@@ -61,7 +61,8 @@ export function ProjectSelectField({
   ariaLabel,
 }: ProjectSelectFieldProps) {
   const registry = useProjects() as ProjectRegistryState;
-  const projects = registry.allProjects.length > 0 ? registry.allProjects : registry.projects;
+  const projects =
+    registry.allProjects.length > 0 ? registry.allProjects : registry.projects;
   const hasError = Boolean(registry.error || registry.isError);
 
   const options = useMemo(() => {

@@ -1,42 +1,42 @@
-import { useEffect, useRef, useState } from 'react'
-import { cn } from '../../../lib/utils'
-import { Button } from '../../ui/Button'
-import { Card } from '../../ui/Card'
-import { Chip } from '../../ui/Chip'
-import { FormField } from '../../ui/FormField'
-import { Input } from '../../ui/Input'
-import { NativeSelect } from '../../ui/NativeSelect'
-import { coarseHitAreaCls } from '../../ui/controlStyles'
+import { useEffect, useRef, useState } from "react";
+import { cn } from "../../../lib/utils";
+import { Button } from "../../ui/Button";
+import { Card } from "../../ui/Card";
+import { Chip } from "../../ui/Chip";
+import { FormField } from "../../ui/FormField";
+import { Input } from "../../ui/Input";
+import { NativeSelect } from "../../ui/NativeSelect";
+import { coarseHitAreaCls } from "../../ui/controlStyles";
 import type {
   PipelineStep,
   StepChangeHandler,
   StepType,
-} from './PipelineEditor.types'
+} from "./PipelineEditor.types";
 import {
   STEP_TYPES,
   detectStepType,
   getStepPreview,
   getTypeColor,
-} from './pipelineStepModel'
+} from "./pipelineStepModel";
 import {
   CommonFields,
   ExecFields,
   InvokePipelineFields,
   McpFields,
   PromptFields,
-} from './PipelineStepFields'
+} from "./PipelineStepFields";
 
 type PipelineStepListProps = {
-  steps: PipelineStep[]
-  expandedIndex: number | null
-  inSidebar?: boolean
-  onExpandedIndexChange: (index: number | null) => void
-  onUpdateStep: (index: number, updates: Partial<PipelineStep>) => void
-  onDeleteStep: (index: number) => void | Promise<void>
-  onMoveStep: (index: number, direction: -1 | 1) => void
-  onChangeStepType: (index: number, type: StepType) => void
-  onAddStep: (type: StepType) => void
-}
+  steps: PipelineStep[];
+  expandedIndex: number | null;
+  inSidebar?: boolean;
+  onExpandedIndexChange: (index: number | null) => void;
+  onUpdateStep: (index: number, updates: Partial<PipelineStep>) => void;
+  onDeleteStep: (index: number) => void | Promise<void>;
+  onMoveStep: (index: number, direction: -1 | 1) => void;
+  onChangeStepType: (index: number, type: StepType) => void;
+  onAddStep: (type: StepType) => void;
+};
 
 export function PipelineStepList({
   steps,
@@ -52,17 +52,19 @@ export function PipelineStepList({
   return (
     <div
       className={cn(
-        'flex-1 overflow-y-auto px-4 pt-3 pb-5',
-        inSidebar && '!overflow-visible !pb-0',
+        "flex-1 overflow-y-auto px-4 pt-3 pb-5",
+        inSidebar && "!overflow-visible !pb-0",
       )}
     >
-      <div className="mb-2.5 flex items-center gap-2 text-xs font-semibold uppercase tracking-[0.5px] text-secondary">
+      <div className="text-secondary mb-2.5 flex items-center gap-2 text-xs font-semibold tracking-[0.5px] uppercase">
         Steps
         <Chip>{steps.length}</Chip>
       </div>
 
       {steps.length === 0 && (
-        <div className="p-6 text-center text-md text-secondary">No steps yet. Add one below.</div>
+        <div className="text-secondary p-6 text-center text-md">
+          No steps yet. Add one below.
+        </div>
       )}
 
       {steps.map((step, index) => (
@@ -72,7 +74,9 @@ export function PipelineStepList({
           index={index}
           totalSteps={steps.length}
           expanded={expandedIndex === index}
-          onToggle={() => onExpandedIndexChange(expandedIndex === index ? null : index)}
+          onToggle={() =>
+            onExpandedIndexChange(expandedIndex === index ? null : index)
+          }
           onUpdate={(updates) => onUpdateStep(index, updates)}
           onDelete={() => void onDeleteStep(index)}
           onMove={(direction) => onMoveStep(index, direction)}
@@ -82,7 +86,7 @@ export function PipelineStepList({
 
       <AddStepButton onAdd={onAddStep} />
     </div>
-  )
+  );
 }
 
 function PipelineStepCard({
@@ -96,18 +100,18 @@ function PipelineStepCard({
   onMove,
   onChangeType,
 }: {
-  step: PipelineStep
-  index: number
-  totalSteps: number
-  expanded: boolean
-  onToggle: () => void
-  onUpdate: StepChangeHandler
-  onDelete: () => void
-  onMove: (direction: -1 | 1) => void
-  onChangeType: (type: StepType) => void
+  step: PipelineStep;
+  index: number;
+  totalSteps: number;
+  expanded: boolean;
+  onToggle: () => void;
+  onUpdate: StepChangeHandler;
+  onDelete: () => void;
+  onMove: (direction: -1 | 1) => void;
+  onChangeType: (type: StepType) => void;
 }) {
-  const type = detectStepType(step)
-  const typeColor = getTypeColor(type)
+  const type = detectStepType(step);
+  const typeColor = getTypeColor(type);
 
   return (
     <Card className="mb-2 overflow-hidden bg-[var(--bg-secondary)]">
@@ -116,7 +120,7 @@ function PipelineStepCard({
         variant="ghost"
         className={cn(
           coarseHitAreaCls,
-          'h-auto w-full justify-start rounded-none border-0 px-3 py-2.5 text-left hover:bg-[var(--bg-tertiary)]',
+          "h-auto w-full justify-start rounded-none border-0 px-3 py-2.5 text-left hover:bg-[var(--bg-tertiary)]",
         )}
         aria-expanded={expanded}
         onClick={onToggle}
@@ -129,11 +133,15 @@ function PipelineStepCard({
         >
           {type}
         </Chip>
-        <span className="shrink-0 text-md font-medium text-primary">{step.id}</span>
-        <span className="min-w-0 flex-1 overflow-hidden text-ellipsis whitespace-nowrap text-sm text-secondary">
+        <span className="text-primary shrink-0 text-md font-medium">
+          {step.id}
+        </span>
+        <span className="text-secondary min-w-0 flex-1 overflow-hidden text-sm text-ellipsis whitespace-nowrap">
           {getStepPreview(step)}
         </span>
-        <span className="ml-auto shrink-0 text-sm text-secondary">{expanded ? '▾' : '▸'}</span>
+        <span className="text-secondary ml-auto shrink-0 text-sm">
+          {expanded ? "▾" : "▸"}
+        </span>
       </Button>
 
       {expanded && (
@@ -171,7 +179,10 @@ function PipelineStepCard({
             </Button>
           </div>
 
-          <FormField label="Step ID" className="mb-2.5 [&>label:first-child]:text-xs">
+          <FormField
+            label="Step ID"
+            className="mb-2.5 [&>label:first-child]:text-xs"
+          >
             {({ id, describedBy, invalid }) => (
               <Input
                 id={id}
@@ -184,7 +195,10 @@ function PipelineStepCard({
             )}
           </FormField>
 
-          <FormField label="Type" className="mb-2.5 [&>label:first-child]:text-xs">
+          <FormField
+            label="Type"
+            className="mb-2.5 [&>label:first-child]:text-xs"
+          >
             {({ id, describedBy, invalid }) => (
               <NativeSelect
                 id={id}
@@ -202,47 +216,52 @@ function PipelineStepCard({
             )}
           </FormField>
 
-          {type === 'exec' && <ExecFields step={step} onChange={onUpdate} />}
-          {type === 'prompt' && <PromptFields step={step} onChange={onUpdate} />}
-          {type === 'mcp' && <McpFields step={step} onChange={onUpdate} />}
-          {type === 'invoke_pipeline' && (
+          {type === "exec" && <ExecFields step={step} onChange={onUpdate} />}
+          {type === "prompt" && (
+            <PromptFields step={step} onChange={onUpdate} />
+          )}
+          {type === "mcp" && <McpFields step={step} onChange={onUpdate} />}
+          {type === "invoke_pipeline" && (
             <InvokePipelineFields step={step} onChange={onUpdate} />
           )}
           <CommonFields step={step} type={type} onChange={onUpdate} />
         </div>
       )}
     </Card>
-  )
+  );
 }
 
 function AddStepButton({ onAdd }: { onAdd: (type: StepType) => void }) {
-  const [open, setOpen] = useState(false)
-  const containerRef = useRef<HTMLDivElement>(null)
+  const [open, setOpen] = useState(false);
+  const containerRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
-    if (!open) return
+    if (!open) return;
     function handlePointerDown(event: MouseEvent) {
-      if (containerRef.current && !containerRef.current.contains(event.target as Node)) {
-        setOpen(false)
+      if (
+        containerRef.current &&
+        !containerRef.current.contains(event.target as Node)
+      ) {
+        setOpen(false);
       }
     }
     function handleKeyDown(event: KeyboardEvent) {
-      if (event.key === 'Escape') setOpen(false)
+      if (event.key === "Escape") setOpen(false);
     }
-    document.addEventListener('mousedown', handlePointerDown)
-    document.addEventListener('keydown', handleKeyDown)
+    document.addEventListener("mousedown", handlePointerDown);
+    document.addEventListener("keydown", handleKeyDown);
     return () => {
-      document.removeEventListener('mousedown', handlePointerDown)
-      document.removeEventListener('keydown', handleKeyDown)
-    }
-  }, [open])
+      document.removeEventListener("mousedown", handlePointerDown);
+      document.removeEventListener("keydown", handleKeyDown);
+    };
+  }, [open]);
 
   return (
     <div className="relative mt-2" ref={containerRef}>
       <Button
         type="button"
         variant="outline"
-        className={cn(coarseHitAreaCls, 'h-auto w-full border-dashed p-2.5')}
+        className={cn(coarseHitAreaCls, "h-auto w-full border-dashed p-2.5")}
         aria-haspopup="menu"
         aria-expanded={open}
         onClick={() => setOpen(!open)}
@@ -256,18 +275,24 @@ function AddStepButton({ onAdd }: { onAdd: (type: StepType) => void }) {
               key={stepType.value}
               type="button"
               variant="ghost"
-              className={cn(coarseHitAreaCls, 'h-auto w-full justify-start px-2.5 py-2 text-md')}
+              className={cn(
+                coarseHitAreaCls,
+                "h-auto w-full justify-start px-2.5 py-2 text-md",
+              )}
               onClick={() => {
-                onAdd(stepType.value)
-                setOpen(false)
+                onAdd(stepType.value);
+                setOpen(false);
               }}
             >
-              <span className="size-2 shrink-0 rounded-full" style={{ background: stepType.color }} />
+              <span
+                className="size-2 shrink-0 rounded-full"
+                style={{ background: stepType.color }}
+              />
               {stepType.label}
             </Button>
           ))}
         </Card>
       )}
     </div>
-  )
+  );
 }

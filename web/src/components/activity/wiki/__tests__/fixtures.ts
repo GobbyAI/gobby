@@ -25,14 +25,16 @@ export const pagesEnvelope: EnvelopeFixture = {
     scope,
     pages: [
       {
-        content_hash: "6d98b22ffd529e5a4d32c3c3803206d2f5f034f62592b98cb726a9e56f6a0392",
+        content_hash:
+          "6d98b22ffd529e5a4d32c3c3803206d2f5f034f62592b98cb726a9e56f6a0392",
         path: "knowledge/concepts/gobby.md",
         tags: ["gwiki", "compiled", "entity"],
         title: "Gobby",
         updated_at: "2026-07-10T23:22:43.489247+00:00",
       },
       {
-        content_hash: "0db1596ac2f34b7cd2e04a491b6924063c4612ad4a1e699121471c61ac154580",
+        content_hash:
+          "0db1596ac2f34b7cd2e04a491b6924063c4612ad4a1e699121471c61ac154580",
         path: "knowledge/concepts/gwiki.md",
         tags: ["gwiki", "compiled", "entity"],
         title: "Gwiki",
@@ -215,12 +217,14 @@ export const readEnvelope: EnvelopeFixture = {
     status: "found",
     requested: { kind: "path", value: "knowledge/concepts/gobby.md" },
     wiki_path: "knowledge/concepts/gobby.md",
-    absolute_path: "/Users/josh/Projects/gobby/wiki/knowledge/concepts/gobby.md",
+    absolute_path:
+      "/Users/josh/Projects/gobby/wiki/knowledge/concepts/gobby.md",
     title: "Gobby",
     content:
       '---\ntitle: "Gobby"\naliases:\n  - "Gobby"\n  - "gobby-cli"\nsource_kind: "concept"\ntags:\n  - gwiki\n  - compiled\n---\n\n# Gobby\n\nGobby is a local-first daemon.\n',
     content_format: "markdown",
-    content_hash: "6d98b22ffd529e5a4d32c3c3803206d2f5f034f62924063c4612ad4a1e699121",
+    content_hash:
+      "6d98b22ffd529e5a4d32c3c3803206d2f5f034f62924063c4612ad4a1e699121",
     byte_len: 5903,
     truncated: false,
     candidates: [],
@@ -442,7 +446,10 @@ export const browseAmbiguousReadEnvelope: EnvelopeFixture = {
     truncated: false,
     candidates: [
       { path: "knowledge/concepts/gobby.md", title: "Gobby" },
-      { path: "code/files/src/gobby/runner.py.md", title: "src/gobby/runner.py" },
+      {
+        path: "code/files/src/gobby/runner.py.md",
+        title: "src/gobby/runner.py",
+      },
     ],
     degradations: [],
   },
@@ -707,12 +714,18 @@ export const graphViewEnvelope: EnvelopeFixture = {
       bridges: [],
       centrality: [
         {
-          node: { id: "document-knowledge-concepts-gobby-md-aa01", kind: "wiki_page" },
+          node: {
+            id: "document-knowledge-concepts-gobby-md-aa01",
+            kind: "wiki_page",
+          },
           degree: 5,
           score: 0.5,
         },
         {
-          node: { id: "document-knowledge-concepts-gwiki-md-aa02", kind: "wiki_page" },
+          node: {
+            id: "document-knowledge-concepts-gwiki-md-aa02",
+            kind: "wiki_page",
+          },
           degree: 2,
           score: 0.2,
         },
@@ -721,16 +734,28 @@ export const graphViewEnvelope: EnvelopeFixture = {
         {
           id: "community-1",
           nodes: [
-            { id: "document-knowledge-concepts-gobby-md-aa01", kind: "wiki_page" },
-            { id: "document-knowledge-concepts-gwiki-md-aa02", kind: "wiki_page" },
+            {
+              id: "document-knowledge-concepts-gobby-md-aa01",
+              kind: "wiki_page",
+            },
+            {
+              id: "document-knowledge-concepts-gwiki-md-aa02",
+              kind: "wiki_page",
+            },
           ],
           weight: 2.0,
         },
         {
           id: "community-2",
           nodes: [
-            { id: "document-code-files-src-gobby-runner-py-md-aa03", kind: "code" },
-            { id: "document-code-files-src-gobby-watcher-py-md-aa04", kind: "code" },
+            {
+              id: "document-code-files-src-gobby-runner-py-md-aa03",
+              kind: "code",
+            },
+            {
+              id: "document-code-files-src-gobby-watcher-py-md-aa04",
+              kind: "code",
+            },
           ],
           weight: 1.0,
         },

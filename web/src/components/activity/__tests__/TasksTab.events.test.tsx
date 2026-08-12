@@ -68,9 +68,7 @@ vi.mock("../../shared/ResizeHandle", () => ({
 let mockFetch: MockFetchInstance;
 
 function taskRow(title: string): HTMLElement {
-  const row = screen
-    .getAllByText(title)[0]
-    .closest('[role="treeitem"]');
+  const row = screen.getAllByText(title)[0].closest('[role="treeitem"]');
   expect(row).toBeTruthy();
   return row as HTMLElement;
 }
@@ -128,16 +126,20 @@ function setupTaskRoutes(tasks: Array<Record<string, unknown>>): void {
   });
 }
 
-function holdTaskListRefetch(tasks: Array<Record<string, unknown>>): () => void {
+function holdTaskListRefetch(
+  tasks: Array<Record<string, unknown>>,
+): () => void {
   const originalFetch = mockFetch.fn.getMockImplementation();
   let resolveListFetch!: (response: Response) => void;
   const pendingListFetch = new Promise<Response>((resolve) => {
     resolveListFetch = resolve;
   });
-  mockFetch.fn.mockImplementation((input: RequestInfo | URL, init?: RequestInit) => {
-    if (String(input).includes("/api/tasks?")) return pendingListFetch;
-    return originalFetch?.(input, init);
-  });
+  mockFetch.fn.mockImplementation(
+    (input: RequestInfo | URL, init?: RequestInit) => {
+      if (String(input).includes("/api/tasks?")) return pendingListFetch;
+      return originalFetch?.(input, init);
+    },
+  );
   return () => {
     resolveListFetch(
       new Response(JSON.stringify({ tasks }), {
@@ -280,7 +282,10 @@ describe("TasksTab — events and row actions", () => {
       vi.advanceTimersByTime(500);
     });
 
-    expect(screen.getByTestId("task-tree")).toHaveAttribute("aria-busy", "true");
+    expect(screen.getByTestId("task-tree")).toHaveAttribute(
+      "aria-busy",
+      "true",
+    );
     expect(screen.getByLabelText("Description")).toBe(description);
     expect(description.value).toBe("Unsaved draft");
     expect(document.activeElement).toBe(description);
@@ -309,7 +314,10 @@ describe("TasksTab — events and row actions", () => {
       }),
     );
     await waitFor(() =>
-      expect(screen.getByTestId("task-tree")).toHaveAttribute("aria-busy", "false"),
+      expect(screen.getByTestId("task-tree")).toHaveAttribute(
+        "aria-busy",
+        "false",
+      ),
     );
   });
 
@@ -328,12 +336,14 @@ describe("TasksTab — events and row actions", () => {
     const pendingDetailFetch = new Promise<Response>((resolve) => {
       resolveDetailFetch = resolve;
     });
-    mockFetch.fn.mockImplementation((input: RequestInfo | URL, init?: RequestInit) => {
-      if (String(input).endsWith("/api/tasks/task-review")) {
-        return pendingDetailFetch;
-      }
-      return originalFetch?.(input, init);
-    });
+    mockFetch.fn.mockImplementation(
+      (input: RequestInfo | URL, init?: RequestInit) => {
+        if (String(input).endsWith("/api/tasks/task-review")) {
+          return pendingDetailFetch;
+        }
+        return originalFetch?.(input, init);
+      },
+    );
 
     act(() => {
       wsHandler?.({
@@ -473,7 +483,11 @@ describe("TasksTab — events and row actions", () => {
   });
 
   it("shows an inline error when assigning a task to the main chat fails", async () => {
-    mockFetch.mockErrorResponse("/api/tasks/task-review/claim", 500, "Server Error");
+    mockFetch.mockErrorResponse(
+      "/api/tasks/task-review/claim",
+      500,
+      "Server Error",
+    );
 
     render(<TasksTab projectId="proj-1" chatSessionId="main-chat-1" />);
 
@@ -500,13 +514,19 @@ describe("TasksTab — events and row actions", () => {
     });
     await openReviewTaskMenu();
 
-    expect(screen.getByRole("menuitem", { name: "Assign to Main Chat" })).toBeDisabled();
-    expect(screen.getByRole("menuitem", { name: "Resume Build" })).toBeEnabled();
+    expect(
+      screen.getByRole("menuitem", { name: "Assign to Main Chat" }),
+    ).toBeDisabled();
+    expect(
+      screen.getByRole("menuitem", { name: "Resume Build" }),
+    ).toBeEnabled();
     expect(screen.queryByRole("menuitem", { name: "Build" })).toBeNull();
     expect(screen.queryByRole("menuitem", { name: "Build Quick" })).toBeNull();
     expect(screen.queryByRole("menuitem", { name: "Stop Build" })).toBeNull();
     expect(screen.getByRole("menuitem", { name: "Close..." })).toBeEnabled();
-    expect(screen.queryByRole("menuitem", { name: "Release Claim" })).toBeNull();
+    expect(
+      screen.queryByRole("menuitem", { name: "Release Claim" }),
+    ).toBeNull();
   });
 
   it("sends build payloads from the quick menu when no build evidence exists", async () => {
@@ -547,7 +567,10 @@ describe("TasksTab — events and row actions", () => {
     expect(screen.queryByText("Task not found")).toBeNull();
     releaseListRefetch();
     await waitFor(() =>
-      expect(screen.getByTestId("task-tree")).toHaveAttribute("aria-busy", "false"),
+      expect(screen.getByTestId("task-tree")).toHaveAttribute(
+        "aria-busy",
+        "false",
+      ),
     );
     expect(findPostCall("/api/build")?.[1]).toMatchObject({
       body: JSON.stringify({ input_ref: "#501" }),
@@ -592,7 +615,9 @@ describe("TasksTab — events and row actions", () => {
     });
     await screen.findByDisplayValue("Review approved task detail");
     await openReviewTaskMenu();
-    expect(screen.getByRole("menuitem", { name: "Resume Build" })).toBeEnabled();
+    expect(
+      screen.getByRole("menuitem", { name: "Resume Build" }),
+    ).toBeEnabled();
     const releaseListRefetch = holdTaskListRefetch(taskList);
     fireEvent.click(screen.getByRole("menuitem", { name: "Resume Build" }));
 
@@ -602,11 +627,16 @@ describe("TasksTab — events and row actions", () => {
     expect(findPostCall("/api/build/resume")?.[1]).toMatchObject({
       body: JSON.stringify({ input_ref: "#401" }),
     });
-    expect(screen.getByDisplayValue("Review approved task detail")).toBeTruthy();
+    expect(
+      screen.getByDisplayValue("Review approved task detail"),
+    ).toBeTruthy();
     expect(screen.queryByText("Task not found")).toBeNull();
     releaseListRefetch();
     await waitFor(() =>
-      expect(screen.getByTestId("task-tree")).toHaveAttribute("aria-busy", "false"),
+      expect(screen.getByTestId("task-tree")).toHaveAttribute(
+        "aria-busy",
+        "false",
+      ),
     );
   });
 
@@ -644,7 +674,10 @@ describe("TasksTab — events and row actions", () => {
     expect(screen.queryByText("Task not found")).toBeNull();
     releaseListRefetch();
     await waitFor(() =>
-      expect(screen.getByTestId("task-tree")).toHaveAttribute("aria-busy", "false"),
+      expect(screen.getByTestId("task-tree")).toHaveAttribute(
+        "aria-busy",
+        "false",
+      ),
     );
   });
 
@@ -698,7 +731,9 @@ describe("TasksTab — events and row actions", () => {
     await waitFor(() => {
       expect(findPostCall("/api/tasks/task-review/release-claim")).toBeTruthy();
     });
-    expect(findPostCall("/api/tasks/task-review/release-claim")?.[1]).toMatchObject({
+    expect(
+      findPostCall("/api/tasks/task-review/release-claim")?.[1],
+    ).toMatchObject({
       body: JSON.stringify({}),
     });
   });
@@ -755,16 +790,25 @@ describe("TasksTab — events and row actions", () => {
 
     render(<TasksTab projectId="proj-1" chatSessionId="main-chat-1" />);
 
-    fireEvent.click(await screen.findByRole("button", { name: "Filter tasks" }));
-    const filterDialog = await screen.findByRole("dialog", { name: "Task filters" });
+    fireEvent.click(
+      await screen.findByRole("button", { name: "Filter tasks" }),
+    );
+    const filterDialog = await screen.findByRole("dialog", {
+      name: "Task filters",
+    });
     fireEvent.click(within(filterDialog).getByLabelText("Closed"));
-    fireEvent.click(within(filterDialog).getByRole("button", { name: "Apply" }));
+    fireEvent.click(
+      within(filterDialog).getByRole("button", { name: "Apply" }),
+    );
 
     const closedRow = await screen.findByText("Closed task");
     fireEvent.click(
-      within(closedRow.closest('[role="treeitem"]') as HTMLElement).getByRole("button", {
-        name: "Task actions",
-      }),
+      within(closedRow.closest('[role="treeitem"]') as HTMLElement).getByRole(
+        "button",
+        {
+          name: "Task actions",
+        },
+      ),
     );
     expect(screen.queryByRole("menuitem", { name: "Build" })).toBeNull();
     expect(screen.queryByRole("menuitem", { name: "Build Quick" })).toBeNull();

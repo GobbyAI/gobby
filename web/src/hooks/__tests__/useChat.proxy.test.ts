@@ -120,7 +120,9 @@ describe("useChat proxy session messaging", () => {
     });
 
     expect(result.current.messages).toHaveLength(1);
-    expect(result.current.messages[0].id).toBe(`user-${sentMsg.client_message_id}`);
+    expect(result.current.messages[0].id).toBe(
+      `user-${sentMsg.client_message_id}`,
+    );
 
     act(() => {
       ws.simulateMessage({
@@ -252,7 +254,9 @@ describe("useChat proxy session messaging", () => {
     expect(sentMsg.type).toBe("send_to_cli_session");
     expect(sentMsg.client_message_id).toEqual(expect.any(String));
     expect(result.current.messages).toHaveLength(1);
-    expect(result.current.messages[0].id).toBe(`user-${sentMsg.client_message_id}`);
+    expect(result.current.messages[0].id).toBe(
+      `user-${sentMsg.client_message_id}`,
+    );
 
     act(() => {
       ws.simulateMessage({
@@ -591,7 +595,10 @@ describe("useChat proxy session messaging", () => {
     });
 
     act(() => {
-      result.current.approvePlan({ id: "approve_yolo", label: "Approve (YOLO)" });
+      result.current.approvePlan({
+        id: "approve_yolo",
+        label: "Approve (YOLO)",
+      });
     });
 
     const sentMsg = JSON.parse(
@@ -683,7 +690,8 @@ describe("useChat proxy session messaging", () => {
       });
     });
 
-    const lastMessage = result.current.messages[result.current.messages.length - 1];
+    const lastMessage =
+      result.current.messages[result.current.messages.length - 1];
     expect(lastMessage).toMatchObject({
       id: "user-voice-voice-1",
       role: "user",

@@ -91,7 +91,9 @@ function optionalNumber(value: unknown): boolean {
 }
 
 function isImageUrl(value: unknown): boolean {
-  return typeof value === "string" || (isRecord(value) && optionalString(value.url));
+  return (
+    typeof value === "string" || (isRecord(value) && optionalString(value.url))
+  );
 }
 
 export function isContentBlock(value: unknown): value is ContentBlock {
@@ -103,9 +105,14 @@ export function isContentBlock(value: unknown): value is ContentBlock {
     case "compaction_summary":
       return typeof value.content === "string";
     case "tool_chain":
-      return Array.isArray(value.tool_calls) && value.tool_calls.every(isToolCall);
+      return (
+        Array.isArray(value.tool_calls) && value.tool_calls.every(isToolCall)
+      );
     case "tool_reference":
-      return typeof value.tool_name === "string" && typeof value.server_name === "string";
+      return (
+        typeof value.tool_name === "string" &&
+        typeof value.server_name === "string"
+      );
     case "attachment":
       return isRecord(value.attachment);
     case "image":
@@ -158,7 +165,11 @@ function normalizeMessages(value: unknown): ChatMessage[] | null {
   for (const item of value) {
     if (!isRecord(item)) return null;
     if (typeof item.id !== "string") return null;
-    if (item.role !== "user" && item.role !== "assistant" && item.role !== "system") {
+    if (
+      item.role !== "user" &&
+      item.role !== "assistant" &&
+      item.role !== "system"
+    ) {
       return null;
     }
     if (typeof item.content !== "string") return null;
@@ -177,7 +188,10 @@ function normalizeMessages(value: unknown): ChatMessage[] | null {
     if (typeof item.thinkingContent === "string") {
       message.thinkingContent = item.thinkingContent;
     }
-    if (Array.isArray(item.contentBlocks) && item.contentBlocks.every(isContentBlock)) {
+    if (
+      Array.isArray(item.contentBlocks) &&
+      item.contentBlocks.every(isContentBlock)
+    ) {
       message.contentBlocks = item.contentBlocks;
     }
     messages.push(message);
@@ -200,13 +214,16 @@ function normalizeSessionMeta(value: unknown): SessionObservationMeta | null {
     title: nullableString(value.title),
     status: value.status,
     canProxyAttach:
-      typeof value.canProxyAttach === "boolean" ? value.canProxyAttach : undefined,
+      typeof value.canProxyAttach === "boolean"
+        ? value.canProxyAttach
+        : undefined,
     model: nullableString(value.model),
     reasoningEffort: nullableString(value.reasoningEffort) ?? undefined,
     externalId: typeof value.externalId === "string" ? value.externalId : "",
     chatMode: rawChatMode ? normalizeChatMode(rawChatMode) : null,
     gitBranch: nullableString(value.gitBranch),
-    contextWindow: typeof value.contextWindow === "number" ? value.contextWindow : null,
+    contextWindow:
+      typeof value.contextWindow === "number" ? value.contextWindow : null,
     agentRunId: nullableString(value.agentRunId),
     workflowName: nullableString(value.workflowName),
     agentName: nullableString(value.agentName),
@@ -244,7 +261,9 @@ function normalizeContinuationSnapshot(
   if (!messages) return null;
 
   const currentMode = normalizeRestorableChatMode(snapshot.currentMode);
-  const sessionInteractionMode = isRestorableInteractionMode(snapshot.sessionInteractionMode)
+  const sessionInteractionMode = isRestorableInteractionMode(
+    snapshot.sessionInteractionMode,
+  )
     ? snapshot.sessionInteractionMode
     : "none";
 
@@ -291,13 +310,21 @@ interface UseContinuationRestoreParams {
     setViewingSessionId: Setter<string | null>;
   };
   conversationRefs: {
-    attachedSessionMetaRef: MutableRefObject<ContinuationRollbackSnapshot["attachedSessionMeta"]>;
-    observedSessionMetaRef: MutableRefObject<ContinuationRollbackSnapshot["observedSessionMeta"]>;
-    viewingSessionMetaRef: MutableRefObject<ContinuationRollbackSnapshot["viewingSessionMeta"]>;
+    attachedSessionMetaRef: MutableRefObject<
+      ContinuationRollbackSnapshot["attachedSessionMeta"]
+    >;
+    observedSessionMetaRef: MutableRefObject<
+      ContinuationRollbackSnapshot["observedSessionMeta"]
+    >;
+    viewingSessionMetaRef: MutableRefObject<
+      ContinuationRollbackSnapshot["viewingSessionMeta"]
+    >;
     wsRef: MutableRefObject<WebSocket | null>;
   };
   conversationSetters: {
-    setAttachedSessionMeta: Setter<ContinuationRollbackSnapshot["attachedSessionMeta"]>;
+    setAttachedSessionMeta: Setter<
+      ContinuationRollbackSnapshot["attachedSessionMeta"]
+    >;
     setContextUsage: Setter<ContinuationRollbackSnapshot["contextUsage"]>;
     setCurrentBranch: Setter<string | null>;
     setCurrentMode: (mode: ChatMode) => void;
@@ -305,13 +332,19 @@ interface UseContinuationRestoreParams {
     setMainSessionMeta: Setter<ContinuationRollbackSnapshot["mainSessionMeta"]>;
     setMessages: Setter<ContinuationRollbackSnapshot["messages"]>;
     setProxyDeliveryNotice: Setter<string | null>;
-    setViewingSessionMeta: Setter<ContinuationRollbackSnapshot["viewingSessionMeta"]>;
+    setViewingSessionMeta: Setter<
+      ContinuationRollbackSnapshot["viewingSessionMeta"]
+    >;
     setWorktreePath: Setter<string | null>;
   };
   interactionMode: {
     pendingSessionInteractionModeRef: MutableRefObject<"observe" | "proxy">;
-    sessionInteractionModeRef: MutableRefObject<ContinuationRollbackSnapshot["sessionInteractionMode"]>;
-    setSessionInteractionMode: Setter<ContinuationRollbackSnapshot["sessionInteractionMode"]>;
+    sessionInteractionModeRef: MutableRefObject<
+      ContinuationRollbackSnapshot["sessionInteractionMode"]
+    >;
+    setSessionInteractionMode: Setter<
+      ContinuationRollbackSnapshot["sessionInteractionMode"]
+    >;
   };
 }
 
@@ -419,7 +452,10 @@ export function useContinuationRestore({
             session_id: restored.observedSessionId,
           });
         } catch (error) {
-          console.warn("Failed to serialize restored session attach request", error);
+          console.warn(
+            "Failed to serialize restored session attach request",
+            error,
+          );
           return;
         }
         const ws = wsRef.current;

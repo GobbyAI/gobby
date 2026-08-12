@@ -340,9 +340,9 @@ export const voiceStatusBarMockFactory = () => ({
           ? "Transcribing..."
           : voiceInputMode === "ptt" && isRecording
             ? "Recording..."
-          : isListening
-            ? "Listening..."
-            : voiceError || ""}
+            : isListening
+              ? "Listening..."
+              : voiceError || ""}
     </div>
   ),
 });
@@ -404,11 +404,7 @@ export const agentStatusBarMockFactory = () => ({
         </button>
       )}
       {onNewChat && (
-        <button
-          type="button"
-          data-testid="new-chat-button"
-          onClick={onNewChat}
-        >
+        <button type="button" data-testid="new-chat-button" onClick={onNewChat}>
           New Chat
         </button>
       )}

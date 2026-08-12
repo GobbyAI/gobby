@@ -50,7 +50,10 @@ export function useTasksTabFilters(stagesRegistry: StageRegistryEntry[]) {
     [defaultStageFilters, selectedStageFilters],
   );
   const selectedRegistryStageNames = useMemo(
-    () => registryStageNames.filter((stageName) => selectedStageFilters.has(stageName)),
+    () =>
+      registryStageNames.filter((stageName) =>
+        selectedStageFilters.has(stageName),
+      ),
     [registryStageNames, selectedStageFilters],
   );
   const stageQueryKey = useMemo(
@@ -73,7 +76,9 @@ export function useTasksTabFilters(stagesRegistry: StageRegistryEntry[]) {
     const stageFilterCount = registryStageNames.filter(
       (stageName) => !selectedStageFilters.has(stageName),
     ).length;
-    return statusFilterCount + (stageSelectionMatchesDefault ? 0 : stageFilterCount);
+    return (
+      statusFilterCount + (stageSelectionMatchesDefault ? 0 : stageFilterCount)
+    );
   }, [
     registryStageNames,
     selectedStageFilters,

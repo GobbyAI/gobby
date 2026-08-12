@@ -294,7 +294,7 @@ describe("ProviderPicker", () => {
     expect(getProviderHeader("Codex").getByText("active")).toBeTruthy();
     expect(
       screen.getByRole("button", {
-          name: "OpenRouter: Moonshotai/Kimi K3●",
+        name: "OpenRouter: Moonshotai/Kimi K3●",
       }),
     ).toBeTruthy();
     expect(screen.getByRole("button", { name: "GPT 5.4" })).toBeTruthy();
@@ -324,11 +324,15 @@ describe("ProviderPicker", () => {
     );
 
     await userEvent.click(
-      await screen.findByRole("button", { name: "OpenRouter: Moonshotai/Kimi K3" }),
+      await screen.findByRole("button", {
+        name: "OpenRouter: Moonshotai/Kimi K3",
+      }),
     );
 
     expect(screen.queryByText("Switch provider?")).toBeNull();
-    expect(onModelChange).toHaveBeenCalledWith("endpoint:openrouter/moonshotai/kimi-k3");
+    expect(onModelChange).toHaveBeenCalledWith(
+      "endpoint:openrouter/moonshotai/kimi-k3",
+    );
     expect(onProviderChange).not.toHaveBeenCalled();
     expect(onSwitchProvider).not.toHaveBeenCalled();
   });
@@ -386,7 +390,9 @@ describe("ProviderPicker", () => {
     );
 
     await userEvent.click(
-      await screen.findByRole("button", { name: "OpenRouter: Moonshotai/Kimi K3" }),
+      await screen.findByRole("button", {
+        name: "OpenRouter: Moonshotai/Kimi K3",
+      }),
     );
     expect(screen.getByText("Switch provider?")).toBeTruthy();
 
@@ -421,7 +427,9 @@ describe("ProviderPicker", () => {
     );
 
     await userEvent.click(
-      await screen.findByRole("button", { name: "OpenRouter: Moonshotai/Kimi K3" }),
+      await screen.findByRole("button", {
+        name: "OpenRouter: Moonshotai/Kimi K3",
+      }),
     );
     expect(screen.getByText("Switch provider?")).toBeTruthy();
     expect(onSelect).not.toHaveBeenCalled();

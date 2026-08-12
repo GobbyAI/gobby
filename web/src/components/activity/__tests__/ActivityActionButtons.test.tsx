@@ -49,7 +49,9 @@ describe("ActivityActionButtons", () => {
       },
     });
 
-    const group = screen.getByRole("radiogroup", { name: "Session status filter" });
+    const group = screen.getByRole("radiogroup", {
+      name: "Session status filter",
+    });
     expect(group).toHaveClass("segmented-control");
     expect(screen.getByRole("radio", { name: "Live" })).toHaveAttribute(
       "aria-checked",
@@ -72,7 +74,9 @@ describe("ActivityActionButtons", () => {
 
     const button = screen.getByRole("button", { name: "Filter sessions" });
     expect(button).toHaveAttribute("aria-expanded", "true");
-    expect(button.querySelector("[data-filter-active-count]")?.textContent).toBe("2");
+    expect(
+      button.querySelector("[data-filter-active-count]")?.textContent,
+    ).toBe("2");
     fireEvent.click(button);
     expect(onToggle).toHaveBeenCalledTimes(1);
   });

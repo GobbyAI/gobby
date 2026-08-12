@@ -1,7 +1,7 @@
 // Shared badge components for the task system.
 // Reusable across the task tree, board cards, and the detail panel.
 
-import type { TaskStateLike } from '../../lib/taskState'
+import type { TaskStateLike } from "../../lib/taskState";
 import {
   getTaskDisplayState,
   getTaskStateSummary,
@@ -12,16 +12,16 @@ import {
   TASK_STATE_LABELS,
   TASK_STATE_ORDER,
   type TaskDisplayState,
-} from '../../lib/taskState'
-import { ActivityRowStatusDot } from '../activity/ActivityRowStatusDot'
-import { taskPriorityLabel } from '../../lib/taskOptions'
-import { Chip } from '../ui/Chip'
-import { type ChipTone } from '../ui/chipVariants'
+} from "../../lib/taskState";
+import { ActivityRowStatusDot } from "../activity/ActivityRowStatusDot";
+import { taskPriorityLabel } from "../../lib/taskOptions";
+import { Chip } from "../ui/Chip";
+import { type ChipTone } from "../ui/chipVariants";
 import {
   PRIORITY_GLYPH_PATHS,
   normalizePriorityGlyphLevel,
   type PriorityGlyphLevel,
-} from './priorityGlyphPaths'
+} from "./priorityGlyphPaths";
 
 // =============================================================================
 // Color maps
@@ -41,14 +41,26 @@ const PRIORITY_STYLES: Record<
   { bg: string; color: string }
 > = {
   0: { bg: "var(--color-error-soft)", color: "var(--color-error)" },
-  1: { bg: "var(--color-warning-soft)", color: "var(--color-warning-foreground)" },
+  1: {
+    bg: "var(--color-warning-soft)",
+    color: "var(--color-warning-foreground)",
+  },
   2: { bg: "var(--color-info-soft)", color: "var(--color-info)" },
-  3: { bg: "var(--color-success-soft)", color: "var(--color-success-foreground)" },
-  4: { bg: "color-mix(in srgb, var(--text-muted) 15%, transparent)", color: "var(--text-muted)" },
+  3: {
+    bg: "var(--color-success-soft)",
+    color: "var(--color-success-foreground)",
+  },
+  4: {
+    bg: "color-mix(in srgb, var(--text-muted) 15%, transparent)",
+    color: "var(--text-muted)",
+  },
 };
 
 function chipToken(value: string | number): string {
-  return String(value).trim().toLowerCase().replace(/[^a-z0-9_-]+/g, "-");
+  return String(value)
+    .trim()
+    .toLowerCase()
+    .replace(/[^a-z0-9_-]+/g, "-");
 }
 
 // =============================================================================
@@ -56,38 +68,38 @@ function chipToken(value: string | number): string {
 // =============================================================================
 
 const STATE_TONES: Record<string, ChipTone> = {
-  open: 'info',
-  ready: 'info',
-  claimed: 'info',
-  review: 'info',
-  needs_review: 'info',
-  'needs-review': 'info',
-  review_approved: 'info',
-  in_progress: 'warning',
-  'in-progress': 'warning',
-  closed: 'accent',
-  done: 'accent',
-  merge_ready: 'accent',
-  'merge-ready': 'accent',
-  blocked: 'error',
-  escalated: 'error',
+  open: "info",
+  ready: "info",
+  claimed: "info",
+  review: "info",
+  needs_review: "info",
+  "needs-review": "info",
+  review_approved: "info",
+  in_progress: "warning",
+  "in-progress": "warning",
+  closed: "accent",
+  done: "accent",
+  merge_ready: "accent",
+  "merge-ready": "accent",
+  blocked: "error",
+  escalated: "error",
 };
 
 const PRIORITY_TONES: Record<PriorityGlyphLevel, ChipTone> = {
-  0: 'error',
-  1: 'warning',
-  2: 'warning',
-  3: 'accent',
-  4: 'neutral',
+  0: "error",
+  1: "warning",
+  2: "warning",
+  3: "accent",
+  4: "neutral",
 };
 
 const TYPE_TONES: Record<string, ChipTone> = {
-  task: 'info',
-  bug: 'error',
-  feature: 'accent',
-  epic: 'info',
-  chore: 'neutral',
-  refactor: 'neutral',
+  task: "info",
+  bug: "error",
+  feature: "accent",
+  epic: "info",
+  chore: "neutral",
+  refactor: "neutral",
 };
 
 // =============================================================================
@@ -96,7 +108,7 @@ const TYPE_TONES: Record<string, ChipTone> = {
 
 export function StatusBadge({ status }: { status: string }) {
   return (
-    <Chip tone={STATE_TONES[chipToken(status)] ?? 'neutral'}>
+    <Chip tone={STATE_TONES[chipToken(status)] ?? "neutral"}>
       {status.replace(/_/g, " ")}
     </Chip>
   );
@@ -107,18 +119,26 @@ export function StatusBadge({ status }: { status: string }) {
 // =============================================================================
 
 function displayStateFromStatus(status: string | undefined): TaskDisplayState {
-  if (status === 'open') return 'ready'
+  if (status === "open") return "ready";
   if (status && TASK_STATE_ORDER.includes(status as TaskDisplayState)) {
-    return status as TaskDisplayState
+    return status as TaskDisplayState;
   }
-  return 'ready'
+  return "ready";
 }
 
-export function StatusDot({ status, task }: { status?: string; task?: TaskStateLike }) {
-  const displayState = task ? getTaskDisplayState(task) : displayStateFromStatus(status)
+export function StatusDot({
+  status,
+  task,
+}: {
+  status?: string;
+  task?: TaskStateLike;
+}) {
+  const displayState = task
+    ? getTaskDisplayState(task)
+    : displayStateFromStatus(status);
   const label = task
     ? getTaskStateSummary(task)
-    : TASK_STATE_LABELS[displayState]
+    : TASK_STATE_LABELS[displayState];
   return (
     <ActivityRowStatusDot
       kind={TASK_STATE_KIND[displayState]}
@@ -134,17 +154,20 @@ export function StatusDot({ status, task }: { status?: string; task?: TaskStateL
 // =============================================================================
 
 export function TaskStateBadges({ task }: { task: TaskStateLike }) {
-  const tokens = getTaskStateTokens(task)
+  const tokens = getTaskStateTokens(task);
 
   return (
     <>
-      {tokens.map(token => (
-        <Chip key={token.key} tone={STATE_TONES[chipToken(token.key)] ?? 'neutral'}>
+      {tokens.map((token) => (
+        <Chip
+          key={token.key}
+          tone={STATE_TONES[chipToken(token.key)] ?? "neutral"}
+        >
           {token.label}
         </Chip>
       ))}
     </>
-  )
+  );
 }
 
 // =============================================================================
@@ -193,7 +216,7 @@ export function PriorityGlyph({ priority }: { priority: number }) {
 // =============================================================================
 
 export function TypeBadge({ type }: { type: string }) {
-  return <Chip tone={TYPE_TONES[chipToken(type)] ?? 'neutral'}>{type}</Chip>;
+  return <Chip tone={TYPE_TONES[chipToken(type)] ?? "neutral"}>{type}</Chip>;
 }
 
 // =============================================================================
@@ -221,7 +244,7 @@ function LockIcon() {
 export function BlockedIndicator({ count }: { count?: number }) {
   return (
     <span
-      className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded text-[length:var(--text-2xs)] font-medium text-[var(--color-error)] bg-[color-mix(in_srgb,var(--color-error)_10%,transparent)]"
+      className="inline-flex items-center gap-1 rounded bg-[color-mix(in_srgb,var(--color-error)_10%,transparent)] px-1.5 py-0.5 text-[length:var(--text-2xs)] font-medium text-[var(--color-error)]"
       title={`Blocked by ${count ?? "?"} task(s)`}
       aria-label={`Blocked by ${count ?? "unknown"} task(s)`}
     >

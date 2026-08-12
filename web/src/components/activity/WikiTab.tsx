@@ -106,9 +106,13 @@ export const WikiTab = memo(function WikiTab({
 
   const dirtyGuard = useDirtyGuard();
   const wiki = useWiki({ projectId, topic });
-  const scope = useMemo<WikiFetchScope>(() => ({ projectId, topic }), [projectId, topic]);
+  const scope = useMemo<WikiFetchScope>(
+    () => ({ projectId, topic }),
+    [projectId, topic],
+  );
   const summary = useMemo(
-    () => summarizeWikiStatus(wiki.status, wiki.health, wiki.error, wiki.isLoading),
+    () =>
+      summarizeWikiStatus(wiki.status, wiki.health, wiki.error, wiki.isLoading),
     [wiki.error, wiki.health, wiki.isLoading, wiki.status],
   );
 
@@ -229,7 +233,9 @@ export const WikiTab = memo(function WikiTab({
         onSearchChange={setSearch}
         wide={wide}
         onOpenGraph={handleOpenGraph}
-        actionsDisabled={summary.state === "unavailable" || summary.state === "loading"}
+        actionsDisabled={
+          summary.state === "unavailable" || summary.state === "loading"
+        }
         actions={{
           onRefreshIndex: () => void actions.refreshIndex(),
           onCompile: () => void actions.runCompile(),
@@ -250,7 +256,10 @@ export const WikiTab = memo(function WikiTab({
           onSubmit={handleTopicSubmit}
           className="flex items-center gap-2 border-b border-border px-3 py-2"
         >
-          <label htmlFor="wiki-topic-scope" className="text-xs text-muted-foreground">
+          <label
+            htmlFor="wiki-topic-scope"
+            className="text-xs text-muted-foreground"
+          >
             Topic scope
           </label>
           <Input
@@ -287,7 +296,10 @@ export const WikiTab = memo(function WikiTab({
           onSubmit={handleIngestSubmit}
           className="flex items-center gap-2 border-b border-border px-3 py-2"
         >
-          <label htmlFor="wiki-ingest-url" className="text-xs text-muted-foreground">
+          <label
+            htmlFor="wiki-ingest-url"
+            className="text-xs text-muted-foreground"
+          >
             Ingest URL
           </label>
           <Input
@@ -312,11 +324,17 @@ export const WikiTab = memo(function WikiTab({
       ) : null}
 
       {actions.status.error ? (
-        <p role="alert" className="border-b border-border px-3 py-1.5 text-xs text-destructive-foreground">
+        <p
+          role="alert"
+          className="border-b border-border px-3 py-1.5 text-xs text-destructive-foreground"
+        >
           {actions.status.error}
         </p>
       ) : actions.status.message ? (
-        <p role="status" className="border-b border-border px-3 py-1.5 text-xs text-muted-foreground">
+        <p
+          role="status"
+          className="border-b border-border px-3 py-1.5 text-xs text-muted-foreground"
+        >
           {actions.status.message}
         </p>
       ) : null}

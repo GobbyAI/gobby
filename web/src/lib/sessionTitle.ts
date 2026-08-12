@@ -31,9 +31,7 @@ function stripMatchingSessionRef(title: string, ref: string): string | null {
   return null;
 }
 
-export function getSessionDisplayTitle(
-  session: SessionTitleLike,
-): string {
+export function getSessionDisplayTitle(session: SessionTitleLike): string {
   const titleText = getSessionTitleText(session.title);
   const ref = getSessionRef(session);
   if (!ref) {

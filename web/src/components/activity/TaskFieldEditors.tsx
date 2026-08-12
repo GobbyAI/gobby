@@ -80,17 +80,20 @@ export function TaskTextField({
     onCommit(next);
   }, [committed, draft, onCommit, value]);
 
-  const onKeyDown = useCallback((event: KeyboardEvent<HTMLInputElement>) => {
-    if (event.key === "Enter") {
-      event.preventDefault();
-      event.currentTarget.blur();
-    } else if (event.key === "Escape") {
-      event.preventDefault();
-      skipNextBlurCommit();
-      setEditorState({ sourceValue: value, committed, draft: committed });
-      event.currentTarget.blur();
-    }
-  }, [committed, skipNextBlurCommit, value]);
+  const onKeyDown = useCallback(
+    (event: KeyboardEvent<HTMLInputElement>) => {
+      if (event.key === "Enter") {
+        event.preventDefault();
+        event.currentTarget.blur();
+      } else if (event.key === "Escape") {
+        event.preventDefault();
+        skipNextBlurCommit();
+        setEditorState({ sourceValue: value, committed, draft: committed });
+        event.currentTarget.blur();
+      }
+    },
+    [committed, skipNextBlurCommit, value],
+  );
 
   return (
     <Input
@@ -104,7 +107,11 @@ export function TaskTextField({
       value={draft}
       disabled={disabled}
       onChange={(event) =>
-        setEditorState({ sourceValue: value, committed, draft: event.target.value })
+        setEditorState({
+          sourceValue: value,
+          committed,
+          draft: event.target.value,
+        })
       }
       onKeyDown={onKeyDown}
       onBlur={() => {
@@ -299,10 +306,13 @@ export function TaskTagsField({
     commit(next);
   }, [commit, entry, tags]);
 
-  const removeTag = useCallback((tag: string) => {
-    const next = tags.filter((existing) => existing !== tag);
-    commit(next);
-  }, [commit, tags]);
+  const removeTag = useCallback(
+    (tag: string) => {
+      const next = tags.filter((existing) => existing !== tag);
+      commit(next);
+    },
+    [commit, tags],
+  );
 
   const onKeyDown = useCallback(
     (event: KeyboardEvent<HTMLInputElement>) => {

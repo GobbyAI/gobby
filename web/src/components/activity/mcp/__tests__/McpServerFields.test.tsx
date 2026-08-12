@@ -2,7 +2,10 @@ import { render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
-import { useProjects, type ProjectWithStats } from "../../../../hooks/useProjects";
+import {
+  useProjects,
+  type ProjectWithStats,
+} from "../../../../hooks/useProjects";
 import { McpServerFields, type McpServerDraft } from "../McpServerFields";
 import { saveMcpServerDraft } from "../McpTabActions";
 
@@ -102,28 +105,42 @@ describe("McpServerFields", () => {
     vi.mocked(useProjects).mockReturnValue(makeProjectsState());
 
     render(
-      <McpServerFields
-        mode="create"
-        source={makeDraft()}
-        onSave={onSave}
-      />,
+      <McpServerFields mode="create" source={makeDraft()} onSave={onSave} />,
     );
 
-    await user.type(screen.getByRole("textbox", { name: "Server name" }), "linear");
-    await user.type(screen.getByRole("textbox", { name: "URL" }), "https://mcp.linear.app");
+    await user.type(
+      screen.getByRole("textbox", { name: "Server name" }),
+      "linear",
+    );
+    await user.type(
+      screen.getByRole("textbox", { name: "URL" }),
+      "https://mcp.linear.app",
+    );
     await user.selectOptions(screen.getByLabelText("Project"), [
       "22222222-2222-4222-8222-222222222222",
     ]);
 
     const headers = screen.getByRole("group", { name: "Headers" });
     await user.click(within(headers).getByRole("button", { name: "Add row" }));
-    await user.type(within(headers).getByRole("textbox", { name: "Key 1" }), "Authorization");
-    await user.type(within(headers).getByRole("textbox", { name: "Value 1" }), "Bearer token");
+    await user.type(
+      within(headers).getByRole("textbox", { name: "Key 1" }),
+      "Authorization",
+    );
+    await user.type(
+      within(headers).getByRole("textbox", { name: "Value 1" }),
+      "Bearer token",
+    );
 
     const env = screen.getByRole("group", { name: "Environment" });
     await user.click(within(env).getByRole("button", { name: "Add row" }));
-    await user.type(within(env).getByRole("textbox", { name: "Key 1" }), "API_TOKEN");
-    await user.type(within(env).getByRole("textbox", { name: "Value 1" }), "secret");
+    await user.type(
+      within(env).getByRole("textbox", { name: "Key 1" }),
+      "API_TOKEN",
+    );
+    await user.type(
+      within(env).getByRole("textbox", { name: "Value 1" }),
+      "secret",
+    );
 
     await user.click(screen.getByRole("button", { name: "Save" }));
 
@@ -146,7 +163,11 @@ describe("McpServerFields", () => {
     render(
       <McpServerFields
         mode="edit"
-        source={makeDraft({ name: "github", transport: "stdio", command: "npx" })}
+        source={makeDraft({
+          name: "github",
+          transport: "stdio",
+          command: "npx",
+        })}
         onSave={vi.fn(async () => true)}
       />,
     );
@@ -158,8 +179,9 @@ describe("McpServerFields", () => {
 
 describe("saveMcpServerDraft", () => {
   it("posts create requests with env and headers intact", async () => {
-    const fetchMock = vi.fn(async (_input: RequestInfo | URL, _init?: RequestInit) =>
-      new Response(JSON.stringify({ success: true })),
+    const fetchMock = vi.fn(
+      async (_input: RequestInfo | URL, _init?: RequestInit) =>
+        new Response(JSON.stringify({ success: true })),
     );
     vi.stubGlobal("fetch", fetchMock);
 
@@ -192,8 +214,9 @@ describe("saveMcpServerDraft", () => {
   });
 
   it("puts config updates before patching enabled state changes", async () => {
-    const fetchMock = vi.fn(async (_input: RequestInfo | URL, _init?: RequestInit) =>
-      new Response(JSON.stringify({ success: true })),
+    const fetchMock = vi.fn(
+      async (_input: RequestInfo | URL, _init?: RequestInit) =>
+        new Response(JSON.stringify({ success: true })),
     );
     vi.stubGlobal("fetch", fetchMock);
 

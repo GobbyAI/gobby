@@ -11,5 +11,5 @@ export function PlusIcon() {
     >
       <path d="M8 1a1 1 0 0 1 1 1v5h5a1 1 0 1 1 0 2H9v5a1 1 0 1 1-2 0V9H2a1 1 0 0 1 0-2h5V2a1 1 0 0 1 1-1Z" />
     </svg>
-  )
+  );
 }

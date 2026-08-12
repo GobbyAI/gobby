@@ -1,12 +1,12 @@
-import { useEffect, useRef, useState } from 'react'
-import { Card } from '../ui/Card'
-import { SegmentedControl } from '../ui/SegmentedControl'
-import { TIERS, type TierId } from './tierPreviewConfig'
+import { useEffect, useRef, useState } from "react";
+import { Card } from "../ui/Card";
+import { SegmentedControl } from "../ui/SegmentedControl";
+import { TIERS, type TierId } from "./tierPreviewConfig";
 
 const TIER_OPTIONS = (Object.keys(TIERS) as TierId[]).map((id) => ({
   value: id,
   label: TIERS[id].label,
-}))
+}));
 
 /**
  * Dev-only annotation surface: renders the app in a centered, tier-sized
@@ -20,31 +20,31 @@ const TIER_OPTIONS = (Object.keys(TIERS) as TierId[]).map((id) => ({
  * always visible without scrolling.
  */
 export function TierPreview() {
-  const [tier, setTier] = useState<TierId>('portrait')
-  const [scale, setScale] = useState(1)
-  const stageRef = useRef<HTMLDivElement>(null)
-  const { width, height } = TIERS[tier]
-  const fills = width === null || height === null
+  const [tier, setTier] = useState<TierId>("portrait");
+  const [scale, setScale] = useState(1);
+  const stageRef = useRef<HTMLDivElement>(null);
+  const { width, height } = TIERS[tier];
+  const fills = width === null || height === null;
 
   useEffect(() => {
-    const stage = stageRef.current
-    if (fills || !stage || typeof ResizeObserver === 'undefined') {
-      setScale(1)
-      return
+    const stage = stageRef.current;
+    if (fills || !stage || typeof ResizeObserver === "undefined") {
+      setScale(1);
+      return;
     }
     const fit = () => {
-      const availW = stage.clientWidth - 32
-      const availH = stage.clientHeight - 32
-      if (availW <= 0 || availH <= 0) return
-      setScale(Math.min(1, availW / width, availH / height))
-    }
-    fit()
-    const observer = new ResizeObserver(fit)
-    observer.observe(stage)
-    return () => observer.disconnect()
-  }, [fills, width, height])
+      const availW = stage.clientWidth - 32;
+      const availH = stage.clientHeight - 32;
+      if (availW <= 0 || availH <= 0) return;
+      setScale(Math.min(1, availW / width, availH / height));
+    };
+    fit();
+    const observer = new ResizeObserver(fit);
+    observer.observe(stage);
+    return () => observer.disconnect();
+  }, [fills, width, height]);
 
-  const shrunk = !fills && scale < 1
+  const shrunk = !fills && scale < 1;
 
   return (
     <div className="flex h-screen flex-col bg-[var(--bg-primary)] font-[var(--font-sans)]">
@@ -61,10 +61,10 @@ export function TierPreview() {
         />
         <span
           data-testid="tier-size"
-          className="font-[var(--font-mono)] text-[length:var(--text-sm)] text-[var(--text-secondary)]"
+          className="text-[length:var(--text-sm)] font-[var(--font-mono)] text-[var(--text-secondary)]"
         >
-          {fills ? 'fill' : `${width}×${height}`}
-          {shrunk ? ` @ ${Math.round(scale * 100)}%` : ''}
+          {fills ? "fill" : `${width}×${height}`}
+          {shrunk ? ` @ ${Math.round(scale * 100)}%` : ""}
         </span>
       </header>
       <div
@@ -72,8 +72,15 @@ export function TierPreview() {
         className="flex min-h-0 flex-1 items-center justify-center overflow-hidden p-4"
       >
         {fills ? (
-          <Card asChild className="h-full w-full bg-[color:var(--bg-secondary)]">
-            <iframe title="Gobby tier preview" src="/" data-testid="tier-frame" />
+          <Card
+            asChild
+            className="h-full w-full bg-[color:var(--bg-secondary)]"
+          >
+            <iframe
+              title="Gobby tier preview"
+              src="/"
+              data-testid="tier-frame"
+            />
           </Card>
         ) : (
           <div
@@ -90,7 +97,7 @@ export function TierPreview() {
                   width: `${width}px`,
                   height: `${height}px`,
                   transform: `scale(${scale})`,
-                  transformOrigin: 'top left',
+                  transformOrigin: "top left",
                 }}
               />
             </Card>
@@ -98,5 +105,5 @@ export function TierPreview() {
         )}
       </div>
     </div>
-  )
+  );
 }

@@ -88,7 +88,8 @@ function WikiForceGraphInner({
 
   const applyHover = useCallback(
     (node: GraphNode | null) => {
-      interactionRef.current.hoverId = node && typeof node.id === "string" ? node.id : null;
+      interactionRef.current.hoverId =
+        node && typeof node.id === "string" ? node.id : null;
     },
     [interactionRef],
   );
@@ -110,7 +111,11 @@ function WikiForceGraphInner({
         return SEARCH_DIM_ALPHA;
       }
       const hoverId = interaction.hoverId;
-      if (hoverId && hoverId !== node.id && !scene.adjacency.get(hoverId)?.has(node.id)) {
+      if (
+        hoverId &&
+        hoverId !== node.id &&
+        !scene.adjacency.get(hoverId)?.has(node.id)
+      ) {
         return HOVER_DIM_ALPHA;
       }
       return 1;
@@ -128,7 +133,9 @@ function WikiForceGraphInner({
       const neighbor =
         interaction.hoverId !== null &&
         (scene.adjacency.get(interaction.hoverId)?.has(node.id) ?? false);
-      const matched = interaction.search !== "" && nodeMatchesSearch(node, interaction.search);
+      const matched =
+        interaction.search !== "" &&
+        nodeMatchesSearch(node, interaction.search);
 
       ctx.save();
       ctx.globalAlpha = nodeAlpha(node);
@@ -159,7 +166,12 @@ function WikiForceGraphInner({
         }
       }
 
-      if (globalScale > LABEL_SCALE_THRESHOLD || hovered || neighbor || matched) {
+      if (
+        globalScale > LABEL_SCALE_THRESHOLD ||
+        hovered ||
+        neighbor ||
+        matched
+      ) {
         const fontSize = 12 / globalScale;
         ctx.font = `${fontSize}px sans-serif`;
         ctx.textAlign = "center";
@@ -176,7 +188,14 @@ function WikiForceGraphInner({
     (node: GraphNode, color: string, ctx: CanvasRenderingContext2D) => {
       ctx.fillStyle = color;
       ctx.beginPath();
-      ctx.arc(node.x ?? 0, node.y ?? 0, nodeRadius(node) + 4, 0, 2 * Math.PI, false);
+      ctx.arc(
+        node.x ?? 0,
+        node.y ?? 0,
+        nodeRadius(node) + 4,
+        0,
+        2 * Math.PI,
+        false,
+      );
       ctx.fill();
     },
     [],
@@ -197,8 +216,10 @@ function WikiForceGraphInner({
         const sourceNode = sourceId ? nodesById.get(sourceId) : undefined;
         const targetNode = targetId ? nodesById.get(targetId) : undefined;
         const anyMatch =
-          (sourceNode !== undefined && nodeMatchesSearch(sourceNode, interaction.search)) ||
-          (targetNode !== undefined && nodeMatchesSearch(targetNode, interaction.search));
+          (sourceNode !== undefined &&
+            nodeMatchesSearch(sourceNode, interaction.search)) ||
+          (targetNode !== undefined &&
+            nodeMatchesSearch(targetNode, interaction.search));
         if (!anyMatch) return scene.colors.linkDim;
       }
       return scene.colors.link;
@@ -235,10 +256,14 @@ function WikiForceGraphInner({
       event.preventDefault();
       const center = fg.centerAt() ?? { x: 0, y: 0 };
       const step = 60 / (fg.zoom() || 1);
-      if (event.key === "ArrowLeft") fg.centerAt(center.x - step, center.y, motionMs);
-      if (event.key === "ArrowRight") fg.centerAt(center.x + step, center.y, motionMs);
-      if (event.key === "ArrowUp") fg.centerAt(center.x, center.y - step, motionMs);
-      if (event.key === "ArrowDown") fg.centerAt(center.x, center.y + step, motionMs);
+      if (event.key === "ArrowLeft")
+        fg.centerAt(center.x - step, center.y, motionMs);
+      if (event.key === "ArrowRight")
+        fg.centerAt(center.x + step, center.y, motionMs);
+      if (event.key === "ArrowUp")
+        fg.centerAt(center.x, center.y - step, motionMs);
+      if (event.key === "ArrowDown")
+        fg.centerAt(center.x, center.y + step, motionMs);
     },
     [motionMs],
   );

@@ -75,7 +75,7 @@ export function SessionsTabDetailPane({
   transcriptEmptyStateMessage,
 }: SessionsTabDetailProps) {
   return (
-    <div className="flex-1 flex flex-col min-h-0">
+    <div className="flex min-h-0 flex-1 flex-col">
       <div className="activity-panel-status-bar activity-panel-status-bar--detail">
         <div className="min-w-0 flex-1">
           <span className="activity-panel-status-bar__title">
@@ -199,35 +199,35 @@ export function SessionsTabDetailPane({
       )}
 
       {contentMode === "summary" ? (
-          <div className="flex-1 overflow-y-auto p-4">
-            {summaryMarkdown ? (
-              <div className={cn("message-content", markdownBodyClassName)}>
-                <MemoizedMarkdown
-                  content={summaryMarkdown}
-                  id={`watch-summary-${selectedSessionId}`}
-                />
-              </div>
-            ) : (
-              <ActivityPanelEmpty body="No summary available" />
-            )}
-          </div>
-        ) : (
-          <WatchingTranscript
-            sessionId={selectedSessionId}
-            messages={messages}
-            isLoading={isLoadingDetail}
-            emptyStateMessage={transcriptEmptyStateMessage}
-            hasMore={hasMoreMessages}
-            loadMore={loadMoreMessages}
-            hasNewer={hasNewerMessages}
-            loadNewer={loadNewerMessages}
-            isLoadingOlder={isLoadingOlder}
-            isLoadingNewer={isLoadingNewer}
-            setTranscriptAtBottom={setTranscriptAtBottom}
-            firstItemIndex={firstItemIndex}
-            transcriptDegradedReason={transcriptDegradedReason}
-          />
-        )}
+        <div className="flex-1 overflow-y-auto p-4">
+          {summaryMarkdown ? (
+            <div className={cn("message-content", markdownBodyClassName)}>
+              <MemoizedMarkdown
+                content={summaryMarkdown}
+                id={`watch-summary-${selectedSessionId}`}
+              />
+            </div>
+          ) : (
+            <ActivityPanelEmpty body="No summary available" />
+          )}
+        </div>
+      ) : (
+        <WatchingTranscript
+          sessionId={selectedSessionId}
+          messages={messages}
+          isLoading={isLoadingDetail}
+          emptyStateMessage={transcriptEmptyStateMessage}
+          hasMore={hasMoreMessages}
+          loadMore={loadMoreMessages}
+          hasNewer={hasNewerMessages}
+          loadNewer={loadNewerMessages}
+          isLoadingOlder={isLoadingOlder}
+          isLoadingNewer={isLoadingNewer}
+          setTranscriptAtBottom={setTranscriptAtBottom}
+          firstItemIndex={firstItemIndex}
+          transcriptDegradedReason={transcriptDegradedReason}
+        />
+      )}
     </div>
   );
 }

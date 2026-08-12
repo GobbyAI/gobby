@@ -256,7 +256,9 @@ test("activity panel shows non-current web chats with a web badge", async ({
         status: 200,
         contentType: "application/json",
         body: JSON.stringify({
-          session: sessions.find((session) => session.id === CURRENT_DB_SESSION_ID),
+          session: sessions.find(
+            (session) => session.id === CURRENT_DB_SESSION_ID,
+          ),
         }),
       });
       return;
@@ -271,7 +273,9 @@ test("activity panel shows non-current web chats with a web badge", async ({
 
   await page.goto("/");
 
-  await expect(page.locator(".activity-panel-mobile-trigger")).toContainText("Sessions");
+  await expect(page.locator(".activity-panel-mobile-trigger")).toContainText(
+    "Sessions",
+  );
   await expect(page.locator(".session-entry")).toHaveCount(2);
   await expect(page.locator(".activity-panel-content")).toContainText(
     "#201: Terminal Session",
@@ -473,7 +477,9 @@ test("activity panel refreshes sessions after a session_event websocket message"
         status: 200,
         contentType: "application/json",
         body: JSON.stringify({
-          session: sessions.find((session) => session.id === CURRENT_DB_SESSION_ID),
+          session: sessions.find(
+            (session) => session.id === CURRENT_DB_SESSION_ID,
+          ),
         }),
       });
       return;
@@ -488,10 +494,16 @@ test("activity panel refreshes sessions after a session_event websocket message"
 
   await page.goto("/");
 
-  await expect(page.locator(".activity-panel-mobile-trigger")).toContainText("Sessions");
+  await expect(page.locator(".activity-panel-mobile-trigger")).toContainText(
+    "Sessions",
+  );
   await expect(page.locator(".session-entry")).toHaveCount(1);
-  await expect(page.locator(".session-entry")).toContainText(["#201: Terminal Session"]);
-  await expect(page.locator(".activity-panel-content")).not.toContainText("Other Web Chat");
+  await expect(page.locator(".session-entry")).toContainText([
+    "#201: Terminal Session",
+  ]);
+  await expect(page.locator(".activity-panel-content")).not.toContainText(
+    "Other Web Chat",
+  );
 
   catalogSessions = [sessions[1], sessions[0], sessions[2]];
   if (sessionEventSenders.length === 0) {

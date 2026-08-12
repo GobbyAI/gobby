@@ -45,10 +45,10 @@ describe("useChat plan actions", () => {
 
     act(() => {
       ws.simulateMessage({
-      type: "plan_pending_approval",
-      conversation_id: result.current.conversationId,
-      tool_call_id: "plan-tool",
-      plan_content: "# My Plan\n\nStep 1...",
+        type: "plan_pending_approval",
+        conversation_id: result.current.conversationId,
+        tool_call_id: "plan-tool",
+        plan_content: "# My Plan\n\nStep 1...",
       });
     });
     expect(result.current.planPendingApproval).toBe(true);
@@ -161,8 +161,18 @@ describe("useChat plan actions", () => {
     act(() => ws.simulateOpen());
 
     const options: ApprovalOption[] = [
-      { id: "approve_yolo", label: "Approve (YOLO)", decision: "approve", emphasis: "primary" },
-      { id: "approve_act", label: "Approve (Act)", decision: "approve", emphasis: "accent" },
+      {
+        id: "approve_yolo",
+        label: "Approve (YOLO)",
+        decision: "approve",
+        emphasis: "primary",
+      },
+      {
+        id: "approve_act",
+        label: "Approve (Act)",
+        decision: "approve",
+        emphasis: "accent",
+      },
     ];
     act(() => {
       ws.simulateMessage({

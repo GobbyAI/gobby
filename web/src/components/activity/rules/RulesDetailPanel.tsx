@@ -38,15 +38,20 @@ function optionsWithCurrent(
   options: Array<{ value: string; label: string }>,
   value: string,
 ) {
-  if (!value || options.some((option) => option.value === value)) return options;
+  if (!value || options.some((option) => option.value === value))
+    return options;
   return [...options, { value, label: value }];
 }
 
 function ReadOnlySummary({ label, value }: { label: string; value: unknown }) {
   return (
     <div className="grid min-w-0 gap-[0.3rem]">
-      <span className="text-[length:var(--text-xs)] font-[var(--font-weight-medium)] text-[var(--text-muted)]">{label}</span>
-      <pre className="max-h-48 min-h-16 overflow-auto whitespace-pre-wrap rounded-md border border-[var(--border)] bg-[var(--bg-deep)] p-[0.6rem] text-[length:var(--text-xs)] leading-[1.45] text-[var(--text-secondary)] [overflow-wrap:anywhere]">{formatRuleSummaryValue(value)}</pre>
+      <span className="text-[length:var(--text-xs)] font-[var(--font-weight-medium)] text-[var(--text-muted)]">
+        {label}
+      </span>
+      <pre className="max-h-48 min-h-16 overflow-auto rounded-md border border-[var(--border)] bg-[var(--bg-deep)] p-[0.6rem] text-[length:var(--text-xs)] leading-[1.45] [overflow-wrap:anywhere] whitespace-pre-wrap text-[var(--text-secondary)]">
+        {formatRuleSummaryValue(value)}
+      </pre>
     </div>
   );
 }
@@ -61,7 +66,10 @@ export function RulesDetailPanel({
   onError,
   onConfirmLeaveChange,
 }: RulesDetailPanelProps) {
-  const sourceDraft = useMemo(() => (detail ? detailToDraft(detail) : null), [detail]);
+  const sourceDraft = useMemo(
+    () => (detail ? detailToDraft(detail) : null),
+    [detail],
+  );
   const sourceKey = sourceDraft?.name ?? "";
   const sourceYamlText = sourceDraft ? draftToYaml(sourceDraft) : "";
   const [detailViewState, setDetailViewState] = useState<{
@@ -81,7 +89,9 @@ export function RulesDetailPanel({
         await onSave(detail.name, draft);
         return true;
       } catch (saveError) {
-        onError(saveError instanceof Error ? saveError.message : String(saveError));
+        onError(
+          saveError instanceof Error ? saveError.message : String(saveError),
+        );
         return false;
       }
     },
@@ -114,7 +124,12 @@ export function RulesDetailPanel({
   }
 
   if (!detail || !draftState.draft) {
-    return <ActivityPanelEmpty heading="Rules" body="Select a rule to inspect and edit it." />;
+    return (
+      <ActivityPanelEmpty
+        heading="Rules"
+        body="Select a rule to inspect and edit it."
+      />
+    );
   }
 
   const draft = draftState.draft;
@@ -126,7 +141,10 @@ export function RulesDetailPanel({
     [{ value: "", label: "Select event" }, ...RULE_EVENT_OPTIONS],
     draft.event,
   );
-  const audienceOptions = optionsWithCurrent([...RULE_AUDIENCE_OPTIONS], draft.audience);
+  const audienceOptions = optionsWithCurrent(
+    [...RULE_AUDIENCE_OPTIONS],
+    draft.audience,
+  );
   const parseYamlDraft = () => {
     const nextDraft = yamlToDraft(yamlText, draft);
     if (bundled) nextDraft.name = detail.name;
@@ -145,7 +163,10 @@ export function RulesDetailPanel({
       setYamlState({
         sourceKey,
         text: yamlText,
-        error: yamlParseError instanceof Error ? yamlParseError.message : "Invalid YAML",
+        error:
+          yamlParseError instanceof Error
+            ? yamlParseError.message
+            : "Invalid YAML",
       });
       return false;
     }
@@ -171,7 +192,10 @@ export function RulesDetailPanel({
       setYamlState({
         sourceKey,
         text: yamlText,
-        error: yamlParseError instanceof Error ? yamlParseError.message : "Invalid YAML",
+        error:
+          yamlParseError instanceof Error
+            ? yamlParseError.message
+            : "Invalid YAML",
       });
     }
   };
@@ -215,8 +239,12 @@ export function RulesDetailPanel({
           <>
             {bundled ? (
               <div className="grid min-w-0 gap-1">
-                <span className="text-[length:var(--text-xs)] font-[var(--font-weight-medium)] text-[var(--text-muted)]">Name</span>
-                <span className="min-h-11 rounded-md border border-[var(--border)] bg-[var(--bg-secondary)] px-3 py-[0.65rem] text-[length:var(--text-sm)] text-[var(--text-primary)] [overflow-wrap:anywhere]">{detail.name}</span>
+                <span className="text-[length:var(--text-xs)] font-[var(--font-weight-medium)] text-[var(--text-muted)]">
+                  Name
+                </span>
+                <span className="min-h-11 rounded-md border border-[var(--border)] bg-[var(--bg-secondary)] px-3 py-[0.65rem] text-[length:var(--text-sm)] [overflow-wrap:anywhere] text-[var(--text-primary)]">
+                  {detail.name}
+                </span>
                 <span className="text-[length:var(--text-xs)] text-[var(--text-muted)]">
                   Bundled template rule names are read-only
                 </span>
@@ -255,7 +283,10 @@ export function RulesDetailPanel({
                 value={String(draft.priority)}
                 onChange={(value) => {
                   const next = Number.parseInt(value, 10);
-                  draftState.setField("priority", Number.isFinite(next) ? next : 0);
+                  draftState.setField(
+                    "priority",
+                    Number.isFinite(next) ? next : 0,
+                  );
                 }}
               />
               <SelectField
@@ -287,8 +318,12 @@ export function RulesDetailPanel({
               onChange={(value) => draftState.setField("enabled", value)}
             />
             <div className="flex min-h-8 items-center gap-2">
-              <span className="text-sm font-medium text-muted-foreground">Source</span>
-              <Chip className="inline-block min-w-0 max-w-40 overflow-hidden text-ellipsis leading-5">{detail.source}</Chip>
+              <span className="text-sm font-medium text-muted-foreground">
+                Source
+              </span>
+              <Chip className="inline-block max-w-40 min-w-0 overflow-hidden leading-5 text-ellipsis">
+                {detail.source}
+              </Chip>
             </div>
             <div className="grid grid-cols-[repeat(auto-fit,minmax(12rem,1fr))] gap-3">
               <ReadOnlySummary label="When" value={draft.when} />

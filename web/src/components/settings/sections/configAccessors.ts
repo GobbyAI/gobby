@@ -9,30 +9,30 @@
 import {
   decodeDynamicSegmentLenient,
   encodeDynamicSegment,
-} from '../../../api/runtimeConfigSegments'
+} from "../../../api/runtimeConfigSegments";
 
 export function asString(value: unknown): string {
-  return typeof value === 'string' ? value : ''
+  return typeof value === "string" ? value : "";
 }
 
 export function asNumber(value: unknown): number | null {
-  return typeof value === 'number' ? value : null
+  return typeof value === "number" ? value : null;
 }
 
 export function asStringList(value: unknown): string[] {
   return Array.isArray(value)
-    ? value.filter((item): item is string => typeof item === 'string')
-    : []
+    ? value.filter((item): item is string => typeof item === "string")
+    : [];
 }
 
 export function asTypedList<T>(value: unknown): T[] {
-  return Array.isArray(value) ? (value as T[]) : []
+  return Array.isArray(value) ? (value as T[]) : [];
 }
 
 export function asMap<V>(value: unknown): Record<string, V> {
-  return value && typeof value === 'object' && !Array.isArray(value)
+  return value && typeof value === "object" && !Array.isArray(value)
     ? (value as Record<string, V>)
-    : {}
+    : {};
 }
 
 /**
@@ -45,35 +45,42 @@ export function asMap<V>(value: unknown): Record<string, V> {
  * the codec rejects empty segments by contract.
  */
 export interface DynamicMapRow<V> {
-  storedKey: string
-  displayKey: string
-  value: V
+  storedKey: string;
+  displayKey: string;
+  value: V;
 }
 
-export function hasBlankDynamicMapKey<V>(rows: readonly DynamicMapRow<V>[]): boolean {
-  return rows.some(({ displayKey }) => displayKey.trim() === '')
+export function hasBlankDynamicMapKey<V>(
+  rows: readonly DynamicMapRow<V>[],
+): boolean {
+  return rows.some(({ displayKey }) => displayKey.trim() === "");
 }
 
-export function decodeDynamicMapRows<V>(map: Record<string, V>): DynamicMapRow<V>[] {
+export function decodeDynamicMapRows<V>(
+  map: Record<string, V>,
+): DynamicMapRow<V>[] {
   return Object.entries(map).map(([storedKey, value]) => ({
     storedKey,
-    displayKey: storedKey === '' ? storedKey : decodeDynamicSegmentLenient(storedKey),
+    displayKey:
+      storedKey === "" ? storedKey : decodeDynamicSegmentLenient(storedKey),
     value,
-  }))
+  }));
 }
 
-export function encodeDynamicMapRows<V>(rows: DynamicMapRow<V>[]): Record<string, V> {
+export function encodeDynamicMapRows<V>(
+  rows: DynamicMapRow<V>[],
+): Record<string, V> {
   return Object.fromEntries(
     rows.map(({ storedKey, displayKey, value }) => {
       const originalDisplayKey =
-        storedKey === '' ? storedKey : decodeDynamicSegmentLenient(storedKey)
+        storedKey === "" ? storedKey : decodeDynamicSegmentLenient(storedKey);
       const nextStoredKey =
         displayKey === originalDisplayKey
           ? storedKey
-          : displayKey === ''
+          : displayKey === ""
             ? displayKey
-            : encodeDynamicSegment(displayKey)
-      return [nextStoredKey, value]
+            : encodeDynamicSegment(displayKey);
+      return [nextStoredKey, value];
     }),
-  )
+  );
 }

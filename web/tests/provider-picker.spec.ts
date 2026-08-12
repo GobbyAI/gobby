@@ -203,7 +203,11 @@ function mockApiRoutes(
       await route.fulfill({
         status: 200,
         contentType: "application/json",
-        body: JSON.stringify({ definitions: [], global_defs: [], project_defs: [] }),
+        body: JSON.stringify({
+          definitions: [],
+          global_defs: [],
+          project_defs: [],
+        }),
       });
       return;
     }
@@ -225,21 +229,26 @@ function mockApiRoutes(
   });
 }
 
-async function prepareProviderPickerPage(page: Parameters<typeof test>[0]["page"]) {
-  await page.addInitScript(({ conversationId }: { conversationId: string }) => {
-    localStorage.setItem("gobby-conversation-id", conversationId);
-    localStorage.removeItem("gobby-db-session-id");
-    localStorage.removeItem("gobby-selected-provider");
-    localStorage.setItem(
-      "gobby-settings",
-      JSON.stringify({
-        model: "opus",
-        fontSize: 16,
-        theme: "dark",
-        defaultChatMode: "plan",
-      }),
-    );
-  }, { conversationId: CURRENT_CONVERSATION_ID });
+async function prepareProviderPickerPage(
+  page: Parameters<typeof test>[0]["page"],
+) {
+  await page.addInitScript(
+    ({ conversationId }: { conversationId: string }) => {
+      localStorage.setItem("gobby-conversation-id", conversationId);
+      localStorage.removeItem("gobby-db-session-id");
+      localStorage.removeItem("gobby-selected-provider");
+      localStorage.setItem(
+        "gobby-settings",
+        JSON.stringify({
+          model: "opus",
+          fontSize: 16,
+          theme: "dark",
+          defaultChatMode: "plan",
+        }),
+      );
+    },
+    { conversationId: CURRENT_CONVERSATION_ID },
+  );
 
   await mockApiRoutes(page);
 }
@@ -379,21 +388,34 @@ test("Codex picker shows friendly labels and no Default placeholder", async ({
   });
 
   await page.goto("/#chat");
-  await expect(page.getByRole("textbox", { name: /message input/i })).toBeVisible();
+  await expect(
+    page.getByRole("textbox", { name: /message input/i }),
+  ).toBeVisible();
 
   await page.getByLabel("Select provider").click();
   await expect(page.getByText("Codex", { exact: true })).toBeVisible();
-  await expect(page.getByRole("button", { name: "GPT 5.4", exact: true })).toBeVisible();
-  await expect(page.getByRole("button", { name: "GPT 5.4 Mini", exact: true })).toBeVisible();
-  await expect(page.getByRole("button", { name: "GPT 5.3 Codex", exact: true })).toBeVisible();
+  await expect(
+    page.getByRole("button", { name: "GPT 5.4", exact: true }),
+  ).toBeVisible();
+  await expect(
+    page.getByRole("button", { name: "GPT 5.4 Mini", exact: true }),
+  ).toBeVisible();
+  await expect(
+    page.getByRole("button", { name: "GPT 5.3 Codex", exact: true }),
+  ).toBeVisible();
   await expect(
     page.getByRole("button", { name: "GPT 5.3 Codex Spark", exact: true }),
   ).toBeVisible();
-  await expect(page.getByRole("button", { name: "Default", exact: true })).toHaveCount(0);
+  await expect(
+    page.getByRole("button", { name: "Default", exact: true }),
+  ).toHaveCount(0);
 
   await page.getByRole("button", { name: "GPT 5.4", exact: true }).click();
 
-  await expect(page.getByLabel("Select provider")).toHaveAttribute("title", "Codex");
+  await expect(page.getByLabel("Select provider")).toHaveAttribute(
+    "title",
+    "Codex",
+  );
   await expect(page.getByLabel("Select model")).toContainText("GPT 5.4");
 
   await page.screenshot({
@@ -406,20 +428,23 @@ test("local catalog selection routes through Codex and restores its catalog owne
   page,
 }) => {
   const createdSessions: Array<Record<string, unknown>> = [];
-  await page.addInitScript(({ conversationId }: { conversationId: string }) => {
-    localStorage.setItem("gobby-conversation-id", conversationId);
-    localStorage.removeItem("gobby-db-session-id");
-    localStorage.removeItem("gobby-selected-provider");
-    localStorage.setItem(
-      "gobby-settings",
-      JSON.stringify({
-        model: "opus",
-        fontSize: 16,
-        theme: "dark",
-        defaultChatMode: "plan",
-      }),
-    );
-  }, { conversationId: CURRENT_CONVERSATION_ID });
+  await page.addInitScript(
+    ({ conversationId }: { conversationId: string }) => {
+      localStorage.setItem("gobby-conversation-id", conversationId);
+      localStorage.removeItem("gobby-db-session-id");
+      localStorage.removeItem("gobby-selected-provider");
+      localStorage.setItem(
+        "gobby-settings",
+        JSON.stringify({
+          model: "opus",
+          fontSize: 16,
+          theme: "dark",
+          defaultChatMode: "plan",
+        }),
+      );
+    },
+    { conversationId: CURRENT_CONVERSATION_ID },
+  );
   await mockApiRoutes(page, {
     onWebChatSessionCreate: (body) => createdSessions.push(body),
   });
@@ -449,7 +474,9 @@ test("local catalog selection routes through Codex and restores its catalog owne
 
   await page.getByLabel("Select provider").click();
   await expect(page.getByText("LM Studio", { exact: true })).toBeVisible();
-  await expect(page.getByText("OpenAI Compatible", { exact: true })).toBeVisible();
+  await expect(
+    page.getByText("OpenAI Compatible", { exact: true }),
+  ).toBeVisible();
   await expect(
     page.getByText(
       "Generic OpenAI-compatible endpoints are unavailable for web chat",
@@ -461,7 +488,10 @@ test("local catalog selection routes through Codex and restores its catalog owne
   ).toBeDisabled();
 
   await page.getByRole("button", { name: "Qwen3 Coder", exact: true }).click();
-  await expect(page.getByLabel("Select provider")).toHaveAttribute("title", "Codex");
+  await expect(page.getByLabel("Select provider")).toHaveAttribute(
+    "title",
+    "Codex",
+  );
   await expect(page.getByLabel("Select model")).toContainText("Qwen3 Coder");
 
   await messageInput.fill("Exercise the local provider contract");
@@ -473,9 +503,15 @@ test("local catalog selection routes through Codex and restores its catalog owne
   });
 
   await page.getByLabel("Select provider").click();
-  const lmStudioHeader = page.getByText("LM Studio", { exact: true }).locator("..");
-  await expect(lmStudioHeader.getByText("active", { exact: true })).toBeVisible();
-  await expect(page.getByText("Codex", { exact: true }).locator("..").getByText("active", {
-    exact: true,
-  })).toHaveCount(0);
+  const lmStudioHeader = page
+    .getByText("LM Studio", { exact: true })
+    .locator("..");
+  await expect(
+    lmStudioHeader.getByText("active", { exact: true }),
+  ).toBeVisible();
+  await expect(
+    page.getByText("Codex", { exact: true }).locator("..").getByText("active", {
+      exact: true,
+    }),
+  ).toHaveCount(0);
 });

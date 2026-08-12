@@ -12,10 +12,7 @@ import {
 } from "./contextUsage";
 import { saveConversationId, uuid } from "./conversationPersistence";
 import { chatLogger } from "./logger";
-import {
-  isChatProvider,
-  normalizeReasoningEffort,
-} from "./sessionRecords";
+import { isChatProvider, normalizeReasoningEffort } from "./sessionRecords";
 import type {
   ContinueSessionInChatAction,
   ConversationActions,
@@ -132,7 +129,10 @@ export function useConversationActions(
               sessionId: id,
             });
           } finally {
-            if (!viewingSessionIdRef.current && conversationIdRef.current === id) {
+            if (
+              !viewingSessionIdRef.current &&
+              conversationIdRef.current === id
+            ) {
               setIsLoadingMessages(false);
             }
           }

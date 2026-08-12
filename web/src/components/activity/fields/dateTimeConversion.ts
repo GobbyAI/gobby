@@ -13,7 +13,9 @@ function normalizeUtcIso(value: string | null | undefined): string {
   return Number.isNaN(date.getTime()) ? "" : date.toISOString();
 }
 
-export function utcIsoToLocalInputValue(value: string | null | undefined): string {
+export function utcIsoToLocalInputValue(
+  value: string | null | undefined,
+): string {
   const normalizedValue = normalizeUtcIso(value);
   if (!normalizedValue) {
     return "";
@@ -25,7 +27,8 @@ export function utcIsoToLocalInputValue(value: string | null | undefined): strin
       date.getFullYear(),
       padDatePart(date.getMonth() + 1),
       padDatePart(date.getDate()),
-    ].join("-") + `T${padDatePart(date.getHours())}:${padDatePart(date.getMinutes())}`
+    ].join("-") +
+    `T${padDatePart(date.getHours())}:${padDatePart(date.getMinutes())}`
   );
 }
 
@@ -50,7 +53,14 @@ export function localInputValueToUtcIso(
   const hour = Number(hourValue);
   const minute = Number(minuteValue);
 
-  if (month < 1 || month > 12 || day < 1 || day > 31 || hour > 23 || minute > 59) {
+  if (
+    month < 1 ||
+    month > 12 ||
+    day < 1 ||
+    day > 31 ||
+    hour > 23 ||
+    minute > 59
+  ) {
     return "";
   }
 

@@ -47,5 +47,7 @@ export const ISOLATION_COLORS: Record<string, IsolationColorPair> = {
  * `var(--text-muted)`.
  */
 export function getIsolationColorVar(mode: string): string {
-  return ISOLATION_COLORS[mode] ? `var(--isolation-${mode})` : "var(--text-muted)";
+  return ISOLATION_COLORS[mode]
+    ? `var(--isolation-${mode})`
+    : "var(--text-muted)";
 }

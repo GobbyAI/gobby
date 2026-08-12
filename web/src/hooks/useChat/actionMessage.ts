@@ -97,11 +97,14 @@ export function useMessageAction(
       }
 
       if (!wsRef.current || wsRef.current.readyState !== WebSocket.OPEN) {
-        chatLogger.warn("WebSocket disconnected; queuing message for reconnect", {
-          hasFiles: Boolean(files?.length),
-          projectId: projectId ?? projectIdRef.current,
-          provider: selectedProviderRef.current,
-        });
+        chatLogger.warn(
+          "WebSocket disconnected; queuing message for reconnect",
+          {
+            hasFiles: Boolean(files?.length),
+            projectId: projectId ?? projectIdRef.current,
+            provider: selectedProviderRef.current,
+          },
+        );
         const queuedId = optimisticMessageId ?? `user-${uuid()}`;
         pendingMessagesRef.current.push({
           messageId: queuedId,

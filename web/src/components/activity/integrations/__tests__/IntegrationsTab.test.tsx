@@ -14,7 +14,10 @@ import {
 } from "../../ActivityActionsContext";
 import { ACTIVITY_PANEL_TABS } from "../../ActivityPanelTabs";
 import { IntegrationsTab } from "../../IntegrationsTab";
-import { createMockFetch, type MockFetchInstance } from "../../../../test/mocks/fetch";
+import {
+  createMockFetch,
+  type MockFetchInstance,
+} from "../../../../test/mocks/fetch";
 import {
   integrationPayloadFromDraft,
   validateIntegrationDraft,
@@ -40,8 +43,7 @@ function HeaderHarness({ children }: { children: ReactNode }) {
   );
 }
 
-const render = (ui: ReactElement) =>
-  baseRender(ui, { wrapper: HeaderHarness });
+const render = (ui: ReactElement) => baseRender(ui, { wrapper: HeaderHarness });
 
 // The search bar is hidden until the header Search toggle opens it.
 async function openSearch(user: ReturnType<typeof userEvent.setup>) {
@@ -50,7 +52,8 @@ async function openSearch(user: ReturnType<typeof userEvent.setup>) {
 
 type ChannelRecord = {
   id: string;
-  channel_type: "slack" | "telegram" | "discord" | "teams" | "email" | "sms" | "gobby_chat";
+  channel_type:
+    "slack" | "telegram" | "discord" | "teams" | "email" | "sms" | "gobby_chat";
   name: string;
   enabled: boolean;
   config_json: Record<string, unknown>;
@@ -112,73 +115,87 @@ function makeMessage(overrides: Partial<MessageRecord>): MessageRecord {
 
 function setupFetch(channels: ChannelRecord[], messages: MessageRecord[] = []) {
   mockFetch = createMockFetch();
-  mockFetch.fn.mockImplementation(async (input: RequestInfo | URL, init?: RequestInit) => {
-    const url = typeof input === "string" ? input : input instanceof URL ? input.toString() : input.url;
-    const method = init?.method ?? "GET";
+  mockFetch.fn.mockImplementation(
+    async (input: RequestInfo | URL, init?: RequestInit) => {
+      const url =
+        typeof input === "string"
+          ? input
+          : input instanceof URL
+            ? input.toString()
+            : input.url;
+      const method = init?.method ?? "GET";
 
-    if (url.endsWith("/api/comms/channels") && method === "GET") {
-      return jsonResponse(channels);
-    }
-    if (url.endsWith("/api/comms/channels") && method === "POST") {
-      return jsonResponse(
-        makeChannel({
-          id: "ch-new",
+      if (url.endsWith("/api/comms/channels") && method === "GET") {
+        return jsonResponse(channels);
+      }
+      if (url.endsWith("/api/comms/channels") && method === "POST") {
+        return jsonResponse(
+          makeChannel({
+            id: "ch-new",
+            channel_type: "telegram",
+            name: "Ops pager",
+            config_json: { chat_id: "-100123" },
+          }),
+        );
+      }
+      if (url.includes("/api/comms/messages")) {
+        return jsonResponse(messages);
+      }
+      if (url.endsWith("/api/comms/channels/ch-slack/status")) {
+        return jsonResponse({
+          name: "release-alerts",
+          channel_type: "slack",
+          status: "active",
+          active: true,
+          enabled: true,
+          supports_webhooks: true,
+          supports_polling: false,
+        });
+      }
+      if (url.endsWith("/api/comms/channels/ch-telegram/status")) {
+        return jsonResponse({
+          name: "incident-bridge",
           channel_type: "telegram",
-          name: "Ops pager",
-          config_json: { chat_id: "-100123" },
-        }),
-      );
-    }
-    if (url.includes("/api/comms/messages")) {
-      return jsonResponse(messages);
-    }
-    if (url.endsWith("/api/comms/channels/ch-slack/status")) {
-      return jsonResponse({
-        name: "release-alerts",
-        channel_type: "slack",
-        status: "active",
-        active: true,
-        enabled: true,
-        supports_webhooks: true,
-        supports_polling: false,
-      });
-    }
-    if (url.endsWith("/api/comms/channels/ch-telegram/status")) {
-      return jsonResponse({
-        name: "incident-bridge",
-        channel_type: "telegram",
-        status: "inactive",
-        active: false,
-        enabled: false,
-        supports_webhooks: true,
-        supports_polling: true,
-        is_polling: false,
-      });
-    }
-    if (url.endsWith("/api/comms/channels/ch-slack") && method === "PUT") {
-      return jsonResponse({
-        ...channels[0],
-        enabled: false,
-        config_json: { channel_id: "C999" },
-      });
-    }
-    if (url.endsWith("/api/comms/channels/ch-slack") && method === "DELETE") {
-      return jsonResponse({ status: "ok" });
-    }
-    return jsonResponse({ error: "no mock route matched" }, 404);
-  });
+          status: "inactive",
+          active: false,
+          enabled: false,
+          supports_webhooks: true,
+          supports_polling: true,
+          is_polling: false,
+        });
+      }
+      if (url.endsWith("/api/comms/channels/ch-slack") && method === "PUT") {
+        return jsonResponse({
+          ...channels[0],
+          enabled: false,
+          config_json: { channel_id: "C999" },
+        });
+      }
+      if (url.endsWith("/api/comms/channels/ch-slack") && method === "DELETE") {
+        return jsonResponse({ status: "ok" });
+      }
+      return jsonResponse({ error: "no mock route matched" }, 404);
+    },
+  );
 }
 
 function setupFetchFailure(status: number) {
   mockFetch = createMockFetch();
-  mockFetch.fn.mockImplementation(async (input: RequestInfo | URL, init?: RequestInit) => {
-    const url = typeof input === "string" ? input : input instanceof URL ? input.toString() : input.url;
-    const method = init?.method ?? "GET";
-    if (url.endsWith("/api/comms/channels") && method === "GET") {
-      return jsonResponse({ error: "communications unavailable" }, status);
-    }
-    return jsonResponse({ error: "no mock route matched" }, 404);
-  });
+  mockFetch.fn.mockImplementation(
+    async (input: RequestInfo | URL, init?: RequestInit) => {
+      const url =
+        typeof input === "string"
+          ? input
+          : input instanceof URL
+            ? input.toString()
+            : input.url;
+      const method = init?.method ?? "GET";
+      if (url.endsWith("/api/comms/channels") && method === "GET") {
+        return jsonResponse({ error: "communications unavailable" }, status);
+      }
+      return jsonResponse({ error: "no mock route matched" }, 404);
+    },
+  );
 }
 
 function jsonResponse(data: unknown, status = 200) {
@@ -225,38 +242,45 @@ describe("Integrations activity tab", () => {
 
     const user = userEvent.setup();
 
-    expect(ACTIVITY_PANEL_TABS.some((tab) => tab.id === "integrations")).toBe(true);
+    expect(ACTIVITY_PANEL_TABS.some((tab) => tab.id === "integrations")).toBe(
+      true,
+    );
     render(<IntegrationsTab />);
 
     expect(
       await screen.findByRole("button", { name: "Select Release alerts" }),
     ).toBeInTheDocument();
-    expect(screen.getByRole("button", { name: "Select Incident bridge" })).toBeInTheDocument();
+    expect(
+      screen.getByRole("button", { name: "Select Incident bridge" }),
+    ).toBeInTheDocument();
     await openSearch(user);
-    expect(screen.getByRole("searchbox", { name: "Search integrations" })).toHaveAttribute(
-      "name",
-      "search-integrations",
-    );
+    expect(
+      screen.getByRole("searchbox", { name: "Search integrations" }),
+    ).toHaveAttribute("name", "search-integrations");
     await user.type(
       screen.getByRole("searchbox", { name: "Search integrations" }),
       "incident",
     );
     expect(screen.queryByText("Release alerts")).not.toBeInTheDocument();
-    await user.click(screen.getByRole("button", { name: "Filter integrations" }));
-    expect(screen.getByRole("combobox", { name: "Platform filter" })).toHaveAttribute(
-      "name",
-      "integration-platform-filter",
+    await user.click(
+      screen.getByRole("button", { name: "Filter integrations" }),
     );
-    expect(screen.getByRole("combobox", { name: "Integration status" })).toHaveAttribute(
-      "name",
-      "integration-status-filter",
-    );
+    expect(
+      screen.getByRole("combobox", { name: "Platform filter" }),
+    ).toHaveAttribute("name", "integration-platform-filter");
+    expect(
+      screen.getByRole("combobox", { name: "Integration status" }),
+    ).toHaveAttribute("name", "integration-status-filter");
     expect(
       screen.queryByRole("searchbox", { name: "Search integrations" }),
     ).not.toBeInTheDocument();
-    expect(screen.getByRole("button", { name: "Select Release alerts" })).toBeInTheDocument();
+    expect(
+      screen.getByRole("button", { name: "Select Release alerts" }),
+    ).toBeInTheDocument();
 
-    const incident = screen.getByRole("button", { name: "Select Incident bridge" });
+    const incident = screen.getByRole("button", {
+      name: "Select Incident bridge",
+    });
     incident.focus();
     await user.keyboard("{Enter}");
     expect(incident.parentElement).toHaveClass("activity-list-row--selected");
@@ -266,15 +290,24 @@ describe("Integrations activity tab", () => {
       "telegram",
     );
     expect(screen.queryByText("Release alerts")).not.toBeInTheDocument();
-    expect(screen.getByRole("button", { name: "Select Incident bridge" })).toBeInTheDocument();
+    expect(
+      screen.getByRole("button", { name: "Select Incident bridge" }),
+    ).toBeInTheDocument();
 
     await openSearch(user);
     expect(
       screen.queryByRole("combobox", { name: "Platform filter" }),
     ).not.toBeInTheDocument();
-    await user.clear(screen.getByRole("searchbox", { name: "Search integrations" }));
-    await user.type(screen.getByRole("searchbox", { name: "Search integrations" }), "incident");
-    expect(screen.getByRole("button", { name: "Select Incident bridge" })).toBeInTheDocument();
+    await user.clear(
+      screen.getByRole("searchbox", { name: "Search integrations" }),
+    );
+    await user.type(
+      screen.getByRole("searchbox", { name: "Search integrations" }),
+      "incident",
+    );
+    expect(
+      screen.getByRole("button", { name: "Select Incident bridge" }),
+    ).toBeInTheDocument();
   });
 
   it("exposes row actions through the shared kebab menu", async () => {
@@ -293,15 +326,25 @@ describe("Integrations activity tab", () => {
     expect(
       await screen.findByRole("button", { name: "Select Release alerts" }),
     ).toBeInTheDocument();
-    await user.click(screen.getByRole("button", { name: "Open actions for Release alerts" }));
+    await user.click(
+      screen.getByRole("button", { name: "Open actions for Release alerts" }),
+    );
 
-    const menu = screen.getByRole("menu", { name: "Actions for Release alerts" });
-    expect(within(menu).getByRole("menuitem", { name: "Disable" })).toBeInTheDocument();
-    expect(within(menu).getByRole("menuitem", { name: "Delete" })).toBeInTheDocument();
+    const menu = screen.getByRole("menu", {
+      name: "Actions for Release alerts",
+    });
+    expect(
+      within(menu).getByRole("menuitem", { name: "Disable" }),
+    ).toBeInTheDocument();
+    expect(
+      within(menu).getByRole("menuitem", { name: "Delete" }),
+    ).toBeInTheDocument();
 
     await user.click(within(menu).getByRole("menuitem", { name: "Disable" }));
     await waitFor(() =>
-      expect(lastJsonBodyFor("/api/comms/channels/ch-slack")).toEqual({ enabled: false }),
+      expect(lastJsonBodyFor("/api/comms/channels/ch-slack")).toEqual({
+        enabled: false,
+      }),
     );
   });
 
@@ -318,8 +361,12 @@ describe("Integrations activity tab", () => {
     const user = userEvent.setup();
     render(<IntegrationsTab />);
 
-    await user.click(await screen.findByRole("button", { name: "Select Release alerts" }));
-    expect(await screen.findByRole("heading", { name: "Release alerts" })).toBeInTheDocument();
+    await user.click(
+      await screen.findByRole("button", { name: "Select Release alerts" }),
+    );
+    expect(
+      await screen.findByRole("heading", { name: "Release alerts" }),
+    ).toBeInTheDocument();
 
     await user.clear(screen.getByLabelText("Channel ID"));
     await user.type(screen.getByLabelText("Channel ID"), "C999");
@@ -351,7 +398,9 @@ describe("Integrations activity tab", () => {
     const user = userEvent.setup();
     render(<IntegrationsTab />);
 
-    await user.click(await screen.findByRole("button", { name: "Select Release alerts" }));
+    await user.click(
+      await screen.findByRole("button", { name: "Select Release alerts" }),
+    );
     await user.type(screen.getByLabelText("Bot Token"), "new-token");
     await user.click(screen.getByRole("button", { name: "Save" }));
 
@@ -377,7 +426,9 @@ describe("Integrations activity tab", () => {
     const user = userEvent.setup();
     render(<IntegrationsTab />);
     await user.click(
-      await screen.findByRole("button", { name: "Select Release alerts/primary" }),
+      await screen.findByRole("button", {
+        name: "Select Release alerts/primary",
+      }),
     );
 
     expect(
@@ -411,10 +462,14 @@ describe("Integrations activity tab", () => {
     const user = userEvent.setup();
     render(<IntegrationsTab />);
 
-    await user.click(await screen.findByRole("button", { name: "Select Release alerts" }));
+    await user.click(
+      await screen.findByRole("button", { name: "Select Release alerts" }),
+    );
     await user.click(screen.getByRole("button", { name: "Messages" }));
 
-    expect(await screen.findByRole("heading", { name: "Messages" })).toBeInTheDocument();
+    expect(
+      await screen.findByRole("heading", { name: "Messages" }),
+    ).toBeInTheDocument();
     expect(screen.getByText("Release shipped")).toBeInTheDocument();
     expect(
       mockFetch.fn.mock.calls.some(([url]) =>
@@ -423,7 +478,9 @@ describe("Integrations activity tab", () => {
     ).toBe(true);
 
     await user.click(screen.getByRole("button", { name: "Close messages" }));
-    expect(await screen.findByRole("heading", { name: "Release alerts" })).toBeInTheDocument();
+    expect(
+      await screen.findByRole("heading", { name: "Release alerts" }),
+    ).toBeInTheDocument();
   });
 
   it("creates channels with config fields separated from secrets", async () => {
@@ -433,7 +490,9 @@ describe("Integrations activity tab", () => {
     render(<IntegrationsTab />);
 
     // Channel creation moved to the shared header "+ New" action (#19159).
-    expect(await screen.findByRole("button", { name: "New channel" })).toBeInTheDocument();
+    expect(
+      await screen.findByRole("button", { name: "New channel" }),
+    ).toBeInTheDocument();
     await user.click(screen.getByRole("button", { name: "New channel" }));
     await user.selectOptions(screen.getByLabelText("Platform"), "telegram");
     await user.type(screen.getByLabelText("Name"), "Ops pager");
@@ -460,15 +519,23 @@ describe("Integrations activity tab", () => {
 
     render(<IntegrationsTab />);
 
-    expect(await screen.findByText("Communications not configured")).toBeInTheDocument();
     expect(
-      screen.getByText("Start the communications manager before managing notification channels."),
+      await screen.findByText("Communications not configured"),
     ).toBeInTheDocument();
     expect(
-      screen.queryByText("Communication channels appear here after they are configured."),
+      screen.getByText(
+        "Start the communications manager before managing notification channels.",
+      ),
+    ).toBeInTheDocument();
+    expect(
+      screen.queryByText(
+        "Communication channels appear here after they are configured.",
+      ),
     ).not.toBeInTheDocument();
     expect(
-      screen.queryByRole("button", { name: "Dismiss error: Request failed: 503" }),
+      screen.queryByRole("button", {
+        name: "Dismiss error: Request failed: 503",
+      }),
     ).not.toBeInTheDocument();
   });
 
@@ -477,15 +544,23 @@ describe("Integrations activity tab", () => {
 
     render(<IntegrationsTab />);
 
-    expect(await screen.findByText("Communications not configured")).toBeInTheDocument();
     expect(
-      screen.getByText("Start the communications manager before managing notification channels."),
+      await screen.findByText("Communications not configured"),
     ).toBeInTheDocument();
     expect(
-      screen.queryByText("Communication channels appear here after they are configured."),
+      screen.getByText(
+        "Start the communications manager before managing notification channels.",
+      ),
+    ).toBeInTheDocument();
+    expect(
+      screen.queryByText(
+        "Communication channels appear here after they are configured.",
+      ),
     ).not.toBeInTheDocument();
     expect(
-      screen.queryByRole("button", { name: "Dismiss error: Request failed: 404" }),
+      screen.queryByRole("button", {
+        name: "Dismiss error: Request failed: 404",
+      }),
     ).not.toBeInTheDocument();
   });
 });

@@ -1,7 +1,9 @@
 export const PRIORITY_GLYPH_LEVELS = [0, 1, 2, 3, 4] as const;
 export type PriorityGlyphLevel = (typeof PRIORITY_GLYPH_LEVELS)[number];
 
-export function normalizePriorityGlyphLevel(priority: number): PriorityGlyphLevel {
+export function normalizePriorityGlyphLevel(
+  priority: number,
+): PriorityGlyphLevel {
   return PRIORITY_GLYPH_LEVELS.includes(priority as PriorityGlyphLevel)
     ? (priority as PriorityGlyphLevel)
     : 2;

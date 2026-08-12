@@ -8,7 +8,11 @@ import { TaskDetailStatusLine } from "./taskdetail/TaskDetailStatusLine";
 import { TaskDetailEditableCore } from "./taskdetail/TaskDetailEditableCore";
 import { TaskDetailRelationships } from "./taskdetail/TaskDetailRelationships";
 import { TaskDetailTrace } from "./taskdetail/TaskDetailTrace";
-import { MetaKVRow, ValidationRow, type ParentTaskRef } from "./taskdetail/TaskDetailKV";
+import {
+  MetaKVRow,
+  ValidationRow,
+  type ParentTaskRef,
+} from "./taskdetail/TaskDetailKV";
 import {
   computeTaskDetail,
   formatTaskDetailDate,
@@ -111,10 +115,10 @@ export function TasksTabDetailPanel({
           className="border-b border-[color-mix(in_srgb,var(--color-error)_35%,transparent)] bg-[var(--color-error-soft)] px-4 py-[0.9rem]"
           data-task-detail-escalation
         >
-          <div className="mb-[0.45rem] text-[length:var(--text-sm)] font-semibold uppercase tracking-[0.08em] text-[var(--color-error)]">
+          <div className="mb-[0.45rem] text-[length:var(--text-sm)] font-semibold tracking-[0.08em] text-[var(--color-error)] uppercase">
             Escalated
             {task.escalated_at && (
-              <span className="ml-[0.4rem] font-medium normal-case tracking-normal text-[var(--text-muted)]">
+              <span className="ml-[0.4rem] font-medium tracking-normal text-[var(--text-muted)] normal-case">
                 {formatTaskDetailDate(task.escalated_at)}
               </span>
             )}
@@ -123,7 +127,7 @@ export function TasksTabDetailPanel({
             <MetaKVRow label="From">{preEscalationStatus}</MetaKVRow>
           )}
           {escalationReason && (
-            <div className="mt-2 whitespace-pre-wrap text-[length:var(--text-base)] leading-normal text-[var(--text-secondary)] [overflow-wrap:anywhere]">
+            <div className="mt-2 text-[length:var(--text-base)] leading-normal [overflow-wrap:anywhere] whitespace-pre-wrap text-[var(--text-secondary)]">
               {escalationReason}
             </div>
           )}
@@ -141,7 +145,7 @@ export function TasksTabDetailPanel({
 
       {showValidationFeedback && validationFeedback && (
         <div className="border-b border-border bg-[color-mix(in_srgb,var(--color-error)_6%,transparent)] px-4 py-[0.9rem]">
-          <div className="mb-[0.45rem] text-[length:var(--text-sm)] font-semibold uppercase tracking-[0.08em] text-[var(--color-error)]">
+          <div className="mb-[0.45rem] text-[length:var(--text-sm)] font-semibold tracking-[0.08em] text-[var(--color-error)] uppercase">
             Validation feedback
           </div>
           <div

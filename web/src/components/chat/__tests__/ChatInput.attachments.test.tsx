@@ -1,266 +1,327 @@
-import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
-import { cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react'
-import { ChatInput } from '../ChatInput'
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import {
+  cleanup,
+  fireEvent,
+  render,
+  screen,
+  waitFor,
+} from "@testing-library/react";
+import { ChatInput } from "../ChatInput";
 
 class MockXMLHttpRequest {
-  static instances: MockXMLHttpRequest[] = []
+  static instances: MockXMLHttpRequest[] = [];
 
-  upload: { onprogress?: (event: ProgressEvent) => void } = {}
-  onload: (() => void) | null = null
-  onerror: (() => void) | null = null
-  onabort: (() => void) | null = null
-  ontimeout: (() => void) | null = null
-  status = 0
-  statusText = ''
-  responseText = ''
-  requestBody: XMLHttpRequestBodyInit | null = null
-  withCredentials = false
-  timeout = 0
+  upload: { onprogress?: (event: ProgressEvent) => void } = {};
+  onload: (() => void) | null = null;
+  onerror: (() => void) | null = null;
+  onabort: (() => void) | null = null;
+  ontimeout: (() => void) | null = null;
+  status = 0;
+  statusText = "";
+  responseText = "";
+  requestBody: XMLHttpRequestBodyInit | null = null;
+  withCredentials = false;
+  timeout = 0;
 
   constructor() {
-    MockXMLHttpRequest.instances.push(this)
+    MockXMLHttpRequest.instances.push(this);
   }
 
-  open = vi.fn()
+  open = vi.fn();
 
   send(body?: XMLHttpRequestBodyInit | null) {
-    this.requestBody = body ?? null
+    this.requestBody = body ?? null;
   }
 
   abort() {
-    this.onabort?.()
+    this.onabort?.();
   }
 
   respond(body: unknown, status = 200) {
-    this.status = status
-    this.responseText = JSON.stringify(body)
-    this.onload?.()
+    this.status = status;
+    this.responseText = JSON.stringify(body);
+    this.onload?.();
   }
 }
 
 async function waitForUpload(): Promise<MockXMLHttpRequest> {
-  await waitFor(() => expect(MockXMLHttpRequest.instances.length).toBeGreaterThan(0))
-  return MockXMLHttpRequest.instances[0]
+  await waitFor(() =>
+    expect(MockXMLHttpRequest.instances.length).toBeGreaterThan(0),
+  );
+  return MockXMLHttpRequest.instances[0];
 }
 
-describe('ChatInput attachments', () => {
-  const originalXHR = globalThis.XMLHttpRequest
-  const originalFileReader = globalThis.FileReader
-  const originalFetch = globalThis.fetch
+describe("ChatInput attachments", () => {
+  const originalXHR = globalThis.XMLHttpRequest;
+  const originalFileReader = globalThis.FileReader;
+  const originalFetch = globalThis.fetch;
 
   beforeEach(() => {
-    MockXMLHttpRequest.instances = []
-    vi.stubGlobal('XMLHttpRequest', MockXMLHttpRequest)
-    vi.spyOn(crypto, 'randomUUID').mockReturnValue(
-      '00000000-0000-4000-8000-000000000001',
-    )
+    MockXMLHttpRequest.instances = [];
+    vi.stubGlobal("XMLHttpRequest", MockXMLHttpRequest);
+    vi.spyOn(crypto, "randomUUID").mockReturnValue(
+      "00000000-0000-4000-8000-000000000001",
+    );
     vi.stubGlobal(
-      'fetch',
-      vi.fn().mockImplementation(async (input: RequestInfo | URL) =>
-        String(input).includes('/api/chat/attachments/limits')
-          ? Response.json({ max_file_bytes: 10 * 1024 * 1024 })
-          : new Response(null, { status: 200 }),
-      ),
-    )
-  })
+      "fetch",
+      vi
+        .fn()
+        .mockImplementation(async (input: RequestInfo | URL) =>
+          String(input).includes("/api/chat/attachments/limits")
+            ? Response.json({ max_file_bytes: 10 * 1024 * 1024 })
+            : new Response(null, { status: 200 }),
+        ),
+    );
+  });
 
   afterEach(() => {
-    cleanup()
-    vi.restoreAllMocks()
-    vi.stubGlobal('XMLHttpRequest', originalXHR)
-    vi.stubGlobal('FileReader', originalFileReader)
-    vi.stubGlobal('fetch', originalFetch)
-    vi.unstubAllGlobals()
-  })
+    cleanup();
+    vi.restoreAllMocks();
+    vi.stubGlobal("XMLHttpRequest", originalXHR);
+    vi.stubGlobal("FileReader", originalFileReader);
+    vi.stubGlobal("fetch", originalFetch);
+    vi.unstubAllGlobals();
+  });
 
-  it('uploads selected files with multipart form data without FileReader base64', async () => {
-    const readAsDataURL = vi.fn()
+  it("uploads selected files with multipart form data without FileReader base64", async () => {
+    const readAsDataURL = vi.fn();
     class MockFileReader {
-      result: string | ArrayBuffer | null = null
-      error: DOMException | null = null
-      readyState = 0
-      onabort: ((this: FileReader, ev: ProgressEvent<FileReader>) => unknown) | null = null
-      onerror: ((this: FileReader, ev: ProgressEvent<FileReader>) => unknown) | null = null
-      onload: ((this: FileReader, ev: ProgressEvent<FileReader>) => unknown) | null = null
-      onloadend: ((this: FileReader, ev: ProgressEvent<FileReader>) => unknown) | null = null
-      onloadstart: ((this: FileReader, ev: ProgressEvent<FileReader>) => unknown) | null = null
-      onprogress: ((this: FileReader, ev: ProgressEvent<FileReader>) => unknown) | null = null
-      abort = vi.fn()
-      readAsArrayBuffer = vi.fn()
-      readAsBinaryString = vi.fn()
-      readAsText = vi.fn()
-      readAsDataURL = readAsDataURL
-      addEventListener = vi.fn()
-      removeEventListener = vi.fn()
-      dispatchEvent = vi.fn(() => true)
-      EMPTY = 0 as const
-      LOADING = 1 as const
-      DONE = 2 as const
+      result: string | ArrayBuffer | null = null;
+      error: DOMException | null = null;
+      readyState = 0;
+      onabort:
+        ((this: FileReader, ev: ProgressEvent<FileReader>) => unknown) | null =
+        null;
+      onerror:
+        ((this: FileReader, ev: ProgressEvent<FileReader>) => unknown) | null =
+        null;
+      onload:
+        ((this: FileReader, ev: ProgressEvent<FileReader>) => unknown) | null =
+        null;
+      onloadend:
+        ((this: FileReader, ev: ProgressEvent<FileReader>) => unknown) | null =
+        null;
+      onloadstart:
+        ((this: FileReader, ev: ProgressEvent<FileReader>) => unknown) | null =
+        null;
+      onprogress:
+        ((this: FileReader, ev: ProgressEvent<FileReader>) => unknown) | null =
+        null;
+      abort = vi.fn();
+      readAsArrayBuffer = vi.fn();
+      readAsBinaryString = vi.fn();
+      readAsText = vi.fn();
+      readAsDataURL = readAsDataURL;
+      addEventListener = vi.fn();
+      removeEventListener = vi.fn();
+      dispatchEvent = vi.fn(() => true);
+      EMPTY = 0 as const;
+      LOADING = 1 as const;
+      DONE = 2 as const;
     }
-    vi.stubGlobal('FileReader', MockFileReader)
-    const onSend = vi.fn()
-    const { container } = render(<ChatInput onSend={onSend} projectId="proj-1" />)
-    const input = container.querySelector('input[type="file"]') as HTMLInputElement
-    const file = new File(['hello'], 'note.txt', { type: 'text/plain' })
+    vi.stubGlobal("FileReader", MockFileReader);
+    const onSend = vi.fn();
+    const { container } = render(
+      <ChatInput onSend={onSend} projectId="proj-1" />,
+    );
+    const input = container.querySelector(
+      'input[type="file"]',
+    ) as HTMLInputElement;
+    const file = new File(["hello"], "note.txt", { type: "text/plain" });
 
-    fireEvent.change(input, { target: { files: [file] } })
+    fireEvent.change(input, { target: { files: [file] } });
 
-    expect(screen.getByRole('button', { name: 'Remove note.txt' })).toHaveClass(
-      'pointer-coarse:h-11',
-      'pointer-coarse:w-11',
-    )
+    expect(screen.getByRole("button", { name: "Remove note.txt" })).toHaveClass(
+      "pointer-coarse:h-11",
+      "pointer-coarse:w-11",
+    );
 
-    const xhr = await waitForUpload()
-    expect(xhr.requestBody).toBeInstanceOf(FormData)
-    expect((xhr.requestBody as FormData).get('project_id')).toBe('proj-1')
-    expect(readAsDataURL).not.toHaveBeenCalled()
+    const xhr = await waitForUpload();
+    expect(xhr.requestBody).toBeInstanceOf(FormData);
+    expect((xhr.requestBody as FormData).get("project_id")).toBe("proj-1");
+    expect(readAsDataURL).not.toHaveBeenCalled();
 
     xhr.respond({
-      id: 'att-1',
-      project_id: 'proj-1',
-      filename: 'note.txt',
-      mime_type: 'text/plain',
+      id: "att-1",
+      project_id: "proj-1",
+      filename: "note.txt",
+      mime_type: "text/plain",
       size_bytes: 5,
-      content_url: '/api/chat/attachments/att-1/content',
-    })
+      content_url: "/api/chat/attachments/att-1/content",
+    });
 
-    await waitFor(() => expect(screen.getByTitle('Send message')).not.toBeDisabled())
-    fireEvent.click(screen.getByTitle('Send message'))
+    await waitFor(() =>
+      expect(screen.getByTitle("Send message")).not.toBeDisabled(),
+    );
+    fireEvent.click(screen.getByTitle("Send message"));
 
     expect(onSend).toHaveBeenCalledWith(
-      '',
+      "",
       [
         expect.objectContaining({
-          attachment: expect.objectContaining({ id: 'att-1' }),
-          status: 'uploaded',
+          attachment: expect.objectContaining({ id: "att-1" }),
+          status: "uploaded",
         }),
       ],
       expect.any(Object),
-    )
-  })
+    );
+  });
 
-  it('keeps submit disabled until upload finishes', async () => {
-    const onSend = vi.fn()
-    const { container } = render(<ChatInput onSend={onSend} projectId="proj-1" />)
-    const input = container.querySelector('input[type="file"]') as HTMLInputElement
-    const file = new File(['hello'], 'note.txt', { type: 'text/plain' })
+  it("keeps submit disabled until upload finishes", async () => {
+    const onSend = vi.fn();
+    const { container } = render(
+      <ChatInput onSend={onSend} projectId="proj-1" />,
+    );
+    const input = container.querySelector(
+      'input[type="file"]',
+    ) as HTMLInputElement;
+    const file = new File(["hello"], "note.txt", { type: "text/plain" });
 
-    fireEvent.change(input, { target: { files: [file] } })
-    const sendButton = screen.getByTitle('Send message')
+    fireEvent.change(input, { target: { files: [file] } });
+    const sendButton = screen.getByTitle("Send message");
 
-    expect(sendButton).toBeDisabled()
-    fireEvent.click(sendButton)
-    expect(onSend).not.toHaveBeenCalled()
+    expect(sendButton).toBeDisabled();
+    fireEvent.click(sendButton);
+    expect(onSend).not.toHaveBeenCalled();
 
-    ;(await waitForUpload()).respond({
-      id: 'att-1',
-      project_id: 'proj-1',
-      filename: 'note.txt',
-      mime_type: 'text/plain',
+    (await waitForUpload()).respond({
+      id: "att-1",
+      project_id: "proj-1",
+      filename: "note.txt",
+      mime_type: "text/plain",
       size_bytes: 5,
-      content_url: '/api/chat/attachments/att-1/content',
-    })
+      content_url: "/api/chat/attachments/att-1/content",
+    });
 
-    await waitFor(() => expect(sendButton).not.toBeDisabled())
-  })
+    await waitFor(() => expect(sendButton).not.toBeDisabled());
+  });
 
-  it('deletes uploaded unsent attachments when unmounted', async () => {
-    const onSend = vi.fn()
-    const { container, unmount } = render(<ChatInput onSend={onSend} projectId="proj-1" />)
-    const input = container.querySelector('input[type="file"]') as HTMLInputElement
-    const file = new File(['hello'], 'note.txt', { type: 'text/plain' })
+  it("deletes uploaded unsent attachments when unmounted", async () => {
+    const onSend = vi.fn();
+    const { container, unmount } = render(
+      <ChatInput onSend={onSend} projectId="proj-1" />,
+    );
+    const input = container.querySelector(
+      'input[type="file"]',
+    ) as HTMLInputElement;
+    const file = new File(["hello"], "note.txt", { type: "text/plain" });
 
-    fireEvent.change(input, { target: { files: [file] } })
-    ;(await waitForUpload()).respond({
-      id: 'att-1',
-      project_id: 'proj-1',
-      filename: 'note.txt',
-      mime_type: 'text/plain',
+    fireEvent.change(input, { target: { files: [file] } });
+    (await waitForUpload()).respond({
+      id: "att-1",
+      project_id: "proj-1",
+      filename: "note.txt",
+      mime_type: "text/plain",
       size_bytes: 5,
-      content_url: '/api/chat/attachments/att-1/content',
-    })
+      content_url: "/api/chat/attachments/att-1/content",
+    });
 
-    await waitFor(() => expect(screen.getByTitle('Send message')).not.toBeDisabled())
-    unmount()
+    await waitFor(() =>
+      expect(screen.getByTitle("Send message")).not.toBeDisabled(),
+    );
+    unmount();
 
     await waitFor(() => {
-      expect(fetch).toHaveBeenCalledWith('/api/chat/attachments/att-1', {
-        method: 'DELETE',
-        credentials: 'include',
+      expect(fetch).toHaveBeenCalledWith("/api/chat/attachments/att-1", {
+        method: "DELETE",
+        credentials: "include",
         signal: expect.any(AbortSignal),
-      })
-    })
-  })
+      });
+    });
+  });
 
-  it('does not delete uploaded attachments after sending', async () => {
-    const onSend = vi.fn()
-    const { container, unmount } = render(<ChatInput onSend={onSend} projectId="proj-1" />)
-    const input = container.querySelector('input[type="file"]') as HTMLInputElement
-    const file = new File(['hello'], 'note.txt', { type: 'text/plain' })
+  it("does not delete uploaded attachments after sending", async () => {
+    const onSend = vi.fn();
+    const { container, unmount } = render(
+      <ChatInput onSend={onSend} projectId="proj-1" />,
+    );
+    const input = container.querySelector(
+      'input[type="file"]',
+    ) as HTMLInputElement;
+    const file = new File(["hello"], "note.txt", { type: "text/plain" });
 
-    fireEvent.change(input, { target: { files: [file] } })
-    ;(await waitForUpload()).respond({
-      id: 'att-1',
-      project_id: 'proj-1',
-      filename: 'note.txt',
-      mime_type: 'text/plain',
+    fireEvent.change(input, { target: { files: [file] } });
+    (await waitForUpload()).respond({
+      id: "att-1",
+      project_id: "proj-1",
+      filename: "note.txt",
+      mime_type: "text/plain",
       size_bytes: 5,
-      content_url: '/api/chat/attachments/att-1/content',
-    })
+      content_url: "/api/chat/attachments/att-1/content",
+    });
 
-    await waitFor(() => expect(screen.getByTitle('Send message')).not.toBeDisabled())
-    fireEvent.click(screen.getByTitle('Send message'))
-    expect(onSend).toHaveBeenCalled()
-    unmount()
+    await waitFor(() =>
+      expect(screen.getByTitle("Send message")).not.toBeDisabled(),
+    );
+    fireEvent.click(screen.getByTitle("Send message"));
+    expect(onSend).toHaveBeenCalled();
+    unmount();
 
-    expect(fetch).not.toHaveBeenCalledWith('/api/chat/attachments/att-1', expect.anything())
-  })
+    expect(fetch).not.toHaveBeenCalledWith(
+      "/api/chat/attachments/att-1",
+      expect.anything(),
+    );
+  });
 
-  it('aborts in-flight uploads when attachments become disabled', async () => {
-    const onSend = vi.fn()
+  it("aborts in-flight uploads when attachments become disabled", async () => {
+    const onSend = vi.fn();
     const { container, rerender } = render(
-      <ChatInput onSend={onSend} projectId="proj-1" attachmentsDisabled={false} />,
-    )
-    const input = container.querySelector('input[type="file"]') as HTMLInputElement
-    const file = new File(['hello'], 'note.txt', { type: 'text/plain' })
+      <ChatInput
+        onSend={onSend}
+        projectId="proj-1"
+        attachmentsDisabled={false}
+      />,
+    );
+    const input = container.querySelector(
+      'input[type="file"]',
+    ) as HTMLInputElement;
+    const file = new File(["hello"], "note.txt", { type: "text/plain" });
 
-    fireEvent.change(input, { target: { files: [file] } })
-    const xhr = await waitForUpload()
-    const abortSpy = vi.spyOn(xhr, 'abort')
+    fireEvent.change(input, { target: { files: [file] } });
+    const xhr = await waitForUpload();
+    const abortSpy = vi.spyOn(xhr, "abort");
 
-    rerender(<ChatInput onSend={onSend} projectId="proj-1" attachmentsDisabled />)
+    rerender(
+      <ChatInput onSend={onSend} projectId="proj-1" attachmentsDisabled />,
+    );
 
-    await waitFor(() => expect(abortSpy).toHaveBeenCalled())
-  })
+    await waitFor(() => expect(abortSpy).toHaveBeenCalled());
+  });
 
-  it('removes queued images when image support is disabled and preserves other files', async () => {
-    const createObjectURL = vi.fn(() => 'blob:image-preview')
-    const revokeObjectURL = vi.fn()
-    vi.stubGlobal('URL', { createObjectURL, revokeObjectURL })
+  it("removes queued images when image support is disabled and preserves other files", async () => {
+    const createObjectURL = vi.fn(() => "blob:image-preview");
+    const revokeObjectURL = vi.fn();
+    vi.stubGlobal("URL", { createObjectURL, revokeObjectURL });
     vi.mocked(crypto.randomUUID)
-      .mockReturnValueOnce('00000000-0000-4000-8000-000000000001')
-      .mockReturnValueOnce('00000000-0000-4000-8000-000000000002')
-    const onSend = vi.fn()
+      .mockReturnValueOnce("00000000-0000-4000-8000-000000000001")
+      .mockReturnValueOnce("00000000-0000-4000-8000-000000000002");
+    const onSend = vi.fn();
     const { container, rerender } = render(
       <ChatInput onSend={onSend} projectId="proj-1" imagesDisabled={false} />,
-    )
-    const input = container.querySelector('input[type="file"]') as HTMLInputElement
-    const image = new File(['image'], 'diagram.png', { type: 'image/png' })
-    const text = new File(['text'], 'notes.txt', { type: 'text/plain' })
+    );
+    const input = container.querySelector(
+      'input[type="file"]',
+    ) as HTMLInputElement;
+    const image = new File(["image"], "diagram.png", { type: "image/png" });
+    const text = new File(["text"], "notes.txt", { type: "text/plain" });
 
-    fireEvent.change(input, { target: { files: [image, text] } })
-    await waitFor(() => expect(MockXMLHttpRequest.instances).toHaveLength(2))
-    const imageAbort = vi.spyOn(MockXMLHttpRequest.instances[0], 'abort')
-    const textAbort = vi.spyOn(MockXMLHttpRequest.instances[1], 'abort')
+    fireEvent.change(input, { target: { files: [image, text] } });
+    await waitFor(() => expect(MockXMLHttpRequest.instances).toHaveLength(2));
+    const imageAbort = vi.spyOn(MockXMLHttpRequest.instances[0], "abort");
+    const textAbort = vi.spyOn(MockXMLHttpRequest.instances[1], "abort");
 
-    rerender(<ChatInput onSend={onSend} projectId="proj-1" imagesDisabled />)
+    rerender(<ChatInput onSend={onSend} projectId="proj-1" imagesDisabled />);
 
     await waitFor(() => {
-      expect(screen.queryByRole('button', { name: 'Remove diagram.png' })).toBeNull()
-    })
-    expect(screen.getByRole('button', { name: 'Remove notes.txt' })).toBeInTheDocument()
-    expect(imageAbort).toHaveBeenCalledOnce()
-    expect(textAbort).not.toHaveBeenCalled()
-    expect(revokeObjectURL).toHaveBeenCalledWith('blob:image-preview')
-  })
-})
+      expect(
+        screen.queryByRole("button", { name: "Remove diagram.png" }),
+      ).toBeNull();
+    });
+    expect(
+      screen.getByRole("button", { name: "Remove notes.txt" }),
+    ).toBeInTheDocument();
+    expect(imageAbort).toHaveBeenCalledOnce();
+    expect(textAbort).not.toHaveBeenCalled();
+    expect(revokeObjectURL).toHaveBeenCalledWith("blob:image-preview");
+  });
+});

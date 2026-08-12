@@ -1,8 +1,4 @@
-import type {
-  Dispatch,
-  MutableRefObject,
-  SetStateAction,
-} from "react";
+import type { Dispatch, MutableRefObject, SetStateAction } from "react";
 import type {
   AcpAvailableCommand,
   ApprovalOption,
@@ -81,7 +77,9 @@ export interface HandlerCallbacks {
   handleChatThinkingRef: MutableRefObject<(msg: ChatThinkingMessage) => void>;
   handleModelSwitchedRef: MutableRefObject<(msg: ModelSwitchedMessage) => void>;
   handleToolStatusRef: MutableRefObject<(status: ToolStatusMessage) => void>;
-  handleVoiceMessageRef: MutableRefObject<(data: Record<string, unknown>) => void>;
+  handleVoiceMessageRef: MutableRefObject<
+    (data: Record<string, unknown>) => void
+  >;
   markSessionUsageFresh: (sessionId: string, rawTimestamp?: string) => void;
   onChatClearedRef: MutableRefObject<((conversationId: string) => void) | null>;
   onChatDeletedRef: MutableRefObject<((conversationId: string) => void) | null>;
@@ -137,7 +135,8 @@ export interface PendingRefs {
 }
 
 export interface UseChatTransportParams
-  extends SessionRefs,
+  extends
+    SessionRefs,
     HandlerCallbacks,
     StateSetters,
     ConnectionRefs,

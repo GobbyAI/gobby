@@ -586,11 +586,15 @@ describe("SessionsTab", () => {
     mockAttentionRoster();
     mockProviderRegistry();
     mockFetch.mockErrorResponse("/api/agents/running", 500);
-    const consoleError = vi.spyOn(console, "error").mockImplementation(() => {});
+    const consoleError = vi
+      .spyOn(console, "error")
+      .mockImplementation(() => {});
     await act(async () => {
       await vi.advanceTimersByTimeAsync(5000);
     });
-    expect(screen.getByRole("alert")).toHaveTextContent("Failed to load running agents");
+    expect(screen.getByRole("alert")).toHaveTextContent(
+      "Failed to load running agents",
+    );
     expect(getSessionEntry("#206: Running Agent Terminal")).toBeInTheDocument();
     expect(consoleError).toHaveBeenCalledWith(
       "Failed to fetch running agents:",
@@ -632,11 +636,15 @@ describe("SessionsTab", () => {
     mockAttentionRoster();
     mockProviderRegistry();
     mockFetch.mockJsonResponse("/api/agents/running", { agents: {} });
-    const consoleError = vi.spyOn(console, "error").mockImplementation(() => {});
+    const consoleError = vi
+      .spyOn(console, "error")
+      .mockImplementation(() => {});
     await act(async () => {
       await vi.advanceTimersByTimeAsync(5000);
     });
-    expect(screen.getByRole("alert")).toHaveTextContent("Failed to load running agents");
+    expect(screen.getByRole("alert")).toHaveTextContent(
+      "Failed to load running agents",
+    );
     expect(getSessionEntry("#206: Running Agent Terminal")).toBeInTheDocument();
     expect(consoleError).toHaveBeenCalledWith(
       "Failed to fetch running agents:",
@@ -728,7 +736,9 @@ describe("SessionsTab", () => {
 
     fireEvent.click(getSessionEntry("#201: Live Terminal"));
     await waitFor(() => {
-      expect(screen.getByText("Transcript output for live-1")).toBeInTheDocument();
+      expect(
+        screen.getByText("Transcript output for live-1"),
+      ).toBeInTheDocument();
     });
 
     openSearch();
@@ -744,7 +754,9 @@ describe("SessionsTab", () => {
       target: { value: "" },
     });
     await waitFor(() => {
-      expect(screen.getByText("Transcript output for live-1")).toBeInTheDocument();
+      expect(
+        screen.getByText("Transcript output for live-1"),
+      ).toBeInTheDocument();
     });
     expect(localStorage.getItem("gobby-watching-session-id")).toBe("live-1");
   });
@@ -899,7 +911,9 @@ describe("SessionsTab", () => {
     const onFocusHandled = vi.fn();
     mockUseSessionDetail.mockImplementation((sessionId) => ({
       session:
-        sessionId === "main-web-1" ? MAIN_WEB_CHAT_SESSION : PARKED_WEB_CHAT_SESSION,
+        sessionId === "main-web-1"
+          ? MAIN_WEB_CHAT_SESSION
+          : PARKED_WEB_CHAT_SESSION,
       sessionError: null,
       clearSessionError: vi.fn(),
       messages: [
@@ -924,7 +938,9 @@ describe("SessionsTab", () => {
     );
 
     await waitFor(() => {
-      expect(screen.getAllByText("#211: Parked Web Chat").length).toBeGreaterThan(0);
+      expect(
+        screen.getAllByText("#211: Parked Web Chat").length,
+      ).toBeGreaterThan(0);
       expect(
         screen.getByText("Transcript output for parked-web-1"),
       ).toBeInTheDocument();
@@ -941,12 +957,16 @@ describe("SessionsTab", () => {
     );
 
     await waitFor(() => {
-      expect(screen.getAllByText("#210: Main Web Chat").length).toBeGreaterThan(0);
+      expect(screen.getAllByText("#210: Main Web Chat").length).toBeGreaterThan(
+        0,
+      );
       expect(
         screen.getByText("Transcript output for main-web-1"),
       ).toBeInTheDocument();
     });
-    expect(screen.getAllByText("#211: Parked Web Chat").length).toBeGreaterThan(0);
+    expect(screen.getAllByText("#211: Parked Web Chat").length).toBeGreaterThan(
+      0,
+    );
   });
 
   it("renders the Live | Expired status filter as a SegmentedControl", async () => {
@@ -975,10 +995,12 @@ describe("SessionsTab", () => {
     );
 
     await waitFor(() => {
-      expect(screen.getAllByText("#201: Live Terminal").length).toBeGreaterThan(0);
-      expect(screen.getAllByText("#202: Paused Terminal").length).toBeGreaterThan(
+      expect(screen.getAllByText("#201: Live Terminal").length).toBeGreaterThan(
         0,
       );
+      expect(
+        screen.getAllByText("#202: Paused Terminal").length,
+      ).toBeGreaterThan(0);
     });
 
     const statusDotForTitle = (title: string) => {
@@ -1036,16 +1058,13 @@ describe("SessionsTab", () => {
       transcriptStatus: null,
     });
 
-    render(
-      <SessionsTab
-        sessions={[LIVE_SESSION]}
-        focusSessionId="live-1"
-      />,
-    );
+    render(<SessionsTab sessions={[LIVE_SESSION]} focusSessionId="live-1" />);
 
     await waitFor(() => {
       expect(screen.getByText("Live transcript output")).toBeInTheDocument();
-      expect(screen.getByRole("button", { name: "Summary" })).toBeInTheDocument();
+      expect(
+        screen.getByRole("button", { name: "Summary" }),
+      ).toBeInTheDocument();
     });
 
     fireEvent.click(screen.getByRole("button", { name: "Summary" }));
@@ -1079,15 +1098,12 @@ describe("SessionsTab", () => {
       transcriptStatus: null,
     });
 
-    render(
-      <SessionsTab
-        sessions={[catalogSession]}
-        focusSessionId="live-1"
-      />,
-    );
+    render(<SessionsTab sessions={[catalogSession]} focusSessionId="live-1" />);
 
     await waitFor(() => {
-      expect(screen.getByRole("button", { name: "Summary" })).toBeInTheDocument();
+      expect(
+        screen.getByRole("button", { name: "Summary" }),
+      ).toBeInTheDocument();
     });
 
     fireEvent.click(screen.getByRole("button", { name: "Summary" }));
@@ -1316,7 +1332,9 @@ describe("SessionsTab", () => {
       transcriptDegradedReason: null,
     });
 
-    render(<SessionsTab sessions={[PAUSED_SESSION]} focusSessionId="paused-1" />);
+    render(
+      <SessionsTab sessions={[PAUSED_SESSION]} focusSessionId="paused-1" />,
+    );
 
     await waitFor(() => {
       expect(screen.getByText("Transcript output")).toBeInTheDocument();
@@ -1354,7 +1372,9 @@ describe("SessionsTab", () => {
       transcriptDegradedReason: null,
     });
 
-    render(<SessionsTab sessions={[PAUSED_SESSION]} focusSessionId="paused-1" />);
+    render(
+      <SessionsTab sessions={[PAUSED_SESSION]} focusSessionId="paused-1" />,
+    );
 
     await waitFor(() => {
       expect(screen.getByText("Transcript output")).toBeInTheDocument();
@@ -1569,12 +1589,17 @@ describe("SessionsTab", () => {
       digest_markdown: "\n\t",
     };
     rerender(
-      <SessionsTab sessions={[emptyCatalogSession]} focusSessionId="paused-1" />,
+      <SessionsTab
+        sessions={[emptyCatalogSession]}
+        focusSessionId="paused-1"
+      />,
     );
 
     expect(screen.getByText("No summary available")).toBeInTheDocument();
     expect(screen.queryByRole("button", { name: "Summary" })).toBeNull();
-    expect(screen.getByRole("button", { name: "Transcript" })).toBeInTheDocument();
+    expect(
+      screen.getByRole("button", { name: "Transcript" }),
+    ).toBeInTheDocument();
   });
 
   it("disables Send Context with guidance when no web chat is active", async () => {
@@ -1665,7 +1690,9 @@ describe("SessionsTab", () => {
     });
 
     fireEvent.click(screen.getByRole("button", { name: "Session actions" }));
-    expect(screen.getByRole("menuitem", { name: "Send Context" })).toBeInTheDocument();
+    expect(
+      screen.getByRole("menuitem", { name: "Send Context" }),
+    ).toBeInTheDocument();
     expect(screen.queryByRole("button", { name: "Send Command" })).toBeNull();
     fireEvent.click(screen.getByRole("menuitem", { name: "Expire Session" }));
 
@@ -1717,7 +1744,9 @@ describe("SessionsTab", () => {
       transcriptStatus: null,
     });
 
-    render(<SessionsTab sessions={[PAUSED_SESSION]} focusSessionId="paused-1" />);
+    render(
+      <SessionsTab sessions={[PAUSED_SESSION]} focusSessionId="paused-1" />,
+    );
 
     await waitFor(() => {
       expect(screen.getByRole("alert")).toHaveTextContent(
@@ -1726,10 +1755,7 @@ describe("SessionsTab", () => {
     });
     expect(
       screen.getByRole("link", { name: "Download transcript instead" }),
-    ).toHaveAttribute(
-      "href",
-      "/api/sessions/paused-1/transcript",
-    );
+    ).toHaveAttribute("href", "/api/sessions/paused-1/transcript");
 
     fireEvent.click(
       screen.getByRole("button", { name: "Dismiss session error" }),
@@ -1778,7 +1804,9 @@ describe("SessionsTab", () => {
       render(
         <SessionsTab
           sessions={[
-            makeAcpSession(acpBlock({ resume: true, close: true, delete: true })),
+            makeAcpSession(
+              acpBlock({ resume: true, close: true, delete: true }),
+            ),
           ]}
           onExpireSession={vi.fn(async () => true)}
           onResumeSession={vi.fn(async () => "new-id")}
@@ -1797,7 +1825,9 @@ describe("SessionsTab", () => {
       expect(
         screen.getByRole("menuitem", { name: "Delete Session" }),
       ).toBeInTheDocument();
-      expect(screen.queryByRole("menuitem", { name: "Expire Session" })).toBeNull();
+      expect(
+        screen.queryByRole("menuitem", { name: "Expire Session" }),
+      ).toBeNull();
     });
 
     it("invokes the resume handler from the menu", async () => {
@@ -1805,7 +1835,9 @@ describe("SessionsTab", () => {
       render(
         <SessionsTab
           sessions={[
-            makeAcpSession(acpBlock({ resume: true, close: false, delete: false })),
+            makeAcpSession(
+              acpBlock({ resume: true, close: false, delete: false }),
+            ),
           ]}
           onResumeSession={onResumeSession}
         />,
@@ -1827,7 +1859,9 @@ describe("SessionsTab", () => {
       render(
         <SessionsTab
           sessions={[
-            makeAcpSession(acpBlock({ resume: false, close: true, delete: false })),
+            makeAcpSession(
+              acpBlock({ resume: false, close: true, delete: false }),
+            ),
           ]}
           onAcpCloseSession={onAcpCloseSession}
         />,
@@ -1857,7 +1891,9 @@ describe("SessionsTab", () => {
       render(
         <SessionsTab
           sessions={[
-            makeAcpSession(acpBlock({ resume: false, close: false, delete: true })),
+            makeAcpSession(
+              acpBlock({ resume: false, close: false, delete: true }),
+            ),
           ]}
           onAcpDeleteSession={onAcpDeleteSession}
         />,
@@ -1880,7 +1916,9 @@ describe("SessionsTab", () => {
       render(
         <SessionsTab
           sessions={[
-            makeAcpSession(acpBlock({ resume: false, close: true, delete: false })),
+            makeAcpSession(
+              acpBlock({ resume: false, close: true, delete: false }),
+            ),
           ]}
           onExpireSession={vi.fn(async () => true)}
           onAcpCloseSession={vi.fn(async () => true)}
@@ -1891,16 +1929,24 @@ describe("SessionsTab", () => {
       expect(
         screen.getByRole("menuitem", { name: "Close Session" }),
       ).toBeInTheDocument();
-      expect(screen.queryByRole("menuitem", { name: "Resume Session" })).toBeNull();
-      expect(screen.queryByRole("menuitem", { name: "Delete Session" })).toBeNull();
-      expect(screen.queryByRole("menuitem", { name: "Expire Session" })).toBeNull();
+      expect(
+        screen.queryByRole("menuitem", { name: "Resume Session" }),
+      ).toBeNull();
+      expect(
+        screen.queryByRole("menuitem", { name: "Delete Session" }),
+      ).toBeNull();
+      expect(
+        screen.queryByRole("menuitem", { name: "Expire Session" }),
+      ).toBeNull();
     });
 
     it("degrades to Send Context only when an ACP row advertises no capabilities", async () => {
       render(
         <SessionsTab
           sessions={[
-            makeAcpSession(acpBlock({ resume: false, close: false, delete: false })),
+            makeAcpSession(
+              acpBlock({ resume: false, close: false, delete: false }),
+            ),
           ]}
           onExpireSession={vi.fn(async () => true)}
         />,
@@ -1910,10 +1956,18 @@ describe("SessionsTab", () => {
       expect(
         screen.getByRole("menuitem", { name: "Send Context" }),
       ).toBeInTheDocument();
-      expect(screen.queryByRole("menuitem", { name: "Resume Session" })).toBeNull();
-      expect(screen.queryByRole("menuitem", { name: "Close Session" })).toBeNull();
-      expect(screen.queryByRole("menuitem", { name: "Delete Session" })).toBeNull();
-      expect(screen.queryByRole("menuitem", { name: "Expire Session" })).toBeNull();
+      expect(
+        screen.queryByRole("menuitem", { name: "Resume Session" }),
+      ).toBeNull();
+      expect(
+        screen.queryByRole("menuitem", { name: "Close Session" }),
+      ).toBeNull();
+      expect(
+        screen.queryByRole("menuitem", { name: "Delete Session" }),
+      ).toBeNull();
+      expect(
+        screen.queryByRole("menuitem", { name: "Expire Session" }),
+      ).toBeNull();
     });
 
     it("keeps Expire and omits ACP actions for non-ACP rows", async () => {
@@ -1933,9 +1987,15 @@ describe("SessionsTab", () => {
       expect(
         screen.getByRole("menuitem", { name: "Expire Session" }),
       ).toBeInTheDocument();
-      expect(screen.queryByRole("menuitem", { name: "Close Session" })).toBeNull();
-      expect(screen.queryByRole("menuitem", { name: "Delete Session" })).toBeNull();
-      expect(screen.queryByRole("menuitem", { name: "Resume Session" })).toBeNull();
+      expect(
+        screen.queryByRole("menuitem", { name: "Close Session" }),
+      ).toBeNull();
+      expect(
+        screen.queryByRole("menuitem", { name: "Delete Session" }),
+      ).toBeNull();
+      expect(
+        screen.queryByRole("menuitem", { name: "Resume Session" }),
+      ).toBeNull();
     });
 
     it("hides the detail-pane Resume button when the ACP resume capability is absent", async () => {

@@ -10,7 +10,9 @@ import {
   type IntegrationSavePayload,
 } from "./IntegrationsTabModel";
 
-export async function saveIntegrationDraft(draft: IntegrationDraft): Promise<Channel> {
+export async function saveIntegrationDraft(
+  draft: IntegrationDraft,
+): Promise<Channel> {
   const payload = integrationPayloadFromDraft(draft);
   if (payload.mode === "create") {
     return await createIntegrationChannel(payload);
@@ -30,10 +32,16 @@ export async function saveExistingIntegration(
   });
 }
 
-export async function toggleIntegrationChannel(channel: Channel): Promise<Channel> {
-  return await updateIntegrationChannel(channel.id, { enabled: !channel.enabled });
+export async function toggleIntegrationChannel(
+  channel: Channel,
+): Promise<Channel> {
+  return await updateIntegrationChannel(channel.id, {
+    enabled: !channel.enabled,
+  });
 }
 
-export async function removeIntegrationChannel(channel: Channel): Promise<void> {
+export async function removeIntegrationChannel(
+  channel: Channel,
+): Promise<void> {
   await deleteIntegrationChannel(channel.id);
 }

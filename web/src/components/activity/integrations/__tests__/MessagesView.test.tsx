@@ -3,7 +3,10 @@ import userEvent from "@testing-library/user-event";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
 import type { Channel, CommsMessage } from "../../../../hooks/useIntegrations";
-import { createMockFetch, type MockFetchInstance } from "../../../../test/mocks/fetch";
+import {
+  createMockFetch,
+  type MockFetchInstance,
+} from "../../../../test/mocks/fetch";
 import { MessagesView } from "../MessagesView";
 
 let mockFetch: MockFetchInstance;
@@ -49,9 +52,15 @@ function setupFetch(responses: CommsMessage[][]) {
   mockFetch = createMockFetch();
   let callIndex = 0;
   mockFetch.fn.mockImplementation(async (input: RequestInfo | URL) => {
-    const url = typeof input === "string" ? input : input instanceof URL ? input.toString() : input.url;
+    const url =
+      typeof input === "string"
+        ? input
+        : input instanceof URL
+          ? input.toString()
+          : input.url;
     if (url.includes("/api/comms/messages")) {
-      const response = responses[Math.min(callIndex, responses.length - 1)] ?? [];
+      const response =
+        responses[Math.min(callIndex, responses.length - 1)] ?? [];
       callIndex += 1;
       return jsonResponse(response);
     }
@@ -93,13 +102,17 @@ describe("MessagesView", () => {
 
     render(<MessagesView channel={channel} onClose={onClose} />);
 
-    expect(await screen.findByRole("heading", { name: "Messages" })).toBeInTheDocument();
+    expect(
+      await screen.findByRole("heading", { name: "Messages" }),
+    ).toBeInTheDocument();
     const rows = await screen.findAllByRole("listitem");
     expect(rows).toHaveLength(2);
     expect(within(rows[0]).getByText("Ship it")).toBeInTheDocument();
     expect(within(rows[0]).getByText("Inbound")).toBeInTheDocument();
     expect(within(rows[0]).getByText("failed")).toBeInTheDocument();
-    expect(within(rows[0]).getByText("Slack rejected the payload")).toBeInTheDocument();
+    expect(
+      within(rows[0]).getByText("Slack rejected the payload"),
+    ).toBeInTheDocument();
     expect(within(rows[1]).getByText("Deploy finished")).toBeInTheDocument();
     expect(within(rows[1]).getByText("Outbound")).toBeInTheDocument();
     expect(within(rows[1]).getByText("delivered")).toBeInTheDocument();
@@ -140,7 +153,9 @@ describe("MessagesView", () => {
     render(<MessagesView channel={channel} onClose={vi.fn()} />);
 
     expect(await screen.findByText("Current page")).toBeInTheDocument();
-    await user.click(screen.getByRole("button", { name: "Load older messages" }));
+    await user.click(
+      screen.getByRole("button", { name: "Load older messages" }),
+    );
 
     await waitFor(() => {
       const urls = requestUrls();
@@ -156,7 +171,9 @@ describe("MessagesView", () => {
 
     expect(await screen.findByText("No messages yet")).toBeInTheDocument();
     expect(
-      screen.getByText("Recent inbound and outbound messages for Release alerts will appear here."),
+      screen.getByText(
+        "Recent inbound and outbound messages for Release alerts will appear here.",
+      ),
     ).toBeInTheDocument();
   });
 });

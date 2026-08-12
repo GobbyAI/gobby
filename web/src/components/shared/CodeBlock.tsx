@@ -1,40 +1,40 @@
-import React, { useEffect, useRef, useState } from 'react'
-import { Prism as SyntaxHighlighter } from 'react-syntax-highlighter'
+import React, { useEffect, useRef, useState } from "react";
+import { Prism as SyntaxHighlighter } from "react-syntax-highlighter";
 
-import { useResolvedTheme } from '../../hooks/useResolvedTheme'
+import { useResolvedTheme } from "../../hooks/useResolvedTheme";
 import {
   CODE_CHROME_TYPOGRAPHY,
   CODE_CHROME_VARS,
   getCodeBlockTheme,
   lineNumberStyle as DEFAULT_LINE_NUMBER_STYLE,
-} from './codeBlockTheme'
+} from "./codeBlockTheme";
 
-type LineNumberStyle = React.CSSProperties
+type LineNumberStyle = React.CSSProperties;
 
 export interface CodeBlockProps {
-  language: string
-  children: string
-  showLineNumbers?: boolean
-  startingLineNumber?: number
+  language: string;
+  children: string;
+  showLineNumbers?: boolean;
+  startingLineNumber?: number;
   /**
    * Override the canonical 2.5em min-width on the line-number gutter.
    * Use '3em' for 4-digit line numbers (file viewers).
    */
-  lineNumberMinWidth?: string
+  lineNumberMinWidth?: string;
   /**
    * Per-line style override. When provided, the callback's return value
    * is merged over the base line-number style (so the diff renderer can
    * tint lines green/red without re-specifying the gutter geometry).
    */
-  lineNumberStyleFn?: (lineNumber: number) => LineNumberStyle
+  lineNumberStyleFn?: (lineNumber: number) => LineNumberStyle;
   /**
    * Per-line wrapper props. Used by DiffBlock to set full-line
    * background tints for added/removed rows.
    */
-  lineProps?: (lineNumber: number) => React.HTMLProps<HTMLElement>
-  wrapLines?: boolean
-  wrapLongLines?: boolean
-  customStyle?: React.CSSProperties
+  lineProps?: (lineNumber: number) => React.HTMLProps<HTMLElement>;
+  wrapLines?: boolean;
+  wrapLongLines?: boolean;
+  customStyle?: React.CSSProperties;
   /**
    * Per-element style override for the inner `<code>` tag. Mirrors
    * `react-syntax-highlighter`'s `codeTagProps`. NOTE: the library
@@ -42,13 +42,13 @@ export interface CodeBlockProps {
    * this value. The theme already renders code in `var(--font-mono)`
    * (`CODE_CHROME_TYPOGRAPHY`), so no font-only override exists.
    */
-  codeTagProps?: React.HTMLProps<HTMLElement>
+  codeTagProps?: React.HTMLProps<HTMLElement>;
   /**
    * Defer SyntaxHighlighter mount until the block scrolls into view.
    * Used by chat-side code blocks for off-screen performance.
    */
-  lazy?: boolean
-  className?: string
+  lazy?: boolean;
+  className?: string;
 }
 
 /**
@@ -74,34 +74,34 @@ export function CodeBlock({
   lazy = false,
   className,
 }: CodeBlockProps) {
-  const [visible, setVisible] = useState(!lazy)
-  const containerRef = useRef<HTMLDivElement>(null)
+  const [visible, setVisible] = useState(!lazy);
+  const containerRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
-    if (!lazy) return
-    const el = containerRef.current
-    if (!el) return
+    if (!lazy) return;
+    const el = containerRef.current;
+    if (!el) return;
     const observer = new IntersectionObserver(
       ([entry]) => {
         if (entry.isIntersecting) {
-          setVisible(true)
-          observer.disconnect()
+          setVisible(true);
+          observer.disconnect();
         }
       },
-      { rootMargin: '200px' },
-    )
-    observer.observe(el)
-    return () => observer.disconnect()
-  }, [lazy])
+      { rootMargin: "200px" },
+    );
+    observer.observe(el);
+    return () => observer.disconnect();
+  }, [lazy]);
 
   const baseLineNumberStyle: LineNumberStyle = {
     ...DEFAULT_LINE_NUMBER_STYLE,
     ...(lineNumberMinWidth ? { minWidth: lineNumberMinWidth } : {}),
-  }
-  const resolvedTheme = useResolvedTheme()
+  };
+  const resolvedTheme = useResolvedTheme();
   const resolvedLineNumberStyle = lineNumberStyleFn
     ? (n: number) => ({ ...baseLineNumberStyle, ...lineNumberStyleFn(n) })
-    : baseLineNumberStyle
+    : baseLineNumberStyle;
 
   if (lazy && !visible) {
     return (
@@ -113,8 +113,8 @@ export function CodeBlock({
             padding: CODE_CHROME_TYPOGRAPHY.padding,
             fontSize: CODE_CHROME_TYPOGRAPHY.fontSize,
             fontFamily: CODE_CHROME_TYPOGRAPHY.fontFamily,
-            color: 'var(--text-primary)',
-            overflow: 'auto',
+            color: "var(--text-primary)",
+            overflow: "auto",
             borderRadius: CODE_CHROME_TYPOGRAPHY.borderRadius,
             ...(customStyle ?? {}),
           }}
@@ -122,15 +122,15 @@ export function CodeBlock({
           <code>{children}</code>
         </pre>
       </div>
-    )
+    );
   }
 
-  const themeStyles = getCodeBlockTheme(resolvedTheme)
+  const themeStyles = getCodeBlockTheme(resolvedTheme);
 
   const wrapper = (
     <SyntaxHighlighter
       style={themeStyles}
-      language={language || 'text'}
+      language={language || "text"}
       PreTag="div"
       showLineNumbers={showLineNumbers}
       startingLineNumber={startingLineNumber}
@@ -143,7 +143,7 @@ export function CodeBlock({
     >
       {children}
     </SyntaxHighlighter>
-  )
+  );
 
   return lazy ? (
     <div ref={containerRef} className={className}>
@@ -153,5 +153,5 @@ export function CodeBlock({
     <div className={className}>{wrapper}</div>
   ) : (
     wrapper
-  )
+  );
 }

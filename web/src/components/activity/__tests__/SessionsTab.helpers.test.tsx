@@ -1,10 +1,7 @@
 import { describe, expect, it } from "vitest";
 import { render } from "@testing-library/react";
 import { renderBadges } from "../SessionsTab.helpers";
-import type {
-  Badge,
-  WatchingSessionEntry,
-} from "../SessionsTab.helpers";
+import type { Badge, WatchingSessionEntry } from "../SessionsTab.helpers";
 import type { AcpSessionInfo } from "../../../types/sessions";
 
 function makeEntry(

@@ -466,7 +466,9 @@ describe("useChatPageProviderState", () => {
     await waitFor(() => {
       expect(proxy.result.current.providerModelCatalog).toHaveLength(2);
       expect(autonomous.result.current.providerModelCatalog).toHaveLength(2);
-      expect(autonomousProxy.result.current.providerModelCatalog).toHaveLength(2);
+      expect(autonomousProxy.result.current.providerModelCatalog).toHaveLength(
+        2,
+      );
     });
   });
 
@@ -627,7 +629,9 @@ describe("useChatPageProviderState", () => {
     const onProviderChange = vi.fn();
     const onModelChange = vi.fn();
     const onReasoningPreferenceChange = vi.fn();
-    const errorSpy = vi.spyOn(console, "error").mockImplementation(() => undefined);
+    const errorSpy = vi
+      .spyOn(console, "error")
+      .mockImplementation(() => undefined);
     const { result } = renderHook(() =>
       useChatPageProviderState({
         chat: createChat({
@@ -929,7 +933,6 @@ describe("useChatPagePlans", () => {
 
     expect(showTab).toHaveBeenCalledWith("plans");
   });
-
 });
 
 describe("useChatPageVoiceStatus", () => {

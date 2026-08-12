@@ -57,15 +57,18 @@ test.describe("Markdown rendering", () => {
   test.beforeEach(async ({ page }) => {
     // Inject test messages into localStorage before the app loads
     // Uses per-conversation storage keys (gobby-chat-<id>) and conversation ID key
-    await page.addInitScript(({ messages, convId, storageKey, convIdKey }) => {
-      localStorage.setItem(convIdKey, convId);
-      localStorage.setItem(storageKey, messages);
-    }, {
-      messages: makeStoredMessages(markdownFixture),
-      convId: CONVERSATION_ID,
-      storageKey: STORAGE_KEY,
-      convIdKey: CONVERSATION_ID_KEY,
-    });
+    await page.addInitScript(
+      ({ messages, convId, storageKey, convIdKey }) => {
+        localStorage.setItem(convIdKey, convId);
+        localStorage.setItem(storageKey, messages);
+      },
+      {
+        messages: makeStoredMessages(markdownFixture),
+        convId: CONVERSATION_ID,
+        storageKey: STORAGE_KEY,
+        convIdKey: CONVERSATION_ID_KEY,
+      },
+    );
     await page.goto("/");
     // Wait for the message content to render
     await page.waitForSelector(".message-content");

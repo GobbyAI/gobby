@@ -14,9 +14,7 @@ import {
   consumePendingProxyMessage,
   removePendingProxyMessageFromQueue,
 } from "./pendingProxyMessages";
-import {
-  toSessionObservationMeta,
-} from "./sessionRecords";
+import { toSessionObservationMeta } from "./sessionRecords";
 import type { UseChatTransportParams } from "./transportTypes";
 
 const UNKNOWN_SESSION_META = {
@@ -105,11 +103,16 @@ export function handleAttachToSessionResult(
   const msgs = (data.messages as ApiMessage[]) || [];
   const mapped: ChatMessage[] = mapApiMessages(msgs);
   // Preserve REST-loaded transcript when re-attaching to viewed session
-  if (ctx.viewingSessionIdRef.current === sid && ctx.messagesRef.current.length > 0) {
+  if (
+    ctx.viewingSessionIdRef.current === sid &&
+    ctx.messagesRef.current.length > 0
+  ) {
     const mappedById = new Map(mapped.map((m) => [m.id, m]));
     // Merge updates into existing messages, then append truly new ones
     const existingIds = new Set(ctx.messagesRef.current.map((m) => m.id));
-    const merged = ctx.messagesRef.current.map((m) => mappedById.get(m.id) ?? m);
+    const merged = ctx.messagesRef.current.map(
+      (m) => mappedById.get(m.id) ?? m,
+    );
     const newMsgs = mapped.filter((m) => !existingIds.has(m.id));
     const hasMergedChanges = merged.some(
       (message, index) => message !== ctx.messagesRef.current[index],
@@ -281,7 +284,8 @@ export function handleCliSessionSendResult(
 ) {
   const clientMessageId =
     typeof data.client_message_id === "string" ? data.client_message_id : null;
-  const messageId = typeof data.message_id === "string" ? data.message_id : null;
+  const messageId =
+    typeof data.message_id === "string" ? data.message_id : null;
   let matchesPendingMessage = clientMessageId === null;
   if (clientMessageId) {
     const pendingProxyMessage =
@@ -317,7 +321,9 @@ export function handleCliSessionSendResult(
   }
   if (matchesPendingMessage) {
     ctx.setProxyDeliveryNotice(
-      data.delivered === false ? "Message queued until the session yields." : null,
+      data.delivered === false
+        ? "Message queued until the session yields."
+        : null,
     );
   }
   if (import.meta.env.DEV) {

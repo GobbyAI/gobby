@@ -27,7 +27,10 @@ interface TaskTreeRowProps {
   isBusy: boolean;
   onSelect: (taskId: string) => void;
   onToggleOpen: (taskId: string) => void;
-  onMenuButtonClick: (event: MouseEvent<HTMLButtonElement>, task: GobbyTask) => void;
+  onMenuButtonClick: (
+    event: MouseEvent<HTMLButtonElement>,
+    task: GobbyTask,
+  ) => void;
   setRowRef: (taskId: string, node: HTMLDivElement | null) => void;
   tabIndex: number;
   onRowKeyDown: (taskId: string, event: KeyboardEvent<HTMLDivElement>) => void;
@@ -89,11 +92,11 @@ function TaskTreeRowComponent({
   onRowKeyDown,
 }: TaskTreeRowProps) {
   const task = row.node.task;
-  const { taskState, displayState, stateSummary, failed } = deriveSafeTaskState(task);
+  const { taskState, displayState, stateSummary, failed } =
+    deriveSafeTaskState(task);
   const currentStage = taskState.current_stage;
   const priority = task.priority ?? DEFAULT_TASK_PRIORITY;
-  const textColor =
-    PRIORITY_TEXT_COLORS[priority] ?? "var(--text-secondary)";
+  const textColor = PRIORITY_TEXT_COLORS[priority] ?? "var(--text-secondary)";
   const textWeight =
     PRIORITY_TEXT_WEIGHTS[priority] ?? "var(--font-weight-normal)";
   const ref = task.seq_num != null ? `#${task.seq_num}` : null;
@@ -108,8 +111,7 @@ function TaskTreeRowComponent({
       }}
       className={cn(
         "flex min-h-[var(--activity-panel-row-height)] w-full cursor-pointer items-center gap-[0.45rem] py-[0.35rem] pr-[0.35rem] text-left text-[length:var(--text-base)] text-inherit transition-colors hover:bg-[var(--bg-tertiary)] pointer-coarse:min-h-11 pointer-coarse:min-w-11",
-        isSelected &&
-          "bg-[color-mix(in_srgb,var(--accent)_8%,transparent)]",
+        isSelected && "bg-[color-mix(in_srgb,var(--accent)_8%,transparent)]",
         displayState === "closed" && "opacity-[0.72]",
       )}
       role="treeitem"
@@ -167,7 +169,7 @@ function TaskTreeRowComponent({
         </span>
       )}
       <span
-        className="min-w-0 flex-1 truncate text-[length:var(--text-base)] font-[var(--font-weight-medium)] leading-[1.3] text-[var(--text-primary)]"
+        className="min-w-0 flex-1 truncate text-[length:var(--text-base)] leading-[1.3] font-[var(--font-weight-medium)] text-[var(--text-primary)]"
         data-task-row-title
         style={{ color: textColor, fontWeight: textWeight }}
       >
@@ -178,7 +180,7 @@ function TaskTreeRowComponent({
       </span>
       {currentStage && (
         <span
-          className="inline-flex h-[1.15rem] min-w-0 max-w-[7.5rem] flex-[0_1_auto] items-center gap-1 rounded-[0.35rem] border border-border bg-[color-mix(in_srgb,var(--bg-secondary)_82%,transparent)] px-[0.35rem] text-[length:var(--text-2xs)] font-medium leading-none text-[var(--text-secondary)]"
+          className="inline-flex h-[1.15rem] max-w-[7.5rem] min-w-0 flex-[0_1_auto] items-center gap-1 rounded-[0.35rem] border border-border bg-[color-mix(in_srgb,var(--bg-secondary)_82%,transparent)] px-[0.35rem] text-[length:var(--text-2xs)] leading-none font-medium text-[var(--text-secondary)]"
           data-task-row-stage
           title={stateSummary}
         >
@@ -187,9 +189,7 @@ function TaskTreeRowComponent({
             style={{ backgroundColor: getStageStateColor(currentStage.state) }}
             aria-hidden="true"
           />
-          <span className="min-w-0 truncate">
-            {currentStage.display_name}
-          </span>
+          <span className="min-w-0 truncate">{currentStage.display_name}</span>
         </span>
       )}
       <Button

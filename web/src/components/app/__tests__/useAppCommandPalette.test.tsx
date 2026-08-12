@@ -1,9 +1,9 @@
-import { act, renderHook } from '@testing-library/react'
-import { afterEach, describe, expect, it, vi } from 'vitest'
+import { act, renderHook } from "@testing-library/react";
+import { afterEach, describe, expect, it, vi } from "vitest";
 
-import { ACTIVITY_PANEL_TABS } from '../../activity/ActivityPanelTabs'
-import { RESTART_TIMEOUT_MS } from '../../../lib/api'
-import { useAppCommandPalette } from '../useAppCommandPalette'
+import { ACTIVITY_PANEL_TABS } from "../../activity/ActivityPanelTabs";
+import { RESTART_TIMEOUT_MS } from "../../../lib/api";
+import { useAppCommandPalette } from "../useAppCommandPalette";
 
 function makeHookArgs(addSystemMessage = vi.fn()) {
   return {
@@ -11,11 +11,11 @@ function makeHookArgs(addSystemMessage = vi.fn()) {
     clearHistory: vi.fn(),
     sendMessage: vi.fn(() => true),
     settings: {
-      model: 'claude-sonnet',
-      chatMode: 'normal' as const,
+      model: "claude-sonnet",
+      chatMode: "normal" as const,
       ttsEnabled: false,
     },
-    effectiveProjectId: 'project-1',
+    effectiveProjectId: "project-1",
     currentMainReasoning: null,
     updateChatMode: vi.fn(),
     sendMode: vi.fn(),
@@ -25,115 +25,127 @@ function makeHookArgs(addSystemMessage = vi.fn()) {
     setResumeModalOpen: vi.fn(),
     showPlanRef: { current: vi.fn() },
     openActivityTab: vi.fn(),
-  }
+  };
 }
 
-describe('useAppCommandPalette', () => {
+describe("useAppCommandPalette", () => {
   afterEach(() => {
-    vi.useRealTimers()
-    vi.unstubAllGlobals()
-  })
+    vi.useRealTimers();
+    vi.unstubAllGlobals();
+  });
 
-  it('treats a restart request abort as an accepted daemon restart', async () => {
-    vi.useFakeTimers()
-    const addSystemMessage = vi.fn()
-    let capturedSignal: AbortSignal | undefined
-    const fetchMock = vi.fn((_url: string | URL | Request, init?: RequestInit) => {
-      capturedSignal = init?.signal ?? undefined
-      return new Promise<Response>((_resolve, reject) => {
-        capturedSignal?.addEventListener(
-          'abort',
-          () => reject(new DOMException('aborted', 'AbortError')),
-          { once: true },
-        )
-      })
-    })
-    vi.stubGlobal('fetch', fetchMock)
+  it("treats a restart request abort as an accepted daemon restart", async () => {
+    vi.useFakeTimers();
+    const addSystemMessage = vi.fn();
+    let capturedSignal: AbortSignal | undefined;
+    const fetchMock = vi.fn(
+      (_url: string | URL | Request, init?: RequestInit) => {
+        capturedSignal = init?.signal ?? undefined;
+        return new Promise<Response>((_resolve, reject) => {
+          capturedSignal?.addEventListener(
+            "abort",
+            () => reject(new DOMException("aborted", "AbortError")),
+            { once: true },
+          );
+        });
+      },
+    );
+    vi.stubGlobal("fetch", fetchMock);
 
-    const { result } = renderHook(() => useAppCommandPalette(makeHookArgs(addSystemMessage)))
-    const restartAction = result.current.commandPaletteActions.find((action) => action.id === 'restart')
+    const { result } = renderHook(() =>
+      useAppCommandPalette(makeHookArgs(addSystemMessage)),
+    );
+    const restartAction = result.current.commandPaletteActions.find(
+      (action) => action.id === "restart",
+    );
 
     act(() => {
-      restartAction?.onSelect()
-    })
+      restartAction?.onSelect();
+    });
 
     expect(fetchMock).toHaveBeenCalledWith(
-      '/api/admin/restart',
+      "/api/admin/restart",
       expect.objectContaining({
-        credentials: 'include',
-        method: 'POST',
+        credentials: "include",
+        method: "POST",
         signal: expect.any(AbortSignal),
       }),
-    )
-    expect(capturedSignal).toBeInstanceOf(AbortSignal)
+    );
+    expect(capturedSignal).toBeInstanceOf(AbortSignal);
 
     await act(async () => {
-      await vi.advanceTimersByTimeAsync(RESTART_TIMEOUT_MS)
-      await Promise.resolve()
-    })
+      await vi.advanceTimersByTimeAsync(RESTART_TIMEOUT_MS);
+      await Promise.resolve();
+    });
 
-    expect(addSystemMessage).toHaveBeenCalledTimes(2)
-    expect(addSystemMessage).toHaveBeenCalledWith('Requesting daemon restart...')
-    expect(addSystemMessage).toHaveBeenCalledWith('Daemon restart requested; reconnecting...')
-    expect(addSystemMessage).not.toHaveBeenCalledWith('Failed to restart daemon')
-  })
+    expect(addSystemMessage).toHaveBeenCalledTimes(2);
+    expect(addSystemMessage).toHaveBeenCalledWith(
+      "Requesting daemon restart...",
+    );
+    expect(addSystemMessage).toHaveBeenCalledWith(
+      "Daemon restart requested; reconnecting...",
+    );
+    expect(addSystemMessage).not.toHaveBeenCalledWith(
+      "Failed to restart daemon",
+    );
+  });
 
-  it('routes legacy MCP browse commands to the MCP activity tab', () => {
-    const args = makeHookArgs()
-    const { result } = renderHook(() => useAppCommandPalette(args))
-
-    act(() => {
-      result.current.handlePaletteSelect({
-        kind: 'command',
-        name: 'mcp',
-        description: 'Open MCP activity',
-        action: 'open_mcp',
-      })
-    })
-
-    expect(args.openActivityTab).toHaveBeenCalledWith('mcp')
-    expect(args.setActiveModal).not.toHaveBeenCalledWith('mcp')
-  })
-
-  it('opens the settings overlay exactly once from both settings actions', () => {
-    const args = makeHookArgs()
-    const { result } = renderHook(() => useAppCommandPalette(args))
+  it("routes legacy MCP browse commands to the MCP activity tab", () => {
+    const args = makeHookArgs();
+    const { result } = renderHook(() => useAppCommandPalette(args));
 
     act(() => {
       result.current.handlePaletteSelect({
-        kind: 'command',
-        name: 'settings',
-        description: 'Open settings',
-        action: 'open_settings',
-      })
-    })
-    expect(args.settingsOverlay.open).toHaveBeenCalledOnce()
+        kind: "command",
+        name: "mcp",
+        description: "Open MCP activity",
+        action: "open_mcp",
+      });
+    });
 
-    args.settingsOverlay.open.mockClear()
+    expect(args.openActivityTab).toHaveBeenCalledWith("mcp");
+    expect(args.setActiveModal).not.toHaveBeenCalledWith("mcp");
+  });
+
+  it("opens the settings overlay exactly once from both settings actions", () => {
+    const args = makeHookArgs();
+    const { result } = renderHook(() => useAppCommandPalette(args));
+
+    act(() => {
+      result.current.handlePaletteSelect({
+        kind: "command",
+        name: "settings",
+        description: "Open settings",
+        action: "open_settings",
+      });
+    });
+    expect(args.settingsOverlay.open).toHaveBeenCalledOnce();
+
+    args.settingsOverlay.open.mockClear();
     const settingsAction = result.current.commandPaletteActions.find(
-      (action) => action.id === 'settings',
-    )
-    act(() => settingsAction?.onSelect())
+      (action) => action.id === "settings",
+    );
+    act(() => settingsAction?.onSelect());
 
-    expect(args.settingsOverlay.open).toHaveBeenCalledOnce()
-  })
+    expect(args.settingsOverlay.open).toHaveBeenCalledOnce();
+  });
 
-  it('derives activity navigation actions from the activity tab registry', () => {
-    const args = makeHookArgs()
-    const { result } = renderHook(() => useAppCommandPalette(args))
+  it("derives activity navigation actions from the activity tab registry", () => {
+    const args = makeHookArgs();
+    const { result } = renderHook(() => useAppCommandPalette(args));
     const navigationActions = result.current.commandPaletteActions.filter(
-      (action) => action.category === 'navigate',
-    )
+      (action) => action.category === "navigate",
+    );
 
     expect(navigationActions.map(({ id, label }) => ({ id, label }))).toEqual(
       ACTIVITY_PANEL_TABS.map(({ id, label }) => ({ id: `nav-${id}`, label })),
-    )
+    );
 
     for (const tab of ACTIVITY_PANEL_TABS) {
-      const action = navigationActions.find(({ id }) => id === `nav-${tab.id}`)
+      const action = navigationActions.find(({ id }) => id === `nav-${tab.id}`);
 
-      act(() => action?.onSelect())
-      expect(args.openActivityTab).toHaveBeenLastCalledWith(tab.id)
+      act(() => action?.onSelect());
+      expect(args.openActivityTab).toHaveBeenLastCalledWith(tab.id);
     }
-  })
-})
+  });
+});

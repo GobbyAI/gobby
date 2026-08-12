@@ -34,7 +34,8 @@ export function McpQuickMenu({
           ...(menu.isExternal
             ? [
                 {
-                  label: menu.enabled === false ? "Enable server" : "Disable server",
+                  label:
+                    menu.enabled === false ? "Enable server" : "Disable server",
                   onSelect: onToggleEnabled,
                 },
                 {
@@ -54,7 +55,9 @@ export function McpQuickMenu({
         width: menu.width ?? 0,
         height: menu.height ?? 0,
       }}
-      menuLabel={menu.kind === "tool" ? "MCP tool actions" : "MCP server actions"}
+      menuLabel={
+        menu.kind === "tool" ? "MCP tool actions" : "MCP server actions"
+      }
       items={items}
       onClose={onClose}
     />

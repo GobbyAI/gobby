@@ -40,7 +40,8 @@ export const IntegrationsTab = memo(function IntegrationsTab() {
   const [channels, setChannels] = useState<Channel[]>([]);
   const [isLoading, setIsLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
-  const [communicationsUnavailable, setCommunicationsUnavailable] = useState(false);
+  const [communicationsUnavailable, setCommunicationsUnavailable] =
+    useState(false);
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const [busyId, setBusyId] = useState<string | null>(null);
   const [isCreating, setIsCreating] = useState(false);
@@ -61,7 +62,11 @@ export const IntegrationsTab = memo(function IntegrationsTab() {
       if (isCommunicationsUnavailable(loadError)) {
         setCommunicationsUnavailable(true);
       } else {
-        setError(loadError instanceof Error ? loadError.message : "Failed to load integrations");
+        setError(
+          loadError instanceof Error
+            ? loadError.message
+            : "Failed to load integrations",
+        );
       }
       setChannels([]);
       return [];
@@ -94,7 +99,10 @@ export const IntegrationsTab = memo(function IntegrationsTab() {
       if (selectedId !== null) setSelectedId(null);
       return;
     }
-    if (!selectedId || !filteredChannels.some((channel) => channel.id === selectedId)) {
+    if (
+      !selectedId ||
+      !filteredChannels.some((channel) => channel.id === selectedId)
+    ) {
       setSelectedId(filteredChannels[0].id);
     }
   }, [filteredChannels, isCreating, selectedId]);
@@ -102,7 +110,9 @@ export const IntegrationsTab = memo(function IntegrationsTab() {
   const replaceChannel = useCallback((updated: Channel) => {
     setChannels((current) =>
       current.some((channel) => channel.id === updated.id)
-        ? current.map((channel) => (channel.id === updated.id ? updated : channel))
+        ? current.map((channel) =>
+            channel.id === updated.id ? updated : channel,
+          )
         : [updated, ...current],
     );
     setSelectedId(updated.id);
@@ -110,17 +120,24 @@ export const IntegrationsTab = memo(function IntegrationsTab() {
     setViewMode("config");
   }, []);
 
-  const withChannelBusy = useCallback(async (channel: Channel, action: () => Promise<void>) => {
-    setBusyId(channel.id);
-    setError(null);
-    try {
-      await action();
-    } catch (actionError) {
-      setError(actionError instanceof Error ? actionError.message : String(actionError));
-    } finally {
-      setBusyId(null);
-    }
-  }, []);
+  const withChannelBusy = useCallback(
+    async (channel: Channel, action: () => Promise<void>) => {
+      setBusyId(channel.id);
+      setError(null);
+      try {
+        await action();
+      } catch (actionError) {
+        setError(
+          actionError instanceof Error
+            ? actionError.message
+            : String(actionError),
+        );
+      } finally {
+        setBusyId(null);
+      }
+    },
+    [],
+  );
 
   const handleSelect = useCallback((channel: Channel) => {
     confirmLeaveRef.current(() => {
@@ -145,7 +162,9 @@ export const IntegrationsTab = memo(function IntegrationsTab() {
         replaceChannel(saved);
         return true;
       } catch (saveError) {
-        setError(saveError instanceof Error ? saveError.message : String(saveError));
+        setError(
+          saveError instanceof Error ? saveError.message : String(saveError),
+        );
         return false;
       }
     },
@@ -192,7 +211,8 @@ export const IntegrationsTab = memo(function IntegrationsTab() {
     setSearchOpen(true);
   };
   const activeFilterCount =
-    (filters.channelType === "all" ? 0 : 1) + (filters.status === "all" ? 0 : 1);
+    (filters.channelType === "all" ? 0 : 1) +
+    (filters.status === "all" ? 0 : 1);
 
   useRegisterActivityActions(
     {
@@ -225,7 +245,10 @@ export const IntegrationsTab = memo(function IntegrationsTab() {
         />
       )}
       {showFilters && (
-        <IntegrationsFilterPanel filters={filters} onFiltersChange={setFilters} />
+        <IntegrationsFilterPanel
+          filters={filters}
+          onFiltersChange={setFilters}
+        />
       )}
 
       {error && (
@@ -243,7 +266,11 @@ export const IntegrationsTab = memo(function IntegrationsTab() {
 
       <div className="flex min-h-0 flex-1 flex-col">
         <div
-          className={hasDetail ? "overflow-y-auto border-b border-border" : "flex-1 overflow-y-auto"}
+          className={
+            hasDetail
+              ? "overflow-y-auto border-b border-border"
+              : "flex-1 overflow-y-auto"
+          }
           style={hasDetail ? { height: `${topHeight}%` } : undefined}
         >
           {isLoading && channels.length === 0 ? (
@@ -259,7 +286,8 @@ export const IntegrationsTab = memo(function IntegrationsTab() {
               body="Start the communications manager before managing notification channels."
               footer={
                 <span className="text-xs text-muted-foreground">
-                  Configuration must expose /api/comms/channels before channels can load.
+                  Configuration must expose /api/comms/channels before channels
+                  can load.
                 </span>
               }
             />

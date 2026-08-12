@@ -4,7 +4,13 @@
  * through MarkdownBody with wikilink navigation and mermaid diagrams.
  */
 
-import { useEffect, useMemo, useState, type MouseEvent, type ReactNode } from "react";
+import {
+  useEffect,
+  useMemo,
+  useState,
+  type MouseEvent,
+  type ReactNode,
+} from "react";
 import type { Components } from "react-markdown";
 import type { PluggableList } from "unified";
 
@@ -50,7 +56,11 @@ function Chevron({ direction }: { direction: "left" | "right" }) {
       strokeWidth="1.5"
       aria-hidden="true"
     >
-      {direction === "left" ? <path d="M10 3 5 8l5 5" /> : <path d="M6 3l5 5-5 5" />}
+      {direction === "left" ? (
+        <path d="M10 3 5 8l5 5" />
+      ) : (
+        <path d="M6 3l5 5-5 5" />
+      )}
     </svg>
   );
 }
@@ -60,12 +70,15 @@ function Chevron({ direction }: { direction: "left" | "right" }) {
 function stripLeadingTitleHeading(body: string, title: string): string {
   const match = /^\s*#\s+(.+?)\s*\r?\n/.exec(body);
   if (!match) return body;
-  if (match[1]?.trim().toLowerCase() !== title.trim().toLowerCase()) return body;
+  if (match[1]?.trim().toLowerCase() !== title.trim().toLowerCase())
+    return body;
   return body.slice(match[0].length).replace(/^\r?\n/, "");
 }
 
 /** Wikilink targets under a `## Citations` heading, in document order. */
-function citationsFromBody(body: string): Array<{ target: string; label: string }> {
+function citationsFromBody(
+  body: string,
+): Array<{ target: string; label: string }> {
   const section = /^##\s+Citations\s*$/m.exec(body);
   if (!section) return [];
   const rest = body.slice(section.index + section[0].length);
@@ -119,17 +132,22 @@ export function WikiPageReader({
   } | null>(null);
   // Keyed to the request so a navigation clears the notice by derivation —
   // no reset effect (react-hooks/set-state-in-effect).
-  const [missing, setMissing] = useState<{ key: string; target: string } | null>(null);
+  const [missing, setMissing] = useState<{
+    key: string;
+    target: string;
+  } | null>(null);
 
   useEffect(() => {
     let cancelled = false;
     fetchPage(scope, { path })
       .then((detail) => {
-        if (!cancelled) setResult({ key: requestKey, state: { status: "ready", detail } });
+        if (!cancelled)
+          setResult({ key: requestKey, state: { status: "ready", detail } });
       })
       .catch((error: unknown) => {
         if (!cancelled) {
-          const message = error instanceof Error ? error.message : "Failed to read page";
+          const message =
+            error instanceof Error ? error.message : "Failed to read page";
           setResult({ key: requestKey, state: { status: "error", message } });
         }
       });
@@ -140,7 +158,8 @@ export function WikiPageReader({
 
   const state: ReadState =
     result && result.key === requestKey ? result.state : { status: "loading" };
-  const missingTarget = missing && missing.key === requestKey ? missing.target : null;
+  const missingTarget =
+    missing && missing.key === requestKey ? missing.target : null;
 
   const remarkPlugins = useMemo<PluggableList>(
     () => [
@@ -169,7 +188,9 @@ export function WikiPageReader({
             </Anchor>
           );
         }
-        const rawTarget = decodeURIComponent(href.slice(WIKILINK_PREFIX.length));
+        const rawTarget = decodeURIComponent(
+          href.slice(WIKILINK_PREFIX.length),
+        );
         const pagePart = rawTarget.split("#")[0] ?? "";
         const handleClick = (event: MouseEvent<HTMLAnchorElement>) => {
           event.preventDefault();
@@ -184,7 +205,9 @@ export function WikiPageReader({
           <a
             href={href}
             {...rest}
-            title={targetMeta ? `${targetMeta.title} — ${targetMeta.path}` : pagePart}
+            title={
+              targetMeta ? `${targetMeta.title} — ${targetMeta.path}` : pagePart
+            }
             onClick={handleClick}
           >
             {children}
@@ -203,11 +226,15 @@ export function WikiPageReader({
       : null;
   const tags =
     detail && Array.isArray(detail.frontmatter.tags)
-      ? detail.frontmatter.tags.filter((tag): tag is string => typeof tag === "string")
+      ? detail.frontmatter.tags.filter(
+          (tag): tag is string => typeof tag === "string",
+        )
       : [];
   const crumbs = breadcrumbSegments(path);
   const title =
-    (detail && typeof detail.frontmatter.title === "string" && detail.frontmatter.title) ||
+    (detail &&
+      typeof detail.frontmatter.title === "string" &&
+      detail.frontmatter.title) ||
     detail?.title ||
     crumbs[crumbs.length - 1]?.label ||
     path;
@@ -220,7 +247,9 @@ export function WikiPageReader({
     if (!graph || !detail?.path) return [];
     const nodeById = new Map(graph.nodes.map((node) => [node.id, node]));
     const pageNodeIds = new Set(
-      graph.nodes.filter((node) => node.path === detail.path).map((node) => node.id),
+      graph.nodes
+        .filter((node) => node.path === detail.path)
+        .map((node) => node.id),
     );
     return graph.edges
       .filter((edge) => edge.kind === "trust" && pageNodeIds.has(edge.source))
@@ -238,9 +267,17 @@ export function WikiPageReader({
   const kebabItems: QuickMenuItem[] = [
     { label: "Open in graph", onSelect: onOpenGraph },
     ...(onCreate && !readOnly
-      ? [{ label: "New page", onSelect: () => onCreate(path.replace(/[^/]*$/, "")) }]
+      ? [
+          {
+            label: "New page",
+            onSelect: () => onCreate(path.replace(/[^/]*$/, "")),
+          },
+        ]
       : []),
-    { label: "Copy path", onSelect: () => void navigator.clipboard?.writeText(path) },
+    {
+      label: "Copy path",
+      onSelect: () => void navigator.clipboard?.writeText(path),
+    },
     ...(sourcePath
       ? [
           {
@@ -281,13 +318,21 @@ export function WikiPageReader({
         >
           <Chevron direction="right" />
         </Button>
-        <nav aria-label="Breadcrumbs" className="flex min-w-0 items-center gap-1 px-1">
+        <nav
+          aria-label="Breadcrumbs"
+          className="flex min-w-0 items-center gap-1 px-1"
+        >
           {segments.map((segment, index) => {
             const isLeaf = index === segments.length - 1;
             const isMiddle = !isLeaf && index > 0 && segments.length > 3;
             return (
-              <span key={segment.prefix} className="flex min-w-0 items-center gap-1 text-xs">
-                {index > 0 ? <span className="text-muted-foreground">/</span> : null}
+              <span
+                key={segment.prefix}
+                className="flex min-w-0 items-center gap-1 text-xs"
+              >
+                {index > 0 ? (
+                  <span className="text-muted-foreground">/</span>
+                ) : null}
                 <span
                   className={`truncate ${
                     isLeaf ? "text-foreground" : "text-muted-foreground"
@@ -312,7 +357,11 @@ export function WikiPageReader({
               Edit
             </Button>
           ) : null}
-          <QuickMenu items={kebabItems} menuLabel="Page actions" triggerLabel="Page actions" />
+          <QuickMenu
+            items={kebabItems}
+            menuLabel="Page actions"
+            triggerLabel="Page actions"
+          />
         </div>
       </div>
 
@@ -351,7 +400,9 @@ export function WikiPageReader({
 
         {detail && detail.status === "ambiguous" ? (
           <div className="px-4 py-6">
-            <p className="text-sm text-foreground">Multiple pages match this reference:</p>
+            <p className="text-sm text-foreground">
+              Multiple pages match this reference:
+            </p>
             <ul className="mt-2 flex list-none flex-col gap-1">
               {detail.candidates.map((candidate) => (
                 <li key={candidate.path}>
@@ -373,10 +424,14 @@ export function WikiPageReader({
           </div>
         ) : null}
 
-        {detail && detail.status !== "not_found" && detail.status !== "ambiguous" ? (
+        {detail &&
+        detail.status !== "not_found" &&
+        detail.status !== "ambiguous" ? (
           <div className="max-w-[70ch] px-4 py-4">
             <header className="mb-3 flex flex-col gap-2">
-              <h1 className="text-2xl font-semibold text-foreground">{title}</h1>
+              <h1 className="text-2xl font-semibold text-foreground">
+                {title}
+              </h1>
               {sourceKind || tags.length > 0 ? (
                 <div className="flex flex-wrap items-center gap-1.5">
                   {sourceKind ? (
@@ -396,7 +451,9 @@ export function WikiPageReader({
               ) : null}
               {frontmatterEntries.length > 0 ? (
                 <details className="text-xs text-muted-foreground">
-                  <summary className="cursor-pointer select-none">Details</summary>
+                  <summary className="cursor-pointer select-none">
+                    Details
+                  </summary>
                   <pre className="mt-1 overflow-x-auto rounded-md bg-muted/50 p-2 font-mono text-2xs">
                     {frontmatterEntries
                       .map(([key, value]) => `${key}: ${JSON.stringify(value)}`)
@@ -438,8 +495,11 @@ export function WikiPageReader({
             </div>
 
             {citations.length > 0 || trustSources.length > 0 ? (
-              <section aria-label="Sources" className="mt-6 border-t border-border pt-3">
-                <h2 className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">
+              <section
+                aria-label="Sources"
+                className="mt-6 border-t border-border pt-3"
+              >
+                <h2 className="text-xs font-semibold tracking-wide text-muted-foreground uppercase">
                   Sources
                 </h2>
                 <ul className="mt-2 flex list-none flex-wrap gap-1.5">
@@ -451,9 +511,16 @@ export function WikiPageReader({
                         size="sm"
                         className={coarseHitAreaCls}
                         onClick={() => {
-                          const resolved = resolveWikilinkTarget(nodeIndex, citation.target);
+                          const resolved = resolveWikilinkTarget(
+                            nodeIndex,
+                            citation.target,
+                          );
                           if (resolved) void nav.openPage(resolved);
-                          else setMissing({ key: requestKey, target: citation.target });
+                          else
+                            setMissing({
+                              key: requestKey,
+                              target: citation.target,
+                            });
                         }}
                       >
                         {citation.label}
@@ -461,7 +528,9 @@ export function WikiPageReader({
                     </li>
                   ))}
                   {trustSources
-                    .filter((node) => !citations.some((c) => c.label === node.title))
+                    .filter(
+                      (node) => !citations.some((c) => c.label === node.title),
+                    )
                     .map((node) => (
                       <li key={node.id}>
                         <span className="rounded-md border border-border px-1.5 py-0.5 text-xs text-muted-foreground">

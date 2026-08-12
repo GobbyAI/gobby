@@ -1,17 +1,17 @@
-import { useId, useMemo, useState } from 'react'
+import { useId, useMemo, useState } from "react";
 import {
   DetailActionButton,
   SecretField,
   SelectField,
   TextField,
-} from '../../activity/fields'
-import type { FieldOption } from '../../activity/fields'
-import { Button } from '../../ui/Button'
-import { SecretConfigField, Subsection } from './configFields'
-import { SettingsSection } from './SettingsSection'
-import type { SettingsSectionFields } from './SettingsSection'
-import { useSettingsSectionContext } from './SettingsSectionContext'
-import type { SecretInfo } from '../../../hooks/useConfiguration'
+} from "../../activity/fields";
+import type { FieldOption } from "../../activity/fields";
+import { Button } from "../../ui/Button";
+import { SecretConfigField, Subsection } from "./configFields";
+import { SettingsSection } from "./SettingsSection";
+import type { SettingsSectionFields } from "./SettingsSection";
+import { useSettingsSectionContext } from "./SettingsSectionContext";
+import type { SecretInfo } from "../../../hooks/useConfiguration";
 
 /**
  * Secrets & Auth settings section (audit IA section 13.2). Two surfaces live
@@ -29,27 +29,31 @@ import type { SecretInfo } from '../../../hooks/useConfiguration'
  */
 
 const OWNED_PATHS: readonly string[] = [
-  'ai.embeddings.api_key',
-  'databases.qdrant.api_key',
-  'databases.falkordb.password',
-]
+  "ai.embeddings.api_key",
+  "databases.qdrant.api_key",
+  "databases.falkordb.password",
+];
 
-const DEFAULT_CATEGORY = 'general'
+const DEFAULT_CATEGORY = "general";
 
 // Always offer `general`, then any server-known categories, de-duplicated and
 // order-stable so the new-secret select never renders an empty option set.
 function categoryOptions(categories: string[]): FieldOption[] {
-  const seen = new Set<string>()
-  const options: FieldOption[] = []
+  const seen = new Set<string>();
+  const options: FieldOption[] = [];
   for (const category of [DEFAULT_CATEGORY, ...categories]) {
-    if (!category || seen.has(category)) continue
-    seen.add(category)
-    options.push({ value: category, label: category })
+    if (!category || seen.has(category)) continue;
+    seen.add(category);
+    options.push({ value: category, label: category });
   }
-  return options
+  return options;
 }
 
-function ServiceCredentialsGroup({ fields }: { fields: SettingsSectionFields }) {
+function ServiceCredentialsGroup({
+  fields,
+}: {
+  fields: SettingsSectionFields;
+}) {
   return (
     <Subsection
       title="Service credentials"
@@ -80,19 +84,19 @@ function ServiceCredentialsGroup({ fields }: { fields: SettingsSectionFields }) 
         nullable
       />
     </Subsection>
-  )
+  );
 }
 
 interface SecretStoreGroupProps {
-  secrets: SecretInfo[]
-  categories: string[]
+  secrets: SecretInfo[];
+  categories: string[];
   onSave?: (
     name: string,
     value: string,
     category?: string,
     description?: string,
-  ) => Promise<boolean>
-  onDelete?: (name: string) => Promise<boolean>
+  ) => Promise<boolean>;
+  onDelete?: (name: string) => Promise<boolean>;
 }
 
 function SecretStoreGroup({
@@ -101,17 +105,17 @@ function SecretStoreGroup({
   onSave,
   onDelete,
 }: SecretStoreGroupProps) {
-  const labelId = useId()
-  const [open, setOpen] = useState(false)
-  const [editingName, setEditingName] = useState<string | null>(null)
-  const [name, setName] = useState('')
-  const [secretValue, setSecretValue] = useState('')
-  const [category, setCategory] = useState(DEFAULT_CATEGORY)
-  const [description, setDescription] = useState('')
-  const [busy, setBusy] = useState(false)
-  const [error, setError] = useState<string | null>(null)
+  const labelId = useId();
+  const [open, setOpen] = useState(false);
+  const [editingName, setEditingName] = useState<string | null>(null);
+  const [name, setName] = useState("");
+  const [secretValue, setSecretValue] = useState("");
+  const [category, setCategory] = useState(DEFAULT_CATEGORY);
+  const [description, setDescription] = useState("");
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState<string | null>(null);
 
-  const options = useMemo(() => categoryOptions(categories), [categories])
+  const options = useMemo(() => categoryOptions(categories), [categories]);
 
   // The store is a standalone surface; without its write handlers there is
   // nothing actionable to render, so degrade to a notice (the auth and service
@@ -126,75 +130,77 @@ function SecretStoreGroup({
           The secret store is unavailable.
         </p>
       </Subsection>
-    )
+    );
   }
 
   const resetForm = () => {
-    setOpen(false)
-    setEditingName(null)
-    setName('')
-    setSecretValue('')
-    setCategory(DEFAULT_CATEGORY)
-    setDescription('')
-    setError(null)
-  }
+    setOpen(false);
+    setEditingName(null);
+    setName("");
+    setSecretValue("");
+    setCategory(DEFAULT_CATEGORY);
+    setDescription("");
+    setError(null);
+  };
 
   const openAdd = () => {
-    resetForm()
-    setOpen(true)
-  }
+    resetForm();
+    setOpen(true);
+  };
 
   const openEdit = (secret: SecretInfo) => {
-    setEditingName(secret.name)
-    setName(secret.name)
-    setSecretValue('')
-    setCategory(secret.category || DEFAULT_CATEGORY)
-    setDescription(secret.description ?? '')
-    setError(null)
-    setOpen(true)
-  }
+    setEditingName(secret.name);
+    setName(secret.name);
+    setSecretValue("");
+    setCategory(secret.category || DEFAULT_CATEGORY);
+    setDescription(secret.description ?? "");
+    setError(null);
+    setOpen(true);
+  };
 
-  const canSubmit = name.trim() !== '' && secretValue.trim() !== ''
+  const canSubmit = name.trim() !== "" && secretValue.trim() !== "";
 
   const handleSubmit = async () => {
-    if (!canSubmit) return
-    setBusy(true)
-    setError(null)
+    if (!canSubmit) return;
+    setBusy(true);
+    setError(null);
     try {
       const ok = await onSave(
         name.trim(),
         secretValue,
         category,
         description.trim() || undefined,
-      )
-      if (ok) resetForm()
-      else setError('Could not save the secret.')
+      );
+      if (ok) resetForm();
+      else setError("Could not save the secret.");
     } catch (err) {
-      setError(err instanceof Error ? err.message : 'Could not save the secret.')
+      setError(
+        err instanceof Error ? err.message : "Could not save the secret.",
+      );
     } finally {
-      setBusy(false)
+      setBusy(false);
     }
-  }
+  };
 
   const handleDelete = async (secretName: string) => {
     if (
       !window.confirm(`Delete secret "${secretName}"? This cannot be undone.`)
     ) {
-      return
+      return;
     }
-    setBusy(true)
-    setError(null)
+    setBusy(true);
+    setError(null);
     try {
-      const ok = await onDelete(secretName)
-      if (!ok) setError('Could not delete the secret.')
+      const ok = await onDelete(secretName);
+      if (!ok) setError("Could not delete the secret.");
     } catch (err) {
       setError(
-        err instanceof Error ? err.message : 'Could not delete the secret.',
-      )
+        err instanceof Error ? err.message : "Could not delete the secret.",
+      );
     } finally {
-      setBusy(false)
+      setBusy(false);
     }
-  }
+  };
 
   return (
     <Subsection
@@ -208,7 +214,7 @@ function SecretStoreGroup({
       >
         <span
           id={labelId}
-          className="text-base font-medium leading-[1.3] text-foreground"
+          className="text-base leading-[1.3] font-medium text-foreground"
         >
           Stored secrets
         </span>
@@ -221,7 +227,7 @@ function SecretStoreGroup({
               >
                 <div className="flex items-center justify-between gap-2">
                   <span
-                    className="min-w-0 flex-1 truncate text-sm font-medium leading-[1.6] text-muted-foreground"
+                    className="min-w-0 flex-1 truncate text-sm leading-[1.6] font-medium text-muted-foreground"
                     title={secret.name}
                   >
                     <code>{secret.name}</code>
@@ -244,7 +250,7 @@ function SecretStoreGroup({
                       disabled={busy}
                       aria-label={`Delete secret ${secret.name}`}
                       onClick={() => {
-                        void handleDelete(secret.name)
+                        void handleDelete(secret.name);
                       }}
                     >
                       Delete
@@ -253,7 +259,7 @@ function SecretStoreGroup({
                 </div>
                 <p className="max-w-[48ch] text-sm leading-[1.4] text-muted-foreground">
                   {secret.category}
-                  {secret.description ? ` · ${secret.description}` : ''} · value
+                  {secret.description ? ` · ${secret.description}` : ""} · value
                   hidden
                 </p>
               </li>
@@ -288,7 +294,7 @@ function SecretStoreGroup({
             label="Value"
             ariaLabel="Secret value"
             value={secretValue}
-            placeholder={editingName ? 'Enter a new value' : 'Secret value'}
+            placeholder={editingName ? "Enter a new value" : "Secret value"}
             disabled={busy}
             onChange={setSecretValue}
           />
@@ -309,15 +315,11 @@ function SecretStoreGroup({
             />
             <DetailActionButton
               label={
-                busy
-                  ? 'Saving…'
-                  : editingName
-                    ? 'Update secret'
-                    : 'Save secret'
+                busy ? "Saving…" : editingName ? "Update secret" : "Save secret"
               }
               variant="accent"
               onClick={() => {
-                void handleSubmit()
+                void handleSubmit();
               }}
               disabled={busy || !canSubmit}
             />
@@ -343,12 +345,12 @@ function SecretStoreGroup({
         </p>
       ) : null}
     </Subsection>
-  )
+  );
 }
 
 export function SecretsAuthSection() {
   const { secrets, secretCategories, saveSecret, deleteSecret } =
-    useSettingsSectionContext()
+    useSettingsSectionContext();
   return (
     <SettingsSection sectionId="secrets-auth" ownedPaths={OWNED_PATHS}>
       {(fields) => (
@@ -363,5 +365,5 @@ export function SecretsAuthSection() {
         </>
       )}
     </SettingsSection>
-  )
+  );
 }

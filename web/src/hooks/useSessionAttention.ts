@@ -1,8 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from "react";
-import {
-  useWebSocketConnected,
-  useWebSocketEvent,
-} from "./useWebSocketEvent";
+import { useWebSocketConnected, useWebSocketEvent } from "./useWebSocketEvent";
 
 export interface SessionAttentionSummary {
   count: number;
@@ -67,10 +64,7 @@ function applyAttentionEvent(
 function summarizeAttention(
   entries: Map<string, BlockedAttentionEntry>,
 ): Map<string, SessionAttentionSummary> {
-  const grouped = new Map<
-    string,
-    { count: number; reasons: Set<string> }
-  >();
+  const grouped = new Map<string, { count: number; reasons: Set<string> }>();
   for (const entry of entries.values()) {
     const summary = grouped.get(entry.sessionId) ?? {
       count: 0,
@@ -105,100 +99,92 @@ export function useSessionAttention() {
   const wsConnected = useWebSocketConnected();
   const wasConnectedRef = useRef(wsConnected);
 
-  const fetchAttentionRoster = useCallback(
-    async function fetchRosterRequest() {
-      if (fetchInFlightRef.current) return;
-      fetchInFlightRef.current = true;
-      abortRef.current?.abort();
-      const controller = new AbortController();
-      abortRef.current = controller;
+  const fetchAttentionRoster = useCallback(async function fetchRosterRequest() {
+    if (fetchInFlightRef.current) return;
+    fetchInFlightRef.current = true;
+    abortRef.current?.abort();
+    const controller = new AbortController();
+    abortRef.current = controller;
 
-      try {
-        const response = await fetch("/api/attention/roster", {
-          signal: controller.signal,
-        });
-        if (!response.ok) {
-          throw new Error(
-            `Attention roster request failed (${response.status})`,
-          );
-        }
-        const data = (await response.json()) as Record<string, unknown>;
-        if (
-          typeof data.epoch !== "string" ||
-          typeof data.seq !== "number" ||
-          !Array.isArray(data.entries)
-        ) {
-          throw new Error("Attention roster response is invalid");
-        }
-        const snapshotSeq = data.seq;
-        const pending = bufferedEventsRef.current;
-        bufferedEventsRef.current = [];
-        const matchingEvents = pending.filter(
-          (event) => event.epoch === data.epoch,
-        );
-        const nonMatchingEvents = pending.filter(
-          (event) => event.epoch !== data.epoch,
-        );
-
-        if (
-          nonMatchingEvents.length > 0 &&
-          !resyncAttemptedRef.current
-        ) {
-          bufferedEventsRef.current = nonMatchingEvents;
-          resyncAttemptedRef.current = true;
-          resyncTimerRef.current = window.setTimeout(() => {
-            resyncTimerRef.current = null;
-            void fetchRosterRequest();
-          }, 50);
-          return;
-        }
-
-        const entries = new Map<string, BlockedAttentionEntry>();
-        for (const rawEntry of data.entries) {
-          if (typeof rawEntry !== "object" || rawEntry === null) continue;
-          const entry = rawEntry as Record<string, unknown>;
-          const attention = entry.attention;
-          if (
-            typeof entry.entry_id !== "string" ||
-            typeof entry.session_id !== "string" ||
-            typeof attention !== "object" ||
-            attention === null
-          ) {
-            continue;
-          }
-          const state = attention as Record<string, unknown>;
-          if (state.state !== "blocked") continue;
-          entries.set(entry.entry_id, {
-            sessionId: entry.session_id,
-            reason:
-              typeof state.reason === "string"
-                ? state.reason
-                : "Attention required",
-          });
-        }
-
-        let seq = snapshotSeq;
-        for (const event of matchingEvents
-          .filter((candidate) => candidate.seq > snapshotSeq)
-          .sort((left, right) => left.seq - right.seq)) {
-          applyAttentionEvent(entries, event);
-          seq = Math.max(seq, event.seq);
-        }
-        cursorRef.current = { epoch: data.epoch, seq };
-        entriesRef.current = entries;
-        resyncAttemptedRef.current = false;
-        setAttentionBySession(summarizeAttention(entries));
-      } catch (error) {
-        if (error instanceof DOMException && error.name === "AbortError") {
-          return;
-        }
-        console.error("Failed to fetch attention roster:", error);
-      } finally {
-        fetchInFlightRef.current = false;
+    try {
+      const response = await fetch("/api/attention/roster", {
+        signal: controller.signal,
+      });
+      if (!response.ok) {
+        throw new Error(`Attention roster request failed (${response.status})`);
       }
-    },
-    [],
-  );
+      const data = (await response.json()) as Record<string, unknown>;
+      if (
+        typeof data.epoch !== "string" ||
+        typeof data.seq !== "number" ||
+        !Array.isArray(data.entries)
+      ) {
+        throw new Error("Attention roster response is invalid");
+      }
+      const snapshotSeq = data.seq;
+      const pending = bufferedEventsRef.current;
+      bufferedEventsRef.current = [];
+      const matchingEvents = pending.filter(
+        (event) => event.epoch === data.epoch,
+      );
+      const nonMatchingEvents = pending.filter(
+        (event) => event.epoch !== data.epoch,
+      );
+
+      if (nonMatchingEvents.length > 0 && !resyncAttemptedRef.current) {
+        bufferedEventsRef.current = nonMatchingEvents;
+        resyncAttemptedRef.current = true;
+        resyncTimerRef.current = window.setTimeout(() => {
+          resyncTimerRef.current = null;
+          void fetchRosterRequest();
+        }, 50);
+        return;
+      }
+
+      const entries = new Map<string, BlockedAttentionEntry>();
+      for (const rawEntry of data.entries) {
+        if (typeof rawEntry !== "object" || rawEntry === null) continue;
+        const entry = rawEntry as Record<string, unknown>;
+        const attention = entry.attention;
+        if (
+          typeof entry.entry_id !== "string" ||
+          typeof entry.session_id !== "string" ||
+          typeof attention !== "object" ||
+          attention === null
+        ) {
+          continue;
+        }
+        const state = attention as Record<string, unknown>;
+        if (state.state !== "blocked") continue;
+        entries.set(entry.entry_id, {
+          sessionId: entry.session_id,
+          reason:
+            typeof state.reason === "string"
+              ? state.reason
+              : "Attention required",
+        });
+      }
+
+      let seq = snapshotSeq;
+      for (const event of matchingEvents
+        .filter((candidate) => candidate.seq > snapshotSeq)
+        .sort((left, right) => left.seq - right.seq)) {
+        applyAttentionEvent(entries, event);
+        seq = Math.max(seq, event.seq);
+      }
+      cursorRef.current = { epoch: data.epoch, seq };
+      entriesRef.current = entries;
+      resyncAttemptedRef.current = false;
+      setAttentionBySession(summarizeAttention(entries));
+    } catch (error) {
+      if (error instanceof DOMException && error.name === "AbortError") {
+        return;
+      }
+      console.error("Failed to fetch attention roster:", error);
+    } finally {
+      fetchInFlightRef.current = false;
+    }
+  }, []);
 
   const handleAttentionEvent = useCallback(
     (data: Record<string, unknown>) => {

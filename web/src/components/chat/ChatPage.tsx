@@ -153,88 +153,92 @@ export function ChatPage({
       </Heading>
       {ConfirmDialogElement}
       <div className="relative flex min-h-0 flex-1 overflow-hidden">
-      {showChatColumn && (
-        <ChatMainColumn
-          chat={chat}
-          voice={voice}
-          projectId={projectId}
-          panelVisible={panelVisible}
-          effectiveSessionRef={routing.effectiveSessionRef}
-          activeTitle={routing.activeTitle}
-          mainSessionSource={routing.mainSessionMeta?.source ?? chat.provider ?? null}
-          messageListRef={messageListRef}
-          providerState={providerState}
-          voiceStatus={voiceStatus}
-          onOpenPalette={() => commandPalette.setShowCommandPalette(true)}
-          onTogglePanel={toggleFromChat}
-          onPaletteSelect={commandPalette.handlePaletteSelect}
-          onNewChat={routing.handleNewChat}
-          onModelChange={onModelChange}
-          onSttEnabledChange={onSttEnabledChange}
-          onTtsEnabledChange={onTtsEnabledChange}
-          onVoiceInputModeChange={onVoiceInputModeChange}
-          onViewPlan={() => showPlanRef?.current?.()}
-          planPendingVariant={planPendingVariant}
-          agentDefinitions={agentDefinitions}
-          agentGlobalDefs={agentGlobalDefs}
-          agentProjectDefs={agentProjectDefs}
-          agentShowScopeToggle={agentShowScopeToggle}
-          agentHasGlobal={agentHasGlobal}
-          agentHasProject={agentHasProject}
-        />
-      )}
+        {showChatColumn && (
+          <ChatMainColumn
+            chat={chat}
+            voice={voice}
+            projectId={projectId}
+            panelVisible={panelVisible}
+            effectiveSessionRef={routing.effectiveSessionRef}
+            activeTitle={routing.activeTitle}
+            mainSessionSource={
+              routing.mainSessionMeta?.source ?? chat.provider ?? null
+            }
+            messageListRef={messageListRef}
+            providerState={providerState}
+            voiceStatus={voiceStatus}
+            onOpenPalette={() => commandPalette.setShowCommandPalette(true)}
+            onTogglePanel={toggleFromChat}
+            onPaletteSelect={commandPalette.handlePaletteSelect}
+            onNewChat={routing.handleNewChat}
+            onModelChange={onModelChange}
+            onSttEnabledChange={onSttEnabledChange}
+            onTtsEnabledChange={onTtsEnabledChange}
+            onVoiceInputModeChange={onVoiceInputModeChange}
+            onViewPlan={() => showPlanRef?.current?.()}
+            planPendingVariant={planPendingVariant}
+            agentDefinitions={agentDefinitions}
+            agentGlobalDefs={agentGlobalDefs}
+            agentProjectDefs={agentProjectDefs}
+            agentShowScopeToggle={agentShowScopeToggle}
+            agentHasGlobal={agentHasGlobal}
+            agentHasProject={agentHasProject}
+          />
+        )}
 
-      <AppErrorBoundary
-        activeTab="activity sidebar"
-        onReturnToChat={toggleFromPanel}
-      >
-        <ActivityPanel
-          mode={effectiveMode}
-          onToggleChat={toggleFromPanel}
-          panelWidth={panelWidth}
-          onWidthChange={setPanelWidth}
-          activeTab={activityTab}
-          onTabChange={setActivityTab}
-          plans={plans.plans}
-          activePlan={plans.activePlan}
-          onOpenPlan={plans.openPlan}
-          onSetPlanVersion={plans.setPlanVersion}
-          planPendingApproval={plans.planPendingApproval}
-          planApproved={plans.planApproved}
-          planApprovalOptions={plans.planApprovalOptions}
-          onApprovePlan={plans.handleApprovePlan}
-          onRequestPlanChanges={plans.handleRequestPlanChanges}
-          planPendingVariant={planPendingVariant}
-          changedFiles={fileChanges.changedFiles}
-          fetchDiff={fileChanges.fetchDiff}
-          changesLoading={fileChanges.loading}
-          changesError={fileChanges.error}
-          onRetryChanges={fileChanges.refresh}
-          projectId={projectId}
-          projectName={projectName}
-          sessions={activitySessions ?? allProjectSessions}
-          sessionsLoading={activitySessionsLoading ?? allProjectSessionsLoading}
-          sessionsFilters={sessionsFilters}
-          onSessionsFiltersChange={onSessionsFiltersChange}
-          mcp={mcp}
-          onKillAgent={conversations.onKillAgent}
-          onExpireSession={conversations.onExpireSession}
-          onAcpCloseSession={conversations.onAcpCloseSession}
-          onAcpDeleteSession={conversations.onAcpDeleteSession}
-          chatSessionId={routing.activityPanelChatSessionId}
-          focusSessionId={routing.focusSessionId}
-          dirtyGuard={dirtyGuard}
-          onFocusSessionHandled={routing.handleFocusSessionHandled}
-          onSwapSession={routing.handleSwapSession}
-          onResumeSession={routing.handleResumeSessionFromActivity}
-          onAddFileToChat={routing.handleAddFileToChat}
-          terminalFocusSessionId={activity.terminalSessionRequest}
-          onTerminalFocusHandled={activity.clearTerminalSessionRequest}
-          isMobile={isMobile}
-          requestPanelOverride={requestPanelOverride}
-          releasePanelOverride={releasePanelOverride}
-        />
-      </AppErrorBoundary>
+        <AppErrorBoundary
+          activeTab="activity sidebar"
+          onReturnToChat={toggleFromPanel}
+        >
+          <ActivityPanel
+            mode={effectiveMode}
+            onToggleChat={toggleFromPanel}
+            panelWidth={panelWidth}
+            onWidthChange={setPanelWidth}
+            activeTab={activityTab}
+            onTabChange={setActivityTab}
+            plans={plans.plans}
+            activePlan={plans.activePlan}
+            onOpenPlan={plans.openPlan}
+            onSetPlanVersion={plans.setPlanVersion}
+            planPendingApproval={plans.planPendingApproval}
+            planApproved={plans.planApproved}
+            planApprovalOptions={plans.planApprovalOptions}
+            onApprovePlan={plans.handleApprovePlan}
+            onRequestPlanChanges={plans.handleRequestPlanChanges}
+            planPendingVariant={planPendingVariant}
+            changedFiles={fileChanges.changedFiles}
+            fetchDiff={fileChanges.fetchDiff}
+            changesLoading={fileChanges.loading}
+            changesError={fileChanges.error}
+            onRetryChanges={fileChanges.refresh}
+            projectId={projectId}
+            projectName={projectName}
+            sessions={activitySessions ?? allProjectSessions}
+            sessionsLoading={
+              activitySessionsLoading ?? allProjectSessionsLoading
+            }
+            sessionsFilters={sessionsFilters}
+            onSessionsFiltersChange={onSessionsFiltersChange}
+            mcp={mcp}
+            onKillAgent={conversations.onKillAgent}
+            onExpireSession={conversations.onExpireSession}
+            onAcpCloseSession={conversations.onAcpCloseSession}
+            onAcpDeleteSession={conversations.onAcpDeleteSession}
+            chatSessionId={routing.activityPanelChatSessionId}
+            focusSessionId={routing.focusSessionId}
+            dirtyGuard={dirtyGuard}
+            onFocusSessionHandled={routing.handleFocusSessionHandled}
+            onSwapSession={routing.handleSwapSession}
+            onResumeSession={routing.handleResumeSessionFromActivity}
+            onAddFileToChat={routing.handleAddFileToChat}
+            terminalFocusSessionId={activity.terminalSessionRequest}
+            onTerminalFocusHandled={activity.clearTerminalSessionRequest}
+            isMobile={isMobile}
+            requestPanelOverride={requestPanelOverride}
+            releasePanelOverride={releasePanelOverride}
+          />
+        </AppErrorBoundary>
       </div>
 
       <CommandPalette

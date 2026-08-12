@@ -46,8 +46,16 @@ const ROW_CLASS =
   "text-foreground hover:bg-muted focus-visible:outline-none focus-visible:ring-1 " +
   "focus-visible:ring-accent pointer-coarse:min-h-11";
 
-function KindIcon({ kind, isFolder }: { kind: WikiPageKind | null; isFolder: boolean }) {
-  const colorVar = isFolder ? FOLDER_COLOR_VAR : (kind && TREE_KIND_COLOR_VARS[kind]) || "--text-muted";
+function KindIcon({
+  kind,
+  isFolder,
+}: {
+  kind: WikiPageKind | null;
+  isFolder: boolean;
+}) {
+  const colorVar = isFolder
+    ? FOLDER_COLOR_VAR
+    : (kind && TREE_KIND_COLOR_VARS[kind]) || "--text-muted";
   return (
     <span
       data-testid="wiki-kind-icon"
@@ -56,11 +64,25 @@ function KindIcon({ kind, isFolder }: { kind: WikiPageKind | null; isFolder: boo
       style={{ color: `var(${colorVar})` }}
     >
       {isFolder ? (
-        <svg width="14" height="14" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.5">
+        <svg
+          width="14"
+          height="14"
+          viewBox="0 0 16 16"
+          fill="none"
+          stroke="currentColor"
+          strokeWidth="1.5"
+        >
           <path d="M1.75 3.5h4l1.5 1.75h7v7.25a1 1 0 0 1-1 1H2.75a1 1 0 0 1-1-1V3.5Z" />
         </svg>
       ) : (
-        <svg width="14" height="14" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.5">
+        <svg
+          width="14"
+          height="14"
+          viewBox="0 0 16 16"
+          fill="none"
+          stroke="currentColor"
+          strokeWidth="1.5"
+        >
           <path d="M4 1.75h5.5L12.5 5v9.25H4V1.75Z" />
           <path d="M9.5 1.75V5h3" />
         </svg>
@@ -85,7 +107,12 @@ function flattenTree(
     for (const node of nodes) {
       const expandable = node.kind === "folder";
       const expanded = expandable && isExpanded(node);
-      rows.push({ node, depth, isExpandable: expandable, isExpanded: expanded });
+      rows.push({
+        node,
+        depth,
+        isExpandable: expandable,
+        isExpanded: expanded,
+      });
       if (expanded) visit(node.children, depth + 1);
     }
   };
@@ -117,7 +144,13 @@ interface SearchMatch {
   kind: WikiPageKind;
 }
 
-function MatchRow({ match, onOpen }: { match: SearchMatch; onOpen: (path: string) => void }) {
+function MatchRow({
+  match,
+  onOpen,
+}: {
+  match: SearchMatch;
+  onOpen: (path: string) => void;
+}) {
   return (
     <li>
       <Button
@@ -153,9 +186,9 @@ export function WikiPageTree({
   // Expansion is tracked as overrides on top of the defaults (top-level
   // folders open, everything deeper — notably knowledge/sources — closed),
   // so the sources folder's 266 entries never render until asked for.
-  const [expandOverrides, setExpandOverrides] = useState<ReadonlyMap<string, boolean>>(
-    new Map(),
-  );
+  const [expandOverrides, setExpandOverrides] = useState<
+    ReadonlyMap<string, boolean>
+  >(new Map());
   const [menuPath, setMenuPath] = useState<string | null>(null);
 
   const roots = useMemo(
@@ -166,7 +199,8 @@ export function WikiPageTree({
   const rows = useMemo(() => {
     // Everything starts collapsed — knowledge/sources (266 entries) and the
     // code/files mirror never render a child row until expanded.
-    const isExpanded = (node: PageTreeNode) => expandOverrides.get(node.path) ?? false;
+    const isExpanded = (node: PageTreeNode) =>
+      expandOverrides.get(node.path) ?? false;
     return flattenTree(roots, isExpanded);
   }, [expandOverrides, roots]);
 
@@ -212,7 +246,8 @@ export function WikiPageTree({
       .filter((page) => rootFilter(page.path))
       .filter(
         (page) =>
-          page.title.toLowerCase().includes(query) || page.path.toLowerCase().includes(query),
+          page.title.toLowerCase().includes(query) ||
+          page.path.toLowerCase().includes(query),
       )
       .map((page) => ({ page, kind: pageKindFromPath(page.path) }));
   }, [pages, rootFilter, search]);
@@ -243,7 +278,10 @@ export function WikiPageTree({
     }
     if (matches.length > VIRTUOSO_MATCH_THRESHOLD) {
       return (
-        <ul aria-label="Matching pages" className="h-full min-h-0 list-none overflow-hidden p-1">
+        <ul
+          aria-label="Matching pages"
+          className="h-full min-h-0 list-none overflow-hidden p-1"
+        >
           <Virtuoso
             totalCount={matches.length}
             itemContent={(index) => {
@@ -255,7 +293,10 @@ export function WikiPageTree({
       );
     }
     return (
-      <ul aria-label="Matching pages" className="min-h-0 list-none overflow-y-auto p-1">
+      <ul
+        aria-label="Matching pages"
+        className="min-h-0 list-none overflow-y-auto p-1"
+      >
         {matches.map((match) => (
           <MatchRow key={match.page.path} match={match} onOpen={onOpen} />
         ))}
@@ -272,13 +313,21 @@ export function WikiPageTree({
     }
     if (onCreateAt && !isCodePage) {
       const prefix = row.isExpandable ? `${path}/` : path.replace(/[^/]+$/, "");
-      items.push({ label: "New page here", onSelect: () => onCreateAt(prefix) });
+      items.push({
+        label: "New page here",
+        onSelect: () => onCreateAt(prefix),
+      });
     }
     items.push({
       label: "Copy path",
       onSelect: () => void navigator.clipboard?.writeText(path),
     });
-    if (onDelete && !row.isExpandable && !isCodePage && row.node.kind === "page") {
+    if (
+      onDelete &&
+      !row.isExpandable &&
+      !isCodePage &&
+      row.node.kind === "page"
+    ) {
       items.push({
         label: "Delete page",
         destructive: true,
@@ -289,7 +338,11 @@ export function WikiPageTree({
   };
 
   return (
-    <div role="tree" aria-label="Wiki pages" className="min-h-0 overflow-y-auto p-1">
+    <div
+      role="tree"
+      aria-label="Wiki pages"
+      className="min-h-0 overflow-y-auto p-1"
+    >
       {rows.map((row) => {
         const path = row.node.path;
         const kind = row.node.kind === "folder" ? null : pageKindFromPath(path);
@@ -306,7 +359,9 @@ export function WikiPageTree({
               className={`${ROW_CLASS} cursor-pointer ${
                 path === selectedPath ? "bg-accent/10 text-foreground" : ""
               }`}
-              style={{ paddingLeft: `calc(0.375rem + ${row.depth} * 0.875rem)` }}
+              style={{
+                paddingLeft: `calc(0.375rem + ${row.depth} * 0.875rem)`,
+              }}
               onClick={() => activateRow(path)}
               onKeyDown={(event) => handleKeyDown(path, event)}
             >
@@ -315,7 +370,9 @@ export function WikiPageTree({
             </div>
             <span
               className={`absolute right-1 ${
-                menuPath === path ? "" : "opacity-0 group-hover/row:opacity-100 focus-within:opacity-100"
+                menuPath === path
+                  ? ""
+                  : "opacity-0 group-hover/row:opacity-100 focus-within:opacity-100"
               }`}
             >
               <QuickMenu

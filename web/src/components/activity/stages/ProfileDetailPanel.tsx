@@ -45,9 +45,13 @@ export function ProfileDetailPanel({
   );
   const handleSave = useCallback(
     async (draft: BuildProfile) => {
-      const unknownSkipStages = draft.skip_stages.filter((stage) => !stageNames.has(stage));
+      const unknownSkipStages = draft.skip_stages.filter(
+        (stage) => !stageNames.has(stage),
+      );
       if (unknownSkipStages.length > 0) {
-        setValidationError(`Unknown skip stage: ${unknownSkipStages.join(", ")}`);
+        setValidationError(
+          `Unknown skip stage: ${unknownSkipStages.join(", ")}`,
+        );
         return false;
       }
       try {
@@ -61,7 +65,10 @@ export function ProfileDetailPanel({
     },
     [creating, onError, onSave, stageNames],
   );
-  const draftState = useDetailDraft<BuildProfile>({ source: sourceDraft, onSave: handleSave });
+  const draftState = useDetailDraft<BuildProfile>({
+    source: sourceDraft,
+    onSave: handleSave,
+  });
 
   useEffect(() => {
     onConfirmLeaveChange(draftState.confirmIfDirty);
@@ -70,13 +77,21 @@ export function ProfileDetailPanel({
 
   if (!draftState.draft) {
     return (
-      <ActivityPanelEmpty heading="Profiles" body="Select a profile to inspect and edit it." />
+      <ActivityPanelEmpty
+        heading="Profiles"
+        body="Select a profile to inspect and edit it."
+      />
     );
   }
 
   const draft = draftState.draft;
-  const unknownSkipStages = draft.skip_stages.filter((stage) => !stageNames.has(stage));
-  const setField = <K extends keyof BuildProfile>(key: K, value: BuildProfile[K]) => {
+  const unknownSkipStages = draft.skip_stages.filter(
+    (stage) => !stageNames.has(stage),
+  );
+  const setField = <K extends keyof BuildProfile>(
+    key: K,
+    value: BuildProfile[K],
+  ) => {
     setValidationError(null);
     draftState.setField(key, value);
   };
@@ -90,16 +105,13 @@ export function ProfileDetailPanel({
         serverChanged={draftState.serverChanged}
         onSave={() => void draftState.save()}
         onDiscard={draftState.discard}
-        actions={
-          !creating ? (
-            <Chip>{draft.source}</Chip>
-          ) : null
-        }
+        actions={!creating ? <Chip>{draft.source}</Chip> : null}
       />
       <div className="min-h-0 flex-1 overflow-y-auto p-3">
         {(validationError || unknownSkipStages.length > 0) && (
           <div className="mb-3 rounded-md bg-error-soft px-3 py-2 text-sm text-error">
-            {validationError ?? `Unknown skip stage: ${unknownSkipStages.join(", ")}`}
+            {validationError ??
+              `Unknown skip stage: ${unknownSkipStages.join(", ")}`}
           </div>
         )}
         <div className="grid gap-3 md:grid-cols-2">
@@ -129,7 +141,9 @@ export function ProfileDetailPanel({
             ariaLabel="Isolation"
             value={draft.isolation}
             options={[...ISOLATION_OPTIONS]}
-            onChange={(value) => setField("isolation", value as BuildProfile["isolation"])}
+            onChange={(value) =>
+              setField("isolation", value as BuildProfile["isolation"])
+            }
           />
           <SelectField
             label="Delivery mode"
@@ -144,7 +158,9 @@ export function ProfileDetailPanel({
             label="Delivery target repo"
             ariaLabel="Delivery target repo"
             value={draft.delivery_target_repo ?? ""}
-            onChange={(value) => setField("delivery_target_repo", value || null)}
+            onChange={(value) =>
+              setField("delivery_target_repo", value || null)
+            }
           />
           <SwitchField
             label="Enabled"

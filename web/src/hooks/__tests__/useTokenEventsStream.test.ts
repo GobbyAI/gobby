@@ -11,9 +11,7 @@ import { useWebSocketEvent } from "../useWebSocketEvent";
 
 const mockUseWebSocketEvent = vi.mocked(useWebSocketEvent);
 
-function makeEvent(
-  overrides: Partial<TokenEvent> = {},
-): TokenEvent {
+function makeEvent(overrides: Partial<TokenEvent> = {}): TokenEvent {
   return {
     session_id: "sess-1",
     event_at: "2026-04-08T12:00:00Z",
@@ -175,8 +173,18 @@ describe("useTokenEventsStream", () => {
     });
 
     expect(result.current.events).toEqual([
-      { ...second, context_window: null, project_id: null, session_totals: undefined },
-      { ...first, context_window: null, project_id: null, session_totals: undefined },
+      {
+        ...second,
+        context_window: null,
+        project_id: null,
+        session_totals: undefined,
+      },
+      {
+        ...first,
+        context_window: null,
+        project_id: null,
+        session_totals: undefined,
+      },
     ]);
   });
 

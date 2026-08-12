@@ -82,8 +82,12 @@ describe("persistence helpers", () => {
       },
     } as unknown as Storage;
     expect(readStoredValue("gobby:wiki-tab:mode", broken)).toBeNull();
-    expect(() => writeStoredValue("gobby:wiki-tab:mode", "code", broken)).not.toThrow();
-    expect(() => writeStoredValue("gobby:wiki-tab:mode", null, broken)).not.toThrow();
+    expect(() =>
+      writeStoredValue("gobby:wiki-tab:mode", "code", broken),
+    ).not.toThrow();
+    expect(() =>
+      writeStoredValue("gobby:wiki-tab:mode", null, broken),
+    ).not.toThrow();
   });
 
   it("validates modes", () => {
@@ -115,7 +119,9 @@ describe("useWikiNav", () => {
     expect(result.current.canForward).toBe(false);
 
     await act(() => result.current.openPage("knowledge/concepts/gobby.md"));
-    await act(() => result.current.openPage("code/files/src/gobby/runner.py.md"));
+    await act(() =>
+      result.current.openPage("code/files/src/gobby/runner.py.md"),
+    );
 
     expect(result.current.current).toEqual({
       path: "code/files/src/gobby/runner.py.md",
@@ -134,8 +140,12 @@ describe("useWikiNav", () => {
   });
 
   it("honors an explicit mode override", async () => {
-    const { result } = renderHook(() => useWikiNav({ guardedRun: runImmediately }));
-    await act(() => result.current.openPage("outputs/GRAPH_REPORT.md", { mode: "code" }));
+    const { result } = renderHook(() =>
+      useWikiNav({ guardedRun: runImmediately }),
+    );
+    await act(() =>
+      result.current.openPage("outputs/GRAPH_REPORT.md", { mode: "code" }),
+    );
     expect(result.current.current?.mode).toBe("code");
   });
 
@@ -159,7 +169,9 @@ describe("useWikiNav", () => {
   });
 
   it("truncates forward history when opening a page after back", async () => {
-    const { result } = renderHook(() => useWikiNav({ guardedRun: runImmediately }));
+    const { result } = renderHook(() =>
+      useWikiNav({ guardedRun: runImmediately }),
+    );
 
     await act(() => result.current.openPage("a.md"));
     await act(() => result.current.openPage("b.md"));
@@ -173,7 +185,9 @@ describe("useWikiNav", () => {
   });
 
   it("caps the history stack at the plan limit", async () => {
-    const { result } = renderHook(() => useWikiNav({ guardedRun: runImmediately }));
+    const { result } = renderHook(() =>
+      useWikiNav({ guardedRun: runImmediately }),
+    );
 
     for (let index = 0; index < WIKI_NAV_HISTORY_CAP + 5; index += 1) {
       await act(() => result.current.openPage(`page-${index}.md`));

@@ -1,12 +1,16 @@
-import { useId, useState } from 'react'
-import { BoundedSelectField, StringListField, TypedListField } from '../fields'
-import { DetailActionButton, TextField } from '../../activity/fields'
-import type { FieldOption } from '../../activity/fields'
-import { SchemaSelectField, Subsection, SwitchConfigField } from './configFields'
-import { asString, asTypedList } from './configAccessors'
-import { SettingsSection, type SettingsSectionFields } from './SettingsSection'
-import { useSettingsSectionContext } from './SettingsSectionContext'
-import { Input } from '../../ui/Input'
+import { useId, useState } from "react";
+import { BoundedSelectField, StringListField, TypedListField } from "../fields";
+import { DetailActionButton, TextField } from "../../activity/fields";
+import type { FieldOption } from "../../activity/fields";
+import {
+  SchemaSelectField,
+  Subsection,
+  SwitchConfigField,
+} from "./configFields";
+import { asString, asTypedList } from "./configAccessors";
+import { SettingsSection, type SettingsSectionFields } from "./SettingsSection";
+import { useSettingsSectionContext } from "./SettingsSectionContext";
+import { Input } from "../../ui/Input";
 
 /**
  * Tool Approvals settings section (audit IA section 13). Two surfaces live here:
@@ -19,37 +23,37 @@ import { Input } from '../../ui/Input'
  */
 
 interface ToolApprovalPolicy {
-  server_pattern: string
-  tool_pattern: string
-  policy: string
+  server_pattern: string;
+  tool_pattern: string;
+  policy: string;
 }
 
 const TOOL_APPROVAL_PATHS = [
-  'tool_approval.enabled',
-  'tool_approval.default_policy',
-  'tool_approval.policies',
-] as const
+  "tool_approval.enabled",
+  "tool_approval.default_policy",
+  "tool_approval.policies",
+] as const;
 
-const OWNED_PATHS: readonly string[] = [...TOOL_APPROVAL_PATHS]
+const OWNED_PATHS: readonly string[] = [...TOOL_APPROVAL_PATHS];
 
 // The three `ToolApprovalPolicy.policy` literals. Rendered through
 // BoundedSelectField (not SchemaSelectField) because list-item fields have no
 // dotted schema path; an out-of-set stored value is surfaced as "(unsupported)".
 const POLICY_OPTIONS: FieldOption[] = [
-  { value: 'auto', label: 'Auto-allow' },
-  { value: 'approve_once', label: 'Approve once' },
-  { value: 'always_ask', label: 'Always ask' },
-]
+  { value: "auto", label: "Auto-allow" },
+  { value: "approve_once", label: "Approve once" },
+  { value: "always_ask", label: "Always ask" },
+];
 
 function arraysEqual(a: string[], b: string[]): boolean {
-  return a.length === b.length && a.every((value, index) => value === b[index])
+  return a.length === b.length && a.every((value, index) => value === b[index]);
 }
 
 function policyLabel(policy: ToolApprovalPolicy, index: number): string {
-  const server = asString(policy.server_pattern) || '*'
-  const tool = asString(policy.tool_pattern) || '*'
-  const pair = `${server} / ${tool}`
-  return pair === '* / *' ? `Per-tool policy ${index + 1}` : pair
+  const server = asString(policy.server_pattern) || "*";
+  const tool = asString(policy.tool_pattern) || "*";
+  const pair = `${server} / ${tool}`;
+  return pair === "* / *" ? `Per-tool policy ${index + 1}` : pair;
 }
 
 function EnablementGroup({ fields }: { fields: SettingsSectionFields }) {
@@ -71,7 +75,7 @@ function EnablementGroup({ fields }: { fields: SettingsSectionFields }) {
         ariaLabel="Default approval policy"
       />
     </Subsection>
-  )
+  );
 }
 
 function PoliciesGroup({ fields }: { fields: SettingsSectionFields }) {
@@ -84,16 +88,16 @@ function PoliciesGroup({ fields }: { fields: SettingsSectionFields }) {
         label="Per-tool policies"
         ariaLabel="Per-tool policy"
         value={asTypedList<ToolApprovalPolicy>(
-          fields.getValue('tool_approval.policies'),
+          fields.getValue("tool_approval.policies"),
         )}
         addLabel="Add policy"
         createItem={() => ({
-          server_pattern: '*',
-          tool_pattern: '*',
-          policy: 'always_ask',
+          server_pattern: "*",
+          tool_pattern: "*",
+          policy: "always_ask",
         })}
         itemLabel={policyLabel}
-        onChange={(value) => fields.setValue('tool_approval.policies', value)}
+        onChange={(value) => fields.setValue("tool_approval.policies", value)}
         renderItem={(policy, onItemChange, index) => (
           <>
             <TextField
@@ -125,16 +129,16 @@ function PoliciesGroup({ fields }: { fields: SettingsSectionFields }) {
         )}
       />
     </Subsection>
-  )
+  );
 }
 
 function BuiltInExemptions({ exemptions }: { exemptions: string[] }) {
-  const labelId = useId()
+  const labelId = useId();
   return (
     <div className="flex flex-col gap-2" role="group" aria-labelledby={labelId}>
       <span
         id={labelId}
-        className="text-base font-medium leading-[1.3] text-foreground"
+        className="text-base leading-[1.3] font-medium text-foreground"
       >
         Built-in exemptions
       </span>
@@ -144,7 +148,7 @@ function BuiltInExemptions({ exemptions }: { exemptions: string[] }) {
             <li key={rule} className="flex items-center gap-2">
               <Input
                 type="text"
-                className="flex-1 text-foreground [font-family:inherit] pointer-coarse:min-h-11"
+                className="flex-1 [font-family:inherit] text-foreground pointer-coarse:min-h-11"
                 value={rule}
                 disabled
                 aria-label={`Built-in exemption ${index + 1}`}
@@ -159,14 +163,14 @@ function BuiltInExemptions({ exemptions }: { exemptions: string[] }) {
         Always auto-allowed and read-only.
       </p>
     </div>
-  )
+  );
 }
 
 interface GlobalRulesGroupProps {
-  rules: string[]
-  defaultRules: string[]
-  builtInExemptions: string[]
-  onSave?: (rules: string[]) => Promise<boolean>
+  rules: string[];
+  defaultRules: string[];
+  builtInExemptions: string[];
+  onSave?: (rules: string[]) => Promise<boolean>;
 }
 
 function GlobalRulesGroup({
@@ -175,17 +179,17 @@ function GlobalRulesGroup({
   builtInExemptions,
   onSave,
 }: GlobalRulesGroupProps) {
-  const [draft, setDraft] = useState<string[]>(rules)
-  const [saving, setSaving] = useState(false)
-  const [error, setError] = useState<string | null>(null)
+  const [draft, setDraft] = useState<string[]>(rules);
+  const [saving, setSaving] = useState(false);
+  const [error, setError] = useState<string | null>(null);
   // Re-seed from the live surface whenever the provider refetches it, using the
   // render-time "adjust state on prop change" pattern (no effect): `rules` is a
   // stable reference until a save or external refetch replaces it.
-  const [seededRules, setSeededRules] = useState<string[]>(rules)
+  const [seededRules, setSeededRules] = useState<string[]>(rules);
   if (rules !== seededRules) {
-    setSeededRules(rules)
-    setDraft(rules)
-    setError(null)
+    setSeededRules(rules);
+    setDraft(rules);
+    setError(null);
   }
 
   if (!onSave) {
@@ -198,27 +202,27 @@ function GlobalRulesGroup({
           Global approval rules are unavailable.
         </p>
       </Subsection>
-    )
+    );
   }
 
-  const dirty = !arraysEqual(draft, rules)
-  const canReset = !arraysEqual(draft, defaultRules)
+  const dirty = !arraysEqual(draft, rules);
+  const canReset = !arraysEqual(draft, defaultRules);
 
   const handleSave = async () => {
-    setSaving(true)
-    setError(null)
+    setSaving(true);
+    setError(null);
     try {
-      const cleaned = draft.map((rule) => rule.trim()).filter(Boolean)
-      const ok = await onSave(cleaned)
-      if (!ok) setError('Could not save approval rules.')
+      const cleaned = draft.map((rule) => rule.trim()).filter(Boolean);
+      const ok = await onSave(cleaned);
+      if (!ok) setError("Could not save approval rules.");
     } catch (err) {
       setError(
-        err instanceof Error ? err.message : 'Could not save approval rules.',
-      )
+        err instanceof Error ? err.message : "Could not save approval rules.",
+      );
     } finally {
-      setSaving(false)
+      setSaving(false);
     }
-  }
+  };
 
   return (
     <Subsection
@@ -230,15 +234,15 @@ function GlobalRulesGroup({
         ariaLabel="Auto-allow rule"
         value={draft}
         onChange={(value) => {
-          setError(null)
-          setDraft(value)
+          setError(null);
+          setDraft(value);
         }}
         addLabel="Add rule"
         placeholder="tool:Write or mcp:gobby-tasks:*"
         disabled={saving}
       />
       <p className="max-w-[48ch] text-sm leading-[1.4] text-muted-foreground">
-        Recommended defaults: {defaultRules.join(', ') || 'none'}
+        Recommended defaults: {defaultRules.join(", ") || "none"}
       </p>
       <BuiltInExemptions exemptions={builtInExemptions} />
       <div className="flex flex-wrap gap-2">
@@ -246,16 +250,16 @@ function GlobalRulesGroup({
           label="Reset to defaults"
           variant="ghost"
           onClick={() => {
-            setError(null)
-            setDraft(defaultRules)
+            setError(null);
+            setDraft(defaultRules);
           }}
           disabled={saving || !canReset}
         />
         <DetailActionButton
-          label={saving ? 'Saving…' : 'Save rules'}
+          label={saving ? "Saving…" : "Save rules"}
           variant="accent"
           onClick={() => {
-            void handleSave()
+            void handleSave();
           }}
           disabled={saving || !dirty}
         />
@@ -269,7 +273,7 @@ function GlobalRulesGroup({
         </p>
       ) : null}
     </Subsection>
-  )
+  );
 }
 
 export function ToolApprovalsSection() {
@@ -278,7 +282,7 @@ export function ToolApprovalsSection() {
     defaultApprovalRules,
     builtInApprovalExemptions,
     saveGlobalApprovalRules,
-  } = useSettingsSectionContext()
+  } = useSettingsSectionContext();
   return (
     <SettingsSection sectionId="tool-approvals" ownedPaths={OWNED_PATHS}>
       {(fields) => (
@@ -294,5 +298,5 @@ export function ToolApprovalsSection() {
         </>
       )}
     </SettingsSection>
-  )
+  );
 }

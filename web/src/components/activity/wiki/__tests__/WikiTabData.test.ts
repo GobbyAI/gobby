@@ -54,8 +54,12 @@ describe("normalizeGraph", () => {
     expect(graph.edges).toHaveLength(4);
     const kinds = graph.edges.map((edge) => edge.kind).sort();
     expect(kinds).toEqual(["audit", "links", "links", "trust"]);
-    const linkEdge = graph.edges.find((edge) => edge.rawTarget === "code/modules/src/gobby");
-    expect(linkEdge?.source).toBe("document-code-files-src-gobby-runner-py-md-3b01f8e1");
+    const linkEdge = graph.edges.find(
+      (edge) => edge.rawTarget === "code/modules/src/gobby",
+    );
+    expect(linkEdge?.source).toBe(
+      "document-code-files-src-gobby-runner-py-md-3b01f8e1",
+    );
     expect(linkEdge?.target).toBe("unresolved-code-modules-src-gobby-562632cc");
   });
 
@@ -75,7 +79,8 @@ describe("normalizePages", () => {
       path: "knowledge/concepts/gobby.md",
       title: "Gobby",
       tags: ["gwiki", "compiled", "entity"],
-      contentHash: "6d98b22ffd529e5a4d32c3c3803206d2f5f034f62592b98cb726a9e56f6a0392",
+      contentHash:
+        "6d98b22ffd529e5a4d32c3c3803206d2f5f034f62592b98cb726a9e56f6a0392",
       updatedAt: "2026-07-10T23:22:43.489247+00:00",
     });
     expect(outputs).toEqual([
@@ -165,14 +170,21 @@ describe("summarizeWikiStatus", () => {
     const summary = summarizeWikiStatus(statusEnvelope, healthEnvelope, null);
     expect(summary.state).toBe("ready");
     expect(summary.degradedServices).toEqual([]);
-    expect(summary.services).toContainEqual({ name: "postgres", configured: true });
+    expect(summary.services).toContainEqual({
+      name: "postgres",
+      configured: true,
+    });
     expect(summary.brokenLinks).toBe(1);
     expect(summary.stalePages).toBe(1);
     expect(summary.uncompiledSources).toBe(1);
   });
 
   it("reports degraded with the unconfigured service names", () => {
-    const summary = summarizeWikiStatus(degradedStatusEnvelope, healthEnvelope, null);
+    const summary = summarizeWikiStatus(
+      degradedStatusEnvelope,
+      healthEnvelope,
+      null,
+    );
     expect(summary.state).toBe("degraded");
     expect(summary.degradedServices).toEqual(["embeddings", "falkordb"]);
   });
@@ -197,7 +209,11 @@ describe("summarizeWikiStatus", () => {
   });
 
   it("keeps non-JSON error text verbatim", () => {
-    const summary = summarizeWikiStatus(null, null, "Wiki gateway timed out { after 5s");
+    const summary = summarizeWikiStatus(
+      null,
+      null,
+      "Wiki gateway timed out { after 5s",
+    );
     expect(summary.message).toBe("Wiki gateway timed out { after 5s");
   });
 
@@ -282,7 +298,10 @@ describe("fetchers", () => {
 
   it("rejects with the human message when the gateway detail is a JSON error blob", async () => {
     mockFetch(
-      { detail: 'Error: { "code": "invalid_scope", "message": "failed to read project identity" }' },
+      {
+        detail:
+          'Error: { "code": "invalid_scope", "message": "failed to read project identity" }',
+      },
       503,
     );
     // Exact match — the raw blob also contains this substring, so toThrow's
@@ -294,7 +313,9 @@ describe("fetchers", () => {
 
   it("throws a typed error message on non-conflict failures", async () => {
     mockFetch({ detail: "wiki gateway offline" }, 503);
-    await expect(fetchPages({}, undefined)).rejects.toThrow("wiki gateway offline");
+    await expect(fetchPages({}, undefined)).rejects.toThrow(
+      "wiki gateway offline",
+    );
   });
 });
 
@@ -331,7 +352,11 @@ describe("savePage", () => {
     mockFetch(writeConflictBody, 412);
     const result = await savePage(
       {},
-      { path: "knowledge/topics/example.md", content: "x", expectedHash: "stale" },
+      {
+        path: "knowledge/topics/example.md",
+        content: "x",
+        expectedHash: "stale",
+      },
     );
     expect(result).toEqual({
       ok: false,
@@ -347,12 +372,18 @@ describe("savePage", () => {
         detail: {
           ...writeConflictBody.detail,
           payload: { code: "already_exists" },
-          error: { ...writeConflictBody.detail.error, message: "page already exists" },
+          error: {
+            ...writeConflictBody.detail.error,
+            message: "page already exists",
+          },
         },
       },
       409,
     );
-    const result = await savePage({}, { path: "a.md", content: "x", mode: "create" });
+    const result = await savePage(
+      {},
+      { path: "a.md", content: "x", mode: "create" },
+    );
     expect(result).toEqual({
       ok: false,
       conflict: true,
@@ -363,6 +394,8 @@ describe("savePage", () => {
 
   it("throws on non-conflict write failures", async () => {
     mockFetch({ detail: "boom" }, 502);
-    await expect(savePage({}, { path: "a.md", content: "x" })).rejects.toThrow("boom");
+    await expect(savePage({}, { path: "a.md", content: "x" })).rejects.toThrow(
+      "boom",
+    );
   });
 });

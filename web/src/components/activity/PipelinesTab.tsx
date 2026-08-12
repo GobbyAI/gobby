@@ -1,14 +1,21 @@
-import { memo, useState, useEffect, useCallback, useRef, useMemo } from 'react'
-import { useConfirmDialog } from '../../hooks/useConfirmDialog'
-import { ResizeHandle } from '../shared/ResizeHandle'
-import { Button } from '../ui/Button'
-import { coarseHitAreaCls } from '../ui/controlStyles'
-import { PipelineStatusDot, StepDisplay, type StepData } from '../shared/executions/execution-utils'
-import { formatDateTime, formatDuration } from '../shared/executions/executionFormatters'
-import { DEFAULT_TOP_PANEL_PERCENT } from './constants'
-import { useRegisterActivityActions } from './activityActions'
-import { ActivityPanelEmpty, PipelinesEmptyIcon } from './ActivityPanelEmpty'
-import { ActivityFilterDropdown } from './ActivityFilterDropdown'
+import { memo, useState, useEffect, useCallback, useRef, useMemo } from "react";
+import { useConfirmDialog } from "../../hooks/useConfirmDialog";
+import { ResizeHandle } from "../shared/ResizeHandle";
+import { Button } from "../ui/Button";
+import { coarseHitAreaCls } from "../ui/controlStyles";
+import {
+  PipelineStatusDot,
+  StepDisplay,
+  type StepData,
+} from "../shared/executions/execution-utils";
+import {
+  formatDateTime,
+  formatDuration,
+} from "../shared/executions/executionFormatters";
+import { DEFAULT_TOP_PANEL_PERCENT } from "./constants";
+import { useRegisterActivityActions } from "./activityActions";
+import { ActivityPanelEmpty, PipelinesEmptyIcon } from "./ActivityPanelEmpty";
+import { ActivityFilterDropdown } from "./ActivityFilterDropdown";
 import {
   deletePipelineDefinition,
   exportPipelineYaml,
@@ -18,273 +25,325 @@ import {
   updatePipelineDefinition,
   type PipelineDefinition,
   type PipelineDefinitionUpdate,
-} from './pipelines/PipelinesDefsActions'
+} from "./pipelines/PipelinesDefsActions";
 import {
   PipelinesDefsDetail,
   type PipelineDefinitionViewMode,
-} from './pipelines/PipelinesDefsDetail'
-import { PipelinesDefsList } from './pipelines/PipelinesDefsList'
+} from "./pipelines/PipelinesDefsDetail";
+import { PipelinesDefsList } from "./pipelines/PipelinesDefsList";
 
 interface PipelinesTabProps {
-  projectId?: string | null
+  projectId?: string | null;
 }
 
 const FILTER_OPTIONS = [
-  { id: 'all', label: 'All' },
-  { id: 'completed', label: 'Completed' },
-  { id: 'failed', label: 'Failed' },
-  { id: 'running', label: 'Running' },
-] as const
+  { id: "all", label: "All" },
+  { id: "completed", label: "Completed" },
+  { id: "failed", label: "Failed" },
+  { id: "running", label: "Running" },
+] as const;
 
-type StatusFilter = typeof FILTER_OPTIONS[number]['id']
+type StatusFilter = (typeof FILTER_OPTIONS)[number]["id"];
 
-const PIPELINES_SEGMENT_STORAGE_KEY = 'gobby-pipelines-segment-v1'
+const PIPELINES_SEGMENT_STORAGE_KEY = "gobby-pipelines-segment-v1";
 
 const PIPELINE_SEGMENT_OPTIONS = [
-  { value: 'live', label: 'Live' },
-  { value: 'defs', label: 'Defs' },
-] as const
+  { value: "live", label: "Live" },
+  { value: "defs", label: "Defs" },
+] as const;
 
-type PipelineSegment = typeof PIPELINE_SEGMENT_OPTIONS[number]['value']
+type PipelineSegment = (typeof PIPELINE_SEGMENT_OPTIONS)[number]["value"];
 
 interface PipelineExecution {
-  id: string
-  pipeline_name: string
-  status: string
-  created_at: string
-  completed_at?: string | null
-  steps?: StepData[]
+  id: string;
+  pipeline_name: string;
+  status: string;
+  created_at: string;
+  completed_at?: string | null;
+  steps?: StepData[];
 }
 
 function getBaseUrl(): string {
-  return import.meta.env.VITE_API_BASE_URL || ''
+  return import.meta.env.VITE_API_BASE_URL || "";
 }
 
 function readStoredPipelineSegment(): PipelineSegment {
-  if (typeof window === 'undefined') return 'live'
+  if (typeof window === "undefined") return "live";
   try {
-    return window.localStorage.getItem(PIPELINES_SEGMENT_STORAGE_KEY) === 'defs'
-      ? 'defs'
-      : 'live'
+    return window.localStorage.getItem(PIPELINES_SEGMENT_STORAGE_KEY) === "defs"
+      ? "defs"
+      : "live";
   } catch {
-    return 'live'
+    return "live";
   }
 }
 
-export const PipelinesTab = memo(function PipelinesTab({ projectId }: PipelinesTabProps) {
-  const { confirm, ConfirmDialogElement } = useConfirmDialog()
-  const [segment, setSegment] = useState<PipelineSegment>(() => readStoredPipelineSegment())
-  const [executions, setExecutions] = useState<PipelineExecution[]>([])
-  const [loading, setLoading] = useState(true)
-  const [statusFilter, setStatusFilter] = useState<StatusFilter>('all')
-  const [showFilterDropdown, setShowFilterDropdown] = useState(false)
-  const [selectedId, setSelectedId] = useState<string | null>(null)
-  const [topHeight, setTopHeight] = useState(DEFAULT_TOP_PANEL_PERCENT)
-  const [detailExec, setDetailExec] = useState<PipelineExecution | null>(null)
-  const [hasMore, setHasMore] = useState(false)
-  const [loadingMore, setLoadingMore] = useState(false)
-  const [definitions, setDefinitions] = useState<PipelineDefinition[]>([])
-  const [definitionsLoading, setDefinitionsLoading] = useState(false)
-  const [definitionError, setDefinitionError] = useState<string | null>(null)
-  const [selectedDefinitionId, setSelectedDefinitionId] = useState<string | null>(null)
-  const [definitionTopHeight, setDefinitionTopHeight] = useState(DEFAULT_TOP_PANEL_PERCENT)
+export const PipelinesTab = memo(function PipelinesTab({
+  projectId,
+}: PipelinesTabProps) {
+  const { confirm, ConfirmDialogElement } = useConfirmDialog();
+  const [segment, setSegment] = useState<PipelineSegment>(() =>
+    readStoredPipelineSegment(),
+  );
+  const [executions, setExecutions] = useState<PipelineExecution[]>([]);
+  const [loading, setLoading] = useState(true);
+  const [statusFilter, setStatusFilter] = useState<StatusFilter>("all");
+  const [showFilterDropdown, setShowFilterDropdown] = useState(false);
+  const [selectedId, setSelectedId] = useState<string | null>(null);
+  const [topHeight, setTopHeight] = useState(DEFAULT_TOP_PANEL_PERCENT);
+  const [detailExec, setDetailExec] = useState<PipelineExecution | null>(null);
+  const [hasMore, setHasMore] = useState(false);
+  const [loadingMore, setLoadingMore] = useState(false);
+  const [definitions, setDefinitions] = useState<PipelineDefinition[]>([]);
+  const [definitionsLoading, setDefinitionsLoading] = useState(false);
+  const [definitionError, setDefinitionError] = useState<string | null>(null);
+  const [selectedDefinitionId, setSelectedDefinitionId] = useState<
+    string | null
+  >(null);
+  const [definitionTopHeight, setDefinitionTopHeight] = useState(
+    DEFAULT_TOP_PANEL_PERCENT,
+  );
   const [definitionViewMode, setDefinitionViewMode] =
-    useState<PipelineDefinitionViewMode>('detail')
-  const [busyDefinitionId, setBusyDefinitionId] = useState<string | null>(null)
-  const pollRef = useRef<ReturnType<typeof setInterval> | null>(null)
-  const listRequestIdRef = useRef(0)
-  const detailRequestIdRef = useRef(0)
-  const selectedIdRef = useRef<string | null>(null)
-  const definitionConfirmLeaveRef = useRef<(next: () => void) => void>((next) => next())
-  const PAGE_SIZE = 50
+    useState<PipelineDefinitionViewMode>("detail");
+  const [busyDefinitionId, setBusyDefinitionId] = useState<string | null>(null);
+  const pollRef = useRef<ReturnType<typeof setInterval> | null>(null);
+  const listRequestIdRef = useRef(0);
+  const detailRequestIdRef = useRef(0);
+  const selectedIdRef = useRef<string | null>(null);
+  const definitionConfirmLeaveRef = useRef<(next: () => void) => void>((next) =>
+    next(),
+  );
+  const PAGE_SIZE = 50;
 
   useEffect(() => {
     try {
-      window.localStorage.setItem(PIPELINES_SEGMENT_STORAGE_KEY, segment)
+      window.localStorage.setItem(PIPELINES_SEGMENT_STORAGE_KEY, segment);
     } catch {
       // Storage can be unavailable in restricted browser contexts.
     }
-  }, [segment])
+  }, [segment]);
 
   // Fetch executions
-  const fetchExecutions = useCallback((options: {
-    appendOffset?: number
-    limit?: number
-    preserveHasMore?: boolean
-    signal?: AbortSignal
-  } = {}) => {
-    const { appendOffset, limit = PAGE_SIZE, preserveHasMore = false, signal } = options
-    const requestId = ++listRequestIdRef.current
-    const baseUrl = getBaseUrl()
-    const params = new URLSearchParams()
-    if (projectId) params.set('project_id', projectId)
-    if (statusFilter !== 'all') params.set('status', statusFilter)
-    params.set('limit', String(limit))
-    if (appendOffset !== undefined) params.set('offset', String(appendOffset))
-    return fetch(`${baseUrl}/api/pipelines/executions?${params}`, { signal })
-      .then((res) => (res.ok ? res.json() : { executions: [] }))
-      .then((data) => {
-        if (signal?.aborted || requestId !== listRequestIdRef.current) return false
-        const fetched = data.executions ?? []
-        if (appendOffset !== undefined) {
-          setExecutions((prev) => [...prev, ...fetched])
-        } else {
-          setExecutions(fetched)
-        }
-        if (!preserveHasMore) setHasMore(fetched.length === limit)
-        return true
-      })
-      .catch((err) => {
-        if (signal?.aborted || requestId !== listRequestIdRef.current) return false
-        if (err instanceof DOMException && err.name === 'AbortError') return false
-        if (appendOffset === undefined && !preserveHasMore) setExecutions([])
-        return false
-      })
-  }, [projectId, statusFilter])
+  const fetchExecutions = useCallback(
+    (
+      options: {
+        appendOffset?: number;
+        limit?: number;
+        preserveHasMore?: boolean;
+        signal?: AbortSignal;
+      } = {},
+    ) => {
+      const {
+        appendOffset,
+        limit = PAGE_SIZE,
+        preserveHasMore = false,
+        signal,
+      } = options;
+      const requestId = ++listRequestIdRef.current;
+      const baseUrl = getBaseUrl();
+      const params = new URLSearchParams();
+      if (projectId) params.set("project_id", projectId);
+      if (statusFilter !== "all") params.set("status", statusFilter);
+      params.set("limit", String(limit));
+      if (appendOffset !== undefined)
+        params.set("offset", String(appendOffset));
+      return fetch(`${baseUrl}/api/pipelines/executions?${params}`, { signal })
+        .then((res) => (res.ok ? res.json() : { executions: [] }))
+        .then((data) => {
+          if (signal?.aborted || requestId !== listRequestIdRef.current)
+            return false;
+          const fetched = data.executions ?? [];
+          if (appendOffset !== undefined) {
+            setExecutions((prev) => [...prev, ...fetched]);
+          } else {
+            setExecutions(fetched);
+          }
+          if (!preserveHasMore) setHasMore(fetched.length === limit);
+          return true;
+        })
+        .catch((err) => {
+          if (signal?.aborted || requestId !== listRequestIdRef.current)
+            return false;
+          if (err instanceof DOMException && err.name === "AbortError")
+            return false;
+          if (appendOffset === undefined && !preserveHasMore) setExecutions([]);
+          return false;
+        });
+    },
+    [projectId, statusFilter],
+  );
 
   // Reset offset and reload when filter changes
   useEffect(() => {
-    const controller = new AbortController()
-    setLoading(true)
+    const controller = new AbortController();
+    setLoading(true);
     fetchExecutions({ signal: controller.signal }).finally(() => {
-      if (!controller.signal.aborted) setLoading(false)
-    })
-    return () => controller.abort()
-  }, [fetchExecutions])
+      if (!controller.signal.aborted) setLoading(false);
+    });
+    return () => controller.abort();
+  }, [fetchExecutions]);
 
   const handleLoadMore = useCallback(() => {
-    const nextOffset = executions.length
-    setLoadingMore(true)
+    const nextOffset = executions.length;
+    setLoadingMore(true);
     fetchExecutions({ appendOffset: nextOffset }).finally(() => {
-      setLoadingMore(false)
-    })
-  }, [executions.length, fetchExecutions])
+      setLoadingMore(false);
+    });
+  }, [executions.length, fetchExecutions]);
 
   // Fetch detail for selected execution
   const fetchDetail = useCallback((id: string) => {
-    const requestId = ++detailRequestIdRef.current
-    const baseUrl = getBaseUrl()
+    const requestId = ++detailRequestIdRef.current;
+    const baseUrl = getBaseUrl();
     fetch(`${baseUrl}/api/pipelines/${id}`)
       .then((res) => (res.ok ? res.json() : null))
       .then((data) => {
-        const execution = data?.execution ?? data
+        const execution = data?.execution ?? data;
         if (
-          requestId === detailRequestIdRef.current
-          && execution?.id === selectedIdRef.current
+          requestId === detailRequestIdRef.current &&
+          execution?.id === selectedIdRef.current
         ) {
-          setDetailExec(execution)
+          setDetailExec(execution);
         }
       })
       .catch((err) => {
         if (requestId === detailRequestIdRef.current) {
-          console.error('Failed to fetch pipeline detail:', err)
+          console.error("Failed to fetch pipeline detail:", err);
         }
-      })
-  }, [])
+      });
+  }, []);
 
   // Poll running executions
   useEffect(() => {
-    const hasRunning = executions.some((e) => e.status === 'running')
-    if (hasRunning || (selectedId && detailExec?.status === 'running')) {
+    const hasRunning = executions.some((e) => e.status === "running");
+    if (hasRunning || (selectedId && detailExec?.status === "running")) {
       pollRef.current = setInterval(() => {
-        fetchExecutions({ limit: executions.length || PAGE_SIZE, preserveHasMore: true })
-        if (selectedId) fetchDetail(selectedId)
-      }, 3000)
+        fetchExecutions({
+          limit: executions.length || PAGE_SIZE,
+          preserveHasMore: true,
+        });
+        if (selectedId) fetchDetail(selectedId);
+      }, 3000);
     }
-    return () => { if (pollRef.current) clearInterval(pollRef.current) }
-  }, [executions, selectedId, detailExec?.status, fetchExecutions, fetchDetail])
+    return () => {
+      if (pollRef.current) clearInterval(pollRef.current);
+    };
+  }, [
+    executions,
+    selectedId,
+    detailExec?.status,
+    fetchExecutions,
+    fetchDetail,
+  ]);
 
-  const handleSelect = useCallback((id: string) => {
-    selectedIdRef.current = id
-    setSelectedId(id)
-    fetchDetail(id)
-  }, [fetchDetail])
+  const handleSelect = useCallback(
+    (id: string) => {
+      selectedIdRef.current = id;
+      setSelectedId(id);
+      fetchDetail(id);
+    },
+    [fetchDetail],
+  );
 
   useEffect(() => {
     if (executions.length === 0) {
       if (selectedIdRef.current !== null) {
-        selectedIdRef.current = null
-        setSelectedId(null)
+        selectedIdRef.current = null;
+        setSelectedId(null);
       }
-      if (detailExec !== null) setDetailExec(null)
-      return
+      if (detailExec !== null) setDetailExec(null);
+      return;
     }
 
-    const currentSelectedId = selectedIdRef.current
+    const currentSelectedId = selectedIdRef.current;
     const nextId =
-      currentSelectedId && executions.some((exec) => exec.id === currentSelectedId)
+      currentSelectedId &&
+      executions.some((exec) => exec.id === currentSelectedId)
         ? currentSelectedId
-        : executions[0].id
+        : executions[0].id;
 
     if (currentSelectedId !== nextId) {
-      selectedIdRef.current = nextId
-      setSelectedId(nextId)
+      selectedIdRef.current = nextId;
+      setSelectedId(nextId);
     }
     if (detailExec?.id !== nextId) {
-      fetchDetail(nextId)
+      fetchDetail(nextId);
     }
-  }, [detailExec, executions, fetchDetail])
+  }, [detailExec, executions, fetchDetail]);
 
   const refreshDefinitions = useCallback(async () => {
-    setDefinitionsLoading(true)
-    setDefinitionError(null)
+    setDefinitionsLoading(true);
+    setDefinitionError(null);
     try {
-      const data = await loadPipelineDefinitions(projectId)
-      setDefinitions(data)
+      const data = await loadPipelineDefinitions(projectId);
+      setDefinitions(data);
       setSelectedDefinitionId((current) =>
         current && data.some((definition) => definition.id === current)
           ? current
-          : data[0]?.id ?? null,
-      )
-      return data
+          : (data[0]?.id ?? null),
+      );
+      return data;
     } catch (error) {
       setDefinitionError(
-        error instanceof Error ? error.message : 'Failed to load pipeline definitions',
-      )
-      setDefinitions([])
-      setSelectedDefinitionId(null)
-      return []
+        error instanceof Error
+          ? error.message
+          : "Failed to load pipeline definitions",
+      );
+      setDefinitions([]);
+      setSelectedDefinitionId(null);
+      return [];
     } finally {
-      setDefinitionsLoading(false)
+      setDefinitionsLoading(false);
     }
-  }, [projectId])
+  }, [projectId]);
 
   useEffect(() => {
-    if (segment !== 'defs') return
-    void refreshDefinitions()
-  }, [refreshDefinitions, segment])
+    if (segment !== "defs") return;
+    void refreshDefinitions();
+  }, [refreshDefinitions, segment]);
 
   const selectedDefinition = useMemo(
-    () => definitions.find((definition) => definition.id === selectedDefinitionId) ?? null,
+    () =>
+      definitions.find(
+        (definition) => definition.id === selectedDefinitionId,
+      ) ?? null,
     [definitions, selectedDefinitionId],
-  )
+  );
 
   const replaceDefinition = useCallback((updated: PipelineDefinition) => {
     setDefinitions((current) =>
-      current.map((definition) => (definition.id === updated.id ? updated : definition)),
-    )
-    setSelectedDefinitionId(updated.id)
-  }, [])
+      current.map((definition) =>
+        definition.id === updated.id ? updated : definition,
+      ),
+    );
+    setSelectedDefinitionId(updated.id);
+  }, []);
 
-  const handleSegmentChange = useCallback((next: PipelineSegment) => {
-    if (next === segment) return
-    const changeSegment = () => {
-      setSegment(next)
-      if (next === 'defs') setDefinitionViewMode('detail')
-    }
-    if (segment === 'defs') {
-      definitionConfirmLeaveRef.current(changeSegment)
-      return
-    }
-    changeSegment()
-  }, [segment])
+  const handleSegmentChange = useCallback(
+    (next: PipelineSegment) => {
+      if (next === segment) return;
+      const changeSegment = () => {
+        setSegment(next);
+        if (next === "defs") setDefinitionViewMode("detail");
+      };
+      if (segment === "defs") {
+        definitionConfirmLeaveRef.current(changeSegment);
+        return;
+      }
+      changeSegment();
+    },
+    [segment],
+  );
 
-  const handleDefinitionSelect = useCallback((definition: PipelineDefinition) => {
-    definitionConfirmLeaveRef.current(() => {
-      setSelectedDefinitionId(definition.id)
-      setDefinitionViewMode('detail')
-    })
-  }, [])
+  const handleDefinitionSelect = useCallback(
+    (definition: PipelineDefinition) => {
+      definitionConfirmLeaveRef.current(() => {
+        setSelectedDefinitionId(definition.id);
+        setDefinitionViewMode("detail");
+      });
+    },
+    [],
+  );
 
   useRegisterActivityActions(
     {
@@ -292,108 +351,129 @@ export const PipelinesTab = memo(function PipelinesTab({ projectId }: PipelinesT
         value: segment,
         onChange: (value) => handleSegmentChange(value as PipelineSegment),
         options: PIPELINE_SEGMENT_OPTIONS,
-        ariaLabel: 'Pipeline surface',
+        ariaLabel: "Pipeline surface",
       },
-      ...(segment === 'live'
+      ...(segment === "live"
         ? {
             filter: {
               open: showFilterDropdown,
               onToggle: () => setShowFilterDropdown((v) => !v),
-              ariaLabel: 'Filter pipelines',
-              activeCount: statusFilter === 'all' ? 0 : 1,
+              ariaLabel: "Filter pipelines",
+              activeCount: statusFilter === "all" ? 0 : 1,
             },
           }
         : {}),
     },
     [segment, handleSegmentChange, showFilterDropdown, statusFilter],
-  )
+  );
 
-  const handleSaveDefinition = useCallback(async (draft: PipelineDefinition) => {
-    const updated = await updatePipelineDefinition(draft.id, {
-      description: draft.description ?? '',
-      enabled: draft.enabled,
-      tags: draft.tags ?? [],
-    })
-    if (!updated) return false
-    replaceDefinition(updated)
-    return true
-  }, [replaceDefinition])
+  const handleSaveDefinition = useCallback(
+    async (draft: PipelineDefinition) => {
+      const updated = await updatePipelineDefinition(draft.id, {
+        description: draft.description ?? "",
+        enabled: draft.enabled,
+        tags: draft.tags ?? [],
+      });
+      if (!updated) return false;
+      replaceDefinition(updated);
+      return true;
+    },
+    [replaceDefinition],
+  );
 
-  const handleUpdateDefinition = useCallback(async (
-    id: string,
-    updates: PipelineDefinitionUpdate,
-  ) => {
-    setDefinitionError(null)
-    const updated = await updatePipelineDefinition(id, updates)
-    if (!updated) {
-      throw new Error('Failed to update pipeline definition')
-    }
-    replaceDefinition(updated)
-    return updated
-  }, [replaceDefinition])
+  const handleUpdateDefinition = useCallback(
+    async (id: string, updates: PipelineDefinitionUpdate) => {
+      setDefinitionError(null);
+      const updated = await updatePipelineDefinition(id, updates);
+      if (!updated) {
+        throw new Error("Failed to update pipeline definition");
+      }
+      replaceDefinition(updated);
+      return updated;
+    },
+    [replaceDefinition],
+  );
 
-  const withDefinitionBusy = useCallback(async (
-    definition: PipelineDefinition,
-    action: () => Promise<void>,
-  ) => {
-    setBusyDefinitionId(definition.id)
-    setDefinitionError(null)
-    try {
-      await action()
-    } catch (error) {
-      setDefinitionError(error instanceof Error ? error.message : String(error))
-    } finally {
-      setBusyDefinitionId(null)
-    }
-  }, [])
+  const withDefinitionBusy = useCallback(
+    async (definition: PipelineDefinition, action: () => Promise<void>) => {
+      setBusyDefinitionId(definition.id);
+      setDefinitionError(null);
+      try {
+        await action();
+      } catch (error) {
+        setDefinitionError(
+          error instanceof Error ? error.message : String(error),
+        );
+      } finally {
+        setBusyDefinitionId(null);
+      }
+    },
+    [],
+  );
 
-  const handleRunDefinition = useCallback((definition: PipelineDefinition) => {
-    void withDefinitionBusy(definition, async () => {
-      const ran = await runPipelineDefinition(definition.name, projectId)
-      if (!ran) throw new Error(`Failed to run ${definition.name}`)
-    })
-  }, [projectId, withDefinitionBusy])
+  const handleRunDefinition = useCallback(
+    (definition: PipelineDefinition) => {
+      void withDefinitionBusy(definition, async () => {
+        const ran = await runPipelineDefinition(definition.name, projectId);
+        if (!ran) throw new Error(`Failed to run ${definition.name}`);
+      });
+    },
+    [projectId, withDefinitionBusy],
+  );
 
-  const handleToggleDefinition = useCallback((definition: PipelineDefinition) => {
-    void withDefinitionBusy(definition, async () => {
-      const updated = await togglePipelineDefinition(definition.id)
-      if (!updated) throw new Error(`Failed to update ${definition.name}`)
-      replaceDefinition(updated)
-    })
-  }, [replaceDefinition, withDefinitionBusy])
+  const handleToggleDefinition = useCallback(
+    (definition: PipelineDefinition) => {
+      void withDefinitionBusy(definition, async () => {
+        const updated = await togglePipelineDefinition(definition.id);
+        if (!updated) throw new Error(`Failed to update ${definition.name}`);
+        replaceDefinition(updated);
+      });
+    },
+    [replaceDefinition, withDefinitionBusy],
+  );
 
-  const handleDeleteDefinition = useCallback((definition: PipelineDefinition) => {
-    void withDefinitionBusy(definition, async () => {
-      const shouldDelete = await confirm({
-        title: `Delete "${definition.name}"?`,
-        confirmLabel: 'Delete',
-        destructive: true,
-      })
-      if (!shouldDelete) return
-      const deleted = await deletePipelineDefinition(definition.id)
-      if (!deleted) throw new Error(`Failed to delete ${definition.name}`)
-      const remainingDefinitions = definitions.filter((item) => item.id !== definition.id)
-      setDefinitions(remainingDefinitions)
-      setSelectedDefinitionId((current) =>
-        current === definition.id ? remainingDefinitions[0]?.id ?? null : current,
-      )
-      setDefinitionViewMode('detail')
-    })
-  }, [confirm, definitions, withDefinitionBusy])
+  const handleDeleteDefinition = useCallback(
+    (definition: PipelineDefinition) => {
+      void withDefinitionBusy(definition, async () => {
+        const shouldDelete = await confirm({
+          title: `Delete "${definition.name}"?`,
+          confirmLabel: "Delete",
+          destructive: true,
+        });
+        if (!shouldDelete) return;
+        const deleted = await deletePipelineDefinition(definition.id);
+        if (!deleted) throw new Error(`Failed to delete ${definition.name}`);
+        const remainingDefinitions = definitions.filter(
+          (item) => item.id !== definition.id,
+        );
+        setDefinitions(remainingDefinitions);
+        setSelectedDefinitionId((current) =>
+          current === definition.id
+            ? (remainingDefinitions[0]?.id ?? null)
+            : current,
+        );
+        setDefinitionViewMode("detail");
+      });
+    },
+    [confirm, definitions, withDefinitionBusy],
+  );
 
-  const handleExportDefinition = useCallback((definition: PipelineDefinition) => {
-    void withDefinitionBusy(definition, async () => {
-      const yaml = await exportPipelineYaml(definition.id)
-      if (!yaml) throw new Error(`Failed to export ${definition.name}`)
-      const blob = new Blob([yaml], { type: 'application/x-yaml' })
-      const url = URL.createObjectURL(blob)
-      const link = document.createElement('a')
-      link.href = url
-      link.download = `${definition.name}.yaml`
-      link.click()
-      URL.revokeObjectURL(url)
-    })
-  }, [withDefinitionBusy])
+  const handleExportDefinition = useCallback(
+    (definition: PipelineDefinition) => {
+      void withDefinitionBusy(definition, async () => {
+        const yaml = await exportPipelineYaml(definition.id);
+        if (!yaml) throw new Error(`Failed to export ${definition.name}`);
+        const blob = new Blob([yaml], { type: "application/x-yaml" });
+        const url = URL.createObjectURL(blob);
+        const link = document.createElement("a");
+        link.href = url;
+        link.download = `${definition.name}.yaml`;
+        link.click();
+        URL.revokeObjectURL(url);
+      });
+    },
+    [withDefinitionBusy],
+  );
 
   const {
     steps: detailSteps,
@@ -401,27 +481,27 @@ export const PipelinesTab = memo(function PipelinesTab({ projectId }: PipelinesT
     passed: passedStepCount,
     failed: failedStepCount,
   } = useMemo(() => {
-    const steps: StepData[] = detailExec?.steps ?? []
+    const steps: StepData[] = detailExec?.steps ?? [];
     const counts = steps.reduce(
       (acc, step) => {
-        acc.total += 1
-        if (step.status === 'completed' || step.status === 'success') {
-          acc.passed += 1
+        acc.total += 1;
+        if (step.status === "completed" || step.status === "success") {
+          acc.passed += 1;
         }
-        if (step.status === 'failed' || step.status === 'error') {
-          acc.failed += 1
+        if (step.status === "failed" || step.status === "error") {
+          acc.failed += 1;
         }
-        return acc
+        return acc;
       },
       { total: 0, passed: 0, failed: 0 },
-    )
-    return { steps, ...counts }
-  }, [detailExec?.steps])
+    );
+    return { steps, ...counts };
+  }, [detailExec?.steps]);
 
   return (
-    <div className="relative flex flex-col h-full">
+    <div className="relative flex h-full flex-col">
       {ConfirmDialogElement}
-      {segment === 'live' && showFilterDropdown && (
+      {segment === "live" && showFilterDropdown && (
         <ActivityFilterDropdown<StatusFilter>
           value={statusFilter}
           options={FILTER_OPTIONS.map((o) => ({ value: o.id, label: o.label }))}
@@ -431,7 +511,7 @@ export const PipelinesTab = memo(function PipelinesTab({ projectId }: PipelinesT
         />
       )}
 
-      {segment === 'defs' ? (
+      {segment === "defs" ? (
         <>
           {definitionError && (
             <Button
@@ -447,8 +527,12 @@ export const PipelinesTab = memo(function PipelinesTab({ projectId }: PipelinesT
           )}
           <div className="flex min-h-0 flex-1 flex-col">
             <div
-              className={`overflow-y-auto ${selectedDefinition ? 'border-b border-border' : 'flex-1'}`}
-              style={selectedDefinition ? { height: `${definitionTopHeight}%` } : undefined}
+              className={`overflow-y-auto ${selectedDefinition ? "border-b border-border" : "flex-1"}`}
+              style={
+                selectedDefinition
+                  ? { height: `${definitionTopHeight}%` }
+                  : undefined
+              }
             >
               {definitionsLoading && definitions.length === 0 ? (
                 <ActivityPanelEmpty
@@ -495,7 +579,7 @@ export const PipelinesTab = memo(function PipelinesTab({ projectId }: PipelinesT
                   onExport={handleExportDefinition}
                   onError={setDefinitionError}
                   onConfirmLeaveChange={(handler) => {
-                    definitionConfirmLeaveRef.current = handler
+                    definitionConfirmLeaveRef.current = handler;
                   }}
                 />
               </div>
@@ -504,113 +588,133 @@ export const PipelinesTab = memo(function PipelinesTab({ projectId }: PipelinesT
         </>
       ) : (
         <>
-      {/* Execution list */}
-      <div className={`overflow-y-auto ${selectedId ? 'border-b border-border' : 'flex-1'}`} style={selectedId ? { height: `${topHeight}%` } : undefined}>
-        {loading && executions.length === 0 ? (
-          <ActivityPanelEmpty body="Loading pipelines…" />
-        ) : executions.length === 0 ? (
-          <ActivityPanelEmpty
-            icon={<PipelinesEmptyIcon />}
-            heading="Pipelines"
-            body={
-              statusFilter === 'all'
-                ? 'Pipeline runs appear here when triggered'
-                : `No ${statusFilter} pipelines yet`
-            }
-          />
-        ) : (
-          <>
-            {executions.map((exec) => (
-              <Button
-                type="button"
-                key={exec.id}
-                variant="ghost"
-                className={`flex min-h-[var(--activity-panel-row-height)] w-full cursor-pointer appearance-none items-center justify-between gap-2 rounded-none border-0 border-b border-[var(--border)] bg-transparent px-3 py-2 text-left transition-colors duration-100 [color:inherit] [font:inherit] hover:bg-[var(--bg-tertiary)] pointer-coarse:min-h-11 pointer-coarse:min-w-11 ${selectedId === exec.id ? 'bg-[color-mix(in_srgb,var(--accent)_8%,transparent)] hover:bg-[color-mix(in_srgb,var(--accent)_8%,transparent)]' : ''} ${coarseHitAreaCls}`}
-                onClick={() => handleSelect(exec.id)}
-              >
-                <div className="flex items-center gap-2 min-w-0">
-                  <PipelineStatusDot status={exec.status} />
-                  <span className="activity-row-title">{exec.pipeline_name}</span>
-                </div>
-                <div className="flex items-center gap-2">
-                  <span className="activity-row-meta">
-                    {formatDateTime(exec.created_at)}
-                  </span>
-                </div>
-              </Button>
-            ))}
-            {hasMore && (
-              <Button
-                type="button"
-                variant="ghost"
-                size="sm"
-                className={`w-full rounded-none py-2 text-xs text-muted-foreground hover:bg-muted/30 hover:text-foreground ${coarseHitAreaCls}`}
-                onClick={handleLoadMore}
-                disabled={loadingMore}
-              >
-                {loadingMore ? 'Loading...' : 'Load more'}
-              </Button>
-            )}
-          </>
-        )}
-      </div>
-
-      {/* Resize handle */}
-      {selectedId && detailExec && (
-        <ResizeHandle direction="vertical" onResize={setTopHeight} panelHeight={topHeight} minHeight={15} maxHeight={80} />
-      )}
-
-      {/* Detail pane */}
-      {selectedId && detailExec && (
-        <div className="flex-1 flex flex-col min-h-0">
-          <div className="h-10 bg-[var(--bg-secondary)] flex items-center justify-between gap-3 px-3 border-b border-border">
-            <div className="flex items-center gap-2 min-w-0">
-              <PipelineStatusDot status={detailExec.status} />
-              <span className="activity-row-title">{detailExec.pipeline_name}</span>
-              {detailExec.completed_at && (
-                <span className="activity-row-meta">
-                  {formatDuration(detailExec.created_at, detailExec.completed_at)}
-                </span>
-              )}
-            </div>
-            {detailStepCount > 0 && (
-              <div className="flex items-center gap-3 activity-row-meta shrink-0">
-                <span>{detailStepCount} step{detailStepCount !== 1 ? 's' : ''}</span>
-                {passedStepCount > 0 && (
-                  <span className="text-success-foreground">
-                    {passedStepCount} passed
-                  </span>
+          {/* Execution list */}
+          <div
+            className={`overflow-y-auto ${selectedId ? "border-b border-border" : "flex-1"}`}
+            style={selectedId ? { height: `${topHeight}%` } : undefined}
+          >
+            {loading && executions.length === 0 ? (
+              <ActivityPanelEmpty body="Loading pipelines…" />
+            ) : executions.length === 0 ? (
+              <ActivityPanelEmpty
+                icon={<PipelinesEmptyIcon />}
+                heading="Pipelines"
+                body={
+                  statusFilter === "all"
+                    ? "Pipeline runs appear here when triggered"
+                    : `No ${statusFilter} pipelines yet`
+                }
+              />
+            ) : (
+              <>
+                {executions.map((exec) => (
+                  <Button
+                    type="button"
+                    key={exec.id}
+                    variant="ghost"
+                    className={`flex min-h-[var(--activity-panel-row-height)] w-full cursor-pointer appearance-none items-center justify-between gap-2 rounded-none border-0 border-b border-[var(--border)] bg-transparent px-3 py-2 text-left [color:inherit] transition-colors duration-100 [font:inherit] hover:bg-[var(--bg-tertiary)] pointer-coarse:min-h-11 pointer-coarse:min-w-11 ${selectedId === exec.id ? "bg-[color-mix(in_srgb,var(--accent)_8%,transparent)] hover:bg-[color-mix(in_srgb,var(--accent)_8%,transparent)]" : ""} ${coarseHitAreaCls}`}
+                    onClick={() => handleSelect(exec.id)}
+                  >
+                    <div className="flex min-w-0 items-center gap-2">
+                      <PipelineStatusDot status={exec.status} />
+                      <span className="activity-row-title">
+                        {exec.pipeline_name}
+                      </span>
+                    </div>
+                    <div className="flex items-center gap-2">
+                      <span className="activity-row-meta">
+                        {formatDateTime(exec.created_at)}
+                      </span>
+                    </div>
+                  </Button>
+                ))}
+                {hasMore && (
+                  <Button
+                    type="button"
+                    variant="ghost"
+                    size="sm"
+                    className={`w-full rounded-none py-2 text-xs text-muted-foreground hover:bg-muted/30 hover:text-foreground ${coarseHitAreaCls}`}
+                    onClick={handleLoadMore}
+                    disabled={loadingMore}
+                  >
+                    {loadingMore ? "Loading..." : "Load more"}
+                  </Button>
                 )}
-                {failedStepCount > 0 && (
-                  <span className="text-error">
-                    {failedStepCount} failed
+              </>
+            )}
+          </div>
+
+          {/* Resize handle */}
+          {selectedId && detailExec && (
+            <ResizeHandle
+              direction="vertical"
+              onResize={setTopHeight}
+              panelHeight={topHeight}
+              minHeight={15}
+              maxHeight={80}
+            />
+          )}
+
+          {/* Detail pane */}
+          {selectedId && detailExec && (
+            <div className="flex min-h-0 flex-1 flex-col">
+              <div className="flex h-10 items-center justify-between gap-3 border-b border-border bg-[var(--bg-secondary)] px-3">
+                <div className="flex min-w-0 items-center gap-2">
+                  <PipelineStatusDot status={detailExec.status} />
+                  <span className="activity-row-title">
+                    {detailExec.pipeline_name}
                   </span>
+                  {detailExec.completed_at && (
+                    <span className="activity-row-meta">
+                      {formatDuration(
+                        detailExec.created_at,
+                        detailExec.completed_at,
+                      )}
+                    </span>
+                  )}
+                </div>
+                {detailStepCount > 0 && (
+                  <div className="activity-row-meta flex shrink-0 items-center gap-3">
+                    <span>
+                      {detailStepCount} step{detailStepCount !== 1 ? "s" : ""}
+                    </span>
+                    {passedStepCount > 0 && (
+                      <span className="text-success-foreground">
+                        {passedStepCount} passed
+                      </span>
+                    )}
+                    {failedStepCount > 0 && (
+                      <span className="text-error">
+                        {failedStepCount} failed
+                      </span>
+                    )}
+                  </div>
                 )}
               </div>
-            )}
-          </div>
-          <div className="flex-1 overflow-y-auto">
-            {detailStepCount > 0 ? (
-              <>
-                <div className="flex flex-col py-2 pl-3 pr-2">
-                  {detailSteps.map((step, i) => (
-                    <StepDisplay
-                      key={step.step_id ?? i}
-                      step={step}
-                      index={i}
-                      layout="timeline"
-                    />
-                  ))}
-                </div>
-              </>
-            ) : (
-              <p className="text-xs text-muted-foreground p-2">No steps available</p>
-            )}
-          </div>
-        </div>
-      )}
+              <div className="flex-1 overflow-y-auto">
+                {detailStepCount > 0 ? (
+                  <>
+                    <div className="flex flex-col py-2 pr-2 pl-3">
+                      {detailSteps.map((step, i) => (
+                        <StepDisplay
+                          key={step.step_id ?? i}
+                          step={step}
+                          index={i}
+                          layout="timeline"
+                        />
+                      ))}
+                    </div>
+                  </>
+                ) : (
+                  <p className="p-2 text-xs text-muted-foreground">
+                    No steps available
+                  </p>
+                )}
+              </div>
+            </div>
+          )}
         </>
       )}
     </div>
-  )
-})
+  );
+});

@@ -40,8 +40,15 @@ const CITATION_ID = "citation-runner-aa06";
 const UNRESOLVED_ID = "unresolved-code-modules-src-gobby-aa07";
 
 interface CapturedGraphProps {
-  graphData: { nodes: WikiGraphSceneNode[]; links: Array<Record<string, unknown>> };
-  nodeCanvasObject?: (node: WikiGraphSceneNode, ctx: unknown, globalScale: number) => void;
+  graphData: {
+    nodes: WikiGraphSceneNode[];
+    links: Array<Record<string, unknown>>;
+  };
+  nodeCanvasObject?: (
+    node: WikiGraphSceneNode,
+    ctx: unknown,
+    globalScale: number,
+  ) => void;
   onNodeClick?: (node: WikiGraphSceneNode) => void;
   onNodeHover?: (node: WikiGraphSceneNode | null) => void;
   onEngineStop?: () => void;
@@ -50,7 +57,9 @@ interface CapturedGraphProps {
   autoPauseRedraw?: boolean;
 }
 
-const capturedRef = vi.hoisted(() => ({ current: null as CapturedGraphProps | null }));
+const capturedRef = vi.hoisted(() => ({
+  current: null as CapturedGraphProps | null,
+}));
 const fgHandle = vi.hoisted(() => ({
   zoom: vi.fn(() => 1),
   centerAt: vi.fn(() => ({ x: 0, y: 0 })),
@@ -106,7 +115,10 @@ class MockIntersectionObserver {
 }
 
 vi.mock("mermaid", () => ({
-  default: { initialize: vi.fn(), render: vi.fn(async () => ({ svg: "<svg />" })) },
+  default: {
+    initialize: vi.fn(),
+    render: vi.fn(async () => ({ svg: "<svg />" })),
+  },
 }));
 
 vi.mock("react-syntax-highlighter", () => ({
@@ -160,13 +172,16 @@ function stubGraphFetch(options: { graph?: () => Response } = {}) {
     const route = url.pathname;
     if (route.includes("/api/wiki/status")) return jsonResponse(statusEnvelope);
     if (route.includes("/api/wiki/health")) return jsonResponse(healthEnvelope);
-    if (route.includes("/api/wiki/sources")) return jsonResponse(sourcesEnvelope);
+    if (route.includes("/api/wiki/sources"))
+      return jsonResponse(sourcesEnvelope);
     if (route.includes("/api/wiki/pages")) return jsonResponse(pagesEnvelope);
     if (route.includes("/api/wiki/graph")) {
       return options.graph?.() ?? jsonResponse(graphViewEnvelope);
     }
-    if (route.includes("/api/wiki/backlinks")) return jsonResponse(backlinksEnvelope);
-    if (route.includes("/api/wiki/read")) return jsonResponse(browseReadGobbyEnvelope);
+    if (route.includes("/api/wiki/backlinks"))
+      return jsonResponse(backlinksEnvelope);
+    if (route.includes("/api/wiki/read"))
+      return jsonResponse(browseReadGobbyEnvelope);
     return jsonResponse({ ok: true, payload: {} });
   });
   vi.stubGlobal("fetch", fetchMock);
@@ -177,7 +192,10 @@ function graphRequestIncludes(fetchMock: ReturnType<typeof vi.fn>): string[] {
   return fetchMock.mock.calls
     .map((call) => String(call[0]))
     .filter((url) => url.includes("/api/wiki/graph"))
-    .map((url) => new URL(url, "http://localhost").searchParams.get("include") ?? "");
+    .map(
+      (url) =>
+        new URL(url, "http://localhost").searchParams.get("include") ?? "",
+    );
 }
 
 const overrideSpies = { request: vi.fn(), release: vi.fn() };
@@ -201,7 +219,9 @@ async function openGraph(user: ReturnType<typeof userEvent.setup>) {
 }
 
 function sceneNode(id: string): WikiGraphSceneNode {
-  const node = capturedRef.current?.graphData.nodes.find((entry) => entry.id === id);
+  const node = capturedRef.current?.graphData.nodes.find(
+    (entry) => entry.id === id,
+  );
   if (!node) throw new Error(`node ${id} not in scene`);
   return { ...node, x: 0, y: 0 } as WikiGraphSceneNode;
 }
@@ -235,7 +255,8 @@ describe("WikiGraphView shell (4.1.2)", () => {
     expect(overrideSpies.request).toHaveBeenCalledTimes(1);
     expect(graphRequestIncludes(fetchMock)).toContain("all");
 
-    const ids = capturedRef.current?.graphData.nodes.map((node) => node.id) ?? [];
+    const ids =
+      capturedRef.current?.graphData.nodes.map((node) => node.id) ?? [];
     expect(ids).toEqual(
       expect.arrayContaining([GOBBY_ID, GWIKI_ID, RUNNER_ID, WATCHER_ID]),
     );
@@ -257,7 +278,9 @@ describe("WikiGraphView shell (4.1.2)", () => {
     await openGraph(user);
     await user.click(screen.getByRole("radio", { name: "Code" }));
 
-    await waitFor(() => expect(graphRequestIncludes(fetchMock)).toContain("code"));
+    await waitFor(() =>
+      expect(graphRequestIncludes(fetchMock)).toContain("code"),
+    );
   });
 
   it("persists toggles across close and reopen", async () => {
@@ -266,9 +289,12 @@ describe("WikiGraphView shell (4.1.2)", () => {
     render(<WikiHarness />);
 
     await openGraph(user);
-    await user.click(screen.getByRole("checkbox", { name: "Sources & citations" }));
+    await user.click(
+      screen.getByRole("checkbox", { name: "Sources & citations" }),
+    );
     await waitFor(() => {
-      const ids = capturedRef.current?.graphData.nodes.map((node) => node.id) ?? [];
+      const ids =
+        capturedRef.current?.graphData.nodes.map((node) => node.id) ?? [];
       expect(ids).toContain(SOURCE_ID);
       expect(ids).toContain(CITATION_ID);
     });
@@ -277,8 +303,12 @@ describe("WikiGraphView shell (4.1.2)", () => {
     await screen.findByRole("tree", { name: /wiki pages/i });
 
     await openGraph(user);
-    expect(screen.getByRole("checkbox", { name: "Sources & citations" })).toBeChecked();
-    const stored = JSON.parse(window.localStorage.getItem("gobby:wiki-tab:graph") ?? "{}") as {
+    expect(
+      screen.getByRole("checkbox", { name: "Sources & citations" }),
+    ).toBeChecked();
+    const stored = JSON.parse(
+      window.localStorage.getItem("gobby:wiki-tab:graph") ?? "{}",
+    ) as {
       sources?: boolean;
     };
     expect(stored.sources).toBe(true);
@@ -290,9 +320,15 @@ describe("WikiGraphView shell (4.1.2)", () => {
     render(<WikiHarness />);
 
     const tree = await screen.findByRole("tree", { name: /wiki pages/i });
-    await user.click(within(tree).getByRole("treeitem", { name: /knowledge/i }));
-    await user.click(await within(tree).findByRole("treeitem", { name: /concepts/i }));
-    await user.click(await within(tree).findByRole("treeitem", { name: "Gobby" }));
+    await user.click(
+      within(tree).getByRole("treeitem", { name: /knowledge/i }),
+    );
+    await user.click(
+      await within(tree).findByRole("treeitem", { name: /concepts/i }),
+    );
+    await user.click(
+      await within(tree).findByRole("treeitem", { name: "Gobby" }),
+    );
     await screen.findByRole("heading", { name: "Gobby", level: 1 });
 
     await openGraph(user);
@@ -303,12 +339,15 @@ describe("WikiGraphView shell (4.1.2)", () => {
   });
 
   it("shows the cap chip when the vault exceeds the node budget", async () => {
-    const bigNodes = Array.from({ length: MAX_GRAPH_NODES + 100 }, (_, index) => ({
-      id: `n${index}`,
-      kind: "wiki_page",
-      path: `knowledge/p${index}.md`,
-      title: `P${index}`,
-    }));
+    const bigNodes = Array.from(
+      { length: MAX_GRAPH_NODES + 100 },
+      (_, index) => ({
+        id: `n${index}`,
+        kind: "wiki_page",
+        path: `knowledge/p${index}.md`,
+        title: `P${index}`,
+      }),
+    );
     stubGraphFetch({
       graph: () =>
         jsonResponse({
@@ -320,7 +359,14 @@ describe("WikiGraphView shell (4.1.2)", () => {
             degraded: false,
             degraded_sources: [],
             nodes: bigNodes,
-            edges: { links: [], imports: [], calls: [], callers: [], trust: [], audit: [] },
+            edges: {
+              links: [],
+              imports: [],
+              calls: [],
+              callers: [],
+              trust: [],
+              audit: [],
+            },
             analytics: null,
           },
         }),
@@ -346,7 +392,14 @@ describe("WikiGraphView shell (4.1.2)", () => {
             degraded: false,
             degraded_sources: [],
             nodes: [],
-            edges: { links: [], imports: [], calls: [], callers: [], trust: [], audit: [] },
+            edges: {
+              links: [],
+              imports: [],
+              calls: [],
+              callers: [],
+              trust: [],
+              audit: [],
+            },
             analytics: null,
           },
         }),
@@ -386,7 +439,9 @@ describe("WikiForceGraph interactions (4.1.1, 4.1.4)", () => {
     await user.click(screen.getByRole("checkbox", { name: "Unresolved" }));
     await waitFor(() => {
       expect(
-        capturedRef.current?.graphData.nodes.some((node) => node.id === UNRESOLVED_ID),
+        capturedRef.current?.graphData.nodes.some(
+          (node) => node.id === UNRESOLVED_ID,
+        ),
       ).toBe(true);
     });
 
@@ -419,7 +474,10 @@ describe("WikiForceGraph interactions (4.1.1, 4.1.4)", () => {
     render(<WikiHarness />);
 
     await openGraph(user);
-    await user.type(screen.getByRole("textbox", { name: "Search graph" }), "gwiki");
+    await user.type(
+      screen.getByRole("textbox", { name: "Search graph" }),
+      "gwiki",
+    );
 
     const missCtx = new MockCanvasCtx();
     capturedRef.current?.nodeCanvasObject?.(
@@ -486,7 +544,11 @@ describe("WikiForceGraph interactions (4.1.1, 4.1.4)", () => {
       nearCtx as unknown as CanvasRenderingContext2D,
       2,
     );
-    expect(nearCtx.fillText).toHaveBeenCalledWith("Gobby", expect.any(Number), expect.any(Number));
+    expect(nearCtx.fillText).toHaveBeenCalledWith(
+      "Gobby",
+      expect.any(Number),
+      expect.any(Number),
+    );
   });
 
   it("zooms from the keyboard on the focused wrapper", async () => {
@@ -495,11 +557,16 @@ describe("WikiForceGraph interactions (4.1.1, 4.1.4)", () => {
     render(<WikiHarness />);
 
     await openGraph(user);
-    const wrapper = screen.getByRole("application", { name: /graph of \d+ pages/i });
+    const wrapper = screen.getByRole("application", {
+      name: /graph of \d+ pages/i,
+    });
     wrapper.focus();
     await user.keyboard("+");
 
-    expect(fgHandle.zoom).toHaveBeenCalledWith(expect.any(Number), expect.any(Number));
+    expect(fgHandle.zoom).toHaveBeenCalledWith(
+      expect.any(Number),
+      expect.any(Number),
+    );
   });
 });
 
@@ -600,7 +667,11 @@ describe("buildGraphScene (4.1.1)", () => {
       analytics: null,
     };
 
-    const scene = buildGraphScene(orphanPayload, { ...baseOptions, orphans: false }, fakeResolve);
+    const scene = buildGraphScene(
+      orphanPayload,
+      { ...baseOptions, orphans: false },
+      fakeResolve,
+    );
     expect(scene.nodes.map((node) => node.id).sort()).toEqual(["a", "b"]);
   });
 
@@ -639,9 +710,15 @@ describe("buildGraphScene (4.1.1)", () => {
 
   it("cycles community colors through the chart series only when enabled", () => {
     const plain = buildGraphScene(payload(), baseOptions, fakeResolve);
-    expect(plain.nodes.every((node) => node.communityColor === null)).toBe(true);
+    expect(plain.nodes.every((node) => node.communityColor === null)).toBe(
+      true,
+    );
 
-    const colored = buildGraphScene(payload(), { ...baseOptions, communities: true }, fakeResolve);
+    const colored = buildGraphScene(
+      payload(),
+      { ...baseOptions, communities: true },
+      fakeResolve,
+    );
     const gobby = colored.nodes.find((node) => node.id === GOBBY_ID);
     const runner = colored.nodes.find((node) => node.id === RUNNER_ID);
     expect(gobby?.communityColor).toBe("--chart-series-1");

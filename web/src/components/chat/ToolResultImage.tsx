@@ -1,42 +1,42 @@
-import { useMemo, useState } from 'react'
+import { useMemo, useState } from "react";
 import {
   Dialog,
   DialogClose,
   DialogContent,
   DialogDescription,
   DialogTitle,
-} from '../ui/Dialog'
-import { Button } from '../ui/Button'
+} from "../ui/Dialog";
+import { Button } from "../ui/Button";
 
 interface ToolResultImageProps {
-  src: string
+  src: string;
 }
 
 function extensionFromImageSrc(src: string): string {
-  const dataMatch = /^data:image\/([^;,]+)/i.exec(src)
+  const dataMatch = /^data:image\/([^;,]+)/i.exec(src);
   if (dataMatch) {
-    const mimeSubtype = dataMatch[1].toLowerCase()
-    if (mimeSubtype === 'jpeg') return 'jpg'
-    if (mimeSubtype === 'svg+xml') return 'svg'
-    return mimeSubtype.replace(/[^a-z0-9]/g, '') || 'png'
+    const mimeSubtype = dataMatch[1].toLowerCase();
+    if (mimeSubtype === "jpeg") return "jpg";
+    if (mimeSubtype === "svg+xml") return "svg";
+    return mimeSubtype.replace(/[^a-z0-9]/g, "") || "png";
   }
 
   try {
-    const pathname = new URL(src, window.location.origin).pathname
-    const pathMatch = /\.([a-z0-9]+)$/i.exec(pathname)
-    return pathMatch?.[1]?.toLowerCase() || 'png'
+    const pathname = new URL(src, window.location.origin).pathname;
+    const pathMatch = /\.([a-z0-9]+)$/i.exec(pathname);
+    return pathMatch?.[1]?.toLowerCase() || "png";
   } catch {
-    return 'png'
+    return "png";
   }
 }
 
 export function ToolResultImage({ src }: ToolResultImageProps) {
-  const [open, setOpen] = useState(false)
-  const [fitToScreen, setFitToScreen] = useState(true)
+  const [open, setOpen] = useState(false);
+  const [fitToScreen, setFitToScreen] = useState(true);
   const downloadName = useMemo(
     () => `tool-result-image.${extensionFromImageSrc(src)}`,
     [src],
-  )
+  );
 
   return (
     <>
@@ -45,10 +45,10 @@ export function ToolResultImage({ src }: ToolResultImageProps) {
           type="button"
           variant="ghost"
           dense
-          className="group max-w-full cursor-zoom-in rounded-lg border border-border bg-muted/20 p-1 transition-colors hover:bg-muted/40 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent focus-visible:ring-offset-2 focus-visible:ring-offset-background"
+          className="group max-w-full cursor-zoom-in rounded-lg border border-border bg-muted/20 p-1 transition-colors hover:bg-muted/40 focus-visible:ring-2 focus-visible:ring-accent focus-visible:ring-offset-2 focus-visible:ring-offset-background focus-visible:outline-none"
           onClick={() => {
-            setFitToScreen(true)
-            setOpen(true)
+            setFitToScreen(true);
+            setOpen(true);
           }}
           aria-label="Open full-size tool result image"
         >
@@ -78,7 +78,7 @@ export function ToolResultImage({ src }: ToolResultImageProps) {
                 <Button
                   type="button"
                   size="sm"
-                  variant={fitToScreen ? 'accent' : 'ghost'}
+                  variant={fitToScreen ? "accent" : "ghost"}
                   className="h-7 px-2"
                   onClick={() => setFitToScreen(true)}
                 >
@@ -87,7 +87,7 @@ export function ToolResultImage({ src }: ToolResultImageProps) {
                 <Button
                   type="button"
                   size="sm"
-                  variant={fitToScreen ? 'ghost' : 'accent'}
+                  variant={fitToScreen ? "ghost" : "accent"}
                   className="h-7 px-2"
                   onClick={() => setFitToScreen(false)}
                 >
@@ -105,7 +105,12 @@ export function ToolResultImage({ src }: ToolResultImageProps) {
                 </a>
               </Button>
               <DialogClose asChild>
-                <Button type="button" size="sm" variant="ghost" className="h-8 px-2">
+                <Button
+                  type="button"
+                  size="sm"
+                  variant="ghost"
+                  className="h-8 px-2"
+                >
                   Close
                 </Button>
               </DialogClose>
@@ -120,13 +125,13 @@ export function ToolResultImage({ src }: ToolResultImageProps) {
               decoding="async"
               className={
                 fitToScreen
-                  ? 'max-h-full max-w-full object-contain'
-                  : 'max-h-none max-w-none object-contain'
+                  ? "max-h-full max-w-full object-contain"
+                  : "max-h-none max-w-none object-contain"
               }
             />
           </div>
         </DialogContent>
       </Dialog>
     </>
-  )
+  );
 }

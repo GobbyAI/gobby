@@ -62,16 +62,12 @@ function isRawSessionUsageUpdatedMessage(
       data.last_prompt_cache_creation_tokens,
       data.last_completion_output_tokens,
     ].every(isOptionalNumeric) &&
-    (
-      data.context_usage_source === undefined ||
+    (data.context_usage_source === undefined ||
       data.context_usage_source === null ||
-      typeof data.context_usage_source === "string"
-    ) &&
-    (
-      data.context_usage_confidence === undefined ||
+      typeof data.context_usage_source === "string") &&
+    (data.context_usage_confidence === undefined ||
       data.context_usage_confidence === null ||
-      typeof data.context_usage_confidence === "string"
-    )
+      typeof data.context_usage_confidence === "string")
   );
 }
 
@@ -122,12 +118,16 @@ export function normalizeSessionUsageUpdatedMessage(
     context_used_tokens: normalizedOptionalNumber(data.context_used_tokens),
     context_usage_ratio: normalizedOptionalNumber(data.context_usage_ratio),
     context_usage_source:
-      typeof data.context_usage_source === "string" ? data.context_usage_source : null,
+      typeof data.context_usage_source === "string"
+        ? data.context_usage_source
+        : null,
     context_usage_confidence:
       typeof data.context_usage_confidence === "string"
         ? data.context_usage_confidence
         : null,
-    last_prompt_input_tokens: normalizedOptionalNumber(data.last_prompt_input_tokens),
+    last_prompt_input_tokens: normalizedOptionalNumber(
+      data.last_prompt_input_tokens,
+    ),
     last_prompt_uncached_input_tokens: normalizedOptionalNumber(
       data.last_prompt_uncached_input_tokens,
     ),
@@ -145,7 +145,9 @@ export function normalizeSessionUsageUpdatedMessage(
     usage_cache_creation_tokens: normalizedOptionalNumber(
       data.usage_cache_creation_tokens,
     ),
-    usage_cache_read_tokens: normalizedOptionalNumber(data.usage_cache_read_tokens),
+    usage_cache_read_tokens: normalizedOptionalNumber(
+      data.usage_cache_read_tokens,
+    ),
     updated_at: data.updated_at,
   };
 }
@@ -159,12 +161,16 @@ function normalizeSessionTotals(
     output_tokens: normalizedOptionalNumber(totals.output_tokens) ?? undefined,
     cache_creation_tokens:
       normalizedOptionalNumber(totals.cache_creation_tokens) ?? undefined,
-    cache_read_tokens: normalizedOptionalNumber(totals.cache_read_tokens) ?? undefined,
-    context_window: normalizedOptionalNumber(totals.context_window) ?? undefined,
+    cache_read_tokens:
+      normalizedOptionalNumber(totals.cache_read_tokens) ?? undefined,
+    context_window:
+      normalizedOptionalNumber(totals.context_window) ?? undefined,
   };
 }
 
-export function normalizeTokenEventMessage(data: unknown): TokenEventMessage | null {
+export function normalizeTokenEventMessage(
+  data: unknown,
+): TokenEventMessage | null {
   if (!isRawTokenEventMessage(data)) return null;
   return {
     type: "token_event",
@@ -175,7 +181,8 @@ export function normalizeTokenEventMessage(data: unknown): TokenEventMessage | n
     origin: typeof data.origin === "string" ? data.origin : null,
     event_at: data.event_at,
     model: typeof data.model === "string" ? data.model : null,
-    model_family: typeof data.model_family === "string" ? data.model_family : null,
+    model_family:
+      typeof data.model_family === "string" ? data.model_family : null,
     input_tokens: normalizedOptionalNumber(data.input_tokens),
     output_tokens: normalizedOptionalNumber(data.output_tokens),
     cache_creation_tokens: normalizedOptionalNumber(data.cache_creation_tokens),
@@ -185,7 +192,9 @@ export function normalizeTokenEventMessage(data: unknown): TokenEventMessage | n
   };
 }
 
-function hasNormalizedContextPayload(data: SessionUsageUpdatedMessage): boolean {
+function hasNormalizedContextPayload(
+  data: SessionUsageUpdatedMessage,
+): boolean {
   if (data.last_completion_output_tokens !== undefined) return true;
   return [
     data.context_used_tokens,
@@ -201,7 +210,10 @@ function hasNormalizedContextPayload(data: SessionUsageUpdatedMessage): boolean 
 
 function hasExistingNormalizedSnapshot(prev: ContextUsage): boolean {
   if (prev.contextUsageSource) {
-    return prev.contextUsageSource !== "web_chat" && prev.contextUsageSource !== "token_event";
+    return (
+      prev.contextUsageSource !== "web_chat" &&
+      prev.contextUsageSource !== "token_event"
+    );
   }
   return Boolean(prev.contextUsageConfidence && prev.contextUsageRatio != null);
 }
@@ -240,7 +252,8 @@ export function handleSessionUsageUpdated(
 ) {
   const update = normalizeSessionUsageUpdatedMessage(data);
   if (!update) return;
-  const visibleSessionId = ctx.viewingSessionIdRef.current ?? ctx.dbSessionIdRef.current;
+  const visibleSessionId =
+    ctx.viewingSessionIdRef.current ?? ctx.dbSessionIdRef.current;
   if (update.session_id === visibleSessionId) {
     ctx.markSessionUsageFresh(update.session_id, update.updated_at);
     ctx.setContextUsage((prev) =>
@@ -248,9 +261,13 @@ export function handleSessionUsageUpdated(
         ...previousUsagePayload(prev),
         ...omitUndefined(update),
         ...(update.last_completion_output_tokens !== undefined
-          ? { last_completion_output_tokens: update.last_completion_output_tokens }
+          ? {
+              last_completion_output_tokens:
+                update.last_completion_output_tokens,
+            }
           : {}),
-        ...(hasExistingNormalizedSnapshot(prev) && !hasNormalizedContextPayload(update)
+        ...(hasExistingNormalizedSnapshot(prev) &&
+        !hasNormalizedContextPayload(update)
           ? {
               context_used_tokens: prev.totalInputTokens,
               last_prompt_input_tokens: prev.totalInputTokens,
@@ -295,7 +312,8 @@ export function handleTokenEvent(
 ) {
   const eventData = normalizeTokenEventMessage(data);
   if (!eventData) return;
-  const visibleSessionId = ctx.viewingSessionIdRef.current ?? ctx.dbSessionIdRef.current;
+  const visibleSessionId =
+    ctx.viewingSessionIdRef.current ?? ctx.dbSessionIdRef.current;
   if (eventData.session_id === visibleSessionId) {
     ctx.markSessionUsageFresh(eventData.session_id, eventData.event_at);
   }

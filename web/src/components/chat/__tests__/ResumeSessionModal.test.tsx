@@ -1,4 +1,10 @@
-import { act, fireEvent, render, screen, waitFor } from "@testing-library/react";
+import {
+  act,
+  fireEvent,
+  render,
+  screen,
+  waitFor,
+} from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import type { GobbySession } from "../../../types/sessions";
@@ -73,14 +79,20 @@ describe("ResumeSessionModal", () => {
       />,
     );
 
-    expect(screen.getByRole("dialog", { name: "Resume Session" })).toBeInTheDocument();
-    expect(await screen.findByText("No resumable sessions")).toBeInTheDocument();
+    expect(
+      screen.getByRole("dialog", { name: "Resume Session" }),
+    ).toBeInTheDocument();
+    expect(
+      await screen.findByText("No resumable sessions"),
+    ).toBeInTheDocument();
   });
 
   it("aborts the previous request and ignores its stale response", async () => {
     const first = deferred<Response>();
     const second = deferred<Response>();
-    fetchMock.mockReturnValueOnce(first.promise).mockReturnValueOnce(second.promise);
+    fetchMock
+      .mockReturnValueOnce(first.promise)
+      .mockReturnValueOnce(second.promise);
 
     render(
       <ResumeSessionModal

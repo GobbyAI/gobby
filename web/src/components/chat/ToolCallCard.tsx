@@ -1,11 +1,11 @@
-import { memo, useCallback, useMemo, useState } from 'react'
-import type { ToolCall } from '../../types/chat'
-import { cn } from '../../lib/utils'
-import { TOOL_CARD_SPACING } from '../shared/spacing'
-import { Badge } from '../ui/Badge'
-import { DropdownCaret } from '../ui/DropdownCaret'
-import { JsonBlock } from './JsonBlock'
-import { RichContentBlocks } from './RichContentBlocks'
+import { memo, useCallback, useMemo, useState } from "react";
+import type { ToolCall } from "../../types/chat";
+import { cn } from "../../lib/utils";
+import { TOOL_CARD_SPACING } from "../shared/spacing";
+import { Badge } from "../ui/Badge";
+import { DropdownCaret } from "../ui/DropdownCaret";
+import { JsonBlock } from "./JsonBlock";
+import { RichContentBlocks } from "./RichContentBlocks";
 import {
   COMPACT_HEADER_NAMES,
   COMPACT_HEADER_TOOL_TYPES,
@@ -18,22 +18,28 @@ import {
   pathBasename,
   resolveToolType,
   type ToolCallGroup,
-} from './ToolCallCard.helpers'
+} from "./ToolCallCard.helpers";
 import {
   ToolArgumentsContent,
   ToolErrorBody,
   ToolLocations,
   ToolResultContent,
-} from './ToolCallCardContent'
-import { AskUserQuestionCard, ToolApprovalCard } from './ToolCallCardInteractions'
+} from "./ToolCallCardContent";
+import {
+  AskUserQuestionCard,
+  ToolApprovalCard,
+} from "./ToolCallCardInteractions";
 
 interface ToolCallCardProps {
-  toolCalls: ToolCall[]
-  onRespond?: (toolCallId: string, answers: Record<string, string>) => boolean | void
+  toolCalls: ToolCall[];
+  onRespond?: (
+    toolCallId: string,
+    answers: Record<string, string>,
+  ) => boolean | void;
   onRespondToApproval?: (
     toolCallId: string,
-    decision: 'approve' | 'reject' | 'approve_always',
-  ) => boolean | void
+    decision: "approve" | "reject" | "approve_always",
+  ) => boolean | void;
 }
 
 const ToolCallItem = memo(function ToolCallItem({
@@ -42,28 +48,34 @@ const ToolCallItem = memo(function ToolCallItem({
   onRespondToApproval,
   nested = false,
 }: {
-  call: ToolCall
-  onRespond?: (toolCallId: string, answers: Record<string, string>) => boolean | void
+  call: ToolCall;
+  onRespond?: (
+    toolCallId: string,
+    answers: Record<string, string>,
+  ) => boolean | void;
   onRespondToApproval?: (
     toolCallId: string,
-    decision: 'approve' | 'reject' | 'approve_always',
-  ) => boolean | void
-  nested?: boolean
+    decision: "approve" | "reject" | "approve_always",
+  ) => boolean | void;
+  nested?: boolean;
 }) {
-  const displayName = getToolDisplayName(call)
-  const toolType = resolveToolType(call)
-  const [expanded, setExpanded] = useState(defaultExpandedForCall(call))
-  const summary = getToolSummary(call)
+  const displayName = getToolDisplayName(call);
+  const toolType = resolveToolType(call);
+  const [expanded, setExpanded] = useState(defaultExpandedForCall(call));
+  const summary = getToolSummary(call);
   const isCompact =
     summary !== null &&
-    (COMPACT_HEADER_TOOL_TYPES.has(toolType) || COMPACT_HEADER_NAMES.has(displayName))
-  const isFileHeader = FILE_TOOL_TYPES.has(toolType)
+    (COMPACT_HEADER_TOOL_TYPES.has(toolType) ||
+      COMPACT_HEADER_NAMES.has(displayName));
+  const isFileHeader = FILE_TOOL_TYPES.has(toolType);
 
-  if (call.tool_name === 'AskUserQuestion') {
-    return <AskUserQuestionCard call={call} onRespond={onRespond} />
+  if (call.tool_name === "AskUserQuestion") {
+    return <AskUserQuestionCard call={call} onRespond={onRespond} />;
   }
-  if (call.status === 'pending_approval') {
-    return <ToolApprovalCard call={call} onRespondToApproval={onRespondToApproval} />
+  if (call.status === "pending_approval") {
+    return (
+      <ToolApprovalCard call={call} onRespondToApproval={onRespondToApproval} />
+    );
   }
 
   const hasDetails =
@@ -72,35 +84,35 @@ const ToolCallItem = memo(function ToolCallItem({
     call.error ||
     Boolean(call.content_blocks?.length) ||
     Boolean(call.locations?.length) ||
-    call.raw_output != null
+    call.raw_output != null;
 
   return (
     <div
       className={cn(
-        '@container',
+        "@container",
         nested
-          ? 'border-b border-border last:border-b-0 overflow-hidden'
-          : 'rounded-lg border border-border overflow-hidden my-1.5',
-        call.status === 'error' && 'border-destructive-foreground/30',
+          ? "overflow-hidden border-b border-border last:border-b-0"
+          : "my-1.5 overflow-hidden rounded-lg border border-border",
+        call.status === "error" && "border-destructive-foreground/30",
       )}
     >
       <div
         className={cn(
           TOOL_CARD_SPACING.header,
-          'text-sm cursor-pointer hover:bg-muted/50 transition-colors',
+          "cursor-pointer text-sm transition-colors hover:bg-muted/50",
         )}
         role="button"
         tabIndex={0}
         aria-expanded={expanded}
         onClick={() => hasDetails && setExpanded(!expanded)}
-        onKeyDown={event => {
+        onKeyDown={(event) => {
           if (
             event.target === event.currentTarget &&
             hasDetails &&
-            (event.key === 'Enter' || event.key === ' ')
+            (event.key === "Enter" || event.key === " ")
           ) {
-            event.preventDefault()
-            setExpanded(!expanded)
+            event.preventDefault();
+            setExpanded(!expanded);
           }
         }}
       >
@@ -113,15 +125,15 @@ const ToolCallItem = memo(function ToolCallItem({
         )}
         {summary && isFileHeader ? (
           <>
-            <span className="text-muted-foreground text-xs truncate hidden @sm:inline">
+            <span className="hidden truncate text-xs text-muted-foreground @sm:inline">
               {summary}
             </span>
-            <span className="text-muted-foreground text-xs truncate @sm:hidden">
+            <span className="truncate text-xs text-muted-foreground @sm:hidden">
               {pathBasename(summary)}
             </span>
           </>
         ) : summary ? (
-          <span className="text-muted-foreground text-xs truncate max-w-[12rem] @sm:max-w-[24rem]">
+          <span className="max-w-[12rem] truncate text-xs text-muted-foreground @sm:max-w-[24rem]">
             {summary}
           </span>
         ) : null}
@@ -129,16 +141,20 @@ const ToolCallItem = memo(function ToolCallItem({
         {hasDetails && <DropdownCaret open={expanded} />}
       </div>
       {expanded && hasDetails && (
-        <div className={cn(TOOL_CARD_SPACING.body, 'text-xs')}>
-        {call.arguments && Object.keys(call.arguments).length > 0 && !isCompact && (
-          <ToolArgumentsContent args={call.arguments} callId={call.id} />
-        )}
-        {call.locations && call.locations.length > 0 && (
-          <ToolLocations callId={call.id} locations={call.locations} />
-        )}
+        <div className={cn(TOOL_CARD_SPACING.body, "text-xs")}>
+          {call.arguments &&
+            Object.keys(call.arguments).length > 0 &&
+            !isCompact && (
+              <ToolArgumentsContent args={call.arguments} callId={call.id} />
+            )}
+          {call.locations && call.locations.length > 0 && (
+            <ToolLocations callId={call.id} locations={call.locations} />
+          )}
           {call.content_blocks && call.content_blocks.length > 0 && (
-            <div className="min-w-0 max-w-full overflow-hidden">
-              <div className={cn('text-muted-foreground', TOOL_CARD_SPACING.label)}>
+            <div className="max-w-full min-w-0 overflow-hidden">
+              <div
+                className={cn("text-muted-foreground", TOOL_CARD_SPACING.label)}
+              >
                 Content
               </div>
               <RichContentBlocks
@@ -147,31 +163,42 @@ const ToolCallItem = memo(function ToolCallItem({
               />
             </div>
           )}
-          {call.status === 'completed' && call.result != null && toolType !== 'edit' && (
-            <div className="min-w-0 max-w-full overflow-hidden">
-              <div className={cn('text-muted-foreground', TOOL_CARD_SPACING.label)}>
-                Result
+          {call.status === "completed" &&
+            call.result != null &&
+            toolType !== "edit" && (
+              <div className="max-w-full min-w-0 overflow-hidden">
+                <div
+                  className={cn(
+                    "text-muted-foreground",
+                    TOOL_CARD_SPACING.label,
+                  )}
+                >
+                  Result
+                </div>
+                <ToolResultContent call={call} />
               </div>
-              <ToolResultContent call={call} />
-            </div>
-          )}
+            )}
           {call.raw_output != null && (
-            <div className="min-w-0 max-w-full overflow-hidden">
-              <div className={cn('text-muted-foreground', TOOL_CARD_SPACING.label)}>
+            <div className="max-w-full min-w-0 overflow-hidden">
+              <div
+                className={cn("text-muted-foreground", TOOL_CARD_SPACING.label)}
+              >
                 Raw Output
               </div>
               <JsonBlock value={call.raw_output} />
             </div>
           )}
-          {call.status === 'error' && call.error && <ToolErrorBody error={call.error} />}
+          {call.status === "error" && call.error && (
+            <ToolErrorBody error={call.error} />
+          )}
         </div>
       )}
     </div>
-  )
-})
+  );
+});
 
 function StatusIcon({ status }: { status: string }) {
-  if (status === 'calling') {
+  if (status === "calling") {
     return (
       <svg
         width="14"
@@ -180,15 +207,21 @@ function StatusIcon({ status }: { status: string }) {
         fill="none"
         stroke="currentColor"
         strokeWidth="2"
-        className="text-accent animate-spin"
+        className="animate-spin text-accent"
         aria-label="In flight"
         role="img"
       >
-        <circle cx="12" cy="12" r="10" strokeDasharray="32" strokeDashoffset="16" />
+        <circle
+          cx="12"
+          cy="12"
+          r="10"
+          strokeDasharray="32"
+          strokeDashoffset="16"
+        />
       </svg>
-    )
+    );
   }
-  if (status === 'completed') {
+  if (status === "completed") {
     return (
       <svg
         width="14"
@@ -203,9 +236,9 @@ function StatusIcon({ status }: { status: string }) {
       >
         <polyline points="20 6 9 17 4 12" />
       </svg>
-    )
+    );
   }
-  if (status === 'error') {
+  if (status === "error") {
     return (
       <svg
         width="14"
@@ -221,9 +254,9 @@ function StatusIcon({ status }: { status: string }) {
         <line x1="18" y1="6" x2="6" y2="18" />
         <line x1="6" y1="6" x2="18" y2="18" />
       </svg>
-    )
+    );
   }
-  if (status === 'pending' || status === 'pending_approval') {
+  if (status === "pending" || status === "pending_approval") {
     return (
       <svg
         width="14"
@@ -239,9 +272,9 @@ function StatusIcon({ status }: { status: string }) {
         <circle cx="12" cy="12" r="10" />
         <polyline points="12 6 12 12 16 14" />
       </svg>
-    )
+    );
   }
-  return null
+  return null;
 }
 
 function GroupStatusIcon({
@@ -249,9 +282,9 @@ function GroupStatusIcon({
   allCompleted,
   hasInFlight,
 }: {
-  hasErrors: boolean
-  allCompleted: boolean
-  hasInFlight: boolean
+  hasErrors: boolean;
+  allCompleted: boolean;
+  hasInFlight: boolean;
 }) {
   if (hasInFlight) {
     return (
@@ -262,13 +295,19 @@ function GroupStatusIcon({
         fill="none"
         stroke="currentColor"
         strokeWidth="2.25"
-        className="text-accent animate-spin"
+        className="animate-spin text-accent"
         aria-label="In flight"
         role="img"
       >
-        <circle cx="12" cy="12" r="10" strokeDasharray="32" strokeDashoffset="16" />
+        <circle
+          cx="12"
+          cy="12"
+          r="10"
+          strokeDasharray="32"
+          strokeDashoffset="16"
+        />
       </svg>
-    )
+    );
   }
   if (hasErrors) {
     return (
@@ -286,7 +325,7 @@ function GroupStatusIcon({
         <line x1="18" y1="6" x2="6" y2="18" />
         <line x1="6" y1="6" x2="18" y2="18" />
       </svg>
-    )
+    );
   }
   if (allCompleted) {
     return (
@@ -303,9 +342,9 @@ function GroupStatusIcon({
       >
         <polyline points="20 6 9 17 4 12" />
       </svg>
-    )
+    );
   }
-  return null
+  return null;
 }
 
 function ToolCallGroupHeader({
@@ -315,36 +354,39 @@ function ToolCallGroupHeader({
   onRespond,
   onRespondToApproval,
 }: {
-  group: ToolCallGroup
-  expanded: boolean
-  onToggle: () => void
-  onRespond?: (toolCallId: string, answers: Record<string, string>) => boolean | void
+  group: ToolCallGroup;
+  expanded: boolean;
+  onToggle: () => void;
+  onRespond?: (
+    toolCallId: string,
+    answers: Record<string, string>,
+  ) => boolean | void;
   onRespondToApproval?: (
     toolCallId: string,
-    decision: 'approve' | 'reject' | 'approve_always',
-  ) => boolean | void
+    decision: "approve" | "reject" | "approve_always",
+  ) => boolean | void;
 }) {
-  const serverName = group.tool_calls[0]?.server_name
+  const serverName = group.tool_calls[0]?.server_name;
   const groupBorderClass = group.hasErrors
-    ? 'border-destructive-foreground/50'
+    ? "border-destructive-foreground/50"
     : group.hasInFlight
-      ? 'border-accent/50'
+      ? "border-accent/50"
       : group.allCompleted
-        ? 'border-success-foreground/40'
-        : 'border-border'
+        ? "border-success-foreground/40"
+        : "border-border";
 
   return (
-    <div className={cn('border-l my-1', groupBorderClass)}>
+    <div className={cn("my-1 border-l", groupBorderClass)}>
       <div
-        className="flex items-center gap-2 pl-3 pr-2 py-1 text-sm cursor-pointer hover:bg-muted/30 transition-colors"
+        className="flex cursor-pointer items-center gap-2 py-1 pr-2 pl-3 text-sm transition-colors hover:bg-muted/30"
         role="button"
         tabIndex={0}
         aria-expanded={expanded}
         onClick={onToggle}
-        onKeyDown={event => {
-          if (event.key === 'Enter' || event.key === ' ') {
-            event.preventDefault()
-            onToggle()
+        onKeyDown={(event) => {
+          if (event.key === "Enter" || event.key === " ") {
+            event.preventDefault();
+            onToggle();
           }
         }}
       >
@@ -355,15 +397,15 @@ function ToolCallGroupHeader({
         />
         <span className="font-mono text-foreground">{group.displayName}</span>
         <Badge variant="default">×{group.tool_calls.length}</Badge>
-        {serverName && serverName !== 'builtin' && (
-          <span className="text-muted-foreground text-xs">{serverName}</span>
+        {serverName && serverName !== "builtin" && (
+          <span className="text-xs text-muted-foreground">{serverName}</span>
         )}
         <div className="flex-1" />
         <DropdownCaret open={expanded} />
       </div>
       {expanded && (
         <div className="pl-3">
-          {group.tool_calls.map(call => (
+          {group.tool_calls.map((call) => (
             <ToolCallItem
               key={call.id}
               call={call}
@@ -375,7 +417,7 @@ function ToolCallGroupHeader({
         </div>
       )}
     </div>
-  )
+  );
 }
 
 export const ToolCallCards = memo(function ToolCallCards({
@@ -383,25 +425,34 @@ export const ToolCallCards = memo(function ToolCallCards({
   onRespond,
   onRespondToApproval,
 }: ToolCallCardProps) {
-  const visibleToolCalls = useMemo(() => toolCalls.filter(hasVisibleToolCall), [toolCalls])
-  const segments = useMemo(() => groupToolCalls(visibleToolCalls), [visibleToolCalls])
+  const visibleToolCalls = useMemo(
+    () => toolCalls.filter(hasVisibleToolCall),
+    [toolCalls],
+  );
+  const segments = useMemo(
+    () => groupToolCalls(visibleToolCalls),
+    [visibleToolCalls],
+  );
   const [groupExpansionOverrides, setGroupExpansionOverrides] = useState<
     Record<string, boolean>
-  >({})
+  >({});
 
   const toggleGroup = useCallback((key: string, defaultExpanded: boolean) => {
-    setGroupExpansionOverrides(previous => {
-      const current = previous[key]
-      return { ...previous, [key]: current == null ? !defaultExpanded : !current }
-    })
-  }, [])
+    setGroupExpansionOverrides((previous) => {
+      const current = previous[key];
+      return {
+        ...previous,
+        [key]: current == null ? !defaultExpanded : !current,
+      };
+    });
+  }, []);
 
-  if (!visibleToolCalls.length) return null
+  if (!visibleToolCalls.length) return null;
 
   return (
     <div className="my-1">
-      {segments.map(segment => {
-        if (segment.kind === 'single') {
+      {segments.map((segment) => {
+        if (segment.kind === "single") {
           return (
             <ToolCallItem
               key={segment.call.id}
@@ -409,11 +460,12 @@ export const ToolCallCards = memo(function ToolCallCards({
               onRespond={onRespond}
               onRespondToApproval={onRespondToApproval}
             />
-          )
+          );
         }
-        const groupKey = `${segment.tool_calls[0].id}-${segment.toolName}`
-        const defaultExpanded = segment.displayName !== 'Protocol' || segment.hasInFlight
-        const expanded = groupExpansionOverrides[groupKey] ?? defaultExpanded
+        const groupKey = `${segment.tool_calls[0].id}-${segment.toolName}`;
+        const defaultExpanded =
+          segment.displayName !== "Protocol" || segment.hasInFlight;
+        const expanded = groupExpansionOverrides[groupKey] ?? defaultExpanded;
         return (
           <ToolCallGroupHeader
             key={groupKey}
@@ -423,8 +475,8 @@ export const ToolCallCards = memo(function ToolCallCards({
             onRespond={onRespond}
             onRespondToApproval={onRespondToApproval}
           />
-        )
+        );
       })}
     </div>
-  )
-})
+  );
+});

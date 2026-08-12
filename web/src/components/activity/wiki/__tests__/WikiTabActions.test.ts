@@ -29,10 +29,17 @@ afterEach(() => {
 
 describe("useWikiTabActions", () => {
   it("saves a page, refetches, and reports success", async () => {
-    vi.stubGlobal("fetch", vi.fn(async () => jsonResponse(writeSuccessEnvelope)));
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async () => jsonResponse(writeSuccessEnvelope)),
+    );
     const onRefetch = vi.fn(async () => {});
     const { result } = renderHook(() =>
-      useWikiTabActions({ scope: { projectId: "p1" }, wiki: makeWikiHelpers(), onRefetch }),
+      useWikiTabActions({
+        scope: { projectId: "p1" },
+        wiki: makeWikiHelpers(),
+        onRefetch,
+      }),
     );
 
     let saved: unknown;
@@ -43,14 +50,20 @@ describe("useWikiTabActions", () => {
       });
     });
 
-    expect(saved).toMatchObject({ ok: true, path: "knowledge/topics/example.md" });
+    expect(saved).toMatchObject({
+      ok: true,
+      path: "knowledge/topics/example.md",
+    });
     expect(onRefetch).toHaveBeenCalledTimes(1);
     expect(result.current.status.error).toBeNull();
     expect(result.current.status.message).toMatch(/saved/i);
   });
 
   it("surfaces a write conflict without refetching", async () => {
-    vi.stubGlobal("fetch", vi.fn(async () => jsonResponse(writeConflictBody, 412)));
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async () => jsonResponse(writeConflictBody, 412)),
+    );
     const onRefetch = vi.fn(async () => {});
     const { result } = renderHook(() =>
       useWikiTabActions({ scope: {}, wiki: makeWikiHelpers(), onRefetch }),
@@ -65,7 +78,11 @@ describe("useWikiTabActions", () => {
       });
     });
 
-    expect(saved).toMatchObject({ ok: false, conflict: true, code: "precondition_failed" });
+    expect(saved).toMatchObject({
+      ok: false,
+      conflict: true,
+      code: "precondition_failed",
+    });
     expect(onRefetch).not.toHaveBeenCalled();
     // Conflicts are caller-owned UX (§3.2 conflict panel / inline 409) — no
     // parallel global error line.
@@ -147,6 +164,8 @@ describe("useWikiTabActions", () => {
       await result.current.ingestUrl("https://example.com/notes");
     });
 
-    expect(wiki.ingest).toHaveBeenCalledWith({ urls: ["https://example.com/notes"] });
+    expect(wiki.ingest).toHaveBeenCalledWith({
+      urls: ["https://example.com/notes"],
+    });
   });
 });

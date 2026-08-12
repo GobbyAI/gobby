@@ -8,7 +8,11 @@ import { useEffect, useMemo, useState } from "react";
 
 import { Button } from "../../ui/Button";
 import { coarseHitAreaCls } from "../../ui/controlStyles";
-import { fetchBacklinks, type WikiBacklink, type WikiFetchScope } from "./WikiTabData";
+import {
+  fetchBacklinks,
+  type WikiBacklink,
+  type WikiFetchScope,
+} from "./WikiTabData";
 import type { WikiGraphPayload, WikiNodeIndex } from "./WikiTabModel";
 
 type BacklinksState =
@@ -48,11 +52,13 @@ export function WikiBacklinks({
     let cancelled = false;
     fetchBacklinks(scope, path)
       .then((backlinks) => {
-        if (!cancelled) setResult({ key: requestKey, state: { status: "ready", backlinks } });
+        if (!cancelled)
+          setResult({ key: requestKey, state: { status: "ready", backlinks } });
       })
       .catch((error: unknown) => {
         if (!cancelled) {
-          const message = error instanceof Error ? error.message : "Failed to load backlinks";
+          const message =
+            error instanceof Error ? error.message : "Failed to load backlinks";
           setResult({ key: requestKey, state: { status: "error", message } });
         }
       });
@@ -91,13 +97,16 @@ export function WikiBacklinks({
   };
 
   return (
-    <section aria-label="Linked mentions" className="mt-6 border-t border-border pt-3">
+    <section
+      aria-label="Linked mentions"
+      className="mt-6 border-t border-border pt-3"
+    >
       <Button
         type="button"
         aria-expanded={expanded}
         variant="ghost"
         size="sm"
-        className={`${coarseHitAreaCls} w-full justify-start gap-1 px-0 text-left text-xs uppercase tracking-wide`}
+        className={`${coarseHitAreaCls} w-full justify-start gap-1 px-0 text-left text-xs tracking-wide uppercase`}
         onClick={toggle}
       >
         <span aria-hidden="true">{expanded ? "▾" : "▸"}</span>
@@ -134,13 +143,15 @@ export function WikiBacklinks({
                 ))}
               </ul>
             ) : (
-              <p className="text-xs text-muted-foreground">No pages link here yet.</p>
+              <p className="text-xs text-muted-foreground">
+                No pages link here yet.
+              </p>
             )
           ) : null}
 
           {graph && unresolvedMentions.length > 0 ? (
             <div>
-              <h3 className="text-2xs font-semibold uppercase tracking-wide text-muted-foreground">
+              <h3 className="text-2xs font-semibold tracking-wide text-muted-foreground uppercase">
                 Unresolved mentions
               </h3>
               <ul className="mt-1 flex list-none flex-col gap-0.5">

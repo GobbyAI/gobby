@@ -1,215 +1,276 @@
-import { useState, useEffect, useCallback, useMemo } from 'react'
-import { Button } from '../ui/Button'
-import { Chip } from '../ui/Chip'
-import { Input } from '../ui/Input'
-import { NativeSelect } from '../ui/NativeSelect'
-import { coarseHitAreaCls } from '../ui/controlStyles'
-import { getAgentEditorCaughtError, getAgentEditorResponseError } from './agent-editor-errors'
+import { useState, useEffect, useCallback, useMemo } from "react";
+import { Button } from "../ui/Button";
+import { Chip } from "../ui/Chip";
+import { Input } from "../ui/Input";
+import { NativeSelect } from "../ui/NativeSelect";
+import { coarseHitAreaCls } from "../ui/controlStyles";
+import {
+  getAgentEditorCaughtError,
+  getAgentEditorResponseError,
+} from "./agent-editor-errors";
 
 interface RuleInfo {
-  name: string
-  description?: string
-  source?: string
-  project_id?: string | null
+  name: string;
+  description?: string;
+  source?: string;
+  project_id?: string | null;
 }
 
 interface RuleSelectors {
-  include: string[]
-  exclude: string[]
+  include: string[];
+  exclude: string[];
 }
 
 interface AgentRulesEditorProps {
-  definitionId?: string | null
-  rules: string[]
-  onRulesChange: (rules: string[]) => void
-  projectId?: string
-  ruleSelectors?: RuleSelectors | null
-  onRuleSelectorsChange?: (selectors: RuleSelectors) => void
+  definitionId?: string | null;
+  rules: string[];
+  onRulesChange: (rules: string[]) => void;
+  projectId?: string;
+  ruleSelectors?: RuleSelectors | null;
+  onRuleSelectorsChange?: (selectors: RuleSelectors) => void;
 }
 
-const SELECTOR_PREFIXES = ['tag:', 'group:', 'name:'] as const
+const SELECTOR_PREFIXES = ["tag:", "group:", "name:"] as const;
 
 export function AgentRulesEditor({
-  definitionId, rules, onRulesChange, projectId,
-  ruleSelectors, onRuleSelectorsChange,
+  definitionId,
+  rules,
+  onRulesChange,
+  projectId,
+  ruleSelectors,
+  onRuleSelectorsChange,
 }: AgentRulesEditorProps) {
-  const [availableRules, setAvailableRules] = useState<RuleInfo[]>([])
-  const [adding, setAdding] = useState(false)
-  const [actionError, setActionError] = useState<string | null>(null)
+  const [availableRules, setAvailableRules] = useState<RuleInfo[]>([]);
+  const [adding, setAdding] = useState(false);
+  const [actionError, setActionError] = useState<string | null>(null);
 
   // Autocomplete data for selectors
-  const [knownTags, setKnownTags] = useState<string[]>([])
-  const [knownGroups, setKnownGroups] = useState<string[]>([])
-  const [addingSelectorType, setAddingSelectorType] = useState<'include' | 'exclude' | null>(null)
-  const [selectorPrefix, setSelectorPrefix] = useState<string>('tag:')
-  const [selectorValue, setSelectorValue] = useState('')
+  const [knownTags, setKnownTags] = useState<string[]>([]);
+  const [knownGroups, setKnownGroups] = useState<string[]>([]);
+  const [addingSelectorType, setAddingSelectorType] = useState<
+    "include" | "exclude" | null
+  >(null);
+  const [selectorPrefix, setSelectorPrefix] = useState<string>("tag:");
+  const [selectorValue, setSelectorValue] = useState("");
 
   useEffect(() => {
-    const params = projectId ? `?project_id=${encodeURIComponent(projectId)}` : ''
+    const params = projectId
+      ? `?project_id=${encodeURIComponent(projectId)}`
+      : "";
     fetch(`/api/rules${params}`)
-      .then(r => r.json())
-      .then(data => {
+      .then((r) => r.json())
+      .then((data) => {
         const items = (data.rules || []).map((r: RuleInfo) => ({
           name: r.name,
           description: r.description,
           source: r.source,
           project_id: r.project_id,
-        }))
-        setAvailableRules(items)
+        }));
+        setAvailableRules(items);
       })
-      .catch(() => setAvailableRules([]))
-  }, [projectId])
+      .catch(() => setAvailableRules([]));
+  }, [projectId]);
 
   // Fetch tags and groups for selector autocomplete
   useEffect(() => {
-    fetch('/api/rules/tags')
-      .then(r => r.json())
-      .then(data => setKnownTags(data.tags || []))
-      .catch(() => setKnownTags([]))
-    fetch('/api/rules/groups')
-      .then(r => r.json())
-      .then(data => setKnownGroups(data.groups || []))
-      .catch(() => setKnownGroups([]))
-  }, [])
+    fetch("/api/rules/tags")
+      .then((r) => r.json())
+      .then((data) => setKnownTags(data.tags || []))
+      .catch(() => setKnownTags([]));
+    fetch("/api/rules/groups")
+      .then((r) => r.json())
+      .then((data) => setKnownGroups(data.groups || []))
+      .catch(() => setKnownGroups([]));
+  }, []);
 
-  const addableRules = availableRules.filter(r => !rules.includes(r.name))
-  const projectRules = addableRules.filter(r => r.project_id)
-  const globalRules = addableRules.filter(r => !r.project_id)
+  const addableRules = availableRules.filter((r) => !rules.includes(r.name));
+  const projectRules = addableRules.filter((r) => r.project_id);
+  const globalRules = addableRules.filter((r) => !r.project_id);
 
-  const handleAdd = useCallback(async (ruleName: string) => {
-    setActionError(null)
-    if (!definitionId) {
-      onRulesChange([...rules, ruleName])
-      setAdding(false)
-      return
-    }
-    try {
-      const res = await fetch(`/api/agents/definitions/${definitionId}/rules`, {
-        method: 'PATCH',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ add: [ruleName] }),
-      })
-      if (!res.ok) throw new Error(await getAgentEditorResponseError(res, 'Failed to add rule'))
-      const data = await res.json()
-      onRulesChange(data.rules || [...rules, ruleName])
-    } catch (e) {
-      setActionError(getAgentEditorCaughtError(e, 'Failed to add rule'))
-    }
-    setAdding(false)
-  }, [definitionId, rules, onRulesChange])
+  const handleAdd = useCallback(
+    async (ruleName: string) => {
+      setActionError(null);
+      if (!definitionId) {
+        onRulesChange([...rules, ruleName]);
+        setAdding(false);
+        return;
+      }
+      try {
+        const res = await fetch(
+          `/api/agents/definitions/${definitionId}/rules`,
+          {
+            method: "PATCH",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ add: [ruleName] }),
+          },
+        );
+        if (!res.ok)
+          throw new Error(
+            await getAgentEditorResponseError(res, "Failed to add rule"),
+          );
+        const data = await res.json();
+        onRulesChange(data.rules || [...rules, ruleName]);
+      } catch (e) {
+        setActionError(getAgentEditorCaughtError(e, "Failed to add rule"));
+      }
+      setAdding(false);
+    },
+    [definitionId, rules, onRulesChange],
+  );
 
-  const handleRemove = useCallback(async (ruleName: string) => {
-    setActionError(null)
-    if (!definitionId) {
-      onRulesChange(rules.filter(r => r !== ruleName))
-      return
-    }
-    try {
-      const res = await fetch(`/api/agents/definitions/${definitionId}/rules`, {
-        method: 'PATCH',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ remove: [ruleName] }),
-      })
-      if (!res.ok) throw new Error(await getAgentEditorResponseError(res, 'Failed to remove rule'))
-      const data = await res.json()
-      onRulesChange(data.rules || rules.filter(r => r !== ruleName))
-    } catch (e) {
-      setActionError(getAgentEditorCaughtError(e, 'Failed to remove rule'))
-    }
-  }, [definitionId, rules, onRulesChange])
+  const handleRemove = useCallback(
+    async (ruleName: string) => {
+      setActionError(null);
+      if (!definitionId) {
+        onRulesChange(rules.filter((r) => r !== ruleName));
+        return;
+      }
+      try {
+        const res = await fetch(
+          `/api/agents/definitions/${definitionId}/rules`,
+          {
+            method: "PATCH",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ remove: [ruleName] }),
+          },
+        );
+        if (!res.ok)
+          throw new Error(
+            await getAgentEditorResponseError(res, "Failed to remove rule"),
+          );
+        const data = await res.json();
+        onRulesChange(data.rules || rules.filter((r) => r !== ruleName));
+      } catch (e) {
+        setActionError(getAgentEditorCaughtError(e, "Failed to remove rule"));
+      }
+    },
+    [definitionId, rules, onRulesChange],
+  );
 
   // --- Selector handlers ---
   const selectors = useMemo<RuleSelectors>(
     () => ruleSelectors || { include: [], exclude: [] },
     [ruleSelectors],
-  )
+  );
 
-  const handleAddSelector = useCallback(async (type: 'include' | 'exclude', selector: string) => {
-    setActionError(null)
-    const updated: RuleSelectors = {
-      include: [...selectors.include],
-      exclude: [...selectors.exclude],
-    }
-    if (type === 'include' && !updated.include.includes(selector)) {
-      updated.include.push(selector)
-    } else if (type === 'exclude' && !updated.exclude.includes(selector)) {
-      updated.exclude.push(selector)
-    }
+  const handleAddSelector = useCallback(
+    async (type: "include" | "exclude", selector: string) => {
+      setActionError(null);
+      const updated: RuleSelectors = {
+        include: [...selectors.include],
+        exclude: [...selectors.exclude],
+      };
+      if (type === "include" && !updated.include.includes(selector)) {
+        updated.include.push(selector);
+      } else if (type === "exclude" && !updated.exclude.includes(selector)) {
+        updated.exclude.push(selector);
+      }
 
-    if (!definitionId) {
-      onRuleSelectorsChange?.(updated)
-      return
-    }
+      if (!definitionId) {
+        onRuleSelectorsChange?.(updated);
+        return;
+      }
 
-    try {
-      const body = type === 'include'
-        ? { add_include: [selector] }
-        : { add_exclude: [selector] }
-      const res = await fetch(`/api/agents/definitions/${definitionId}/rule-selectors`, {
-        method: 'PATCH',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(body),
-      })
-      if (!res.ok) throw new Error(await getAgentEditorResponseError(res, 'Failed to add selector'))
-      const data = await res.json()
-      onRuleSelectorsChange?.(data.rule_selectors)
-    } catch (e) {
-      setActionError(getAgentEditorCaughtError(e, 'Failed to add selector'))
-    }
-  }, [definitionId, selectors, onRuleSelectorsChange])
+      try {
+        const body =
+          type === "include"
+            ? { add_include: [selector] }
+            : { add_exclude: [selector] };
+        const res = await fetch(
+          `/api/agents/definitions/${definitionId}/rule-selectors`,
+          {
+            method: "PATCH",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify(body),
+          },
+        );
+        if (!res.ok)
+          throw new Error(
+            await getAgentEditorResponseError(res, "Failed to add selector"),
+          );
+        const data = await res.json();
+        onRuleSelectorsChange?.(data.rule_selectors);
+      } catch (e) {
+        setActionError(getAgentEditorCaughtError(e, "Failed to add selector"));
+      }
+    },
+    [definitionId, selectors, onRuleSelectorsChange],
+  );
 
-  const handleRemoveSelector = useCallback(async (type: 'include' | 'exclude', selector: string) => {
-    setActionError(null)
-    const updated: RuleSelectors = {
-      include: selectors.include.filter(s => s !== selector),
-      exclude: selectors.exclude.filter(s => s !== selector),
-    }
+  const handleRemoveSelector = useCallback(
+    async (type: "include" | "exclude", selector: string) => {
+      setActionError(null);
+      const updated: RuleSelectors = {
+        include: selectors.include.filter((s) => s !== selector),
+        exclude: selectors.exclude.filter((s) => s !== selector),
+      };
 
-    if (!definitionId) {
-      onRuleSelectorsChange?.(updated)
-      return
-    }
+      if (!definitionId) {
+        onRuleSelectorsChange?.(updated);
+        return;
+      }
 
-    try {
-      const body = type === 'include'
-        ? { remove_include: [selector] }
-        : { remove_exclude: [selector] }
-      const res = await fetch(`/api/agents/definitions/${definitionId}/rule-selectors`, {
-        method: 'PATCH',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(body),
-      })
-      if (!res.ok) throw new Error(await getAgentEditorResponseError(res, 'Failed to remove selector'))
-      const data = await res.json()
-      onRuleSelectorsChange?.(data.rule_selectors)
-    } catch (e) {
-      setActionError(getAgentEditorCaughtError(e, 'Failed to remove selector'))
-    }
-  }, [definitionId, selectors, onRuleSelectorsChange])
+      try {
+        const body =
+          type === "include"
+            ? { remove_include: [selector] }
+            : { remove_exclude: [selector] };
+        const res = await fetch(
+          `/api/agents/definitions/${definitionId}/rule-selectors`,
+          {
+            method: "PATCH",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify(body),
+          },
+        );
+        if (!res.ok)
+          throw new Error(
+            await getAgentEditorResponseError(res, "Failed to remove selector"),
+          );
+        const data = await res.json();
+        onRuleSelectorsChange?.(data.rule_selectors);
+      } catch (e) {
+        setActionError(
+          getAgentEditorCaughtError(e, "Failed to remove selector"),
+        );
+      }
+    },
+    [definitionId, selectors, onRuleSelectorsChange],
+  );
 
   const commitSelector = () => {
     if (!addingSelectorType || !selectorValue.trim()) {
-      setAddingSelectorType(null)
-      return
+      setAddingSelectorType(null);
+      return;
     }
-    const full = selectorPrefix === 'name:' ? selectorValue.trim() : `${selectorPrefix}${selectorValue.trim()}`
-    handleAddSelector(addingSelectorType, full)
-    setAddingSelectorType(null)
-    setSelectorValue('')
-    setSelectorPrefix('tag:')
-  }
+    const full =
+      selectorPrefix === "name:"
+        ? selectorValue.trim()
+        : `${selectorPrefix}${selectorValue.trim()}`;
+    handleAddSelector(addingSelectorType, full);
+    setAddingSelectorType(null);
+    setSelectorValue("");
+    setSelectorPrefix("tag:");
+  };
 
   // Build autocomplete suggestions based on selected prefix
-  const suggestions = selectorPrefix === 'tag:' ? knownTags
-    : selectorPrefix === 'group:' ? knownGroups
-    : []
-  const filteredSuggestions = suggestions.filter(s =>
-    s.toLowerCase().includes(selectorValue.toLowerCase()) &&
-    !selectors.include.includes(`${selectorPrefix}${s}`) &&
-    !selectors.exclude.includes(`${selectorPrefix}${s}`)
-  )
+  const suggestions =
+    selectorPrefix === "tag:"
+      ? knownTags
+      : selectorPrefix === "group:"
+        ? knownGroups
+        : [];
+  const filteredSuggestions = suggestions.filter(
+    (s) =>
+      s.toLowerCase().includes(selectorValue.toLowerCase()) &&
+      !selectors.include.includes(`${selectorPrefix}${s}`) &&
+      !selectors.exclude.includes(`${selectorPrefix}${s}`),
+  );
 
-  const removeButton = (type: 'include' | 'exclude' | 'rule', value: string) => (
+  const removeButton = (
+    type: "include" | "exclude" | "rule",
+    value: string,
+  ) => (
     <Button
       type="button"
       variant="ghost"
@@ -217,16 +278,16 @@ export function AgentRulesEditor({
       dense
       className={`${coarseHitAreaCls} min-h-0 w-auto px-0.5 text-base leading-none hover:text-[var(--color-error)]`}
       onClick={() => {
-        if (type === 'rule') void handleRemove(value)
-        else void handleRemoveSelector(type, value)
+        if (type === "rule") void handleRemove(value);
+        else void handleRemoveSelector(type, value);
       }}
       title={`Remove ${value}`}
     >
       &times;
     </Button>
-  )
+  );
 
-  const selectorInput = (type: 'include' | 'exclude') => (
+  const selectorInput = (type: "include" | "exclude") => (
     <div className="flex items-center gap-1">
       <NativeSelect
         wrapperClassName="w-20 shrink-0"
@@ -234,8 +295,8 @@ export function AgentRulesEditor({
         aria-label={`${type} selector prefix`}
         value={selectorPrefix}
         onChange={(event) => {
-          setSelectorPrefix(event.target.value)
-          setSelectorValue('')
+          setSelectorPrefix(event.target.value);
+          setSelectorValue("");
         }}
       >
         {SELECTOR_PREFIXES.map((prefix) => (
@@ -250,8 +311,8 @@ export function AgentRulesEditor({
           value={selectorValue}
           onChange={(event) => setSelectorValue(event.target.value)}
           onKeyDown={(event) => {
-            if (event.key === 'Enter') commitSelector()
-            if (event.key === 'Escape') setAddingSelectorType(null)
+            if (event.key === "Enter") commitSelector();
+            if (event.key === "Escape") setAddingSelectorType(null);
           }}
           placeholder="value"
           aria-label={`${type} selector value`}
@@ -286,7 +347,7 @@ export function AgentRulesEditor({
         Cancel
       </Button>
     </div>
-  )
+  );
 
   return (
     <div className="flex flex-col gap-2">
@@ -306,13 +367,18 @@ export function AgentRulesEditor({
 
       <div className="flex flex-wrap items-center gap-1.5">
         {rules.map((name) => (
-          <Chip key={name} className="gap-1 border border-border pl-2.5 pr-2 text-sm">
+          <Chip
+            key={name}
+            className="gap-1 border border-border pr-2 pl-2.5 text-sm"
+          >
             {name}
-            {removeButton('rule', name)}
+            {removeButton("rule", name)}
           </Chip>
         ))}
         {rules.length === 0 && !adding && (
-          <span className="text-sm italic text-[var(--text-muted)]">No rules assigned</span>
+          <span className="text-sm text-[var(--text-muted)] italic">
+            No rules assigned
+          </span>
         )}
       </div>
       {adding ? (
@@ -323,7 +389,7 @@ export function AgentRulesEditor({
           autoFocus
           value=""
           onChange={(event) => {
-            if (event.target.value) void handleAdd(event.target.value)
+            if (event.target.value) void handleAdd(event.target.value);
           }}
           onBlur={() => setAdding(false)}
         >
@@ -365,25 +431,25 @@ export function AgentRulesEditor({
 
       {onRuleSelectorsChange && (
         <div className="mt-2.5 flex flex-col gap-2 border-t border-border pt-2.5">
-          <div className="text-sm font-semibold uppercase tracking-wider text-[var(--text-muted)]">
+          <div className="text-sm font-semibold tracking-wider text-[var(--text-muted)] uppercase">
             Rule Selectors
           </div>
-          {(['include', 'exclude'] as const).map((type) => {
-            const values = selectors[type]
+          {(["include", "exclude"] as const).map((type) => {
+            const values = selectors[type];
             return (
               <div key={type} className="flex flex-col gap-1">
-                <span className="text-xs uppercase tracking-wider text-[var(--text-muted)]">
+                <span className="text-xs tracking-wider text-[var(--text-muted)] uppercase">
                   {type}
                 </span>
                 <div className="flex flex-wrap items-center gap-1.5">
                   {values.map((selector) => (
                     <Chip
                       key={selector}
-                      tone={type === 'include' ? 'info' : 'error'}
-                      className={`gap-1 border border-dashed pl-2.5 pr-2 text-sm ${
-                        type === 'include'
-                          ? 'border-[var(--color-info)]'
-                          : 'border-[var(--color-error)]'
+                      tone={type === "include" ? "info" : "error"}
+                      className={`gap-1 border border-dashed pr-2 pl-2.5 text-sm ${
+                        type === "include"
+                          ? "border-[var(--color-info)]"
+                          : "border-[var(--color-error)]"
                       }`}
                     >
                       {selector}
@@ -391,7 +457,9 @@ export function AgentRulesEditor({
                     </Chip>
                   ))}
                   {values.length === 0 && addingSelectorType !== type && (
-                    <span className="text-sm italic text-[var(--text-muted)]">None</span>
+                    <span className="text-sm text-[var(--text-muted)] italic">
+                      None
+                    </span>
                   )}
                 </div>
                 {addingSelectorType === type ? (
@@ -403,19 +471,19 @@ export function AgentRulesEditor({
                     dense
                     className={`${coarseHitAreaCls} self-start`}
                     onClick={() => {
-                      setAddingSelectorType(type)
-                      setSelectorPrefix('tag:')
-                      setSelectorValue('')
+                      setAddingSelectorType(type);
+                      setSelectorPrefix("tag:");
+                      setSelectorValue("");
                     }}
                   >
-                    + Add {type === 'include' ? 'Include' : 'Exclude'}
+                    + Add {type === "include" ? "Include" : "Exclude"}
                   </Button>
                 )}
               </div>
-            )
+            );
           })}
         </div>
       )}
     </div>
-  )
+  );
 }

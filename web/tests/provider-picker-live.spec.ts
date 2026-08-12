@@ -36,7 +36,10 @@ function isProviderMatrixModel(value: unknown): value is ProviderMatrixModel {
 }
 
 function sanitizeToken(value: string): string {
-  return value.replace(/[^a-z0-9]+/gi, "-").replace(/^-+|-+$/g, "").toLowerCase();
+  return value
+    .replace(/[^a-z0-9]+/gi, "-")
+    .replace(/^-+|-+$/g, "")
+    .toLowerCase();
 }
 
 function getLiveChatUrl(): string {
@@ -79,7 +82,9 @@ async function loadLiveCatalog(
     "Live provider verification requires an authenticated daemon session.",
   ).toBe(false);
 
-  const providersResponse = await request.get(getApiUrl("/api/providers/models"));
+  const providersResponse = await request.get(
+    getApiUrl("/api/providers/models"),
+  );
   expect(providersResponse.ok()).toBeTruthy();
   const providersBody = await providersResponse.json();
   const providers = Array.isArray(providersBody?.providers)
@@ -101,7 +106,9 @@ async function openFreshChat(
   }, conversationId);
   await page.reload();
   await expect(page.getByLabel("Select provider")).toBeVisible();
-  await expect(page.getByRole("textbox", { name: /message input/i })).toBeVisible();
+  await expect(
+    page.getByRole("textbox", { name: /message input/i }),
+  ).toBeVisible();
 }
 
 async function selectProviderModel(
@@ -118,10 +125,15 @@ async function selectProviderModel(
   await providerOption.click();
 
   await page.getByLabel("Select model").click();
-  const modelOption = page.getByRole("option", { name: modelLabel, exact: true });
+  const modelOption = page.getByRole("option", {
+    name: modelLabel,
+    exact: true,
+  });
   await expect(modelOption).toBeVisible();
   await modelOption.click();
-  await expect(page.getByRole("textbox", { name: /message input/i })).toBeVisible();
+  await expect(
+    page.getByRole("textbox", { name: /message input/i }),
+  ).toBeVisible();
 }
 
 async function sendProbePrompt(
@@ -143,13 +155,17 @@ async function sendProbePrompt(
     { timeout: 15_000 },
   );
 
-  const dbSessionId = await page.evaluate(() => localStorage.getItem("gobby-db-session-id"));
+  const dbSessionId = await page.evaluate(() =>
+    localStorage.getItem("gobby-db-session-id"),
+  );
   expect(dbSessionId).toBeTruthy();
 
   await expect
     .poll(
       async () => {
-        const sessionResponse = await request.get(getApiUrl(`/api/sessions/${dbSessionId}`));
+        const sessionResponse = await request.get(
+          getApiUrl(`/api/sessions/${dbSessionId}`),
+        );
         if (!sessionResponse.ok()) {
           return null;
         }
@@ -174,10 +190,13 @@ async function sendProbePrompt(
           return false;
         }
         const messagesBody = await messagesResponse.json();
-        const messages = Array.isArray(messagesBody.messages) ? messagesBody.messages : [];
+        const messages = Array.isArray(messagesBody.messages)
+          ? messagesBody.messages
+          : [];
         return messages.some(
           (message: { role?: string; content?: string | null }) =>
-            message.role === "assistant" && (message.content || "").includes(token),
+            message.role === "assistant" &&
+            (message.content || "").includes(token),
         );
       },
       { timeout: PROMPT_TIMEOUT_MS },
@@ -202,10 +221,19 @@ test.describe("Live provider picker verification", () => {
 
     for (const providerName of providersToVerify) {
       const provider = catalog[providerName];
-      expect(provider, `Provider ${providerName} must exist in /api/providers/models`).toBeTruthy();
-      expect(provider.available, `Provider ${providerName} must be available`).toBeTruthy();
+      expect(
+        provider,
+        `Provider ${providerName} must exist in /api/providers/models`,
+      ).toBeTruthy();
+      expect(
+        provider.available,
+        `Provider ${providerName} must be available`,
+      ).toBeTruthy();
       const models = provider.models.filter(isProviderMatrixModel);
-      expect(models.length, `Provider ${providerName} must expose matrix models`).toBeGreaterThan(0);
+      expect(
+        models.length,
+        `Provider ${providerName} must expose matrix models`,
+      ).toBeGreaterThan(0);
       const model =
         models.find((entry) => entry.is_default) ||
         models.find((entry) => !entry.hidden) ||

@@ -1,8 +1,17 @@
-import { forwardRef, type ComponentPropsWithoutRef, type ElementRef } from 'react'
-import * as SelectPrimitive from '@radix-ui/react-select'
-import { cn } from '../../lib/utils'
-import { coarseHitAreaCls } from './controlStyles'
-export { Select, SelectGroup, SelectValue, SelectLabel } from './selectPrimitives'
+import {
+  forwardRef,
+  type ComponentPropsWithoutRef,
+  type ElementRef,
+} from "react";
+import * as SelectPrimitive from "@radix-ui/react-select";
+import { cn } from "../../lib/utils";
+import { coarseHitAreaCls } from "./controlStyles";
+export {
+  Select,
+  SelectGroup,
+  SelectValue,
+  SelectLabel,
+} from "./selectPrimitives";
 
 export const SelectTrigger = forwardRef<
   ElementRef<typeof SelectPrimitive.Trigger>,
@@ -12,11 +21,11 @@ export const SelectTrigger = forwardRef<
     ref={ref}
     className={cn(
       coarseHitAreaCls,
-      'inline-flex h-9 min-w-0 shrink-0 items-center justify-between rounded-md border border-border bg-transparent px-2.5 py-2 text-sm',
-      'placeholder:text-muted-foreground',
-      'focus:outline-none focus:ring-2 focus:ring-accent focus:ring-offset-2 focus:ring-offset-background',
-      'disabled:cursor-not-allowed disabled:opacity-50',
-      className
+      "inline-flex h-9 min-w-0 shrink-0 items-center justify-between rounded-md border border-border bg-transparent px-2.5 py-2 text-sm",
+      "placeholder:text-muted-foreground",
+      "focus:ring-2 focus:ring-accent focus:ring-offset-2 focus:ring-offset-background focus:outline-none",
+      "disabled:cursor-not-allowed disabled:opacity-50",
+      className,
     )}
     {...props}
   >
@@ -25,36 +34,37 @@ export const SelectTrigger = forwardRef<
       <ChevronDownIcon />
     </SelectPrimitive.Icon>
   </SelectPrimitive.Trigger>
-))
-SelectTrigger.displayName = 'SelectTrigger'
+));
+SelectTrigger.displayName = "SelectTrigger";
 
 export const SelectContent = forwardRef<
   ElementRef<typeof SelectPrimitive.Content>,
   ComponentPropsWithoutRef<typeof SelectPrimitive.Content>
->(({ className, children, position = 'popper', ...props }, ref) => (
+>(({ className, children, position = "popper", ...props }, ref) => (
   <SelectPrimitive.Portal>
     <SelectPrimitive.Content
       ref={ref}
       className={cn(
-        'relative z-50 max-h-60 min-w-[8rem] max-w-[calc(100vw-2rem)] overflow-hidden rounded-md border border-border bg-background shadow-md',
-        position === 'popper' && 'translate-y-1',
-        className
+        "relative z-50 max-h-60 max-w-[calc(100vw-2rem)] min-w-[8rem] overflow-hidden rounded-md border border-border bg-background shadow-md",
+        position === "popper" && "translate-y-1",
+        className,
       )}
       position={position}
       {...props}
     >
       <SelectPrimitive.Viewport
         className={cn(
-          'p-1',
-          position === 'popper' && 'max-h-[min(var(--radix-select-content-available-height),15rem)] w-full min-w-[var(--radix-select-trigger-width)]'
+          "p-1",
+          position === "popper" &&
+            "max-h-[min(var(--radix-select-content-available-height),15rem)] w-full min-w-[var(--radix-select-trigger-width)]",
         )}
       >
         {children}
       </SelectPrimitive.Viewport>
     </SelectPrimitive.Content>
   </SelectPrimitive.Portal>
-))
-SelectContent.displayName = 'SelectContent'
+));
+SelectContent.displayName = "SelectContent";
 
 export const SelectItem = forwardRef<
   ElementRef<typeof SelectPrimitive.Item>,
@@ -64,10 +74,10 @@ export const SelectItem = forwardRef<
     ref={ref}
     className={cn(
       coarseHitAreaCls,
-      'flex w-full cursor-default select-none items-center rounded-sm py-1.5 pl-8 pr-2 text-sm',
-      'outline-none focus:bg-muted focus:text-foreground',
-      'data-[disabled]:pointer-events-none data-[disabled]:opacity-50',
-      className
+      "flex w-full cursor-default items-center rounded-sm py-1.5 pr-2 pl-8 text-sm select-none",
+      "outline-none focus:bg-muted focus:text-foreground",
+      "data-[disabled]:pointer-events-none data-[disabled]:opacity-50",
+      className,
     )}
     {...props}
   >
@@ -78,21 +88,41 @@ export const SelectItem = forwardRef<
     </span>
     <SelectPrimitive.ItemText>{children}</SelectPrimitive.ItemText>
   </SelectPrimitive.Item>
-))
-SelectItem.displayName = 'SelectItem'
+));
+SelectItem.displayName = "SelectItem";
 
 function ChevronDownIcon() {
   return (
-    <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+    <svg
+      width="12"
+      height="12"
+      viewBox="0 0 24 24"
+      fill="none"
+      stroke="currentColor"
+      strokeWidth="2"
+      strokeLinecap="round"
+      strokeLinejoin="round"
+      aria-hidden="true"
+    >
       <polyline points="6 9 12 15 18 9" />
     </svg>
-  )
+  );
 }
 
 function CheckIcon() {
   return (
-    <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+    <svg
+      width="12"
+      height="12"
+      viewBox="0 0 24 24"
+      fill="none"
+      stroke="currentColor"
+      strokeWidth="2"
+      strokeLinecap="round"
+      strokeLinejoin="round"
+      aria-hidden="true"
+    >
       <polyline points="20 6 9 17 4 12" />
     </svg>
-  )
+  );
 }

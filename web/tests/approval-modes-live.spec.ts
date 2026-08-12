@@ -9,9 +9,7 @@ import { promises as fs } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
-import {
-  getProviderDisplayName,
-} from "../src/lib/providerModels";
+import { getProviderDisplayName } from "../src/lib/providerModels";
 
 const LIVE_E2E_FLAG = "GOBBY_LIVE_PROVIDER_E2E";
 const LIVE_E2E_URL = "GOBBY_LIVE_PROVIDER_E2E_URL";
@@ -66,7 +64,10 @@ function isProviderMatrixModel(value: unknown): value is ProviderMatrixModel {
 }
 
 function sanitizeToken(value: string): string {
-  return value.replace(/[^a-z0-9]+/gi, "-").replace(/^-+|-+$/g, "").toLowerCase();
+  return value
+    .replace(/[^a-z0-9]+/gi, "-")
+    .replace(/^-+|-+$/g, "")
+    .toLowerCase();
 }
 
 function getLiveChatUrl(): string {
@@ -125,7 +126,9 @@ async function loadLiveCatalog(
     "Live provider approval verification requires an authenticated daemon session.",
   ).toBe(false);
 
-  const providersResponse = await request.get(getApiUrl("/api/providers/models"));
+  const providersResponse = await request.get(
+    getApiUrl("/api/providers/models"),
+  );
   expect(providersResponse.ok()).toBeTruthy();
   const providersBody = await providersResponse.json();
   const providers = Array.isArray(providersBody?.providers)
@@ -159,7 +162,9 @@ function pickModel(provider: ProviderModelEntry): SelectedProviderModel {
       selected = candidates[0];
   }
   if (!selected) {
-    throw new Error(`Provider ${provider.provider} has no visible matrix models`);
+    throw new Error(
+      `Provider ${provider.provider} has no visible matrix models`,
+    );
   }
   return { value: selected.canonical_model, label: selected.display_name };
 }
@@ -178,7 +183,9 @@ async function openFreshChat(
   }, conversationId);
   await page.reload();
   await expect(page.getByLabel("Select provider")).toBeVisible();
-  await expect(page.getByRole("textbox", { name: /message input/i })).toBeVisible();
+  await expect(
+    page.getByRole("textbox", { name: /message input/i }),
+  ).toBeVisible();
 }
 
 async function selectProviderAndModel(
@@ -195,10 +202,15 @@ async function selectProviderAndModel(
   await providerOption.click();
 
   await page.getByLabel("Select model").click();
-  const modelOption = page.getByRole("option", { name: modelLabel, exact: true });
+  const modelOption = page.getByRole("option", {
+    name: modelLabel,
+    exact: true,
+  });
   await expect(modelOption).toBeVisible();
   await modelOption.click();
-  await expect(page.getByRole("textbox", { name: /message input/i })).toBeVisible();
+  await expect(
+    page.getByRole("textbox", { name: /message input/i }),
+  ).toBeVisible();
 }
 
 async function selectMode(
@@ -219,7 +231,9 @@ async function waitForSessionSummary(
   await expect
     .poll(
       async () => {
-        const response = await request.get(getApiUrl(`/api/sessions/${dbSessionId}`));
+        const response = await request.get(
+          getApiUrl(`/api/sessions/${dbSessionId}`),
+        );
         if (!response.ok()) {
           return null;
         }
@@ -238,10 +252,7 @@ async function waitForSessionSummary(
     .toBeTruthy();
 }
 
-async function sendPrompt(
-  page: Page,
-  prompt: string,
-): Promise<string> {
+async function sendPrompt(page: Page, prompt: string): Promise<string> {
   const input = page.getByRole("textbox", { name: /message input/i });
   await input.fill(prompt);
   await input.press("Enter");
@@ -252,7 +263,9 @@ async function sendPrompt(
     { timeout: 15_000 },
   );
 
-  const dbSessionId = await page.evaluate(() => localStorage.getItem("gobby-db-session-id"));
+  const dbSessionId = await page.evaluate(() =>
+    localStorage.getItem("gobby-db-session-id"),
+  );
   expect(dbSessionId).toBeTruthy();
   return dbSessionId!;
 }
@@ -285,7 +298,10 @@ async function verifyActModeApproval(
   await selectProviderAndModel(page, provider, model.label);
   await selectMode(page, "Act");
 
-  const dbSessionId = await sendPrompt(page, buildCommandPrompt(filePath, token));
+  const dbSessionId = await sendPrompt(
+    page,
+    buildCommandPrompt(filePath, token),
+  );
   await waitForSessionSummary(request, dbSessionId, provider, model.value);
 
   await expect(page.getByText("Approval Required")).toBeVisible({
@@ -296,7 +312,9 @@ async function verifyActModeApproval(
   await page.getByRole("button", { name: "Approve", exact: true }).click();
 
   await expect
-    .poll(async () => await fileContents(filePath), { timeout: PROMPT_TIMEOUT_MS })
+    .poll(async () => await fileContents(filePath), {
+      timeout: PROMPT_TIMEOUT_MS,
+    })
     .toBe(token);
   await expect(page.getByText("Approval Required")).toHaveCount(0, {
     timeout: PROMPT_TIMEOUT_MS,
@@ -324,11 +342,16 @@ async function verifyYoloModeSuppression(
   await selectProviderAndModel(page, provider, model.label);
   await selectMode(page, "YOLO");
 
-  const dbSessionId = await sendPrompt(page, buildCommandPrompt(filePath, token));
+  const dbSessionId = await sendPrompt(
+    page,
+    buildCommandPrompt(filePath, token),
+  );
   await waitForSessionSummary(request, dbSessionId, provider, model.value);
 
   await expect
-    .poll(async () => await fileContents(filePath), { timeout: PROMPT_TIMEOUT_MS })
+    .poll(async () => await fileContents(filePath), {
+      timeout: PROMPT_TIMEOUT_MS,
+    })
     .toBe(token);
   await expect(page.getByText("Approval Required")).toHaveCount(0);
   await expect(page.getByText("Generation failed")).toHaveCount(0);
@@ -339,10 +362,14 @@ async function verifyYoloModeSuppression(
 async function loadInteractiveTerminalSession(
   request: APIRequestContext,
 ): Promise<SessionListEntry> {
-  const response = await request.get(getApiUrl("/api/sessions?limit=50&offset=0"));
+  const response = await request.get(
+    getApiUrl("/api/sessions?limit=50&offset=0"),
+  );
   expect(response.ok()).toBeTruthy();
   const body = await response.json();
-  const sessions = Array.isArray(body?.sessions) ? (body.sessions as SessionListEntry[]) : [];
+  const sessions = Array.isArray(body?.sessions)
+    ? (body.sessions as SessionListEntry[])
+    : [];
   const terminalSession = sessions.find(
     (session) =>
       session.session_type === "terminal" &&
@@ -384,18 +411,31 @@ test.describe("Live approval mode verification", () => {
 
     for (const providerName of providersToVerify) {
       const provider = catalog[providerName];
-      expect(provider, `Provider ${providerName} must exist in /api/providers/models`).toBeTruthy();
-      expect(provider.available, `Provider ${providerName} must be available`).toBeTruthy();
-      expect(provider.models.length, `Provider ${providerName} must expose models`).toBeGreaterThan(
-        0,
-      );
+      expect(
+        provider,
+        `Provider ${providerName} must exist in /api/providers/models`,
+      ).toBeTruthy();
+      expect(
+        provider.available,
+        `Provider ${providerName} must be available`,
+      ).toBeTruthy();
+      expect(
+        provider.models.length,
+        `Provider ${providerName} must expose models`,
+      ).toBeGreaterThan(0);
 
       const model = pickModel(provider);
       await test.step(`${providerName} Act mode prompts before execution`, async () => {
         await verifyActModeApproval(page, request, providerName, model, runId);
       });
       await test.step(`${providerName} YOLO mode suppresses approval prompts`, async () => {
-        await verifyYoloModeSuppression(page, request, providerName, model, runId);
+        await verifyYoloModeSuppression(
+          page,
+          request,
+          providerName,
+          model,
+          runId,
+        );
       });
     }
   });
@@ -413,7 +453,10 @@ test.describe("Live approval mode verification", () => {
     const terminalSession = await loadInteractiveTerminalSession(request);
     await page.goto(getLiveChatUrl());
     await page.evaluate((sessionId) => {
-      localStorage.setItem("gobby-conversation-id", `live-terminal-view-${Date.now()}`);
+      localStorage.setItem(
+        "gobby-conversation-id",
+        `live-terminal-view-${Date.now()}`,
+      );
       localStorage.removeItem("gobby-db-session-id");
       localStorage.setItem("gobby-viewing-session-id", sessionId);
       localStorage.setItem("gobby-viewing-session-mode", "observe");
@@ -423,8 +466,12 @@ test.describe("Live approval mode verification", () => {
     await expect(page.getByTestId("agent-status-bar")).toBeVisible({
       timeout: 30_000,
     });
-    await expect(page.getByRole("textbox", { name: /message input/i })).toHaveCount(0);
-    await expect(page.getByRole("radiogroup", { name: "Chat mode" })).toHaveCount(0);
+    await expect(
+      page.getByRole("textbox", { name: /message input/i }),
+    ).toHaveCount(0);
+    await expect(
+      page.getByRole("radiogroup", { name: "Chat mode" }),
+    ).toHaveCount(0);
     await expect(page.getByRole("button", { name: "Attach" })).toBeVisible();
     await expect(page.getByRole("button", { name: "Resume" })).toBeVisible();
   });

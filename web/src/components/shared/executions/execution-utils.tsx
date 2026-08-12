@@ -41,7 +41,10 @@ function getBadgeVariant(status: string): BadgeProps["variant"] {
 
 export function StatusBadge({ status }: { status: string }) {
   return (
-    <Badge variant={getBadgeVariant(status)} className="uppercase tracking-wider">
+    <Badge
+      variant={getBadgeVariant(status)}
+      className="tracking-wider uppercase"
+    >
       {STATUS_LABELS[status] || status}
     </Badge>
   );
@@ -109,7 +112,9 @@ export function StepDisplay({
         onClick={() => setShowOutput(!showOutput)}
       >
         <div className="flex items-center gap-2">
-          <span className="font-[inherit] text-sm text-[var(--text-muted)]">{index + 1}.</span>
+          <span className="font-[inherit] text-sm text-[var(--text-muted)]">
+            {index + 1}.
+          </span>
           <span className="text-base">{step.step_id}</span>
         </div>
         <div className="flex items-center gap-2">
@@ -125,7 +130,7 @@ export function StepDisplay({
 
       {showOutput && step.output_json && (
         <div className="border-t border-border bg-[var(--bg-secondary)] px-3 py-2">
-          <pre className="m-0 max-h-[200px] overflow-y-auto whitespace-pre-wrap [overflow-wrap:anywhere] font-mono text-sm leading-[1.5] text-[var(--text-secondary)]">
+          <pre className="m-0 max-h-[200px] overflow-y-auto font-mono text-sm leading-[1.5] [overflow-wrap:anywhere] whitespace-pre-wrap text-[var(--text-secondary)]">
             {formatJson(step.output_json)}
           </pre>
         </div>
@@ -141,8 +146,8 @@ export function StepDisplay({
 
   if (layout === "timeline") {
     return (
-      <div className="relative ml-3 pl-3 border-l border-border last:border-l-transparent">
-        <span className="absolute left-[-8px] top-2.5 inline-flex size-4 items-center justify-center bg-[var(--bg-primary)]">
+      <div className="relative ml-3 border-l border-border pl-3 last:border-l-transparent">
+        <span className="absolute top-2.5 left-[-8px] inline-flex size-4 items-center justify-center bg-[var(--bg-primary)]">
           <StepStatusIcon status={step.status} />
         </span>
         {inner}
@@ -189,7 +194,10 @@ export function StepStatusIcon({ status }: { status: string }) {
 
   return (
     <span
-      className={cn("inline-flex items-center justify-center", getStepStatusClass(status))}
+      className={cn(
+        "inline-flex items-center justify-center",
+        getStepStatusClass(status),
+      )}
       role="img"
       aria-label={label}
       title={label}

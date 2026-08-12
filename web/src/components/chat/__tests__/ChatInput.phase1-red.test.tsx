@@ -1,39 +1,44 @@
-import { describe, expect, it, vi } from 'vitest'
-import { render, screen, fireEvent, waitFor } from '@testing-library/react'
-import { ChatInput } from '../ChatInput'
+import { describe, expect, it, vi } from "vitest";
+import { render, screen, fireEvent, waitFor } from "@testing-library/react";
+import { ChatInput } from "../ChatInput";
 
-describe('ChatInput Phase 1 sizing contract', () => {
-  it('keeps a compact send button with a 44px coarse-pointer floor', () => {
-    render(<ChatInput onSend={vi.fn()} />)
+describe("ChatInput Phase 1 sizing contract", () => {
+  it("keeps a compact send button with a 44px coarse-pointer floor", () => {
+    render(<ChatInput onSend={vi.fn()} />);
 
-    const textarea = screen.getByRole('textbox', { name: 'Message input' })
-    const sendButton = screen.getByRole('button', { name: 'Send message' })
+    const textarea = screen.getByRole("textbox", { name: "Message input" });
+    const sendButton = screen.getByRole("button", { name: "Send message" });
 
-    expect(textarea).toHaveClass('min-h-[36px]')
-    expect(textarea).not.toHaveClass('min-h-[52px]')
-    expect(sendButton).toHaveClass('h-[36px]', 'w-[36px]', 'self-end')
-    expect(sendButton).toHaveClass('pointer-coarse:h-11', 'pointer-coarse:w-11')
-    expect(sendButton).not.toHaveClass('h-[52px]', 'w-[52px]', 'self-start')
-  })
+    expect(textarea).toHaveClass("min-h-[36px]");
+    expect(textarea).not.toHaveClass("min-h-[52px]");
+    expect(sendButton).toHaveClass("h-[36px]", "w-[36px]", "self-end");
+    expect(sendButton).toHaveClass(
+      "pointer-coarse:h-11",
+      "pointer-coarse:w-11",
+    );
+    expect(sendButton).not.toHaveClass("h-[52px]", "w-[52px]", "self-start");
+  });
 
-  it('keeps textarea auto-grow capped at 200px', async () => {
-    render(<ChatInput onSend={vi.fn()} />)
+  it("keeps textarea auto-grow capped at 200px", async () => {
+    render(<ChatInput onSend={vi.fn()} />);
 
-    const textarea = screen.getByRole('textbox', { name: 'Message input' })
-    Object.defineProperty(textarea, 'scrollHeight', {
+    const textarea = screen.getByRole("textbox", { name: "Message input" });
+    Object.defineProperty(textarea, "scrollHeight", {
       configurable: true,
       value: 260,
-    })
+    });
 
-    fireEvent.change(textarea, { target: { value: 'one\ntwo\nthree\nfour\nfive' } })
+    fireEvent.change(textarea, {
+      target: { value: "one\ntwo\nthree\nfour\nfive" },
+    });
 
     // jsdom can't do layout, so the JS fallback (where CSS field-sizing is
     // unsupported) applies the 200px cap. It now runs in a rAF off the input
     // path, so the height settles asynchronously.
-    await waitFor(() => expect(textarea).toHaveStyle({ height: '200px' }))
-  })
+    await waitFor(() => expect(textarea).toHaveStyle({ height: "200px" }));
+  });
 
-  it('keeps speaker and microphone controls in the toolbar', () => {
+  it("keeps speaker and microphone controls in the toolbar", () => {
     render(
       <ChatInput
         onSend={vi.fn()}
@@ -44,9 +49,15 @@ describe('ChatInput Phase 1 sizing contract', () => {
         startRecording={vi.fn(async () => {})}
         stopRecording={vi.fn(async () => {})}
       />,
-    )
+    );
 
-    expect(screen.getByRole('button', { name: 'Toggle text-to-speech' })).toBeInTheDocument()
-    expect(screen.getByRole('button', { name: 'Microphone off; enable push to talk' })).toBeInTheDocument()
-  })
-})
+    expect(
+      screen.getByRole("button", { name: "Toggle text-to-speech" }),
+    ).toBeInTheDocument();
+    expect(
+      screen.getByRole("button", {
+        name: "Microphone off; enable push to talk",
+      }),
+    ).toBeInTheDocument();
+  });
+});

@@ -48,7 +48,9 @@ const STATUS_MODE_OPTIONS = [
 
 function resolveSessionSummaryMarkdown(
   ...sessions: Array<
-    Pick<GobbySession, "summary_markdown" | "digest_markdown"> | null | undefined
+    | Pick<GobbySession, "summary_markdown" | "digest_markdown">
+    | null
+    | undefined
   >
 ): string | null {
   for (const session of sessions) {
@@ -73,13 +75,19 @@ interface SessionsTabProps {
   filters?: SessionsFilters;
   onFiltersChange?: (filters: SessionsFilters) => void;
   onKillAgent?: (runId: string) => Promise<boolean | void> | boolean | void;
-  onExpireSession?: (sessionId: string) => Promise<boolean | void> | boolean | void;
+  onExpireSession?: (
+    sessionId: string,
+  ) => Promise<boolean | void> | boolean | void;
   onResumeSession?: (sessionId: string) => Promise<string> | string | void;
   // ACP lifecycle dispatch — distinct from the chat-conversation `onDeleteSession`.
   // Both target an ACP-backed row by canonical session id; gated upstream by
   // the row's advertised `acp` capabilities.
-  onAcpCloseSession?: (sessionId: string) => Promise<boolean | void> | boolean | void;
-  onAcpDeleteSession?: (sessionId: string) => Promise<boolean | void> | boolean | void;
+  onAcpCloseSession?: (
+    sessionId: string,
+  ) => Promise<boolean | void> | boolean | void;
+  onAcpDeleteSession?: (
+    sessionId: string,
+  ) => Promise<boolean | void> | boolean | void;
   chatSessionId?: string | null;
   focusSessionId?: string | null;
   onFocusHandled?: () => void;
@@ -143,14 +151,17 @@ export const SessionsTab = memo(function SessionsTab({
   const { attentionBySession } = useSessionAttention();
   const [search, setSearch] = useState("");
   const [searchInput, setSearchInput] = useState("");
-  const [contentMode, setContentMode] = useState<WatchingContentMode>("transcript");
-  const [selectedSessionId, setSelectedSessionId] = useState<string | null>(() => {
-    try {
-      return localStorage.getItem(WATCHING_SESSION_ID_KEY);
-    } catch {
-      return null;
-    }
-  });
+  const [contentMode, setContentMode] =
+    useState<WatchingContentMode>("transcript");
+  const [selectedSessionId, setSelectedSessionId] = useState<string | null>(
+    () => {
+      try {
+        return localStorage.getItem(WATCHING_SESSION_ID_KEY);
+      } catch {
+        return null;
+      }
+    },
+  );
   const [topHeight, setTopHeight] = useState(DEFAULT_TOP_PANEL_PERCENT);
   const [expiringIds, setExpiringIds] = useState<Set<string>>(new Set());
   const [ctxMenu, setCtxMenu] = useState<SessionContextMenu | null>(null);
@@ -176,7 +187,9 @@ export const SessionsTab = memo(function SessionsTab({
 
   const activeFilterCount = countActiveFilters(filters);
   const { providerOptions, registryLoaded } = useSessionProviderOptions();
-  const [modalEntry, setModalEntry] = useState<WatchingSessionEntry | null>(null);
+  const [modalEntry, setModalEntry] = useState<WatchingSessionEntry | null>(
+    null,
+  );
   const initialSelectionAppliedRef = useRef(false);
   const selectionClearedRef = useRef(false);
 
@@ -192,7 +205,9 @@ export const SessionsTab = memo(function SessionsTab({
       setExpiringIds((prev) => {
         const next = new Set<string>();
         for (const sessionId of prev) {
-          const session = sessions.find((candidate) => candidate.id === sessionId);
+          const session = sessions.find(
+            (candidate) => candidate.id === sessionId,
+          );
           if (session && session.status !== "expired") {
             next.add(sessionId);
           }
@@ -261,7 +276,13 @@ export const SessionsTab = memo(function SessionsTab({
         ariaLabel: "Search sessions",
       },
     },
-    [statusMode, setStatusMode, showFilterDropdown, activeFilterCount, searchOpen],
+    [
+      statusMode,
+      setStatusMode,
+      showFilterDropdown,
+      activeFilterCount,
+      searchOpen,
+    ],
   );
 
   const sessionsWithAttention = useMemo(
@@ -318,7 +339,8 @@ export const SessionsTab = memo(function SessionsTab({
       }
 
       const hasFocusedEntry =
-        focusSessionId != null && entries.some((entry) => entry.id === focusSessionId);
+        focusSessionId != null &&
+        entries.some((entry) => entry.id === focusSessionId);
 
       if (!initialSelectionAppliedRef.current) {
         initialSelectionAppliedRef.current = true;
@@ -364,7 +386,9 @@ export const SessionsTab = memo(function SessionsTab({
         return;
       }
 
-      const stillPresent = entries.some((entry) => entry.id === selectedSessionId);
+      const stillPresent = entries.some(
+        (entry) => entry.id === selectedSessionId,
+      );
       if (!stillPresent) {
         if (selectedSessionId === chatSessionId && !hasFocusedEntry) {
           selectionClearedRef.current = true;
@@ -422,11 +446,14 @@ export const SessionsTab = memo(function SessionsTab({
 
   const selectedSession = selectedSessionDetail ?? selectedCatalogSession;
 
-  const handleSelect = useCallback((id: string) => {
-    selectionClearedRef.current = false;
-    persistWatchingSessionId(id);
-    setSelectedSessionId(id);
-  }, [persistWatchingSessionId]);
+  const handleSelect = useCallback(
+    (id: string) => {
+      selectionClearedRef.current = false;
+      persistWatchingSessionId(id);
+      setSelectedSessionId(id);
+    },
+    [persistWatchingSessionId],
+  );
 
   const handleResumeSession = useCallback(
     (sessionId: string) => onResumeSession?.(sessionId),
@@ -447,14 +474,16 @@ export const SessionsTab = memo(function SessionsTab({
     selectedSessionDetail,
     selectedCatalogSession,
   );
-  const selectedSessionStatus = selectedSession?.status ?? selectedEntry?.status ?? null;
+  const selectedSessionStatus =
+    selectedSession?.status ?? selectedEntry?.status ?? null;
   const transcriptUnavailable =
     transcriptStatus?.content_state === "missing" ||
     transcriptStatus?.content_state === "unparseable";
   const hideResumeAndSwap =
     selectedSessionStatus === "expired" && transcriptUnavailable;
   const showSummaryButton =
-    selectedEntry != null && (Boolean(summaryMarkdown) || contentMode === "summary");
+    selectedEntry != null &&
+    (Boolean(summaryMarkdown) || contentMode === "summary");
   const showResumeButton =
     selectedEntry?.type === "session" &&
     selectedSessionId != null &&
@@ -464,7 +493,9 @@ export const SessionsTab = memo(function SessionsTab({
     // ACP rows only offer resume when the agent advertises the capability;
     // non-ACP rows are unchanged.
     (selectedEntry.acp ? selectedEntry.acp.capabilities.resume === true : true);
-  const showSwapButton = Boolean(selectedEntry && onSwapSession && !hideResumeAndSwap);
+  const showSwapButton = Boolean(
+    selectedEntry && onSwapSession && !hideResumeAndSwap,
+  );
 
   // Optimistically hide a row while a lifecycle action is in flight, restoring
   // it if the action reports failure (returns `false` or throws). Shared by
@@ -523,7 +554,9 @@ export const SessionsTab = memo(function SessionsTab({
       if (!onAcpCloseSession) {
         return false;
       }
-      return runOptimisticRowAction(entry.id, () => onAcpCloseSession(entry.id));
+      return runOptimisticRowAction(entry.id, () =>
+        onAcpCloseSession(entry.id),
+      );
     },
     [onAcpCloseSession, runOptimisticRowAction],
   );
@@ -533,13 +566,18 @@ export const SessionsTab = memo(function SessionsTab({
       if (!onAcpDeleteSession) {
         return false;
       }
-      return runOptimisticRowAction(entry.id, () => onAcpDeleteSession(entry.id));
+      return runOptimisticRowAction(entry.id, () =>
+        onAcpDeleteSession(entry.id),
+      );
     },
     [onAcpDeleteSession, runOptimisticRowAction],
   );
 
   const handleMenuButtonClick = useCallback(
-    (event: React.MouseEvent<HTMLButtonElement>, entry: WatchingSessionEntry) => {
+    (
+      event: React.MouseEvent<HTMLButtonElement>,
+      entry: WatchingSessionEntry,
+    ) => {
       event.stopPropagation();
       const rect = event.currentTarget.getBoundingClientRect();
       setCtxMenu({
@@ -576,11 +614,7 @@ export const SessionsTab = memo(function SessionsTab({
       sessionType: selectedEntry.sessionType ?? null,
       agentRunId: selectedEntry.agentRunId ?? null,
     });
-  }, [
-    onSwapSession,
-    selectedEntry,
-    selectedSessionId,
-  ]);
+  }, [onSwapSession, selectedEntry, selectedSessionId]);
 
   const hasActiveFilters = activeFilterCount > 0 || search.trim().length > 0;
   const scopeSuffix = projectName ? ` in ${projectName}` : "";
@@ -591,7 +625,7 @@ export const SessionsTab = memo(function SessionsTab({
       : `No live sessions${scopeSuffix}`;
 
   return (
-    <div className="relative flex flex-col h-full">
+    <div className="relative flex h-full flex-col">
       {searchOpen && (
         <ActivityToolbarSearchRow
           value={searchInput}

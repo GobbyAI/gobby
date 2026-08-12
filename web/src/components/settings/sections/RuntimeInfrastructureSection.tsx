@@ -6,8 +6,8 @@ import {
   Subsection,
   SwitchConfigField,
   TextConfigField,
-} from './configFields'
-import { SettingsSection, type SettingsSectionFields } from './SettingsSection'
+} from "./configFields";
+import { SettingsSection, type SettingsSectionFields } from "./SettingsSection";
 
 /**
  * Config rows this section owns, per the configuration audit (IA section 13,
@@ -22,89 +22,89 @@ import { SettingsSection, type SettingsSectionFields } from './SettingsSection'
  */
 const OWNED_PATHS: readonly string[] = [
   // Daemon core
-  'daemon_port',
-  'bind_host',
-  'daemon_health_check_interval',
-  'test_mode',
-  'cors_origins',
+  "daemon_port",
+  "bind_host",
+  "daemon_health_check_interval",
+  "test_mode",
+  "cors_origins",
   // WebSocket server
-  'websocket.enabled',
-  'websocket.port',
-  'websocket.ping_interval',
-  'websocket.ping_timeout',
+  "websocket.enabled",
+  "websocket.port",
+  "websocket.ping_interval",
+  "websocket.ping_timeout",
   // Web UI serving
-  'ui.enabled',
-  'ui.mode',
-  'ui.port',
-  'ui.host',
-  'ui.web_dir',
-  'ui.knowledge_graph_limit',
-  'ui.knowledge_graph_relationship_limit',
+  "ui.enabled",
+  "ui.mode",
+  "ui.port",
+  "ui.host",
+  "ui.web_dir",
+  "ui.knowledge_graph_limit",
+  "ui.knowledge_graph_relationship_limit",
   // Unified search
-  'search.mode',
-  'search.keyword_weight',
-  'search.embedding_weight',
-  'search.notify_on_fallback',
+  "search.mode",
+  "search.keyword_weight",
+  "search.embedding_weight",
+  "search.notify_on_fallback",
   // Code index
-  'code_index.enabled',
-  'code_index.maintenance_interval_seconds',
-  'code_index.maintenance_index_timeout_seconds',
-  'code_index.nightly_full_reindex_enabled',
-  'code_index.nightly_full_reindex_cron',
-  'code_index.nightly_full_reindex_timezone',
-  'code_index.nightly_full_reindex_timeout_seconds',
-  'code_index.nightly_full_reindex_concurrency',
-  'code_index.maintenance_log_file',
-  'code_index.missing_root_purge_observations',
-  'code_index.embedding_enabled',
-  'code_index.graph_enabled',
-  'code_index.symbol_summary.enabled',
-  'code_index.symbol_summary.batch_size',
-  'code_index.symbol_summary.profile',
-  'code_index.symbol_summary.candidates',
-  'code_index.symbol_summary.max_concurrency',
-  'code_index.symbol_summary.max_tokens',
-  'code_index.sync_worker_interval_seconds',
-  'code_index.sync_worker_batch_size',
-  'indexing.respect_gitignore',
+  "code_index.enabled",
+  "code_index.maintenance_interval_seconds",
+  "code_index.maintenance_index_timeout_seconds",
+  "code_index.nightly_full_reindex_enabled",
+  "code_index.nightly_full_reindex_cron",
+  "code_index.nightly_full_reindex_timezone",
+  "code_index.nightly_full_reindex_timeout_seconds",
+  "code_index.nightly_full_reindex_concurrency",
+  "code_index.maintenance_log_file",
+  "code_index.missing_root_purge_observations",
+  "code_index.embedding_enabled",
+  "code_index.graph_enabled",
+  "code_index.symbol_summary.enabled",
+  "code_index.symbol_summary.batch_size",
+  "code_index.symbol_summary.profile",
+  "code_index.symbol_summary.candidates",
+  "code_index.symbol_summary.max_concurrency",
+  "code_index.symbol_summary.max_tokens",
+  "code_index.sync_worker_interval_seconds",
+  "code_index.sync_worker_batch_size",
+  "indexing.respect_gitignore",
   // Binary freshness
-  'bin_freshness.enabled',
-  'bin_freshness.initial_delay_seconds',
-  'bin_freshness.interval_seconds',
-  'bin_freshness.jitter_seconds',
-  'bin_freshness.github_timeout_seconds',
+  "bin_freshness.enabled",
+  "bin_freshness.initial_delay_seconds",
+  "bin_freshness.interval_seconds",
+  "bin_freshness.jitter_seconds",
+  "bin_freshness.github_timeout_seconds",
   // Digest
-  'digest.enabled',
-  'digest.profile',
-  'digest.candidates',
-  'digest.timeout',
+  "digest.enabled",
+  "digest.profile",
+  "digest.candidates",
+  "digest.timeout",
   // Sandboxing
-  'web_chat_sandbox.enabled',
-  'web_chat_sandbox.extra_read_paths',
-  'web_chat_sandbox.extra_write_paths',
-  'agent_sandbox.enabled',
-  'agent_sandbox.extra_read_paths',
-  'agent_sandbox.extra_write_paths',
+  "web_chat_sandbox.enabled",
+  "web_chat_sandbox.extra_read_paths",
+  "web_chat_sandbox.extra_write_paths",
+  "agent_sandbox.enabled",
+  "agent_sandbox.extra_read_paths",
+  "agent_sandbox.extra_write_paths",
   // Directories
-  'clones_dir',
-  'worktrees_dir',
-]
+  "clones_dir",
+  "worktrees_dir",
+];
 
 // `search.mode` and `ui.mode` are bounded in the backend but persisted as free
 // text (no JSON-schema enum), so the section supplies the option set explicitly
 // rather than deriving it from the schema.
 const SEARCH_MODE_OPTIONS = [
-  { value: 'keyword', label: 'Keyword only' },
-  { value: 'embedding', label: 'Embedding only' },
-  { value: 'auto', label: 'Auto (embedding, keyword fallback)' },
-  { value: 'hybrid', label: 'Hybrid (weighted blend)' },
-]
+  { value: "keyword", label: "Keyword only" },
+  { value: "embedding", label: "Embedding only" },
+  { value: "auto", label: "Auto (embedding, keyword fallback)" },
+  { value: "hybrid", label: "Hybrid (weighted blend)" },
+];
 
 const UI_MODE_OPTIONS = [
-  { value: 'auto', label: 'Auto' },
-  { value: 'production', label: 'Production (serve built assets)' },
-  { value: 'dev', label: 'Dev (proxy the Vite dev server)' },
-]
+  { value: "auto", label: "Auto" },
+  { value: "production", label: "Production (serve built assets)" },
+  { value: "dev", label: "Dev (proxy the Vite dev server)" },
+];
 
 function DaemonGroup({ fields }: { fields: SettingsSectionFields }) {
   return (
@@ -146,7 +146,7 @@ function DaemonGroup({ fields }: { fields: SettingsSectionFields }) {
         placeholder="https://app.example.com"
       />
     </Subsection>
-  )
+  );
 }
 
 function WebSocketGroup({ fields }: { fields: SettingsSectionFields }) {
@@ -180,7 +180,7 @@ function WebSocketGroup({ fields }: { fields: SettingsSectionFields }) {
         ariaLabel="WebSocket ping timeout (seconds)"
       />
     </Subsection>
-  )
+  );
 }
 
 function WebUiGroup({ fields }: { fields: SettingsSectionFields }) {
@@ -235,7 +235,7 @@ function WebUiGroup({ fields }: { fields: SettingsSectionFields }) {
         ariaLabel="Knowledge graph relationship limit"
       />
     </Subsection>
-  )
+  );
 }
 
 function SearchGroup({ fields }: { fields: SettingsSectionFields }) {
@@ -272,7 +272,7 @@ function SearchGroup({ fields }: { fields: SettingsSectionFields }) {
         ariaLabel="Warn when search falls back to keyword"
       />
     </Subsection>
-  )
+  );
 }
 
 function CodeIndexGroup({ fields }: { fields: SettingsSectionFields }) {
@@ -414,7 +414,7 @@ function CodeIndexGroup({ fields }: { fields: SettingsSectionFields }) {
         ariaLabel="Respect .gitignore when indexing"
       />
     </Subsection>
-  )
+  );
 }
 
 function BinFreshnessGroup({ fields }: { fields: SettingsSectionFields }) {
@@ -454,7 +454,7 @@ function BinFreshnessGroup({ fields }: { fields: SettingsSectionFields }) {
         ariaLabel="GitHub request timeout (seconds)"
       />
     </Subsection>
-  )
+  );
 }
 
 function DigestGroup({ fields }: { fields: SettingsSectionFields }) {
@@ -490,7 +490,7 @@ function DigestGroup({ fields }: { fields: SettingsSectionFields }) {
         ariaLabel="Digest timeout (seconds)"
       />
     </Subsection>
-  )
+  );
 }
 
 function WebChatSandboxGroup({ fields }: { fields: SettingsSectionFields }) {
@@ -522,7 +522,7 @@ function WebChatSandboxGroup({ fields }: { fields: SettingsSectionFields }) {
         placeholder="/absolute/path"
       />
     </Subsection>
-  )
+  );
 }
 
 function AgentSandboxGroup({ fields }: { fields: SettingsSectionFields }) {
@@ -554,7 +554,7 @@ function AgentSandboxGroup({ fields }: { fields: SettingsSectionFields }) {
         placeholder="/absolute/path"
       />
     </Subsection>
-  )
+  );
 }
 
 function DirectoriesGroup({ fields }: { fields: SettingsSectionFields }) {
@@ -578,7 +578,7 @@ function DirectoriesGroup({ fields }: { fields: SettingsSectionFields }) {
         placeholder="~/.gobby/worktrees"
       />
     </Subsection>
-  )
+  );
 }
 
 /**
@@ -589,7 +589,10 @@ function DirectoriesGroup({ fields }: { fields: SettingsSectionFields }) {
  */
 export function RuntimeInfrastructureSection() {
   return (
-    <SettingsSection sectionId="runtime-infrastructure" ownedPaths={OWNED_PATHS}>
+    <SettingsSection
+      sectionId="runtime-infrastructure"
+      ownedPaths={OWNED_PATHS}
+    >
       {(fields) => (
         <>
           <DaemonGroup fields={fields} />
@@ -605,5 +608,5 @@ export function RuntimeInfrastructureSection() {
         </>
       )}
     </SettingsSection>
-  )
+  );
 }

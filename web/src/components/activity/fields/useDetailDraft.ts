@@ -97,37 +97,40 @@ export function useDetailDraft<T extends object>({
     setDraft(cloneSource(latestSourceRef.current));
   }, []);
 
-  const save = useCallback(async (overrideDraft?: T) => {
-    const target = overrideDraft ?? draft;
-    if (target === null || target === undefined) return false;
-    const latest = latestSourceRef.current ?? target;
-    const merged = { ...latest };
+  const save = useCallback(
+    async (overrideDraft?: T) => {
+      const target = overrideDraft ?? draft;
+      if (target === null || target === undefined) return false;
+      const latest = latestSourceRef.current ?? target;
+      const merged = { ...latest };
 
-    if (overrideDraft) {
-      for (const key of Object.keys(overrideDraft) as Array<keyof T>) {
-        merged[key] = overrideDraft[key];
+      if (overrideDraft) {
+        for (const key of Object.keys(overrideDraft) as Array<keyof T>) {
+          merged[key] = overrideDraft[key];
+        }
+      } else {
+        for (const key of editedKeysRef.current) {
+          merged[key] = target[key];
+        }
       }
-    } else {
-      for (const key of editedKeysRef.current) {
-        merged[key] = target[key];
-      }
-    }
 
-    setSaving(true);
-    try {
-      const saved = await onSave(merged);
-      if (!saved) return false;
-      latestSourceRef.current = merged;
-      editedKeysRef.current.clear();
-      dirtyRef.current = false;
-      setDraft(cloneSource(merged));
-      setDirty(false);
-      setServerChanged(false);
-      return true;
-    } finally {
-      setSaving(false);
-    }
-  }, [draft, onSave]);
+      setSaving(true);
+      try {
+        const saved = await onSave(merged);
+        if (!saved) return false;
+        latestSourceRef.current = merged;
+        editedKeysRef.current.clear();
+        dirtyRef.current = false;
+        setDraft(cloneSource(merged));
+        setDirty(false);
+        setServerChanged(false);
+        return true;
+      } finally {
+        setSaving(false);
+      }
+    },
+    [draft, onSave],
+  );
 
   const confirmLeave = useCallback(async () => {
     if (!dirtyRef.current) return true;

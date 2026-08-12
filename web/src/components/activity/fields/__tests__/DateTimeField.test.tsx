@@ -8,7 +8,10 @@ import {
 } from "@testing-library/react";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
-import { useProjects, type ProjectWithStats } from "../../../../hooks/useProjects";
+import {
+  useProjects,
+  type ProjectWithStats,
+} from "../../../../hooks/useProjects";
 import { DateTimeField } from "../DateTimeField";
 import {
   localInputValueToUtcIso,
@@ -43,7 +46,9 @@ function makeProject(overrides: Partial<ProjectWithStats>): ProjectWithStats {
   };
 }
 
-function makeProjectsState(overrides: Partial<ProjectsHookState> = {}): ProjectsHookState {
+function makeProjectsState(
+  overrides: Partial<ProjectsHookState> = {},
+): ProjectsHookState {
   const projects = [
     makeProject({
       id: "11111111-1111-4111-8111-111111111111",
@@ -99,18 +104,20 @@ describe("ProjectSelectField (#17015)", () => {
     );
 
     const select = screen.getByLabelText("Project");
-    expect(within(select).getByRole("option", { name: "Client portal" })).toHaveValue(
-      "11111111-1111-4111-8111-111111111111",
-    );
-    expect(within(select).getByRole("option", { name: "ops-console" })).toHaveValue(
-      "22222222-2222-4222-8222-222222222222",
-    );
+    expect(
+      within(select).getByRole("option", { name: "Client portal" }),
+    ).toHaveValue("11111111-1111-4111-8111-111111111111");
+    expect(
+      within(select).getByRole("option", { name: "ops-console" }),
+    ).toHaveValue("22222222-2222-4222-8222-222222222222");
 
     fireEvent.change(select, {
       target: { value: "11111111-1111-4111-8111-111111111111" },
     });
 
-    expect(onChange).toHaveBeenCalledWith("11111111-1111-4111-8111-111111111111");
+    expect(onChange).toHaveBeenCalledWith(
+      "11111111-1111-4111-8111-111111111111",
+    );
   });
 
   it("keeps an unknown selected project visible by UUID prefix", () => {
@@ -133,25 +140,39 @@ describe("ProjectSelectField (#17015)", () => {
   });
 
   it("degrades loading and error states to disabled hint options", () => {
-    vi.mocked(useProjects).mockReturnValue(makeProjectsState({ isLoading: true }));
+    vi.mocked(useProjects).mockReturnValue(
+      makeProjectsState({ isLoading: true }),
+    );
     const { rerender } = render(
-      <ProjectSelectField label="Project" ariaLabel="Project" value="" onChange={vi.fn()} />,
+      <ProjectSelectField
+        label="Project"
+        ariaLabel="Project"
+        value=""
+        onChange={vi.fn()}
+      />,
     );
 
     expect(screen.getByLabelText("Project")).toBeDisabled();
-    expect(within(screen.getByLabelText("Project")).getByRole("option")).toHaveTextContent(
-      "Loading projects",
-    );
+    expect(
+      within(screen.getByLabelText("Project")).getByRole("option"),
+    ).toHaveTextContent("Loading projects");
 
     vi.mocked(useProjects).mockReturnValue(
       makeProjectsState({ error: new Error("Project registry unavailable") }),
     );
-    rerender(<ProjectSelectField label="Project" ariaLabel="Project" value="" onChange={vi.fn()} />);
+    rerender(
+      <ProjectSelectField
+        label="Project"
+        ariaLabel="Project"
+        value=""
+        onChange={vi.fn()}
+      />,
+    );
 
     expect(screen.getByLabelText("Project")).toBeDisabled();
-    expect(within(screen.getByLabelText("Project")).getByRole("option")).toHaveTextContent(
-      "Projects unavailable",
-    );
+    expect(
+      within(screen.getByLabelText("Project")).getByRole("option"),
+    ).toHaveTextContent("Projects unavailable");
   });
 });
 
@@ -185,7 +206,9 @@ describe("DateTimeField (#17015)", () => {
       target: { value: "2026-03-09T09:45" },
     });
 
-    expect(onChange).toHaveBeenCalledWith(localInputValueToUtcIso("2026-03-09T09:45"));
+    expect(onChange).toHaveBeenCalledWith(
+      localInputValueToUtcIso("2026-03-09T09:45"),
+    );
   });
 
   it("drives native picker color-scheme from the resolved theme", async () => {

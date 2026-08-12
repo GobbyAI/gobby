@@ -181,7 +181,9 @@ describe("QuickMenu (#17016)", () => {
     expect(screen.queryByRole("menu", { name: "Row actions" })).toBeNull();
 
     fireEvent.click(screen.getByRole("button", { name: "Open row actions" }));
-    fireEvent.click(document.querySelector(".session-ctx-backdrop") as HTMLElement);
+    fireEvent.click(
+      document.querySelector(".session-ctx-backdrop") as HTMLElement,
+    );
     expect(screen.queryByRole("menu", { name: "Row actions" })).toBeNull();
   });
 
@@ -209,7 +211,9 @@ describe("QuickMenu (#17016)", () => {
       <QuickMenu
         triggerLabel="Open row actions"
         menuLabel="Row actions"
-        items={[{ label: "Remove server...", destructive: true, onSelect: vi.fn() }]}
+        items={[
+          { label: "Remove server...", destructive: true, onSelect: vi.fn() },
+        ]}
       />,
     );
 
@@ -290,7 +294,11 @@ describe("QuickMenu (#17016)", () => {
       />,
     );
 
-    expect(screen.getByRole("menu", { name: "MCP server actions" })).toBeTruthy();
-    expect(screen.getByRole("menuitem", { name: "Remove server..." })).toBeTruthy();
+    expect(
+      screen.getByRole("menu", { name: "MCP server actions" }),
+    ).toBeTruthy();
+    expect(
+      screen.getByRole("menuitem", { name: "Remove server..." }),
+    ).toBeTruthy();
   });
 });

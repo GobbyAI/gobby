@@ -32,7 +32,9 @@ export function useSessionReconciliation({
   switchConversation,
   startNewChat,
 }: UseSessionReconciliationArgs) {
-  const [initialPersistedDbSessionId] = useState(() => loadPersistedDbSessionId());
+  const [initialPersistedDbSessionId] = useState(() =>
+    loadPersistedDbSessionId(),
+  );
 
   useEffect(() => {
     if (!projectReady) return;

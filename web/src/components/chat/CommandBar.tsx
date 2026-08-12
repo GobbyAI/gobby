@@ -1,23 +1,23 @@
-import type { AgentDefInfo } from '../../hooks/useAgentDefinitions'
-import { getSessionTitleText } from '../../lib/sessionTitle'
-import { SourceIcon } from '../shared/SourceIcon'
-import { Button } from '../ui/Button'
-import { DropdownCaret } from '../ui/DropdownCaret'
-import { PanelIcon } from './icons/PanelIcon'
+import type { AgentDefInfo } from "../../hooks/useAgentDefinitions";
+import { getSessionTitleText } from "../../lib/sessionTitle";
+import { SourceIcon } from "../shared/SourceIcon";
+import { Button } from "../ui/Button";
+import { DropdownCaret } from "../ui/DropdownCaret";
+import { PanelIcon } from "./icons/PanelIcon";
 
 interface CommandBarProps {
-  sessionRef: string | null
-  title: string | null
-  sessionSource?: string | null
-  onOpenPalette: () => void
-  onTogglePanel?: () => void
-  panelVisible?: boolean
-  agentDefinitions?: AgentDefInfo[]
-  agentGlobalDefs?: AgentDefInfo[]
-  agentProjectDefs?: AgentDefInfo[]
-  agentShowScopeToggle?: boolean
-  agentHasGlobal?: boolean
-  agentHasProject?: boolean
+  sessionRef: string | null;
+  title: string | null;
+  sessionSource?: string | null;
+  onOpenPalette: () => void;
+  onTogglePanel?: () => void;
+  panelVisible?: boolean;
+  agentDefinitions?: AgentDefInfo[];
+  agentGlobalDefs?: AgentDefInfo[];
+  agentProjectDefs?: AgentDefInfo[];
+  agentShowScopeToggle?: boolean;
+  agentHasGlobal?: boolean;
+  agentHasProject?: boolean;
 }
 
 export function CommandBar({
@@ -43,20 +43,25 @@ export function CommandBar({
           variant="ghost"
           size="sm"
           dense
-          className="command-bar-session min-w-0 max-w-full flex-1 basis-auto justify-start rounded border-0 bg-transparent px-2 py-1 text-left text-[length:var(--text-base)] [font-weight:var(--font-weight-medium)] text-[var(--text-primary)] [transition:background_0.1s] hover:bg-[var(--bg-tertiary)]"
+          className="command-bar-session max-w-full min-w-0 flex-1 basis-auto justify-start rounded border-0 bg-transparent px-2 py-1 text-left text-[length:var(--text-base)] [font-weight:var(--font-weight-medium)] text-[var(--text-primary)] [transition:background_0.1s] hover:bg-[var(--bg-tertiary)]"
           data-testid="chat-session-selector"
           onClick={onOpenPalette}
           title="Switch session (Cmd+K)"
         >
           {sessionSource && (
-            <span className="command-bar-source inline-flex shrink-0 items-center text-[var(--text-secondary)]" aria-hidden="true">
+            <span
+              className="command-bar-source inline-flex shrink-0 items-center text-[var(--text-secondary)]"
+              aria-hidden="true"
+            >
               <SourceIcon source={sessionSource} size={14} />
             </span>
           )}
           {sessionRef && (
-            <span className="command-bar-ref shrink-0 text-[var(--accent)] [font-weight:var(--font-weight-medium)]">{sessionRef}</span>
+            <span className="command-bar-ref shrink-0 [font-weight:var(--font-weight-medium)] text-[var(--accent)]">
+              {sessionRef}
+            </span>
           )}
-          <span className="command-bar-title min-w-0 flex-1 basis-auto overflow-hidden text-ellipsis whitespace-nowrap text-left text-[var(--text-primary)] [font-weight:var(--font-weight-medium)] max-md:max-w-none">
+          <span className="command-bar-title min-w-0 flex-1 basis-auto overflow-hidden text-left [font-weight:var(--font-weight-medium)] text-ellipsis whitespace-nowrap text-[var(--text-primary)] max-md:max-w-none">
             {getSessionTitleText(title)}
           </span>
           <DropdownCaret />
@@ -73,16 +78,18 @@ export function CommandBar({
             dense
             className="command-bar-btn min-h-[var(--status-bar-control-height)] shrink-0"
             onClick={onTogglePanel}
-            aria-label={panelVisible ? 'Hide activity panel' : 'Show activity panel'}
-            title={panelVisible ? 'Hide activity panel' : 'Show activity panel'}
+            aria-label={
+              panelVisible ? "Hide activity panel" : "Show activity panel"
+            }
+            title={panelVisible ? "Hide activity panel" : "Show activity panel"}
           >
             <PanelIcon visible={panelVisible} />
             <span className="command-bar-btn__label">
-              {panelVisible ? 'Hide Panel' : 'Show Panel'}
+              {panelVisible ? "Hide Panel" : "Show Panel"}
             </span>
           </Button>
         )}
       </div>
     </div>
-  )
+  );
 }

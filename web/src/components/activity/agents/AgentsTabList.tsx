@@ -75,13 +75,11 @@ export function AgentsTabList({
                 label={agent.enabled ? "Agent enabled" : "Agent disabled"}
                 pulse={agent.enabled}
               />
-              <span className="activity-row-title">{agent.definition.name}</span>
-              <Chip>
-                {agent.definition.provider}
-              </Chip>
-              <Chip>
-                {sourceLabel}
-              </Chip>
+              <span className="activity-row-title">
+                {agent.definition.name}
+              </span>
+              <Chip>{agent.definition.provider}</Chip>
+              <Chip>{sourceLabel}</Chip>
             </Button>
             <div className="px-1">
               <QuickMenu

@@ -67,22 +67,22 @@ export const PROVIDER_COLOR_PAIRS: Record<string, SourceColorPair> = {
 };
 
 export const SOURCE_LABELS: Record<string, string> = {
-  claude: 'Claude',
-  grok: 'Grok',
-  agy: 'AGY',
-  qwen: 'Qwen',
-  codex: 'Codex',
-  droid: 'Droid',
-  pipeline: 'Pipeline',
-  cron: 'Cron',
-  claude_code: 'Claude Code',
-  claude_sdk: 'Claude SDK',
-  claude_sdk_web_chat: 'Claude SDK Web Chat',
-  cursor: 'Cursor',
-  windsurf: 'Windsurf',
-  copilot: 'Copilot',
-  unknown: 'Unknown',
-}
+  claude: "Claude",
+  grok: "Grok",
+  agy: "AGY",
+  qwen: "Qwen",
+  codex: "Codex",
+  droid: "Droid",
+  pipeline: "Pipeline",
+  cron: "Cron",
+  claude_code: "Claude Code",
+  claude_sdk: "Claude SDK",
+  claude_sdk_web_chat: "Claude SDK Web Chat",
+  cursor: "Cursor",
+  windsurf: "Windsurf",
+  copilot: "Copilot",
+  unknown: "Unknown",
+};
 
 /** Resolve a session source to its theme-aware accent colour. */
 export function getSourceColorVar(source: string): string {

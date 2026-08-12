@@ -53,8 +53,9 @@ export function useContextUsageState() {
   const [contextUsageUpdatedAt, setContextUsageUpdatedAt] = useState<
     number | null
   >(null);
-  const preAttachContextUsageRef =
-    useRef<PreAttachContextUsageSnapshot | null>(null);
+  const preAttachContextUsageRef = useRef<PreAttachContextUsageSnapshot | null>(
+    null,
+  );
   const didTrackContextUsageRef = useRef(false);
   const lastLiveUsageBySessionRef = useRef<Map<string, LiveContextUsageEntry>>(
     new Map(),
@@ -69,16 +70,13 @@ export function useContextUsageState() {
       const parsed = rawTimestamp ? new Date(rawTimestamp).getTime() : NaN;
       const now = Date.now();
       // Live websocket usage beats older hydrated session snapshots.
-      lastLiveUsageBySessionRef.current.set(
-        sessionId,
-        {
-          usageTimestamp:
-            Number.isFinite(parsed) && parsed >= 0 && parsed <= now
-              ? parsed
-              : now,
-          lastSeenAt: now,
-        },
-      );
+      lastLiveUsageBySessionRef.current.set(sessionId, {
+        usageTimestamp:
+          Number.isFinite(parsed) && parsed >= 0 && parsed <= now
+            ? parsed
+            : now,
+        lastSeenAt: now,
+      });
       pruneLiveContextUsageEntries(lastLiveUsageBySessionRef.current, now);
     },
     [],

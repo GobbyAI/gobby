@@ -1,11 +1,7 @@
 import type { MockFetchInstance } from "../../../test/mocks/fetch";
 
 export type TestStageState =
-  | "ready"
-  | "in_progress"
-  | "needs_review"
-  | "review_approved"
-  | "done";
+  "ready" | "in_progress" | "needs_review" | "review_approved" | "done";
 
 export function stagePayload(
   state: TestStageState = "ready",

@@ -1,16 +1,14 @@
-import {
-  fireEvent,
-  screen,
-  waitFor,
-  within,
-} from "@testing-library/react";
+import { fireEvent, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import { ACTIVITY_PANEL_TABS } from "../../ActivityPanelTabs";
 import { SkillsTab } from "../../SkillsTab";
 import { renderWithActivityActions as render } from "../../../../test/helpers";
-import { createMockFetch, type MockFetchInstance } from "../../../../test/mocks/fetch";
+import {
+  createMockFetch,
+  type MockFetchInstance,
+} from "../../../../test/mocks/fetch";
 
 vi.mock("../../../../hooks/useWebSocketEvent", () => ({
   useWebSocketEvent: vi.fn(),
@@ -20,7 +18,10 @@ vi.mock("../../../../hooks/useWebSocketEvent", () => ({
 // copy without driving the Radix dialog internals.
 const confirmMock = vi.hoisted(() => vi.fn(async () => true));
 vi.mock("../../../../hooks/useConfirmDialog", () => ({
-  useConfirmDialog: () => ({ confirm: confirmMock, ConfirmDialogElement: null }),
+  useConfirmDialog: () => ({
+    confirm: confirmMock,
+    ConfirmDialogElement: null,
+  }),
 }));
 
 vi.mock("../../../shared/ResizeHandle", () => ({
@@ -28,8 +29,9 @@ vi.mock("../../../shared/ResizeHandle", () => ({
 }));
 
 vi.mock("../../../shared/MarkdownBody", async (importOriginal) => ({
-  markdownBodyClassName: (await importOriginal<typeof import("../../../shared/MarkdownBody")>())
-    .markdownBodyClassName,
+  markdownBodyClassName: (
+    await importOriginal<typeof import("../../../shared/MarkdownBody")>()
+  ).markdownBodyClassName,
   MarkdownBody: ({ content }: { content: string }) => (
     <div data-testid="markdown-body">{content}</div>
   ),
@@ -141,7 +143,10 @@ function setupFetch(skills: SkillRecord[]) {
     restored: true,
     skill: { ...skills[0], deleted_at: null },
   });
-  mockFetch.mockJsonResponse(/\/api\/skills\/[^/]+$/, { ...skills[0], enabled: false });
+  mockFetch.mockJsonResponse(/\/api\/skills\/[^/]+$/, {
+    ...skills[0],
+    enabled: false,
+  });
 }
 
 function lastJsonBodyFor(pathPart: string) {
@@ -229,10 +234,16 @@ describe("Skills activity Installed segment", () => {
     expect(screen.getAllByText("Bridge pack").length).toBeGreaterThan(0);
     expect(screen.queryByText("Code navigator")).not.toBeInTheDocument();
 
-    await user.selectOptions(screen.getByLabelText("Skill category"), "Automation");
+    await user.selectOptions(
+      screen.getByLabelText("Skill category"),
+      "Automation",
+    );
     // The search bar is hidden until the header Search toggle opens it.
     await user.click(screen.getByRole("button", { name: "Search skills" }));
-    await user.type(screen.getByRole("searchbox", { name: "Search skills" }), "bridge");
+    await user.type(
+      screen.getByRole("searchbox", { name: "Search skills" }),
+      "bridge",
+    );
 
     expect(screen.getAllByText("Bridge pack").length).toBeGreaterThan(0);
     expect(screen.queryByText("Hub curator")).not.toBeInTheDocument();
@@ -240,7 +251,11 @@ describe("Skills activity Installed segment", () => {
 
   it("exposes row actions through the shared kebab menu", async () => {
     setupFetch([
-      makeSkill({ id: "sk-installed", name: "Code navigator", source: "installed" }),
+      makeSkill({
+        id: "sk-installed",
+        name: "Code navigator",
+        source: "installed",
+      }),
       makeSkill({
         id: "sk-project",
         name: "Bridge pack",
@@ -256,21 +271,39 @@ describe("Skills activity Installed segment", () => {
     expect(
       await screen.findByRole("button", { name: "Select Code navigator" }),
     ).toBeInTheDocument();
-    await user.click(screen.getByRole("button", { name: "Open actions for Code navigator" }));
+    await user.click(
+      screen.getByRole("button", { name: "Open actions for Code navigator" }),
+    );
 
-    const installedMenu = screen.getByRole("menu", { name: "Actions for Code navigator" });
-    expect(within(installedMenu).getByRole("menuitem", { name: "Disable" })).toBeInTheDocument();
+    const installedMenu = screen.getByRole("menu", {
+      name: "Actions for Code navigator",
+    });
+    expect(
+      within(installedMenu).getByRole("menuitem", { name: "Disable" }),
+    ).toBeInTheDocument();
     expect(
       within(installedMenu).getByRole("menuitem", { name: "Move to project" }),
     ).toBeInTheDocument();
-    expect(within(installedMenu).getByRole("menuitem", { name: "Export" })).toBeInTheDocument();
-    expect(within(installedMenu).getByRole("menuitem", { name: "Delete" })).toBeInTheDocument();
+    expect(
+      within(installedMenu).getByRole("menuitem", { name: "Export" }),
+    ).toBeInTheDocument();
+    expect(
+      within(installedMenu).getByRole("menuitem", { name: "Delete" }),
+    ).toBeInTheDocument();
 
-    await user.click(within(installedMenu).getByRole("menuitem", { name: "Disable" }));
-    expect(lastJsonBodyFor("/api/skills/sk-installed")).toEqual({ enabled: false });
+    await user.click(
+      within(installedMenu).getByRole("menuitem", { name: "Disable" }),
+    );
+    expect(lastJsonBodyFor("/api/skills/sk-installed")).toEqual({
+      enabled: false,
+    });
 
-    await user.click(screen.getByRole("button", { name: "Open actions for Bridge pack" }));
-    const projectMenu = screen.getByRole("menu", { name: "Actions for Bridge pack" });
+    await user.click(
+      screen.getByRole("button", { name: "Open actions for Bridge pack" }),
+    );
+    const projectMenu = screen.getByRole("menu", {
+      name: "Actions for Bridge pack",
+    });
     expect(
       within(projectMenu).getByRole("menuitem", { name: "Move to installed" }),
     ).toBeInTheDocument();
@@ -279,7 +312,11 @@ describe("Skills activity Installed segment", () => {
   it("limits deleted skill menus to Restore, Export, and Delete forever (#19162)", async () => {
     setupFetch([
       makeSkill({ id: "sk-live", name: "Live skill" }),
-      makeSkill({ id: "sk-gone", name: "Old skill", deleted_at: "2026-07-01T00:00:00Z" }),
+      makeSkill({
+        id: "sk-gone",
+        name: "Old skill",
+        deleted_at: "2026-07-01T00:00:00Z",
+      }),
     ]);
 
     const user = userEvent.setup();
@@ -290,26 +327,46 @@ describe("Skills activity Installed segment", () => {
     await user.click(screen.getByRole("button", { name: "Filter skills" }));
     await user.selectOptions(screen.getByLabelText("Skill source"), "deleted");
 
-    await user.click(screen.getByRole("button", { name: "Open actions for Old skill" }));
+    await user.click(
+      screen.getByRole("button", { name: "Open actions for Old skill" }),
+    );
     const menu = screen.getByRole("menu", { name: "Actions for Old skill" });
-    expect(within(menu).getByRole("menuitem", { name: "Restore" })).toBeInTheDocument();
-    expect(within(menu).getByRole("menuitem", { name: "Export" })).toBeInTheDocument();
-    expect(within(menu).getByRole("menuitem", { name: "Delete forever" })).toBeInTheDocument();
-    expect(within(menu).queryByRole("menuitem", { name: "Disable" })).toBeNull();
-    expect(within(menu).queryByRole("menuitem", { name: /Move to/ })).toBeNull();
+    expect(
+      within(menu).getByRole("menuitem", { name: "Restore" }),
+    ).toBeInTheDocument();
+    expect(
+      within(menu).getByRole("menuitem", { name: "Export" }),
+    ).toBeInTheDocument();
+    expect(
+      within(menu).getByRole("menuitem", { name: "Delete forever" }),
+    ).toBeInTheDocument();
+    expect(
+      within(menu).queryByRole("menuitem", { name: "Disable" }),
+    ).toBeNull();
+    expect(
+      within(menu).queryByRole("menuitem", { name: /Move to/ }),
+    ).toBeNull();
   });
 
   it("purges a soft-deleted skill after a permanent-delete confirm (#19162)", async () => {
     setupFetch([
-      makeSkill({ id: "sk-gone", name: "Old skill", deleted_at: "2026-07-01T00:00:00Z" }),
+      makeSkill({
+        id: "sk-gone",
+        name: "Old skill",
+        deleted_at: "2026-07-01T00:00:00Z",
+      }),
     ]);
 
     const user = userEvent.setup();
     render(<SkillsTab projectId="project-1" />);
 
-    await user.click(await screen.findByRole("button", { name: "Filter skills" }));
+    await user.click(
+      await screen.findByRole("button", { name: "Filter skills" }),
+    );
     await user.selectOptions(screen.getByLabelText("Skill source"), "deleted");
-    await user.click(screen.getByRole("button", { name: "Open actions for Old skill" }));
+    await user.click(
+      screen.getByRole("button", { name: "Open actions for Old skill" }),
+    );
     await user.click(screen.getByRole("menuitem", { name: "Delete forever" }));
 
     await waitFor(() => {
@@ -335,7 +392,9 @@ describe("Skills activity Installed segment", () => {
     render(<SkillsTab projectId="project-1" />);
 
     await screen.findByRole("button", { name: "Select Live skill" });
-    await user.click(screen.getByRole("button", { name: "Open actions for Live skill" }));
+    await user.click(
+      screen.getByRole("button", { name: "Open actions for Live skill" }),
+    );
     await user.click(screen.getByRole("menuitem", { name: "Delete" }));
 
     await waitFor(() => {
@@ -351,19 +410,29 @@ describe("Skills activity Installed segment", () => {
 
   it("restores a soft-deleted skill from the row menu (#19162)", async () => {
     setupFetch([
-      makeSkill({ id: "sk-gone", name: "Old skill", deleted_at: "2026-07-01T00:00:00Z" }),
+      makeSkill({
+        id: "sk-gone",
+        name: "Old skill",
+        deleted_at: "2026-07-01T00:00:00Z",
+      }),
     ]);
 
     const user = userEvent.setup();
     render(<SkillsTab projectId="project-1" />);
 
-    await user.click(await screen.findByRole("button", { name: "Filter skills" }));
+    await user.click(
+      await screen.findByRole("button", { name: "Filter skills" }),
+    );
     await user.selectOptions(screen.getByLabelText("Skill source"), "deleted");
-    await user.click(screen.getByRole("button", { name: "Open actions for Old skill" }));
+    await user.click(
+      screen.getByRole("button", { name: "Open actions for Old skill" }),
+    );
     await user.click(screen.getByRole("menuitem", { name: "Restore" }));
 
     await waitFor(() => {
-      expect(callWithMethod("/api/skills/sk-gone/restore", "POST")).toBeTruthy();
+      expect(
+        callWithMethod("/api/skills/sk-gone/restore", "POST"),
+      ).toBeTruthy();
     });
     expect(confirmMock).not.toHaveBeenCalled();
   });
@@ -384,7 +453,9 @@ describe("Skills activity Installed segment", () => {
     const user = userEvent.setup();
     render(<SkillsTab projectId="project-1" />);
 
-    await user.click(await screen.findByRole("button", { name: /Select Code navigator/i }));
+    await user.click(
+      await screen.findByRole("button", { name: /Select Code navigator/i }),
+    );
     const descriptionField = await screen.findByLabelText("Skill description");
 
     await user.clear(descriptionField);
@@ -393,7 +464,9 @@ describe("Skills activity Installed segment", () => {
 
     await waitFor(() => {
       expect(lastJsonBodyFor("/api/skills/sk-installed")).toEqual(
-        expect.objectContaining({ description: "Updated indexed-code guidance" }),
+        expect.objectContaining({
+          description: "Updated indexed-code guidance",
+        }),
       );
     });
 
@@ -416,12 +489,18 @@ describe("Skills activity Installed segment", () => {
     const user = userEvent.setup();
     render(<SkillsTab projectId="project-1" />);
 
-    await user.click(await screen.findByRole("button", { name: /Select Code navigator/i }));
+    await user.click(
+      await screen.findByRole("button", { name: /Select Code navigator/i }),
+    );
     await user.click(await screen.findByRole("button", { name: "Content" }));
 
     // Read-only by default: rendered markdown, no editor until Edit is clicked.
-    expect(await screen.findByTestId("markdown-body")).toHaveTextContent("Use gcode first.");
-    expect(screen.queryByLabelText("Skill content markdown")).not.toBeInTheDocument();
+    expect(await screen.findByTestId("markdown-body")).toHaveTextContent(
+      "Use gcode first.",
+    );
+    expect(
+      screen.queryByLabelText("Skill content markdown"),
+    ).not.toBeInTheDocument();
 
     await user.click(screen.getByRole("button", { name: "Edit" }));
     const editor = await screen.findByLabelText("Skill content markdown");
@@ -441,7 +520,9 @@ describe("Skills activity Installed segment", () => {
     });
 
     // Saving exits edit mode back to the read view.
-    expect(screen.queryByLabelText("Skill content markdown")).not.toBeInTheDocument();
+    expect(
+      screen.queryByLabelText("Skill content markdown"),
+    ).not.toBeInTheDocument();
 
     await user.click(screen.getByRole("button", { name: "Close" }));
     expect(screen.getByLabelText("Skill description")).toBeInTheDocument();
@@ -459,7 +540,9 @@ describe("Skills activity Installed segment", () => {
     const user = userEvent.setup();
     render(<SkillsTab projectId="project-1" />);
 
-    await user.click(await screen.findByRole("button", { name: /Select Code navigator/i }));
+    await user.click(
+      await screen.findByRole("button", { name: /Select Code navigator/i }),
+    );
     await user.click(await screen.findByRole("button", { name: "Content" }));
     await user.click(await screen.findByRole("button", { name: "Edit" }));
 
@@ -468,8 +551,12 @@ describe("Skills activity Installed segment", () => {
     });
     await user.click(screen.getByRole("button", { name: "Cancel" }));
 
-    expect(screen.queryByLabelText("Skill content markdown")).not.toBeInTheDocument();
-    expect(screen.getByTestId("markdown-body")).toHaveTextContent("Use gcode first.");
+    expect(
+      screen.queryByLabelText("Skill content markdown"),
+    ).not.toBeInTheDocument();
+    expect(screen.getByTestId("markdown-body")).toHaveTextContent(
+      "Use gcode first.",
+    );
     expect(
       mockFetch.fn.mock.calls.some(
         ([, init]) => (init as RequestInit | undefined)?.method === "PUT",
@@ -495,22 +582,31 @@ describe("Skills activity Installed segment", () => {
         },
       ],
     });
-    mockFetch.mockJsonResponse(/\/api\/skills\/sk-installed\/files\/references\/usage\.md$/, {
-      path: "references/usage.md",
-      file_type: "reference",
-      size_bytes: 20,
-      content_hash: "abc",
-      content: "# Usage\nOriginal reference.\n",
-    });
+    mockFetch.mockJsonResponse(
+      /\/api\/skills\/sk-installed\/files\/references\/usage\.md$/,
+      {
+        path: "references/usage.md",
+        file_type: "reference",
+        size_bytes: 20,
+        content_hash: "abc",
+        content: "# Usage\nOriginal reference.\n",
+      },
+    );
 
     const user = userEvent.setup();
     render(<SkillsTab projectId="project-1" />);
 
-    await user.click(await screen.findByRole("button", { name: /Select Code navigator/i }));
+    await user.click(
+      await screen.findByRole("button", { name: /Select Code navigator/i }),
+    );
     await user.click(await screen.findByRole("button", { name: "Content" }));
 
-    const filesNav = await screen.findByRole("navigation", { name: "Skill files" });
-    expect(within(filesNav).getByRole("button", { name: "SKILL.md" })).toBeInTheDocument();
+    const filesNav = await screen.findByRole("navigation", {
+      name: "Skill files",
+    });
+    expect(
+      within(filesNav).getByRole("button", { name: "SKILL.md" }),
+    ).toBeInTheDocument();
 
     await user.click(
       within(filesNav).getByRole("button", { name: "references/usage.md" }),
@@ -536,7 +632,9 @@ describe("Skills activity Installed segment", () => {
     expect(
       screen.queryByLabelText("references/usage.md content"),
     ).not.toBeInTheDocument();
-    expect(screen.getByTestId("markdown-body")).toHaveTextContent("Updated reference.");
+    expect(screen.getByTestId("markdown-body")).toHaveTextContent(
+      "Updated reference.",
+    );
   });
 
   it("keeps the skill editor draft open and shows update failures", async () => {
@@ -551,7 +649,9 @@ describe("Skills activity Installed segment", () => {
     const user = userEvent.setup();
     render(<SkillsTab projectId="project-1" />);
 
-    await user.click(await screen.findByRole("button", { name: /Select Code navigator/i }));
+    await user.click(
+      await screen.findByRole("button", { name: /Select Code navigator/i }),
+    );
     await user.click(screen.getByRole("button", { name: "Content" }));
     await user.click(await screen.findByRole("button", { name: "Edit" }));
     fireEvent.change(screen.getByLabelText("Skill content markdown"), {
@@ -566,7 +666,9 @@ describe("Skills activity Installed segment", () => {
     );
     await user.click(screen.getByRole("button", { name: "Save" }));
 
-    expect(await screen.findByText("Skill update was rejected")).toBeInTheDocument();
+    expect(
+      await screen.findByText("Skill update was rejected"),
+    ).toBeInTheDocument();
     expect(screen.getByLabelText("Skill content markdown")).toHaveValue(
       "# Code navigator\nKeep this draft.\n",
     );
@@ -580,7 +682,9 @@ describe("Skills activity Installed segment", () => {
     render(<SkillsTab projectId="project-1" />);
 
     await screen.findByRole("button", { name: /Select Code navigator/i });
-    await user.click(screen.getByRole("button", { name: "Open actions for Code navigator" }));
+    await user.click(
+      screen.getByRole("button", { name: "Open actions for Code navigator" }),
+    );
     mockFetch.resetRoutes();
     mockFetch.mockJsonResponse(
       /\/api\/skills\/sk-installed\/export$/,
@@ -589,6 +693,8 @@ describe("Skills activity Installed segment", () => {
     );
     await user.click(screen.getByRole("menuitem", { name: "Export" }));
 
-    expect(await screen.findByText("Skill export is unavailable")).toBeInTheDocument();
+    expect(
+      await screen.findByText("Skill export is unavailable"),
+    ).toBeInTheDocument();
   });
 });

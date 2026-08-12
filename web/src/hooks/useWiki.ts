@@ -81,7 +81,9 @@ async function parseWikiResponse(response: Response): Promise<unknown> {
   try {
     return await response.json();
   } catch (error) {
-    throw new Error(`HTTP ${response.status} returned invalid JSON: ${String(error)}`);
+    throw new Error(
+      `HTTP ${response.status} returned invalid JSON: ${String(error)}`,
+    );
   }
 }
 
@@ -111,7 +113,8 @@ async function postWikiEnvelope<TPayload = WikiJson>(
   path: string,
   body?: unknown,
 ): Promise<WikiEnvelope<TPayload>> {
-  const isFormData = typeof FormData !== "undefined" && body instanceof FormData;
+  const isFormData =
+    typeof FormData !== "undefined" && body instanceof FormData;
   const response = await fetch(`${getBaseUrl()}${path}`, {
     method: "POST",
     headers: isFormData ? undefined : { "Content-Type": "application/json" },
@@ -137,10 +140,15 @@ function sourceRecordsFromEnvelope(envelope: WikiEnvelope): WikiSourceRecord[] {
 
 export function useWiki(options: UseWikiOptions = {}) {
   const { projectId = null, topic = null } = options;
-  const query = useMemo(() => scopeQuery({ projectId, topic }), [projectId, topic]);
+  const query = useMemo(
+    () => scopeQuery({ projectId, topic }),
+    [projectId, topic],
+  );
   const [status, setStatus] = useState<WikiEnvelope | null>(null);
   const [health, setHealth] = useState<WikiEnvelope | null>(null);
-  const [sourcesEnvelope, setSourcesEnvelope] = useState<WikiEnvelope | null>(null);
+  const [sourcesEnvelope, setSourcesEnvelope] = useState<WikiEnvelope | null>(
+    null,
+  );
   const [isLoading, setIsLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
 
@@ -173,8 +181,13 @@ export function useWiki(options: UseWikiOptions = {}) {
   );
 
   const withQuery = useCallback(
-    (path: string, params: Record<string, string | number | null | undefined> = {}) => {
-      const nextParams = new URLSearchParams(query.startsWith("?") ? query.slice(1) : query);
+    (
+      path: string,
+      params: Record<string, string | number | null | undefined> = {},
+    ) => {
+      const nextParams = new URLSearchParams(
+        query.startsWith("?") ? query.slice(1) : query,
+      );
       for (const [key, value] of Object.entries(params)) {
         if (value !== null && value !== undefined && String(value).trim()) {
           nextParams.set(key, String(value));
@@ -188,19 +201,23 @@ export function useWiki(options: UseWikiOptions = {}) {
 
   const search = useCallback(
     (request: WikiSearchRequest) =>
-      readWikiEnvelope(withQuery("/api/wiki/search", {
-        query: request.query,
-        limit: request.limit,
-      })),
+      readWikiEnvelope(
+        withQuery("/api/wiki/search", {
+          query: request.query,
+          limit: request.limit,
+        }),
+      ),
     [withQuery],
   );
 
   const read = useCallback(
     (request: WikiReadRequest) =>
-      readWikiEnvelope(withQuery("/api/wiki/read", {
-        path: request.path,
-        title: request.title,
-      })),
+      readWikiEnvelope(
+        withQuery("/api/wiki/read", {
+          path: request.path,
+          title: request.title,
+        }),
+      ),
     [withQuery],
   );
 
@@ -214,12 +231,14 @@ export function useWiki(options: UseWikiOptions = {}) {
   );
 
   const ingest = useCallback(
-    (request: WikiIngestRequest) => postWikiEnvelope(withQuery("/api/wiki/ingest"), request),
+    (request: WikiIngestRequest) =>
+      postWikiEnvelope(withQuery("/api/wiki/ingest"), request),
     [withQuery],
   );
 
   const compileWiki = useCallback(
-    (request: WikiCompileRequest = {}) => postWikiEnvelope(withQuery("/api/wiki/compile"), request),
+    (request: WikiCompileRequest = {}) =>
+      postWikiEnvelope(withQuery("/api/wiki/compile"), request),
     [withQuery],
   );
 
@@ -228,14 +247,11 @@ export function useWiki(options: UseWikiOptions = {}) {
     [withQuery],
   );
 
-  const checkHealth = useCallback(
-    async () => {
-      const nextHealth = await readWikiEnvelope(withQuery("/api/wiki/health"));
-      setHealth(nextHealth);
-      return nextHealth;
-    },
-    [withQuery],
-  );
+  const checkHealth = useCallback(async () => {
+    const nextHealth = await readWikiEnvelope(withQuery("/api/wiki/health"));
+    setHealth(nextHealth);
+    return nextHealth;
+  }, [withQuery]);
 
   useEffect(() => {
     // Let the initial render commit before refresh toggles loading/error state.

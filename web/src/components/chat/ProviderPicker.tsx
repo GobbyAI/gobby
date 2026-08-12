@@ -27,7 +27,9 @@ function getVisibleModelsForProvider(
   const models = getModelsForProvider(catalog, provider);
   if (models.length > 0) return models;
   if (entry) return [{ value: "default", label: "Default" }];
-  return [{ value: currentModel || "default", label: currentModel || "Default" }];
+  return [
+    { value: currentModel || "default", label: currentModel || "Default" },
+  ];
 }
 
 function getExecutionProvider(
@@ -114,13 +116,17 @@ export function ProviderPicker({
   const visibleProviders = getOrderedProviders(
     Array.from(
       new Set([
-        ...(availableProviders.length > 0 ? availableProviders : [effectiveProvider]),
+        ...(availableProviders.length > 0
+          ? availableProviders
+          : [effectiveProvider]),
         ...catalog.map((entry) => entry.provider),
       ]),
     ),
   ).filter((provider) => {
     if (isHiddenProvider(provider)) return false;
-    return catalogByProvider.get(provider.toLowerCase())?.supports_web_chat !== false;
+    return (
+      catalogByProvider.get(provider.toLowerCase())?.supports_web_chat !== false
+    );
   });
 
   const applySelection = useCallback(
@@ -186,26 +192,26 @@ export function ProviderPicker({
 
   return (
     <Dialog open={open} onOpenChange={handleOpenChange}>
-      <DialogContent className="max-w-sm p-0 gap-0">
+      <DialogContent className="max-w-sm gap-0 p-0">
         {confirmSwitch ? (
           <div className="p-4">
-            <DialogTitle className="text-sm font-medium mb-2">
+            <DialogTitle className="mb-2 text-sm font-medium">
               Switch provider?
             </DialogTitle>
-            <DialogDescription className="text-xs mb-4">
+            <DialogDescription className="mb-4 text-xs">
               Switching to{" "}
-              <span className="text-foreground font-medium">
+              <span className="font-medium text-foreground">
                 {getProviderDisplayName(confirmSwitch.provider)}
               </span>{" "}
               will start a new conversation. Your current chat will be preserved
               in session history.
             </DialogDescription>
-            <div className="flex gap-2 justify-end">
+            <div className="flex justify-end gap-2">
               <Button
                 type="button"
                 variant="secondary"
                 size="sm"
-                className="px-3 py-1.5 text-xs rounded border border-border text-muted-foreground hover:text-foreground hover:bg-muted transition-colors"
+                className="rounded border border-border px-3 py-1.5 text-xs text-muted-foreground transition-colors hover:bg-muted hover:text-foreground"
                 onClick={handleCancel}
               >
                 Cancel
@@ -214,7 +220,7 @@ export function ProviderPicker({
                 type="button"
                 variant="primary"
                 size="sm"
-                className="px-3 py-1.5 text-xs rounded bg-accent text-accent-foreground hover:bg-accent/90 transition-colors"
+                className="rounded bg-accent px-3 py-1.5 text-xs text-accent-foreground transition-colors hover:bg-accent/90"
                 onClick={handleConfirm}
               >
                 Switch
@@ -227,13 +233,13 @@ export function ProviderPicker({
               <DialogTitle className="text-sm font-medium">
                 Provider & Model
               </DialogTitle>
-              <DialogDescription className="text-xs mt-0.5">
+              <DialogDescription className="mt-0.5 text-xs">
                 {visibleProviders.length > 1
                   ? "Select a provider and model for this conversation"
                   : "Select a model for this conversation"}
               </DialogDescription>
             </div>
-            <div className="px-2 pb-2 max-h-[60vh] overflow-y-auto">
+            <div className="max-h-[60vh] overflow-y-auto px-2 pb-2">
               {visibleProviders.map((provider) => {
                 const entry = catalogByProvider.get(provider.toLowerCase());
                 const models = getVisibleModelsForProvider(
@@ -252,17 +258,20 @@ export function ProviderPicker({
                 return (
                   <div key={provider} className="mb-1">
                     <div className="flex items-center gap-2 px-2 py-1.5 text-xs text-muted-foreground">
-                      <SourceIcon source={entry?.provider_type ?? provider} size={14} />
+                      <SourceIcon
+                        source={entry?.provider_type ?? provider}
+                        size={14}
+                      />
                       <span className="font-medium text-foreground">
                         {displayName}
                       </span>
                       {entry?.deprecated && (
-                        <span className="text-[length:var(--text-2xs)] px-1 py-0.5 rounded bg-muted text-muted-foreground">
+                        <span className="rounded bg-muted px-1 py-0.5 text-[length:var(--text-2xs)] text-muted-foreground">
                           deprecated
                         </span>
                       )}
                       {isActive && (
-                        <span className="text-[length:var(--text-2xs)] px-1 py-0.5 rounded bg-accent/20 text-accent">
+                        <span className="rounded bg-accent/20 px-1 py-0.5 text-[length:var(--text-2xs)] text-accent">
                           active
                         </span>
                       )}
@@ -279,18 +288,22 @@ export function ProviderPicker({
                           size="sm"
                           dense
                           className={cn(
-                            "min-h-0 w-full justify-start whitespace-normal border-0 px-3 py-1.5 text-left text-xs font-normal rounded mx-1 transition-colors",
+                            "mx-1 min-h-0 w-full justify-start rounded border-0 px-3 py-1.5 text-left text-xs font-normal whitespace-normal transition-colors",
                             "hover:bg-muted",
                             isSelected
-                              ? "bg-accent/10 text-accent font-medium"
+                              ? "bg-accent/10 font-medium text-accent"
                               : "text-muted-foreground",
                           )}
                           style={{ width: "calc(100% - 8px)" }}
-                          onClick={() => handleSelect(executionProvider, model.value)}
+                          onClick={() =>
+                            handleSelect(executionProvider, model.value)
+                          }
                         >
                           {model.label}
                           {isSelected && (
-                            <span className="ml-2 text-[length:var(--text-2xs)]">●</span>
+                            <span className="ml-2 text-[length:var(--text-2xs)]">
+                              ●
+                            </span>
                           )}
                         </Button>
                       );

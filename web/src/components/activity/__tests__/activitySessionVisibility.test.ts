@@ -3,9 +3,7 @@ import { describe, expect, it } from "vitest";
 import { getVisibleActivitySessions } from "../activitySessionVisibility";
 import type { GobbySession } from "../../../types/sessions";
 
-function makeSession(
-  overrides: Partial<GobbySession> = {},
-): GobbySession {
+function makeSession(overrides: Partial<GobbySession> = {}): GobbySession {
   return {
     id: "session-1",
     ref: "#1",

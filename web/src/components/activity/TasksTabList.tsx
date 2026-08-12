@@ -65,7 +65,10 @@ export function TasksTabList({
   const onFocusRequest = useCallback(
     (taskId: string) => {
       const index = rowIndexById.get(taskId);
-      if (index !== undefined && visibleRows.length >= TASK_TREE_WINDOWING_THRESHOLD) {
+      if (
+        index !== undefined &&
+        visibleRows.length >= TASK_TREE_WINDOWING_THRESHOLD
+      ) {
         virtuosoRef.current?.scrollToIndex({ index, align: "center" });
       }
     },
@@ -162,7 +165,10 @@ export function TasksTabList({
         className="h-full min-h-0"
         data={visibleRows}
         computeItemKey={(_index, row) => row.node.task.id}
-        initialItemCount={Math.min(TASK_TREE_INITIAL_ITEM_COUNT, visibleRows.length)}
+        initialItemCount={Math.min(
+          TASK_TREE_INITIAL_ITEM_COUNT,
+          visibleRows.length,
+        )}
         increaseViewportBy={200}
         itemContent={renderVirtualRow}
       />
@@ -170,10 +176,7 @@ export function TasksTabList({
   }
 
   return (
-    <div
-      {...treeProps}
-      className="h-full min-h-0 overflow-y-auto"
-    >
+    <div {...treeProps} className="h-full min-h-0 overflow-y-auto">
       {isEmpty ? (
         <ActivityPanelEmpty
           icon={<TasksEmptyIcon />}

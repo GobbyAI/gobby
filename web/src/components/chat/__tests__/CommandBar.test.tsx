@@ -16,8 +16,12 @@ describe("CommandBar", () => {
     );
 
     expect(screen.getByText("#42")).toHaveClass("command-bar-ref");
-    expect(screen.getByText("Viewed web chat")).toHaveClass("command-bar-title");
-    expect(screen.getByTestId("chat-session-selector")).toHaveTextContent("#42");
+    expect(screen.getByText("Viewed web chat")).toHaveClass(
+      "command-bar-title",
+    );
+    expect(screen.getByTestId("chat-session-selector")).toHaveTextContent(
+      "#42",
+    );
     expect(screen.getByTestId("chat-session-selector")).toHaveTextContent(
       "Viewed web chat",
     );
@@ -28,11 +32,7 @@ describe("CommandBar", () => {
 
   it("renders the default title for a fresh chat", () => {
     render(
-      <CommandBar
-        sessionRef={null}
-        title={null}
-        onOpenPalette={vi.fn()}
-      />,
+      <CommandBar sessionRef={null} title={null} onOpenPalette={vi.fn()} />,
     );
 
     expect(screen.getByTestId("chat-session-selector")).toHaveTextContent(

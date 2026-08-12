@@ -73,7 +73,10 @@ describe("rules YAML conversion", () => {
     expect(yamlText).toContain("effects:");
     expect(yamlText).toContain("throttle:");
 
-    const parsedDraft = yamlToDraft(yamlText, { ...baseDraft, name: "fallback-rule" });
+    const parsedDraft = yamlToDraft(yamlText, {
+      ...baseDraft,
+      name: "fallback-rule",
+    });
     const definition = draftToDefinition(parsedDraft);
 
     expect(parsedDraft).toEqual(baseDraft);
@@ -126,13 +129,17 @@ custom_nested:
       enabled: false,
       when: "workspace == clean",
       match: { branch: "main" },
-      effects: [{ type: "set_variable", name: "rules_yaml_enabled", value: true }],
+      effects: [
+        { type: "set_variable", name: "rules_yaml_enabled", value: true },
+      ],
       extra: { custom_nested: { allowed: true } },
     });
   });
 
   it("rejects YAML that cannot represent a rule definition", () => {
-    expect(() => yamlToDraft("[]", baseDraft)).toThrow("Invalid YAML: expected an object");
+    expect(() => yamlToDraft("[]", baseDraft)).toThrow(
+      "Invalid YAML: expected an object",
+    );
     expect(() => yamlToDraft("effects: block", baseDraft)).toThrow(
       '"effects" must be an array of objects',
     );

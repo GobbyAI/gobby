@@ -1,68 +1,70 @@
-import { useCallback, useState } from 'react'
-import { Heading } from '../shared/Heading'
-import { Button } from '../ui/Button'
-import { Card } from '../ui/Card'
-import { Chip } from '../ui/Chip'
-import { FormField } from '../ui/FormField'
-import { Input } from '../ui/Input'
-import { NativeSelect } from '../ui/NativeSelect'
-import { Textarea } from '../ui/Textarea'
-import { coarseHitAreaCls } from '../ui/controlStyles'
+import { useCallback, useState } from "react";
+import { Heading } from "../shared/Heading";
+import { Button } from "../ui/Button";
+import { Card } from "../ui/Card";
+import { Chip } from "../ui/Chip";
+import { FormField } from "../ui/FormField";
+import { Input } from "../ui/Input";
+import { NativeSelect } from "../ui/NativeSelect";
+import { Textarea } from "../ui/Textarea";
+import { coarseHitAreaCls } from "../ui/controlStyles";
 
 export interface WorkflowTransition {
-  to: string
-  when: string
-  on_transition?: Record<string, unknown>[]
+  to: string;
+  when: string;
+  on_transition?: Record<string, unknown>[];
 }
 
 export interface WorkflowStep {
-  name: string
-  description?: string | null
-  status_message?: string | null
-  allowed_tools?: string[] | 'all'
-  blocked_tools?: string[]
-  allowed_mcp_tools?: string[] | 'all'
-  blocked_mcp_tools?: string[]
-  transitions?: WorkflowTransition[]
-  exit_when?: string | null
-  on_enter?: Record<string, unknown>[]
-  on_exit?: Record<string, unknown>[]
-  on_mcp_success?: Record<string, unknown>[]
-  on_mcp_error?: Record<string, unknown>[]
+  name: string;
+  description?: string | null;
+  status_message?: string | null;
+  allowed_tools?: string[] | "all";
+  blocked_tools?: string[];
+  allowed_mcp_tools?: string[] | "all";
+  blocked_mcp_tools?: string[];
+  transitions?: WorkflowTransition[];
+  exit_when?: string | null;
+  on_enter?: Record<string, unknown>[];
+  on_exit?: Record<string, unknown>[];
+  on_mcp_success?: Record<string, unknown>[];
+  on_mcp_error?: Record<string, unknown>[];
 }
 
 interface AgentStepsEditorProps {
-  steps: WorkflowStep[]
-  onChange: (steps: WorkflowStep[]) => void
+  steps: WorkflowStep[];
+  onChange: (steps: WorkflowStep[]) => void;
 }
 
 function createDefaultStep(existing: WorkflowStep[]): WorkflowStep {
-  const names = new Set(existing.map((step) => step.name))
-  let number = existing.length + 1
-  while (names.has(`step-${number}`)) number += 1
+  const names = new Set(existing.map((step) => step.name));
+  let number = existing.length + 1;
+  while (names.has(`step-${number}`)) number += 1;
   return {
     name: `step-${number}`,
-    allowed_tools: 'all',
+    allowed_tools: "all",
     blocked_tools: [],
-    allowed_mcp_tools: 'all',
+    allowed_mcp_tools: "all",
     blocked_mcp_tools: [],
     transitions: [],
-  }
+  };
 }
 
 function getStepPreview(step: WorkflowStep): string {
-  const parts: string[] = []
+  const parts: string[] = [];
   if (step.description) {
     const description =
-      step.description.length > 50 ? `${step.description.slice(0, 47)}...` : step.description
-    parts.push(description)
+      step.description.length > 50
+        ? `${step.description.slice(0, 47)}...`
+        : step.description;
+    parts.push(description);
   }
   if (step.transitions && step.transitions.length > 0) {
     parts.push(
-      `${step.transitions.length} transition${step.transitions.length > 1 ? 's' : ''}`,
-    )
+      `${step.transitions.length} transition${step.transitions.length > 1 ? "s" : ""}`,
+    );
   }
-  return parts.join(' \u2014 ')
+  return parts.join(" \u2014 ");
 }
 
 function ChipInput({
@@ -70,23 +72,26 @@ function ChipInput({
   onChange,
   placeholder,
 }: {
-  values: string[]
-  onChange: (values: string[]) => void
-  placeholder?: string
+  values: string[];
+  onChange: (values: string[]) => void;
+  placeholder?: string;
 }) {
-  const [input, setInput] = useState('')
+  const [input, setInput] = useState("");
 
   const handleAdd = () => {
-    const value = input.trim()
-    if (value && !values.includes(value)) onChange([...values, value])
-    setInput('')
-  }
+    const value = input.trim();
+    if (value && !values.includes(value)) onChange([...values, value]);
+    setInput("");
+  };
 
   return (
     <div className="flex flex-col gap-1">
       <div className="flex flex-wrap gap-1">
         {values.map((value) => (
-          <Chip key={value} className="gap-1 border border-border pl-2 pr-1.5 text-xs">
+          <Chip
+            key={value}
+            className="gap-1 border border-border pr-1.5 pl-2 text-xs"
+          >
             {value}
             <Button
               type="button"
@@ -109,9 +114,9 @@ function ChipInput({
           value={input}
           onChange={(event) => setInput(event.target.value)}
           onKeyDown={(event) => {
-            if (event.key === 'Enter') {
-              event.preventDefault()
-              handleAdd()
+            if (event.key === "Enter") {
+              event.preventDefault();
+              handleAdd();
             }
           }}
           placeholder={placeholder}
@@ -129,24 +134,24 @@ function ChipInput({
         </Button>
       </div>
     </div>
-  )
+  );
 }
 
 function ToolGatingSection({
   step,
   onChange,
 }: {
-  step: WorkflowStep
-  onChange: (step: Partial<WorkflowStep>) => void
+  step: WorkflowStep;
+  onChange: (step: Partial<WorkflowStep>) => void;
 }) {
-  const isAllowedAll = step.allowed_tools === 'all'
-  const isMcpAllowedAll = step.allowed_mcp_tools === 'all'
+  const isAllowedAll = step.allowed_tools === "all";
+  const isMcpAllowedAll = step.allowed_mcp_tools === "all";
 
   return (
     <div className="flex flex-col gap-1.5 border-t border-border pt-1.5">
       <Heading
         level={5}
-        className="m-0 text-xs font-semibold uppercase tracking-wider text-[var(--text-muted)]"
+        className="m-0 text-xs font-semibold tracking-wider text-[var(--text-muted)] uppercase"
       >
         Tool Gating
       </Heading>
@@ -159,9 +164,11 @@ function ToolGatingSection({
               className="px-1 text-xs"
               aria-describedby={describedBy}
               error={invalid}
-              value={isAllowedAll ? 'all' : 'list'}
+              value={isAllowedAll ? "all" : "list"}
               onChange={(event) =>
-                onChange({ allowed_tools: event.target.value === 'all' ? 'all' : [] })
+                onChange({
+                  allowed_tools: event.target.value === "all" ? "all" : [],
+                })
               }
             >
               <option value="all">All</option>
@@ -195,9 +202,11 @@ function ToolGatingSection({
               className="px-1 text-xs"
               aria-describedby={describedBy}
               error={invalid}
-              value={isMcpAllowedAll ? 'all' : 'list'}
+              value={isMcpAllowedAll ? "all" : "list"}
               onChange={(event) =>
-                onChange({ allowed_mcp_tools: event.target.value === 'all' ? 'all' : [] })
+                onChange({
+                  allowed_mcp_tools: event.target.value === "all" ? "all" : [],
+                })
               }
             >
               <option value="all">All</option>
@@ -223,7 +232,7 @@ function ToolGatingSection({
         )}
       </FormField>
     </div>
-  )
+  );
 }
 
 function TransitionsSection({
@@ -231,30 +240,35 @@ function TransitionsSection({
   onChange,
   allStepNames,
 }: {
-  step: WorkflowStep
-  onChange: (step: Partial<WorkflowStep>) => void
-  allStepNames: string[]
+  step: WorkflowStep;
+  onChange: (step: Partial<WorkflowStep>) => void;
+  allStepNames: string[];
 }) {
-  const transitions = step.transitions || []
+  const transitions = step.transitions || [];
 
-  const updateTransition = (index: number, updates: Partial<WorkflowTransition>) => {
+  const updateTransition = (
+    index: number,
+    updates: Partial<WorkflowTransition>,
+  ) => {
     onChange({
       transitions: transitions.map((transition, itemIndex) =>
         itemIndex === index ? { ...transition, ...updates } : transition,
       ),
-    })
-  }
+    });
+  };
 
   const addTransition = () => {
-    const otherNames = allStepNames.filter((name) => name !== step.name)
-    onChange({ transitions: [...transitions, { to: otherNames[0] || '', when: '' }] })
-  }
+    const otherNames = allStepNames.filter((name) => name !== step.name);
+    onChange({
+      transitions: [...transitions, { to: otherNames[0] || "", when: "" }],
+    });
+  };
 
   return (
     <div className="flex flex-col gap-1.5 border-t border-border pt-1.5">
       <Heading
         level={5}
-        className="m-0 text-xs font-semibold uppercase tracking-wider text-[var(--text-muted)]"
+        className="m-0 text-xs font-semibold tracking-wider text-[var(--text-muted)] uppercase"
       >
         Transitions
       </Heading>
@@ -265,7 +279,9 @@ function TransitionsSection({
             className="px-1.5 text-sm"
             aria-label={`Transition ${index + 1} target`}
             value={transition.to}
-            onChange={(event) => updateTransition(index, { to: event.target.value })}
+            onChange={(event) =>
+              updateTransition(index, { to: event.target.value })
+            }
           >
             <option value="">(select step)</option>
             {allStepNames
@@ -281,7 +297,9 @@ function TransitionsSection({
             className="px-1.5 text-sm"
             aria-label={`Transition ${index + 1} condition`}
             value={transition.when}
-            onChange={(event) => updateTransition(index, { when: event.target.value })}
+            onChange={(event) =>
+              updateTransition(index, { when: event.target.value })
+            }
             placeholder="when expression..."
           />
           <Button
@@ -291,7 +309,11 @@ function TransitionsSection({
             dense
             className={`${coarseHitAreaCls} min-h-0 w-auto px-px text-sm leading-none hover:text-[var(--color-error)]`}
             onClick={() =>
-              onChange({ transitions: transitions.filter((_, itemIndex) => itemIndex !== index) })
+              onChange({
+                transitions: transitions.filter(
+                  (_, itemIndex) => itemIndex !== index,
+                ),
+              })
             }
             aria-label={`Remove transition ${index + 1}`}
           >
@@ -309,42 +331,45 @@ function TransitionsSection({
         + Add Transition
       </Button>
     </div>
-  )
+  );
 }
 
-type AdvancedFieldKey = 'on_enter' | 'on_exit' | 'on_mcp_success' | 'on_mcp_error'
+type AdvancedFieldKey =
+  "on_enter" | "on_exit" | "on_mcp_success" | "on_mcp_error";
 
 function AdvancedJsonField({
   label,
   value,
   onCommit,
 }: {
-  label: string
-  value: Record<string, unknown>[] | undefined
-  onCommit: (value: Record<string, unknown>[]) => void
+  label: string;
+  value: Record<string, unknown>[] | undefined;
+  onCommit: (value: Record<string, unknown>[]) => void;
 }) {
-  const [draft, setDraft] = useState(value?.length ? JSON.stringify(value, null, 2) : '')
-  const [error, setError] = useState<string | null>(null)
+  const [draft, setDraft] = useState(
+    value?.length ? JSON.stringify(value, null, 2) : "",
+  );
+  const [error, setError] = useState<string | null>(null);
 
   const commitDraft = () => {
-    const text = draft.trim()
+    const text = draft.trim();
     if (!text) {
-      setError(null)
-      onCommit([])
-      return
+      setError(null);
+      onCommit([]);
+      return;
     }
     try {
-      const parsed: unknown = JSON.parse(text)
+      const parsed: unknown = JSON.parse(text);
       if (!Array.isArray(parsed)) {
-        setError('Value must be a JSON array')
-        return
+        setError("Value must be a JSON array");
+        return;
       }
-      setError(null)
-      onCommit(parsed as Record<string, unknown>[])
+      setError(null);
+      onCommit(parsed as Record<string, unknown>[]);
     } catch {
-      setError('Invalid JSON')
+      setError("Invalid JSON");
     }
-  }
+  };
 
   return (
     <div className="flex flex-col gap-1">
@@ -372,23 +397,23 @@ function AdvancedJsonField({
         </span>
       )}
     </div>
-  )
+  );
 }
 
 function AdvancedSection({
   step,
   onChange,
 }: {
-  step: WorkflowStep
-  onChange: (step: Partial<WorkflowStep>) => void
+  step: WorkflowStep;
+  onChange: (step: Partial<WorkflowStep>) => void;
 }) {
-  const [expanded, setExpanded] = useState(false)
+  const [expanded, setExpanded] = useState(false);
   const fields: { key: AdvancedFieldKey; label: string }[] = [
-    { key: 'on_enter', label: 'on_enter' },
-    { key: 'on_exit', label: 'on_exit' },
-    { key: 'on_mcp_success', label: 'on_mcp_success' },
-    { key: 'on_mcp_error', label: 'on_mcp_error' },
-  ]
+    { key: "on_enter", label: "on_enter" },
+    { key: "on_exit", label: "on_exit" },
+    { key: "on_mcp_success", label: "on_mcp_success" },
+    { key: "on_mcp_error", label: "on_mcp_error" },
+  ];
 
   return (
     <div className="flex flex-col gap-1.5 border-t border-border pt-1.5">
@@ -397,12 +422,12 @@ function AdvancedSection({
         variant="ghost"
         size="sm"
         dense
-        className={`${coarseHitAreaCls} self-start p-0 uppercase tracking-wider`}
+        className={`${coarseHitAreaCls} self-start p-0 tracking-wider uppercase`}
         aria-expanded={expanded}
         onClick={() => setExpanded(!expanded)}
       >
         <span className="shrink-0 text-xs text-[var(--text-muted)]">
-          {expanded ? '\u25BE' : '\u25B8'}
+          {expanded ? "\u25BE" : "\u25B8"}
         </span>
         Advanced
       </Button>
@@ -419,74 +444,82 @@ function AdvancedSection({
         </div>
       )}
     </div>
-  )
+  );
 }
 
 export function AgentStepsEditor({ steps, onChange }: AgentStepsEditorProps) {
-  const [expandedName, setExpandedName] = useState<string | null>(null)
-  const allStepNames = steps.map((step) => step.name)
+  const [expandedName, setExpandedName] = useState<string | null>(null);
+  const allStepNames = steps.map((step) => step.name);
 
   const updateStep = useCallback(
     (index: number, updates: Partial<WorkflowStep>) => {
-      onChange(steps.map((step, itemIndex) => (itemIndex === index ? { ...step, ...updates } : step)))
+      onChange(
+        steps.map((step, itemIndex) =>
+          itemIndex === index ? { ...step, ...updates } : step,
+        ),
+      );
     },
     [steps, onChange],
-  )
+  );
 
   const renameStep = useCallback(
     (index: number, newName: string) => {
-      const oldName = steps[index].name
+      const oldName = steps[index].name;
       onChange(
         steps.map((step, itemIndex) => ({
           ...step,
           ...(itemIndex === index ? { name: newName } : {}),
           transitions: step.transitions?.map((transition) =>
-            transition.to === oldName ? { ...transition, to: newName } : transition,
+            transition.to === oldName
+              ? { ...transition, to: newName }
+              : transition,
           ),
         })),
-      )
+      );
     },
     [steps, onChange],
-  )
+  );
 
   const deleteStep = useCallback(
     (index: number) => {
-      const name = steps[index].name
-      onChange(steps.filter((_, itemIndex) => itemIndex !== index))
-      if (expandedName === name) setExpandedName(null)
+      const name = steps[index].name;
+      onChange(steps.filter((_, itemIndex) => itemIndex !== index));
+      if (expandedName === name) setExpandedName(null);
     },
     [steps, onChange, expandedName],
-  )
+  );
 
   const moveStep = useCallback(
     (index: number, direction: -1 | 1) => {
-      const target = index + direction
-      if (target < 0 || target >= steps.length) return
-      const next = [...steps]
-      ;[next[index], next[target]] = [next[target], next[index]]
-      onChange(next)
+      const target = index + direction;
+      if (target < 0 || target >= steps.length) return;
+      const next = [...steps];
+      [next[index], next[target]] = [next[target], next[index]];
+      onChange(next);
     },
     [steps, onChange],
-  )
+  );
 
   const addStep = useCallback(() => {
-    const step = createDefaultStep(steps)
-    onChange([...steps, step])
-    setExpandedName(step.name)
-  }, [steps, onChange])
+    const step = createDefaultStep(steps);
+    onChange([...steps, step]);
+    setExpandedName(step.name);
+  }, [steps, onChange]);
 
   return (
     <div className="flex flex-col gap-1.5">
       {steps.length === 0 && (
-        <span className="text-sm italic text-[var(--text-muted)]">No steps defined</span>
+        <span className="text-sm text-[var(--text-muted)] italic">
+          No steps defined
+        </span>
       )}
       {steps.map((step, index) => {
-        const isExpanded = expandedName === step.name
+        const isExpanded = expandedName === step.name;
         return (
           <Card
             key={`${step.name}-${index}`}
             className={`overflow-hidden bg-[var(--bg-primary)] ${
-              isExpanded ? 'border-[var(--accent)]' : ''
+              isExpanded ? "border-[var(--accent)]" : ""
             }`}
           >
             <Button
@@ -500,11 +533,11 @@ export function AgentStepsEditor({ steps, onChange }: AgentStepsEditorProps) {
               <Chip tone="accent" className="text-sm">
                 {step.name}
               </Chip>
-              <span className="flex-1 overflow-hidden text-ellipsis whitespace-nowrap text-sm text-[var(--text-muted)]">
+              <span className="flex-1 overflow-hidden text-sm text-ellipsis whitespace-nowrap text-[var(--text-muted)]">
                 {getStepPreview(step)}
               </span>
               <span className="shrink-0 text-xs text-[var(--text-muted)]">
-                {isExpanded ? '\u25BE' : '\u25B8'}
+                {isExpanded ? "\u25BE" : "\u25B8"}
               </span>
             </Button>
             {isExpanded && (
@@ -551,9 +584,9 @@ export function AgentStepsEditor({ steps, onChange }: AgentStepsEditorProps) {
                       error={invalid}
                       value={step.name}
                       onChange={(event) => {
-                        const newName = event.target.value
-                        renameStep(index, newName)
-                        setExpandedName(newName)
+                        const newName = event.target.value;
+                        renameStep(index, newName);
+                        setExpandedName(newName);
                       }}
                     />
                   )}
@@ -564,9 +597,11 @@ export function AgentStepsEditor({ steps, onChange }: AgentStepsEditorProps) {
                       id={id}
                       aria-describedby={describedBy}
                       error={invalid}
-                      value={step.description || ''}
+                      value={step.description || ""}
                       onChange={(event) =>
-                        updateStep(index, { description: event.target.value || null })
+                        updateStep(index, {
+                          description: event.target.value || null,
+                        })
                       }
                       placeholder="What this step does..."
                       rows={2}
@@ -579,9 +614,11 @@ export function AgentStepsEditor({ steps, onChange }: AgentStepsEditorProps) {
                       id={id}
                       aria-describedby={describedBy}
                       error={invalid}
-                      value={step.status_message || ''}
+                      value={step.status_message || ""}
                       onChange={(event) =>
-                        updateStep(index, { status_message: event.target.value || null })
+                        updateStep(index, {
+                          status_message: event.target.value || null,
+                        })
                       }
                       placeholder="Shown while step is active..."
                       rows={2}
@@ -603,9 +640,11 @@ export function AgentStepsEditor({ steps, onChange }: AgentStepsEditorProps) {
                       id={id}
                       aria-describedby={describedBy}
                       error={invalid}
-                      value={step.exit_when || ''}
+                      value={step.exit_when || ""}
                       onChange={(event) =>
-                        updateStep(index, { exit_when: event.target.value || null })
+                        updateStep(index, {
+                          exit_when: event.target.value || null,
+                        })
                       }
                       placeholder="Expression to auto-exit this step..."
                     />
@@ -618,7 +657,7 @@ export function AgentStepsEditor({ steps, onChange }: AgentStepsEditorProps) {
               </div>
             )}
           </Card>
-        )
+        );
       })}
       <Button
         type="button"
@@ -630,5 +669,5 @@ export function AgentStepsEditor({ steps, onChange }: AgentStepsEditorProps) {
         + Add Step
       </Button>
     </div>
-  )
+  );
 }

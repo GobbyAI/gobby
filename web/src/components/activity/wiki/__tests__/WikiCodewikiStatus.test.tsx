@@ -32,7 +32,9 @@ describe("WikiCodewikiStatus", () => {
     render(<WikiCodewikiStatus />);
 
     expect(await screen.findByText("Paused")).toBeTruthy();
-    expect(screen.getByText("Generation paused pending wiki redesign.")).toBeTruthy();
+    expect(
+      screen.getByText("Generation paused pending wiki redesign."),
+    ).toBeTruthy();
   });
 
   it("renders nothing once the surface is live", async () => {

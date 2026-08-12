@@ -1,20 +1,20 @@
-import { useEffect, useMemo, useRef, useState } from 'react'
-import type { ChangeEvent } from 'react'
-import { CodeMirrorEditor } from '../../shared/CodeMirrorEditor'
-import { DetailActionButton, SelectField } from '../../activity/fields'
-import { Button } from '../../ui/Button'
-import { Input } from '../../ui/Input'
-import type { FieldOption } from '../../activity/fields'
-import { Subsection } from './configFields'
-import { SettingsSection } from './SettingsSection'
-import { useSettingsSectionContext } from './SettingsSectionContext'
-import type { SettingsSectionId } from '../sections'
-import { useDaemonRestart } from '../../../hooks/useDaemonRestart'
+import { useEffect, useMemo, useRef, useState } from "react";
+import type { ChangeEvent } from "react";
+import { CodeMirrorEditor } from "../../shared/CodeMirrorEditor";
+import { DetailActionButton, SelectField } from "../../activity/fields";
+import { Button } from "../../ui/Button";
+import { Input } from "../../ui/Input";
+import type { FieldOption } from "../../activity/fields";
+import { Subsection } from "./configFields";
+import { SettingsSection } from "./SettingsSection";
+import { useSettingsSectionContext } from "./SettingsSectionContext";
+import type { SettingsSectionId } from "../sections";
+import { useDaemonRestart } from "../../../hooks/useDaemonRestart";
 import type {
   ConfigExportBundle,
   PromptDetail,
   PromptInfo,
-} from '../../../hooks/useConfiguration'
+} from "../../../hooks/useConfiguration";
 
 /**
  * Prompts & Templates settings section (audit IA section 7, rows 78-82). Three
@@ -33,10 +33,10 @@ import type {
  * guard so switching sections or closing the overlay prompts to discard.
  */
 
-const SECTION_ID: SettingsSectionId = 'prompts-templates'
-const OWNED_PATHS: readonly string[] = []
+const SECTION_ID: SettingsSectionId = "prompts-templates";
+const OWNED_PATHS: readonly string[] = [];
 
-type SurfaceStatus = { ok: boolean; message: string }
+type SurfaceStatus = { ok: boolean; message: string };
 
 /**
  * Register an additional dirty guard for this section keyed to a standalone
@@ -45,15 +45,15 @@ type SurfaceStatus = { ok: boolean; message: string }
  * coexist; the section counts as dirty if any reports dirty.
  */
 function useSectionDirtyGuard(dirty: boolean): void {
-  const { registerDirtyGuard } = useSettingsSectionContext()
-  const dirtyRef = useRef(dirty)
+  const { registerDirtyGuard } = useSettingsSectionContext();
+  const dirtyRef = useRef(dirty);
   useEffect(() => {
-    dirtyRef.current = dirty
-  }, [dirty])
+    dirtyRef.current = dirty;
+  }, [dirty]);
   useEffect(
     () => registerDirtyGuard(SECTION_ID, () => dirtyRef.current),
     [registerDirtyGuard],
-  )
+  );
 }
 
 // `All prompts` first, then server-known categories with counts, sorted stable.
@@ -62,22 +62,22 @@ function categoryFilterOptions(
   categories: Record<string, number>,
 ): FieldOption[] {
   const options: FieldOption[] = [
-    { value: '', label: `All prompts (${total})` },
-  ]
+    { value: "", label: `All prompts (${total})` },
+  ];
   for (const [name, count] of Object.entries(categories).sort(([a], [b]) =>
     a.localeCompare(b),
   )) {
-    options.push({ value: name, label: `${name} (${count})` })
+    options.push({ value: name, label: `${name} (${count})` });
   }
-  return options
+  return options;
 }
 
 interface PromptOverridesGroupProps {
-  prompts: PromptInfo[]
-  categories: Record<string, number>
-  onGetDetail?: (path: string) => Promise<PromptDetail | null>
-  onSaveOverride?: (path: string, content: string) => Promise<boolean>
-  onDeleteOverride?: (path: string) => Promise<boolean>
+  prompts: PromptInfo[];
+  categories: Record<string, number>;
+  onGetDetail?: (path: string) => Promise<PromptDetail | null>;
+  onSaveOverride?: (path: string, content: string) => Promise<boolean>;
+  onDeleteOverride?: (path: string) => Promise<boolean>;
 }
 
 function PromptOverridesGroup({
@@ -87,25 +87,25 @@ function PromptOverridesGroup({
   onSaveOverride,
   onDeleteOverride,
 }: PromptOverridesGroupProps) {
-  const [category, setCategory] = useState('')
-  const [detail, setDetail] = useState<PromptDetail | null>(null)
-  const [editContent, setEditContent] = useState('')
-  const [savedContent, setSavedContent] = useState('')
-  const [busy, setBusy] = useState(false)
-  const [error, setError] = useState<string | null>(null)
-  const requestIdRef = useRef(0)
+  const [category, setCategory] = useState("");
+  const [detail, setDetail] = useState<PromptDetail | null>(null);
+  const [editContent, setEditContent] = useState("");
+  const [savedContent, setSavedContent] = useState("");
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  const requestIdRef = useRef(0);
 
-  const dirty = detail !== null && editContent !== savedContent
-  useSectionDirtyGuard(dirty)
+  const dirty = detail !== null && editContent !== savedContent;
+  useSectionDirtyGuard(dirty);
 
   const options = useMemo(
     () => categoryFilterOptions(prompts.length, categories),
     [prompts.length, categories],
-  )
+  );
   const filtered = useMemo(
     () => (category ? prompts.filter((p) => p.category === category) : prompts),
     [prompts, category],
-  )
+  );
 
   // The override editor edits persisted content in place; without its write
   // handlers there is nothing actionable, so degrade to a notice.
@@ -119,97 +119,97 @@ function PromptOverridesGroup({
           Prompt editing is unavailable.
         </p>
       </Subsection>
-    )
+    );
   }
 
   const openPrompt = async (path: string) => {
-    const requestId = ++requestIdRef.current
-    setBusy(true)
-    setError(null)
+    const requestId = ++requestIdRef.current;
+    setBusy(true);
+    setError(null);
     try {
-      const loaded = await onGetDetail(path)
-      if (requestId !== requestIdRef.current) return
+      const loaded = await onGetDetail(path);
+      if (requestId !== requestIdRef.current) return;
       if (loaded) {
-        setDetail(loaded)
-        setEditContent(loaded.content)
-        setSavedContent(loaded.content)
+        setDetail(loaded);
+        setEditContent(loaded.content);
+        setSavedContent(loaded.content);
       } else {
-        setError('Could not load this prompt.')
+        setError("Could not load this prompt.");
       }
     } catch {
       if (requestId === requestIdRef.current) {
-        setError('Could not load this prompt.')
+        setError("Could not load this prompt.");
       }
     } finally {
-      if (requestId === requestIdRef.current) setBusy(false)
+      if (requestId === requestIdRef.current) setBusy(false);
     }
-  }
+  };
 
   const closeEditor = () => {
-    if (dirty && !window.confirm('Discard unsaved override edits?')) return
-    requestIdRef.current += 1
-    setBusy(false)
-    setDetail(null)
-    setEditContent('')
-    setSavedContent('')
-    setError(null)
-  }
+    if (dirty && !window.confirm("Discard unsaved override edits?")) return;
+    requestIdRef.current += 1;
+    setBusy(false);
+    setDetail(null);
+    setEditContent("");
+    setSavedContent("");
+    setError(null);
+  };
 
   const handleSave = async () => {
-    if (!detail) return
-    const requestId = ++requestIdRef.current
-    setBusy(true)
-    setError(null)
+    if (!detail) return;
+    const requestId = ++requestIdRef.current;
+    setBusy(true);
+    setError(null);
     try {
-      const ok = await onSaveOverride(detail.path, editContent)
-      if (requestId !== requestIdRef.current) return
+      const ok = await onSaveOverride(detail.path, editContent);
+      if (requestId !== requestIdRef.current) return;
       if (ok) {
-        setSavedContent(editContent)
-        setDetail({ ...detail, source: 'overridden', has_override: true })
+        setSavedContent(editContent);
+        setDetail({ ...detail, source: "overridden", has_override: true });
       } else {
-        setError('Could not save the override.')
+        setError("Could not save the override.");
       }
     } catch {
       if (requestId === requestIdRef.current) {
-        setError('Could not save the override.')
+        setError("Could not save the override.");
       }
     } finally {
-      if (requestId === requestIdRef.current) setBusy(false)
+      if (requestId === requestIdRef.current) setBusy(false);
     }
-  }
+  };
 
   const handleRevert = async () => {
-    if (!detail) return
+    if (!detail) return;
     if (!window.confirm(`Revert "${detail.path}" to its bundled default?`)) {
-      return
+      return;
     }
-    const requestId = ++requestIdRef.current
-    setBusy(true)
-    setError(null)
+    const requestId = ++requestIdRef.current;
+    setBusy(true);
+    setError(null);
     try {
-      const ok = await onDeleteOverride(detail.path)
-      if (requestId !== requestIdRef.current) return
+      const ok = await onDeleteOverride(detail.path);
+      if (requestId !== requestIdRef.current) return;
       if (ok) {
-        const bundled = detail.bundled_content ?? ''
+        const bundled = detail.bundled_content ?? "";
         setDetail({
           ...detail,
-          source: 'bundled',
+          source: "bundled",
           has_override: false,
           content: bundled,
-        })
-        setEditContent(bundled)
-        setSavedContent(bundled)
+        });
+        setEditContent(bundled);
+        setSavedContent(bundled);
       } else {
-        setError('Could not revert the override.')
+        setError("Could not revert the override.");
       }
     } catch {
       if (requestId === requestIdRef.current) {
-        setError('Could not revert the override.')
+        setError("Could not revert the override.");
       }
     } finally {
-      if (requestId === requestIdRef.current) setBusy(false)
+      if (requestId === requestIdRef.current) setBusy(false);
     }
-  }
+  };
 
   return (
     <Subsection
@@ -220,7 +220,7 @@ function PromptOverridesGroup({
         <div className="flex flex-col gap-3">
           <div className="flex flex-wrap items-start justify-between gap-3">
             <div className="flex min-w-0 flex-col gap-1">
-              <span className="min-w-0 break-all text-base font-medium leading-[1.6] text-foreground">
+              <span className="min-w-0 text-base leading-[1.6] font-medium break-all text-foreground">
                 {detail.path}
               </span>
               {detail.description ? (
@@ -240,16 +240,16 @@ function PromptOverridesGroup({
                   label="Revert to bundled default"
                   variant="destructive"
                   onClick={() => {
-                    void handleRevert()
+                    void handleRevert();
                   }}
                   disabled={busy}
                 />
               ) : null}
               <DetailActionButton
-                label={busy ? 'Saving…' : 'Save override'}
+                label={busy ? "Saving…" : "Save override"}
                 variant="accent"
                 onClick={() => {
-                  void handleSave()
+                  void handleSave();
                 }}
                 disabled={busy || editContent === savedContent}
               />
@@ -263,7 +263,7 @@ function PromptOverridesGroup({
               editorId="prompt-override-editor"
               onChange={setEditContent}
               onSave={() => {
-                void handleSave()
+                void handleSave();
               }}
             />
           </div>
@@ -297,13 +297,13 @@ function PromptOverridesGroup({
                     type="button"
                     variant="ghost"
                     dense
-                    className="w-full cursor-pointer flex-col items-stretch justify-start whitespace-normal py-3 text-left font-normal"
+                    className="w-full cursor-pointer flex-col items-stretch justify-start py-3 text-left font-normal whitespace-normal"
                     aria-label={`Edit prompt ${prompt.path}`}
                     onClick={() => {
-                      void openPrompt(prompt.path)
+                      void openPrompt(prompt.path);
                     }}
                   >
-                    <span className="break-all text-base font-medium leading-none text-foreground">
+                    <span className="text-base leading-none font-medium break-all text-foreground">
                       {prompt.path}
                     </span>
                     {prompt.description ? (
@@ -312,7 +312,7 @@ function PromptOverridesGroup({
                       </span>
                     ) : null}
                     <span className="self-start rounded-md border border-border bg-surface-secondary px-2 py-0.5 text-sm leading-none text-muted-foreground">
-                      {prompt.has_override ? 'Overridden' : 'Bundled'}
+                      {prompt.has_override ? "Overridden" : "Bundled"}
                     </span>
                   </Button>
                 </li>
@@ -330,33 +330,33 @@ function PromptOverridesGroup({
         </>
       )}
     </Subsection>
-  )
+  );
 }
 
 interface TemplateGroupProps {
-  content: string
-  onSave?: (content: string) => Promise<{ ok: boolean; errors?: string[] }>
+  content: string;
+  onSave?: (content: string) => Promise<{ ok: boolean; errors?: string[] }>;
 }
 
 function TemplateGroup({ content, onSave }: TemplateGroupProps) {
-  const [draft, setDraft] = useState(content)
-  const [baseline, setBaseline] = useState(content)
-  const [errors, setErrors] = useState<string[]>([])
-  const [saving, setSaving] = useState(false)
+  const [draft, setDraft] = useState(content);
+  const [baseline, setBaseline] = useState(content);
+  const [errors, setErrors] = useState<string[]>([]);
+  const [saving, setSaving] = useState(false);
   const { showRestart, restartError, markRestartRequired, restartDaemon } =
-    useDaemonRestart()
+    useDaemonRestart();
 
   // Re-sync from the latest fetched template (e.g. after an import refetch) by
   // adjusting state during render rather than in an effect — React's
   // recommended prop-change pattern, which avoids the extra commit + flash of
   // an effect-driven reset. The guard makes this converge in one re-render.
   if (content !== baseline) {
-    setBaseline(content)
-    setDraft(content)
+    setBaseline(content);
+    setDraft(content);
   }
 
-  const dirty = draft !== baseline
-  useSectionDirtyGuard(dirty)
+  const dirty = draft !== baseline;
+  useSectionDirtyGuard(dirty);
 
   if (!onSave) {
     return (
@@ -368,21 +368,21 @@ function TemplateGroup({ content, onSave }: TemplateGroupProps) {
           The template editor is unavailable.
         </p>
       </Subsection>
-    )
+    );
   }
 
   const handleSave = async () => {
-    setSaving(true)
-    setErrors([])
-    const result = await onSave(draft)
-    setSaving(false)
+    setSaving(true);
+    setErrors([]);
+    const result = await onSave(draft);
+    setSaving(false);
     if (result.ok) {
-      setBaseline(draft)
-      markRestartRequired()
+      setBaseline(draft);
+      markRestartRequired();
     } else {
-      setErrors(result.errors ?? ['Save failed.'])
+      setErrors(result.errors ?? ["Save failed."]);
     }
-  }
+  };
 
   return (
     <Subsection
@@ -401,7 +401,7 @@ function TemplateGroup({ content, onSave }: TemplateGroupProps) {
             label="Restart now"
             variant="secondary"
             onClick={() => {
-              void restartDaemon()
+              void restartDaemon();
             }}
           />
         </div>
@@ -414,7 +414,7 @@ function TemplateGroup({ content, onSave }: TemplateGroupProps) {
           editorId="settings-template-editor"
           onChange={setDraft}
           onSave={() => {
-            void handleSave()
+            void handleSave();
           }}
         />
       </div>
@@ -437,27 +437,29 @@ function TemplateGroup({ content, onSave }: TemplateGroupProps) {
       ) : null}
       <div className="flex flex-wrap gap-2">
         <DetailActionButton
-          label={saving ? 'Saving…' : 'Save template'}
+          label={saving ? "Saving…" : "Save template"}
           variant="accent"
           onClick={() => {
-            void handleSave()
+            void handleSave();
           }}
           disabled={saving || !dirty}
         />
       </div>
     </Subsection>
-  )
+  );
 }
 
 interface BackupRestoreGroupProps {
-  onExport?: () => Promise<ConfigExportBundle | null>
-  onImport?: (content: string) => Promise<{ success: boolean; summary: string }>
+  onExport?: () => Promise<ConfigExportBundle | null>;
+  onImport?: (
+    content: string,
+  ) => Promise<{ success: boolean; summary: string }>;
 }
 
 function BackupRestoreGroup({ onExport, onImport }: BackupRestoreGroupProps) {
-  const fileInputRef = useRef<HTMLInputElement>(null)
-  const [busy, setBusy] = useState(false)
-  const [status, setStatus] = useState<SurfaceStatus | null>(null)
+  const fileInputRef = useRef<HTMLInputElement>(null);
+  const [busy, setBusy] = useState(false);
+  const [status, setStatus] = useState<SurfaceStatus | null>(null);
 
   if (!onExport || !onImport) {
     return (
@@ -469,61 +471,61 @@ function BackupRestoreGroup({ onExport, onImport }: BackupRestoreGroupProps) {
           Backup and restore is unavailable.
         </p>
       </Subsection>
-    )
+    );
   }
 
   const handleExport = async () => {
-    setBusy(true)
-    setStatus(null)
+    setBusy(true);
+    setStatus(null);
     try {
-      const bundle = await onExport()
+      const bundle = await onExport();
       if (!bundle) {
-        setStatus({ ok: false, message: 'Export failed.' })
-        return
+        setStatus({ ok: false, message: "Export failed." });
+        return;
       }
       const blob = new Blob([bundle.content], {
-        type: 'application/yaml',
-      })
-      const url = URL.createObjectURL(blob)
-      const link = document.createElement('a')
-      link.href = url
-      link.download = `gobby-config-revision-${bundle.revision}.yaml`
-      link.click()
-      URL.revokeObjectURL(url)
-      setStatus({ ok: true, message: 'Configuration exported.' })
+        type: "application/yaml",
+      });
+      const url = URL.createObjectURL(blob);
+      const link = document.createElement("a");
+      link.href = url;
+      link.download = `gobby-config-revision-${bundle.revision}.yaml`;
+      link.click();
+      URL.revokeObjectURL(url);
+      setStatus({ ok: true, message: "Configuration exported." });
     } catch (err) {
       setStatus({
         ok: false,
         message: `Export failed. ${err instanceof Error ? err.message : String(err)}`,
-      })
+      });
     } finally {
-      setBusy(false)
+      setBusy(false);
     }
-  }
+  };
 
   const handleFileChange = async (event: ChangeEvent<HTMLInputElement>) => {
-    const file = event.target.files?.[0]
-    event.target.value = ''
-    if (!file) return
-    setBusy(true)
-    setStatus(null)
+    const file = event.target.files?.[0];
+    event.target.value = "";
+    if (!file) return;
+    setBusy(true);
+    setStatus(null);
     try {
-      const result = await onImport(await file.text())
+      const result = await onImport(await file.text());
       setStatus({
         ok: result.success,
         message: result.success
           ? `Import complete. ${result.summary}`
           : `Import failed. ${result.summary}`,
-      })
+      });
     } catch (err) {
       setStatus({
         ok: false,
         message: `Import failed. ${err instanceof Error ? err.message : String(err)}`,
-      })
+      });
     } finally {
-      setBusy(false)
+      setBusy(false);
     }
-  }
+  };
 
   return (
     <Subsection
@@ -535,7 +537,7 @@ function BackupRestoreGroup({ onExport, onImport }: BackupRestoreGroupProps) {
           label="Export configuration"
           variant="secondary"
           onClick={() => {
-            void handleExport()
+            void handleExport();
           }}
           disabled={busy}
         />
@@ -554,19 +556,19 @@ function BackupRestoreGroup({ onExport, onImport }: BackupRestoreGroupProps) {
         wrapperClassName="sr-only"
         className="sr-only"
         onChange={(event) => {
-          void handleFileChange(event)
+          void handleFileChange(event);
         }}
       />
       {status ? (
         <p
           className="max-w-[48ch] text-sm leading-[1.4] text-muted-foreground"
-          role={status.ok ? 'status' : 'alert'}
+          role={status.ok ? "status" : "alert"}
         >
           {status.message}
         </p>
       ) : null}
     </Subsection>
-  )
+  );
 }
 
 export function PromptsTemplatesSection() {
@@ -580,7 +582,7 @@ export function PromptsTemplatesSection() {
     saveTemplate,
     exportConfig,
     importConfig,
-  } = useSettingsSectionContext()
+  } = useSettingsSectionContext();
 
   return (
     <SettingsSection sectionId="prompts-templates" ownedPaths={OWNED_PATHS}>
@@ -593,10 +595,13 @@ export function PromptsTemplatesSection() {
             onSaveOverride={savePromptOverride}
             onDeleteOverride={deletePromptOverride}
           />
-          <TemplateGroup content={templateContent ?? ''} onSave={saveTemplate} />
+          <TemplateGroup
+            content={templateContent ?? ""}
+            onSave={saveTemplate}
+          />
           <BackupRestoreGroup onExport={exportConfig} onImport={importConfig} />
         </>
       )}
     </SettingsSection>
-  )
+  );
 }

@@ -1,24 +1,24 @@
-import type { ReactNode } from 'react'
-import { Button } from '../../ui/Button'
-import { FormField } from '../../ui/FormField'
+import type { ReactNode } from "react";
+import { Button } from "../../ui/Button";
+import { FormField } from "../../ui/FormField";
 
 export interface TypedListFieldProps<T> {
-  label: string
-  value: T[]
-  onChange: (value: T[]) => void
+  label: string;
+  value: T[];
+  onChange: (value: T[]) => void;
   /** Renders one item's editor. Receives the item, an update callback, and its index. */
   renderItem: (
     item: T,
     onItemChange: (next: T) => void,
     index: number,
-  ) => ReactNode
+  ) => ReactNode;
   /** Builds a blank item when the user adds a row. */
-  createItem: () => T
-  ariaLabel: string
-  disabled?: boolean
-  addLabel?: string
+  createItem: () => T;
+  ariaLabel: string;
+  disabled?: boolean;
+  addLabel?: string;
   /** Optional per-item heading (e.g. a name field) shown above its editor. */
-  itemLabel?: (item: T, index: number) => string
+  itemLabel?: (item: T, index: number) => string;
 }
 
 /**
@@ -34,19 +34,21 @@ export function TypedListField<T>({
   createItem,
   ariaLabel,
   disabled,
-  addLabel = 'Add item',
+  addLabel = "Add item",
   itemLabel,
 }: TypedListFieldProps<T>) {
   function updateItem(index: number, next: T) {
-    onChange(value.map((item, itemIndex) => (itemIndex === index ? next : item)))
+    onChange(
+      value.map((item, itemIndex) => (itemIndex === index ? next : item)),
+    );
   }
 
   function removeItem(index: number) {
-    onChange(value.filter((_, itemIndex) => itemIndex !== index))
+    onChange(value.filter((_, itemIndex) => itemIndex !== index));
   }
 
   function addItem() {
-    onChange([...value, createItem()])
+    onChange([...value, createItem()]);
   }
 
   return (
@@ -62,7 +64,9 @@ export function TypedListField<T>({
                 >
                   <div className="flex items-center justify-between gap-2">
                     <span className="text-sm font-medium text-muted-foreground">
-                      {itemLabel ? itemLabel(item, index) : `${ariaLabel} ${index + 1}`}
+                      {itemLabel
+                        ? itemLabel(item, index)
+                        : `${ariaLabel} ${index + 1}`}
                     </span>
                     <Button
                       type="button"
@@ -86,12 +90,17 @@ export function TypedListField<T>({
             <p className="text-sm text-muted-foreground">No items.</p>
           )}
           <div className="flex flex-wrap gap-2">
-            <Button type="button" size="sm" disabled={disabled} onClick={addItem}>
+            <Button
+              type="button"
+              size="sm"
+              disabled={disabled}
+              onClick={addItem}
+            >
               {addLabel}
             </Button>
           </div>
         </>
       )}
     </FormField>
-  )
+  );
 }

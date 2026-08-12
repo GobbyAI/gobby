@@ -37,7 +37,8 @@ const CLAIMED_TASK_BASE = {
   claimed_by_session_id: CURRENT_DB_SESSION_ID,
   category: "test",
   labels: ["web-chat", "tasks", "persistence"],
-  description: "Refresh should rehydrate task ownership and task-linked session state.",
+  description:
+    "Refresh should rehydrate task ownership and task-linked session state.",
   validation_status: "pending",
   validation_feedback: null,
   validation_criteria: "Refresh keeps claimed task state visible.",

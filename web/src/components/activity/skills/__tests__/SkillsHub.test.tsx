@@ -1,15 +1,13 @@
-import {
-  fireEvent,
-  screen,
-  waitFor,
-  within,
-} from "@testing-library/react";
+import { fireEvent, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import { SkillsTab } from "../../SkillsTab";
 import { renderWithActivityActions as render } from "../../../../test/helpers";
-import { createMockFetch, type MockFetchInstance } from "../../../../test/mocks/fetch";
+import {
+  createMockFetch,
+  type MockFetchInstance,
+} from "../../../../test/mocks/fetch";
 
 vi.mock("../../../../hooks/useWebSocketEvent", () => ({
   useWebSocketEvent: vi.fn(),
@@ -58,7 +56,9 @@ type InstalledSkill = {
 
 let mockFetch: MockFetchInstance;
 
-function makeInstalledSkill(overrides: Partial<InstalledSkill>): InstalledSkill {
+function makeInstalledSkill(
+  overrides: Partial<InstalledSkill>,
+): InstalledSkill {
   return {
     id: "skill-hub-installed",
     name: "Review Sentinel",
@@ -147,11 +147,19 @@ async function searchHub(user: ReturnType<typeof userEvent.setup>) {
   await user.click(screen.getByRole("radio", { name: "Hub" }));
   await screen.findByRole("combobox", { name: "Hub source" });
 
-  await user.selectOptions(screen.getByRole("combobox", { name: "Hub source" }), "clawdhub");
-  await user.type(screen.getByRole("searchbox", { name: "Search hub skills" }), "review");
+  await user.selectOptions(
+    screen.getByRole("combobox", { name: "Hub source" }),
+    "clawdhub",
+  );
+  await user.type(
+    screen.getByRole("searchbox", { name: "Search hub skills" }),
+    "review",
+  );
   await user.click(screen.getByRole("button", { name: "Search hub skills" }));
 
-  const result = await screen.findByRole("button", { name: "Select Review Sentinel" });
+  const result = await screen.findByRole("button", {
+    name: "Select Review Sentinel",
+  });
   await user.click(result);
 }
 
@@ -189,7 +197,8 @@ describe("Skills activity Hub segment", () => {
           {
             severity: "high",
             title: "Prompt injection",
-            description: "The skill asks the agent to ignore local instructions.",
+            description:
+              "The skill asks the agent to ignore local instructions.",
             remediation: "Remove the override language.",
             location: "line 4",
             category: "instruction-override",
@@ -206,19 +215,29 @@ describe("Skills activity Hub segment", () => {
     expect(screen.getByText(/# Review Sentinel/)).toBeInTheDocument();
     expect(screen.getByText("SKILLSMP_API_KEY missing")).toBeInTheDocument();
 
-    const installBeforeScan = screen.getByRole("button", { name: "Install hub skill" });
+    const installBeforeScan = screen.getByRole("button", {
+      name: "Install hub skill",
+    });
     expect(installBeforeScan).toBeDisabled();
-    expect(screen.getByText("Run a safety scan before installing.")).toBeInTheDocument();
+    expect(
+      screen.getByText("Run a safety scan before installing."),
+    ).toBeInTheDocument();
 
     await user.click(screen.getByRole("button", { name: "Scan hub skill" }));
-    expect((await screen.findAllByText("HIGH")).length).toBeGreaterThanOrEqual(2);
+    expect((await screen.findAllByText("HIGH")).length).toBeGreaterThanOrEqual(
+      2,
+    );
     expect(screen.getByText("Prompt injection")).toBeInTheDocument();
-    expect(screen.getByText("Remove the override language.")).toBeInTheDocument();
+    expect(
+      screen.getByText("Remove the override language."),
+    ).toBeInTheDocument();
     expect(screen.getByText("line 4")).toBeInTheDocument();
 
     await user.click(screen.getByRole("button", { name: "Install hub skill" }));
     expect(
-      await screen.findByRole("heading", { name: "Install despite HIGH findings?" }),
+      await screen.findByRole("heading", {
+        name: "Install despite HIGH findings?",
+      }),
     ).toBeInTheDocument();
     await user.click(screen.getByRole("button", { name: "Install anyway" }));
 
@@ -230,10 +249,9 @@ describe("Skills activity Hub segment", () => {
         project_id: "project-1",
       }),
     );
-    expect(await screen.findByRole("radio", { name: "Installed" })).toHaveAttribute(
-      "aria-checked",
-      "true",
-    );
+    expect(
+      await screen.findByRole("radio", { name: "Installed" }),
+    ).toHaveAttribute("aria-checked", "true");
     expect(
       await screen.findByRole("button", { name: "Select Review Sentinel" }),
     ).toBeInTheDocument();
@@ -271,9 +289,13 @@ describe("Skills activity Hub segment", () => {
     await user.click(screen.getByRole("button", { name: "Install hub skill" }));
 
     await waitFor(() =>
-      expect(screen.queryByRole("heading", { name: /Install despite/ })).not.toBeInTheDocument(),
+      expect(
+        screen.queryByRole("heading", { name: /Install despite/ }),
+      ).not.toBeInTheDocument(),
     );
-    expect(lastJsonBodyFor("/api/skills/hubs/install")?.hub_name).toBe("clawdhub");
+    expect(lastJsonBodyFor("/api/skills/hubs/install")?.hub_name).toBe(
+      "clawdhub",
+    );
   });
 
   it("keeps result rows scoped for accessible selection", async () => {
@@ -302,11 +324,18 @@ describe("Skills activity Hub segment", () => {
     render(<SkillsTab />);
 
     await user.click(screen.getByRole("radio", { name: "Hub" }));
-    await user.type(screen.getByRole("searchbox", { name: "Search hub skills" }), "review");
+    await user.type(
+      screen.getByRole("searchbox", { name: "Search hub skills" }),
+      "review",
+    );
     fireEvent.click(screen.getByRole("button", { name: "Search hub skills" }));
 
-    const list = await screen.findByRole("list", { name: "Hub search results" });
-    const row = within(list).getByRole("button", { name: "Select Review Sentinel" });
+    const list = await screen.findByRole("list", {
+      name: "Hub search results",
+    });
+    const row = within(list).getByRole("button", {
+      name: "Select Review Sentinel",
+    });
     expect(row).toHaveTextContent("Review pull requests before merge.");
     expect(row).toHaveTextContent("clawdhub");
     expect(row).toHaveTextContent("v1.2.0");

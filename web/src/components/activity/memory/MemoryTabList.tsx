@@ -167,11 +167,11 @@ export function MemoryTabList({
               aria-label={`Select ${previewContent(memory.content)}`}
               onClick={() => onSelect(memory)}
             >
-              <span className="activity-row-title">{previewContent(memory.content)}</span>
+              <span className="activity-row-title">
+                {previewContent(memory.content)}
+              </span>
               {hidden && <DreamFlagBadge memory={memory} />}
-              <Chip>
-                {memoryTypeLabel(memory.memory_type)}
-              </Chip>
+              <Chip>{memoryTypeLabel(memory.memory_type)}</Chip>
               <Chip tone={memory.is_global ? "accent" : "neutral"}>
                 {memoryScopeLabel(memory)}
               </Chip>

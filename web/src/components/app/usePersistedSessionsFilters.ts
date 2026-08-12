@@ -22,8 +22,8 @@ function loadSessionsFilters(projectId: string | null): SessionsFilters {
 }
 
 export function usePersistedSessionsFilters(projectId: string | null) {
-  const [sessionsFilters, setSessionsFilters] = useState<SessionsFilters>(
-    () => loadSessionsFilters(projectId),
+  const [sessionsFilters, setSessionsFilters] = useState<SessionsFilters>(() =>
+    loadSessionsFilters(projectId),
   );
   const activeProjectIdRef = useRef(projectId);
   const skipNextPersistenceRef = useRef(false);

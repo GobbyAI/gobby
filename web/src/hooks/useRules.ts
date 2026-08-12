@@ -1,311 +1,354 @@
-import { useState, useEffect, useCallback, useMemo, useRef } from 'react'
-import { useWebSocketEvent } from './useWebSocketEvent'
+import { useState, useEffect, useCallback, useMemo, useRef } from "react";
+import { useWebSocketEvent } from "./useWebSocketEvent";
 
 export interface RuleSummary {
-  id: string
-  name: string
-  description: string | null
-  event: string | null
-  group: string | null
-  when: string | null
-  enabled: boolean
-  priority: number
-  source: string
-  tags: string[] | null
-  effect?: Record<string, unknown> | null
-  effects?: Array<Record<string, unknown>> | null
-  has_template_update?: boolean
-  audience?: string | null
-  agent_scope?: string[] | null
-  match?: Record<string, unknown> | null
-  project_id?: string | null
+  id: string;
+  name: string;
+  description: string | null;
+  event: string | null;
+  group: string | null;
+  when: string | null;
+  enabled: boolean;
+  priority: number;
+  source: string;
+  tags: string[] | null;
+  effect?: Record<string, unknown> | null;
+  effects?: Array<Record<string, unknown>> | null;
+  has_template_update?: boolean;
+  audience?: string | null;
+  agent_scope?: string[] | null;
+  match?: Record<string, unknown> | null;
+  project_id?: string | null;
 }
 
 export interface RuleDetail extends RuleSummary {
-  match: Record<string, unknown> | null
-  effect?: Record<string, unknown> | null
-  effects?: Array<Record<string, unknown>> | null
-  audience?: string | null
-  agent_scope?: string[] | null
+  match: Record<string, unknown> | null;
+  effect?: Record<string, unknown> | null;
+  effects?: Array<Record<string, unknown>> | null;
+  audience?: string | null;
+  agent_scope?: string[] | null;
 }
 
 function getBaseUrl(): string {
-  return ''
+  return "";
 }
 
 export class RuleApiError extends Error {
-  status: number
+  status: number;
 
   constructor(message: string, status: number) {
-    super(message)
-    this.name = 'RuleApiError'
-    this.status = status
+    super(message);
+    this.name = "RuleApiError";
+    this.status = status;
   }
 }
 
 interface RuleMutationOptions {
-  throwOnError?: boolean
+  throwOnError?: boolean;
 }
 
 interface RuleUpdateOptions extends RuleMutationOptions {
-  newName?: string
+  newName?: string;
 }
 
 interface RuleFilters {
-  event?: string
-  group?: string
-  enabled?: boolean
+  event?: string;
+  group?: string;
+  enabled?: boolean;
 }
 
 async function parseRuleError(response: Response): Promise<RuleApiError> {
-  let message = `Rule request failed with status ${response.status}`
+  let message = `Rule request failed with status ${response.status}`;
   try {
-    const data = await response.json()
-    if (typeof data.detail === 'string') message = data.detail
-    else if (typeof data.error === 'string') message = data.error
+    const data = await response.json();
+    if (typeof data.detail === "string") message = data.detail;
+    else if (typeof data.error === "string") message = data.error;
   } catch {
     try {
-      const text = await response.text()
-      if (text) message = text
+      const text = await response.text();
+      if (text) message = text;
     } catch {
       /* ignore */
     }
   }
-  return new RuleApiError(message, response.status)
+  return new RuleApiError(message, response.status);
 }
 
 export function useRules() {
-  const [rules, setRules] = useState<RuleSummary[]>([])
-  const [groups, setGroups] = useState<string[]>([])
-  const [isLoading, setIsLoading] = useState(true)
-  const [enforcementEnabled, setEnforcementEnabled] = useState(true)
-  const ruleFiltersRef = useRef<RuleFilters | undefined>(undefined)
+  const [rules, setRules] = useState<RuleSummary[]>([]);
+  const [groups, setGroups] = useState<string[]>([]);
+  const [isLoading, setIsLoading] = useState(true);
+  const [enforcementEnabled, setEnforcementEnabled] = useState(true);
+  const ruleFiltersRef = useRef<RuleFilters | undefined>(undefined);
 
   const fetchRules = useCallback(async (params?: RuleFilters) => {
-    ruleFiltersRef.current = params
+    ruleFiltersRef.current = params;
     try {
-      const baseUrl = getBaseUrl()
-      const searchParams = new URLSearchParams()
-      if (params?.event) searchParams.set('event', params.event)
-      if (params?.group) searchParams.set('group', params.group)
-      if (params?.enabled !== undefined) searchParams.set('enabled', String(params.enabled))
-      const query = searchParams.toString()
-      const url = `${baseUrl}/api/rules${query ? `?${query}` : ''}`
+      const baseUrl = getBaseUrl();
+      const searchParams = new URLSearchParams();
+      if (params?.event) searchParams.set("event", params.event);
+      if (params?.group) searchParams.set("group", params.group);
+      if (params?.enabled !== undefined)
+        searchParams.set("enabled", String(params.enabled));
+      const query = searchParams.toString();
+      const url = `${baseUrl}/api/rules${query ? `?${query}` : ""}`;
 
-      const response = await fetch(url)
+      const response = await fetch(url);
       if (response.ok) {
-        const data = await response.json()
-        setRules(data.rules || [])
+        const data = await response.json();
+        setRules(data.rules || []);
         if (data.enforcement_enabled !== undefined) {
-          setEnforcementEnabled(data.enforcement_enabled)
+          setEnforcementEnabled(data.enforcement_enabled);
         }
       }
     } catch (e) {
-      console.error('Failed to fetch rules:', e)
+      console.error("Failed to fetch rules:", e);
     }
-  }, [])
+  }, []);
 
   const refetchRules = useCallback(
     () => fetchRules(ruleFiltersRef.current),
     [fetchRules],
-  )
+  );
 
   const fetchGroups = useCallback(async () => {
     try {
-      const baseUrl = getBaseUrl()
-      const response = await fetch(`${baseUrl}/api/rules/groups`)
+      const baseUrl = getBaseUrl();
+      const response = await fetch(`${baseUrl}/api/rules/groups`);
       if (response.ok) {
-        const data = await response.json()
-        setGroups(data.groups || [])
+        const data = await response.json();
+        setGroups(data.groups || []);
       }
     } catch (e) {
-      console.error('Failed to fetch rule groups:', e)
+      console.error("Failed to fetch rule groups:", e);
     }
-  }, [])
+  }, []);
 
-  const fetchRuleDetail = useCallback(async (name: string): Promise<RuleDetail | null> => {
-    try {
-      const baseUrl = getBaseUrl()
-      const response = await fetch(`${baseUrl}/api/rules/${encodeURIComponent(name)}`)
-      if (response.ok) {
-        const data = await response.json()
-        return data.rule || null
-      }
-    } catch (e) {
-      console.error('Failed to fetch rule detail:', e)
-    }
-    return null
-  }, [])
-
-  const toggleRule = useCallback(async (name: string, enabled: boolean): Promise<boolean> => {
-    try {
-      const baseUrl = getBaseUrl()
-      const response = await fetch(`${baseUrl}/api/rules/${encodeURIComponent(name)}/toggle`, {
-        method: 'PUT',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ enabled }),
-      })
-      if (response.ok) {
-        const data = await response.json()
-        if (data.status === 'success') {
-          await refetchRules()
-          return true
+  const fetchRuleDetail = useCallback(
+    async (name: string): Promise<RuleDetail | null> => {
+      try {
+        const baseUrl = getBaseUrl();
+        const response = await fetch(
+          `${baseUrl}/api/rules/${encodeURIComponent(name)}`,
+        );
+        if (response.ok) {
+          const data = await response.json();
+          return data.rule || null;
         }
+      } catch (e) {
+        console.error("Failed to fetch rule detail:", e);
       }
-    } catch (e) {
-      console.error('Failed to toggle rule:', e)
-    }
-    return false
-  }, [refetchRules])
+      return null;
+    },
+    [],
+  );
 
-  const createRule = useCallback(async (
-    name: string,
-    definition: Record<string, unknown>,
-    options?: RuleMutationOptions,
-  ): Promise<RuleDetail | null> => {
-    try {
-      const baseUrl = getBaseUrl()
-      const response = await fetch(`${baseUrl}/api/rules`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ name, definition }),
-      })
-      if (response.ok) {
-        const data = await response.json()
-        await refetchRules()
-        return data.rule || null
+  const toggleRule = useCallback(
+    async (name: string, enabled: boolean): Promise<boolean> => {
+      try {
+        const baseUrl = getBaseUrl();
+        const response = await fetch(
+          `${baseUrl}/api/rules/${encodeURIComponent(name)}/toggle`,
+          {
+            method: "PUT",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ enabled }),
+          },
+        );
+        if (response.ok) {
+          const data = await response.json();
+          if (data.status === "success") {
+            await refetchRules();
+            return true;
+          }
+        }
+      } catch (e) {
+        console.error("Failed to toggle rule:", e);
       }
-      if (options?.throwOnError) throw await parseRuleError(response)
-    } catch (e) {
-      if (options?.throwOnError) throw e
-      console.error('Failed to create rule:', e)
-    }
-    return null
-  }, [refetchRules])
+      return false;
+    },
+    [refetchRules],
+  );
 
-  const updateRule = useCallback(async (
-    name: string,
-    definition: Record<string, unknown>,
-    options?: RuleUpdateOptions,
-  ): Promise<boolean> => {
-    try {
-      const baseUrl = getBaseUrl()
-      const requestedName = options?.newName
-        ?? (typeof definition.name === 'string' ? definition.name : undefined)
-      const body: Record<string, unknown> = { definition }
-      if (requestedName && requestedName !== name) {
-        body.name = requestedName
+  const createRule = useCallback(
+    async (
+      name: string,
+      definition: Record<string, unknown>,
+      options?: RuleMutationOptions,
+    ): Promise<RuleDetail | null> => {
+      try {
+        const baseUrl = getBaseUrl();
+        const response = await fetch(`${baseUrl}/api/rules`, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ name, definition }),
+        });
+        if (response.ok) {
+          const data = await response.json();
+          await refetchRules();
+          return data.rule || null;
+        }
+        if (options?.throwOnError) throw await parseRuleError(response);
+      } catch (e) {
+        if (options?.throwOnError) throw e;
+        console.error("Failed to create rule:", e);
       }
-      const response = await fetch(`${baseUrl}/api/rules/${encodeURIComponent(name)}`, {
-        method: 'PUT',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(body),
-      })
-      if (response.ok) {
-        await refetchRules()
-        return true
-      }
-      if (options?.throwOnError) throw await parseRuleError(response)
-    } catch (e) {
-      if (options?.throwOnError) throw e
-      console.error('Failed to update rule:', e)
-    }
-    return false
-  }, [refetchRules])
+      return null;
+    },
+    [refetchRules],
+  );
 
-  const bulkToggleRules = useCallback(async (source: string, enabled: boolean): Promise<boolean> => {
-    try {
-      const baseUrl = getBaseUrl()
-      const response = await fetch(`${baseUrl}/api/rules/bulk-toggle`, {
-        method: 'PUT',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ source, enabled }),
-      })
-      if (response.ok) {
-        await refetchRules()
-        return true
+  const updateRule = useCallback(
+    async (
+      name: string,
+      definition: Record<string, unknown>,
+      options?: RuleUpdateOptions,
+    ): Promise<boolean> => {
+      try {
+        const baseUrl = getBaseUrl();
+        const requestedName =
+          options?.newName ??
+          (typeof definition.name === "string" ? definition.name : undefined);
+        const body: Record<string, unknown> = { definition };
+        if (requestedName && requestedName !== name) {
+          body.name = requestedName;
+        }
+        const response = await fetch(
+          `${baseUrl}/api/rules/${encodeURIComponent(name)}`,
+          {
+            method: "PUT",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify(body),
+          },
+        );
+        if (response.ok) {
+          await refetchRules();
+          return true;
+        }
+        if (options?.throwOnError) throw await parseRuleError(response);
+      } catch (e) {
+        if (options?.throwOnError) throw e;
+        console.error("Failed to update rule:", e);
       }
-    } catch (e) {
-      console.error('Failed to bulk toggle rules:', e)
-    }
-    return false
-  }, [refetchRules])
+      return false;
+    },
+    [refetchRules],
+  );
 
-  const setEnforcement = useCallback(async (enabled: boolean): Promise<boolean> => {
-    try {
-      const baseUrl = getBaseUrl()
-      const response = await fetch(`${baseUrl}/api/rules`, {
-        method: 'PUT',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ enforcement_enabled: enabled }),
-      })
-      if (response.ok) {
-        const data = await response.json()
-        setEnforcementEnabled(data.enforcement_enabled)
-        return true
+  const bulkToggleRules = useCallback(
+    async (source: string, enabled: boolean): Promise<boolean> => {
+      try {
+        const baseUrl = getBaseUrl();
+        const response = await fetch(`${baseUrl}/api/rules/bulk-toggle`, {
+          method: "PUT",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ source, enabled }),
+        });
+        if (response.ok) {
+          await refetchRules();
+          return true;
+        }
+      } catch (e) {
+        console.error("Failed to bulk toggle rules:", e);
       }
-    } catch (e) {
-      console.error('Failed to set enforcement:', e)
-    }
-    return false
-  }, [])
+      return false;
+    },
+    [refetchRules],
+  );
 
-  const deleteRule = useCallback(async (name: string, force?: boolean): Promise<boolean> => {
-    try {
-      const baseUrl = getBaseUrl()
-      const params = force ? '?force=true' : ''
-      const response = await fetch(`${baseUrl}/api/rules/${encodeURIComponent(name)}${params}`, {
-        method: 'DELETE',
-      })
-      if (response.ok) {
-        await refetchRules()
-        return true
+  const setEnforcement = useCallback(
+    async (enabled: boolean): Promise<boolean> => {
+      try {
+        const baseUrl = getBaseUrl();
+        const response = await fetch(`${baseUrl}/api/rules`, {
+          method: "PUT",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ enforcement_enabled: enabled }),
+        });
+        if (response.ok) {
+          const data = await response.json();
+          setEnforcementEnabled(data.enforcement_enabled);
+          return true;
+        }
+      } catch (e) {
+        console.error("Failed to set enforcement:", e);
       }
-    } catch (e) {
-      console.error('Failed to delete rule:', e)
-    }
-    return false
-  }, [refetchRules])
+      return false;
+    },
+    [],
+  );
+
+  const deleteRule = useCallback(
+    async (name: string, force?: boolean): Promise<boolean> => {
+      try {
+        const baseUrl = getBaseUrl();
+        const params = force ? "?force=true" : "";
+        const response = await fetch(
+          `${baseUrl}/api/rules/${encodeURIComponent(name)}${params}`,
+          {
+            method: "DELETE",
+          },
+        );
+        if (response.ok) {
+          await refetchRules();
+          return true;
+        }
+      } catch (e) {
+        console.error("Failed to delete rule:", e);
+      }
+      return false;
+    },
+    [refetchRules],
+  );
 
   // Computed values
-  const ruleCount = rules.length
-  const enabledCount = useMemo(() => rules.filter(r => r.enabled).length, [rules])
+  const ruleCount = rules.length;
+  const enabledCount = useMemo(
+    () => rules.filter((r) => r.enabled).length,
+    [rules],
+  );
 
   const eventTypes = useMemo(() => {
-    const set = new Set<string>()
-    rules.forEach(r => { if (r.event) set.add(r.event) })
-    return Array.from(set).sort()
-  }, [rules])
+    const set = new Set<string>();
+    rules.forEach((r) => {
+      if (r.event) set.add(r.event);
+    });
+    return Array.from(set).sort();
+  }, [rules]);
 
   const sources = useMemo(() => {
-    const set = new Set<string>()
-    rules.forEach(r => { if (r.source) set.add(r.source) })
-    return Array.from(set).sort()
-  }, [rules])
+    const set = new Set<string>();
+    rules.forEach((r) => {
+      if (r.source) set.add(r.source);
+    });
+    return Array.from(set).sort();
+  }, [rules]);
 
   // Auto-fetch on mount
-  const debounceRef = useRef<number | null>(null)
+  const debounceRef = useRef<number | null>(null);
 
   useEffect(() => {
-    setIsLoading(true)
-    Promise.all([fetchRules(), fetchGroups()]).finally(() => setIsLoading(false))
+    setIsLoading(true);
+    Promise.all([fetchRules(), fetchGroups()]).finally(() =>
+      setIsLoading(false),
+    );
 
     return () => {
-      if (debounceRef.current) window.clearTimeout(debounceRef.current)
-    }
-  }, [fetchRules, fetchGroups])
+      if (debounceRef.current) window.clearTimeout(debounceRef.current);
+    };
+  }, [fetchRules, fetchGroups]);
 
   // Real-time updates via WebSocket
   useWebSocketEvent(
-    'workflow_event',
+    "workflow_event",
     useCallback(() => {
-      if (debounceRef.current) window.clearTimeout(debounceRef.current)
+      if (debounceRef.current) window.clearTimeout(debounceRef.current);
       debounceRef.current = window.setTimeout(() => {
-        refetchRules()
-        fetchGroups()
-      }, 500)
+        refetchRules();
+        fetchGroups();
+      }, 500);
     }, [refetchRules, fetchGroups]),
-  )
+  );
 
   return {
     rules,
@@ -325,5 +368,5 @@ export function useRules() {
     deleteRule,
     setEnforcement,
     bulkToggleRules,
-  }
+  };
 }

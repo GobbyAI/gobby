@@ -1,15 +1,15 @@
-import { Button } from '../../ui/Button'
-import { FormField } from '../../ui/FormField'
-import { Input } from '../../ui/Input'
+import { Button } from "../../ui/Button";
+import { FormField } from "../../ui/FormField";
+import { Input } from "../../ui/Input";
 
 export interface StringListFieldProps {
-  label: string
-  value: string[]
-  onChange: (value: string[]) => void
-  ariaLabel: string
-  disabled?: boolean
-  placeholder?: string
-  addLabel?: string
+  label: string;
+  value: string[];
+  onChange: (value: string[]) => void;
+  ariaLabel: string;
+  disabled?: boolean;
+  placeholder?: string;
+  addLabel?: string;
 }
 
 /**
@@ -24,18 +24,20 @@ export function StringListField({
   ariaLabel,
   disabled,
   placeholder,
-  addLabel = 'Add item',
+  addLabel = "Add item",
 }: StringListFieldProps) {
   function updateItem(index: number, next: string) {
-    onChange(value.map((item, itemIndex) => (itemIndex === index ? next : item)))
+    onChange(
+      value.map((item, itemIndex) => (itemIndex === index ? next : item)),
+    );
   }
 
   function removeItem(index: number) {
-    onChange(value.filter((_, itemIndex) => itemIndex !== index))
+    onChange(value.filter((_, itemIndex) => itemIndex !== index));
   }
 
   function addItem() {
-    onChange([...value, ''])
+    onChange([...value, ""]);
   }
 
   return (
@@ -72,12 +74,17 @@ export function StringListField({
             <p className="text-sm text-muted-foreground">No entries.</p>
           )}
           <div className="flex flex-wrap gap-2">
-            <Button type="button" size="sm" disabled={disabled} onClick={addItem}>
+            <Button
+              type="button"
+              size="sm"
+              disabled={disabled}
+              onClick={addItem}
+            >
               {addLabel}
             </Button>
           </div>
         </>
       )}
     </FormField>
-  )
+  );
 }

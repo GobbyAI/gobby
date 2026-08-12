@@ -1,11 +1,11 @@
-import type { ReactNode } from 'react'
-import { Card } from '../ui/Card'
-import { Chip } from '../ui/Chip'
-import { Heading } from '../shared/Heading'
-import type { AgentItemForPanel } from './AgentEditForm.types'
+import type { ReactNode } from "react";
+import { Card } from "../ui/Card";
+import { Chip } from "../ui/Chip";
+import { Heading } from "../shared/Heading";
+import type { AgentItemForPanel } from "./AgentEditForm.types";
 
 interface AgentReadOnlyDetailsProps {
-  agentItem: AgentItemForPanel
+  agentItem: AgentItemForPanel;
 }
 
 function MetaRow({ label, children }: { label: string; children: ReactNode }) {
@@ -14,37 +14,48 @@ function MetaRow({ label, children }: { label: string; children: ReactNode }) {
       <span className="text-sm text-[var(--text-secondary)]">{label}</span>
       <div className="min-w-0 text-right">{children}</div>
     </div>
-  )
+  );
 }
 
-function DefinitionSection({ title, content }: { title: string; content: string }) {
+function DefinitionSection({
+  title,
+  content,
+}: {
+  title: string;
+  content: string;
+}) {
   return (
     <div className="flex flex-col gap-1.5 border-b border-border px-5 py-3">
       <Heading
         level={4}
-        className="mt-0 mb-1 text-sm font-semibold uppercase tracking-wider text-[var(--text-muted)]"
+        className="mt-0 mb-1 text-sm font-semibold tracking-wider text-[var(--text-muted)] uppercase"
       >
         {title}
       </Heading>
-      <pre className="m-0 whitespace-pre-wrap font-sans text-sm leading-relaxed text-[var(--text-secondary)]">
+      <pre className="m-0 font-sans text-sm leading-relaxed whitespace-pre-wrap text-[var(--text-secondary)]">
         {content}
       </pre>
     </div>
-  )
+  );
 }
 
 export function AgentReadOnlyDetails({ agentItem }: AgentReadOnlyDetailsProps) {
-  const definition = agentItem.definition
-  const workflowMetadataKeys = ['rules', 'variables', 'pipeline', 'rule_selectors']
+  const definition = agentItem.definition;
+  const workflowMetadataKeys = [
+    "rules",
+    "variables",
+    "pipeline",
+    "rule_selectors",
+  ];
   const workflowEntries = definition.workflows
     ? Object.entries(definition.workflows).filter(
         ([name, value]) =>
           !workflowMetadataKeys.includes(name) &&
-          typeof value === 'object' &&
+          typeof value === "object" &&
           value !== null &&
           !Array.isArray(value),
       )
-    : []
+    : [];
 
   return (
     <>
@@ -53,13 +64,13 @@ export function AgentReadOnlyDetails({ agentItem }: AgentReadOnlyDetailsProps) {
           <span>{definition.provider}</span>
         </MetaRow>
         <MetaRow label="Model">
-          <span>{definition.model || '(default)'}</span>
+          <span>{definition.model || "(default)"}</span>
         </MetaRow>
         <MetaRow label="Reasoning">
-          <span>{definition.reasoning_effort || 'Auto'}</span>
+          <span>{definition.reasoning_effort || "Auto"}</span>
         </MetaRow>
         <MetaRow label="Require reasoning">
-          <span>{definition.reasoning_required ? 'Yes' : 'No'}</span>
+          <span>{definition.reasoning_required ? "Yes" : "No"}</span>
         </MetaRow>
         {definition.fallback_agent && (
           <MetaRow label="Fallback">
@@ -70,7 +81,7 @@ export function AgentReadOnlyDetails({ agentItem }: AgentReadOnlyDetailsProps) {
           <span>{definition.mode}</span>
         </MetaRow>
         <MetaRow label="Isolation">
-          <span>{definition.isolation || 'none'}</span>
+          <span>{definition.isolation || "none"}</span>
         </MetaRow>
         <MetaRow label="Base branch">
           <span>{definition.base_branch}</span>
@@ -91,35 +102,48 @@ export function AgentReadOnlyDetails({ agentItem }: AgentReadOnlyDetailsProps) {
       </div>
 
       {definition.description && (
-        <DefinitionSection title="Description" content={definition.description} />
+        <DefinitionSection
+          title="Description"
+          content={definition.description}
+        />
       )}
-      {definition.role && <DefinitionSection title="Role" content={definition.role} />}
-      {definition.goal && <DefinitionSection title="Goal" content={definition.goal} />}
+      {definition.role && (
+        <DefinitionSection title="Role" content={definition.role} />
+      )}
+      {definition.goal && (
+        <DefinitionSection title="Goal" content={definition.goal} />
+      )}
       {definition.personality && (
-        <DefinitionSection title="Personality" content={definition.personality} />
+        <DefinitionSection
+          title="Personality"
+          content={definition.personality}
+        />
       )}
       {definition.instructions && (
-        <DefinitionSection title="Instructions" content={definition.instructions} />
+        <DefinitionSection
+          title="Instructions"
+          content={definition.instructions}
+        />
       )}
 
       {workflowEntries.length > 0 && (
         <div className="flex flex-col gap-1.5 border-b border-border px-5 py-3">
           <Heading
             level={4}
-            className="mt-0 mb-1 text-sm font-semibold uppercase tracking-wider text-[var(--text-muted)]"
+            className="mt-0 mb-1 text-sm font-semibold tracking-wider text-[var(--text-muted)] uppercase"
           >
             Workflows
           </Heading>
           <div className="flex flex-col gap-1.5">
             {workflowEntries.map(([workflowName, rawWorkflow]) => {
               const workflow = rawWorkflow as {
-                type?: string
-                file?: string
-                mode?: string
-                internal?: boolean
-                step_count?: number
-                description?: string
-              }
+                type?: string;
+                file?: string;
+                mode?: string;
+                internal?: boolean;
+                step_count?: number;
+                description?: string;
+              };
               return (
                 <div
                   key={workflowName}
@@ -131,14 +155,16 @@ export function AgentReadOnlyDetails({ agentItem }: AgentReadOnlyDetailsProps) {
                   {workflow.type && <Chip>{workflow.type}</Chip>}
                   {workflow.file && <Chip>{workflow.file}</Chip>}
                   {workflow.internal && <Chip>internal</Chip>}
-                  {workflow.step_count != null && <Chip>{workflow.step_count} steps</Chip>}
+                  {workflow.step_count != null && (
+                    <Chip>{workflow.step_count} steps</Chip>
+                  )}
                   {workflow.description && (
                     <span className="basis-full text-xs text-[var(--text-muted)]">
                       {workflow.description}
                     </span>
                   )}
                 </div>
-              )
+              );
             })}
           </div>
         </div>
@@ -148,12 +174,12 @@ export function AgentReadOnlyDetails({ agentItem }: AgentReadOnlyDetailsProps) {
         <div className="flex flex-col gap-1.5 border-b border-border px-5 py-3">
           <Heading
             level={4}
-            className="mt-0 mb-1 text-sm font-semibold uppercase tracking-wider text-[var(--text-muted)]"
+            className="mt-0 mb-1 text-sm font-semibold tracking-wider text-[var(--text-muted)] uppercase"
           >
             Rules
           </Heading>
           <div className="flex flex-wrap items-center gap-1.5">
-            {definition.workflows.rules.map(name => (
+            {definition.workflows.rules.map((name) => (
               <Chip key={name} className="border border-border text-sm">
                 {name}
               </Chip>
@@ -166,17 +192,17 @@ export function AgentReadOnlyDetails({ agentItem }: AgentReadOnlyDetailsProps) {
         <div className="flex flex-col gap-1.5 border-b border-border px-5 py-3">
           <Heading
             level={4}
-            className="mt-0 mb-1 text-sm font-semibold uppercase tracking-wider text-[var(--text-muted)]"
+            className="mt-0 mb-1 text-sm font-semibold tracking-wider text-[var(--text-muted)] uppercase"
           >
             Rule Selectors
           </Heading>
           {definition.workflows.rule_selectors.include.length > 0 && (
             <div>
-              <span className="text-xs uppercase tracking-[0.3px] text-[var(--text-muted)]">
+              <span className="text-xs tracking-[0.3px] text-[var(--text-muted)] uppercase">
                 Include
               </span>
               <div className="mt-1 flex flex-wrap items-center gap-1.5">
-                {definition.workflows.rule_selectors.include.map(selector => (
+                {definition.workflows.rule_selectors.include.map((selector) => (
                   <Chip
                     key={selector}
                     tone="info"
@@ -190,11 +216,11 @@ export function AgentReadOnlyDetails({ agentItem }: AgentReadOnlyDetailsProps) {
           )}
           {definition.workflows.rule_selectors.exclude.length > 0 && (
             <div className="mt-1.5">
-              <span className="text-xs uppercase tracking-[0.3px] text-[var(--text-muted)]">
+              <span className="text-xs tracking-[0.3px] text-[var(--text-muted)] uppercase">
                 Exclude
               </span>
               <div className="mt-1 flex flex-wrap items-center gap-1.5">
-                {definition.workflows.rule_selectors.exclude.map(selector => (
+                {definition.workflows.rule_selectors.exclude.map((selector) => (
                   <Chip
                     key={selector}
                     tone="error"
@@ -214,41 +240,46 @@ export function AgentReadOnlyDetails({ agentItem }: AgentReadOnlyDetailsProps) {
           <div className="flex flex-col gap-1.5 border-b border-border px-5 py-3">
             <Heading
               level={4}
-              className="mt-0 mb-1 text-sm font-semibold uppercase tracking-wider text-[var(--text-muted)]"
+              className="mt-0 mb-1 text-sm font-semibold tracking-wider text-[var(--text-muted)] uppercase"
             >
               Variables
             </Heading>
             <div className="flex flex-col gap-1">
-              {Object.entries(definition.workflows.variables).map(([key, value]) => (
-                <div key={key} className="flex items-center gap-2 text-sm">
-                  <code className="min-w-[80px] font-semibold text-[var(--text-primary)]">
-                    {key}
-                  </code>
-                  <span className="flex-1 overflow-hidden text-ellipsis whitespace-nowrap text-[var(--text-muted)]">
-                    {typeof value === 'string' ? value : JSON.stringify(value)}
-                  </span>
-                </div>
-              ))}
+              {Object.entries(definition.workflows.variables).map(
+                ([key, value]) => (
+                  <div key={key} className="flex items-center gap-2 text-sm">
+                    <code className="min-w-[80px] font-semibold text-[var(--text-primary)]">
+                      {key}
+                    </code>
+                    <span className="flex-1 overflow-hidden text-ellipsis whitespace-nowrap text-[var(--text-muted)]">
+                      {typeof value === "string"
+                        ? value
+                        : JSON.stringify(value)}
+                    </span>
+                  </div>
+                ),
+              )}
             </div>
           </div>
         )}
 
       {((definition.blocked_tools && definition.blocked_tools.length > 0) ||
-        (definition.blocked_mcp_tools && definition.blocked_mcp_tools.length > 0)) && (
+        (definition.blocked_mcp_tools &&
+          definition.blocked_mcp_tools.length > 0)) && (
         <div className="flex flex-col gap-1.5 border-b border-border px-5 py-3">
           <Heading
             level={4}
-            className="mt-0 mb-1 text-sm font-semibold uppercase tracking-wider text-[var(--text-muted)]"
+            className="mt-0 mb-1 text-sm font-semibold tracking-wider text-[var(--text-muted)] uppercase"
           >
             Tool Restrictions
           </Heading>
           {definition.blocked_tools && definition.blocked_tools.length > 0 && (
             <div className="flex flex-col gap-1">
-              <span className="text-xs uppercase tracking-[0.3px] text-[var(--text-muted)]">
+              <span className="text-xs tracking-[0.3px] text-[var(--text-muted)] uppercase">
                 Blocked Tools
               </span>
               <div className="flex flex-wrap gap-1">
-                {definition.blocked_tools.map(tool => (
+                {definition.blocked_tools.map((tool) => (
                   <Chip key={tool} className="border border-border text-xs">
                     {tool}
                   </Chip>
@@ -256,20 +287,21 @@ export function AgentReadOnlyDetails({ agentItem }: AgentReadOnlyDetailsProps) {
               </div>
             </div>
           )}
-          {definition.blocked_mcp_tools && definition.blocked_mcp_tools.length > 0 && (
-            <div className="flex flex-col gap-1">
-              <span className="text-xs uppercase tracking-[0.3px] text-[var(--text-muted)]">
-                Blocked MCP Tools
-              </span>
-              <div className="flex flex-wrap gap-1">
-                {definition.blocked_mcp_tools.map(tool => (
-                  <Chip key={tool} className="border border-border text-xs">
-                    {tool}
-                  </Chip>
-                ))}
+          {definition.blocked_mcp_tools &&
+            definition.blocked_mcp_tools.length > 0 && (
+              <div className="flex flex-col gap-1">
+                <span className="text-xs tracking-[0.3px] text-[var(--text-muted)] uppercase">
+                  Blocked MCP Tools
+                </span>
+                <div className="flex flex-wrap gap-1">
+                  {definition.blocked_mcp_tools.map((tool) => (
+                    <Chip key={tool} className="border border-border text-xs">
+                      {tool}
+                    </Chip>
+                  ))}
+                </div>
               </div>
-            </div>
-          )}
+            )}
         </div>
       )}
 
@@ -277,19 +309,23 @@ export function AgentReadOnlyDetails({ agentItem }: AgentReadOnlyDetailsProps) {
         <div className="flex flex-col gap-1.5 border-b border-border px-5 py-3">
           <Heading
             level={4}
-            className="mt-0 mb-1 text-sm font-semibold uppercase tracking-wider text-[var(--text-muted)]"
+            className="mt-0 mb-1 text-sm font-semibold tracking-wider text-[var(--text-muted)] uppercase"
           >
             Steps ({definition.steps.length})
           </Heading>
           <div className="flex flex-col gap-1">
             {definition.steps.map((step, index) => (
-              <Card key={index} padding="sm" className="flex items-center gap-2 text-sm">
+              <Card
+                key={index}
+                padding="sm"
+                className="flex items-center gap-2 text-sm"
+              >
                 <Chip tone="accent">{step.name}</Chip>
                 <span className="text-xs text-[var(--text-muted)]">
-                  {step.description || ''}
+                  {step.description || ""}
                   {step.transitions && step.transitions.length > 0
-                    ? ` → ${step.transitions.map(transition => transition.to).join(', ')}`
-                    : ''}
+                    ? ` → ${step.transitions.map((transition) => transition.to).join(", ")}`
+                    : ""}
                 </span>
               </Card>
             ))}
@@ -301,7 +337,7 @@ export function AgentReadOnlyDetails({ agentItem }: AgentReadOnlyDetailsProps) {
         <div className="flex flex-col gap-1.5 border-b border-border px-5 py-3">
           <Heading
             level={4}
-            className="mt-0 mb-1 text-sm font-semibold uppercase tracking-wider text-[var(--text-muted)]"
+            className="mt-0 mb-1 text-sm font-semibold tracking-wider text-[var(--text-muted)] uppercase"
           >
             Sandbox
           </Heading>
@@ -314,21 +350,21 @@ export function AgentReadOnlyDetails({ agentItem }: AgentReadOnlyDetailsProps) {
       <div className="flex flex-col gap-1.5 border-b border-border px-5 py-3">
         <Heading
           level={4}
-          className="mt-0 mb-1 text-sm font-semibold uppercase tracking-wider text-[var(--text-muted)]"
+          className="mt-0 mb-1 text-sm font-semibold tracking-wider text-[var(--text-muted)] uppercase"
         >
           Source
         </Heading>
-        <div className="text-sm text-[var(--text-secondary)] [&_code]:break-all [&_code]:font-[inherit] [&_code]:text-xs [&_code]:text-[var(--text-muted)]">
+        <div className="text-sm text-[var(--text-secondary)] [&_code]:font-[inherit] [&_code]:text-xs [&_code]:break-all [&_code]:text-[var(--text-muted)]">
           {agentItem.source_path ? (
             <code>{agentItem.source_path}</code>
           ) : (
             <span>
               Database ({agentItem.source})
-              {agentItem.db_id ? ` — ${agentItem.db_id.slice(0, 8)}` : ''}
+              {agentItem.db_id ? ` — ${agentItem.db_id.slice(0, 8)}` : ""}
             </span>
           )}
         </div>
       </div>
     </>
-  )
+  );
 }

@@ -92,7 +92,10 @@ export interface WikiGraphHandlers {
 const SOURCE_KINDS = new Set(["source", "citation"]);
 const CODE_EDGE_KINDS = new Set(["imports", "calls"]);
 
-function edgeLayerEnabled(kind: string, options: WikiGraphSceneOptions): boolean {
+function edgeLayerEnabled(
+  kind: string,
+  options: WikiGraphSceneOptions,
+): boolean {
   if (kind === "links") return true;
   if (kind === "trust") return options.trust;
   if (kind === "audit") return options.audit;
@@ -102,7 +105,9 @@ function edgeLayerEnabled(kind: string, options: WikiGraphSceneOptions): boolean
 }
 
 /** `analytics.centrality` entries look like `{node: {id}, degree, score}`. */
-function centralityDegrees(analytics: Record<string, unknown> | null): Map<string, number> {
+function centralityDegrees(
+  analytics: Record<string, unknown> | null,
+): Map<string, number> {
   const degrees = new Map<string, number>();
   if (!analytics || !Array.isArray(analytics.centrality)) return degrees;
   for (const value of analytics.centrality) {
@@ -121,11 +126,13 @@ function centralityDegrees(analytics: Record<string, unknown> | null): Map<strin
 }
 
 /** `analytics.communities` entries look like `{id, nodes: [{id}], weight}`. */
-function communityOrdinals(
-  analytics: Record<string, unknown> | null,
-): { byNode: Map<string, number>; count: number } {
+function communityOrdinals(analytics: Record<string, unknown> | null): {
+  byNode: Map<string, number>;
+  count: number;
+} {
   const byNode = new Map<string, number>();
-  if (!analytics || !Array.isArray(analytics.communities)) return { byNode, count: 0 };
+  if (!analytics || !Array.isArray(analytics.communities))
+    return { byNode, count: 0 };
   let ordinal = 0;
   for (const value of analytics.communities) {
     if (typeof value !== "object" || value === null) continue;
@@ -182,7 +189,8 @@ export function buildGraphScene(
   }
 
   const analyticDegree = centralityDegrees(payload.analytics);
-  const degreeOf = (id: string) => analyticDegree.get(id) ?? localDegree.get(id) ?? 0;
+  const degreeOf = (id: string) =>
+    analyticDegree.get(id) ?? localDegree.get(id) ?? 0;
 
   let kept = options.orphans
     ? visible

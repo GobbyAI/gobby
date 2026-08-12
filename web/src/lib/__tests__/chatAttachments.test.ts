@@ -1,4 +1,4 @@
-import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import {
   ATTACHMENT_DELETE_TIMEOUT_MS,
@@ -6,269 +6,302 @@ import {
   deleteChatAttachment,
   formatAttachmentSize,
   uploadChatAttachment,
-} from '../chatAttachments'
+} from "../chatAttachments";
 
 class FakeUpload {
-  onprogress: ((event: ProgressEvent<XMLHttpRequestEventTarget>) => void) | null = null
+  onprogress:
+    ((event: ProgressEvent<XMLHttpRequestEventTarget>) => void) | null = null;
 }
 
 class FakeXMLHttpRequest {
-  static instances: FakeXMLHttpRequest[] = []
+  static instances: FakeXMLHttpRequest[] = [];
 
-  upload = new FakeUpload()
-  timeout = 0
-  withCredentials = false
-  status = 0
-  statusText = ''
-  responseText = ''
-  onload: (() => void) | null = null
-  onerror: (() => void) | null = null
-  onabort: (() => void) | null = null
-  ontimeout: (() => void) | null = null
-  method: string | null = null
-  url: string | null = null
-  body: Document | XMLHttpRequestBodyInit | null = null
+  upload = new FakeUpload();
+  timeout = 0;
+  withCredentials = false;
+  status = 0;
+  statusText = "";
+  responseText = "";
+  onload: (() => void) | null = null;
+  onerror: (() => void) | null = null;
+  onabort: (() => void) | null = null;
+  ontimeout: (() => void) | null = null;
+  method: string | null = null;
+  url: string | null = null;
+  body: Document | XMLHttpRequestBodyInit | null = null;
 
   constructor() {
-    FakeXMLHttpRequest.instances.push(this)
+    FakeXMLHttpRequest.instances.push(this);
   }
 
   open(method: string, url: string) {
-    this.method = method
-    this.url = url
+    this.method = method;
+    this.url = url;
   }
 
   send(body?: Document | XMLHttpRequestBodyInit | null) {
-    this.body = body ?? null
+    this.body = body ?? null;
   }
 
   abort() {
-    this.onabort?.()
+    this.onabort?.();
   }
 }
 
-const originalXMLHttpRequest = globalThis.XMLHttpRequest
+const originalXMLHttpRequest = globalThis.XMLHttpRequest;
 
 afterEach(() => {
-  vi.useRealTimers()
-  globalThis.XMLHttpRequest = originalXMLHttpRequest
-  vi.restoreAllMocks()
-  vi.unstubAllGlobals()
-  FakeXMLHttpRequest.instances = []
-})
+  vi.useRealTimers();
+  globalThis.XMLHttpRequest = originalXMLHttpRequest;
+  vi.restoreAllMocks();
+  vi.unstubAllGlobals();
+  FakeXMLHttpRequest.instances = [];
+});
 
 beforeEach(() => {
   vi.stubGlobal(
-    'fetch',
+    "fetch",
     vi.fn().mockResolvedValue(Response.json({ max_file_bytes: 100_000_000 })),
-  )
-})
+  );
+});
 
 async function startedUpload(): Promise<FakeXMLHttpRequest> {
-  await vi.waitFor(() => expect(FakeXMLHttpRequest.instances).toHaveLength(1))
-  return FakeXMLHttpRequest.instances[0]
+  await vi.waitFor(() => expect(FakeXMLHttpRequest.instances).toHaveLength(1));
+  return FakeXMLHttpRequest.instances[0];
 }
 
-describe('uploadChatAttachment', () => {
-  it('rejects files above the backend-configured limit before creating an XHR', async () => {
-    globalThis.XMLHttpRequest = FakeXMLHttpRequest as unknown as typeof XMLHttpRequest
-    vi.mocked(fetch).mockResolvedValueOnce(Response.json({ max_file_bytes: 4 }))
-    const file = new File(['hello'], 'huge.bin')
+describe("uploadChatAttachment", () => {
+  it("rejects files above the backend-configured limit before creating an XHR", async () => {
+    globalThis.XMLHttpRequest =
+      FakeXMLHttpRequest as unknown as typeof XMLHttpRequest;
+    vi.mocked(fetch).mockResolvedValueOnce(
+      Response.json({ max_file_bytes: 4 }),
+    );
+    const file = new File(["hello"], "huge.bin");
 
-    const upload = uploadChatAttachment(file)
+    const upload = uploadChatAttachment(file);
 
-    await expect(upload.promise).rejects.toThrow('Attachment exceeds 4 B limit')
-    expect(fetch).toHaveBeenCalledWith('/api/chat/attachments/limits', {
-      credentials: 'include',
+    await expect(upload.promise).rejects.toThrow(
+      "Attachment exceeds 4 B limit",
+    );
+    expect(fetch).toHaveBeenCalledWith("/api/chat/attachments/limits", {
+      credentials: "include",
       signal: expect.any(AbortSignal),
-    })
-    expect(FakeXMLHttpRequest.instances).toHaveLength(0)
-  })
+    });
+    expect(FakeXMLHttpRequest.instances).toHaveLength(0);
+  });
 
-  it('times out uploads after ten minutes and clears progress', async () => {
-    globalThis.XMLHttpRequest = FakeXMLHttpRequest as unknown as typeof XMLHttpRequest
-    const onProgress = vi.fn()
+  it("times out uploads after ten minutes and clears progress", async () => {
+    globalThis.XMLHttpRequest =
+      FakeXMLHttpRequest as unknown as typeof XMLHttpRequest;
+    const onProgress = vi.fn();
 
-    const upload = uploadChatAttachment(new File(['hello'], 'note.txt'), { onProgress })
-    const xhr = await startedUpload()
+    const upload = uploadChatAttachment(new File(["hello"], "note.txt"), {
+      onProgress,
+    });
+    const xhr = await startedUpload();
 
     xhr.upload.onprogress?.(
-      new ProgressEvent('progress', {
+      new ProgressEvent("progress", {
         lengthComputable: true,
         loaded: 1,
         total: 2,
       }) as ProgressEvent<XMLHttpRequestEventTarget>,
-    )
-    const rejection = expect(upload.promise).rejects.toThrow('Attachment upload timed out')
-    xhr.ontimeout?.()
+    );
+    const rejection = expect(upload.promise).rejects.toThrow(
+      "Attachment upload timed out",
+    );
+    xhr.ontimeout?.();
 
-    await rejection
-    expect(xhr.timeout).toBe(ATTACHMENT_UPLOAD_TIMEOUT_MS)
-    expect(onProgress).toHaveBeenNthCalledWith(1, 0.5)
-    expect(onProgress).toHaveBeenLastCalledWith(null)
-  })
+    await rejection;
+    expect(xhr.timeout).toBe(ATTACHMENT_UPLOAD_TIMEOUT_MS);
+    expect(onProgress).toHaveBeenNthCalledWith(1, 0.5);
+    expect(onProgress).toHaveBeenLastCalledWith(null);
+  });
 
-  it('rejects invalid upload JSON responses', async () => {
-    globalThis.XMLHttpRequest = FakeXMLHttpRequest as unknown as typeof XMLHttpRequest
+  it("rejects invalid upload JSON responses", async () => {
+    globalThis.XMLHttpRequest =
+      FakeXMLHttpRequest as unknown as typeof XMLHttpRequest;
 
-    const upload = uploadChatAttachment(new File(['hello'], 'note.txt'))
-    const xhr = await startedUpload()
-    xhr.status = 200
-    xhr.responseText = '{bad'
-    const rejection = expect(upload.promise).rejects.toThrow('Attachment upload returned invalid JSON')
-    xhr.onload?.()
+    const upload = uploadChatAttachment(new File(["hello"], "note.txt"));
+    const xhr = await startedUpload();
+    xhr.status = 200;
+    xhr.responseText = "{bad";
+    const rejection = expect(upload.promise).rejects.toThrow(
+      "Attachment upload returned invalid JSON",
+    );
+    xhr.onload?.();
 
-    await rejection
-  })
+    await rejection;
+  });
 
-  it('rejects network upload errors and clears progress', async () => {
-    globalThis.XMLHttpRequest = FakeXMLHttpRequest as unknown as typeof XMLHttpRequest
-    const onProgress = vi.fn()
+  it("rejects network upload errors and clears progress", async () => {
+    globalThis.XMLHttpRequest =
+      FakeXMLHttpRequest as unknown as typeof XMLHttpRequest;
+    const onProgress = vi.fn();
 
-    const upload = uploadChatAttachment(new File(['hello'], 'note.txt'), { onProgress })
-    const xhr = await startedUpload()
-    const rejection = expect(upload.promise).rejects.toThrow('Attachment upload failed')
-    xhr.onerror?.()
+    const upload = uploadChatAttachment(new File(["hello"], "note.txt"), {
+      onProgress,
+    });
+    const xhr = await startedUpload();
+    const rejection = expect(upload.promise).rejects.toThrow(
+      "Attachment upload failed",
+    );
+    xhr.onerror?.();
 
-    await rejection
-    expect(onProgress).toHaveBeenLastCalledWith(null)
-  })
+    await rejection;
+    expect(onProgress).toHaveBeenLastCalledWith(null);
+  });
 
-  it('resolves successful upload payloads with normalized content URLs', async () => {
-    globalThis.XMLHttpRequest = FakeXMLHttpRequest as unknown as typeof XMLHttpRequest
+  it("resolves successful upload payloads with normalized content URLs", async () => {
+    globalThis.XMLHttpRequest =
+      FakeXMLHttpRequest as unknown as typeof XMLHttpRequest;
 
-    const upload = uploadChatAttachment(new File(['hello'], 'note.txt'))
-    const xhr = await startedUpload()
-    xhr.status = 201
+    const upload = uploadChatAttachment(new File(["hello"], "note.txt"));
+    const xhr = await startedUpload();
+    xhr.status = 201;
     xhr.responseText = JSON.stringify({
-      id: 'att-1',
-      project_id: 'proj-1',
-      filename: 'note.txt',
-      mime_type: 'text/plain',
+      id: "att-1",
+      project_id: "proj-1",
+      filename: "note.txt",
+      mime_type: "text/plain",
       size_bytes: 5,
-      content_url: '/api/chat/attachments/att-1/content',
-    })
-    xhr.onload?.()
+      content_url: "/api/chat/attachments/att-1/content",
+    });
+    xhr.onload?.();
 
     await expect(upload.promise).resolves.toMatchObject({
-      id: 'att-1',
-      filename: 'note.txt',
-      content_url: '/api/chat/attachments/att-1/content',
-    })
-  })
+      id: "att-1",
+      filename: "note.txt",
+      content_url: "/api/chat/attachments/att-1/content",
+    });
+  });
 
-  it('normalizes same-origin absolute content URLs to paths', async () => {
-    globalThis.XMLHttpRequest = FakeXMLHttpRequest as unknown as typeof XMLHttpRequest
+  it("normalizes same-origin absolute content URLs to paths", async () => {
+    globalThis.XMLHttpRequest =
+      FakeXMLHttpRequest as unknown as typeof XMLHttpRequest;
 
-    const upload = uploadChatAttachment(new File(['hello'], 'note.txt'))
-    const xhr = await startedUpload()
-    xhr.status = 201
+    const upload = uploadChatAttachment(new File(["hello"], "note.txt"));
+    const xhr = await startedUpload();
+    xhr.status = 201;
     xhr.responseText = JSON.stringify({
-      id: 'att-1',
-      project_id: 'proj-1',
-      filename: 'note.txt',
-      mime_type: 'text/plain',
+      id: "att-1",
+      project_id: "proj-1",
+      filename: "note.txt",
+      mime_type: "text/plain",
       size_bytes: 5,
       content_url: `${window.location.origin}/api/chat/attachments/att-1/content?download=1`,
-    })
-    xhr.onload?.()
+    });
+    xhr.onload?.();
 
     await expect(upload.promise).resolves.toMatchObject({
-      content_url: '/api/chat/attachments/att-1/content?download=1',
-    })
-  })
+      content_url: "/api/chat/attachments/att-1/content?download=1",
+    });
+  });
 
-  it('returns an abort handle that cancels the XHR', async () => {
-    globalThis.XMLHttpRequest = FakeXMLHttpRequest as unknown as typeof XMLHttpRequest
-    const onProgress = vi.fn()
+  it("returns an abort handle that cancels the XHR", async () => {
+    globalThis.XMLHttpRequest =
+      FakeXMLHttpRequest as unknown as typeof XMLHttpRequest;
+    const onProgress = vi.fn();
 
-    const upload = uploadChatAttachment(new File(['hello'], 'note.txt'), { onProgress })
-    const xhr = await startedUpload()
-    const abort = vi.fn(() => xhr.onabort?.())
-    xhr.abort = abort
-    const rejection = expect(upload.promise).rejects.toThrow('Attachment upload canceled')
-
-    upload.abort()
-
-    await rejection
-    expect(abort).toHaveBeenCalled()
-    expect(onProgress).toHaveBeenLastCalledWith(null)
-  })
-
-  it('rejects upload JSON with an invalid attachment shape', async () => {
-    globalThis.XMLHttpRequest = FakeXMLHttpRequest as unknown as typeof XMLHttpRequest
-
-    const upload = uploadChatAttachment(new File(['hello'], 'note.txt'))
-    const xhr = await startedUpload()
-    xhr.status = 200
-    xhr.responseText = JSON.stringify({ id: 'att-1' })
+    const upload = uploadChatAttachment(new File(["hello"], "note.txt"), {
+      onProgress,
+    });
+    const xhr = await startedUpload();
+    const abort = vi.fn(() => xhr.onabort?.());
+    xhr.abort = abort;
     const rejection = expect(upload.promise).rejects.toThrow(
-      'Attachment upload response field project_id must be a string',
-    )
-    xhr.onload?.()
+      "Attachment upload canceled",
+    );
 
-    await rejection
-  })
-})
+    upload.abort();
 
-describe('deleteChatAttachment', () => {
-  it('resolves successful delete responses', async () => {
-    const response = new Response(null, { status: 204 })
-    const fetchMock = vi.fn().mockResolvedValue(response)
-    vi.stubGlobal('fetch', fetchMock)
+    await rejection;
+    expect(abort).toHaveBeenCalled();
+    expect(onProgress).toHaveBeenLastCalledWith(null);
+  });
 
-    await expect(deleteChatAttachment('att-1')).resolves.toBe(response)
-  })
+  it("rejects upload JSON with an invalid attachment shape", async () => {
+    globalThis.XMLHttpRequest =
+      FakeXMLHttpRequest as unknown as typeof XMLHttpRequest;
 
-  it('encodes IDs and throws on non-OK responses with the response body', async () => {
+    const upload = uploadChatAttachment(new File(["hello"], "note.txt"));
+    const xhr = await startedUpload();
+    xhr.status = 200;
+    xhr.responseText = JSON.stringify({ id: "att-1" });
+    const rejection = expect(upload.promise).rejects.toThrow(
+      "Attachment upload response field project_id must be a string",
+    );
+    xhr.onload?.();
+
+    await rejection;
+  });
+});
+
+describe("deleteChatAttachment", () => {
+  it("resolves successful delete responses", async () => {
+    const response = new Response(null, { status: 204 });
+    const fetchMock = vi.fn().mockResolvedValue(response);
+    vi.stubGlobal("fetch", fetchMock);
+
+    await expect(deleteChatAttachment("att-1")).resolves.toBe(response);
+  });
+
+  it("encodes IDs and throws on non-OK responses with the response body", async () => {
     const fetchMock = vi.fn().mockResolvedValue(
-      new Response('delete denied', {
+      new Response("delete denied", {
         status: 409,
-        statusText: 'Conflict',
+        statusText: "Conflict",
       }),
-    )
-    vi.stubGlobal('fetch', fetchMock)
+    );
+    vi.stubGlobal("fetch", fetchMock);
 
-    await expect(deleteChatAttachment('id/with slash')).rejects.toThrow('delete denied')
+    await expect(deleteChatAttachment("id/with slash")).rejects.toThrow(
+      "delete denied",
+    );
 
-    expect(fetchMock).toHaveBeenCalledWith('/api/chat/attachments/id%2Fwith%20slash', {
-      method: 'DELETE',
-      credentials: 'include',
-      signal: expect.any(AbortSignal),
-    })
-  })
+    expect(fetchMock).toHaveBeenCalledWith(
+      "/api/chat/attachments/id%2Fwith%20slash",
+      {
+        method: "DELETE",
+        credentials: "include",
+        signal: expect.any(AbortSignal),
+      },
+    );
+  });
 
-  it('throws a timeout-specific error when delete aborts', async () => {
-    vi.useFakeTimers()
-    const fetchMock = vi.fn((_url: string | URL | Request, init?: RequestInit) => (
-      new Promise<Response>((_resolve, reject) => {
-        init?.signal?.addEventListener(
-          'abort',
-          () => reject(new DOMException('aborted', 'AbortError')),
-          { once: true },
-        )
-      })
-    ))
-    vi.stubGlobal('fetch', fetchMock)
+  it("throws a timeout-specific error when delete aborts", async () => {
+    vi.useFakeTimers();
+    const fetchMock = vi.fn(
+      (_url: string | URL | Request, init?: RequestInit) =>
+        new Promise<Response>((_resolve, reject) => {
+          init?.signal?.addEventListener(
+            "abort",
+            () => reject(new DOMException("aborted", "AbortError")),
+            { once: true },
+          );
+        }),
+    );
+    vi.stubGlobal("fetch", fetchMock);
 
-    const result = expect(deleteChatAttachment('att-1')).rejects.toThrow(
-      'Attachment delete timed out',
-    )
-    await vi.advanceTimersByTimeAsync(ATTACHMENT_DELETE_TIMEOUT_MS)
-    await result
-    vi.useRealTimers()
-  })
-})
+    const result = expect(deleteChatAttachment("att-1")).rejects.toThrow(
+      "Attachment delete timed out",
+    );
+    await vi.advanceTimersByTimeAsync(ATTACHMENT_DELETE_TIMEOUT_MS);
+    await result;
+    vi.useRealTimers();
+  });
+});
 
-describe('formatAttachmentSize', () => {
-  it('clamps non-positive byte counts to zero bytes', () => {
-    expect(formatAttachmentSize(0)).toBe('0 B')
-    expect(formatAttachmentSize(-1)).toBe('0 B')
-  })
+describe("formatAttachmentSize", () => {
+  it("clamps non-positive byte counts to zero bytes", () => {
+    expect(formatAttachmentSize(0)).toBe("0 B");
+    expect(formatAttachmentSize(-1)).toBe("0 B");
+  });
 
-  it('formats binary byte counts with IEC units', () => {
-    expect(formatAttachmentSize(1536)).toBe('1.5 KiB')
-    expect(formatAttachmentSize(2 * 1024 * 1024)).toBe('2.0 MiB')
-    expect(formatAttachmentSize(3 * 1024 * 1024 * 1024)).toBe('3.0 GiB')
-  })
-})
+  it("formats binary byte counts with IEC units", () => {
+    expect(formatAttachmentSize(1536)).toBe("1.5 KiB");
+    expect(formatAttachmentSize(2 * 1024 * 1024)).toBe("2.0 MiB");
+    expect(formatAttachmentSize(3 * 1024 * 1024 * 1024)).toBe("3.0 GiB");
+  });
+});

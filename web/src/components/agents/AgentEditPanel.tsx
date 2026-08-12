@@ -1,16 +1,16 @@
-import { useId, useLayoutEffect, useRef, type ReactNode } from 'react'
-import { useDialogFocus } from '../../hooks/useDialogFocus'
-import { cn } from '../../lib/utils'
-import { Button } from '../ui/Button'
-import { coarseHitAreaCls } from '../ui/controlStyles'
+import { useId, useLayoutEffect, useRef, type ReactNode } from "react";
+import { useDialogFocus } from "../../hooks/useDialogFocus";
+import { cn } from "../../lib/utils";
+import { Button } from "../ui/Button";
+import { coarseHitAreaCls } from "../ui/controlStyles";
 
 interface AgentEditPanelProps {
-  isOpen: boolean
-  onClose: () => void
-  title: string
-  headerContent?: ReactNode
-  footer?: ReactNode
-  children: ReactNode
+  isOpen: boolean;
+  onClose: () => void;
+  title: string;
+  headerContent?: ReactNode;
+  footer?: ReactNode;
+  children: ReactNode;
 }
 
 export function AgentEditPanel({
@@ -21,12 +21,12 @@ export function AgentEditPanel({
   footer,
   children,
 }: AgentEditPanelProps) {
-  const panelRef = useRef<HTMLDivElement>(null)
-  const titleId = useId()
-  useDialogFocus({ ref: panelRef, isOpen, onClose })
+  const panelRef = useRef<HTMLDivElement>(null);
+  const titleId = useId();
+  useDialogFocus({ ref: panelRef, isOpen, onClose });
   useLayoutEffect(() => {
-    panelRef.current?.toggleAttribute('inert', !isOpen)
-  }, [isOpen])
+    panelRef.current?.toggleAttribute("inert", !isOpen);
+  }, [isOpen]);
 
   return (
     <>
@@ -39,22 +39,22 @@ export function AgentEditPanel({
       <div
         ref={panelRef}
         tabIndex={-1}
-        role={isOpen ? 'dialog' : undefined}
+        role={isOpen ? "dialog" : undefined}
         aria-modal={isOpen ? true : undefined}
         aria-labelledby={isOpen ? titleId : undefined}
         aria-hidden={isOpen ? undefined : true}
         className={cn(
-          'fixed right-0 top-0 z-[100] flex h-full w-[480px] max-w-[90vw] flex-col border-l border-[var(--border)] bg-[var(--bg-secondary)] outline-none transition-transform duration-[250ms] ease-out',
-          'max-md:w-screen max-md:max-w-full',
-          isOpen ? 'translate-x-0' : 'translate-x-full',
+          "fixed top-0 right-0 z-[100] flex h-full w-[480px] max-w-[90vw] flex-col border-l border-[var(--border)] bg-[var(--bg-secondary)] transition-transform duration-[250ms] ease-out outline-none",
+          "max-md:w-screen max-md:max-w-full",
+          isOpen ? "translate-x-0" : "translate-x-full",
         )}
-        onClick={event => event.stopPropagation()}
+        onClick={(event) => event.stopPropagation()}
       >
         <div className="flex-shrink-0 border-b border-[var(--border)] px-5 py-4">
           <div className="flex items-center justify-between">
             <h2
               id={titleId}
-              className="text-[length:var(--text-sm)] font-semibold uppercase tracking-[0.05em] text-[var(--text-muted)]"
+              className="text-[length:var(--text-sm)] font-semibold tracking-[0.05em] text-[var(--text-muted)] uppercase"
             >
               {title}
             </h2>
@@ -91,5 +91,5 @@ export function AgentEditPanel({
         )}
       </div>
     </>
-  )
+  );
 }

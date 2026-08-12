@@ -218,7 +218,8 @@ async function installTerminalSocket(page: Page): Promise<TerminalHarness> {
             JSON.stringify({
               type: "terminal_output",
               run_id: streamingId,
-              data: OUTPUT_BY_STREAM[streamingId] ?? "Unknown terminal output\r\n",
+              data:
+                OUTPUT_BY_STREAM[streamingId] ?? "Unknown terminal output\r\n",
             }),
           );
         }
@@ -242,7 +243,9 @@ async function openTerminalTab(page: Page): Promise<void> {
     .click();
 
   await expect(tabTrigger).toContainText("Terminal");
-  await expect(page.getByRole("combobox", { name: "Terminal session" })).toBeVisible({
+  await expect(
+    page.getByRole("combobox", { name: "Terminal session" }),
+  ).toBeVisible({
     timeout: 15_000,
   });
 }
@@ -254,7 +257,10 @@ async function chooseTerminalSession(page: Page, name: string): Promise<void> {
   await expect(picker).toContainText(name);
 }
 
-function messagesOfType(harness: TerminalHarness, type: string): Array<Record<string, unknown>> {
+function messagesOfType(
+  harness: TerminalHarness,
+  type: string,
+): Array<Record<string, unknown>> {
   return harness.messages.filter((message) => message.type === type);
 }
 
@@ -262,24 +268,28 @@ test.beforeEach(async ({ page }) => {
   await installApiMocks(page);
 });
 
-test("renders ANSI output and row-grid styling in the activity terminal", async ({ page }) => {
+test("renders ANSI output and row-grid styling in the activity terminal", async ({
+  page,
+}) => {
   await installTerminalSocket(page);
   await openTerminalTab(page);
   await chooseTerminalSession(page, "test-session");
 
   const terminal = page.getByTestId("terminal-view");
-  await expect(terminal).toContainText("Default foreground text for comparison");
+  await expect(terminal).toContainText(
+    "Default foreground text for comparison",
+  );
 
   const renderedStyle = await terminal.locator(".wterm").evaluate((element) => {
-    const row = Array.from(element.querySelectorAll<HTMLElement>(".term-row")).find((item) =>
-      item.textContent?.includes("[31] Red"),
-    );
-    const redRun = Array.from(element.querySelectorAll<HTMLElement>(".term-row > span")).find(
-      (item) => item.textContent?.includes("[31] Red"),
-    );
-    const defaultRun = Array.from(element.querySelectorAll<HTMLElement>(".term-row > span")).find(
-      (item) => item.textContent?.includes("Default foreground text"),
-    );
+    const row = Array.from(
+      element.querySelectorAll<HTMLElement>(".term-row"),
+    ).find((item) => item.textContent?.includes("[31] Red"));
+    const redRun = Array.from(
+      element.querySelectorAll<HTMLElement>(".term-row > span"),
+    ).find((item) => item.textContent?.includes("[31] Red"));
+    const defaultRun = Array.from(
+      element.querySelectorAll<HTMLElement>(".term-row > span"),
+    ).find((item) => item.textContent?.includes("Default foreground text"));
     if (!row || !redRun || !defaultRun) {
       throw new Error("Expected ANSI and default terminal rows");
     }
@@ -291,7 +301,9 @@ test("renders ANSI output and row-grid styling in the activity terminal", async 
       redColor: getComputedStyle(redRun).color,
       rowHeight: rowStyle.height,
       rowLineHeight: rowStyle.lineHeight,
-      rowHeightToken: terminalStyle.getPropertyValue("--term-row-height").trim(),
+      rowHeightToken: terminalStyle
+        .getPropertyValue("--term-row-height")
+        .trim(),
     };
   });
 
@@ -309,7 +321,9 @@ test("forwards composer input and detaches before switching terminal sessions", 
   await openTerminalTab(page);
 
   const terminal = page.getByTestId("terminal-view");
-  await expect(terminal).toContainText("Default foreground text for comparison");
+  await expect(terminal).toContainText(
+    "Default foreground text for comparison",
+  );
   await expect
     .poll(() => messagesOfType(harness, "tmux_attach"))
     .toContainEqual(
@@ -328,7 +342,9 @@ test("forwards composer input and detaches before switching terminal sessions", 
   await expect
     .poll(() =>
       messagesOfType(harness, "terminal_input")
-        .filter((message) => ["status\r", "\x1b", "\x03"].includes(String(message.data)))
+        .filter((message) =>
+          ["status\r", "\x1b", "\x03"].includes(String(message.data)),
+        )
         .map(({ run_id, data }) => ({ run_id, data })),
     )
     .toEqual([
@@ -357,23 +373,32 @@ test("forwards composer input and detaches before switching terminal sessions", 
     );
   const firstDetachIndex = harness.messages.findIndex(
     (message) =>
-      message.type === "tmux_detach" && message.streaming_id === STREAM_IDS["test-session"],
+      message.type === "tmux_detach" &&
+      message.streaming_id === STREAM_IDS["test-session"],
   );
   const secondAttachIndex = harness.messages.findIndex(
-    (message) => message.type === "tmux_attach" && message.session_name === "second-session",
+    (message) =>
+      message.type === "tmux_attach" &&
+      message.session_name === "second-session",
   );
 
   expect(firstDetachIndex).toBeGreaterThan(-1);
   expect(secondAttachIndex).toBeGreaterThan(firstDetachIndex);
 });
 
-test("keeps streamed output visible when Ghostty WASM falls back", async ({ page }) => {
+test("keeps streamed output visible when Ghostty WASM falls back", async ({
+  page,
+}) => {
   await page.route("**/wasm/ghostty-vt.wasm", (route) => route.abort());
   await installTerminalSocket(page);
   await openTerminalTab(page);
 
   const terminal = page.getByTestId("terminal-view");
-  await expect(page.getByText("Reduced terminal fidelity", { exact: true })).toBeVisible();
-  await expect(terminal).toContainText("Default foreground text for comparison");
+  await expect(
+    page.getByText("Reduced terminal fidelity", { exact: true }),
+  ).toBeVisible();
+  await expect(terminal).toContainText(
+    "Default foreground text for comparison",
+  );
   await expect(terminal.locator(".term-row")).not.toHaveCount(0);
 });

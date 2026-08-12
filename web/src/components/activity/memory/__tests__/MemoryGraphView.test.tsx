@@ -53,7 +53,12 @@ function setupFetch() {
   };
 
   const fetchMock = vi.fn(async (input: RequestInfo | URL) => {
-    const url = typeof input === "string" ? input : input instanceof URL ? input.toString() : input.url;
+    const url =
+      typeof input === "string"
+        ? input
+        : input instanceof URL
+          ? input.toString()
+          : input.url;
 
     if (url.includes("/api/memories/stats")) {
       return jsonResponse({
@@ -87,7 +92,9 @@ describe("Memory graph activity view", () => {
 
     const buttonClose = render(
       <MemoryGraphView
-        fetchKnowledgeGraph={vi.fn().mockResolvedValue({ entities: [], relationships: [] })}
+        fetchKnowledgeGraph={vi
+          .fn()
+          .mockResolvedValue({ entities: [], relationships: [] })}
         fetchEntityNeighbors={vi.fn()}
         releasePanelOverride={releasePanelOverride}
         onClose={onClose}
@@ -103,7 +110,9 @@ describe("Memory graph activity view", () => {
 
     const escapeClose = render(
       <MemoryGraphView
-        fetchKnowledgeGraph={vi.fn().mockResolvedValue({ entities: [], relationships: [] })}
+        fetchKnowledgeGraph={vi
+          .fn()
+          .mockResolvedValue({ entities: [], relationships: [] })}
         fetchEntityNeighbors={vi.fn()}
         releasePanelOverride={releasePanelOverride}
         onClose={onClose}
@@ -116,7 +125,9 @@ describe("Memory graph activity view", () => {
 
     const unmountClose = render(
       <MemoryGraphView
-        fetchKnowledgeGraph={vi.fn().mockResolvedValue({ entities: [], relationships: [] })}
+        fetchKnowledgeGraph={vi
+          .fn()
+          .mockResolvedValue({ entities: [], relationships: [] })}
         fetchEntityNeighbors={vi.fn()}
         releasePanelOverride={releasePanelOverride}
         onClose={vi.fn()}
@@ -140,21 +151,29 @@ describe("Memory graph activity view", () => {
       />,
     );
 
-    expect(await screen.findByRole("button", { name: "Show Graph" })).toBeInTheDocument();
+    expect(
+      await screen.findByRole("button", { name: "Show Graph" }),
+    ).toBeInTheDocument();
     await userEvent.click(screen.getByRole("button", { name: "Show Graph" }));
 
     expect(requestPanelOverride).toHaveBeenCalledTimes(1);
     // The secondary "Memory graph" statusbar is gone (#19153) — close lives in
     // the graph toolbar, so the panel is all canvas.
-    expect(screen.queryByRole("heading", { name: "Memory graph" })).not.toBeInTheDocument();
+    expect(
+      screen.queryByRole("heading", { name: "Memory graph" }),
+    ).not.toBeInTheDocument();
     expect(await screen.findByTestId("knowledge-graph")).toBeInTheDocument();
-    expect(screen.queryByRole("textbox", { name: "Memory content" })).not.toBeInTheDocument();
+    expect(
+      screen.queryByRole("textbox", { name: "Memory content" }),
+    ).not.toBeInTheDocument();
 
     await userEvent.click(screen.getByRole("button", { name: "Close graph" }));
 
     expect(releasePanelOverride).toHaveBeenCalledTimes(1);
     await waitFor(() =>
-      expect(screen.getByRole("textbox", { name: "Memory content" })).toBeInTheDocument(),
+      expect(
+        screen.getByRole("textbox", { name: "Memory content" }),
+      ).toBeInTheDocument(),
     );
   });
 
@@ -170,8 +189,12 @@ describe("Memory graph activity view", () => {
       />,
     );
 
-    expect(await screen.findByText("Graph opens on desktop only.")).toBeInTheDocument();
-    expect(screen.queryByRole("button", { name: "Graph" })).not.toBeInTheDocument();
+    expect(
+      await screen.findByText("Graph opens on desktop only."),
+    ).toBeInTheDocument();
+    expect(
+      screen.queryByRole("button", { name: "Graph" }),
+    ).not.toBeInTheDocument();
     expect(screen.queryByTestId("knowledge-graph")).not.toBeInTheDocument();
   });
 });

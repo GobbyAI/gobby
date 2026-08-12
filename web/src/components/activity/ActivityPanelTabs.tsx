@@ -225,6 +225,7 @@ export const ACTIVITY_PANEL_TABS: ActivityPanelTab[] = [
   // and event-driven tab selection can no longer land on it either.
 ];
 
-export const ACTIVITY_PANEL_DROPDOWN_TABS = [...ACTIVITY_PANEL_TABS].sort((left, right) =>
-  left.label.localeCompare(right.label, undefined, { sensitivity: "base" }),
+export const ACTIVITY_PANEL_DROPDOWN_TABS = [...ACTIVITY_PANEL_TABS].sort(
+  (left, right) =>
+    left.label.localeCompare(right.label, undefined, { sensitivity: "base" }),
 );

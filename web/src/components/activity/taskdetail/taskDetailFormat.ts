@@ -19,11 +19,7 @@ import type { PatchFieldValue } from "../useTaskInlineEdit";
  */
 
 export type StageVariant =
-  | "active"
-  | "blocked"
-  | "closed"
-  | "escalated"
-  | "default";
+  "active" | "blocked" | "closed" | "escalated" | "default";
 
 export function formatTaskDetailDate(iso: string | null | undefined): string {
   if (!iso) return "—";

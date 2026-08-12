@@ -110,7 +110,8 @@ export function useChatControlActions(
     } catch {
       return false;
     }
-    if (wsRef.current !== socket || socket.readyState !== WebSocket.OPEN) return false;
+    if (wsRef.current !== socket || socket.readyState !== WebSocket.OPEN)
+      return false;
 
     setCurrentMode(normalizedMode);
     setPlanPendingApproval(false);
@@ -132,17 +133,20 @@ export function useChatControlActions(
     [],
   );
 
-  const sendProjectChange: SendProjectChangeAction = useCallback((projectId) => {
-    if (!wsRef.current || wsRef.current.readyState !== WebSocket.OPEN) return;
-    if (!conversationIdRef.current) return;
-    wsRef.current.send(
-      JSON.stringify({
-        type: "set_project",
-        project_id: projectId,
-        conversation_id: conversationIdRef.current,
-      }),
-    );
-  }, []);
+  const sendProjectChange: SendProjectChangeAction = useCallback(
+    (projectId) => {
+      if (!wsRef.current || wsRef.current.readyState !== WebSocket.OPEN) return;
+      if (!conversationIdRef.current) return;
+      wsRef.current.send(
+        JSON.stringify({
+          type: "set_project",
+          project_id: projectId,
+          conversation_id: conversationIdRef.current,
+        }),
+      );
+    },
+    [],
+  );
 
   const sendAgentChange: SendAgentChangeAction = useCallback((agentName) => {
     if (!wsRef.current || wsRef.current.readyState !== WebSocket.OPEN) return;

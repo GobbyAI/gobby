@@ -52,7 +52,13 @@ const MENU_GAP = 4;
    session rows, task rows) renders this — no per-surface copies. */
 export function KebabIcon() {
   return (
-    <svg width="16" height="16" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true">
+    <svg
+      width="16"
+      height="16"
+      viewBox="0 0 24 24"
+      fill="currentColor"
+      aria-hidden="true"
+    >
       <circle cx="12" cy="5" r="2" />
       <circle cx="12" cy="12" r="2" />
       <circle cx="12" cy="19" r="2" />
@@ -164,13 +170,23 @@ export function QuickMenu({
     // has real dimensions.
     if (!triggerRect || !menuRect || menuRect.width === 0) return;
 
-    const viewportWidth = window.innerWidth || document.documentElement.clientWidth;
-    const viewportHeight = window.innerHeight || document.documentElement.clientHeight;
-    const maxLeft = Math.max(VIEWPORT_GUTTER, viewportWidth - menuRect.width - VIEWPORT_GUTTER);
-    const left = clamp(triggerRect.right - menuRect.width, VIEWPORT_GUTTER, maxLeft);
+    const viewportWidth =
+      window.innerWidth || document.documentElement.clientWidth;
+    const viewportHeight =
+      window.innerHeight || document.documentElement.clientHeight;
+    const maxLeft = Math.max(
+      VIEWPORT_GUTTER,
+      viewportWidth - menuRect.width - VIEWPORT_GUTTER,
+    );
+    const left = clamp(
+      triggerRect.right - menuRect.width,
+      VIEWPORT_GUTTER,
+      maxLeft,
+    );
     const belowTop = triggerRect.bottom + MENU_GAP;
     const aboveTop = triggerRect.top - menuRect.height - MENU_GAP;
-    const fitsBelow = belowTop + menuRect.height <= viewportHeight - VIEWPORT_GUTTER;
+    const fitsBelow =
+      belowTop + menuRect.height <= viewportHeight - VIEWPORT_GUTTER;
     const top = fitsBelow ? belowTop : Math.max(VIEWPORT_GUTTER, aboveTop);
 
     setMenuStyle({
@@ -204,7 +220,10 @@ export function QuickMenu({
 
   useEffect(() => {
     if (!isOpen) return;
-    itemRefs.current = itemRefs.current.slice(0, items.filter(isActionItem).length);
+    itemRefs.current = itemRefs.current.slice(
+      0,
+      items.filter(isActionItem).length,
+    );
     enabledItems()[0]?.focus();
   }, [enabledItems, isOpen, items]);
 
@@ -219,13 +238,17 @@ export function QuickMenu({
       return;
     }
     if (focusableItems.length === 0) return;
-    const currentIndex = focusableItems.indexOf(document.activeElement as HTMLButtonElement);
+    const currentIndex = focusableItems.indexOf(
+      document.activeElement as HTMLButtonElement,
+    );
     if (event.key === "ArrowDown") {
       event.preventDefault();
       focusMenuItem(currentIndex === -1 ? 0 : currentIndex + 1);
     } else if (event.key === "ArrowUp") {
       event.preventDefault();
-      focusMenuItem(currentIndex === -1 ? focusableItems.length - 1 : currentIndex - 1);
+      focusMenuItem(
+        currentIndex === -1 ? focusableItems.length - 1 : currentIndex - 1,
+      );
     } else if (event.key === "Home") {
       event.preventDefault();
       focusMenuItem(0);
@@ -308,7 +331,7 @@ export function QuickMenu({
                   }}
                   className={cn(
                     "session-ctx-item quick-menu-item",
-                    "flex min-h-8 w-full items-center gap-2 border-0 bg-transparent px-2.5 py-1.5 text-left text-[length:var(--text-md)] text-[var(--text-primary)] hover:bg-[var(--bg-tertiary)] focus-visible:outline-2 focus-visible:outline-accent focus-visible:outline-offset-2 disabled:cursor-not-allowed disabled:opacity-[0.55] pointer-coarse:min-h-11",
+                    "flex min-h-8 w-full items-center gap-2 border-0 bg-transparent px-2.5 py-1.5 text-left text-[length:var(--text-md)] text-[var(--text-primary)] hover:bg-[var(--bg-tertiary)] focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-accent disabled:cursor-not-allowed disabled:opacity-[0.55] pointer-coarse:min-h-11",
                     item.destructive &&
                       "session-ctx-item--destructive text-[var(--color-error)] hover:bg-[color-mix(in_srgb,var(--color-error)_10%,transparent)]",
                     coarseHitAreaCls,

@@ -1,13 +1,16 @@
-import { useCallback, useState } from 'react'
-import { Button } from '../ui/Button'
-import { Input } from '../ui/Input'
-import { coarseHitAreaCls } from '../ui/controlStyles'
-import { getAgentEditorCaughtError, getAgentEditorResponseError } from './agent-editor-errors'
+import { useCallback, useState } from "react";
+import { Button } from "../ui/Button";
+import { Input } from "../ui/Input";
+import { coarseHitAreaCls } from "../ui/controlStyles";
+import {
+  getAgentEditorCaughtError,
+  getAgentEditorResponseError,
+} from "./agent-editor-errors";
 
 interface AgentVariablesEditorProps {
-  definitionId?: string | null
-  variables: Record<string, unknown>
-  onVariablesChange: (variables: Record<string, unknown>) => void
+  definitionId?: string | null;
+  variables: Record<string, unknown>;
+  onVariablesChange: (variables: Record<string, unknown>) => void;
 }
 
 export function AgentVariablesEditor({
@@ -15,78 +18,97 @@ export function AgentVariablesEditor({
   variables,
   onVariablesChange,
 }: AgentVariablesEditorProps) {
-  const [newKey, setNewKey] = useState('')
-  const [newValue, setNewValue] = useState('')
-  const [adding, setAdding] = useState(false)
-  const [actionError, setActionError] = useState<string | null>(null)
+  const [newKey, setNewKey] = useState("");
+  const [newValue, setNewValue] = useState("");
+  const [adding, setAdding] = useState(false);
+  const [actionError, setActionError] = useState<string | null>(null);
 
-  const entries = Object.entries(variables)
+  const entries = Object.entries(variables);
 
   const handleSet = useCallback(
     async (key: string, value: string) => {
-      setActionError(null)
-      let parsed: unknown = value
+      setActionError(null);
+      let parsed: unknown = value;
       try {
-        parsed = JSON.parse(value)
+        parsed = JSON.parse(value);
       } catch {
         // Keep non-JSON values as strings.
       }
       if (!definitionId) {
-        onVariablesChange({ ...variables, [key]: parsed })
-        return
+        onVariablesChange({ ...variables, [key]: parsed });
+        return;
       }
       try {
-        const res = await fetch(`/api/agents/definitions/${definitionId}/variables`, {
-          method: 'PATCH',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ set: { [key]: parsed } }),
-        })
+        const res = await fetch(
+          `/api/agents/definitions/${definitionId}/variables`,
+          {
+            method: "PATCH",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ set: { [key]: parsed } }),
+          },
+        );
         if (!res.ok) {
-          throw new Error(await getAgentEditorResponseError(res, 'Failed to set variable'))
+          throw new Error(
+            await getAgentEditorResponseError(res, "Failed to set variable"),
+          );
         }
-        const data = await res.json()
-        onVariablesChange(data.variables || { ...variables, [key]: parsed })
+        const data = await res.json();
+        onVariablesChange(data.variables || { ...variables, [key]: parsed });
       } catch (error) {
-        setActionError(getAgentEditorCaughtError(error, 'Failed to set variable'))
+        setActionError(
+          getAgentEditorCaughtError(error, "Failed to set variable"),
+        );
       }
     },
     [definitionId, variables, onVariablesChange],
-  )
+  );
 
   const handleRemove = useCallback(
     async (key: string) => {
-      setActionError(null)
+      setActionError(null);
       if (!definitionId) {
-        onVariablesChange(Object.fromEntries(entries.filter(([entryKey]) => entryKey !== key)))
-        return
+        onVariablesChange(
+          Object.fromEntries(entries.filter(([entryKey]) => entryKey !== key)),
+        );
+        return;
       }
       try {
-        const res = await fetch(`/api/agents/definitions/${definitionId}/variables`, {
-          method: 'PATCH',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ remove: [key] }),
-        })
+        const res = await fetch(
+          `/api/agents/definitions/${definitionId}/variables`,
+          {
+            method: "PATCH",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ remove: [key] }),
+          },
+        );
         if (!res.ok) {
-          throw new Error(await getAgentEditorResponseError(res, 'Failed to remove variable'))
+          throw new Error(
+            await getAgentEditorResponseError(res, "Failed to remove variable"),
+          );
         }
-        const data = await res.json()
+        const data = await res.json();
         onVariablesChange(
-          data.variables || Object.fromEntries(entries.filter(([entryKey]) => entryKey !== key)),
-        )
+          data.variables ||
+            Object.fromEntries(
+              entries.filter(([entryKey]) => entryKey !== key),
+            ),
+        );
       } catch (error) {
-        setActionError(getAgentEditorCaughtError(error, 'Failed to remove variable'))
+        setActionError(
+          getAgentEditorCaughtError(error, "Failed to remove variable"),
+        );
       }
     },
     [definitionId, entries, onVariablesChange],
-  )
+  );
 
   const handleAdd = () => {
-    if (!newKey.trim()) return
-    void handleSet(newKey.trim(), newValue)
-    setNewKey('')
-    setNewValue('')
-    setAdding(false)
-  }
+    if (!newKey.trim()) return;
+    void handleSet(newKey.trim(), newValue);
+    setNewKey("");
+    setNewValue("");
+    setAdding(false);
+  };
 
   return (
     <div className="flex flex-col gap-2">
@@ -107,9 +129,11 @@ export function AgentVariablesEditor({
         <div className="flex flex-col gap-1">
           {entries.map(([key, value]) => (
             <div key={key} className="flex items-center gap-2 text-sm">
-              <code className="min-w-20 font-semibold text-[var(--text-primary)]">{key}</code>
+              <code className="min-w-20 font-semibold text-[var(--text-primary)]">
+                {key}
+              </code>
               <span className="flex-1 overflow-hidden text-ellipsis whitespace-nowrap text-[var(--text-muted)]">
-                {typeof value === 'string' ? value : JSON.stringify(value)}
+                {typeof value === "string" ? value : JSON.stringify(value)}
               </span>
               <Button
                 type="button"
@@ -126,7 +150,11 @@ export function AgentVariablesEditor({
           ))}
         </div>
       ) : (
-        !adding && <span className="text-sm italic text-[var(--text-muted)]">No variables set</span>
+        !adding && (
+          <span className="text-sm text-[var(--text-muted)] italic">
+            No variables set
+          </span>
+        )
       )}
       {adding ? (
         <div className="flex items-center gap-1.5">
@@ -145,7 +173,7 @@ export function AgentVariablesEditor({
             onChange={(event) => setNewValue(event.target.value)}
             placeholder="Value"
             onKeyDown={(event) => {
-              if (event.key === 'Enter') handleAdd()
+              if (event.key === "Enter") handleAdd();
             }}
           />
           <Button
@@ -181,5 +209,5 @@ export function AgentVariablesEditor({
         </Button>
       )}
     </div>
-  )
+  );
 }

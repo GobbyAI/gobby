@@ -1,26 +1,32 @@
-import { useEffect, useState } from 'react'
-import { Button } from '../ui/Button'
-import { Chip } from '../ui/Chip'
-import { NativeSelect } from '../ui/NativeSelect'
-import { coarseHitAreaCls } from '../ui/controlStyles'
+import { useEffect, useState } from "react";
+import { Button } from "../ui/Button";
+import { Chip } from "../ui/Chip";
+import { NativeSelect } from "../ui/NativeSelect";
+import { coarseHitAreaCls } from "../ui/controlStyles";
 
 interface SkillInfo {
-  name: string
-  description?: string
+  name: string;
+  description?: string;
 }
 
 interface AgentSkillsEditorProps {
-  skills: string[]
-  onSkillsChange: (skills: string[]) => void
-  projectId?: string
+  skills: string[];
+  onSkillsChange: (skills: string[]) => void;
+  projectId?: string;
 }
 
-export function AgentSkillsEditor({ skills, onSkillsChange, projectId }: AgentSkillsEditorProps) {
-  const [availableSkills, setAvailableSkills] = useState<SkillInfo[]>([])
-  const [adding, setAdding] = useState(false)
+export function AgentSkillsEditor({
+  skills,
+  onSkillsChange,
+  projectId,
+}: AgentSkillsEditorProps) {
+  const [availableSkills, setAvailableSkills] = useState<SkillInfo[]>([]);
+  const [adding, setAdding] = useState(false);
 
   useEffect(() => {
-    const params = projectId ? `?project_id=${encodeURIComponent(projectId)}` : ''
+    const params = projectId
+      ? `?project_id=${encodeURIComponent(projectId)}`
+      : "";
     fetch(`/api/skills${params}`)
       .then((response) => response.json())
       .then((data) => {
@@ -29,18 +35,23 @@ export function AgentSkillsEditor({ skills, onSkillsChange, projectId }: AgentSk
             name: skill.name,
             description: skill.description,
           })),
-        )
+        );
       })
-      .catch(() => setAvailableSkills([]))
-  }, [projectId])
+      .catch(() => setAvailableSkills([]));
+  }, [projectId]);
 
-  const addableSkills = availableSkills.filter((skill) => !skills.includes(skill.name))
+  const addableSkills = availableSkills.filter(
+    (skill) => !skills.includes(skill.name),
+  );
 
   return (
     <div className="flex flex-col gap-2">
       <div className="flex flex-wrap items-center gap-1.5">
         {skills.map((name) => (
-          <Chip key={name} className="gap-1 border border-border pl-2.5 pr-2 text-sm">
+          <Chip
+            key={name}
+            className="gap-1 border border-border pr-2 pl-2.5 text-sm"
+          >
             {name}
             <Button
               type="button"
@@ -48,7 +59,9 @@ export function AgentSkillsEditor({ skills, onSkillsChange, projectId }: AgentSk
               size="icon"
               dense
               className={`${coarseHitAreaCls} min-h-0 w-auto px-0.5 text-base leading-none hover:text-[var(--color-error)]`}
-              onClick={() => onSkillsChange(skills.filter((skill) => skill !== name))}
+              onClick={() =>
+                onSkillsChange(skills.filter((skill) => skill !== name))
+              }
               title={`Remove ${name}`}
             >
               &times;
@@ -56,7 +69,9 @@ export function AgentSkillsEditor({ skills, onSkillsChange, projectId }: AgentSk
           </Chip>
         ))}
         {skills.length === 0 && !adding && (
-          <span className="text-sm italic text-[var(--text-muted)]">No skills assigned</span>
+          <span className="text-sm text-[var(--text-muted)] italic">
+            No skills assigned
+          </span>
         )}
       </div>
       {adding ? (
@@ -68,8 +83,8 @@ export function AgentSkillsEditor({ skills, onSkillsChange, projectId }: AgentSk
           value=""
           onChange={(event) => {
             if (event.target.value) {
-              onSkillsChange([...skills, event.target.value])
-              setAdding(false)
+              onSkillsChange([...skills, event.target.value]);
+              setAdding(false);
             }
           }}
           onBlur={() => setAdding(false)}
@@ -80,7 +95,9 @@ export function AgentSkillsEditor({ skills, onSkillsChange, projectId }: AgentSk
               {skill.name}
             </option>
           ))}
-          {addableSkills.length === 0 && <option disabled>No skills available</option>}
+          {addableSkills.length === 0 && (
+            <option disabled>No skills available</option>
+          )}
         </NativeSelect>
       ) : (
         <Button
@@ -95,5 +112,5 @@ export function AgentSkillsEditor({ skills, onSkillsChange, projectId }: AgentSk
         </Button>
       )}
     </div>
-  )
+  );
 }

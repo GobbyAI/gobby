@@ -86,7 +86,8 @@ describe("CommandPalette", () => {
           value: originalScrollIntoView,
         });
       } else {
-        delete (Element.prototype as { scrollIntoView?: unknown }).scrollIntoView;
+        delete (Element.prototype as { scrollIntoView?: unknown })
+          .scrollIntoView;
       }
     }
   });
@@ -114,7 +115,9 @@ describe("CommandPalette", () => {
       />,
     );
 
-    const refs = screen.getAllByTestId("session-ref").map((el) => el.textContent);
+    const refs = screen
+      .getAllByTestId("session-ref")
+      .map((el) => el.textContent);
     expect(refs).toEqual(["#42", "#13", "#5"]);
   });
 
@@ -161,11 +164,9 @@ describe("CommandPalette", () => {
     fireEvent.keyDown(input, { key: "Enter" });
     fireEvent.keyDown(input, { key: "Backspace" });
 
-    expect(screen.getAllByTestId("session-ref").map((el) => el.textContent)).toEqual([
-      "#1",
-      "#30",
-      "#20",
-    ]);
+    expect(
+      screen.getAllByTestId("session-ref").map((el) => el.textContent),
+    ).toEqual(["#1", "#30", "#20"]);
     expect(onSelectSession).toHaveBeenCalledWith(todaySession);
     expect(onDeleteSession).toHaveBeenCalledWith(todaySession);
   });
@@ -196,7 +197,9 @@ describe("CommandPalette", () => {
     const { rerender } = render(<CommandPalette {...props} isOpen={true} />);
     const dialog = screen.getByRole("dialog", { name: "Command palette" });
     const combobox = screen.getByRole("combobox");
-    const listbox = screen.getByRole("listbox", { name: "Command palette results" });
+    const listbox = screen.getByRole("listbox", {
+      name: "Command palette results",
+    });
     const options = screen.getAllByRole("option");
 
     expect(dialog).toHaveAttribute("aria-modal", "true");

@@ -1,17 +1,22 @@
-import { readFileSync } from 'node:fs'
-import { join } from 'node:path'
+import { readFileSync } from "node:fs";
+import { join } from "node:path";
 
-import { describe, expect, it } from 'vitest'
+import { describe, expect, it } from "vitest";
 
-const focusManagedInputs: readonly string[] = []
+const focusManagedInputs: readonly string[] = [];
 
-describe('shared input focus styles', () => {
-  it('uses inputFocusCls instead of suppressing outlines locally', () => {
+describe("shared input focus styles", () => {
+  it("uses inputFocusCls instead of suppressing outlines locally", () => {
     for (const file of focusManagedInputs) {
-      const source = readFileSync(join(process.cwd(), 'src/components', file), 'utf8')
+      const source = readFileSync(
+        join(process.cwd(), "src/components", file),
+        "utf8",
+      );
 
-      expect(source, file).toContain('inputFocusCls')
-      expect(source, file).not.toMatch(/(?:^|\s)(?:focus:)?outline-none(?:\s|['"`])/)
+      expect(source, file).toContain("inputFocusCls");
+      expect(source, file).not.toMatch(
+        /(?:^|\s)(?:focus:)?outline-none(?:\s|['"`])/,
+      );
     }
-  })
-})
+  });
+});

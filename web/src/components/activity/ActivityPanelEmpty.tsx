@@ -1,10 +1,10 @@
-import { memo, type ReactNode } from 'react'
+import { memo, type ReactNode } from "react";
 
 interface ActivityPanelEmptyProps {
-  icon?: ReactNode
-  heading?: string
-  body: string
-  footer?: ReactNode
+  icon?: ReactNode;
+  heading?: string;
+  body: string;
+  footer?: ReactNode;
 }
 
 export const ActivityPanelEmpty = memo(function ActivityPanelEmpty({
@@ -33,19 +33,19 @@ export const ActivityPanelEmpty = memo(function ActivityPanelEmpty({
       </p>
       {footer}
     </div>
-  )
-})
+  );
+});
 
 const ICON_PROPS = {
   width: 48,
   height: 48,
-  viewBox: '0 0 24 24',
-  fill: 'none',
-  stroke: 'currentColor',
+  viewBox: "0 0 24 24",
+  fill: "none",
+  stroke: "currentColor",
   strokeWidth: 1.5,
-  strokeLinecap: 'round',
-  strokeLinejoin: 'round',
-} as const
+  strokeLinecap: "round",
+  strokeLinejoin: "round",
+} as const;
 
 export function PlansEmptyIcon() {
   return (
@@ -55,7 +55,7 @@ export function PlansEmptyIcon() {
       <path d="m9 11 1.5 1.5L13 10" />
       <path d="M9 16h6" />
     </svg>
-  )
+  );
 }
 
 export function ChangesEmptyIcon() {
@@ -68,7 +68,7 @@ export function ChangesEmptyIcon() {
       <path d="M15 18H8a2 2 0 0 1-2-2V9" />
       <path d="m11 13-3 3 3 3" />
     </svg>
-  )
+  );
 }
 
 export function TasksEmptyIcon() {
@@ -79,7 +79,7 @@ export function TasksEmptyIcon() {
       <path d="M13 8h8" />
       <path d="M13 15h8" />
     </svg>
-  )
+  );
 }
 
 export function SessionsEmptyIcon() {
@@ -87,7 +87,7 @@ export function SessionsEmptyIcon() {
     <svg {...ICON_PROPS}>
       <path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z" />
     </svg>
-  )
+  );
 }
 
 export function PipelinesEmptyIcon() {
@@ -99,7 +99,7 @@ export function PipelinesEmptyIcon() {
       <path d="M7 12h3" />
       <path d="M14 12h3" />
     </svg>
-  )
+  );
 }
 
 export function CronEmptyIcon() {
@@ -108,7 +108,7 @@ export function CronEmptyIcon() {
       <circle cx="12" cy="12" r="9" />
       <path d="M12 7v5l3 2" />
     </svg>
-  )
+  );
 }
 
 export function FilesEmptyIcon() {
@@ -116,7 +116,7 @@ export function FilesEmptyIcon() {
     <svg {...ICON_PROPS}>
       <path d="M3 7a2 2 0 0 1 2-2h4l2 2h8a2 2 0 0 1 2 2v8a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z" />
     </svg>
-  )
+  );
 }
 
 export function TracesEmptyIcon() {
@@ -124,5 +124,5 @@ export function TracesEmptyIcon() {
     <svg {...ICON_PROPS}>
       <path d="M3 12h3l3-7 4 14 3-7h5" />
     </svg>
-  )
+  );
 }

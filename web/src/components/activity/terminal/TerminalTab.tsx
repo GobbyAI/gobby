@@ -53,7 +53,9 @@ function StatePanel({ title, body, action, busy = false }: StatePanelProps) {
         ) : null}
         <div className="space-y-1">
           <p className="text-sm font-semibold text-foreground">{title}</p>
-          <p className="text-xs leading-relaxed text-muted-foreground">{body}</p>
+          <p className="text-xs leading-relaxed text-muted-foreground">
+            {body}
+          </p>
         </div>
         {action}
       </div>
@@ -61,7 +63,9 @@ function StatePanel({ title, body, action, busy = false }: StatePanelProps) {
   );
 }
 
-function targetKey(target: { name: string; socket: string } | null): string | null {
+function targetKey(
+  target: { name: string; socket: string } | null,
+): string | null {
   return target ? `${target.socket}:${target.name}` : null;
 }
 
@@ -88,7 +92,9 @@ function loadStoredTerminalTargetKey(): string | null {
   }
 }
 
-function storeTerminalTarget(target: { name: string; socket: string } | null): void {
+function storeTerminalTarget(
+  target: { name: string; socket: string } | null,
+): void {
   try {
     if (target === null) {
       window.sessionStorage.removeItem(TERMINAL_TARGET_STORAGE_KEY);
@@ -142,10 +148,14 @@ export function TerminalTab({
     killSession,
     onOutput,
   } = useTmuxSessions();
-  const [selectedKey, setSelectedKey] = useState<string | null>(loadStoredTerminalTargetKey);
+  const [selectedKey, setSelectedKey] = useState<string | null>(
+    loadStoredTerminalTargetKey,
+  );
   const [listHeight, setListHeight] = useState(30);
   const [endedKey, setEndedKey] = useState<string | null>(null);
-  const [readyContext, setReadyContext] = useState<TerminalContext | null>(null);
+  const [readyContext, setReadyContext] = useState<TerminalContext | null>(
+    null,
+  );
   const [focusNotice, setFocusNotice] = useState<string | null>(null);
   const viewRef = useRef<TerminalViewHandle>(null);
   const streamingIdRef = useRef<string | null>(streamingId);
@@ -159,7 +169,9 @@ export function TerminalTab({
     [sessions, tmuxSessions],
   );
   const selected =
-    joinedSessions.find((session) => sessionKey(session.tmux) === selectedKey) ?? null;
+    joinedSessions.find(
+      (session) => sessionKey(session.tmux) === selectedKey,
+    ) ?? null;
   const attachedKey = targetKey(attachedTarget);
   const terminalContext = useMemo<TerminalContext>(
     () => ({ connected, streamingId }),
@@ -228,7 +240,8 @@ export function TerminalTab({
       consumedFocusIdRef.current = null;
       return;
     }
-    if (!sessionsLoaded || consumedFocusIdRef.current === focusSessionId) return;
+    if (!sessionsLoaded || consumedFocusIdRef.current === focusSessionId)
+      return;
 
     const timer = window.setTimeout(() => {
       if (consumedFocusIdRef.current === focusSessionId) return;
@@ -239,7 +252,8 @@ export function TerminalTab({
         setFocusNotice(null);
       } else {
         setFocusNotice("No live terminal for this session");
-        const fallback = joinedSessions.find((session) => !session.dead) ?? joinedSessions[0];
+        const fallback =
+          joinedSessions.find((session) => !session.dead) ?? joinedSessions[0];
         if (fallback) chooseSession(sessionKey(fallback.tmux));
       }
       onFocusHandled?.();
@@ -261,7 +275,9 @@ export function TerminalTab({
 
   useEffect(() => {
     if (!sessionsLoaded || endedKey !== null) return;
-    const availableKeys = new Set(joinedSessions.map((session) => sessionKey(session.tmux)));
+    const availableKeys = new Set(
+      joinedSessions.map((session) => sessionKey(session.tmux)),
+    );
     const lastAttachedKey = lastAttachedKeyRef.current;
     const vanishedKey =
       lastAttachedKey !== null && !availableKeys.has(lastAttachedKey)
@@ -288,7 +304,8 @@ export function TerminalTab({
     ) {
       return;
     }
-    const fallback = joinedSessions.find((session) => !session.dead) ?? joinedSessions[0];
+    const fallback =
+      joinedSessions.find((session) => !session.dead) ?? joinedSessions[0];
     const timer = window.setTimeout(() => {
       allowInitialSelectionRef.current = false;
       setSelectedKey(sessionKey(fallback.tmux));
@@ -309,7 +326,9 @@ export function TerminalTab({
     ) {
       return;
     }
-    const availableKeys = new Set(joinedSessions.map((session) => sessionKey(session.tmux)));
+    const availableKeys = new Set(
+      joinedSessions.map((session) => sessionKey(session.tmux)),
+    );
     const lastAttachedKey = lastAttachedKeyRef.current;
     if (
       (lastAttachedKey !== null && !availableKeys.has(lastAttachedKey)) ||
@@ -347,7 +366,8 @@ export function TerminalTab({
       ) {
         return;
       }
-      const reportedSize = rows > 0 && cols > 0 ? { rows, cols } : viewRef.current?.getSize();
+      const reportedSize =
+        rows > 0 && cols > 0 ? { rows, cols } : viewRef.current?.getSize();
       if (reportedSize) {
         resizeTerminal(reportedSize.rows, reportedSize.cols);
       }
@@ -427,7 +447,11 @@ export function TerminalTab({
         title="Terminal session ended"
         body="The selected socket and tmux session disappeared. Dismiss this notice to choose another live session."
         action={
-          <Button variant="secondary" size="sm" onClick={dismissVanishedSession}>
+          <Button
+            variant="secondary"
+            size="sm"
+            onClick={dismissVanishedSession}
+          >
             Dismiss ended session
           </Button>
         }
@@ -511,9 +535,12 @@ export function TerminalTab({
         {!connected ? (
           <div className="absolute inset-0 z-20 grid place-items-center bg-[var(--bg-primary)]/90">
             <div className="max-w-xs space-y-1 text-center">
-              <p className="text-sm font-semibold text-foreground">Reconnecting</p>
+              <p className="text-sm font-semibold text-foreground">
+                Reconnecting
+              </p>
               <p className="text-xs text-muted-foreground">
-                Waiting for the daemon before confirming this terminal still exists.
+                Waiting for the daemon before confirming this terminal still
+                exists.
               </p>
             </div>
           </div>

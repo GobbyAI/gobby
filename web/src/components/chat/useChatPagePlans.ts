@@ -66,7 +66,9 @@ export function useChatPagePlans({
   const planId =
     planState.switchKey === conversationSwitchKey ? planState.planId : null;
   const pendingPlanId =
-    planState.switchKey === conversationSwitchKey ? planState.pendingPlanId : null;
+    planState.switchKey === conversationSwitchKey
+      ? planState.pendingPlanId
+      : null;
 
   useEffect(() => {
     planStateRef.current = planState;
@@ -77,7 +79,8 @@ export function useChatPagePlans({
     prevChatPendingRef.current = chat.planPendingApproval;
     if (wasPending && !chat.planPendingApproval) {
       setPlanState((previous) =>
-        previous.switchKey === conversationSwitchKey && previous.pendingPlanId !== null
+        previous.switchKey === conversationSwitchKey &&
+        previous.pendingPlanId !== null
           ? { ...previous, pendingPlanId: null }
           : previous,
       );

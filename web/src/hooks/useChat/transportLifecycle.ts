@@ -95,7 +95,8 @@ export function connectChatTransport(
             return;
           }
           if (!data?.messages?.length) return;
-          const backfilled: ChatMessage[] = data.messages.map(mapStoredChatMessage);
+          const backfilled: ChatMessage[] =
+            data.messages.map(mapStoredChatMessage);
           ctx.setMessages((prev) => {
             const existingIds = new Set(prev.map((m) => m.id));
             const newMsgs = backfilled.filter((m) => !existingIds.has(m.id));
@@ -149,7 +150,10 @@ export function connectChatTransport(
     // if reconnect timeout expires (30s).
     window.setTimeout(() => {
       // If still disconnected after 30s, assume the stream is dead
-      if (!ctx.wsRef.current || ctx.wsRef.current.readyState !== WebSocket.OPEN) {
+      if (
+        !ctx.wsRef.current ||
+        ctx.wsRef.current.readyState !== WebSocket.OPEN
+      ) {
         ctx.setIsStreaming(false);
         ctx.setIsThinking(false);
         ctx.activeRequestIdRef.current = null;

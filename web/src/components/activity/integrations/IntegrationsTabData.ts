@@ -1,4 +1,8 @@
-import type { Channel, ChannelStatus, CommsMessage } from "../../../hooks/useIntegrations";
+import type {
+  Channel,
+  ChannelStatus,
+  CommsMessage,
+} from "../../../hooks/useIntegrations";
 import type { IntegrationSavePayload } from "./IntegrationsTabModel";
 
 export class IntegrationApiError extends Error {
@@ -24,21 +28,30 @@ export function isCommunicationsUnavailable(error: unknown): boolean {
 async function fetchJson<T>(url: string, init?: RequestInit): Promise<T> {
   const response = await fetch(url, init);
   if (!response.ok) {
-    throw new IntegrationApiError(`Request failed: ${response.status}`, response.status);
+    throw new IntegrationApiError(
+      `Request failed: ${response.status}`,
+      response.status,
+    );
   }
   return (await response.json()) as T;
 }
 
-function normalizeChannels(data: Channel[] | { channels?: Channel[] }): Channel[] {
+function normalizeChannels(
+  data: Channel[] | { channels?: Channel[] },
+): Channel[] {
   return Array.isArray(data) ? data : (data.channels ?? []);
 }
 
-function normalizeMessages(data: CommsMessage[] | { messages?: CommsMessage[] }): CommsMessage[] {
+function normalizeMessages(
+  data: CommsMessage[] | { messages?: CommsMessage[] },
+): CommsMessage[] {
   return Array.isArray(data) ? data : (data.messages ?? []);
 }
 
 export async function loadIntegrationChannels(): Promise<Channel[]> {
-  const data = await fetchJson<Channel[] | { channels?: Channel[] }>("/api/comms/channels");
+  const data = await fetchJson<Channel[] | { channels?: Channel[] }>(
+    "/api/comms/channels",
+  );
   return normalizeChannels(data);
 }
 
@@ -56,7 +69,9 @@ export async function loadChannelMessages(
   return normalizeMessages(data);
 }
 
-export async function fetchIntegrationStatus(channelId: string): Promise<ChannelStatus | null> {
+export async function fetchIntegrationStatus(
+  channelId: string,
+): Promise<ChannelStatus | null> {
   try {
     return await fetchJson<ChannelStatus>(
       `/api/comms/channels/${encodeURIComponent(channelId)}/status`,
@@ -66,7 +81,9 @@ export async function fetchIntegrationStatus(channelId: string): Promise<Channel
   }
 }
 
-export async function createIntegrationChannel(payload: IntegrationSavePayload): Promise<Channel> {
+export async function createIntegrationChannel(
+  payload: IntegrationSavePayload,
+): Promise<Channel> {
   return await fetchJson<Channel>("/api/comms/channels", {
     method: "POST",
     headers: { "Content-Type": "application/json" },
@@ -87,18 +104,29 @@ export async function updateIntegrationChannel(
     secrets?: Record<string, string>;
   },
 ): Promise<Channel> {
-  return await fetchJson<Channel>(`/api/comms/channels/${encodeURIComponent(channelId)}`, {
-    method: "PUT",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify(updates),
-  });
+  return await fetchJson<Channel>(
+    `/api/comms/channels/${encodeURIComponent(channelId)}`,
+    {
+      method: "PUT",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(updates),
+    },
+  );
 }
 
-export async function deleteIntegrationChannel(channelId: string): Promise<void> {
-  const response = await fetch(`/api/comms/channels/${encodeURIComponent(channelId)}`, {
-    method: "DELETE",
-  });
+export async function deleteIntegrationChannel(
+  channelId: string,
+): Promise<void> {
+  const response = await fetch(
+    `/api/comms/channels/${encodeURIComponent(channelId)}`,
+    {
+      method: "DELETE",
+    },
+  );
   if (!response.ok) {
-    throw new IntegrationApiError(`Request failed: ${response.status}`, response.status);
+    throw new IntegrationApiError(
+      `Request failed: ${response.status}`,
+      response.status,
+    );
   }
 }

@@ -1,1 +1,1 @@
-export { MarkdownBody as Markdown } from '../shared/MarkdownBody'
+export { MarkdownBody as Markdown } from "../shared/MarkdownBody";

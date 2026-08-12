@@ -1,15 +1,20 @@
-import { Dialog, DialogContent, DialogTitle, DialogDescription } from './Dialog'
-import { Button } from './Button'
+import {
+  Dialog,
+  DialogContent,
+  DialogTitle,
+  DialogDescription,
+} from "./Dialog";
+import { Button } from "./Button";
 
 interface ConfirmDialogProps {
-  open: boolean
-  onConfirm: () => void
-  onCancel: () => void
-  title: string
-  description?: string
-  confirmLabel?: string
-  cancelLabel?: string
-  destructive?: boolean
+  open: boolean;
+  onConfirm: () => void;
+  onCancel: () => void;
+  title: string;
+  description?: string;
+  confirmLabel?: string;
+  cancelLabel?: string;
+  destructive?: boolean;
 }
 
 export function ConfirmDialog({
@@ -18,21 +23,33 @@ export function ConfirmDialog({
   onCancel,
   title,
   description,
-  confirmLabel = 'Confirm',
-  cancelLabel = 'Cancel',
+  confirmLabel = "Confirm",
+  cancelLabel = "Cancel",
   destructive = false,
 }: ConfirmDialogProps) {
   return (
-    <Dialog open={open} onOpenChange={(isOpen) => { if (!isOpen) onCancel() }}>
+    <Dialog
+      open={open}
+      onOpenChange={(isOpen) => {
+        if (!isOpen) onCancel();
+      }}
+    >
       <DialogContent className="max-w-sm">
         <DialogTitle>{title}</DialogTitle>
         {description && <DialogDescription>{description}</DialogDescription>}
-        <div style={{ display: 'flex', justifyContent: 'flex-end', gap: '0.5rem', marginTop: '1rem' }}>
+        <div
+          style={{
+            display: "flex",
+            justifyContent: "flex-end",
+            gap: "0.5rem",
+            marginTop: "1rem",
+          }}
+        >
           <Button variant="outline" size="sm" onClick={onCancel}>
             {cancelLabel}
           </Button>
           <Button
-            variant={destructive ? 'destructive' : 'accent'}
+            variant={destructive ? "destructive" : "accent"}
             size="sm"
             onClick={onConfirm}
           >
@@ -41,5 +58,5 @@ export function ConfirmDialog({
         </div>
       </DialogContent>
     </Dialog>
-  )
+  );
 }

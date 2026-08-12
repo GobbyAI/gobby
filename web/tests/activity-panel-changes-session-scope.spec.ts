@@ -67,7 +67,12 @@ async function setupMocks(page: Page, current: SessionRecord) {
       localStorage.setItem("gobby-activity-panel-tab-v2", "changes");
       localStorage.setItem(
         "gobby-settings",
-        JSON.stringify({ model: "opus", fontSize: 16, theme: "dark", defaultChatMode: "plan" }),
+        JSON.stringify({
+          model: "opus",
+          fontSize: 16,
+          theme: "dark",
+          defaultChatMode: "plan",
+        }),
       );
     },
     { conversationId: current.externalId, dbSessionId: current.id },
@@ -88,7 +93,12 @@ async function setupMocks(page: Page, current: SessionRecord) {
             conversation_ids: [current.externalId],
           }),
         );
-        ws.send(JSON.stringify({ type: "subscribe_success", events: message?.events ?? [] }));
+        ws.send(
+          JSON.stringify({
+            type: "subscribe_success",
+            events: message?.events ?? [],
+          }),
+        );
       }
     });
   });
@@ -97,9 +107,14 @@ async function setupMocks(page: Page, current: SessionRecord) {
     const url = new URL(route.request().url());
     const path = url.pathname;
     const json = (body: unknown) =>
-      route.fulfill({ status: 200, contentType: "application/json", body: JSON.stringify(body) });
+      route.fulfill({
+        status: 200,
+        contentType: "application/json",
+        body: JSON.stringify(body),
+      });
 
-    if (path === "/api/auth/status") return json({ auth_required: false, authenticated: true });
+    if (path === "/api/auth/status")
+      return json({ auth_required: false, authenticated: true });
     if (path === "/api/config/ui-settings")
       return json({
         selectedProjectId: "proj-1",
@@ -108,8 +123,10 @@ async function setupMocks(page: Page, current: SessionRecord) {
         defaultChatMode: "plan",
         fontSize: 16,
       });
-    if (path === "/api/providers") return json({ providers: [{ name: "claude", available: true }] });
-    if (path === "/api/voice/status") return json({ enabled: false, stt_available: false });
+    if (path === "/api/providers")
+      return json({ providers: [{ name: "claude", available: true }] });
+    if (path === "/api/voice/status")
+      return json({ enabled: false, stt_available: false });
     if (path === "/api/projects" || path === "/api/files/projects")
       return json([
         {
@@ -129,7 +146,8 @@ async function setupMocks(page: Page, current: SessionRecord) {
         },
       ]);
     if (path === "/api/agents/running") return json({ agents: [] });
-    if (path === "/api/sessions") return json({ sessions: SESSIONS, total: SESSIONS.length });
+    if (path === "/api/sessions")
+      return json({ sessions: SESSIONS, total: SESSIONS.length });
 
     // Session-scoped Changes endpoint — the heart of this spec.
     const changesMatch = path.match(/^\/api\/sessions\/([^/]+)\/changes$/);
@@ -147,13 +165,16 @@ async function setupMocks(page: Page, current: SessionRecord) {
       const sid = sessionMatch[1];
       return json({ session: SESSIONS.find((s) => s.id === sid) ?? null });
     }
-    if (/^\/api\/chat\/[^/]+\/messages$/.test(path)) return json({ messages: [] });
+    if (/^\/api\/chat\/[^/]+\/messages$/.test(path))
+      return json({ messages: [] });
 
     return json({});
   });
 }
 
-test("Changes panel shows the current session's working-tree changes", async ({ page }) => {
+test("Changes panel shows the current session's working-tree changes", async ({
+  page,
+}) => {
   await setupMocks(page, SESSION_A);
   await page.goto("/");
 
@@ -161,7 +182,9 @@ test("Changes panel shows the current session's working-tree changes", async ({ 
   await expect(page.getByText("beta.ts")).toHaveCount(0);
 });
 
-test("Changes panel contents switch when the viewed session switches", async ({ page }) => {
+test("Changes panel contents switch when the viewed session switches", async ({
+  page,
+}) => {
   // A different viewed session resolves to a different working tree, so the
   // Changes panel must surface that session's files instead.
   await setupMocks(page, SESSION_B);

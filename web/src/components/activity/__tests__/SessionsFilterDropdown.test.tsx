@@ -1,9 +1,18 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { render, screen, fireEvent, waitFor, within } from "@testing-library/react";
+import {
+  render,
+  screen,
+  fireEvent,
+  waitFor,
+  within,
+} from "@testing-library/react";
 
 import { useIsMobile } from "../../../hooks/useIsMobile";
 import { SessionsFilterDropdown } from "../SessionsFilterDropdown";
-import { defaultSessionsFilters, type SessionsFilters } from "../sessionsFilters";
+import {
+  defaultSessionsFilters,
+  type SessionsFilters,
+} from "../sessionsFilters";
 
 vi.mock("../../../hooks/useIsMobile", () => ({
   useIsMobile: vi.fn(),
@@ -17,13 +26,19 @@ afterEach(() => {
   vi.restoreAllMocks();
 });
 
-function renderDropdown(overrides: Partial<{
-  filters: SessionsFilters;
-  providerOptions: readonly string[];
-}> = {}) {
+function renderDropdown(
+  overrides: Partial<{
+    filters: SessionsFilters;
+    providerOptions: readonly string[];
+  }> = {},
+) {
   const onChange = vi.fn();
   const onClose = vi.fn();
-  const providerOptions = overrides.providerOptions ?? ["claude", "codex", "unknown"];
+  const providerOptions = overrides.providerOptions ?? [
+    "claude",
+    "codex",
+    "unknown",
+  ];
   const element = (filters: SessionsFilters) => (
     <SessionsFilterDropdown
       filters={filters}
@@ -36,7 +51,8 @@ function renderDropdown(overrides: Partial<{
   return {
     onChange,
     onClose,
-    rerenderFilters: (filters: SessionsFilters) => view.rerender(element(filters)),
+    rerenderFilters: (filters: SessionsFilters) =>
+      view.rerender(element(filters)),
     ...view,
   };
 }
@@ -65,7 +81,9 @@ describe("SessionsFilterDropdown", () => {
     // full 320px width.
     const grid = screen.getByText("Mode").closest(".grid")!;
     expect(grid.className).toContain("grid-cols-1");
-    expect(grid.className).toContain("@min-[20rem]:grid-cols-[auto_minmax(0,1fr)]");
+    expect(grid.className).toContain(
+      "@min-[20rem]:grid-cols-[auto_minmax(0,1fr)]",
+    );
 
     // Date range lives in a full-width row so all preset segments stay visible.
     const dateColumn = screen.getByText("Date range").closest(".grid > div")!;
@@ -74,7 +92,9 @@ describe("SessionsFilterDropdown", () => {
 
     // From/to inputs flex with the column instead of clipping at fixed widths.
     for (const label of ["Session ref minimum", "Task ref maximum"]) {
-      const wrapper = screen.getByLabelText(label, { selector: "input" }).closest("label")!;
+      const wrapper = screen
+        .getByLabelText(label, { selector: "input" })
+        .closest("label")!;
       expect(wrapper.className).toContain("flex-1");
       expect(wrapper.className).not.toContain("shrink-0");
     }
@@ -118,7 +138,9 @@ describe("SessionsFilterDropdown", () => {
   });
 
   it("toggling a default Provider uses the sorted provider option order", () => {
-    const { onChange } = renderDropdown({ providerOptions: ["unknown", "claude", "codex"] });
+    const { onChange } = renderDropdown({
+      providerOptions: ["unknown", "claude", "codex"],
+    });
     fireEvent.click(screen.getByLabelText("Codex"));
 
     const next: SessionsFilters = onChange.mock.calls[0][0];
@@ -127,9 +149,12 @@ describe("SessionsFilterDropdown", () => {
 
   it("typing a session ref bound emits onChange with the parsed integer", () => {
     const { onChange } = renderDropdown();
-    fireEvent.change(screen.getByLabelText("Session ref minimum", { selector: "input" })!, {
-      target: { value: "100" },
-    });
+    fireEvent.change(
+      screen.getByLabelText("Session ref minimum", { selector: "input" })!,
+      {
+        target: { value: "100" },
+      },
+    );
     expect(onChange).toHaveBeenCalledTimes(1);
     const next: SessionsFilters = onChange.mock.calls[0][0];
     expect(next.sessionRefMin).toBe(100);
@@ -140,7 +165,9 @@ describe("SessionsFilterDropdown", () => {
     filters.sessionRefMin = 50;
     const { onChange } = renderDropdown({ filters });
 
-    fireEvent.change(screen.getByLabelText("Session ref minimum"), { target: { value: "" } });
+    fireEvent.change(screen.getByLabelText("Session ref minimum"), {
+      target: { value: "" },
+    });
     const next: SessionsFilters = onChange.mock.calls[0][0];
     expect(next.sessionRefMin).toBeNull();
   });

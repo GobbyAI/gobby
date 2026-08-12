@@ -25,7 +25,9 @@ export type SkillUpdatePayload = Partial<
   >
 >;
 
-async function parseSkillResponse(response: Response): Promise<ActivitySkill | null> {
+async function parseSkillResponse(
+  response: Response,
+): Promise<ActivitySkill | null> {
   if (!response.ok) return null;
   const data = await response.json();
   if (data?.skill) return data.skill as ActivitySkill;
@@ -35,7 +37,8 @@ async function parseSkillResponse(response: Response): Promise<ActivitySkill | n
 
 export async function loadSkillHubs(): Promise<SkillHub[]> {
   const response = await fetch(`${getBaseUrl()}/api/skills/hubs`);
-  if (!response.ok) throw await skillResponseError(response, "Failed to load skill hubs");
+  if (!response.ok)
+    throw await skillResponseError(response, "Failed to load skill hubs");
   const data = await response.json();
   return Array.isArray(data?.hubs) ? (data.hubs as SkillHub[]) : [];
 }
@@ -47,12 +50,17 @@ export async function searchSkillHubs(
   const params = new URLSearchParams({ q: query });
   if (hubName) params.set("hub_name", hubName);
 
-  const response = await fetch(`${getBaseUrl()}/api/skills/hubs/search?${params}`);
-  if (!response.ok) throw await skillResponseError(response, "Failed to search skill hubs");
+  const response = await fetch(
+    `${getBaseUrl()}/api/skills/hubs/search?${params}`,
+  );
+  if (!response.ok)
+    throw await skillResponseError(response, "Failed to search skill hubs");
 
   const data = await response.json();
   return {
-    results: Array.isArray(data?.results) ? (data.results as SkillHubResult[]) : [],
+    results: Array.isArray(data?.results)
+      ? (data.results as SkillHubResult[])
+      : [],
     hubErrors:
       data?.hub_errors && typeof data.hub_errors === "object"
         ? (data.hub_errors as Record<string, string>)
@@ -60,16 +68,22 @@ export async function searchSkillHubs(
   };
 }
 
-export async function scanHubSkill(content: string, name: string): Promise<SkillScanResult> {
+export async function scanHubSkill(
+  content: string,
+  name: string,
+): Promise<SkillScanResult> {
   const response = await fetch(`${getBaseUrl()}/api/skills/scan`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({ content, name }),
   });
-  if (!response.ok) throw await skillResponseError(response, "Failed to scan hub skill");
+  if (!response.ok)
+    throw await skillResponseError(response, "Failed to scan hub skill");
 
   const data = await response.json();
-  const findings = Array.isArray(data?.findings) ? (data.findings as SkillScanFinding[]) : [];
+  const findings = Array.isArray(data?.findings)
+    ? (data.findings as SkillScanFinding[])
+    : [];
   const isSafe = Boolean(data?.is_safe ?? data?.safe ?? findings.length === 0);
 
   return {
@@ -97,7 +111,8 @@ export async function installHubSkill(params: {
       project_id: params.projectId ?? null,
     }),
   });
-  if (!response.ok) throw await skillResponseError(response, "Failed to install hub skill");
+  if (!response.ok)
+    throw await skillResponseError(response, "Failed to install hub skill");
   return parseSkillResponse(response);
 }
 
@@ -105,12 +120,16 @@ export async function updateSkill(
   skillId: string,
   updates: SkillUpdatePayload,
 ): Promise<ActivitySkill | null> {
-  const response = await fetch(`${getBaseUrl()}/api/skills/${encodeURIComponent(skillId)}`, {
-    method: "PUT",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify(updates),
-  });
-  if (!response.ok) throw await skillResponseError(response, "Failed to update skill");
+  const response = await fetch(
+    `${getBaseUrl()}/api/skills/${encodeURIComponent(skillId)}`,
+    {
+      method: "PUT",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(updates),
+    },
+  );
+  if (!response.ok)
+    throw await skillResponseError(response, "Failed to update skill");
   return parseSkillResponse(response);
 }
 
@@ -127,27 +146,36 @@ export async function saveSkillFile(
       body: JSON.stringify({ content }),
     },
   );
-  if (!response.ok) throw await skillResponseError(response, "Failed to save skill file");
+  if (!response.ok)
+    throw await skillResponseError(response, "Failed to save skill file");
   return true;
 }
 
 export async function deleteSkill(skillId: string): Promise<boolean> {
-  const response = await fetch(`${getBaseUrl()}/api/skills/${encodeURIComponent(skillId)}`, {
-    method: "DELETE",
-  });
+  const response = await fetch(
+    `${getBaseUrl()}/api/skills/${encodeURIComponent(skillId)}`,
+    {
+      method: "DELETE",
+    },
+  );
   return response.ok;
 }
 
-export async function restoreSkill(skillId: string): Promise<ActivitySkill | null> {
+export async function restoreSkill(
+  skillId: string,
+): Promise<ActivitySkill | null> {
   const response = await fetch(
     `${getBaseUrl()}/api/skills/${encodeURIComponent(skillId)}/restore`,
     { method: "POST" },
   );
-  if (!response.ok) throw await skillResponseError(response, "Failed to restore skill");
+  if (!response.ok)
+    throw await skillResponseError(response, "Failed to restore skill");
   return parseSkillResponse(response);
 }
 
-export async function toggleSkill(skill: ActivitySkill): Promise<ActivitySkill | null> {
+export async function toggleSkill(
+  skill: ActivitySkill,
+): Promise<ActivitySkill | null> {
   return updateSkill(skill.id, { enabled: !skill.enabled });
 }
 
@@ -163,7 +191,9 @@ export async function moveSkillToProject(
   return parseSkillResponse(response);
 }
 
-export async function moveSkillToInstalled(skillId: string): Promise<ActivitySkill | null> {
+export async function moveSkillToInstalled(
+  skillId: string,
+): Promise<ActivitySkill | null> {
   const response = await fetch(
     `${getBaseUrl()}/api/skills/${encodeURIComponent(skillId)}/move-to-installed`,
     { method: "POST" },
@@ -171,13 +201,21 @@ export async function moveSkillToInstalled(skillId: string): Promise<ActivitySki
   return parseSkillResponse(response);
 }
 
-export async function exportSkill(skillId: string): Promise<{ filename: string; content: string }> {
-  const response = await fetch(`${getBaseUrl()}/api/skills/${encodeURIComponent(skillId)}/export`);
-  if (!response.ok) throw await skillResponseError(response, "Failed to export skill");
+export async function exportSkill(
+  skillId: string,
+): Promise<{ filename: string; content: string }> {
+  const response = await fetch(
+    `${getBaseUrl()}/api/skills/${encodeURIComponent(skillId)}/export`,
+  );
+  if (!response.ok)
+    throw await skillResponseError(response, "Failed to export skill");
   return response.json() as Promise<{ filename: string; content: string }>;
 }
 
-export function downloadSkillExport(result: { filename: string; content: string }): void {
+export function downloadSkillExport(result: {
+  filename: string;
+  content: string;
+}): void {
   const blob = new Blob([result.content], { type: "text/markdown" });
   const url = URL.createObjectURL(blob);
   const link = document.createElement("a");

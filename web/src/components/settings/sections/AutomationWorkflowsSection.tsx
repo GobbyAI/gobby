@@ -1,7 +1,7 @@
-import { SettingsSection, type SettingsSectionFields } from './SettingsSection'
-import { useSettingsSectionContext } from './SettingsSectionContext'
-import { SwitchField } from '../../activity/fields'
-import { WorkflowVariablesEditor } from '../WorkflowVariablesEditor'
+import { SettingsSection, type SettingsSectionFields } from "./SettingsSection";
+import { useSettingsSectionContext } from "./SettingsSectionContext";
+import { SwitchField } from "../../activity/fields";
+import { WorkflowVariablesEditor } from "../WorkflowVariablesEditor";
 import {
   ListMapConfigField,
   NumberConfigField,
@@ -12,7 +12,7 @@ import {
   SwitchConfigField,
   TextAreaConfigField,
   TextConfigField,
-} from './configFields'
+} from "./configFields";
 
 /**
  * Automation & Workflows settings (audit IA section 8). Owns the task system,
@@ -26,91 +26,94 @@ import {
 
 // All `gobby-tasks.*` draft paths live under the hyphenated key; getByPath
 // splits on '.', so the hyphen stays intact as a single segment.
-const TASKS_PATHS = ['gobby-tasks.enabled', 'gobby-tasks.show_result_on_create']
+const TASKS_PATHS = [
+  "gobby-tasks.enabled",
+  "gobby-tasks.show_result_on_create",
+];
 
 const FILE_EXTRACTION_PATHS = [
-  'gobby-tasks.file_extraction.file_extensions',
-  'gobby-tasks.file_extraction.known_files',
-  'gobby-tasks.file_extraction.path_prefixes',
-]
+  "gobby-tasks.file_extraction.file_extensions",
+  "gobby-tasks.file_extraction.known_files",
+  "gobby-tasks.file_extraction.path_prefixes",
+];
 
 const EXPANSION_PATHS = [
-  'gobby-tasks.expansion.profile',
-  'gobby-tasks.expansion.candidates',
-  'gobby-tasks.expansion.enabled',
-  'gobby-tasks.expansion.prompt_path',
-  'gobby-tasks.expansion.system_prompt_path',
-  'gobby-tasks.expansion.default_strategy',
-  'gobby-tasks.expansion.timeout',
-  'gobby-tasks.expansion.pattern_criteria.patterns',
-  'gobby-tasks.expansion.pattern_criteria.detection_keywords',
-]
+  "gobby-tasks.expansion.profile",
+  "gobby-tasks.expansion.candidates",
+  "gobby-tasks.expansion.enabled",
+  "gobby-tasks.expansion.prompt_path",
+  "gobby-tasks.expansion.system_prompt_path",
+  "gobby-tasks.expansion.default_strategy",
+  "gobby-tasks.expansion.timeout",
+  "gobby-tasks.expansion.pattern_criteria.patterns",
+  "gobby-tasks.expansion.pattern_criteria.detection_keywords",
+];
 
 const VALIDATION_PATHS = [
-  'gobby-tasks.validation.profile',
-  'gobby-tasks.validation.candidates',
-  'gobby-tasks.validation.enabled',
-  'gobby-tasks.validation.system_prompt',
-  'gobby-tasks.validation.prompt_path',
-  'gobby-tasks.validation.criteria_prompt_path',
-  'gobby-tasks.validation.criteria_system_prompt',
-  'gobby-tasks.validation.max_iterations',
-  'gobby-tasks.validation.close_review_prompt_max_chars',
-  'gobby-tasks.validation.escalation_enabled',
-  'gobby-tasks.validation.escalation_notify',
-  'gobby-tasks.validation.escalation_webhook_url',
-  'gobby-tasks.validation.auto_generate_on_create',
-  'gobby-tasks.validation.auto_generate_on_expand',
-]
+  "gobby-tasks.validation.profile",
+  "gobby-tasks.validation.candidates",
+  "gobby-tasks.validation.enabled",
+  "gobby-tasks.validation.system_prompt",
+  "gobby-tasks.validation.prompt_path",
+  "gobby-tasks.validation.criteria_prompt_path",
+  "gobby-tasks.validation.criteria_system_prompt",
+  "gobby-tasks.validation.max_iterations",
+  "gobby-tasks.validation.close_review_prompt_max_chars",
+  "gobby-tasks.validation.escalation_enabled",
+  "gobby-tasks.validation.escalation_notify",
+  "gobby-tasks.validation.escalation_webhook_url",
+  "gobby-tasks.validation.auto_generate_on_create",
+  "gobby-tasks.validation.auto_generate_on_expand",
+];
 
 const WORKFLOW_PATHS = [
-  'workflow.enabled',
-  'workflow.timeout',
-  'workflow.debug_echo_context',
-]
+  "workflow.enabled",
+  "workflow.timeout",
+  "workflow.debug_echo_context",
+];
 
 const TMUX_PATHS = [
-  'tmux.enabled',
-  'tmux.command',
-  'tmux.socket_name',
-  'tmux.socket_path',
-  'tmux.config_file',
-  'tmux.session_prefix',
-  'tmux.history_limit',
-  'tmux.wsl_distribution',
-  'tmux.idle_check_enabled',
-  'tmux.idle_timeout_seconds',
-  'tmux.idle_reprompt_delay_seconds',
-  'tmux.max_reprompt_attempts',
-  'tmux.reasoning_watchdog_interrupt_enabled',
-  'tmux.reasoning_watchdog_settle_seconds',
-  'tmux.init_timeout_seconds',
-  'tmux.init_activity_grace_seconds',
-  'tmux.registration_timeout_seconds',
-  'tmux.auto_enter_approval_prompts',
-  'tmux.auto_enter_agent_terminals',
-  'tmux.auto_enter_agent_interval_seconds',
-]
+  "tmux.enabled",
+  "tmux.command",
+  "tmux.socket_name",
+  "tmux.socket_path",
+  "tmux.config_file",
+  "tmux.session_prefix",
+  "tmux.history_limit",
+  "tmux.wsl_distribution",
+  "tmux.idle_check_enabled",
+  "tmux.idle_timeout_seconds",
+  "tmux.idle_reprompt_delay_seconds",
+  "tmux.max_reprompt_attempts",
+  "tmux.reasoning_watchdog_interrupt_enabled",
+  "tmux.reasoning_watchdog_settle_seconds",
+  "tmux.init_timeout_seconds",
+  "tmux.init_activity_grace_seconds",
+  "tmux.registration_timeout_seconds",
+  "tmux.auto_enter_approval_prompts",
+  "tmux.auto_enter_agent_terminals",
+  "tmux.auto_enter_agent_interval_seconds",
+];
 
 const CRON_PATHS = [
-  'cron.enabled',
-  'cron.check_interval_seconds',
-  'cron.max_concurrent_jobs',
-  'cron.running_timeout_seconds',
-  'cron.cleanup_after_days',
-  'cron.backoff_delays',
-]
+  "cron.enabled",
+  "cron.check_interval_seconds",
+  "cron.max_concurrent_jobs",
+  "cron.running_timeout_seconds",
+  "cron.cleanup_after_days",
+  "cron.backoff_delays",
+];
 
 const SYSTEM_LOOPS_PATHS = [
-  'system_loops.automation.enabled',
-  'system_loops.automation.interval_seconds',
-]
+  "system_loops.automation.enabled",
+  "system_loops.automation.interval_seconds",
+];
 
 const PIPELINES_PATHS = [
-  'pipelines.prompt_step.profile',
-  'pipelines.prompt_step.candidates',
-  'pipelines.nesting_depth_limit',
-]
+  "pipelines.prompt_step.profile",
+  "pipelines.prompt_step.candidates",
+  "pipelines.nesting_depth_limit",
+];
 
 const OWNED_PATHS: readonly string[] = [
   ...TASKS_PATHS,
@@ -122,7 +125,7 @@ const OWNED_PATHS: readonly string[] = [
   ...CRON_PATHS,
   ...SYSTEM_LOOPS_PATHS,
   ...PIPELINES_PATHS,
-]
+];
 
 function TasksGroup({ fields }: { fields: SettingsSectionFields }) {
   return (
@@ -167,7 +170,7 @@ function TasksGroup({ fields }: { fields: SettingsSectionFields }) {
         placeholder="src/"
       />
     </Subsection>
-  )
+  );
 }
 
 function ExpansionGroup({ fields }: { fields: SettingsSectionFields }) {
@@ -243,7 +246,7 @@ function ExpansionGroup({ fields }: { fields: SettingsSectionFields }) {
         itemAddLabel="Add keyword"
       />
     </Subsection>
-  )
+  );
 }
 
 function ValidationGroup({ fields }: { fields: SettingsSectionFields }) {
@@ -344,7 +347,7 @@ function ValidationGroup({ fields }: { fields: SettingsSectionFields }) {
         ariaLabel="Auto-generate criteria on expand"
       />
     </Subsection>
-  )
+  );
 }
 
 function WorkflowEngineGroup({ fields }: { fields: SettingsSectionFields }) {
@@ -372,7 +375,7 @@ function WorkflowEngineGroup({ fields }: { fields: SettingsSectionFields }) {
         ariaLabel="Echo context for debugging"
       />
     </Subsection>
-  )
+  );
 }
 
 function TmuxGroup({ fields }: { fields: SettingsSectionFields }) {
@@ -509,7 +512,7 @@ function TmuxGroup({ fields }: { fields: SettingsSectionFields }) {
         ariaLabel="Auto-enter agent interval (seconds)"
       />
     </Subsection>
-  )
+  );
 }
 
 function CronGroup({ fields }: { fields: SettingsSectionFields }) {
@@ -556,7 +559,7 @@ function CronGroup({ fields }: { fields: SettingsSectionFields }) {
         addLabel="Add delay"
       />
     </Subsection>
-  )
+  );
 }
 
 function SystemLoopsGroup({ fields }: { fields: SettingsSectionFields }) {
@@ -578,7 +581,7 @@ function SystemLoopsGroup({ fields }: { fields: SettingsSectionFields }) {
         ariaLabel="Automation loop interval (seconds)"
       />
     </Subsection>
-  )
+  );
 }
 
 function PipelinesGroup({ fields }: { fields: SettingsSectionFields }) {
@@ -608,15 +611,15 @@ function PipelinesGroup({ fields }: { fields: SettingsSectionFields }) {
         ariaLabel="Pipeline nesting depth limit"
       />
     </Subsection>
-  )
+  );
 }
 
 function RulesEnforcementGroup({
   rulesEnforcement,
   setRulesEnforcement,
 }: {
-  rulesEnforcement?: boolean
-  setRulesEnforcement?: (enabled: boolean) => Promise<boolean>
+  rulesEnforcement?: boolean;
+  setRulesEnforcement?: (enabled: boolean) => Promise<boolean>;
 }) {
   return (
     <Subsection
@@ -629,7 +632,7 @@ function RulesEnforcementGroup({
           ariaLabel="Enforce rules engine"
           value={rulesEnforcement === true}
           onChange={(next) => {
-            void setRulesEnforcement(next)
+            void setRulesEnforcement(next);
           }}
         />
       ) : (
@@ -638,7 +641,7 @@ function RulesEnforcementGroup({
         </p>
       )}
     </Subsection>
-  )
+  );
 }
 
 function WorkflowVariablesGroup() {
@@ -649,11 +652,11 @@ function WorkflowVariablesGroup() {
     >
       <WorkflowVariablesEditor />
     </Subsection>
-  )
+  );
 }
 
 export function AutomationWorkflowsSection() {
-  const { rulesEnforcement, setRulesEnforcement } = useSettingsSectionContext()
+  const { rulesEnforcement, setRulesEnforcement } = useSettingsSectionContext();
   return (
     <SettingsSection sectionId="automation-workflows" ownedPaths={OWNED_PATHS}>
       {(fields) => (
@@ -674,5 +677,5 @@ export function AutomationWorkflowsSection() {
         </>
       )}
     </SettingsSection>
-  )
+  );
 }

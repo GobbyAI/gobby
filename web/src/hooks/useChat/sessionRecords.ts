@@ -7,21 +7,34 @@ import type {
 import { normalizeChatMode } from "../../types/chat";
 import { AUTO_REASONING_EFFORT } from "../../lib/providerModels";
 
-const CHAT_PROVIDERS = new Set(["claude", "qwen", "codex", "droid", "agy", "grok"]);
+const CHAT_PROVIDERS = new Set([
+  "claude",
+  "qwen",
+  "codex",
+  "droid",
+  "agy",
+  "grok",
+]);
 
 export function isChatProvider(value: unknown): value is string {
   return typeof value === "string" && CHAT_PROVIDERS.has(value);
 }
 
-export function isValidSessionType(value: unknown): value is "terminal" | "web_chat" {
+export function isValidSessionType(
+  value: unknown,
+): value is "terminal" | "web_chat" {
   return value === "terminal" || value === "web_chat";
 }
 
-export function normalizeSessionType(value: unknown): "terminal" | "web_chat" | null {
+export function normalizeSessionType(
+  value: unknown,
+): "terminal" | "web_chat" | null {
   return isValidSessionType(value) ? value : null;
 }
 
-export function normalizeReasoningEffort(value: string | null | undefined): string | null {
+export function normalizeReasoningEffort(
+  value: string | null | undefined,
+): string | null {
   if (!value) {
     return null;
   }
@@ -57,7 +70,9 @@ function isNullableNumber(value: unknown): value is number | null | undefined {
   return value === null || value === undefined || typeof value === "number";
 }
 
-function isCreatedWebChatSession(value: unknown): value is CreatedWebChatSession {
+function isCreatedWebChatSession(
+  value: unknown,
+): value is CreatedWebChatSession {
   if (!isRecord(value)) return false;
   return (
     typeof value.id === "string" &&
@@ -112,7 +127,9 @@ export async function createWebChatSession(params?: {
   title?: string | null;
 }): Promise<CreatedWebChatSession> {
   const baseUrl = import.meta.env.VITE_API_BASE_URL || "";
-  const reasoningEffort = normalizeReasoningEffort(params?.reasoningEffort ?? null);
+  const reasoningEffort = normalizeReasoningEffort(
+    params?.reasoningEffort ?? null,
+  );
   const response = await fetch(`${baseUrl}/api/sessions/web-chat`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
@@ -208,15 +225,31 @@ export function toSessionObservationMeta(
       "ref",
       typeof session.seq_num === "number" ? `#${session.seq_num}` : null,
     ),
-    source: sessionMetaValue(overrides, "source", sessionString(session, "source", "unknown")!),
-    title: sessionMetaValue(overrides, "title", sessionString(session, "title", null)),
-    status: sessionMetaValue(overrides, "status", sessionString(session, "status", "unknown")!),
+    source: sessionMetaValue(
+      overrides,
+      "source",
+      sessionString(session, "source", "unknown")!,
+    ),
+    title: sessionMetaValue(
+      overrides,
+      "title",
+      sessionString(session, "title", null),
+    ),
+    status: sessionMetaValue(
+      overrides,
+      "status",
+      sessionString(session, "status", "unknown")!,
+    ),
     canProxyAttach: sessionMetaValue(
       overrides,
       "canProxyAttach",
       sessionBoolean(session, "can_proxy_attach"),
     ),
-    model: sessionMetaValue(overrides, "model", sessionString(session, "model", null)),
+    model: sessionMetaValue(
+      overrides,
+      "model",
+      sessionString(session, "model", null),
+    ),
     reasoningEffort: sessionMetaValue(
       overrides,
       "reasoningEffort",

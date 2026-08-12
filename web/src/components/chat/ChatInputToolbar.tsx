@@ -1,54 +1,54 @@
-import type { RefObject } from 'react'
-import type { AgentDefInfo } from '../../hooks/useAgentDefinitions'
-import type { VoiceInputMode } from '../../hooks/useSettings'
-import type { ChatMode, ChatModeInfo } from '../../types/chat'
-import { cn } from '../../lib/utils'
-import { Button } from '../ui/Button'
-import { Input } from '../ui/Input'
-import { ActiveAgentIndicator } from './ActiveAgentIndicator'
-import { BranchIndicator } from './BranchIndicator'
-import { ChatInputVoiceControls } from './ChatInputVoiceControls'
-import { PaperclipIcon } from './ChatInputIcons'
-import { ModeSelector } from './ModeSelector'
+import type { RefObject } from "react";
+import type { AgentDefInfo } from "../../hooks/useAgentDefinitions";
+import type { VoiceInputMode } from "../../hooks/useSettings";
+import type { ChatMode, ChatModeInfo } from "../../types/chat";
+import { cn } from "../../lib/utils";
+import { Button } from "../ui/Button";
+import { Input } from "../ui/Input";
+import { ActiveAgentIndicator } from "./ActiveAgentIndicator";
+import { BranchIndicator } from "./BranchIndicator";
+import { ChatInputVoiceControls } from "./ChatInputVoiceControls";
+import { PaperclipIcon } from "./ChatInputIcons";
+import { ModeSelector } from "./ModeSelector";
 
 interface ChatInputToolbarProps {
-  agentDefinitions: AgentDefInfo[]
-  agentGlobalDefs: AgentDefInfo[]
-  agentHasGlobal: boolean
-  agentHasProject: boolean
-  agentName?: string
-  agentPickerDisabled: boolean
-  agentProjectDefs: AgentDefInfo[]
-  agentShowScopeToggle: boolean
-  attachmentsDisabled: boolean
-  canSelectModel: boolean
-  currentBranch?: string | null
-  disabled: boolean
-  fileInputRef: RefObject<HTMLInputElement>
-  handleFilesSelected: (files: FileList | null) => void
-  isRecording: boolean
-  isSpeaking: boolean
-  metaRef: RefObject<HTMLDivElement>
-  mode: ChatMode
-  modeDisabled: boolean
-  modeOptions?: ChatModeInfo[]
-  onAgentChange?: (agentName: string) => void
-  onModeChange?: (mode: ChatMode) => void
-  onSttEnabledChange?: (enabled: boolean) => void
-  onTtsEnabledChange?: (enabled: boolean) => void
-  onVoiceInputModeChange?: (mode: VoiceInputMode) => void
-  onWorktreeChange?: (worktreePath: string, worktreeId?: string) => void
-  prepareTTSPlayback?: () => void
-  projectId?: string | null
-  proxyDeliveryNotice?: string | null
-  stopTTS?: () => void
-  sttEnabled: boolean
-  ttsEnabled: boolean
-  voiceInputMode: VoiceInputMode
-  voiceLoading: boolean
-  voiceReady: boolean
-  worktreePath?: string | null
-  worktreePickerDisabled: boolean
+  agentDefinitions: AgentDefInfo[];
+  agentGlobalDefs: AgentDefInfo[];
+  agentHasGlobal: boolean;
+  agentHasProject: boolean;
+  agentName?: string;
+  agentPickerDisabled: boolean;
+  agentProjectDefs: AgentDefInfo[];
+  agentShowScopeToggle: boolean;
+  attachmentsDisabled: boolean;
+  canSelectModel: boolean;
+  currentBranch?: string | null;
+  disabled: boolean;
+  fileInputRef: RefObject<HTMLInputElement>;
+  handleFilesSelected: (files: FileList | null) => void;
+  isRecording: boolean;
+  isSpeaking: boolean;
+  metaRef: RefObject<HTMLDivElement>;
+  mode: ChatMode;
+  modeDisabled: boolean;
+  modeOptions?: ChatModeInfo[];
+  onAgentChange?: (agentName: string) => void;
+  onModeChange?: (mode: ChatMode) => void;
+  onSttEnabledChange?: (enabled: boolean) => void;
+  onTtsEnabledChange?: (enabled: boolean) => void;
+  onVoiceInputModeChange?: (mode: VoiceInputMode) => void;
+  onWorktreeChange?: (worktreePath: string, worktreeId?: string) => void;
+  prepareTTSPlayback?: () => void;
+  projectId?: string | null;
+  proxyDeliveryNotice?: string | null;
+  stopTTS?: () => void;
+  sttEnabled: boolean;
+  ttsEnabled: boolean;
+  voiceInputMode: VoiceInputMode;
+  voiceLoading: boolean;
+  voiceReady: boolean;
+  worktreePath?: string | null;
+  worktreePickerDisabled: boolean;
 }
 
 export function ChatInputToolbar({
@@ -91,15 +91,15 @@ export function ChatInputToolbar({
   worktreePickerDisabled,
 }: ChatInputToolbarProps) {
   const attachmentButtonLabel = attachmentsDisabled
-    ? 'Attached session owns attachments'
-    : 'Attach file'
+    ? "Attached session owns attachments"
+    : "Attach file";
 
   return (
     <div ref={metaRef} className="chat-input-meta">
       <div
         className={cn(
-          'chat-input-notice-slot',
-          proxyDeliveryNotice ? 'mb-1.5 flex items-center' : 'hidden',
+          "chat-input-notice-slot",
+          proxyDeliveryNotice ? "mb-1.5 flex items-center" : "hidden",
         )}
         aria-live="polite"
       >
@@ -178,11 +178,11 @@ export function ChatInputToolbar({
           wrapperClassName="hidden"
           className="hidden"
           onChange={(event) => {
-            handleFilesSelected(event.target.files)
-            event.target.value = ''
+            handleFilesSelected(event.target.files);
+            event.target.value = "";
           }}
         />
       </div>
     </div>
-  )
+  );
 }

@@ -1,4 +1,8 @@
-import { RuleApiError, type RuleDetail, type RuleSummary } from "../../../hooks/useRules";
+import {
+  RuleApiError,
+  type RuleDetail,
+  type RuleSummary,
+} from "../../../hooks/useRules";
 import {
   detailToDraft,
   draftToDefinition,
@@ -34,7 +38,10 @@ export function formatRuleError(error: unknown): string {
 }
 
 function shouldRetryCopy(error: unknown): boolean {
-  return error instanceof RuleApiError && (error.status === 400 || error.status === 409);
+  return (
+    error instanceof RuleApiError &&
+    (error.status === 400 || error.status === 409)
+  );
 }
 
 export async function copyRuleWithRetry(
@@ -64,7 +71,10 @@ export async function copyRuleWithRetry(
   throw new Error(`Failed to copy ${rule.name}`);
 }
 
-function enqueueRuleSave<T>(ruleName: string, run: () => Promise<T>): Promise<T> {
+function enqueueRuleSave<T>(
+  ruleName: string,
+  run: () => Promise<T>,
+): Promise<T> {
   const previous = ruleSaveQueues.get(ruleName) ?? Promise.resolve();
   const next = previous.catch(() => undefined).then(run);
   const queued = next.finally(() => {

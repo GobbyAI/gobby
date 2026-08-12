@@ -63,9 +63,7 @@ export function useSessionAttachmentState() {
   const [sessionInteractionMode, setSessionInteractionMode] =
     useState<SessionInteractionMode>("none");
   const sessionInteractionModeRef = useRef<SessionInteractionMode>("none");
-  const pendingSessionInteractionModeRef = useRef<"observe" | "proxy">(
-    "proxy",
-  );
+  const pendingSessionInteractionModeRef = useRef<"observe" | "proxy">("proxy");
   const pendingAttachSessionIdRef = useRef<string | null>(null);
   const [proxyDeliveryNotice, setProxyDeliveryNotice] = useState<string | null>(
     null,
@@ -159,7 +157,10 @@ export function useSessionAttachmentState() {
         try {
           data = JSON.parse(body);
         } catch (error) {
-          console.warn("Failed to parse agent name response", { agentRunId, error });
+          console.warn("Failed to parse agent name response", {
+            agentRunId,
+            error,
+          });
           agentNameCacheRef.current.set(agentRunId, {
             value: null,
             expiresAt: Date.now() + AGENT_NAME_RESOLVE_FAILURE_TTL_MS,

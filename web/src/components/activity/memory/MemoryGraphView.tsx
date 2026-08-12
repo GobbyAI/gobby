@@ -14,7 +14,9 @@ import { DEFAULT_GRAPH_LIMITS, type GraphLimits } from "./KnowledgeGraphModel";
 import { DetailActionButton } from "../fields";
 
 const KnowledgeGraph = lazy(() =>
-  import("./KnowledgeGraph").then((module) => ({ default: module.KnowledgeGraph })),
+  import("./KnowledgeGraph").then((module) => ({
+    default: module.KnowledgeGraph,
+  })),
 );
 
 interface MemoryGraphViewProps {
@@ -22,7 +24,9 @@ interface MemoryGraphViewProps {
     limit?: number,
     relationshipLimit?: number,
   ) => Promise<KnowledgeGraphData | null>;
-  fetchEntityNeighbors: (entityKey: string) => Promise<KnowledgeGraphData | null>;
+  fetchEntityNeighbors: (
+    entityKey: string,
+  ) => Promise<KnowledgeGraphData | null>;
   releasePanelOverride: () => void;
   onClose: () => void;
   limits?: GraphLimits;
@@ -95,8 +99,15 @@ export function MemoryGraphView({
     <div className="flex min-h-0 flex-1 flex-col items-center justify-center gap-3 px-4 text-center text-sm text-muted-foreground">
       <div>3D knowledge graph failed to load.</div>
       <div className="flex items-center gap-2">
-        <DetailActionButton label="Try again" onClick={() => setGraphFailed(false)} />
-        <DetailActionButton label="Close graph" variant="accent" onClick={handleClose} />
+        <DetailActionButton
+          label="Try again"
+          onClick={() => setGraphFailed(false)}
+        />
+        <DetailActionButton
+          label="Close graph"
+          variant="accent"
+          onClick={handleClose}
+        />
       </div>
     </div>
   );

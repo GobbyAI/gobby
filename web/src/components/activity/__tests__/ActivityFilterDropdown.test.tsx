@@ -23,10 +23,9 @@ describe("ActivityFilterDropdown", () => {
       />,
     );
 
-    expect(screen.getByRole("option", { name: "All activity" })).toHaveAttribute(
-      "aria-selected",
-      "true",
-    );
+    expect(
+      screen.getByRole("option", { name: "All activity" }),
+    ).toHaveAttribute("aria-selected", "true");
 
     await user.click(screen.getByRole("option", { name: "Active only" }));
 

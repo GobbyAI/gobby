@@ -1,4 +1,4 @@
-import { SettingsSection, type SettingsSectionFields } from './SettingsSection'
+import { SettingsSection, type SettingsSectionFields } from "./SettingsSection";
 import {
   MapConfigField,
   NumberConfigField,
@@ -7,7 +7,7 @@ import {
   Subsection,
   SwitchConfigField,
   TextConfigField,
-} from './configFields'
+} from "./configFields";
 
 /**
  * Observability settings section: telemetry, logging, tracing, metrics, and
@@ -20,47 +20,47 @@ import {
  */
 
 const TELEMETRY_PATHS = [
-  'telemetry.service_name',
-  'telemetry.log_level',
-  'telemetry.log_format',
-  'telemetry.log_file',
-  'telemetry.log_file_error',
-  'telemetry.log_file_hook_manager',
-  'telemetry.log_file_mcp_server',
-  'telemetry.log_file_mcp_client',
-  'telemetry.max_size_mb',
-  'telemetry.backup_count',
-  'telemetry.traces_enabled',
-  'telemetry.traces_to_console',
-  'telemetry.trace_sample_rate',
-  'telemetry.trace_retention_days',
-  'telemetry.metrics_enabled',
-  'telemetry.exporter.otlp_endpoint',
-  'telemetry.exporter.otlp_protocol',
-  'telemetry.exporter.otlp_headers',
-  'telemetry.exporter.prometheus_enabled',
-  'telemetry.llm_tracing.enabled',
-  'telemetry.llm_tracing.capture_content',
-  'telemetry.llm_tracing.providers',
-] as const
+  "telemetry.service_name",
+  "telemetry.log_level",
+  "telemetry.log_format",
+  "telemetry.log_file",
+  "telemetry.log_file_error",
+  "telemetry.log_file_hook_manager",
+  "telemetry.log_file_mcp_server",
+  "telemetry.log_file_mcp_client",
+  "telemetry.max_size_mb",
+  "telemetry.backup_count",
+  "telemetry.traces_enabled",
+  "telemetry.traces_to_console",
+  "telemetry.trace_sample_rate",
+  "telemetry.trace_retention_days",
+  "telemetry.metrics_enabled",
+  "telemetry.exporter.otlp_endpoint",
+  "telemetry.exporter.otlp_protocol",
+  "telemetry.exporter.otlp_headers",
+  "telemetry.exporter.prometheus_enabled",
+  "telemetry.llm_tracing.enabled",
+  "telemetry.llm_tracing.capture_content",
+  "telemetry.llm_tracing.providers",
+] as const;
 
 const LOGGING_PATHS = [
-  'logging.level',
-  'logging.format',
-  'logging.dir',
-  'logging.max_size_mb',
-  'logging.backup_count',
-  'logging.runtime_max_size_mb',
-  'logging.growth_warn_mb_per_interval',
-] as const
+  "logging.level",
+  "logging.format",
+  "logging.dir",
+  "logging.max_size_mb",
+  "logging.backup_count",
+  "logging.runtime_max_size_mb",
+  "logging.growth_warn_mb_per_interval",
+] as const;
 
-const METRICS_PATHS = ['metrics.list_limit'] as const
+const METRICS_PATHS = ["metrics.list_limit"] as const;
 
 const OWNED_PATHS: readonly string[] = [
   ...LOGGING_PATHS,
   ...TELEMETRY_PATHS,
   ...METRICS_PATHS,
-]
+];
 
 function ServiceGroup({ fields }: { fields: SettingsSectionFields }) {
   return (
@@ -76,10 +76,14 @@ function ServiceGroup({ fields }: { fields: SettingsSectionFields }) {
         placeholder="gobby-daemon"
       />
     </Subsection>
-  )
+  );
 }
 
-function RuntimeLoggingGroup({ fields }: { fields: SettingsSectionFields }): JSX.Element {
+function RuntimeLoggingGroup({
+  fields,
+}: {
+  fields: SettingsSectionFields;
+}): JSX.Element {
   return (
     <Subsection
       title="Runtime logging"
@@ -129,7 +133,7 @@ function RuntimeLoggingGroup({ fields }: { fields: SettingsSectionFields }): JSX
         ariaLabel="Logs directory growth warning threshold"
       />
     </Subsection>
-  )
+  );
 }
 
 function LoggingGroup({ fields }: { fields: SettingsSectionFields }) {
@@ -198,7 +202,7 @@ function LoggingGroup({ fields }: { fields: SettingsSectionFields }) {
         ariaLabel="Log backup count"
       />
     </Subsection>
-  )
+  );
 }
 
 function TracingGroup({ fields }: { fields: SettingsSectionFields }) {
@@ -233,7 +237,7 @@ function TracingGroup({ fields }: { fields: SettingsSectionFields }) {
         ariaLabel="Trace retention days"
       />
     </Subsection>
-  )
+  );
 }
 
 function MetricsGroup({ fields }: { fields: SettingsSectionFields }) {
@@ -255,7 +259,7 @@ function MetricsGroup({ fields }: { fields: SettingsSectionFields }) {
         ariaLabel="Metrics list limit"
       />
     </Subsection>
-  )
+  );
 }
 
 function ExportersGroup({ fields }: { fields: SettingsSectionFields }) {
@@ -293,7 +297,7 @@ function ExportersGroup({ fields }: { fields: SettingsSectionFields }) {
         ariaLabel="Enable Prometheus endpoint"
       />
     </Subsection>
-  )
+  );
 }
 
 function LlmTracingGroup({ fields }: { fields: SettingsSectionFields }) {
@@ -323,7 +327,7 @@ function LlmTracingGroup({ fields }: { fields: SettingsSectionFields }) {
         placeholder="anthropic"
       />
     </Subsection>
-  )
+  );
 }
 
 export function ObservabilitySection() {
@@ -341,5 +345,5 @@ export function ObservabilitySection() {
         </>
       )}
     </SettingsSection>
-  )
+  );
 }

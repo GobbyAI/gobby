@@ -39,7 +39,9 @@ const OAUTH_PROVIDER_OPTIONS = [
 ];
 
 function transportUsesUrl(transport: string): boolean {
-  return transport === "http" || transport === "websocket" || transport === "sse";
+  return (
+    transport === "http" || transport === "websocket" || transport === "sse"
+  );
 }
 
 export function McpServerFields({
@@ -70,7 +72,8 @@ export function McpServerFields({
   }
 
   const usesUrl = transportUsesUrl(draft.transport);
-  const title = mode === "create" ? "New MCP server" : draft.name || "MCP server";
+  const title =
+    mode === "create" ? "New MCP server" : draft.name || "MCP server";
 
   return (
     <div className="flex min-h-0 flex-[1_1_auto] flex-col overflow-hidden bg-[var(--bg-primary)]">

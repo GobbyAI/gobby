@@ -109,7 +109,7 @@ export function ChatMainColumn({
 
   return (
     <div
-      className="chat-column @container/chat-column flex min-w-[320px] flex-1 flex-col @max-[479px]/chat-column:[&_.command-bar-right_span]:hidden @max-[360px]/chat-column:[&_.command-bar]:pl-3 @max-[360px]/chat-column:[&_.command-bar]:pr-2"
+      className="chat-column @container/chat-column flex min-w-[320px] flex-1 flex-col @max-[360px]/chat-column:[&_.command-bar]:pr-2 @max-[360px]/chat-column:[&_.command-bar]:pl-3 @max-[479px]/chat-column:[&_.command-bar-right_span]:hidden"
       data-chat-column
     >
       <CommandBar
@@ -127,132 +127,128 @@ export function ChatMainColumn({
         agentHasProject={agentHasProject}
       />
       {chat.isReconnecting && (
-          <div className="bg-warning/20 text-warning-foreground text-xs text-center py-1 shrink-0">
-            Reconnecting...
-          </div>
-        )}
-
-        <div className="grid flex-1 min-h-0">
-          <MessageList
-            ref={messageListRef}
-            messages={chat.messages}
-            isStreaming={chat.isStreaming}
-            isThinking={chat.isThinking}
-            isLoadingMessages={chat.isLoadingMessages}
-            onRespondToQuestion={chat.onRespondToQuestion}
-            onRespondToApproval={chat.onRespondToApproval}
-          />
+        <div className="shrink-0 bg-warning/20 py-1 text-center text-xs text-warning-foreground">
+          Reconnecting...
         </div>
+      )}
 
-        {voiceStatus.showVoiceStatusBar && (
-          <VoiceStatusBar
-            voiceLoading={voiceStatus.voiceStatusWarming}
-            isListening={voice.isListening ?? false}
-            isSpeechDetected={voice.isSpeechDetected ?? false}
-            isRecording={voice.isRecording ?? false}
-            isTranscribing={voice.isTranscribing ?? false}
-            voiceInputMode={voiceStatus.voiceInputMode}
-            voiceError={voice.voiceError}
-          />
-        )}
-
-        <AgentStatusBar
-          viewingMeta={viewingMeta}
-          interactionMode={chat.sessionInteractionMode ?? "none"}
-          contextUsage={chat.contextUsage}
-          contextUsageUpdatedAt={chat.contextUsageUpdatedAt}
-          isAttached={!!chat.attachedSessionId}
-          isAutonomousSession={isAutonomousSession}
-          onAttach={canAttachViewedSession ? chat.onAttachToViewed : undefined}
-          onResume={
-            canControlViewedSession ? handleResumeViewedSession : undefined
-          }
-          onDetach={chat.attachedSessionId ? chat.onDetachFromSession : undefined}
-          onOpenTerminal={
-            viewingMeta?.sessionType === "terminal" && chat.dbSessionId
-              ? () =>
-                  showActivityTab(
-                    "terminal",
-                    chat.dbSessionId ?? undefined,
-                  )
-              : undefined
-          }
-          onNewChat={() => onNewChat()}
-          planPendingApproval={chat.planPendingApproval}
-          planApprovalOptions={chat.planApprovalOptions}
-          onApprovePlan={chat.onApprovePlan}
-          onRequestPlanChanges={chat.onRequestPlanChanges}
-          onViewPlan={onViewPlan}
-          planPendingVariant={planPendingVariant}
+      <div className="grid min-h-0 flex-1">
+        <MessageList
+          ref={messageListRef}
+          messages={chat.messages}
+          isStreaming={chat.isStreaming}
+          isThinking={chat.isThinking}
+          isLoadingMessages={chat.isLoadingMessages}
+          onRespondToQuestion={chat.onRespondToQuestion}
+          onRespondToApproval={chat.onRespondToApproval}
         />
+      </div>
 
-        {showChatInput && (
-          <ChatInput
-            onSend={chat.onSend}
-            onStop={chat.onStop}
-            isStreaming={chat.isStreaming}
-            disabled={chatInputDisabled}
-            disabledPlaceholder={chatInputDisabledPlaceholder}
-            disabledAriaLabel={chatInputDisabledAriaLabel}
-            onInputChange={chat.onInputChange}
-            paletteItems={chat.paletteItems}
-            onPaletteSelect={onPaletteSelect}
-            mode={chat.mode}
-            onModeChange={handleInputModeChange}
-            modeDisabled={isAutonomousSession}
-            modeOptions={isAutonomousSession ? AUTONOMOUS_CHAT_MODES : undefined}
-            currentBranch={effectiveBranch}
-            worktreePath={chat.worktreePath}
-            projectId={projectId ?? null}
-            onWorktreeChange={chat.onWorktreeChange}
-            worktreePickerDisabled={isProxyAttached}
-            agentName={effectiveAgentName}
-            onAgentChange={chat.onAgentChange}
-            agentPickerDisabled={isAutonomousSession}
-            agentDefinitions={agentDefinitions}
-            agentGlobalDefs={agentGlobalDefs}
-            agentProjectDefs={agentProjectDefs}
-            agentShowScopeToggle={agentShowScopeToggle}
-            agentHasGlobal={agentHasGlobal}
-            agentHasProject={agentHasProject}
-            sttEnabled={voice.sttEnabled}
-            ttsEnabled={voice.ttsEnabled}
-            voiceInputMode={voice.voiceInputMode}
-            isRecording={voice.isRecording}
-            isSpeaking={voice.isSpeaking}
-            voiceLoading={voice.voiceLoading}
-            voiceReady={voice.voiceReady}
-            prepareTTSPlayback={voice.prepareTTSPlayback}
-            startRecording={voice.startRecording}
-            stopRecording={voice.stopRecording}
-            cancelRecording={voice.cancelRecording}
-            stopTTS={voice.stopTTS}
-            onSttEnabledChange={onSttEnabledChange}
-            onTtsEnabledChange={onTtsEnabledChange}
-            onVoiceInputModeChange={onVoiceInputModeChange}
-            onScrollToBottom={() => messageListRef.current?.scrollToBottom()}
-            provider={effectiveInputProvider}
-            availableProviders={availableProviders}
-            providerModelCatalog={providerModelCatalog}
-            currentModel={effectiveInputModel}
-            currentReasoning={effectiveInputReasoning}
-            onModelChange={onModelChange}
-            onReasoningChange={handleReasoningChange}
-            onProviderSelectionChange={
-              isSwappedTerminal
-                ? handleSwappedSessionProviderSelection
-                : handleMainProviderSelection
-            }
-            providerPickerDisabledReason={providerPickerDisabledReason}
-            hasMessages={chat.messages.length > 0}
-            proxySlashMode={
-              isSwappedTerminal && chat.sessionInteractionMode === "proxy"
-            }
-            proxyDeliveryNotice={chat.proxyDeliveryNotice}
-            attachmentsDisabled={isProxyAttached}
-            imagesDisabled={imagesDisabled}
-          />
-        )}
+      {voiceStatus.showVoiceStatusBar && (
+        <VoiceStatusBar
+          voiceLoading={voiceStatus.voiceStatusWarming}
+          isListening={voice.isListening ?? false}
+          isSpeechDetected={voice.isSpeechDetected ?? false}
+          isRecording={voice.isRecording ?? false}
+          isTranscribing={voice.isTranscribing ?? false}
+          voiceInputMode={voiceStatus.voiceInputMode}
+          voiceError={voice.voiceError}
+        />
+      )}
+
+      <AgentStatusBar
+        viewingMeta={viewingMeta}
+        interactionMode={chat.sessionInteractionMode ?? "none"}
+        contextUsage={chat.contextUsage}
+        contextUsageUpdatedAt={chat.contextUsageUpdatedAt}
+        isAttached={!!chat.attachedSessionId}
+        isAutonomousSession={isAutonomousSession}
+        onAttach={canAttachViewedSession ? chat.onAttachToViewed : undefined}
+        onResume={
+          canControlViewedSession ? handleResumeViewedSession : undefined
+        }
+        onDetach={chat.attachedSessionId ? chat.onDetachFromSession : undefined}
+        onOpenTerminal={
+          viewingMeta?.sessionType === "terminal" && chat.dbSessionId
+            ? () => showActivityTab("terminal", chat.dbSessionId ?? undefined)
+            : undefined
+        }
+        onNewChat={() => onNewChat()}
+        planPendingApproval={chat.planPendingApproval}
+        planApprovalOptions={chat.planApprovalOptions}
+        onApprovePlan={chat.onApprovePlan}
+        onRequestPlanChanges={chat.onRequestPlanChanges}
+        onViewPlan={onViewPlan}
+        planPendingVariant={planPendingVariant}
+      />
+
+      {showChatInput && (
+        <ChatInput
+          onSend={chat.onSend}
+          onStop={chat.onStop}
+          isStreaming={chat.isStreaming}
+          disabled={chatInputDisabled}
+          disabledPlaceholder={chatInputDisabledPlaceholder}
+          disabledAriaLabel={chatInputDisabledAriaLabel}
+          onInputChange={chat.onInputChange}
+          paletteItems={chat.paletteItems}
+          onPaletteSelect={onPaletteSelect}
+          mode={chat.mode}
+          onModeChange={handleInputModeChange}
+          modeDisabled={isAutonomousSession}
+          modeOptions={isAutonomousSession ? AUTONOMOUS_CHAT_MODES : undefined}
+          currentBranch={effectiveBranch}
+          worktreePath={chat.worktreePath}
+          projectId={projectId ?? null}
+          onWorktreeChange={chat.onWorktreeChange}
+          worktreePickerDisabled={isProxyAttached}
+          agentName={effectiveAgentName}
+          onAgentChange={chat.onAgentChange}
+          agentPickerDisabled={isAutonomousSession}
+          agentDefinitions={agentDefinitions}
+          agentGlobalDefs={agentGlobalDefs}
+          agentProjectDefs={agentProjectDefs}
+          agentShowScopeToggle={agentShowScopeToggle}
+          agentHasGlobal={agentHasGlobal}
+          agentHasProject={agentHasProject}
+          sttEnabled={voice.sttEnabled}
+          ttsEnabled={voice.ttsEnabled}
+          voiceInputMode={voice.voiceInputMode}
+          isRecording={voice.isRecording}
+          isSpeaking={voice.isSpeaking}
+          voiceLoading={voice.voiceLoading}
+          voiceReady={voice.voiceReady}
+          prepareTTSPlayback={voice.prepareTTSPlayback}
+          startRecording={voice.startRecording}
+          stopRecording={voice.stopRecording}
+          cancelRecording={voice.cancelRecording}
+          stopTTS={voice.stopTTS}
+          onSttEnabledChange={onSttEnabledChange}
+          onTtsEnabledChange={onTtsEnabledChange}
+          onVoiceInputModeChange={onVoiceInputModeChange}
+          onScrollToBottom={() => messageListRef.current?.scrollToBottom()}
+          provider={effectiveInputProvider}
+          availableProviders={availableProviders}
+          providerModelCatalog={providerModelCatalog}
+          currentModel={effectiveInputModel}
+          currentReasoning={effectiveInputReasoning}
+          onModelChange={onModelChange}
+          onReasoningChange={handleReasoningChange}
+          onProviderSelectionChange={
+            isSwappedTerminal
+              ? handleSwappedSessionProviderSelection
+              : handleMainProviderSelection
+          }
+          providerPickerDisabledReason={providerPickerDisabledReason}
+          hasMessages={chat.messages.length > 0}
+          proxySlashMode={
+            isSwappedTerminal && chat.sessionInteractionMode === "proxy"
+          }
+          proxyDeliveryNotice={chat.proxyDeliveryNotice}
+          attachmentsDisabled={isProxyAttached}
+          imagesDisabled={imagesDisabled}
+        />
+      )}
     </div>
   );
 }

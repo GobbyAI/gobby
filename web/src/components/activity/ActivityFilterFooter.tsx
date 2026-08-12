@@ -1,22 +1,22 @@
-import { Button } from '../ui/Button'
+import { Button } from "../ui/Button";
 
 export interface ActivityFilterFooterProps {
-  onReset: () => void
-  onApply: () => void
-  resetDisabled?: boolean
-  applyLabel?: string
+  onReset: () => void;
+  onApply: () => void;
+  resetDisabled?: boolean;
+  applyLabel?: string;
 }
 
 export function ActivityFilterFooter({
   onReset,
   onApply,
   resetDisabled,
-  applyLabel = 'Apply',
+  applyLabel = "Apply",
 }: ActivityFilterFooterProps) {
   return (
     <div
       className="flex items-center justify-between border-t border-border px-2 py-1.5"
-      style={{ background: 'var(--bg-secondary)' }}
+      style={{ background: "var(--bg-secondary)" }}
     >
       <Button
         type="button"
@@ -31,5 +31,5 @@ export function ActivityFilterFooter({
         {applyLabel}
       </Button>
     </div>
-  )
+  );
 }

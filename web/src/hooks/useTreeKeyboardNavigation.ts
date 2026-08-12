@@ -13,7 +13,8 @@ export interface TreeNavItem {
   isExpanded: boolean;
 }
 
-type NavKey = "ArrowDown" | "ArrowUp" | "ArrowLeft" | "ArrowRight" | "Home" | "End";
+type NavKey =
+  "ArrowDown" | "ArrowUp" | "ArrowLeft" | "ArrowRight" | "Home" | "End";
 
 interface UseTreeKeyboardNavigationOptions {
   /** Flattened visible rows, in DOM order. */
@@ -66,7 +67,9 @@ export function useTreeKeyboardNavigation({
   // Keep the anchor aligned with external selection (mouse click, host reset)
   // via the "adjust state during render" pattern — no effect, so there's no
   // extra commit/paint just to sync focus.
-  const [prevSelectedId, setPrevSelectedId] = useState<string | null>(selectedId);
+  const [prevSelectedId, setPrevSelectedId] = useState<string | null>(
+    selectedId,
+  );
   if (selectedId !== prevSelectedId) {
     setPrevSelectedId(selectedId);
     setFocusedId(selectedId);
@@ -89,12 +92,15 @@ export function useTreeKeyboardNavigation({
   // queued focus moves would then fire all at once on the next paint). Only
   // focusRow arms this; external selection sync never steals DOM focus.
   const [focusSeq, setFocusSeq] = useState(0);
-  const focusRow = useCallback((id: string) => {
-    setFocusedId(id);
-    pendingFocusRef.current = id;
-    onFocusRequest?.(id);
-    setFocusSeq((seq) => seq + 1);
-  }, [onFocusRequest]);
+  const focusRow = useCallback(
+    (id: string) => {
+      setFocusedId(id);
+      pendingFocusRef.current = id;
+      onFocusRequest?.(id);
+      setFocusSeq((seq) => seq + 1);
+    },
+    [onFocusRequest],
+  );
 
   useLayoutEffect(() => {
     if (focusSeq === 0) return;

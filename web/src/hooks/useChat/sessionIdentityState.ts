@@ -1,10 +1,10 @@
 import { useCallback, useEffect, useRef, useState } from "react";
+import type { Dispatch, MutableRefObject, SetStateAction } from "react";
 import type {
-  Dispatch,
-  MutableRefObject,
-  SetStateAction,
-} from "react";
-import type { ChatMode, ContextUsage, SessionObservationMeta } from "../../types/chat";
+  ChatMode,
+  ContextUsage,
+  SessionObservationMeta,
+} from "../../types/chat";
 import { normalizeChatMode } from "../../types/chat";
 import { clearFreshChatDraft } from "../../lib/sessionPersistence";
 import {
@@ -61,7 +61,9 @@ export function useSessionIdentityState({
   );
   const dbSessionIdRef = useRef<string | null>(dbSessionId);
   const creatingSessionIdRef = useRef<Promise<string | null> | null>(null);
-  const creatingForceNewSessionIdRef = useRef<Promise<string | null> | null>(null);
+  const creatingForceNewSessionIdRef = useRef<Promise<string | null> | null>(
+    null,
+  );
   const lastSeqRef = useRef<number>(0);
 
   const [currentBranch, setCurrentBranch] = useState<string | null>(null);
@@ -157,7 +159,11 @@ export function useSessionIdentityState({
           applyMainSessionMeta(session as Record<string, unknown>);
           const ws = wsRef.current;
           const agentName = activeAgentRef.current;
-          if (ws?.readyState === WebSocket.OPEN && agentName && agentName !== "default") {
+          if (
+            ws?.readyState === WebSocket.OPEN &&
+            agentName &&
+            agentName !== "default"
+          ) {
             try {
               ws.send(
                 JSON.stringify({
@@ -167,7 +173,10 @@ export function useSessionIdentityState({
                 }),
               );
             } catch (error) {
-              console.warn("Failed to send set_agent for new chat session", error);
+              console.warn(
+                "Failed to send set_agent for new chat session",
+                error,
+              );
             }
           }
           return session.id;

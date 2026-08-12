@@ -1,26 +1,35 @@
-import { cleanup, fireEvent, render, screen, within } from '@testing-library/react'
-import { afterEach, describe, expect, it, vi } from 'vitest'
-import { AppearanceSection } from '../AppearanceSection'
-import { SettingsSectionContext } from '../SettingsSectionContext'
-import type { SettingsSectionContextValue } from '../SettingsSectionContext'
-import type { Settings, UseSettingsReturn } from '../../../../hooks/useSettings'
+import {
+  cleanup,
+  fireEvent,
+  render,
+  screen,
+  within,
+} from "@testing-library/react";
+import { afterEach, describe, expect, it, vi } from "vitest";
+import { AppearanceSection } from "../AppearanceSection";
+import { SettingsSectionContext } from "../SettingsSectionContext";
+import type { SettingsSectionContextValue } from "../SettingsSectionContext";
+import type {
+  Settings,
+  UseSettingsReturn,
+} from "../../../../hooks/useSettings";
 
-afterEach(cleanup)
+afterEach(cleanup);
 
 function makeSettings(overrides: Partial<Settings> = {}): Settings {
   return {
     fontSize: 16,
-    model: 'opus',
-    chatMode: 'plan',
-    theme: 'dark',
-    defaultChatMode: 'plan',
+    model: "opus",
+    chatMode: "plan",
+    theme: "dark",
+    defaultChatMode: "plan",
     sttEnabled: false,
     ttsEnabled: false,
-    voiceInputMode: 'ptt',
-    planPendingVariant: 'info',
-    density: 'comfortable',
+    voiceInputMode: "ptt",
+    planPendingVariant: "info",
+    density: "comfortable",
     ...overrides,
-  }
+  };
 }
 
 function makeClient(settings: Settings): UseSettingsReturn {
@@ -37,7 +46,7 @@ function makeClient(settings: Settings): UseSettingsReturn {
     updatePlanPendingVariant: vi.fn(),
     updateDensity: vi.fn(),
     resetSettings: vi.fn(),
-  }
+  };
 }
 
 function renderSection(clientSettings: UseSettingsReturn | undefined): void {
@@ -49,80 +58,87 @@ function renderSection(clientSettings: UseSettingsReturn | undefined): void {
     saveConfig: async () => ({ ok: true }),
     registerDirtyGuard: () => () => {},
     clientSettings,
-  }
+  };
   render(
     <SettingsSectionContext.Provider value={ctx}>
       <AppearanceSection />
     </SettingsSectionContext.Provider>,
-  )
+  );
 }
 
-describe('AppearanceSection', () => {
-  it('exposes the selected theme through labelled single-select group semantics', () => {
-    const client = makeClient(makeSettings({ theme: 'dark' }))
-    renderSection(client)
+describe("AppearanceSection", () => {
+  it("exposes the selected theme through labelled single-select group semantics", () => {
+    const client = makeClient(makeSettings({ theme: "dark" }));
+    renderSection(client);
 
-    const themeGroup = screen.getByRole('radiogroup', { name: 'Theme' })
-    expect(within(themeGroup).getByRole('radio', { name: 'Dark' })).toBeChecked()
-    expect(within(themeGroup).getByRole('radio', { name: 'Light' })).not.toBeChecked()
+    const themeGroup = screen.getByRole("radiogroup", { name: "Theme" });
+    expect(
+      within(themeGroup).getByRole("radio", { name: "Dark" }),
+    ).toBeChecked();
+    expect(
+      within(themeGroup).getByRole("radio", { name: "Light" }),
+    ).not.toBeChecked();
 
-    fireEvent.click(within(themeGroup).getByRole('radio', { name: 'Light' }))
-    expect(client.updateTheme).toHaveBeenCalledWith('light')
-  })
+    fireEvent.click(within(themeGroup).getByRole("radio", { name: "Light" }));
+    expect(client.updateTheme).toHaveBeenCalledWith("light");
+  });
 
-  it('resets client appearance settings to their defaults', () => {
-    const client = makeClient(makeSettings({ fontSize: 20, theme: 'light' }))
-    renderSection(client)
+  it("resets client appearance settings to their defaults", () => {
+    const client = makeClient(makeSettings({ fontSize: 20, theme: "light" }));
+    renderSection(client);
 
-    fireEvent.click(screen.getByRole('button', { name: 'Reset to defaults' }))
+    fireEvent.click(screen.getByRole("button", { name: "Reset to defaults" }));
 
-    expect(client.resetSettings).toHaveBeenCalledOnce()
-  })
+    expect(client.resetSettings).toHaveBeenCalledOnce();
+  });
 
-  it('routes a density change to updateDensity', () => {
-    const client = makeClient(makeSettings({ density: 'comfortable' }))
-    renderSection(client)
+  it("routes a density change to updateDensity", () => {
+    const client = makeClient(makeSettings({ density: "comfortable" }));
+    renderSection(client);
 
-    const densityGroup = screen.getByRole('radiogroup', { name: 'Density' })
-    expect(within(densityGroup).getByRole('radio', { name: 'Comfortable' })).toHaveAttribute(
-      'aria-checked',
-      'true',
-    )
+    const densityGroup = screen.getByRole("radiogroup", { name: "Density" });
+    expect(
+      within(densityGroup).getByRole("radio", { name: "Comfortable" }),
+    ).toHaveAttribute("aria-checked", "true");
 
-    fireEvent.click(within(densityGroup).getByRole('radio', { name: 'Compact' }))
-    expect(client.updateDensity).toHaveBeenCalledWith('compact')
-  })
+    fireEvent.click(
+      within(densityGroup).getByRole("radio", { name: "Compact" }),
+    );
+    expect(client.updateDensity).toHaveBeenCalledWith("compact");
+  });
 
-  it('bounds the font-size slider to 12-24 and routes changes to updateFontSize', () => {
-    const client = makeClient(makeSettings({ fontSize: 16 }))
-    renderSection(client)
+  it("bounds the font-size slider to 12-24 and routes changes to updateFontSize", () => {
+    const client = makeClient(makeSettings({ fontSize: 16 }));
+    renderSection(client);
 
-    const slider = screen.getByRole('slider', { name: 'Font size' })
+    const slider = screen.getByRole("slider", { name: "Font size" });
     // The audit's missing-validation fix: the slider must cap at 24, not 48.
-    expect(slider).toHaveAttribute('min', '12')
-    expect(slider).toHaveAttribute('max', '24')
+    expect(slider).toHaveAttribute("min", "12");
+    expect(slider).toHaveAttribute("max", "24");
 
-    fireEvent.change(slider, { target: { value: '20' } })
-    expect(client.updateFontSize).toHaveBeenCalledWith(20)
-  })
+    fireEvent.change(slider, { target: { value: "20" } });
+    expect(client.updateFontSize).toHaveBeenCalledWith(20);
+  });
 
-  it('exposes a plan-pending control wired to updatePlanPendingVariant (dead-backend fix)', () => {
-    const client = makeClient(makeSettings({ planPendingVariant: 'info' }))
-    renderSection(client)
+  it("exposes a plan-pending control wired to updatePlanPendingVariant (dead-backend fix)", () => {
+    const client = makeClient(makeSettings({ planPendingVariant: "info" }));
+    renderSection(client);
 
-    const group = screen.getByRole('radiogroup', { name: 'Plan-pending highlight' })
-    expect(within(group).getByRole('radio', { name: 'Info' })).toHaveAttribute(
-      'aria-checked',
-      'true',
-    )
+    const group = screen.getByRole("radiogroup", {
+      name: "Plan-pending highlight",
+    });
+    expect(within(group).getByRole("radio", { name: "Info" })).toHaveAttribute(
+      "aria-checked",
+      "true",
+    );
 
-    fireEvent.click(within(group).getByRole('radio', { name: 'Amber' }))
-    expect(client.updatePlanPendingVariant).toHaveBeenCalledWith('amber')
-  })
+    fireEvent.click(within(group).getByRole("radio", { name: "Amber" }));
+    expect(client.updatePlanPendingVariant).toHaveBeenCalledWith("amber");
+  });
 
-  it('renders a graceful fallback when no settings instance is available', () => {
-    renderSection(undefined)
-    expect(screen.getByText(/unavailable/i)).toBeInTheDocument()
-    expect(screen.queryByRole('radiogroup', { name: 'Theme' })).toBeNull()
-  })
-})
+  it("renders a graceful fallback when no settings instance is available", () => {
+    renderSection(undefined);
+    expect(screen.getByText(/unavailable/i)).toBeInTheDocument();
+    expect(screen.queryByRole("radiogroup", { name: "Theme" })).toBeNull();
+  });
+});

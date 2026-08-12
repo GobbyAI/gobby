@@ -1,17 +1,20 @@
-import { memo, useEffect, useRef, useState } from 'react'
-import type { ChatAttachment, ChatMessage } from '../../types/chat'
-import { cn } from '../../lib/utils'
-import { extractImageSrc } from '../../lib/imageSources'
-import { formatAttachmentSize, normalizeAttachmentUrl } from '../../lib/chatAttachments'
-import { MESSAGE_SPACING } from '../shared/spacing'
-import { GobbyLogo } from '../shared/GobbyLogo'
-import { markdownBodyClassName } from '../shared/MarkdownBody'
-import { Markdown } from './Markdown'
-import { ThinkingBlock } from './ThinkingBlock'
-import { CompactionSummaryCard } from './CompactionSummaryCard'
-import { ToolCallCards } from './ToolCallCard'
-import { RichContentBlocks } from './RichContentBlocks'
-import { splitProtocolContent } from './protocolContent'
+import { memo, useEffect, useRef, useState } from "react";
+import type { ChatAttachment, ChatMessage } from "../../types/chat";
+import { cn } from "../../lib/utils";
+import { extractImageSrc } from "../../lib/imageSources";
+import {
+  formatAttachmentSize,
+  normalizeAttachmentUrl,
+} from "../../lib/chatAttachments";
+import { MESSAGE_SPACING } from "../shared/spacing";
+import { GobbyLogo } from "../shared/GobbyLogo";
+import { markdownBodyClassName } from "../shared/MarkdownBody";
+import { Markdown } from "./Markdown";
+import { ThinkingBlock } from "./ThinkingBlock";
+import { CompactionSummaryCard } from "./CompactionSummaryCard";
+import { ToolCallCards } from "./ToolCallCard";
+import { RichContentBlocks } from "./RichContentBlocks";
+import { splitProtocolContent } from "./protocolContent";
 
 /** Replace [Image: ...] text descriptions with styled placeholders */
 function renderImagePlaceholders(content: string): string {
@@ -19,65 +22,82 @@ function renderImagePlaceholders(content: string): string {
     /\[Image: original (\d+)x(\d+), displayed at (\d+)x(\d+)[^\]]*\]/g,
     (_match, origW: string, origH: string) =>
       `\n\n> 🖼️ **Image** (${origW}×${origH})\n\n`,
-  )
+  );
 }
 
 function safeAttachmentHref(contentUrl: string): string | null {
   const origin =
-    typeof window !== 'undefined' && window.location?.origin
+    typeof window !== "undefined" && window.location?.origin
       ? window.location.origin
-      : 'http://localhost'
+      : "http://localhost";
   try {
-    const parsed = new URL(contentUrl, origin)
-    if (parsed.protocol !== 'http:' && parsed.protocol !== 'https:') return null
-    if (!parsed.pathname.startsWith('/api/chat/attachments/')) return null
-    if (parsed.origin === origin && contentUrl.startsWith('/')) {
-      return `${parsed.pathname}${parsed.search}${parsed.hash}`
+    const parsed = new URL(contentUrl, origin);
+    if (parsed.protocol !== "http:" && parsed.protocol !== "https:")
+      return null;
+    if (!parsed.pathname.startsWith("/api/chat/attachments/")) return null;
+    if (parsed.origin === origin && contentUrl.startsWith("/")) {
+      return `${parsed.pathname}${parsed.search}${parsed.hash}`;
     }
-    return parsed.href
+    return parsed.href;
   } catch {
-    return null
+    return null;
   }
 }
 
-function AttachmentUnavailableCard({ attachment }: { attachment: ChatAttachment }) {
+function AttachmentUnavailableCard({
+  attachment,
+}: {
+  attachment: ChatAttachment;
+}) {
   return (
-    <div className="my-1 p-2 rounded bg-muted/50 border border-border text-xs flex items-center gap-2">
-      <span className="font-medium text-foreground truncate">{attachment.filename}</span>
+    <div className="my-1 flex items-center gap-2 rounded border border-border bg-muted/50 p-2 text-xs">
+      <span className="truncate font-medium text-foreground">
+        {attachment.filename}
+      </span>
       <span className="text-muted-foreground">Attachment link unavailable</span>
     </div>
-  )
+  );
 }
 
 function AttachmentBlock({ attachment }: { attachment: ChatAttachment }) {
-  const resolved = normalizeAttachmentUrl(attachment)
-  const [failedImageUrl, setFailedImageUrl] = useState<string | null>(null)
-  const mountedRef = useRef(true)
-  const isImage = resolved.mime_type.startsWith('image/')
-  const isPdf = resolved.mime_type === 'application/pdf'
-  const imageFailed = failedImageUrl === resolved.content_url
-  const safeHref = safeAttachmentHref(resolved.content_url)
+  const resolved = normalizeAttachmentUrl(attachment);
+  const [failedImageUrl, setFailedImageUrl] = useState<string | null>(null);
+  const mountedRef = useRef(true);
+  const isImage = resolved.mime_type.startsWith("image/");
+  const isPdf = resolved.mime_type === "application/pdf";
+  const imageFailed = failedImageUrl === resolved.content_url;
+  const safeHref = safeAttachmentHref(resolved.content_url);
 
   useEffect(() => {
-    mountedRef.current = true
+    mountedRef.current = true;
     return () => {
-      mountedRef.current = false
-    }
-  }, [])
+      mountedRef.current = false;
+    };
+  }, []);
 
   if (!safeHref) {
-    return <AttachmentUnavailableCard attachment={resolved} />
+    return <AttachmentUnavailableCard attachment={resolved} />;
   }
 
   if (isImage) {
     if (imageFailed) {
       return (
-        <div className="my-1 p-2 rounded bg-muted/50 border border-border text-xs flex items-center gap-2">
-          <span className="font-medium text-foreground truncate">{resolved.filename}</span>
-          <span className="text-muted-foreground">Image preview unavailable</span>
-          <a className="ml-auto text-accent hover:underline" href={safeHref} download={resolved.filename}>Download</a>
+        <div className="my-1 flex items-center gap-2 rounded border border-border bg-muted/50 p-2 text-xs">
+          <span className="truncate font-medium text-foreground">
+            {resolved.filename}
+          </span>
+          <span className="text-muted-foreground">
+            Image preview unavailable
+          </span>
+          <a
+            className="ml-auto text-accent hover:underline"
+            href={safeHref}
+            download={resolved.filename}
+          >
+            Download
+          </a>
         </div>
-      )
+      );
     }
 
     return (
@@ -89,16 +109,16 @@ function AttachmentBlock({ attachment }: { attachment: ChatAttachment }) {
           decoding="async"
           className="max-w-full rounded-lg border border-border"
           onError={() => {
-            if (mountedRef.current) setFailedImageUrl(resolved.content_url)
+            if (mountedRef.current) setFailedImageUrl(resolved.content_url);
           }}
         />
       </div>
-    )
+    );
   }
 
   if (isPdf) {
     return (
-      <div className="my-2 rounded-md border border-border overflow-hidden bg-muted/30">
+      <div className="my-2 overflow-hidden rounded-md border border-border bg-muted/30">
         <iframe
           title={resolved.filename}
           src={safeHref}
@@ -108,27 +128,50 @@ function AttachmentBlock({ attachment }: { attachment: ChatAttachment }) {
         />
         <div className="flex items-center justify-between gap-3 px-3 py-2 text-xs">
           <span className="truncate font-medium">{resolved.filename}</span>
-          <a className="text-accent hover:underline" href={safeHref} target="_blank" rel="noreferrer noopener">Open</a>
+          <a
+            className="text-accent hover:underline"
+            href={safeHref}
+            target="_blank"
+            rel="noreferrer noopener"
+          >
+            Open
+          </a>
         </div>
       </div>
-    )
+    );
   }
 
   return (
-    <div className="my-1 p-2 rounded bg-muted/50 border border-border text-xs flex items-center gap-2">
-      <span className="font-medium text-foreground truncate">{resolved.filename}</span>
-      <span className="text-muted-foreground">{formatAttachmentSize(resolved.size_bytes)}</span>
-      <a className="ml-auto text-accent hover:underline" href={safeHref} download={resolved.filename}>Download</a>
+    <div className="my-1 flex items-center gap-2 rounded border border-border bg-muted/50 p-2 text-xs">
+      <span className="truncate font-medium text-foreground">
+        {resolved.filename}
+      </span>
+      <span className="text-muted-foreground">
+        {formatAttachmentSize(resolved.size_bytes)}
+      </span>
+      <a
+        className="ml-auto text-accent hover:underline"
+        href={safeHref}
+        download={resolved.filename}
+      >
+        Download
+      </a>
     </div>
-  )
+  );
 }
 
 interface MessageItemProps {
-  message: ChatMessage
-  isStreaming?: boolean
-  isThinking?: boolean
-  onRespondToQuestion?: (toolCallId: string, answers: Record<string, string>) => boolean | void
-  onRespondToApproval?: (toolCallId: string, decision: 'approve' | 'reject' | 'approve_always') => boolean | void
+  message: ChatMessage;
+  isStreaming?: boolean;
+  isThinking?: boolean;
+  onRespondToQuestion?: (
+    toolCallId: string,
+    answers: Record<string, string>,
+  ) => boolean | void;
+  onRespondToApproval?: (
+    toolCallId: string,
+    decision: "approve" | "reject" | "approve_always",
+  ) => boolean | void;
 }
 
 function ProtocolAwareText({
@@ -138,37 +181,47 @@ function ProtocolAwareText({
   onRespondToQuestion,
   onRespondToApproval,
 }: {
-  content: string
-  id: string
-  isStreaming?: boolean
-  onRespondToQuestion?: (toolCallId: string, answers: Record<string, string>) => boolean | void
-  onRespondToApproval?: (toolCallId: string, decision: 'approve' | 'reject' | 'approve_always') => boolean | void
+  content: string;
+  id: string;
+  isStreaming?: boolean;
+  onRespondToQuestion?: (
+    toolCallId: string,
+    answers: Record<string, string>,
+  ) => boolean | void;
+  onRespondToApproval?: (
+    toolCallId: string,
+    decision: "approve" | "reject" | "approve_always",
+  ) => boolean | void;
 }) {
-  const segments = splitProtocolContent(content, id, isStreaming)
+  const segments = splitProtocolContent(content, id, isStreaming);
   const textSegmentIndexes = segments
-    .map((segment, index) => (segment.type === 'text' ? index : -1))
-    .filter((index) => index >= 0)
-  const lastTextSegmentIndex = textSegmentIndexes[textSegmentIndexes.length - 1]
+    .map((segment, index) => (segment.type === "text" ? index : -1))
+    .filter((index) => index >= 0);
+  const lastTextSegmentIndex =
+    textSegmentIndexes[textSegmentIndexes.length - 1];
 
   return (
     <>
       {segments.map((segment, index) => {
-        if (segment.type === 'text') {
+        if (segment.type === "text") {
           return (
             <div
               key={`${id}-t${index}`}
               className={cn(
-                'message-content text-[length:var(--text-lg)] leading-relaxed text-foreground',
+                "message-content text-[length:var(--text-lg)] leading-relaxed text-foreground",
                 markdownBodyClassName,
               )}
               data-testid="chat-message-content"
             >
-              <Markdown content={renderImagePlaceholders(segment.content)} id={`${id}-${index}`} />
+              <Markdown
+                content={renderImagePlaceholders(segment.content)}
+                id={`${id}-${index}`}
+              />
               {isStreaming && index === lastTextSegmentIndex && (
                 <span className="cursor ml-1.5 inline-block h-4 w-2 animate-pulse bg-foreground align-text-bottom" />
               )}
             </div>
-          )
+          );
         }
 
         return (
@@ -178,72 +231,96 @@ function ProtocolAwareText({
             onRespond={onRespondToQuestion}
             onRespondToApproval={onRespondToApproval}
           />
-        )
+        );
       })}
     </>
-  )
+  );
 }
 
-export const MessageItem = memo(function MessageItem({ message, isStreaming = false, isThinking = false, onRespondToQuestion, onRespondToApproval }: MessageItemProps) {
-  const isModelSwitch = message.role === 'system' && message.id.startsWith('model-switch-')
-  const lastTextBlockIndex = message.contentBlocks?.reduce(
-    (last, block, index) => (block.type === 'text' ? index : last),
-    -1,
-  ) ?? -1
+export const MessageItem = memo(function MessageItem({
+  message,
+  isStreaming = false,
+  isThinking = false,
+  onRespondToQuestion,
+  onRespondToApproval,
+}: MessageItemProps) {
+  const isModelSwitch =
+    message.role === "system" && message.id.startsWith("model-switch-");
+  const lastTextBlockIndex =
+    message.contentBlocks?.reduce(
+      (last, block, index) => (block.type === "text" ? index : last),
+      -1,
+    ) ?? -1;
 
   // Don't render empty messages (e.g. compact acknowledgements with no body)
-  const hasContent = message.content || message.thinkingContent ||
+  const hasContent =
+    message.content ||
+    message.thinkingContent ||
     (message.toolCalls && message.toolCalls.length > 0) ||
     (message.contentBlocks && message.contentBlocks.length > 0) ||
-    isStreaming || isThinking
-  if (!hasContent && !isModelSwitch) return null
+    isStreaming ||
+    isThinking;
+  if (!hasContent && !isModelSwitch) return null;
 
   if (isModelSwitch) {
     return (
       <div className="flex justify-center py-2">
-        <span className="text-xs text-muted-foreground bg-muted rounded-full px-3 py-1">
+        <span className="rounded-full bg-muted px-3 py-1 text-xs text-muted-foreground">
           {message.content}
         </span>
       </div>
-    )
+    );
   }
 
   return (
-    <div className={cn(
-      MESSAGE_SPACING.body,
-      message.role === 'user' && 'bg-[var(--color-info-soft)]',
-    )}>
-      <div className="max-w-3xl mx-auto">
+    <div
+      className={cn(
+        MESSAGE_SPACING.body,
+        message.role === "user" && "bg-[var(--color-info-soft)]",
+      )}
+    >
+      <div className="mx-auto max-w-3xl">
         <div className={MESSAGE_SPACING.headerRow}>
-          {message.role === 'assistant' && (
+          {message.role === "assistant" && (
             <GobbyLogo label="App logo" className="rounded" />
           )}
           <span className="text-xs font-medium text-muted-foreground">
-            {message.role === 'user' ? 'You' : message.role === 'assistant' ? 'Gobby' : 'System'}
+            {message.role === "user"
+              ? "You"
+              : message.role === "assistant"
+                ? "Gobby"
+                : "System"}
           </span>
           <span className="text-xs text-muted-foreground/60">
             {(() => {
-              const date = message.timestamp instanceof Date ? message.timestamp : new Date(message.timestamp)
-              return !isNaN(date.getTime()) ? date.toLocaleTimeString() : ''
+              const date =
+                message.timestamp instanceof Date
+                  ? message.timestamp
+                  : new Date(message.timestamp);
+              return !isNaN(date.getTime()) ? date.toLocaleTimeString() : "";
             })()}
           </span>
         </div>
 
         {isThinking && !message.content && !message.thinkingContent && (
           <div className={MESSAGE_SPACING.metaRow}>
-            <div className="w-4 h-4 border-2 border-accent border-t-transparent rounded-full animate-spin" />
+            <div className="h-4 w-4 animate-spin rounded-full border-2 border-accent border-t-transparent" />
             <span className="text-sm text-muted-foreground">Thinking...</span>
           </div>
         )}
 
-        {message.thinkingContent !== undefined && !(message.contentBlocks && message.contentBlocks.length > 0) && (
-          <ThinkingBlock content={message.thinkingContent} messageId={message.id} />
-        )}
+        {message.thinkingContent !== undefined &&
+          !(message.contentBlocks && message.contentBlocks.length > 0) && (
+            <ThinkingBlock
+              content={message.thinkingContent}
+              messageId={message.id}
+            />
+          )}
 
         {message.contentBlocks && message.contentBlocks.length > 0 ? (
           <>
             {message.contentBlocks.map((block, i) => {
-              if (block.type === 'text') {
+              if (block.type === "text") {
                 return (
                   <ProtocolAwareText
                     key={`${message.id}-b${i}`}
@@ -253,15 +330,26 @@ export const MessageItem = memo(function MessageItem({ message, isStreaming = fa
                     onRespondToQuestion={onRespondToQuestion}
                     onRespondToApproval={onRespondToApproval}
                   />
-                )
+                );
               }
-              if (block.type === 'thinking') {
-                return <ThinkingBlock key={`${message.id}-b${i}`} content={block.content} messageId={message.id} />
+              if (block.type === "thinking") {
+                return (
+                  <ThinkingBlock
+                    key={`${message.id}-b${i}`}
+                    content={block.content}
+                    messageId={message.id}
+                  />
+                );
               }
-              if (block.type === 'compaction_summary') {
-                return <CompactionSummaryCard key={`${message.id}-b${i}`} content={block.content} />
+              if (block.type === "compaction_summary") {
+                return (
+                  <CompactionSummaryCard
+                    key={`${message.id}-b${i}`}
+                    content={block.content}
+                  />
+                );
               }
-              if (block.type === 'tool_chain') {
+              if (block.type === "tool_chain") {
                 return (
                   <ToolCallCards
                     key={`${message.id}-b${i}`}
@@ -269,49 +357,73 @@ export const MessageItem = memo(function MessageItem({ message, isStreaming = fa
                     onRespond={onRespondToQuestion}
                     onRespondToApproval={onRespondToApproval}
                   />
-                )
+                );
               }
-              if (block.type === 'tool_reference') {
+              if (block.type === "tool_reference") {
                 return (
-                  <div key={`${message.id}-b${i}`} className="my-1 text-xs text-muted-foreground italic">
+                  <div
+                    key={`${message.id}-b${i}`}
+                    className="my-1 text-xs text-muted-foreground italic"
+                  >
                     Referencing tool: {block.tool_name} ({block.server_name})
                   </div>
-                )
+                );
               }
-              if (block.type === 'attachment') {
-                return <AttachmentBlock key={`${message.id}-b${i}`} attachment={block.attachment} />
+              if (block.type === "attachment") {
+                return (
+                  <AttachmentBlock
+                    key={`${message.id}-b${i}`}
+                    attachment={block.attachment}
+                  />
+                );
               }
-              if (block.type === 'image') {
-                const src = extractImageSrc(block)
-                if (!src) return null
+              if (block.type === "image") {
+                const src = extractImageSrc(block);
+                if (!src) return null;
                 return (
                   <div key={`${message.id}-b${i}`} className="my-2">
-                    <img src={src} alt="Image content" loading="lazy" decoding="async" className="max-w-full rounded-lg border border-border" />
+                    <img
+                      src={src}
+                      alt="Image content"
+                      loading="lazy"
+                      decoding="async"
+                      className="max-w-full rounded-lg border border-border"
+                    />
                   </div>
-                )
+                );
               }
-              if (block.type === 'document') {
+              if (block.type === "document") {
                 return (
-                  <div key={`${message.id}-b${i}`} className="my-1 p-2 rounded bg-muted/50 border border-border text-xs flex items-center gap-2">
-                    <span className="font-medium text-foreground">Document:</span>
-                    <span className="truncate">{block.source?.name || 'Unknown'}</span>
+                  <div
+                    key={`${message.id}-b${i}`}
+                    className="my-1 flex items-center gap-2 rounded border border-border bg-muted/50 p-2 text-xs"
+                  >
+                    <span className="font-medium text-foreground">
+                      Document:
+                    </span>
+                    <span className="truncate">
+                      {block.source?.name || "Unknown"}
+                    </span>
                   </div>
-                )
+                );
               }
-              if (block.type === 'web_search_result') {
+              if (block.type === "web_search_result") {
                 return (
-                  <div key={`${message.id}-b${i}`} className="my-1 p-2 rounded bg-accent/10 border border-accent/20 text-xs italic">
+                  <div
+                    key={`${message.id}-b${i}`}
+                    className="my-1 rounded border border-accent/20 bg-accent/10 p-2 text-xs italic"
+                  >
                     Search result included.
                   </div>
-                )
+                );
               }
               if (
-                block.type === 'resource_link' ||
-                block.type === 'resource' ||
-                block.type === 'audio' ||
-                block.type === 'diff' ||
-                block.type === 'terminal' ||
-                block.type === 'unknown'
+                block.type === "resource_link" ||
+                block.type === "resource" ||
+                block.type === "audio" ||
+                block.type === "diff" ||
+                block.type === "terminal" ||
+                block.type === "unknown"
               ) {
                 return (
                   <RichContentBlocks
@@ -319,15 +431,19 @@ export const MessageItem = memo(function MessageItem({ message, isStreaming = fa
                     blocks={[block]}
                     idPrefix={`${message.id}-b${i}`}
                   />
-                )
+                );
               }
-              return null
+              return null;
             })}
           </>
         ) : (
           <>
             {message.toolCalls && message.toolCalls.length > 0 && (
-              <ToolCallCards toolCalls={message.toolCalls} onRespond={onRespondToQuestion} onRespondToApproval={onRespondToApproval} />
+              <ToolCallCards
+                toolCalls={message.toolCalls}
+                onRespond={onRespondToQuestion}
+                onRespondToApproval={onRespondToApproval}
+              />
             )}
             {message.content && (
               <ProtocolAwareText
@@ -342,5 +458,5 @@ export const MessageItem = memo(function MessageItem({ message, isStreaming = fa
         )}
       </div>
     </div>
-  )
-})
+  );
+});

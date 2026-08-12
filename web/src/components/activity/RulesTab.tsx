@@ -8,10 +8,7 @@ import { coarseHitAreaCls } from "../ui/controlStyles";
 import { Switch } from "../ui/Switch";
 import { ActivityPanelEmpty } from "./ActivityPanelEmpty";
 import { ActivityToolbarSearchRow } from "./ActivityPanelSearch";
-import {
-  FilterDropdownShell,
-  InlineFilterFieldRow,
-} from "./FilterPrimitives";
+import { FilterDropdownShell, InlineFilterFieldRow } from "./FilterPrimitives";
 import { useRegisterActivityActions } from "./activityActions";
 import { DEFAULT_TOP_PANEL_PERCENT } from "./constants";
 import { SelectField } from "./fields";
@@ -85,7 +82,10 @@ function RulesFilterDropdown({
             onChange={(event) => onFiltersChange({ ...filters, event })}
             options={[
               { value: "", label: "Any event" },
-              ...eventOptions.map((eventName) => ({ value: eventName, label: eventName })),
+              ...eventOptions.map((eventName) => ({
+                value: eventName,
+                label: eventName,
+              })),
             ]}
           />
         </InlineFilterFieldRow>
@@ -168,7 +168,10 @@ export function RulesTab({ projectId: _projectId }: RulesTabProps) {
   const filterTriggerRef = useRef<HTMLElement | null>(null);
   const { fetchRuleDetail } = data;
 
-  const existingNames = useMemo(() => data.rules.map((rule) => rule.name), [data.rules]);
+  const existingNames = useMemo(
+    () => data.rules.map((rule) => rule.name),
+    [data.rules],
+  );
 
   const guardedRun = useCallback((next: () => void) => {
     confirmLeaveRef.current(next);
@@ -178,7 +181,7 @@ export function RulesTab({ projectId: _projectId }: RulesTabProps) {
     const keep =
       selectedName !== null &&
       data.rules.some((rule) => rule.name === selectedName);
-    const next = keep ? selectedName : data.filteredRules[0]?.name ?? null;
+    const next = keep ? selectedName : (data.filteredRules[0]?.name ?? null);
     if (next !== selectedName) guardedRun(() => setSelectedName(next));
   }, [data.filteredRules, data.rules, guardedRun, selectedName]);
 
@@ -292,10 +295,13 @@ export function RulesTab({ projectId: _projectId }: RulesTabProps) {
       try {
         const didToggle = await data.toggleRule(rule.name, !rule.enabled);
         if (!didToggle) {
-          setActionError(`Failed to ${rule.enabled ? "disable" : "enable"} rule`);
+          setActionError(
+            `Failed to ${rule.enabled ? "disable" : "enable"} rule`,
+          );
           return;
         }
-        if (selectedName === rule.name) setDetailRefreshToken((value) => value + 1);
+        if (selectedName === rule.name)
+          setDetailRefreshToken((value) => value + 1);
       } catch (error) {
         setActionError(formatRuleError(error));
       } finally {
@@ -352,7 +358,8 @@ export function RulesTab({ projectId: _projectId }: RulesTabProps) {
     [data],
   );
 
-  const hasActiveFilters = data.activeFilterCount > 0 || data.search.trim().length > 0;
+  const hasActiveFilters =
+    data.activeFilterCount > 0 || data.search.trim().length > 0;
   const emptyMessage = hasActiveFilters
     ? "No rules match the current filters"
     : data.statusSegment === "enabled"
@@ -389,7 +396,10 @@ export function RulesTab({ projectId: _projectId }: RulesTabProps) {
           type="button"
           variant="destructive"
           size="sm"
-          className={cn("min-h-11 cursor-pointer rounded-none border-0 border-b border-[var(--border)] bg-[var(--color-warning-soft)] px-3 py-[0.45rem] text-left text-[length:var(--text-sm)] text-[var(--color-warning-foreground)]", coarseHitAreaCls)}
+          className={cn(
+            "min-h-11 cursor-pointer rounded-none border-0 border-b border-[var(--border)] bg-[var(--color-warning-soft)] px-3 py-[0.45rem] text-left text-[length:var(--text-sm)] text-[var(--color-warning-foreground)]",
+            coarseHitAreaCls,
+          )}
           onClick={() => setActionError(null)}
           aria-label={`Dismiss error: ${actionError}`}
         >

@@ -32,14 +32,17 @@ interface AgentsTabProps {
   projectId?: string | null;
 }
 
-export const AgentsTab = memo(function AgentsTab({ projectId }: AgentsTabProps) {
+export const AgentsTab = memo(function AgentsTab({
+  projectId,
+}: AgentsTabProps) {
   const { confirm, ConfirmDialogElement } = useConfirmDialog();
   const [definitions, setDefinitions] = useState<AgentDefInfo[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [search, setSearch] = useState("");
   const [searchOpen, setSearchOpen] = useState(false);
-  const [sourceFilter, setSourceFilter] = useState<AgentSourceFilter>("installed");
+  const [sourceFilter, setSourceFilter] =
+    useState<AgentSourceFilter>("installed");
   const [selectedKey, setSelectedKey] = useState<string | null>(null);
   const [busyKey, setBusyKey] = useState<string | null>(null);
   const [creating, setCreating] = useState(false);
@@ -47,16 +50,22 @@ export const AgentsTab = memo(function AgentsTab({ projectId }: AgentsTabProps) 
   const [providerCatalog, setProviderCatalog] = useState<
     Awaited<ReturnType<typeof loadProviderCatalog>>
   >([]);
-  const [pipelines, setPipelines] = useState<{ id: string; name: string }[]>([]);
+  const [pipelines, setPipelines] = useState<{ id: string; name: string }[]>(
+    [],
+  );
   const confirmLeaveRef = useRef<(next: () => void) => void>((next) => next());
 
   const selectedAgent = useMemo(
-    () => definitions.find((definition) => getAgentKey(definition) === selectedKey) ?? null,
+    () =>
+      definitions.find(
+        (definition) => getAgentKey(definition) === selectedKey,
+      ) ?? null,
     [definitions, selectedKey],
   );
 
   const filteredAgents = useMemo(
-    () => filterAgentDefinitions(definitions, { sourceFilter, searchText: search }),
+    () =>
+      filterAgentDefinitions(definitions, { sourceFilter, searchText: search }),
     [definitions, search, sourceFilter],
   );
 
@@ -65,11 +74,13 @@ export const AgentsTab = memo(function AgentsTab({ projectId }: AgentsTabProps) 
       setLoading(true);
       setError(null);
       try {
-        const [nextDefinitions, nextCatalog, nextPipelines] = await Promise.all([
-          loadAgentDefinitions(projectId),
-          loadProviderCatalog(),
-          loadPipelineList(),
-        ]);
+        const [nextDefinitions, nextCatalog, nextPipelines] = await Promise.all(
+          [
+            loadAgentDefinitions(projectId),
+            loadProviderCatalog(),
+            loadPipelineList(),
+          ],
+        );
         setDefinitions(nextDefinitions);
         setProviderCatalog(nextCatalog);
         setPipelines(nextPipelines);
@@ -80,13 +91,22 @@ export const AgentsTab = memo(function AgentsTab({ projectId }: AgentsTabProps) 
             );
             if (selected) return getAgentKey(selected);
           }
-          if (current && nextDefinitions.some((definition) => getAgentKey(definition) === current)) {
+          if (
+            current &&
+            nextDefinitions.some(
+              (definition) => getAgentKey(definition) === current,
+            )
+          ) {
             return current;
           }
           return nextDefinitions[0] ? getAgentKey(nextDefinitions[0]) : null;
         });
       } catch (loadError) {
-        setError(loadError instanceof Error ? loadError.message : "Failed to load agents");
+        setError(
+          loadError instanceof Error
+            ? loadError.message
+            : "Failed to load agents",
+        );
       } finally {
         setLoading(false);
       }
@@ -156,7 +176,11 @@ export const AgentsTab = memo(function AgentsTab({ projectId }: AgentsTabProps) 
     try {
       await action();
     } catch (actionError) {
-      setError(actionError instanceof Error ? actionError.message : String(actionError));
+      setError(
+        actionError instanceof Error
+          ? actionError.message
+          : String(actionError),
+      );
     } finally {
       setBusyKey(null);
     }
@@ -171,7 +195,10 @@ export const AgentsTab = memo(function AgentsTab({ projectId }: AgentsTabProps) 
 
   const handleDuplicate = (agent: AgentDefInfo) => {
     void withBusy(agent, async () => {
-      const copyName = nextCopyName(agent.definition.name, getAgentNames(definitions));
+      const copyName = nextCopyName(
+        agent.definition.name,
+        getAgentNames(definitions),
+      );
       await duplicateAgentDefinition(agent, copyName, projectId);
       await refreshDefinitions(copyName);
     });
@@ -211,10 +238,15 @@ export const AgentsTab = memo(function AgentsTab({ projectId }: AgentsTabProps) 
       <div className="flex min-h-0 flex-1 flex-col">
         <div
           className="min-h-0 overflow-y-auto"
-          style={creating || selectedAgent ? { height: `${topHeight}%` } : undefined}
+          style={
+            creating || selectedAgent ? { height: `${topHeight}%` } : undefined
+          }
         >
           {loading ? (
-            <ActivityPanelEmpty heading="Agents" body="Loading agent definitions..." />
+            <ActivityPanelEmpty
+              heading="Agents"
+              body="Loading agent definitions..."
+            />
           ) : filteredAgents.length === 0 ? (
             <ActivityPanelEmpty
               icon={<TasksEmptyIcon />}

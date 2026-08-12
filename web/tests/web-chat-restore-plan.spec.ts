@@ -119,7 +119,10 @@ type MockApiCounters = {
   taskLinkedSessionDetailFetches?: number;
 };
 
-function bumpCounter(counters: MockApiCounters | undefined, key: keyof MockApiCounters) {
+function bumpCounter(
+  counters: MockApiCounters | undefined,
+  key: keyof MockApiCounters,
+) {
   if (!counters) return;
   counters[key] = (counters[key] ?? 0) + 1;
 }
@@ -188,13 +191,18 @@ async function mockApi(
         body: JSON.stringify({
           providers:
             path === "/api/providers"
-              ? [{ name: "codex", available: true }, { name: "claude", available: true }]
+              ? [
+                  { name: "codex", available: true },
+                  { name: "claude", available: true },
+                ]
               : [
                   {
                     provider: "codex",
                     available: true,
                     default_model: "gpt-5.4",
-                    models: [{ value: "gpt-5.4", label: "GPT-5.4", is_default: true }],
+                    models: [
+                      { value: "gpt-5.4", label: "GPT-5.4", is_default: true },
+                    ],
                   },
                 ],
         }),
@@ -291,7 +299,13 @@ async function mockApi(
       const body =
         parentTaskId === CLAIMED_TASK_ID
           ? { tasks: [], total: 0, stats: {}, limit: 200, offset: 0 }
-          : { tasks: [claimedTask], total: 1, stats: {}, limit: 500, offset: 0 };
+          : {
+              tasks: [claimedTask],
+              total: 1,
+              stats: {},
+              limit: 500,
+              offset: 0,
+            };
       await route.fulfill({
         status: 200,
         contentType: "application/json",
@@ -313,7 +327,11 @@ async function mockApi(
       await route.fulfill({
         status: 200,
         contentType: "application/json",
-        body: JSON.stringify({ id: CLAIMED_TASK_ID, blockers: [], blocking: [] }),
+        body: JSON.stringify({
+          id: CLAIMED_TASK_ID,
+          blockers: [],
+          blocking: [],
+        }),
       });
       return;
     }
@@ -353,7 +371,9 @@ async function mockApi(
         status: 200,
         contentType: "application/json",
         body: JSON.stringify({
-          session: webChatSessions.find((session) => session.id === TASK_LINKED_DB_SESSION_ID),
+          session: webChatSessions.find(
+            (session) => session.id === TASK_LINKED_DB_SESSION_ID,
+          ),
         }),
       });
       return;
@@ -370,7 +390,9 @@ async function mockApi(
               role: "assistant",
               content: "Task-linked session transcript",
               timestamp: "2026-04-19T18:31:00Z",
-              content_blocks: [{ type: "text", content: "Task-linked session transcript" }],
+              content_blocks: [
+                { type: "text", content: "Task-linked session transcript" },
+              ],
             },
           ],
           total_count: 1,
@@ -385,7 +407,9 @@ async function mockApi(
         status: 200,
         contentType: "application/json",
         body: JSON.stringify({
-          session: webChatSessions.find((session) => session.id === OTHER_DB_SESSION_ID),
+          session: webChatSessions.find(
+            (session) => session.id === OTHER_DB_SESSION_ID,
+          ),
         }),
       });
       return;
@@ -444,7 +468,9 @@ async function mockApi(
 }
 
 test.describe("Web Chat Restore And Plan Mode", () => {
-  test("mobile refresh restores the same main-chat session", async ({ page }) => {
+  test("mobile refresh restores the same main-chat session", async ({
+    page,
+  }) => {
     await page.setViewportSize({ width: 390, height: 844 });
     await seedLocalState(page);
     const counters = { currentMessageFetches: 0, otherMessageFetches: 0 };
@@ -478,7 +504,9 @@ test.describe("Web Chat Restore And Plan Mode", () => {
     await expect(page.getByText("Persisted main chat message")).toBeVisible();
     await expect(page.getByText("Other session message")).toHaveCount(0);
     await expect
-      .poll(async () => page.evaluate(() => localStorage.getItem("gobby-db-session-id")))
+      .poll(async () =>
+        page.evaluate(() => localStorage.getItem("gobby-db-session-id")),
+      )
       .toBe(CURRENT_DB_SESSION_ID);
 
     await page.reload();
@@ -494,13 +522,7 @@ test.describe("Web Chat Restore And Plan Mode", () => {
   }) => {
     await page.setViewportSize({ width: 1280, height: 900 });
     await page.addInitScript(
-      ({
-        sessionId,
-        taskRef,
-      }: {
-        sessionId: string;
-        taskRef: number;
-      }) => {
+      ({ sessionId, taskRef }: { sessionId: string; taskRef: number }) => {
         localStorage.setItem("gobby-conversation-id", sessionId);
         localStorage.setItem("gobby-db-session-id", sessionId);
         localStorage.setItem("gobby-activity-panel-pinned", "true");
@@ -569,7 +591,9 @@ test.describe("Web Chat Restore And Plan Mode", () => {
 
     await expect(page.getByText("Persisted main chat message")).toBeVisible();
     await expect(page.getByText("Other session message")).toHaveCount(0);
-    await expect(page.locator(".activity-panel-mobile-trigger")).toContainText("Sessions");
+    await expect(page.locator(".activity-panel-mobile-trigger")).toContainText(
+      "Sessions",
+    );
     await expect(page.locator(".session-entry")).toHaveCount(1);
     await expect(page.locator(".activity-panel-content")).toContainText(
       "#204: Task Linked Web Chat",
@@ -584,7 +608,9 @@ test.describe("Web Chat Restore And Plan Mode", () => {
     await page.locator(".activity-panel-mobile-trigger").click();
     await page.getByRole("menuitemradio", { name: "Tasks" }).click();
 
-    await expect(page.locator(".activity-panel-mobile-trigger")).toContainText("Tasks");
+    await expect(page.locator(".activity-panel-mobile-trigger")).toContainText(
+      "Tasks",
+    );
     const taskTree = page.getByTestId("task-tree");
     const claimedTaskRow = taskTree.getByRole("treeitem", {
       name: /#14425 Verify web chat task state survives refresh: Development: In Progress.*Claimed/,
@@ -603,7 +629,9 @@ test.describe("Web Chat Restore And Plan Mode", () => {
 
     await expect(page.getByText("Persisted main chat message")).toBeVisible();
     await expect(page.getByText("Other session message")).toHaveCount(0);
-    await expect(page.locator(".activity-panel-mobile-trigger")).toContainText("Tasks");
+    await expect(page.locator(".activity-panel-mobile-trigger")).toContainText(
+      "Tasks",
+    );
     await expect(claimedTaskRow).toBeVisible();
     await expect(detail).toContainText("web-main");
     await expect(detail).not.toContainText(CURRENT_DB_SESSION_ID);
@@ -634,58 +662,64 @@ test.describe("Web Chat Restore And Plan Mode", () => {
         body: JSON.stringify({ sessions: [webChatSessions[0]], total: 1 }),
       });
     });
-    await page.route(`**/api/sessions/${STALE_TERMINAL_SESSION_ID}`, async (route) => {
-      await route.fulfill({
-        status: 200,
-        contentType: "application/json",
-        body: JSON.stringify({
-          session: {
-            id: STALE_TERMINAL_SESSION_ID,
-            ref: "#999",
-            external_id: "term-stale",
-            source: "codex",
-            project_id: "proj-1",
-            title: "Stale Terminal",
-            status: "active",
-            model: "gpt-5.4",
-            message_count: 1,
-            created_at: "2026-04-19T18:05:00Z",
-            updated_at: "2026-04-19T18:06:00Z",
-            seq_num: 999,
-            summary_markdown: null,
-            git_branch: "main",
-            usage_input_tokens: 0,
-            usage_output_tokens: 0,
-            had_edits: false,
-            agent_depth: 0,
-            chat_mode: null,
-            parent_session_id: null,
-            session_type: "terminal",
-            terminal_context: { tmux_session: "stale" },
-          },
-        }),
-      });
-    });
-    await page.route(`**/api/chat/${STALE_TERMINAL_SESSION_ID}/messages**`, async (route) => {
-      staleMessageFetches += 1;
-      await route.fulfill({
-        status: 200,
-        contentType: "application/json",
-        body: JSON.stringify({
-          messages: [
-            {
-              id: "stale-msg-1",
-              role: "assistant",
-              content: "Stale terminal message",
-              tool_calls: [],
-              seq: 1,
-              created_at: "2026-04-19T18:06:00Z",
+    await page.route(
+      `**/api/sessions/${STALE_TERMINAL_SESSION_ID}`,
+      async (route) => {
+        await route.fulfill({
+          status: 200,
+          contentType: "application/json",
+          body: JSON.stringify({
+            session: {
+              id: STALE_TERMINAL_SESSION_ID,
+              ref: "#999",
+              external_id: "term-stale",
+              source: "codex",
+              project_id: "proj-1",
+              title: "Stale Terminal",
+              status: "active",
+              model: "gpt-5.4",
+              message_count: 1,
+              created_at: "2026-04-19T18:05:00Z",
+              updated_at: "2026-04-19T18:06:00Z",
+              seq_num: 999,
+              summary_markdown: null,
+              git_branch: "main",
+              usage_input_tokens: 0,
+              usage_output_tokens: 0,
+              had_edits: false,
+              agent_depth: 0,
+              chat_mode: null,
+              parent_session_id: null,
+              session_type: "terminal",
+              terminal_context: { tmux_session: "stale" },
             },
-          ],
-          max_seq: 1,
-        }),
-      });
-    });
+          }),
+        });
+      },
+    );
+    await page.route(
+      `**/api/chat/${STALE_TERMINAL_SESSION_ID}/messages**`,
+      async (route) => {
+        staleMessageFetches += 1;
+        await route.fulfill({
+          status: 200,
+          contentType: "application/json",
+          body: JSON.stringify({
+            messages: [
+              {
+                id: "stale-msg-1",
+                role: "assistant",
+                content: "Stale terminal message",
+                tool_calls: [],
+                seq: 1,
+                created_at: "2026-04-19T18:06:00Z",
+              },
+            ],
+            max_seq: 1,
+          }),
+        });
+      },
+    );
 
     await page.routeWebSocket("**/ws", (ws) => {
       ws.onMessage((raw) => {
@@ -709,10 +743,14 @@ test.describe("Web Chat Restore And Plan Mode", () => {
 
     await page.goto("/");
 
-    await expect(page.getByText("Start a conversation with Gobby")).toBeVisible();
+    await expect(
+      page.getByText("Start a conversation with Gobby"),
+    ).toBeVisible();
     await expect(page.getByText("Stale terminal message")).toHaveCount(0);
     await expect
-      .poll(async () => page.evaluate(() => localStorage.getItem("gobby-db-session-id")))
+      .poll(async () =>
+        page.evaluate(() => localStorage.getItem("gobby-db-session-id")),
+      )
       .toBeNull();
     expect(staleMessageFetches).toBe(0);
   });
@@ -768,9 +806,8 @@ test.describe("Web Chat Restore And Plan Mode", () => {
     await expect(page.getByTestId("plan-strip-approve")).toBeVisible();
     await page.getByTestId("plan-strip-approve").click();
 
-    await expect(page.getByRole("radio", { name: "YOLO", exact: true })).toHaveAttribute(
-      "aria-checked",
-      "true",
-    );
+    await expect(
+      page.getByRole("radio", { name: "YOLO", exact: true }),
+    ).toHaveAttribute("aria-checked", "true");
   });
 });

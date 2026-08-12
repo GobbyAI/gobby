@@ -1,23 +1,23 @@
-import { useCallback, useEffect, useId, useRef, useState } from 'react'
-import { Input } from '../ui/Input'
-import { NativeSelect } from '../ui/NativeSelect'
-import { Textarea } from '../ui/Textarea'
-import { cn } from '../../lib/utils'
+import { useCallback, useEffect, useId, useRef, useState } from "react";
+import { Input } from "../ui/Input";
+import { NativeSelect } from "../ui/NativeSelect";
+import { Textarea } from "../ui/Textarea";
+import { cn } from "../../lib/utils";
 
 interface ToolArgumentFormProps {
-  schema: Record<string, unknown> | null
-  values: Record<string, unknown>
-  onChange: (values: Record<string, unknown>) => void
-  onValidityChange?: (isValid: boolean) => void
-  disabled?: boolean
+  schema: Record<string, unknown> | null;
+  values: Record<string, unknown>;
+  onChange: (values: Record<string, unknown>) => void;
+  onValidityChange?: (isValid: boolean) => void;
+  disabled?: boolean;
 }
 
 interface PropertySchema {
-  type?: string
-  description?: string
-  enum?: string[]
-  default?: unknown
-  items?: Record<string, unknown>
+  type?: string;
+  description?: string;
+  enum?: string[];
+  default?: unknown;
+  items?: Record<string, unknown>;
 }
 
 export function ToolArgumentForm({
@@ -27,27 +27,37 @@ export function ToolArgumentForm({
   onValidityChange,
   disabled,
 }: ToolArgumentFormProps) {
-  const invalidFieldsRef = useRef(new Set<string>())
+  const invalidFieldsRef = useRef(new Set<string>());
 
   useEffect(() => {
-    invalidFieldsRef.current.clear()
-    onValidityChange?.(true)
-  }, [schema, onValidityChange])
+    invalidFieldsRef.current.clear();
+    onValidityChange?.(true);
+  }, [schema, onValidityChange]);
 
-  const handleFieldValidityChange = useCallback((name: string, isValid: boolean) => {
-    if (isValid) invalidFieldsRef.current.delete(name)
-    else invalidFieldsRef.current.add(name)
-    onValidityChange?.(invalidFieldsRef.current.size === 0)
-  }, [onValidityChange])
+  const handleFieldValidityChange = useCallback(
+    (name: string, isValid: boolean) => {
+      if (isValid) invalidFieldsRef.current.delete(name);
+      else invalidFieldsRef.current.add(name);
+      onValidityChange?.(invalidFieldsRef.current.size === 0);
+    },
+    [onValidityChange],
+  );
 
-  if (!schema) return null
+  if (!schema) return null;
 
-  const properties = (schema.properties ?? {}) as Record<string, PropertySchema>
-  const required = (schema.required ?? []) as string[]
-  const entries = Object.entries(properties)
+  const properties = (schema.properties ?? {}) as Record<
+    string,
+    PropertySchema
+  >;
+  const required = (schema.required ?? []) as string[];
+  const entries = Object.entries(properties);
 
   if (entries.length === 0) {
-    return <p className="text-sm text-muted-foreground italic">This tool takes no arguments.</p>
+    return (
+      <p className="text-sm text-muted-foreground italic">
+        This tool takes no arguments.
+      </p>
+    );
   }
 
   return (
@@ -65,7 +75,7 @@ export function ToolArgumentForm({
         />
       ))}
     </div>
-  )
+  );
 }
 
 function FieldRow({
@@ -77,66 +87,73 @@ function FieldRow({
   onChange,
   onValidityChange,
 }: {
-  name: string
-  prop: PropertySchema
-  value: unknown
-  isRequired: boolean
-  disabled?: boolean
-  onChange: (val: unknown) => void
-  onValidityChange: (name: string, isValid: boolean) => void
+  name: string;
+  prop: PropertySchema;
+  value: unknown;
+  isRequired: boolean;
+  disabled?: boolean;
+  onChange: (val: unknown) => void;
+  onValidityChange: (name: string, isValid: boolean) => void;
 }) {
-  const inputId = useId()
-  const errorId = `${inputId}-error`
-  const handleChange = useCallback(
-    (val: unknown) => onChange(val),
-    [onChange],
-  )
+  const inputId = useId();
+  const errorId = `${inputId}-error`;
+  const handleChange = useCallback((val: unknown) => onChange(val), [onChange]);
   const formatJsonValue = useCallback((nextValue: unknown) => {
-    if (nextValue === undefined || nextValue === null || nextValue === '') return ''
-    return typeof nextValue === 'string' ? nextValue : JSON.stringify(nextValue, null, 2)
-  }, [])
-  const [jsonValue, setJsonValue] = useState(() => formatJsonValue(value))
-  const [jsonError, setJsonError] = useState<string | null>(null)
+    if (nextValue === undefined || nextValue === null || nextValue === "")
+      return "";
+    return typeof nextValue === "string"
+      ? nextValue
+      : JSON.stringify(nextValue, null, 2);
+  }, []);
+  const [jsonValue, setJsonValue] = useState(() => formatJsonValue(value));
+  const [jsonError, setJsonError] = useState<string | null>(null);
 
   const label = (
-    <label htmlFor={inputId} className="block text-sm font-medium text-foreground mb-1">
+    <label
+      htmlFor={inputId}
+      className="mb-1 block text-sm font-medium text-foreground"
+    >
       {name}
-      {isRequired && <span className="text-destructive-foreground ml-0.5">*</span>}
+      {isRequired && (
+        <span className="ml-0.5 text-destructive-foreground">*</span>
+      )}
     </label>
-  )
+  );
 
   const help = prop.description ? (
-    <p className="text-xs text-muted-foreground mt-0.5">{prop.description}</p>
-  ) : null
+    <p className="mt-0.5 text-xs text-muted-foreground">{prop.description}</p>
+  ) : null;
 
   // String with enum -> select
-  if (prop.type === 'string' && prop.enum) {
+  if (prop.type === "string" && prop.enum) {
     return (
       <div>
         {label}
         <NativeSelect
           id={inputId}
           className={cn(
-            'flex h-9 w-full rounded-md border border-border bg-transparent px-3 py-1 text-sm',
-            'focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent',
-            'disabled:cursor-not-allowed disabled:opacity-50',
+            "flex h-9 w-full rounded-md border border-border bg-transparent px-3 py-1 text-sm",
+            "focus-visible:ring-2 focus-visible:ring-accent focus-visible:outline-none",
+            "disabled:cursor-not-allowed disabled:opacity-50",
           )}
-          value={(value as string) ?? ''}
+          value={(value as string) ?? ""}
           onChange={(e) => handleChange(e.target.value || undefined)}
           disabled={disabled}
         >
           <option value="">-- select --</option>
           {prop.enum.map((opt) => (
-            <option key={opt} value={opt}>{opt}</option>
+            <option key={opt} value={opt}>
+              {opt}
+            </option>
           ))}
         </NativeSelect>
         {help}
       </div>
-    )
+    );
   }
 
   // Boolean -> checkbox
-  if (prop.type === 'boolean') {
+  if (prop.type === "boolean") {
     return (
       <div>
         <div className="flex items-center gap-2 text-sm font-medium text-foreground">
@@ -151,73 +168,82 @@ function FieldRow({
           />
           <label htmlFor={inputId} className="cursor-pointer">
             {name}
-            {isRequired && <span className="text-destructive-foreground">*</span>}
+            {isRequired && (
+              <span className="text-destructive-foreground">*</span>
+            )}
           </label>
         </div>
         {help}
       </div>
-    )
+    );
   }
 
   // Number / integer
-  if (prop.type === 'number' || prop.type === 'integer') {
+  if (prop.type === "number" || prop.type === "integer") {
     return (
       <div>
         {label}
         <Input
           id={inputId}
           type="number"
-          value={value !== undefined && value !== null ? String(value) : ''}
+          value={value !== undefined && value !== null ? String(value) : ""}
           onChange={(e) => {
-            const raw = e.target.value
-            if (!raw) { handleChange(undefined); return }
-            handleChange(prop.type === 'integer' ? parseInt(raw, 10) : parseFloat(raw))
+            const raw = e.target.value;
+            if (!raw) {
+              handleChange(undefined);
+              return;
+            }
+            handleChange(
+              prop.type === "integer" ? parseInt(raw, 10) : parseFloat(raw),
+            );
           }}
-          step={prop.type === 'integer' ? 1 : 'any'}
+          step={prop.type === "integer" ? 1 : "any"}
           disabled={disabled}
-          placeholder={prop.default !== undefined ? `Default: ${prop.default}` : undefined}
+          placeholder={
+            prop.default !== undefined ? `Default: ${prop.default}` : undefined
+          }
         />
         {help}
       </div>
-    )
+    );
   }
 
   // Object / array -> JSON textarea
-  if (prop.type === 'object' || prop.type === 'array') {
+  if (prop.type === "object" || prop.type === "array") {
     return (
       <div>
         {label}
         <Textarea
           id={inputId}
           className={cn(
-            'flex w-full rounded-md border border-border bg-transparent px-3 py-2 text-sm font-mono',
-            'focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent',
-            'disabled:cursor-not-allowed disabled:opacity-50',
-            'min-h-[80px] resize-y',
+            "flex w-full rounded-md border border-border bg-transparent px-3 py-2 font-mono text-sm",
+            "focus-visible:ring-2 focus-visible:ring-accent focus-visible:outline-none",
+            "disabled:cursor-not-allowed disabled:opacity-50",
+            "min-h-[80px] resize-y",
           )}
           value={jsonValue}
           onChange={(e) => {
-            const raw = e.target.value
-            setJsonValue(raw)
+            const raw = e.target.value;
+            setJsonValue(raw);
             if (!raw.trim()) {
-              setJsonError(null)
-              onValidityChange(name, true)
-              handleChange(undefined)
-              return
+              setJsonError(null);
+              onValidityChange(name, true);
+              handleChange(undefined);
+              return;
             }
             try {
-              const parsed = JSON.parse(raw)
-              setJsonError(null)
-              onValidityChange(name, true)
-              handleChange(parsed)
+              const parsed = JSON.parse(raw);
+              setJsonError(null);
+              onValidityChange(name, true);
+              handleChange(parsed);
             } catch {
-              setJsonError('Enter valid JSON.')
-              onValidityChange(name, false)
+              setJsonError("Enter valid JSON.");
+              onValidityChange(name, false);
             }
           }}
           onBlur={() => {
             if (!jsonError && jsonValue.trim()) {
-              setJsonValue(JSON.stringify(JSON.parse(jsonValue), null, 2))
+              setJsonValue(JSON.stringify(JSON.parse(jsonValue), null, 2));
             }
           }}
           aria-invalid={jsonError ? true : undefined}
@@ -226,13 +252,17 @@ function FieldRow({
           placeholder={`JSON ${prop.type}`}
         />
         {jsonError && (
-          <p id={errorId} role="alert" className="text-xs text-destructive-foreground mt-1">
+          <p
+            id={errorId}
+            role="alert"
+            className="mt-1 text-xs text-destructive-foreground"
+          >
             {jsonError}
           </p>
         )}
         {help}
       </div>
-    )
+    );
   }
 
   // Default: string input
@@ -242,12 +272,14 @@ function FieldRow({
       <Input
         id={inputId}
         type="text"
-        value={(value as string) ?? ''}
+        value={(value as string) ?? ""}
         onChange={(e) => handleChange(e.target.value || undefined)}
         disabled={disabled}
-        placeholder={prop.default !== undefined ? `Default: ${prop.default}` : undefined}
+        placeholder={
+          prop.default !== undefined ? `Default: ${prop.default}` : undefined
+        }
       />
       {help}
     </div>
-  )
+  );
 }

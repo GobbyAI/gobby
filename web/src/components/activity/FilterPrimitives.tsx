@@ -13,8 +13,10 @@ import { Button } from "../ui/Button";
 import { coarseHitAreaCls } from "../ui/controlStyles";
 import { DropdownCaret } from "../ui/DropdownCaret";
 
-interface FilterDropdownTriggerProps
-  extends Omit<ButtonHTMLAttributes<HTMLButtonElement>, "children"> {
+interface FilterDropdownTriggerProps extends Omit<
+  ButtonHTMLAttributes<HTMLButtonElement>,
+  "children"
+> {
   open: boolean;
   label?: string;
   activeCount?: number;
@@ -43,12 +45,10 @@ export const FilterDropdownTrigger = forwardRef<
       aria-expanded={open}
     >
       {icon}
-      <span className="activity-panel-action-btn__label">
-        {label}
-      </span>
+      <span className="activity-panel-action-btn__label">{label}</span>
       {activeCount > 0 && (
         <span
-          className="pointer-events-none absolute -right-1 -top-1 inline-flex h-4 min-w-4 items-center justify-center rounded-full bg-accent px-1 text-[length:var(--text-2xs)] font-semibold leading-none text-accent-foreground"
+          className="pointer-events-none absolute -top-1 -right-1 inline-flex h-4 min-w-4 items-center justify-center rounded-full bg-accent px-1 text-[length:var(--text-2xs)] leading-none font-semibold text-accent-foreground"
           data-filter-active-count
         >
           {activeCount}
@@ -89,7 +89,7 @@ export const InlineFilterPanel = forwardRef<
       ref={ref}
       className={cn(
         variant === "inline"
-          ? "absolute right-3 top-1 z-[85] grid max-h-[min(28rem,calc(100vh-6rem))] w-[min(22rem,calc(100vw-1rem))] gap-[0.65rem] overflow-auto rounded-lg border border-border bg-[var(--bg-secondary)] p-3 shadow-md"
+          ? "absolute top-1 right-3 z-[85] grid max-h-[min(28rem,calc(100vh-6rem))] w-[min(22rem,calc(100vw-1rem))] gap-[0.65rem] overflow-auto rounded-lg border border-border bg-[var(--bg-secondary)] p-3 shadow-md"
           : "z-[100] flex flex-col rounded-md border border-border bg-[var(--bg-secondary)] shadow-xl",
         className,
       )}
@@ -181,7 +181,7 @@ export function FilterSection({
 }) {
   return (
     <div className="mb-3 last:mb-0">
-      <div className="text-xs font-medium mb-1.5 text-muted-foreground">
+      <div className="mb-1.5 text-xs font-medium text-muted-foreground">
         {label}
       </div>
       <div className="flex flex-col gap-1">{children}</div>

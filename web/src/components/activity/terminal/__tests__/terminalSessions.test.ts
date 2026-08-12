@@ -200,13 +200,21 @@ describe("terminal session helpers", () => {
     expect(joined[0].label).toBe("vim");
     expect(joined[1].label).toBe("gobby");
     expect(joined[2].label).toBe("2");
-    expect(joined.map(({ paneRef }) => paneRef)).toEqual(["tmux 0", "tmux 1", "tmux 2"]);
+    expect(joined.map(({ paneRef }) => paneRef)).toEqual([
+      "tmux 0",
+      "tmux 1",
+      "tmux 2",
+    ]);
   });
 
   it("derives the provider icon from the pane command for unmanaged panes", () => {
     const joined = joinTmuxSessions(
       [
-        makeTmuxSession({ name: "0", pane_command: "claude", pane_path: "/tmp" }),
+        makeTmuxSession({
+          name: "0",
+          pane_command: "claude",
+          pane_path: "/tmp",
+        }),
         makeTmuxSession({ name: "1", pane_command: "htop", pane_path: "/tmp" }),
       ],
       [],

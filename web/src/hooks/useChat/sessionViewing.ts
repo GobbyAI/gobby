@@ -19,9 +19,7 @@ import {
 import type { ContextUsage } from "../../types/chat";
 import { loadDbSessionId } from "./conversationPersistence";
 import { clearPendingProxyMessages } from "./pendingProxyMessages";
-import {
-  normalizeSessionType,
-} from "./sessionRecords";
+import { normalizeSessionType } from "./sessionRecords";
 
 type Setter<T> = Dispatch<SetStateAction<T>>;
 type ViewSessionOptions = { forceRefresh?: boolean };
@@ -79,131 +77,15 @@ export function useChatSessionViewing(params: UseChatSessionViewingParams) {
     wsRef,
   } = params;
 
-const viewRequestSeqRef = useRef(0);
+  const viewRequestSeqRef = useRef(0);
 
-// Clear viewing state and restore previous web chat
-const clearViewingSession = useCallback(() => {
-  viewRequestSeqRef.current += 1;
-  pendingAttachSessionIdRef.current = null;
-  // Detach from any active WS subscription
-  const observedSessionId = observedSessionIdRef.current;
-  if (observedSessionId) {
-    if (wsRef.current?.readyState === WebSocket.OPEN) {
-      wsRef.current.send(
-        JSON.stringify({
-          type: "detach_from_session",
-          session_id: observedSessionId,
-        }),
-      );
-    }
-    observedSessionIdRef.current = null;
-    setObservedSessionId(null);
-    observedSessionMetaRef.current = null;
-    attachedSessionIdRef.current = null;
-    setAttachedSessionId(null);
-    attachedSessionMetaRef.current = null;
-    setAttachedSessionMeta(null);
-    clearPendingProxyMessages(
-      pendingProxyMessagesRef.current,
-      pendingProxySessionQueuesRef.current,
-    );
-    sessionInteractionModeRef.current = "none";
-    setProxyDeliveryNotice(null);
-    setSessionInteractionMode("none");
-  }
-
-  viewingSessionIdRef.current = null;
-  viewingSessionMetaRef.current = null;
-  setViewingSessionId(null);
-  setViewingSessionMeta(null);
-  setMessages([]);
-  setIsLoadingMessages(false);
-  setProxyDeliveryNotice(null);
-
-  if (mainSessionMeta) {
-    setSessionRef(mainSessionMeta.ref);
-    setSessionTitle(mainSessionMeta.title ?? null);
-    setCurrentBranch(mainSessionMeta.gitBranch ?? null);
-    if (mainSessionMeta.contextWindow) {
-      setContextUsage((prev) => ({
-        ...prev,
-        contextWindow: mainSessionMeta.contextWindow ?? null,
-      }));
-    } else {
-      setContextUsage(buildContextUsageFromTotals({}));
-    }
-  } else {
-    setSessionRef(null);
-    setSessionTitle(null);
-    setCurrentBranch(null);
-    setContextUsage(buildContextUsageFromTotals({}));
-  }
-
-  // Restore previous conversation messages and chat mode from DB
-  const prevDbSid = loadDbSessionId();
-  if (prevDbSid) {
-    const baseUrl = import.meta.env.VITE_API_BASE_URL || "";
-    fetch(`${baseUrl}/api/chat/${prevDbSid}/messages?limit=100&after_seq=0`)
-      .then((res) => (res.ok ? res.json() : null))
-      .then((data) => {
-        if (
-          viewingSessionIdRef.current ||
-          loadDbSessionId() !== prevDbSid
-        ) {
-          return;
-        }
-        if (typeof data?.max_seq === "number") {
-          lastSeqRef.current = data.max_seq;
-        }
-        if (!data?.messages?.length) {
-          return;
-        }
-        const mapped = data.messages.map(mapStoredChatMessage);
-        if (mapped.length > 0) setMessages(mapped);
-      })
-      .catch((err) => console.error("Failed to restore messages:", err));
-
-    // Restore chat mode from DB (prevents stale mode from viewed session)
-    fetch(`${baseUrl}/api/sessions/${prevDbSid}`)
-      .then((res) => (res.ok ? res.json() : null))
-      .then((data) => {
-        const s = data?.session;
-        if (viewingSessionIdRef.current || loadDbSessionId() !== prevDbSid) {
-          return;
-        }
-        if (s?.chat_mode) {
-          const restored = normalizeChatMode(s.chat_mode);
-          currentModeRef.current = restored;
-          onModeChangedRef.current?.(restored);
-        }
-      })
-      .catch(() => {});
-  }
-}, [mainSessionMeta, setContextUsage]);
-
-// View a CLI session (read-only, no WS subscription — loads via REST)
-const viewSession = useCallback(
-  (sessionId: string, options?: ViewSessionOptions) => {
-    const forceRefresh = options?.forceRefresh ?? false;
-    clearFreshChatDraft();
-    // Skip if already viewing/attached to this session
-    if (
-      !forceRefresh &&
-      ((viewingSessionIdRef.current === sessionId &&
-        (viewingSessionMetaRef.current || messagesRef.current.length > 0)) ||
-        observedSessionIdRef.current === sessionId)
-    ) {
-      return;
-    }
-    const requestSeq = ++viewRequestSeqRef.current;
+  // Clear viewing state and restore previous web chat
+  const clearViewingSession = useCallback(() => {
+    viewRequestSeqRef.current += 1;
     pendingAttachSessionIdRef.current = null;
-    const isCurrentRequest = () =>
-      viewRequestSeqRef.current === requestSeq &&
-      viewingSessionIdRef.current === sessionId;
-
-    // Detach from any active WS subscription first
+    // Detach from any active WS subscription
     const observedSessionId = observedSessionIdRef.current;
-    if (observedSessionId && observedSessionId !== sessionId) {
+    if (observedSessionId) {
       if (wsRef.current?.readyState === WebSocket.OPEN) {
         wsRef.current.send(
           JSON.stringify({
@@ -228,231 +110,344 @@ const viewSession = useCallback(
       setSessionInteractionMode("none");
     }
 
-    // Reset chat state
-    lastSeqRef.current = 0;
-    activeRequestIdRef.current = null;
-    setIsStreaming(false);
-    setIsThinking(false);
+    viewingSessionIdRef.current = null;
+    viewingSessionMetaRef.current = null;
+    setViewingSessionId(null);
+    setViewingSessionMeta(null);
     setMessages([]);
-    setIsLoadingMessages(true);
-    setProxyDeliveryNotice(null);
-    setContextUsage(buildContextUsageFromTotals({}));
-
-    // Set viewing state
-    viewingSessionIdRef.current = sessionId;
-    setViewingSessionId(sessionId);
-
-    // Fetch messages via REST
-    const baseUrl = import.meta.env.VITE_API_BASE_URL || "";
-    fetch(`${baseUrl}/api/sessions/${sessionId}/messages?limit=100&offset=0`)
-      .then((res) => (res.ok ? res.json() : null))
-      .then((data) => {
-        if (!isCurrentRequest()) return;
-        const mapped = data?.messages?.length ? mapApiMessages(data.messages) : [];
-        setMessages(mapped);
-      })
-      .catch((err) => console.error("Failed to fetch session messages:", err))
-      .finally(() => {
-        if (isCurrentRequest()) setIsLoadingMessages(false);
-      });
-
-    // Fetch session metadata
-    const metadataFetchStartedAt = Date.now();
-    fetch(`${baseUrl}/api/sessions/${sessionId}`)
-      .then((res) => {
-        if (res.status === 404 && isCurrentRequest()) {
-          initialViewingSessionIdRef.current = null;
-          initialViewingModeRef.current = "none";
-          clearViewingSession();
-          return null;
-        }
-        return res.ok ? res.json() : null;
-      })
-      .then((data) => {
-        const s = data?.session;
-        if (!s || !isCurrentRequest()) return;
-          const ref = typeof s.seq_num === "number" ? `#${s.seq_num}` : null;
-        setSessionRef(ref);
-        const nextMeta: SessionObservationMeta = {
-          ref,
-          source: s.source || "unknown",
-          title: s.title || null,
-          status: s.status || "unknown",
-          canProxyAttach: canProxyAttachSessionRecord(s),
-          model: s.model || null,
-          reasoningEffort: s.reasoning_effort || null,
-          externalId: s.external_id || "",
-          chatMode: s.chat_mode || null,
-          gitBranch: s.git_branch || null,
-          contextWindow: s.context_window || null,
-          agentRunId: s.agent_run_id || null,
-          workflowName: s.workflow_name || null,
-          agentName: null,
-          sessionType: normalizeSessionType(s.session_type),
-        };
-        viewingSessionMetaRef.current = nextMeta;
-        setViewingSessionMeta(nextMeta);
-        if (nextMeta.agentRunId) {
-          void resolveAgentName(nextMeta.agentRunId).then((agentName) => {
-            if (!agentName || !isCurrentRequest()) return;
-            setViewingSessionMeta((prev) =>
-              prev && isCurrentRequest() ? { ...prev, agentName } : prev,
-            );
-          });
-        }
-        if (!shouldApplyHydratedUsage(sessionId, metadataFetchStartedAt)) {
-          return;
-        }
-        setContextUsage(computeContextUsageFromSessionData(s));
-      })
-      .catch((err) =>
-        console.error("Failed to fetch session metadata:", err),
-      );
-    // resolveAgentName is a stable useCallback (its own deps are []) — safe
-    // to reference here without re-creating the callback every render.
-  },
-  [resolveAgentName, setContextUsage, shouldApplyHydratedUsage],
-);
-
-// Attach to a CLI session (interactive mode with WS subscription)
-const attachToSession = useCallback(
-  (sessionId: string, mode: "observe" | "proxy" = "proxy") => {
-    if (!wsRef.current || wsRef.current.readyState !== WebSocket.OPEN) return;
-    clearFreshChatDraft();
-    pendingAttachSessionIdRef.current = sessionId;
-    pendingSessionInteractionModeRef.current = mode;
+    setIsLoadingMessages(false);
     setProxyDeliveryNotice(null);
 
-    const observedSessionId = observedSessionIdRef.current;
-    if (observedSessionId && observedSessionId !== sessionId) {
-      wsRef.current.send(
-        JSON.stringify({
-          type: "detach_from_session",
-          session_id: observedSessionId,
-        }),
-      );
-      observedSessionIdRef.current = null;
-      observedSessionMetaRef.current = null;
-      attachedSessionIdRef.current = null;
-      attachedSessionMetaRef.current = null;
-      clearPendingProxyMessages(
-        pendingProxyMessagesRef.current,
-        pendingProxySessionQueuesRef.current,
-      );
-      sessionInteractionModeRef.current = "none";
-      setObservedSessionId(null);
-      setAttachedSessionId(null);
-      setAttachedSessionMeta(null);
-      setSessionInteractionMode("none");
+    if (mainSessionMeta) {
+      setSessionRef(mainSessionMeta.ref);
+      setSessionTitle(mainSessionMeta.title ?? null);
+      setCurrentBranch(mainSessionMeta.gitBranch ?? null);
+      if (mainSessionMeta.contextWindow) {
+        setContextUsage((prev) => ({
+          ...prev,
+          contextWindow: mainSessionMeta.contextWindow ?? null,
+        }));
+      } else {
+        setContextUsage(buildContextUsageFromTotals({}));
+      }
+    } else {
+      setSessionRef(null);
+      setSessionTitle(null);
+      setCurrentBranch(null);
+      setContextUsage(buildContextUsageFromTotals({}));
     }
 
-    // Don't reset messages if already viewing this session
-    if (viewingSessionIdRef.current !== sessionId) {
-      preAttachContextUsageRef.current =
-        preAttachContextUsageRef.current !== null && observedSessionId
-          ? {
-              ...preAttachContextUsageRef.current,
-              sessionId,
-            }
-          : { sessionId, usage: contextUsage };
+    // Restore previous conversation messages and chat mode from DB
+    const prevDbSid = loadDbSessionId();
+    if (prevDbSid) {
+      const baseUrl = import.meta.env.VITE_API_BASE_URL || "";
+      fetch(`${baseUrl}/api/chat/${prevDbSid}/messages?limit=100&after_seq=0`)
+        .then((res) => (res.ok ? res.json() : null))
+        .then((data) => {
+          if (viewingSessionIdRef.current || loadDbSessionId() !== prevDbSid) {
+            return;
+          }
+          if (typeof data?.max_seq === "number") {
+            lastSeqRef.current = data.max_seq;
+          }
+          if (!data?.messages?.length) {
+            return;
+          }
+          const mapped = data.messages.map(mapStoredChatMessage);
+          if (mapped.length > 0) setMessages(mapped);
+        })
+        .catch((err) => console.error("Failed to restore messages:", err));
+
+      // Restore chat mode from DB (prevents stale mode from viewed session)
+      fetch(`${baseUrl}/api/sessions/${prevDbSid}`)
+        .then((res) => (res.ok ? res.json() : null))
+        .then((data) => {
+          const s = data?.session;
+          if (viewingSessionIdRef.current || loadDbSessionId() !== prevDbSid) {
+            return;
+          }
+          if (s?.chat_mode) {
+            const restored = normalizeChatMode(s.chat_mode);
+            currentModeRef.current = restored;
+            onModeChangedRef.current?.(restored);
+          }
+        })
+        .catch(() => {});
+    }
+  }, [mainSessionMeta, setContextUsage]);
+
+  // View a CLI session (read-only, no WS subscription — loads via REST)
+  const viewSession = useCallback(
+    (sessionId: string, options?: ViewSessionOptions) => {
+      const forceRefresh = options?.forceRefresh ?? false;
+      clearFreshChatDraft();
+      // Skip if already viewing/attached to this session
+      if (
+        !forceRefresh &&
+        ((viewingSessionIdRef.current === sessionId &&
+          (viewingSessionMetaRef.current || messagesRef.current.length > 0)) ||
+          observedSessionIdRef.current === sessionId)
+      ) {
+        return;
+      }
+      const requestSeq = ++viewRequestSeqRef.current;
+      pendingAttachSessionIdRef.current = null;
+      const isCurrentRequest = () =>
+        viewRequestSeqRef.current === requestSeq &&
+        viewingSessionIdRef.current === sessionId;
+
+      // Detach from any active WS subscription first
+      const observedSessionId = observedSessionIdRef.current;
+      if (observedSessionId && observedSessionId !== sessionId) {
+        if (wsRef.current?.readyState === WebSocket.OPEN) {
+          wsRef.current.send(
+            JSON.stringify({
+              type: "detach_from_session",
+              session_id: observedSessionId,
+            }),
+          );
+        }
+        observedSessionIdRef.current = null;
+        setObservedSessionId(null);
+        observedSessionMetaRef.current = null;
+        attachedSessionIdRef.current = null;
+        setAttachedSessionId(null);
+        attachedSessionMetaRef.current = null;
+        setAttachedSessionMeta(null);
+        clearPendingProxyMessages(
+          pendingProxyMessagesRef.current,
+          pendingProxySessionQueuesRef.current,
+        );
+        sessionInteractionModeRef.current = "none";
+        setProxyDeliveryNotice(null);
+        setSessionInteractionMode("none");
+      }
+
+      // Reset chat state
+      lastSeqRef.current = 0;
       activeRequestIdRef.current = null;
       setIsStreaming(false);
       setIsThinking(false);
       setMessages([]);
+      setIsLoadingMessages(true);
+      setProxyDeliveryNotice(null);
       setContextUsage(buildContextUsageFromTotals({}));
+
+      // Set viewing state
+      viewingSessionIdRef.current = sessionId;
+      setViewingSessionId(sessionId);
+
+      // Fetch messages via REST
+      const baseUrl = import.meta.env.VITE_API_BASE_URL || "";
+      fetch(`${baseUrl}/api/sessions/${sessionId}/messages?limit=100&offset=0`)
+        .then((res) => (res.ok ? res.json() : null))
+        .then((data) => {
+          if (!isCurrentRequest()) return;
+          const mapped = data?.messages?.length
+            ? mapApiMessages(data.messages)
+            : [];
+          setMessages(mapped);
+        })
+        .catch((err) => console.error("Failed to fetch session messages:", err))
+        .finally(() => {
+          if (isCurrentRequest()) setIsLoadingMessages(false);
+        });
+
+      // Fetch session metadata
+      const metadataFetchStartedAt = Date.now();
+      fetch(`${baseUrl}/api/sessions/${sessionId}`)
+        .then((res) => {
+          if (res.status === 404 && isCurrentRequest()) {
+            initialViewingSessionIdRef.current = null;
+            initialViewingModeRef.current = "none";
+            clearViewingSession();
+            return null;
+          }
+          return res.ok ? res.json() : null;
+        })
+        .then((data) => {
+          const s = data?.session;
+          if (!s || !isCurrentRequest()) return;
+          const ref = typeof s.seq_num === "number" ? `#${s.seq_num}` : null;
+          setSessionRef(ref);
+          const nextMeta: SessionObservationMeta = {
+            ref,
+            source: s.source || "unknown",
+            title: s.title || null,
+            status: s.status || "unknown",
+            canProxyAttach: canProxyAttachSessionRecord(s),
+            model: s.model || null,
+            reasoningEffort: s.reasoning_effort || null,
+            externalId: s.external_id || "",
+            chatMode: s.chat_mode || null,
+            gitBranch: s.git_branch || null,
+            contextWindow: s.context_window || null,
+            agentRunId: s.agent_run_id || null,
+            workflowName: s.workflow_name || null,
+            agentName: null,
+            sessionType: normalizeSessionType(s.session_type),
+          };
+          viewingSessionMetaRef.current = nextMeta;
+          setViewingSessionMeta(nextMeta);
+          if (nextMeta.agentRunId) {
+            void resolveAgentName(nextMeta.agentRunId).then((agentName) => {
+              if (!agentName || !isCurrentRequest()) return;
+              setViewingSessionMeta((prev) =>
+                prev && isCurrentRequest() ? { ...prev, agentName } : prev,
+              );
+            });
+          }
+          if (!shouldApplyHydratedUsage(sessionId, metadataFetchStartedAt)) {
+            return;
+          }
+          setContextUsage(computeContextUsageFromSessionData(s));
+        })
+        .catch((err) =>
+          console.error("Failed to fetch session metadata:", err),
+        );
+      // resolveAgentName is a stable useCallback (its own deps are []) — safe
+      // to reference here without re-creating the callback every render.
+    },
+    [resolveAgentName, setContextUsage, shouldApplyHydratedUsage],
+  );
+
+  // Attach to a CLI session (interactive mode with WS subscription)
+  const attachToSession = useCallback(
+    (sessionId: string, mode: "observe" | "proxy" = "proxy") => {
+      if (!wsRef.current || wsRef.current.readyState !== WebSocket.OPEN) return;
+      clearFreshChatDraft();
+      pendingAttachSessionIdRef.current = sessionId;
+      pendingSessionInteractionModeRef.current = mode;
+      setProxyDeliveryNotice(null);
+
+      const observedSessionId = observedSessionIdRef.current;
+      if (observedSessionId && observedSessionId !== sessionId) {
+        wsRef.current.send(
+          JSON.stringify({
+            type: "detach_from_session",
+            session_id: observedSessionId,
+          }),
+        );
+        observedSessionIdRef.current = null;
+        observedSessionMetaRef.current = null;
+        attachedSessionIdRef.current = null;
+        attachedSessionMetaRef.current = null;
+        clearPendingProxyMessages(
+          pendingProxyMessagesRef.current,
+          pendingProxySessionQueuesRef.current,
+        );
+        sessionInteractionModeRef.current = "none";
+        setObservedSessionId(null);
+        setAttachedSessionId(null);
+        setAttachedSessionMeta(null);
+        setSessionInteractionMode("none");
+      }
+
+      // Don't reset messages if already viewing this session
+      if (viewingSessionIdRef.current !== sessionId) {
+        preAttachContextUsageRef.current =
+          preAttachContextUsageRef.current !== null && observedSessionId
+            ? {
+                ...preAttachContextUsageRef.current,
+                sessionId,
+              }
+            : { sessionId, usage: contextUsage };
+        activeRequestIdRef.current = null;
+        setIsStreaming(false);
+        setIsThinking(false);
+        setMessages([]);
+        setContextUsage(buildContextUsageFromTotals({}));
+      }
+
+      wsRef.current.send(
+        JSON.stringify({
+          type: "attach_to_session",
+          session_id: sessionId,
+        }),
+      );
+    },
+    [contextUsage, setContextUsage],
+  );
+
+  useEffect(() => {
+    const restoredViewingSessionId = initialViewingSessionIdRef.current;
+    if (!restoredViewingSessionId || initialViewingRestoreRef.current) {
+      return;
+    }
+    initialViewingRestoreRef.current = true;
+    viewSession(restoredViewingSessionId);
+  }, [viewSession]);
+
+  useEffect(() => {
+    if (!isConnected) {
+      initialViewingReconnectRetryRef.current = false;
+      return;
     }
 
-    wsRef.current.send(
-      JSON.stringify({
-        type: "attach_to_session",
-        session_id: sessionId,
-      }),
+    const restoredViewingSessionId = initialViewingSessionIdRef.current;
+    if (
+      !restoredViewingSessionId ||
+      !initialViewingRestoreRef.current ||
+      initialViewingReconnectRetryRef.current ||
+      viewingSessionIdRef.current !== restoredViewingSessionId ||
+      viewingSessionMetaRef.current ||
+      messagesRef.current.length > 0
+    ) {
+      return;
+    }
+
+    initialViewingReconnectRetryRef.current = true;
+    viewSession(restoredViewingSessionId);
+  }, [isConnected, viewSession, viewingSessionId]);
+
+  useEffect(() => {
+    const restoredViewingSessionId = initialViewingSessionIdRef.current;
+    if (
+      !restoredViewingSessionId ||
+      initialViewingModeRef.current === "none" ||
+      !isConnected ||
+      viewingSessionIdRef.current !== restoredViewingSessionId ||
+      observedSessionIdRef.current === restoredViewingSessionId
+    ) {
+      return;
+    }
+    attachToSession(restoredViewingSessionId, initialViewingModeRef.current);
+    initialViewingModeRef.current = "none";
+  }, [attachToSession, isConnected, viewingSessionId]);
+
+  // Attach to the currently viewed session (button click from view-only mode)
+  const attachToViewed = useCallback(() => {
+    const sid = viewingSessionIdRef.current;
+    if (!sid) {
+      return;
+    }
+    const viewedMeta = viewingSessionMetaRef.current;
+    if (!canProxyAttachObservationMeta(viewedMeta)) {
+      return;
+    }
+    attachToSession(sid, "proxy");
+  }, [attachToSession]);
+
+  // Disable proxy mode but keep the live observation subscription.
+  const detachFromSession = useCallback(() => {
+    if (!attachedSessionIdRef.current) return;
+
+    clearPendingProxyMessages(
+      pendingProxyMessagesRef.current,
+      pendingProxySessionQueuesRef.current,
     );
-  },
-  [contextUsage, setContextUsage],
-);
-
-useEffect(() => {
-  const restoredViewingSessionId = initialViewingSessionIdRef.current;
-  if (!restoredViewingSessionId || initialViewingRestoreRef.current) {
-    return;
-  }
-  initialViewingRestoreRef.current = true;
-  viewSession(restoredViewingSessionId);
-}, [viewSession]);
-
-useEffect(() => {
-  if (!isConnected) {
-    initialViewingReconnectRetryRef.current = false;
-    return;
-  }
-
-  const restoredViewingSessionId = initialViewingSessionIdRef.current;
-  if (
-    !restoredViewingSessionId ||
-    !initialViewingRestoreRef.current ||
-    initialViewingReconnectRetryRef.current ||
-    viewingSessionIdRef.current !== restoredViewingSessionId ||
-    viewingSessionMetaRef.current ||
-    messagesRef.current.length > 0
-  ) {
-    return;
-  }
-
-  initialViewingReconnectRetryRef.current = true;
-  viewSession(restoredViewingSessionId);
-}, [isConnected, viewSession, viewingSessionId]);
-
-useEffect(() => {
-  const restoredViewingSessionId = initialViewingSessionIdRef.current;
-  if (
-    !restoredViewingSessionId ||
-    initialViewingModeRef.current === "none" ||
-    !isConnected ||
-    viewingSessionIdRef.current !== restoredViewingSessionId ||
-    observedSessionIdRef.current === restoredViewingSessionId
-  ) {
-    return;
-  }
-  attachToSession(restoredViewingSessionId, initialViewingModeRef.current);
-  initialViewingModeRef.current = "none";
-}, [attachToSession, isConnected, viewingSessionId]);
-
-// Attach to the currently viewed session (button click from view-only mode)
-const attachToViewed = useCallback(() => {
-  const sid = viewingSessionIdRef.current;
-  if (!sid) {
-    return;
-  }
-  const viewedMeta = viewingSessionMetaRef.current;
-  if (!canProxyAttachObservationMeta(viewedMeta)) {
-    return;
-  }
-  attachToSession(sid, "proxy");
-}, [attachToSession]);
-
-// Disable proxy mode but keep the live observation subscription.
-const detachFromSession = useCallback(() => {
-  if (!attachedSessionIdRef.current) return;
-
-  clearPendingProxyMessages(
-    pendingProxyMessagesRef.current,
-    pendingProxySessionQueuesRef.current,
-  );
-  attachedSessionIdRef.current = null;
-  attachedSessionMetaRef.current = null;
-  sessionInteractionModeRef.current = observedSessionIdRef.current
-    ? "observe"
-    : "none";
-  setAttachedSessionId(null);
-  setAttachedSessionMeta(null);
-  setProxyDeliveryNotice(null);
-  setSessionInteractionMode(
-    observedSessionIdRef.current ? "observe" : "none",
-  );
-}, []);
-
-
+    attachedSessionIdRef.current = null;
+    attachedSessionMetaRef.current = null;
+    sessionInteractionModeRef.current = observedSessionIdRef.current
+      ? "observe"
+      : "none";
+    setAttachedSessionId(null);
+    setAttachedSessionMeta(null);
+    setProxyDeliveryNotice(null);
+    setSessionInteractionMode(
+      observedSessionIdRef.current ? "observe" : "none",
+    );
+  }, []);
 
   return {
     viewSession,

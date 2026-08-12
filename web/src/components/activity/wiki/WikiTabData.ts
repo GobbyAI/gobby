@@ -35,7 +35,10 @@ function asList(value: unknown): unknown[] {
   return Array.isArray(value) ? value : [];
 }
 
-export function fieldText(record: Record<string, unknown>, ...keys: string[]): string | null {
+export function fieldText(
+  record: Record<string, unknown>,
+  ...keys: string[]
+): string | null {
   for (const key of keys) {
     const value = record[key];
     if (typeof value === "string" && value.length > 0) return value;
@@ -43,7 +46,10 @@ export function fieldText(record: Record<string, unknown>, ...keys: string[]): s
   return null;
 }
 
-export function fieldNumber(record: Record<string, unknown>, ...keys: string[]): number | null {
+export function fieldNumber(
+  record: Record<string, unknown>,
+  ...keys: string[]
+): number | null {
   for (const key of keys) {
     const value = record[key];
     if (typeof value === "number" && Number.isFinite(value)) return value;
@@ -51,8 +57,13 @@ export function fieldNumber(record: Record<string, unknown>, ...keys: string[]):
   return null;
 }
 
-export function fieldStringList(record: Record<string, unknown>, key: string): string[] {
-  return asList(record[key]).filter((item): item is string => typeof item === "string");
+export function fieldStringList(
+  record: Record<string, unknown>,
+  key: string,
+): string[] {
+  return asList(record[key]).filter(
+    (item): item is string => typeof item === "string",
+  );
 }
 
 function fieldBoolean(record: Record<string, unknown>, key: string): boolean {
@@ -81,7 +92,9 @@ async function parseBody(response: Response): Promise<unknown> {
   try {
     return await response.json();
   } catch (error) {
-    throw new Error(`HTTP ${response.status} returned invalid JSON: ${String(error)}`);
+    throw new Error(
+      `HTTP ${response.status} returned invalid JSON: ${String(error)}`,
+    );
   }
 }
 
@@ -89,11 +102,16 @@ function errorMessage(body: unknown, status: number): string {
   const detail = asRecord(body).detail;
   if (typeof detail === "string") return humanizeWikiError(detail);
   const detailRecord = asRecord(detail);
-  const message = fieldText(asRecord(detailRecord.error), "message") ?? fieldText(detailRecord, "stderr");
+  const message =
+    fieldText(asRecord(detailRecord.error), "message") ??
+    fieldText(detailRecord, "stderr");
   return message ?? `HTTP ${status}`;
 }
 
-async function readEnvelope(path: string, init?: RequestInit): Promise<WikiEnvelope> {
+async function readEnvelope(
+  path: string,
+  init?: RequestInit,
+): Promise<WikiEnvelope> {
   const response = await fetch(path, init);
   const body = await parseBody(response);
   if (!response.ok) {
@@ -120,7 +138,10 @@ function normalizeGraphNode(value: unknown): WikiGraphNode | null {
   };
 }
 
-function normalizeGraphEdge(value: unknown, kind: string): WikiGraphEdge | null {
+function normalizeGraphEdge(
+  value: unknown,
+  kind: string,
+): WikiGraphEdge | null {
   const record = asRecord(value);
   const source = fieldText(record, "source");
   const target = fieldText(record, "target");
@@ -149,7 +170,8 @@ export function normalizeGraph(payload: unknown): WikiGraphPayload {
       if (edge) edges.push(edge);
     }
   }
-  const analytics = record.analytics === undefined ? null : asRecord(record.analytics);
+  const analytics =
+    record.analytics === undefined ? null : asRecord(record.analytics);
   return {
     nodes,
     edges,
@@ -228,7 +250,10 @@ export interface WikiPageDetail {
 
 const FRONTMATTER_PATTERN = /^---\r?\n([\s\S]*?)\r?\n---\r?\n?/;
 
-function splitFrontmatter(content: string): { frontmatter: Record<string, unknown>; body: string } {
+function splitFrontmatter(content: string): {
+  frontmatter: Record<string, unknown>;
+  body: string;
+} {
   const match = FRONTMATTER_PATTERN.exec(content);
   if (!match) return { frontmatter: {}, body: content };
   const body = content.slice(match[0].length).replace(/^\r?\n/, "");
@@ -241,7 +266,8 @@ function splitFrontmatter(content: string): { frontmatter: Record<string, unknow
 }
 
 function normalizePageCandidate(value: unknown): WikiPageCandidate | null {
-  if (typeof value === "string") return value ? { path: value, title: null } : null;
+  if (typeof value === "string")
+    return value ? { path: value, title: null } : null;
   const record = asRecord(value);
   const path = fieldText(record, "path", "wiki_path");
   if (!path) return null;
@@ -263,7 +289,9 @@ export function normalizePage(payload: unknown): WikiPageDetail {
     truncated: fieldBoolean(record, "truncated"),
     candidates: asList(record.candidates ?? record.matches)
       .map(normalizePageCandidate)
-      .filter((candidate): candidate is WikiPageCandidate => candidate !== null),
+      .filter(
+        (candidate): candidate is WikiPageCandidate => candidate !== null,
+      ),
   };
 }
 
@@ -392,9 +420,12 @@ export function summarizeWikiStatus(
     };
   }
   const statusPayload = asRecord(status.payload);
-  const services: WikiServiceState[] = Object.entries(asRecord(statusPayload.services)).map(
-    ([name, value]) => ({ name, configured: fieldBoolean(asRecord(value), "configured") }),
-  );
+  const services: WikiServiceState[] = Object.entries(
+    asRecord(statusPayload.services),
+  ).map(([name, value]) => ({
+    name,
+    configured: fieldBoolean(asRecord(value), "configured"),
+  }));
   const degradedServices = services
     .filter((service) => !service.configured)
     .map((service) => service.name);
@@ -416,7 +447,9 @@ export async function fetchGraph(
   scope: WikiFetchScope,
   include: WikiGraphInclude = "all",
 ): Promise<WikiGraphPayload> {
-  const envelope = await readEnvelope(`/api/wiki/graph${wikiQuery(scope, { include })}`);
+  const envelope = await readEnvelope(
+    `/api/wiki/graph${wikiQuery(scope, { include })}`,
+  );
   return normalizeGraph(envelopePayload(envelope));
 }
 
@@ -424,7 +457,9 @@ export async function fetchPages(
   scope: WikiFetchScope,
   prefix?: string,
 ): Promise<WikiPagesResult> {
-  const envelope = await readEnvelope(`/api/wiki/pages${wikiQuery(scope, { prefix })}`);
+  const envelope = await readEnvelope(
+    `/api/wiki/pages${wikiQuery(scope, { prefix })}`,
+  );
   return normalizePages(envelopePayload(envelope));
 }
 
@@ -442,7 +477,9 @@ export async function fetchBacklinks(
   scope: WikiFetchScope,
   target: string,
 ): Promise<WikiBacklink[]> {
-  const envelope = await readEnvelope(`/api/wiki/backlinks${wikiQuery(scope, { target })}`);
+  const envelope = await readEnvelope(
+    `/api/wiki/backlinks${wikiQuery(scope, { target })}`,
+  );
   return normalizeBacklinks(envelopePayload(envelope));
 }
 
@@ -451,7 +488,9 @@ export async function fetchSearch(
   query: string,
   limit?: number,
 ): Promise<WikiSearchResult> {
-  const envelope = await readEnvelope(`/api/wiki/search${wikiQuery(scope, { query, limit })}`);
+  const envelope = await readEnvelope(
+    `/api/wiki/search${wikiQuery(scope, { query, limit })}`,
+  );
   return normalizeSearch(envelopePayload(envelope));
 }
 
@@ -465,10 +504,23 @@ export interface WikiSaveRequest {
 }
 
 export type WikiSaveResult =
-  | { ok: true; path: string | null; created: boolean; contentHash: string | null }
-  | { ok: false; conflict: true; code: "precondition_failed" | "already_exists"; message: string };
+  | {
+      ok: true;
+      path: string | null;
+      created: boolean;
+      contentHash: string | null;
+    }
+  | {
+      ok: false;
+      conflict: true;
+      code: "precondition_failed" | "already_exists";
+      message: string;
+    };
 
-const CONFLICT_STATUS_CODES: Record<number, "precondition_failed" | "already_exists"> = {
+const CONFLICT_STATUS_CODES: Record<
+  number,
+  "precondition_failed" | "already_exists"
+> = {
   412: "precondition_failed",
   409: "already_exists",
 };
@@ -495,9 +547,11 @@ export async function savePage(
     return {
       ok: false,
       conflict: true,
-      code: payloadCode === "already_exists" || payloadCode === "precondition_failed"
-        ? payloadCode
-        : conflictCode,
+      code:
+        payloadCode === "already_exists" ||
+        payloadCode === "precondition_failed"
+          ? payloadCode
+          : conflictCode,
       message: errorMessage(body, response.status),
     };
   }
@@ -513,7 +567,10 @@ export async function savePage(
   };
 }
 
-export async function deletePage(scope: WikiFetchScope, path: string): Promise<WikiJson> {
+export async function deletePage(
+  scope: WikiFetchScope,
+  path: string,
+): Promise<WikiJson> {
   const envelope = await readEnvelope(`/api/wiki/delete${wikiQuery(scope)}`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },

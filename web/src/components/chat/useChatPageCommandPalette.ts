@@ -58,7 +58,8 @@ export function useChatPageCommandPalette({
   );
 
   const handleCommandPaletteSelectSession = useCallback(
-    (session: GobbySession) => handleSwapSession(toSwappedSessionTarget(session)),
+    (session: GobbySession) =>
+      handleSwapSession(toSwappedSessionTarget(session)),
     [handleSwapSession],
   );
 

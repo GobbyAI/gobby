@@ -1,14 +1,14 @@
-import { SelectField } from '../../activity/fields'
-import type { FieldOption } from '../../activity/fields'
+import { SelectField } from "../../activity/fields";
+import type { FieldOption } from "../../activity/fields";
 
 export interface BoundedSelectFieldProps {
-  label: string
-  value: string
-  onChange: (value: string) => void
-  options: FieldOption[]
-  ariaLabel: string
-  disabled?: boolean
-  placeholder?: string
+  label: string;
+  value: string;
+  onChange: (value: string) => void;
+  options: FieldOption[];
+  ariaLabel: string;
+  disabled?: boolean;
+  placeholder?: string;
 }
 
 /**
@@ -23,10 +23,11 @@ export function BoundedSelectField({
   options,
   ...rest
 }: BoundedSelectFieldProps) {
-  const known = value === '' || options.some((option) => option.value === value)
+  const known =
+    value === "" || options.some((option) => option.value === value);
   const effectiveOptions: FieldOption[] = known
     ? options
-    : [{ value, label: `${value} (unsupported)` }, ...options]
+    : [{ value, label: `${value} (unsupported)` }, ...options];
 
-  return <SelectField value={value} options={effectiveOptions} {...rest} />
+  return <SelectField value={value} options={effectiveOptions} {...rest} />;
 }

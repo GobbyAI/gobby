@@ -1,11 +1,4 @@
-import {
-  memo,
-  useState,
-  useEffect,
-  useCallback,
-  useRef,
-  useMemo,
-} from "react";
+import { memo, useState, useEffect, useCallback, useRef, useMemo } from "react";
 import { ResizeHandle } from "../shared/ResizeHandle";
 import { useWebSocketEvent } from "../../hooks/useWebSocketEvent";
 import { useStagesRegistry } from "../../hooks/useStagesRegistry";
@@ -36,18 +29,13 @@ import {
 import { DEFAULT_TOP_PANEL_PERCENT } from "./constants";
 import { ActivityPanelEmpty } from "./ActivityPanelEmpty";
 import { TaskCloseDialog } from "./TaskCloseDialog";
-import {
-  TaskQuickMenu,
-} from "./TaskQuickMenu";
+import { TaskQuickMenu } from "./TaskQuickMenu";
 import { useRegisterActivityActions } from "./activityActions";
 import { ActivityToolbarSearchRow } from "./ActivityPanelSearch";
 import { TasksTabFilters } from "./TasksTabFilters";
 import { TasksTabList } from "./TasksTabList";
 import { TaskCreateForm } from "../tasks/TaskCreateForm";
-import {
-  patchTaskFields,
-  type PatchTaskFields,
-} from "./TasksTabActions";
+import { patchTaskFields, type PatchTaskFields } from "./TasksTabActions";
 import {
   extractTaskPayload,
   fetchMissingTaskAncestors,
@@ -109,7 +97,8 @@ export const TasksTab = memo(function TasksTab({
   const [topHeight, setTopHeight] = useState(DEFAULT_TOP_PANEL_PERCENT);
   const [taskDetail, setTaskDetail] = useState<GobbyTaskDetail | null>(null);
   const [detailLoading, setDetailLoading] = useState(false);
-  const [taskDependencies, setTaskDependencies] = useState<DependencyTree | null>(null);
+  const [taskDependencies, setTaskDependencies] =
+    useState<DependencyTree | null>(null);
   const [taskSubtasks, setTaskSubtasks] = useState<GobbyTask[]>([]);
   const [actionError, setActionError] = useState<string | null>(null);
   const [fetchError, setFetchError] = useState<string | null>(null);
@@ -294,8 +283,13 @@ export const TasksTab = memo(function TasksTab({
             if (controller.signal.aborted) return;
             if (selectedTaskIdRef.current !== taskId) return;
             const raw = extractTaskPayload(data);
-            const cached = tasksRef.current.find((task) => task.id === taskId) ?? null;
-            setTaskDetail(raw ? (normalizeActivityTask(raw, cached) as GobbyTaskDetail) : null);
+            const cached =
+              tasksRef.current.find((task) => task.id === taskId) ?? null;
+            setTaskDetail(
+              raw
+                ? (normalizeActivityTask(raw, cached) as GobbyTaskDetail)
+                : null,
+            );
           })
           .catch((err) => {
             if (err?.name !== "AbortError") {
@@ -348,8 +342,11 @@ export const TasksTab = memo(function TasksTab({
       .then((data) => {
         if (selectedTaskIdRef.current !== selectedTaskId) return;
         const raw = extractTaskPayload(data);
-        const cached = tasksRef.current.find((task) => task.id === selectedTaskId) ?? null;
-        setTaskDetail(raw ? (normalizeActivityTask(raw, cached) as GobbyTaskDetail) : null);
+        const cached =
+          tasksRef.current.find((task) => task.id === selectedTaskId) ?? null;
+        setTaskDetail(
+          raw ? (normalizeActivityTask(raw, cached) as GobbyTaskDetail) : null,
+        );
       })
       .catch((err) => {
         if (err.name !== "AbortError") setTaskDetail(null);
@@ -387,7 +384,9 @@ export const TasksTab = memo(function TasksTab({
     )
       .then((res) => (res.ok ? res.json() : null))
       .then((data) =>
-        setTaskSubtasks(normalizeTaskPayloads(data?.tasks ?? []) as GobbyTask[]),
+        setTaskSubtasks(
+          normalizeTaskPayloads(data?.tasks ?? []) as GobbyTask[],
+        ),
       )
       .catch((err) => {
         if (err.name !== "AbortError") setTaskSubtasks([]);
@@ -413,8 +412,10 @@ export const TasksTab = memo(function TasksTab({
       matchingTasks
         .filter((task) => getTaskDisplayState(task) === "closed")
         .sort((a, b) => {
-          const closedAtA = getCanonicalTaskState(a).closed_at ?? a.updated_at ?? "";
-          const closedAtB = getCanonicalTaskState(b).closed_at ?? b.updated_at ?? "";
+          const closedAtA =
+            getCanonicalTaskState(a).closed_at ?? a.updated_at ?? "";
+          const closedAtB =
+            getCanonicalTaskState(b).closed_at ?? b.updated_at ?? "";
           return closedAtB.localeCompare(closedAtA);
         })
         .slice(0, RECENT_CLOSED_TASK_LIMIT)
@@ -493,7 +494,7 @@ export const TasksTab = memo(function TasksTab({
   const selectedTaskSummary = useMemo(
     () =>
       selectedTaskId
-        ? tasks.find((task) => task.id === selectedTaskId) ?? null
+        ? (tasks.find((task) => task.id === selectedTaskId) ?? null)
         : null,
     [selectedTaskId, tasks],
   );
@@ -544,8 +545,12 @@ export const TasksTab = memo(function TasksTab({
         ),
       );
       if (selectedTaskIdRef.current === taskId) {
-        setTaskDetail((prev) =>
-          normalizeActivityTask(rawTask, prev ?? undefined) as GobbyTaskDetail,
+        setTaskDetail(
+          (prev) =>
+            normalizeActivityTask(
+              rawTask,
+              prev ?? undefined,
+            ) as GobbyTaskDetail,
         );
       }
     },
@@ -553,23 +558,18 @@ export const TasksTab = memo(function TasksTab({
   );
 
   // Restore the pre-edit snapshot when an optimistic inline edit fails.
-  const rollbackTask = useCallback(
-    (taskId: string, snapshot: GobbyTask) => {
-      setTasks((prev) =>
-        prev.map((task) => (task.id === taskId ? snapshot : task)),
-      );
-      setTaskDetail((prev) =>
-        prev && prev.id === taskId
-          ? (
-              isGobbyTaskDetailSnapshot(snapshot)
-                ? snapshot
-                : mergeTaskSnapshotIntoDetail(prev, snapshot)
-            )
-          : prev,
-      );
-    },
-    [],
-  );
+  const rollbackTask = useCallback((taskId: string, snapshot: GobbyTask) => {
+    setTasks((prev) =>
+      prev.map((task) => (task.id === taskId ? snapshot : task)),
+    );
+    setTaskDetail((prev) =>
+      prev && prev.id === taskId
+        ? isGobbyTaskDetailSnapshot(snapshot)
+          ? snapshot
+          : mergeTaskSnapshotIntoDetail(prev, snapshot)
+        : prev,
+    );
+  }, []);
 
   const patchTask = useCallback(
     (taskId: string, fields: PatchTaskFields) =>
@@ -639,7 +639,7 @@ export const TasksTab = memo(function TasksTab({
   }
 
   return (
-    <div className="relative flex flex-col h-full min-h-0">
+    <div className="relative flex h-full min-h-0 flex-col">
       {searchOpen && (
         <ActivityToolbarSearchRow
           value={search}
@@ -660,7 +660,7 @@ export const TasksTab = memo(function TasksTab({
       )}
       {actionError && (
         <div
-          className="px-2.5 py-1.5 border-b border-border text-xs"
+          className="border-b border-border px-2.5 py-1.5 text-xs"
           role="alert"
           style={{ color: "var(--color-error)" }}
         >
@@ -669,7 +669,7 @@ export const TasksTab = memo(function TasksTab({
       )}
       {fetchError && (
         <div
-          className="px-2.5 py-1.5 border-b border-border text-xs"
+          className="border-b border-border px-2.5 py-1.5 text-xs"
           role="alert"
           style={{ color: "var(--color-error)" }}
         >
@@ -678,7 +678,7 @@ export const TasksTab = memo(function TasksTab({
       )}
 
       <div
-        className={`min-h-0 flex flex-col ${showDetail ? "border-b border-border" : "flex-1"}`}
+        className={`flex min-h-0 flex-col ${showDetail ? "border-b border-border" : "flex-1"}`}
         style={showDetail ? { height: `${topHeight}%` } : undefined}
       >
         <TasksTabList

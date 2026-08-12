@@ -1,138 +1,144 @@
-import { useCallback, useEffect, useRef, useState, type KeyboardEvent } from 'react'
+import {
+  useCallback,
+  useEffect,
+  useRef,
+  useState,
+  type KeyboardEvent,
+} from "react";
 import type {
   QueuedFile,
   ChatMode,
   ChatModeInfo,
   ChatSendOptions,
-} from '../../types/chat'
-import type { PaletteItem } from '../../hooks/useColonAutocomplete'
-import { useCoarsePointer } from '../../hooks/useIsMobile'
-import type { VoiceInputMode } from '../../hooks/useSettings'
-import { cn } from '../../lib/utils'
-import { ChatCommandPalette } from './ChatCommandPalette'
-import { ChatInputModelControls } from './ChatInputModelControls'
-import { ChatInputPrimaryButton } from './ChatInputPrimaryButton'
-import { ChatInputQueuedFiles } from './ChatInputQueuedFiles'
-import { ChatInputToolbar } from './ChatInputToolbar'
-import { Textarea } from '../ui/Textarea'
-import { useChatInputAttachments } from './useChatInputAttachments'
-import { useChatInputNarrow } from './useChatInputNarrow'
-import { useChatInputPrimaryAction } from './useChatInputPrimaryAction'
-import { useChatInputProviderSelection } from './useChatInputProviderSelection'
-import type { AgentDefInfo } from '../../hooks/useAgentDefinitions'
+} from "../../types/chat";
+import type { PaletteItem } from "../../hooks/useColonAutocomplete";
+import { useCoarsePointer } from "../../hooks/useIsMobile";
+import type { VoiceInputMode } from "../../hooks/useSettings";
+import { cn } from "../../lib/utils";
+import { ChatCommandPalette } from "./ChatCommandPalette";
+import { ChatInputModelControls } from "./ChatInputModelControls";
+import { ChatInputPrimaryButton } from "./ChatInputPrimaryButton";
+import { ChatInputQueuedFiles } from "./ChatInputQueuedFiles";
+import { ChatInputToolbar } from "./ChatInputToolbar";
+import { Textarea } from "../ui/Textarea";
+import { useChatInputAttachments } from "./useChatInputAttachments";
+import { useChatInputNarrow } from "./useChatInputNarrow";
+import { useChatInputPrimaryAction } from "./useChatInputPrimaryAction";
+import { useChatInputProviderSelection } from "./useChatInputProviderSelection";
+import type { AgentDefInfo } from "../../hooks/useAgentDefinitions";
 import {
   AUTO_REASONING_EFFORT,
   type ProviderModelEntry,
-} from '../../lib/providerModels'
+} from "../../lib/providerModels";
 
 interface ChatInputProps {
   onSend: (
     message: string,
     files?: QueuedFile[],
     options?: ChatSendOptions,
-  ) => void
-  onStop?: () => void
-  isStreaming?: boolean
-  disabled?: boolean
-  disabledPlaceholder?: string
-  disabledAriaLabel?: string
-  viewingSession?: boolean
-  onInputChange?: (value: string) => void
-  paletteItems?: PaletteItem[]
-  onPaletteSelect?: (item: PaletteItem) => void
-  mode?: ChatMode
-  onModeChange?: (mode: ChatMode) => void
-  modeOptions?: ChatModeInfo[]
-  modeDisabled?: boolean
-  sttEnabled?: boolean
-  ttsEnabled?: boolean
-  voiceInputMode?: VoiceInputMode
-  isRecording?: boolean
-  isSpeaking?: boolean
-  voiceLoading?: boolean
-  voiceReady?: boolean
-  prepareTTSPlayback?: () => void
-  startRecording?: () => Promise<void>
-  stopRecording?: () => Promise<void>
-  cancelRecording?: () => void
-  stopTTS?: () => void
-  onSttEnabledChange?: (enabled: boolean) => void
-  onTtsEnabledChange?: (enabled: boolean) => void
-  onVoiceInputModeChange?: (mode: VoiceInputMode) => void
-  currentBranch?: string | null
-  worktreePath?: string | null
-  projectId?: string | null
-  onWorktreeChange?: (worktreePath: string, worktreeId?: string) => void
-  worktreePickerDisabled?: boolean
-  agentName?: string
-  onAgentChange?: (agentName: string) => void
-  agentPickerDisabled?: boolean
-  agentDefinitions?: AgentDefInfo[]
-  agentGlobalDefs?: AgentDefInfo[]
-  agentProjectDefs?: AgentDefInfo[]
-  agentShowScopeToggle?: boolean
-  agentHasGlobal?: boolean
-  agentHasProject?: boolean
-  onScrollToBottom?: () => void
-  provider?: string | null
-  availableProviders?: string[]
-  providerModelCatalog?: ProviderModelEntry[]
-  currentModel?: string
-  currentReasoning?: string
-  onModelChange?: (model: string) => void
-  onReasoningChange?: (effort: string) => void
-  onProviderChange?: (provider: string | null) => void
+  ) => void;
+  onStop?: () => void;
+  isStreaming?: boolean;
+  disabled?: boolean;
+  disabledPlaceholder?: string;
+  disabledAriaLabel?: string;
+  viewingSession?: boolean;
+  onInputChange?: (value: string) => void;
+  paletteItems?: PaletteItem[];
+  onPaletteSelect?: (item: PaletteItem) => void;
+  mode?: ChatMode;
+  onModeChange?: (mode: ChatMode) => void;
+  modeOptions?: ChatModeInfo[];
+  modeDisabled?: boolean;
+  sttEnabled?: boolean;
+  ttsEnabled?: boolean;
+  voiceInputMode?: VoiceInputMode;
+  isRecording?: boolean;
+  isSpeaking?: boolean;
+  voiceLoading?: boolean;
+  voiceReady?: boolean;
+  prepareTTSPlayback?: () => void;
+  startRecording?: () => Promise<void>;
+  stopRecording?: () => Promise<void>;
+  cancelRecording?: () => void;
+  stopTTS?: () => void;
+  onSttEnabledChange?: (enabled: boolean) => void;
+  onTtsEnabledChange?: (enabled: boolean) => void;
+  onVoiceInputModeChange?: (mode: VoiceInputMode) => void;
+  currentBranch?: string | null;
+  worktreePath?: string | null;
+  projectId?: string | null;
+  onWorktreeChange?: (worktreePath: string, worktreeId?: string) => void;
+  worktreePickerDisabled?: boolean;
+  agentName?: string;
+  onAgentChange?: (agentName: string) => void;
+  agentPickerDisabled?: boolean;
+  agentDefinitions?: AgentDefInfo[];
+  agentGlobalDefs?: AgentDefInfo[];
+  agentProjectDefs?: AgentDefInfo[];
+  agentShowScopeToggle?: boolean;
+  agentHasGlobal?: boolean;
+  agentHasProject?: boolean;
+  onScrollToBottom?: () => void;
+  provider?: string | null;
+  availableProviders?: string[];
+  providerModelCatalog?: ProviderModelEntry[];
+  currentModel?: string;
+  currentReasoning?: string;
+  onModelChange?: (model: string) => void;
+  onReasoningChange?: (effort: string) => void;
+  onProviderChange?: (provider: string | null) => void;
   onSwitchProvider?: (
     provider: string,
     options?: { model?: string | null; reasoningEffort?: string | null },
-  ) => void
-  hasMessages?: boolean
+  ) => void;
+  hasMessages?: boolean;
   onProviderSelectionChange?: (
     provider: string,
     model: string,
     reasoningEffort: string | null,
-  ) => void
-  providerPickerDisabledReason?: string | null
-  proxySlashMode?: boolean
-  showObserveOverlay?: boolean
-  onAttachObservedSession?: () => void
-  proxyDeliveryNotice?: string | null
-  attachmentsDisabled?: boolean
-  imagesDisabled?: boolean
+  ) => void;
+  providerPickerDisabledReason?: string | null;
+  proxySlashMode?: boolean;
+  showObserveOverlay?: boolean;
+  onAttachObservedSession?: () => void;
+  proxyDeliveryNotice?: string | null;
+  attachmentsDisabled?: boolean;
+  imagesDisabled?: boolean;
 }
 
 const LOCAL_ONLY_SLASH_COMMANDS = new Set([
-  'gobby',
-  'mcp',
-  'panel',
-  'restart',
-  'settings',
-  'skills',
-])
+  "gobby",
+  "mcp",
+  "panel",
+  "restart",
+  "settings",
+  "skills",
+]);
 
 function shouldHandleSlashCommandLocally(input: string): boolean {
-  if (!input.startsWith('/')) return false
-  const commandToken = input.slice(1).split(/\s/)[0] || ''
-  const topLevelCommand = commandToken.split(':')[0] || commandToken
-  return LOCAL_ONLY_SLASH_COMMANDS.has(topLevelCommand)
+  if (!input.startsWith("/")) return false;
+  const commandToken = input.slice(1).split(/\s/)[0] || "";
+  const topLevelCommand = commandToken.split(":")[0] || commandToken;
+  return LOCAL_ONLY_SLASH_COMMANDS.has(topLevelCommand);
 }
 
-let fieldSizingSupport: boolean | null = null
+let fieldSizingSupport: boolean | null = null;
 // Chromium auto-sizes a textarea with `field-sizing: content`, so the composer
 // needs no JS layout reads at all there. Cache the one-time capability check.
 function supportsFieldSizing(): boolean {
   if (fieldSizingSupport === null) {
     fieldSizingSupport =
-      typeof CSS !== 'undefined' &&
-      typeof CSS.supports === 'function' &&
-      CSS.supports('field-sizing', 'content')
+      typeof CSS !== "undefined" &&
+      typeof CSS.supports === "function" &&
+      CSS.supports("field-sizing", "content");
   }
-  return fieldSizingSupport
+  return fieldSizingSupport;
 }
 
-const MAX_TEXTAREA_HEIGHT = 200
-const CHAT_COMMAND_LISTBOX_ID = 'chat-command-palette-listbox'
-const CHAT_COMMAND_OPTION_ID_PREFIX = 'chat-command-palette-option'
+const MAX_TEXTAREA_HEIGHT = 200;
+const CHAT_COMMAND_LISTBOX_ID = "chat-command-palette-listbox";
+const CHAT_COMMAND_OPTION_ID_PREFIX = "chat-command-palette-option";
 
 export function ChatInput({
   onSend,
@@ -145,13 +151,13 @@ export function ChatInput({
   onInputChange,
   paletteItems = [],
   onPaletteSelect,
-  mode = 'normal',
+  mode = "normal",
   onModeChange,
   modeOptions,
   modeDisabled = false,
   sttEnabled = false,
   ttsEnabled = false,
-  voiceInputMode = 'ptt',
+  voiceInputMode = "ptt",
   isRecording = false,
   isSpeaking = false,
   voiceLoading = false,
@@ -182,7 +188,7 @@ export function ChatInput({
   provider,
   availableProviders = [],
   providerModelCatalog = [],
-  currentModel = 'opus',
+  currentModel = "opus",
   currentReasoning = AUTO_REASONING_EFFORT,
   onModelChange,
   onReasoningChange,
@@ -198,15 +204,15 @@ export function ChatInput({
   attachmentsDisabled = false,
   imagesDisabled = false,
 }: ChatInputProps) {
-  const [input, setInput] = useState('')
-  const [isDragOver, setIsDragOver] = useState(false)
-  const [selectedIndex, setSelectedIndex] = useState(0)
-  const textareaRef = useRef<HTMLTextAreaElement>(null)
-  const fileInputRef = useRef<HTMLInputElement>(null)
-  const paletteRef = useRef<HTMLDivElement>(null)
-  const metaRef = useRef<HTMLDivElement>(null)
-  const isNarrow = useChatInputNarrow(metaRef)
-  const coarsePointer = useCoarsePointer()
+  const [input, setInput] = useState("");
+  const [isDragOver, setIsDragOver] = useState(false);
+  const [selectedIndex, setSelectedIndex] = useState(0);
+  const textareaRef = useRef<HTMLTextAreaElement>(null);
+  const fileInputRef = useRef<HTMLInputElement>(null);
+  const paletteRef = useRef<HTMLDivElement>(null);
+  const metaRef = useRef<HTMLDivElement>(null);
+  const isNarrow = useChatInputNarrow(metaRef);
+  const coarsePointer = useCoarsePointer();
   const {
     clearQueuedFiles,
     handleFilesSelected,
@@ -215,60 +221,71 @@ export function ChatInput({
     queuedFiles,
     removeFile,
     retryFile,
-  } = useChatInputAttachments({ attachmentsDisabled, imagesDisabled, projectId })
+  } = useChatInputAttachments({
+    attachmentsDisabled,
+    imagesDisabled,
+    projectId,
+  });
 
-  const showPalette = input.startsWith('/') && paletteItems.length > 0
+  const showPalette = input.startsWith("/") && paletteItems.length > 0;
 
   useEffect(() => {
-    const textarea = textareaRef.current
-    if (!textarea) return
+    const textarea = textareaRef.current;
+    if (!textarea) return;
     // Chromium can size the textarea with CSS `field-sizing`; other browsers
     // use a rAF resize pass against the actual textarea node.
-    if (supportsFieldSizing()) return
+    if (supportsFieldSizing()) return;
     const frame = requestAnimationFrame(() => {
-      textarea.style.height = 'auto'
-      const scrollHeight = textarea.scrollHeight
-      const next = Math.min(scrollHeight, MAX_TEXTAREA_HEIGHT)
-      textarea.style.height = `${next}px`
+      textarea.style.height = "auto";
+      const scrollHeight = textarea.scrollHeight;
+      const next = Math.min(scrollHeight, MAX_TEXTAREA_HEIGHT);
+      textarea.style.height = `${next}px`;
       if (scrollHeight > MAX_TEXTAREA_HEIGHT) {
-        textarea.scrollTop = textarea.scrollHeight
+        textarea.scrollTop = textarea.scrollHeight;
       }
-    })
-    return () => cancelAnimationFrame(frame)
-  }, [input])
+    });
+    return () => cancelAnimationFrame(frame);
+  }, [input]);
 
-  useEffect(() => { setSelectedIndex(0) }, [paletteItems])
+  useEffect(() => {
+    setSelectedIndex(0);
+  }, [paletteItems]);
 
   // Scroll selected command into view when navigating with arrow keys
   useEffect(() => {
-    const list = paletteRef.current
-    if (!list) return
-    const selected = list.children[selectedIndex] as HTMLElement | undefined
-    selected?.scrollIntoView({ block: 'nearest' })
-  }, [selectedIndex])
+    const list = paletteRef.current;
+    if (!list) return;
+    const selected = list.children[selectedIndex] as HTMLElement | undefined;
+    selected?.scrollIntoView({ block: "nearest" });
+  }, [selectedIndex]);
 
-  const handleChange = useCallback((value: string) => {
-    setInput(value)
-    onInputChange?.(value)
-  }, [onInputChange])
+  const handleChange = useCallback(
+    (value: string) => {
+      setInput(value);
+      onInputChange?.(value);
+    },
+    [onInputChange],
+  );
 
   const handleSubmit = useCallback(() => {
-    const trimmed = input.trim()
-    const filesToSend = attachmentsDisabled ? [] : queuedFiles
-    const hasBlockingUpload = filesToSend.some((qf) => qf.status !== 'uploaded')
-    if (hasBlockingUpload) return
-    const hasFiles = filesToSend.length > 0
+    const trimmed = input.trim();
+    const filesToSend = attachmentsDisabled ? [] : queuedFiles;
+    const hasBlockingUpload = filesToSend.some(
+      (qf) => qf.status !== "uploaded",
+    );
+    if (hasBlockingUpload) return;
+    const hasFiles = filesToSend.length > 0;
     if ((trimmed || hasFiles) && !disabled) {
       if (ttsEnabled) {
-        prepareTTSPlayback?.()
+        prepareTTSPlayback?.();
       }
       onSend(trimmed, hasFiles ? filesToSend : undefined, {
         reasoningEffort: currentReasoning,
         ttsEnabled,
-      })
-      handleChange('')
-      clearQueuedFiles()
-      onScrollToBottom?.()
+      });
+      handleChange("");
+      clearQueuedFiles();
+      onScrollToBottom?.();
     }
   }, [
     attachmentsDisabled,
@@ -282,95 +299,140 @@ export function ChatInput({
     prepareTTSPlayback,
     queuedFiles,
     ttsEnabled,
-  ])
+  ]);
 
-  const handlePaletteSelect = useCallback((item: PaletteItem) => {
-    if (item.kind === 'command') {
-      if (item.action === 'acp_prompt') {
-        if (disabled) return
-        const filesToSend = attachmentsDisabled ? [] : queuedFiles
-        const hasBlockingUpload = filesToSend.some((qf) => qf.status !== 'uploaded')
-        if (hasBlockingUpload) return
-        const commandText = item.name.startsWith('/') ? item.name : `/${item.name}`
-        const trimmed = input.trim()
-        const match = trimmed.match(/^(\S+)(\s+[\s\S]*)?$/)
-        const firstToken = match?.[1] ?? ''
-        const suffix = match?.[2] ?? ''
-        const prompt = firstToken === commandText ? trimmed : `${commandText}${suffix}`
-        if (!prompt) return
-        if (ttsEnabled) {
-          prepareTTSPlayback?.()
-        }
-        onSend(prompt, filesToSend.length > 0 ? filesToSend : undefined, {
-          reasoningEffort: currentReasoning,
-          ttsEnabled,
-        })
-        handleChange('')
-        clearQueuedFiles()
-        onScrollToBottom?.()
-        return
-      }
-      onPaletteSelect?.(item)
-      handleChange('')
-    } else {
-      const completed = `/${item.parentCommand}:${item.name} `
-      handleChange(completed)
-      textareaRef.current?.focus()
-    }
-  }, [
-    attachmentsDisabled,
-    clearQueuedFiles,
-    currentReasoning,
-    disabled,
-    handleChange,
-    input,
-    onPaletteSelect,
-    onScrollToBottom,
-    onSend,
-    prepareTTSPlayback,
-    queuedFiles,
-    ttsEnabled,
-  ])
-
-  const handleKeyDown = useCallback((e: KeyboardEvent<HTMLTextAreaElement>) => {
-    if (e.nativeEvent.isComposing) return
-
-    if (e.key === 'Escape') {
-      if (showPalette) { e.preventDefault(); handleChange(''); return }
-      if (isStreaming && onStop) { e.preventDefault(); onStop(); return }
-    }
-    if (showPalette) {
-      if (e.key === 'ArrowUp') { e.preventDefault(); setSelectedIndex((i) => (i > 0 ? i - 1 : paletteItems.length - 1)); return }
-      if (e.key === 'ArrowDown') { e.preventDefault(); setSelectedIndex((i) => (i < paletteItems.length - 1 ? i + 1 : 0)); return }
-      if (e.key === 'Tab') {
-        e.preventDefault()
-        const selected = paletteItems[selectedIndex]
-        if (selected) handlePaletteSelect(selected)
-        return
-      }
-      if (e.key === 'Enter' && !e.shiftKey) {
-        if (!(proxySlashMode && !shouldHandleSlashCommandLocally(input))) {
-          e.preventDefault()
-          const selected = paletteItems[selectedIndex]
-          if (selected) {
-            handlePaletteSelect(selected)
+  const handlePaletteSelect = useCallback(
+    (item: PaletteItem) => {
+      if (item.kind === "command") {
+        if (item.action === "acp_prompt") {
+          if (disabled) return;
+          const filesToSend = attachmentsDisabled ? [] : queuedFiles;
+          const hasBlockingUpload = filesToSend.some(
+            (qf) => qf.status !== "uploaded",
+          );
+          if (hasBlockingUpload) return;
+          const commandText = item.name.startsWith("/")
+            ? item.name
+            : `/${item.name}`;
+          const trimmed = input.trim();
+          const match = trimmed.match(/^(\S+)(\s+[\s\S]*)?$/);
+          const firstToken = match?.[1] ?? "";
+          const suffix = match?.[2] ?? "";
+          const prompt =
+            firstToken === commandText ? trimmed : `${commandText}${suffix}`;
+          if (!prompt) return;
+          if (ttsEnabled) {
+            prepareTTSPlayback?.();
           }
-          return
+          onSend(prompt, filesToSend.length > 0 ? filesToSend : undefined, {
+            reasoningEffort: currentReasoning,
+            ttsEnabled,
+          });
+          handleChange("");
+          clearQueuedFiles();
+          onScrollToBottom?.();
+          return;
+        }
+        onPaletteSelect?.(item);
+        handleChange("");
+      } else {
+        const completed = `/${item.parentCommand}:${item.name} `;
+        handleChange(completed);
+        textareaRef.current?.focus();
+      }
+    },
+    [
+      attachmentsDisabled,
+      clearQueuedFiles,
+      currentReasoning,
+      disabled,
+      handleChange,
+      input,
+      onPaletteSelect,
+      onScrollToBottom,
+      onSend,
+      prepareTTSPlayback,
+      queuedFiles,
+      ttsEnabled,
+    ],
+  );
+
+  const handleKeyDown = useCallback(
+    (e: KeyboardEvent<HTMLTextAreaElement>) => {
+      if (e.nativeEvent.isComposing) return;
+
+      if (e.key === "Escape") {
+        if (showPalette) {
+          e.preventDefault();
+          handleChange("");
+          return;
+        }
+        if (isStreaming && onStop) {
+          e.preventDefault();
+          onStop();
+          return;
         }
       }
-    }
-    // Submit mapping follows pointer modality, not the viewport tier: a short
-    // desktop window is still a hardware keyboard (Enter submits), while touch
-    // keyboards keep Enter as newline with the send button as primary submit.
-    if (coarsePointer) {
-      if (e.key === 'Enter' && e.shiftKey) { e.preventDefault(); handleSubmit() }
-    } else {
-      if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); handleSubmit() }
-    }
-  }, [handleChange, handleSubmit, input, isStreaming, onStop, proxySlashMode, showPalette, paletteItems, selectedIndex, handlePaletteSelect, coarsePointer])
+      if (showPalette) {
+        if (e.key === "ArrowUp") {
+          e.preventDefault();
+          setSelectedIndex((i) => (i > 0 ? i - 1 : paletteItems.length - 1));
+          return;
+        }
+        if (e.key === "ArrowDown") {
+          e.preventDefault();
+          setSelectedIndex((i) => (i < paletteItems.length - 1 ? i + 1 : 0));
+          return;
+        }
+        if (e.key === "Tab") {
+          e.preventDefault();
+          const selected = paletteItems[selectedIndex];
+          if (selected) handlePaletteSelect(selected);
+          return;
+        }
+        if (e.key === "Enter" && !e.shiftKey) {
+          if (!(proxySlashMode && !shouldHandleSlashCommandLocally(input))) {
+            e.preventDefault();
+            const selected = paletteItems[selectedIndex];
+            if (selected) {
+              handlePaletteSelect(selected);
+            }
+            return;
+          }
+        }
+      }
+      // Submit mapping follows pointer modality, not the viewport tier: a short
+      // desktop window is still a hardware keyboard (Enter submits), while touch
+      // keyboards keep Enter as newline with the send button as primary submit.
+      if (coarsePointer) {
+        if (e.key === "Enter" && e.shiftKey) {
+          e.preventDefault();
+          handleSubmit();
+        }
+      } else {
+        if (e.key === "Enter" && !e.shiftKey) {
+          e.preventDefault();
+          handleSubmit();
+        }
+      }
+    },
+    [
+      handleChange,
+      handleSubmit,
+      input,
+      isStreaming,
+      onStop,
+      proxySlashMode,
+      showPalette,
+      paletteItems,
+      selectedIndex,
+      handlePaletteSelect,
+      coarsePointer,
+    ],
+  );
 
-  const hasInput = input.trim().length > 0 || queuedFiles.length > 0
-  const pttEnabled = sttEnabled && voiceInputMode === 'ptt'
+  const hasInput = input.trim().length > 0 || queuedFiles.length > 0;
+  const pttEnabled = sttEnabled && voiceInputMode === "ptt";
   const {
     canSelectModel,
     effectiveProvider,
@@ -396,7 +458,7 @@ export function ChatInput({
     provider,
     providerModelCatalog,
     providerPickerDisabledReason,
-  })
+  });
 
   const {
     handleMicPointerCancel,
@@ -425,49 +487,49 @@ export function ChatInput({
     startRecording,
     sttEnabled,
     stopRecording,
-  })
+  });
 
   const disabledInputPlaceholder =
     disabledPlaceholder ??
     (viewingSession
-      ? 'Read-only while watching this session...'
-      : 'Message input unavailable...')
+      ? "Read-only while watching this session..."
+      : "Message input unavailable...");
   const disabledInputAriaLabel =
     disabledAriaLabel ??
     (viewingSession
-      ? 'Message input — watching read only'
-      : 'Message input — unavailable')
+      ? "Message input — watching read only"
+      : "Message input — unavailable");
 
   return (
     <div
       className={cn(
-        'chat-input-footer border-t border-border bg-background px-4 py-3',
-        '@max-[360px]/chat-column:pl-3 @max-[360px]/chat-column:pr-2',
-        isDragOver && 'bg-accent/5 ring-2 ring-inset ring-accent',
+        "chat-input-footer border-t border-border bg-background px-4 py-3",
+        "@max-[360px]/chat-column:pr-2 @max-[360px]/chat-column:pl-3",
+        isDragOver && "bg-accent/5 ring-2 ring-accent ring-inset",
       )}
       onDragOver={(e) => {
-        if (e.dataTransfer.types.includes('application/x-gobby-file')) {
-          e.preventDefault()
-          e.dataTransfer.dropEffect = 'copy'
-          setIsDragOver(true)
+        if (e.dataTransfer.types.includes("application/x-gobby-file")) {
+          e.preventDefault();
+          e.dataTransfer.dropEffect = "copy";
+          setIsDragOver(true);
         }
       }}
       onDragLeave={(e) => {
         if (!e.currentTarget.contains(e.relatedTarget as Node)) {
-          setIsDragOver(false)
+          setIsDragOver(false);
         }
       }}
       onDrop={(e) => {
-        const filePath = e.dataTransfer.getData('application/x-gobby-file')
+        const filePath = e.dataTransfer.getData("application/x-gobby-file");
         if (filePath) {
-          e.preventDefault()
-          setInput((prev) => prev ? `${prev} ${filePath}` : filePath)
-          textareaRef.current?.focus()
+          e.preventDefault();
+          setInput((prev) => (prev ? `${prev} ${filePath}` : filePath));
+          textareaRef.current?.focus();
         }
-        setIsDragOver(false)
+        setIsDragOver(false);
       }}
     >
-      <div className="max-w-3xl mx-auto relative">
+      <div className="relative mx-auto max-w-3xl">
         {showPalette && (
           <ChatCommandPalette
             items={paletteItems}
@@ -479,7 +541,11 @@ export function ChatInput({
           />
         )}
 
-        <ChatInputQueuedFiles files={queuedFiles} onRemove={removeFile} onRetry={retryFile} />
+        <ChatInputQueuedFiles
+          files={queuedFiles}
+          onRemove={removeFile}
+          onRetry={retryFile}
+        />
 
         <ChatInputToolbar
           agentDefinitions={agentDefinitions}
@@ -528,7 +594,7 @@ export function ChatInput({
               ref={textareaRef}
               name="message"
               wrapperClassName="flex-1"
-              className="chat-input-textarea min-h-[36px] max-h-[200px] flex-1 resize-none rounded-lg border-transparent bg-muted px-3 py-2 text-sm leading-5 text-foreground [field-sizing:content] placeholder:text-muted-foreground focus:outline-none focus:ring-2 focus:ring-accent"
+              className="chat-input-textarea [field-sizing:content] max-h-[200px] min-h-[36px] flex-1 resize-none rounded-lg border-transparent bg-muted px-3 py-2 text-sm leading-5 text-foreground placeholder:text-muted-foreground focus:ring-2 focus:ring-accent focus:outline-none"
               value={input}
               onChange={(e) => handleChange(e.target.value)}
               onKeyDown={handleKeyDown}
@@ -536,23 +602,25 @@ export function ChatInput({
                 disabled
                   ? disabledInputPlaceholder
                   : isStreaming
-                    ? 'Interrupt...'
-                    : 'Message or /command...'
+                    ? "Interrupt..."
+                    : "Message or /command..."
               }
               aria-label={
                 disabled
                   ? disabledInputAriaLabel
                   : isStreaming
-                    ? 'Message input — streaming'
-                    : 'Message input'
+                    ? "Message input — streaming"
+                    : "Message input"
               }
-              role={showPalette ? 'combobox' : undefined}
+              role={showPalette ? "combobox" : undefined}
               aria-expanded={showPalette || undefined}
               aria-controls={showPalette ? CHAT_COMMAND_LISTBOX_ID : undefined}
               aria-activedescendant={
-                showPalette ? `${CHAT_COMMAND_OPTION_ID_PREFIX}-${selectedIndex}` : undefined
+                showPalette
+                  ? `${CHAT_COMMAND_OPTION_ID_PREFIX}-${selectedIndex}`
+                  : undefined
               }
-              aria-autocomplete={showPalette ? 'list' : undefined}
+              aria-autocomplete={showPalette ? "list" : undefined}
               disabled={disabled}
               rows={2}
               autoComplete="off"
@@ -607,7 +675,7 @@ export function ChatInput({
               selectionDisabled={selectionDisabled}
               worktreePath={worktreePath}
               worktreePickerDisabled={worktreePickerDisabled}
-              />
+            />
           )}
           {showObserveOverlay && (
             <div className="chat-input-overlay absolute inset-0 z-10 flex items-center justify-center rounded-xl bg-[color-mix(in_srgb,var(--bg-primary)_80%,transparent)]">
@@ -623,5 +691,5 @@ export function ChatInput({
         </div>
       </div>
     </div>
-  )
+  );
 }

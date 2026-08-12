@@ -1,10 +1,16 @@
-import { fireEvent, render, screen, waitFor, within } from '@testing-library/react'
-import { describe, it, expect, vi } from 'vitest'
-import { RuntimeInfrastructureSection } from '../RuntimeInfrastructureSection'
+import {
+  fireEvent,
+  render,
+  screen,
+  waitFor,
+  within,
+} from "@testing-library/react";
+import { describe, it, expect, vi } from "vitest";
+import { RuntimeInfrastructureSection } from "../RuntimeInfrastructureSection";
 import {
   SettingsSectionContext,
   type SettingsSectionContextValue,
-} from '../SettingsSectionContext'
+} from "../SettingsSectionContext";
 
 // Minimal schema covering the rows the assertions touch: the two `*.profile`
 // rows reach the shared FeatureProfile enum through a `$ref`, and a couple of
@@ -14,56 +20,56 @@ import {
 const SCHEMA: Record<string, unknown> = {
   $defs: {
     FeatureProfile: {
-      enum: ['feature_low', 'feature_mid', 'feature_high'],
-      type: 'string',
+      enum: ["feature_low", "feature_mid", "feature_high"],
+      type: "string",
     },
     CodeIndexConfig: {
-      type: 'object',
+      type: "object",
       properties: {
-        symbol_summary: { $ref: '#/$defs/CodeIndexSymbolSummaryConfig' },
+        symbol_summary: { $ref: "#/$defs/CodeIndexSymbolSummaryConfig" },
       },
     },
     CodeIndexSymbolSummaryConfig: {
-      type: 'object',
+      type: "object",
       properties: {
-        enabled: { type: 'boolean' },
-        batch_size: { type: 'integer', minimum: 1 },
-        profile: { $ref: '#/$defs/FeatureProfile' },
-        candidates: { type: 'array', items: { type: 'string' } },
-        max_concurrency: { type: 'integer', minimum: 1 },
-        max_tokens: { type: 'integer', minimum: 1 },
+        enabled: { type: "boolean" },
+        batch_size: { type: "integer", minimum: 1 },
+        profile: { $ref: "#/$defs/FeatureProfile" },
+        candidates: { type: "array", items: { type: "string" } },
+        max_concurrency: { type: "integer", minimum: 1 },
+        max_tokens: { type: "integer", minimum: 1 },
       },
     },
     DigestConfig: {
-      type: 'object',
+      type: "object",
       properties: {
-        profile: { $ref: '#/$defs/FeatureProfile' },
+        profile: { $ref: "#/$defs/FeatureProfile" },
       },
     },
     UIConfig: {
-      type: 'object',
+      type: "object",
       properties: {
-        knowledge_graph_limit: { type: 'integer', minimum: 0 },
+        knowledge_graph_limit: { type: "integer", minimum: 0 },
       },
     },
   },
-  type: 'object',
+  type: "object",
   properties: {
-    code_index: { $ref: '#/$defs/CodeIndexConfig' },
-    digest: { $ref: '#/$defs/DigestConfig' },
-    ui: { $ref: '#/$defs/UIConfig' },
+    code_index: { $ref: "#/$defs/CodeIndexConfig" },
+    digest: { $ref: "#/$defs/DigestConfig" },
+    ui: { $ref: "#/$defs/UIConfig" },
   },
-}
+};
 
 function makeConfigValues(): Record<string, unknown> {
   return {
     daemon_port: 60887,
-    bind_host: '127.0.0.1',
+    bind_host: "127.0.0.1",
     daemon_health_check_interval: 30,
     test_mode: false,
-    cors_origins: ['http://localhost:3000', 'http://localhost:5173'],
-    clones_dir: '/home/dev/.gobby/clones',
-    worktrees_dir: '/home/dev/.gobby/worktrees',
+    cors_origins: ["http://localhost:3000", "http://localhost:5173"],
+    clones_dir: "/home/dev/.gobby/clones",
+    worktrees_dir: "/home/dev/.gobby/worktrees",
     websocket: {
       enabled: true,
       port: 60888,
@@ -72,15 +78,15 @@ function makeConfigValues(): Record<string, unknown> {
     },
     ui: {
       enabled: false,
-      mode: 'auto',
+      mode: "auto",
       port: 60889,
-      host: 'localhost',
-      web_dir: '/home/dev/gobby/web',
+      host: "localhost",
+      web_dir: "/home/dev/gobby/web",
       knowledge_graph_limit: 500,
       knowledge_graph_relationship_limit: 2000,
     },
     search: {
-      mode: 'auto',
+      mode: "auto",
       keyword_weight: 0.4,
       embedding_weight: 0.6,
       notify_on_fallback: true,
@@ -90,19 +96,19 @@ function makeConfigValues(): Record<string, unknown> {
       maintenance_interval_seconds: 3600,
       maintenance_index_timeout_seconds: 900,
       nightly_full_reindex_enabled: true,
-      nightly_full_reindex_cron: '0 2 * * *',
+      nightly_full_reindex_cron: "0 2 * * *",
       nightly_full_reindex_timezone: null,
       nightly_full_reindex_timeout_seconds: 7200,
       nightly_full_reindex_concurrency: 1,
-      maintenance_log_file: '~/.gobby/logs/code-index-maintenance.log',
+      maintenance_log_file: "~/.gobby/logs/code-index-maintenance.log",
       missing_root_purge_observations: 3,
       embedding_enabled: true,
       graph_enabled: true,
       symbol_summary: {
         enabled: false,
         batch_size: 16,
-        profile: 'feature_low',
-        candidates: ['anthropic/claude-haiku'],
+        profile: "feature_low",
+        candidates: ["anthropic/claude-haiku"],
         max_concurrency: 4,
         max_tokens: 100,
       },
@@ -120,22 +126,22 @@ function makeConfigValues(): Record<string, unknown> {
       github_timeout_seconds: 10,
     },
     digest: {
-      profile: 'feature_mid',
-      candidates: ['anthropic/claude-sonnet'],
+      profile: "feature_mid",
+      candidates: ["anthropic/claude-sonnet"],
       enabled: false,
       timeout: 120,
     },
     web_chat_sandbox: {
       enabled: true,
-      extra_read_paths: ['/srv/shared'],
-      extra_write_paths: ['/srv/out'],
+      extra_read_paths: ["/srv/shared"],
+      extra_write_paths: ["/srv/out"],
     },
     agent_sandbox: {
       enabled: false,
-      extra_read_paths: ['/srv/agent-read'],
-      extra_write_paths: ['/srv/agent-write'],
+      extra_read_paths: ["/srv/agent-read"],
+      extra_write_paths: ["/srv/agent-write"],
     },
-  }
+  };
 }
 
 function makeContext(
@@ -149,7 +155,7 @@ function makeContext(
     saveConfig: vi.fn(async () => ({ ok: true })),
     registerDirtyGuard: () => () => {},
     ...overrides,
-  }
+  };
 }
 
 function renderSection(ctx: SettingsSectionContextValue) {
@@ -157,201 +163,215 @@ function renderSection(ctx: SettingsSectionContextValue) {
     <SettingsSectionContext.Provider value={ctx}>
       <RuntimeInfrastructureSection />
     </SettingsSectionContext.Provider>,
-  )
+  );
 }
 
-describe('RuntimeInfrastructureSection', () => {
-  it('reads the daemon core rows', () => {
-    renderSection(makeContext())
+describe("RuntimeInfrastructureSection", () => {
+  it("reads the daemon core rows", () => {
+    renderSection(makeContext());
 
-    expect(screen.getByLabelText('Daemon HTTP port')).toHaveValue(60887)
-    expect(screen.getByLabelText('Daemon bind host')).toHaveValue('127.0.0.1')
+    expect(screen.getByLabelText("Daemon HTTP port")).toHaveValue(60887);
+    expect(screen.getByLabelText("Daemon bind host")).toHaveValue("127.0.0.1");
     expect(
-      screen.getByLabelText('Daemon health-check interval (seconds)'),
-    ).toHaveValue(30)
+      screen.getByLabelText("Daemon health-check interval (seconds)"),
+    ).toHaveValue(30);
     expect(
-      screen.getByRole('switch', { name: 'Enable test mode' }),
-    ).not.toBeChecked()
-  })
+      screen.getByRole("switch", { name: "Enable test mode" }),
+    ).not.toBeChecked();
+  });
 
-  it('renders cors_origins as an editable string list, not a text fallback', () => {
-    renderSection(makeContext())
+  it("renders cors_origins as an editable string list, not a text fallback", () => {
+    renderSection(makeContext());
 
-    expect(screen.getByLabelText('CORS origin item 1')).toHaveValue(
-      'http://localhost:3000',
-    )
-    expect(screen.getByLabelText('CORS origin item 2')).toHaveValue(
-      'http://localhost:5173',
-    )
-  })
+    expect(screen.getByLabelText("CORS origin item 1")).toHaveValue(
+      "http://localhost:3000",
+    );
+    expect(screen.getByLabelText("CORS origin item 2")).toHaveValue(
+      "http://localhost:5173",
+    );
+  });
 
-  it('reads the websocket rows', () => {
-    renderSection(makeContext())
+  it("reads the websocket rows", () => {
+    renderSection(makeContext());
 
     expect(
-      screen.getByRole('switch', { name: 'Enable WebSocket server' }),
-    ).toBeChecked()
-    expect(screen.getByLabelText('WebSocket port')).toHaveValue(60888)
-    expect(screen.getByLabelText('WebSocket ping interval (seconds)')).toHaveValue(
-      20,
-    )
-    expect(screen.getByLabelText('WebSocket ping timeout (seconds)')).toHaveValue(20)
-  })
-
-  it('renders search.mode as a bounded select, not free text', () => {
-    renderSection(makeContext())
-
-    const mode = screen.getByLabelText('Search mode')
-    expect(mode).toHaveValue('auto')
-    expect(within(mode).getAllByRole('option')).toHaveLength(4)
-    expect(screen.getByLabelText('Search keyword weight')).toHaveValue(0.4)
-    expect(screen.getByLabelText('Search embedding weight')).toHaveValue(0.6)
+      screen.getByRole("switch", { name: "Enable WebSocket server" }),
+    ).toBeChecked();
+    expect(screen.getByLabelText("WebSocket port")).toHaveValue(60888);
     expect(
-      screen.getByRole('switch', {
-        name: 'Warn when search falls back to keyword',
+      screen.getByLabelText("WebSocket ping interval (seconds)"),
+    ).toHaveValue(20);
+    expect(
+      screen.getByLabelText("WebSocket ping timeout (seconds)"),
+    ).toHaveValue(20);
+  });
+
+  it("renders search.mode as a bounded select, not free text", () => {
+    renderSection(makeContext());
+
+    const mode = screen.getByLabelText("Search mode");
+    expect(mode).toHaveValue("auto");
+    expect(within(mode).getAllByRole("option")).toHaveLength(4);
+    expect(screen.getByLabelText("Search keyword weight")).toHaveValue(0.4);
+    expect(screen.getByLabelText("Search embedding weight")).toHaveValue(0.6);
+    expect(
+      screen.getByRole("switch", {
+        name: "Warn when search falls back to keyword",
       }),
-    ).toBeChecked()
-  })
+    ).toBeChecked();
+  });
 
-  it('renders ui.mode as a bounded select with the serving rows', () => {
-    renderSection(makeContext())
+  it("renders ui.mode as a bounded select with the serving rows", () => {
+    renderSection(makeContext());
 
-    const mode = screen.getByLabelText('Web UI mode')
-    expect(mode).toHaveValue('auto')
-    expect(within(mode).getAllByRole('option')).toHaveLength(3)
+    const mode = screen.getByLabelText("Web UI mode");
+    expect(mode).toHaveValue("auto");
+    expect(within(mode).getAllByRole("option")).toHaveLength(3);
     expect(
-      screen.getByRole('switch', { name: 'Enable web UI serving' }),
-    ).not.toBeChecked()
-    expect(screen.getByLabelText('Web UI dev port')).toHaveValue(60889)
-    expect(screen.getByLabelText('Web UI dev host')).toHaveValue('localhost')
-    expect(screen.getByLabelText('Web directory path')).toHaveValue(
-      '/home/dev/gobby/web',
-    )
-    expect(screen.getByLabelText('Knowledge graph entity limit')).toHaveValue(500)
-    expect(screen.getByLabelText('Knowledge graph relationship limit')).toHaveValue(2000)
-    expect(screen.queryByLabelText('Memory graph node limit')).not.toBeInTheDocument()
-  })
-
-  it('renders kept code-index summary fields and omits retired controls', () => {
-    renderSection(makeContext())
-
-    expect(screen.getByLabelText('Summary candidate item 1')).toHaveValue(
-      'anthropic/claude-haiku',
-    )
-    const profile = screen.getByLabelText('Code summary capability profile')
-    expect(profile).toHaveValue('feature_low')
-    expect(within(profile).getAllByRole('option')).toHaveLength(3)
-    expect(screen.queryByLabelText('Re-index on commit')).not.toBeInTheDocument()
+      screen.getByRole("switch", { name: "Enable web UI serving" }),
+    ).not.toBeChecked();
+    expect(screen.getByLabelText("Web UI dev port")).toHaveValue(60889);
+    expect(screen.getByLabelText("Web UI dev host")).toHaveValue("localhost");
+    expect(screen.getByLabelText("Web directory path")).toHaveValue(
+      "/home/dev/gobby/web",
+    );
+    expect(screen.getByLabelText("Knowledge graph entity limit")).toHaveValue(
+      500,
+    );
     expect(
-      screen.queryByLabelText('Maximum indexed file size (bytes)'),
-    ).not.toBeInTheDocument()
-    expect(screen.queryByLabelText('Qdrant collection prefix')).not.toBeInTheDocument()
-  })
-
-  it('renders the digest rows with a schema-enum profile select', () => {
-    renderSection(makeContext())
-
+      screen.getByLabelText("Knowledge graph relationship limit"),
+    ).toHaveValue(2000);
     expect(
-      screen.getByRole('switch', { name: 'Enable digest generation' }),
-    ).not.toBeChecked()
-    const profile = screen.getByLabelText('Digest capability profile')
-    expect(profile).toHaveValue('feature_mid')
-    expect(within(profile).getAllByRole('option')).toHaveLength(3)
-    expect(screen.getByLabelText('Digest candidate item 1')).toHaveValue(
-      'anthropic/claude-sonnet',
-    )
-    expect(screen.getByLabelText('Digest timeout (seconds)')).toHaveValue(120)
-  })
+      screen.queryByLabelText("Memory graph node limit"),
+    ).not.toBeInTheDocument();
+  });
 
-  it('renders the sandbox path editors as string lists', () => {
-    renderSection(makeContext())
+  it("renders kept code-index summary fields and omits retired controls", () => {
+    renderSection(makeContext());
 
-    expect(screen.getByLabelText('Web chat read path item 1')).toHaveValue(
-      '/srv/shared',
-    )
-    expect(screen.getByLabelText('Web chat write path item 1')).toHaveValue(
-      '/srv/out',
-    )
-    expect(screen.getByLabelText('Agent read path item 1')).toHaveValue(
-      '/srv/agent-read',
-    )
-    expect(screen.getByLabelText('Agent write path item 1')).toHaveValue(
-      '/srv/agent-write',
-    )
-  })
+    expect(screen.getByLabelText("Summary candidate item 1")).toHaveValue(
+      "anthropic/claude-haiku",
+    );
+    const profile = screen.getByLabelText("Code summary capability profile");
+    expect(profile).toHaveValue("feature_low");
+    expect(within(profile).getAllByRole("option")).toHaveLength(3);
+    expect(
+      screen.queryByLabelText("Re-index on commit"),
+    ).not.toBeInTheDocument();
+    expect(
+      screen.queryByLabelText("Maximum indexed file size (bytes)"),
+    ).not.toBeInTheDocument();
+    expect(
+      screen.queryByLabelText("Qdrant collection prefix"),
+    ).not.toBeInTheDocument();
+  });
 
-  it('reads the binary-freshness and directory rows', () => {
-    renderSection(makeContext())
+  it("renders the digest rows with a schema-enum profile select", () => {
+    renderSection(makeContext());
 
     expect(
-      screen.getByRole('switch', { name: 'Enable binary freshness checks' }),
-    ).toBeChecked()
-    expect(screen.getByLabelText('Freshness interval (seconds)')).toHaveValue(3600)
-    expect(screen.getByLabelText('Clones directory')).toHaveValue(
-      '/home/dev/.gobby/clones',
-    )
-    expect(screen.getByLabelText('Worktrees directory')).toHaveValue(
-      '/home/dev/.gobby/worktrees',
-    )
-  })
+      screen.getByRole("switch", { name: "Enable digest generation" }),
+    ).not.toBeChecked();
+    const profile = screen.getByLabelText("Digest capability profile");
+    expect(profile).toHaveValue("feature_mid");
+    expect(within(profile).getAllByRole("option")).toHaveLength(3);
+    expect(screen.getByLabelText("Digest candidate item 1")).toHaveValue(
+      "anthropic/claude-sonnet",
+    );
+    expect(screen.getByLabelText("Digest timeout (seconds)")).toHaveValue(120);
+  });
 
-  it('persists an edited scalar through the section Save', async () => {
-    const ctx = makeContext()
-    renderSection(ctx)
+  it("renders the sandbox path editors as string lists", () => {
+    renderSection(makeContext());
 
-    fireEvent.click(screen.getByRole('switch', { name: 'Enable test mode' }))
-    const save = screen.getByRole('button', { name: 'Save' })
-    await waitFor(() => expect(save).toBeEnabled())
-    fireEvent.click(save)
+    expect(screen.getByLabelText("Web chat read path item 1")).toHaveValue(
+      "/srv/shared",
+    );
+    expect(screen.getByLabelText("Web chat write path item 1")).toHaveValue(
+      "/srv/out",
+    );
+    expect(screen.getByLabelText("Agent read path item 1")).toHaveValue(
+      "/srv/agent-read",
+    );
+    expect(screen.getByLabelText("Agent write path item 1")).toHaveValue(
+      "/srv/agent-write",
+    );
+  });
 
-    await waitFor(() => expect(ctx.saveConfig).toHaveBeenCalledTimes(1))
+  it("reads the binary-freshness and directory rows", () => {
+    renderSection(makeContext());
+
+    expect(
+      screen.getByRole("switch", { name: "Enable binary freshness checks" }),
+    ).toBeChecked();
+    expect(screen.getByLabelText("Freshness interval (seconds)")).toHaveValue(
+      3600,
+    );
+    expect(screen.getByLabelText("Clones directory")).toHaveValue(
+      "/home/dev/.gobby/clones",
+    );
+    expect(screen.getByLabelText("Worktrees directory")).toHaveValue(
+      "/home/dev/.gobby/worktrees",
+    );
+  });
+
+  it("persists an edited scalar through the section Save", async () => {
+    const ctx = makeContext();
+    renderSection(ctx);
+
+    fireEvent.click(screen.getByRole("switch", { name: "Enable test mode" }));
+    const save = screen.getByRole("button", { name: "Save" });
+    await waitFor(() => expect(save).toBeEnabled());
+    fireEvent.click(save);
+
+    await waitFor(() => expect(ctx.saveConfig).toHaveBeenCalledTimes(1));
     expect(ctx.saveConfig).toHaveBeenCalledWith(
       expect.objectContaining({ test_mode: true }),
-    )
-  })
+    );
+  });
 
-  it('persists an edited cors_origins list through the section Save', async () => {
-    const ctx = makeContext()
-    renderSection(ctx)
+  it("persists an edited cors_origins list through the section Save", async () => {
+    const ctx = makeContext();
+    renderSection(ctx);
 
-    fireEvent.change(screen.getByLabelText('CORS origin item 1'), {
-      target: { value: 'http://localhost:4000' },
-    })
-    const save = screen.getByRole('button', { name: 'Save' })
-    await waitFor(() => expect(save).toBeEnabled())
-    fireEvent.click(save)
+    fireEvent.change(screen.getByLabelText("CORS origin item 1"), {
+      target: { value: "http://localhost:4000" },
+    });
+    const save = screen.getByRole("button", { name: "Save" });
+    await waitFor(() => expect(save).toBeEnabled());
+    fireEvent.click(save);
 
-    await waitFor(() => expect(ctx.saveConfig).toHaveBeenCalledTimes(1))
+    await waitFor(() => expect(ctx.saveConfig).toHaveBeenCalledTimes(1));
     expect(ctx.saveConfig).toHaveBeenCalledWith(
       expect.objectContaining({
-        cors_origins: ['http://localhost:4000', 'http://localhost:5173'],
+        cors_origins: ["http://localhost:4000", "http://localhost:5173"],
       }),
-    )
-  })
+    );
+  });
 
-  it('persists a bounded-select change through the section Save', async () => {
-    const ctx = makeContext()
-    renderSection(ctx)
+  it("persists a bounded-select change through the section Save", async () => {
+    const ctx = makeContext();
+    renderSection(ctx);
 
-    fireEvent.change(screen.getByLabelText('Search mode'), {
-      target: { value: 'hybrid' },
-    })
-    const save = screen.getByRole('button', { name: 'Save' })
-    await waitFor(() => expect(save).toBeEnabled())
-    fireEvent.click(save)
+    fireEvent.change(screen.getByLabelText("Search mode"), {
+      target: { value: "hybrid" },
+    });
+    const save = screen.getByRole("button", { name: "Save" });
+    await waitFor(() => expect(save).toBeEnabled());
+    fireEvent.click(save);
 
-    await waitFor(() => expect(ctx.saveConfig).toHaveBeenCalledTimes(1))
+    await waitFor(() => expect(ctx.saveConfig).toHaveBeenCalledTimes(1));
     expect(ctx.saveConfig).toHaveBeenCalledWith(
-      expect.objectContaining({ 'search.mode': 'hybrid' }),
-    )
-  })
+      expect.objectContaining({ "search.mode": "hybrid" }),
+    );
+  });
 
-  it('does not render the legacy pending placeholder', () => {
-    renderSection(makeContext())
+  it("does not render the legacy pending placeholder", () => {
+    renderSection(makeContext());
 
     expect(
       screen.queryByText(/being migrated into this section/),
-    ).not.toBeInTheDocument()
-    expect(screen.getByText('Code index')).toBeInTheDocument()
-  })
-})
+    ).not.toBeInTheDocument();
+    expect(screen.getByText("Code index")).toBeInTheDocument();
+  });
+});

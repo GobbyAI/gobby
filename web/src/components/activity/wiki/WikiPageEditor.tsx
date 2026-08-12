@@ -14,14 +14,17 @@ import { CodeMirrorEditor } from "../../shared/CodeMirrorEditor";
 import { Card } from "../../ui/Card";
 import { Input } from "../../ui/Input";
 import { ActivityPanelEmpty } from "../ActivityPanelEmpty";
-import { DetailActionButton, DetailPaneHeader, useDetailDraft } from "../fields";
+import {
+  DetailActionButton,
+  DetailPaneHeader,
+  useDetailDraft,
+} from "../fields";
 import { fetchPage, type WikiFetchScope } from "./WikiTabData";
 import { validateCreatePath } from "./WikiTabModel";
 import type { WikiTabActions } from "./WikiTabActions";
 
 export type WikiEditorIntent =
-  | { kind: "edit"; path: string }
-  | { kind: "create"; seed: string };
+  { kind: "edit"; path: string } | { kind: "create"; seed: string };
 
 interface WikiDraft {
   path: string;
@@ -43,12 +46,23 @@ interface WikiPageEditorProps {
   onSaved: (path: string) => void;
 }
 
-export function WikiPageEditor({ scope, intent, actions, onClose, onSaved }: WikiPageEditorProps) {
+export function WikiPageEditor({
+  scope,
+  intent,
+  actions,
+  onClose,
+  onSaved,
+}: WikiPageEditorProps) {
   // The host keys this component by intent, so `intent` is immutable for a
   // mounted editor and plain (unkeyed) state is safe across its lifetime.
-  const [base, setBase] = useState<{ content: string; hash: string | null } | null>(null);
+  const [base, setBase] = useState<{
+    content: string;
+    hash: string | null;
+  } | null>(null);
   const [loadError, setLoadError] = useState<string | null>(null);
-  const [conflict, setConflict] = useState<{ message: string | null } | null>(null);
+  const [conflict, setConflict] = useState<{ message: string | null } | null>(
+    null,
+  );
   const [formError, setFormError] = useState<string | null>(null);
   // Synchronous mirror of the base hash: revalidate() and save() compare
   // against this ref so back-to-back async steps never race a re-render.
@@ -76,7 +90,9 @@ export function WikiPageEditor({ scope, intent, actions, onClose, onSaved }: Wik
       })
       .catch((error: unknown) => {
         if (!cancelled) {
-          setLoadError(error instanceof Error ? error.message : "Failed to load page");
+          setLoadError(
+            error instanceof Error ? error.message : "Failed to load page",
+          );
         }
       });
     return () => {
@@ -106,7 +122,8 @@ export function WikiPageEditor({ scope, intent, actions, onClose, onSaved }: Wik
   }, [adoptBase, intent, scope]);
 
   const source = useMemo<WikiDraft | null>(() => {
-    if (intent.kind === "create") return { path: intent.seed, content: CREATE_TEMPLATE };
+    if (intent.kind === "create")
+      return { path: intent.seed, content: CREATE_TEMPLATE };
     return base ? { path: intent.path, content: base.content } : null;
   }, [base, intent]);
 
@@ -160,8 +177,16 @@ export function WikiPageEditor({ scope, intent, actions, onClose, onSaved }: Wik
     [actions, base, intent, revalidate],
   );
 
-  const { draft, setField, dirty, saving, serverChanged, save, discard, confirmIfDirty } =
-    useDetailDraft<WikiDraft>({ source, onSave: handleSave });
+  const {
+    draft,
+    setField,
+    dirty,
+    saving,
+    serverChanged,
+    save,
+    discard,
+    confirmIfDirty,
+  } = useDetailDraft<WikiDraft>({ source, onSave: handleSave });
 
   const runSave = useCallback(async () => {
     const saved = await save();
@@ -216,11 +241,24 @@ export function WikiPageEditor({ scope, intent, actions, onClose, onSaved }: Wik
   const headerActions =
     intent.kind === "create" ? (
       <>
-        <DetailActionButton label="Cancel" variant="ghost" onClick={() => confirmIfDirty(onClose)} />
-        <DetailActionButton label="Create" variant="accent" disabled={saving} onClick={() => void runSave()} />
+        <DetailActionButton
+          label="Cancel"
+          variant="ghost"
+          onClick={() => confirmIfDirty(onClose)}
+        />
+        <DetailActionButton
+          label="Create"
+          variant="accent"
+          disabled={saving}
+          onClick={() => void runSave()}
+        />
       </>
     ) : (
-      <DetailActionButton label="Close" variant="ghost" onClick={() => confirmIfDirty(onClose)} />
+      <DetailActionButton
+        label="Close"
+        variant="ghost"
+        onClick={() => confirmIfDirty(onClose)}
+      />
     );
 
   return (
@@ -238,7 +276,10 @@ export function WikiPageEditor({ scope, intent, actions, onClose, onSaved }: Wik
       {intent.kind === "create" ? (
         <div className="flex flex-col gap-1 border-b border-border px-3 py-2">
           <div className="flex items-center gap-2">
-            <label htmlFor="wiki-create-path" className="shrink-0 text-xs text-muted-foreground">
+            <label
+              htmlFor="wiki-create-path"
+              className="shrink-0 text-xs text-muted-foreground"
+            >
               Page path
             </label>
             <Input
@@ -263,7 +304,10 @@ export function WikiPageEditor({ scope, intent, actions, onClose, onSaved }: Wik
       ) : null}
 
       {conflict ? (
-        <div role="alert" className="border-b border-border bg-[var(--color-warning-soft)] px-3 py-2">
+        <div
+          role="alert"
+          className="border-b border-border bg-[var(--color-warning-soft)] px-3 py-2"
+        >
           <p className="text-xs font-medium text-[var(--color-warning-foreground)]">
             Page changed on disk
           </p>
@@ -272,9 +316,21 @@ export function WikiPageEditor({ scope, intent, actions, onClose, onSaved }: Wik
             {conflict.message ? ` ${conflict.message}.` : ""}
           </p>
           <div className="mt-2 flex items-center gap-2">
-            <DetailActionButton label="Reload" variant="secondary" onClick={() => void handleReload()} />
-            <DetailActionButton label="Overwrite" variant="destructive" onClick={() => void handleOverwrite()} />
-            <DetailActionButton label="Keep editing" variant="ghost" onClick={() => setConflict(null)} />
+            <DetailActionButton
+              label="Reload"
+              variant="secondary"
+              onClick={() => void handleReload()}
+            />
+            <DetailActionButton
+              label="Overwrite"
+              variant="destructive"
+              onClick={() => void handleOverwrite()}
+            />
+            <DetailActionButton
+              label="Keep editing"
+              variant="ghost"
+              onClick={() => setConflict(null)}
+            />
           </div>
         </div>
       ) : null}

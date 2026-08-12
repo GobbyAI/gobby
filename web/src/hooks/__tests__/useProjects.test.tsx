@@ -1,105 +1,107 @@
-import { renderHook, waitFor } from '@testing-library/react'
-import { afterEach, describe, expect, it, vi } from 'vitest'
+import { renderHook, waitFor } from "@testing-library/react";
+import { afterEach, describe, expect, it, vi } from "vitest";
 
-import { useProjects, type ProjectWithStats } from '../useProjects'
-import { useWebSocketEvent } from '../useWebSocketEvent'
+import { useProjects, type ProjectWithStats } from "../useProjects";
+import { useWebSocketEvent } from "../useWebSocketEvent";
 
-vi.mock('../useWebSocketEvent', () => ({
+vi.mock("../useWebSocketEvent", () => ({
   useWebSocketEvent: vi.fn(),
-}))
+}));
 
 // #20066: on a fresh unauthenticated load the mount fetch 401s and nothing
 // retried after login, so the project list stayed empty until a project_event
 // happened to arrive. The `enabled` option must defer fetching while false and
 // re-run the fetch when it flips true.
 
-function makeProject(overrides: Partial<ProjectWithStats> = {}): ProjectWithStats {
+function makeProject(
+  overrides: Partial<ProjectWithStats> = {},
+): ProjectWithStats {
   return {
-    id: 'p1',
-    name: 'gobby',
-    display_name: 'Gobby',
-    repo_path: '/Users/josh/Projects/gobby',
+    id: "p1",
+    name: "gobby",
+    display_name: "Gobby",
+    repo_path: "/Users/josh/Projects/gobby",
     github_url: null,
     github_repo: null,
     linear_team_id: null,
     linear_project_id: null,
     approval_rules: [],
     validation_detection: null,
-    created_at: '2026-08-11T00:00:00Z',
-    updated_at: '2026-08-11T00:00:00Z',
+    created_at: "2026-08-11T00:00:00Z",
+    updated_at: "2026-08-11T00:00:00Z",
     session_count: 0,
     open_task_count: 0,
     last_activity_at: null,
     ...overrides,
-  }
+  };
 }
 
 function okResponse(projects: ProjectWithStats[]): Response {
-  return { ok: true, json: async () => projects } as Response
+  return { ok: true, json: async () => projects } as Response;
 }
 
 afterEach(() => {
-  vi.unstubAllGlobals()
-  vi.clearAllMocks()
-  vi.restoreAllMocks()
-})
+  vi.unstubAllGlobals();
+  vi.clearAllMocks();
+  vi.restoreAllMocks();
+});
 
-describe('useProjects auth gating (#20066)', () => {
-  it('fetches on mount by default', async () => {
-    const fetchMock = vi.fn(() => Promise.resolve(okResponse([makeProject()])))
-    vi.stubGlobal('fetch', fetchMock)
+describe("useProjects auth gating (#20066)", () => {
+  it("fetches on mount by default", async () => {
+    const fetchMock = vi.fn(() => Promise.resolve(okResponse([makeProject()])));
+    vi.stubGlobal("fetch", fetchMock);
 
-    const { result } = renderHook(() => useProjects())
+    const { result } = renderHook(() => useProjects());
 
-    await waitFor(() => expect(result.current.allProjects).toHaveLength(1))
-    expect(fetchMock).toHaveBeenCalledExactlyOnceWith('/api/projects')
-  })
+    await waitFor(() => expect(result.current.allProjects).toHaveLength(1));
+    expect(fetchMock).toHaveBeenCalledExactlyOnceWith("/api/projects");
+  });
 
-  it('defers fetching while disabled and fetches once enabled flips true', async () => {
-    const fetchMock = vi.fn(() => Promise.resolve(okResponse([makeProject()])))
-    vi.stubGlobal('fetch', fetchMock)
+  it("defers fetching while disabled and fetches once enabled flips true", async () => {
+    const fetchMock = vi.fn(() => Promise.resolve(okResponse([makeProject()])));
+    vi.stubGlobal("fetch", fetchMock);
 
     const { result, rerender } = renderHook(
       ({ enabled }: { enabled: boolean }) => useProjects({ enabled }),
       { initialProps: { enabled: false } },
-    )
-    expect(fetchMock).not.toHaveBeenCalled()
-    const calls = vi.mocked(useWebSocketEvent).mock.calls
-    const disabledHandler = calls[calls.length - 1]?.[1]
-    expect(disabledHandler).toBeDefined()
-    disabledHandler?.({})
-    expect(fetchMock).not.toHaveBeenCalled()
+    );
+    expect(fetchMock).not.toHaveBeenCalled();
+    const calls = vi.mocked(useWebSocketEvent).mock.calls;
+    const disabledHandler = calls[calls.length - 1]?.[1];
+    expect(disabledHandler).toBeDefined();
+    disabledHandler?.({});
+    expect(fetchMock).not.toHaveBeenCalled();
 
-    rerender({ enabled: true })
+    rerender({ enabled: true });
 
-    await waitFor(() => expect(result.current.allProjects).toHaveLength(1))
-    expect(fetchMock).toHaveBeenCalledTimes(1)
-  })
+    await waitFor(() => expect(result.current.allProjects).toHaveLength(1));
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+  });
 
-  it('recovers from a pre-auth 401 once auth flips back to true', async () => {
+  it("recovers from a pre-auth 401 once auth flips back to true", async () => {
     // Login flow: the optimistic mount fetch 401s, the auth status check
     // disables the hook, then a successful login re-enables it.
     const fetchMock = vi
       .fn()
       .mockResolvedValueOnce({ ok: false, status: 401 } as Response)
-      .mockResolvedValue(okResponse([makeProject()]))
-    vi.stubGlobal('fetch', fetchMock)
-    vi.spyOn(console, 'error').mockImplementation(() => {})
+      .mockResolvedValue(okResponse([makeProject()]));
+    vi.stubGlobal("fetch", fetchMock);
+    vi.spyOn(console, "error").mockImplementation(() => {});
 
     const { result, rerender } = renderHook(
       ({ enabled }: { enabled: boolean }) => useProjects({ enabled }),
       { initialProps: { enabled: true } },
-    )
-    await waitFor(() => expect(result.current.error).not.toBeNull())
-    expect(result.current.allProjects).toHaveLength(0)
+    );
+    await waitFor(() => expect(result.current.error).not.toBeNull());
+    expect(result.current.allProjects).toHaveLength(0);
 
-    rerender({ enabled: false })
-    expect(fetchMock).toHaveBeenCalledTimes(1)
+    rerender({ enabled: false });
+    expect(fetchMock).toHaveBeenCalledTimes(1);
 
-    rerender({ enabled: true })
+    rerender({ enabled: true });
 
-    await waitFor(() => expect(result.current.allProjects).toHaveLength(1))
-    expect(result.current.error).toBeNull()
-    expect(fetchMock).toHaveBeenCalledTimes(2)
-  })
-})
+    await waitFor(() => expect(result.current.allProjects).toHaveLength(1));
+    expect(result.current.error).toBeNull();
+    expect(fetchMock).toHaveBeenCalledTimes(2);
+  });
+});

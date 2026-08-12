@@ -43,7 +43,10 @@ export function StageDetailPanel({
     },
     [onError, onSave],
   );
-  const draftState = useDetailDraft<StageEntry>({ source: stage, onSave: handleSave });
+  const draftState = useDetailDraft<StageEntry>({
+    source: stage,
+    onSave: handleSave,
+  });
 
   useEffect(() => {
     onConfirmLeaveChange(draftState.confirmIfDirty);
@@ -52,12 +55,18 @@ export function StageDetailPanel({
 
   if (!draftState.draft) {
     return (
-      <ActivityPanelEmpty heading="Stages" body="Select a stage to inspect and edit it." />
+      <ActivityPanelEmpty
+        heading="Stages"
+        body="Select a stage to inspect and edit it."
+      />
     );
   }
 
   const draft = draftState.draft;
-  const setField = <K extends keyof StageEntry>(key: K, value: StageEntry[K]) => {
+  const setField = <K extends keyof StageEntry>(
+    key: K,
+    value: StageEntry[K],
+  ) => {
     draftState.setField(key, value);
   };
 
@@ -70,9 +79,7 @@ export function StageDetailPanel({
         serverChanged={draftState.serverChanged}
         onSave={() => void draftState.save()}
         onDiscard={draftState.discard}
-        actions={
-          <Chip>{draft.name}</Chip>
-        }
+        actions={<Chip>{draft.name}</Chip>}
       />
       <div className="min-h-0 flex-1 overflow-y-auto p-3">
         <div className="grid gap-3 md:grid-cols-2">
@@ -123,7 +130,9 @@ export function StageDetailPanel({
             label="Position"
             ariaLabel="Position"
             value={String(draft.position_hint)}
-            onChange={(value) => setField("position_hint", numericValue(value, 0))}
+            onChange={(value) =>
+              setField("position_hint", numericValue(value, 0))
+            }
           />
           <TextField
             label="Max work attempts"
@@ -165,13 +174,17 @@ export function StageDetailPanel({
             label="Reviewer selector JSON"
             ariaLabel="Reviewer selector JSON"
             value={draft.reviewer_agent_selector_json ?? ""}
-            onChange={(value) => setField("reviewer_agent_selector_json", value || null)}
+            onChange={(value) =>
+              setField("reviewer_agent_selector_json", value || null)
+            }
           />
           <TextAreaField
             label="Dispatch inputs JSON"
             ariaLabel="Dispatch inputs JSON"
             value={draft.dispatch_inputs_json ?? ""}
-            onChange={(value) => setField("dispatch_inputs_json", value || null)}
+            onChange={(value) =>
+              setField("dispatch_inputs_json", value || null)
+            }
           />
         </div>
       </div>

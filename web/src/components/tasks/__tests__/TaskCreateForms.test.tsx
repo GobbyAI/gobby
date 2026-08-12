@@ -1,42 +1,23 @@
-import { render, screen, waitFor } from '@testing-library/react'
-import userEvent from '@testing-library/user-event'
-import { afterEach, describe, expect, it, vi } from 'vitest'
+import { render, screen, waitFor } from "@testing-library/react";
+import userEvent from "@testing-library/user-event";
+import { afterEach, describe, expect, it, vi } from "vitest";
 
-import { QuickCaptureTask } from '../QuickCaptureTask'
-import { TaskCreateForm } from '../TaskCreateForm'
+import { QuickCaptureTask } from "../QuickCaptureTask";
+import { TaskCreateForm } from "../TaskCreateForm";
 
-describe('task creation forms', () => {
+describe("task creation forms", () => {
   afterEach(() => {
-    vi.restoreAllMocks()
-    vi.unstubAllGlobals()
-  })
+    vi.restoreAllMocks();
+    vi.unstubAllGlobals();
+  });
 
-  it('shows TaskCreateForm submission failures and keeps the form open', async () => {
-    const onClose = vi.fn()
-    const submissionError = new Error('Task service unavailable')
-    const consoleError = vi.spyOn(console, 'error').mockImplementation(() => {})
-    const onSubmit = vi.fn().mockRejectedValue(submissionError)
-
-    render(
-      <TaskCreateForm
-        isOpen
-        tasks={[]}
-        onSubmit={onSubmit}
-        onClose={onClose}
-      />,
-    )
-
-    await userEvent.type(screen.getByPlaceholderText('Task title...'), 'New task')
-    await userEvent.click(screen.getByRole('button', { name: 'Create Task' }))
-
-    expect(await screen.findByRole('alert')).toHaveTextContent('Task service unavailable')
-    expect(onClose).not.toHaveBeenCalled()
-    expect(consoleError).toHaveBeenCalledWith('Failed to create task:', submissionError)
-  })
-
-  it('closes TaskCreateForm after a successful submission', async () => {
-    const onClose = vi.fn()
-    const onSubmit = vi.fn().mockResolvedValue({ id: 'task-1' })
+  it("shows TaskCreateForm submission failures and keeps the form open", async () => {
+    const onClose = vi.fn();
+    const submissionError = new Error("Task service unavailable");
+    const consoleError = vi
+      .spyOn(console, "error")
+      .mockImplementation(() => {});
+    const onSubmit = vi.fn().mockRejectedValue(submissionError);
 
     render(
       <TaskCreateForm
@@ -45,49 +26,97 @@ describe('task creation forms', () => {
         onSubmit={onSubmit}
         onClose={onClose}
       />,
-    )
+    );
 
-    await userEvent.type(screen.getByPlaceholderText('Task title...'), 'New task')
-    await userEvent.click(screen.getByRole('button', { name: 'Create Task' }))
+    await userEvent.type(
+      screen.getByPlaceholderText("Task title..."),
+      "New task",
+    );
+    await userEvent.click(screen.getByRole("button", { name: "Create Task" }));
 
-    await waitFor(() => expect(onClose).toHaveBeenCalledOnce())
-    expect(screen.getByPlaceholderText('Task title...')).toHaveValue('')
-  })
+    expect(await screen.findByRole("alert")).toHaveTextContent(
+      "Task service unavailable",
+    );
+    expect(onClose).not.toHaveBeenCalled();
+    expect(consoleError).toHaveBeenCalledWith(
+      "Failed to create task:",
+      submissionError,
+    );
+  });
 
-  it('shows QuickCaptureTask request failures and keeps the form open', async () => {
-    const onClose = vi.fn()
-    const consoleError = vi.spyOn(console, 'error').mockImplementation(() => {})
-    vi.stubGlobal('fetch', vi.fn().mockResolvedValue(new Response(null, { status: 503 })))
+  it("closes TaskCreateForm after a successful submission", async () => {
+    const onClose = vi.fn();
+    const onSubmit = vi.fn().mockResolvedValue({ id: "task-1" });
 
-    render(<QuickCaptureTask isOpen onClose={onClose} />)
+    render(
+      <TaskCreateForm
+        isOpen
+        tasks={[]}
+        onSubmit={onSubmit}
+        onClose={onClose}
+      />,
+    );
 
-    await userEvent.type(screen.getByPlaceholderText('Task title...'), 'Quick task')
-    await userEvent.click(screen.getByRole('button', { name: 'Create' }))
+    await userEvent.type(
+      screen.getByPlaceholderText("Task title..."),
+      "New task",
+    );
+    await userEvent.click(screen.getByRole("button", { name: "Create Task" }));
 
-    expect(await screen.findByRole('alert')).toHaveTextContent('Failed to create task (503)')
-    expect(onClose).not.toHaveBeenCalled()
-    expect(consoleError).toHaveBeenCalledWith('Failed to create task:', 503)
-  })
+    await waitFor(() => expect(onClose).toHaveBeenCalledOnce());
+    expect(screen.getByPlaceholderText("Task title...")).toHaveValue("");
+  });
 
-  it('promotes QuickCaptureTask controls for coarse pointers', () => {
-    render(<QuickCaptureTask isOpen onClose={vi.fn()} />)
+  it("shows QuickCaptureTask request failures and keeps the form open", async () => {
+    const onClose = vi.fn();
+    const consoleError = vi
+      .spyOn(console, "error")
+      .mockImplementation(() => {});
+    vi.stubGlobal(
+      "fetch",
+      vi.fn().mockResolvedValue(new Response(null, { status: 503 })),
+    );
 
-    for (const button of screen.getAllByRole('button')) {
-      expect(button).toHaveClass('pointer-coarse:min-h-11')
-      expect(button).toHaveClass('pointer-coarse:min-w-11')
+    render(<QuickCaptureTask isOpen onClose={onClose} />);
+
+    await userEvent.type(
+      screen.getByPlaceholderText("Task title..."),
+      "Quick task",
+    );
+    await userEvent.click(screen.getByRole("button", { name: "Create" }));
+
+    expect(await screen.findByRole("alert")).toHaveTextContent(
+      "Failed to create task (503)",
+    );
+    expect(onClose).not.toHaveBeenCalled();
+    expect(consoleError).toHaveBeenCalledWith("Failed to create task:", 503);
+  });
+
+  it("promotes QuickCaptureTask controls for coarse pointers", () => {
+    render(<QuickCaptureTask isOpen onClose={vi.fn()} />);
+
+    for (const button of screen.getAllByRole("button")) {
+      expect(button).toHaveClass("pointer-coarse:min-h-11");
+      expect(button).toHaveClass("pointer-coarse:min-w-11");
     }
-  })
+  });
 
-  it('closes QuickCaptureTask after a successful request', async () => {
-    const onClose = vi.fn()
-    vi.stubGlobal('fetch', vi.fn().mockResolvedValue(new Response(null, { status: 201 })))
+  it("closes QuickCaptureTask after a successful request", async () => {
+    const onClose = vi.fn();
+    vi.stubGlobal(
+      "fetch",
+      vi.fn().mockResolvedValue(new Response(null, { status: 201 })),
+    );
 
-    render(<QuickCaptureTask isOpen onClose={onClose} />)
+    render(<QuickCaptureTask isOpen onClose={onClose} />);
 
-    await userEvent.type(screen.getByPlaceholderText('Task title...'), 'Quick task')
-    await userEvent.click(screen.getByRole('button', { name: 'Create' }))
+    await userEvent.type(
+      screen.getByPlaceholderText("Task title..."),
+      "Quick task",
+    );
+    await userEvent.click(screen.getByRole("button", { name: "Create" }));
 
-    await waitFor(() => expect(onClose).toHaveBeenCalledOnce())
-    expect(screen.queryByRole('alert')).toBeNull()
-  })
-})
+    await waitFor(() => expect(onClose).toHaveBeenCalledOnce());
+    expect(screen.queryByRole("alert")).toBeNull();
+  });
+});

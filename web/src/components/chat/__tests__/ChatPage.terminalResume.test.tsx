@@ -80,7 +80,6 @@ describe("ChatPage – terminal resume", () => {
     expect(screen.getByTestId("agent-status-resume")).toBeInTheDocument();
   });
 
-
   it("routes Resume to the viewed terminal continuation flow", async () => {
     const continueSessionInChat = vi.fn(async () => "continued-session");
 
@@ -119,7 +118,6 @@ describe("ChatPage – terminal resume", () => {
     });
   });
 
-
   it("keeps non-autonomous terminal swaps in observe mode", async () => {
     const continueSessionInChat = vi.fn(async () => "continued-session");
     const viewSession = vi.fn();
@@ -143,10 +141,11 @@ describe("ChatPage – terminal resume", () => {
     });
 
     expect(continueSessionInChat).not.toHaveBeenCalled();
-    expect(viewSession).toHaveBeenCalledWith("terminal-2", { forceRefresh: true });
+    expect(viewSession).toHaveBeenCalledWith("terminal-2", {
+      forceRefresh: true,
+    });
     expect(observeSession).toHaveBeenCalledWith("terminal-2", "observe");
   });
-
 
   it("keeps autonomous terminal swaps in observe mode", async () => {
     const continueSessionInChat = vi.fn(async () => "continued-session");
@@ -170,9 +169,9 @@ describe("ChatPage – terminal resume", () => {
     });
 
     expect(continueSessionInChat).not.toHaveBeenCalled();
-    expect(viewSession).toHaveBeenCalledWith("terminal-auto", { forceRefresh: true });
+    expect(viewSession).toHaveBeenCalledWith("terminal-auto", {
+      forceRefresh: true,
+    });
     expect(observeSession).toHaveBeenCalledWith("terminal-auto", "observe");
   });
-
-
 });

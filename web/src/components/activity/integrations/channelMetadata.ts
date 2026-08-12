@@ -30,10 +30,18 @@ export interface ChannelFieldDefinition {
   type?: string;
 }
 
-export const CHANNEL_TYPE_FIELDS: Record<ChannelType, ChannelFieldDefinition[]> = {
+export const CHANNEL_TYPE_FIELDS: Record<
+  ChannelType,
+  ChannelFieldDefinition[]
+> = {
   slack: [
     { key: "bot_token", label: "Bot Token", secret: true, required: true },
-    { key: "signing_secret", label: "Signing Secret", secret: true, required: true },
+    {
+      key: "signing_secret",
+      label: "Signing Secret",
+      secret: true,
+      required: true,
+    },
     { key: "channel_id", label: "Channel ID", placeholder: "C0123456789" },
   ],
   telegram: [
@@ -46,14 +54,41 @@ export const CHANNEL_TYPE_FIELDS: Record<ChannelType, ChannelFieldDefinition[]> 
   ],
   teams: [
     { key: "app_id", label: "App ID", secret: true, required: true },
-    { key: "app_password", label: "App Password", secret: true, required: true },
+    {
+      key: "app_password",
+      label: "App Password",
+      secret: true,
+      required: true,
+    },
   ],
   email: [
     { key: "password", label: "Password", secret: true, required: true },
-    { key: "smtp_host", label: "SMTP Host", required: true, placeholder: "smtp.gmail.com" },
-    { key: "smtp_port", label: "SMTP Port", required: true, type: "number", placeholder: "587" },
-    { key: "imap_host", label: "IMAP Host", required: true, placeholder: "imap.gmail.com" },
-    { key: "imap_port", label: "IMAP Port", required: true, type: "number", placeholder: "993" },
+    {
+      key: "smtp_host",
+      label: "SMTP Host",
+      required: true,
+      placeholder: "smtp.gmail.com",
+    },
+    {
+      key: "smtp_port",
+      label: "SMTP Port",
+      required: true,
+      type: "number",
+      placeholder: "587",
+    },
+    {
+      key: "imap_host",
+      label: "IMAP Host",
+      required: true,
+      placeholder: "imap.gmail.com",
+    },
+    {
+      key: "imap_port",
+      label: "IMAP Port",
+      required: true,
+      type: "number",
+      placeholder: "993",
+    },
     {
       key: "from_address",
       label: "From Address",
@@ -64,8 +99,18 @@ export const CHANNEL_TYPE_FIELDS: Record<ChannelType, ChannelFieldDefinition[]> 
   ],
   sms: [
     { key: "auth_token", label: "Auth Token", secret: true, required: true },
-    { key: "account_sid", label: "Account SID", required: true, placeholder: "AC..." },
-    { key: "from_number", label: "From Number", required: true, placeholder: "+15551234567" },
+    {
+      key: "account_sid",
+      label: "Account SID",
+      required: true,
+      placeholder: "AC...",
+    },
+    {
+      key: "from_number",
+      label: "From Number",
+      required: true,
+      placeholder: "+15551234567",
+    },
   ],
   gobby_chat: [],
 };

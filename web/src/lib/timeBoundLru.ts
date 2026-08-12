@@ -1,12 +1,15 @@
 export interface TimeBoundLruOptions {
-  maxEntries: number
-  ttlMs: number
+  maxEntries: number;
+  ttlMs: number;
 }
 
-const FULL_SORT_MAX_ENTRIES = 128
-const BOUNDED_SELECTION_MAX_EXCESS = 16
+const FULL_SORT_MAX_ENTRIES = 128;
+const BOUNDED_SELECTION_MAX_EXCESS = 16;
 
-function selectOldestKeys<K>(entries: Map<K, number>, excessCount: number): K[] {
+function selectOldestKeys<K>(
+  entries: Map<K, number>,
+  excessCount: number,
+): K[] {
   if (
     entries.size <= FULL_SORT_MAX_ENTRIES ||
     excessCount > BOUNDED_SELECTION_MAX_EXCESS
@@ -17,29 +20,29 @@ function selectOldestKeys<K>(entries: Map<K, number>, excessCount: number): K[] 
           leftLastSeenAt - rightLastSeenAt,
       )
       .slice(0, excessCount)
-      .map(([key]) => key)
+      .map(([key]) => key);
   }
 
-  const oldestEntries: Array<[K, number]> = []
+  const oldestEntries: Array<[K, number]> = [];
   for (const entry of entries.entries()) {
-    const [, lastSeenAt] = entry
+    const [, lastSeenAt] = entry;
     if (oldestEntries.length < excessCount) {
-      oldestEntries.push(entry)
+      oldestEntries.push(entry);
       oldestEntries.sort(
         ([, leftLastSeenAt], [, rightLastSeenAt]) =>
           rightLastSeenAt - leftLastSeenAt,
-      )
-      continue
+      );
+      continue;
     }
     if (lastSeenAt < oldestEntries[0][1]) {
-      oldestEntries[0] = entry
+      oldestEntries[0] = entry;
       oldestEntries.sort(
         ([, leftLastSeenAt], [, rightLastSeenAt]) =>
           rightLastSeenAt - leftLastSeenAt,
-      )
+      );
     }
   }
-  return oldestEntries.map(([key]) => key)
+  return oldestEntries.map(([key]) => key);
 }
 
 /**
@@ -52,33 +55,33 @@ export function pruneTimeBoundLru<K>(
   now: number,
   { maxEntries, ttlMs }: TimeBoundLruOptions,
 ): void {
-  let canPruneByTime = true
+  let canPruneByTime = true;
   for (const [, lastSeenAt] of entries) {
     if (now < lastSeenAt) {
-      canPruneByTime = false
-      break
+      canPruneByTime = false;
+      break;
     }
   }
 
   if (canPruneByTime) {
     for (const [key, lastSeenAt] of entries) {
       if (now - lastSeenAt >= ttlMs) {
-        entries.delete(key)
+        entries.delete(key);
       }
     }
   }
 
   if (maxEntries <= 0) {
-    entries.clear()
-    return
+    entries.clear();
+    return;
   }
 
-  const excessCount = entries.size - maxEntries
+  const excessCount = entries.size - maxEntries;
   if (excessCount <= 0) {
-    return
+    return;
   }
 
   for (const key of selectOldestKeys(entries, excessCount)) {
-    entries.delete(key)
+    entries.delete(key);
   }
 }

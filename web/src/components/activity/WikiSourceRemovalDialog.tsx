@@ -48,7 +48,9 @@ export function WikiSourceRemovalDialog({
       <DialogContent className="max-w-2xl">
         <DialogTitle>Remove wiki source</DialogTitle>
         <DialogDescription>
-          {source ? `Review the CLI dry-run preview for ${sourceLabel(source)}.` : ""}
+          {source
+            ? `Review the CLI dry-run preview for ${sourceLabel(source)}.`
+            : ""}
         </DialogDescription>
 
         <div className="mt-4 space-y-4">

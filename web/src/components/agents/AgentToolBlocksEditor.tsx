@@ -1,32 +1,35 @@
-import { useState } from 'react'
-import { Button } from '../ui/Button'
-import { Chip } from '../ui/Chip'
-import { FormField } from '../ui/FormField'
-import { Input } from '../ui/Input'
-import { coarseHitAreaCls } from '../ui/controlStyles'
+import { useState } from "react";
+import { Button } from "../ui/Button";
+import { Chip } from "../ui/Chip";
+import { FormField } from "../ui/FormField";
+import { Input } from "../ui/Input";
+import { coarseHitAreaCls } from "../ui/controlStyles";
 
 function ChipInput({
   values,
   onChange,
   placeholder,
 }: {
-  values: string[]
-  onChange: (values: string[]) => void
-  placeholder?: string
+  values: string[];
+  onChange: (values: string[]) => void;
+  placeholder?: string;
 }) {
-  const [input, setInput] = useState('')
+  const [input, setInput] = useState("");
 
   const handleAdd = () => {
-    const value = input.trim()
-    if (value && !values.includes(value)) onChange([...values, value])
-    setInput('')
-  }
+    const value = input.trim();
+    if (value && !values.includes(value)) onChange([...values, value]);
+    setInput("");
+  };
 
   return (
     <div className="flex flex-col gap-1">
       <div className="flex flex-wrap gap-1">
         {values.map((value) => (
-          <Chip key={value} className="gap-1 border border-border pl-2 pr-1.5 text-xs">
+          <Chip
+            key={value}
+            className="gap-1 border border-border pr-1.5 pl-2 text-xs"
+          >
             {value}
             <Button
               type="button"
@@ -49,9 +52,9 @@ function ChipInput({
           value={input}
           onChange={(event) => setInput(event.target.value)}
           onKeyDown={(event) => {
-            if (event.key === 'Enter') {
-              event.preventDefault()
-              handleAdd()
+            if (event.key === "Enter") {
+              event.preventDefault();
+              handleAdd();
             }
           }}
           placeholder={placeholder}
@@ -69,14 +72,14 @@ function ChipInput({
         </Button>
       </div>
     </div>
-  )
+  );
 }
 
 interface AgentToolBlocksEditorProps {
-  blockedTools: string[]
-  onBlockedToolsChange?: (tools: string[]) => void
-  blockedMcpTools: string[]
-  onBlockedMcpToolsChange?: (tools: string[]) => void
+  blockedTools: string[];
+  onBlockedToolsChange?: (tools: string[]) => void;
+  blockedMcpTools: string[];
+  onBlockedMcpToolsChange?: (tools: string[]) => void;
 }
 
 export function AgentToolBlocksEditor({
@@ -110,5 +113,5 @@ export function AgentToolBlocksEditor({
         </FormField>
       )}
     </div>
-  )
+  );
 }

@@ -23,19 +23,29 @@ describe("usePersistedSessionsFilters", () => {
   });
 
   it("loads and persists filters independently for each project", async () => {
-    localStorage.setItem("gobby-sessions-filters:project-a", storedFilters("claimed"));
-    localStorage.setItem("gobby-sessions-filters:project-b", storedFilters("created"));
+    localStorage.setItem(
+      "gobby-sessions-filters:project-a",
+      storedFilters("claimed"),
+    );
+    localStorage.setItem(
+      "gobby-sessions-filters:project-b",
+      storedFilters("created"),
+    );
 
     const { result, rerender } = renderHook(
       ({ projectId }) => usePersistedSessionsFilters(projectId),
       { initialProps: { projectId: "project-a" as string | null } },
     );
 
-    expect([...result.current.sessionsFilters.taskRefRoles]).toEqual(["claimed"]);
+    expect([...result.current.sessionsFilters.taskRefRoles]).toEqual([
+      "claimed",
+    ]);
 
     rerender({ projectId: "project-b" });
     await waitFor(() => {
-      expect([...result.current.sessionsFilters.taskRefRoles]).toEqual(["created"]);
+      expect([...result.current.sessionsFilters.taskRefRoles]).toEqual([
+        "created",
+      ]);
     });
 
     act(() => {
@@ -46,12 +56,12 @@ describe("usePersistedSessionsFilters", () => {
     });
 
     await waitFor(() => {
-      expect(localStorage.getItem("gobby-sessions-filters:project-b")).toContain(
-        '"taskRefMin":42',
-      );
+      expect(
+        localStorage.getItem("gobby-sessions-filters:project-b"),
+      ).toContain('"taskRefMin":42');
     });
-    expect(localStorage.getItem("gobby-sessions-filters:project-a")).not.toContain(
-      '"taskRefMin":42',
-    );
+    expect(
+      localStorage.getItem("gobby-sessions-filters:project-a"),
+    ).not.toContain('"taskRefMin":42');
   });
 });

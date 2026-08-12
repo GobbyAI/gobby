@@ -38,9 +38,12 @@ export function useTasksTabMenuActions({
   setActionError,
   taskDetail,
 }: UseTasksTabMenuActionsProps) {
-  const [activeTaskAction, setActiveTaskAction] = useState<ActiveTaskAction | null>(null);
+  const [activeTaskAction, setActiveTaskAction] =
+    useState<ActiveTaskAction | null>(null);
   const [taskMenu, setTaskMenu] = useState<TaskContextMenu | null>(null);
-  const [closeDialogTask, setCloseDialogTask] = useState<GobbyTask | null>(null);
+  const [closeDialogTask, setCloseDialogTask] = useState<GobbyTask | null>(
+    null,
+  );
 
   const closeTaskMenu = useCallback(() => setTaskMenu(null), []);
 
@@ -213,7 +216,8 @@ export function useTasksTabMenuActions({
       void runMenuAction(
         task,
         "close",
-        () => postTaskLifecycleAction(getBaseUrl(), task.id, "close", { reason }),
+        () =>
+          postTaskLifecycleAction(getBaseUrl(), task.id, "close", { reason }),
         "Failed to close task",
       );
       setCloseDialogTask(null);

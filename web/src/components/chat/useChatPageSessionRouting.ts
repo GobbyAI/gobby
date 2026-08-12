@@ -42,7 +42,8 @@ function sessionToObservationMeta(
     status: session.status,
     model: session.model ?? null,
     externalId: session.external_id,
-    chatMode: session.chat_mode != null ? normalizeChatMode(session.chat_mode) : null,
+    chatMode:
+      session.chat_mode != null ? normalizeChatMode(session.chat_mode) : null,
     gitBranch: session.git_branch ?? null,
     contextWindow: null,
     agentRunId: session.agent_run_id ?? null,
@@ -63,7 +64,8 @@ export function useChatPageSessionRouting({
     (session) => session.id === conversations.activeSessionId,
   );
   const mainSessionMeta =
-    chat.mainSessionMeta ?? (activeSession ? sessionToObservationMeta(activeSession) : null);
+    chat.mainSessionMeta ??
+    (activeSession ? sessionToObservationMeta(activeSession) : null);
   const activeTitle = chat.sessionTitle ?? mainSessionMeta?.title ?? null;
   const effectiveSessionRef =
     chat.sessionRef ??

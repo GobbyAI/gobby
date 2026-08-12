@@ -34,7 +34,11 @@ import {
   type WikiGraphSceneOptions,
 } from "./WikiGraphScene";
 import { fetchGraph, type WikiFetchScope } from "./WikiTabData";
-import { wikiNodeColorVar, type WikiGraphInclude, type WikiGraphPayload } from "./WikiTabModel";
+import {
+  wikiNodeColorVar,
+  type WikiGraphInclude,
+  type WikiGraphPayload,
+} from "./WikiTabModel";
 import {
   loadGraphSettings,
   storeGraphSettings,
@@ -116,7 +120,10 @@ export function WikiGraphView({
     const stored = loadGraphSettings();
     return initialInclude ? { ...stored, include: initialInclude } : stored;
   });
-  const [graph, setGraph] = useState<{ key: string; payload: WikiGraphPayload } | null>(null);
+  const [graph, setGraph] = useState<{
+    key: string;
+    payload: WikiGraphPayload;
+  } | null>(null);
   const [fetchError, setFetchError] = useState<string | null>(null);
   const [retrySeq, setRetrySeq] = useState(0);
   const [boundarySeq, setBoundarySeq] = useState(0);
@@ -125,11 +132,15 @@ export function WikiGraphView({
   const bodyRef = useRef<HTMLDivElement | null>(null);
   const theme = useResolvedTheme();
   const reducedMotion = useMemo(
-    () => window.matchMedia?.("(prefers-reduced-motion: reduce)").matches ?? false,
+    () =>
+      window.matchMedia?.("(prefers-reduced-motion: reduce)").matches ?? false,
     [],
   );
 
-  const interactionRef = useRef<WikiGraphInteraction>({ hoverId: null, search: "" });
+  const interactionRef = useRef<WikiGraphInteraction>({
+    hoverId: null,
+    search: "",
+  });
   const handlersRef = useRef<WikiGraphHandlers>({ onNodeClick: () => {} });
 
   const releasedRef = useRef(false);
@@ -178,7 +189,9 @@ export function WikiGraphView({
       })
       .catch((error: unknown) => {
         if (!cancelled) {
-          setFetchError(error instanceof Error ? error.message : "Failed to load graph");
+          setFetchError(
+            error instanceof Error ? error.message : "Failed to load graph",
+          );
         }
       });
     return () => {
@@ -255,7 +268,11 @@ export function WikiGraphView({
           label="Try again"
           onClick={() => setBoundarySeq((seq) => seq + 1)}
         />
-        <DetailActionButton label="Close graph" variant="accent" onClick={handleClose} />
+        <DetailActionButton
+          label="Close graph"
+          variant="accent"
+          onClick={handleClose}
+        />
       </div>
     </div>
   );
@@ -263,7 +280,9 @@ export function WikiGraphView({
   return (
     <div className="flex h-full min-h-0 flex-col bg-[var(--bg-primary)]">
       <div className="flex h-10 shrink-0 items-center gap-3 border-b border-border bg-[var(--bg-secondary)] px-3">
-        <h2 className="truncate text-sm font-medium text-foreground">Wiki graph</h2>
+        <h2 className="truncate text-sm font-medium text-foreground">
+          Wiki graph
+        </h2>
         {scene?.capped ? (
           <span className="rounded-full border border-border px-2 py-0.5 text-2xs text-muted-foreground">
             showing top {MAX_GRAPH_NODES.toLocaleString("en-US")} of{" "}
@@ -288,7 +307,9 @@ export function WikiGraphView({
           value={searchText}
           onChange={(event) => {
             setSearchText(event.target.value);
-            interactionRef.current.search = event.target.value.trim().toLowerCase();
+            interactionRef.current.search = event.target.value
+              .trim()
+              .toLowerCase();
           }}
           placeholder="Search nodes…"
           spellCheck={false}
@@ -329,7 +350,8 @@ export function WikiGraphView({
                 style={
                   kind === "unresolved_target"
                     ? {
-                        border: "1.5px dashed var(--color-destructive-foreground)",
+                        border:
+                          "1.5px dashed var(--color-destructive-foreground)",
                         backgroundColor: "transparent",
                       }
                     : { backgroundColor: `var(${wikiNodeColorVar(kind)})` }
@@ -339,19 +361,24 @@ export function WikiGraphView({
             </li>
           ))}
           {settings.communities && scene
-            ? Array.from({ length: Math.min(scene.communityCount, 6) }, (_, index) => (
-                <li
-                  key={`community-${index}`}
-                  className="flex items-center gap-1.5 text-2xs text-muted-foreground"
-                >
-                  <span
-                    aria-hidden="true"
-                    className="inline-block h-2.5 w-2.5 rounded-full"
-                    style={{ backgroundColor: `var(${communityColorVar(index)})` }}
-                  />
-                  Community {index + 1}
-                </li>
-              ))
+            ? Array.from(
+                { length: Math.min(scene.communityCount, 6) },
+                (_, index) => (
+                  <li
+                    key={`community-${index}`}
+                    className="flex items-center gap-1.5 text-2xs text-muted-foreground"
+                  >
+                    <span
+                      aria-hidden="true"
+                      className="inline-block h-2.5 w-2.5 rounded-full"
+                      style={{
+                        backgroundColor: `var(${communityColorVar(index)})`,
+                      }}
+                    />
+                    Community {index + 1}
+                  </li>
+                ),
+              )
             : null}
         </ul>
       ) : null}

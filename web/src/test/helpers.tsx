@@ -1,9 +1,9 @@
-import { render, type RenderOptions } from '@testing-library/react'
-import { type ReactElement } from 'react'
+import { render, type RenderOptions } from "@testing-library/react";
+import { type ReactElement } from "react";
 import {
   ActivityActionButtons,
   ActivityActionsProvider,
-} from '../components/activity/ActivityActionsContext'
+} from "../components/activity/ActivityActionsContext";
 
 /**
  * Render helper that wraps components with any necessary providers.
@@ -12,14 +12,14 @@ import {
  */
 export function renderWithProviders(
   ui: ReactElement,
-  options?: Omit<RenderOptions, 'wrapper'>,
+  options?: Omit<RenderOptions, "wrapper">,
 ) {
-  return render(ui, { ...options })
+  return render(ui, { ...options });
 }
 
 export function renderWithActivityActions(
   ui: ReactElement,
-  options?: Omit<RenderOptions, 'wrapper'>,
+  options?: Omit<RenderOptions, "wrapper">,
 ) {
   return render(ui, {
     ...options,
@@ -29,9 +29,9 @@ export function renderWithActivityActions(
         {children}
       </ActivityActionsProvider>
     ),
-  })
+  });
 }
 
-export { render }
-export { screen, within, waitFor, act } from '@testing-library/react'
-export { default as userEvent } from '@testing-library/user-event'
+export { render };
+export { screen, within, waitFor, act } from "@testing-library/react";
+export { default as userEvent } from "@testing-library/user-event";

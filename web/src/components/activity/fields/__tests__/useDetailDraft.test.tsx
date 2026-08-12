@@ -1,4 +1,10 @@
-import { act, fireEvent, render, renderHook, screen } from "@testing-library/react";
+import {
+  act,
+  fireEvent,
+  render,
+  renderHook,
+  screen,
+} from "@testing-library/react";
 import { describe, expect, it, vi } from "vitest";
 
 import { DetailPaneHeader, useDetailDraft } from "../";
@@ -135,7 +141,12 @@ describe("useDetailDraft (#17014)", () => {
 describe("DetailPaneHeader (#17014)", () => {
   it("renders save and discard only for dirty drafts", () => {
     const { rerender } = render(
-      <DetailPaneHeader title="Rule detail" dirty={false} onSave={vi.fn()} onDiscard={vi.fn()} />,
+      <DetailPaneHeader
+        title="Rule detail"
+        dirty={false}
+        onSave={vi.fn()}
+        onDiscard={vi.fn()}
+      />,
     );
 
     expect(screen.getByText("Rule detail")).toBeInTheDocument();
@@ -143,7 +154,12 @@ describe("DetailPaneHeader (#17014)", () => {
     expect(screen.queryByRole("button", { name: "Discard" })).toBeNull();
 
     rerender(
-      <DetailPaneHeader title="Rule detail" dirty onSave={vi.fn()} onDiscard={vi.fn()} />,
+      <DetailPaneHeader
+        title="Rule detail"
+        dirty
+        onSave={vi.fn()}
+        onDiscard={vi.fn()}
+      />,
     );
 
     expect(screen.getByRole("button", { name: "Save" })).toBeInTheDocument();

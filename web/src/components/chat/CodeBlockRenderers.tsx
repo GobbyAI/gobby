@@ -1,76 +1,80 @@
-import React, { useCallback, useEffect, useRef, useState } from 'react'
-import { CodeBlock } from '../shared/CodeBlock'
-import { cn } from '../../lib/utils'
-import { useIsMobile } from '../../hooks/useIsMobile'
-import { Button } from '../ui/Button'
+import React, { useCallback, useEffect, useRef, useState } from "react";
+import { CodeBlock } from "../shared/CodeBlock";
+import { cn } from "../../lib/utils";
+import { useIsMobile } from "../../hooks/useIsMobile";
+import { Button } from "../ui/Button";
 
 export interface CodeProps {
-  children?: React.ReactNode
-  className?: string
-  node?: unknown
+  children?: React.ReactNode;
+  className?: string;
+  node?: unknown;
 }
 
 export function CodeBlockInner({ children, className }: CodeProps) {
-  const [copied, setCopied] = useState(false)
-  const copyTimeoutRef = useRef<number | null>(null)
-  const isMobile = useIsMobile()
+  const [copied, setCopied] = useState(false);
+  const copyTimeoutRef = useRef<number | null>(null);
+  const isMobile = useIsMobile();
 
-  const match = /language-([\w+#\-./]+)/.exec(className || '')
-  const language = match ? match[1] : ''
-  const codeString = String(children).replace(/\n$/, '')
-  const isInline = !match && !String(children).includes('\n')
+  const match = /language-([\w+#\-./]+)/.exec(className || "");
+  const language = match ? match[1] : "";
+  const codeString = String(children).replace(/\n$/, "");
+  const isInline = !match && !String(children).includes("\n");
 
   useEffect(() => {
     return () => {
-      if (copyTimeoutRef.current) clearTimeout(copyTimeoutRef.current)
-    }
-  }, [])
+      if (copyTimeoutRef.current) clearTimeout(copyTimeoutRef.current);
+    };
+  }, []);
 
   const handleCopy = useCallback(async () => {
     try {
-      await navigator.clipboard.writeText(codeString)
-      setCopied(true)
-      if (copyTimeoutRef.current) clearTimeout(copyTimeoutRef.current)
-      copyTimeoutRef.current = window.setTimeout(() => setCopied(false), 2000)
+      await navigator.clipboard.writeText(codeString);
+      setCopied(true);
+      if (copyTimeoutRef.current) clearTimeout(copyTimeoutRef.current);
+      copyTimeoutRef.current = window.setTimeout(() => setCopied(false), 2000);
     } catch {
-      console.error('Failed to copy to clipboard')
+      console.error("Failed to copy to clipboard");
     }
-  }, [codeString])
+  }, [codeString]);
 
   if (isInline) {
     return (
       <code
         className={cn(
-  'rounded-[3px] bg-muted/50 px-1 py-px text-base font-mono text-foreground',
+          "rounded-[3px] bg-muted/50 px-1 py-px font-mono text-base text-foreground",
           className,
         )}
       >
         {children}
       </code>
-    )
+    );
   }
 
   return (
-    <div className="my-3 rounded-lg border border-border overflow-hidden">
+    <div className="my-3 overflow-hidden rounded-lg border border-border">
       <div className="flex items-center justify-between bg-muted/50 px-3 py-1.5 text-xs">
-        <span className="text-muted-foreground font-mono">{language || 'text'}</span>
+        <span className="font-mono text-muted-foreground">
+          {language || "text"}
+        </span>
         <div className="flex items-center gap-1">
           <Button
             type="button"
             variant="ghost"
             size="icon"
             dense
-            className="flex min-h-0 w-auto items-center gap-1 rounded px-1.5 py-0.5 text-muted-foreground hover:text-foreground hover:bg-muted transition-colors pointer-coarse:min-h-11 pointer-coarse:min-w-11"
+            className="flex min-h-0 w-auto items-center gap-1 rounded px-1.5 py-0.5 text-muted-foreground transition-colors hover:bg-muted hover:text-foreground pointer-coarse:min-h-11 pointer-coarse:min-w-11"
             onClick={handleCopy}
             title="Copy code"
-            aria-label={copied ? 'Code copied to clipboard' : 'Copy code to clipboard'}
+            aria-label={
+              copied ? "Code copied to clipboard" : "Copy code to clipboard"
+            }
           >
             {copied ? <CheckIcon /> : <CopyIcon />}
           </Button>
         </div>
       </div>
       <CodeBlock
-        language={language || 'text'}
+        language={language || "text"}
         lazy
         wrapLongLines={isMobile}
         customStyle={{
@@ -80,22 +84,25 @@ export function CodeBlockInner({ children, className }: CodeProps) {
           // mono block wraps; horizontal scrolling inside nested cards is
           // banned on touch surfaces. Desktop keeps the scroll affordance.
           ...(isMobile
-            ? { whiteSpace: 'pre-wrap' as const, overflowWrap: 'anywhere' as const }
+            ? {
+                whiteSpace: "pre-wrap" as const,
+                overflowWrap: "anywhere" as const,
+              }
             : {}),
         }}
       >
         {codeString}
       </CodeBlock>
     </div>
-  )
+  );
 }
 
 export function TableWrapper({ children }: { children?: React.ReactNode }) {
   return (
-    <div className="overflow-x-auto my-3">
+    <div className="my-3 overflow-x-auto">
       <table className="min-w-full border-collapse text-sm">{children}</table>
     </div>
-  )
+  );
 }
 
 export function ImageBlock({
@@ -106,13 +113,13 @@ export function ImageBlock({
   return (
     <img
       src={src}
-      alt={alt || 'Image'}
-      className="max-w-full rounded-lg border border-border my-2"
+      alt={alt || "Image"}
+      className="my-2 max-w-full rounded-lg border border-border"
       loading="lazy"
       decoding="async"
       {...props}
     />
-  )
+  );
 }
 
 export function Anchor({
@@ -120,17 +127,18 @@ export function Anchor({
   children,
   ...props
 }: React.AnchorHTMLAttributes<HTMLAnchorElement>) {
-  const isExternal = href && (href.startsWith('http://') || href.startsWith('https://'))
+  const isExternal =
+    href && (href.startsWith("http://") || href.startsWith("https://"));
   return (
     <a
       href={href}
       className="text-accent hover:underline"
-      {...(isExternal ? { target: '_blank', rel: 'noopener noreferrer' } : {})}
+      {...(isExternal ? { target: "_blank", rel: "noopener noreferrer" } : {})}
       {...props}
     >
       {children}
     </a>
-  )
+  );
 }
 
 function CopyIcon() {
@@ -148,7 +156,7 @@ function CopyIcon() {
       <rect x="9" y="9" width="13" height="13" rx="2" ry="2" />
       <path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1" />
     </svg>
-  )
+  );
 }
 
 function CheckIcon() {
@@ -165,5 +173,5 @@ function CheckIcon() {
     >
       <polyline points="20 6 9 17 4 12" />
     </svg>
-  )
+  );
 }

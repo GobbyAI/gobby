@@ -115,9 +115,7 @@ export async function saveMcpServerDraft(
   if (!updated) return false;
 
   if (options.draft.enabled === options.originalEnabled) return true;
-  return sendMcpServerRequest(
-    serverUrl(options.originalName),
-    "PATCH",
-    { enabled: options.draft.enabled },
-  );
+  return sendMcpServerRequest(serverUrl(options.originalName), "PATCH", {
+    enabled: options.draft.enabled,
+  });
 }

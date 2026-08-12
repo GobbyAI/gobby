@@ -3,7 +3,10 @@ import userEvent from "@testing-library/user-event";
 import { forwardRef, useImperativeHandle, useState } from "react";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
-import type { TmuxSession, useTmuxSessions } from "../../../../hooks/useTmuxSessions";
+import type {
+  TmuxSession,
+  useTmuxSessions,
+} from "../../../../hooks/useTmuxSessions";
 import type { GobbySession } from "../../../../types/sessions";
 import type { JoinedTerminalSession } from "../terminalSessions";
 import type { TerminalViewHandle, TerminalViewProps } from "../TerminalView";
@@ -60,33 +63,38 @@ vi.mock("../TerminalSessionList", () => ({
 }));
 
 vi.mock("../TerminalView", () => ({
-  TerminalView: forwardRef<TerminalViewHandle, TerminalViewProps>((props, ref) => {
-    const [mountId] = useState(() => ++terminalViewState.mounts);
-    const [writes, setWrites] = useState<string[]>([]);
-    useImperativeHandle(ref, () => ({
-      write: (data: string) => setWrites((current) => [...current, data]),
-      getSize: () => ({ rows: 24, cols: 80 }),
-    }));
-    return (
-      <div
-        role="log"
-        aria-label="Terminal output (read-only)"
-        data-mount-id={mountId}
-        onKeyDown={() => undefined}
-      >
-        <output aria-label="Terminal writes">{writes.join("")}</output>
-        <button type="button" onClick={() => props.onReady?.(31, 97)}>
-          Renderer ready
-        </button>
-        <button type="button" onClick={() => props.onProtocolResponse?.("\u001b[6n")}>
-          Protocol reply
-        </button>
-        <button type="button" onClick={() => props.onSizeChange?.(33, 101)}>
-          Renderer resized
-        </button>
-      </div>
-    );
-  }),
+  TerminalView: forwardRef<TerminalViewHandle, TerminalViewProps>(
+    (props, ref) => {
+      const [mountId] = useState(() => ++terminalViewState.mounts);
+      const [writes, setWrites] = useState<string[]>([]);
+      useImperativeHandle(ref, () => ({
+        write: (data: string) => setWrites((current) => [...current, data]),
+        getSize: () => ({ rows: 24, cols: 80 }),
+      }));
+      return (
+        <div
+          role="log"
+          aria-label="Terminal output (read-only)"
+          data-mount-id={mountId}
+          onKeyDown={() => undefined}
+        >
+          <output aria-label="Terminal writes">{writes.join("")}</output>
+          <button type="button" onClick={() => props.onReady?.(31, 97)}>
+            Renderer ready
+          </button>
+          <button
+            type="button"
+            onClick={() => props.onProtocolResponse?.("\u001b[6n")}
+          >
+            Protocol reply
+          </button>
+          <button type="button" onClick={() => props.onSizeChange?.(33, 101)}>
+            Renderer resized
+          </button>
+        </div>
+      );
+    },
+  ),
 }));
 
 function makeTmuxSession(overrides: Partial<TmuxSession> = {}): TmuxSession {
@@ -197,9 +205,9 @@ describe("attach lifecycle", () => {
     await waitFor(() => {
       expect(hookState.attachSession).toHaveBeenCalledWith("agent", "gobby");
     });
-    expect(screen.getByRole("combobox", { name: "Terminal session" })).toHaveValue(
-      "gobby:agent",
-    );
+    expect(
+      screen.getByRole("combobox", { name: "Terminal session" }),
+    ).toHaveValue("gobby:agent");
   });
 
   it("restores the exact selected target after a component remount", async () => {
@@ -222,7 +230,8 @@ describe("attach lifecycle", () => {
       expect(hookState.attachSession).toHaveBeenCalledWith("two", "gobby");
       expect(
         JSON.parse(
-          window.sessionStorage.getItem("gobby:terminal:selected-target") ?? "null",
+          window.sessionStorage.getItem("gobby:terminal:selected-target") ??
+            "null",
         ),
       ).toEqual({ socket: "gobby", sessionName: "two" });
     });
@@ -235,9 +244,9 @@ describe("attach lifecycle", () => {
       expect(hookState.attachSession).toHaveBeenCalledTimes(1);
       expect(hookState.attachSession).toHaveBeenCalledWith("two", "gobby");
     });
-    expect(screen.getByRole("combobox", { name: "Terminal session" })).toHaveValue(
-      "gobby:two",
-    );
+    expect(
+      screen.getByRole("combobox", { name: "Terminal session" }),
+    ).toHaveValue("gobby:two");
   });
 
   it("selects the first row when every pane is dead and hides the keys bar", async () => {
@@ -249,9 +258,14 @@ describe("attach lifecycle", () => {
     render(<TerminalTab />);
 
     await waitFor(() => {
-      expect(hookState.attachSession).toHaveBeenCalledWith("finished", "default");
+      expect(hookState.attachSession).toHaveBeenCalledWith(
+        "finished",
+        "default",
+      );
     });
-    expect(screen.getByRole("log", { name: "Terminal output (read-only)" })).toBeInTheDocument();
+    expect(
+      screen.getByRole("log", { name: "Terminal output (read-only)" }),
+    ).toBeInTheDocument();
     // A dead pane accepts no input, so the special-keys bar is withheld.
     expect(screen.queryByRole("button", { name: "Esc" })).toBeNull();
   });
@@ -273,15 +287,21 @@ describe("attach lifecycle", () => {
 
     await waitFor(() => expect(outputListener).not.toBeNull());
     act(() => outputListener?.("another-run", "wrong"));
-    expect(screen.getByRole("status", { name: "Terminal writes" })).toHaveTextContent("");
+    expect(
+      screen.getByRole("status", { name: "Terminal writes" }),
+    ).toHaveTextContent("");
     act(() => outputListener?.("run-one", "right"));
-    expect(screen.getByRole("status", { name: "Terminal writes" })).toHaveTextContent("right");
+    expect(
+      screen.getByRole("status", { name: "Terminal writes" }),
+    ).toHaveTextContent("right");
 
     await user.selectOptions(
       screen.getByRole("combobox", { name: "Terminal session" }),
       "gobby:two",
     );
-    await waitFor(() => expect(hookState.detachSession).toHaveBeenCalledTimes(1));
+    await waitFor(() =>
+      expect(hookState.detachSession).toHaveBeenCalledTimes(1),
+    );
     expect(hookState.clearAttachError).toHaveBeenCalledTimes(1);
     expect(hookState.dismissEndedSession).not.toHaveBeenCalled();
 
@@ -304,7 +324,10 @@ describe("attach lifecycle", () => {
 
   it("defers focus consumption until a gobby-socket agent row can be joined", async () => {
     const onFocusHandled = vi.fn();
-    const gobbySession = makeGobbySession({ id: "focus-me", agent_run_id: "agent-run-7" });
+    const gobbySession = makeGobbySession({
+      id: "focus-me",
+      agent_run_id: "agent-run-7",
+    });
     const tmux = makeTmuxSession({
       name: "agent-pane",
       socket: "gobby",
@@ -333,12 +356,15 @@ describe("attach lifecycle", () => {
     );
 
     await waitFor(() => {
-      expect(hookState.attachSession).toHaveBeenCalledWith("agent-pane", "gobby");
+      expect(hookState.attachSession).toHaveBeenCalledWith(
+        "agent-pane",
+        "gobby",
+      );
     });
     expect(onFocusHandled).toHaveBeenCalledTimes(1);
-    expect(screen.getByRole("combobox", { name: "Terminal session" })).toHaveValue(
-      "gobby:agent-pane",
-    );
+    expect(
+      screen.getByRole("combobox", { name: "Terminal session" }),
+    ).toHaveValue("gobby:agent-pane");
   });
 
   it("gates the empty state on the first list and explains how to create a session", async () => {
@@ -352,7 +378,9 @@ describe("attach lifecycle", () => {
     hookState = { ...hookState, sessionsLoaded: true };
     rendered.rerender(<TerminalTab />);
     expect(await screen.findByText("No terminal sessions")).toBeInTheDocument();
-    expect(screen.getByText(/Create one to start a live, read-only terminal view/)).toBeInTheDocument();
+    expect(
+      screen.getByText(/Create one to start a live, read-only terminal view/),
+    ).toBeInTheDocument();
     await user.click(screen.getByRole("button", { name: "New Terminal" }));
     expect(hookState.createSession).toHaveBeenCalledTimes(1);
   });
@@ -387,9 +415,9 @@ describe("attach lifecycle", () => {
     rendered.rerender(<TerminalTab />);
 
     await waitFor(() => {
-      expect(screen.getByRole("combobox", { name: "Terminal session" })).toHaveValue(
-        "default:web-new",
-      );
+      expect(
+        screen.getByRole("combobox", { name: "Terminal session" }),
+      ).toHaveValue("default:web-new");
       expect(attachSession).toHaveBeenCalledWith("web-new", "default");
     });
     expect(screen.getByRole("option", { name: "web-new" })).toHaveAttribute(
@@ -405,12 +433,19 @@ describe("attach lifecycle", () => {
       sessions: [makeTmuxSession({ name: "fallback" })],
     });
 
-    render(<TerminalTab focusSessionId="missing" onFocusHandled={onFocusHandled} />);
+    render(
+      <TerminalTab focusSessionId="missing" onFocusHandled={onFocusHandled} />,
+    );
 
-    expect(await screen.findByText("No live terminal for this session")).toBeInTheDocument();
+    expect(
+      await screen.findByText("No live terminal for this session"),
+    ).toBeInTheDocument();
     expect(onFocusHandled).toHaveBeenCalledTimes(1);
     await waitFor(() => {
-      expect(hookState.attachSession).toHaveBeenCalledWith("fallback", "default");
+      expect(hookState.attachSession).toHaveBeenCalledWith(
+        "fallback",
+        "default",
+      );
     });
   });
 });
@@ -449,7 +484,10 @@ describe("ready handshake repaint", () => {
     // Output streamed before readiness was dropped, so every ready handshake
     // must force a full tmux repaint even when the size is already known.
     expect(hookState.refreshTerminal).toHaveBeenCalledTimes(1);
-    expect(hookState.refreshTerminal).toHaveBeenLastCalledWith("wide", "default");
+    expect(hookState.refreshTerminal).toHaveBeenLastCalledWith(
+      "wide",
+      "default",
+    );
     await waitFor(() => {
       expect(screen.queryByText("Attaching terminal…")).not.toBeInTheDocument();
     });
@@ -468,7 +506,10 @@ describe("ready handshake repaint", () => {
     expect(hookState.resizeTerminal).toHaveBeenCalledTimes(2);
     expect(hookState.resizeTerminal).toHaveBeenLastCalledWith(31, 97);
     expect(hookState.refreshTerminal).toHaveBeenCalledTimes(2);
-    expect(hookState.refreshTerminal).toHaveBeenLastCalledWith("wide", "default");
+    expect(hookState.refreshTerminal).toHaveBeenLastCalledWith(
+      "wide",
+      "default",
+    );
   });
 
   it("requires fresh readiness when a reconnect reuses a stream id", async () => {
@@ -483,9 +524,9 @@ describe("ready handshake repaint", () => {
     const rendered = render(<TerminalTab />);
 
     await waitFor(() => {
-      expect(screen.getByRole("combobox", { name: "Terminal session" })).toHaveValue(
-        "default:reused",
-      );
+      expect(
+        screen.getByRole("combobox", { name: "Terminal session" }),
+      ).toHaveValue("default:reused");
     });
     await user.click(screen.getByRole("button", { name: "Renderer ready" }));
 
@@ -561,16 +602,18 @@ describe("attach error and reconnect gating", () => {
     const rendered = render(<TerminalTab />);
 
     await waitFor(() => {
-      expect(screen.getByRole("combobox", { name: "Terminal session" })).toHaveValue(
-        "default:pending",
-      );
+      expect(
+        screen.getByRole("combobox", { name: "Terminal session" }),
+      ).toHaveValue("default:pending");
     });
     rendered.rerender(<TerminalTab />);
     expect(hookState.attachSession).not.toHaveBeenCalled();
 
     hookState = { ...hookState, requestPending: false };
     rendered.rerender(<TerminalTab />);
-    await waitFor(() => expect(hookState.attachSession).toHaveBeenCalledTimes(1));
+    await waitFor(() =>
+      expect(hookState.attachSession).toHaveBeenCalledTimes(1),
+    );
   });
 
   it("halts on attach error and retry re-arms exactly one request", async () => {
@@ -586,20 +629,27 @@ describe("attach error and reconnect gating", () => {
       "Couldn’t attach to this terminal. Permission denied",
     );
     expect(hookState.attachSession).not.toHaveBeenCalled();
-    await user.click(screen.getByRole("button", { name: "Retry terminal attach" }));
+    await user.click(
+      screen.getByRole("button", { name: "Retry terminal attach" }),
+    );
     expect(hookState.clearAttachError).toHaveBeenCalledTimes(1);
     expect(hookState.attachSession).not.toHaveBeenCalled();
 
     hookState = { ...hookState, attachError: null };
     rendered.rerender(<TerminalTab />);
-    await waitFor(() => expect(hookState.attachSession).toHaveBeenCalledTimes(1));
+    await waitFor(() =>
+      expect(hookState.attachSession).toHaveBeenCalledTimes(1),
+    );
     rendered.rerender(<TerminalTab />);
     expect(hookState.attachSession).toHaveBeenCalledTimes(1);
   });
 
   it("uses the socket-qualified last attachment to detect a vanished reconnect target", async () => {
     const user = userEvent.setup();
-    const defaultShared = makeTmuxSession({ name: "shared", socket: "default" });
+    const defaultShared = makeTmuxSession({
+      name: "shared",
+      socket: "default",
+    });
     const gobbyShared = makeTmuxSession({ name: "shared", socket: "gobby" });
     hookState = makeHookState({
       sessionsLoaded: true,
@@ -609,9 +659,9 @@ describe("attach error and reconnect gating", () => {
     });
     const rendered = render(<TerminalTab />);
     await waitFor(() => {
-      expect(screen.getByRole("combobox", { name: "Terminal session" })).toHaveValue(
-        "default:shared",
-      );
+      expect(
+        screen.getByRole("combobox", { name: "Terminal session" }),
+      ).toHaveValue("default:shared");
     });
 
     hookState = {
@@ -632,12 +682,18 @@ describe("attach error and reconnect gating", () => {
       sessions: [gobbyShared],
     };
     rendered.rerender(<TerminalTab />);
-    expect(await screen.findByText("Terminal session ended")).toBeInTheDocument();
+    expect(
+      await screen.findByText("Terminal session ended"),
+    ).toBeInTheDocument();
     expect(hookState.attachSession).not.toHaveBeenCalled();
 
-    await user.click(screen.getByRole("button", { name: "Dismiss ended session" }));
+    await user.click(
+      screen.getByRole("button", { name: "Dismiss ended session" }),
+    );
     expect(hookState.attachSession).not.toHaveBeenCalled();
-    expect(window.sessionStorage.getItem("gobby:terminal:selected-target")).toBeNull();
+    expect(
+      window.sessionStorage.getItem("gobby:terminal:selected-target"),
+    ).toBeNull();
 
     await user.selectOptions(
       screen.getByRole("combobox", { name: "Terminal session" }),
@@ -652,7 +708,9 @@ describe("attach error and reconnect gating", () => {
     const target = makeTmuxSession({ name: "survivor" });
     hookState = makeHookState({ sessionsLoaded: true, sessions: [target] });
     const rendered = render(<TerminalTab />);
-    await waitFor(() => expect(hookState.attachSession).toHaveBeenCalledTimes(1));
+    await waitFor(() =>
+      expect(hookState.attachSession).toHaveBeenCalledTimes(1),
+    );
 
     hookState = {
       ...hookState,
@@ -664,14 +722,18 @@ describe("attach error and reconnect gating", () => {
     hookState = { ...hookState, connected: true, sessionsLoaded: true };
     rendered.rerender(<TerminalTab />);
 
-    await waitFor(() => expect(hookState.attachSession).toHaveBeenCalledTimes(2));
+    await waitFor(() =>
+      expect(hookState.attachSession).toHaveBeenCalledTimes(2),
+    );
   });
 
   it("ends when a mid-attach target is absent from the first reconnect list", async () => {
     const target = makeTmuxSession({ name: "lost" });
     hookState = makeHookState({ sessionsLoaded: true, sessions: [target] });
     const rendered = render(<TerminalTab />);
-    await waitFor(() => expect(hookState.attachSession).toHaveBeenCalledTimes(1));
+    await waitFor(() =>
+      expect(hookState.attachSession).toHaveBeenCalledTimes(1),
+    );
 
     hookState = {
       ...hookState,
@@ -688,7 +750,12 @@ describe("attach error and reconnect gating", () => {
     };
     rendered.rerender(<TerminalTab />);
 
-    expect(await screen.findByText("Terminal session ended")).toBeInTheDocument();
-    expect(hookState.attachSession).not.toHaveBeenCalledWith("replacement", "default");
+    expect(
+      await screen.findByText("Terminal session ended"),
+    ).toBeInTheDocument();
+    expect(hookState.attachSession).not.toHaveBeenCalledWith(
+      "replacement",
+      "default",
+    );
   });
 });

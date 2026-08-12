@@ -6,10 +6,7 @@ import {
   useState,
 } from "react";
 
-import type {
-  ChatState,
-  SessionObservationMeta,
-} from "../../types/chat";
+import type { ChatState, SessionObservationMeta } from "../../types/chat";
 import {
   buildReasoningPreferenceKey,
   fetchProviderModelCatalog,
@@ -63,7 +60,8 @@ export function useChatPageProviderState({
     latestChatRef.current = chat;
   }, [chat]);
 
-  const viewingMeta = chat.viewingSessionMeta ?? chat.attachedSessionMeta ?? null;
+  const viewingMeta =
+    chat.viewingSessionMeta ?? chat.attachedSessionMeta ?? null;
   const isSwappedTerminal = viewingMeta?.sessionType === "terminal";
   const isAutonomousSession = Boolean(
     isSwappedTerminal && viewingMeta?.agentRunId,
@@ -178,19 +176,17 @@ export function useChatPageProviderState({
         effectiveInputReasoning,
       );
     }
-    void chat.continueSessionInChat(
-      chat.viewingSessionId,
-      projectId ?? undefined,
-      {
+    void chat
+      .continueSessionInChat(chat.viewingSessionId, projectId ?? undefined, {
         provider: effectiveInputProvider,
         model: effectiveInputModel,
         reasoningEffort: effectiveInputReasoning,
         chatMode: viewingMeta?.chatMode ?? null,
         fallbackContext: "auto",
-      },
-    ).catch((error) => {
-      console.error("Failed to resume viewed session in chat:", error);
-    });
+      })
+      .catch((error) => {
+        console.error("Failed to resume viewed session in chat:", error);
+      });
   }, [
     chat,
     effectiveInputModel,
@@ -228,7 +224,9 @@ export function useChatPageProviderState({
 
       const currentChat = latestChatRef.current;
       const currentViewingMeta =
-        currentChat.viewingSessionMeta ?? currentChat.attachedSessionMeta ?? null;
+        currentChat.viewingSessionMeta ??
+        currentChat.attachedSessionMeta ??
+        null;
       if (
         currentChat.viewingSessionId !== viewingSessionId ||
         currentViewingMeta?.sessionType !== "terminal" ||

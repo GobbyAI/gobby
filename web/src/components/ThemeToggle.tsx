@@ -22,7 +22,11 @@ interface ThemeToggleProps {
  * explicit choice, and persists through the settings store rather than
  * touching `data-theme` directly.
  */
-export function ThemeToggle({ theme, onThemeChange, disabled = false }: ThemeToggleProps) {
+export function ThemeToggle({
+  theme,
+  onThemeChange,
+  disabled = false,
+}: ThemeToggleProps) {
   // `theme` is accepted for API symmetry with other settings-driven controls;
   // the rendered glyph follows what's actually on screen (resolves `system`).
   void theme;

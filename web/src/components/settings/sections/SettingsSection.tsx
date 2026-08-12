@@ -1,12 +1,12 @@
-import { useEffect, useMemo, useRef } from 'react'
-import type { ReactNode } from 'react'
-import type { ConfigApplyFailure } from '../../../api/config'
-import { DetailActionButton } from '../../activity/fields'
-import { useDetailDraft } from '../../activity/fields/useDetailDraft'
-import { getSettingsSection } from '../sections'
-import type { SettingsSectionId } from '../sections'
-import { resolveSchemaNode } from '../configSchema'
-import { useSettingsSectionContext } from './SettingsSectionContext'
+import { useEffect, useMemo, useRef } from "react";
+import type { ReactNode } from "react";
+import type { ConfigApplyFailure } from "../../../api/config";
+import { DetailActionButton } from "../../activity/fields";
+import { useDetailDraft } from "../../activity/fields/useDetailDraft";
+import { getSettingsSection } from "../sections";
+import type { SettingsSectionId } from "../sections";
+import { resolveSchemaNode } from "../configSchema";
+import { useSettingsSectionContext } from "./SettingsSectionContext";
 
 /**
  * The render surface handed to a section body. Sections read and write only
@@ -14,25 +14,25 @@ import { useSettingsSectionContext } from './SettingsSectionContext'
  * to the section's per-load draft, so edits never leak across sections.
  */
 export interface SettingsSectionFields {
-  getValue: (path: string) => unknown
-  getActiveValue?: (path: string) => unknown
-  setValue: (path: string, value: unknown) => void
-  schema: Record<string, unknown> | null
-  secretKeys: string[]
-  pendingRestartKeys?: string[]
-  failedLiveKeys?: Record<string, ConfigApplyFailure>
-  isLoading: boolean
+  getValue: (path: string) => unknown;
+  getActiveValue?: (path: string) => unknown;
+  setValue: (path: string, value: unknown) => void;
+  schema: Record<string, unknown> | null;
+  secretKeys: string[];
+  pendingRestartKeys?: string[];
+  failedLiveKeys?: Record<string, ConfigApplyFailure>;
+  isLoading: boolean;
 }
 
 export interface SettingsSectionProps {
-  sectionId: SettingsSectionId
+  sectionId: SettingsSectionId;
   /** Config dotted-paths this section owns. The draft is scoped to these. */
-  ownedPaths: readonly string[]
-  saveDisabled?: boolean
-  children: (fields: SettingsSectionFields) => ReactNode
+  ownedPaths: readonly string[];
+  saveDisabled?: boolean;
+  children: (fields: SettingsSectionFields) => ReactNode;
 }
 
-type SectionDraft = Record<string, unknown>
+type SectionDraft = Record<string, unknown>;
 
 /**
  * Read a value out of the nested config object by dotted path. `/api/config/values`
@@ -40,12 +40,12 @@ type SectionDraft = Record<string, unknown>
  * path must be walked segment by segment.
  */
 function getByPath(source: Record<string, unknown>, path: string): unknown {
-  let current: unknown = source
-  for (const segment of path.split('.')) {
-    if (current === null || typeof current !== 'object') return undefined
-    current = (current as Record<string, unknown>)[segment]
+  let current: unknown = source;
+  for (const segment of path.split(".")) {
+    if (current === null || typeof current !== "object") return undefined;
+    current = (current as Record<string, unknown>)[segment];
   }
-  return current
+  return current;
 }
 
 /**
@@ -57,11 +57,11 @@ function pickPaths(
   configValues: Record<string, unknown>,
   paths: readonly string[],
 ): SectionDraft {
-  const slice: SectionDraft = {}
+  const slice: SectionDraft = {};
   for (const path of paths) {
-    slice[path] = getByPath(configValues, path)
+    slice[path] = getByPath(configValues, path);
   }
-  return slice
+  return slice;
 }
 
 /**
@@ -87,13 +87,13 @@ export function SettingsSection({
     isLoading,
     saveConfig,
     registerDirtyGuard,
-  } = useSettingsSectionContext()
-  const section = getSettingsSection(sectionId)
+  } = useSettingsSectionContext();
+  const section = getSettingsSection(sectionId);
 
   const source = useMemo(
     () => pickPaths(configValues, ownedPaths),
     [configValues, ownedPaths],
-  )
+  );
 
   const { draft, setField, dirty, saving, serverChanged, save, discard } =
     useDetailDraft<SectionDraft>({
@@ -103,30 +103,28 @@ export function SettingsSection({
         // keys) are mutated only through their coordinator action; the store
         // rejects direct writes, so submitting them bricks the whole save.
         const payload = Object.fromEntries(
-          Object.entries(merged).filter(
-            ([path]) => {
-              if (schema === null) return false
-              return resolveSchemaNode(schema, path)?.activation !== 'managed'
-            },
-          ),
-        )
-        const result = await saveConfig(payload)
-        return result.ok
+          Object.entries(merged).filter(([path]) => {
+            if (schema === null) return false;
+            return resolveSchemaNode(schema, path)?.activation !== "managed";
+          }),
+        );
+        const result = await saveConfig(payload);
+        return result.ok;
       },
-    })
+    });
 
   // A ref keeps the registered predicate reading live dirty state without
   // re-registering on every keystroke. Updated in an effect (never during
   // render) so the predicate the overlay calls on exit reflects current state.
-  const dirtyRef = useRef(dirty)
+  const dirtyRef = useRef(dirty);
   useEffect(() => {
-    dirtyRef.current = dirty
-  }, [dirty])
+    dirtyRef.current = dirty;
+  }, [dirty]);
 
   useEffect(
     () => registerDirtyGuard(sectionId, () => dirtyRef.current),
     [registerDirtyGuard, sectionId],
-  )
+  );
 
   const fields: SettingsSectionFields = {
     getValue: (path) => draft?.[path],
@@ -137,15 +135,15 @@ export function SettingsSection({
     pendingRestartKeys,
     failedLiveKeys,
     isLoading,
-  }
+  };
 
-  const hasFields = ownedPaths.length > 0
+  const hasFields = ownedPaths.length > 0;
 
   return (
     <div className="flex min-h-0 flex-1 flex-col" aria-busy={isLoading}>
       <div className="flex min-h-0 flex-1 flex-col gap-6 overflow-y-auto px-7 py-6">
         <div className="flex flex-col gap-1.5 border-b border-border pb-5">
-          <h3 className="text-lg font-semibold leading-[1.2] text-foreground">
+          <h3 className="text-lg leading-[1.2] font-semibold text-foreground">
             {section.label}
           </h3>
           <p className="max-w-[60ch] text-base leading-[1.5] text-muted-foreground">
@@ -159,7 +157,7 @@ export function SettingsSection({
             data-terminal={mutationError.terminal || undefined}
             role="alert"
           >
-            {mutationError.terminal ? 'Terminal configuration error: ' : ''}
+            {mutationError.terminal ? "Terminal configuration error: " : ""}
             {mutationError.message}
           </p>
         ) : null}
@@ -181,15 +179,15 @@ export function SettingsSection({
             disabled={!dirty || saving}
           />
           <DetailActionButton
-            label={saving ? 'Saving…' : 'Save'}
+            label={saving ? "Saving…" : "Save"}
             variant="accent"
             onClick={() => {
-              void save()
+              void save();
             }}
             disabled={!dirty || saving || saveDisabled}
           />
         </footer>
       ) : null}
     </div>
-  )
+  );
 }

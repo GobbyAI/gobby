@@ -61,10 +61,7 @@ export function useAppProjectSelection({
         .filter((p) => !HIDDEN_PROJECTS.has(p.name))
         .map((p) => ({
           id: p.id,
-          name:
-            p.name === "_personal"
-              ? "Personal"
-              : p.display_name || p.name,
+          name: p.name === "_personal" ? "Personal" : p.display_name || p.name,
         })),
     [allProjects],
   );
@@ -101,13 +98,15 @@ export function useAppProjectSelection({
   // On mount: fetch persisted project/provider from API (DB is source of truth).
   useEffect(() => {
     let cancelled = false;
-    configurationClient.fetchValues()
+    configurationClient
+      .fetchValues()
       .then((snapshot) => {
         if (cancelled) return;
         const data = snapshot?.desired.ui_settings;
-        const settings = data && typeof data === "object" && !Array.isArray(data)
-          ? data as Record<string, unknown>
-          : null;
+        const settings =
+          data && typeof data === "object" && !Array.isArray(data)
+            ? (data as Record<string, unknown>)
+            : null;
         if (
           !projectTouchedRef.current &&
           typeof settings?.selectedProjectId === "string"
@@ -151,7 +150,9 @@ export function useAppProjectSelection({
       isFirstProjectRender.current = false;
       if (!projectTouchedRef.current) return;
     }
-    void configurationClient.patchLastWriteWins({ ui_settings: { selectedProjectId } });
+    void configurationClient.patchLastWriteWins({
+      ui_settings: { selectedProjectId },
+    });
   }, [selectedProjectId, projectReady]);
 
   const prevProjectRef = useRef<string | null>(null);

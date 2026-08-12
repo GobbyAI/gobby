@@ -1,26 +1,38 @@
-import { useState, useEffect, useRef, useMemo, useCallback } from 'react'
-import ForceGraph3D from 'react-force-graph-3d'
-import SpriteText from 'three-spritetext'
-import { useCodeGraph, mergeCodeGraphData } from '../../hooks/useCodeGraph'
-import type { CodeGraphData, CodeGraphNode, CodeGraphSearchResult } from '../../hooks/useCodeGraph'
-import { IS_IOS_DEVICE, IS_MOBILE_DEVICE } from '../../utils/platform'
-import { resolveCssVar, cn, escapeHtml } from '../../lib/utils'
-import { Button } from '../ui/Button'
-import { Card } from '../ui/Card'
-import { Input } from '../ui/Input'
-import { coarseHitAreaCls } from '../ui/controlStyles'
+import { useState, useEffect, useRef, useMemo, useCallback } from "react";
+import ForceGraph3D from "react-force-graph-3d";
+import SpriteText from "three-spritetext";
+import { useCodeGraph, mergeCodeGraphData } from "../../hooks/useCodeGraph";
+import type {
+  CodeGraphData,
+  CodeGraphNode,
+  CodeGraphSearchResult,
+} from "../../hooks/useCodeGraph";
+import { IS_IOS_DEVICE, IS_MOBILE_DEVICE } from "../../utils/platform";
+import { resolveCssVar, cn, escapeHtml } from "../../lib/utils";
+import { Button } from "../ui/Button";
+import { Card } from "../ui/Card";
+import { Input } from "../ui/Input";
+import { coarseHitAreaCls } from "../ui/controlStyles";
 
-const DEFAULT_CODE_GRAPH_LIMIT = IS_IOS_DEVICE ? 30 : IS_MOBILE_DEVICE ? 50 : 100
-const CODE_GRAPH_LIMIT_MIN = 10
-const CODE_GRAPH_LIMIT_MAX = IS_IOS_DEVICE ? 100 : IS_MOBILE_DEVICE ? 200 : 1000
-const CODE_GRAPH_LIMIT_STEP = 10
+const DEFAULT_CODE_GRAPH_LIMIT = IS_IOS_DEVICE
+  ? 30
+  : IS_MOBILE_DEVICE
+    ? 50
+    : 100;
+const CODE_GRAPH_LIMIT_MIN = 10;
+const CODE_GRAPH_LIMIT_MAX = IS_IOS_DEVICE
+  ? 100
+  : IS_MOBILE_DEVICE
+    ? 200
+    : 1000;
+const CODE_GRAPH_LIMIT_STEP = 10;
 
-const DEFAULT_CHARGE = -120
-const DEFAULT_LINK_DIST = 60
-const DEFAULT_CENTER = 0.05
+const DEFAULT_CHARGE = -120;
+const DEFAULT_LINK_DIST = 60;
+const DEFAULT_CENTER = 0.05;
 
 interface CodeGraphExplorerProps {
-  projectId: string | null
+  projectId: string | null;
 }
 
 // ── Node / edge colors routed through deutan-safe semantic tokens ───────────
@@ -29,82 +41,82 @@ interface CodeGraphExplorerProps {
 // for three.js consumers; getNodeColorCss() returns var() form for HTML.
 
 const NODE_COLOR_VARS: Record<string, string> = {
-  file: '--color-info',
-  folder: '--text-muted',
-  class: '--color-warning-foreground',
-  function: '--color-success-foreground',
-  method: '--color-review',
-  interface: '--color-error',
-  module: '--text-muted',
-  constant: '--color-warning-foreground',
-  variable: '--text-muted',
-  type: '--text-muted',
-  unresolved: '--color-error',
-  external: '--color-error',
-}
+  file: "--color-info",
+  folder: "--text-muted",
+  class: "--color-warning-foreground",
+  function: "--color-success-foreground",
+  method: "--color-review",
+  interface: "--color-error",
+  module: "--text-muted",
+  constant: "--color-warning-foreground",
+  variable: "--text-muted",
+  type: "--text-muted",
+  unresolved: "--color-error",
+  external: "--color-error",
+};
 
 const EDGE_COLOR_VARS: Record<string, string> = {
-  CALLS: '--text-muted',
-  IMPORTS: '--color-info',
-  DEFINES: '--color-review',
-}
+  CALLS: "--text-muted",
+  IMPORTS: "--color-info",
+  DEFINES: "--color-review",
+};
 
 // Blast-radius gradient: hottest (closest) → coolest (farthest).
 const BLAST_COLOR_VARS = [
-  '--color-error',
-  '--color-warning-foreground',
-  '--accent',
-  '--color-success-foreground',
-]
+  "--color-error",
+  "--color-warning-foreground",
+  "--accent",
+  "--color-success-foreground",
+];
 
 function nodeColorVar(type: string): string {
-  return NODE_COLOR_VARS[type] ?? '--text-muted'
+  return NODE_COLOR_VARS[type] ?? "--text-muted";
 }
 
 function edgeColorVar(type: string): string {
-  return EDGE_COLOR_VARS[type] ?? '--text-muted'
+  return EDGE_COLOR_VARS[type] ?? "--text-muted";
 }
 
 function getNodeColor(node: GraphNode): string {
   if (node.blast_distance !== undefined && node.blast_distance >= 0) {
-    const idx = Math.min(node.blast_distance, BLAST_COLOR_VARS.length - 1)
-    return resolveCssVar(BLAST_COLOR_VARS[idx])
+    const idx = Math.min(node.blast_distance, BLAST_COLOR_VARS.length - 1);
+    return resolveCssVar(BLAST_COLOR_VARS[idx]);
   }
-  return resolveCssVar(nodeColorVar(node.type))
+  return resolveCssVar(nodeColorVar(node.type));
 }
 
 function getNodeColorCss(type: string | undefined): string {
-  return `var(${type ? nodeColorVar(type) : '--text-muted'})`
+  return `var(${type ? nodeColorVar(type) : "--text-muted"})`;
 }
 
 // ── Force graph data types ─────────────────────────────────────
 
 interface GraphNode {
-  id: string
-  name: string
-  type: string
-  kind?: string
-  file_path?: string
-  line_start?: number
-  signature?: string
-  symbol_count?: number
-  blast_distance?: number
-  color: string
-  val: number
+  id: string;
+  name: string;
+  type: string;
+  kind?: string;
+  file_path?: string;
+  line_start?: number;
+  signature?: string;
+  symbol_count?: number;
+  blast_distance?: number;
+  color: string;
+  val: number;
 }
 
 interface GraphLink {
-  source: string
-  target: string
-  type: string
-  color: string
+  source: string;
+  target: string;
+  type: string;
+  color: string;
 }
 
 function buildForceData(data: CodeGraphData): {
-  nodes: GraphNode[]
-  links: GraphLink[]
+  nodes: GraphNode[];
+  links: GraphLink[];
 } {
-  const nodeIds = new Set(data.nodes.map((n) => n.id))
+  const nodeIds = new Set(data.nodes.map((n) => n.id));
 
   const nodes: GraphNode[] = data.nodes.map((n) => {
     const gn: GraphNode = {
@@ -117,12 +129,12 @@ function buildForceData(data: CodeGraphData): {
       signature: n.signature,
       symbol_count: n.symbol_count,
       blast_distance: n.blast_distance,
-      color: '',
+      color: "",
       val: 2,
-    }
-    gn.color = getNodeColor(gn)
-    return gn
-  })
+    };
+    gn.color = getNodeColor(gn);
+    return gn;
+  });
 
   const links: GraphLink[] = data.links
     .filter((l) => nodeIds.has(l.source) && nodeIds.has(l.target))
@@ -131,25 +143,30 @@ function buildForceData(data: CodeGraphData): {
       target: l.target,
       type: l.type,
       color: resolveCssVar(edgeColorVar(l.type)),
-    }))
+    }));
 
-  return { nodes, links }
+  return { nodes, links };
 }
 
 function edgeColor(relType: string): string {
-  return resolveCssVar(edgeColorVar(relType))
+  return resolveCssVar(edgeColorVar(relType));
 }
 
-function getStoredNumber(key: string, defaultVal: number, min?: number, max?: number): number {
+function getStoredNumber(
+  key: string,
+  defaultVal: number,
+  min?: number,
+  max?: number,
+): number {
   try {
-    const v = localStorage.getItem(key)
-    const n = Number(v)
-    if (!v || !Number.isFinite(n)) return defaultVal
-    if (min !== undefined && n < min) return defaultVal
-    if (max !== undefined && n > max) return defaultVal
-    return n
+    const v = localStorage.getItem(key);
+    const n = Number(v);
+    if (!v || !Number.isFinite(n)) return defaultVal;
+    if (min !== undefined && n < min) return defaultVal;
+    if (max !== undefined && n > max) return defaultVal;
+    return n;
   } catch {
-    return defaultVal
+    return defaultVal;
   }
 }
 
@@ -157,214 +174,240 @@ function getStoredNumber(key: string, defaultVal: number, min?: number, max?: nu
 
 export function CodeGraphExplorer({ projectId }: CodeGraphExplorerProps) {
   // react-force-graph-3d does not export a usable instance type
-  const fgRef = useRef<any>(null)
-  const containerRef = useRef<HTMLDivElement>(null)
-  const [dimensions, setDimensions] = useState({ width: 800, height: 600 })
+  const fgRef = useRef<any>(null);
+  const containerRef = useRef<HTMLDivElement>(null);
+  const [dimensions, setDimensions] = useState({ width: 800, height: 600 });
   const [graphData, setGraphData] = useState<CodeGraphData>({
     nodes: [],
     links: [],
-  })
-  const [selectedNode, setSelectedNode] = useState<GraphNode | null>(null)
-  const [blastMode, setBlastMode] = useState(false)
-  const [blastData, setBlastData] = useState<Set<string> | null>(null)
-  const [searchQuery, setSearchQuery] = useState('')
-  const [searchResults, setSearchResults] = useState<CodeGraphSearchResult[]>([])
-  const [isLoading, setIsLoading] = useState(false)
-  const [expandedNodes, setExpandedNodes] = useState<Set<string>>(new Set())
-  const [webglError, setWebglError] = useState(false)
-  const [showPhysics, setShowPhysics] = useState(false)
+  });
+  const [selectedNode, setSelectedNode] = useState<GraphNode | null>(null);
+  const [blastMode, setBlastMode] = useState(false);
+  const [blastData, setBlastData] = useState<Set<string> | null>(null);
+  const [searchQuery, setSearchQuery] = useState("");
+  const [searchResults, setSearchResults] = useState<CodeGraphSearchResult[]>(
+    [],
+  );
+  const [isLoading, setIsLoading] = useState(false);
+  const [expandedNodes, setExpandedNodes] = useState<Set<string>>(new Set());
+  const [webglError, setWebglError] = useState(false);
+  const [showPhysics, setShowPhysics] = useState(false);
   const [limit, setLimit] = useState(() =>
     getStoredNumber(
-      'gobby-cg-limit',
+      "gobby-cg-limit",
       DEFAULT_CODE_GRAPH_LIMIT,
       CODE_GRAPH_LIMIT_MIN,
       CODE_GRAPH_LIMIT_MAX,
     ),
-  )
-  const [charge, setCharge] = useState(() => getStoredNumber('gobby-cg-charge', DEFAULT_CHARGE))
+  );
+  const [charge, setCharge] = useState(() =>
+    getStoredNumber("gobby-cg-charge", DEFAULT_CHARGE),
+  );
   const [linkDist, setLinkDist] = useState(() =>
-    getStoredNumber('gobby-cg-link-dist', DEFAULT_LINK_DIST),
-  )
+    getStoredNumber("gobby-cg-link-dist", DEFAULT_LINK_DIST),
+  );
   const [centerStrength, setCenterStrength] = useState(() =>
-    getStoredNumber('gobby-cg-center', DEFAULT_CENTER),
-  )
-  const searchDebounceRef = useRef<number | null>(null)
-  const graphRequestIdRef = useRef(0)
-  const searchRequestIdRef = useRef(0)
-  const selectionRequestIdRef = useRef(0)
+    getStoredNumber("gobby-cg-center", DEFAULT_CENTER),
+  );
+  const searchDebounceRef = useRef<number | null>(null);
+  const graphRequestIdRef = useRef(0);
+  const searchRequestIdRef = useRef(0);
+  const selectionRequestIdRef = useRef(0);
 
-  const { fetchFileGraph, expandFile, expandSymbol, fetchBlastRadius, searchSymbols } =
-    useCodeGraph()
+  const {
+    fetchFileGraph,
+    expandFile,
+    expandSymbol,
+    fetchBlastRadius,
+    searchSymbols,
+  } = useCodeGraph();
 
   // WebGL error handling (from KnowledgeGraph pattern)
   useEffect(() => {
     const handleError = (e: ErrorEvent) => {
-      const msg = (e.message || '').toLowerCase()
-      if (msg.includes('webgl') || msg.includes('three') || msg.includes('context lost')) {
-        e.preventDefault()
-        setWebglError(true)
+      const msg = (e.message || "").toLowerCase();
+      if (
+        msg.includes("webgl") ||
+        msg.includes("three") ||
+        msg.includes("context lost")
+      ) {
+        e.preventDefault();
+        setWebglError(true);
       }
-    }
-    window.addEventListener('error', handleError)
-    return () => window.removeEventListener('error', handleError)
-  }, [])
+    };
+    window.addEventListener("error", handleError);
+    return () => window.removeEventListener("error", handleError);
+  }, []);
 
   // Clean up search debounce on unmount
   useEffect(() => {
     return () => {
-      if (searchDebounceRef.current) clearTimeout(searchDebounceRef.current)
-    }
-  }, [])
+      if (searchDebounceRef.current) clearTimeout(searchDebounceRef.current);
+    };
+  }, []);
 
   // Resize observer
   useEffect(() => {
-    const container = containerRef.current
-    if (!container) return
+    const container = containerRef.current;
+    if (!container) return;
     const ro = new ResizeObserver((entries) => {
-      const { width, height } = entries[0].contentRect
-      setDimensions({ width, height })
-    })
-    ro.observe(container)
-    return () => ro.disconnect()
-  }, [])
+      const { width, height } = entries[0].contentRect;
+      setDimensions({ width, height });
+    });
+    ro.observe(container);
+    return () => ro.disconnect();
+  }, []);
 
   // Initial load (re-fetch when limit changes)
   useEffect(() => {
-    if (!projectId) return
-    const requestId = ++graphRequestIdRef.current
-    searchRequestIdRef.current += 1
-    selectionRequestIdRef.current += 1
-    setIsLoading(true)
-    setExpandedNodes(new Set())
+    if (!projectId) return;
+    const requestId = ++graphRequestIdRef.current;
+    searchRequestIdRef.current += 1;
+    selectionRequestIdRef.current += 1;
+    setIsLoading(true);
+    setExpandedNodes(new Set());
     fetchFileGraph(projectId, limit)
       .then((data) => {
-        if (requestId === graphRequestIdRef.current && data) setGraphData(data)
+        if (requestId === graphRequestIdRef.current && data) setGraphData(data);
       })
       .catch((e) => {
-        console.error('CodeGraphExplorer: fetchFileGraph failed', e)
+        console.error("CodeGraphExplorer: fetchFileGraph failed", e);
       })
       .finally(() => {
-        if (requestId === graphRequestIdRef.current) setIsLoading(false)
-      })
-  }, [projectId, limit, fetchFileGraph])
+        if (requestId === graphRequestIdRef.current) setIsLoading(false);
+      });
+  }, [projectId, limit, fetchFileGraph]);
 
   // Build force data
-  const forceData = useMemo(() => buildForceData(graphData), [graphData])
+  const forceData = useMemo(() => buildForceData(graphData), [graphData]);
 
   // Apply force parameters whenever data or physics values change, and reheat
   // the simulation so a fresh batch of nodes actually spreads instead of
   // collapsing into one super-cluster at the origin.
   useEffect(() => {
-    const fg = fgRef.current
-    if (!fg) return
-    fg.d3Force('charge')?.strength(charge)
-    fg.d3Force('link')?.distance(linkDist)
-    fg.d3Force('center')?.strength(centerStrength)
+    const fg = fgRef.current;
+    if (!fg) return;
+    fg.d3Force("charge")?.strength(charge);
+    fg.d3Force("link")?.distance(linkDist);
+    fg.d3Force("center")?.strength(centerStrength);
     if (IS_MOBILE_DEVICE) {
       try {
-        fg.renderer().setPixelRatio(Math.min(window.devicePixelRatio, 2))
+        fg.renderer().setPixelRatio(Math.min(window.devicePixelRatio, 2));
       } catch (e) {
-        console.warn('CodeGraphExplorer: setPixelRatio failed', e)
+        console.warn("CodeGraphExplorer: setPixelRatio failed", e);
       }
     }
     try {
-      fg.d3ReheatSimulation()
+      fg.d3ReheatSimulation();
     } catch {
       /* simulation may not be ready */
     }
-  }, [forceData, charge, linkDist, centerStrength])
+  }, [forceData, charge, linkDist, centerStrength]);
 
   // Search
-  const searchLower = searchQuery.toLowerCase()
-  const isSearchActive = searchQuery.length > 0
+  const searchLower = searchQuery.toLowerCase();
+  const isSearchActive = searchQuery.length > 0;
 
   // Node click handler
   const handleNodeClick = useCallback(
     async (node: any) => {
-      if (!projectId) return
-      const requestId = ++selectionRequestIdRef.current
-      setSelectedNode(node as GraphNode)
+      if (!projectId) return;
+      const requestId = ++selectionRequestIdRef.current;
+      setSelectedNode(node as GraphNode);
 
       if (blastMode) {
-        const opts = node.type === 'file' ? { filePath: node.id } : { symbolId: node.id }
-        const data = await fetchBlastRadius(projectId, opts)
-        if (requestId !== selectionRequestIdRef.current) return
+        const opts =
+          node.type === "file" ? { filePath: node.id } : { symbolId: node.id };
+        const data = await fetchBlastRadius(projectId, opts);
+        if (requestId !== selectionRequestIdRef.current) return;
         if (data) {
-          const affected = new Set(data.nodes.map((n: any) => n.id))
-          setBlastData(affected)
-          setGraphData((prev) => mergeCodeGraphData(prev, data))
+          const affected = new Set(data.nodes.map((n: any) => n.id));
+          setBlastData(affected);
+          setGraphData((prev) => mergeCodeGraphData(prev, data));
         }
-        return
+        return;
       }
 
-      if (expandedNodes.has(node.id)) return
-      setExpandedNodes((prev) => new Set(prev).add(node.id))
+      if (expandedNodes.has(node.id)) return;
+      setExpandedNodes((prev) => new Set(prev).add(node.id));
 
-      let newData: CodeGraphData | null = null
-      if (node.type === 'file') {
-        newData = await expandFile(projectId, node.id)
+      let newData: CodeGraphData | null = null;
+      if (node.type === "file") {
+        newData = await expandFile(projectId, node.id);
       } else {
-        newData = await expandSymbol(projectId, node.id)
+        newData = await expandSymbol(projectId, node.id);
       }
-      if (requestId !== selectionRequestIdRef.current) return
+      if (requestId !== selectionRequestIdRef.current) return;
       if (newData) {
-        setGraphData((prev) => mergeCodeGraphData(prev, newData!))
+        setGraphData((prev) => mergeCodeGraphData(prev, newData!));
       }
     },
-    [projectId, blastMode, expandedNodes, fetchBlastRadius, expandFile, expandSymbol],
-  )
+    [
+      projectId,
+      blastMode,
+      expandedNodes,
+      fetchBlastRadius,
+      expandFile,
+      expandSymbol,
+    ],
+  );
 
   // Search handler
   const handleSearch = useCallback(
     (query: string) => {
-      const requestId = ++searchRequestIdRef.current
-      setSearchQuery(query)
-      if (searchDebounceRef.current) clearTimeout(searchDebounceRef.current)
+      const requestId = ++searchRequestIdRef.current;
+      setSearchQuery(query);
+      if (searchDebounceRef.current) clearTimeout(searchDebounceRef.current);
       if (!query.trim() || !projectId) {
-        setSearchResults([])
-        return
+        setSearchResults([]);
+        return;
       }
       searchDebounceRef.current = window.setTimeout(async () => {
-        const results = await searchSymbols(projectId, query)
-        if (requestId !== searchRequestIdRef.current) return
-        setSearchResults(results)
-      }, 300)
+        const results = await searchSymbols(projectId, query);
+        if (requestId !== searchRequestIdRef.current) return;
+        setSearchResults(results);
+      }, 300);
     },
     [projectId, searchSymbols],
-  )
+  );
 
   // Search result click
   const handleSearchResultClick = useCallback(
     async (result: any) => {
-      if (!projectId) return
-      const requestId = ++selectionRequestIdRef.current
-      setSearchQuery('')
-      setSearchResults([])
+      if (!projectId) return;
+      const requestId = ++selectionRequestIdRef.current;
+      setSearchQuery("");
+      setSearchResults([]);
 
-      const exists = graphData.nodes.some((n) => n.id === result.id)
+      const exists = graphData.nodes.some((n) => n.id === result.id);
       if (!exists) {
-        const data = await expandSymbol(projectId, result.id)
-        if (requestId !== selectionRequestIdRef.current) return
+        const data = await expandSymbol(projectId, result.id);
+        if (requestId !== selectionRequestIdRef.current) return;
         if (data) {
           const resultNode: CodeGraphNode = {
             id: result.id,
             name: result.name,
-            type: result.type || result.kind || 'function',
+            type: result.type || result.kind || "function",
             kind: result.kind,
             file_path: result.file_path,
-          }
-          const merged = mergeCodeGraphData({ nodes: [resultNode], links: [] }, data)
-          setGraphData((prev) => mergeCodeGraphData(prev, merged))
+          };
+          const merged = mergeCodeGraphData(
+            { nodes: [resultNode], links: [] },
+            data,
+          );
+          setGraphData((prev) => mergeCodeGraphData(prev, merged));
         }
       }
 
       // Center on node in 3D
       if (fgRef.current) {
-        const node = fgRef.current.graphData().nodes.find((n: any) => n.id === result.id)
+        const node = fgRef.current
+          .graphData()
+          .nodes.find((n: any) => n.id === result.id);
         if (node) {
-          const distance = 200
-          const hyp = Math.hypot(node.x, node.y, node.z)
-          const distRatio = hyp === 0 ? 1 : 1 + distance / hyp
+          const distance = 200;
+          const hyp = Math.hypot(node.x, node.y, node.z);
+          const distRatio = hyp === 0 ? 1 : 1 + distance / hyp;
           fgRef.current.cameraPosition(
             {
               x: node.x * distRatio,
@@ -373,106 +416,116 @@ export function CodeGraphExplorer({ projectId }: CodeGraphExplorerProps) {
             },
             node,
             1000,
-          )
+          );
         }
       }
     },
     [projectId, graphData.nodes, expandSymbol],
-  )
+  );
 
   // Zoom to fit
   const handleZoomToFit = useCallback(() => {
-    fgRef.current?.zoomToFit(400, 40)
-  }, [])
+    fgRef.current?.zoomToFit(400, 40);
+  }, []);
 
   // Toggle blast radius mode
   const toggleBlastMode = useCallback(() => {
     setBlastMode((prev) => {
-      if (prev) setBlastData(null)
-      return !prev
-    })
-  }, [])
+      if (prev) setBlastData(null);
+      return !prev;
+    });
+  }, []);
 
   // 3D node rendering — SpriteText (same pattern as KnowledgeGraph)
   const nodeThreeObject = useCallback(
     (node: any) => {
       try {
         const label =
-          node.type === 'file'
-            ? (node.name as string).split('/').pop() || node.name
-            : (node.name as string)
-        const color = node.color as string
-        const dimmed = blastData ? !blastData.has(node.id) : false
-        const searchDimmed = isSearchActive && !label.toLowerCase().includes(searchLower)
-        const isDimmed = dimmed || searchDimmed
+          node.type === "file"
+            ? (node.name as string).split("/").pop() || node.name
+            : (node.name as string);
+        const color = node.color as string;
+        const dimmed = blastData ? !blastData.has(node.id) : false;
+        const searchDimmed =
+          isSearchActive && !label.toLowerCase().includes(searchLower);
+        const isDimmed = dimmed || searchDimmed;
 
-        const sprite = new SpriteText(label)
-        sprite.color = isDimmed ? resolveCssVar('--text-muted') : color
-        sprite.fontFace = 'JetBrains Mono, SF Mono, Menlo, monospace'
+        const sprite = new SpriteText(label);
+        sprite.color = isDimmed ? resolveCssVar("--text-muted") : color;
+        sprite.fontFace = "JetBrains Mono, SF Mono, Menlo, monospace";
 
         if (IS_MOBILE_DEVICE) {
-          sprite.textHeight = 2
+          sprite.textHeight = 2;
         } else {
-          sprite.textHeight = 3
+          sprite.textHeight = 3;
           sprite.backgroundColor = isDimmed
-            ? resolveCssVar('--bg-primary', 0.3)
-            : resolveCssVar('--bg-primary', 0.75)
-          sprite.borderColor = isDimmed ? 'transparent' : color
-          sprite.borderWidth = 0.3
-          sprite.borderRadius = 3
-          sprite.padding = [2, 4] as any
+            ? resolveCssVar("--bg-primary", 0.3)
+            : resolveCssVar("--bg-primary", 0.75);
+          sprite.borderColor = isDimmed ? "transparent" : color;
+          sprite.borderWidth = 0.3;
+          sprite.borderRadius = 3;
+          sprite.padding = [2, 4] as any;
         }
-        return sprite
+        return sprite;
       } catch {
-        const fallback = new SpriteText('?')
-        fallback.color = resolveCssVar('--text-muted')
-        fallback.textHeight = 3
-        return fallback
+        const fallback = new SpriteText("?");
+        fallback.color = resolveCssVar("--text-muted");
+        fallback.textHeight = 3;
+        return fallback;
       }
     },
     [blastData, isSearchActive, searchLower],
-  )
+  );
 
   // Link color — must always return a visible color by default
   const linkColor = useCallback(
     (link: any) => {
-      const srcId = typeof link.source === 'object' ? link.source.id : link.source
-      const tgtId = typeof link.target === 'object' ? link.target.id : link.target
+      const srcId =
+        typeof link.source === "object" ? link.source.id : link.source;
+      const tgtId =
+        typeof link.target === "object" ? link.target.id : link.target;
 
       if (blastData) {
         if (!blastData.has(srcId) || !blastData.has(tgtId))
-          return resolveCssVar('--text-muted', 0.1)
+          return resolveCssVar("--text-muted", 0.1);
       }
       if (isSearchActive) {
         const srcLabel =
-          typeof link.source === 'object' ? (link.source.name ?? link.source.id) : link.source
+          typeof link.source === "object"
+            ? (link.source.name ?? link.source.id)
+            : link.source;
         const tgtLabel =
-          typeof link.target === 'object' ? (link.target.name ?? link.target.id) : link.target
-        const srcMatch = String(srcLabel).toLowerCase().includes(searchLower)
-        const tgtMatch = String(tgtLabel).toLowerCase().includes(searchLower)
-        if (!srcMatch && !tgtMatch) return resolveCssVar('--text-muted', 0.15)
+          typeof link.target === "object"
+            ? (link.target.name ?? link.target.id)
+            : link.target;
+        const srcMatch = String(srcLabel).toLowerCase().includes(searchLower);
+        const tgtMatch = String(tgtLabel).toLowerCase().includes(searchLower);
+        if (!srcMatch && !tgtMatch) return resolveCssVar("--text-muted", 0.15);
       }
-      return link.color || edgeColor(link.type) || resolveCssVar('--text-muted', 0.4)
+      return (
+        link.color || edgeColor(link.type) || resolveCssVar("--text-muted", 0.4)
+      );
     },
     [blastData, isSearchActive, searchLower],
-  )
+  );
 
-  const linkLabel = useCallback((link: any) => link.type as string, [])
+  const linkLabel = useCallback((link: any) => link.type as string, []);
 
   if (!projectId) {
     return (
       <div className="flex h-full items-center justify-center text-[length:var(--text-base)] text-[var(--text-muted)]">
         Select a project to explore its code graph.
       </div>
-    )
+    );
   }
 
   if (webglError) {
     return (
       <div className="flex h-full items-center justify-center text-[length:var(--text-base)] text-[var(--text-muted)]">
-        WebGL error — your browser may not support 3D rendering. Try refreshing the page.
+        WebGL error — your browser may not support 3D rendering. Try refreshing
+        the page.
       </div>
-    )
+    );
   }
 
   return (
@@ -481,28 +534,28 @@ export function CodeGraphExplorer({ projectId }: CodeGraphExplorerProps) {
       ref={containerRef}
     >
       {/* Controls */}
-      <div className="absolute right-3 top-3 z-10 flex gap-1.5">
+      <div className="absolute top-3 right-3 z-10 flex gap-1.5">
         <Button
           variant="secondary"
           size="sm"
           dense
           className={cn(
-            'cursor-pointer rounded border-[var(--border)] bg-[var(--bg-secondary)] py-1 font-mono font-normal text-[length:var(--text-sm)] text-[var(--text-secondary)] hover:border-[var(--accent)] hover:bg-[var(--bg-secondary)] hover:text-[var(--text-primary)]',
+            "cursor-pointer rounded border-[var(--border)] bg-[var(--bg-secondary)] py-1 font-mono text-[length:var(--text-sm)] font-normal text-[var(--text-secondary)] hover:border-[var(--accent)] hover:bg-[var(--bg-secondary)] hover:text-[var(--text-primary)]",
             coarseHitAreaCls,
             blastMode &&
-              'border-[var(--destructive,var(--color-error))] bg-[color-mix(in_srgb,var(--destructive,var(--color-error))_15%,transparent)] text-[var(--destructive,var(--color-error))]',
+              "border-[var(--destructive,var(--color-error))] bg-[color-mix(in_srgb,var(--destructive,var(--color-error))_15%,transparent)] text-[var(--destructive,var(--color-error))]",
           )}
           onClick={toggleBlastMode}
           title="Blast Radius Mode"
         >
-          {blastMode ? 'Blast On' : 'Blast Radius'}
+          {blastMode ? "Blast On" : "Blast Radius"}
         </Button>
         <Button
           variant="secondary"
           size="sm"
           dense
           className={cn(
-            'cursor-pointer rounded border-[var(--border)] bg-[var(--bg-secondary)] py-1 font-mono font-normal text-[length:var(--text-sm)] text-[var(--text-secondary)] hover:border-[var(--accent)] hover:bg-[var(--bg-secondary)] hover:text-[var(--text-primary)]',
+            "cursor-pointer rounded border-[var(--border)] bg-[var(--bg-secondary)] py-1 font-mono text-[length:var(--text-sm)] font-normal text-[var(--text-secondary)] hover:border-[var(--accent)] hover:bg-[var(--bg-secondary)] hover:text-[var(--text-primary)]",
             coarseHitAreaCls,
           )}
           onClick={handleZoomToFit}
@@ -515,10 +568,10 @@ export function CodeGraphExplorer({ projectId }: CodeGraphExplorerProps) {
           size="sm"
           dense
           className={cn(
-            'cursor-pointer rounded border-[var(--border)] bg-[var(--bg-secondary)] py-1 font-mono font-normal text-[length:var(--text-sm)] text-[var(--text-secondary)] hover:border-[var(--accent)] hover:bg-[var(--bg-secondary)] hover:text-[var(--text-primary)]',
+            "cursor-pointer rounded border-[var(--border)] bg-[var(--bg-secondary)] py-1 font-mono text-[length:var(--text-sm)] font-normal text-[var(--text-secondary)] hover:border-[var(--accent)] hover:bg-[var(--bg-secondary)] hover:text-[var(--text-primary)]",
             coarseHitAreaCls,
             showPhysics &&
-              'border-[var(--destructive,var(--color-error))] bg-[color-mix(in_srgb,var(--destructive,var(--color-error))_15%,transparent)] text-[var(--destructive,var(--color-error))]',
+              "border-[var(--destructive,var(--color-error))] bg-[color-mix(in_srgb,var(--destructive,var(--color-error))_15%,transparent)] text-[var(--destructive,var(--color-error))]",
           )}
           onClick={() => setShowPhysics((p) => !p)}
           title="Physics controls"
@@ -542,7 +595,7 @@ export function CodeGraphExplorer({ projectId }: CodeGraphExplorerProps) {
 
       {/* Physics controls panel */}
       {showPhysics && (
-        <Card className="absolute right-2 top-[42px] z-[15] flex min-w-[200px] flex-col gap-[5px] rounded-md border-[var(--border)] bg-[var(--bg-secondary)] px-2.5 py-2">
+        <Card className="absolute top-[42px] right-2 z-[15] flex min-w-[200px] flex-col gap-[5px] rounded-md border-[var(--border)] bg-[var(--bg-secondary)] px-2.5 py-2">
           <div className="flex cursor-default items-center gap-1.5">
             <span className="min-w-[56px] text-[length:var(--text-xs)] text-[var(--text-secondary)]">
               Repulsion
@@ -557,16 +610,16 @@ export function CodeGraphExplorer({ projectId }: CodeGraphExplorerProps) {
               step={10}
               value={charge}
               onChange={(e) => {
-                const v = Number(e.target.value)
-                setCharge(v)
+                const v = Number(e.target.value);
+                setCharge(v);
                 try {
-                  localStorage.setItem('gobby-cg-charge', String(v))
+                  localStorage.setItem("gobby-cg-charge", String(v));
                 } catch {
                   /* noop */
                 }
               }}
             />
-            <span className="min-w-[32px] text-right text-[length:var(--text-2xs)] tabular-nums text-[var(--text-muted)]">
+            <span className="min-w-[32px] text-right text-[length:var(--text-2xs)] text-[var(--text-muted)] tabular-nums">
               {charge}
             </span>
           </div>
@@ -584,16 +637,16 @@ export function CodeGraphExplorer({ projectId }: CodeGraphExplorerProps) {
               step={5}
               value={linkDist}
               onChange={(e) => {
-                const v = Number(e.target.value)
-                setLinkDist(v)
+                const v = Number(e.target.value);
+                setLinkDist(v);
                 try {
-                  localStorage.setItem('gobby-cg-link-dist', String(v))
+                  localStorage.setItem("gobby-cg-link-dist", String(v));
                 } catch {
                   /* noop */
                 }
               }}
             />
-            <span className="min-w-[32px] text-right text-[length:var(--text-2xs)] tabular-nums text-[var(--text-muted)]">
+            <span className="min-w-[32px] text-right text-[length:var(--text-2xs)] text-[var(--text-muted)] tabular-nums">
               {linkDist}
             </span>
           </div>
@@ -611,16 +664,16 @@ export function CodeGraphExplorer({ projectId }: CodeGraphExplorerProps) {
               step={0.005}
               value={centerStrength}
               onChange={(e) => {
-                const v = Number(e.target.value)
-                setCenterStrength(v)
+                const v = Number(e.target.value);
+                setCenterStrength(v);
                 try {
-                  localStorage.setItem('gobby-cg-center', String(v))
+                  localStorage.setItem("gobby-cg-center", String(v));
                 } catch {
                   /* noop */
                 }
               }}
             />
-            <span className="min-w-[32px] text-right text-[length:var(--text-2xs)] tabular-nums text-[var(--text-muted)]">
+            <span className="min-w-[32px] text-right text-[length:var(--text-2xs)] text-[var(--text-muted)] tabular-nums">
               {centerStrength.toFixed(3)}
             </span>
           </div>
@@ -638,16 +691,16 @@ export function CodeGraphExplorer({ projectId }: CodeGraphExplorerProps) {
               step={CODE_GRAPH_LIMIT_STEP}
               value={limit}
               onChange={(e) => {
-                const v = Number(e.target.value)
-                setLimit(v)
+                const v = Number(e.target.value);
+                setLimit(v);
                 try {
-                  localStorage.setItem('gobby-cg-limit', String(v))
+                  localStorage.setItem("gobby-cg-limit", String(v));
                 } catch {
                   /* noop */
                 }
               }}
             />
-            <span className="min-w-[32px] text-right text-[length:var(--text-2xs)] tabular-nums text-[var(--text-muted)]">
+            <span className="min-w-[32px] text-right text-[length:var(--text-2xs)] text-[var(--text-muted)] tabular-nums">
               {limit}
             </span>
           </div>
@@ -656,19 +709,19 @@ export function CodeGraphExplorer({ projectId }: CodeGraphExplorerProps) {
             size="sm"
             dense
             className={cn(
-              'mt-0.5 cursor-pointer rounded border-[var(--border)] bg-[var(--bg-tertiary)] py-0.5 text-[length:var(--text-xs)] font-normal text-[var(--text-muted)] hover:bg-[var(--bg-primary)] hover:text-[var(--text-primary)]',
+              "mt-0.5 cursor-pointer rounded border-[var(--border)] bg-[var(--bg-tertiary)] py-0.5 text-[length:var(--text-xs)] font-normal text-[var(--text-muted)] hover:bg-[var(--bg-primary)] hover:text-[var(--text-primary)]",
               coarseHitAreaCls,
             )}
             onClick={() => {
-              setCharge(DEFAULT_CHARGE)
-              setLinkDist(DEFAULT_LINK_DIST)
-              setCenterStrength(DEFAULT_CENTER)
-              setLimit(DEFAULT_CODE_GRAPH_LIMIT)
+              setCharge(DEFAULT_CHARGE);
+              setLinkDist(DEFAULT_LINK_DIST);
+              setCenterStrength(DEFAULT_CENTER);
+              setLimit(DEFAULT_CODE_GRAPH_LIMIT);
               try {
-                localStorage.removeItem('gobby-cg-charge')
-                localStorage.removeItem('gobby-cg-link-dist')
-                localStorage.removeItem('gobby-cg-center')
-                localStorage.removeItem('gobby-cg-limit')
+                localStorage.removeItem("gobby-cg-charge");
+                localStorage.removeItem("gobby-cg-link-dist");
+                localStorage.removeItem("gobby-cg-center");
+                localStorage.removeItem("gobby-cg-limit");
               } catch {
                 /* noop */
               }
@@ -680,7 +733,7 @@ export function CodeGraphExplorer({ projectId }: CodeGraphExplorerProps) {
       )}
 
       {/* Search */}
-      <div className="absolute left-3 top-3 z-10 w-[260px]">
+      <div className="absolute top-3 left-3 z-10 w-[260px]">
         <Input
           type="text"
           placeholder="Search"
@@ -697,20 +750,20 @@ export function CodeGraphExplorer({ projectId }: CodeGraphExplorerProps) {
                 size="sm"
                 dense
                 className={cn(
-                  'w-full cursor-pointer justify-start rounded-none border-0 bg-transparent px-2.5 py-1.5 text-left font-mono font-normal text-[length:var(--text-sm)] text-[var(--text-primary)] hover:bg-[var(--bg-tertiary)]',
+                  "w-full cursor-pointer justify-start rounded-none border-0 bg-transparent px-2.5 py-1.5 text-left font-mono text-[length:var(--text-sm)] font-normal text-[var(--text-primary)] hover:bg-[var(--bg-tertiary)]",
                   coarseHitAreaCls,
                 )}
                 onClick={() => handleSearchResultClick(r)}
               >
                 <span
-                  className="min-w-[55px] shrink-0 text-[length:var(--text-2xs)] uppercase tracking-[0.5px]"
+                  className="min-w-[55px] shrink-0 text-[length:var(--text-2xs)] tracking-[0.5px] uppercase"
                   style={{ color: getNodeColorCss(r.kind) }}
                 >
                   {r.kind || r.type}
                 </span>
                 <span className="shrink-0 font-medium">{r.name}</span>
                 {r.file_path && (
-                  <span className="overflow-hidden text-ellipsis whitespace-nowrap text-[length:var(--text-2xs)] text-[var(--text-muted)]">
+                  <span className="overflow-hidden text-[length:var(--text-2xs)] text-ellipsis whitespace-nowrap text-[var(--text-muted)]">
                     {r.file_path}
                   </span>
                 )}
@@ -723,11 +776,11 @@ export function CodeGraphExplorer({ projectId }: CodeGraphExplorerProps) {
       {/* Info overlay */}
       <Card className="absolute bottom-3 left-3 z-10 rounded border-0 bg-[color-mix(in_srgb,var(--bg-primary)_80%,transparent)] px-2 py-1 font-mono text-[length:var(--text-xs)] text-[var(--text-muted)]">
         {forceData.nodes.length} nodes &middot; {forceData.links.length} edges
-        {isLoading && ' (loading...)'}
+        {isLoading && " (loading...)"}
       </Card>
 
       {/* Legend */}
-      <Card className="absolute bottom-3 right-3 z-10 flex flex-col gap-[3px] rounded border-[var(--border)] bg-[color-mix(in_srgb,var(--bg-primary)_85%,transparent)] px-2.5 py-2">
+      <Card className="absolute right-3 bottom-3 z-10 flex flex-col gap-[3px] rounded border-[var(--border)] bg-[color-mix(in_srgb,var(--bg-primary)_85%,transparent)] px-2.5 py-2">
         {Object.keys(NODE_COLOR_VARS)
           .slice(0, 7)
           .map((type) => (
@@ -759,10 +812,10 @@ export function CodeGraphExplorer({ projectId }: CodeGraphExplorerProps) {
 
       {/* Detail panel */}
       {selectedNode && (
-        <Card className="absolute right-3 top-[50px] z-10 w-[250px] rounded-md border-[var(--border)] bg-[var(--bg-secondary)] p-3">
+        <Card className="absolute top-[50px] right-3 z-10 w-[250px] rounded-md border-[var(--border)] bg-[var(--bg-secondary)] p-3">
           <div className="mb-1.5 flex items-center justify-between">
             <span
-              className="font-mono text-[length:var(--text-2xs)] uppercase tracking-[0.5px]"
+              className="font-mono text-[length:var(--text-2xs)] tracking-[0.5px] uppercase"
               style={{ color: getNodeColorCss(selectedNode.type) }}
             >
               {selectedNode.type}
@@ -772,7 +825,7 @@ export function CodeGraphExplorer({ projectId }: CodeGraphExplorerProps) {
               size="icon"
               dense
               className={cn(
-                'h-auto min-h-0 w-auto cursor-pointer border-0 bg-transparent p-0 text-[length:var(--text-lg)] font-normal leading-none text-[var(--text-muted)] hover:bg-transparent hover:text-[var(--text-primary)]',
+                "h-auto min-h-0 w-auto cursor-pointer border-0 bg-transparent p-0 text-[length:var(--text-lg)] leading-none font-normal text-[var(--text-muted)] hover:bg-transparent hover:text-[var(--text-primary)]",
                 coarseHitAreaCls,
               )}
               onClick={() => setSelectedNode(null)}
@@ -781,18 +834,18 @@ export function CodeGraphExplorer({ projectId }: CodeGraphExplorerProps) {
               &times;
             </Button>
           </div>
-          <div className="mb-1 break-all font-mono text-[length:var(--text-md)] font-semibold text-[var(--text-primary)]">
+          <div className="mb-1 font-mono text-[length:var(--text-md)] font-semibold break-all text-[var(--text-primary)]">
             {selectedNode.name}
           </div>
           {selectedNode.signature && (
-            <div className="mb-1 overflow-x-auto whitespace-nowrap rounded-[3px] bg-[color-mix(in_srgb,var(--bg-primary)_30%,transparent)] px-1.5 py-1 font-mono text-[length:var(--text-xs)] text-[var(--color-warning-foreground)]">
+            <div className="mb-1 overflow-x-auto rounded-[3px] bg-[color-mix(in_srgb,var(--bg-primary)_30%,transparent)] px-1.5 py-1 font-mono text-[length:var(--text-xs)] whitespace-nowrap text-[var(--color-warning-foreground)]">
               {selectedNode.signature}
             </div>
           )}
-          {selectedNode.file_path && selectedNode.type !== 'file' && (
+          {selectedNode.file_path && selectedNode.type !== "file" && (
             <div className="mb-0.5 font-mono text-[length:var(--text-xs)] text-[var(--text-muted)]">
               {selectedNode.file_path}
-              {selectedNode.line_start ? `:${selectedNode.line_start}` : ''}
+              {selectedNode.line_start ? `:${selectedNode.line_start}` : ""}
             </div>
           )}
           {selectedNode.symbol_count !== undefined && (
@@ -814,21 +867,21 @@ export function CodeGraphExplorer({ projectId }: CodeGraphExplorerProps) {
         nodeThreeObjectExtend={false}
         onNodeClick={handleNodeClick}
         nodeLabel={(node: any) => {
-          const name = escapeHtml(String(node.name || ''))
-          const parts = [`<b>${name}</b>`]
+          const name = escapeHtml(String(node.name || ""));
+          const parts = [`<b>${name}</b>`];
           if (node.kind)
             parts.push(
               `<br/><span style="color:${getNodeColorCss(node.type)};text-transform:uppercase;font-size:var(--text-2xs)">${escapeHtml(String(node.kind))}</span>`,
-            )
+            );
           if (node.signature)
             parts.push(
               `<br/><span style="color:var(--color-warning-foreground);font-size:var(--text-2xs)">${escapeHtml(String(node.signature))}</span>`,
-            )
-          if (node.file_path && node.type !== 'file')
+            );
+          if (node.file_path && node.type !== "file")
             parts.push(
-              `<br/><span style="color:var(--text-muted);font-size:var(--text-2xs)">${escapeHtml(String(node.file_path))}${node.line_start ? ':' + node.line_start : ''}</span>`,
-            )
-          return `<div style="text-align:center;font-family:monospace;font-size:var(--text-md);line-height:1.4">${parts.join('')}</div>`
+              `<br/><span style="color:var(--text-muted);font-size:var(--text-2xs)">${escapeHtml(String(node.file_path))}${node.line_start ? ":" + node.line_start : ""}</span>`,
+            );
+          return `<div style="text-align:center;font-family:monospace;font-size:var(--text-md);line-height:1.4">${parts.join("")}</div>`;
         }}
         linkSource="source"
         linkTarget="target"
@@ -849,11 +902,11 @@ export function CodeGraphExplorer({ projectId }: CodeGraphExplorerProps) {
           ? {
               rendererConfig: {
                 antialias: false,
-                powerPreference: 'low-power' as const,
+                powerPreference: "low-power" as const,
               },
             }
           : {})}
       />
     </div>
-  )
+  );
 }

@@ -96,7 +96,10 @@ export function SecretField({
             variant="ghost"
             size="sm"
             dense
-            className={cn("absolute inset-y-0 right-0 rounded-l-none px-3", coarseHitAreaCls)}
+            className={cn(
+              "absolute inset-y-0 right-0 rounded-l-none px-3",
+              coarseHitAreaCls,
+            )}
             aria-label={revealed ? `Hide ${ariaLabel}` : `Show ${ariaLabel}`}
             aria-pressed={revealed}
             disabled={disabled}
@@ -165,7 +168,7 @@ export function TextAreaField({
            auto-grows to fit (field-sizing) — the pane scrolls, not the box. */
         <Textarea
           id={id}
-          className="min-h-24 resize-none [field-sizing:content]"
+          className="[field-sizing:content] min-h-24 resize-none"
           aria-label={ariaLabel}
           value={value}
           disabled={disabled}

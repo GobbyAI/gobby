@@ -15,7 +15,10 @@ import {
 import { normalizePages } from "../WikiTabData";
 import { pagesEnvelope } from "./fixtures";
 
-function fixturePages(): { pages: WikiPageMeta[]; outputs: ReturnType<typeof normalizePages>["outputs"] } {
+function fixturePages(): {
+  pages: WikiPageMeta[];
+  outputs: ReturnType<typeof normalizePages>["outputs"];
+} {
   return normalizePages(pagesEnvelope.payload);
 }
 
@@ -75,9 +78,9 @@ describe("codePathToSourcePath", () => {
     expect(codePathToSourcePath("code/files/src/gobby/runner.py.md")).toBe(
       "src/gobby/runner.py",
     );
-    expect(codePathToSourcePath("code/files/crates/gwiki/src/recap.rs.md")).toBe(
-      "crates/gwiki/src/recap.rs",
-    );
+    expect(
+      codePathToSourcePath("code/files/crates/gwiki/src/recap.rs.md"),
+    ).toBe("crates/gwiki/src/recap.rs");
   });
 
   it("returns null for non code/files pages", () => {
@@ -102,7 +105,11 @@ describe("buildPageTree", () => {
 
     const knowledge = findChild(tree, "knowledge");
     expect(knowledge.kind).toBe("folder");
-    expect(childNames(knowledge.children)).toEqual(["concepts", "sources", "topics"]);
+    expect(childNames(knowledge.children)).toEqual([
+      "concepts",
+      "sources",
+      "topics",
+    ]);
 
     const concepts = findChild(knowledge.children, "concepts");
     expect(childNames(concepts.children)).toEqual(["gobby", "gwiki"]);
@@ -118,7 +125,9 @@ describe("buildPageTree", () => {
     const kinds = tree.map((node) => node.kind);
     const firstPageIdx = kinds.indexOf("page");
     const lastFolderIdx = kinds.lastIndexOf("folder");
-    expect(lastFolderIdx).toBeLessThan(firstPageIdx === -1 ? kinds.length : firstPageIdx);
+    expect(lastFolderIdx).toBeLessThan(
+      firstPageIdx === -1 ? kinds.length : firstPageIdx,
+    );
   });
 
   it("marks outputs subtree entries as output nodes", () => {
@@ -136,15 +145,26 @@ describe("buildPageTree", () => {
 
   it("applies the root filter for mode-scoped trees", () => {
     const { pages, outputs } = fixturePages();
-    const codeTree = buildPageTree(pages, outputs, (path) => path.startsWith("code/"));
+    const codeTree = buildPageTree(pages, outputs, (path) =>
+      path.startsWith("code/"),
+    );
     expect(childNames(codeTree)).toEqual(["code"]);
-    const wikiTree = buildPageTree(pages, outputs, (path) => !path.startsWith("code/"));
+    const wikiTree = buildPageTree(
+      pages,
+      outputs,
+      (path) => !path.startsWith("code/"),
+    );
     expect(childNames(wikiTree)).not.toContain("code");
   });
 
   it("promotes the named wrapper folder's children to roots", () => {
     const { pages, outputs } = fixturePages();
-    const promoted = buildPageTree(pages, outputs, (path) => path.startsWith("code/"), "code");
+    const promoted = buildPageTree(
+      pages,
+      outputs,
+      (path) => path.startsWith("code/"),
+      "code",
+    );
     expect(childNames(promoted)).toEqual(["files", "_architecture"]);
     // Promotion rewrites the root set only — node paths stay full vault paths.
     const files = findChild(promoted, "files");
@@ -167,7 +187,9 @@ describe("buildNodeIndex / resolveWikilinkTarget", () => {
   it("resolves titles case-insensitively", () => {
     const { pages } = fixturePages();
     const index = buildNodeIndex(pages);
-    expect(resolveWikilinkTarget(index, "Gobby")).toBe("knowledge/concepts/gobby.md");
+    expect(resolveWikilinkTarget(index, "Gobby")).toBe(
+      "knowledge/concepts/gobby.md",
+    );
     expect(resolveWikilinkTarget(index, "architecture overview")).toBe(
       "code/_architecture.md",
     );
@@ -193,14 +215,18 @@ describe("buildNodeIndex / resolveWikilinkTarget", () => {
   it("returns null for unresolved targets", () => {
     const { pages } = fixturePages();
     const index = buildNodeIndex(pages);
-    expect(resolveWikilinkTarget(index, "knowledge/concepts/missing")).toBeNull();
+    expect(
+      resolveWikilinkTarget(index, "knowledge/concepts/missing"),
+    ).toBeNull();
     expect(resolveWikilinkTarget(index, "No Such Title")).toBeNull();
   });
 
   it("exposes byPath lookups keyed by exact page path", () => {
     const { pages } = fixturePages();
     const index = buildNodeIndex(pages);
-    expect(index.byPath.get("knowledge/concepts/gwiki.md")?.title).toBe("Gwiki");
+    expect(index.byPath.get("knowledge/concepts/gwiki.md")?.title).toBe(
+      "Gwiki",
+    );
   });
 });
 

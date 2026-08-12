@@ -36,7 +36,9 @@ function rows(open = true): VisibleTaskRow[] {
   };
   return [
     { node: parent, depth: 0, isInternal: true, isOpen: open },
-    ...(open ? [{ node: child, depth: 1, isInternal: false, isOpen: false }] : []),
+    ...(open
+      ? [{ node: child, depth: 1, isInternal: false, isOpen: false }]
+      : []),
   ];
 }
 
@@ -150,7 +152,9 @@ describe("TasksTabList keyboard navigation", () => {
         />,
       );
 
-      expect(screen.getByRole("treeitem", { name: /Broken task: Ready/ })).toBeTruthy();
+      expect(
+        screen.getByRole("treeitem", { name: /Broken task: Ready/ }),
+      ).toBeTruthy();
       expect(warn).toHaveBeenCalledWith(
         "Failed to derive task row state",
         expect.objectContaining({ taskId: "broken" }),
@@ -181,7 +185,9 @@ describe("TasksTabList rendering performance", () => {
       />,
     );
 
-    await waitFor(() => expect(screen.getAllByRole("treeitem").length).toBeGreaterThan(0));
+    await waitFor(() =>
+      expect(screen.getAllByRole("treeitem").length).toBeGreaterThan(0),
+    );
     expect(screen.getAllByRole("treeitem").length).toBeLessThan(500);
     expect(screen.queryByRole("treeitem", { name: /Task 499/ })).toBeNull();
   });

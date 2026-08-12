@@ -7,10 +7,7 @@ import { Button } from "../ui/Button";
 import { coarseHitAreaCls } from "../ui/controlStyles";
 import { ActivityPanelEmpty, TasksEmptyIcon } from "./ActivityPanelEmpty";
 import { ActivityToolbarSearchRow } from "./ActivityPanelSearch";
-import {
-  InlineFilterFieldRow,
-  InlineFilterPanel,
-} from "./FilterPrimitives";
+import { InlineFilterFieldRow, InlineFilterPanel } from "./FilterPrimitives";
 import { useRegisterActivityActions } from "./activityActions";
 import { DEFAULT_TOP_PANEL_PERCENT } from "./constants";
 import { SelectField } from "./fields";
@@ -69,8 +66,12 @@ function skillUpdatePayload(draft: ActivitySkill): SkillUpdatePayload {
   };
 }
 
-export const SkillsTab = memo(function SkillsTab({ projectId }: SkillsTabProps) {
-  const [segment, setSegment] = useState<SkillSegment>(() => readStoredSegment());
+export const SkillsTab = memo(function SkillsTab({
+  projectId,
+}: SkillsTabProps) {
+  const [segment, setSegment] = useState<SkillSegment>(() =>
+    readStoredSegment(),
+  );
   const [skills, setSkills] = useState<ActivitySkill[]>([]);
   const [isLoading, setIsLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
@@ -103,7 +104,11 @@ export const SkillsTab = memo(function SkillsTab({ projectId }: SkillsTabProps) 
       setSkills(loaded);
       return loaded;
     } catch (loadError) {
-      setError(loadError instanceof Error ? loadError.message : "Failed to load skills");
+      setError(
+        loadError instanceof Error
+          ? loadError.message
+          : "Failed to load skills",
+      );
       setSkills([]);
       return [];
     } finally {
@@ -143,8 +148,12 @@ export const SkillsTab = memo(function SkillsTab({ projectId }: SkillsTabProps) 
       if (selectedId !== null) setSelectedId(null);
       return;
     }
-    if (!selectedId || !filteredSkills.some((skill) => skill.id === selectedId)) {
-      const nextSelection = filteredSkills.find((skill) => !skill.deleted_at) ?? filteredSkills[0];
+    if (
+      !selectedId ||
+      !filteredSkills.some((skill) => skill.id === selectedId)
+    ) {
+      const nextSelection =
+        filteredSkills.find((skill) => !skill.deleted_at) ?? filteredSkills[0];
       setSelectedId(nextSelection.id);
     }
   }, [filteredSkills, segment, selectedId]);
@@ -158,17 +167,24 @@ export const SkillsTab = memo(function SkillsTab({ projectId }: SkillsTabProps) 
     setSelectedId(updated.id);
   }, []);
 
-  const withSkillBusy = useCallback(async (skill: ActivitySkill, action: () => Promise<void>) => {
-    setBusyId(skill.id);
-    setError(null);
-    try {
-      await action();
-    } catch (actionError) {
-      setError(actionError instanceof Error ? actionError.message : String(actionError));
-    } finally {
-      setBusyId(null);
-    }
-  }, []);
+  const withSkillBusy = useCallback(
+    async (skill: ActivitySkill, action: () => Promise<void>) => {
+      setBusyId(skill.id);
+      setError(null);
+      try {
+        await action();
+      } catch (actionError) {
+        setError(
+          actionError instanceof Error
+            ? actionError.message
+            : String(actionError),
+        );
+      } finally {
+        setBusyId(null);
+      }
+    },
+    [],
+  );
 
   const handleSegmentChange = useCallback(
     (next: SkillSegment) => {
@@ -225,7 +241,12 @@ export const SkillsTab = memo(function SkillsTab({ projectId }: SkillsTabProps) 
       const payload = skillUpdatePayload(draft);
       const updated = await updateSkill(draft.id, payload);
       if (!updated) return false;
-      replaceSkill({ ...updated, ...payload, id: draft.id, name: draft.name } as ActivitySkill);
+      replaceSkill({
+        ...updated,
+        ...payload,
+        id: draft.id,
+        name: draft.name,
+      } as ActivitySkill);
       return true;
     },
     [replaceSkill],
@@ -291,7 +312,8 @@ export const SkillsTab = memo(function SkillsTab({ projectId }: SkillsTabProps) 
               }
             : {
                 title: `Delete ${skill.name}?`,
-                description: "The skill moves to Deleted and can be restored later.",
+                description:
+                  "The skill moves to Deleted and can be restored later.",
                 confirmLabel: "Delete",
                 destructive: true,
               },
@@ -323,7 +345,12 @@ export const SkillsTab = memo(function SkillsTab({ projectId }: SkillsTabProps) 
         source: skill.source ?? "installed",
         deleted_at: null,
       });
-      setFilters((current) => ({ ...current, source: "all", category: "all", search: "" }));
+      setFilters((current) => ({
+        ...current,
+        source: "all",
+        category: "all",
+        search: "",
+      }));
       setSegment("installed");
     },
     [replaceSkill],
@@ -334,7 +361,9 @@ export const SkillsTab = memo(function SkillsTab({ projectId }: SkillsTabProps) 
       {segment === "installed" && searchOpen && (
         <ActivityToolbarSearchRow
           value={filters.search}
-          onChange={(search) => setFilters((current) => ({ ...current, search }))}
+          onChange={(search) =>
+            setFilters((current) => ({ ...current, search }))
+          }
           placeholder="Search skills"
           ariaLabel="Search skills"
           onClose={closeSearch}
@@ -368,7 +397,10 @@ export const SkillsTab = memo(function SkillsTab({ projectId }: SkillsTabProps) 
               }
               options={[
                 { value: "all", label: "All categories" },
-                ...categoryOptions.map((category) => ({ value: category, label: category })),
+                ...categoryOptions.map((category) => ({
+                  value: category,
+                  label: category,
+                })),
               ]}
             />
           </InlineFilterFieldRow>

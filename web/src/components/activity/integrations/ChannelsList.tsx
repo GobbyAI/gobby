@@ -71,12 +71,13 @@ export function ChannelsList({
               />
               <span className="activity-row-title">{channel.name}</span>
               <Chip className="gap-1">
-                <IntegrationPlatformIcon type={channel.channel_type} size={12} />
+                <IntegrationPlatformIcon
+                  type={channel.channel_type}
+                  size={12}
+                />
                 {CHANNEL_DISPLAY_NAMES[channel.channel_type]}
               </Chip>
-              <Chip>
-                {channel.enabled ? "On" : "Off"}
-              </Chip>
+              <Chip>{channel.enabled ? "On" : "Off"}</Chip>
             </Button>
             <div className="px-1">
               <QuickMenu

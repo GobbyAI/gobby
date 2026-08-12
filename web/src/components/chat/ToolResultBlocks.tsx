@@ -1,105 +1,117 @@
-import { useMemo } from 'react'
+import { useMemo } from "react";
 
-import { cn } from '../../lib/utils'
-import { CodeBlock } from '../shared/CodeBlock'
-import { TOOL_CARD_SPACING } from '../shared/spacing'
-import { parseReadOutput } from './ToolCallCard.helpers'
-import { TOOL_RESULT_CUSTOM_STYLE } from './ToolCallCard.styles'
+import { cn } from "../../lib/utils";
+import { CodeBlock } from "../shared/CodeBlock";
+import { TOOL_CARD_SPACING } from "../shared/spacing";
+import { parseReadOutput } from "./ToolCallCard.helpers";
+import { TOOL_RESULT_CUSTOM_STYLE } from "./ToolCallCard.styles";
 
-const TOOL_RESULT_WRAP_CLASS = 'tool-result-wrap'
+const TOOL_RESULT_WRAP_CLASS = "tool-result-wrap";
 
 export interface MetadataStripProps {
-  meta: Record<string, unknown>
-  className?: string
+  meta: Record<string, unknown>;
+  className?: string;
 }
 
 function formatMetaValue(value: unknown): string {
-  if (typeof value === 'string') {
-    return value.length > 64 ? `${value.slice(0, 63)}…` : value
+  if (typeof value === "string") {
+    return value.length > 64 ? `${value.slice(0, 63)}…` : value;
   }
-  if (typeof value === 'number' || typeof value === 'boolean') return String(value)
-  if (value == null) return 'null'
+  if (typeof value === "number" || typeof value === "boolean")
+    return String(value);
+  if (value == null) return "null";
   try {
-    const s = JSON.stringify(value)
-    return s.length > 64 ? `${s.slice(0, 63)}…` : s
+    const s = JSON.stringify(value);
+    return s.length > 64 ? `${s.slice(0, 63)}…` : s;
   } catch {
-    return String(value)
+    return String(value);
   }
 }
 
 export function MetadataStrip({ meta, className }: MetadataStripProps) {
-  const entries = Object.entries(meta).filter(([, v]) => v !== undefined)
-  if (entries.length === 0) return null
+  const entries = Object.entries(meta).filter(([, v]) => v !== undefined);
+  if (entries.length === 0) return null;
   return (
     <div
       className={cn(
-        'flex flex-wrap gap-x-3 gap-y-0.5 text-[length:var(--text-2xs)] font-mono',
+        "flex flex-wrap gap-x-3 gap-y-0.5 font-mono text-[length:var(--text-2xs)]",
         TOOL_CARD_SPACING.metaStrip,
-        'border-b border-border/40 text-muted-foreground bg-muted/30',
+        "border-b border-border/40 bg-muted/30 text-muted-foreground",
         className,
       )}
     >
       {entries.map(([key, value]) => (
         <span key={key}>
-          <span className="opacity-60">{key}:</span>{' '}
+          <span className="opacity-60">{key}:</span>{" "}
           <span>{formatMetaValue(value)}</span>
         </span>
       ))}
     </div>
-  )
+  );
 }
 
-export type JsonResultVariant = 'normal' | 'error'
+export type JsonResultVariant = "normal" | "error";
 
 export interface JsonResultBlockProps {
-  value: unknown
-  variant?: JsonResultVariant
-  className?: string
+  value: unknown;
+  variant?: JsonResultVariant;
+  className?: string;
 }
 
 const JSON_BLOCK_BASE = cn(
-  'rounded max-h-96 overflow-y-auto overflow-x-hidden font-mono text-xs whitespace-pre-wrap [overflow-wrap:anywhere]',
+  "max-h-96 overflow-x-hidden overflow-y-auto rounded font-mono text-xs [overflow-wrap:anywhere] whitespace-pre-wrap",
   TOOL_CARD_SPACING.resultPad,
-)
+);
 
 function formatJsonForDisplay(value: unknown): string {
-  let serialized: string
+  let serialized: string;
   try {
-    if (typeof value === 'string') {
-      serialized = JSON.stringify(JSON.parse(value), null, 2)
+    if (typeof value === "string") {
+      serialized = JSON.stringify(JSON.parse(value), null, 2);
     } else {
-      serialized = JSON.stringify(value, null, 2) ?? String(value)
+      serialized = JSON.stringify(value, null, 2) ?? String(value);
     }
   } catch {
-    return typeof value === 'string' ? value : String(value)
+    return typeof value === "string" ? value : String(value);
   }
-  return serialized.replace(/\\n/g, '\n').replace(/\\t/g, '\t')
+  return serialized.replace(/\\n/g, "\n").replace(/\\t/g, "\t");
 }
 
-export function JsonResultBlock({ value, variant = 'normal', className }: JsonResultBlockProps) {
-  const display = useMemo(() => formatJsonForDisplay(value), [value])
+export function JsonResultBlock({
+  value,
+  variant = "normal",
+  className,
+}: JsonResultBlockProps) {
+  const display = useMemo(() => formatJsonForDisplay(value), [value]);
   // Normal results sit transparently on the bordered tool card (no second
   // off-shade slab). The error variant keeps a destructive wash: that is a
   // grayscale-legible state signal, not chrome (.impeccable.md state rule).
   const palette =
-    variant === 'error'
-      ? 'bg-destructive/30 text-destructive-foreground'
-      : 'text-foreground'
+    variant === "error"
+      ? "bg-destructive/30 text-destructive-foreground"
+      : "text-foreground";
   return (
-    <pre className={cn(JSON_BLOCK_BASE, TOOL_RESULT_WRAP_CLASS, palette, className)}>
+    <pre
+      className={cn(
+        JSON_BLOCK_BASE,
+        TOOL_RESULT_WRAP_CLASS,
+        palette,
+        className,
+      )}
+    >
       <code>{display}</code>
     </pre>
-  )
+  );
 }
 
 export interface RenderResultBodyOptions {
-  language?: string
-  variant?: JsonResultVariant
+  language?: string;
+  variant?: JsonResultVariant;
 }
 
 function looksLikeJsonString(body: string): boolean {
-  const t = body.trimStart()
-  return t.startsWith('{') || t.startsWith('[')
+  const t = body.trimStart();
+  return t.startsWith("{") || t.startsWith("[");
 }
 
 function LineNumberedBody({
@@ -107,9 +119,9 @@ function LineNumberedBody({
   language,
   startingLineNumber,
 }: {
-  content: string
-  language: string
-  startingLineNumber: number
+  content: string;
+  language: string;
+  startingLineNumber: number;
 }) {
   return (
     <CodeBlock
@@ -121,13 +133,13 @@ function LineNumberedBody({
     >
       {content}
     </CodeBlock>
-  )
+  );
 }
 
 function PlainBody({ body, language }: { body: string; language?: string }) {
   return (
     <CodeBlock
-      language={language ?? 'text'}
+      language={language ?? "text"}
       showLineNumbers={false}
       wrapLongLines
       className="tool-code-surface"
@@ -136,28 +148,32 @@ function PlainBody({ body, language }: { body: string; language?: string }) {
     >
       {body}
     </CodeBlock>
-  )
+  );
 }
 
 export interface ToolResultBodyProps extends RenderResultBodyOptions {
-  body: string
+  body: string;
 }
 
-export function ToolResultBody({ body, language, variant }: ToolResultBodyProps) {
-  const parsedRead = parseReadOutput(body)
+export function ToolResultBody({
+  body,
+  language,
+  variant,
+}: ToolResultBodyProps) {
+  const parsedRead = parseReadOutput(body);
   if (parsedRead) {
     return (
       <LineNumberedBody
         content={parsedRead.content}
-        language={language ?? 'text'}
+        language={language ?? "text"}
         startingLineNumber={parsedRead.startLine}
       />
-    )
+    );
   }
 
   if (looksLikeJsonString(body)) {
-    return <JsonResultBlock value={body} variant={variant} />
+    return <JsonResultBlock value={body} variant={variant} />;
   }
 
-  return <PlainBody body={body} language={language} />
+  return <PlainBody body={body} language={language} />;
 }

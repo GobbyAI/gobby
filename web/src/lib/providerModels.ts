@@ -94,7 +94,9 @@ export async function fetchProviderModelCatalog(): Promise<
         const validModels = data.providers
           .filter(isProviderModelEntry)
           .map(mapProviderModelEntry)
-          .filter((entry: ProviderModelEntry) => !isHiddenProvider(entry.provider));
+          .filter(
+            (entry: ProviderModelEntry) => !isHiddenProvider(entry.provider),
+          );
         cachedModels = validModels;
         cachedModelsTimestamp = now;
         return validModels;
@@ -171,7 +173,8 @@ export function getModelsForProvider(
   provider: string,
 ): ProviderModelOption[] {
   const entry = catalog.find(
-    (candidate) => normalizeProvider(candidate.provider) === normalizeProvider(provider),
+    (candidate) =>
+      normalizeProvider(candidate.provider) === normalizeProvider(provider),
   );
   const rawModels = Array.isArray(entry?.models) ? entry.models : [];
   return resolveVisibleModels(provider, rawModels);
@@ -293,7 +296,10 @@ export function getPreferredReasoningEffort(
 ): string {
   const options = getReasoningOptionsForModel(catalog, provider, model);
   const normalizedPreferred = normalizeModelIdentifier(preferredEffort);
-  if (normalizedPreferred && options.some((option) => option.value === normalizedPreferred)) {
+  if (
+    normalizedPreferred &&
+    options.some((option) => option.value === normalizedPreferred)
+  ) {
     return normalizedPreferred;
   }
 
@@ -304,7 +310,10 @@ export function getPreferredReasoningEffort(
   const defaultEffort = normalizeModelIdentifier(
     matchedModel?.reasoning?.default_effort,
   );
-  if (defaultEffort && options.some((option) => option.value === defaultEffort)) {
+  if (
+    defaultEffort &&
+    options.some((option) => option.value === defaultEffort)
+  ) {
     return defaultEffort;
   }
 
@@ -356,7 +365,11 @@ export function getPreferredModelForProvider(
     return safePreferredModel?.trim() || null;
   }
 
-  const models = getModelsForSelection(catalog, normalizedProvider, safePreferredModel);
+  const models = getModelsForSelection(
+    catalog,
+    normalizedProvider,
+    safePreferredModel,
+  );
   if (models.length === 0) {
     return safePreferredModel?.trim() || null;
   }
@@ -366,7 +379,9 @@ export function getPreferredModelForProvider(
     return matchedModel.value;
   }
 
-  return models.find((model) => model.is_default)?.value ?? models[0]?.value ?? null;
+  return (
+    models.find((model) => model.is_default)?.value ?? models[0]?.value ?? null
+  );
 }
 
 export function resolveProviderModelPair(
@@ -384,8 +399,11 @@ export function resolveProviderModelPair(
   }
 
   const sameProviderFallbackModel =
-    fallback?.provider?.trim() === provider ? fallback.model?.trim() || null : null;
-  const preferredModel = sameProviderFallbackModel || primary.model?.trim() || null;
+    fallback?.provider?.trim() === provider
+      ? fallback.model?.trim() || null
+      : null;
+  const preferredModel =
+    sameProviderFallbackModel || primary.model?.trim() || null;
 
   return {
     provider,
@@ -402,9 +420,9 @@ function resolveVisibleModels(
 
   for (const model of visibleModels) {
     const resolved = resolveModelOption(provider, model);
-    const identity = normalizeModelIdentifier(
-      resolved.canonical_id ?? resolved.value,
-    ) ?? resolved.value;
+    const identity =
+      normalizeModelIdentifier(resolved.canonical_id ?? resolved.value) ??
+      resolved.value;
     const existing = deduped.get(identity);
     if (!existing) {
       deduped.set(identity, resolved);
@@ -466,12 +484,22 @@ function parseModelInfo(
 }
 
 function parseClaudeModelInfo(model: ProviderModelOption): ParsedModelInfo {
-  const tokens = tokenizeModel(model.canonical_id || model.value || model.label);
-  const family = tokens.find((token) => ["fable", "opus", "sonnet", "haiku"].includes(token));
+  const tokens = tokenizeModel(
+    model.canonical_id || model.value || model.label,
+  );
+  const family = tokens.find((token) =>
+    ["fable", "opus", "sonnet", "haiku"].includes(token),
+  );
   const versionParts = extractVersionParts(tokens, family);
   const releaseDate = extractReleaseDate(tokens);
   const familyScore =
-    family === "fable" ? 400 : family === "opus" ? 300 : family === "sonnet" ? 200 : 100;
+    family === "fable"
+      ? 400
+      : family === "opus"
+        ? 300
+        : family === "sonnet"
+          ? 200
+          : 100;
 
   return {
     displayLabel: family
@@ -490,7 +518,9 @@ function parseCodexModelInfo(model: ProviderModelOption): ParsedModelInfo {
   }
   const tokens = tokenizeModel(normalized);
   const versionParts = extractVersionParts(tokens, "gpt");
-  const flavors = CODEX_FLAVORS.filter((flavor) => tokens.includes(flavor.token));
+  const flavors = CODEX_FLAVORS.filter((flavor) =>
+    tokens.includes(flavor.token),
+  );
   const tierScore = flavors.reduce(
     (score, flavor) => Math.min(score, flavor.tierScore),
     400,
@@ -611,7 +641,9 @@ function compareResolvedModels(
   }
 
   if (leftParsed.releaseDate !== rightParsed.releaseDate) {
-    return (rightParsed.releaseDate ?? "").localeCompare(leftParsed.releaseDate ?? "");
+    return (rightParsed.releaseDate ?? "").localeCompare(
+      leftParsed.releaseDate ?? "",
+    );
   }
 
   return left.label.localeCompare(right.label);
@@ -637,7 +669,10 @@ function tokenizeModel(value: string): string[] {
     .filter(Boolean);
 }
 
-function extractVersionParts(tokens: string[], anchor: string | null | undefined): number[] {
+function extractVersionParts(
+  tokens: string[],
+  anchor: string | null | undefined,
+): number[] {
   const anchorIndex = anchor ? tokens.indexOf(anchor) : -1;
   const startIndex = anchorIndex >= 0 ? anchorIndex + 1 : 0;
   const versionParts: number[] = [];
@@ -681,7 +716,9 @@ function formatReasoningLabel(value: string): string {
   return titleCase(normalized);
 }
 
-export function formatModelDisplayLabel(label: string | null | undefined): string {
+export function formatModelDisplayLabel(
+  label: string | null | undefined,
+): string {
   const raw = label?.trim() ?? "";
   if (!raw) return "";
   return raw

@@ -51,7 +51,10 @@ export function WikiCodewikiStatus() {
       inFlight = true;
       try {
         const snapshot = await load();
-        if (snapshot !== null && (snapshot.state === "disabled" || snapshot.enabled === false)) {
+        if (
+          snapshot !== null &&
+          (snapshot.state === "disabled" || snapshot.enabled === false)
+        ) {
           stopPolling();
         }
         return snapshot;
@@ -62,8 +65,9 @@ export function WikiCodewikiStatus() {
 
     void poll().then((snapshot) => {
       if (
-        !cancelled
-        && (snapshot === null || (snapshot.state !== "disabled" && snapshot.enabled !== false))
+        !cancelled &&
+        (snapshot === null ||
+          (snapshot.state !== "disabled" && snapshot.enabled !== false))
       ) {
         timer = window.setInterval(() => void poll(), POLL_INTERVAL_MS);
       }
@@ -80,7 +84,11 @@ export function WikiCodewikiStatus() {
   const snapshot = state.status === "ready" ? state.snapshot : null;
   // A live surface needs no dormancy strip: render only while the daemon
   // reports the surface disabled, or when its status is unreachable.
-  if (snapshot !== null && snapshot.state !== "disabled" && snapshot.enabled !== false) {
+  if (
+    snapshot !== null &&
+    snapshot.state !== "disabled" &&
+    snapshot.enabled !== false
+  ) {
     return null;
   }
 
@@ -94,7 +102,9 @@ export function WikiCodewikiStatus() {
         {snapshot === null ? "Unavailable" : "Paused"}
       </Badge>
       <span className="truncate">
-        {snapshot === null ? "Codewiki status unavailable" : reasonText(snapshot)}
+        {snapshot === null
+          ? "Codewiki status unavailable"
+          : reasonText(snapshot)}
       </span>
     </p>
   );

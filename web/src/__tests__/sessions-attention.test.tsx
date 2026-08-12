@@ -25,8 +25,7 @@ function HeaderHarness({ children }: { children: ReactNode }) {
   );
 }
 
-const render = (ui: ReactElement) =>
-  baseRender(ui, { wrapper: HeaderHarness });
+const render = (ui: ReactElement) => baseRender(ui, { wrapper: HeaderHarness });
 
 type AgentEventHandler = (data: Record<string, unknown>) => void;
 
@@ -44,7 +43,11 @@ vi.mock("../hooks/useWebSocketEvent", () => ({
 vi.mock("../components/activity/SessionsTab.entries", () => ({
   resolveSessionStatusMode: () => "live",
   statusesForMode: () => new Set(["active", "paused"]),
-  useRunningAgents: () => ({ agents: [], agentsLoading: false, fetchError: null }),
+  useRunningAgents: () => ({
+    agents: [],
+    agentsLoading: false,
+    fetchError: null,
+  }),
   useWatchingSessionEntries: () => [
     {
       id: "session-1",
@@ -183,13 +186,13 @@ describe("session attention", () => {
 
     expect(websocket.handler).not.toBeNull();
     expect(
-      await screen.findByLabelText(
-        "Blocked attention: 1; Approval required",
-      ),
+      await screen.findByLabelText("Blocked attention: 1; Approval required"),
     ).toHaveTextContent("blocked 1");
 
     act(() => {
-      websocket.handler?.(attentionEvent("run:run-2", 6, "blocked", "Operator input required"));
+      websocket.handler?.(
+        attentionEvent("run:run-2", 6, "blocked", "Operator input required"),
+      );
     });
     expect(
       await screen.findByLabelText(

@@ -1,4 +1,4 @@
-import { useSyncExternalStore } from 'react'
+import { useSyncExternalStore } from "react";
 
 /**
  * The active resolved app theme, read from the `data-theme` attribute that
@@ -9,21 +9,21 @@ import { useSyncExternalStore } from 'react'
  * Prism style object passed to react-syntax-highlighter, which is a plain
  * JS object and cannot read `var(--…)` for its token palette.
  */
-function read(): 'light' | 'dark' {
-  return document.documentElement.getAttribute('data-theme') === 'light'
-    ? 'light'
-    : 'dark'
+function read(): "light" | "dark" {
+  return document.documentElement.getAttribute("data-theme") === "light"
+    ? "light"
+    : "dark";
 }
 
 function subscribe(onChange: () => void): () => void {
-  const observer = new MutationObserver(onChange)
+  const observer = new MutationObserver(onChange);
   observer.observe(document.documentElement, {
     attributes: true,
-    attributeFilter: ['data-theme'],
-  })
-  return () => observer.disconnect()
+    attributeFilter: ["data-theme"],
+  });
+  return () => observer.disconnect();
 }
 
-export function useResolvedTheme(): 'light' | 'dark' {
-  return useSyncExternalStore(subscribe, read, () => 'dark')
+export function useResolvedTheme(): "light" | "dark" {
+  return useSyncExternalStore(subscribe, read, () => "dark");
 }

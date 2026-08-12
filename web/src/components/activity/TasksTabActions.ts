@@ -58,10 +58,18 @@ export function extractResponseErrorMessage(
   return statusText || fallbackWithStatus;
 }
 
-async function taskActionError(response: Response, fallback: string): Promise<TaskActionHttpError> {
+async function taskActionError(
+  response: Response,
+  fallback: string,
+): Promise<TaskActionHttpError> {
   const body = await response.text().catch(() => "");
   return new TaskActionHttpError(
-    extractResponseErrorMessage(body, response.statusText, fallback, response.status),
+    extractResponseErrorMessage(
+      body,
+      response.statusText,
+      fallback,
+      response.status,
+    ),
     response.status,
     body,
   );
@@ -136,13 +144,19 @@ export async function postTaskLifecycleAction(
   return extractTaskPayload(await response.json());
 }
 
-export async function startBuild(baseUrl: string, task: GobbyTask): Promise<void> {
+export async function startBuild(
+  baseUrl: string,
+  task: GobbyTask,
+): Promise<void> {
   await postBuildRequest(baseUrl, {
     input_ref: taskActionRef(task),
   });
 }
 
-export async function startQuickBuild(baseUrl: string, task: GobbyTask): Promise<void> {
+export async function startQuickBuild(
+  baseUrl: string,
+  task: GobbyTask,
+): Promise<void> {
   const stageName = currentStageName(task);
   await postBuildRequest(baseUrl, {
     input_ref: taskActionRef(task),
@@ -183,7 +197,10 @@ async function postBuildRequest(
 }
 
 function isSemanticStopError(error: unknown): boolean {
-  if (error instanceof TaskActionHttpError && [404, 409, 410].includes(error.status)) {
+  if (
+    error instanceof TaskActionHttpError &&
+    [404, 409, 410].includes(error.status)
+  ) {
     return true;
   }
   const message = error instanceof Error ? error.message : String(error);
@@ -191,10 +208,15 @@ function isSemanticStopError(error: unknown): boolean {
 }
 
 export function buildRetryDelay(baseDelay: number): number {
-  return baseDelay + Math.floor(Math.random() * QUICK_BUILD_STOP_RETRY_JITTER_MS);
+  return (
+    baseDelay + Math.floor(Math.random() * QUICK_BUILD_STOP_RETRY_JITTER_MS)
+  );
 }
 
-async function stopQuickBuildWithRetry(baseUrl: string, task: GobbyTask): Promise<void> {
+async function stopQuickBuildWithRetry(
+  baseUrl: string,
+  task: GobbyTask,
+): Promise<void> {
   // Attempts are the initial stop call plus one retry for each configured delay.
   const maxAttempts = QUICK_BUILD_STOP_RETRY_DELAYS_MS.length + 1;
   let lastError: unknown;
@@ -218,10 +240,15 @@ async function stopQuickBuildWithRetry(baseUrl: string, task: GobbyTask): Promis
         attempt: attempt + 1,
         error,
       });
-      await new Promise((resolve) => setTimeout(resolve, buildRetryDelay(delay)));
+      await new Promise((resolve) =>
+        setTimeout(resolve, buildRetryDelay(delay)),
+      );
     }
   }
   const ref = taskActionRef(task);
-  const detail = lastError instanceof Error ? lastError.message : String(lastError);
-  throw new Error(`Quick build started for ${ref}, but stop failed after retries: ${detail}`);
+  const detail =
+    lastError instanceof Error ? lastError.message : String(lastError);
+  throw new Error(
+    `Quick build started for ${ref}, but stop failed after retries: ${detail}`,
+  );
 }

@@ -43,7 +43,9 @@ export interface UseChatActionsParams {
   attachedSessionMetaRef: MutableRefObject<SessionObservationMeta | null>;
   bindActiveSession: (sessionId: string | null) => void;
   clearPreAttachContextUsage: () => void;
-  clearSessionObservationState: (options?: { preserveViewing?: boolean }) => void;
+  clearSessionObservationState: (options?: {
+    preserveViewing?: boolean;
+  }) => void;
   contextUsage: ContextUsage;
   continuingSessionIdRef: MutableRefObject<string | null>;
   continuationRollbackRef: MutableRefObject<ContinuationRollbackSnapshot | null>;
@@ -214,9 +216,7 @@ export interface PlanApprovalActions {
 }
 
 export interface UseChatActionsResult
-  extends ConversationActions,
-    ChatControlActions,
-    PlanApprovalActions {
+  extends ConversationActions, ChatControlActions, PlanApprovalActions {
   sendMessage: SendMessageAction;
 }
 

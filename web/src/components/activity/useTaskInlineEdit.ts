@@ -78,12 +78,15 @@ export function useTaskInlineEdit({
     return next;
   }, []);
 
-  const bumpPendingGenerationsForTask = useCallback((taskId: string) => {
-    const prefix = `${taskId}:`;
-    for (const key of generationRef.current.keys()) {
-      if (key.startsWith(prefix)) bumpGeneration(key);
-    }
-  }, [bumpGeneration]);
+  const bumpPendingGenerationsForTask = useCallback(
+    (taskId: string) => {
+      const prefix = `${taskId}:`;
+      for (const key of generationRef.current.keys()) {
+        if (key.startsWith(prefix)) bumpGeneration(key);
+      }
+    },
+    [bumpGeneration],
+  );
 
   const setPendingKey = useCallback((key: string, on: boolean) => {
     setPending((prev) => {

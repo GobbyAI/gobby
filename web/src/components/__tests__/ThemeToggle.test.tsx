@@ -1,67 +1,73 @@
-import { cleanup, fireEvent, render, screen } from '@testing-library/react'
-import { afterEach, describe, expect, it, vi } from 'vitest'
-import { ThemeToggle } from '../ThemeToggle'
+import { cleanup, fireEvent, render, screen } from "@testing-library/react";
+import { afterEach, describe, expect, it, vi } from "vitest";
+import { ThemeToggle } from "../ThemeToggle";
 
-function setResolvedTheme(theme: 'dark' | 'light') {
-  document.documentElement.setAttribute('data-theme', theme)
+function setResolvedTheme(theme: "dark" | "light") {
+  document.documentElement.setAttribute("data-theme", theme);
 }
 
 afterEach(() => {
-  cleanup()
-  document.documentElement.removeAttribute('data-theme')
-})
+  cleanup();
+  document.documentElement.removeAttribute("data-theme");
+});
 
-describe('ThemeToggle', () => {
-  it('shows the light-bulb affordance in dark mode and switches to light on click', () => {
-    setResolvedTheme('dark')
-    const onThemeChange = vi.fn()
-    render(<ThemeToggle theme="dark" onThemeChange={onThemeChange} />)
+describe("ThemeToggle", () => {
+  it("shows the light-bulb affordance in dark mode and switches to light on click", () => {
+    setResolvedTheme("dark");
+    const onThemeChange = vi.fn();
+    render(<ThemeToggle theme="dark" onThemeChange={onThemeChange} />);
 
-    const button = screen.getByRole('button', { name: 'Switch to light theme' })
+    const button = screen.getByRole("button", {
+      name: "Switch to light theme",
+    });
     expect(button).toHaveClass(
-      'bg-accent-tint',
-      'w-8',
-      'shrink-0',
-      'pointer-coarse:before:min-w-11',
-    )
+      "bg-accent-tint",
+      "w-8",
+      "shrink-0",
+      "pointer-coarse:before:min-w-11",
+    );
     expect(button).not.toHaveClass(
-      'app-theme-toggle',
-      'pointer-coarse:min-h-11',
-      'pointer-coarse:min-w-11',
-    )
+      "app-theme-toggle",
+      "pointer-coarse:min-h-11",
+      "pointer-coarse:min-w-11",
+    );
 
-    fireEvent.click(button)
-    expect(onThemeChange).toHaveBeenCalledWith('light')
-  })
+    fireEvent.click(button);
+    expect(onThemeChange).toHaveBeenCalledWith("light");
+  });
 
-  it('shows the moon affordance in light mode and switches to dark on click', () => {
-    setResolvedTheme('light')
-    const onThemeChange = vi.fn()
-    render(<ThemeToggle theme="light" onThemeChange={onThemeChange} />)
+  it("shows the moon affordance in light mode and switches to dark on click", () => {
+    setResolvedTheme("light");
+    const onThemeChange = vi.fn();
+    render(<ThemeToggle theme="light" onThemeChange={onThemeChange} />);
 
-    const button = screen.getByRole('button', { name: 'Switch to dark theme' })
-    fireEvent.click(button)
-    expect(onThemeChange).toHaveBeenCalledWith('dark')
-  })
+    const button = screen.getByRole("button", { name: "Switch to dark theme" });
+    fireEvent.click(button);
+    expect(onThemeChange).toHaveBeenCalledWith("dark");
+  });
 
   it('resolves a "system" setting to the on-screen theme', () => {
-    setResolvedTheme('light')
-    const onThemeChange = vi.fn()
-    render(<ThemeToggle theme="system" onThemeChange={onThemeChange} />)
+    setResolvedTheme("light");
+    const onThemeChange = vi.fn();
+    render(<ThemeToggle theme="system" onThemeChange={onThemeChange} />);
 
-    fireEvent.click(screen.getByRole('button', { name: 'Switch to dark theme' }))
-    expect(onThemeChange).toHaveBeenCalledWith('dark')
-  })
+    fireEvent.click(
+      screen.getByRole("button", { name: "Switch to dark theme" }),
+    );
+    expect(onThemeChange).toHaveBeenCalledWith("dark");
+  });
 
-  it('does not invoke the callback when disabled', () => {
-    setResolvedTheme('dark')
-    const onThemeChange = vi.fn()
-    render(<ThemeToggle theme="dark" onThemeChange={onThemeChange} disabled />)
+  it("does not invoke the callback when disabled", () => {
+    setResolvedTheme("dark");
+    const onThemeChange = vi.fn();
+    render(<ThemeToggle theme="dark" onThemeChange={onThemeChange} disabled />);
 
-    const button = screen.getByRole('button', { name: 'Switch to light theme' })
-    expect(button).toBeDisabled()
+    const button = screen.getByRole("button", {
+      name: "Switch to light theme",
+    });
+    expect(button).toBeDisabled();
 
-    fireEvent.click(button)
-    expect(onThemeChange).not.toHaveBeenCalled()
-  })
-})
+    fireEvent.click(button);
+    expect(onThemeChange).not.toHaveBeenCalled();
+  });
+});

@@ -1,7 +1,10 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import { renderHook, act, waitFor } from "@testing-library/react";
 
-import { createMockFetch, type MockFetchInstance } from "../../test/mocks/fetch";
+import {
+  createMockFetch,
+  type MockFetchInstance,
+} from "../../test/mocks/fetch";
 
 vi.mock("../useWebSocketEvent", () => ({
   useWebSocketEvent: vi.fn(),
@@ -114,7 +117,11 @@ describe("useSessionCatalog", () => {
       expect(
         mockFetch.fn.mock.calls.some(([url]) => {
           const u = String(url);
-          return u.includes("/api/sessions") && u.includes("project_id=proj-1") && u.includes("limit=100");
+          return (
+            u.includes("/api/sessions") &&
+            u.includes("project_id=proj-1") &&
+            u.includes("limit=100")
+          );
         }),
       ).toBe(true);
     });

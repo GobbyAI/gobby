@@ -1,35 +1,35 @@
-import { useState } from 'react'
-import type { ApprovalOption } from '../../types/chat'
-import { Button } from '../ui/Button'
-import { Textarea } from '../ui/Textarea'
-import { cn } from '../../lib/utils'
+import { useState } from "react";
+import type { ApprovalOption } from "../../types/chat";
+import { Button } from "../ui/Button";
+import { Textarea } from "../ui/Textarea";
+import { cn } from "../../lib/utils";
 
 interface PlanApprovalActionsProps {
-  onApprove: (option?: ApprovalOption) => void
-  onRequestChanges: (feedback: string) => void
+  onApprove: (option?: ApprovalOption) => void;
+  onRequestChanges: (feedback: string) => void;
   /**
    * Plan-accept options from the backend registry. When present, one button is
    * rendered per option (Approve (YOLO) / Approve (Act)); when empty/absent the
    * surface degrades to a single generic Approve so older payloads still work.
    */
-  options?: ApprovalOption[]
-  approveLabel?: string
-  rejectLabel?: string
-  className?: string
+  options?: ApprovalOption[];
+  approveLabel?: string;
+  rejectLabel?: string;
+  className?: string;
   /**
    * When set, the interactive controls expose `data-testid` hooks
    * (`<prefix>-approve` or `<prefix>-option-<id>`, `<prefix>-reject`,
    * `<prefix>-feedback`, `<prefix>-send`) so each surface can target its own
    * affordances.
    */
-  testIdPrefix?: string
+  testIdPrefix?: string;
   /**
    * Button arrangement. `inline` (default) is one wrapping row, used by the
    * desktop status-bar strip. `stacked` lays the approve options out 2-up
    * (Approve (YOLO) | Approve (Act)) with a full-width Reject below and 44px
    * touch targets — used by the mobile Plans panel.
    */
-  layout?: 'inline' | 'stacked'
+  layout?: "inline" | "stacked";
 }
 
 /**
@@ -52,50 +52,58 @@ export function PlanApprovalActions({
   onApprove,
   onRequestChanges,
   options,
-  approveLabel = 'Approve',
-  rejectLabel = 'Reject',
+  approveLabel = "Approve",
+  rejectLabel = "Reject",
   className,
   testIdPrefix,
-  layout = 'inline',
+  layout = "inline",
 }: PlanApprovalActionsProps) {
-  const [showFeedback, setShowFeedback] = useState(false)
-  const [feedback, setFeedback] = useState('')
+  const [showFeedback, setShowFeedback] = useState(false);
+  const [feedback, setFeedback] = useState("");
 
-  const stacked = layout === 'stacked'
-  const tid = (suffix: string) => (testIdPrefix ? `${testIdPrefix}-${suffix}` : undefined)
+  const stacked = layout === "stacked";
+  const tid = (suffix: string) =>
+    testIdPrefix ? `${testIdPrefix}-${suffix}` : undefined;
 
   // The comment is optional: an empty submit still rejects the plan.
   const submitReject = () => {
-    onRequestChanges(feedback.trim())
-    setFeedback('')
-    setShowFeedback(false)
-  }
+    onRequestChanges(feedback.trim());
+    setFeedback("");
+    setShowFeedback(false);
+  };
 
   if (showFeedback) {
     return (
-      <div className={cn('flex flex-col gap-2', className)}>
+      <div className={cn("flex flex-col gap-2", className)}>
         <Textarea
-          className="min-h-[60px] w-full resize-none rounded-lg border-transparent bg-muted px-3 py-2 text-sm text-foreground placeholder:text-muted-foreground focus:outline-none focus:ring-2 focus:ring-accent"
+          className="min-h-[60px] w-full resize-none rounded-lg border-transparent bg-muted px-3 py-2 text-sm text-foreground placeholder:text-muted-foreground focus:ring-2 focus:ring-accent focus:outline-none"
           placeholder="Add a comment (optional)…"
           value={feedback}
           onChange={(e) => setFeedback(e.target.value)}
           onKeyDown={(e) => {
-            if (e.key === 'Enter' && !e.shiftKey && !e.nativeEvent.isComposing) {
-              e.preventDefault()
-              submitReject()
+            if (
+              e.key === "Enter" &&
+              !e.shiftKey &&
+              !e.nativeEvent.isComposing
+            ) {
+              e.preventDefault();
+              submitReject();
             }
           }}
-          data-testid={tid('feedback')}
+          data-testid={tid("feedback")}
           autoFocus
           rows={2}
         />
-        <div className={stacked ? 'grid grid-cols-2 gap-2' : 'flex gap-2'}>
+        <div className={stacked ? "grid grid-cols-2 gap-2" : "flex gap-2"}>
           <Button
             size="sm"
             variant="destructive"
-            className={cn('gap-1.5', stacked && 'w-full pointer-coarse:min-h-11')}
+            className={cn(
+              "gap-1.5",
+              stacked && "w-full pointer-coarse:min-h-11",
+            )}
             onClick={submitReject}
-            data-testid={tid('send')}
+            data-testid={tid("send")}
           >
             <RejectIcon />
             {rejectLabel}
@@ -103,31 +111,36 @@ export function PlanApprovalActions({
           <Button
             size="sm"
             variant="outline"
-            className={cn(stacked && 'w-full pointer-coarse:min-h-11')}
+            className={cn(stacked && "w-full pointer-coarse:min-h-11")}
             onClick={() => {
-              setShowFeedback(false)
-              setFeedback('')
+              setShowFeedback(false);
+              setFeedback("");
             }}
           >
             Cancel
           </Button>
         </div>
       </div>
-    )
+    );
   }
 
-  const hasOptions = Array.isArray(options) && options.length > 0
-  const approveBtnClass = cn('gap-1.5', stacked && 'w-full pointer-coarse:min-h-11')
+  const hasOptions = Array.isArray(options) && options.length > 0;
+  const approveBtnClass = cn(
+    "gap-1.5",
+    stacked && "w-full pointer-coarse:min-h-11",
+  );
 
   return (
-    <div className={cn('flex flex-col gap-2', className)}>
-      <div className={stacked ? 'grid grid-cols-2 gap-2' : 'flex flex-wrap gap-2'}>
+    <div className={cn("flex flex-col gap-2", className)}>
+      <div
+        className={stacked ? "grid grid-cols-2 gap-2" : "flex flex-wrap gap-2"}
+      >
         {hasOptions ? (
           options.map((option) => (
             <Button
               key={option.id}
               size="sm"
-              variant={option.emphasis === 'primary' ? 'primary' : 'accent'}
+              variant={option.emphasis === "primary" ? "primary" : "accent"}
               className={approveBtnClass}
               onClick={() => onApprove(option)}
               title={option.description}
@@ -141,9 +154,9 @@ export function PlanApprovalActions({
           <Button
             size="sm"
             variant="primary"
-            className={cn(approveBtnClass, stacked && 'col-span-2')}
+            className={cn(approveBtnClass, stacked && "col-span-2")}
             onClick={() => onApprove()}
-            data-testid={tid('approve')}
+            data-testid={tid("approve")}
           >
             <CheckIcon />
             {approveLabel}
@@ -157,7 +170,7 @@ export function PlanApprovalActions({
             variant="destructive"
             className="gap-1.5"
             onClick={() => setShowFeedback(true)}
-            data-testid={tid('reject')}
+            data-testid={tid("reject")}
           >
             <RejectIcon />
             {rejectLabel}
@@ -170,14 +183,14 @@ export function PlanApprovalActions({
           variant="destructive"
           className="w-full gap-1.5 pointer-coarse:min-h-11"
           onClick={() => setShowFeedback(true)}
-          data-testid={tid('reject')}
+          data-testid={tid("reject")}
         >
           <RejectIcon />
           {rejectLabel}
         </Button>
       )}
     </div>
-  )
+  );
 }
 
 function CheckIcon() {
@@ -196,7 +209,7 @@ function CheckIcon() {
     >
       <path d="M20 6 9 17l-5-5" />
     </svg>
-  )
+  );
 }
 
 function RejectIcon() {
@@ -218,5 +231,5 @@ function RejectIcon() {
       <circle cx="12" cy="12" r="9" />
       <path d="m5.6 5.6 12.8 12.8" />
     </svg>
-  )
+  );
 }

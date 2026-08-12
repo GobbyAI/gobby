@@ -377,7 +377,9 @@ describe("ChatPage – activity panel wiring", () => {
       fireEvent.click(screen.getByTestId("command-bar-open-palette"));
     });
     await act(async () => {
-      fireEvent.click(screen.getByTestId("command-palette-select-terminal-live"));
+      fireEvent.click(
+        screen.getByTestId("command-palette-select-terminal-live"),
+      );
     });
 
     expect(showTabSpy).toHaveBeenCalledWith("sessions");
@@ -591,9 +593,9 @@ describe("ChatPage – activity panel wiring", () => {
       );
     });
 
-    expect(screen.getByTestId("activity-panel-chat-session-id").textContent).toBe(
-      "",
-    );
+    expect(
+      screen.getByTestId("activity-panel-chat-session-id").textContent,
+    ).toBe("");
     expect(
       screen.getByTestId("activity-panel-focus-session-id"),
     ).toHaveTextContent("web-chat-4993");

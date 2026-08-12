@@ -1,45 +1,62 @@
-import { memo, useState, useCallback, useEffect, useMemo } from 'react'
-import { ResizeHandle } from '../shared/ResizeHandle'
-import { DiffBlock } from '../shared/DiffBlock'
-import { parseUnifiedDiffLines } from '../shared/DiffBlock.helpers'
-import type { ChangedFile } from '../../hooks/useFileChanges'
-import { ActivityPanelEmpty, ChangesEmptyIcon } from './ActivityPanelEmpty'
-import { Button } from '../ui/Button'
-import { coarseHitAreaCls } from '../ui/controlStyles'
+import { memo, useState, useCallback, useEffect, useMemo } from "react";
+import { ResizeHandle } from "../shared/ResizeHandle";
+import { DiffBlock } from "../shared/DiffBlock";
+import { parseUnifiedDiffLines } from "../shared/DiffBlock.helpers";
+import type { ChangedFile } from "../../hooks/useFileChanges";
+import { ActivityPanelEmpty, ChangesEmptyIcon } from "./ActivityPanelEmpty";
+import { Button } from "../ui/Button";
+import { coarseHitAreaCls } from "../ui/controlStyles";
 
 interface FileChangesTabProps {
-  changedFiles: ChangedFile[]
-  fetchDiff: (path: string) => Promise<string>
-  loading?: boolean
-  error?: string | null
-  onRetry?: () => void
+  changedFiles: ChangedFile[];
+  fetchDiff: (path: string) => Promise<string>;
+  loading?: boolean;
+  error?: string | null;
+  onRetry?: () => void;
 }
 
 // Cap rendered diffs so a single huge file can't lock up the panel.
-const MAX_DIFF_LINES = 2000
+const MAX_DIFF_LINES = 2000;
 
 function statusBadge(status: string) {
   const map: Record<string, { label: string; className: string }> = {
-    E: { label: 'E', className: 'bg-[color-mix(in_srgb,var(--color-warning-foreground)_20%,transparent)] text-[var(--color-warning-foreground)]' },
-    W: { label: 'W', className: 'bg-[color-mix(in_srgb,var(--color-success-foreground)_20%,transparent)] text-[var(--color-success-foreground)]' },
-    D: { label: 'D', className: 'bg-[color-mix(in_srgb,var(--color-error)_20%,transparent)] text-[var(--color-error)]' },
-  }
-  const info = map[status] || { label: status, className: 'bg-[var(--bg-tertiary)] text-[var(--text-muted)]' }
+    E: {
+      label: "E",
+      className:
+        "bg-[color-mix(in_srgb,var(--color-warning-foreground)_20%,transparent)] text-[var(--color-warning-foreground)]",
+    },
+    W: {
+      label: "W",
+      className:
+        "bg-[color-mix(in_srgb,var(--color-success-foreground)_20%,transparent)] text-[var(--color-success-foreground)]",
+    },
+    D: {
+      label: "D",
+      className:
+        "bg-[color-mix(in_srgb,var(--color-error)_20%,transparent)] text-[var(--color-error)]",
+    },
+  };
+  const info = map[status] || {
+    label: status,
+    className: "bg-[var(--bg-tertiary)] text-[var(--text-muted)]",
+  };
   return (
-    <span className={`inline-flex size-5 shrink-0 items-center justify-center rounded font-mono text-[length:var(--text-2xs)] font-bold ${info.className}`}>
+    <span
+      className={`inline-flex size-5 shrink-0 items-center justify-center rounded font-mono text-[length:var(--text-2xs)] font-bold ${info.className}`}
+    >
       {info.label}
     </span>
-  )
+  );
 }
 
 function fileName(path: string): string {
-  return path.split('/').pop() || path
+  return path.split("/").pop() || path;
 }
 
 function fileDir(path: string): string {
-  const parts = path.split('/')
-  if (parts.length <= 1) return ''
-  return parts.slice(0, -1).join('/') + '/'
+  const parts = path.split("/");
+  if (parts.length <= 1) return "";
+  return parts.slice(0, -1).join("/") + "/";
 }
 
 export const FileChangesTab = memo(function FileChangesTab({
@@ -49,64 +66,68 @@ export const FileChangesTab = memo(function FileChangesTab({
   error = null,
   onRetry,
 }: FileChangesTabProps) {
-  const [selectedPath, setSelectedPath] = useState<string | null>(null)
-  const [diff, setDiff] = useState<string>('')
-  const [loadingDiff, setLoadingDiff] = useState(false)
-  const [topHeight, setTopHeight] = useState(35)
+  const [selectedPath, setSelectedPath] = useState<string | null>(null);
+  const [diff, setDiff] = useState<string>("");
+  const [loadingDiff, setLoadingDiff] = useState(false);
+  const [topHeight, setTopHeight] = useState(35);
 
   const { displayedDiff, diffTruncated } = useMemo(() => {
-    const lines = diff.split('\n')
-    if (lines.length <= MAX_DIFF_LINES) return { displayedDiff: diff, diffTruncated: false }
-    return { displayedDiff: lines.slice(0, MAX_DIFF_LINES).join('\n'), diffTruncated: true }
-  }, [diff])
+    const lines = diff.split("\n");
+    if (lines.length <= MAX_DIFF_LINES)
+      return { displayedDiff: diff, diffTruncated: false };
+    return {
+      displayedDiff: lines.slice(0, MAX_DIFF_LINES).join("\n"),
+      diffTruncated: true,
+    };
+  }, [diff]);
 
   const handleSelect = useCallback(
     (path: string) => {
       if (path === selectedPath) {
-        setSelectedPath(null)
-        setDiff('')
-        return
+        setSelectedPath(null);
+        setDiff("");
+        return;
       }
-      setSelectedPath(path)
+      setSelectedPath(path);
     },
-    [selectedPath]
-  )
+    [selectedPath],
+  );
 
   useEffect(() => {
     if (!selectedPath) {
-      setDiff('')
-      setLoadingDiff(false)
-      return
+      setDiff("");
+      setLoadingDiff(false);
+      return;
     }
     if (!changedFiles.some((file) => file.path === selectedPath)) {
-      setSelectedPath(null)
-      setDiff('')
-      setLoadingDiff(false)
-      return
+      setSelectedPath(null);
+      setDiff("");
+      setLoadingDiff(false);
+      return;
     }
-    let isStale = false
-    setLoadingDiff(true)
+    let isStale = false;
+    setLoadingDiff(true);
     void fetchDiff(selectedPath)
       .then((result) => {
         if (!isStale) {
-          setDiff(result)
+          setDiff(result);
         }
       })
       .catch((err) => {
         if (!isStale) {
-          console.error('Failed to fetch diff:', err)
-          setDiff('')
+          console.error("Failed to fetch diff:", err);
+          setDiff("");
         }
       })
       .finally(() => {
         if (!isStale) {
-          setLoadingDiff(false)
+          setLoadingDiff(false);
         }
-      })
+      });
     return () => {
-      isStale = true
-    }
-  }, [changedFiles, fetchDiff, selectedPath])
+      isStale = true;
+    };
+  }, [changedFiles, fetchDiff, selectedPath]);
 
   if (error && changedFiles.length === 0) {
     return (
@@ -121,18 +142,20 @@ export const FileChangesTab = memo(function FileChangesTab({
               variant="secondary"
               size="sm"
               onClick={onRetry}
-              className={`mt-3 rounded border border-border px-3 py-1 text-xs text-muted-foreground hover:bg-muted transition-colors ${coarseHitAreaCls}`}
+              className={`mt-3 rounded border border-border px-3 py-1 text-xs text-muted-foreground transition-colors hover:bg-muted ${coarseHitAreaCls}`}
             >
               Retry
             </Button>
           ) : undefined
         }
       />
-    )
+    );
   }
 
   if (loading && changedFiles.length === 0) {
-    return <ActivityPanelEmpty icon={<ChangesEmptyIcon />} body="Loading changes…" />
+    return (
+      <ActivityPanelEmpty icon={<ChangesEmptyIcon />} body="Loading changes…" />
+    );
   }
 
   if (changedFiles.length === 0) {
@@ -142,23 +165,24 @@ export const FileChangesTab = memo(function FileChangesTab({
         heading="Changes"
         body="Changes appear here as files are modified during the session"
       />
-    )
+    );
   }
 
   return (
-    <div className="flex flex-col h-full">
+    <div className="flex h-full flex-col">
       {/* File list */}
       <div
-        className={`overflow-y-auto ${selectedPath ? 'border-b border-border' : 'flex-1'}`}
+        className={`overflow-y-auto ${selectedPath ? "border-b border-border" : "flex-1"}`}
         style={selectedPath ? { height: `${topHeight}%` } : undefined}
       >
-        <div className="flex items-center justify-between px-3 py-2 border-b border-border bg-muted/20">
+        <div className="flex items-center justify-between border-b border-border bg-muted/20 px-3 py-2">
           <span className="text-xs text-muted-foreground">
-            {changedFiles.length} file{changedFiles.length !== 1 ? 's' : ''} changed
+            {changedFiles.length} file{changedFiles.length !== 1 ? "s" : ""}{" "}
+            changed
           </span>
         </div>
         {changedFiles.map((file) => {
-          const isSelected = file.path === selectedPath
+          const isSelected = file.path === selectedPath;
           return (
             <Button
               key={file.path}
@@ -166,10 +190,10 @@ export const FileChangesTab = memo(function FileChangesTab({
               variant="ghost"
               onClick={() => handleSelect(file.path)}
               aria-pressed={isSelected}
-              className={`activity-list-row activity-list-row__body${isSelected ? ' activity-list-row--selected' : ''} ${coarseHitAreaCls}`}
+              className={`activity-list-row activity-list-row__body${isSelected ? "activity-list-row--selected" : ""} ${coarseHitAreaCls}`}
             >
               {statusBadge(file.status)}
-              <div className="flex-1 min-w-0 flex items-baseline gap-1">
+              <div className="flex min-w-0 flex-1 items-baseline gap-1">
                 <span className="activity-row-title truncate">
                   {fileName(file.path)}
                 </span>
@@ -178,7 +202,7 @@ export const FileChangesTab = memo(function FileChangesTab({
                 </span>
               </div>
             </Button>
-          )
+          );
         })}
       </div>
 
@@ -195,7 +219,7 @@ export const FileChangesTab = memo(function FileChangesTab({
 
       {/* Diff area */}
       {selectedPath && (
-        <div className="flex-1 flex flex-col min-h-0">
+        <div className="flex min-h-0 flex-1 flex-col">
           {loadingDiff ? (
             <ActivityPanelEmpty body="Loading diff…" />
           ) : !diff ? (
@@ -203,8 +227,9 @@ export const FileChangesTab = memo(function FileChangesTab({
           ) : (
             <>
               {diffTruncated && (
-                <div className="px-3 py-1.5 text-xs text-muted-foreground border-b border-border bg-muted/20">
-                  Large diff truncated to the first {MAX_DIFF_LINES.toLocaleString()} lines.
+                <div className="border-b border-border bg-muted/20 px-3 py-1.5 text-xs text-muted-foreground">
+                  Large diff truncated to the first{" "}
+                  {MAX_DIFF_LINES.toLocaleString()} lines.
                 </div>
               )}
               <DiffBlock
@@ -214,7 +239,7 @@ export const FileChangesTab = memo(function FileChangesTab({
                 path={selectedPath}
                 header
                 onCopy={() => {
-                  navigator.clipboard.writeText(diff).catch(console.error)
+                  navigator.clipboard.writeText(diff).catch(console.error);
                 }}
               />
             </>
@@ -222,5 +247,5 @@ export const FileChangesTab = memo(function FileChangesTab({
         </div>
       )}
     </div>
-  )
-})
+  );
+});

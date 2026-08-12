@@ -7,7 +7,12 @@ import {
   beforeEach,
   afterEach,
 } from "vitest";
-import { fireEvent, render as baseRender, screen, waitFor } from "@testing-library/react";
+import {
+  fireEvent,
+  render as baseRender,
+  screen,
+  waitFor,
+} from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import type { ReactElement, ReactNode } from "react";
 import {
@@ -57,7 +62,9 @@ let mockFetch: MockFetchInstance;
 function taskListRequestUrls(): string[] {
   return mockFetch.fn.mock.calls
     .map(([url]) => String(url))
-    .filter((url) => url.includes("/api/tasks?") && !url.includes("parent_task_id="));
+    .filter(
+      (url) => url.includes("/api/tasks?") && !url.includes("parent_task_id="),
+    );
 }
 
 describe("TasksTab", () => {
@@ -148,7 +155,9 @@ describe("TasksTab", () => {
   });
 
   it("surfaces create task API errors in the task alert banner", async () => {
-    const consoleError = vi.spyOn(console, "error").mockImplementation(() => {});
+    const consoleError = vi
+      .spyOn(console, "error")
+      .mockImplementation(() => {});
     mockFetch.mockJsonResponse(
       "/api/tasks",
       { detail: "Task category is required" },
@@ -615,7 +624,9 @@ describe("TasksTab", () => {
     const parentRow = screen
       .getAllByText("Expandable parent")[0]
       .closest('[role="treeitem"]');
-    const childRow = screen.getByText("Nested child").closest('[role="treeitem"]');
+    const childRow = screen
+      .getByText("Nested child")
+      .closest('[role="treeitem"]');
     expect(parentRow).toHaveAttribute("aria-expanded", "true");
     expect(childRow).toHaveAttribute("aria-level", "2");
 
@@ -630,9 +641,7 @@ describe("TasksTab", () => {
     });
 
     expect(
-      screen
-        .getAllByText("Expandable parent")[0]
-        .closest('[role="treeitem"]'),
+      screen.getAllByText("Expandable parent")[0].closest('[role="treeitem"]'),
     ).toHaveAttribute("aria-expanded", "false");
     expect(
       screen.getByRole("button", {
@@ -699,7 +708,9 @@ describe("TasksTab", () => {
         },
       ],
     });
-    mockFetch.mockJsonResponse(/\/api\/tasks\?.*parent_task_id=/, { tasks: [] });
+    mockFetch.mockJsonResponse(/\/api\/tasks\?.*parent_task_id=/, {
+      tasks: [],
+    });
     mockFetch.mockJsonResponse(/\/api\/tasks\?.*closed=false/, {
       tasks: [childTask],
     });
@@ -728,8 +739,12 @@ describe("TasksTab", () => {
       expect(screen.getByText("Visible child task")).toBeTruthy();
     });
 
-    const parentRow = screen.getByText("Fetched root epic").closest('[role="treeitem"]');
-    const childRow = screen.getByText("Visible child task").closest('[role="treeitem"]');
+    const parentRow = screen
+      .getByText("Fetched root epic")
+      .closest('[role="treeitem"]');
+    const childRow = screen
+      .getByText("Visible child task")
+      .closest('[role="treeitem"]');
 
     expect(parentRow).toHaveAttribute("aria-level", "1");
     expect(parentRow).toHaveAttribute("aria-expanded", "true");
@@ -762,10 +777,12 @@ describe("TasksTab", () => {
 
     const originalFetch = mockFetch.fn.getMockImplementation();
     const pendingDetail = new Promise<Response>(() => {});
-    mockFetch.fn.mockImplementation((input: RequestInfo | URL, init?: RequestInit) => {
-      if (String(input).endsWith("/api/tasks/task-2")) return pendingDetail;
-      return originalFetch?.(input, init);
-    });
+    mockFetch.fn.mockImplementation(
+      (input: RequestInfo | URL, init?: RequestInit) => {
+        if (String(input).endsWith("/api/tasks/task-2")) return pendingDetail;
+        return originalFetch?.(input, init);
+      },
+    );
 
     await user.click(screen.getByText("Open task 2"));
 
@@ -831,9 +848,9 @@ describe("TasksTab", () => {
       "Task title",
     )) as HTMLInputElement;
     expect(title.value).toBe("Detail pane task");
-    expect(
-      document.querySelector("[data-task-detail-ref]")?.textContent,
-    ).toBe("#510");
+    expect(document.querySelector("[data-task-detail-ref]")?.textContent).toBe(
+      "#510",
+    );
 
     // Owner shown exactly once (the status line), never doubled.
     expect(screen.getAllByText("Agent Delta")).toHaveLength(1);

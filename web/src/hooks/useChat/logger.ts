@@ -16,7 +16,10 @@ function serializeError(value: Error, seen: WeakSet<object>): ChatLogContext {
 
 function serializeDomLike(value: object): ChatLogContext | null {
   const record = value as Record<string, unknown>;
-  if (typeof record.nodeName !== "string" && typeof record.tagName !== "string") {
+  if (
+    typeof record.nodeName !== "string" &&
+    typeof record.tagName !== "string"
+  ) {
     return null;
   }
   return {
@@ -32,7 +35,11 @@ function serializeDomLike(value: object): ChatLogContext | null {
 function serializeValue(value: unknown, seen: WeakSet<object>): unknown {
   if (value == null) return value;
   const valueType = typeof value;
-  if (valueType === "string" || valueType === "number" || valueType === "boolean") {
+  if (
+    valueType === "string" ||
+    valueType === "number" ||
+    valueType === "boolean"
+  ) {
     return value;
   }
   if (valueType === "bigint") {
@@ -79,10 +86,9 @@ function serializeValue(value: unknown, seen: WeakSet<object>): unknown {
 
   try {
     return Object.fromEntries(
-      Object.entries(value as Record<string, unknown>).map(([key, entryValue]) => [
-        key,
-        serializeValue(entryValue, seen),
-      ]),
+      Object.entries(value as Record<string, unknown>).map(
+        ([key, entryValue]) => [key, serializeValue(entryValue, seen)],
+      ),
     );
   } catch (error) {
     const tag = Object.prototype.toString.call(value);
@@ -90,7 +96,9 @@ function serializeValue(value: unknown, seen: WeakSet<object>): unknown {
   }
 }
 
-function serializeContext(context: ChatLogContext | undefined): ChatLogContext | undefined {
+function serializeContext(
+  context: ChatLogContext | undefined,
+): ChatLogContext | undefined {
   if (!context) return undefined;
   const seen = new WeakSet<object>();
   return Object.fromEntries(

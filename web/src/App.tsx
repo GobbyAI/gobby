@@ -282,7 +282,10 @@ export default function App() {
 
   // Web-chat sessions for main conversation list
   const webChatSessions = useMemo(
-    () => allProjectSessions.filter((session) => session.session_type === "web_chat"),
+    () =>
+      allProjectSessions.filter(
+        (session) => session.session_type === "web_chat",
+      ),
     [allProjectSessions],
   );
 
@@ -421,7 +424,12 @@ export default function App() {
       normalizeChatMode(settings.defaultChatMode);
     updateChatMode(restoredMode);
     sendMode(restoredMode);
-  }, [conversationSwitchKey, sessionCatalog.isLoading, dbSessionId, webChatSessions]); // eslint-disable-line react-hooks/exhaustive-deps
+  }, [
+    conversationSwitchKey,
+    sessionCatalog.isLoading,
+    dbSessionId,
+    webChatSessions,
+  ]); // eslint-disable-line react-hooks/exhaustive-deps
 
   const handleInputChange = useCallback(
     (value: string) => {
@@ -465,7 +473,12 @@ export default function App() {
     );
   }
   if (authRequired && !authenticated) {
-    return <LoginPage credentialsConfigured={credentialsConfigured} onLogin={login} />;
+    return (
+      <LoginPage
+        credentialsConfigured={credentialsConfigured}
+        onLogin={login}
+      />
+    );
   }
 
   const visibleToastMessage = toastMessage ?? transportError?.message ?? null;
@@ -485,16 +498,16 @@ export default function App() {
               className="[--app-brand-logo-size:2.75rem] mobile:[--app-brand-logo-size:1.875rem]"
               size="var(--app-brand-logo-size)"
             />
-            <span className="min-w-0 overflow-hidden text-ellipsis whitespace-nowrap text-[length:var(--text-3xl)] font-semibold leading-none text-foreground mobile:text-[length:var(--text-2xl)]">
+            <span className="min-w-0 overflow-hidden text-[length:var(--text-3xl)] leading-none font-semibold text-ellipsis whitespace-nowrap text-foreground mobile:text-[length:var(--text-2xl)]">
               Gobby
             </span>
           </div>
-          <div className="[--control-row-height:var(--status-bar-control-height)] flex shrink-0 flex-nowrap items-center justify-end gap-2">
+          <div className="flex shrink-0 flex-nowrap items-center justify-end gap-2 [--control-row-height:var(--status-bar-control-height)]">
             {!isConnected && (
               <Badge
                 variant="error"
                 style={{ height: "var(--control-row-height)" }}
-                className="gap-2 uppercase tracking-[0.05em]"
+                className="gap-2 tracking-[0.05em] uppercase"
               >
                 <span
                   aria-hidden="true"
@@ -561,136 +574,136 @@ export default function App() {
           }
         >
           <ChatPage
-                projectId={effectiveProjectId}
-                projectName={
-                  projectOptions.find(
-                    (project) => project.id === effectiveProjectId,
-                  )?.name ?? null
-                }
-                showPlanRef={showPlanRef}
-                planPendingVariant={settings.planPendingVariant}
-                chat={{
-                  messages,
-                  sessionRef,
-                  sessionTitle,
-                  currentBranch,
-                  worktreePath,
-                  isStreaming,
-                  isThinking,
-                  isLoadingMessages,
-                  isConnected,
-                  isReconnecting,
-                  contextUsage,
-                  onSend: handleSendMessage,
-                  addSystemMessage,
-                  onStop: stopStreaming,
-                  onRespondToQuestion: respondToQuestion,
-                  onRespondToApproval: respondToApproval,
-                  onInputChange: handleInputChange,
-                  paletteItems,
-                  onPaletteSelect: handlePaletteSelect,
-                  acpAvailableCommands,
-                  mode: settings.chatMode,
-                  onModeChange: (mode) => {
+            projectId={effectiveProjectId}
+            projectName={
+              projectOptions.find(
+                (project) => project.id === effectiveProjectId,
+              )?.name ?? null
+            }
+            showPlanRef={showPlanRef}
+            planPendingVariant={settings.planPendingVariant}
+            chat={{
+              messages,
+              sessionRef,
+              sessionTitle,
+              currentBranch,
+              worktreePath,
+              isStreaming,
+              isThinking,
+              isLoadingMessages,
+              isConnected,
+              isReconnecting,
+              contextUsage,
+              onSend: handleSendMessage,
+              addSystemMessage,
+              onStop: stopStreaming,
+              onRespondToQuestion: respondToQuestion,
+              onRespondToApproval: respondToApproval,
+              onInputChange: handleInputChange,
+              paletteItems,
+              onPaletteSelect: handlePaletteSelect,
+              acpAvailableCommands,
+              mode: settings.chatMode,
+              onModeChange: (mode) => {
+                updateChatMode(mode);
+                sendMode(mode);
+              },
+              onModeChangeLocal: updateChatMode,
+              onWorktreeChange: isPersonalProject
+                ? undefined
+                : sendWorktreeChange,
+              planPendingApproval,
+              planApproved,
+              planApprovalOptions,
+              onApprovePlan: approvePlan,
+              onRequestPlanChanges: requestPlanChanges,
+              setOnPlanReady,
+              continueSessionInChat,
+              viewSession,
+              clearViewingSession,
+              mainSessionMeta,
+              viewingSessionId,
+              viewingSessionMeta,
+              isContinuingSession,
+              observeSession,
+              attachedSessionId,
+              attachedSessionMeta,
+              sessionInteractionMode,
+              proxyDeliveryNotice,
+              onAttachToViewed: attachToViewed,
+              onDetachFromSession: detachFromSession,
+              onAttachedModeChange: attachedSessionId
+                ? (mode) => {
                     updateChatMode(mode);
-                    sendMode(mode);
-                  },
-                  onModeChangeLocal: updateChatMode,
-                  onWorktreeChange: isPersonalProject
-                    ? undefined
-                    : sendWorktreeChange,
-                  planPendingApproval,
-                  planApproved,
-                  planApprovalOptions,
-                  onApprovePlan: approvePlan,
-                  onRequestPlanChanges: requestPlanChanges,
-                  setOnPlanReady,
-                  continueSessionInChat,
-                  viewSession,
-                  clearViewingSession,
-                  mainSessionMeta,
-                  viewingSessionId,
-                  viewingSessionMeta,
-                  isContinuingSession,
-                  observeSession,
-                  attachedSessionId,
-                  attachedSessionMeta,
-                  sessionInteractionMode,
-                  proxyDeliveryNotice,
-                  onAttachToViewed: attachToViewed,
-                  onDetachFromSession: detachFromSession,
-                  onAttachedModeChange: attachedSessionId
-                    ? (mode) => {
-                        updateChatMode(mode);
-                        sendAttachedSessionMode(attachedSessionId, mode);
-                      }
-                    : undefined,
-                  activeAgent,
-                  onAgentChange: sendAgentChange,
-                  provider: selectedProvider,
-                  onProviderChange: selectProvider,
-                  onSwitchProvider: switchProvider,
-                  dbSessionId,
-                  conversationSwitchKey,
-                }}
-                allProjectSessions={allProjectSessions}
-                allProjectSessionsLoading={sessionCatalog.isLoading}
-                activitySessions={activitySessionCatalog.sessions}
-                activitySessionsLoading={activitySessionCatalog.isLoading}
-                sessionsFilters={sessionsFilters}
-                onSessionsFiltersChange={setSessionsFilters}
-                mcp={mcp}
-                requestedActivityTab={activityTabRequest}
-                onActivityTabRequestHandled={() => setActivityTabRequest(null)}
-                conversations={{
-                  sessions: webChatSessions,
-                  activeSessionId: dbSessionId,
-                  deletingIds: sessionCatalog.deletingIds,
-                  onNewChat: handleStartNewChat,
-                  onSelectSession: handleSelectConversation,
-                  onDeleteSession: handleDeleteConversation,
-                  onRenameSession: sessionCatalog.renameSession,
-                  onKillAgent: handleKillAgent,
-                  onExpireSession: handleExpireSession,
-                  onAcpCloseSession: handleCloseSession,
-                  onAcpDeleteSession: handleDeleteSession,
-                  viewingSessionId,
-                  attachedSessionId,
-                }}
-                currentModel={settings.model}
-                onModelChange={updateModel}
-                reasoningPreferences={reasoningPreferences}
-                onReasoningPreferenceChange={updateReasoningPreference}
-                agentDefinitions={agentDefs.definitions}
-                agentGlobalDefs={agentDefs.globalDefs}
-                agentProjectDefs={agentDefs.projectDefs}
-                agentShowScopeToggle={agentDefs.showScopeToggle}
-                agentHasGlobal={agentDefs.hasGlobal}
-                agentHasProject={agentDefs.hasProject}
-                paletteActions={commandPaletteActions}
-                onSttEnabledChange={updateSttEnabled}
-                onTtsEnabledChange={updateTtsEnabled}
-                onVoiceInputModeChange={updateVoiceInputMode}
-                voice={{
-                  sttEnabled: settings.sttEnabled,
-                  ttsEnabled: settings.ttsEnabled,
-                  voiceInputMode: settings.voiceInputMode,
-                  voiceAvailable: voice.voiceAvailable,
-                  voiceReady: voice.voiceReady,
-                  voiceLoading: voice.voiceLoading,
-                  isListening: voice.isListening,
-                  isSpeechDetected: voice.isSpeechDetected,
-                  isRecording: voice.isRecording,
-                  isTranscribing: voice.isTranscribing,
-                  isSpeaking: voice.isSpeaking,
-                  voiceError: voice.voiceError,
-                  prepareTTSPlayback: voice.prepareTTSPlayback,
-                  startRecording: voice.startRecording,
-                  stopRecording: voice.stopRecording,
-                  cancelRecording: voice.cancelRecording,
-                  stopTTS: voice.stopTTS,
-                }}
-            />
+                    sendAttachedSessionMode(attachedSessionId, mode);
+                  }
+                : undefined,
+              activeAgent,
+              onAgentChange: sendAgentChange,
+              provider: selectedProvider,
+              onProviderChange: selectProvider,
+              onSwitchProvider: switchProvider,
+              dbSessionId,
+              conversationSwitchKey,
+            }}
+            allProjectSessions={allProjectSessions}
+            allProjectSessionsLoading={sessionCatalog.isLoading}
+            activitySessions={activitySessionCatalog.sessions}
+            activitySessionsLoading={activitySessionCatalog.isLoading}
+            sessionsFilters={sessionsFilters}
+            onSessionsFiltersChange={setSessionsFilters}
+            mcp={mcp}
+            requestedActivityTab={activityTabRequest}
+            onActivityTabRequestHandled={() => setActivityTabRequest(null)}
+            conversations={{
+              sessions: webChatSessions,
+              activeSessionId: dbSessionId,
+              deletingIds: sessionCatalog.deletingIds,
+              onNewChat: handleStartNewChat,
+              onSelectSession: handleSelectConversation,
+              onDeleteSession: handleDeleteConversation,
+              onRenameSession: sessionCatalog.renameSession,
+              onKillAgent: handleKillAgent,
+              onExpireSession: handleExpireSession,
+              onAcpCloseSession: handleCloseSession,
+              onAcpDeleteSession: handleDeleteSession,
+              viewingSessionId,
+              attachedSessionId,
+            }}
+            currentModel={settings.model}
+            onModelChange={updateModel}
+            reasoningPreferences={reasoningPreferences}
+            onReasoningPreferenceChange={updateReasoningPreference}
+            agentDefinitions={agentDefs.definitions}
+            agentGlobalDefs={agentDefs.globalDefs}
+            agentProjectDefs={agentDefs.projectDefs}
+            agentShowScopeToggle={agentDefs.showScopeToggle}
+            agentHasGlobal={agentDefs.hasGlobal}
+            agentHasProject={agentDefs.hasProject}
+            paletteActions={commandPaletteActions}
+            onSttEnabledChange={updateSttEnabled}
+            onTtsEnabledChange={updateTtsEnabled}
+            onVoiceInputModeChange={updateVoiceInputMode}
+            voice={{
+              sttEnabled: settings.sttEnabled,
+              ttsEnabled: settings.ttsEnabled,
+              voiceInputMode: settings.voiceInputMode,
+              voiceAvailable: voice.voiceAvailable,
+              voiceReady: voice.voiceReady,
+              voiceLoading: voice.voiceLoading,
+              isListening: voice.isListening,
+              isSpeechDetected: voice.isSpeechDetected,
+              isRecording: voice.isRecording,
+              isTranscribing: voice.isTranscribing,
+              isSpeaking: voice.isSpeaking,
+              voiceError: voice.voiceError,
+              prepareTTSPlayback: voice.prepareTTSPlayback,
+              startRecording: voice.startRecording,
+              stopRecording: voice.stopRecording,
+              cancelRecording: voice.cancelRecording,
+              stopTTS: voice.stopTTS,
+            }}
+          />
         </Suspense>
       </AppErrorBoundary>
 

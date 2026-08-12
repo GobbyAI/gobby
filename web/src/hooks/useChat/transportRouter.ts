@@ -25,7 +25,10 @@ import {
   handleDetachFromSessionResult,
   handleObservedSessionMessage,
 } from "./transportProxyEvents";
-import { handleSessionUsageUpdated, handleTokenEvent } from "./transportUsageEvents";
+import {
+  handleSessionUsageUpdated,
+  handleTokenEvent,
+} from "./transportUsageEvents";
 import {
   handleVoiceTransportEvent,
   isVoiceTransportEvent,

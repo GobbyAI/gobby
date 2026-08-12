@@ -1,12 +1,12 @@
-import type { ChatMode, ChatModeInfo } from '../../types/chat'
-import { CHAT_MODES } from '../../types/chat'
-import { SegmentedControl } from '../ui/SegmentedControl'
+import type { ChatMode, ChatModeInfo } from "../../types/chat";
+import { CHAT_MODES } from "../../types/chat";
+import { SegmentedControl } from "../ui/SegmentedControl";
 
 interface ModeSelectorProps {
-  mode: ChatMode
-  onModeChange: (mode: ChatMode) => void
-  disabled?: boolean
-  modes?: ChatModeInfo[]
+  mode: ChatMode;
+  onModeChange: (mode: ChatMode) => void;
+  disabled?: boolean;
+  modes?: ChatModeInfo[];
 }
 
 export function ModeSelector({
@@ -30,5 +30,5 @@ export function ModeSelector({
       coarseTouchTarget={false}
       disabled={disabled}
     />
-  )
+  );
 }

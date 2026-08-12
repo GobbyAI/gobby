@@ -1,8 +1,8 @@
-import { fireEvent, render, screen, waitFor } from '@testing-library/react'
-import { beforeEach, describe, expect, it, vi } from 'vitest'
+import { fireEvent, render, screen, waitFor } from "@testing-library/react";
+import { beforeEach, describe, expect, it, vi } from "vitest";
 
-import { SettingsSectionProvider } from '../SettingsSectionProvider'
-import { useSettingsSectionContext } from '../SettingsSectionContext'
+import { SettingsSectionProvider } from "../SettingsSectionProvider";
+import { useSettingsSectionContext } from "../SettingsSectionContext";
 
 const config = vi.hoisted(() => ({
   schema: null,
@@ -19,40 +19,45 @@ const config = vi.hoisted(() => ({
   fetchPrompts: vi.fn(async () => undefined),
   fetchTemplate: vi.fn(async () => undefined),
   importConfig: vi.fn(async () => ({ success: true })),
-}))
+}));
 
-vi.mock('../../../../hooks/useConfiguration', () => ({
+vi.mock("../../../../hooks/useConfiguration", () => ({
   useConfiguration: () => config,
-}))
+}));
 
 function SaveHarness() {
-  const { saveConfig } = useSettingsSectionContext()
+  const { saveConfig } = useSettingsSectionContext();
   return (
-    <button type="button" onClick={() => void saveConfig({ server: { port: 60887 } })}>
+    <button
+      type="button"
+      onClick={() => void saveConfig({ server: { port: 60887 } })}
+    >
       Save harness
     </button>
-  )
+  );
 }
 
-describe('SettingsSectionProvider', () => {
+describe("SettingsSectionProvider", () => {
   beforeEach(() => {
-    vi.clearAllMocks()
-  })
+    vi.clearAllMocks();
+  });
 
-  it('does_not_issue_a_second_config_fetch_after_a_successful_save', async () => {
+  it("does_not_issue_a_second_config_fetch_after_a_successful_save", async () => {
     render(
       <SettingsSectionProvider>
         <SaveHarness />
       </SettingsSectionProvider>,
-    )
-    await waitFor(() => expect(config.fetchConfig).toHaveBeenCalledTimes(1))
-    config.fetchConfig.mockClear()
+    );
+    await waitFor(() => expect(config.fetchConfig).toHaveBeenCalledTimes(1));
+    config.fetchConfig.mockClear();
 
-    fireEvent.click(screen.getByRole('button', { name: 'Save harness' }))
+    fireEvent.click(screen.getByRole("button", { name: "Save harness" }));
 
     await waitFor(() =>
-      expect(config.saveConfig).toHaveBeenCalledWith({ server: { port: 60887 } }),
-    )
-    expect(config.fetchConfig).not.toHaveBeenCalled()
-  })
-})
+      expect(config.saveConfig).toHaveBeenCalledWith({
+        server: { port: 60887 },
+      }),
+    );
+    expect(config.fetchConfig).not.toHaveBeenCalled();
+  });
+});

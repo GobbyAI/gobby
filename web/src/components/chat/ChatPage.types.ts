@@ -3,7 +3,11 @@ import type { MutableRefObject } from "react";
 import type { AgentDefInfo } from "../../hooks/useAgentDefinitions";
 import type { PaletteItem } from "../../hooks/useColonAutocomplete";
 import type { VoiceInputMode } from "../../hooks/useSettings";
-import type { ChatState, ConversationState, VoiceProps } from "../../types/chat";
+import type {
+  ChatState,
+  ConversationState,
+  VoiceProps,
+} from "../../types/chat";
 import type { GobbySession } from "../../types/sessions";
 import type { SessionsFilters } from "../activity/sessionsFilters";
 import type { ActivityMcpTabProps } from "../activity/ActivityMcpTab";
@@ -36,9 +40,7 @@ export interface VoiceConfigProps {
 }
 
 export interface ChatPageProps
-  extends AgentProps,
-    SessionFilterProps,
-    VoiceConfigProps {
+  extends AgentProps, SessionFilterProps, VoiceConfigProps {
   chat: ChatState;
   conversations: ConversationState;
   voice: VoiceProps;

@@ -63,7 +63,9 @@ async function loadCodexModels(
     "Live Codex verification requires an authenticated daemon session.",
   ).toBe(false);
 
-  const providersResponse = await request.get(getApiUrl("/api/providers/models"));
+  const providersResponse = await request.get(
+    getApiUrl("/api/providers/models"),
+  );
   expect(providersResponse.ok()).toBeTruthy();
   const providersBody = await providersResponse.json();
   const providers = Array.isArray(providersBody?.providers)
@@ -77,7 +79,10 @@ async function loadCodexModels(
   const visibleModels = (codex?.models || [])
     .filter(isProviderMatrixModel)
     .filter((model) => !model.hidden);
-  expect(visibleModels.length, "Codex must expose at least two visible models").toBeGreaterThan(1);
+  expect(
+    visibleModels.length,
+    "Codex must expose at least two visible models",
+  ).toBeGreaterThan(1);
 
   return visibleModels.slice(0, 2).map((model) => ({
     value: model.canonical_model,
@@ -97,7 +102,9 @@ async function openFreshChat(
   }, conversationId);
   await page.reload();
   await expect(page.getByLabel("Select provider and model")).toBeVisible();
-  await expect(page.getByRole("textbox", { name: /message input/i })).toBeVisible();
+  await expect(
+    page.getByRole("textbox", { name: /message input/i }),
+  ).toBeVisible();
 }
 
 async function selectProviderModel(
@@ -108,7 +115,9 @@ async function selectProviderModel(
   const option = page.getByRole("button", { name: modelLabel, exact: true });
   await expect(option).toBeVisible();
   await option.click();
-  await expect(page.getByRole("textbox", { name: /message input/i })).toBeVisible();
+  await expect(
+    page.getByRole("textbox", { name: /message input/i }),
+  ).toBeVisible();
 }
 
 async function waitForSessionSummary(
@@ -118,23 +127,28 @@ async function waitForSessionSummary(
 ): Promise<SessionSummary> {
   let matchedSession: SessionSummary | undefined;
   await expect
-    .poll(async () => {
-      const response = await request.get(getApiUrl(`/api/sessions/${dbSessionId}`));
-      if (response.ok()) {
-        const body = await response.json();
-        const session = body?.session as SessionSummary | undefined;
-        if (
-          session?.id &&
-          session.ref &&
-          session.source === "codex" &&
-          session.model === expectedModel
-        ) {
-          matchedSession = session;
-          return true;
+    .poll(
+      async () => {
+        const response = await request.get(
+          getApiUrl(`/api/sessions/${dbSessionId}`),
+        );
+        if (response.ok()) {
+          const body = await response.json();
+          const session = body?.session as SessionSummary | undefined;
+          if (
+            session?.id &&
+            session.ref &&
+            session.source === "codex" &&
+            session.model === expectedModel
+          ) {
+            matchedSession = session;
+            return true;
+          }
         }
-      }
-      return false;
-    }, { timeout: PROMPT_TIMEOUT_MS })
+        return false;
+      },
+      { timeout: PROMPT_TIMEOUT_MS },
+    )
     .toBe(true);
   if (!matchedSession) {
     throw new Error(`Codex session metadata vanished for ${dbSessionId}`);
@@ -163,7 +177,9 @@ async function waitForAssistantToken(
             (message: { role?: string; content?: string | null }) =>
               message.role === "assistant",
           )
-          .map((message: { content?: string | null }) => (message.content || "").trim())
+          .map((message: { content?: string | null }) =>
+            (message.content || "").trim(),
+          )
           .filter(Boolean);
 
         const failed = assistantMessages.find(
@@ -173,9 +189,13 @@ async function waitForAssistantToken(
             content.includes("missing field turnId"),
         );
         if (failed) {
-          throw new Error(`Codex returned an error instead of a response: ${failed}`);
+          throw new Error(
+            `Codex returned an error instead of a response: ${failed}`,
+          );
         }
-        return assistantMessages.some((content: string) => content.includes(token));
+        return assistantMessages.some((content: string) =>
+          content.includes(token),
+        );
       },
       { timeout: PROMPT_TIMEOUT_MS },
     )
@@ -189,7 +209,9 @@ async function sendPromptAndWait(
   token: string,
   expectedModel: string,
 ): Promise<{ dbSessionId: string; session: SessionSummary }> {
-  const initialMessageCount = await page.getByTestId("chat-message-content").count();
+  const initialMessageCount = await page
+    .getByTestId("chat-message-content")
+    .count();
   const input = page.getByRole("textbox", { name: /message input/i });
   await input.fill(prompt);
   await input.press("Enter");
@@ -200,10 +222,16 @@ async function sendPromptAndWait(
     { timeout: 15_000 },
   );
 
-  const dbSessionId = await page.evaluate(() => localStorage.getItem("gobby-db-session-id"));
+  const dbSessionId = await page.evaluate(() =>
+    localStorage.getItem("gobby-db-session-id"),
+  );
   expect(dbSessionId).toBeTruthy();
 
-  const session = await waitForSessionSummary(request, dbSessionId!, expectedModel);
+  const session = await waitForSessionSummary(
+    request,
+    dbSessionId!,
+    expectedModel,
+  );
   await waitForAssistantToken(request, dbSessionId!, token);
   await expect
     .poll(async () => page.getByTestId("chat-message-content").count(), {
@@ -211,7 +239,9 @@ async function sendPromptAndWait(
     })
     .toBeGreaterThan(initialMessageCount + 1);
 
-  await expect(page.getByText("Thinking...")).toHaveCount(0, { timeout: PROMPT_TIMEOUT_MS });
+  await expect(page.getByText("Thinking...")).toHaveCount(0, {
+    timeout: PROMPT_TIMEOUT_MS,
+  });
   await expect(page.getByText("missing field turnId")).toHaveCount(0);
   await expect(page.getByText("Generation failed")).toHaveCount(0);
 
@@ -264,6 +294,8 @@ test.describe("Live Codex model switch verification", () => {
     );
 
     expect(secondTurn.dbSessionId).toBe(firstTurn.dbSessionId);
-    await expect(page.getByTestId("chat-session-selector")).toContainText(firstTurn.session.ref);
+    await expect(page.getByTestId("chat-session-selector")).toContainText(
+      firstTurn.session.ref,
+    );
   });
 });

@@ -29,14 +29,21 @@ export function StagesList({
         const selected = stage.name === selectedName;
         const busy = stage.name === busyName;
         const menuItems: QuickMenuItem[] = stage.deleted_at
-          ? [{ label: "Restore", disabled: busy, onSelect: () => onRestore(stage) }]
+          ? [
+              {
+                label: "Restore",
+                disabled: busy,
+                onSelect: () => onRestore(stage),
+              },
+            ]
           : [
               {
                 label: "Delete",
                 destructive: true,
                 disabled: busy,
                 onSelect: () => {
-                  if (window.confirm(`Delete "${stage.display_label}"?`)) onDelete(stage);
+                  if (window.confirm(`Delete "${stage.display_label}"?`))
+                    onDelete(stage);
                 },
               },
             ];
@@ -60,7 +67,11 @@ export function StagesList({
             >
               <ActivityRowStatusDot
                 kind={stage.requires_human ? "warning" : "active"}
-                label={stage.requires_human ? "Human review required" : "Automated stage"}
+                label={
+                  stage.requires_human
+                    ? "Human review required"
+                    : "Automated stage"
+                }
               />
               <span className="activity-row-title">{stage.display_label}</span>
               <Chip>{stage.category}</Chip>

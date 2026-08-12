@@ -237,7 +237,9 @@ describe("useChat streaming and event handling", () => {
     expect(msg.toolCalls?.[0].tool_type).toBe("read");
     expect(msg.toolCalls?.[0].arguments).toBeUndefined();
     expect(msg.toolCalls?.[0].tool_kind).toBe("read");
-    expect(msg.toolCalls?.[0].locations).toEqual([{ uri: "file:///tmp/test", line: 1 }]);
+    expect(msg.toolCalls?.[0].locations).toEqual([
+      { uri: "file:///tmp/test", line: 1 },
+    ]);
     expect(msg.toolCalls?.[0].content_blocks).toEqual([
       { type: "terminal", terminal_id: "term-1" },
     ]);
@@ -270,7 +272,9 @@ describe("useChat streaming and event handling", () => {
       });
     });
 
-    const updated = result.current.messages.filter((m) => m.role === "assistant")[0];
+    const updated = result.current.messages.filter(
+      (m) => m.role === "assistant",
+    )[0];
     expect(updated.toolCalls?.[0].content_blocks).toEqual([
       { type: "terminal", terminal_id: "term-1" },
       {
@@ -302,7 +306,9 @@ describe("useChat streaming and event handling", () => {
       });
     });
 
-    const final = result.current.messages.filter((m) => m.role === "assistant")[0];
+    const final = result.current.messages.filter(
+      (m) => m.role === "assistant",
+    )[0];
     expect(final.toolCalls?.[0].arguments).toEqual({ path: "/tmp/test" });
   });
 

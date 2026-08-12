@@ -150,11 +150,12 @@ export function ActivityMcpTab({
   const [menu, setMenu] = useState<McpContextMenu | null>(null);
   const [schemaLoading, setSchemaLoading] = useState(false);
   const [toolSchema, setToolSchema] = useState<McpToolSchema | null>(null);
-  const [argumentValues, setArgumentValues] = useState<Record<string, unknown>>({});
-  const [executing, setExecuting] = useState(false);
-  const [executionResult, setExecutionResult] = useState<McpExecutionResult | null>(
-    null,
+  const [argumentValues, setArgumentValues] = useState<Record<string, unknown>>(
+    {},
   );
+  const [executing, setExecuting] = useState(false);
+  const [executionResult, setExecutionResult] =
+    useState<McpExecutionResult | null>(null);
   const [actionError, setActionError] = useState<string | null>(null);
   const [refreshing, setRefreshing] = useState(false);
   const [topHeight, setTopHeight] = useState(DEFAULT_TOP_PANEL_PERCENT);
@@ -172,12 +173,15 @@ export function ActivityMcpTab({
     () =>
       servers
         .filter((server) => {
-          if (typeFilter !== "all" && getServerType(server) !== typeFilter) return false;
+          if (typeFilter !== "all" && getServerType(server) !== typeFilter)
+            return false;
           if (!normalizedSearch) return true;
           return serverMatchesQuery(server, normalizedSearch, toolsByServer);
         })
         .sort((left, right) =>
-          left.name.localeCompare(right.name, undefined, { sensitivity: "base" }),
+          left.name.localeCompare(right.name, undefined, {
+            sensitivity: "base",
+          }),
         ),
     [normalizedSearch, typeFilter, servers, toolsByServer],
   );
@@ -185,7 +189,10 @@ export function ActivityMcpTab({
   const getVisibleTools = useCallback(
     (server: McpServer) => {
       const tools = toolsByServer[server.name] ?? [];
-      if (!normalizedSearch || server.name.toLowerCase().includes(normalizedSearch)) {
+      if (
+        !normalizedSearch ||
+        server.name.toLowerCase().includes(normalizedSearch)
+      ) {
         return tools;
       }
       return tools.filter((tool) => matchesTool(tool, normalizedSearch));
@@ -215,18 +222,19 @@ export function ActivityMcpTab({
   }, [filteredServers, selection, updateSelection]);
 
   const selectedServer = selection?.serverName
-    ? servers.find((server) => server.name === selection.serverName) ?? null
+    ? (servers.find((server) => server.name === selection.serverName) ?? null)
     : null;
   const selectedTool =
     selection?.kind === "tool"
-      ? (toolsByServer[selection.serverName] ?? []).find(
+      ? ((toolsByServer[selection.serverName] ?? []).find(
           (tool) => tool.name === selection.toolName,
-        ) ?? null
+        ) ?? null)
       : null;
   const serverDraftSource = useMemo(() => {
     if (selection?.kind !== "server") return null;
     if (selection.viewMode === "create") return createMcpServerDraft();
-    if (!selectedServer || getServerType(selectedServer) !== "external") return null;
+    if (!selectedServer || getServerType(selectedServer) !== "external")
+      return null;
     return mcpServerToDraft(selectedServer);
   }, [selectedServer, selection]);
 
@@ -268,8 +276,10 @@ export function ActivityMcpTab({
       setExpandedServers((prev) => {
         const next = new Set(prev);
         for (const server of servers) {
-          if (typeFilter !== "all" && getServerType(server) !== typeFilter) continue;
-          if (serverMatchesQuery(server, query, toolsByServer)) next.add(server.name);
+          if (typeFilter !== "all" && getServerType(server) !== typeFilter)
+            continue;
+          if (serverMatchesQuery(server, query, toolsByServer))
+            next.add(server.name);
         }
         return next;
       });
@@ -409,7 +419,11 @@ export function ActivityMcpTab({
         }
 
         await fetchServers?.();
-        updateSelection({ kind: "server", serverName: draft.name, viewMode: "fields" });
+        updateSelection({
+          kind: "server",
+          serverName: draft.name,
+          viewMode: "fields",
+        });
         return true;
       } catch (error) {
         setActionError(actionErrorMessage(error, "Failed to save MCP server"));
@@ -469,10 +483,14 @@ export function ActivityMcpTab({
     setMenu(null);
     try {
       const ok = await setServerEnabled(name, next);
-      if (!ok) setActionError(`Failed to ${next ? "enable" : "disable"} ${name}`);
+      if (!ok)
+        setActionError(`Failed to ${next ? "enable" : "disable"} ${name}`);
     } catch (error) {
       setActionError(
-        actionErrorMessage(error, `Failed to ${next ? "enable" : "disable"} ${name}`),
+        actionErrorMessage(
+          error,
+          `Failed to ${next ? "enable" : "disable"} ${name}`,
+        ),
       );
     }
   }, [menu, setServerEnabled]);
@@ -524,7 +542,10 @@ export function ActivityMcpTab({
           type="button"
           variant="destructive"
           size="sm"
-          className={cn("w-full cursor-pointer rounded-none border-0 border-b border-[var(--border)] bg-[color-mix(in_srgb,var(--color-error)_10%,transparent)] px-3 py-[0.4rem] text-left text-[length:var(--text-xs)] text-[var(--color-error)]", coarseHitAreaCls)}
+          className={cn(
+            "w-full cursor-pointer rounded-none border-0 border-b border-[var(--border)] bg-[color-mix(in_srgb,var(--color-error)_10%,transparent)] px-3 py-[0.4rem] text-left text-[length:var(--text-xs)] text-[var(--color-error)]",
+            coarseHitAreaCls,
+          )}
           onClick={() => setActionError(null)}
           aria-label={`Dismiss error: ${actionError}`}
         >
@@ -582,9 +603,10 @@ export function ActivityMcpTab({
                       serverType === "internal" ? "Internal" : "External"
                     }`}
                     className={cn(
-                      "flex min-h-[var(--activity-panel-row-height)] cursor-pointer items-center gap-[0.45rem] py-[0.35rem] pl-3 pr-1 text-[var(--text-primary)] transition-[background,box-shadow] duration-150 hover:bg-[var(--bg-tertiary)] [&:not(:first-child)]:border-t [&:not(:first-child)]:border-[var(--border)]",
+                      "flex min-h-[var(--activity-panel-row-height)] cursor-pointer items-center gap-[0.45rem] py-[0.35rem] pr-1 pl-3 text-[var(--text-primary)] transition-[background,box-shadow] duration-150 hover:bg-[var(--bg-tertiary)] [&:not(:first-child)]:border-t [&:not(:first-child)]:border-[var(--border)]",
                       disabled && "opacity-[0.55]",
-                      serverSelected && "bg-[color-mix(in_srgb,var(--accent)_8%,transparent)]",
+                      serverSelected &&
+                        "bg-[color-mix(in_srgb,var(--accent)_8%,transparent)]",
                     )}
                     onClick={() => selectRow(serverId)}
                     onKeyDown={(event) => handleKeyDown(serverId, event)}
@@ -593,7 +615,10 @@ export function ActivityMcpTab({
                       type="button"
                       variant="ghost"
                       size="icon"
-                      className={cn("inline-flex size-5 shrink-0 cursor-pointer items-center justify-center rounded-[0.35rem] border-0 bg-transparent p-0 text-[var(--text-muted)] transition-colors duration-150 hover:bg-[var(--bg-primary)] hover:text-[var(--text-primary)]", coarseHitAreaCls)}
+                      className={cn(
+                        "inline-flex size-5 shrink-0 cursor-pointer items-center justify-center rounded-[0.35rem] border-0 bg-transparent p-0 text-[var(--text-muted)] transition-colors duration-150 hover:bg-[var(--bg-primary)] hover:text-[var(--text-primary)]",
+                        coarseHitAreaCls,
+                      )}
                       aria-label={`${expanded ? "Collapse" : "Expand"} ${
                         server.name
                       } tools`}
@@ -634,7 +659,7 @@ export function ActivityMcpTab({
                   {expanded &&
                     (visibleTools.length === 0 ? (
                       <div
-                        className="py-[0.45rem] pl-[2.55rem] pr-3 text-[length:var(--text-sm)] text-[var(--text-secondary)]"
+                        className="py-[0.45rem] pr-3 pl-[2.55rem] text-[length:var(--text-sm)] text-[var(--text-secondary)]"
                         role="treeitem"
                         aria-level={2}
                         aria-disabled="true"
@@ -663,8 +688,9 @@ export function ActivityMcpTab({
                                 : `${tool.name} tool`
                             }
                             className={cn(
-                              "flex min-h-[var(--activity-panel-row-height)] cursor-pointer items-center gap-[0.45rem] py-[0.35rem] pl-[2.55rem] pr-1 text-[var(--text-primary)] transition-[background,box-shadow] duration-150 hover:bg-[var(--bg-tertiary)]",
-                              toolSelected && "bg-[color-mix(in_srgb,var(--accent)_8%,transparent)]",
+                              "flex min-h-[var(--activity-panel-row-height)] cursor-pointer items-center gap-[0.45rem] py-[0.35rem] pr-1 pl-[2.55rem] text-[var(--text-primary)] transition-[background,box-shadow] duration-150 hover:bg-[var(--bg-tertiary)]",
+                              toolSelected &&
+                                "bg-[color-mix(in_srgb,var(--accent)_8%,transparent)]",
                             )}
                             onClick={() => selectRow(toolId)}
                             onKeyDown={(event) => handleKeyDown(toolId, event)}
@@ -775,7 +801,6 @@ export function ActivityMcpTab({
           onRemoveServer={handleRemoveServer}
         />
       )}
-
     </div>
   );
 }

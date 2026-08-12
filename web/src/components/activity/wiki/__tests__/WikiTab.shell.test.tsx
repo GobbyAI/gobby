@@ -1,4 +1,10 @@
-import { act, render, renderHook, screen, waitFor } from "@testing-library/react";
+import {
+  act,
+  render,
+  renderHook,
+  screen,
+  waitFor,
+} from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import type { ReactNode } from "react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
@@ -28,7 +34,9 @@ function jsonResponse(body: unknown, status = 200) {
   } as Response;
 }
 
-type FetchOverrides = Partial<Record<"status" | "health" | "sources", Response>>;
+type FetchOverrides = Partial<
+  Record<"status" | "health" | "sources", Response>
+>;
 
 function stubWikiFetch(overrides: FetchOverrides = {}) {
   const fetchMock = vi.fn(async (input: RequestInfo | URL) => {
@@ -92,7 +100,9 @@ describe("WikiTab shell", () => {
       expect(screen.getByRole("radio", { name: label })).toBeInTheDocument();
     }
     for (const retired of ["Ask", "Research"]) {
-      expect(screen.queryByRole("radio", { name: retired })).not.toBeInTheDocument();
+      expect(
+        screen.queryByRole("radio", { name: retired }),
+      ).not.toBeInTheDocument();
     }
     expect(screen.getByRole("radio", { name: "Wiki" })).toHaveAttribute(
       "aria-checked",
@@ -197,8 +207,12 @@ describe("WikiTab shell", () => {
     const user = userEvent.setup();
     renderShell(<WikiTab projectId="p1" />);
 
-    await user.click(await screen.findByRole("button", { name: "Wiki actions" }));
-    await user.click(await screen.findByRole("menuitem", { name: /manage sources/i }));
+    await user.click(
+      await screen.findByRole("button", { name: "Wiki actions" }),
+    );
+    await user.click(
+      await screen.findByRole("menuitem", { name: /manage sources/i }),
+    );
 
     expect(
       await screen.findByRole("heading", { name: /wiki sources/i }),
@@ -206,6 +220,8 @@ describe("WikiTab shell", () => {
     expect(await screen.findByText("Session: 019efb0c")).toBeInTheDocument();
 
     await user.click(screen.getByRole("button", { name: /back to wiki/i }));
-    expect(screen.queryByRole("heading", { name: /wiki sources/i })).not.toBeInTheDocument();
+    expect(
+      screen.queryByRole("heading", { name: /wiki sources/i }),
+    ).not.toBeInTheDocument();
   });
 });

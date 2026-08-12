@@ -28,7 +28,9 @@ export interface WikiSourcesManagerProps {
 }
 
 function sourceTitle(source: WikiSourceRecord): string {
-  return source.title?.trim() || source.wiki_path || source.page_path || source.id;
+  return (
+    source.title?.trim() || source.wiki_path || source.page_path || source.id
+  );
 }
 
 function sourceDetail(source: WikiSourceRecord): string | null {
@@ -52,7 +54,9 @@ export function WikiSourcesManager({
 }: WikiSourcesManagerProps) {
   const [filter, setFilter] = useState("");
   const [selectedId, setSelectedId] = useState<string | null>(null);
-  const [removalTarget, setRemovalTarget] = useState<WikiSourceRecord | null>(null);
+  const [removalTarget, setRemovalTarget] = useState<WikiSourceRecord | null>(
+    null,
+  );
   const [preview, setPreview] = useState<WikiEnvelope | null>(null);
   const [isPreviewLoading, setIsPreviewLoading] = useState(false);
   const [isConfirming, setIsConfirming] = useState(false);
@@ -84,7 +88,9 @@ export function WikiSourcesManager({
         setPreview(await removeSource({ id: source.id, dry_run: true }));
       } catch (previewError) {
         setRemovalError(
-          previewError instanceof Error ? previewError.message : String(previewError),
+          previewError instanceof Error
+            ? previewError.message
+            : String(previewError),
         );
       } finally {
         setIsPreviewLoading(false);
@@ -107,12 +113,16 @@ export function WikiSourcesManager({
       setRemovalError(null);
       try {
         await removeSource({ id: removalTarget.id, yes: true, keep_asset });
-        setSelectedId((current) => (current === removalTarget.id ? null : current));
+        setSelectedId((current) =>
+          current === removalTarget.id ? null : current,
+        );
         cancelRemoval();
         await onRemoved();
       } catch (confirmError) {
         setRemovalError(
-          confirmError instanceof Error ? confirmError.message : String(confirmError),
+          confirmError instanceof Error
+            ? confirmError.message
+            : String(confirmError),
         );
         setIsConfirming(false);
       }
@@ -147,14 +157,19 @@ export function WikiSourcesManager({
       </div>
 
       {error ? (
-        <p role="alert" className="px-3 py-2 text-xs text-destructive-foreground">
+        <p
+          role="alert"
+          className="px-3 py-2 text-xs text-destructive-foreground"
+        >
           {error}
         </p>
       ) : null}
 
       <div className="min-h-0 flex-1 overflow-y-auto">
         {isLoading ? (
-          <p className="px-3 py-4 text-sm text-muted-foreground">Loading sources…</p>
+          <p className="px-3 py-4 text-sm text-muted-foreground">
+            Loading sources…
+          </p>
         ) : filtered.length === 0 ? (
           <p className="px-3 py-4 text-sm text-muted-foreground">
             {sources.length === 0
@@ -176,7 +191,9 @@ export function WikiSourcesManager({
                   >
                     <Button
                       type="button"
-                      onClick={() => setSelectedId(isSelected ? null : source.id)}
+                      onClick={() =>
+                        setSelectedId(isSelected ? null : source.id)
+                      }
                       variant="ghost"
                       size="sm"
                       className={`${coarseHitAreaCls} h-auto min-w-0 flex-1 flex-col items-start justify-start gap-0 px-0 py-0 text-left`}
@@ -205,7 +222,9 @@ export function WikiSourcesManager({
                   {isSelected && selected ? (
                     <dl className="grid grid-cols-[auto_1fr] gap-x-3 gap-y-1 px-3 pb-3 text-xs">
                       {Object.entries(selected)
-                        .filter(([, value]) => typeof value === "string" && value)
+                        .filter(
+                          ([, value]) => typeof value === "string" && value,
+                        )
                         .map(([key, value]) => (
                           <div key={key} className="contents">
                             <dt className="text-muted-foreground">{key}</dt>

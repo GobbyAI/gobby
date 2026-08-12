@@ -28,7 +28,10 @@ import {
   MEMORY_VISIBILITY_OPTIONS,
   type DreamPurgeGraceDays,
 } from "./memory/MemoryTabData";
-import { DEFAULT_GRAPH_LIMITS, type GraphLimits } from "./memory/KnowledgeGraphModel";
+import {
+  DEFAULT_GRAPH_LIMITS,
+  type GraphLimits,
+} from "./memory/KnowledgeGraphModel";
 import { MemoryDetailPanel } from "./memory/MemoryDetailPanel";
 import { MemoryGraphView } from "./memory/MemoryGraphView";
 import { MemoryTabList } from "./memory/MemoryTabList";
@@ -101,8 +104,10 @@ export const MemoryTab = memo(function MemoryTab({
   const [topHeight, setTopHeight] = useState(DEFAULT_TOP_PANEL_PERCENT);
   const [viewMode, setViewMode] = useState<MemoryViewMode>("detail");
   const [scope, setScope] = useState<MemoryScopeSegment>("project");
-  const [purgeGraceDays, setPurgeGraceDays] = useState<DreamPurgeGraceDays | null>(null);
-  const [graphLimits, setGraphLimits] = useState<GraphLimits>(DEFAULT_GRAPH_LIMITS);
+  const [purgeGraceDays, setPurgeGraceDays] =
+    useState<DreamPurgeGraceDays | null>(null);
+  const [graphLimits, setGraphLimits] =
+    useState<GraphLimits>(DEFAULT_GRAPH_LIMITS);
   const confirmLeaveRef = useRef<(next: () => void) => void>((next) => next());
 
   const tabFilters = useMemo(
@@ -223,18 +228,21 @@ export const MemoryTab = memo(function MemoryTab({
   // the graph refetches immediately; a failed save just logs.
   const handleGraphLimitsChange = useCallback((next: GraphLimits) => {
     setGraphLimits(next);
-    void configurationClient.patch({
-      ui: {
-        knowledge_graph_limit: next.entities,
-        knowledge_graph_relationship_limit: next.relationships,
-      },
-    }).then((result) => {
-      if (result.kind !== "success") {
-        console.warn("Failed to persist graph limits", result.message);
-      }
-    }).catch((saveError: unknown) => {
-      console.warn("Failed to persist graph limits", saveError);
-    });
+    void configurationClient
+      .patch({
+        ui: {
+          knowledge_graph_limit: next.entities,
+          knowledge_graph_relationship_limit: next.relationships,
+        },
+      })
+      .then((result) => {
+        if (result.kind !== "success") {
+          console.warn("Failed to persist graph limits", result.message);
+        }
+      })
+      .catch((saveError: unknown) => {
+        console.warn("Failed to persist graph limits", saveError);
+      });
   }, []);
 
   const handleSave = useCallback(
@@ -242,7 +250,9 @@ export const MemoryTab = memo(function MemoryTab({
       try {
         return await saveMemoryDraft({ draft, updateMemory });
       } catch (saveError) {
-        setError(saveError instanceof Error ? saveError.message : String(saveError));
+        setError(
+          saveError instanceof Error ? saveError.message : String(saveError),
+        );
         return false;
       }
     },
@@ -255,7 +265,11 @@ export const MemoryTab = memo(function MemoryTab({
     try {
       await copyMemoryContent(memory);
     } catch (copyError) {
-      setError(copyError instanceof Error ? copyError.message : "Failed to copy memory");
+      setError(
+        copyError instanceof Error
+          ? copyError.message
+          : "Failed to copy memory",
+      );
     } finally {
       setBusyId(null);
     }
@@ -270,7 +284,11 @@ export const MemoryTab = memo(function MemoryTab({
         const deleted = await deleteMemoryWithRefresh({ memory, deleteMemory });
         if (deleted && selectedId === memory.id) setSelectedId(null);
       } catch (deleteError) {
-        setError(deleteError instanceof Error ? deleteError.message : "Failed to delete memory");
+        setError(
+          deleteError instanceof Error
+            ? deleteError.message
+            : "Failed to delete memory",
+        );
       } finally {
         setBusyId(null);
       }
@@ -288,7 +306,11 @@ export const MemoryTab = memo(function MemoryTab({
           setError("Failed to restore memory");
         }
       } catch (restoreError) {
-        setError(restoreError instanceof Error ? restoreError.message : "Failed to restore memory");
+        setError(
+          restoreError instanceof Error
+            ? restoreError.message
+            : "Failed to restore memory",
+        );
       } finally {
         setBusyId(null);
       }
@@ -309,7 +331,11 @@ export const MemoryTab = memo(function MemoryTab({
           setError("Failed to promote memory");
         }
       } catch (promoteError) {
-        setError(promoteError instanceof Error ? promoteError.message : "Failed to promote memory");
+        setError(
+          promoteError instanceof Error
+            ? promoteError.message
+            : "Failed to promote memory",
+        );
       } finally {
         setBusyId(null);
       }
@@ -320,9 +346,15 @@ export const MemoryTab = memo(function MemoryTab({
   const hasDetail = Boolean(selectedMemory);
 
   const detailActions = isMobile ? (
-    <span className="text-xs text-muted-foreground">Graph opens on desktop only.</span>
+    <span className="text-xs text-muted-foreground">
+      Graph opens on desktop only.
+    </span>
   ) : (
-    <DetailActionButton label="Show Graph" icon={<GraphIcon />} onClick={handleOpenGraph} />
+    <DetailActionButton
+      label="Show Graph"
+      icon={<GraphIcon />}
+      onClick={handleOpenGraph}
+    />
   );
 
   if (viewMode === "graph") {
@@ -350,79 +382,86 @@ export const MemoryTab = memo(function MemoryTab({
         />
       )}
       {filtersOpen && (
-        <div className="absolute right-2 top-1 z-20 w-56 rounded-md border border-border bg-[var(--bg-primary)] p-2 shadow-lg">
-              <div className="mb-2 px-1 text-xs font-medium text-muted-foreground">Type</div>
-              {MEMORY_TYPE_OPTIONS.map((option) => (
-                <div
-                  key={option.value}
-                  className="flex min-h-9 items-center justify-between gap-2 rounded-md px-2 text-sm hover:bg-muted"
-                >
-                  <span>
-                    {option.label}
-                    <span className="ml-1 text-xs text-muted-foreground">
-                      {memoryTypeCount(stats, option.value)}
-                    </span>
-                  </span>
-                  <Input
-                    type="checkbox"
-                    wrapperClassName="w-auto"
-                    className="size-4 rounded-sm p-0"
-                    aria-label={option.label}
-                    checked={filters.memoryType === option.value}
-                    onChange={() =>
-                      patchFilters({
-                        memoryType: filters.memoryType === option.value ? null : option.value,
-                        recentOnly: false,
-                      })
-                    }
-                  />
-                </div>
-              ))}
-              <div className="mt-1 flex min-h-9 items-center justify-between gap-2 rounded-md px-2 text-sm hover:bg-muted">
-                <span>
-                  Last 24 hours
-                  <span className="ml-1 text-xs text-muted-foreground">
-                    {stats?.recent_count ?? 0}
-                  </span>
+        <div className="absolute top-1 right-2 z-20 w-56 rounded-md border border-border bg-[var(--bg-primary)] p-2 shadow-lg">
+          <div className="mb-2 px-1 text-xs font-medium text-muted-foreground">
+            Type
+          </div>
+          {MEMORY_TYPE_OPTIONS.map((option) => (
+            <div
+              key={option.value}
+              className="flex min-h-9 items-center justify-between gap-2 rounded-md px-2 text-sm hover:bg-muted"
+            >
+              <span>
+                {option.label}
+                <span className="ml-1 text-xs text-muted-foreground">
+                  {memoryTypeCount(stats, option.value)}
                 </span>
+              </span>
+              <Input
+                type="checkbox"
+                wrapperClassName="w-auto"
+                className="size-4 rounded-sm p-0"
+                aria-label={option.label}
+                checked={filters.memoryType === option.value}
+                onChange={() =>
+                  patchFilters({
+                    memoryType:
+                      filters.memoryType === option.value ? null : option.value,
+                    recentOnly: false,
+                  })
+                }
+              />
+            </div>
+          ))}
+          <div className="mt-1 flex min-h-9 items-center justify-between gap-2 rounded-md px-2 text-sm hover:bg-muted">
+            <span>
+              Last 24 hours
+              <span className="ml-1 text-xs text-muted-foreground">
+                {stats?.recent_count ?? 0}
+              </span>
+            </span>
+            <Input
+              type="checkbox"
+              wrapperClassName="w-auto"
+              className="size-4 rounded-sm p-0"
+              aria-label="Last 24 hours"
+              checked={filters.recentOnly}
+              onChange={() =>
+                patchFilters({
+                  recentOnly: !filters.recentOnly,
+                  memoryType: null,
+                })
+              }
+            />
+          </div>
+          <div className="mt-2 mb-1 px-1 text-xs font-medium text-muted-foreground">
+            Visibility
+          </div>
+          <div
+            role="radiogroup"
+            aria-label="Visibility"
+            className="flex flex-col"
+          >
+            {MEMORY_VISIBILITY_OPTIONS.map((option) => (
+              <div
+                key={option.value}
+                className="flex min-h-9 items-center justify-between gap-2 rounded-md px-2 text-sm hover:bg-muted"
+              >
+                <span>{option.label}</span>
                 <Input
-                  type="checkbox"
+                  type="radio"
                   wrapperClassName="w-auto"
-                  className="size-4 rounded-sm p-0"
-                  aria-label="Last 24 hours"
-                  checked={filters.recentOnly}
-                  onChange={() =>
-                    patchFilters({
-                      recentOnly: !filters.recentOnly,
-                      memoryType: null,
-                    })
-                  }
+                  className="size-4 rounded-full p-0"
+                  name="memory-visibility"
+                  aria-label={option.label}
+                  checked={filters.visibility === option.value}
+                  onChange={() => patchFilters({ visibility: option.value })}
                 />
               </div>
-              <div className="mt-2 mb-1 px-1 text-xs font-medium text-muted-foreground">
-                Visibility
-              </div>
-              <div role="radiogroup" aria-label="Visibility" className="flex flex-col">
-                {MEMORY_VISIBILITY_OPTIONS.map((option) => (
-                  <div
-                    key={option.value}
-                    className="flex min-h-9 items-center justify-between gap-2 rounded-md px-2 text-sm hover:bg-muted"
-                  >
-                    <span>{option.label}</span>
-                    <Input
-                      type="radio"
-                      wrapperClassName="w-auto"
-                      className="size-4 rounded-full p-0"
-                      name="memory-visibility"
-                      aria-label={option.label}
-                      checked={filters.visibility === option.value}
-                      onChange={() => patchFilters({ visibility: option.value })}
-                    />
-                  </div>
-                ))}
-              </div>
-            </div>
-          )}
+            ))}
+          </div>
+        </div>
+      )}
 
       {error && (
         <Button
@@ -439,7 +478,11 @@ export const MemoryTab = memo(function MemoryTab({
 
       <div className="flex min-h-0 flex-1 flex-col">
         <div
-          className={hasDetail ? "overflow-y-auto border-b border-border" : "flex-1 overflow-y-auto"}
+          className={
+            hasDetail
+              ? "overflow-y-auto border-b border-border"
+              : "flex-1 overflow-y-auto"
+          }
           style={hasDetail ? { height: `${topHeight}%` } : undefined}
         >
           {isLoading && memories.length === 0 ? (
@@ -458,8 +501,8 @@ export const MemoryTab = memo(function MemoryTab({
                   : search.trim()
                     ? "No memories match the current filters."
                     : memories.length === 0
-                    ? "Memories captured during sessions appear here."
-                    : "No memories match the current filters."
+                      ? "Memories captured during sessions appear here."
+                      : "No memories match the current filters."
               }
             />
           ) : (

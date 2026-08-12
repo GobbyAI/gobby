@@ -40,7 +40,9 @@ function makeMemory(overrides: Partial<GobbyMemory> = {}): GobbyMemory {
   };
 }
 
-function baseFilters(overrides: Partial<MemoryTabFilters> = {}): MemoryTabFilters {
+function baseFilters(
+  overrides: Partial<MemoryTabFilters> = {},
+): MemoryTabFilters {
   return {
     search: "",
     memoryType: null,
@@ -53,7 +55,9 @@ function baseFilters(overrides: Partial<MemoryTabFilters> = {}): MemoryTabFilter
 describe("isHiddenMemory / memoryDreamFlag", () => {
   it("treats only rows with deleted_at as hidden", () => {
     expect(isHiddenMemory(makeMemory())).toBe(false);
-    expect(isHiddenMemory(makeMemory({ deleted_at: "2026-06-10T00:00:00Z" }))).toBe(true);
+    expect(
+      isHiddenMemory(makeMemory({ deleted_at: "2026-06-10T00:00:00Z" })),
+    ).toBe(true);
   });
 
   it("normalizes the dream action only for hidden rows with a known action", () => {
@@ -78,7 +82,9 @@ describe("isHiddenMemory / memoryDreamFlag", () => {
       dreamFlagLabel(makeMemory({ deleted_at: "x", dream_action: "delete" })),
     ).toBe("Flagged for deletion");
     // Hidden but unknown/missing action still gets a generic label.
-    expect(dreamFlagLabel(makeMemory({ deleted_at: "x", dream_action: null }))).toBe("Flagged");
+    expect(
+      dreamFlagLabel(makeMemory({ deleted_at: "x", dream_action: null })),
+    ).toBe("Flagged");
   });
 });
 
@@ -91,20 +97,36 @@ describe("memoryScopeLabel", () => {
 
 describe("filterMemories visibility", () => {
   const active = makeMemory({ id: "active" });
-  const hidden = makeMemory({ id: "hidden", deleted_at: "2026-06-10T00:00:00Z", dream_action: "review" });
+  const hidden = makeMemory({
+    id: "hidden",
+    deleted_at: "2026-06-10T00:00:00Z",
+    dream_action: "review",
+  });
 
   it("active visibility hides dream-flagged rows", () => {
-    const result = filterMemories([active, hidden], baseFilters({ visibility: "active" }), NOW);
+    const result = filterMemories(
+      [active, hidden],
+      baseFilters({ visibility: "active" }),
+      NOW,
+    );
     expect(result.map((m) => m.id)).toEqual(["active"]);
   });
 
   it("hidden visibility shows only dream-flagged rows", () => {
-    const result = filterMemories([active, hidden], baseFilters({ visibility: "hidden" }), NOW);
+    const result = filterMemories(
+      [active, hidden],
+      baseFilters({ visibility: "hidden" }),
+      NOW,
+    );
     expect(result.map((m) => m.id)).toEqual(["hidden"]);
   });
 
   it("all visibility shows everything", () => {
-    const result = filterMemories([active, hidden], baseFilters({ visibility: "all" }), NOW);
+    const result = filterMemories(
+      [active, hidden],
+      baseFilters({ visibility: "all" }),
+      NOW,
+    );
     expect(result.map((m) => m.id)).toEqual(["active", "hidden"]);
   });
 
@@ -209,7 +231,9 @@ describe("extractDreamPurgeGraceDays", () => {
     expect(extractDreamPurgeGraceDays({ memory: { dream: {} } })).toBeNull();
     expect(
       extractDreamPurgeGraceDays({
-        memory: { dream: { purge_review_after_days: Number.POSITIVE_INFINITY } },
+        memory: {
+          dream: { purge_review_after_days: Number.POSITIVE_INFINITY },
+        },
       }),
     ).toBeNull();
   });
@@ -219,7 +243,10 @@ describe("extractGraphLimits (#19157)", () => {
   it("reads the persisted knowledge-graph limits from ui config", () => {
     expect(
       extractGraphLimits({
-        ui: { knowledge_graph_limit: 0, knowledge_graph_relationship_limit: 12000 },
+        ui: {
+          knowledge_graph_limit: 0,
+          knowledge_graph_relationship_limit: 12000,
+        },
       }),
     ).toEqual({ entities: 0, relationships: 12000 });
   });
@@ -229,12 +256,18 @@ describe("extractGraphLimits (#19157)", () => {
     expect(extractGraphLimits({ ui: {} })).toEqual(DEFAULT_GRAPH_LIMITS);
     expect(
       extractGraphLimits({
-        ui: { knowledge_graph_limit: null, knowledge_graph_relationship_limit: "" },
+        ui: {
+          knowledge_graph_limit: null,
+          knowledge_graph_relationship_limit: "",
+        },
       }),
     ).toEqual(DEFAULT_GRAPH_LIMITS);
     expect(
       extractGraphLimits({
-        ui: { knowledge_graph_limit: "lots", knowledge_graph_relationship_limit: -5 },
+        ui: {
+          knowledge_graph_limit: "lots",
+          knowledge_graph_relationship_limit: -5,
+        },
       }),
     ).toEqual(DEFAULT_GRAPH_LIMITS);
   });

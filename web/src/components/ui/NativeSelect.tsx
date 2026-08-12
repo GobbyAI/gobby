@@ -1,12 +1,11 @@
-import { forwardRef, type SelectHTMLAttributes } from 'react'
-import { cn } from '../../lib/utils'
-import { controlSurfaceCls, controlWrapperCls } from './controlStyles'
+import { forwardRef, type SelectHTMLAttributes } from "react";
+import { cn } from "../../lib/utils";
+import { controlSurfaceCls, controlWrapperCls } from "./controlStyles";
 
-export interface NativeSelectProps
-  extends SelectHTMLAttributes<HTMLSelectElement> {
-  error?: boolean
+export interface NativeSelectProps extends SelectHTMLAttributes<HTMLSelectElement> {
+  error?: boolean;
   /** Layout overrides for the wrapper label (flex-1, width caps, …). */
-  wrapperClassName?: string
+  wrapperClassName?: string;
 }
 
 /**
@@ -20,10 +19,10 @@ export const NativeSelect = forwardRef<HTMLSelectElement, NativeSelectProps>(
       <label className={cn(controlWrapperCls, wrapperClassName)}>
         <select
           className={cn(
-            'h-9 py-1',
+            "h-9 py-1",
             controlSurfaceCls,
-            error ? 'border-destructive' : 'border-border',
-            className
+            error ? "border-destructive" : "border-border",
+            className,
           )}
           aria-invalid={!!error}
           ref={ref}
@@ -32,7 +31,7 @@ export const NativeSelect = forwardRef<HTMLSelectElement, NativeSelectProps>(
           {children}
         </select>
       </label>
-    )
-  }
-)
-NativeSelect.displayName = 'NativeSelect'
+    );
+  },
+);
+NativeSelect.displayName = "NativeSelect";

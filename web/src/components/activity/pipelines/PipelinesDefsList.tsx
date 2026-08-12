@@ -35,13 +35,21 @@ export function PipelinesDefsList({
   onDelete,
 }: PipelinesDefsListProps) {
   return (
-    <div className="flex flex-col" role="list" aria-label="Pipeline definitions">
+    <div
+      className="flex flex-col"
+      role="list"
+      aria-label="Pipeline definitions"
+    >
       {definitions.map((definition) => {
         const selected = definition.id === selectedId;
         const busy = definition.id === busyId;
         const steps = stepCount(definition);
         const menuItems: QuickMenuItem[] = [
-          { label: "Run", disabled: busy || !definition.enabled, onSelect: () => onRun(definition) },
+          {
+            label: "Run",
+            disabled: busy || !definition.enabled,
+            onSelect: () => onRun(definition),
+          },
           {
             label: definition.enabled ? "Disable" : "Enable",
             disabled: busy,
@@ -74,7 +82,9 @@ export function PipelinesDefsList({
             >
               <ActivityRowStatusDot
                 kind={definition.enabled ? "active" : "disabled"}
-                label={definition.enabled ? "Enabled pipeline" : "Disabled pipeline"}
+                label={
+                  definition.enabled ? "Enabled pipeline" : "Disabled pipeline"
+                }
               />
               <span className="activity-row-title">{definition.name}</span>
               <Chip tone="accent" uppercase>

@@ -13,23 +13,21 @@ export function useChatPageVoiceStatus(
   const wantsVoiceStatusSlot = Boolean(
     voice.ttsEnabled || (voice.sttEnabled && voiceInputMode === "vad"),
   );
-  const isPttRecording = Boolean(
-    voiceInputMode === "ptt" && voice.isRecording,
-  );
+  const isPttRecording = Boolean(voiceInputMode === "ptt" && voice.isRecording);
   const showVoiceStatusBar = Boolean(
     wantsVoiceStatusSlot ||
-      voice.voiceLoading ||
-      voice.isListening ||
-      isPttRecording ||
-      voice.isTranscribing ||
-      voice.voiceError,
+    voice.voiceLoading ||
+    voice.isListening ||
+    isPttRecording ||
+    voice.isTranscribing ||
+    voice.voiceError,
   );
   const voiceStatusWarming = Boolean(
     voice.voiceLoading ||
-      (wantsVoiceStatusSlot &&
-        voice.voiceAvailable &&
-        !voice.voiceReady &&
-        !voice.voiceError),
+    (wantsVoiceStatusSlot &&
+      voice.voiceAvailable &&
+      !voice.voiceReady &&
+      !voice.voiceError),
   );
 
   return {

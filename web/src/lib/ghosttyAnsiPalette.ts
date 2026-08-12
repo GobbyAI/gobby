@@ -1,5 +1,5 @@
-import type { CellData } from '@wterm/core'
-import type { GhosttyCore } from '@wterm/ghostty'
+import type { CellData } from "@wterm/core";
+import type { GhosttyCore } from "@wterm/ghostty";
 
 // ghostty-vt resolves ANSI palette SGRs (30-37/90-97, 38;5/48;5 with N < 16)
 // to concrete RGB from its built-in Tomorrow Night base-16 palette before
@@ -26,31 +26,31 @@ const ANSI_INDEX_BY_RGB = new Map<number, number>([
   [0xc397d8, 13],
   [0x70c0b1, 14],
   [0xeaeaea, 15],
-])
+]);
 
 export function remapAnsiCell(cell: CellData): CellData {
   const fgIdx =
-    cell.fgRgb === undefined ? undefined : ANSI_INDEX_BY_RGB.get(cell.fgRgb)
+    cell.fgRgb === undefined ? undefined : ANSI_INDEX_BY_RGB.get(cell.fgRgb);
   const bgIdx =
-    cell.bgRgb === undefined ? undefined : ANSI_INDEX_BY_RGB.get(cell.bgRgb)
-  if (fgIdx === undefined && bgIdx === undefined) return cell
-  const next = { ...cell }
+    cell.bgRgb === undefined ? undefined : ANSI_INDEX_BY_RGB.get(cell.bgRgb);
+  if (fgIdx === undefined && bgIdx === undefined) return cell;
+  const next = { ...cell };
   if (fgIdx !== undefined) {
-    next.fg = fgIdx
-    delete next.fgRgb
+    next.fg = fgIdx;
+    delete next.fgRgb;
   }
   if (bgIdx !== undefined) {
-    next.bg = bgIdx
-    delete next.bgRgb
+    next.bg = bgIdx;
+    delete next.bgRgb;
   }
-  return next
+  return next;
 }
 
 export function withGobbyAnsiPalette(core: GhosttyCore): GhosttyCore {
-  const getCell = core.getCell.bind(core)
-  const getScrollbackCell = core.getScrollbackCell.bind(core)
-  core.getCell = (row: number, col: number) => remapAnsiCell(getCell(row, col))
+  const getCell = core.getCell.bind(core);
+  const getScrollbackCell = core.getScrollbackCell.bind(core);
+  core.getCell = (row: number, col: number) => remapAnsiCell(getCell(row, col));
   core.getScrollbackCell = (offset: number, col: number) =>
-    remapAnsiCell(getScrollbackCell(offset, col))
-  return core
+    remapAnsiCell(getScrollbackCell(offset, col));
+  return core;
 }

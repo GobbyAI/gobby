@@ -454,10 +454,17 @@ const OVERFLOW_MESSAGES = [
       "Long-form content exercising mono overflow and scroll behavior.",
       "",
       "```ts",
-      ...Array.from({ length: 40 }, (_, i) => `const row${i} = ${i}; ${LONG_LINE}`),
+      ...Array.from(
+        { length: 40 },
+        (_, i) => `const row${i} = ${i}; ${LONG_LINE}`,
+      ),
       "```",
       "",
-      Array.from({ length: 30 }, (_, i) => `Paragraph ${i}: the quick brown fox jumps over the lazy dog, at length, repeatedly, to force scrolling.`).join("\n\n"),
+      Array.from(
+        { length: 30 },
+        (_, i) =>
+          `Paragraph ${i}: the quick brown fox jumps over the lazy dog, at length, repeatedly, to force scrolling.`,
+      ).join("\n\n"),
     ].join("\n"),
   },
 ];
@@ -469,7 +476,11 @@ const WIKI_LONG_CONTENT = [
   "",
   "# Home",
   "",
-  ...Array.from({ length: 60 }, (_, i) => `Section ${i} body copy that keeps the reader scrolling through a realistically long wiki document.\n`),
+  ...Array.from(
+    { length: 60 },
+    (_, i) =>
+      `Section ${i} body copy that keeps the reader scrolling through a realistically long wiki document.\n`,
+  ),
 ].join("\n");
 
 /** One nested config tree feeding /api/config/values for the 13 settings
@@ -490,18 +501,46 @@ const CONFIG_VALUES = {
     knowledge_graph_limit: 500,
     knowledge_graph_relationship_limit: 2000,
   },
-  search: { mode: "hybrid", keyword_weight: 0.4, embedding_weight: 0.6, notify_on_fallback: true },
+  search: {
+    mode: "hybrid",
+    keyword_weight: 0.4,
+    embedding_weight: 0.6,
+    notify_on_fallback: true,
+  },
   auth: { username: "admin", password: "********" },
-  embeddings: { model: "text-embedding-3-small", dim: 1536, api_base: null, query_prefix: null, api_key: "********" },
+  embeddings: {
+    model: "text-embedding-3-small",
+    dim: 1536,
+    api_base: null,
+    query_prefix: null,
+    api_key: "********",
+  },
   databases: {
-    qdrant: { url: "http://localhost:6333", port: 6333, collection_prefix: "gobby_", api_key: "********" },
-    falkordb: { host: "localhost", port: 6379, graph_name: "gobby", graph_search: true, graph_min_score: 0.35, rrf_k: 60, password: "********" },
+    qdrant: {
+      url: "http://localhost:6333",
+      port: 6333,
+      collection_prefix: "gobby_",
+      api_key: "********",
+    },
+    falkordb: {
+      host: "localhost",
+      port: 6379,
+      graph_name: "gobby",
+      graph_search: true,
+      graph_min_score: 0.35,
+      rrf_k: 60,
+      password: "********",
+    },
   },
   tool_approval: {
     enabled: true,
     default_policy: "approve_once",
     policies: [
-      { server_pattern: "gobby-tasks", tool_pattern: "create_task", policy: "always_ask" },
+      {
+        server_pattern: "gobby-tasks",
+        tool_pattern: "create_task",
+        policy: "always_ask",
+      },
       { server_pattern: "*", tool_pattern: "Read", policy: "auto" },
     ],
   },
@@ -836,7 +875,11 @@ const CONFIG_VALUES = {
       otlp_headers: { Authorization: "Bearer token" },
       prometheus_enabled: true,
     },
-    llm_tracing: { enabled: false, capture_content: false, providers: ["anthropic", "openai"] },
+    llm_tracing: {
+      enabled: false,
+      capture_content: false,
+      providers: ["anthropic", "openai"],
+    },
   },
   metrics: { list_limit: 10000 },
   communications: {
@@ -910,9 +953,22 @@ const CONFIG_VALUES = {
     jitter_seconds: 300,
     github_timeout_seconds: 10,
   },
-  digest: { enabled: true, profile: "feature_mid", candidates: ["claude/sonnet"], timeout: 120 },
-  web_chat_sandbox: { enabled: true, extra_read_paths: ["/tmp"], extra_write_paths: ["/tmp/out"] },
-  agent_sandbox: { enabled: true, extra_read_paths: ["/tmp"], extra_write_paths: ["/tmp/out"] },
+  digest: {
+    enabled: true,
+    profile: "feature_mid",
+    candidates: ["claude/sonnet"],
+    timeout: 120,
+  },
+  web_chat_sandbox: {
+    enabled: true,
+    extra_read_paths: ["/tmp"],
+    extra_write_paths: ["/tmp/out"],
+  },
+  agent_sandbox: {
+    enabled: true,
+    extra_read_paths: ["/tmp"],
+    extra_write_paths: ["/tmp/out"],
+  },
   clones_dir: "~/.gobby/clones",
   worktrees_dir: "~/.gobby/worktrees",
 };
@@ -934,8 +990,7 @@ function setSchemaPath(
   let node = root;
   for (const segment of segments.slice(0, -1)) {
     const existing = node.properties[segment] as
-      | { type: string; properties: Record<string, unknown> }
-      | undefined;
+      { type: string; properties: Record<string, unknown> } | undefined;
     const child = existing ?? { type: "object", properties: {} };
     node.properties[segment] = child;
     node = child;
@@ -993,7 +1048,10 @@ function buildConfigSchema(): Record<string, unknown> {
     type: "string",
     enum: ["debug", "info", "warning", "error"],
   });
-  setSchemaPath(root, "logging.format", { type: "string", enum: ["text", "json"] });
+  setSchemaPath(root, "logging.format", {
+    type: "string",
+    enum: ["text", "json"],
+  });
   setSchemaPath(root, "telemetry.exporter.otlp_protocol", {
     type: "string",
     enum: ["grpc", "http"],
@@ -1026,7 +1084,11 @@ function baseApi(
 ): unknown | undefined {
   switch (pathname) {
     case "/api/auth/status":
-      return { auth_required: false, authenticated: true, credentials_configured: true };
+      return {
+        auth_required: false,
+        authenticated: true,
+        credentials_configured: true,
+      };
     case "/api/config/ui-settings":
       // Must mirror the localStorage seed — the remote payload merges over
       // local settings on mount, so a mismatch would undo per-cell settings.
@@ -1183,7 +1245,12 @@ function baseApi(
     case `/api/skills/${SKILL.id}/files`:
       return {
         files: [
-          { path: "SKILL.md", file_type: "markdown", size_bytes: 120, content_hash: "abc123" },
+          {
+            path: "SKILL.md",
+            file_type: "markdown",
+            size_bytes: 120,
+            content_hash: "abc123",
+          },
         ],
       };
     case `/api/skills/${SKILL.id}/files/SKILL.md`:
@@ -1235,7 +1302,12 @@ function baseApi(
           },
         ],
         relationships: [
-          { source_key: "entity-1", target_key: "entity-2", type: "CONTAINS", properties: {} },
+          {
+            source_key: "entity-1",
+            target_key: "entity-2",
+            type: "CONTAINS",
+            properties: {},
+          },
         ],
       };
     case "/api/config/values":
@@ -1473,17 +1545,38 @@ function baseApi(
       const treePath = url.searchParams.get("path") ?? "";
       if (treePath === "src") {
         return [
-          { name: "main.py", path: "src/main.py", is_dir: false, extension: ".py", size: 1024 },
-          { name: "utils.ts", path: "src/utils.ts", is_dir: false, extension: ".ts", size: 512 },
+          {
+            name: "main.py",
+            path: "src/main.py",
+            is_dir: false,
+            extension: ".py",
+            size: 1024,
+          },
+          {
+            name: "utils.ts",
+            path: "src/utils.ts",
+            is_dir: false,
+            extension: ".ts",
+            size: 512,
+          },
         ];
       }
       return [
         { name: "src", path: "src", is_dir: true, extension: null, size: null },
-        { name: "README.md", path: "README.md", is_dir: false, extension: ".md", size: 256 },
+        {
+          name: "README.md",
+          path: "README.md",
+          is_dir: false,
+          extension: ".md",
+          size: 256,
+        },
       ];
     }
     case "/api/files/git-status":
-      return { branch: "main", files: { "README.md": "M", "src/main.py": "??" } };
+      return {
+        branch: "main",
+        files: { "README.md": "M", "src/main.py": "??" },
+      };
     case "/api/source-control/status":
       return {
         github_available: false,
@@ -1656,20 +1749,27 @@ function chatReplyHook(
   reply: (ws: WebSocketRoute, requestId: string) => void,
 ): WsHook {
   return (ws, message) => {
-    if (message.type === "chat_message" && typeof message.request_id === "string") {
+    if (
+      message.type === "chat_message" &&
+      typeof message.request_id === "string"
+    ) {
       reply(ws, message.request_id);
     }
   };
 }
 
-const TAB_CHECKPOINTS: Record<string, (page: Page, cell: CaptureCell) => Locator> = {
+const TAB_CHECKPOINTS: Record<
+  string,
+  (page: Page, cell: CaptureCell) => Locator
+> = {
   sessions: (page) => page.locator(".session-entry", { hasText: "Session A" }),
   terminal: (page) =>
     page
       .getByTestId("terminal-view")
       .locator(".term-row", { hasText: "plain line" })
       .first(),
-  tasks: (page) => page.getByTestId("task-tree").getByRole("treeitem", { name: /#14425/ }),
+  tasks: (page) =>
+    page.getByTestId("task-tree").getByRole("treeitem", { name: /#14425/ }),
   mcp: (page) =>
     page
       .getByRole("tree", { name: "MCP servers and tools" })
@@ -1677,16 +1777,25 @@ const TAB_CHECKPOINTS: Record<string, (page: Page, cell: CaptureCell) => Locator
   agents: (page) => page.getByRole("button", { name: "Select reviewer" }),
   stages: (page) => page.getByRole("button", { name: "Select Development" }),
   skills: (page) => page.getByRole("button", { name: "Select impeccable" }),
-  memory: (page) => page.getByRole("list", { name: "Memories" }).getByRole("listitem").first(),
-  integrations: (page) => page.getByRole("button", { name: "Select Slack Alerts" }),
+  memory: (page) =>
+    page.getByRole("list", { name: "Memories" }).getByRole("listitem").first(),
+  integrations: (page) =>
+    page.getByRole("button", { name: "Select Slack Alerts" }),
   wiki: (page) =>
-    page.getByRole("tree", { name: "Wiki pages" }).getByRole("treeitem", { name: "Home" }),
-  rules: (page) => page.getByRole("button", { name: "Select no-secrets-in-diff" }),
+    page
+      .getByRole("tree", { name: "Wiki pages" })
+      .getByRole("treeitem", { name: "Home" }),
+  rules: (page) =>
+    page.getByRole("button", { name: "Select no-secrets-in-diff" }),
   plans: (page) => page.getByTestId("plan-review-status"),
   changes: (page) => page.getByRole("button", { name: /alpha\.ts/ }),
   files: (page) =>
-    page.getByRole("tree", { name: "Project files" }).getByRole("treeitem").first(),
-  pipelines: (page) => page.getByRole("button", { name: /nightly-verify/ }).first(),
+    page
+      .getByRole("tree", { name: "Project files" })
+      .getByRole("treeitem")
+      .first(),
+  pipelines: (page) =>
+    page.getByRole("button", { name: /nightly-verify/ }).first(),
   cron: (page) => page.getByRole("button", { name: "Select Nightly Digest" }),
 };
 
@@ -1695,7 +1804,9 @@ function buildTabImplementations(): Record<string, Record<string, StateImpl>> {
   for (const tab of ACTIVITY_PANEL_TABS) {
     const checkpoint = TAB_CHECKPOINTS[tab.id];
     if (!checkpoint) {
-      throw new Error(`No checkpoint implementation for activity tab "${tab.id}"`);
+      throw new Error(
+        `No checkpoint implementation for activity tab "${tab.id}"`,
+      );
     }
     let base: StateImpl;
     switch (tab.id) {
@@ -1778,9 +1889,9 @@ function buildTabImplementations(): Record<string, Record<string, StateImpl>> {
             // fitted box to hold still across consecutive checks.
             const wterms = page.locator(".wterm");
             await expect(wterms.first()).toBeVisible({ timeout: 20000 });
-            await expect(
-              page.getByText("plain line").first(),
-            ).toBeVisible({ timeout: 15000 });
+            await expect(page.getByText("plain line").first()).toBeVisible({
+              timeout: 15000,
+            });
             const boxes = () =>
               wterms.evaluateAll((els) =>
                 els
@@ -1854,31 +1965,41 @@ function buildTabImplementations(): Record<string, Record<string, StateImpl>> {
     }
     const states: Record<string, StateImpl> = { base };
     if (tab.id === "sessions") {
-      states["filter-open"] = tabImpl(tab.id, (page) =>
-        page.getByTestId("sessions-filter-overlay"), {
-        prepare: async (page) => {
-          await page.getByRole("button", { name: "Filter sessions" }).click();
+      states["filter-open"] = tabImpl(
+        tab.id,
+        (page) => page.getByTestId("sessions-filter-overlay"),
+        {
+          prepare: async (page) => {
+            await page.getByRole("button", { name: "Filter sessions" }).click();
+          },
         },
-      });
-      states["menu-open"] = tabImpl(tab.id, (page) =>
-        page
-          .locator(".activity-panel-mobile-menu")
-          .getByRole("button", { name: "Tasks", exact: true }), {
-        prepare: async (page) => {
-          await page.locator(".activity-panel-mobile-trigger").click();
+      );
+      states["menu-open"] = tabImpl(
+        tab.id,
+        (page) =>
+          page
+            .locator(".activity-panel-mobile-menu")
+            .getByRole("button", { name: "Tasks", exact: true }),
+        {
+          prepare: async (page) => {
+            await page.locator(".activity-panel-mobile-trigger").click();
+          },
         },
-      });
+      );
     }
     if (tab.id === "wiki") {
-      states.overflow = tabImpl(tab.id, (page) =>
-        page.getByRole("heading", { name: "Home" }).first(), {
-        prepare: async (page) => {
-          await page
-            .getByRole("tree", { name: "Wiki pages" })
-            .getByRole("treeitem", { name: "Home" })
-            .click();
+      states.overflow = tabImpl(
+        tab.id,
+        (page) => page.getByRole("heading", { name: "Home" }).first(),
+        {
+          prepare: async (page) => {
+            await page
+              .getByRole("tree", { name: "Wiki pages" })
+              .getByRole("treeitem", { name: "Home" })
+              .click();
+          },
         },
-      });
+      );
     }
     impls[`tab-${tab.id}`] = states;
   }
@@ -1916,7 +2037,11 @@ function buildImplementations(): Record<string, Record<string, StateImpl>> {
       base: {
         api: (pathname) =>
           pathname === "/api/auth/status"
-            ? { auth_required: true, authenticated: false, credentials_configured: true }
+            ? {
+                auth_required: true,
+                authenticated: false,
+                credentials_configured: true,
+              }
             : undefined,
         checkpoint: (page) => page.getByRole("button", { name: "Sign in" }),
       },
@@ -1932,7 +2057,9 @@ function buildImplementations(): Record<string, Record<string, StateImpl>> {
             ? { messages: OVERFLOW_MESSAGES, max_seq: OVERFLOW_MESSAGES.length }
             : undefined,
         checkpoint: (page) =>
-          page.getByText("Long-form content exercising mono overflow", { exact: false }),
+          page.getByText("Long-form content exercising mono overflow", {
+            exact: false,
+          }),
       },
       "stream-error": {
         ws: chatReplyHook((ws, requestId) => {
@@ -1951,7 +2078,9 @@ function buildImplementations(): Record<string, Record<string, StateImpl>> {
           await input.press("Enter");
         },
         checkpoint: (page) =>
-          page.getByText("Provider connection lost mid-response.", { exact: false }),
+          page.getByText("Provider connection lost mid-response.", {
+            exact: false,
+          }),
       },
       streaming: {
         // No server reply at all: sending a message sets the client's
@@ -1979,7 +2108,8 @@ function buildImplementations(): Record<string, Record<string, StateImpl>> {
           const input = page.getByRole("textbox", { name: /message input/i });
           await input.fill("Draft a release note for 0.5.0");
         },
-        checkpoint: (page) => page.getByRole("button", { name: "Send message" }),
+        checkpoint: (page) =>
+          page.getByRole("button", { name: "Send message" }),
       },
       "voice-recording": {
         settings: { sttEnabled: true, voiceInputMode: "ptt" },
@@ -2025,9 +2155,10 @@ function buildImplementations(): Record<string, Record<string, StateImpl>> {
             : undefined,
         checkpoint: (page) => page.getByTestId("voice-status-bar"),
         readiness: async (page) => {
-          await expect(
-            page.getByTestId("voice-status-bar"),
-          ).toContainText(/Ready — speak to send|Listening/, { timeout: 15000 });
+          await expect(page.getByTestId("voice-status-bar")).toContainText(
+            /Ready — speak to send|Listening/,
+            { timeout: 15000 },
+          );
         },
         motionTarget: (page) =>
           page
@@ -2059,14 +2190,19 @@ function buildImplementations(): Record<string, Record<string, StateImpl>> {
           // Desktop-tier viewports only (the matrix restricts this
           // scenario): the panel is already open and Show Graph exists.
           await expect(
-            page.getByRole("list", { name: "Memories" }).getByRole("listitem").first(),
+            page
+              .getByRole("list", { name: "Memories" })
+              .getByRole("listitem")
+              .first(),
           ).toBeVisible();
           await page.getByRole("button", { name: "Show Graph" }).click();
         },
         checkpoint: (page) => page.locator(".knowledge-graph"),
         readiness: async (page) => {
           await expect(
-            page.locator(".knowledge-graph").getByText("2 entities · 1 relationships"),
+            page
+              .locator(".knowledge-graph")
+              .getByText("2 entities · 1 relationships"),
           ).toBeVisible({ timeout: 20000 });
           const canvas = page.locator(".knowledge-graph canvas");
           await expect(canvas).toBeVisible();
@@ -2084,7 +2220,9 @@ function buildImplementations(): Record<string, Record<string, StateImpl>> {
     "mobile-toolbar": {
       base: {
         prepare: async (page) => {
-          await page.getByRole("button", { name: "Show activity panel" }).click();
+          await page
+            .getByRole("button", { name: "Show activity panel" })
+            .click();
         },
         checkpoint: (page) =>
           page
@@ -2216,7 +2354,9 @@ test.describe("representative mappings", () => {
 
     // Traces must still be absent from the live registry — if it returns,
     // it needs a real capture scenario instead of a mapping.
-    expect(ACTIVITY_PANEL_TABS.some((tab) => (tab.id as string) === "traces")).toBe(false);
+    expect(
+      ACTIVITY_PANEL_TABS.some((tab) => (tab.id as string) === "traces"),
+    ).toBe(false);
   });
 });
 
@@ -2237,7 +2377,9 @@ test.describe("composer parity", () => {
       "input-status.css",
       "input.css",
     ]) {
-      expect(fs.existsSync(path.join(SRC_DIR, "components/chat/styles", sheet))).toBe(false);
+      expect(
+        fs.existsSync(path.join(SRC_DIR, "components/chat/styles", sheet)),
+      ).toBe(false);
     }
   });
 });
@@ -2256,7 +2398,9 @@ test.describe("reduced-motion relocation", () => {
       expect(
         new Set(
           cells
-            .filter((cell) => cell.scenario === scenario && cell.state === state)
+            .filter(
+              (cell) => cell.scenario === scenario && cell.state === state,
+            )
             .map((cell) => cell.motion),
         ),
       ).toEqual(new Set(["reduce", "none"]));
@@ -2267,8 +2411,12 @@ test.describe("reduced-motion relocation", () => {
       "utf8",
     );
     expect(accessibility).toContain("prefers-reduced-motion: reduce");
-    expect(accessibility).toContain('.chat-input-primary-button[aria-pressed="true"]');
-    expect(accessibility).toContain('.chat-input-voice-toggle[aria-busy="true"]');
+    expect(accessibility).toContain(
+      '.chat-input-primary-button[aria-pressed="true"]',
+    );
+    expect(accessibility).toContain(
+      '.chat-input-voice-toggle[aria-busy="true"]',
+    );
     expect(accessibility).toContain(".voice-status-bar [data-voice-motion]");
   });
 });
@@ -2394,19 +2542,20 @@ async function settle(page: Page): Promise<void> {
     );
     const bgUrls = new Set<string>();
     for (const el of Array.from(document.querySelectorAll("*"))) {
-      const match = getComputedStyle(el).backgroundImage.match(
-        /url\("?([^")]+)"?\)/,
-      );
+      const match =
+        getComputedStyle(el).backgroundImage.match(/url\("?([^")]+)"?\)/);
       if (match) bgUrls.add(match[1]);
     }
     await Promise.all(
-      Array.from(bgUrls, (url) =>
-        new Promise<void>((resolve) => {
-          const img = new Image();
-          img.onload = () => resolve();
-          img.onerror = () => resolve();
-          img.src = url;
-        }),
+      Array.from(
+        bgUrls,
+        (url) =>
+          new Promise<void>((resolve) => {
+            const img = new Image();
+            img.onload = () => resolve();
+            img.onerror = () => resolve();
+            img.src = url;
+          }),
       ),
     );
     await new Promise((resolve) =>
@@ -2488,7 +2637,9 @@ async function runCaptureCell(
     const page = await context.newPage();
     page.on("console", (message) => {
       if (message.type() === "error" || message.type() === "warning") {
-        consoleLog.push(`console.${message.type()}: ${message.text().slice(0, 300)}`);
+        consoleLog.push(
+          `console.${message.type()}: ${message.text().slice(0, 300)}`,
+        );
       }
     });
     page.on("pageerror", (error) => {
@@ -2707,9 +2858,10 @@ async function runCaptureCell(
             `(${animation.name} ${animation.durationSeconds}s)`,
         ).toBe(true);
       } else {
-        expect(animation.name, `${cell.key}: control animation missing`).not.toBe(
-          "none",
-        );
+        expect(
+          animation.name,
+          `${cell.key}: control animation missing`,
+        ).not.toBe("none");
         expect(animation.durationSeconds).toBeGreaterThan(0.1);
       }
     }
@@ -2784,7 +2936,9 @@ test.describe("style-surface capture matrix", () => {
   );
 
   for (const cell of expandCaptureCells()) {
-    test(`capture ${cell.key} @style-capture`, async ({ browser }, testInfo) => {
+    test(`capture ${cell.key} @style-capture`, async ({
+      browser,
+    }, testInfo) => {
       const fragment = await runCaptureCell(browser, cell, testInfo);
       expect(fragment.cellKey).toBe(cell.key);
       expect(fragment.pngSha256).toMatch(/^[0-9a-f]{64}$/);

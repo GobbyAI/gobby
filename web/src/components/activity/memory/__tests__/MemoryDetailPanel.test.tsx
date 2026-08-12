@@ -32,7 +32,8 @@ describe("MemoryDetailPanel", () => {
     const labelsSeenByRestore: string[] = [];
     const onRestore = vi.fn(() => {
       labelsSeenByRestore.push(
-        screen.getByRole("button", { name: "Restore memory" }).textContent ?? "",
+        screen.getByRole("button", { name: "Restore memory" }).textContent ??
+          "",
       );
     });
 
@@ -46,7 +47,9 @@ describe("MemoryDetailPanel", () => {
       />,
     );
 
-    await userEvent.click(screen.getByRole("button", { name: "Restore memory" }));
+    await userEvent.click(
+      screen.getByRole("button", { name: "Restore memory" }),
+    );
 
     await waitFor(() => expect(onRestore).toHaveBeenCalledTimes(1));
     expect(labelsSeenByRestore[0]).toContain("Restoring");

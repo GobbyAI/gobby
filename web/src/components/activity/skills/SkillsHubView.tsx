@@ -1,4 +1,10 @@
-import { useCallback, useEffect, useMemo, useState, type KeyboardEvent } from "react";
+import {
+  useCallback,
+  useEffect,
+  useMemo,
+  useState,
+  type KeyboardEvent,
+} from "react";
 
 import { ResizeHandle } from "../../shared/ResizeHandle";
 import { Button } from "../../ui/Button";
@@ -25,11 +31,16 @@ function resultKey(result: SkillHubResult): string {
 function hubAuthLabel(hub: SkillHub): string {
   if (hub.auth_required === false) return "open";
   if (hub.auth_configured === true) return "auth ready";
-  if (hub.auth_required === true) return hub.auth_key_name ? `needs ${hub.auth_key_name}` : "auth required";
+  if (hub.auth_required === true)
+    return hub.auth_key_name ? `needs ${hub.auth_key_name}` : "auth required";
   return hub.type;
 }
 
-export function SkillsHubView({ projectId, onInstalled, onError }: SkillsHubViewProps) {
+export function SkillsHubView({
+  projectId,
+  onInstalled,
+  onError,
+}: SkillsHubViewProps) {
   const [hubs, setHubs] = useState<SkillHub[]>([]);
   const [hubErrors, setHubErrors] = useState<Record<string, string>>({});
   const [selectedHub, setSelectedHub] = useState("all");
@@ -51,7 +62,8 @@ export function SkillsHubView({ projectId, onInstalled, onError }: SkillsHubView
         const loaded = await loadSkillHubs();
         if (!cancelled) setHubs(loaded);
       } catch (error) {
-        if (!cancelled) onError(error instanceof Error ? error.message : String(error));
+        if (!cancelled)
+          onError(error instanceof Error ? error.message : String(error));
       } finally {
         if (!cancelled) setLoadingHubs(false);
       }
@@ -87,7 +99,9 @@ export function SkillsHubView({ projectId, onInstalled, onError }: SkillsHubView
       );
       setResults(response.results);
       setHubErrors(response.hubErrors);
-      setSelectedKey(response.results[0] ? resultKey(response.results[0]) : null);
+      setSelectedKey(
+        response.results[0] ? resultKey(response.results[0]) : null,
+      );
     } catch (error) {
       setResults([]);
       setHubErrors({});
@@ -106,9 +120,12 @@ export function SkillsHubView({ projectId, onInstalled, onError }: SkillsHubView
 
   return (
     <div className="flex min-h-0 flex-1 flex-col">
-      <div className="overflow-y-auto border-b border-border" style={{ height: `${topHeight}%` }}>
+      <div
+        className="overflow-y-auto border-b border-border"
+        style={{ height: `${topHeight}%` }}
+      >
         <div className="flex flex-col gap-3 p-3">
-          <div className="grid gap-2 [grid-template-columns:minmax(9rem,0.45fr)_minmax(12rem,1fr)_auto] mobile:grid-cols-1">
+          <div className="grid [grid-template-columns:minmax(9rem,0.45fr)_minmax(12rem,1fr)_auto] gap-2 mobile:grid-cols-1">
             <SelectField
               label="Hub"
               ariaLabel="Hub source"
@@ -121,10 +138,12 @@ export function SkillsHubView({ projectId, onInstalled, onError }: SkillsHubView
               ]}
             />
             <div className="flex min-w-0 flex-col gap-1.5">
-              <span className="text-xs font-medium text-muted-foreground">Search</span>
+              <span className="text-xs font-medium text-muted-foreground">
+                Search
+              </span>
               <Input
                 type="search"
-                className="min-h-11 rounded-md border border-border bg-[var(--bg-secondary)] px-3 py-2 text-sm text-foreground placeholder:text-muted-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent"
+                className="min-h-11 rounded-md border border-border bg-[var(--bg-secondary)] px-3 py-2 text-sm text-foreground placeholder:text-muted-foreground focus-visible:ring-2 focus-visible:ring-accent focus-visible:outline-none"
                 aria-label="Search hub skills"
                 name="hub-skill-search"
                 value={query}
@@ -162,7 +181,9 @@ export function SkillsHubView({ projectId, onInstalled, onError }: SkillsHubView
                   key={hub.name}
                   className="inline-flex min-h-8 items-center gap-1.5 rounded-md border border-border bg-[var(--bg-secondary)] px-2 text-xs text-muted-foreground"
                 >
-                  <span className="font-medium text-foreground">{hub.name}</span>
+                  <span className="font-medium text-foreground">
+                    {hub.name}
+                  </span>
                   {hubAuthLabel(hub)}
                 </span>
               ))}
@@ -176,7 +197,9 @@ export function SkillsHubView({ projectId, onInstalled, onError }: SkillsHubView
                   key={hub}
                   className="rounded-md border border-border bg-[var(--color-warning-soft)] px-3 py-2 text-sm text-foreground"
                 >
-                  <span className="font-semibold text-[var(--color-warning-foreground)]">{hub}</span>{" "}
+                  <span className="font-semibold text-[var(--color-warning-foreground)]">
+                    {hub}
+                  </span>{" "}
                   {error}
                 </div>
               ))}
@@ -184,7 +207,11 @@ export function SkillsHubView({ projectId, onInstalled, onError }: SkillsHubView
           )}
 
           {results.length > 0 ? (
-            <div className="flex flex-col" role="list" aria-label="Hub search results">
+            <div
+              className="flex flex-col"
+              role="list"
+              aria-label="Hub search results"
+            >
               {results.map((result) => {
                 const selected = resultKey(result) === selectedKey;
                 return (
@@ -192,25 +219,27 @@ export function SkillsHubView({ projectId, onInstalled, onError }: SkillsHubView
                     key={resultKey(result)}
                     role="listitem"
                     className={`border-b border-border ${
-                      selected ? "bg-[var(--accent-tint)]" : "bg-[var(--bg-primary)]"
+                      selected
+                        ? "bg-[var(--accent-tint)]"
+                        : "bg-[var(--bg-primary)]"
                     }`}
                   >
                     <Button
                       type="button"
                       variant="ghost"
                       aria-label={`Select ${result.display_name || result.slug}`}
-                      className={`flex min-h-14 w-full min-w-0 items-center gap-3 px-3 py-2 text-left transition-colors hover:bg-[var(--surface-tint-subtle)] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent ${coarseHitAreaCls}`}
+                      className={`flex min-h-14 w-full min-w-0 items-center gap-3 px-3 py-2 text-left transition-colors hover:bg-[var(--surface-tint-subtle)] focus-visible:ring-2 focus-visible:ring-accent focus-visible:outline-none ${coarseHitAreaCls}`}
                       onClick={() => setSelectedKey(resultKey(result))}
                     >
                       <span className="flex min-w-0 flex-1 flex-col">
-                        <span className="activity-row-title">{result.display_name || result.slug}</span>
+                        <span className="activity-row-title">
+                          {result.display_name || result.slug}
+                        </span>
                         <span className="activity-row-meta truncate">
                           {result.description || "No description"}
                         </span>
                       </span>
-                      <Chip>
-                        {result.hub_name}
-                      </Chip>
+                      <Chip>{result.hub_name}</Chip>
                       <Chip>
                         {result.version ? `v${result.version}` : "latest"}
                       </Chip>
@@ -223,7 +252,11 @@ export function SkillsHubView({ projectId, onInstalled, onError }: SkillsHubView
             <ActivityPanelEmpty
               icon={<TasksEmptyIcon />}
               heading="Skill Hub"
-              body={query.trim() ? "No hub skills match the current search." : "Enter a search query to look across hubs."}
+              body={
+                query.trim()
+                  ? "No hub skills match the current search."
+                  : "Enter a search query to look across hubs."
+              }
             />
           ) : (
             <ActivityPanelEmpty

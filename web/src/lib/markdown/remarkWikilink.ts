@@ -111,7 +111,9 @@ function walk(parent: Parent, resolve: RemarkWikilinkOptions["resolve"]): void {
  * react-markdown/unified plugin and as a directly-callable transformer
  * factory in tests.
  */
-export function remarkWikilink(options: RemarkWikilinkOptions = {}): (tree: Root) => void {
+export function remarkWikilink(
+  options: RemarkWikilinkOptions = {},
+): (tree: Root) => void {
   const { resolve } = options;
   return (tree: Root): void => {
     walk(tree, resolve);

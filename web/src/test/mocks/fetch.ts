@@ -1,55 +1,68 @@
-import { vi, type Mock } from 'vitest'
+import { vi, type Mock } from "vitest";
 
 type MockResponseInit = {
-  status?: number
-  statusText?: string
-  headers?: Record<string, string>
-}
+  status?: number;
+  statusText?: string;
+  headers?: Record<string, string>;
+};
 
 export interface MockFetchInstance {
   /** The underlying vi.fn — use for assertions */
-  fn: Mock
+  fn: Mock;
   /** Register a JSON response for a URL pattern */
-  mockJsonResponse(urlPattern: string | RegExp, data: unknown, init?: MockResponseInit): void
+  mockJsonResponse(
+    urlPattern: string | RegExp,
+    data: unknown,
+    init?: MockResponseInit,
+  ): void;
   /** Register an error response */
-  mockErrorResponse(urlPattern: string | RegExp, status: number, body?: string): void
+  mockErrorResponse(
+    urlPattern: string | RegExp,
+    status: number,
+    body?: string,
+  ): void;
   /** Reset all mocked routes */
-  resetRoutes(): void
+  resetRoutes(): void;
   /** Restore original fetch */
-  restore(): void
+  restore(): void;
 }
 
 interface Route {
-  pattern: string | RegExp
-  response: () => Response
+  pattern: string | RegExp;
+  response: () => Response;
 }
 
 export function createMockFetch(): MockFetchInstance {
-  const routes: Route[] = []
-  const originalFetch = globalThis.fetch
+  const routes: Route[] = [];
+  const originalFetch = globalThis.fetch;
   const originalWindowFetch =
-    typeof window !== 'undefined' ? window.fetch : undefined
+    typeof window !== "undefined" ? window.fetch : undefined;
 
   const fn = vi.fn(async (input: RequestInfo | URL): Promise<Response> => {
-    const url = typeof input === 'string' ? input : input instanceof URL ? input.toString() : input.url
+    const url =
+      typeof input === "string"
+        ? input
+        : input instanceof URL
+          ? input.toString()
+          : input.url;
 
     for (const route of routes) {
       const matches =
-        typeof route.pattern === 'string'
+        typeof route.pattern === "string"
           ? url.includes(route.pattern)
-          : route.pattern.test(url)
-      if (matches) return route.response()
+          : route.pattern.test(url);
+      if (matches) return route.response();
     }
 
-    return new Response(JSON.stringify({ error: 'no mock route matched' }), {
+    return new Response(JSON.stringify({ error: "no mock route matched" }), {
       status: 404,
-      headers: { 'Content-Type': 'application/json' },
-    })
-  })
+      headers: { "Content-Type": "application/json" },
+    });
+  });
 
-  globalThis.fetch = fn as unknown as typeof fetch
-  if (typeof window !== 'undefined') {
-    window.fetch = fn as unknown as typeof fetch
+  globalThis.fetch = fn as unknown as typeof fetch;
+  if (typeof window !== "undefined") {
+    window.fetch = fn as unknown as typeof fetch;
   }
 
   return {
@@ -60,10 +73,10 @@ export function createMockFetch(): MockFetchInstance {
         response: () =>
           new Response(JSON.stringify(data), {
             status: init?.status ?? 200,
-            statusText: init?.statusText ?? 'OK',
-            headers: { 'Content-Type': 'application/json', ...init?.headers },
+            statusText: init?.statusText ?? "OK",
+            headers: { "Content-Type": "application/json", ...init?.headers },
           }),
-      })
+      });
     },
     mockErrorResponse(urlPattern, status, body) {
       routes.push({
@@ -73,22 +86,22 @@ export function createMockFetch(): MockFetchInstance {
             status,
             statusText: `Error ${status}`,
           }),
-      })
+      });
     },
     resetRoutes() {
-      routes.length = 0
-      fn.mockClear()
+      routes.length = 0;
+      fn.mockClear();
     },
     restore() {
-      globalThis.fetch = originalFetch
-      if (typeof window !== 'undefined') {
-        const win = window as Window & { fetch?: typeof fetch }
+      globalThis.fetch = originalFetch;
+      if (typeof window !== "undefined") {
+        const win = window as Window & { fetch?: typeof fetch };
         if (originalWindowFetch === undefined) {
-          Reflect.deleteProperty(win, 'fetch')
+          Reflect.deleteProperty(win, "fetch");
         } else {
-          win.fetch = originalWindowFetch
+          win.fetch = originalWindowFetch;
         }
       }
     },
-  }
+  };
 }

@@ -4,7 +4,7 @@
  * itself arrives as the following message; this marks the landmark.
  */
 export function CompactionSummaryCard({ content }: { content: string }) {
-  const label = content.trim() || 'Conversation compacted'
+  const label = content.trim() || "Conversation compacted";
   return (
     <div
       className="my-3 flex items-center gap-3 text-xs text-muted-foreground"
@@ -15,5 +15,5 @@ export function CompactionSummaryCard({ content }: { content: string }) {
       <span className="shrink-0 font-medium">{label}</span>
       <span className="h-px flex-1 bg-border" aria-hidden="true" />
     </div>
-  )
+  );
 }

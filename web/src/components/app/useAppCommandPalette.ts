@@ -10,7 +10,10 @@ import type { Settings } from "../../hooks/useSettings";
 import type { CommandPaletteAction } from "../chat/CommandPalette";
 import type { SettingsOverlayController } from "../settings/useSettingsOverlay";
 import type { ChatMode, QueuedFile } from "../../types/chat";
-import { ACTIVITY_PANEL_TABS, type ActivityTab } from "../activity/ActivityPanelTabs";
+import {
+  ACTIVITY_PANEL_TABS,
+  type ActivityTab,
+} from "../activity/ActivityPanelTabs";
 import { requestDaemonRestart } from "../../lib/api";
 
 type ActiveModal = "skills" | "gobby" | null;
@@ -88,9 +91,10 @@ export function useAppCommandPalette({
       } catch (err) {
         console.error("Restart request failed:", err);
         if (showFailureMessage) {
-          const message = err instanceof Error && err.message
-            ? err.message
-            : "Failed to restart daemon";
+          const message =
+            err instanceof Error && err.message
+              ? err.message
+              : "Failed to restart daemon";
           addSystemMessage(`Failed to restart daemon: ${message}`);
         }
       }
@@ -167,12 +171,14 @@ export function useAppCommandPalette({
   );
 
   const commandPaletteActions = useMemo<CommandPaletteAction[]>(() => {
-    const navigationActions = ACTIVITY_PANEL_TABS.map<CommandPaletteAction>(({ id, label }) => ({
-      id: `nav-${id}`,
-      label,
-      category: "navigate",
-      onSelect: () => openActivityTab(id),
-    }));
+    const navigationActions = ACTIVITY_PANEL_TABS.map<CommandPaletteAction>(
+      ({ id, label }) => ({
+        id: `nav-${id}`,
+        label,
+        category: "navigate",
+        onSelect: () => openActivityTab(id),
+      }),
+    );
     const actions: CommandPaletteAction[] = [
       ...navigationActions,
       {
@@ -215,7 +221,9 @@ export function useAppCommandPalette({
         label: "Restart Daemon",
         icon: "\u21BB",
         category: "action",
-        onSelect: () => { void restartDaemon(true); },
+        onSelect: () => {
+          void restartDaemon(true);
+        },
       },
     ];
     return actions;

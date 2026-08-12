@@ -1,9 +1,9 @@
-import { useEffect, useMemo, useState } from 'react'
-import { useWorkflows, type WorkflowDetail } from '../../hooks/useWorkflows'
-import { Button } from '../ui/Button'
-import { Switch } from '../ui/Switch'
-import { TextField } from '../activity/fields'
-import { parseVariableInput, variableDisplayValue } from './workflowVariables'
+import { useEffect, useMemo, useState } from "react";
+import { useWorkflows, type WorkflowDetail } from "../../hooks/useWorkflows";
+import { Button } from "../ui/Button";
+import { Switch } from "../ui/Switch";
+import { TextField } from "../activity/fields";
+import { parseVariableInput, variableDisplayValue } from "./workflowVariables";
 
 /**
  * Live editor for workflow variable defaults (`/api/workflows?workflow_type=
@@ -23,76 +23,76 @@ export function WorkflowVariablesEditor() {
     createWorkflow,
     toggleEnabled,
     deleteWorkflow,
-  } = useWorkflows()
-  const [showForm, setShowForm] = useState(false)
-  const [name, setName] = useState('')
-  const [value, setValue] = useState('')
-  const [description, setDescription] = useState('')
-  const [error, setError] = useState<string | null>(null)
+  } = useWorkflows();
+  const [showForm, setShowForm] = useState(false);
+  const [name, setName] = useState("");
+  const [value, setValue] = useState("");
+  const [description, setDescription] = useState("");
+  const [error, setError] = useState<string | null>(null);
 
   useEffect(() => {
-    let active = true
-    void fetchWorkflows({ workflow_type: 'variable' }).then((ok) => {
-      if (active && !ok) setError('Could not load variable defaults.')
-    })
+    let active = true;
+    void fetchWorkflows({ workflow_type: "variable" }).then((ok) => {
+      if (active && !ok) setError("Could not load variable defaults.");
+    });
     return () => {
-      active = false
-    }
-  }, [fetchWorkflows])
+      active = false;
+    };
+  }, [fetchWorkflows]);
 
   const variables = useMemo(
-    () => workflows.filter((workflow) => workflow.workflow_type === 'variable'),
+    () => workflows.filter((workflow) => workflow.workflow_type === "variable"),
     [workflows],
-  )
+  );
 
   function resetForm() {
-    setName('')
-    setValue('')
-    setDescription('')
-    setShowForm(false)
+    setName("");
+    setValue("");
+    setDescription("");
+    setShowForm(false);
   }
 
   async function handleCreate() {
-    const trimmedName = name.trim()
-    if (!trimmedName) return
-    const trimmedDescription = description.trim()
+    const trimmedName = name.trim();
+    if (!trimmedName) return;
+    const trimmedDescription = description.trim();
     const definitionJson = JSON.stringify({
       variable: trimmedName,
       value: parseVariableInput(value),
       description: trimmedDescription || undefined,
-    })
-    setError(null)
+    });
+    setError(null);
     const created = await createWorkflow({
       name: trimmedName,
       definition_json: definitionJson,
-      workflow_type: 'variable',
+      workflow_type: "variable",
       description: trimmedDescription || undefined,
       enabled: true,
-    })
+    });
     if (created) {
-      resetForm()
+      resetForm();
     } else {
-      setError('Could not save the variable.')
+      setError("Could not save the variable.");
     }
   }
 
   async function handleToggle(variable: WorkflowDetail) {
-    setError(null)
-    const updated = await toggleEnabled(variable.id)
-    if (!updated) setError(`Could not update "${variable.name}".`)
+    setError(null);
+    const updated = await toggleEnabled(variable.id);
+    if (!updated) setError(`Could not update "${variable.name}".`);
   }
 
   async function handleDelete(variable: WorkflowDetail) {
-    if (!window.confirm(`Delete variable "${variable.name}"?`)) return
-    setError(null)
-    const deleted = await deleteWorkflow(variable.id)
-    if (!deleted) setError(`Could not delete "${variable.name}".`)
+    if (!window.confirm(`Delete variable "${variable.name}"?`)) return;
+    setError(null);
+    const deleted = await deleteWorkflow(variable.id);
+    if (!deleted) setError(`Could not delete "${variable.name}".`);
   }
 
   return (
     <div className="flex flex-col gap-3">
       <div className="flex items-center justify-between gap-2">
-        <span className="text-base font-medium leading-[1.3] text-foreground">
+        <span className="text-base leading-[1.3] font-medium text-foreground">
           Variable defaults
         </span>
         <Button
@@ -133,19 +133,10 @@ export function WorkflowVariablesEditor() {
             onChange={setDescription}
           />
           <div className="flex justify-end gap-2">
-            <Button
-              type="button"
-              variant="ghost"
-              size="sm"
-              onClick={resetForm}
-            >
+            <Button type="button" variant="ghost" size="sm" onClick={resetForm}>
               Cancel
             </Button>
-            <Button
-              type="button"
-              size="sm"
-              onClick={() => void handleCreate()}
-            >
+            <Button type="button" size="sm" onClick={() => void handleCreate()}>
               Save variable
             </Button>
           </div>
@@ -177,7 +168,7 @@ export function WorkflowVariablesEditor() {
               className="flex flex-col gap-3 rounded-lg border border-border bg-muted px-3.5 py-3"
             >
               <div className="flex flex-wrap items-center justify-between gap-2">
-                <code className="min-w-0 break-all text-base font-medium leading-[1.6] text-foreground">
+                <code className="min-w-0 text-base leading-[1.6] font-medium break-all text-foreground">
                   {variable.name}
                 </code>
                 <div className="flex flex-wrap items-center gap-3">
@@ -189,7 +180,7 @@ export function WorkflowVariablesEditor() {
                     aria-label={`Toggle ${variable.name}`}
                     onChange={() => void handleToggle(variable)}
                   />
-                  {variable.source !== 'template' ? (
+                  {variable.source !== "template" ? (
                     <Button
                       type="button"
                       variant="ghost"
@@ -203,7 +194,7 @@ export function WorkflowVariablesEditor() {
                 </div>
               </div>
               <div className="flex flex-wrap items-baseline gap-x-3 gap-y-1">
-                <code className="break-all text-sm leading-[1.6] text-muted-foreground">
+                <code className="text-sm leading-[1.6] break-all text-muted-foreground">
                   {variableDisplayValue(variable.definition_json)}
                 </code>
                 {variable.description ? (
@@ -217,7 +208,7 @@ export function WorkflowVariablesEditor() {
         </ul>
       )}
     </div>
-  )
+  );
 }
 
-export default WorkflowVariablesEditor
+export default WorkflowVariablesEditor;

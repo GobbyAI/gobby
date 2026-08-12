@@ -81,7 +81,11 @@ function setupMockWebSocket(page: import("@playwright/test").Page) {
       const OriginalWebSocket = window.WebSocket;
 
       (window as any).WebSocket = function (url: string, ...rest: any[]) {
-        if (typeof url === "string" && url.includes("/ws") && !url.includes("vite")) {
+        if (
+          typeof url === "string" &&
+          url.includes("/ws") &&
+          !url.includes("vite")
+        ) {
           let _onmessage: ((ev: { data: string }) => void) | null = null;
           let _onopen: (() => void) | null = null;
           let _onclose: (() => void) | null = null;
@@ -93,7 +97,10 @@ function setupMockWebSocket(page: import("@playwright/test").Page) {
               (window as any).__sentMessages.push(data);
               try {
                 const parsed = JSON.parse(data);
-                if (parsed.type === "subscribe" && parsed.events?.includes("chat_stream")) {
+                if (
+                  parsed.type === "subscribe" &&
+                  parsed.events?.includes("chat_stream")
+                ) {
                   (window as any).__chatWs = mockWs;
                 }
               } catch {
@@ -143,7 +150,9 @@ function setupMockWebSocket(page: import("@playwright/test").Page) {
 
       Object.defineProperty((window as any).WebSocket, "OPEN", { value: 1 });
       Object.defineProperty((window as any).WebSocket, "CLOSED", { value: 3 });
-      Object.defineProperty((window as any).WebSocket, "CONNECTING", { value: 0 });
+      Object.defineProperty((window as any).WebSocket, "CONNECTING", {
+        value: 0,
+      });
       Object.defineProperty((window as any).WebSocket, "CLOSING", { value: 2 });
     },
     {
@@ -174,14 +183,20 @@ async function serverSend(
 async function getClientMessages(
   page: import("@playwright/test").Page,
 ): Promise<Array<Record<string, unknown>>> {
-  const raw: string[] = await page.evaluate(() => (window as any).__sentMessages || []);
+  const raw: string[] = await page.evaluate(
+    () => (window as any).__sentMessages || [],
+  );
   return raw.map((msg) => JSON.parse(msg));
 }
 
 async function waitForConnection(page: import("@playwright/test").Page) {
-  await page.waitForFunction(() => (window as any).__mockWsReady === true, null, {
-    timeout: 5000,
-  });
+  await page.waitForFunction(
+    () => (window as any).__mockWsReady === true,
+    null,
+    {
+      timeout: 5000,
+    },
+  );
   await page.waitForTimeout(200);
   await serverSend(page, {
     type: "connection_established",
@@ -327,7 +342,9 @@ test("can swap to another web chat, send a message, and receive a response", asy
               role: "assistant",
               content: "Current chat response",
               timestamp: "2026-04-08T12:15:00Z",
-              content_blocks: [{ type: "text", content: "Current chat response" }],
+              content_blocks: [
+                { type: "text", content: "Current chat response" },
+              ],
             },
           ],
         }),
@@ -382,7 +399,9 @@ test("can swap to another web chat, send a message, and receive a response", asy
   await page.goto("/");
   await waitForConnection(page);
 
-  await expect(page.getByRole("button", { name: /#202 current web chat/i })).toBeVisible();
+  await expect(
+    page.getByRole("button", { name: /#202 current web chat/i }),
+  ).toBeVisible();
 
   await page.getByRole("button", { name: /#202 current web chat/i }).click();
   await expect(
@@ -390,7 +409,9 @@ test("can swap to another web chat, send a message, and receive a response", asy
   ).toBeVisible();
   await page.getByText("Other Web Chat").click();
 
-  await expect(page.getByRole("button", { name: /#203 other web chat/i })).toBeVisible();
+  await expect(
+    page.getByRole("button", { name: /#203 other web chat/i }),
+  ).toBeVisible();
   await expect(page.getByText("Attach")).toHaveCount(0);
   await expect(page.getByText("Other chat history")).toBeVisible();
 
@@ -401,7 +422,10 @@ test("can swap to another web chat, send a message, and receive a response", asy
   const outgoing = await getClientMessages(page);
   const chatMessage = [...outgoing]
     .reverse()
-    .find((msg) => msg.type === "chat_message" && msg.content === "Hello after swap");
+    .find(
+      (msg) =>
+        msg.type === "chat_message" && msg.content === "Hello after swap",
+    );
   expect(chatMessage).toBeTruthy();
   expect(chatMessage?.conversation_id).toBe(OTHER_CONVERSATION_ID);
 

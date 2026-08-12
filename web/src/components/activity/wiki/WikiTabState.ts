@@ -21,7 +21,10 @@ export const WIKI_TAB_KEYS = {
 export const WIKI_MODES: readonly WikiMode[] = ["wiki", "code"];
 
 export function isWikiMode(value: unknown): value is WikiMode {
-  return typeof value === "string" && (WIKI_MODES as readonly string[]).includes(value);
+  return (
+    typeof value === "string" &&
+    (WIKI_MODES as readonly string[]).includes(value)
+  );
 }
 
 function defaultStorage(): Storage | null {
@@ -42,7 +45,11 @@ export function readStoredValue(key: string, storage?: Storage): string | null {
   }
 }
 
-export function writeStoredValue(key: string, value: string | null, storage?: Storage): void {
+export function writeStoredValue(
+  key: string,
+  value: string | null,
+  storage?: Storage,
+): void {
   const target = storage ?? defaultStorage();
   if (!target) return;
   try {
@@ -74,7 +81,9 @@ export function storeTopic(topic: string | null): void {
 export type WikiBrowseMode = Extract<WikiMode, "wiki" | "code">;
 
 function lastPageKey(mode: WikiBrowseMode): string {
-  return mode === "code" ? WIKI_TAB_KEYS.lastPageCode : WIKI_TAB_KEYS.lastPageWiki;
+  return mode === "code"
+    ? WIKI_TAB_KEYS.lastPageCode
+    : WIKI_TAB_KEYS.lastPageWiki;
 }
 
 export function loadLastPage(mode: WikiBrowseMode): string | null {
@@ -125,7 +134,9 @@ export function loadGraphSettings(): WikiGraphSettings {
     const defaults = DEFAULT_WIKI_GRAPH_SETTINGS;
     return {
       include:
-        parsed.include === "knowledge" || parsed.include === "code" ? parsed.include : "all",
+        parsed.include === "knowledge" || parsed.include === "code"
+          ? parsed.include
+          : "all",
       sources: boolOr(parsed.sources, defaults.sources),
       unresolved: boolOr(parsed.unresolved, defaults.unresolved),
       orphans: boolOr(parsed.orphans, defaults.orphans),
@@ -176,7 +187,10 @@ interface WikiNavState {
 
 const INITIAL_NAV_STATE: WikiNavState = { entries: [], cursor: -1 };
 
-export function useWikiNav({ guardedRun, onNavigate }: WikiNavOptions): WikiNav {
+export function useWikiNav({
+  guardedRun,
+  onNavigate,
+}: WikiNavOptions): WikiNav {
   const [state, setState] = useState<WikiNavState>(INITIAL_NAV_STATE);
   // commit() is the only mutation path and updates the ref alongside setState,
   // so the ref stays current without a render-phase write.
@@ -193,13 +207,19 @@ export function useWikiNav({ guardedRun, onNavigate }: WikiNavOptions): WikiNav 
 
   const openPage = useCallback(
     async (path: string, opts?: { mode?: WikiMode }) => {
-      const entry: WikiNavEntry = { path, mode: opts?.mode ?? modeForPath(path) };
+      const entry: WikiNavEntry = {
+        path,
+        mode: opts?.mode ?? modeForPath(path),
+      };
       const { entries, cursor } = stateRef.current;
       const current = cursor >= 0 ? entries[cursor] : null;
-      if (current && current.path === entry.path && current.mode === entry.mode) return;
+      if (current && current.path === entry.path && current.mode === entry.mode)
+        return;
       await guardedRun(() => {
         const { entries: latest, cursor: latestCursor } = stateRef.current;
-        const next = [...latest.slice(0, latestCursor + 1), entry].slice(-WIKI_NAV_HISTORY_CAP);
+        const next = [...latest.slice(0, latestCursor + 1), entry].slice(
+          -WIKI_NAV_HISTORY_CAP,
+        );
         commit({ entries: next, cursor: next.length - 1 }, entry);
       });
     },

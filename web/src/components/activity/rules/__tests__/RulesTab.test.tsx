@@ -29,8 +29,7 @@ function HeaderHarness({ children }: { children: ReactNode }) {
   );
 }
 
-const render = (ui: ReactElement) =>
-  baseRender(ui, { wrapper: HeaderHarness });
+const render = (ui: ReactElement) => baseRender(ui, { wrapper: HeaderHarness });
 
 vi.mock("../../../../hooks/useWebSocketEvent", () => ({
   useWebSocketEvent: vi.fn(),
@@ -111,7 +110,9 @@ function jsonResponse(body: unknown, status = 200) {
   });
 }
 
-function installRulesFetch({ toggleSucceeds = true }: { toggleSucceeds?: boolean } = {}) {
+function installRulesFetch({
+  toggleSucceeds = true,
+}: { toggleSucceeds?: boolean } = {}) {
   const rules = [
     makeRule({ id: "rule-1", name: "alpha-rule" }),
     makeRule({
@@ -148,88 +149,103 @@ function installRulesFetch({ toggleSucceeds = true }: { toggleSucceeds?: boolean
   const calls: FetchCall[] = [];
   let copyAttempts = 0;
 
-  const fetchMock = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
-    const url = typeof input === "string" ? input : input.toString();
-    const requestUrl = new URL(url, "http://localhost");
-    const method = init?.method ?? "GET";
-    const body = init?.body ? JSON.parse(String(init.body)) : undefined;
-    calls.push({ url, method, body });
+  const fetchMock = vi.fn(
+    async (input: RequestInfo | URL, init?: RequestInit) => {
+      const url = typeof input === "string" ? input : input.toString();
+      const requestUrl = new URL(url, "http://localhost");
+      const method = init?.method ?? "GET";
+      const body = init?.body ? JSON.parse(String(init.body)) : undefined;
+      calls.push({ url, method, body });
 
-    if (requestUrl.pathname === "/api/rules/groups") {
-      return jsonResponse({ groups: ["context", "guardrails", "lifecycle"] });
-    }
-
-    if (requestUrl.pathname === "/api/rules" && method === "GET") {
-      return jsonResponse({ rules: [...rules], enforcement_enabled: true });
-    }
-
-    if (requestUrl.pathname === "/api/rules" && method === "PUT") {
-      return jsonResponse({ status: "success", enforcement_enabled: body.enforcement_enabled });
-    }
-
-    if (requestUrl.pathname === "/api/rules" && method === "POST") {
-      copyAttempts += 1;
-      if (copyAttempts === 1) {
-        return jsonResponse({ detail: "Rule already exists" }, 409);
+      if (requestUrl.pathname === "/api/rules/groups") {
+        return jsonResponse({ groups: ["context", "guardrails", "lifecycle"] });
       }
-      const created = makeRule({
-        id: "rule-copy",
-        name: body.name,
-        description: body.definition.description,
-        event: body.definition.event,
-        group: body.definition.group,
-        enabled: body.definition.enabled,
-        priority: body.definition.priority,
-        source: "project",
-        tags: body.definition.tags,
-        effects: body.definition.effects,
-      });
-      rules.push(created);
-      return jsonResponse({ status: "success", rule: created }, 201);
-    }
 
-    const detailMatch = requestUrl.pathname.match(/^\/api\/rules\/([^/]+)$/);
-    if (detailMatch && method === "GET") {
-      const ruleName = decodeURIComponent(detailMatch[1]);
-      const rule = rules.find((candidate) => candidate.name === ruleName);
-      return rule
-        ? jsonResponse({ status: "success", rule })
-        : jsonResponse({ detail: "not found" }, 404);
-    }
+      if (requestUrl.pathname === "/api/rules" && method === "GET") {
+        return jsonResponse({ rules: [...rules], enforcement_enabled: true });
+      }
 
-    if (detailMatch && method === "PUT") {
-      const ruleName = decodeURIComponent(detailMatch[1]);
-      const index = rules.findIndex((candidate) => candidate.name === ruleName);
-      if (index < 0) return jsonResponse({ detail: "not found" }, 404);
-      const updated = {
-        ...rules[index],
-        ...body.definition,
-        id: rules[index].id,
-        source: rules[index].source,
-        name: body.name ?? rules[index].name,
-      };
-      rules[index] = updated;
-      return jsonResponse({ status: "success", rule: updated });
-    }
+      if (requestUrl.pathname === "/api/rules" && method === "PUT") {
+        return jsonResponse({
+          status: "success",
+          enforcement_enabled: body.enforcement_enabled,
+        });
+      }
 
-    if (requestUrl.pathname.endsWith("/toggle") && method === "PUT") {
-      if (!toggleSucceeds) return jsonResponse({ detail: "toggle failed" }, 500);
-      const pathParts = requestUrl.pathname.split("/");
-      const ruleName = decodeURIComponent(pathParts[pathParts.length - 2] ?? "");
-      const rule = rules.find((candidate) => candidate.name === ruleName);
-      if (rule) rule.enabled = body.enabled;
-      return jsonResponse({ status: "success" });
-    }
+      if (requestUrl.pathname === "/api/rules" && method === "POST") {
+        copyAttempts += 1;
+        if (copyAttempts === 1) {
+          return jsonResponse({ detail: "Rule already exists" }, 409);
+        }
+        const created = makeRule({
+          id: "rule-copy",
+          name: body.name,
+          description: body.definition.description,
+          event: body.definition.event,
+          group: body.definition.group,
+          enabled: body.definition.enabled,
+          priority: body.definition.priority,
+          source: "project",
+          tags: body.definition.tags,
+          effects: body.definition.effects,
+        });
+        rules.push(created);
+        return jsonResponse({ status: "success", rule: created }, 201);
+      }
 
-    if (detailMatch && method === "DELETE") {
-      const ruleName = decodeURIComponent(detailMatch[1]);
-      const index = rules.findIndex((candidate) => candidate.name === ruleName);
-      if (index >= 0) rules.splice(index, 1);
-      return jsonResponse({ status: "success" });
-    }
+      const detailMatch = requestUrl.pathname.match(/^\/api\/rules\/([^/]+)$/);
+      if (detailMatch && method === "GET") {
+        const ruleName = decodeURIComponent(detailMatch[1]);
+        const rule = rules.find((candidate) => candidate.name === ruleName);
+        return rule
+          ? jsonResponse({ status: "success", rule })
+          : jsonResponse({ detail: "not found" }, 404);
+      }
 
-    return jsonResponse({ detail: `Unhandled ${method} ${requestUrl.pathname}` }, 404);
-  });
+      if (detailMatch && method === "PUT") {
+        const ruleName = decodeURIComponent(detailMatch[1]);
+        const index = rules.findIndex(
+          (candidate) => candidate.name === ruleName,
+        );
+        if (index < 0) return jsonResponse({ detail: "not found" }, 404);
+        const updated = {
+          ...rules[index],
+          ...body.definition,
+          id: rules[index].id,
+          source: rules[index].source,
+          name: body.name ?? rules[index].name,
+        };
+        rules[index] = updated;
+        return jsonResponse({ status: "success", rule: updated });
+      }
+
+      if (requestUrl.pathname.endsWith("/toggle") && method === "PUT") {
+        if (!toggleSucceeds)
+          return jsonResponse({ detail: "toggle failed" }, 500);
+        const pathParts = requestUrl.pathname.split("/");
+        const ruleName = decodeURIComponent(
+          pathParts[pathParts.length - 2] ?? "",
+        );
+        const rule = rules.find((candidate) => candidate.name === ruleName);
+        if (rule) rule.enabled = body.enabled;
+        return jsonResponse({ status: "success" });
+      }
+
+      if (detailMatch && method === "DELETE") {
+        const ruleName = decodeURIComponent(detailMatch[1]);
+        const index = rules.findIndex(
+          (candidate) => candidate.name === ruleName,
+        );
+        if (index >= 0) rules.splice(index, 1);
+        return jsonResponse({ status: "success" });
+      }
+
+      return jsonResponse(
+        { detail: `Unhandled ${method} ${requestUrl.pathname}` },
+        404,
+      );
+    },
+  );
 
   globalThis.fetch = fetchMock as unknown as typeof fetch;
   return { calls, fetchMock, rules };
@@ -247,10 +263,12 @@ describe("Rules activity tab", () => {
 
   it("generates stable copy names", () => {
     expect(nextCopyName("alpha", new Set(["alpha"]))).toBe("alpha-copy");
-    expect(nextCopyName("alpha", new Set(["alpha", "alpha-copy"]))).toBe("alpha-copy-2");
-    expect(nextCopyName("alpha-copy", new Set(["alpha-copy", "alpha-copy-2"]))).toBe(
-      "alpha-copy-3",
+    expect(nextCopyName("alpha", new Set(["alpha", "alpha-copy"]))).toBe(
+      "alpha-copy-2",
     );
+    expect(
+      nextCopyName("alpha-copy", new Set(["alpha-copy", "alpha-copy-2"])),
+    ).toBe("alpha-copy-3");
   });
 
   it("registers the rules tab", () => {
@@ -275,21 +293,43 @@ describe("Rules activity tab", () => {
     await user.click(screen.getByRole("radio", { name: "Enabled" }));
     // The search bar is hidden until the header Search toggle opens it.
     await user.click(screen.getByRole("button", { name: "Search rules" }));
-    await user.type(screen.getByRole("searchbox", { name: "Search rules" }), "compaction");
-    expect(await within(rulesList).findByText("gamma-rule")).toBeInTheDocument();
+    await user.type(
+      screen.getByRole("searchbox", { name: "Search rules" }),
+      "compaction",
+    );
+    expect(
+      await within(rulesList).findByText("gamma-rule"),
+    ).toBeInTheDocument();
     expect(within(rulesList).queryByText("alpha-rule")).not.toBeInTheDocument();
 
     await user.click(screen.getByRole("button", { name: "Filter rules" }));
-    expect(screen.queryByRole("searchbox", { name: "Search rules" })).not.toBeInTheDocument();
-    expect(await within(rulesList).findByText("alpha-rule")).toBeInTheDocument();
-    await user.selectOptions(screen.getByLabelText("Filter by event"), "before_tool");
-    await user.selectOptions(screen.getByLabelText("Filter by group"), "guardrails");
-    await user.selectOptions(screen.getByLabelText("Filter by source"), "project");
+    expect(
+      screen.queryByRole("searchbox", { name: "Search rules" }),
+    ).not.toBeInTheDocument();
+    expect(
+      await within(rulesList).findByText("alpha-rule"),
+    ).toBeInTheDocument();
+    await user.selectOptions(
+      screen.getByLabelText("Filter by event"),
+      "before_tool",
+    );
+    await user.selectOptions(
+      screen.getByLabelText("Filter by group"),
+      "guardrails",
+    );
+    await user.selectOptions(
+      screen.getByLabelText("Filter by source"),
+      "project",
+    );
     await user.selectOptions(screen.getByLabelText("Filter by tag"), "safety");
 
-    expect(await within(rulesList).findByText("alpha-rule")).toBeInTheDocument();
+    expect(
+      await within(rulesList).findByText("alpha-rule"),
+    ).toBeInTheDocument();
     expect(within(rulesList).queryByText("gamma-rule")).not.toBeInTheDocument();
-    expect(within(rulesList).queryByText("template-rule")).not.toBeInTheDocument();
+    expect(
+      within(rulesList).queryByText("template-rule"),
+    ).not.toBeInTheDocument();
   });
 
   it("preserves popup close, reset, outside-click, Escape, and focus transitions", async () => {
@@ -302,31 +342,46 @@ describe("Rules activity tab", () => {
     const trigger = screen.getByRole("button", { name: "Filter rules" });
 
     await user.click(trigger);
-    expect(screen.getByRole("dialog", { name: "Rule filters" })).toBeInTheDocument();
+    expect(
+      screen.getByRole("dialog", { name: "Rule filters" }),
+    ).toBeInTheDocument();
 
-    await user.selectOptions(screen.getByLabelText("Filter by event"), "before_tool");
+    await user.selectOptions(
+      screen.getByLabelText("Filter by event"),
+      "before_tool",
+    );
     expect(within(rulesList).queryByText("gamma-rule")).not.toBeInTheDocument();
 
-    await user.click(screen.getByRole("button", { name: "Reset rule filters" }));
+    await user.click(
+      screen.getByRole("button", { name: "Reset rule filters" }),
+    );
     expect(screen.getByLabelText("Filter by event")).toHaveValue("");
-    expect(await within(rulesList).findByText("gamma-rule")).toBeInTheDocument();
+    expect(
+      await within(rulesList).findByText("gamma-rule"),
+    ).toBeInTheDocument();
 
     fireEvent.keyDown(window, { key: "Escape" });
     await waitFor(() =>
-      expect(screen.queryByRole("dialog", { name: "Rule filters" })).not.toBeInTheDocument(),
+      expect(
+        screen.queryByRole("dialog", { name: "Rule filters" }),
+      ).not.toBeInTheDocument(),
     );
     expect(trigger).toHaveFocus();
 
     await user.click(trigger);
     fireEvent.click(screen.getByTestId("rules-filter-overlay"));
     await waitFor(() =>
-      expect(screen.queryByRole("dialog", { name: "Rule filters" })).not.toBeInTheDocument(),
+      expect(
+        screen.queryByRole("dialog", { name: "Rule filters" }),
+      ).not.toBeInTheDocument(),
     );
     expect(trigger).toHaveFocus();
 
     await user.click(trigger);
     await user.click(trigger);
-    expect(screen.queryByRole("dialog", { name: "Rule filters" })).not.toBeInTheDocument();
+    expect(
+      screen.queryByRole("dialog", { name: "Rule filters" }),
+    ).not.toBeInTheDocument();
   });
 
   it("selects the first rule by default so the detail pane is populated (#19152)", async () => {
@@ -345,30 +400,53 @@ describe("Rules activity tab", () => {
     const rulesList = await screen.findByRole("list", { name: "Rules" });
     expect(within(rulesList).getByText("alpha-rule")).toBeInTheDocument();
 
-    await user.click(screen.getByRole("button", { name: "Open actions for alpha-rule" }));
-    const firstMenu = screen.getByRole("menu", { name: "Actions for alpha-rule" });
-    expect(within(firstMenu).getByRole("menuitem", { name: "Disable" })).toBeInTheDocument();
-    expect(within(firstMenu).getByRole("menuitem", { name: "Copy" })).toBeInTheDocument();
-    expect(within(firstMenu).getByRole("menuitem", { name: "Delete" })).toBeInTheDocument();
-    await user.click(within(firstMenu).getByRole("menuitem", { name: "Disable" }));
+    await user.click(
+      screen.getByRole("button", { name: "Open actions for alpha-rule" }),
+    );
+    const firstMenu = screen.getByRole("menu", {
+      name: "Actions for alpha-rule",
+    });
+    expect(
+      within(firstMenu).getByRole("menuitem", { name: "Disable" }),
+    ).toBeInTheDocument();
+    expect(
+      within(firstMenu).getByRole("menuitem", { name: "Copy" }),
+    ).toBeInTheDocument();
+    expect(
+      within(firstMenu).getByRole("menuitem", { name: "Delete" }),
+    ).toBeInTheDocument();
+    await user.click(
+      within(firstMenu).getByRole("menuitem", { name: "Disable" }),
+    );
 
     await waitFor(() =>
-      expect(calls.some((call) => call.url.includes("/api/rules/alpha-rule/toggle"))).toBe(true),
+      expect(
+        calls.some((call) => call.url.includes("/api/rules/alpha-rule/toggle")),
+      ).toBe(true),
     );
     expect(
-      calls.find((call) => call.url.includes("/api/rules/alpha-rule/toggle"))?.body,
+      calls.find((call) => call.url.includes("/api/rules/alpha-rule/toggle"))
+        ?.body,
     ).toEqual({ enabled: false });
 
     await user.click(screen.getByRole("radio", { name: "Disabled" }));
-    expect(await within(rulesList).findByText("alpha-rule")).toBeInTheDocument();
-    await user.click(screen.getByRole("button", { name: "Open actions for alpha-rule" }));
+    expect(
+      await within(rulesList).findByText("alpha-rule"),
+    ).toBeInTheDocument();
+    await user.click(
+      screen.getByRole("button", { name: "Open actions for alpha-rule" }),
+    );
     await user.click(screen.getByRole("menuitem", { name: "Copy" }));
 
     await waitFor(() =>
-      expect(screen.getAllByText("alpha-rule-copy-2").length).toBeGreaterThan(0),
+      expect(screen.getAllByText("alpha-rule-copy-2").length).toBeGreaterThan(
+        0,
+      ),
     );
     const postBodies = calls
-      .filter((call) => call.url.endsWith("/api/rules") && call.method === "POST")
+      .filter(
+        (call) => call.url.endsWith("/api/rules") && call.method === "POST",
+      )
       .map((call) => call.body);
     expect(postBodies).toEqual([
       expect.objectContaining({ name: "alpha-rule-copy" }),
@@ -384,13 +462,21 @@ describe("Rules activity tab", () => {
     const rulesList = await screen.findByRole("list", { name: "Rules" });
     expect(within(rulesList).getByText("alpha-rule")).toBeInTheDocument();
     const alphaRule = screen.getByRole("button", { name: "Select alpha-rule" });
-    expect(within(alphaRule).getByLabelText("Rule enabled")).toBeInTheDocument();
+    expect(
+      within(alphaRule).getByLabelText("Rule enabled"),
+    ).toBeInTheDocument();
 
-    await user.click(screen.getByRole("button", { name: "Open actions for alpha-rule" }));
+    await user.click(
+      screen.getByRole("button", { name: "Open actions for alpha-rule" }),
+    );
     await user.click(screen.getByRole("menuitem", { name: "Disable" }));
 
-    expect(await screen.findByText("Failed to disable rule")).toBeInTheDocument();
-    expect(within(alphaRule).getByLabelText("Rule enabled")).toBeInTheDocument();
+    expect(
+      await screen.findByText("Failed to disable rule"),
+    ).toBeInTheDocument();
+    expect(
+      within(alphaRule).getByLabelText("Rule enabled"),
+    ).toBeInTheDocument();
   });
 
   it("saves scalar draft edits as a full-definition PUT and reselects renamed rules", async () => {
@@ -398,7 +484,9 @@ describe("Rules activity tab", () => {
     const user = userEvent.setup();
 
     render(<RulesTab />);
-    await user.click(await screen.findByRole("button", { name: /Select alpha-rule/i }));
+    await user.click(
+      await screen.findByRole("button", { name: /Select alpha-rule/i }),
+    );
 
     const nameField = await screen.findByLabelText("Rule name");
     await user.clear(nameField);
@@ -411,9 +499,12 @@ describe("Rules activity tab", () => {
 
     await user.click(screen.getByRole("button", { name: "Save" }));
 
-    await waitFor(() => expect(screen.getByDisplayValue("alpha-renamed")).toBeInTheDocument());
+    await waitFor(() =>
+      expect(screen.getByDisplayValue("alpha-renamed")).toBeInTheDocument(),
+    );
     const putCall = calls.find(
-      (call) => call.url.endsWith("/api/rules/alpha-rule") && call.method === "PUT",
+      (call) =>
+        call.url.endsWith("/api/rules/alpha-rule") && call.method === "PUT",
     );
     expect(putCall?.body).toEqual({
       name: "alpha-renamed",
@@ -431,9 +522,9 @@ describe("Rules activity tab", () => {
         when: "tool.name == 'Edit'",
       }),
     });
-    expect((putCall?.body as { definition?: Record<string, unknown> }).definition).not.toHaveProperty(
-      "name",
-    );
+    expect(
+      (putCall?.body as { definition?: Record<string, unknown> }).definition,
+    ).not.toHaveProperty("name");
   });
 
   it("edits full rule definitions from the YAML detail view", async () => {
@@ -441,7 +532,9 @@ describe("Rules activity tab", () => {
     const user = userEvent.setup();
 
     render(<RulesTab />);
-    await user.click(await screen.findByRole("button", { name: /Select alpha-rule/i }));
+    await user.click(
+      await screen.findByRole("button", { name: /Select alpha-rule/i }),
+    );
     await screen.findByLabelText("Rule name");
 
     await user.click(screen.getByRole("radio", { name: "YAML" }));
@@ -482,9 +575,12 @@ describe("Rules activity tab", () => {
 
     await user.click(screen.getByRole("button", { name: "Save" }));
 
-    await waitFor(() => expect(screen.getAllByText("alpha-yaml").length).toBeGreaterThan(0));
+    await waitFor(() =>
+      expect(screen.getAllByText("alpha-yaml").length).toBeGreaterThan(0),
+    );
     const putCall = calls.find(
-      (call) => call.url.endsWith("/api/rules/alpha-rule") && call.method === "PUT",
+      (call) =>
+        call.url.endsWith("/api/rules/alpha-rule") && call.method === "PUT",
     );
     expect(putCall?.body).toEqual({
       name: "alpha-yaml",
@@ -502,9 +598,9 @@ describe("Rules activity tab", () => {
         effects: [{ type: "block", reason: "YAML generated file" }],
       }),
     });
-    expect((putCall?.body as { definition?: Record<string, unknown> }).definition).not.toHaveProperty(
-      "name",
-    );
+    expect(
+      (putCall?.body as { definition?: Record<string, unknown> }).definition,
+    ).not.toHaveProperty("name");
   });
 
   it("keeps bundled template rule names read-only", async () => {
@@ -512,9 +608,13 @@ describe("Rules activity tab", () => {
     const user = userEvent.setup();
 
     render(<RulesTab />);
-    await user.click(await screen.findByRole("button", { name: /Select template-rule/i }));
+    await user.click(
+      await screen.findByRole("button", { name: /Select template-rule/i }),
+    );
 
-    expect(await screen.findByText("Bundled template rule names are read-only")).toBeInTheDocument();
+    expect(
+      await screen.findByText("Bundled template rule names are read-only"),
+    ).toBeInTheDocument();
     expect(screen.getAllByText("template-rule").length).toBeGreaterThan(1);
     expect(screen.queryByLabelText("Rule name")).not.toBeInTheDocument();
   });

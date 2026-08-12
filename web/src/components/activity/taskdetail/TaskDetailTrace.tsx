@@ -24,7 +24,9 @@ export function TaskDetailTrace({ task }: { task: GobbyTaskDetail }) {
     isolation !== null ||
     dispatchFailures > 0;
 
-  const githubRepo = isValidGithubRepoSlug(task.github_repo) ? task.github_repo : null;
+  const githubRepo = isValidGithubRepoSlug(task.github_repo)
+    ? task.github_repo
+    : null;
   const prUrl =
     task.github_pr_number != null && githubRepo
       ? `https://github.com/${githubRepo}/pull/${task.github_pr_number}`
@@ -48,10 +50,10 @@ export function TaskDetailTrace({ task }: { task: GobbyTaskDetail }) {
 
   return (
     <details className="group border-b border-border bg-[var(--bg-primary)]">
-      <summary className="cursor-pointer list-none px-4 py-[0.7rem] text-[length:var(--text-2xs)] font-[var(--font-weight-semibold)] uppercase tracking-[0.08em] text-[var(--text-muted)] before:mr-[0.4rem] before:inline-block before:tracking-normal before:content-['▸'] before:transition-transform before:duration-[120ms] group-open:before:rotate-90 focus-visible:outline-2 focus-visible:-outline-offset-2 focus-visible:outline-accent [&::-webkit-details-marker]:hidden">
+      <summary className="cursor-pointer list-none px-4 py-[0.7rem] text-[length:var(--text-2xs)] font-[var(--font-weight-semibold)] tracking-[0.08em] text-[var(--text-muted)] uppercase before:mr-[0.4rem] before:inline-block before:tracking-normal before:transition-transform before:duration-[120ms] before:content-['▸'] group-open:before:rotate-90 focus-visible:outline-2 focus-visible:-outline-offset-2 focus-visible:outline-accent [&::-webkit-details-marker]:hidden">
         Trace
       </summary>
-      <div className="flex flex-col border-b-0 bg-[var(--bg-primary)] px-4 pb-[0.95rem] pt-0">
+      <div className="flex flex-col border-b-0 bg-[var(--bg-primary)] px-4 pt-0 pb-[0.95rem]">
         <MetaKVRow label="Created">
           {formatTaskDetailDate(task.created_at)}
         </MetaKVRow>
@@ -69,7 +71,7 @@ export function TaskDetailTrace({ task }: { task: GobbyTaskDetail }) {
               {labels.map((l, i) => (
                 <span
                   key={`label-${i}`}
-                  className="inline-flex h-5 items-center whitespace-nowrap rounded-full border border-border bg-[var(--bg-tertiary)] px-2 font-mono text-[length:var(--text-2xs)] font-medium tracking-[0.02em] text-[var(--text-secondary)]"
+                  className="inline-flex h-5 items-center rounded-full border border-border bg-[var(--bg-tertiary)] px-2 font-mono text-[length:var(--text-2xs)] font-medium tracking-[0.02em] whitespace-nowrap text-[var(--text-secondary)]"
                 >
                   {l}
                 </span>

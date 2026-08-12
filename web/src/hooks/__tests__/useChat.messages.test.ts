@@ -456,9 +456,13 @@ describe("useChat message and conversation state", () => {
     act(() => ws.simulateOpen());
 
     await act(async () => {
-      await result.current.continueSessionInChat("source-session", "proj-source", {
-        fallbackContext: "auto",
-      });
+      await result.current.continueSessionInChat(
+        "source-session",
+        "proj-source",
+        {
+          fallbackContext: "auto",
+        },
+      );
     });
 
     const continueMsg = ws.send.mock.calls
@@ -720,7 +724,9 @@ describe("useChat message and conversation state", () => {
     expect(result.current.conversationId).not.toBe(oldId);
     expect(result.current.dbSessionId).toBeNull();
     expect(localStorage.removeItem).toHaveBeenCalledWith("gobby-db-session-id");
-    expect(localStorage.removeItem).toHaveBeenCalledWith("gobby-conversation-id");
+    expect(localStorage.removeItem).toHaveBeenCalledWith(
+      "gobby-conversation-id",
+    );
     expect(localStorage.getItem("gobby-fresh-chat-draft")).toBe("1");
 
     const sessionCalls = mockFetch.fn.mock.calls.filter(
@@ -992,9 +998,7 @@ describe("useChat message and conversation state", () => {
     expect(localStorage.getItem("gobby-conversation-id")).toBe(
       storedConversationId,
     );
-    expect(localStorage.getItem("gobby-db-session-id")).toBe(
-      storedDbSessionId,
-    );
+    expect(localStorage.getItem("gobby-db-session-id")).toBe(storedDbSessionId);
   });
 
   it("ignores a matching session_continued after the conversation changes", async () => {
@@ -1050,9 +1054,7 @@ describe("useChat message and conversation state", () => {
     expect(localStorage.getItem("gobby-conversation-id")).toBe(
       storedConversationId,
     );
-    expect(localStorage.getItem("gobby-db-session-id")).toBe(
-      storedDbSessionId,
-    );
+    expect(localStorage.getItem("gobby-db-session-id")).toBe(storedDbSessionId);
   });
 
   it("restores the previous chat state when continueSessionInChat fails", async () => {

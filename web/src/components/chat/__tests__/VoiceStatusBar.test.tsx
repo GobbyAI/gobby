@@ -1,10 +1,10 @@
-import { render, screen } from '@testing-library/react'
-import { describe, expect, it } from 'vitest'
+import { render, screen } from "@testing-library/react";
+import { describe, expect, it } from "vitest";
 
-import { VoiceStatusBar } from '../VoiceStatusBar'
+import { VoiceStatusBar } from "../VoiceStatusBar";
 
-describe('VoiceStatusBar', () => {
-  it('shows Recording only during active PTT capture', () => {
+describe("VoiceStatusBar", () => {
+  it("shows Recording only during active PTT capture", () => {
     render(
       <VoiceStatusBar
         isListening={false}
@@ -13,12 +13,12 @@ describe('VoiceStatusBar', () => {
         isTranscribing={false}
         voiceInputMode="ptt"
       />,
-    )
+    );
 
-    expect(screen.getByText('Recording...')).toBeTruthy()
-  })
+    expect(screen.getByText("Recording...")).toBeTruthy();
+  });
 
-  it('keeps VAD ready copy out of Recording state', () => {
+  it("keeps VAD ready copy out of Recording state", () => {
     render(
       <VoiceStatusBar
         isListening={true}
@@ -27,13 +27,13 @@ describe('VoiceStatusBar', () => {
         isTranscribing={false}
         voiceInputMode="vad"
       />,
-    )
+    );
 
-    expect(screen.getByText('Ready — speak to send')).toBeTruthy()
-    expect(screen.queryByText('Recording...')).toBeNull()
-  })
+    expect(screen.getByText("Ready — speak to send")).toBeTruthy();
+    expect(screen.queryByText("Recording...")).toBeNull();
+  });
 
-  it('keeps VAD speech copy out of Recording state', () => {
+  it("keeps VAD speech copy out of Recording state", () => {
     render(
       <VoiceStatusBar
         isListening={true}
@@ -42,13 +42,13 @@ describe('VoiceStatusBar', () => {
         isTranscribing={false}
         voiceInputMode="vad"
       />,
-    )
+    );
 
-    expect(screen.getByText('Listening...')).toBeTruthy()
-    expect(screen.queryByText('Recording...')).toBeNull()
-  })
+    expect(screen.getByText("Listening...")).toBeTruthy();
+    expect(screen.queryByText("Recording...")).toBeNull();
+  });
 
-  it('lets transcribing win over PTT recording', () => {
+  it("lets transcribing win over PTT recording", () => {
     render(
       <VoiceStatusBar
         isListening={true}
@@ -57,9 +57,9 @@ describe('VoiceStatusBar', () => {
         isTranscribing={true}
         voiceInputMode="ptt"
       />,
-    )
+    );
 
-    expect(screen.getByText('Transcribing...')).toBeTruthy()
-    expect(screen.queryByText('Recording...')).toBeNull()
-  })
-})
+    expect(screen.getByText("Transcribing...")).toBeTruthy();
+    expect(screen.queryByText("Recording...")).toBeNull();
+  });
+});

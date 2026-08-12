@@ -64,7 +64,7 @@ export function normalizeChatMode(mode: string | null | undefined): ChatMode {
   return "plan";
 }
 
-export type ToolResultKind = 'text' | 'json' | 'image' | 'error';
+export type ToolResultKind = "text" | "json" | "image" | "error";
 
 export interface ToolResult {
   content: unknown;
@@ -332,7 +332,10 @@ export interface ChatState {
   onProviderChange?: (provider: string | null) => void;
   dbSessionId?: string | null;
   conversationSwitchKey?: number;
-  viewSession?: (sessionId: string, options?: { forceRefresh?: boolean }) => void;
+  viewSession?: (
+    sessionId: string,
+    options?: { forceRefresh?: boolean },
+  ) => void;
   clearViewingSession?: () => void;
   mainSessionMeta?: SessionObservationMeta | null;
   viewingSessionId?: string | null;
@@ -360,11 +363,17 @@ export interface ConversationState {
   onDeleteSession?: (session: GobbySession) => void;
   onRenameSession?: (id: string, title: string) => void;
   onKillAgent?: (runId: string) => Promise<boolean | void> | boolean | void;
-  onExpireSession?: (sessionId: string) => Promise<boolean | void> | boolean | void;
+  onExpireSession?: (
+    sessionId: string,
+  ) => Promise<boolean | void> | boolean | void;
   // ACP-backed session lifecycle, distinct from `onDeleteSession` (which deletes
   // a chat conversation). Targets an ACP row by canonical session id.
-  onAcpCloseSession?: (sessionId: string) => Promise<boolean | void> | boolean | void;
-  onAcpDeleteSession?: (sessionId: string) => Promise<boolean | void> | boolean | void;
+  onAcpCloseSession?: (
+    sessionId: string,
+  ) => Promise<boolean | void> | boolean | void;
+  onAcpDeleteSession?: (
+    sessionId: string,
+  ) => Promise<boolean | void> | boolean | void;
   viewingSessionId?: string | null;
   attachedSessionId?: string | null;
 }

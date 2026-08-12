@@ -31,7 +31,12 @@ function Harness({
       rows.push({ id: parent, depth: 0, isExpandable: true, isExpanded });
       if (!isExpanded) continue;
       for (const child of CHILDREN[parent] ?? []) {
-        rows.push({ id: child, depth: 1, isExpandable: false, isExpanded: false });
+        rows.push({
+          id: child,
+          depth: 1,
+          isExpandable: false,
+          isExpanded: false,
+        });
       }
     }
     return rows;
@@ -133,11 +138,17 @@ describe("useTreeKeyboardNavigation", () => {
   it("expands and collapses parents with Arrow Right/Left", () => {
     render(<Harness />);
     fireEvent.keyDown(screen.getByTestId("row-a"), { key: "ArrowRight" });
-    expect(screen.getByTestId("row-a")).toHaveAttribute("aria-expanded", "true");
+    expect(screen.getByTestId("row-a")).toHaveAttribute(
+      "aria-expanded",
+      "true",
+    );
     expect(screen.getByTestId("row-a1")).toBeInTheDocument();
 
     fireEvent.keyDown(screen.getByTestId("row-a"), { key: "ArrowLeft" });
-    expect(screen.getByTestId("row-a")).toHaveAttribute("aria-expanded", "false");
+    expect(screen.getByTestId("row-a")).toHaveAttribute(
+      "aria-expanded",
+      "false",
+    );
     expect(screen.queryByTestId("row-a1")).toBeNull();
   });
 

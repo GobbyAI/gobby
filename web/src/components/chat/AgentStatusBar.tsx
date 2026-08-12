@@ -1,19 +1,19 @@
-import { useEffect, useState } from 'react'
+import { useEffect, useState } from "react";
 import type {
   ApprovalOption,
   ContextUsage,
   SessionInteractionMode,
   SessionObservationMeta,
-} from '../../types/chat'
-import { cn } from '../../lib/utils'
-import { Button } from '../ui/Button'
-import { Chip } from '../ui/Chip'
-import { chipIdentityClasses } from '../ui/chipVariants'
-import { ContextUsageIndicator } from './ContextUsageIndicator'
-import { LinkIcon, PlayIcon, UnlinkIcon } from '../icons'
-import { PlusIcon } from './icons/PlusIcon'
-import { PlanPendingActionStrip } from './PlanPendingActionStrip'
-import type { PlanPendingVariant } from './planPendingSurface'
+} from "../../types/chat";
+import { cn } from "../../lib/utils";
+import { Button } from "../ui/Button";
+import { Chip } from "../ui/Chip";
+import { chipIdentityClasses } from "../ui/chipVariants";
+import { ContextUsageIndicator } from "./ContextUsageIndicator";
+import { LinkIcon, PlayIcon, UnlinkIcon } from "../icons";
+import { PlusIcon } from "./icons/PlusIcon";
+import { PlanPendingActionStrip } from "./PlanPendingActionStrip";
+import type { PlanPendingVariant } from "./planPendingSurface";
 
 function PromptIcon() {
   return (
@@ -31,58 +31,58 @@ function PromptIcon() {
       <polyline points="4 17 10 11 4 5" />
       <line x1="12" y1="19" x2="20" y2="19" />
     </svg>
-  )
+  );
 }
 
 interface AgentStatusBarProps {
-  viewingMeta?: SessionObservationMeta | null
-  interactionMode: SessionInteractionMode
-  contextUsage?: ContextUsage
-  contextUsageUpdatedAt?: number | null
-  isAttached?: boolean
-  isAutonomousSession?: boolean
-  onAttach?: () => void
-  onResume?: () => void
-  onDetach?: () => void
-  onOpenTerminal?: () => void
-  onNewChat?: () => void
-  planPendingApproval?: boolean
-  planApprovalOptions?: ApprovalOption[]
-  onApprovePlan?: (option?: ApprovalOption) => void
-  onRequestPlanChanges?: (feedback: string) => void
-  onViewPlan?: () => void
-  planPendingVariant?: PlanPendingVariant
+  viewingMeta?: SessionObservationMeta | null;
+  interactionMode: SessionInteractionMode;
+  contextUsage?: ContextUsage;
+  contextUsageUpdatedAt?: number | null;
+  isAttached?: boolean;
+  isAutonomousSession?: boolean;
+  onAttach?: () => void;
+  onResume?: () => void;
+  onDetach?: () => void;
+  onOpenTerminal?: () => void;
+  onNewChat?: () => void;
+  planPendingApproval?: boolean;
+  planApprovalOptions?: ApprovalOption[];
+  onApprovePlan?: (option?: ApprovalOption) => void;
+  onRequestPlanChanges?: (feedback: string) => void;
+  onViewPlan?: () => void;
+  planPendingVariant?: PlanPendingVariant;
 }
 
-const CONTEXT_USAGE_REFRESH_MS = 15_000
+const CONTEXT_USAGE_REFRESH_MS = 15_000;
 
 function subscribeToClock(onStoreChange: () => void): () => void {
-  const interval = window.setInterval(onStoreChange, CONTEXT_USAGE_REFRESH_MS)
-  return () => window.clearInterval(interval)
+  const interval = window.setInterval(onStoreChange, CONTEXT_USAGE_REFRESH_MS);
+  return () => window.clearInterval(interval);
 }
 
 function getSessionKindBadge(
-  sessionType: SessionObservationMeta['sessionType'],
+  sessionType: SessionObservationMeta["sessionType"],
 ): string | null {
-  if (sessionType === 'web_chat') {
-    return 'WEB'
+  if (sessionType === "web_chat") {
+    return "WEB";
   }
-  if (sessionType === 'terminal') {
-    return 'TMUX'
+  if (sessionType === "terminal") {
+    return "TMUX";
   }
 
-  return null
+  return null;
 }
 
 function formatSessionStateText(
   interactionMode: SessionInteractionMode,
   isAttached: boolean,
 ): string {
-  if (interactionMode === 'proxy' || isAttached) {
-    return 'Attached'
+  if (interactionMode === "proxy" || isAttached) {
+    return "Attached";
   }
 
-  return 'Watching live'
+  return "Watching live";
 }
 
 export function AgentStatusBar({
@@ -104,34 +104,40 @@ export function AgentStatusBar({
   onViewPlan,
   planPendingVariant,
 }: AgentStatusBarProps) {
-  const [usageClock, setUsageClock] = useState(() => Date.now())
+  const [usageClock, setUsageClock] = useState(() => Date.now());
 
   useEffect(() => {
-    if (contextUsageUpdatedAt == null) return undefined
+    if (contextUsageUpdatedAt == null) return undefined;
 
-    return subscribeToClock(() => setUsageClock(Date.now()))
-  }, [contextUsageUpdatedAt])
+    return subscribeToClock(() => setUsageClock(Date.now()));
+  }, [contextUsageUpdatedAt]);
 
   const contextUsageStaleMs =
-    contextUsageUpdatedAt != null ? Math.max(0, usageClock - contextUsageUpdatedAt) : null
-  const sessionBadge = viewingMeta ? getSessionKindBadge(viewingMeta.sessionType) : null
-  const stateText = viewingMeta ? formatSessionStateText(interactionMode, isAttached) : null
-  const canAttach = !isAttached && Boolean(onAttach)
-  const canResume = !isAutonomousSession && Boolean(onResume)
-  const canDetach = isAttached && Boolean(onDetach)
+    contextUsageUpdatedAt != null
+      ? Math.max(0, usageClock - contextUsageUpdatedAt)
+      : null;
+  const sessionBadge = viewingMeta
+    ? getSessionKindBadge(viewingMeta.sessionType)
+    : null;
+  const stateText = viewingMeta
+    ? formatSessionStateText(interactionMode, isAttached)
+    : null;
+  const canAttach = !isAttached && Boolean(onAttach);
+  const canResume = !isAutonomousSession && Boolean(onResume);
+  const canDetach = isAttached && Boolean(onDetach);
 
   return (
     <div
       className={cn(
-        'agent-status-bar flex min-h-[var(--activity-panel-bar-height,2.5rem)] shrink-0 items-center justify-between gap-3 border-t border-border bg-[var(--bg-secondary)] px-3 @max-[360px]/chat-column:pl-3 @max-[360px]/chat-column:pr-2',
-        planPendingApproval && 'agent-status-bar--pending flex-wrap gap-y-1.5',
+        "agent-status-bar flex min-h-[var(--activity-panel-bar-height,2.5rem)] shrink-0 items-center justify-between gap-3 border-t border-border bg-[var(--bg-secondary)] px-3 @max-[360px]/chat-column:pr-2 @max-[360px]/chat-column:pl-3",
+        planPendingApproval && "agent-status-bar--pending flex-wrap gap-y-1.5",
       )}
       data-testid="agent-status-bar"
     >
-      <div className="agent-status-bar__summary flex min-w-0 flex-1 flex-wrap items-center justify-start gap-3 mobile:gap-2 @max-[360px]/chat-column:flex-nowrap">
+      <div className="agent-status-bar__summary flex min-w-0 flex-1 flex-wrap items-center justify-start gap-3 @max-[360px]/chat-column:flex-nowrap mobile:gap-2">
         {viewingMeta && stateText ? (
           <div className="chat-session-status flex min-w-0 flex-wrap items-center gap-1.5 @max-[360px]/chat-column:flex-nowrap">
-            <span className="chat-session-status__state whitespace-nowrap text-[length:var(--text-sm)] font-medium leading-none text-[var(--text-muted)] @max-[360px]/chat-column:hidden">
+            <span className="chat-session-status__state text-[length:var(--text-sm)] leading-none font-medium whitespace-nowrap text-[var(--text-muted)] @max-[360px]/chat-column:hidden">
               {stateText}
             </span>
             {sessionBadge ? (
@@ -166,7 +172,9 @@ export function AgentStatusBar({
             title="Attach"
           >
             <LinkIcon />
-            <span className="chat-action-btn__label @max-[479px]/chat-column:hidden">Attach</span>
+            <span className="chat-action-btn__label @max-[479px]/chat-column:hidden">
+              Attach
+            </span>
           </Button>
         )}
         {canDetach && (
@@ -180,7 +188,9 @@ export function AgentStatusBar({
             title="Detach"
           >
             <UnlinkIcon />
-            <span className="chat-action-btn__label @max-[479px]/chat-column:hidden">Detach</span>
+            <span className="chat-action-btn__label @max-[479px]/chat-column:hidden">
+              Detach
+            </span>
           </Button>
         )}
         {onOpenTerminal && (
@@ -194,7 +204,9 @@ export function AgentStatusBar({
             title="Terminal"
           >
             <PromptIcon />
-            <span className="chat-action-btn__label @max-[479px]/chat-column:hidden">Terminal</span>
+            <span className="chat-action-btn__label @max-[479px]/chat-column:hidden">
+              Terminal
+            </span>
           </Button>
         )}
         {canResume && (
@@ -208,7 +220,9 @@ export function AgentStatusBar({
             title="Resume"
           >
             <PlayIcon />
-            <span className="chat-action-btn__label @max-[479px]/chat-column:hidden">Resume</span>
+            <span className="chat-action-btn__label @max-[479px]/chat-column:hidden">
+              Resume
+            </span>
           </Button>
         )}
         <Button
@@ -223,7 +237,9 @@ export function AgentStatusBar({
           title="New Chat"
         >
           <PlusIcon />
-          <span className="chat-new-chat-btn__label @max-[479px]/chat-column:hidden">New Chat</span>
+          <span className="chat-new-chat-btn__label @max-[479px]/chat-column:hidden">
+            New Chat
+          </span>
         </Button>
       </div>
       {planPendingApproval && onApprovePlan && onRequestPlanChanges && (
@@ -238,5 +254,5 @@ export function AgentStatusBar({
         </div>
       )}
     </div>
-  )
+  );
 }

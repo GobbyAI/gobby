@@ -39,10 +39,12 @@ const MODE_OPTIONS = ["inherit", "autonomous", "interactive"].map((value) => ({
   label: value,
 }));
 
-const ISOLATION_OPTIONS = ["inherit", "worktree", "clone", "none"].map((value) => ({
-  value,
-  label: value,
-}));
+const ISOLATION_OPTIONS = ["inherit", "worktree", "clone", "none"].map(
+  (value) => ({
+    value,
+    label: value,
+  }),
+);
 
 function uniqueOptions(values: string[], current: string) {
   const options = [...values];
@@ -73,7 +75,7 @@ export function AgentsDetailPanel({
         return false;
       }
       try {
-        return await onSave(creating ? null : agent?.db_id ?? null, draft);
+        return await onSave(creating ? null : (agent?.db_id ?? null), draft);
       } catch (error) {
         onError(error instanceof Error ? error.message : String(error));
         return false;
@@ -93,23 +95,42 @@ export function AgentsDetailPanel({
   }, [draftState.confirmIfDirty, onConfirmLeaveChange]);
 
   if (!draftState.draft) {
-    return <ActivityPanelEmpty heading="Agents" body="Select an agent to inspect and edit it." />;
+    return (
+      <ActivityPanelEmpty
+        heading="Agents"
+        body="Select an agent to inspect and edit it."
+      />
+    );
   }
 
   const draft = draftState.draft;
   const form = draft.form;
-  const providers = getOrderedProviders(providerCatalog.map((entry) => entry.provider));
-  const providerOptions = uniqueOptions(["inherit", ...providers], form.provider);
+  const providers = getOrderedProviders(
+    providerCatalog.map((entry) => entry.provider),
+  );
+  const providerOptions = uniqueOptions(
+    ["inherit", ...providers],
+    form.provider,
+  );
   const modelOptions = getModelsForProvider(providerCatalog, form.provider);
   const pipelineOptions = [
     { value: "", label: "(none)" },
-    ...pipelines.map((pipeline) => ({ value: pipeline.name, label: pipeline.name })),
+    ...pipelines.map((pipeline) => ({
+      value: pipeline.name,
+      label: pipeline.name,
+    })),
   ];
-  if (form.pipeline && !pipelineOptions.some((option) => option.value === form.pipeline)) {
+  if (
+    form.pipeline &&
+    !pipelineOptions.some((option) => option.value === form.pipeline)
+  ) {
     pipelineOptions.push({ value: form.pipeline, label: form.pipeline });
   }
 
-  const setDraftField = <K extends keyof AgentDraft>(key: K, value: AgentDraft[K]) => {
+  const setDraftField = <K extends keyof AgentDraft>(
+    key: K,
+    value: AgentDraft[K],
+  ) => {
     draftState.setField(key, value);
   };
   const setFormField = <K extends keyof AgentDraft["form"]>(
@@ -128,11 +149,7 @@ export function AgentsDetailPanel({
         serverChanged={draftState.serverChanged}
         onSave={() => void draftState.save()}
         onDiscard={draftState.discard}
-        actions={
-          !creating && agent ? (
-            <Chip>{agent.source}</Chip>
-          ) : null
-        }
+        actions={!creating && agent ? <Chip>{agent.source}</Chip> : null}
       />
       <div className="min-h-0 flex-1 overflow-y-auto p-3">
         <div className="grid grid-cols-1 gap-3 md:grid-cols-2">
@@ -237,12 +254,16 @@ export function AgentsDetailPanel({
               rules={draft.rules}
               onRulesChange={(value) => setDraftField("rules", value)}
               ruleSelectors={draft.ruleSelectors}
-              onRuleSelectorsChange={(value) => setDraftField("ruleSelectors", value)}
+              onRuleSelectorsChange={(value) =>
+                setDraftField("ruleSelectors", value)
+              }
               projectId={projectId ?? undefined}
             />
           </section>
           <section className="rounded-md border border-border bg-[var(--bg-secondary)] p-3">
-            <h3 className="mb-2 text-sm font-medium text-foreground">Variables</h3>
+            <h3 className="mb-2 text-sm font-medium text-foreground">
+              Variables
+            </h3>
             <AgentVariablesEditor
               variables={draft.variables}
               onVariablesChange={(value) => setDraftField("variables", value)}
@@ -256,12 +277,18 @@ export function AgentsDetailPanel({
             />
           </section>
           <section className="rounded-md border border-border bg-[var(--bg-secondary)] p-3">
-            <h3 className="mb-2 text-sm font-medium text-foreground">Tool blocks</h3>
+            <h3 className="mb-2 text-sm font-medium text-foreground">
+              Tool blocks
+            </h3>
             <AgentToolBlocksEditor
               blockedTools={draft.blockedTools}
-              onBlockedToolsChange={(value) => setDraftField("blockedTools", value)}
+              onBlockedToolsChange={(value) =>
+                setDraftField("blockedTools", value)
+              }
               blockedMcpTools={draft.blockedMcpTools}
-              onBlockedMcpToolsChange={(value) => setDraftField("blockedMcpTools", value)}
+              onBlockedMcpToolsChange={(value) =>
+                setDraftField("blockedMcpTools", value)
+              }
             />
           </section>
         </div>

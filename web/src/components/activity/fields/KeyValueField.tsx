@@ -13,7 +13,9 @@ interface KeyValueFieldProps {
   ariaLabel: string;
 }
 
-function entriesToRecord(entries: Array<[string, string]>): Record<string, string> {
+function entriesToRecord(
+  entries: Array<[string, string]>,
+): Record<string, string> {
   return Object.fromEntries(entries);
 }
 
@@ -30,7 +32,9 @@ export function KeyValueField({
   function updateKey(index: number, nextKey: string) {
     const isDuplicate =
       nextKey !== "" &&
-      entries.some((entry, entryIndex) => entryIndex !== index && entry[0] === nextKey);
+      entries.some(
+        (entry, entryIndex) => entryIndex !== index && entry[0] === nextKey,
+      );
     if (isDuplicate) {
       setKeyError(`Key "${nextKey}" already exists`);
       console.warn(
@@ -59,7 +63,9 @@ export function KeyValueField({
   }
 
   function removeRow(index: number) {
-    onChange(entriesToRecord(entries.filter((_, entryIndex) => entryIndex !== index)));
+    onChange(
+      entriesToRecord(entries.filter((_, entryIndex) => entryIndex !== index)),
+    );
   }
 
   return (
@@ -137,7 +143,7 @@ const inputClass = cn(
 const iconButtonClass = cn(
   "inline-flex h-11 w-11 items-center justify-center rounded-md border border-border",
   "text-muted-foreground transition-colors hover:bg-muted hover:text-foreground",
-  "focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent",
+  "focus-visible:ring-2 focus-visible:ring-accent focus-visible:outline-none",
   "focus-visible:ring-offset-2 focus-visible:ring-offset-background",
   "disabled:cursor-not-allowed disabled:opacity-50",
 );

@@ -54,7 +54,12 @@ export interface Badge {
 
 export const WATCHING_SESSION_ID_KEY = "gobby-watching-session-id";
 export const HIDDEN_SOURCES = new Set(["pipeline", "cron", "system"]);
-const LOCAL_LEGACY_PROVIDERS = new Set(["lmstudio", "ollama", "llamacpp", "local"]);
+const LOCAL_LEGACY_PROVIDERS = new Set([
+  "lmstudio",
+  "ollama",
+  "llamacpp",
+  "local",
+]);
 
 export function getBaseUrl(): string {
   return import.meta.env.VITE_API_BASE_URL || "";

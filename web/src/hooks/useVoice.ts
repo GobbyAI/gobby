@@ -1,37 +1,37 @@
-import { useCallback, useEffect, useRef, useState } from 'react'
-import type { RefObject } from 'react'
-import type { VoiceInputMode } from './useSettings'
-import type { RawVoiceStatus } from './voiceStatus'
-import { useTTSPlayback } from './voice/useTTSPlayback'
-import { useVoiceCapture } from './voice/useVoiceCapture'
-import { useVoiceStatus } from './voice/useVoiceStatus'
+import { useCallback, useEffect, useRef, useState } from "react";
+import type { RefObject } from "react";
+import type { VoiceInputMode } from "./useSettings";
+import type { RawVoiceStatus } from "./voiceStatus";
+import { useTTSPlayback } from "./voice/useTTSPlayback";
+import { useVoiceCapture } from "./voice/useVoiceCapture";
+import { useVoiceStatus } from "./voice/useVoiceStatus";
 
 interface VoiceOptions {
-  sttEnabled: boolean
-  ttsEnabled: boolean
-  voiceInputMode: VoiceInputMode
+  sttEnabled: boolean;
+  ttsEnabled: boolean;
+  voiceInputMode: VoiceInputMode;
 }
 
 interface VoiceState {
-  voiceAvailable: boolean
-  voiceReady: boolean
-  voiceLoading: boolean
-  isListening: boolean
-  isSpeechDetected: boolean
-  isRecording: boolean
-  isTranscribing: boolean
-  isSpeaking: boolean
-  voiceError: string | null
+  voiceAvailable: boolean;
+  voiceReady: boolean;
+  voiceLoading: boolean;
+  isListening: boolean;
+  isSpeechDetected: boolean;
+  isRecording: boolean;
+  isTranscribing: boolean;
+  isSpeaking: boolean;
+  voiceError: string | null;
 }
 
 export interface UseVoiceReturn extends VoiceState {
-  prepareTTSPlayback: () => void
-  startRecording: () => Promise<void>
-  stopRecording: () => Promise<void>
-  cancelRecording: () => void
-  handleVoiceMessage: (data: Record<string, unknown>) => void
-  handleBinaryMessage: (data: ArrayBuffer) => void
-  stopTTS: () => void
+  prepareTTSPlayback: () => void;
+  startRecording: () => Promise<void>;
+  stopRecording: () => Promise<void>;
+  cancelRecording: () => void;
+  handleVoiceMessage: (data: Record<string, unknown>) => void;
+  handleBinaryMessage: (data: ArrayBuffer) => void;
+  stopTTS: () => void;
 }
 
 export function useVoice(
@@ -43,26 +43,26 @@ export function useVoice(
   socketConnected: boolean,
   ensureConversationId?: () => Promise<string | null>,
 ): UseVoiceReturn {
-  const { sttEnabled, ttsEnabled, voiceInputMode } = opts
+  const { sttEnabled, ttsEnabled, voiceInputMode } = opts;
 
-  const [voiceError, setVoiceError] = useState<string | null>(null)
-  const errorTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
+  const [voiceError, setVoiceError] = useState<string | null>(null);
+  const errorTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
-  const conversationIdRef = useRef(conversationId)
+  const conversationIdRef = useRef(conversationId);
   useEffect(() => {
-    conversationIdRef.current = conversationId
-  }, [conversationId])
+    conversationIdRef.current = conversationId;
+  }, [conversationId]);
 
   const setTransientError = useCallback((msg: string, ms = 3000) => {
-    if (errorTimerRef.current) clearTimeout(errorTimerRef.current)
-    setVoiceError(msg)
-    errorTimerRef.current = setTimeout(() => setVoiceError(null), ms)
-  }, [])
+    if (errorTimerRef.current) clearTimeout(errorTimerRef.current);
+    setVoiceError(msg);
+    errorTimerRef.current = setTimeout(() => setVoiceError(null), ms);
+  }, []);
 
   const clearTransientError = useCallback(() => {
-    if (errorTimerRef.current) clearTimeout(errorTimerRef.current)
-    setVoiceError(null)
-  }, [])
+    if (errorTimerRef.current) clearTimeout(errorTimerRef.current);
+    setVoiceError(null);
+  }, []);
 
   const status = useVoiceStatus({
     wsRef,
@@ -70,14 +70,14 @@ export function useVoice(
     socketConnected,
     sttEnabled,
     ttsEnabled,
-  })
+  });
 
   const playback = useTTSPlayback({
     wsRef,
     conversationIdRef,
     ttsEnabled,
     setTransientError,
-  })
+  });
 
   const capture = useVoiceCapture({
     wsRef,
@@ -91,7 +91,7 @@ export function useVoice(
     setTransientError,
     clearTransientError,
     onBargeIn: playback.stopTTS,
-  })
+  });
 
   const {
     clearPendingTTSMeta,
@@ -100,7 +100,7 @@ export function useVoice(
     isSpeaking,
     prepareTTSPlayback,
     stopTTS,
-  } = playback
+  } = playback;
   const {
     cancelRecording,
     finishTranscriptionRequest,
@@ -112,7 +112,7 @@ export function useVoice(
     resetTranscriptionRequest,
     startRecording,
     stopRecording,
-  } = capture
+  } = capture;
   const {
     applyVoiceStatus,
     markVoicePreparing,
@@ -121,81 +121,91 @@ export function useVoice(
     voiceAvailable,
     voiceLoading,
     voiceReady,
-  } = status
+  } = status;
 
-  const prevSwitchKeyRef = useRef(conversationSwitchKey)
+  const prevSwitchKeyRef = useRef(conversationSwitchKey);
   useEffect(() => {
     if (prevSwitchKeyRef.current !== conversationSwitchKey) {
-      prevSwitchKeyRef.current = conversationSwitchKey
-      stopTTS()
-      cancelRecording()
-      resetTranscriptionRequest()
+      prevSwitchKeyRef.current = conversationSwitchKey;
+      stopTTS();
+      cancelRecording();
+      resetTranscriptionRequest();
     }
-  }, [cancelRecording, conversationSwitchKey, resetTranscriptionRequest, stopTTS])
+  }, [
+    cancelRecording,
+    conversationSwitchKey,
+    resetTranscriptionRequest,
+    stopTTS,
+  ]);
 
   useEffect(() => {
-    if (!socketConnected) resetTranscriptionRequest()
-  }, [resetTranscriptionRequest, socketConnected])
+    if (!socketConnected) resetTranscriptionRequest();
+  }, [resetTranscriptionRequest, socketConnected]);
 
   useEffect(() => {
     return () => {
-      if (errorTimerRef.current) clearTimeout(errorTimerRef.current)
-    }
-  }, [])
+      if (errorTimerRef.current) clearTimeout(errorTimerRef.current);
+    };
+  }, []);
 
-  const handleVoiceMessage = useCallback((data: Record<string, unknown>) => {
-    const type = data.type as string
+  const handleVoiceMessage = useCallback(
+    (data: Record<string, unknown>) => {
+      const type = data.type as string;
 
-    if (type === 'voice_transcription') {
-      if (finishTranscriptionRequest(data.request_id)) {
-        clearTransientError()
-      }
-    } else if (type === 'voice_status') {
-      const voiceStatus = data.status as string
-      if (voiceStatus === 'error') {
+      if (type === "voice_transcription") {
         if (finishTranscriptionRequest(data.request_id)) {
-          clearTransientError()
-          setVoiceError(data.error as string || 'Voice error')
+          clearTransientError();
         }
-      } else if (voiceStatus === 'empty') {
-        if (finishTranscriptionRequest(data.request_id)) {
-          setTransientError('No speech detected — try speaking louder or closer to the mic')
+      } else if (type === "voice_status") {
+        const voiceStatus = data.status as string;
+        if (voiceStatus === "error") {
+          if (finishTranscriptionRequest(data.request_id)) {
+            clearTransientError();
+            setVoiceError((data.error as string) || "Voice error");
+          }
+        } else if (voiceStatus === "empty") {
+          if (finishTranscriptionRequest(data.request_id)) {
+            setTransientError(
+              "No speech detected — try speaking louder or closer to the mic",
+            );
+          }
+        } else if (voiceStatus === "transcribing") {
+          if (markTranscriptionInProgress(data.request_id)) {
+            clearTransientError();
+          }
+        } else if (voiceStatus === "preparing") {
+          if (data.voice_loading === true && data.voice_ready !== true) {
+            markVoicePreparing();
+          }
+          clearTransientError();
+          startStatusPolling();
         }
-      } else if (voiceStatus === 'transcribing') {
-        if (markTranscriptionInProgress(data.request_id)) {
-          clearTransientError()
+        if ("voice_ready" in data || "voice_loading" in data) {
+          applyVoiceStatus(data as RawVoiceStatus);
         }
-      } else if (voiceStatus === 'preparing') {
-        if (data.voice_loading === true && data.voice_ready !== true) {
-          markVoicePreparing()
+      } else if (type === "tts_audio") {
+        if (!ttsEnabled) return;
+        handleTTSAudioMeta(data);
+      } else if (type === "tts_status") {
+        const ttsStatus = data.status as string;
+        if (ttsStatus === "idle") {
+          clearPendingTTSMeta();
         }
-        clearTransientError()
-        startStatusPolling()
       }
-      if ('voice_ready' in data || 'voice_loading' in data) {
-        applyVoiceStatus(data as RawVoiceStatus)
-      }
-    } else if (type === 'tts_audio') {
-      if (!ttsEnabled) return
-      handleTTSAudioMeta(data)
-    } else if (type === 'tts_status') {
-      const ttsStatus = data.status as string
-      if (ttsStatus === 'idle') {
-        clearPendingTTSMeta()
-      }
-    }
-  }, [
-    applyVoiceStatus,
-    clearPendingTTSMeta,
-    clearTransientError,
-    finishTranscriptionRequest,
-    handleTTSAudioMeta,
-    markTranscriptionInProgress,
-    markVoicePreparing,
-    setTransientError,
-    startStatusPolling,
-    ttsEnabled,
-  ])
+    },
+    [
+      applyVoiceStatus,
+      clearPendingTTSMeta,
+      clearTransientError,
+      finishTranscriptionRequest,
+      handleTTSAudioMeta,
+      markTranscriptionInProgress,
+      markVoicePreparing,
+      setTransientError,
+      startStatusPolling,
+      ttsEnabled,
+    ],
+  );
 
   return {
     voiceAvailable,
@@ -214,5 +224,5 @@ export function useVoice(
     handleVoiceMessage,
     handleBinaryMessage,
     stopTTS,
-  }
+  };
 }

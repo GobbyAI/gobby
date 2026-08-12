@@ -76,7 +76,9 @@ function toggleInclusiveSetMember<T>(
   } else {
     next.add(value);
   }
-  return next.size === 0 || next.size === allValues.length ? new Set<T>() : next;
+  return next.size === 0 || next.size === allValues.length
+    ? new Set<T>()
+    : next;
 }
 
 function parseRefBound(raw: string): number | null {
@@ -91,8 +93,12 @@ export function SessionsFilterDropdown({
   providerOptions,
   onClose,
 }: SessionsFilterDropdownProps) {
-  const [previousDatePreset, setPreviousDatePreset] = useState(filters.datePreset);
-  const [showCustomDate, setShowCustomDate] = useState(filters.datePreset === "custom");
+  const [previousDatePreset, setPreviousDatePreset] = useState(
+    filters.datePreset,
+  );
+  const [showCustomDate, setShowCustomDate] = useState(
+    filters.datePreset === "custom",
+  );
   if (previousDatePreset !== filters.datePreset) {
     setPreviousDatePreset(filters.datePreset);
     setShowCustomDate(filters.datePreset === "custom");
@@ -123,7 +129,9 @@ export function SessionsFilterDropdown({
   }
 
   function handleModeToggle(mode: SessionMode): void {
-    update({ modes: toggleInclusiveSetMember(filters.modes, mode, MODE_VALUES) });
+    update({
+      modes: toggleInclusiveSetMember(filters.modes, mode, MODE_VALUES),
+    });
   }
 
   function handleProviderToggle(provider: string): void {
@@ -184,7 +192,7 @@ export function SessionsFilterDropdown({
     >
       <div className="grid grid-cols-1 @min-[20rem]:grid-cols-[auto_minmax(0,1fr)]">
         {/* Left column: Mode + Provider */}
-        <div className="flex flex-col gap-0.5 p-1.5 min-w-0">
+        <div className="flex min-w-0 flex-col gap-0.5 p-1.5">
           <FilterSection label="Mode">
             {MODE_OPTIONS.map((option) => (
               <FilterCheckboxRow
@@ -221,7 +229,7 @@ export function SessionsFilterDropdown({
         </div>
 
         {/* Right column: Session ref + Task ref */}
-        <div className="flex flex-col gap-0.5 p-1.5 min-w-0 border-t border-border @min-[20rem]:border-t-0 @min-[20rem]:border-l">
+        <div className="flex min-w-0 flex-col gap-0.5 border-t border-border p-1.5 @min-[20rem]:border-t-0 @min-[20rem]:border-l">
           <FilterSection label="Session ref">
             <RefRangeInputs
               minValue={filters.sessionRefMin}
@@ -255,11 +263,13 @@ export function SessionsFilterDropdown({
         </div>
 
         {/* Date range spans the full popover so every preset segment stays visible */}
-        <div className="flex flex-col gap-0.5 p-1.5 min-w-0 border-t border-border @min-[20rem]:col-span-2">
+        <div className="flex min-w-0 flex-col gap-0.5 border-t border-border p-1.5 @min-[20rem]:col-span-2">
           <FilterSection label="Date range">
             <div className="px-2 py-1">
               <SegmentedControl<DatePreset>
-                value={filters.datePreset === "custom" ? "all" : filters.datePreset}
+                value={
+                  filters.datePreset === "custom" ? "all" : filters.datePreset
+                }
                 onChange={handleDatePresetChange}
                 options={DATE_PRESET_OPTIONS}
                 ariaLabel="Date preset"
@@ -288,7 +298,10 @@ export function SessionsFilterDropdown({
                   className="h-7 w-full px-1.5 py-0.5 text-[length:var(--text-md)]"
                   value={filters.dateCustomFrom ?? ""}
                   onChange={(e) =>
-                    update({ dateCustomFrom: e.target.value || null, datePreset: "custom" })
+                    update({
+                      dateCustomFrom: e.target.value || null,
+                      datePreset: "custom",
+                    })
                   }
                   aria-label="Custom date from"
                 />
@@ -298,7 +311,10 @@ export function SessionsFilterDropdown({
                   className="h-7 w-full px-1.5 py-0.5 text-[length:var(--text-md)]"
                   value={filters.dateCustomTo ?? ""}
                   onChange={(e) =>
-                    update({ dateCustomTo: e.target.value || null, datePreset: "custom" })
+                    update({
+                      dateCustomTo: e.target.value || null,
+                      datePreset: "custom",
+                    })
                   }
                   aria-label="Custom date to"
                 />
@@ -318,7 +334,11 @@ export function SessionsFilterDropdown({
 }
 
 function EmptyHint({ children }: { children: React.ReactNode }) {
-  return <div className="px-2 py-1 text-[length:var(--text-md)] text-muted-foreground">{children}</div>;
+  return (
+    <div className="px-2 py-1 text-[length:var(--text-md)] text-muted-foreground">
+      {children}
+    </div>
+  );
 }
 
 function RefRangeInputs({
@@ -334,7 +354,8 @@ function RefRangeInputs({
   onChangeMax: (value: number | null) => void;
   ariaLabelPrefix: string;
 }) {
-  const isInvalid = minValue !== null && maxValue !== null && minValue > maxValue;
+  const isInvalid =
+    minValue !== null && maxValue !== null && minValue > maxValue;
   const inputClassName =
     "h-7 w-full px-1.5 py-0.5 text-[length:var(--text-md)] font-mono";
 
@@ -354,7 +375,9 @@ function RefRangeInputs({
           aria-invalid={isInvalid}
           error={isInvalid}
         />
-        <span className="text-[length:var(--text-md)] text-muted-foreground">to</span>
+        <span className="text-[length:var(--text-md)] text-muted-foreground">
+          to
+        </span>
         <Input
           type="text"
           inputMode="numeric"
@@ -370,7 +393,9 @@ function RefRangeInputs({
         />
       </div>
       {isInvalid && (
-        <div className="mt-1 text-[length:var(--text-md)] text-[var(--color-error)]">Min must be &lt;= Max</div>
+        <div className="mt-1 text-[length:var(--text-md)] text-[var(--color-error)]">
+          Min must be &lt;= Max
+        </div>
       )}
     </FilterFieldRow>
   );

@@ -107,11 +107,7 @@ describe("MessageList", () => {
 
   it("renders empty-state copy without a terminal period", () => {
     render(
-      <MessageList
-        messages={[]}
-        isStreaming={false}
-        isThinking={false}
-      />,
+      <MessageList messages={[]} isStreaming={false} isThinking={false} />,
     );
 
     expect(

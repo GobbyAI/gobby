@@ -98,7 +98,11 @@ describe("AgentsTabActions", () => {
   });
 
   it("builds duplicate payloads without dropping definition fields", () => {
-    const body = buildDuplicateAgentBody(agentDefinition(), "reviewer-copy", "project-1");
+    const body = buildDuplicateAgentBody(
+      agentDefinition(),
+      "reviewer-copy",
+      "project-1",
+    );
 
     expect(body).toMatchObject({
       name: "reviewer-copy",

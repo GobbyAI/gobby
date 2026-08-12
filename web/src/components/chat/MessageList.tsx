@@ -308,7 +308,7 @@ export const MessageList = memo(
         <div className="flex min-h-0 flex-1 items-center justify-center [&_.text-sm]:text-[length:var(--text-base)] [&_.text-xs]:text-[length:var(--text-sm)]">
           <div className="chat-empty-state flex flex-col items-center gap-3 text-center text-[var(--text-muted)]">
             {isLoadingMessages ? (
-              <p className="text-sm animate-pulse">Loading messages...</p>
+              <p className="animate-pulse text-sm">Loading messages...</p>
             ) : (
               <>
                 <div
@@ -333,7 +333,7 @@ export const MessageList = memo(
     return (
       <Virtuoso
         ref={virtuosoRef}
-        className="min-h-0 flex-1 overflow-x-hidden overscroll-contain [overflow-anchor:none] [&_.text-sm]:text-[length:var(--text-base)] [&_.text-xs]:text-[length:var(--text-sm)] [&::-webkit-scrollbar]:w-2 [&::-webkit-scrollbar-track]:bg-transparent [&::-webkit-scrollbar-thumb]:rounded-full [&::-webkit-scrollbar-thumb]:bg-border [scrollbar-width:thin] [scrollbar-color:var(--border)_transparent]"
+        className="min-h-0 flex-1 [scrollbar-width:thin] [scrollbar-color:var(--border)_transparent] overflow-x-hidden overscroll-contain [overflow-anchor:none] [&_.text-sm]:text-[length:var(--text-base)] [&_.text-xs]:text-[length:var(--text-sm)] [&::-webkit-scrollbar]:w-2 [&::-webkit-scrollbar-thumb]:rounded-full [&::-webkit-scrollbar-thumb]:bg-border [&::-webkit-scrollbar-track]:bg-transparent"
         data={messages}
         computeItemKey={(_, message) => message.id}
         itemContent={itemContent}
@@ -374,15 +374,15 @@ function ChatEmptyIcon() {
 function ThinkingIndicator() {
   return (
     <div className="px-4 py-3">
-      <div className="max-w-3xl mx-auto">
-        <div className="flex items-center gap-2 mb-1.5">
+      <div className="mx-auto max-w-3xl">
+        <div className="mb-1.5 flex items-center gap-2">
           <GobbyLogo label="App logo" className="rounded" />
           <span className="text-xs font-medium text-muted-foreground">
             Gobby
           </span>
         </div>
         <div className="flex items-center gap-2 py-2">
-          <div className="w-4 h-4 border-2 border-accent border-t-transparent rounded-full animate-spin" />
+          <div className="h-4 w-4 animate-spin rounded-full border-2 border-accent border-t-transparent" />
           <span className="text-sm text-muted-foreground">Thinking...</span>
         </div>
       </div>

@@ -1,89 +1,89 @@
-import { afterEach, describe, expect, it } from 'vitest'
-import { readFileSync } from 'node:fs'
-import { dirname, join } from 'node:path'
-import { fileURLToPath } from 'node:url'
-import { compile } from '@tailwindcss/node'
-import postcss from 'postcss'
-import { buttonVariants } from '../components/ui/buttonVariants'
-import { coarseHitAreaCls } from '../components/ui/controlStyles'
+import { afterEach, describe, expect, it } from "vitest";
+import { readFileSync } from "node:fs";
+import { dirname, join } from "node:path";
+import { fileURLToPath } from "node:url";
+import { compile } from "@tailwindcss/node";
+import postcss from "postcss";
+import { buttonVariants } from "../components/ui/buttonVariants";
+import { coarseHitAreaCls } from "../components/ui/controlStyles";
 
 const targets = [
-  'primary action',
-  'queued-file remove',
-  'code copy',
-  'session actions',
-  'task row',
-  'task actions',
-  'task expand',
-  'activity menu item',
-  'filter option',
-  'session role filter',
-  'error dismiss',
-  'pipeline row',
-] as const
+  "primary action",
+  "queued-file remove",
+  "code copy",
+  "session actions",
+  "task row",
+  "task actions",
+  "task expand",
+  "activity menu item",
+  "filter option",
+  "session role filter",
+  "error dismiss",
+  "pipeline row",
+] as const;
 
-const srcRoot = dirname(dirname(fileURLToPath(import.meta.url)))
+const srcRoot = dirname(dirname(fileURLToPath(import.meta.url)));
 
 const CHAT_INPUT_TOUCH_CANDIDATES = [
-  'h-[36px]',
-  'w-[36px]',
-  'pointer-coarse:h-11',
-  'pointer-coarse:w-11',
-] as const
+  "h-[36px]",
+  "w-[36px]",
+  "pointer-coarse:h-11",
+  "pointer-coarse:w-11",
+] as const;
 
 const ACTIVITY_MENU_TOUCH_CANDIDATES = [
-  'pointer-coarse:min-h-11',
-  'pointer-coarse:min-w-11',
-] as const
+  "pointer-coarse:min-h-11",
+  "pointer-coarse:min-w-11",
+] as const;
 
 const SESSION_ACTION_TOUCH_CANDIDATES = [
-  'pointer-coarse:h-11',
-  'pointer-coarse:w-11',
-  'pointer-coarse:min-h-11',
-  'pointer-coarse:min-w-11',
-] as const
+  "pointer-coarse:h-11",
+  "pointer-coarse:w-11",
+  "pointer-coarse:min-h-11",
+  "pointer-coarse:min-w-11",
+] as const;
 
 const TASK_ACTION_TOUCH_CANDIDATES = [
-  'pointer-coarse:size-11',
-  'pointer-coarse:min-h-11',
-  'pointer-coarse:min-w-11',
-] as const
+  "pointer-coarse:size-11",
+  "pointer-coarse:min-h-11",
+  "pointer-coarse:min-w-11",
+] as const;
 
 const TASK_ROW_TOUCH_CANDIDATES = [
-  'w-full',
-  'min-h-[var(--activity-panel-row-height)]',
-  'pointer-coarse:min-h-11',
-  'pointer-coarse:min-w-11',
-] as const
+  "w-full",
+  "min-h-[var(--activity-panel-row-height)]",
+  "pointer-coarse:min-h-11",
+  "pointer-coarse:min-w-11",
+] as const;
 
 const TASK_EXPAND_TOUCH_CANDIDATES = [
-  'h-6',
-  'w-6',
-  'pointer-coarse:size-11',
-  'pointer-coarse:min-h-11',
-  'pointer-coarse:min-w-11',
-] as const
+  "h-6",
+  "w-6",
+  "pointer-coarse:size-11",
+  "pointer-coarse:min-h-11",
+  "pointer-coarse:min-w-11",
+] as const;
 
 const TASK_ERROR_DISMISS_TOUCH_CANDIDATES = [
-  'pointer-coarse:min-h-11',
-  'pointer-coarse:min-w-11',
-] as const
+  "pointer-coarse:min-h-11",
+  "pointer-coarse:min-w-11",
+] as const;
 
 const ACTIVITY_TAB_TOUCH_CANDIDATES = [
-  'min-h-[var(--activity-panel-row-height)]',
-  'pointer-coarse:min-h-11',
-  'pointer-coarse:min-w-11',
-] as const
+  "min-h-[var(--activity-panel-row-height)]",
+  "pointer-coarse:min-h-11",
+  "pointer-coarse:min-w-11",
+] as const;
 
 async function emulateCoarsePointer(): Promise<HTMLStyleElement> {
   const tailwind = await compile('@import "tailwindcss";', {
     base: srcRoot,
     onDependency() {},
-  })
+  });
   const tailwindCss = tailwind.build([
-    'flex',
-    'h-4',
-    'w-4',
+    "flex",
+    "h-4",
+    "w-4",
     ...CHAT_INPUT_TOUCH_CANDIDATES,
     ...ACTIVITY_MENU_TOUCH_CANDIDATES,
     ...SESSION_ACTION_TOUCH_CANDIDATES,
@@ -92,36 +92,37 @@ async function emulateCoarsePointer(): Promise<HTMLStyleElement> {
     ...TASK_EXPAND_TOUCH_CANDIDATES,
     ...TASK_ERROR_DISMISS_TOUCH_CANDIDATES,
     ...ACTIVITY_TAB_TOUCH_CANDIDATES,
-    'pointer-coarse:min-h-11',
-    'pointer-coarse:min-w-11',
-  ])
-  const cssSources = [tailwindCss]
-  const coarseRules: string[] = []
-  let spacing: string | undefined
+    "pointer-coarse:min-h-11",
+    "pointer-coarse:min-w-11",
+  ]);
+  const cssSources = [tailwindCss];
+  const coarseRules: string[] = [];
+  let spacing: string | undefined;
   for (const css of cssSources) {
-    const root = postcss.parse(css)
-    root.walkDecls('--spacing', declaration => {
-      spacing ??= declaration.value
-    })
-    root.walkAtRules('media', rule => {
+    const root = postcss.parse(css);
+    root.walkDecls("--spacing", (declaration) => {
+      spacing ??= declaration.value;
+    });
+    root.walkAtRules("media", (rule) => {
       if (/pointer\s*:\s*coarse/.test(rule.params)) {
-        if (rule.parent?.type === 'rule') {
-          coarseRules.push(rule.parent.clone({ nodes: rule.nodes }).toString())
+        if (rule.parent?.type === "rule") {
+          coarseRules.push(rule.parent.clone({ nodes: rule.nodes }).toString());
         } else {
-          for (const nestedRule of rule.nodes ?? []) coarseRules.push(nestedRule.toString())
+          for (const nestedRule of rule.nodes ?? [])
+            coarseRules.push(nestedRule.toString());
         }
       }
-    })
+    });
   }
 
-  expect(coarseRules.length).toBeGreaterThan(0)
-  expect(spacing).toBeDefined()
-  document.documentElement.style.setProperty('--spacing', spacing!)
-  const style = document.createElement('style')
-  style.dataset.testCoarsePointer = 'true'
-  style.textContent = coarseRules.join('\n')
-  document.head.append(style)
-  return style
+  expect(coarseRules.length).toBeGreaterThan(0);
+  expect(spacing).toBeDefined();
+  document.documentElement.style.setProperty("--spacing", spacing!);
+  const style = document.createElement("style");
+  style.dataset.testCoarsePointer = "true";
+  style.textContent = coarseRules.join("\n");
+  document.head.append(style);
+  return style;
 }
 
 /**
@@ -131,59 +132,65 @@ async function emulateCoarsePointer(): Promise<HTMLStyleElement> {
  * ignores rules wrapped in @layer or @media, so both sets are flattened to
  * plain selector blocks before injection.
  */
-async function emulateButtonStyles(candidates: readonly string[]): Promise<HTMLStyleElement> {
+async function emulateButtonStyles(
+  candidates: readonly string[],
+): Promise<HTMLStyleElement> {
   const tailwind = await compile('@import "tailwindcss";', {
     base: srcRoot,
     onDependency() {},
-  })
-  const css = tailwind.build([...new Set(candidates)])
-  const root = postcss.parse(css)
-  let spacing: string | undefined
-  root.walkDecls('--spacing', declaration => {
-    spacing ??= declaration.value
-  })
+  });
+  const css = tailwind.build([...new Set(candidates)]);
+  const root = postcss.parse(css);
+  let spacing: string | undefined;
+  root.walkDecls("--spacing", (declaration) => {
+    spacing ??= declaration.value;
+  });
 
-  const flatRules: string[] = []
-  root.walkRules(rule => {
+  const flatRules: string[] = [];
+  root.walkRules((rule) => {
     // Keep rules whose only at-rule ancestors are @layer; conditional rules
     // (@media, @supports) are handled by the coarse extraction below.
-    let conditional = false
+    let conditional = false;
     for (
       let parent: typeof rule.parent = rule.parent;
-      parent && parent.type !== 'root';
+      parent && parent.type !== "root";
       parent = parent.parent as typeof rule.parent
     ) {
-      if (parent.type === 'atrule' && (parent as postcss.AtRule).name !== 'layer') {
-        conditional = true
-        break
+      if (
+        parent.type === "atrule" &&
+        (parent as postcss.AtRule).name !== "layer"
+      ) {
+        conditional = true;
+        break;
       }
     }
-    if (conditional) return
+    if (conditional) return;
     const declarations = (rule.nodes ?? [])
-      .filter(node => node.type === 'decl')
+      .filter((node) => node.type === "decl")
       .map(String)
-      .join('; ')
-    if (declarations) flatRules.push(`${rule.selector} { ${declarations} }`)
-  })
+      .join("; ");
+    if (declarations) flatRules.push(`${rule.selector} { ${declarations} }`);
+  });
 
-  const coarseRules: string[] = []
-  root.walkAtRules('media', rule => {
+  const coarseRules: string[] = [];
+  root.walkAtRules("media", (rule) => {
     if (/pointer\s*:\s*coarse/.test(rule.params)) {
-      if (rule.parent?.type === 'rule') {
-        coarseRules.push(rule.parent.clone({ nodes: rule.nodes }).toString())
+      if (rule.parent?.type === "rule") {
+        coarseRules.push(rule.parent.clone({ nodes: rule.nodes }).toString());
       } else {
-        for (const nestedRule of rule.nodes ?? []) coarseRules.push(nestedRule.toString())
+        for (const nestedRule of rule.nodes ?? [])
+          coarseRules.push(nestedRule.toString());
       }
     }
-  })
+  });
 
-  expect(spacing).toBeDefined()
-  document.documentElement.style.setProperty('--spacing', spacing!)
-  const style = document.createElement('style')
-  style.dataset.testCoarsePointer = 'true'
-  style.textContent = [...flatRules, ...coarseRules].join('\n')
-  document.head.append(style)
-  return style
+  expect(spacing).toBeDefined();
+  document.documentElement.style.setProperty("--spacing", spacing!);
+  const style = document.createElement("style");
+  style.dataset.testCoarsePointer = "true";
+  style.textContent = [...flatRules, ...coarseRules].join("\n");
+  document.head.append(style);
+  return style;
 }
 
 /**
@@ -195,233 +202,258 @@ async function emulateButtonStyles(candidates: readonly string[]): Promise<HTMLS
  * cannot compute for pseudo-elements.
  */
 async function emulateHitAreaStyles(): Promise<{
-  style: HTMLStyleElement
-  coarseHostDeclarations: string[]
+  style: HTMLStyleElement;
+  coarseHostDeclarations: string[];
 }> {
   const tailwind = await compile('@import "tailwindcss";', {
     base: srcRoot,
     onDependency() {},
-  })
-  const css = tailwind.build([...coarseHitAreaCls.split(/\s+/), 'h-9'])
-  const root = postcss.parse(css)
-  let spacing: string | undefined
-  root.walkDecls('--spacing', declaration => {
-    spacing ??= declaration.value
-  })
+  });
+  const css = tailwind.build([...coarseHitAreaCls.split(/\s+/), "h-9"]);
+  const root = postcss.parse(css);
+  let spacing: string | undefined;
+  root.walkDecls("--spacing", (declaration) => {
+    spacing ??= declaration.value;
+  });
 
-  const baseRules: string[] = []
-  root.walkRules(rule => {
-    let conditional = false
+  const baseRules: string[] = [];
+  root.walkRules((rule) => {
+    let conditional = false;
     for (
       let parent: typeof rule.parent = rule.parent;
-      parent && parent.type !== 'root';
+      parent && parent.type !== "root";
       parent = parent.parent as typeof rule.parent
     ) {
-      if (parent.type === 'atrule' && (parent as postcss.AtRule).name !== 'layer') {
-        conditional = true
-        break
+      if (
+        parent.type === "atrule" &&
+        (parent as postcss.AtRule).name !== "layer"
+      ) {
+        conditional = true;
+        break;
       }
     }
-    if (conditional || rule.selector.includes('::before')) return
+    if (conditional || rule.selector.includes("::before")) return;
     const declarations = (rule.nodes ?? [])
-      .filter(node => node.type === 'decl')
+      .filter((node) => node.type === "decl")
       .map(String)
-      .join('; ')
-    if (declarations) baseRules.push(`${rule.selector} { ${declarations} }`)
-  })
+      .join("; ");
+    if (declarations) baseRules.push(`${rule.selector} { ${declarations} }`);
+  });
 
-  const pseudoDeclarations: string[] = []
-  const coarseHostDeclarations: string[] = []
-  root.walkAtRules('media', atRule => {
-    if (!/pointer\s*:\s*coarse/.test(atRule.params)) return
-    atRule.walkRules(rule => {
+  const pseudoDeclarations: string[] = [];
+  const coarseHostDeclarations: string[] = [];
+  root.walkAtRules("media", (atRule) => {
+    if (!/pointer\s*:\s*coarse/.test(atRule.params)) return;
+    atRule.walkRules((rule) => {
       const declarations = (rule.nodes ?? [])
-        .filter(node => node.type === 'decl')
-        .map(String)
-      if (rule.selector.includes('::before')) pseudoDeclarations.push(...declarations)
-      else coarseHostDeclarations.push(...declarations)
-    })
-  })
+        .filter((node) => node.type === "decl")
+        .map(String);
+      if (rule.selector.includes("::before"))
+        pseudoDeclarations.push(...declarations);
+      else coarseHostDeclarations.push(...declarations);
+    });
+  });
 
-  expect(spacing).toBeDefined()
-  expect(pseudoDeclarations.length).toBeGreaterThan(0)
-  document.documentElement.style.setProperty('--spacing', spacing!)
-  const style = document.createElement('style')
-  style.dataset.testCoarsePointer = 'true'
+  expect(spacing).toBeDefined();
+  expect(pseudoDeclarations.length).toBeGreaterThan(0);
+  document.documentElement.style.setProperty("--spacing", spacing!);
+  const style = document.createElement("style");
+  style.dataset.testCoarsePointer = "true";
   style.textContent = [
     ...baseRules,
-    `.pseudo-probe { ${pseudoDeclarations.join('; ')} }`,
-  ].join('\n')
-  document.head.append(style)
-  return { style, coarseHostDeclarations }
+    `.pseudo-probe { ${pseudoDeclarations.join("; ")} }`,
+  ].join("\n");
+  document.head.append(style);
+  return { style, coarseHostDeclarations };
 }
 
 function cssLengthToPixels(value: string): number {
-  if (!value || value === 'auto') return 0
-  const number = parseFloat(value)
-  if (value.endsWith('px')) return number
-  if (value.endsWith('rem')) return number * 16
+  if (!value || value === "auto") return 0;
+  const number = parseFloat(value);
+  if (value.endsWith("px")) return number;
+  if (value.endsWith("rem")) return number * 16;
 
   const spacingMultiple = value.match(
     /^calc\(var\(--spacing\)\s*\*\s*([\d.]+)\)$/,
-  )?.[1]
+  )?.[1];
   if (spacingMultiple) {
-    const spacing = getComputedStyle(document.documentElement).getPropertyValue('--spacing')
-    return cssLengthToPixels(spacing) * Number(spacingMultiple)
+    const spacing = getComputedStyle(document.documentElement).getPropertyValue(
+      "--spacing",
+    );
+    return cssLengthToPixels(spacing) * Number(spacingMultiple);
   }
-  return 0
+  return 0;
 }
 
-function computedFloor(style: CSSStyleDeclaration, axis: 'width' | 'height'): number {
-  const minimum = axis === 'width' ? style.minWidth : style.minHeight
-  return Math.max(cssLengthToPixels(style[axis]), cssLengthToPixels(minimum))
+function computedFloor(
+  style: CSSStyleDeclaration,
+  axis: "width" | "height",
+): number {
+  const minimum = axis === "width" ? style.minWidth : style.minHeight;
+  return Math.max(cssLengthToPixels(style[axis]), cssLengthToPixels(minimum));
 }
 
-describe('coarse-pointer touch targets', () => {
+describe("coarse-pointer touch targets", () => {
   afterEach(() => {
-    document.body.replaceChildren()
-    document.querySelector('[data-test-coarse-pointer]')?.remove()
-    document.documentElement.style.removeProperty('--spacing')
-  })
+    document.body.replaceChildren();
+    document.querySelector("[data-test-coarse-pointer]")?.remove();
+    document.documentElement.style.removeProperty("--spacing");
+  });
 
-  it('promotes compact chat and activity controls to at least 44px', async () => {
+  it("promotes compact chat and activity controls to at least 44px", async () => {
     const pipelinesSource = readFileSync(
-      join(srcRoot, 'components/activity/PipelinesTab.tsx'),
-      'utf8',
-    )
-    expect(pipelinesSource).toContain('pointer-coarse:min-h-11')
-    expect(pipelinesSource).toContain('pointer-coarse:min-w-11')
+      join(srcRoot, "components/activity/PipelinesTab.tsx"),
+      "utf8",
+    );
+    expect(pipelinesSource).toContain("pointer-coarse:min-h-11");
+    expect(pipelinesSource).toContain("pointer-coarse:min-w-11");
     const taskRowSource = readFileSync(
-      join(srcRoot, 'components/activity/TaskTreeRow.tsx'),
-      'utf8',
-    )
+      join(srcRoot, "components/activity/TaskTreeRow.tsx"),
+      "utf8",
+    );
     const taskDetailSource = readFileSync(
-      join(srcRoot, 'components/activity/TasksTabDetailPanel.tsx'),
-      'utf8',
-    )
+      join(srcRoot, "components/activity/TasksTabDetailPanel.tsx"),
+      "utf8",
+    );
     for (const candidate of TASK_ROW_TOUCH_CANDIDATES) {
-      expect(taskRowSource).toContain(candidate)
+      expect(taskRowSource).toContain(candidate);
     }
     for (const candidate of [
       ...TASK_ACTION_TOUCH_CANDIDATES,
       ...TASK_EXPAND_TOUCH_CANDIDATES,
     ]) {
-      expect(taskRowSource).toContain(candidate)
+      expect(taskRowSource).toContain(candidate);
     }
     for (const candidate of TASK_ERROR_DISMISS_TOUCH_CANDIDATES) {
-      expect(taskDetailSource).toContain(candidate)
+      expect(taskDetailSource).toContain(candidate);
     }
 
-    await emulateCoarsePointer()
+    await emulateCoarsePointer();
     document.body.innerHTML = `
-      <button data-target="primary action" class="${CHAT_INPUT_TOUCH_CANDIDATES.join(' ')}">Send</button>
+      <button data-target="primary action" class="${CHAT_INPUT_TOUCH_CANDIDATES.join(" ")}">Send</button>
       <button data-target="queued-file remove" class="h-4 w-4 pointer-coarse:h-11 pointer-coarse:w-11">×</button>
       <button data-target="code copy" class="pointer-coarse:min-h-11 pointer-coarse:min-w-11">Copy</button>
-      <button data-target="session actions" class="session-more-btn ${SESSION_ACTION_TOUCH_CANDIDATES.join(' ')}">⋮</button>
-      <div data-target="task row" class="${TASK_ROW_TOUCH_CANDIDATES.join(' ')}">Task</div>
-      <button data-target="task actions" class="${TASK_ACTION_TOUCH_CANDIDATES.join(' ')}">⋮</button>
-      <button data-target="task expand" class="${TASK_EXPAND_TOUCH_CANDIDATES.join(' ')}">›</button>
-      <button data-target="activity menu item" class="activity-panel-mobile-menu__item ${ACTIVITY_MENU_TOUCH_CANDIDATES.join(' ')}">Sessions</button>
+      <button data-target="session actions" class="session-more-btn ${SESSION_ACTION_TOUCH_CANDIDATES.join(" ")}">⋮</button>
+      <div data-target="task row" class="${TASK_ROW_TOUCH_CANDIDATES.join(" ")}">Task</div>
+      <button data-target="task actions" class="${TASK_ACTION_TOUCH_CANDIDATES.join(" ")}">⋮</button>
+      <button data-target="task expand" class="${TASK_EXPAND_TOUCH_CANDIDATES.join(" ")}">›</button>
+      <button data-target="activity menu item" class="activity-panel-mobile-menu__item ${ACTIVITY_MENU_TOUCH_CANDIDATES.join(" ")}">Sessions</button>
       <label data-target="filter option" class="flex pointer-coarse:min-h-11 pointer-coarse:min-w-11"><input type="checkbox"> Filter</label>
       <label data-target="session role filter" class="flex pointer-coarse:min-h-11 pointer-coarse:min-w-11"><input type="checkbox"> Parent</label>
-      <button data-target="error dismiss" class="${TASK_ERROR_DISMISS_TOUCH_CANDIDATES.join(' ')}">×</button>
-      <button data-target="pipeline row" class="${ACTIVITY_TAB_TOUCH_CANDIDATES.join(' ')}">Run</button>
-    `
+      <button data-target="error dismiss" class="${TASK_ERROR_DISMISS_TOUCH_CANDIDATES.join(" ")}">×</button>
+      <button data-target="pipeline row" class="${ACTIVITY_TAB_TOUCH_CANDIDATES.join(" ")}">Run</button>
+    `;
 
     for (const target of targets) {
-      const element = document.querySelector<HTMLElement>(`[data-target="${target}"]`)
-      expect(element).not.toBeNull()
-      const style = getComputedStyle(element!)
-      expect(computedFloor(style, 'width'), `${target} width`).toBeGreaterThanOrEqual(44)
-      expect(computedFloor(style, 'height'), `${target} height`).toBeGreaterThanOrEqual(44)
+      const element = document.querySelector<HTMLElement>(
+        `[data-target="${target}"]`,
+      );
+      expect(element).not.toBeNull();
+      const style = getComputedStyle(element!);
+      expect(
+        computedFloor(style, "width"),
+        `${target} width`,
+      ).toBeGreaterThanOrEqual(44);
+      expect(
+        computedFloor(style, "height"),
+        `${target} height`,
+      ).toBeGreaterThanOrEqual(44);
     }
-  })
+  });
 
-  it('expands control primitives to an invisible ≥44×44 coarse hit area', async () => {
-    await emulateHitAreaStyles()
-    document.body.innerHTML = '<span class="pseudo-probe"></span>'
-    const probe = getComputedStyle(document.querySelector('.pseudo-probe')!)
+  it("expands control primitives to an invisible ≥44×44 coarse hit area", async () => {
+    await emulateHitAreaStyles();
+    document.body.innerHTML = '<span class="pseudo-probe"></span>';
+    const probe = getComputedStyle(document.querySelector(".pseudo-probe")!);
     // The expansion overlays the control (absolute, centered) instead of
     // growing it, and floors both axes at the 44px touch target.
-    expect(probe.position).toBe('absolute')
-    expect(computedFloor(probe, 'width')).toBeGreaterThanOrEqual(44)
-    expect(computedFloor(probe, 'height')).toBeGreaterThanOrEqual(44)
-  })
+    expect(probe.position).toBe("absolute");
+    expect(computedFloor(probe, "width")).toBeGreaterThanOrEqual(44);
+    expect(computedFloor(probe, "height")).toBeGreaterThanOrEqual(44);
+  });
 
-  it('keeps the visible control box on the 36px ladder under coarse pointers', async () => {
-    const { coarseHostDeclarations } = await emulateHitAreaStyles()
+  it("keeps the visible control box on the 36px ladder under coarse pointers", async () => {
+    const { coarseHostDeclarations } = await emulateHitAreaStyles();
     // No coarse-pointer rule may size the host element itself — the whole
     // point of the pseudo-element expansion is unchanged rendered visuals.
     for (const declaration of coarseHostDeclarations) {
-      expect(declaration).not.toMatch(/(?:^|\s)(?:min-)?(?:width|height)\s*:/)
+      expect(declaration).not.toMatch(/(?:^|\s)(?:min-)?(?:width|height)\s*:/);
     }
-    document.body.innerHTML = `<input class="${coarseHitAreaCls} h-9">`
-    const host = getComputedStyle(document.querySelector('input')!)
-    expect(computedFloor(host, 'height')).toBe(36)
-    expect(computedFloor(host, 'height')).toBeLessThan(44)
-  })
+    document.body.innerHTML = `<input class="${coarseHitAreaCls} h-9">`;
+    const host = getComputedStyle(document.querySelector("input")!);
+    expect(computedFloor(host, "height")).toBe(36);
+    expect(computedFloor(host, "height")).toBeLessThan(44);
+  });
 
-  it('floors the dense header and settings triggers through the shared hit-area expansion', () => {
+  it("floors the dense header and settings triggers through the shared hit-area expansion", () => {
     // These controls are dense (no coarse promotion of the visual box), so
     // the 44px floor must come from coarseHitAreaCls — whose ≥44×44 pseudo
     // geometry the 'expands control primitives' test verifies above.
     const headerSources = [
-      readFileSync(join(srcRoot, 'App.tsx'), 'utf8'),
-      readFileSync(join(srcRoot, 'components/ThemeToggle.tsx'), 'utf8'),
-    ]
+      readFileSync(join(srcRoot, "App.tsx"), "utf8"),
+      readFileSync(join(srcRoot, "components/ThemeToggle.tsx"), "utf8"),
+    ];
     for (const source of headerSources) {
-      expect(source).toContain('cn("shrink-0", coarseHitAreaCls)')
-      expect(source).not.toContain('pointer-coarse:min-w-11')
+      expect(source).toContain('cn("shrink-0", coarseHitAreaCls)');
+      expect(source).not.toContain("pointer-coarse:min-w-11");
     }
 
     const overlaySource = readFileSync(
-      join(srcRoot, 'components/settings/SettingsOverlay.tsx'),
-      'utf8',
-    )
-    expect(overlaySource).toContain('coarseHitAreaCls')
-    expect(overlaySource).toContain('aria-expanded:bg-[var(--accent-tint)]')
+      join(srcRoot, "components/settings/SettingsOverlay.tsx"),
+      "utf8",
+    );
+    expect(overlaySource).toContain("coarseHitAreaCls");
+    expect(overlaySource).toContain("aria-expanded:bg-[var(--accent-tint)]");
 
     // The compact project trigger's row must not clip the expansion out of
     // hit-testing: overflow-hidden on the 28px row would cap the tap target.
     const selectorSource = readFileSync(
-      join(srcRoot, 'components/ProjectSelector.tsx'),
-      'utf8',
-    )
+      join(srcRoot, "components/ProjectSelector.tsx"),
+      "utf8",
+    );
     expect(selectorSource).toContain(
-      'h-[var(--control-row-height)] min-h-[var(--control-row-height)] w-full items-stretch rounded-md border border-border bg-background mobile:inline-flex',
-    )
+      "h-[var(--control-row-height)] min-h-[var(--control-row-height)] w-full items-stretch rounded-md border border-border bg-background mobile:inline-flex",
+    );
     expect(selectorSource).toContain(
       'cn("w-full rounded-[inherit] py-0 [font-family:inherit]", coarseHitAreaCls)',
-    )
-  })
+    );
+  });
 
-  it('promotes every Button size to 44px on coarse pointers unless dense', async () => {
-    const sizes = ['sm', 'md', 'lg', 'icon'] as const
-    const denseStates = [false, true] as const
-    const ladder: Record<(typeof sizes)[number], number> = { sm: 28, md: 32, lg: 40, icon: 32 }
+  it("promotes every Button size to 44px on coarse pointers unless dense", async () => {
+    const sizes = ["sm", "md", "lg", "icon"] as const;
+    const denseStates = [false, true] as const;
+    const ladder: Record<(typeof sizes)[number], number> = {
+      sm: 28,
+      md: 32,
+      lg: 40,
+      icon: 32,
+    };
 
-    const candidates = sizes.flatMap(size =>
-      denseStates.flatMap(dense =>
-        buttonVariants({ variant: 'secondary', size, dense }).split(/\s+/),
+    const candidates = sizes.flatMap((size) =>
+      denseStates.flatMap((dense) =>
+        buttonVariants({ variant: "secondary", size, dense }).split(/\s+/),
       ),
-    )
-    await emulateButtonStyles(candidates)
+    );
+    await emulateButtonStyles(candidates);
 
     for (const size of sizes) {
       for (const dense of denseStates) {
-        document.body.innerHTML = `<button class="${buttonVariants({ variant: 'secondary', size, dense })}">Go</button>`
-        const style = getComputedStyle(document.body.querySelector('button')!)
-        const height = computedFloor(style, 'height')
-        const width = computedFloor(style, 'width')
+        document.body.innerHTML = `<button class="${buttonVariants({ variant: "secondary", size, dense })}">Go</button>`;
+        const style = getComputedStyle(document.body.querySelector("button")!);
+        const height = computedFloor(style, "height");
+        const width = computedFloor(style, "width");
         if (dense) {
-          expect(height, `${size} dense keeps the ladder height`).toBe(ladder[size])
-          expect(height, `${size} dense must not promote`).toBeLessThan(44)
-          if (size === 'icon') expect(width, 'icon dense width').toBe(ladder.icon)
+          expect(height, `${size} dense keeps the ladder height`).toBe(
+            ladder[size],
+          );
+          expect(height, `${size} dense must not promote`).toBeLessThan(44);
+          if (size === "icon")
+            expect(width, "icon dense width").toBe(ladder.icon);
         } else {
-          expect(height, `${size} height`).toBeGreaterThanOrEqual(44)
-          expect(width, `${size} width`).toBeGreaterThanOrEqual(44)
+          expect(height, `${size} height`).toBeGreaterThanOrEqual(44);
+          expect(width, `${size} width`).toBeGreaterThanOrEqual(44);
         }
       }
     }
-  })
-})
+  });
+});

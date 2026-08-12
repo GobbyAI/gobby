@@ -18,7 +18,9 @@ import {
 
 export type SessionStatusMode = "live" | "expired";
 
-export function resolveSessionStatusMode(filters: SessionsFilters): SessionStatusMode {
+export function resolveSessionStatusMode(
+  filters: SessionsFilters,
+): SessionStatusMode {
   return filters.statuses.size === 1 && filters.statuses.has("expired")
     ? "expired"
     : "live";
@@ -113,7 +115,9 @@ export function useWatchingSessionEntries({
       statusMode === "live"
         ? agents.reduce<WatchingSessionEntry[]>((nextEntries, agent) => {
             const matchedSession = agent.session_id
-              ? visibleSessions.find((session) => session.id === agent.session_id)
+              ? visibleSessions.find(
+                  (session) => session.id === agent.session_id,
+                )
               : undefined;
             if (!matchedSession) {
               return nextEntries;
@@ -171,10 +175,16 @@ export function useWatchingSessionEntries({
         seqNum: session.seq_num,
         inputTokens: session.usage_input_tokens ?? 0,
         outputTokens: session.usage_output_tokens ?? 0,
-        totalTokens: (session.usage_input_tokens ?? 0) + (session.usage_output_tokens ?? 0),
+        totalTokens:
+          (session.usage_input_tokens ?? 0) +
+          (session.usage_output_tokens ?? 0),
         hasTmux: Boolean(session.terminal_context),
         sandboxEnabled: session.sandbox_enabled ?? false,
-        isLocal: resolveLocalFlag(session.is_local, session.source, session.model),
+        isLocal: resolveLocalFlag(
+          session.is_local,
+          session.source,
+          session.model,
+        ),
         acp: session.acp ?? null,
       }));
 

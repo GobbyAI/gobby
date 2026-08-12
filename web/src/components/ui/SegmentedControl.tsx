@@ -1,37 +1,38 @@
-import { useRef, type KeyboardEvent, type ReactNode } from 'react'
-import { cn } from '../../lib/utils'
-import { useResolvedTheme } from '../../hooks/useResolvedTheme'
-import { coarseHitAreaCls } from './controlStyles'
+import { useRef, type KeyboardEvent, type ReactNode } from "react";
+import { cn } from "../../lib/utils";
+import { useResolvedTheme } from "../../hooks/useResolvedTheme";
+import { coarseHitAreaCls } from "./controlStyles";
 
 interface BaseSegmentedControlOption<T extends string> {
-  value: T
-  title?: string
-  onClick?: () => void
+  value: T;
+  title?: string;
+  onClick?: () => void;
 }
 
-type TextSegmentedControlOption<T extends string> = BaseSegmentedControlOption<T> & {
-  label: string
-  ariaLabel?: string
-}
+type TextSegmentedControlOption<T extends string> =
+  BaseSegmentedControlOption<T> & {
+    label: string;
+    ariaLabel?: string;
+  };
 
-type NonTextSegmentedControlOption<T extends string> = BaseSegmentedControlOption<T> & {
-  label: Exclude<ReactNode, string>
-  ariaLabel: string
-}
+type NonTextSegmentedControlOption<T extends string> =
+  BaseSegmentedControlOption<T> & {
+    label: Exclude<ReactNode, string>;
+    ariaLabel: string;
+  };
 
 export type SegmentedControlOption<T extends string> =
-  | TextSegmentedControlOption<T>
-  | NonTextSegmentedControlOption<T>
+  TextSegmentedControlOption<T> | NonTextSegmentedControlOption<T>;
 
 interface SegmentedControlProps<T extends string> {
-  value: T
-  onChange: (value: T) => void
-  options: readonly SegmentedControlOption<T>[]
-  ariaLabel: string
-  controlHeight?: 'sm' | 'md'
-  disabled?: boolean
-  className?: string
-  coarseTouchTarget?: boolean
+  value: T;
+  onChange: (value: T) => void;
+  options: readonly SegmentedControlOption<T>[];
+  ariaLabel: string;
+  controlHeight?: "sm" | "md";
+  disabled?: boolean;
+  className?: string;
+  coarseTouchTarget?: boolean;
 }
 
 export function SegmentedControl<T extends string>({
@@ -39,45 +40,54 @@ export function SegmentedControl<T extends string>({
   onChange,
   options,
   ariaLabel,
-  controlHeight = 'md',
+  controlHeight = "md",
   disabled = false,
   className,
   coarseTouchTarget = true,
 }: SegmentedControlProps<T>) {
-  const buttonRefs = useRef<(HTMLButtonElement | null)[]>([])
+  const buttonRefs = useRef<(HTMLButtonElement | null)[]>([]);
 
   function selectIndex(index: number) {
-    const next = options[index]
-    if (!next) return
-    onChange(next.value)
-    next.onClick?.()
-    buttonRefs.current[index]?.focus()
+    const next = options[index];
+    if (!next) return;
+    onChange(next.value);
+    next.onClick?.();
+    buttonRefs.current[index]?.focus();
   }
 
-  function handleKeyDown(event: KeyboardEvent<HTMLButtonElement>, index: number) {
-    if (disabled) return
-    let nextIndex = -1
-    if (event.key === 'ArrowRight') nextIndex = (index + 1) % options.length
-    else if (event.key === 'ArrowLeft') nextIndex = (index - 1 + options.length) % options.length
-    else if (event.key === 'Home') nextIndex = 0
-    else if (event.key === 'End') nextIndex = options.length - 1
-    if (nextIndex < 0) return
-    event.preventDefault()
-    selectIndex(nextIndex)
+  function handleKeyDown(
+    event: KeyboardEvent<HTMLButtonElement>,
+    index: number,
+  ) {
+    if (disabled) return;
+    let nextIndex = -1;
+    if (event.key === "ArrowRight") nextIndex = (index + 1) % options.length;
+    else if (event.key === "ArrowLeft")
+      nextIndex = (index - 1 + options.length) % options.length;
+    else if (event.key === "Home") nextIndex = 0;
+    else if (event.key === "End") nextIndex = options.length - 1;
+    if (nextIndex < 0) return;
+    event.preventDefault();
+    selectIndex(nextIndex);
   }
 
-  const heightVar = controlHeight === 'sm' ? 'var(--control-row-height-sm)' : 'var(--control-row-height)'
+  const heightVar =
+    controlHeight === "sm"
+      ? "var(--control-row-height-sm)"
+      : "var(--control-row-height)";
 
   // Light: recessed bg-secondary track + a brighter neutral --surface-selected
   // well for the active segment (selection by lightness + weight, hue stays
   // the fourth signal — .impeccable.md). Dark is byte-frozen to the shipped
   // accent treatment (IMG_3754); CSS can't reach Tailwind classes so this
   // branches on the same useResolvedTheme() hook the chrome uses.
-  const isLight = useResolvedTheme() === 'light'
-  const trackBg = isLight ? 'bg-[var(--bg-secondary)]' : 'bg-[var(--bg-primary)]'
+  const isLight = useResolvedTheme() === "light";
+  const trackBg = isLight
+    ? "bg-[var(--bg-secondary)]"
+    : "bg-[var(--bg-primary)]";
   const activeOption = isLight
-    ? 'bg-[var(--surface-selected)] text-[var(--text-primary)] font-semibold'
-    : 'bg-accent/15 text-accent font-semibold'
+    ? "bg-[var(--surface-selected)] text-[var(--text-primary)] font-semibold"
+    : "bg-accent/15 text-accent font-semibold";
 
   return (
     <div
@@ -86,23 +96,24 @@ export function SegmentedControl<T extends string>({
       aria-disabled={disabled || undefined}
       style={{ height: heightVar }}
       className={cn(
-        'segmented-control',
-        'inline-flex items-stretch rounded-md border border-border [--segmented-option-px:0.75rem] text-[length:var(--text-base)]',
-        'mobile:[--segmented-option-px:0.55rem] mobile:text-[length:var(--text-sm)]',
+        "segmented-control",
+        "inline-flex items-stretch rounded-md border border-border text-[length:var(--text-base)] [--segmented-option-px:0.75rem]",
+        "mobile:text-[length:var(--text-sm)] mobile:[--segmented-option-px:0.55rem]",
         trackBg,
         className,
       )}
     >
       {options.map((option, index) => {
-        const isActive = option.value === value
-        const explicitAriaLabel = option.ariaLabel?.trim()
+        const isActive = option.value === value;
+        const explicitAriaLabel = option.ariaLabel?.trim();
         const optionAriaLabel =
-          explicitAriaLabel || (typeof option.label === 'string' ? option.label : undefined)
+          explicitAriaLabel ||
+          (typeof option.label === "string" ? option.label : undefined);
         return (
           <button
             key={option.value}
             ref={(node) => {
-              buttonRefs.current[index] = node
+              buttonRefs.current[index] = node;
             }}
             type="button"
             role="radio"
@@ -112,37 +123,37 @@ export function SegmentedControl<T extends string>({
             aria-label={optionAriaLabel}
             title={option.title}
             onClick={() => {
-              if (disabled) return
-              onChange(option.value)
-              option.onClick?.()
+              if (disabled) return;
+              onChange(option.value);
+              option.onClick?.();
             }}
             onKeyDown={(event) => handleKeyDown(event, index)}
             className={cn(
-              'segmented-control__option',
+              "segmented-control__option",
               // min-w-0 lets a squeezed track shrink its options instead of
               // letting them paint over neighboring controls; the inner span
               // ellipsizes the label under that squeeze.
-              'inline-flex min-w-0 items-center justify-center px-[var(--segmented-option-px)]',
+              "inline-flex min-w-0 items-center justify-center px-[var(--segmented-option-px)]",
               // Options keep the track's visual height on touch (the bar
               // supplies the 44px row); the invisible ::before floors the tap
               // target at 44×44 instead of inflating the rendered box.
               coarseTouchTarget && coarseHitAreaCls,
-              'transition-colors motion-reduce:transition-none',
-              'focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent focus-visible:ring-offset-2 focus-visible:ring-offset-background',
-              index === 0 && 'rounded-l-md',
-              index === options.length - 1 && 'rounded-r-md',
+              "transition-colors motion-reduce:transition-none",
+              "focus-visible:ring-2 focus-visible:ring-accent focus-visible:ring-offset-2 focus-visible:ring-offset-background focus-visible:outline-none",
+              index === 0 && "rounded-l-md",
+              index === options.length - 1 && "rounded-r-md",
               isActive
                 ? activeOption
-                : 'text-muted-foreground hover:bg-muted hover:text-foreground',
-              disabled && 'cursor-not-allowed opacity-50',
+                : "text-muted-foreground hover:bg-muted hover:text-foreground",
+              disabled && "cursor-not-allowed opacity-50",
             )}
           >
             <span className="segmented-control__option-label min-w-0 truncate">
               {option.label}
             </span>
           </button>
-        )
+        );
       })}
     </div>
-  )
+  );
 }

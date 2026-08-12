@@ -37,9 +37,7 @@ function DepList({
     <div className="flex min-w-0 flex-col gap-[0.2rem]">
       {nodes.map((node) => {
         const { ref, title } = depLabel(node);
-        const select = onSelectTask
-          ? () => onSelectTask(node.id)
-          : undefined;
+        const select = onSelectTask ? () => onSelectTask(node.id) : undefined;
         return select ? (
           <Button
             key={node.id}
@@ -108,8 +106,8 @@ export function TaskDetailRelationships({
   if (!hasRelationships) return null;
 
   return (
-    <section className="flex flex-col border-b border-border bg-[var(--bg-primary)] px-4 pb-[0.95rem] pt-[0.4rem]">
-      <h3 className="mb-[0.35rem] mt-[0.55rem] text-[length:var(--text-2xs)] font-[var(--font-weight-semibold)] uppercase tracking-[0.08em] text-[var(--text-muted)]">
+    <section className="flex flex-col border-b border-border bg-[var(--bg-primary)] px-4 pt-[0.4rem] pb-[0.95rem]">
+      <h3 className="mt-[0.55rem] mb-[0.35rem] text-[length:var(--text-2xs)] font-[var(--font-weight-semibold)] tracking-[0.08em] text-[var(--text-muted)] uppercase">
         Relationships
       </h3>
       {parentTask && (
@@ -134,7 +132,7 @@ export function TaskDetailRelationships({
               return (
                 <span
                   key={s}
-                  className="inline-flex h-6 items-center gap-[0.3rem] whitespace-nowrap rounded-full border border-border bg-[var(--bg-tertiary)] px-[0.55rem] text-[length:var(--text-2xs)] font-medium tracking-[0.02em] text-[var(--text-secondary)] [&_strong]:font-semibold [&_strong]:text-[var(--text-primary)]"
+                  className="inline-flex h-6 items-center gap-[0.3rem] rounded-full border border-border bg-[var(--bg-tertiary)] px-[0.55rem] text-[length:var(--text-2xs)] font-medium tracking-[0.02em] whitespace-nowrap text-[var(--text-secondary)] [&_strong]:font-semibold [&_strong]:text-[var(--text-primary)]"
                   title={`${TASK_STATE_LABELS[s]} subtasks`}
                 >
                   <strong>{count}</strong> {TASK_STATE_LABELS[s].toLowerCase()}

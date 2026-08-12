@@ -1,28 +1,28 @@
-import { cleanup, render, screen } from '@testing-library/react'
-import { afterEach, describe, expect, it, vi } from 'vitest'
-import { createElement } from 'react'
-import { AppearanceSection } from '../components/settings/sections/AppearanceSection'
+import { cleanup, render, screen } from "@testing-library/react";
+import { afterEach, describe, expect, it, vi } from "vitest";
+import { createElement } from "react";
+import { AppearanceSection } from "../components/settings/sections/AppearanceSection";
 import {
   SettingsSectionContext,
   type SettingsSectionContextValue,
-} from '../components/settings/sections/SettingsSectionContext'
-import type { Settings, UseSettingsReturn } from '../hooks/useSettings'
+} from "../components/settings/sections/SettingsSectionContext";
+import type { Settings, UseSettingsReturn } from "../hooks/useSettings";
 
-afterEach(cleanup)
+afterEach(cleanup);
 
 function renderAppearanceSlider(): HTMLElement {
   const settings: Settings = {
     fontSize: 16,
-    model: 'opus',
-    chatMode: 'plan',
-    theme: 'dark',
-    defaultChatMode: 'plan',
+    model: "opus",
+    chatMode: "plan",
+    theme: "dark",
+    defaultChatMode: "plan",
     sttEnabled: false,
     ttsEnabled: false,
-    voiceInputMode: 'ptt',
-    planPendingVariant: 'info',
-    density: 'comfortable',
-  }
+    voiceInputMode: "ptt",
+    planPendingVariant: "info",
+    density: "comfortable",
+  };
   const clientSettings: UseSettingsReturn = {
     settings,
     updateFontSize: vi.fn(),
@@ -36,7 +36,7 @@ function renderAppearanceSlider(): HTMLElement {
     updatePlanPendingVariant: vi.fn(),
     updateDensity: vi.fn(),
     resetSettings: vi.fn(),
-  }
+  };
   const context: SettingsSectionContextValue = {
     schema: null,
     configValues: {},
@@ -45,7 +45,7 @@ function renderAppearanceSlider(): HTMLElement {
     saveConfig: async () => ({ ok: true }),
     registerDirtyGuard: () => () => {},
     clientSettings,
-  }
+  };
 
   render(
     createElement(
@@ -53,28 +53,28 @@ function renderAppearanceSlider(): HTMLElement {
       { value: context },
       createElement(AppearanceSection),
     ),
-  )
-  return screen.getByRole('slider', { name: 'Font size' })
+  );
+  return screen.getByRole("slider", { name: "Font size" });
 }
 
-describe('settings slider focus treatment', () => {
-  it('carries the accent focus-visible ring utilities with no resting outline', () => {
-    const slider = renderAppearanceSlider()
+describe("settings slider focus treatment", () => {
+  it("carries the accent focus-visible ring utilities with no resting outline", () => {
+    const slider = renderAppearanceSlider();
 
-    slider.focus()
-    expect(slider).toHaveFocus()
+    slider.focus();
+    expect(slider).toHaveFocus();
 
     expect(slider).toHaveClass(
-      'focus-visible:outline-2',
-      'focus-visible:outline-accent',
-      'focus-visible:outline-offset-[3px]',
-      'accent-accent',
-      'cursor-pointer',
-    )
+      "focus-visible:outline-2",
+      "focus-visible:outline-accent",
+      "focus-visible:outline-offset-[3px]",
+      "accent-accent",
+      "cursor-pointer",
+    );
     const restingOutlineTokens = slider.className
       .split(/\s+/)
-      .filter((token) => token.startsWith('outline'))
-    expect(restingOutlineTokens).toEqual([])
-    expect(slider.className).not.toContain('appearance-font-size__range')
-  })
-})
+      .filter((token) => token.startsWith("outline"));
+    expect(restingOutlineTokens).toEqual([]);
+    expect(slider.className).not.toContain("appearance-font-size__range");
+  });
+});

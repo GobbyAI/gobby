@@ -383,7 +383,7 @@ describe("useChat viewed session state", () => {
           id: "sess-protocol-1",
           role: "user",
           content:
-            '<local-command-stdout><stdout>npm test</stdout></local-command-stdout>',
+            "<local-command-stdout><stdout>npm test</stdout></local-command-stdout>",
           timestamp: "2026-04-09T00:00:01Z",
         },
       });
@@ -564,7 +564,9 @@ describe("useChat viewed session state", () => {
                     role: "user",
                     content: "Run the checks",
                     timestamp: "2026-04-09T00:00:01Z",
-                    content_blocks: [{ type: "text", content: "Run the checks" }],
+                    content_blocks: [
+                      { type: "text", content: "Run the checks" },
+                    ],
                   },
                   {
                     id: "full-assistant",
@@ -643,10 +645,9 @@ describe("useChat viewed session state", () => {
     });
 
     await waitFor(() => {
-      expect(result.current.messages.map((message) => message.content)).toEqual([
-        "Run the checks",
-        "Full REST transcript",
-      ]);
+      expect(result.current.messages.map((message) => message.content)).toEqual(
+        ["Run the checks", "Full REST transcript"],
+      );
     });
     expect(messageFetchCount).toBe(2);
   });
@@ -751,7 +752,9 @@ describe("useChat viewed session state", () => {
     let resolveOldMessages: ((response: Response) => void) | null = null;
     mockFetch.fn.mockImplementation(async (input: RequestInfo | URL) => {
       const url = requestUrl(input);
-      if (url.includes("/api/sessions/terminal-old/messages?limit=100&offset=0")) {
+      if (
+        url.includes("/api/sessions/terminal-old/messages?limit=100&offset=0")
+      ) {
         return jsonResponse({
           messages: [
             {
@@ -759,7 +762,9 @@ describe("useChat viewed session state", () => {
               role: "assistant",
               content: "Terminal transcript",
               timestamp: "2026-04-09T00:00:00Z",
-              content_blocks: [{ type: "text", content: "Terminal transcript" }],
+              content_blocks: [
+                { type: "text", content: "Terminal transcript" },
+              ],
             },
           ],
         });
@@ -833,7 +838,9 @@ describe("useChat viewed session state", () => {
     });
 
     await waitFor(() => {
-      expect(result.current.messages[0]?.content).toBe("New conversation transcript");
+      expect(result.current.messages[0]?.content).toBe(
+        "New conversation transcript",
+      );
     });
 
     await act(async () => {
@@ -853,7 +860,9 @@ describe("useChat viewed session state", () => {
       await Promise.resolve();
     });
 
-    expect(result.current.messages[0]?.content).toBe("New conversation transcript");
+    expect(result.current.messages[0]?.content).toBe(
+      "New conversation transcript",
+    );
   });
 
   it("clears the viewing-session loading state when returning to chat", async () => {
@@ -887,7 +896,9 @@ describe("useChat viewed session state", () => {
             role: "assistant",
             content: "New session transcript",
             timestamp: "2026-04-09T00:00:00Z",
-            content_blocks: [{ type: "text", content: "New session transcript" }],
+            content_blocks: [
+              { type: "text", content: "New session transcript" },
+            ],
           },
         ],
       },
@@ -947,7 +958,9 @@ describe("useChat viewed session state", () => {
     expect(result.current.messages.map((message) => message.content)).toEqual([
       "New session transcript",
     ]);
-    expect(JSON.parse(ws.send.mock.calls[sendCountBeforeLateResult][0])).toEqual({
+    expect(
+      JSON.parse(ws.send.mock.calls[sendCountBeforeLateResult][0]),
+    ).toEqual({
       type: "detach_from_session",
       session_id: "sess-old",
     });
@@ -998,7 +1011,9 @@ describe("useChat viewed session state", () => {
     });
 
     await waitFor(() => {
-      expect(result.current.messages[0]?.timestamp).toEqual(new Date(createdAt));
+      expect(result.current.messages[0]?.timestamp).toEqual(
+        new Date(createdAt),
+      );
     });
   });
 
@@ -1098,7 +1113,9 @@ describe("useChat viewed session state", () => {
     });
 
     const detachMsg = JSON.parse(ws.send.mock.calls[sendCountBeforeSwap][0]);
-    const attachMsg = JSON.parse(ws.send.mock.calls[sendCountBeforeSwap + 1][0]);
+    const attachMsg = JSON.parse(
+      ws.send.mock.calls[sendCountBeforeSwap + 1][0],
+    );
     expect(detachMsg).toMatchObject({
       type: "detach_from_session",
       session_id: "sess-old",
@@ -1222,9 +1239,12 @@ describe("useChat viewed session state", () => {
 
   it("resets viewed context usage when switching to a zero-usage session", async () => {
     await loadModule();
-    mockFetch.mockJsonResponse("/api/sessions/sess-old/messages?limit=100&offset=0", {
-      messages: [],
-    });
+    mockFetch.mockJsonResponse(
+      "/api/sessions/sess-old/messages?limit=100&offset=0",
+      {
+        messages: [],
+      },
+    );
     mockFetch.mockJsonResponse("/api/sessions/sess-old", {
       session: {
         id: "sess-old",
@@ -1244,9 +1264,12 @@ describe("useChat viewed session state", () => {
         session_type: "terminal",
       },
     });
-    mockFetch.mockJsonResponse("/api/sessions/sess-new/messages?limit=100&offset=0", {
-      messages: [],
-    });
+    mockFetch.mockJsonResponse(
+      "/api/sessions/sess-new/messages?limit=100&offset=0",
+      {
+        messages: [],
+      },
+    );
     mockFetch.mockJsonResponse("/api/sessions/sess-new", {
       session: {
         id: "sess-new",
@@ -1460,7 +1483,9 @@ describe("useChat viewed session state", () => {
       result.current.attachToViewed?.();
     });
 
-    expect(JSON.parse(ws.send.mock.calls[sendCountBeforeAttach][0])).toMatchObject({
+    expect(
+      JSON.parse(ws.send.mock.calls[sendCountBeforeAttach][0]),
+    ).toMatchObject({
       type: "attach_to_session",
       session_id: "sess-auto",
     });
@@ -1495,7 +1520,9 @@ describe("useChat viewed session state", () => {
       result.current.sendMessage("please continue");
     });
 
-    const sentMsg = JSON.parse(ws.send.mock.calls[ws.send.mock.calls.length - 1][0]);
+    const sentMsg = JSON.parse(
+      ws.send.mock.calls[ws.send.mock.calls.length - 1][0],
+    );
     expect(sentMsg).toMatchObject({
       type: "send_to_cli_session",
       session_id: "sess-auto",

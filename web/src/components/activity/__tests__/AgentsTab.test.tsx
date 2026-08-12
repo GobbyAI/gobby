@@ -4,10 +4,14 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 
 import { ACTIVITY_PANEL_TABS } from "../ActivityPanelTabs";
 import { AgentsTab } from "../AgentsTab";
-import { createMockFetch, type MockFetchInstance } from "../../../test/mocks/fetch";
+import {
+  createMockFetch,
+  type MockFetchInstance,
+} from "../../../test/mocks/fetch";
 
 vi.mock("../../../lib/providerModels", async (importOriginal) => {
-  const actual = await importOriginal<typeof import("../../../lib/providerModels")>();
+  const actual =
+    await importOriginal<typeof import("../../../lib/providerModels")>();
   return {
     ...actual,
     fetchProviderModelCatalog: vi.fn(async () => [
@@ -101,9 +105,14 @@ describe("AgentsTab", () => {
 
     render(<AgentsTab projectId="project-1" />);
 
-    await user.click(await screen.findByRole("button", { name: "Select reviewer" }));
+    await user.click(
+      await screen.findByRole("button", { name: "Select reviewer" }),
+    );
     await user.clear(screen.getByRole("textbox", { name: "Description" }));
-    await user.type(screen.getByRole("textbox", { name: "Description" }), "Updated reviewer");
+    await user.type(
+      screen.getByRole("textbox", { name: "Description" }),
+      "Updated reviewer",
+    );
     await user.selectOptions(screen.getByLabelText("Provider"), "codex");
     await user.clear(screen.getByRole("textbox", { name: "Model" }));
     await user.type(screen.getByRole("textbox", { name: "Model" }), "gpt-5");
@@ -149,7 +158,9 @@ describe("AgentsTab", () => {
     render(<AgentsTab projectId="project-1" />);
 
     const row = await screen.findByRole("listitem", { name: /reviewer/i });
-    await user.click(within(row).getByRole("button", { name: "Open actions for reviewer" }));
+    await user.click(
+      within(row).getByRole("button", { name: "Open actions for reviewer" }),
+    );
     await user.click(await screen.findByRole("menuitem", { name: "Disable" }));
 
     await waitFor(() => {
@@ -172,7 +183,9 @@ describe("AgentsTab", () => {
     expect(within(row).getByText("claude")).toHaveClass("inline-flex");
     expect(within(row).getByText("Installed")).toHaveClass("inline-flex");
 
-    await user.click(within(row).getByRole("button", { name: "Select reviewer" }));
+    await user.click(
+      within(row).getByRole("button", { name: "Select reviewer" }),
+    );
     expect(await screen.findByText("installed")).toHaveClass("inline-flex");
 
     mockFetch.restore();
@@ -185,8 +198,12 @@ describe("AgentsTab", () => {
     render(<AgentsTab projectId="project-1" />);
 
     const row = await screen.findByRole("listitem", { name: /reviewer/i });
-    await user.click(within(row).getByRole("button", { name: "Open actions for reviewer" }));
-    await user.click(await screen.findByRole("menuitem", { name: "Duplicate" }));
+    await user.click(
+      within(row).getByRole("button", { name: "Open actions for reviewer" }),
+    );
+    await user.click(
+      await screen.findByRole("menuitem", { name: "Duplicate" }),
+    );
 
     await waitFor(() => {
       expect(mockFetch.fn).toHaveBeenCalledWith(

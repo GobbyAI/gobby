@@ -81,7 +81,9 @@ describe("StepDisplay", () => {
   it("uses a native button for the expandable step header", () => {
     render(<StepDisplay step={STEP} index={0} />);
 
-    expect(screen.getByRole("button", { name: /build/ }).tagName).toBe("BUTTON");
+    expect(screen.getByRole("button", { name: /build/ }).tagName).toBe(
+      "BUTTON",
+    );
   });
 });
 

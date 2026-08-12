@@ -14,7 +14,17 @@ describe("TerminalKeysBar", () => {
     // carries only the special keys an on-screen keyboard can't produce.
     expect(screen.queryByRole("textbox")).toBeNull();
 
-    const quickKeys = ["Esc", "Tab", "Enter", "Up", "Down", "Ctrl+C", "1", "2", "3"];
+    const quickKeys = [
+      "Esc",
+      "Tab",
+      "Enter",
+      "Up",
+      "Down",
+      "Ctrl+C",
+      "1",
+      "2",
+      "3",
+    ];
     for (const name of quickKeys) {
       await user.click(screen.getByRole("button", { name }));
     }

@@ -19,13 +19,20 @@ export function RulesYamlView({
   yamlError,
   onYamlSave,
 }: RulesYamlViewProps) {
-  const editState = useEditableContent({ content: yamlText, onSave: onYamlSave });
+  const editState = useEditableContent({
+    content: yamlText,
+    onSave: onYamlSave,
+  });
   return (
     <div className="flex min-h-0 min-w-0 flex-1 flex-col gap-3">
       {bundled && (
         <div className="grid min-w-0 gap-1">
-          <span className="text-[length:var(--text-xs)] font-[var(--font-weight-medium)] text-[var(--text-muted)]">Name</span>
-          <span className="min-h-11 rounded-md border border-[var(--border)] bg-[var(--bg-secondary)] px-3 py-[0.65rem] text-[length:var(--text-sm)] text-[var(--text-primary)] [overflow-wrap:anywhere]">{detail.name}</span>
+          <span className="text-[length:var(--text-xs)] font-[var(--font-weight-medium)] text-[var(--text-muted)]">
+            Name
+          </span>
+          <span className="min-h-11 rounded-md border border-[var(--border)] bg-[var(--bg-secondary)] px-3 py-[0.65rem] text-[length:var(--text-sm)] [overflow-wrap:anywhere] text-[var(--text-primary)]">
+            {detail.name}
+          </span>
           <span className="text-[length:var(--text-xs)] text-[var(--text-muted)]">
             Bundled template rule names are read-only
           </span>
@@ -51,8 +58,12 @@ export function RulesYamlView({
             readOnly={!editState.isEditing}
             ariaLabel="Rule YAML"
             editorId="rule-yaml-editor"
-            onChange={editState.isEditing ? editState.setEditContent : undefined}
-            onSave={editState.isEditing ? () => void editState.saveEdit() : undefined}
+            onChange={
+              editState.isEditing ? editState.setEditContent : undefined
+            }
+            onSave={
+              editState.isEditing ? () => void editState.saveEdit() : undefined
+            }
           />
         </div>
       </div>

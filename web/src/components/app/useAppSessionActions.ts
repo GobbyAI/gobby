@@ -89,12 +89,7 @@ export function useAppSessionActions({
         timerId,
       });
     },
-    [
-      deleteConversation,
-      markSessionDeleting,
-      restoreSession,
-      showToast,
-    ],
+    [deleteConversation, markSessionDeleting, restoreSession, showToast],
   );
 
   const handleKillAgent = useCallback(
@@ -174,13 +169,11 @@ export function useAppSessionActions({
           showToast("Failed to delete session");
           return false;
         }
-        const payload = (await res.json().catch(() => null)) as
-          | { disposition?: string; session?: { status?: string } }
-          | null;
-        if (
-          payload?.disposition &&
-          payload.disposition !== "removed"
-        ) {
+        const payload = (await res.json().catch(() => null)) as {
+          disposition?: string;
+          session?: { status?: string };
+        } | null;
+        if (payload?.disposition && payload.disposition !== "removed") {
           restoreSession(sessionId);
         } else if (payload?.session?.status === "expired") {
           restoreSession(sessionId);

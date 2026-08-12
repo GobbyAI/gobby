@@ -1,35 +1,39 @@
-import type { VoiceInputMode } from '../../hooks/useSettings'
-import { cn } from '../../lib/utils'
-import { Button } from '../ui/Button'
-import { MicIcon, SpeakerIcon } from './ChatInputIcons'
+import type { VoiceInputMode } from "../../hooks/useSettings";
+import { cn } from "../../lib/utils";
+import { Button } from "../ui/Button";
+import { MicIcon, SpeakerIcon } from "./ChatInputIcons";
 
 interface ChatInputVoiceControlsProps {
-  disabled?: boolean
-  sttEnabled?: boolean
-  ttsEnabled?: boolean
-  voiceInputMode?: VoiceInputMode
-  isRecording?: boolean
-  isSpeaking?: boolean
-  voiceLoading?: boolean
-  voiceReady?: boolean
-  prepareTTSPlayback?: () => void
-  stopTTS?: () => void
-  onSttEnabledChange?: (enabled: boolean) => void
-  onTtsEnabledChange?: (enabled: boolean) => void
-  onVoiceInputModeChange?: (mode: VoiceInputMode) => void
+  disabled?: boolean;
+  sttEnabled?: boolean;
+  ttsEnabled?: boolean;
+  voiceInputMode?: VoiceInputMode;
+  isRecording?: boolean;
+  isSpeaking?: boolean;
+  voiceLoading?: boolean;
+  voiceReady?: boolean;
+  prepareTTSPlayback?: () => void;
+  stopTTS?: () => void;
+  onSttEnabledChange?: (enabled: boolean) => void;
+  onTtsEnabledChange?: (enabled: boolean) => void;
+  onVoiceInputModeChange?: (mode: VoiceInputMode) => void;
 }
 
-function getMicLabel(sttEnabled: boolean, voiceInputMode: VoiceInputMode): string {
-  if (!sttEnabled) return 'Microphone off; enable push to talk'
-  if (voiceInputMode === 'ptt') return 'Microphone in push to talk; switch to VAD'
-  return 'Microphone in VAD; turn microphone off'
+function getMicLabel(
+  sttEnabled: boolean,
+  voiceInputMode: VoiceInputMode,
+): string {
+  if (!sttEnabled) return "Microphone off; enable push to talk";
+  if (voiceInputMode === "ptt")
+    return "Microphone in push to talk; switch to VAD";
+  return "Microphone in VAD; turn microphone off";
 }
 
 export function ChatInputVoiceControls({
   disabled = false,
   sttEnabled = false,
   ttsEnabled = false,
-  voiceInputMode = 'ptt',
+  voiceInputMode = "ptt",
   isRecording = false,
   isSpeaking = false,
   voiceLoading = false,
@@ -40,38 +44,38 @@ export function ChatInputVoiceControls({
   onTtsEnabledChange,
   onVoiceInputModeChange,
 }: ChatInputVoiceControlsProps) {
-  const showTtsControl = Boolean(onTtsEnabledChange)
-  const showSttControl = Boolean(onSttEnabledChange && onVoiceInputModeChange)
-  const ttsWarming = ttsEnabled && voiceLoading && !voiceReady
-  const micLabel = getMicLabel(sttEnabled, voiceInputMode)
-  const voiceModeLabel = voiceInputMode === 'vad' ? 'VAD' : 'PTT'
+  const showTtsControl = Boolean(onTtsEnabledChange);
+  const showSttControl = Boolean(onSttEnabledChange && onVoiceInputModeChange);
+  const ttsWarming = ttsEnabled && voiceLoading && !voiceReady;
+  const micLabel = getMicLabel(sttEnabled, voiceInputMode);
+  const voiceModeLabel = voiceInputMode === "vad" ? "VAD" : "PTT";
 
-  if (!showTtsControl && !showSttControl) return null
+  if (!showTtsControl && !showSttControl) return null;
 
   const handleTtsClick = () => {
     if (isSpeaking) {
-      stopTTS?.()
-      return
+      stopTTS?.();
+      return;
     }
     if (!ttsEnabled) {
-      prepareTTSPlayback?.()
+      prepareTTSPlayback?.();
     }
-    onTtsEnabledChange?.(!ttsEnabled)
-  }
+    onTtsEnabledChange?.(!ttsEnabled);
+  };
 
   const handleMicClick = () => {
-    if (isRecording) return
+    if (isRecording) return;
     if (!sttEnabled) {
-      onVoiceInputModeChange?.('ptt')
-      onSttEnabledChange?.(true)
-      return
+      onVoiceInputModeChange?.("ptt");
+      onSttEnabledChange?.(true);
+      return;
     }
-    if (voiceInputMode === 'ptt') {
-      onVoiceInputModeChange?.('vad')
-      return
+    if (voiceInputMode === "ptt") {
+      onVoiceInputModeChange?.("vad");
+      return;
     }
-    onSttEnabledChange?.(false)
-  }
+    onSttEnabledChange?.(false);
+  };
 
   return (
     <>
@@ -84,20 +88,24 @@ export function ChatInputVoiceControls({
           onClick={handleTtsClick}
           title={
             isSpeaking
-              ? 'Stop speaking'
+              ? "Stop speaking"
               : ttsWarming
-                ? 'Text-to-speech warming up'
+                ? "Text-to-speech warming up"
                 : ttsEnabled
-                  ? 'Disable text-to-speech'
-                  : 'Enable text-to-speech'
+                  ? "Disable text-to-speech"
+                  : "Enable text-to-speech"
           }
-          aria-label={ttsWarming ? 'Text-to-speech warming up' : 'Toggle text-to-speech'}
+          aria-label={
+            ttsWarming ? "Text-to-speech warming up" : "Toggle text-to-speech"
+          }
           aria-pressed={ttsEnabled || isSpeaking}
           aria-busy={ttsWarming}
           className={cn(
-            'chat-input-voice-toggle text-[var(--text-secondary)] hover:text-[var(--text-primary)]',
-            (ttsEnabled || isSpeaking) && 'chat-input-voice-toggle--active text-accent',
-            ttsWarming && 'chat-input-voice-toggle--warming animate-pulse text-accent',
+            "chat-input-voice-toggle text-[var(--text-secondary)] hover:text-[var(--text-primary)]",
+            (ttsEnabled || isSpeaking) &&
+              "chat-input-voice-toggle--active text-accent",
+            ttsWarming &&
+              "chat-input-voice-toggle--warming animate-pulse text-accent",
           )}
         >
           <SpeakerIcon muted={!ttsEnabled && !isSpeaking} />
@@ -114,8 +122,8 @@ export function ChatInputVoiceControls({
             aria-label={micLabel}
             aria-pressed={sttEnabled}
             className={cn(
-              'chat-input-voice-toggle text-[var(--text-secondary)] hover:text-[var(--text-primary)]',
-              sttEnabled && 'chat-input-voice-toggle--active text-accent',
+              "chat-input-voice-toggle text-[var(--text-secondary)] hover:text-[var(--text-primary)]",
+              sttEnabled && "chat-input-voice-toggle--active text-accent",
             )}
           >
             <MicIcon muted={!sttEnabled} />
@@ -123,8 +131,8 @@ export function ChatInputVoiceControls({
           {sttEnabled && (
             <span
               className={cn(
-                'chat-input-voice-mode min-w-7 text-[length:var(--text-2xs)] font-bold leading-none text-[var(--text-muted)]',
-                isRecording && 'chat-input-voice-mode--disabled opacity-50',
+                "chat-input-voice-mode min-w-7 text-[length:var(--text-2xs)] leading-none font-bold text-[var(--text-muted)]",
+                isRecording && "chat-input-voice-mode--disabled opacity-50",
               )}
               aria-disabled={isRecording || undefined}
             >
@@ -134,5 +142,5 @@ export function ChatInputVoiceControls({
         </div>
       )}
     </>
-  )
+  );
 }

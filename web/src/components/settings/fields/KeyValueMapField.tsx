@@ -1,16 +1,16 @@
-import type { ReactNode } from 'react'
-import { Button } from '../../ui/Button'
-import { FormField } from '../../ui/FormField'
-import { Input } from '../../ui/Input'
+import type { ReactNode } from "react";
+import { Button } from "../../ui/Button";
+import { FormField } from "../../ui/FormField";
+import { Input } from "../../ui/Input";
 
 export interface KeyValueMapFieldProps<V = string> {
-  label: string
-  value: Record<string, V>
-  onChange: (value: Record<string, V>) => void
-  ariaLabel: string
-  disabled?: boolean
-  keyPlaceholder?: string
-  addLabel?: string
+  label: string;
+  value: Record<string, V>;
+  onChange: (value: Record<string, V>) => void;
+  ariaLabel: string;
+  disabled?: boolean;
+  keyPlaceholder?: string;
+  addLabel?: string;
   /**
    * Renders the editor for one entry's value. Defaults to a text input, which
    * covers `map<string>` rows; pass a custom renderer for `map<number>`,
@@ -20,21 +20,23 @@ export interface KeyValueMapFieldProps<V = string> {
     value: V,
     onValueChange: (next: V) => void,
     key: string,
-  ) => ReactNode
+  ) => ReactNode;
   /** Seed value for a freshly added entry. Defaults to an empty string. */
-  createValue?: () => V
+  createValue?: () => V;
 }
 
 export interface KeyValueMapRow<V> {
-  storedKey: string
-  displayKey: string
-  value: V
+  storedKey: string;
+  displayKey: string;
+  value: V;
 }
 
-export interface KeyValueRowsFieldProps<V = string>
-  extends Omit<KeyValueMapFieldProps<V>, 'value' | 'onChange'> {
-  value: KeyValueMapRow<V>[]
-  onChange: (value: KeyValueMapRow<V>[]) => void
+export interface KeyValueRowsFieldProps<V = string> extends Omit<
+  KeyValueMapFieldProps<V>,
+  "value" | "onChange"
+> {
+  value: KeyValueMapRow<V>[];
+  onChange: (value: KeyValueMapRow<V>[]) => void;
 }
 
 function defaultRenderValue(
@@ -45,11 +47,11 @@ function defaultRenderValue(
   return (
     <Input
       type="text"
-      value={typeof value === 'string' ? value : String(value ?? '')}
-      aria-label={`Value for ${key || 'new entry'}`}
+      value={typeof value === "string" ? value : String(value ?? "")}
+      aria-label={`Value for ${key || "new entry"}`}
       onChange={(event) => onValueChange(event.target.value)}
     />
-  )
+  );
 }
 
 /**
@@ -64,14 +66,14 @@ export function KeyValueRowsField<V = string>({
   ariaLabel,
   disabled,
   keyPlaceholder,
-  addLabel = 'Add entry',
+  addLabel = "Add entry",
   renderValue,
   createValue,
 }: KeyValueRowsFieldProps<V>) {
-  const entries = value
+  const entries = value;
 
   function commit(nextEntries: KeyValueMapRow<V>[]) {
-    onChange(nextEntries)
+    onChange(nextEntries);
   }
 
   function updateKey(index: number, nextKey: string) {
@@ -79,7 +81,7 @@ export function KeyValueRowsField<V = string>({
       entries.map((entry, entryIndex) =>
         entryIndex === index ? { ...entry, displayKey: nextKey } : entry,
       ),
-    )
+    );
   }
 
   function updateValue(index: number, nextValue: V) {
@@ -87,16 +89,16 @@ export function KeyValueRowsField<V = string>({
       entries.map((entry, entryIndex) =>
         entryIndex === index ? { ...entry, value: nextValue } : entry,
       ),
-    )
+    );
   }
 
   function removeEntry(index: number) {
-    commit(entries.filter((_, entryIndex) => entryIndex !== index))
+    commit(entries.filter((_, entryIndex) => entryIndex !== index));
   }
 
   function addEntry() {
-    const seed = createValue ? createValue() : ('' as V)
-    commit([...entries, { storedKey: '', displayKey: '', value: seed }])
+    const seed = createValue ? createValue() : ("" as V);
+    commit([...entries, { storedKey: "", displayKey: "", value: seed }]);
   }
 
   return (
@@ -145,14 +147,19 @@ export function KeyValueRowsField<V = string>({
             <p className="text-sm text-muted-foreground">No entries.</p>
           )}
           <div className="flex flex-wrap gap-2">
-            <Button type="button" size="sm" disabled={disabled} onClick={addEntry}>
+            <Button
+              type="button"
+              size="sm"
+              disabled={disabled}
+              onClick={addEntry}
+            >
               {addLabel}
             </Button>
           </div>
         </>
       )}
     </FormField>
-  )
+  );
 }
 
 export function KeyValueMapField<V = string>(props: KeyValueMapFieldProps<V>) {
@@ -160,7 +167,7 @@ export function KeyValueMapField<V = string>(props: KeyValueMapFieldProps<V>) {
     storedKey: key,
     displayKey: key,
     value,
-  }))
+  }));
   return (
     <KeyValueRowsField
       {...props}
@@ -173,5 +180,5 @@ export function KeyValueMapField<V = string>(props: KeyValueMapFieldProps<V>) {
         )
       }
     />
-  )
+  );
 }

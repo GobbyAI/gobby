@@ -16,36 +16,39 @@
  * Each consuming surface keeps its own shape/spacing/border-side classes and
  * applies these color fragments on top via `cn(...)`.
  */
-export type PlanPendingVariant = 'amber' | 'info'
+export type PlanPendingVariant = "amber" | "info";
 
-export const DEFAULT_PLAN_PENDING_VARIANT: PlanPendingVariant = 'info'
+export const DEFAULT_PLAN_PENDING_VARIANT: PlanPendingVariant = "info";
 
 export interface PlanPendingColors {
   /** Background fill of the surface band/strip. */
-  surfaceBg: string
+  surfaceBg: string;
   /** Border color utility — pair with a `border` / `border-b` shape class. */
-  borderColor: string
+  borderColor: string;
   /** Icon stroke + heading/label text color (the deutan-safe state cue). */
-  accentText: string
+  accentText: string;
 }
 
 const VARIANTS: Record<PlanPendingVariant, PlanPendingColors> = {
   amber: {
-    surfaceBg: 'bg-muted/50',
-    borderColor: 'border-[var(--border)]',
-    accentText: 'text-[var(--color-warning-foreground)]',
+    surfaceBg: "bg-muted/50",
+    borderColor: "border-[var(--border)]",
+    accentText: "text-[var(--color-warning-foreground)]",
   },
   info: {
-    surfaceBg: 'bg-[var(--color-info-soft)]',
-    borderColor: 'border-[color-mix(in_srgb,var(--color-info)_22%,transparent)]',
-    accentText: 'text-[var(--color-info)]',
+    surfaceBg: "bg-[var(--color-info-soft)]",
+    borderColor:
+      "border-[color-mix(in_srgb,var(--color-info)_22%,transparent)]",
+    accentText: "text-[var(--color-info)]",
   },
-}
+};
 
-export function normalizePlanPendingVariant(value: unknown): PlanPendingVariant {
-  return value === 'amber' ? 'amber' : DEFAULT_PLAN_PENDING_VARIANT
+export function normalizePlanPendingVariant(
+  value: unknown,
+): PlanPendingVariant {
+  return value === "amber" ? "amber" : DEFAULT_PLAN_PENDING_VARIANT;
 }
 
 export function getPlanPendingColors(value: unknown): PlanPendingColors {
-  return VARIANTS[normalizePlanPendingVariant(value)]
+  return VARIANTS[normalizePlanPendingVariant(value)];
 }

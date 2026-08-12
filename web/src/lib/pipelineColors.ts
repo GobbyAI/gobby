@@ -1,4 +1,4 @@
-import type { StatusKind } from '../components/activity/ActivityRowStatusDot';
+import type { StatusKind } from "../components/activity/ActivityRowStatusDot";
 
 /**
  * Pipeline editor and execution color palette.
@@ -37,7 +37,10 @@ export const STEP_TYPE_COLORS: Record<string, PipelineColorPair> = {
   exec: { dark: "oklch(72% 0.13 200)", light: "oklch(45% 0.15 200)" },
   prompt: { dark: "oklch(70% 0.16 290)", light: "oklch(42% 0.18 290)" },
   mcp: { dark: "oklch(70% 0.14 240)", light: "oklch(42% 0.16 240)" },
-  invoke_pipeline: { dark: "oklch(72% 0.16 310)", light: "oklch(45% 0.18 310)" },
+  invoke_pipeline: {
+    dark: "oklch(72% 0.16 310)",
+    light: "oklch(45% 0.18 310)",
+  },
 };
 
 /** Pipeline-execution status dot colours.

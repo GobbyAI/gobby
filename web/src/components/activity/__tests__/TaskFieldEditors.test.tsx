@@ -11,9 +11,7 @@ import {
 describe("TaskTextField (#14771 / D4)", () => {
   it("commits the trimmed value on Enter", () => {
     const onCommit = vi.fn();
-    render(
-      <TaskTextField value="Old" onCommit={onCommit} ariaLabel="Title" />,
-    );
+    render(<TaskTextField value="Old" onCommit={onCommit} ariaLabel="Title" />);
     const input = screen.getByLabelText("Title") as HTMLInputElement;
     fireEvent.change(input, { target: { value: "  New  " } });
     fireEvent.keyDown(input, { key: "Enter" });
@@ -65,7 +63,11 @@ describe("TaskTextField (#14771 / D4)", () => {
     fireEvent.change(input, { target: { value: "Local draft" } });
 
     view.rerender(
-      <TaskTextField value="Server value" onCommit={onCommit} ariaLabel="Title" />,
+      <TaskTextField
+        value="Server value"
+        onCommit={onCommit}
+        ariaLabel="Title"
+      />,
     );
 
     expect(input).toHaveValue("Server value");
@@ -223,8 +225,12 @@ describe("TaskTagsField (#14771 / D4)", () => {
       <TaskTagsField value={["api"]} onCommit={onCommit} ariaLabel="Labels" />,
     );
 
-    expect(screen.getByRole("button", { name: "Remove label api" })).toBeInTheDocument();
-    expect(screen.queryByRole("button", { name: "Remove label web" })).toBeNull();
+    expect(
+      screen.getByRole("button", { name: "Remove label api" }),
+    ).toBeInTheDocument();
+    expect(
+      screen.queryByRole("button", { name: "Remove label web" }),
+    ).toBeNull();
     expect(onCommit).not.toHaveBeenCalled();
   });
 });

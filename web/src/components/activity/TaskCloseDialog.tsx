@@ -33,7 +33,8 @@ export function TaskCloseDialog({
     showReasonError: false,
   }));
 
-  const matchesCurrentTask = draft.taskId === currentTaskId && draft.isClosed === isClosed;
+  const matchesCurrentTask =
+    draft.taskId === currentTaskId && draft.isClosed === isClosed;
   const reason = matchesCurrentTask ? draft.reason : "";
   const showReasonError = matchesCurrentTask && draft.showReasonError;
 
@@ -42,7 +43,12 @@ export function TaskCloseDialog({
   const submit = () => {
     const trimmed = reason.trim();
     if (!trimmed) {
-      setDraft({ taskId: currentTaskId, isClosed, reason, showReasonError: true });
+      setDraft({
+        taskId: currentTaskId,
+        isClosed,
+        reason,
+        showReasonError: true,
+      });
       return;
     }
     onConfirm(trimmed);
@@ -58,7 +64,7 @@ export function TaskCloseDialog({
       }}
     >
       <DialogContent
-        className="w-[min(24rem,100%)] border-border bg-[var(--bg-secondary)] p-4 text-[var(--text-primary)] shadow-lg [&_h2]:m-0 [&_h2]:text-[length:var(--text-lg)] [&_h2]:font-semibold [&_label]:mb-[0.35rem] [&_label]:block [&_label]:text-[length:var(--text-xs)] [&_label]:font-semibold [&_label]:text-[var(--text-secondary)] [&_p]:mb-3 [&_p]:mt-1 [&_p]:text-[length:var(--text-sm)] [&_p]:text-[var(--text-secondary)]"
+        className="w-[min(24rem,100%)] border-border bg-[var(--bg-secondary)] p-4 text-[var(--text-primary)] shadow-lg [&_h2]:m-0 [&_h2]:text-[length:var(--text-lg)] [&_h2]:font-semibold [&_label]:mb-[0.35rem] [&_label]:block [&_label]:text-[length:var(--text-xs)] [&_label]:font-semibold [&_label]:text-[var(--text-secondary)] [&_p]:mt-1 [&_p]:mb-3 [&_p]:text-[length:var(--text-sm)] [&_p]:text-[var(--text-secondary)]"
         {...(showReasonError
           ? { "aria-describedby": "activity-task-close-error" }
           : {})}

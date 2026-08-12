@@ -79,9 +79,9 @@ describe("TasksTabDetailPanel — D5 IA (#14772)", () => {
     const { container } = render(
       <TasksTabDetailPanel task={makeTask({ agent_name: null })} />,
     );
-    expect(
-      container.querySelector("[data-task-owner]")?.textContent,
-    ).toContain("Unassigned");
+    expect(container.querySelector("[data-task-owner]")?.textContent).toContain(
+      "Unassigned",
+    );
   });
 
   it("never renders the dropped 'Path' field or its value", () => {
@@ -93,9 +93,7 @@ describe("TasksTabDetailPanel — D5 IA (#14772)", () => {
   });
 
   it("renders the escalation block only when the task is escalated", () => {
-    const { container: a } = render(
-      <TasksTabDetailPanel task={makeTask()} />,
-    );
+    const { container: a } = render(<TasksTabDetailPanel task={makeTask()} />);
     expect(a.querySelector("[data-task-detail-escalation]")).toBeNull();
 
     const { container: b } = render(
@@ -128,7 +126,10 @@ describe("TasksTabDetailPanel — D5 IA (#14772)", () => {
   it("links the PR inside Trace when repo metadata is present", () => {
     const { getByText } = render(
       <TasksTabDetailPanel
-        task={makeTask({ github_pr_number: 42, github_repo: "example/repo--name" })}
+        task={makeTask({
+          github_pr_number: 42,
+          github_repo: "example/repo--name",
+        })}
       />,
     );
     const link = getByText("example/repo--name#42");
@@ -174,7 +175,11 @@ describe("TasksTabDetailPanel — D5 IA (#14772)", () => {
   it("does not render read-only details solely for labels", () => {
     const { getByText, container } = render(
       <TasksTabDetailPanel
-        task={makeTask({ labels: ["backend", "bug"], description: null, validation_criteria: null })}
+        task={makeTask({
+          labels: ["backend", "bug"],
+          description: null,
+          validation_criteria: null,
+        })}
       />,
     );
 
@@ -222,15 +227,11 @@ describe("TasksTabDetailPanel — D5 IA (#14772)", () => {
   });
 
   it("renders the Validation row only when validation_status is set", () => {
-    const { container: a } = render(
-      <TasksTabDetailPanel task={makeTask()} />,
-    );
+    const { container: a } = render(<TasksTabDetailPanel task={makeTask()} />);
     expect(a.querySelector("[data-task-detail-validation]")).toBeNull();
 
     const { container: b, getByText } = render(
-      <TasksTabDetailPanel
-        task={makeTask({ validation_status: "pending" })}
-      />,
+      <TasksTabDetailPanel task={makeTask({ validation_status: "pending" })} />,
     );
     expect(b.querySelector("[data-task-detail-validation]")).not.toBeNull();
     expect(getByText("Validation")).toBeTruthy();

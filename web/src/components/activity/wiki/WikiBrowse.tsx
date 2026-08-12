@@ -5,7 +5,13 @@
  * and the edit/create editor takeover of the reader pane.
  */
 
-import { useCallback, useEffect, useMemo, useState, type KeyboardEvent } from "react";
+import {
+  useCallback,
+  useEffect,
+  useMemo,
+  useState,
+  type KeyboardEvent,
+} from "react";
 
 import { useConfirmDialog } from "../../../hooks/useConfirmDialog";
 import { ResizeHandle } from "../../shared/ResizeHandle";
@@ -87,7 +93,10 @@ export function WikiBrowse({
     state: Exclude<PagesState, { status: "loading" }>;
   } | null>(null);
   const [retrySeq, setRetrySeq] = useState(0);
-  const [graph, setGraph] = useState<{ key: string; payload: WikiGraphPayload } | null>(null);
+  const [graph, setGraph] = useState<{
+    key: string;
+    payload: WikiGraphPayload;
+  } | null>(null);
   const [graphWanted, setGraphWanted] = useState(false);
   const [quickOpenVisible, setQuickOpenVisible] = useState(false);
   // The editor intent captures the selection it was opened over; any guarded
@@ -104,12 +113,20 @@ export function WikiBrowse({
     let cancelled = false;
     fetchPages(scope)
       .then((result) => {
-        if (!cancelled) setPagesResult({ key: requestKey, state: { status: "ready", result } });
+        if (!cancelled)
+          setPagesResult({
+            key: requestKey,
+            state: { status: "ready", result },
+          });
       })
       .catch((error: unknown) => {
         if (!cancelled) {
-          const message = error instanceof Error ? error.message : "Failed to list pages";
-          setPagesResult({ key: requestKey, state: { status: "error", message } });
+          const message =
+            error instanceof Error ? error.message : "Failed to list pages";
+          setPagesResult({
+            key: requestKey,
+            state: { status: "error", message },
+          });
         }
       });
     return () => {
@@ -137,11 +154,17 @@ export function WikiBrowse({
   }, [graph, graphKey, graphWanted, scope]);
 
   const pagesState: PagesState =
-    pagesResult && pagesResult.key === requestKey ? pagesResult.state : { status: "loading" };
+    pagesResult && pagesResult.key === requestKey
+      ? pagesResult.state
+      : { status: "loading" };
   // Memoized from the stored result (stable identity), not the per-render
   // pagesState object, so downstream memo deps only change on new data.
   const { pages, outputs } = useMemo<WikiPagesResult>(() => {
-    if (pagesResult && pagesResult.key === requestKey && pagesResult.state.status === "ready") {
+    if (
+      pagesResult &&
+      pagesResult.key === requestKey &&
+      pagesResult.state.status === "ready"
+    ) {
       return pagesResult.state.result;
     }
     return { pages: [], outputs: [] };
@@ -230,7 +253,9 @@ export function WikiBrowse({
   );
 
   const liveEditorIntent =
-    editorIntent && editorIntent.at === selectedPath ? editorIntent.intent : null;
+    editorIntent && editorIntent.at === selectedPath
+      ? editorIntent.intent
+      : null;
 
   const reader = liveEditorIntent ? (
     <WikiPageEditor
@@ -257,7 +282,10 @@ export function WikiBrowse({
       graph={graph?.key === graphKey ? graph.payload : null}
       onOpenGraph={onOpenGraph}
       onToggleEdit={() =>
-        setEditorIntent({ intent: { kind: "edit", path: selectedPath }, at: selectedPath })
+        setEditorIntent({
+          intent: { kind: "edit", path: selectedPath },
+          at: selectedPath,
+        })
       }
       onCreate={openCreate}
       onDelete={handleDelete}
@@ -287,7 +315,10 @@ export function WikiBrowse({
     >
       {wide ? (
         <div className="flex min-h-0 flex-1">
-          <div style={{ width: treeWidth }} className="min-h-0 shrink-0 overflow-hidden border-r border-border">
+          <div
+            style={{ width: treeWidth }}
+            className="min-h-0 shrink-0 overflow-hidden border-r border-border"
+          >
             {tree}
           </div>
           <ResizeHandle
@@ -302,7 +333,10 @@ export function WikiBrowse({
         </div>
       ) : (
         <div className="flex min-h-0 flex-1 flex-col">
-          <div style={{ height: `${split}%` }} className="min-h-0 overflow-hidden border-b border-border">
+          <div
+            style={{ height: `${split}%` }}
+            className="min-h-0 overflow-hidden border-b border-border"
+          >
             {tree}
           </div>
           <ResizeHandle

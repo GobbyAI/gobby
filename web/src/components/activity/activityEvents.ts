@@ -7,10 +7,7 @@ export interface ShowActivityTabDetail {
   sessionId?: string;
 }
 
-export function showActivityTab(
-  tab: ActivityTab,
-  sessionId?: string,
-): void {
+export function showActivityTab(tab: ActivityTab, sessionId?: string): void {
   const detail: ShowActivityTabDetail =
     sessionId === undefined ? { tab } : { tab, sessionId };
   window.dispatchEvent(

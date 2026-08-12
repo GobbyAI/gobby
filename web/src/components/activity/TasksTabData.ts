@@ -40,7 +40,10 @@ export function normalizeActivityTask(
   }) as GobbyTask;
 }
 
-export function areSetsEqual<T>(left: ReadonlySet<T>, right: ReadonlySet<T>): boolean {
+export function areSetsEqual<T>(
+  left: ReadonlySet<T>,
+  right: ReadonlySet<T>,
+): boolean {
   if (left.size !== right.size) return false;
   for (const value of left) {
     if (!right.has(value)) return false;
@@ -122,13 +125,19 @@ export async function fetchMissingTaskAncestors(
         continue;
       }
 
-      const parentTask = normalizeActivityTask(raw, taskMap.get(parentId) ?? null);
+      const parentTask = normalizeActivityTask(
+        raw,
+        taskMap.get(parentId) ?? null,
+      );
       taskMap.set(parentTask.id, parentTask);
 
       enqueueParent(parentTask, depth);
     } catch (err) {
       if (err instanceof Error && err.name === "AbortError") throw err;
-      console.warn("Failed to load missing task parent", { parentId, error: err });
+      console.warn("Failed to load missing task parent", {
+        parentId,
+        error: err,
+      });
     }
   }
 

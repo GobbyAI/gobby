@@ -134,7 +134,7 @@ export function SessionInteractionModal({
           Inject context into the session. The agent will see this on its next
           hook cycle.
           <br />
-          <span className="text-xs text-muted-foreground mt-1">
+          <span className="mt-1 text-xs text-muted-foreground">
             Target: {displayLabel}
           </span>
         </DialogDescription>
@@ -155,9 +155,9 @@ export function SessionInteractionModal({
             }}
           />
 
-          {error && <p className="text-xs text-error mt-2">{error}</p>}
+          {error && <p className="mt-2 text-xs text-error">{error}</p>}
 
-          <div className="flex justify-end gap-2 mt-3">
+          <div className="mt-3 flex justify-end gap-2">
             <Button
               type="button"
               variant="secondary"

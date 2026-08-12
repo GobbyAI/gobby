@@ -27,8 +27,7 @@ function HeaderHarness({ children }: { children: ReactNode }) {
   );
 }
 
-const render = (ui: ReactElement) =>
-  baseRender(ui, { wrapper: HeaderHarness });
+const render = (ui: ReactElement) => baseRender(ui, { wrapper: HeaderHarness });
 
 // The search bar is hidden until the header Search toggle opens it.
 async function openSearch(user: ReturnType<typeof userEvent.setup>) {
@@ -98,79 +97,99 @@ interface FetchRouteOptions {
   searchResults?: MemoryRecord[];
 }
 
-function setupFetch(initialMemories: MemoryRecord[], options: FetchRouteOptions = {}) {
+function setupFetch(
+  initialMemories: MemoryRecord[],
+  options: FetchRouteOptions = {},
+) {
   let memories = [...initialMemories];
-  const fetchMock = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
-    const url = typeof input === "string" ? input : input instanceof URL ? input.toString() : input.url;
-    const method = init?.method ?? "GET";
+  const fetchMock = vi.fn(
+    async (input: RequestInfo | URL, init?: RequestInit) => {
+      const url =
+        typeof input === "string"
+          ? input
+          : input instanceof URL
+            ? input.toString()
+            : input.url;
+      const method = init?.method ?? "GET";
 
-    if (url.endsWith("/api/config/values") && method === "GET") {
-      return jsonResponse({
-        values: {
-          memory: {
-            dream: {
-              purge_review_after_days: 90,
-              purge_delete_after_days: 30,
+      if (url.endsWith("/api/config/values") && method === "GET") {
+        return jsonResponse({
+          values: {
+            memory: {
+              dream: {
+                purge_review_after_days: 90,
+                purge_delete_after_days: 30,
+              },
             },
           },
-        },
-      });
-    }
-    if (url.includes("/api/memories/stats")) {
-      return jsonResponse({
-        total_count: memories.length,
-        by_type: { fact: 1, preference: 1, pattern: 0, context: 0 },
-        recent_count: 1,
-        avg_importance: 0.5,
-        project_id: "project-1",
-      });
-    }
-    if (url.includes("/api/memories/search?") && method === "GET") {
-      const query = new URL(url, "http://localhost").searchParams.get("q")?.toLowerCase() ?? "";
-      const results = options.searchResults ?? memories.filter((memory) =>
-        memory.content.toLowerCase().includes(query) ||
-        memory.memory_type.toLowerCase().includes(query) ||
-        (memory.tags ?? []).some((tag) => tag.toLowerCase().includes(query))
-      );
-      return jsonResponse({ results });
-    }
-    if (url.includes("/api/memories?") && method === "GET") {
-      return jsonResponse({ memories });
-    }
-    if (url.endsWith("/api/memories/mem-recent") && method === "PUT") {
-      return jsonResponse({
-        ...memories[0],
-        ...JSON.parse(String(init?.body)),
-        updated_at: new Date().toISOString(),
-      });
-    }
-    if (url.endsWith("/api/memories/mem-recent") && method === "DELETE") {
-      return jsonResponse({ ok: true });
-    }
-    if (url.endsWith("/promote") && method === "POST") {
-      const memoryId = url.split("/").slice(-2, -1)[0];
-      if (options.promote?.has(memoryId)) return jsonResponse({ error: "not found" }, 404);
-      const index = memories.findIndex((memory) => memory.id === memoryId);
-      if (index === -1) return jsonResponse({ error: "not found" }, 404);
-      memories = memories.map((memory, memoryIndex) =>
-        memoryIndex === index ? { ...memory, is_global: true } : memory,
-      );
-      return jsonResponse(memories[index]);
-    }
-    if (url.includes("/restore") && method === "POST") {
-      const memoryId = url.split("/").slice(-2, -1)[0];
-      if (options.restore?.has(memoryId)) return jsonResponse({ error: "not found" }, 404);
-      const index = memories.findIndex((memory) => memory.id === memoryId);
-      if (index === -1) return jsonResponse({ error: "not found" }, 404);
-      memories = memories.map((memory, memoryIndex) =>
-        memoryIndex === index
-          ? { ...memory, deleted_at: null, dream_action: null }
-          : memory,
-      );
-      return jsonResponse(memories[index]);
-    }
-    return jsonResponse({ error: "no mock route matched" }, 404);
-  });
+        });
+      }
+      if (url.includes("/api/memories/stats")) {
+        return jsonResponse({
+          total_count: memories.length,
+          by_type: { fact: 1, preference: 1, pattern: 0, context: 0 },
+          recent_count: 1,
+          avg_importance: 0.5,
+          project_id: "project-1",
+        });
+      }
+      if (url.includes("/api/memories/search?") && method === "GET") {
+        const query =
+          new URL(url, "http://localhost").searchParams
+            .get("q")
+            ?.toLowerCase() ?? "";
+        const results =
+          options.searchResults ??
+          memories.filter(
+            (memory) =>
+              memory.content.toLowerCase().includes(query) ||
+              memory.memory_type.toLowerCase().includes(query) ||
+              (memory.tags ?? []).some((tag) =>
+                tag.toLowerCase().includes(query),
+              ),
+          );
+        return jsonResponse({ results });
+      }
+      if (url.includes("/api/memories?") && method === "GET") {
+        return jsonResponse({ memories });
+      }
+      if (url.endsWith("/api/memories/mem-recent") && method === "PUT") {
+        return jsonResponse({
+          ...memories[0],
+          ...JSON.parse(String(init?.body)),
+          updated_at: new Date().toISOString(),
+        });
+      }
+      if (url.endsWith("/api/memories/mem-recent") && method === "DELETE") {
+        return jsonResponse({ ok: true });
+      }
+      if (url.endsWith("/promote") && method === "POST") {
+        const memoryId = url.split("/").slice(-2, -1)[0];
+        if (options.promote?.has(memoryId))
+          return jsonResponse({ error: "not found" }, 404);
+        const index = memories.findIndex((memory) => memory.id === memoryId);
+        if (index === -1) return jsonResponse({ error: "not found" }, 404);
+        memories = memories.map((memory, memoryIndex) =>
+          memoryIndex === index ? { ...memory, is_global: true } : memory,
+        );
+        return jsonResponse(memories[index]);
+      }
+      if (url.includes("/restore") && method === "POST") {
+        const memoryId = url.split("/").slice(-2, -1)[0];
+        if (options.restore?.has(memoryId))
+          return jsonResponse({ error: "not found" }, 404);
+        const index = memories.findIndex((memory) => memory.id === memoryId);
+        if (index === -1) return jsonResponse({ error: "not found" }, 404);
+        memories = memories.map((memory, memoryIndex) =>
+          memoryIndex === index
+            ? { ...memory, deleted_at: null, dream_action: null }
+            : memory,
+        );
+        return jsonResponse(memories[index]);
+      }
+      return jsonResponse({ error: "no mock route matched" }, 404);
+    },
+  );
 
   globalThis.fetch = fetchMock as unknown as typeof fetch;
   window.fetch = fetchMock as unknown as typeof fetch;
@@ -181,7 +200,10 @@ function lastJsonBody(fetchMock: ReturnType<typeof setupFetch>) {
   const call = fetchMock.mock.calls
     .slice()
     .reverse()
-    .find(([url, init]) => String(url).includes("/api/memories/mem-recent") && Boolean(init?.body));
+    .find(
+      ([url, init]) =>
+        String(url).includes("/api/memories/mem-recent") && Boolean(init?.body),
+    );
   return call?.[1]?.body ? JSON.parse(String(call[1].body)) : null;
 }
 
@@ -217,14 +239,23 @@ describe("Memory activity tab", () => {
     render(<MemoryTab projectId="project-1" />);
 
     expect(
-      await screen.findByRole("button", { name: "Select Persist panel width override" }),
+      await screen.findByRole("button", {
+        name: "Select Persist panel width override",
+      }),
     ).toBeInTheDocument();
-    expect(screen.getByRole("button", { name: "Select Use a quiet palette for dashboards" }))
-      .toBeInTheDocument();
+    expect(
+      screen.getByRole("button", {
+        name: "Select Use a quiet palette for dashboards",
+      }),
+    ).toBeInTheDocument();
     await openSearch(user);
-    expect(screen.getByRole("searchbox", { name: "Search memories" })).toBeInTheDocument();
+    expect(
+      screen.getByRole("searchbox", { name: "Search memories" }),
+    ).toBeInTheDocument();
     // Manual refresh is gone — the list stays current via live updates (#19152).
-    expect(screen.queryByRole("button", { name: "Refresh memories" })).not.toBeInTheDocument();
+    expect(
+      screen.queryByRole("button", { name: "Refresh memories" }),
+    ).not.toBeInTheDocument();
     // Scope selector defaults to Project.
     expect(screen.getByRole("radio", { name: "Project" })).toHaveAttribute(
       "aria-checked",
@@ -236,36 +267,66 @@ describe("Memory activity tab", () => {
     });
     paletteMemory.focus();
     await user.keyboard(" ");
-    expect(paletteMemory.parentElement).toHaveClass("activity-list-row--selected");
+    expect(paletteMemory.parentElement).toHaveClass(
+      "activity-list-row--selected",
+    );
 
     await user.click(screen.getByRole("button", { name: "Filter memories" }));
     await user.click(screen.getByRole("checkbox", { name: "Last 24 hours" }));
-    expect(screen.queryByText("Use a quiet palette for dashboards")).not.toBeInTheDocument();
+    expect(
+      screen.queryByText("Use a quiet palette for dashboards"),
+    ).not.toBeInTheDocument();
     const recentMemory = screen.getByRole("button", {
       name: "Select Persist panel width override",
     });
     expect(recentMemory).toBeInTheDocument();
-    expect(recentMemory.parentElement).toHaveClass("activity-list-row--selected");
+    expect(recentMemory.parentElement).toHaveClass(
+      "activity-list-row--selected",
+    );
 
     await user.click(screen.getByRole("button", { name: "Filter memories" }));
     await user.click(screen.getByRole("checkbox", { name: "Last 24 hours" }));
-    await user.type(screen.getByRole("searchbox", { name: "Search memories" }), "palette");
-    expect(screen.queryByText("Persist panel width override")).not.toBeInTheDocument();
-    expect(await screen.findByRole("button", { name: "Select Use a quiet palette for dashboards" }))
-      .toBeInTheDocument();
+    await user.type(
+      screen.getByRole("searchbox", { name: "Search memories" }),
+      "palette",
+    );
+    expect(
+      screen.queryByText("Persist panel width override"),
+    ).not.toBeInTheDocument();
+    expect(
+      await screen.findByRole("button", {
+        name: "Select Use a quiet palette for dashboards",
+      }),
+    ).toBeInTheDocument();
 
-    await user.clear(screen.getByRole("searchbox", { name: "Search memories" }));
+    await user.clear(
+      screen.getByRole("searchbox", { name: "Search memories" }),
+    );
 
-    await user.click(screen.getByRole("button", { name: "Select Persist panel width override" }));
+    await user.click(
+      screen.getByRole("button", {
+        name: "Select Persist panel width override",
+      }),
+    );
     await user.clear(screen.getByRole("textbox", { name: "Memory content" }));
-    await user.type(screen.getByRole("textbox", { name: "Memory content" }), "Draft should be discarded");
+    await user.type(
+      screen.getByRole("textbox", { name: "Memory content" }),
+      "Draft should be discarded",
+    );
     await user.click(screen.getByRole("button", { name: "Discard" }));
-    expect(screen.getByRole("textbox", { name: "Memory content" }))
-      .toHaveValue("Persist panel width override");
+    expect(screen.getByRole("textbox", { name: "Memory content" })).toHaveValue(
+      "Persist panel width override",
+    );
 
     await user.clear(screen.getByRole("textbox", { name: "Memory content" }));
-    await user.type(screen.getByRole("textbox", { name: "Memory content" }), "Panel override is transient");
-    await user.selectOptions(screen.getByRole("combobox", { name: "Memory type" }), "pattern");
+    await user.type(
+      screen.getByRole("textbox", { name: "Memory content" }),
+      "Panel override is transient",
+    );
+    await user.selectOptions(
+      screen.getByRole("combobox", { name: "Memory type" }),
+      "pattern",
+    );
     await user.type(screen.getByLabelText("Add Tags"), "panel{Enter}");
     expect(screen.getByRole("button", { name: "Discard" })).toBeInTheDocument();
     await user.click(screen.getByRole("button", { name: "Save" }));
@@ -278,10 +339,20 @@ describe("Memory activity tab", () => {
       }),
     );
 
-    await user.click(screen.getByRole("button", { name: "Open actions for Persist panel width override" }));
-    const menu = screen.getByRole("menu", { name: "Actions for Persist panel width override" });
-    expect(within(menu).getByRole("menuitem", { name: "Copy content" })).toBeInTheDocument();
-    expect(within(menu).getByRole("menuitem", { name: "Delete" })).toBeInTheDocument();
+    await user.click(
+      screen.getByRole("button", {
+        name: "Open actions for Persist panel width override",
+      }),
+    );
+    const menu = screen.getByRole("menu", {
+      name: "Actions for Persist panel width override",
+    });
+    expect(
+      within(menu).getByRole("menuitem", { name: "Copy content" }),
+    ).toBeInTheDocument();
+    expect(
+      within(menu).getByRole("menuitem", { name: "Delete" }),
+    ).toBeInTheDocument();
   }, 20_000);
 
   it("uses server search results beyond the 100-row list cap", async () => {
@@ -295,24 +366,35 @@ describe("Memory activity tab", () => {
       id: "mem-server-only",
       content: "Server-only memory beyond list cap",
     });
-    const fetchMock = setupFetch(listedMemories, { searchResults: [serverOnlyMemory] });
+    const fetchMock = setupFetch(listedMemories, {
+      searchResults: [serverOnlyMemory],
+    });
     const user = userEvent.setup();
 
     render(<MemoryTab projectId="project-1" />);
-    expect(await screen.findByRole("button", { name: "Select Listed memory 0" }))
-      .toBeInTheDocument();
+    expect(
+      await screen.findByRole("button", { name: "Select Listed memory 0" }),
+    ).toBeInTheDocument();
 
     await openSearch(user);
-    await user.type(screen.getByRole("searchbox", { name: "Search memories" }), "server-only");
+    await user.type(
+      screen.getByRole("searchbox", { name: "Search memories" }),
+      "server-only",
+    );
 
     expect(
-      await screen.findByRole("button", { name: "Select Server-only memory beyond list cap" }),
+      await screen.findByRole("button", {
+        name: "Select Server-only memory beyond list cap",
+      }),
     ).toBeInTheDocument();
     expect(screen.queryByText("Listed memory 0")).not.toBeInTheDocument();
     expect(
       fetchMock.mock.calls.some(([url]) => {
         const requestUrl = String(url);
-        return requestUrl.includes("/api/memories/search?") && requestUrl.includes("q=server-only");
+        return (
+          requestUrl.includes("/api/memories/search?") &&
+          requestUrl.includes("q=server-only")
+        );
       }),
     ).toBe(true);
   }, 20_000);
@@ -330,7 +412,9 @@ describe("Memory activity tab", () => {
     render(<MemoryTab projectId="project-1" />);
 
     expect(
-      await screen.findByRole("button", { name: "Select Universal review checklist" }),
+      await screen.findByRole("button", {
+        name: "Select Universal review checklist",
+      }),
     ).toBeInTheDocument();
     expect(screen.getAllByText("Project").length).toBeGreaterThan(0);
     expect(screen.getByText("Current project")).toBeInTheDocument();
@@ -350,9 +434,13 @@ describe("Memory activity tab", () => {
       expect(promoted).toBe(true);
     });
     await waitFor(() => {
-      expect(screen.getByRole("switch", { name: "Global memory" })).toBeChecked();
+      expect(
+        screen.getByRole("switch", { name: "Global memory" }),
+      ).toBeChecked();
     });
-    expect(screen.getByRole("switch", { name: "Global memory" })).toBeDisabled();
+    expect(
+      screen.getByRole("switch", { name: "Global memory" }),
+    ).toBeDisabled();
     expect(screen.getAllByText("Global").length).toBeGreaterThan(0);
     expect(screen.getByText("Available across projects")).toBeInTheDocument();
   });
@@ -373,18 +461,26 @@ describe("Memory activity tab", () => {
     render(<MemoryTab projectId="project-1" />);
 
     expect(
-      await screen.findByRole("button", { name: "Select Project-only checklist" }),
+      await screen.findByRole("button", {
+        name: "Select Project-only checklist",
+      }),
     ).toBeInTheDocument();
     await user.click(screen.getByRole("switch", { name: "Global memory" }));
 
     expect(
-      await screen.findByRole("button", { name: "Dismiss error: Failed to promote memory" }),
+      await screen.findByRole("button", {
+        name: "Dismiss error: Failed to promote memory",
+      }),
     ).toBeInTheDocument();
   });
 
   it("filters by visibility, badges hidden rows, and restores them", async () => {
     const fetchMock = setupFetch([
-      makeMemory({ id: "mem-recent", content: "Active fact", created_at: recentIso }),
+      makeMemory({
+        id: "mem-recent",
+        content: "Active fact",
+        created_at: recentIso,
+      }),
       makeMemory({
         id: "mem-hidden",
         content: "Stale flagged fact",
@@ -397,7 +493,9 @@ describe("Memory activity tab", () => {
     render(<MemoryTab projectId="project-1" />);
 
     // Active (default) hides dream-flagged rows.
-    expect(await screen.findByRole("button", { name: "Select Active fact" })).toBeInTheDocument();
+    expect(
+      await screen.findByRole("button", { name: "Select Active fact" }),
+    ).toBeInTheDocument();
     expect(screen.queryByText("Stale flagged fact")).not.toBeInTheDocument();
 
     // Switch the visibility scope to Hidden.
@@ -412,9 +510,17 @@ describe("Memory activity tab", () => {
     expect(screen.getAllByText("Flagged for review").length).toBeGreaterThan(0);
 
     // Restore via the row action menu.
-    await user.click(screen.getByRole("button", { name: "Open actions for Stale flagged fact" }));
-    const hiddenMenu = screen.getByRole("menu", { name: "Actions for Stale flagged fact" });
-    await user.click(within(hiddenMenu).getByRole("menuitem", { name: "Restore" }));
+    await user.click(
+      screen.getByRole("button", {
+        name: "Open actions for Stale flagged fact",
+      }),
+    );
+    const hiddenMenu = screen.getByRole("menu", {
+      name: "Actions for Stale flagged fact",
+    });
+    await user.click(
+      within(hiddenMenu).getByRole("menuitem", { name: "Restore" }),
+    );
 
     await waitFor(() => {
       const restored = fetchMock.mock.calls.some(
@@ -442,18 +548,32 @@ describe("Memory activity tab", () => {
     const user = userEvent.setup();
     render(<MemoryTab projectId="project-1" />);
 
-    await user.click(await screen.findByRole("button", { name: "Filter memories" }));
+    await user.click(
+      await screen.findByRole("button", { name: "Filter memories" }),
+    );
     await user.click(screen.getByRole("radio", { name: "Hidden" }));
     expect(
-      await screen.findByRole("button", { name: "Select Restore failure fact" }),
+      await screen.findByRole("button", {
+        name: "Select Restore failure fact",
+      }),
     ).toBeInTheDocument();
 
-    await user.click(screen.getByRole("button", { name: "Open actions for Restore failure fact" }));
-    const hiddenMenu = screen.getByRole("menu", { name: "Actions for Restore failure fact" });
-    await user.click(within(hiddenMenu).getByRole("menuitem", { name: "Restore" }));
+    await user.click(
+      screen.getByRole("button", {
+        name: "Open actions for Restore failure fact",
+      }),
+    );
+    const hiddenMenu = screen.getByRole("menu", {
+      name: "Actions for Restore failure fact",
+    });
+    await user.click(
+      within(hiddenMenu).getByRole("menuitem", { name: "Restore" }),
+    );
 
     expect(
-      await screen.findByRole("button", { name: "Dismiss error: Failed to restore memory" }),
+      await screen.findByRole("button", {
+        name: "Dismiss error: Failed to restore memory",
+      }),
     ).toBeInTheDocument();
   });
 });

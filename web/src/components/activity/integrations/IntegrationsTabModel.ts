@@ -1,4 +1,8 @@
-import type { Channel, ChannelStatus, ChannelType } from "../../../hooks/useIntegrations";
+import type {
+  Channel,
+  ChannelStatus,
+  ChannelType,
+} from "../../../hooks/useIntegrations";
 import type { StatusKind } from "../ActivityRowStatusDot";
 import {
   CHANNEL_DISPLAY_NAMES,
@@ -41,11 +45,17 @@ export function channelTypeOptions() {
   }));
 }
 
-export function filterChannels(channels: Channel[], filters: IntegrationFilters): Channel[] {
+export function filterChannels(
+  channels: Channel[],
+  filters: IntegrationFilters,
+): Channel[] {
   const query = filters.search.trim().toLowerCase();
   return channels.filter((channel) => {
     if (channel.channel_type === "gobby_chat") return false;
-    if (filters.channelType !== "all" && channel.channel_type !== filters.channelType) {
+    if (
+      filters.channelType !== "all" &&
+      channel.channel_type !== filters.channelType
+    ) {
       return false;
     }
     if (filters.status === "enabled" && !channel.enabled) return false;
@@ -92,7 +102,9 @@ export function createEmptyDraft(): IntegrationDraft {
   };
 }
 
-export function integrationPayloadFromDraft(draft: IntegrationDraft): IntegrationSavePayload {
+export function integrationPayloadFromDraft(
+  draft: IntegrationDraft,
+): IntegrationSavePayload {
   const fields = CHANNEL_TYPE_FIELDS[draft.channel_type];
   const config: Record<string, string | number> = {};
   const secrets: Record<string, string> = {};
@@ -125,7 +137,9 @@ export function integrationPayloadFromDraft(draft: IntegrationDraft): Integratio
   };
 }
 
-export function validateIntegrationDraft(draft: IntegrationDraft): string | null {
+export function validateIntegrationDraft(
+  draft: IntegrationDraft,
+): string | null {
   if (!draft.name.trim()) return "Name is required";
   const fields = CHANNEL_TYPE_FIELDS[draft.channel_type];
   for (const field of fields) {
@@ -133,7 +147,8 @@ export function validateIntegrationDraft(draft: IntegrationDraft): string | null
     const rawValue = source[field.key]?.trim();
     if (!field.secret && field.type === "number" && rawValue) {
       const numeric = Number(rawValue);
-      if (!Number.isFinite(numeric)) return `${field.label} must be a finite number`;
+      if (!Number.isFinite(numeric))
+        return `${field.label} must be a finite number`;
     }
     if (!field.required) continue;
     if (draft.mode === "edit" && field.secret) continue;
@@ -150,7 +165,9 @@ export function statusLabelForChannel(channel: Channel): string {
   return channel.enabled ? "Enabled" : "Disabled";
 }
 
-export function statusKindForChannelStatus(status: ChannelStatus | null): StatusKind {
+export function statusKindForChannelStatus(
+  status: ChannelStatus | null,
+): StatusKind {
   if (!status) return "info";
   if (!status.enabled) return "disabled";
   return status.active ? "active" : "warning";

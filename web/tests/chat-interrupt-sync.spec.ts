@@ -38,7 +38,11 @@ function setupMockWebSocket(page: import("@playwright/test").Page) {
       const OriginalWebSocket = window.WebSocket;
 
       (window as any).WebSocket = function (url: string, ...rest: any[]) {
-        if (typeof url === "string" && url.includes("/ws") && !url.includes("vite")) {
+        if (
+          typeof url === "string" &&
+          url.includes("/ws") &&
+          !url.includes("vite")
+        ) {
           let _onmessage: ((ev: { data: string }) => void) | null = null;
           let _onopen: (() => void) | null = null;
           let _onclose: (() => void) | null = null;
@@ -52,29 +56,51 @@ function setupMockWebSocket(page: import("@playwright/test").Page) {
               // Auto-detect the chat WebSocket by its subscribe message
               try {
                 const parsed = JSON.parse(data);
-                if (parsed.type === "subscribe" && parsed.events?.includes("chat_stream")) {
+                if (
+                  parsed.type === "subscribe" &&
+                  parsed.events?.includes("chat_stream")
+                ) {
                   mockWs._isChat = true;
                   (window as any).__chatWs = mockWs;
                 }
               } catch {}
             },
-            close() { mockWs.readyState = 3; if (_onclose) _onclose(); },
+            close() {
+              mockWs.readyState = 3;
+              if (_onclose) _onclose();
+            },
             addEventListener() {},
             removeEventListener() {},
-            set onmessage(cb: ((ev: { data: string }) => void) | null) { _onmessage = cb; },
-            get onmessage() { return _onmessage; },
-            set onopen(cb: (() => void) | null) { _onopen = cb; },
-            get onopen() { return _onopen; },
+            set onmessage(cb: ((ev: { data: string }) => void) | null) {
+              _onmessage = cb;
+            },
+            get onmessage() {
+              return _onmessage;
+            },
+            set onopen(cb: (() => void) | null) {
+              _onopen = cb;
+            },
+            get onopen() {
+              return _onopen;
+            },
             set onerror(_: unknown) {},
-            get onerror() { return null; },
-            set onclose(cb: (() => void) | null) { _onclose = cb; },
-            get onclose() { return _onclose; },
+            get onerror() {
+              return null;
+            },
+            set onclose(cb: (() => void) | null) {
+              _onclose = cb;
+            },
+            get onclose() {
+              return _onclose;
+            },
           };
 
           (window as any).__allMockWs.push(mockWs);
           (window as any).__mockWsReady = true;
 
-          setTimeout(() => { if (mockWs.onopen) mockWs.onopen(); }, 50);
+          setTimeout(() => {
+            if (mockWs.onopen) mockWs.onopen();
+          }, 50);
           return mockWs;
         }
         return new OriginalWebSocket(url, ...rest);
@@ -82,19 +108,24 @@ function setupMockWebSocket(page: import("@playwright/test").Page) {
 
       Object.defineProperty((window as any).WebSocket, "OPEN", { value: 1 });
       Object.defineProperty((window as any).WebSocket, "CLOSED", { value: 3 });
-      Object.defineProperty((window as any).WebSocket, "CONNECTING", { value: 0 });
+      Object.defineProperty((window as any).WebSocket, "CONNECTING", {
+        value: 0,
+      });
       Object.defineProperty((window as any).WebSocket, "CLOSING", { value: 2 });
     },
     {
       convId: CONVERSATION_ID,
       storageKey: STORAGE_KEY,
       convIdKey: CONVERSATION_ID_KEY,
-    }
+    },
   );
 }
 
 /** Send a server message to the chat WebSocket only. */
-async function serverSend(page: import("@playwright/test").Page, msg: Record<string, unknown>) {
+async function serverSend(
+  page: import("@playwright/test").Page,
+  msg: Record<string, unknown>,
+) {
   await page.evaluate((data) => {
     // For chat-specific messages, send only to the chat WS
     const chatWs = (window as any).__chatWs;
@@ -112,7 +143,10 @@ async function serverSend(page: import("@playwright/test").Page, msg: Record<str
 }
 
 /** Broadcast a server message to ALL mocked WebSocket connections (for handshake). */
-async function broadcastSend(page: import("@playwright/test").Page, msg: Record<string, unknown>) {
+async function broadcastSend(
+  page: import("@playwright/test").Page,
+  msg: Record<string, unknown>,
+) {
   await page.evaluate((data) => {
     for (const ws of (window as any).__allMockWs || []) {
       if (ws.onmessage) {
@@ -123,24 +157,37 @@ async function broadcastSend(page: import("@playwright/test").Page, msg: Record<
 }
 
 /** Read all messages the client has sent to the "server". */
-async function getClientMessages(page: import("@playwright/test").Page): Promise<Array<Record<string, unknown>>> {
-  const raw: string[] = await page.evaluate(() => (window as any).__sentMessages || []);
+async function getClientMessages(
+  page: import("@playwright/test").Page,
+): Promise<Array<Record<string, unknown>>> {
+  const raw: string[] = await page.evaluate(
+    () => (window as any).__sentMessages || [],
+  );
   return raw.map((s) => JSON.parse(s));
 }
 
 /** Wait for the mock WebSocket to be ready and complete the handshake. */
 async function waitForConnection(page: import("@playwright/test").Page) {
-  await page.waitForFunction(() => (window as any).__mockWsReady === true, null, { timeout: 5000 });
+  await page.waitForFunction(
+    () => (window as any).__mockWsReady === true,
+    null,
+    { timeout: 5000 },
+  );
   // Wait for all WebSocket onopen callbacks to fire and subscribe messages to be sent
   await page.waitForTimeout(200);
   // Broadcast handshake to all connections
-  await broadcastSend(page, { type: "connection_established", conversation_ids: [] });
+  await broadcastSend(page, {
+    type: "connection_established",
+    conversation_ids: [],
+  });
   await broadcastSend(page, {
     type: "subscribe_success",
     events: ["chat_stream", "chat_error", "tool_status", "chat_thinking"],
   });
   // Wait for chat WS to be identified via its subscribe message
-  await page.waitForFunction(() => (window as any).__chatWs !== null, null, { timeout: 3000 });
+  await page.waitForFunction(() => (window as any).__chatWs !== null, null, {
+    timeout: 3000,
+  });
   await expect(page.locator("text=Connected")).toBeVisible({ timeout: 3000 });
 }
 
@@ -161,7 +208,7 @@ test.describe("Chat interrupt synchronization", () => {
 
     const allMsgs = await getClientMessages(page);
     const msgA = allMsgs.find(
-      (m) => m.type === "chat_message" && m.content === "reply with 1"
+      (m) => m.type === "chat_message" && m.content === "reply with 1",
     );
     expect(msgA).toBeTruthy();
     const requestIdA = msgA!.request_id as string;
@@ -178,7 +225,9 @@ test.describe("Chat interrupt synchronization", () => {
     await page.waitForTimeout(100);
 
     // Verify first response appeared
-    await expect(page.locator(".message-assistant .message-content").first()).toContainText("1");
+    await expect(
+      page.locator(".message-assistant .message-content").first(),
+    ).toContainText("1");
 
     // --- User sends message B (interrupt): "reply with 2" ---
     await input.fill("reply with 2");
@@ -187,7 +236,7 @@ test.describe("Chat interrupt synchronization", () => {
 
     const allMsgs2 = await getClientMessages(page);
     const msgB = allMsgs2.find(
-      (m) => m.type === "chat_message" && m.content === "reply with 2"
+      (m) => m.type === "chat_message" && m.content === "reply with 2",
     );
     expect(msgB).toBeTruthy();
     const requestIdB = msgB!.request_id as string;
@@ -223,9 +272,13 @@ test.describe("Chat interrupt synchronization", () => {
     });
 
     // Wait for render
-    await expect(page.locator(".message-assistant")).toHaveCount(2, { timeout: 2000 });
+    await expect(page.locator(".message-assistant")).toHaveCount(2, {
+      timeout: 2000,
+    });
 
-    const assistantMessages = page.locator(".message-assistant .message-content");
+    const assistantMessages = page.locator(
+      ".message-assistant .message-content",
+    );
 
     // First assistant response should contain "1"
     await expect(assistantMessages.nth(0)).toContainText("1");
@@ -250,7 +303,9 @@ test.describe("Chat interrupt synchronization", () => {
     await page.waitForTimeout(150);
 
     const msgs1 = await getClientMessages(page);
-    const msgA = msgs1.find((m) => m.type === "chat_message" && m.content === "message A");
+    const msgA = msgs1.find(
+      (m) => m.type === "chat_message" && m.content === "message A",
+    );
     expect(msgA).toBeTruthy();
     const requestIdA = msgA!.request_id as string;
 
@@ -260,7 +315,9 @@ test.describe("Chat interrupt synchronization", () => {
     await page.waitForTimeout(150);
 
     const msgs2 = await getClientMessages(page);
-    const msgB = msgs2.find((m) => m.type === "chat_message" && m.content === "message B");
+    const msgB = msgs2.find(
+      (m) => m.type === "chat_message" && m.content === "message B",
+    );
     expect(msgB).toBeTruthy();
     const requestIdB = msgB!.request_id as string;
 
@@ -304,17 +361,23 @@ test.describe("Chat interrupt synchronization", () => {
     });
 
     // Wait for render
-    await expect(page.locator(".message-assistant .message-content")).toHaveCount(1, { timeout: 2000 });
+    await expect(
+      page.locator(".message-assistant .message-content"),
+    ).toHaveCount(1, { timeout: 2000 });
 
     // The stale content should NOT appear
     const allText = await page.locator(".chat-messages").innerText();
     expect(allText).not.toContain("STALE CONTENT");
 
     // Only response B should appear
-    await expect(page.locator(".message-assistant .message-content").first()).toContainText("CORRECT RESPONSE");
+    await expect(
+      page.locator(".message-assistant .message-content").first(),
+    ).toContainText("CORRECT RESPONSE");
   });
 
-  test("triple interrupt should not compound the off-by-one", async ({ page }) => {
+  test("triple interrupt should not compound the off-by-one", async ({
+    page,
+  }) => {
     await setupMockWebSocket(page);
     await page.goto("/");
     await waitForConnection(page);
@@ -334,7 +397,7 @@ test.describe("Chat interrupt synchronization", () => {
     const requestIds: string[] = [];
     for (const msg of ["first", "second", "third"]) {
       const found = allMsgs.find(
-        (m) => m.type === "chat_message" && m.content === msg
+        (m) => m.type === "chat_message" && m.content === msg,
       );
       expect(found).toBeTruthy();
       requestIds.push(found!.request_id as string);
@@ -379,9 +442,13 @@ test.describe("Chat interrupt synchronization", () => {
     });
 
     // Wait for render
-    await expect(page.locator(".message-assistant .message-content")).toHaveCount(1, { timeout: 2000 });
+    await expect(
+      page.locator(".message-assistant .message-content"),
+    ).toHaveCount(1, { timeout: 2000 });
 
     // Should have exactly 1 assistant message (for "third")
-    await expect(page.locator(".message-assistant .message-content").first()).toContainText("response to third");
+    await expect(
+      page.locator(".message-assistant .message-content").first(),
+    ).toContainText("response to third");
   });
 });

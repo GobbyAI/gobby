@@ -11,11 +11,11 @@
 
 /** Inputs, textareas, selects: 2px brand outline on keyboard focus. */
 export const inputFocusCls =
-  'focus-visible:outline-2 focus-visible:outline-[var(--accent)] ' +
-  'focus-visible:outline-offset-[1px] focus:outline-none'
+  "focus-visible:outline-2 focus-visible:outline-[var(--accent)] " +
+  "focus-visible:outline-offset-[1px] focus:outline-none";
 
 /** Buttons: mirrors the retired `.btn` `:focus-visible` outline pattern for
  * raw buttons not yet on the shared Button primitive. */
 export const buttonFocusCls =
-  'focus-visible:outline-2 focus-visible:outline-[var(--accent)] ' +
-  'focus-visible:outline-offset-[2px] focus:outline-none'
+  "focus-visible:outline-2 focus-visible:outline-[var(--accent)] " +
+  "focus-visible:outline-offset-[2px] focus:outline-none";

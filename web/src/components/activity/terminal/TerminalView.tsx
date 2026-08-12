@@ -45,10 +45,7 @@ export interface TerminalViewProps {
 
 interface TerminalInstanceProps {
   container: HTMLDivElement;
-  resolution: Extract<
-    RendererResolution,
-    { status: "ghostty" | "fallback" }
-  >;
+  resolution: Extract<RendererResolution, { status: "ghostty" | "fallback" }>;
   terminalRef: MutableRefObject<WTerm | null>;
   sizeRef: MutableRefObject<TerminalSize | null>;
   onSizeChangeRef: MutableRefObject<TerminalViewProps["onSizeChange"]>;
@@ -101,7 +98,9 @@ const MIN_TERMINAL_COLS = 80;
 // silently gives up when the measurement lands at 0 (fonts not yet loaded,
 // layout not settled), leaving the grid stuck at the 80x24 default forever.
 // Measure with the same .term-row probe so the numbers match the renderer.
-function measureCell(root: HTMLElement): { charWidth: number; rowHeight: number } | null {
+function measureCell(
+  root: HTMLElement,
+): { charWidth: number; rowHeight: number } | null {
   const row = document.createElement("div");
   row.className = "term-row";
   row.style.visibility = "hidden";
@@ -391,7 +390,9 @@ export const TerminalView = forwardRef<TerminalViewHandle, TerminalViewProps>(
               role="alert"
             >
               <div className="flex flex-col gap-1">
-                <strong className="font-semibold">Terminal renderer unavailable</strong>
+                <strong className="font-semibold">
+                  Terminal renderer unavailable
+                </strong>
                 <span className="[overflow-wrap:anywhere] text-[var(--text-secondary)]">
                   {resolution.message}
                 </span>

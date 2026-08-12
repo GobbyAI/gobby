@@ -37,7 +37,10 @@ class MockIntersectionObserver {
 }
 
 vi.mock("mermaid", () => ({
-  default: { initialize: vi.fn(), render: vi.fn(async () => ({ svg: "<svg />" })) },
+  default: {
+    initialize: vi.fn(),
+    render: vi.fn(async () => ({ svg: "<svg />" })),
+  },
 }));
 
 vi.mock("react-syntax-highlighter", () => ({
@@ -89,7 +92,8 @@ function stubBrowseFetch(overrides: BrowseFetchOverrides = {}) {
     const route = url.pathname;
     if (route.includes("/api/wiki/status")) return jsonResponse(statusEnvelope);
     if (route.includes("/api/wiki/health")) return jsonResponse(healthEnvelope);
-    if (route.includes("/api/wiki/sources")) return jsonResponse(sourcesEnvelope);
+    if (route.includes("/api/wiki/sources"))
+      return jsonResponse(sourcesEnvelope);
     if (route.includes("/api/wiki/pages")) {
       return overrides.pages ?? jsonResponse(pagesEnvelope);
     }
@@ -101,7 +105,8 @@ function stubBrowseFetch(overrides: BrowseFetchOverrides = {}) {
     }
     if (route.includes("/api/wiki/read")) {
       const path = url.searchParams.get("path");
-      if (path && overrides.readByPath?.[path]) return overrides.readByPath[path];
+      if (path && overrides.readByPath?.[path])
+        return overrides.readByPath[path];
       if (path === "knowledge/concepts/gwiki.md") {
         return jsonResponse(browseReadGwikiEnvelope);
       }
@@ -119,7 +124,11 @@ function readRequests(fetchMock: ReturnType<typeof vi.fn>): string[] {
     .filter((url) => url.includes("/api/wiki/read"))
     .map((url) => {
       const parsed = new URL(url, "http://localhost");
-      return parsed.searchParams.get("path") ?? parsed.searchParams.get("title") ?? "";
+      return (
+        parsed.searchParams.get("path") ??
+        parsed.searchParams.get("title") ??
+        ""
+      );
     });
 }
 
@@ -144,11 +153,16 @@ function makeGuardValue(guards: DirtyGuard[]): DirtyGuardContextValue {
 async function expandToConcepts(user: ReturnType<typeof userEvent.setup>) {
   const tree = await screen.findByRole("tree", { name: /wiki pages/i });
   await user.click(within(tree).getByRole("treeitem", { name: /knowledge/i }));
-  await user.click(await within(tree).findByRole("treeitem", { name: /concepts/i }));
+  await user.click(
+    await within(tree).findByRole("treeitem", { name: /concepts/i }),
+  );
   return tree;
 }
 
-async function openPageFromTree(user: ReturnType<typeof userEvent.setup>, name: RegExp) {
+async function openPageFromTree(
+  user: ReturnType<typeof userEvent.setup>,
+  name: RegExp,
+) {
   const row = await screen.findByRole("treeitem", { name });
   await user.click(row);
 }
@@ -171,11 +185,21 @@ describe("WikiPageTree (3.1.1)", () => {
     render(<WikiTab projectId="p1" />);
 
     const tree = await screen.findByRole("tree", { name: /wiki pages/i });
-    expect(within(tree).getByRole("treeitem", { name: /knowledge/i })).toBeInTheDocument();
-    expect(within(tree).getByRole("treeitem", { name: /recaps/i })).toBeInTheDocument();
-    expect(within(tree).getByRole("treeitem", { name: /outputs/i })).toBeInTheDocument();
-    expect(within(tree).getByRole("treeitem", { name: /wiki index/i })).toBeInTheDocument();
-    expect(within(tree).queryByRole("treeitem", { name: /^code$/i })).not.toBeInTheDocument();
+    expect(
+      within(tree).getByRole("treeitem", { name: /knowledge/i }),
+    ).toBeInTheDocument();
+    expect(
+      within(tree).getByRole("treeitem", { name: /recaps/i }),
+    ).toBeInTheDocument();
+    expect(
+      within(tree).getByRole("treeitem", { name: /outputs/i }),
+    ).toBeInTheDocument();
+    expect(
+      within(tree).getByRole("treeitem", { name: /wiki index/i }),
+    ).toBeInTheDocument();
+    expect(
+      within(tree).queryByRole("treeitem", { name: /^code$/i }),
+    ).not.toBeInTheDocument();
   });
 
   it("collapses the sources folder by default and expands folders on click", async () => {
@@ -184,11 +208,12 @@ describe("WikiPageTree (3.1.1)", () => {
     render(<WikiTab projectId="p1" />);
 
     const tree = await expandToConcepts(user);
-    expect(await within(tree).findByRole("treeitem", { name: /sources/i })).toHaveAttribute(
-      "aria-expanded",
-      "false",
-    );
-    expect(await within(tree).findByRole("treeitem", { name: /^gobby$/i })).toBeInTheDocument();
+    expect(
+      await within(tree).findByRole("treeitem", { name: /sources/i }),
+    ).toHaveAttribute("aria-expanded", "false");
+    expect(
+      await within(tree).findByRole("treeitem", { name: /^gobby$/i }),
+    ).toBeInTheDocument();
   });
 
   it("colors page icons by kind from design tokens", async () => {
@@ -197,13 +222,17 @@ describe("WikiPageTree (3.1.1)", () => {
     render(<WikiTab projectId="p1" />);
 
     const tree = await expandToConcepts(user);
-    const conceptRow = await within(tree).findByRole("treeitem", { name: /^gobby$/i });
-    expect(within(conceptRow).getByTestId("wiki-kind-icon").style.color).toContain("--accent");
+    const conceptRow = await within(tree).findByRole("treeitem", {
+      name: /^gobby$/i,
+    });
+    expect(
+      within(conceptRow).getByTestId("wiki-kind-icon").style.color,
+    ).toContain("--accent");
 
     const folderRow = within(tree).getByRole("treeitem", { name: /recaps/i });
-    expect(within(folderRow).getByTestId("wiki-kind-icon").style.color).toContain(
-      "--lang-folder",
-    );
+    expect(
+      within(folderRow).getByTestId("wiki-kind-icon").style.color,
+    ).toContain("--lang-folder");
   });
 
   it("supports keyboard navigation with Enter opening the focused page", async () => {
@@ -212,21 +241,29 @@ describe("WikiPageTree (3.1.1)", () => {
     render(<WikiTab projectId="p1" />);
 
     const tree = await screen.findByRole("tree", { name: /wiki pages/i });
-    const knowledge = within(tree).getByRole("treeitem", { name: /knowledge/i });
+    const knowledge = within(tree).getByRole("treeitem", {
+      name: /knowledge/i,
+    });
     knowledge.focus();
     await user.keyboard("{ArrowRight}");
-    const concepts = await within(tree).findByRole("treeitem", { name: /concepts/i });
+    const concepts = await within(tree).findByRole("treeitem", {
+      name: /concepts/i,
+    });
     await user.keyboard("{ArrowDown}");
     // Roving focus lands via requestAnimationFrame — wait it out per key.
     await waitFor(() => expect(concepts).toHaveFocus());
     await user.keyboard("{ArrowRight}");
-    const gobby = await within(tree).findByRole("treeitem", { name: /^gobby$/i });
+    const gobby = await within(tree).findByRole("treeitem", {
+      name: /^gobby$/i,
+    });
     await user.keyboard("{ArrowDown}");
     await waitFor(() => expect(gobby).toHaveFocus());
     await user.keyboard("{Enter}");
 
     await waitFor(() =>
-      expect(screen.getByRole("heading", { name: "Gobby", level: 1 })).toBeInTheDocument(),
+      expect(
+        screen.getByRole("heading", { name: "Gobby", level: 1 }),
+      ).toBeInTheDocument(),
     );
   });
 
@@ -238,8 +275,12 @@ describe("WikiPageTree (3.1.1)", () => {
     await screen.findByRole("tree", { name: /wiki pages/i });
     await user.type(screen.getByRole("searchbox"), "guardrails");
 
-    const matches = await screen.findByRole("list", { name: /matching pages/i });
-    expect(within(matches).getByText("Contract guardrails")).toBeInTheDocument();
+    const matches = await screen.findByRole("list", {
+      name: /matching pages/i,
+    });
+    expect(
+      within(matches).getByText("Contract guardrails"),
+    ).toBeInTheDocument();
     expect(within(matches).queryByText("Gwiki")).not.toBeInTheDocument();
   });
 
@@ -256,12 +297,15 @@ describe("WikiPageTree (3.1.1)", () => {
       if (url.includes("/api/wiki/pages")) return jsonResponse(pagesEnvelope);
       if (url.includes("/api/wiki/status")) return jsonResponse(statusEnvelope);
       if (url.includes("/api/wiki/health")) return jsonResponse(healthEnvelope);
-      if (url.includes("/api/wiki/sources")) return jsonResponse(sourcesEnvelope);
+      if (url.includes("/api/wiki/sources"))
+        return jsonResponse(sourcesEnvelope);
       return jsonResponse({ ok: true, payload: {} });
     });
     await user.click(retry);
 
-    expect(await screen.findByRole("tree", { name: /wiki pages/i })).toBeInTheDocument();
+    expect(
+      await screen.findByRole("tree", { name: /wiki pages/i }),
+    ).toBeInTheDocument();
   });
 });
 
@@ -274,7 +318,9 @@ describe("WikiPageReader (3.1.2)", () => {
     await expandToConcepts(user);
     await openPageFromTree(user, /^gobby$/i);
 
-    expect(await screen.findByRole("heading", { name: "Gobby", level: 1 })).toBeInTheDocument();
+    expect(
+      await screen.findByRole("heading", { name: "Gobby", level: 1 }),
+    ).toBeInTheDocument();
     expect(screen.getByText("concept")).toBeInTheDocument();
     expect(screen.getByText("compiled")).toBeInTheDocument();
     expect(screen.getByText(/local-first daemon/)).toBeInTheDocument();
@@ -294,7 +340,9 @@ describe("WikiPageReader (3.1.2)", () => {
     expect(unresolved.className).toContain("wikilink--unresolved");
 
     await user.click(screen.getByRole("link", { name: "Gwiki" }));
-    expect(await screen.findByRole("heading", { name: "Gwiki", level: 1 })).toBeInTheDocument();
+    expect(
+      await screen.findByRole("heading", { name: "Gwiki", level: 1 }),
+    ).toBeInTheDocument();
     expect(readRequests(fetchMock)).toContain("knowledge/concepts/gwiki.md");
   });
 
@@ -317,7 +365,9 @@ describe("WikiPageReader (3.1.2)", () => {
   it("offers a match picker for ambiguous reads", async () => {
     stubBrowseFetch({
       readByPath: {
-        "knowledge/concepts/gobby.md": jsonResponse(browseAmbiguousReadEnvelope),
+        "knowledge/concepts/gobby.md": jsonResponse(
+          browseAmbiguousReadEnvelope,
+        ),
       },
     });
     const user = userEvent.setup();
@@ -326,7 +376,9 @@ describe("WikiPageReader (3.1.2)", () => {
     await expandToConcepts(user);
     await openPageFromTree(user, /^gobby$/i);
 
-    expect(await screen.findByText(/multiple pages match/i)).toBeInTheDocument();
+    expect(
+      await screen.findByText(/multiple pages match/i),
+    ).toBeInTheDocument();
     expect(
       screen.getByRole("button", { name: /src\/gobby\/runner\.py/i }),
     ).toBeInTheDocument();
@@ -357,16 +409,24 @@ describe("WikiBacklinks (3.1.3)", () => {
     await screen.findByRole("heading", { name: "Gobby", level: 1 });
 
     await user.click(screen.getByRole("button", { name: /linked mentions/i }));
-    const backlinks = await screen.findByRole("region", { name: /linked mentions/i });
-    expect(await within(backlinks).findByText("Contract guardrails")).toBeInTheDocument();
+    const backlinks = await screen.findByRole("region", {
+      name: /linked mentions/i,
+    });
+    expect(
+      await within(backlinks).findByText("Contract guardrails"),
+    ).toBeInTheDocument();
     expect(within(backlinks).getByText("2026-07-07")).toBeInTheDocument();
 
     expect(await screen.findByText(/unresolved mentions/i)).toBeInTheDocument();
-    expect(within(backlinks).getByRole("button", { name: "Gwiki" })).toBeInTheDocument();
+    expect(
+      within(backlinks).getByRole("button", { name: "Gwiki" }),
+    ).toBeInTheDocument();
 
     await user.click(within(backlinks).getByText("Contract guardrails"));
     await waitFor(() =>
-      expect(readRequests(fetchMock)).toContain("knowledge/topics/contract-guardrails.md"),
+      expect(readRequests(fetchMock)).toContain(
+        "knowledge/topics/contract-guardrails.md",
+      ),
     );
   });
 });
@@ -378,19 +438,25 @@ describe("Quick-open and history (3.1.4)", () => {
     render(<WikiTab projectId="p1" />);
 
     const tree = await screen.findByRole("tree", { name: /wiki pages/i });
-    within(tree).getByRole("treeitem", { name: /knowledge/i }).focus();
+    within(tree)
+      .getByRole("treeitem", { name: /knowledge/i })
+      .focus();
     await user.keyboard("{Meta>}k{/Meta}");
 
     const dialog = await screen.findByRole("dialog", { name: /quick open/i });
     await user.type(within(dialog).getByRole("combobox"), "gwi");
-    const resultCard = await within(dialog).findByRole("option", { name: /gwiki/i });
+    const resultCard = await within(dialog).findByRole("option", {
+      name: /gwiki/i,
+    });
     expect(resultCard).toHaveClass("border-border", "bg-background");
     await user.click(resultCard);
 
     await waitFor(() =>
       expect(readRequests(fetchMock)).toContain("knowledge/concepts/gwiki.md"),
     );
-    expect(screen.queryByRole("dialog", { name: /quick open/i })).not.toBeInTheDocument();
+    expect(
+      screen.queryByRole("dialog", { name: /quick open/i }),
+    ).not.toBeInTheDocument();
   });
 
   it("closes quick-open on Escape without navigating", async () => {
@@ -399,12 +465,16 @@ describe("Quick-open and history (3.1.4)", () => {
     render(<WikiTab projectId="p1" />);
 
     const tree = await screen.findByRole("tree", { name: /wiki pages/i });
-    within(tree).getByRole("treeitem", { name: /knowledge/i }).focus();
+    within(tree)
+      .getByRole("treeitem", { name: /knowledge/i })
+      .focus();
     await user.keyboard("{Meta>}k{/Meta}");
     await screen.findByRole("dialog", { name: /quick open/i });
     await user.keyboard("{Escape}");
 
-    expect(screen.queryByRole("dialog", { name: /quick open/i })).not.toBeInTheDocument();
+    expect(
+      screen.queryByRole("dialog", { name: /quick open/i }),
+    ).not.toBeInTheDocument();
     expect(readRequests(fetchMock)).toHaveLength(0);
   });
 
@@ -420,10 +490,14 @@ describe("Quick-open and history (3.1.4)", () => {
     await screen.findByRole("heading", { name: "Gwiki", level: 1 });
 
     await user.click(screen.getByRole("button", { name: /^back$/i }));
-    expect(await screen.findByRole("heading", { name: "Gobby", level: 1 })).toBeInTheDocument();
+    expect(
+      await screen.findByRole("heading", { name: "Gobby", level: 1 }),
+    ).toBeInTheDocument();
 
     await user.click(screen.getByRole("button", { name: /^forward$/i }));
-    expect(await screen.findByRole("heading", { name: "Gwiki", level: 1 })).toBeInTheDocument();
+    expect(
+      await screen.findByRole("heading", { name: "Gwiki", level: 1 }),
+    ).toBeInTheDocument();
   });
 
   it("blocks history transitions while a dirty guard declines", async () => {
@@ -447,6 +521,8 @@ describe("Quick-open and history (3.1.4)", () => {
     guard.isDirty = () => true;
     await user.click(screen.getByRole("button", { name: /^back$/i }));
     expect(confirmLeave).toHaveBeenCalledTimes(1);
-    expect(screen.getByRole("heading", { name: "Gwiki", level: 1 })).toBeInTheDocument();
+    expect(
+      screen.getByRole("heading", { name: "Gwiki", level: 1 }),
+    ).toBeInTheDocument();
   });
 });

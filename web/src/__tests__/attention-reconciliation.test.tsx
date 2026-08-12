@@ -15,7 +15,8 @@ vi.mock("../hooks/useWebSocketEvent", () => ({
   useWebSocketEvent: (eventType: string, handler: AgentEventHandler) => {
     if (eventType === "agent_event") {
       websocket.handler = handler;
-      if (!websocket.order.includes("subscribe")) websocket.order.push("subscribe");
+      if (!websocket.order.includes("subscribe"))
+        websocket.order.push("subscribe");
     }
   },
   useWebSocketConnected: () => websocket.connected,
@@ -36,7 +37,9 @@ function deferredResponse() {
   return { promise, resolve };
 }
 
-function attentionEvent(overrides: Record<string, unknown>): Record<string, unknown> {
+function attentionEvent(
+  overrides: Record<string, unknown>,
+): Record<string, unknown> {
   return {
     type: "agent_event",
     event: "attention_changed",
@@ -116,11 +119,15 @@ describe("useSessionAttention reconciliation", () => {
 
     expect(websocket.handler).not.toBeNull();
     await waitFor(() => expect(rosterRequests).toBe(1));
-    expect(websocket.order.indexOf("subscribe")).toBeLessThan(websocket.order.indexOf("roster-1"));
+    expect(websocket.order.indexOf("subscribe")).toBeLessThan(
+      websocket.order.indexOf("roster-1"),
+    );
 
     act(() => {
       websocket.handler?.(attentionEvent({ seq: 11 }));
-      websocket.handler?.(attentionEvent({ seq: 9, state: null, reason: null }));
+      websocket.handler?.(
+        attentionEvent({ seq: 9, state: null, reason: null }),
+      );
     });
     initialRoster.resolve(
       jsonResponse({

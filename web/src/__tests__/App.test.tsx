@@ -18,10 +18,16 @@ import { configurationClient } from "../api/config";
 const chatPagePropsSpy = vi.hoisted(() => vi.fn());
 const settingsOverlayRenderSpy = vi.hoisted(() => vi.fn());
 
-vi.mock('../components/settings/SettingsOverlay', () => ({
+vi.mock("../components/settings/SettingsOverlay", () => ({
   default: (props: Record<string, unknown>) => {
     settingsOverlayRenderSpy(props);
-    return <div role="dialog" aria-label="Settings overlay" data-testid="settings-overlay" />;
+    return (
+      <div
+        role="dialog"
+        aria-label="Settings overlay"
+        data-testid="settings-overlay"
+      />
+    );
   },
 }));
 
@@ -241,7 +247,11 @@ vi.mock("../hooks/useSessionCatalog", () => ({
 }));
 
 vi.mock("../hooks/useMcp", () => ({
-  useMcp: vi.fn(() => ({ servers: [], toolsByServer: {}, fetchToolSchema: vi.fn() })),
+  useMcp: vi.fn(() => ({
+    servers: [],
+    toolsByServer: {},
+    fetchToolSchema: vi.fn(),
+  })),
 }));
 
 vi.mock("../hooks/useSkills", () => ({
@@ -306,7 +316,9 @@ describe("App wiring", () => {
     configurationClient.reset();
     vi.clearAllMocks();
     vi.mocked(useChat).mockReturnValue(makeChatHookState() as never);
-    vi.mocked(useSessionCatalog).mockReturnValue(makeSessionCatalogState() as never);
+    vi.mocked(useSessionCatalog).mockReturnValue(
+      makeSessionCatalogState() as never,
+    );
     window.location.hash = "";
 
     const storage = new Map<string, string>();
@@ -330,21 +342,26 @@ describe("App wiring", () => {
     globalThis.fetch = vi.fn((_input: RequestInfo | URL, init?: RequestInit) =>
       Promise.resolve({
         ok: true,
-        json: () => Promise.resolve(init?.method === "PATCH" ? {
-          committed: true,
-          revision: 1,
-          changed_keys: [],
-          apply_status: "applied",
-          pending_restart_keys: [],
-          failed_live_keys: {},
-        } : {
-          revision: 0,
-          desired: { ui_settings: {} },
-          active: { ui_settings: {} },
-          secret_set: {},
-          pending_restart_keys: [],
-          failed_live_keys: {},
-        }),
+        json: () =>
+          Promise.resolve(
+            init?.method === "PATCH"
+              ? {
+                  committed: true,
+                  revision: 1,
+                  changed_keys: [],
+                  apply_status: "applied",
+                  pending_restart_keys: [],
+                  failed_live_keys: {},
+                }
+              : {
+                  revision: 0,
+                  desired: { ui_settings: {} },
+                  active: { ui_settings: {} },
+                  secret_set: {},
+                  pending_restart_keys: [],
+                  failed_live_keys: {},
+                },
+          ),
       } as Response),
     ) as unknown as typeof fetch;
   });
@@ -375,13 +392,17 @@ describe("App wiring", () => {
     };
 
     act(() => {
-      props.paletteActions?.find((action) => action.id === "settings")?.onSelect();
+      props.paletteActions
+        ?.find((action) => action.id === "settings")
+        ?.onSelect();
     });
 
     expect(await screen.findByTestId("settings-overlay")).toBeInTheDocument();
     expect(screen.getAllByTestId("settings-overlay")).toHaveLength(1);
     expect(settingsOverlayRenderSpy).toHaveBeenCalledOnce();
-    expect(screen.queryByRole("button", { name: "Reset to Defaults" })).toBeNull();
+    expect(
+      screen.queryByRole("button", { name: "Reset to Defaults" }),
+    ).toBeNull();
   });
 
   it("clears a requested activity tab before switching projects", async () => {
@@ -394,7 +415,9 @@ describe("App wiring", () => {
     });
 
     const currentProps = () =>
-      chatPagePropsSpy.mock.calls[chatPagePropsSpy.mock.calls.length - 1]?.[0] as {
+      chatPagePropsSpy.mock.calls[
+        chatPagePropsSpy.mock.calls.length - 1
+      ]?.[0] as {
         projectId: string;
         requestedActivityTab: string | null;
         chat: { onPaletteSelect: (item: unknown) => void };
@@ -438,14 +461,15 @@ describe("App wiring", () => {
       }
       return Promise.resolve({
         ok: true,
-        json: () => Promise.resolve({
-          committed: true,
-          revision: 2,
-          changed_keys: [],
-          apply_status: "applied",
-          pending_restart_keys: [],
-          failed_live_keys: {},
-        }),
+        json: () =>
+          Promise.resolve({
+            committed: true,
+            revision: 2,
+            changed_keys: [],
+            apply_status: "applied",
+            pending_restart_keys: [],
+            failed_live_keys: {},
+          }),
       } as Response);
     }) as unknown as typeof fetch;
 
@@ -460,14 +484,15 @@ describe("App wiring", () => {
     await act(async () => {
       resolveSettings?.({
         ok: true,
-        json: () => Promise.resolve({
-          revision: 1,
-          desired: { ui_settings: { selectedProjectId: "personal" } },
-          active: { ui_settings: { selectedProjectId: "personal" } },
-          secret_set: {},
-          pending_restart_keys: [],
-          failed_live_keys: {},
-        }),
+        json: () =>
+          Promise.resolve({
+            revision: 1,
+            desired: { ui_settings: { selectedProjectId: "personal" } },
+            active: { ui_settings: { selectedProjectId: "personal" } },
+            secret_set: {},
+            pending_restart_keys: [],
+            failed_live_keys: {},
+          }),
       } as Response);
     });
 
@@ -513,32 +538,36 @@ describe("App wiring", () => {
       setSelectedProvider,
     };
     vi.mocked(useChat).mockReturnValue(chatState as never);
-    const fetchMock = vi.fn((_url: string | URL | Request, init?: RequestInit) => {
-      if (!init) {
+    const fetchMock = vi.fn(
+      (_url: string | URL | Request, init?: RequestInit) => {
+        if (!init) {
+          return Promise.resolve({
+            ok: true,
+            json: () =>
+              Promise.resolve({
+                revision: 3,
+                desired: { ui_settings: { selectedProvider: "codex" } },
+                active: { ui_settings: { selectedProvider: "codex" } },
+                secret_set: {},
+                pending_restart_keys: [],
+                failed_live_keys: {},
+              }),
+          } as Response);
+        }
         return Promise.resolve({
           ok: true,
-          json: () => Promise.resolve({
-            revision: 3,
-            desired: { ui_settings: { selectedProvider: "codex" } },
-            active: { ui_settings: { selectedProvider: "codex" } },
-            secret_set: {},
-            pending_restart_keys: [],
-            failed_live_keys: {},
-          }),
+          json: () =>
+            Promise.resolve({
+              committed: true,
+              revision: 4,
+              changed_keys: ["ui_settings.selectedProvider"],
+              apply_status: "applied",
+              pending_restart_keys: [],
+              failed_live_keys: {},
+            }),
         } as Response);
-      }
-      return Promise.resolve({
-        ok: true,
-        json: () => Promise.resolve({
-          committed: true,
-          revision: 4,
-          changed_keys: ["ui_settings.selectedProvider"],
-          apply_status: "applied",
-          pending_restart_keys: [],
-          failed_live_keys: {},
-        }),
-      } as Response);
-    });
+      },
+    );
     globalThis.fetch = fetchMock as unknown as typeof fetch;
 
     const { rerender } = render(<App />);
@@ -561,7 +590,9 @@ describe("App wiring", () => {
           method: "PATCH",
         }),
       );
-      const patchCall = fetchMock.mock.calls.find(([, init]) => init?.method === "PATCH");
+      const patchCall = fetchMock.mock.calls.find(
+        ([, init]) => init?.method === "PATCH",
+      );
       expect(JSON.parse(String(patchCall?.[1]?.body))).toMatchObject({
         expected_revision: 3,
         values: { ui_settings: { selectedProvider: "qwen" } },
@@ -896,14 +927,22 @@ describe("App wiring", () => {
         render(<App />);
       });
 
-      const logoutButton = await screen.findByRole("button", { name: "Log out" });
-      expect(logoutButton).toHaveClass("w-8", "shrink-0", "pointer-coarse:before:min-w-11");
+      const logoutButton = await screen.findByRole("button", {
+        name: "Log out",
+      });
+      expect(logoutButton).toHaveClass(
+        "w-8",
+        "shrink-0",
+        "pointer-coarse:before:min-w-11",
+      );
       expect(logoutButton).not.toHaveClass(
         "app-logout-btn",
         "pointer-coarse:min-h-11",
         "pointer-coarse:min-w-11",
       );
-      expect(document.querySelector('[aria-label="Toggle navigation menu"]')).toBeNull();
+      expect(
+        document.querySelector('[aria-label="Toggle navigation menu"]'),
+      ).toBeNull();
 
       await act(async () => {
         fireEvent.click(logoutButton);
@@ -1094,7 +1133,11 @@ describe("App wiring", () => {
     expect(props.chat.dbSessionId).toBe("web-main");
     expect(props.chat.viewingSessionId).toBe("terminal-1");
     expect(props.conversations.activeSessionId).toBe("web-main");
-    expect(props.allProjectSessions.map((session) => session.id)).toContain("web-main");
-    expect(props.activitySessions.map((session) => session.id)).toContain("web-main");
+    expect(props.allProjectSessions.map((session) => session.id)).toContain(
+      "web-main",
+    );
+    expect(props.activitySessions.map((session) => session.id)).toContain(
+      "web-main",
+    );
   });
 });

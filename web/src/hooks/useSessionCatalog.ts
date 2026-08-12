@@ -57,7 +57,9 @@ async function fetchSessionPage(
   }
   const data = await response.json();
   const sessions: GobbySession[] = Array.isArray(data.sessions)
-    ? data.sessions.filter((session: GobbySession) => session.status !== "deleted")
+    ? data.sessions.filter(
+        (session: GobbySession) => session.status !== "deleted",
+      )
     : [];
   const next: SessionCursor | null =
     data.next_cursor && typeof data.next_cursor === "object"
@@ -121,7 +123,11 @@ export function useSessionCatalog(
     setIsLoading(true);
     setError(null);
     try {
-      const result = await fetchSessionPage(currentProjectId, filtersRef.current, null);
+      const result = await fetchSessionPage(
+        currentProjectId,
+        filtersRef.current,
+        null,
+      );
       setSessions((prev) =>
         fetchGenerationRef.current === currentGeneration &&
         projectIdRef.current === currentProjectId
@@ -163,7 +169,11 @@ export function useSessionCatalog(
     const currentGeneration = fetchGenerationRef.current;
     if (!currentProjectId) return;
     try {
-      const result = await fetchSessionPage(currentProjectId, filtersRef.current, null);
+      const result = await fetchSessionPage(
+        currentProjectId,
+        filtersRef.current,
+        null,
+      );
       setSessions((prev) => {
         if (
           fetchGenerationRef.current !== currentGeneration ||
@@ -230,35 +240,41 @@ export function useSessionCatalog(
 
   useWebSocketEvent(
     "session_event",
-    useCallback((data: Record<string, unknown>) => {
-      // Patch the local catalog optimistically for status-changing events.
-      // refreshPageOne fetches with the active filter (e.g. Live = active+paused),
-      // so an expired/deleted session isn't returned and the merge preserves
-      // its stale prev row — Live view keeps showing the row with status:active
-      // until the user reloads. Patch in place so client-side filters drop it.
-      const event = typeof data.event === "string" ? data.event : null;
-      const sessionId = typeof data.session_id === "string" ? data.session_id : null;
-      if (sessionId) {
-        if (event === "session_expired") {
-          setSessions((prev) =>
-            prev.map((session) =>
-              session.id === sessionId
-                ? { ...session, status: "expired" }
-                : session,
-            ),
-          );
-        } else if (event === "session_deleted") {
-          setSessions((prev) => prev.filter((session) => session.id !== sessionId));
+    useCallback(
+      (data: Record<string, unknown>) => {
+        // Patch the local catalog optimistically for status-changing events.
+        // refreshPageOne fetches with the active filter (e.g. Live = active+paused),
+        // so an expired/deleted session isn't returned and the merge preserves
+        // its stale prev row — Live view keeps showing the row with status:active
+        // until the user reloads. Patch in place so client-side filters drop it.
+        const event = typeof data.event === "string" ? data.event : null;
+        const sessionId =
+          typeof data.session_id === "string" ? data.session_id : null;
+        if (sessionId) {
+          if (event === "session_expired") {
+            setSessions((prev) =>
+              prev.map((session) =>
+                session.id === sessionId
+                  ? { ...session, status: "expired" }
+                  : session,
+              ),
+            );
+          } else if (event === "session_deleted") {
+            setSessions((prev) =>
+              prev.filter((session) => session.id !== sessionId),
+            );
+          }
         }
-      }
-      if (debouncedRefetchRef.current) {
-        window.clearTimeout(debouncedRefetchRef.current);
-      }
-      debouncedRefetchRef.current = window.setTimeout(
-        () => void refreshPageOne(),
-        REFETCH_DEBOUNCE_MS,
-      );
-    }, [refreshPageOne]),
+        if (debouncedRefetchRef.current) {
+          window.clearTimeout(debouncedRefetchRef.current);
+        }
+        debouncedRefetchRef.current = window.setTimeout(
+          () => void refreshPageOne(),
+          REFETCH_DEBOUNCE_MS,
+        );
+      },
+      [refreshPageOne],
+    ),
   );
 
   // Coalesce session_usage_updated bursts into one render per animation frame.
@@ -266,7 +282,9 @@ export function useSessionCatalog(
   // batched over Tailscale; without coalescing each event re-maps the whole list
   // and re-renders. Accumulate the latest snapshot per session id, then apply
   // them all in a single setSessions on the next frame.
-  const pendingUsageRef = useRef<Map<string, Record<string, unknown>>>(new Map());
+  const pendingUsageRef = useRef<Map<string, Record<string, unknown>>>(
+    new Map(),
+  );
   const usageFrameRef = useRef<number | null>(null);
 
   useEffect(
@@ -323,7 +341,8 @@ export function useSessionCatalog(
     "session_usage_updated",
     useCallback(
       (data: Record<string, unknown>) => {
-        const sessionId = typeof data.session_id === "string" ? data.session_id : null;
+        const sessionId =
+          typeof data.session_id === "string" ? data.session_id : null;
         if (!sessionId) {
           return;
         }
@@ -347,7 +366,9 @@ export function useSessionCatalog(
         const aSeq = a.seq_num ?? -Infinity;
         const bSeq = b.seq_num ?? -Infinity;
         if (aSeq !== bSeq) return bSeq - aSeq;
-        return new Date(b.created_at).getTime() - new Date(a.created_at).getTime();
+        return (
+          new Date(b.created_at).getTime() - new Date(a.created_at).getTime()
+        );
       }),
     [sessions],
   );
@@ -362,7 +383,11 @@ export function useSessionCatalog(
     if (!currentProjectId) return;
     setIsLoadingMore(true);
     try {
-      const result = await fetchSessionPage(currentProjectId, filtersRef.current, cursor);
+      const result = await fetchSessionPage(
+        currentProjectId,
+        filtersRef.current,
+        cursor,
+      );
       setSessions((prev) => {
         // Append, but de-dupe by id in case a session moved between pages
         // due to an updated_at change between page-1 fetch and this fetch.

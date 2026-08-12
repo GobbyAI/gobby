@@ -32,7 +32,7 @@ export function MetaKVRow({
   title?: string;
 }) {
   const valueCls = cn(
-    "min-w-0 text-[length:var(--text-sm)] leading-[1.45] text-[var(--text-secondary)] [overflow-wrap:anywhere]",
+    "min-w-0 text-[length:var(--text-sm)] leading-[1.45] [overflow-wrap:anywhere] text-[var(--text-secondary)]",
     mono && "font-mono text-[length:var(--text-xs)]",
     link &&
       href &&
@@ -71,12 +71,16 @@ export function ValidationRow({
   failCount: number;
 }) {
   const normalized = status.trim().toLowerCase();
-  const variant: ValidationStatus =
-    ["pass", "passed", "approve", "approved"].includes(normalized)
-      ? "ok"
-      : ["fail", "failed", "reject", "rejected"].includes(normalized)
-        ? "fail"
-        : "neutral";
+  const variant: ValidationStatus = [
+    "pass",
+    "passed",
+    "approve",
+    "approved",
+  ].includes(normalized)
+    ? "ok"
+    : ["fail", "failed", "reject", "rejected"].includes(normalized)
+      ? "fail"
+      : "neutral";
   return (
     <div
       className="grid grid-cols-[minmax(0,6.5rem)_minmax(0,1fr)] items-center gap-[0.85rem] border-b border-border bg-[var(--bg-primary)] px-4 py-[0.65rem]"
@@ -89,7 +93,7 @@ export function ValidationRow({
       <span className="flex min-w-0 items-center gap-2">
         <span
           className={cn(
-            "inline-flex h-6 items-center gap-[0.3rem] whitespace-nowrap rounded-full border border-border bg-[var(--bg-tertiary)] px-[0.55rem] text-[length:var(--text-2xs)] font-medium tracking-[0.02em] text-[var(--text-secondary)] capitalize",
+            "inline-flex h-6 items-center gap-[0.3rem] rounded-full border border-border bg-[var(--bg-tertiary)] px-[0.55rem] text-[length:var(--text-2xs)] font-medium tracking-[0.02em] whitespace-nowrap text-[var(--text-secondary)] capitalize",
             variant === "ok" &&
               "border-[color-mix(in_srgb,var(--color-success-foreground)_35%,transparent)] bg-[var(--color-success-soft)] text-[var(--color-success-foreground)]",
             variant === "fail" &&
@@ -124,7 +128,7 @@ export function ParentKVRow({
       <span className="text-[length:var(--text-sm)] font-[var(--font-weight-medium)] text-[var(--text-muted)]">
         Parent
       </span>
-      <span className="min-w-0 text-[length:var(--text-sm)] leading-[1.45] text-[var(--text-secondary)] [overflow-wrap:anywhere]">
+      <span className="min-w-0 text-[length:var(--text-sm)] leading-[1.45] [overflow-wrap:anywhere] text-[var(--text-secondary)]">
         {handleClick ? (
           <Button
             type="button"
@@ -140,18 +144,14 @@ export function ParentKVRow({
             <span className="shrink-0 font-mono text-[length:var(--text-sm)] font-semibold text-accent">
               {parent.ref}
             </span>
-            <span className="whitespace-normal">
-              {parent.title}
-            </span>
+            <span className="whitespace-normal">{parent.title}</span>
           </Button>
         ) : (
           <>
             <span className="shrink-0 font-mono text-[length:var(--text-sm)] font-semibold text-accent">
               {parent.ref}
             </span>{" "}
-            <span className="whitespace-normal">
-              {parent.title}
-            </span>
+            <span className="whitespace-normal">{parent.title}</span>
           </>
         )}
       </span>

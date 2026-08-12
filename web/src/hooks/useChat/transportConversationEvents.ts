@@ -25,7 +25,8 @@ function isApprovalOption(value: unknown): value is ApprovalOption {
   return (
     typeof option.id === "string" &&
     typeof option.label === "string" &&
-    (option.description === undefined || typeof option.description === "string") &&
+    (option.description === undefined ||
+      typeof option.description === "string") &&
     (decision === undefined || decision === "approve") &&
     (emphasis === undefined || emphasis === "primary" || emphasis === "accent")
   );
@@ -40,7 +41,9 @@ function readNullableString(
   return undefined;
 }
 
-function readSessionTitle(data: Record<string, unknown>): string | null | undefined {
+function readSessionTitle(
+  data: Record<string, unknown>,
+): string | null | undefined {
   const explicit = readNullableString(data, "session_title");
   return explicit !== undefined ? explicit : readNullableString(data, "title");
 }
@@ -287,7 +290,8 @@ export function handleSessionContinued(
     return;
   }
   ctx.clearContinuingSession();
-  const nextConversationId = (data.conversation_id as string | undefined) ?? null;
+  const nextConversationId =
+    (data.conversation_id as string | undefined) ?? null;
   const nextDbSessionId = (data.db_session_id as string) ?? null;
   if (
     nextConversationId &&

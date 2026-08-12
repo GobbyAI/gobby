@@ -1,21 +1,31 @@
-import type { ReactNode } from 'react'
-import { NumberField, SecretField, SwitchField, TextAreaField, TextField } from '../../activity/fields'
-import type { FieldOption } from '../../activity/fields'
+import type { ReactNode } from "react";
+import {
+  NumberField,
+  SecretField,
+  SwitchField,
+  TextAreaField,
+  TextField,
+} from "../../activity/fields";
+import type { FieldOption } from "../../activity/fields";
 import {
   BoundedSelectField,
   KeyValueMapField,
   StringListField,
   TypedListField,
-} from '../fields'
-import { enumOptionsAt, numberBoundsAt, resolveSchemaNode } from '../configSchema'
-import type { SettingsSectionFields } from './SettingsSection'
+} from "../fields";
+import {
+  enumOptionsAt,
+  numberBoundsAt,
+  resolveSchemaNode,
+} from "../configSchema";
+import type { SettingsSectionFields } from "./SettingsSection";
 import {
   asMap,
   asNumber,
   asString,
   asStringList,
   asTypedList,
-} from './configAccessors'
+} from "./configAccessors";
 
 /**
  * Shared field wrappers for config-backed settings sections. Every section that
@@ -34,14 +44,14 @@ export function Subsection({
   hint,
   children,
 }: {
-  title: string
-  hint?: string
-  children: ReactNode
+  title: string;
+  hint?: string;
+  children: ReactNode;
 }) {
   return (
     <section className="flex flex-col gap-4">
       <div className="flex flex-col gap-1">
-        <h4 className="text-base font-semibold leading-[1.3] text-foreground">
+        <h4 className="text-base leading-[1.3] font-semibold text-foreground">
           {title}
         </h4>
         {hint ? (
@@ -52,26 +62,26 @@ export function Subsection({
       </div>
       {children}
     </section>
-  )
+  );
 }
 
 interface ConfigFieldBase {
-  fields: SettingsSectionFields
-  path: string
-  label: string
-  ariaLabel: string
-  managedAction?: (value: unknown) => void
+  fields: SettingsSectionFields;
+  path: string;
+  label: string;
+  ariaLabel: string;
+  managedAction?: (value: unknown) => void;
 }
 
 function activationAt(fields: SettingsSectionFields, path: string): string {
-  const activation = resolveSchemaNode(fields.schema, path)?.activation
-  return typeof activation === 'string' ? activation : 'live'
+  const activation = resolveSchemaNode(fields.schema, path)?.activation;
+  return typeof activation === "string" ? activation : "live";
 }
 
 function displayValue(value: unknown): string {
-  if (typeof value === 'string') return value
-  if (value === undefined) return 'unset'
-  return JSON.stringify(value)
+  if (typeof value === "string") return value;
+  if (value === undefined) return "unset";
+  return JSON.stringify(value);
 }
 
 function updateConfigField(
@@ -80,11 +90,11 @@ function updateConfigField(
   value: unknown,
   managedAction?: (value: unknown) => void,
 ): void {
-  if (activationAt(fields, path) === 'managed') {
-    managedAction?.(value)
-    return
+  if (activationAt(fields, path) === "managed") {
+    managedAction?.(value);
+    return;
   }
-  fields.setValue(path, value)
+  fields.setValue(path, value);
 }
 
 function ConfigFieldState({
@@ -92,26 +102,34 @@ function ConfigFieldState({
   path,
   children,
 }: {
-  fields: SettingsSectionFields
-  path: string
-  children: ReactNode
+  fields: SettingsSectionFields;
+  path: string;
+  children: ReactNode;
 }) {
-  const activation = activationAt(fields, path)
-  const pending = fields.pendingRestartKeys?.includes(path) === true
-  const failure = fields.failedLiveKeys?.[path]
+  const activation = activationAt(fields, path);
+  const pending = fields.pendingRestartKeys?.includes(path) === true;
+  const failure = fields.failedLiveKeys?.[path];
   // A freshly typed secret sits unmasked in the draft until save; the status
   // strip must never echo it (or the stored active value) in plaintext.
-  const secret = fields.secretKeys.includes(path)
-    || resolveSchemaNode(fields.schema, path)?.secrecy === 'reference'
+  const secret =
+    fields.secretKeys.includes(path) ||
+    resolveSchemaNode(fields.schema, path)?.secrecy === "reference";
   const statusValue = (value: unknown): string =>
-    secret && value !== undefined && value !== null ? '********' : displayValue(value)
-  const label = activation === 'restart_required'
-    ? 'Restart required'
-    : activation === 'managed'
-      ? 'Managed activation'
-      : 'Live activation'
+    secret && value !== undefined && value !== null
+      ? "********"
+      : displayValue(value);
+  const label =
+    activation === "restart_required"
+      ? "Restart required"
+      : activation === "managed"
+        ? "Managed activation"
+        : "Live activation";
   return (
-    <div className="settings-config-field" data-activation={activation} data-config-path={path}>
+    <div
+      className="settings-config-field"
+      data-activation={activation}
+      data-config-path={path}
+    >
       {children}
       <div className="settings-config-field__status">
         <span>{label}</span>
@@ -123,12 +141,13 @@ function ConfigFieldState({
         ) : null}
         {failure ? (
           <span role="status">
-            Live apply failed in {failure.subscriber} at revision {failure.revision}
+            Live apply failed in {failure.subscriber} at revision{" "}
+            {failure.revision}
           </span>
         ) : null}
       </div>
     </div>
-  )
+  );
 }
 
 /** A boolean config row backed by a toggle. */
@@ -145,10 +164,12 @@ export function SwitchConfigField({
         label={label}
         ariaLabel={ariaLabel}
         value={fields.getValue(path) === true}
-        onChange={(value) => updateConfigField(fields, path, value, managedAction)}
+        onChange={(value) =>
+          updateConfigField(fields, path, value, managedAction)
+        }
       />
     </ConfigFieldState>
-  )
+  );
 }
 
 /** A numeric config row whose min/max come from the daemon schema. */
@@ -160,7 +181,7 @@ export function NumberConfigField({
   step,
   managedAction,
 }: ConfigFieldBase & { step?: number }) {
-  const bounds = numberBoundsAt(fields.schema, path)
+  const bounds = numberBoundsAt(fields.schema, path);
   return (
     <ConfigFieldState fields={fields} path={path}>
       <NumberField
@@ -170,11 +191,13 @@ export function NumberConfigField({
         min={bounds.min}
         max={bounds.max}
         step={step}
-        disabled={activationAt(fields, path) === 'managed' && !managedAction}
-        onChange={(value) => updateConfigField(fields, path, value, managedAction)}
+        disabled={activationAt(fields, path) === "managed" && !managedAction}
+        onChange={(value) =>
+          updateConfigField(fields, path, value, managedAction)
+        }
       />
     </ConfigFieldState>
-  )
+  );
 }
 
 /**
@@ -197,16 +220,18 @@ export function TextConfigField({
         ariaLabel={ariaLabel}
         value={asString(fields.getValue(path))}
         placeholder={placeholder}
-        disabled={activationAt(fields, path) === 'managed' && !managedAction}
-        onChange={(value) => updateConfigField(
-          fields,
-          path,
-          nullable && value === '' ? null : value,
-          managedAction,
-        )}
+        disabled={activationAt(fields, path) === "managed" && !managedAction}
+        onChange={(value) =>
+          updateConfigField(
+            fields,
+            path,
+            nullable && value === "" ? null : value,
+            managedAction,
+          )
+        }
       />
     </ConfigFieldState>
-  )
+  );
 }
 
 /**
@@ -232,15 +257,17 @@ export function SecretConfigField({
         ariaLabel={ariaLabel}
         value={asString(fields.getValue(path))}
         placeholder={placeholder}
-        onChange={(value) => updateConfigField(
-          fields,
-          path,
-          nullable && value === '' ? null : value,
-          managedAction,
-        )}
+        onChange={(value) =>
+          updateConfigField(
+            fields,
+            path,
+            nullable && value === "" ? null : value,
+            managedAction,
+          )
+        }
       />
     </ConfigFieldState>
-  )
+  );
 }
 
 /** A select whose options are the schema enum at `path` (resolved through $ref). */
@@ -258,10 +285,12 @@ export function SchemaSelectField({
         ariaLabel={ariaLabel}
         value={asString(fields.getValue(path))}
         options={enumOptionsAt(fields.schema, path)}
-        onChange={(value) => updateConfigField(fields, path, value, managedAction)}
+        onChange={(value) =>
+          updateConfigField(fields, path, value, managedAction)
+        }
       />
     </ConfigFieldState>
-  )
+  );
 }
 
 /**
@@ -285,10 +314,12 @@ export function OptionsSelectField({
         ariaLabel={ariaLabel}
         value={asString(fields.getValue(path))}
         options={options}
-        onChange={(value) => updateConfigField(fields, path, value, managedAction)}
+        onChange={(value) =>
+          updateConfigField(fields, path, value, managedAction)
+        }
       />
     </ConfigFieldState>
-  )
+  );
 }
 
 /**
@@ -305,7 +336,11 @@ export function TextAreaConfigField({
   nullable,
   rows,
   managedAction,
-}: ConfigFieldBase & { placeholder?: string; nullable?: boolean; rows?: number }) {
+}: ConfigFieldBase & {
+  placeholder?: string;
+  nullable?: boolean;
+  rows?: number;
+}) {
   return (
     <ConfigFieldState fields={fields} path={path}>
       <TextAreaField
@@ -314,15 +349,17 @@ export function TextAreaConfigField({
         value={asString(fields.getValue(path))}
         placeholder={placeholder}
         rows={rows}
-        onChange={(value) => updateConfigField(
-          fields,
-          path,
-          nullable && value === '' ? null : value,
-          managedAction,
-        )}
+        onChange={(value) =>
+          updateConfigField(
+            fields,
+            path,
+            nullable && value === "" ? null : value,
+            managedAction,
+          )
+        }
       />
     </ConfigFieldState>
-  )
+  );
 }
 
 /**
@@ -347,10 +384,12 @@ export function MapConfigField({
         value={asMap<string>(fields.getValue(path))}
         addLabel={addLabel}
         keyPlaceholder={keyPlaceholder}
-        onChange={(value) => updateConfigField(fields, path, value, managedAction)}
+        onChange={(value) =>
+          updateConfigField(fields, path, value, managedAction)
+        }
       />
     </ConfigFieldState>
-  )
+  );
 }
 
 /**
@@ -371,10 +410,10 @@ export function ListMapConfigField({
   managedAction,
 }: ConfigFieldBase & {
   /** Label for each entry's nested string-list editor (its group name). */
-  valueLabel: string
-  addLabel?: string
-  keyPlaceholder?: string
-  itemAddLabel?: string
+  valueLabel: string;
+  addLabel?: string;
+  keyPlaceholder?: string;
+  itemAddLabel?: string;
 }) {
   return (
     <ConfigFieldState fields={fields} path={path}>
@@ -388,16 +427,18 @@ export function ListMapConfigField({
         renderValue={(value, onValueChange, key) => (
           <StringListField
             label={valueLabel}
-            ariaLabel={`${ariaLabel} ${key || 'new entry'} values`}
+            ariaLabel={`${ariaLabel} ${key || "new entry"} values`}
             value={asStringList(value)}
             addLabel={itemAddLabel}
             onChange={onValueChange}
           />
         )}
-        onChange={(value) => updateConfigField(fields, path, value, managedAction)}
+        onChange={(value) =>
+          updateConfigField(fields, path, value, managedAction)
+        }
       />
     </ConfigFieldState>
-  )
+  );
 }
 
 /**
@@ -421,18 +462,20 @@ export function NumberListConfigField({
         value={asTypedList<number>(fields.getValue(path))}
         addLabel={addLabel}
         createItem={() => 0}
-        onChange={(value) => updateConfigField(fields, path, value, managedAction)}
+        onChange={(value) =>
+          updateConfigField(fields, path, value, managedAction)
+        }
         renderItem={(item, onItemChange, index) => (
           <NumberField
             label=""
             ariaLabel={`${ariaLabel} item ${index + 1}`}
-            value={typeof item === 'number' ? item : null}
+            value={typeof item === "number" ? item : null}
             onChange={(next) => onItemChange(next ?? 0)}
           />
         )}
       />
     </ConfigFieldState>
-  )
+  );
 }
 
 /**
@@ -462,15 +505,17 @@ export function NumberMapConfigField({
         renderValue={(value, onValueChange, key) => (
           <NumberField
             label=""
-            ariaLabel={`${ariaLabel} ${key || 'new entry'} value`}
+            ariaLabel={`${ariaLabel} ${key || "new entry"} value`}
             value={asNumber(value)}
             onChange={(next) => onValueChange(next ?? 0)}
           />
         )}
-        onChange={(value) => updateConfigField(fields, path, value, managedAction)}
+        onChange={(value) =>
+          updateConfigField(fields, path, value, managedAction)
+        }
       />
     </ConfigFieldState>
-  )
+  );
 }
 
 /** A list-of-strings config row. */
@@ -491,8 +536,10 @@ export function StringListConfigField({
         value={asStringList(fields.getValue(path))}
         addLabel={addLabel}
         placeholder={placeholder}
-        onChange={(value) => updateConfigField(fields, path, value, managedAction)}
+        onChange={(value) =>
+          updateConfigField(fields, path, value, managedAction)
+        }
       />
     </ConfigFieldState>
-  )
+  );
 }

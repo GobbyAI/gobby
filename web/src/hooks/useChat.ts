@@ -662,7 +662,6 @@ export function useChat({ connectionEnabled = true }: UseChatOptions = {}) {
     ]);
   }, []);
 
-
   useChatLifecycle({
     applyMainSessionMeta,
     bindActiveSession,

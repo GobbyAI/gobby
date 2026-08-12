@@ -1,8 +1,8 @@
-import { useState } from 'react'
-import { DetailActionButton, TextField } from '../../activity/fields'
-import { TypedListField } from '../fields'
-import { SettingsSection, type SettingsSectionFields } from './SettingsSection'
-import { useSettingsSectionContext } from './SettingsSectionContext'
+import { useState } from "react";
+import { DetailActionButton, TextField } from "../../activity/fields";
+import { TypedListField } from "../fields";
+import { SettingsSection, type SettingsSectionFields } from "./SettingsSection";
+import { useSettingsSectionContext } from "./SettingsSectionContext";
 import {
   NumberConfigField,
   OptionsSelectField,
@@ -11,8 +11,8 @@ import {
   Subsection,
   SwitchConfigField,
   TextConfigField,
-} from './configFields'
-import { asString, asTypedList } from './configAccessors'
+} from "./configFields";
+import { asString, asTypedList } from "./configAccessors";
 
 /**
  * Memory & Knowledge settings section: the persistent memory store, its
@@ -31,90 +31,90 @@ import { asString, asTypedList } from './configAccessors'
  */
 
 const MEMORY_PATHS = [
-  'memory.enabled',
-  'memory.backend',
-  'memory.auto_crossref',
-  'memory.crossref_threshold',
-  'memory.crossref_max_links',
-  'memory.access_debounce_seconds',
-  'memory.code_link_min_score',
-  'memory.temporal_decay_half_life_days',
-  'memory.min_recall_score',
-  'memory.graph_edge_weighting',
-  'memory.materialize_cooccurrence',
-  'memory.graph_edge_decay',
-  'memory.edge_half_life_days',
-  'memory.recall_signal_logging',
-  'memory.recall_signal_log_path',
-  'memory.kg.profile',
-  'memory.kg.candidates',
-  'memory.dream.profile',
-  'memory.dream.candidates',
-  'memory.dream.enabled',
-  'memory.dream.schedule_cron',
-  'memory.dream.prompt_path',
-  'memory.dream.max_tokens',
-  'memory.dream.max_runtime_seconds',
-  'memory.dream.work_unit_timeout_seconds',
-  'memory.dream.evidence_channel_timeout_seconds',
-  'memory.dream.evidence_retry_attempts',
-  'memory.dream.evidence_phase_timeout_seconds',
-  'memory.dream.min_action_confidence',
-  'memory.dream.min_delete_confidence',
-  'memory.dream.include_global_memories',
-  'memory.dream.reconcile_after_apply',
-  'memory.dream.reconcile_after_revert',
-] as const
+  "memory.enabled",
+  "memory.backend",
+  "memory.auto_crossref",
+  "memory.crossref_threshold",
+  "memory.crossref_max_links",
+  "memory.access_debounce_seconds",
+  "memory.code_link_min_score",
+  "memory.temporal_decay_half_life_days",
+  "memory.min_recall_score",
+  "memory.graph_edge_weighting",
+  "memory.materialize_cooccurrence",
+  "memory.graph_edge_decay",
+  "memory.edge_half_life_days",
+  "memory.recall_signal_logging",
+  "memory.recall_signal_log_path",
+  "memory.kg.profile",
+  "memory.kg.candidates",
+  "memory.dream.profile",
+  "memory.dream.candidates",
+  "memory.dream.enabled",
+  "memory.dream.schedule_cron",
+  "memory.dream.prompt_path",
+  "memory.dream.max_tokens",
+  "memory.dream.max_runtime_seconds",
+  "memory.dream.work_unit_timeout_seconds",
+  "memory.dream.evidence_channel_timeout_seconds",
+  "memory.dream.evidence_retry_attempts",
+  "memory.dream.evidence_phase_timeout_seconds",
+  "memory.dream.min_action_confidence",
+  "memory.dream.min_delete_confidence",
+  "memory.dream.include_global_memories",
+  "memory.dream.reconcile_after_apply",
+  "memory.dream.reconcile_after_revert",
+] as const;
 
 const RECALL_PATHS = [
-  'memory_recall.profile',
-  'memory_recall.candidates',
-  'memory_recall.enabled',
-  'memory_recall.timeout',
-  'memory_recall.candidate_limit',
-  'memory_recall.selected_limit',
-  'memory_recall.min_score',
-  'memory_recall.query_synthesis_threshold',
-  'memory_recall.query_max_chars',
-] as const
+  "memory_recall.profile",
+  "memory_recall.candidates",
+  "memory_recall.enabled",
+  "memory_recall.timeout",
+  "memory_recall.candidate_limit",
+  "memory_recall.selected_limit",
+  "memory_recall.min_score",
+  "memory_recall.query_synthesis_threshold",
+  "memory_recall.query_max_chars",
+] as const;
 
 const EMBEDDINGS_PATHS = [
-  'ai.embeddings.model',
-  'ai.embeddings.dim',
-  'ai.embeddings.api_base',
-  'ai.embeddings.query_prefix',
-  'ai.embeddings.catalog_key',
-] as const
+  "ai.embeddings.model",
+  "ai.embeddings.dim",
+  "ai.embeddings.api_base",
+  "ai.embeddings.query_prefix",
+  "ai.embeddings.catalog_key",
+] as const;
 
 const DATABASE_PATHS = [
-  'databases.qdrant.url',
-  'databases.qdrant.port',
-  'databases.qdrant.collection_prefix',
-  'databases.falkordb.host',
-  'databases.falkordb.port',
-  'databases.falkordb.graph_name',
-  'databases.falkordb.graph_search',
-  'databases.falkordb.graph_min_score',
-  'databases.falkordb.rrf_k',
-] as const
+  "databases.qdrant.url",
+  "databases.qdrant.port",
+  "databases.qdrant.collection_prefix",
+  "databases.falkordb.host",
+  "databases.falkordb.port",
+  "databases.falkordb.graph_name",
+  "databases.falkordb.graph_search",
+  "databases.falkordb.graph_min_score",
+  "databases.falkordb.rrf_k",
+] as const;
 
 const QUEUE_PATHS = [
-  'knowledge_graph_queue.interval_minutes',
-  'knowledge_graph_queue.batch_size',
-] as const
+  "knowledge_graph_queue.interval_minutes",
+  "knowledge_graph_queue.batch_size",
+] as const;
 
 const BACKUP_PATHS = [
-  'memory_backup.enabled',
-  'memory_backup.backup_path',
-] as const
+  "memory_backup.enabled",
+  "memory_backup.backup_path",
+] as const;
 
 const WIKI_PATHS = [
-  'wiki.enabled',
-  'wiki.roots',
-  'wiki.debounce_interval',
-  'wiki.poll_interval',
-  'wiki.ignore_globs',
-] as const
+  "wiki.enabled",
+  "wiki.roots",
+  "wiki.debounce_interval",
+  "wiki.poll_interval",
+  "wiki.ignore_globs",
+] as const;
 
 const OWNED_PATHS: readonly string[] = [
   ...MEMORY_PATHS,
@@ -124,21 +124,21 @@ const OWNED_PATHS: readonly string[] = [
   ...QUEUE_PATHS,
   ...BACKUP_PATHS,
   ...WIKI_PATHS,
-]
+];
 
 /**
  * `memory.backend` is validator-bounded to `{local, null}` but typed as a plain
  * string in the schema (no enum), so its options are listed explicitly.
  */
 const BACKEND_OPTIONS = [
-  { value: 'local', label: 'Local' },
-  { value: 'null', label: 'Disabled (null)' },
-]
+  { value: "local", label: "Local" },
+  { value: "null", label: "Disabled (null)" },
+];
 
 /** One watched wiki root: a stable scope name plus a filesystem path. */
 interface WikiRoot {
-  scope: string
-  path: string
+  scope: string;
+  path: string;
 }
 
 function MemoryGroup({ fields }: { fields: SettingsSectionFields }) {
@@ -244,7 +244,7 @@ function MemoryGroup({ fields }: { fields: SettingsSectionFields }) {
         nullable
       />
     </Subsection>
-  )
+  );
 }
 
 function KnowledgeGraphGroup({ fields }: { fields: SettingsSectionFields }) {
@@ -268,7 +268,7 @@ function KnowledgeGraphGroup({ fields }: { fields: SettingsSectionFields }) {
         placeholder="provider/model"
       />
     </Subsection>
-  )
+  );
 }
 
 function DreamGroup({ fields }: { fields: SettingsSectionFields }) {
@@ -381,7 +381,7 @@ function DreamGroup({ fields }: { fields: SettingsSectionFields }) {
         ariaLabel="Reconcile after revert"
       />
     </Subsection>
-  )
+  );
 }
 
 function RecallGroup({ fields }: { fields: SettingsSectionFields }) {
@@ -448,26 +448,27 @@ function RecallGroup({ fields }: { fields: SettingsSectionFields }) {
         ariaLabel="Query max characters"
       />
     </Subsection>
-  )
+  );
 }
 
 function EmbeddingsGroup({ fields }: { fields: SettingsSectionFields }) {
-  const { runManagedAction } = useSettingsSectionContext()
-  const storedCatalogKey = asString(fields.getValue('ai.embeddings.catalog_key'))
-  const [baseline, setBaseline] = useState(storedCatalogKey)
-  const [catalogKey, setCatalogKey] = useState(storedCatalogKey)
+  const { runManagedAction } = useSettingsSectionContext();
+  const storedCatalogKey = asString(
+    fields.getValue("ai.embeddings.catalog_key"),
+  );
+  const [baseline, setBaseline] = useState(storedCatalogKey);
+  const [catalogKey, setCatalogKey] = useState(storedCatalogKey);
   if (storedCatalogKey !== baseline) {
-    setBaseline(storedCatalogKey)
-    setCatalogKey(storedCatalogKey)
+    setBaseline(storedCatalogKey);
+    setCatalogKey(storedCatalogKey);
   }
   // Overlays the local, managed-action-driven catalog key over the draft so
   // the catalog-key row (and only that row) renders the pending selection.
   const catalogFields: SettingsSectionFields = {
     ...fields,
-    getValue: (path) => path === 'ai.embeddings.catalog_key'
-      ? catalogKey
-      : fields.getValue(path),
-  }
+    getValue: (path) =>
+      path === "ai.embeddings.catalog_key" ? catalogKey : fields.getValue(path),
+  };
   return (
     <Subsection
       title="Embeddings"
@@ -506,7 +507,7 @@ function EmbeddingsGroup({ fields }: { fields: SettingsSectionFields }) {
         ariaLabel="Embedding catalog key"
         placeholder="provider/model"
         managedAction={(value) => {
-          if (typeof value === 'string') setCatalogKey(value)
+          if (typeof value === "string") setCatalogKey(value);
         }}
       />
       <div className="flex flex-wrap gap-2">
@@ -516,17 +517,17 @@ function EmbeddingsGroup({ fields }: { fields: SettingsSectionFields }) {
           disabled={!runManagedAction || !catalogKey || catalogKey === baseline}
           onClick={() => {
             if (runManagedAction) {
-              void runManagedAction('/api/embeddings/switch/start', {
+              void runManagedAction("/api/embeddings/switch/start", {
                 catalog_key: catalogKey,
               }).then((started) => {
-                if (started) setBaseline(catalogKey)
-              })
+                if (started) setBaseline(catalogKey);
+              });
             }
           }}
         />
       </div>
     </Subsection>
-  )
+  );
 }
 
 function VectorStoreGroup({ fields }: { fields: SettingsSectionFields }) {
@@ -557,7 +558,7 @@ function VectorStoreGroup({ fields }: { fields: SettingsSectionFields }) {
         placeholder="gobby_"
       />
     </Subsection>
-  )
+  );
 }
 
 function GraphStoreGroup({ fields }: { fields: SettingsSectionFields }) {
@@ -606,7 +607,7 @@ function GraphStoreGroup({ fields }: { fields: SettingsSectionFields }) {
         ariaLabel="FalkorDB RRF k"
       />
     </Subsection>
-  )
+  );
 }
 
 function QueueGroup({ fields }: { fields: SettingsSectionFields }) {
@@ -628,7 +629,7 @@ function QueueGroup({ fields }: { fields: SettingsSectionFields }) {
         ariaLabel="Queue batch size"
       />
     </Subsection>
-  )
+  );
 }
 
 function BackupGroup({ fields }: { fields: SettingsSectionFields }) {
@@ -651,7 +652,7 @@ function BackupGroup({ fields }: { fields: SettingsSectionFields }) {
         placeholder=".gobby/memories.jsonl"
       />
     </Subsection>
-  )
+  );
 }
 
 /**
@@ -664,11 +665,13 @@ function WikiRootsField({ fields }: { fields: SettingsSectionFields }) {
     <TypedListField<WikiRoot>
       label="Wiki roots"
       ariaLabel="Wiki root"
-      value={asTypedList<WikiRoot>(fields.getValue('wiki.roots'))}
+      value={asTypedList<WikiRoot>(fields.getValue("wiki.roots"))}
       addLabel="Add wiki root"
-      createItem={() => ({ scope: '', path: '' })}
-      itemLabel={(root, index) => asString(root.scope) || `Wiki root ${index + 1}`}
-      onChange={(value) => fields.setValue('wiki.roots', value)}
+      createItem={() => ({ scope: "", path: "" })}
+      itemLabel={(root, index) =>
+        asString(root.scope) || `Wiki root ${index + 1}`
+      }
+      onChange={(value) => fields.setValue("wiki.roots", value)}
       renderItem={(root, onItemChange, index) => (
         <>
           <TextField
@@ -688,7 +691,7 @@ function WikiRootsField({ fields }: { fields: SettingsSectionFields }) {
         </>
       )}
     />
-  )
+  );
 }
 
 function WikiGroup({ fields }: { fields: SettingsSectionFields }) {
@@ -727,7 +730,7 @@ function WikiGroup({ fields }: { fields: SettingsSectionFields }) {
         placeholder="outputs/**"
       />
     </Subsection>
-  )
+  );
 }
 
 export function MemoryKnowledgeSection() {
@@ -748,5 +751,5 @@ export function MemoryKnowledgeSection() {
         </>
       )}
     </SettingsSection>
-  )
+  );
 }

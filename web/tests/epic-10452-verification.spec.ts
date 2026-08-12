@@ -31,7 +31,11 @@ function setupMockWebSocket(page: import("@playwright/test").Page) {
       const OriginalWebSocket = window.WebSocket;
 
       (window as any).WebSocket = function (url: string, ...rest: any[]) {
-        if (typeof url === "string" && url.includes("/ws") && !url.includes("vite")) {
+        if (
+          typeof url === "string" &&
+          url.includes("/ws") &&
+          !url.includes("vite")
+        ) {
           let _onmessage: ((ev: { data: string }) => void) | null = null;
           let _onopen: (() => void) | null = null;
           let _onclose: (() => void) | null = null;
@@ -44,29 +48,51 @@ function setupMockWebSocket(page: import("@playwright/test").Page) {
               (window as any).__sentMessages.push(data);
               try {
                 const parsed = JSON.parse(data);
-                if (parsed.type === "subscribe" && parsed.events?.includes("chat_stream")) {
+                if (
+                  parsed.type === "subscribe" &&
+                  parsed.events?.includes("chat_stream")
+                ) {
                   mockWs._isChat = true;
                   (window as any).__chatWs = mockWs;
                 }
               } catch {}
             },
-            close() { mockWs.readyState = 3; if (_onclose) _onclose(); },
+            close() {
+              mockWs.readyState = 3;
+              if (_onclose) _onclose();
+            },
             addEventListener() {},
             removeEventListener() {},
-            set onmessage(cb: ((ev: { data: string }) => void) | null) { _onmessage = cb; },
-            get onmessage() { return _onmessage; },
-            set onopen(cb: (() => void) | null) { _onopen = cb; },
-            get onopen() { return _onopen; },
+            set onmessage(cb: ((ev: { data: string }) => void) | null) {
+              _onmessage = cb;
+            },
+            get onmessage() {
+              return _onmessage;
+            },
+            set onopen(cb: (() => void) | null) {
+              _onopen = cb;
+            },
+            get onopen() {
+              return _onopen;
+            },
             set onerror(_: unknown) {},
-            get onerror() { return null; },
-            set onclose(cb: (() => void) | null) { _onclose = cb; },
-            get onclose() { return _onclose; },
+            get onerror() {
+              return null;
+            },
+            set onclose(cb: (() => void) | null) {
+              _onclose = cb;
+            },
+            get onclose() {
+              return _onclose;
+            },
           };
 
           (window as any).__allMockWs.push(mockWs);
           (window as any).__mockWsReady = true;
 
-          setTimeout(() => { if (mockWs.onopen) mockWs.onopen(); }, 50);
+          setTimeout(() => {
+            if (mockWs.onopen) mockWs.onopen();
+          }, 50);
           return mockWs;
         }
         return new OriginalWebSocket(url, ...rest);
@@ -74,18 +100,23 @@ function setupMockWebSocket(page: import("@playwright/test").Page) {
 
       Object.defineProperty((window as any).WebSocket, "OPEN", { value: 1 });
       Object.defineProperty((window as any).WebSocket, "CLOSED", { value: 3 });
-      Object.defineProperty((window as any).WebSocket, "CONNECTING", { value: 0 });
+      Object.defineProperty((window as any).WebSocket, "CONNECTING", {
+        value: 0,
+      });
       Object.defineProperty((window as any).WebSocket, "CLOSING", { value: 2 });
     },
     {
       convId: CONVERSATION_ID,
       storageKey: STORAGE_KEY,
       convIdKey: CONVERSATION_ID_KEY,
-    }
+    },
   );
 }
 
-async function serverSend(page: import("@playwright/test").Page, msg: Record<string, unknown>) {
+async function serverSend(
+  page: import("@playwright/test").Page,
+  msg: Record<string, unknown>,
+) {
   await page.evaluate((data) => {
     const chatWs = (window as any).__chatWs;
     if (chatWs?.onmessage) {
@@ -100,7 +131,10 @@ async function serverSend(page: import("@playwright/test").Page, msg: Record<str
   }, msg);
 }
 
-async function broadcastSend(page: import("@playwright/test").Page, msg: Record<string, unknown>) {
+async function broadcastSend(
+  page: import("@playwright/test").Page,
+  msg: Record<string, unknown>,
+) {
   await page.evaluate((data) => {
     for (const ws of (window as any).__allMockWs || []) {
       if (ws.onmessage) {
@@ -110,29 +144,46 @@ async function broadcastSend(page: import("@playwright/test").Page, msg: Record<
   }, msg);
 }
 
-async function getClientMessages(page: import("@playwright/test").Page): Promise<Array<Record<string, unknown>>> {
-  const raw: string[] = await page.evaluate(() => (window as any).__sentMessages || []);
+async function getClientMessages(
+  page: import("@playwright/test").Page,
+): Promise<Array<Record<string, unknown>>> {
+  const raw: string[] = await page.evaluate(
+    () => (window as any).__sentMessages || [],
+  );
   return raw.map((s) => JSON.parse(s));
 }
 
 async function clearClientMessages(page: import("@playwright/test").Page) {
-  await page.evaluate(() => { (window as any).__sentMessages = []; });
+  await page.evaluate(() => {
+    (window as any).__sentMessages = [];
+  });
 }
 
 async function waitForConnection(page: import("@playwright/test").Page) {
-  await page.waitForFunction(() => (window as any).__mockWsReady === true, null, { timeout: 5000 });
+  await page.waitForFunction(
+    () => (window as any).__mockWsReady === true,
+    null,
+    { timeout: 5000 },
+  );
   await page.waitForTimeout(200);
-  await broadcastSend(page, { type: "connection_established", conversation_ids: [] });
+  await broadcastSend(page, {
+    type: "connection_established",
+    conversation_ids: [],
+  });
   await broadcastSend(page, {
     type: "subscribe_success",
     events: ["chat_stream", "chat_error", "tool_status", "chat_thinking"],
   });
-  await page.waitForFunction(() => (window as any).__chatWs !== null, null, { timeout: 3000 });
+  await page.waitForFunction(() => (window as any).__chatWs !== null, null, {
+    timeout: 3000,
+  });
   await expect(page.locator("text=Connected")).toBeVisible({ timeout: 3000 });
 }
 
 /** Read the actual conversation_id the app is using from its sent messages. */
-async function getAppConversationId(page: import("@playwright/test").Page): Promise<string | null> {
+async function getAppConversationId(
+  page: import("@playwright/test").Page,
+): Promise<string | null> {
   const msgs = await getClientMessages(page);
   // The subscribe message or any message with conversation_id reveals the app's actual ID
   for (const m of msgs) {
@@ -174,7 +225,9 @@ const PROJECT_SELECTOR_BTN = "button[aria-haspopup='listbox']";
 // #10455: Auto-send feedback on plan_changes_requested
 // ============================================================
 test.describe("#10455: Plan feedback auto-send", () => {
-  test("clicking Request Changes → entering feedback → mode_changed triggers auto-send", async ({ page }) => {
+  test("clicking Request Changes → entering feedback → mode_changed triggers auto-send", async ({
+    page,
+  }) => {
     setupApiMocks(page);
     await setupMockWebSocket(page);
     await page.goto("/");
@@ -190,7 +243,9 @@ test.describe("#10455: Plan feedback auto-send", () => {
     });
 
     // 2. Wait for PlanApprovalBar to appear
-    const requestChangesBtn = page.locator("button", { hasText: "Request Changes" });
+    const requestChangesBtn = page.locator("button", {
+      hasText: "Request Changes",
+    });
     await expect(requestChangesBtn).toBeVisible({ timeout: 3000 });
 
     // 3. Click Request Changes to show feedback form
@@ -202,19 +257,25 @@ test.describe("#10455: Plan feedback auto-send", () => {
     await feedbackInput.fill("Please add error handling to the auth module");
 
     // 5. Click Send Feedback
-    const sendFeedbackBtn = page.locator("button", { hasText: "Send Feedback" });
+    const sendFeedbackBtn = page.locator("button", {
+      hasText: "Send Feedback",
+    });
     await sendFeedbackBtn.click();
 
     // 6. Verify plan_approval_response was sent with request_changes decision
     const msgsAfterFeedback = await getClientMessages(page);
     const approvalResponse = msgsAfterFeedback.find(
-      (m) => m.type === "plan_approval_response" && m.decision === "request_changes"
+      (m) =>
+        m.type === "plan_approval_response" && m.decision === "request_changes",
     );
     expect(approvalResponse).toBeTruthy();
-    expect(approvalResponse!.feedback).toBe("Please add error handling to the auth module");
+    expect(approvalResponse!.feedback).toBe(
+      "Please add error handling to the auth module",
+    );
 
     // Read the actual conversation_id from the response (in case it differs from localStorage)
-    const actualConvId = (approvalResponse!.conversation_id as string) || appConvId;
+    const actualConvId =
+      (approvalResponse!.conversation_id as string) || appConvId;
 
     // 7. Clear messages to isolate the auto-send
     await clearClientMessages(page);
@@ -234,7 +295,9 @@ test.describe("#10455: Plan feedback auto-send", () => {
     // 10. Verify the feedback was auto-sent as a chat_message
     const autoSentMsgs = await getClientMessages(page);
     const chatMsg = autoSentMsgs.find(
-      (m) => m.type === "chat_message" && m.content === "Please add error handling to the auth module"
+      (m) =>
+        m.type === "chat_message" &&
+        m.content === "Please add error handling to the auth module",
     );
     expect(chatMsg).toBeTruthy();
   });
@@ -244,7 +307,9 @@ test.describe("#10455: Plan feedback auto-send", () => {
 // #10456: Retry fetchProjects with backoff
 // ============================================================
 test.describe("#10456: fetchProjects retry with backoff", () => {
-  test("retries on failure and shows project selector once successful", async ({ page }) => {
+  test("retries on failure and shows project selector once successful", async ({
+    page,
+  }) => {
     let fetchAttempt = 0;
 
     // Mock projects endpoint to fail first 2 attempts, succeed on 3rd
@@ -262,10 +327,18 @@ test.describe("#10456: fetchProjects retry with backoff", () => {
     });
 
     await page.route("**/api/sessions*", (route) => {
-      route.fulfill({ status: 200, contentType: "application/json", body: "[]" });
+      route.fulfill({
+        status: 200,
+        contentType: "application/json",
+        body: "[]",
+      });
     });
     await page.route("**/api/files/tree*", (route) => {
-      route.fulfill({ status: 200, contentType: "application/json", body: "[]" });
+      route.fulfill({
+        status: 200,
+        contentType: "application/json",
+        body: "[]",
+      });
     });
     await page.route("**/api/files/git-status*", (route) => {
       route.fulfill({
@@ -293,7 +366,9 @@ test.describe("#10456: fetchProjects retry with backoff", () => {
 // #10458: Wire sendProjectChange in App.tsx via useEffect
 // ============================================================
 test.describe("#10458: sendProjectChange on project switch", () => {
-  test("switching projects sends set_project WebSocket message", async ({ page }) => {
+  test("switching projects sends set_project WebSocket message", async ({
+    page,
+  }) => {
     setupApiMocks(page);
     await setupMockWebSocket(page);
     await page.goto("/");
@@ -319,12 +394,14 @@ test.describe("#10458: sendProjectChange on project switch", () => {
     // Verify set_project message was sent for the Personal project
     const msgs = await getClientMessages(page);
     const setProjectMsg = msgs.find(
-      (m) => m.type === "set_project" && m.project_id === "proj-personal"
+      (m) => m.type === "set_project" && m.project_id === "proj-personal",
     );
     expect(setProjectMsg).toBeTruthy();
   });
 
-  test("initial project load sends set_project for default project", async ({ page }) => {
+  test("initial project load sends set_project for default project", async ({
+    page,
+  }) => {
     setupApiMocks(page);
     await setupMockWebSocket(page);
     await page.goto("/");

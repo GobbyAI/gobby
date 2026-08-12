@@ -1,4 +1,12 @@
-import { afterEach, beforeEach, describe, expect, expectTypeOf, it, vi } from "vitest";
+import {
+  afterEach,
+  beforeEach,
+  describe,
+  expect,
+  expectTypeOf,
+  it,
+  vi,
+} from "vitest";
 
 import {
   clearProviderModelCache,
@@ -190,55 +198,62 @@ describe("providerModels", () => {
       "Haiku 4.5",
     ]);
     expect(
-      models.filter((model) => model.label === "Sonnet 4.5").map((model) => model.value),
-    ).toEqual([
-      "claude-sonnet-4-5-20251001",
-      "claude-sonnet-4-5-20250901",
-    ]);
+      models
+        .filter((model) => model.label === "Sonnet 4.5")
+        .map((model) => model.value),
+    ).toEqual(["claude-sonnet-4-5-20251001", "claude-sonnet-4-5-20250901"]);
   });
 
   it("honors the provider default ahead of inferred model strength", () => {
-    const defaultCatalog: ProviderModelEntry[] = [{
-      provider: "codex",
-      available: true,
-      source: "live",
-      models: [
-        { value: "gpt-5.4", label: "gpt-5.4" },
-        { value: "gpt-5.4-mini", label: "gpt-5.4-mini", is_default: true },
-      ],
-    }];
+    const defaultCatalog: ProviderModelEntry[] = [
+      {
+        provider: "codex",
+        available: true,
+        source: "live",
+        models: [
+          { value: "gpt-5.4", label: "gpt-5.4" },
+          { value: "gpt-5.4-mini", label: "gpt-5.4-mini", is_default: true },
+        ],
+      },
+    ];
 
-    expect(getModelsForProvider(defaultCatalog, "codex")[0]?.value).toBe("gpt-5.4-mini");
-    expect(getPreferredModelForProvider(defaultCatalog, "codex")).toBe("gpt-5.4-mini");
+    expect(getModelsForProvider(defaultCatalog, "codex")[0]?.value).toBe(
+      "gpt-5.4-mini",
+    );
+    expect(getPreferredModelForProvider(defaultCatalog, "codex")).toBe(
+      "gpt-5.4-mini",
+    );
   });
 
   it("only applies the Pro tier to Gemini model tokens", () => {
-    const qwenCatalog: ProviderModelEntry[] = [{
-      provider: "qwen",
-      available: true,
-      source: "live",
-      models: [
-        { value: "improved-99", label: "improved-99" },
-        { value: "gemini-2.5-pro", label: "gemini-2.5-pro" },
-      ],
-    }];
+    const qwenCatalog: ProviderModelEntry[] = [
+      {
+        provider: "qwen",
+        available: true,
+        source: "live",
+        models: [
+          { value: "improved-99", label: "improved-99" },
+          { value: "gemini-2.5-pro", label: "gemini-2.5-pro" },
+        ],
+      },
+    ];
 
-    expect(getModelsForProvider(qwenCatalog, "qwen")[0]?.value).toBe("gemini-2.5-pro");
+    expect(getModelsForProvider(qwenCatalog, "qwen")[0]?.value).toBe(
+      "gemini-2.5-pro",
+    );
   });
 
   it("derives reasoning options and defaults from the provider catalog", () => {
-    expect(
-      getReasoningOptionsForModel(catalog, "codex", "gpt-5.4"),
-    ).toEqual([
+    expect(getReasoningOptionsForModel(catalog, "codex", "gpt-5.4")).toEqual([
       { value: "auto", label: "Auto" },
       { value: "low", label: "Low" },
       { value: "medium", label: "Med" },
       { value: "high", label: "High" },
       { value: "xhigh", label: "XHigh" },
     ]);
-    expect(
-      getPreferredReasoningEffort(catalog, "codex", "gpt-5.4"),
-    ).toBe("medium");
+    expect(getPreferredReasoningEffort(catalog, "codex", "gpt-5.4")).toBe(
+      "medium",
+    );
   });
 
   it("exposes Claude reasoning levels when the catalog provides them", () => {
@@ -342,9 +357,12 @@ describe("providerModels", () => {
 
   it("labels and sorts known providers alphabetically by display name", () => {
     expect(getProviderDisplayName("droid")).toBe("Droid");
-    expect(
-      getOrderedProviders(["qwen", "droid", "claude", "codex"]),
-    ).toEqual(["claude", "codex", "droid", "qwen"]);
+    expect(getOrderedProviders(["qwen", "droid", "claude", "codex"])).toEqual([
+      "claude",
+      "codex",
+      "droid",
+      "qwen",
+    ]);
   });
 
   it("humanizes endpoint provider ids instead of raw scheme casing (#20047)", () => {
@@ -386,17 +404,19 @@ describe("providerModels", () => {
       "grok",
       "qwen",
     ]);
-    expect(getModelsForProvider(entries, "grok").map(({ value, label }) => ({ value, label }))).toEqual([
-      { value: "grok-build", label: "Grok Build" },
-    ]);
+    expect(
+      getModelsForProvider(entries, "grok").map(({ value, label }) => ({
+        value,
+        label,
+      })),
+    ).toEqual([{ value: "grok-build", label: "Grok Build" }]);
     expect(entries[1].source).toBe("unsupported");
   });
 
   it("uses curated backend Qwen labels and humanizes raw-id labels", () => {
-    expect(getModelsForProvider(catalog, "qwen").map((model) => model.label)).toEqual([
-      "GPT 5",
-      "Qwen Coder (OAuth)",
-    ]);
+    expect(
+      getModelsForProvider(catalog, "qwen").map((model) => model.label),
+    ).toEqual(["GPT 5", "Qwen Coder (OAuth)"]);
     expect(getModelLabel(catalog, "qwen", "gpt-5(openai)")).toBe("GPT 5");
     expect(getModelLabel(catalog, "qwen", "coder-model(qwen-oauth)")).toBe(
       "Qwen Coder (OAuth)",
@@ -435,9 +455,9 @@ describe("providerModels", () => {
   });
 
   it("rejects a stale local selector instead of silently switching providers", () => {
-    expect(getPreferredModelForProvider(catalog, "codex", "local:openrouter/kimi")).toBe(
-      "gpt-5.4",
-    );
+    expect(
+      getPreferredModelForProvider(catalog, "codex", "local:openrouter/kimi"),
+    ).toBe("gpt-5.4");
     expect(
       resolveProviderModelPair(catalog, {
         provider: "codex",
@@ -498,8 +518,14 @@ describe("providerModels", () => {
                   available: true,
                   hidden: false,
                   is_default: true,
-                  context_length: { value: 200_000, source: "provider-catalog" },
-                  max_output_tokens: { value: 100_000, source: "provider-catalog" },
+                  context_length: {
+                    value: 200_000,
+                    source: "provider-catalog",
+                  },
+                  max_output_tokens: {
+                    value: 100_000,
+                    source: "provider-catalog",
+                  },
                   latency_class: null,
                   reasoning: {
                     status: "known",
@@ -627,7 +653,9 @@ describe("providerModels", () => {
     expectTypeOf(result[0]?.models[0]?.routes?.fast?.selector).toEqualTypeOf<
       string | undefined
     >();
-    expectTypeOf(result[0]?.refresh?.generation).toEqualTypeOf<number | undefined>();
+    expectTypeOf(result[0]?.refresh?.generation).toEqualTypeOf<
+      number | undefined
+    >();
   });
 
   it("logs and returns an empty catalog when the fetch fails", async () => {
@@ -707,26 +735,29 @@ describe("providerModels", () => {
         },
       ],
     };
-    vi.stubGlobal("fetch", vi.fn().mockResolvedValue({
-      ok: true,
-      json: async () => ({
-        providers: [
-          unknownEntry,
-          {
-            ...unknownEntry,
-            provider: "legacy",
-            models: [
-              {
-                value: "legacy-model",
-                label: "Legacy Model",
-                context_length: 200_000,
-                context_length_source: "static_default",
-              },
-            ],
-          },
-        ],
+    vi.stubGlobal(
+      "fetch",
+      vi.fn().mockResolvedValue({
+        ok: true,
+        json: async () => ({
+          providers: [
+            unknownEntry,
+            {
+              ...unknownEntry,
+              provider: "legacy",
+              models: [
+                {
+                  value: "legacy-model",
+                  label: "Legacy Model",
+                  context_length: 200_000,
+                  context_length_source: "static_default",
+                },
+              ],
+            },
+          ],
+        }),
       }),
-    }));
+    );
 
     await expect(fetchProviderModelCatalog()).resolves.toEqual([unknownEntry]);
   });
@@ -738,20 +769,23 @@ describe("providerModels", () => {
       source: "live",
       models: [{ value: "gpt-5.4", label: "GPT-5.4" }],
     };
-    vi.stubGlobal("fetch", vi.fn().mockResolvedValue({
-      ok: true,
-      json: async () => ({
-        providers: [
-          codexEntry,
-          {
-            provider: "agy",
-            available: true,
-            source: "live",
-            models: [{ value: "agy-1", label: "AGY 1" }],
-          },
-        ],
+    vi.stubGlobal(
+      "fetch",
+      vi.fn().mockResolvedValue({
+        ok: true,
+        json: async () => ({
+          providers: [
+            codexEntry,
+            {
+              provider: "agy",
+              available: true,
+              source: "live",
+              models: [{ value: "agy-1", label: "AGY 1" }],
+            },
+          ],
+        }),
       }),
-    }));
+    );
 
     await expect(fetchProviderModelCatalog()).resolves.toEqual([codexEntry]);
     // Rendering support for existing AGY sessions stays intact.
@@ -770,15 +804,25 @@ describe("providerModels", () => {
       source: "live",
       models: [{ value: "endpoint:lm-studio/qwen3", label: "Qwen3" }],
     };
-    expectTypeOf(validEntry.execution_provider).toEqualTypeOf<string | undefined>();
+    expectTypeOf(validEntry.execution_provider).toEqualTypeOf<
+      string | undefined
+    >();
     const fetchSpy = vi.fn().mockResolvedValue({
       ok: true,
       json: async () => ({
         providers: [
           validEntry,
           { ...validEntry, provider: "endpoint:blank", execution_provider: "" },
-          { ...validEntry, provider: "endpoint:whitespace", execution_provider: "   " },
-          { ...validEntry, provider: "endpoint:null", execution_provider: null },
+          {
+            ...validEntry,
+            provider: "endpoint:whitespace",
+            execution_provider: "   ",
+          },
+          {
+            ...validEntry,
+            provider: "endpoint:null",
+            execution_provider: null,
+          },
           { ...validEntry, provider: "endpoint:number", execution_provider: 1 },
         ],
       }),

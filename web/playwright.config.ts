@@ -1,6 +1,7 @@
 import { defineConfig } from "@playwright/test";
 
-const PLAYWRIGHT_BASE_URL = process.env.PLAYWRIGHT_BASE_URL || "http://localhost:60889";
+const PLAYWRIGHT_BASE_URL =
+  process.env.PLAYWRIGHT_BASE_URL || "http://localhost:60889";
 const SHOULD_START_WEBSERVER = !process.env.PLAYWRIGHT_BASE_URL;
 
 // Style-surface capture cells are tagged @style-capture and run only in the

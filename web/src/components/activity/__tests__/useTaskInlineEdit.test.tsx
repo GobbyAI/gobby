@@ -217,7 +217,10 @@ describe("useTaskInlineEdit — optimistic + rollback (#14771 / D4)", () => {
     });
 
     await act(async () => {
-      descriptionGate.resolve({ id: "task-1", description: "New description" } as RawTaskPayload);
+      descriptionGate.resolve({
+        id: "task-1",
+        description: "New description",
+      } as RawTaskPayload);
       await descriptionCommit;
       titleGate.resolve({ id: "task-1", title: "New title" } as RawTaskPayload);
       await titleCommit;

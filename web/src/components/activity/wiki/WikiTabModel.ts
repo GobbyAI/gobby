@@ -142,9 +142,18 @@ function insertLeaf(roots: PageTreeNode[], leaf: TreeLeaf): void {
       });
       return;
     }
-    let folder = level.find((node) => node.kind === "folder" && node.name === segment);
+    let folder = level.find(
+      (node) => node.kind === "folder" && node.name === segment,
+    );
     if (!folder) {
-      folder = { name: segment, path: prefix, kind: "folder", page: null, output: null, children: [] };
+      folder = {
+        name: segment,
+        path: prefix,
+        kind: "folder",
+        page: null,
+        output: null,
+        children: [],
+      };
       level.push(folder);
     }
     level = folder.children;
@@ -188,7 +197,9 @@ export function buildPageTree(
   sortLevel(roots);
   if (!promoteRoot) return roots;
   return roots.flatMap((node) =>
-    node.kind === "folder" && node.name === promoteRoot ? node.children : [node],
+    node.kind === "folder" && node.name === promoteRoot
+      ? node.children
+      : [node],
   );
 }
 
@@ -225,7 +236,10 @@ export function buildNodeIndex(pages: WikiPageMeta[]): WikiNodeIndex {
  * or without the .md suffix), then normalized title/alias. Null when the
  * target has no page yet.
  */
-export function resolveWikilinkTarget(index: WikiNodeIndex, target: string): string | null {
+export function resolveWikilinkTarget(
+  index: WikiNodeIndex,
+  target: string,
+): string | null {
   const trimmed = target.trim();
   if (!trimmed) return null;
   if (index.byPath.has(trimmed)) return trimmed;

@@ -30,35 +30,38 @@ export function usePlanApprovalActions(
     [],
   );
 
-  const approvePlan: ApprovePlanAction = useCallback((option) => {
-    if (!wsRef.current || wsRef.current.readyState !== WebSocket.OPEN) return;
-    const proxySessionId = attachedSessionIdRef.current;
-    const isProxyTerminal = isAttachedProxyTerminal();
-    if (isProxyTerminal) {
+  const approvePlan: ApprovePlanAction = useCallback(
+    (option) => {
+      if (!wsRef.current || wsRef.current.readyState !== WebSocket.OPEN) return;
+      const proxySessionId = attachedSessionIdRef.current;
+      const isProxyTerminal = isAttachedProxyTerminal();
+      if (isProxyTerminal) {
+        wsRef.current.send(
+          JSON.stringify({
+            type: "plan_approval_response",
+            target_session_id: proxySessionId,
+            decision: "approve",
+            ...(option?.id ? { option_id: option.id } : {}),
+          }),
+        );
+        setPlanPendingApproval(false);
+        planContentRef.current = null;
+        return;
+      }
+      if (!conversationIdRef.current) return;
+      if (!planContentRef.current) return;
       wsRef.current.send(
         JSON.stringify({
           type: "plan_approval_response",
-          target_session_id: proxySessionId,
+          conversation_id: conversationIdRef.current,
+          tool_call_id: planToolCallIdRef.current,
           decision: "approve",
           ...(option?.id ? { option_id: option.id } : {}),
         }),
       );
-      setPlanPendingApproval(false);
-      planContentRef.current = null;
-      return;
-    }
-    if (!conversationIdRef.current) return;
-    if (!planContentRef.current) return;
-    wsRef.current.send(
-      JSON.stringify({
-        type: "plan_approval_response",
-        conversation_id: conversationIdRef.current,
-        tool_call_id: planToolCallIdRef.current,
-        decision: "approve",
-        ...(option?.id ? { option_id: option.id } : {}),
-      }),
-    );
-  }, [isAttachedProxyTerminal]);
+    },
+    [isAttachedProxyTerminal],
+  );
 
   const requestPlanChanges: RequestPlanChangesAction = useCallback(
     (feedback) => {

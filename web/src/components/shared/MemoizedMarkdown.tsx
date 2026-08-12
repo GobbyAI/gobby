@@ -1,1 +1,1 @@
-export { MarkdownBody as MemoizedMarkdown } from './MarkdownBody'
+export { MarkdownBody as MemoizedMarkdown } from "./MarkdownBody";

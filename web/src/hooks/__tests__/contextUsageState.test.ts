@@ -28,7 +28,11 @@ describe("context usage live freshness pruning", () => {
 
   it("evicts oldest live entries above the max size", () => {
     const entries = new Map<string, LiveContextUsageEntry>();
-    for (let index = 0; index < LIVE_CONTEXT_USAGE_MAX_ENTRIES + 2; index += 1) {
+    for (
+      let index = 0;
+      index < LIVE_CONTEXT_USAGE_MAX_ENTRIES + 2;
+      index += 1
+    ) {
       entries.set(`session-${index}`, {
         usageTimestamp: index,
         lastSeenAt: index,

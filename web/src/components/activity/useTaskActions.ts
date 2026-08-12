@@ -77,7 +77,8 @@ export function useTaskActions({
           typeof detail === "string"
             ? detail
             : `Failed to create task (${response.status})`;
-        const message = detailMessage || `Failed to create task (${response.status})`;
+        const message =
+          detailMessage || `Failed to create task (${response.status})`;
         console.error("Task creation failed", {
           status: response.status,
           payload,

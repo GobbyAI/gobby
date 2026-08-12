@@ -79,10 +79,15 @@ export function SkillsInstalledDetail({
 
   const draft = draftState.draft;
   const disabled = Boolean(draft.deleted_at);
-  const setField = <K extends keyof ActivitySkill>(key: K, value: ActivitySkill[K]) => {
+  const setField = <K extends keyof ActivitySkill>(
+    key: K,
+    value: ActivitySkill[K],
+  ) => {
     draftState.setField(key, value);
   };
-  const showProjectField = Boolean(draft.project_id || draft.source === "project");
+  const showProjectField = Boolean(
+    draft.project_id || draft.source === "project",
+  );
 
   return (
     <div className="flex h-full min-h-0 flex-col">
@@ -99,7 +104,10 @@ export function SkillsInstalledDetail({
               <Chip>{skillSourceLabel(draft)}</Chip>
             )}
             {viewMode === "content" ? (
-              <DetailActionButton label="Close" onClick={() => setViewMode("detail")} />
+              <DetailActionButton
+                label="Close"
+                onClick={() => setViewMode("detail")}
+              />
             ) : (
               <DetailActionButton
                 label="Content"

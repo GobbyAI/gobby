@@ -1,4 +1,9 @@
-import { render as baseRender, screen, waitFor, within } from "@testing-library/react";
+import {
+  render as baseRender,
+  screen,
+  waitFor,
+  within,
+} from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import type { ReactElement, ReactNode } from "react";
 import { afterEach, describe, expect, it, vi } from "vitest";
@@ -141,87 +146,123 @@ function installStagesFetch() {
   const profiles = [makeProfile()];
   const calls: FetchCall[] = [];
 
-  const fetchMock = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
-    const url = typeof input === "string" ? input : input.toString();
-    const requestUrl = new URL(url, "http://localhost");
-    const method = init?.method ?? "GET";
-    const body = init?.body ? JSON.parse(String(init.body)) : undefined;
-    calls.push({ url, method, body });
+  const fetchMock = vi.fn(
+    async (input: RequestInfo | URL, init?: RequestInit) => {
+      const url = typeof input === "string" ? input : input.toString();
+      const requestUrl = new URL(url, "http://localhost");
+      const method = init?.method ?? "GET";
+      const body = init?.body ? JSON.parse(String(init.body)) : undefined;
+      calls.push({ url, method, body });
 
-    if (requestUrl.pathname === "/api/stages/registry" && method === "GET") {
-      const includeDeleted = requestUrl.searchParams.get("include_deleted") === "true";
-      return jsonResponse({
-        stages: includeDeleted ? stages : stages.filter((stage) => !stage.deleted_at),
-      });
-    }
+      if (requestUrl.pathname === "/api/stages/registry" && method === "GET") {
+        const includeDeleted =
+          requestUrl.searchParams.get("include_deleted") === "true";
+        return jsonResponse({
+          stages: includeDeleted
+            ? stages
+            : stages.filter((stage) => !stage.deleted_at),
+        });
+      }
 
-    const stageMatch = requestUrl.pathname.match(/^\/api\/stages\/registry\/([^/]+)$/);
-    if (stageMatch && method === "DELETE") {
-      const stageName = decodeURIComponent(stageMatch[1]);
-      const stage = stages.find((candidate) => candidate.name === stageName);
-      if (stage) stage.deleted_at = "2026-07-14T00:00:00Z";
-      return jsonResponse(stage ?? { detail: "not found" }, stage ? 200 : 404);
-    }
+      const stageMatch = requestUrl.pathname.match(
+        /^\/api\/stages\/registry\/([^/]+)$/,
+      );
+      if (stageMatch && method === "DELETE") {
+        const stageName = decodeURIComponent(stageMatch[1]);
+        const stage = stages.find((candidate) => candidate.name === stageName);
+        if (stage) stage.deleted_at = "2026-07-14T00:00:00Z";
+        return jsonResponse(
+          stage ?? { detail: "not found" },
+          stage ? 200 : 404,
+        );
+      }
 
-    if (stageMatch && method === "PUT") {
-      const stageName = decodeURIComponent(stageMatch[1]);
-      const index = stages.findIndex((stage) => stage.name === stageName);
-      if (index < 0) return jsonResponse({ detail: "not found" }, 404);
-      stages[index] = { ...stages[index], ...body };
-      return jsonResponse(stages[index]);
-    }
+      if (stageMatch && method === "PUT") {
+        const stageName = decodeURIComponent(stageMatch[1]);
+        const index = stages.findIndex((stage) => stage.name === stageName);
+        if (index < 0) return jsonResponse({ detail: "not found" }, 404);
+        stages[index] = { ...stages[index], ...body };
+        return jsonResponse(stages[index]);
+      }
 
-    if (requestUrl.pathname === "/api/profiles" && method === "GET") {
-      return jsonResponse({ profiles });
-    }
+      if (requestUrl.pathname === "/api/profiles" && method === "GET") {
+        return jsonResponse({ profiles });
+      }
 
-    if (requestUrl.pathname === "/api/profiles" && method === "POST") {
-      const created = makeProfile({
-        ...body,
-        id: "profile-default",
-        name: body.name,
-        source: body.source ?? "project",
-        project_id: body.project_id ?? "project-1",
-        state: "custom",
-      });
-      profiles.push(created);
-      return jsonResponse(created, 201);
-    }
+      if (requestUrl.pathname === "/api/profiles" && method === "POST") {
+        const created = makeProfile({
+          ...body,
+          id: "profile-default",
+          name: body.name,
+          source: body.source ?? "project",
+          project_id: body.project_id ?? "project-1",
+          state: "custom",
+        });
+        profiles.push(created);
+        return jsonResponse(created, 201);
+      }
 
-    const profileMatch = requestUrl.pathname.match(/^\/api\/profiles\/([^/]+)$/);
-    if (profileMatch && method === "DELETE") {
-      const profileName = decodeURIComponent(profileMatch[1]);
-      const profile = profiles.find((candidate) => candidate.name === profileName);
-      if (profile) profile.deleted_at = "2026-07-14T00:00:00Z";
-      return jsonResponse(profile ?? { detail: "not found" }, profile ? 200 : 404);
-    }
+      const profileMatch = requestUrl.pathname.match(
+        /^\/api\/profiles\/([^/]+)$/,
+      );
+      if (profileMatch && method === "DELETE") {
+        const profileName = decodeURIComponent(profileMatch[1]);
+        const profile = profiles.find(
+          (candidate) => candidate.name === profileName,
+        );
+        if (profile) profile.deleted_at = "2026-07-14T00:00:00Z";
+        return jsonResponse(
+          profile ?? { detail: "not found" },
+          profile ? 200 : 404,
+        );
+      }
 
-    if (profileMatch && method === "PUT") {
-      const profileName = decodeURIComponent(profileMatch[1]);
-      const index = profiles.findIndex((profile) => profile.name === profileName);
-      if (index < 0) return jsonResponse({ detail: "not found" }, 404);
-      profiles[index] = { ...profiles[index], ...body };
-      return jsonResponse(profiles[index]);
-    }
+      if (profileMatch && method === "PUT") {
+        const profileName = decodeURIComponent(profileMatch[1]);
+        const index = profiles.findIndex(
+          (profile) => profile.name === profileName,
+        );
+        if (index < 0) return jsonResponse({ detail: "not found" }, 404);
+        profiles[index] = { ...profiles[index], ...body };
+        return jsonResponse(profiles[index]);
+      }
 
-    if (requestUrl.pathname.endsWith("/enable") && method === "POST") {
-      const pathParts = requestUrl.pathname.split("/");
-      const profileName = decodeURIComponent(pathParts[pathParts.length - 2] ?? "");
-      const profile = profiles.find((candidate) => candidate.name === profileName);
-      if (profile) profile.enabled = true;
-      return jsonResponse(profile ?? { detail: "not found" }, profile ? 200 : 404);
-    }
+      if (requestUrl.pathname.endsWith("/enable") && method === "POST") {
+        const pathParts = requestUrl.pathname.split("/");
+        const profileName = decodeURIComponent(
+          pathParts[pathParts.length - 2] ?? "",
+        );
+        const profile = profiles.find(
+          (candidate) => candidate.name === profileName,
+        );
+        if (profile) profile.enabled = true;
+        return jsonResponse(
+          profile ?? { detail: "not found" },
+          profile ? 200 : 404,
+        );
+      }
 
-    if (requestUrl.pathname.endsWith("/disable") && method === "POST") {
-      const pathParts = requestUrl.pathname.split("/");
-      const profileName = decodeURIComponent(pathParts[pathParts.length - 2] ?? "");
-      const profile = profiles.find((candidate) => candidate.name === profileName);
-      if (profile) profile.enabled = false;
-      return jsonResponse(profile ?? { detail: "not found" }, profile ? 200 : 404);
-    }
+      if (requestUrl.pathname.endsWith("/disable") && method === "POST") {
+        const pathParts = requestUrl.pathname.split("/");
+        const profileName = decodeURIComponent(
+          pathParts[pathParts.length - 2] ?? "",
+        );
+        const profile = profiles.find(
+          (candidate) => candidate.name === profileName,
+        );
+        if (profile) profile.enabled = false;
+        return jsonResponse(
+          profile ?? { detail: "not found" },
+          profile ? 200 : 404,
+        );
+      }
 
-    return jsonResponse({ detail: `Unhandled ${method} ${requestUrl.pathname}` }, 404);
-  });
+      return jsonResponse(
+        { detail: `Unhandled ${method} ${requestUrl.pathname}` },
+        404,
+      );
+    },
+  );
 
   globalThis.fetch = fetchMock as unknown as typeof fetch;
   return { calls, fetchMock, stages, profiles };
@@ -243,12 +284,18 @@ describe("Stages activity tab", () => {
 
     render(<StagesTab projectId="project-1" />);
 
-    expect(await screen.findByRole("button", { name: "Select Implementation" })).toBeInTheDocument();
+    expect(
+      await screen.findByRole("button", { name: "Select Implementation" }),
+    ).toBeInTheDocument();
 
     await user.click(screen.getByRole("radio", { name: "Profiles" }));
 
-    expect(await screen.findByRole("button", { name: "Select Fast build" })).toBeInTheDocument();
-    expect(screen.queryByRole("button", { name: "Select Implementation" })).not.toBeInTheDocument();
+    expect(
+      await screen.findByRole("button", { name: "Select Fast build" }),
+    ).toBeInTheDocument();
+    expect(
+      screen.queryByRole("button", { name: "Select Implementation" }),
+    ).not.toBeInTheDocument();
   });
 
   it("edits stage detail through a draft with Save and Discard", async () => {
@@ -256,7 +303,9 @@ describe("Stages activity tab", () => {
     const user = userEvent.setup();
 
     render(<StagesTab projectId="project-1" />);
-    await user.click(await screen.findByRole("button", { name: "Select Implementation" }));
+    await user.click(
+      await screen.findByRole("button", { name: "Select Implementation" }),
+    );
 
     const labelField = await screen.findByLabelText("Stage label");
     await user.clear(labelField);
@@ -288,17 +337,26 @@ describe("Stages activity tab", () => {
 
     render(<StagesTab projectId="project-1" />);
     await user.click(screen.getByRole("radio", { name: "Profiles" }));
-    await user.click(await screen.findByRole("button", { name: "Select Fast build" }));
+    await user.click(
+      await screen.findByRole("button", { name: "Select Fast build" }),
+    );
 
-    const descriptionField = await screen.findByLabelText("Profile description");
+    const descriptionField = await screen.findByLabelText(
+      "Profile description",
+    );
     await user.clear(descriptionField);
     await user.type(descriptionField, "Parallel fast lane");
 
     await user.click(screen.getByRole("button", { name: "Discard" }));
-    expect(screen.getByLabelText("Profile description")).toHaveValue("Short autonomous build");
+    expect(screen.getByLabelText("Profile description")).toHaveValue(
+      "Short autonomous build",
+    );
 
     await user.clear(screen.getByLabelText("Profile description"));
-    await user.type(screen.getByLabelText("Profile description"), "Parallel fast lane");
+    await user.type(
+      screen.getByLabelText("Profile description"),
+      "Parallel fast lane",
+    );
     await user.click(screen.getByRole("button", { name: "Save" }));
 
     await waitFor(() =>
@@ -320,9 +378,15 @@ describe("Stages activity tab", () => {
     render(<StagesTab projectId="project-1" />);
     await user.click(screen.getByRole("radio", { name: "Profiles" }));
 
-    const row = await screen.findByRole("listitem", { name: /Fast build profile/i });
-    await user.click(within(row).getByRole("button", { name: "Open actions for Fast build" }));
-    await user.click(await screen.findByRole("menuitem", { name: "Set as default" }));
+    const row = await screen.findByRole("listitem", {
+      name: /Fast build profile/i,
+    });
+    await user.click(
+      within(row).getByRole("button", { name: "Open actions for Fast build" }),
+    );
+    await user.click(
+      await screen.findByRole("menuitem", { name: "Set as default" }),
+    );
 
     await waitFor(() =>
       expect(
@@ -342,25 +406,38 @@ describe("Stages activity tab", () => {
 
     render(<StagesTab projectId="project-1" />);
     await user.click(screen.getByRole("radio", { name: "Profiles" }));
-    await user.click(await screen.findByRole("button", { name: "Select Fast build" }));
+    await user.click(
+      await screen.findByRole("button", { name: "Select Fast build" }),
+    );
 
     await user.clear(screen.getByLabelText("Profile description"));
-    await user.type(screen.getByLabelText("Profile description"), "Updated description");
+    await user.type(
+      screen.getByLabelText("Profile description"),
+      "Updated description",
+    );
     fetchMock.mockRejectedValueOnce(new Error("Profile save failed"));
     await user.click(screen.getByRole("button", { name: "Save" }));
 
     expect(
-      await screen.findByRole("button", { name: "Dismiss error: Profile save failed" }),
+      await screen.findByRole("button", {
+        name: "Dismiss error: Profile save failed",
+      }),
     ).toBeInTheDocument();
     await user.click(screen.getByRole("button", { name: "Discard" }));
 
     const row = screen.getByRole("listitem", { name: /Fast build profile/i });
-    await user.click(within(row).getByRole("button", { name: "Open actions for Fast build" }));
+    await user.click(
+      within(row).getByRole("button", { name: "Open actions for Fast build" }),
+    );
     fetchMock.mockRejectedValueOnce(new Error("Profile action failed"));
-    await user.click(await screen.findByRole("menuitem", { name: "Set as default" }));
+    await user.click(
+      await screen.findByRole("menuitem", { name: "Set as default" }),
+    );
 
     expect(
-      await screen.findByRole("button", { name: "Dismiss error: Profile action failed" }),
+      await screen.findByRole("button", {
+        name: "Dismiss error: Profile action failed",
+      }),
     ).toBeInTheDocument();
   });
 
@@ -371,9 +448,13 @@ describe("Stages activity tab", () => {
 
     render(<StagesTab projectId="project-1" />);
 
-    const stageRow = await screen.findByRole("listitem", { name: /Implementation stage/i });
+    const stageRow = await screen.findByRole("listitem", {
+      name: /Implementation stage/i,
+    });
     await user.click(
-      within(stageRow).getByRole("button", { name: "Open actions for Implementation" }),
+      within(stageRow).getByRole("button", {
+        name: "Open actions for Implementation",
+      }),
     );
     await user.click(await screen.findByRole("menuitem", { name: "Delete" }));
 
@@ -382,7 +463,9 @@ describe("Stages activity tab", () => {
 
     confirm.mockReturnValue(true);
     await user.click(
-      within(stageRow).getByRole("button", { name: "Open actions for Implementation" }),
+      within(stageRow).getByRole("button", {
+        name: "Open actions for Implementation",
+      }),
     );
     await user.click(await screen.findByRole("menuitem", { name: "Delete" }));
 
@@ -397,28 +480,38 @@ describe("Stages activity tab", () => {
     );
 
     await user.click(screen.getByRole("radio", { name: "Profiles" }));
-    const profileRow = await screen.findByRole("listitem", { name: /Fast build profile/i });
+    const profileRow = await screen.findByRole("listitem", {
+      name: /Fast build profile/i,
+    });
     confirm.mockReturnValue(false);
     await user.click(
-      within(profileRow).getByRole("button", { name: "Open actions for Fast build" }),
+      within(profileRow).getByRole("button", {
+        name: "Open actions for Fast build",
+      }),
     );
     await user.click(await screen.findByRole("menuitem", { name: "Delete" }));
 
     expect(confirm).toHaveBeenCalledWith('Delete "Fast build"?');
     expect(
-      calls.some((call) => call.url.includes("/api/profiles/fast") && call.method === "DELETE"),
+      calls.some(
+        (call) =>
+          call.url.includes("/api/profiles/fast") && call.method === "DELETE",
+      ),
     ).toBe(false);
 
     confirm.mockReturnValue(true);
     await user.click(
-      within(profileRow).getByRole("button", { name: "Open actions for Fast build" }),
+      within(profileRow).getByRole("button", {
+        name: "Open actions for Fast build",
+      }),
     );
     await user.click(await screen.findByRole("menuitem", { name: "Delete" }));
 
     await waitFor(() =>
       expect(
         calls.some(
-          (call) => call.url.includes("/api/profiles/fast") && call.method === "DELETE",
+          (call) =>
+            call.url.includes("/api/profiles/fast") && call.method === "DELETE",
         ),
       ).toBe(true),
     );

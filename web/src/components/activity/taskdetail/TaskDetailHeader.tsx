@@ -18,14 +18,11 @@ export interface TaskDetailHeaderProps {
  * state/priority/type chips. Lifecycle state appears here and nowhere else
  * in the pane.
  */
-export function TaskDetailHeader({
-  task,
-  edit,
-}: TaskDetailHeaderProps) {
+export function TaskDetailHeader({ task, edit }: TaskDetailHeaderProps) {
   const titlePending = edit?.isFieldPending(task.id, "title") ?? false;
 
   return (
-    <header className="flex flex-col gap-[0.55rem] border-b border-border bg-[var(--bg-primary)] px-4 pb-[0.9rem] pt-4">
+    <header className="flex flex-col gap-[0.55rem] border-b border-border bg-[var(--bg-primary)] px-4 pt-4 pb-[0.9rem]">
       <div className="flex items-center justify-between gap-[0.6rem]">
         <span
           className="shrink-0 font-mono text-[length:var(--text-xs)] font-[var(--font-weight-medium)] text-[var(--text-muted)]"
@@ -51,7 +48,7 @@ export function TaskDetailHeader({
           }
         />
       ) : (
-        <h2 className="m-0 text-[length:var(--text-xl)] font-[var(--font-weight-semibold)] leading-[1.2] tracking-[-0.01em] text-[var(--text-primary)] [overflow-wrap:anywhere]">
+        <h2 className="m-0 text-[length:var(--text-xl)] leading-[1.2] font-[var(--font-weight-semibold)] tracking-[-0.01em] [overflow-wrap:anywhere] text-[var(--text-primary)]">
           {task.title}
         </h2>
       )}

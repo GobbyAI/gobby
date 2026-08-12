@@ -68,10 +68,7 @@ const SET_STATE_IN_EFFECT_EXEMPTIONS = [
   "src/hooks/useWorkflows.ts",
 ];
 
-const IMMUTABILITY_EXEMPTIONS = [
-  "src/App.tsx",
-  "src/hooks/useChat.ts",
-];
+const IMMUTABILITY_EXEMPTIONS = ["src/App.tsx", "src/hooks/useChat.ts"];
 
 export default defineConfig([
   globalIgnores(["dist/", "coverage/", ".vite/"]),

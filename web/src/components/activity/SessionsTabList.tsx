@@ -8,10 +8,7 @@ import { coarseHitAreaCls } from "../ui/controlStyles";
 import { ActivityPanelEmpty } from "./ActivityPanelEmpty";
 import { ActivityRowStatusDot } from "./ActivityRowStatusDot";
 import { KebabIcon } from "./QuickMenu";
-import {
-  type WatchingSessionEntry,
-  renderBadges,
-} from "./SessionsTab.helpers";
+import { type WatchingSessionEntry, renderBadges } from "./SessionsTab.helpers";
 
 interface SessionsEntryListProps {
   emptyState: ReactNode;
@@ -43,7 +40,10 @@ export function SessionsEntryList({
       style={selectedSessionId ? { height: `${topHeight}%` } : undefined}
     >
       {fetchError && entries.length > 0 ? (
-        <div className="border-b border-border px-3 py-1.5 text-xs text-destructive-foreground" role="alert">
+        <div
+          className="border-b border-border px-3 py-1.5 text-xs text-destructive-foreground"
+          role="alert"
+        >
           {fetchError}
         </div>
       ) : null}
@@ -95,11 +95,10 @@ function SessionEntryRow({
       role="button"
       tabIndex={0}
       className={cn(
-        "session-entry flex min-h-[var(--activity-panel-row-height)] w-full cursor-pointer appearance-none items-center justify-between border-0 border-b border-border bg-transparent px-3 py-2 text-left font-[inherit] text-[inherit] transition-colors hover:bg-[var(--bg-tertiary)] focus-visible:outline-2 focus-visible:outline-accent focus-visible:outline-offset-[-2px]",
+        "session-entry flex min-h-[var(--activity-panel-row-height)] w-full cursor-pointer appearance-none items-center justify-between border-0 border-b border-border bg-transparent px-3 py-2 text-left font-[inherit] text-[inherit] transition-colors hover:bg-[var(--bg-tertiary)] focus-visible:outline-2 focus-visible:outline-offset-[-2px] focus-visible:outline-accent",
         isSelected &&
           "session-entry--active bg-[color-mix(in_srgb,var(--accent)_8%,transparent)]",
-        isPaused &&
-          "session-entry--paused opacity-[0.55] hover:opacity-75",
+        isPaused && "session-entry--paused opacity-[0.55] hover:opacity-75",
       )}
       onClick={() => onSelect(entry.id)}
       onKeyDown={(event) => {
@@ -109,7 +108,7 @@ function SessionEntryRow({
         }
       }}
     >
-      <div className="flex items-center gap-2 min-w-0 flex-1">
+      <div className="flex min-w-0 flex-1 items-center gap-2">
         <ActivityRowStatusDot
           kind={
             entry.status === "active"

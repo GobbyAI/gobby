@@ -140,9 +140,15 @@ export async function loadAgentDefinitions(
   const params = new URLSearchParams();
   if (projectId) params.set("project_id", projectId);
   const query = params.toString();
-  const response = await fetch(`${getBaseUrl()}/api/agents/definitions${query ? `?${query}` : ""}`);
+  const response = await fetch(
+    `${getBaseUrl()}/api/agents/definitions${query ? `?${query}` : ""}`,
+  );
   const data = await response.json();
-  if (response.ok && data.status === "success" && Array.isArray(data.definitions)) {
+  if (
+    response.ok &&
+    data.status === "success" &&
+    Array.isArray(data.definitions)
+  ) {
     return data.definitions as AgentDefInfo[];
   }
   throw new Error("Failed to load agent definitions");
@@ -152,8 +158,12 @@ export async function loadProviderCatalog(): Promise<ProviderModelEntry[]> {
   return fetchProviderModelCatalog();
 }
 
-export async function loadPipelineList(): Promise<{ id: string; name: string }[]> {
-  const response = await fetch(`${getBaseUrl()}/api/workflows?workflow_type=pipeline`);
+export async function loadPipelineList(): Promise<
+  { id: string; name: string }[]
+> {
+  const response = await fetch(
+    `${getBaseUrl()}/api/workflows?workflow_type=pipeline`,
+  );
   if (!response.ok) return [];
   const data = await response.json();
   if (!Array.isArray(data?.workflows)) return [];
@@ -193,7 +203,8 @@ export function filterAgentDefinitions(
   return definitions.filter((definition) => {
     if (definition.deleted_at) return false;
     if (options.sourceFilter === "installed") {
-      if (definition.source === "template" || definition.source === "project") return false;
+      if (definition.source === "template" || definition.source === "project")
+        return false;
     } else if (options.sourceFilter === "project") {
       if (definition.source !== "project") return false;
     } else if (options.sourceFilter === "templates") {
@@ -237,7 +248,8 @@ export function agentToDraft(agent: AgentDefInfo): AgentDraft {
       isolation: definition.isolation ?? "inherit",
       base_branch: definition.base_branch,
       timeout: definition.timeout,
-      pipeline: typeof workflows.pipeline === "string" ? workflows.pipeline : "",
+      pipeline:
+        typeof workflows.pipeline === "string" ? workflows.pipeline : "",
     },
     enabled: agent.enabled,
     tags: agent.tags ?? [],

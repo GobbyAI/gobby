@@ -1,21 +1,21 @@
-import type { ApprovalOption } from '../../types/chat'
-import { cn } from '../../lib/utils'
-import { Button } from '../ui/Button'
-import { PlanApprovalActions } from './PlanApprovalActions'
+import type { ApprovalOption } from "../../types/chat";
+import { cn } from "../../lib/utils";
+import { Button } from "../ui/Button";
+import { PlanApprovalActions } from "./PlanApprovalActions";
 import {
   getPlanPendingColors,
   type PlanPendingVariant,
-} from './planPendingSurface'
+} from "./planPendingSurface";
 
 interface PlanPendingActionStripProps {
-  onApprove: (option?: ApprovalOption) => void
-  onRequestChanges: (feedback: string) => void
+  onApprove: (option?: ApprovalOption) => void;
+  onRequestChanges: (feedback: string) => void;
   /** Per-CLI plan-accept options; empty/absent falls back to a single Approve. */
-  options?: ApprovalOption[]
+  options?: ApprovalOption[];
   /** Focus the Plans panel (altitude-3 canonical view). */
-  onView?: () => void
-  variant?: PlanPendingVariant
-  className?: string
+  onView?: () => void;
+  variant?: PlanPendingVariant;
+  className?: string;
 }
 
 /**
@@ -34,7 +34,7 @@ export function PlanPendingActionStrip({
   variant,
   className,
 }: PlanPendingActionStripProps) {
-  const planPendingColors = getPlanPendingColors(variant)
+  const planPendingColors = getPlanPendingColors(variant);
 
   return (
     <div
@@ -43,7 +43,7 @@ export function PlanPendingActionStrip({
       aria-live="polite"
       aria-label="Plan awaiting approval"
       className={cn(
-        'flex flex-wrap items-center gap-x-3 gap-y-1.5 rounded-md border px-2.5 py-1.5',
+        "flex flex-wrap items-center gap-x-3 gap-y-1.5 rounded-md border px-2.5 py-1.5",
         planPendingColors.surfaceBg,
         planPendingColors.borderColor,
         className,
@@ -51,7 +51,7 @@ export function PlanPendingActionStrip({
     >
       <span
         className={cn(
-          'flex items-center gap-1.5 text-xs font-semibold',
+          "flex items-center gap-1.5 text-xs font-semibold",
           planPendingColors.accentText,
         )}
       >
@@ -66,13 +66,18 @@ export function PlanPendingActionStrip({
           testIdPrefix="plan-strip"
         />
         {onView && (
-          <Button size="sm" variant="ghost" onClick={onView} data-testid="plan-strip-view">
+          <Button
+            size="sm"
+            variant="ghost"
+            onClick={onView}
+            data-testid="plan-strip-view"
+          >
             View
           </Button>
         )}
       </div>
     </div>
-  )
+  );
 }
 
 function ClockIcon({ className }: { className?: string }) {
@@ -92,5 +97,5 @@ function ClockIcon({ className }: { className?: string }) {
       <circle cx="12" cy="12" r="9" />
       <polyline points="12 7 12 12 15 14" />
     </svg>
-  )
+  );
 }

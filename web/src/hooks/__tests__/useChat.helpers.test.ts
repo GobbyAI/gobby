@@ -126,7 +126,7 @@ describe("useChat persisted message helpers", () => {
           id: "restored-protocol-1",
           role: "user",
           content:
-            '<local-command-caveat><command>npm test</command></local-command-caveat>',
+            "<local-command-caveat><command>npm test</command></local-command-caveat>",
           tool_calls: [],
           seq: 1,
           created_at: "2026-04-14T00:00:00Z",
@@ -187,7 +187,9 @@ describe("useChat persisted message helpers", () => {
     expect(result.current.dbSessionId).toBeNull();
     expect(result.current.messages).toHaveLength(0);
     expect(
-      mockFetch.fn.mock.calls.some(([url]) => String(url).includes("/api/chat/")),
+      mockFetch.fn.mock.calls.some(([url]) =>
+        String(url).includes("/api/chat/"),
+      ),
     ).toBe(false);
   });
 
@@ -210,7 +212,9 @@ describe("useChat persisted message helpers", () => {
     });
 
     expect(localStorage.removeItem).toHaveBeenCalledWith("gobby-db-session-id");
-    expect(localStorage.removeItem).toHaveBeenCalledWith("gobby-conversation-id");
+    expect(localStorage.removeItem).toHaveBeenCalledWith(
+      "gobby-conversation-id",
+    );
     expect(
       mockFetch.fn.mock.calls.some(([url]) =>
         String(url).includes("/api/chat/test-conversation-id/messages"),
@@ -241,7 +245,9 @@ describe("useChat persisted message helpers", () => {
     });
 
     expect(localStorage.removeItem).toHaveBeenCalledWith("gobby-db-session-id");
-    expect(localStorage.removeItem).toHaveBeenCalledWith("gobby-conversation-id");
+    expect(localStorage.removeItem).toHaveBeenCalledWith(
+      "gobby-conversation-id",
+    );
     expect(
       mockFetch.fn.mock.calls.some(([url]) =>
         String(url).includes("/api/chat/terminal-session/messages"),
@@ -250,10 +256,13 @@ describe("useChat persisted message helpers", () => {
   });
 
   it("hydrates persisted main-session metadata from the durable db session on mount", async () => {
-    mockFetch.mockJsonResponse("/api/chat/test-conversation-id/messages?limit=100&after_seq=0", {
-      messages: [],
-      max_seq: 0,
-    });
+    mockFetch.mockJsonResponse(
+      "/api/chat/test-conversation-id/messages?limit=100&after_seq=0",
+      {
+        messages: [],
+        max_seq: 0,
+      },
+    );
     mockFetch.mockJsonResponse("/api/sessions/test-conversation-id", {
       session: {
         id: "test-conversation-id",

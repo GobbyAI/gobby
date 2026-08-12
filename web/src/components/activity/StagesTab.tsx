@@ -37,7 +37,9 @@ interface StagesTabProps {
   projectId?: string | null;
 }
 
-export const StagesTab = memo(function StagesTab({ projectId }: StagesTabProps) {
+export const StagesTab = memo(function StagesTab({
+  projectId,
+}: StagesTabProps) {
   const [segment, setSegment] = useState<StageSegment>("stages");
   const [search, setSearch] = useState("");
   const [searchOpen, setSearchOpen] = useState(false);
@@ -45,8 +47,12 @@ export const StagesTab = memo(function StagesTab({ projectId }: StagesTabProps) 
   const [profiles, setProfiles] = useState<BuildProfile[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
-  const [selectedStageName, setSelectedStageName] = useState<string | null>(null);
-  const [selectedProfileKey, setSelectedProfileKey] = useState<string | null>(null);
+  const [selectedStageName, setSelectedStageName] = useState<string | null>(
+    null,
+  );
+  const [selectedProfileKey, setSelectedProfileKey] = useState<string | null>(
+    null,
+  );
   const [creatingProfile, setCreatingProfile] = useState(false);
   const [busyStageName, setBusyStageName] = useState<string | null>(null);
   const [busyProfileKey, setBusyProfileKey] = useState<string | null>(null);
@@ -63,10 +69,11 @@ export const StagesTab = memo(function StagesTab({ projectId }: StagesTabProps) 
       setSelectedStageName((current) =>
         current && data.stages.some((stage) => stage.name === current)
           ? current
-          : data.stages[0]?.name ?? null,
+          : (data.stages[0]?.name ?? null),
       );
       setSelectedProfileKey((current) =>
-        current && data.profiles.some((profile) => profileKey(profile) === current)
+        current &&
+        data.profiles.some((profile) => profileKey(profile) === current)
           ? current
           : data.profiles[0]
             ? profileKey(data.profiles[0])
@@ -74,7 +81,11 @@ export const StagesTab = memo(function StagesTab({ projectId }: StagesTabProps) 
       );
       return data;
     } catch (loadError) {
-      setError(loadError instanceof Error ? loadError.message : "Failed to load stages");
+      setError(
+        loadError instanceof Error
+          ? loadError.message
+          : "Failed to load stages",
+      );
       return null;
     } finally {
       setLoading(false);
@@ -85,15 +96,23 @@ export const StagesTab = memo(function StagesTab({ projectId }: StagesTabProps) 
     void refreshData();
   }, [refreshData]);
 
-  const filteredStages = useMemo(() => filterStages(stages, search), [stages, search]);
-  const filteredProfiles = useMemo(() => filterProfiles(profiles, search), [profiles, search]);
+  const filteredStages = useMemo(
+    () => filterStages(stages, search),
+    [stages, search],
+  );
+  const filteredProfiles = useMemo(
+    () => filterProfiles(profiles, search),
+    [profiles, search],
+  );
   const currentStageNames = useMemo(() => stageNames(stages), [stages]);
   const selectedStage = useMemo(
     () => stages.find((stage) => stage.name === selectedStageName) ?? null,
     [selectedStageName, stages],
   );
   const selectedProfile = useMemo(
-    () => profiles.find((profile) => profileKey(profile) === selectedProfileKey) ?? null,
+    () =>
+      profiles.find((profile) => profileKey(profile) === selectedProfileKey) ??
+      null,
     [profiles, selectedProfileKey],
   );
 
@@ -158,26 +177,40 @@ export const StagesTab = memo(function StagesTab({ projectId }: StagesTabProps) 
     [segment, searchOpen],
   );
 
-  const withStageBusy = async (stage: StageEntry, action: () => Promise<void>) => {
+  const withStageBusy = async (
+    stage: StageEntry,
+    action: () => Promise<void>,
+  ) => {
     setBusyStageName(stage.name);
     setError(null);
     try {
       await action();
     } catch (actionError) {
-      setError(actionError instanceof Error ? actionError.message : String(actionError));
+      setError(
+        actionError instanceof Error
+          ? actionError.message
+          : String(actionError),
+      );
     } finally {
       setBusyStageName(null);
     }
   };
 
-  const withProfileBusy = async (profile: BuildProfile, action: () => Promise<void>) => {
+  const withProfileBusy = async (
+    profile: BuildProfile,
+    action: () => Promise<void>,
+  ) => {
     const key = profileKey(profile);
     setBusyProfileKey(key);
     setError(null);
     try {
       await action();
     } catch (actionError) {
-      setError(actionError instanceof Error ? actionError.message : String(actionError));
+      setError(
+        actionError instanceof Error
+          ? actionError.message
+          : String(actionError),
+      );
     } finally {
       setBusyProfileKey(null);
     }
@@ -205,7 +238,9 @@ export const StagesTab = memo(function StagesTab({ projectId }: StagesTabProps) 
   );
 
   const hasDetail =
-    segment === "stages" ? Boolean(selectedStage) : Boolean(creatingProfile || selectedProfile);
+    segment === "stages"
+      ? Boolean(selectedStage)
+      : Boolean(creatingProfile || selectedProfile);
 
   return (
     <div className="flex h-full min-h-0 flex-col bg-[var(--bg-primary)]">
@@ -236,7 +271,10 @@ export const StagesTab = memo(function StagesTab({ projectId }: StagesTabProps) 
           style={hasDetail ? { height: `${topHeight}%` } : undefined}
         >
           {loading ? (
-            <ActivityPanelEmpty heading="Stages" body="Loading stages and profiles..." />
+            <ActivityPanelEmpty
+              heading="Stages"
+              body="Loading stages and profiles..."
+            />
           ) : segment === "stages" ? (
             filteredStages.length === 0 ? (
               <ActivityPanelEmpty

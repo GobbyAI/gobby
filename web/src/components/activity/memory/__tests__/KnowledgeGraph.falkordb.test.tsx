@@ -1,14 +1,17 @@
-import { fireEvent, render, screen, waitFor } from '@testing-library/react'
-import { describe, expect, it, vi } from 'vitest'
+import { fireEvent, render, screen, waitFor } from "@testing-library/react";
+import { describe, expect, it, vi } from "vitest";
 
-import { KnowledgeGraph } from '../KnowledgeGraph'
+import { KnowledgeGraph } from "../KnowledgeGraph";
 
 type ForceGraphProps = {
-  graphData?: { nodes: Array<{ entity: unknown }>; links: Array<{ type?: string; color?: string }> }
-  nodeLabel?: (node: { entity: unknown }) => string
-  linkLabel?: (link: { type?: string }) => string
-  linkColor?: (link: { color?: string }) => string
-}
+  graphData?: {
+    nodes: Array<{ entity: unknown }>;
+    links: Array<{ type?: string; color?: string }>;
+  };
+  nodeLabel?: (node: { entity: unknown }) => string;
+  linkLabel?: (link: { type?: string }) => string;
+  linkColor?: (link: { color?: string }) => string;
+};
 
 class MockResizeObserver {
   observe() {}
@@ -16,8 +19,8 @@ class MockResizeObserver {
   disconnect() {}
 }
 
-vi.mock('react-force-graph-3d', async () => {
-  const ReactModule = await import('react')
+vi.mock("react-force-graph-3d", async () => {
+  const ReactModule = await import("react");
   return {
     default: ReactModule.forwardRef(function MockForceGraph(
       props: ForceGraphProps,
@@ -25,13 +28,13 @@ vi.mock('react-force-graph-3d', async () => {
     ) {
       const nodeLabel = props.graphData?.nodes[0]
         ? props.nodeLabel?.(props.graphData.nodes[0])
-        : undefined
+        : undefined;
       const linkLabel = props.graphData?.links[0]
         ? props.linkLabel?.(props.graphData.links[0])
-        : undefined
+        : undefined;
       const linkColor = props.graphData?.links[0]
         ? props.linkColor?.(props.graphData.links[0])
-        : undefined
+        : undefined;
 
       return (
         <div
@@ -40,131 +43,149 @@ vi.mock('react-force-graph-3d', async () => {
           data-node-label={nodeLabel}
           data-testid="force-graph"
         />
-      )
+      );
     }),
-  }
-})
+  };
+});
 
-vi.mock('three-spritetext', () => ({
+vi.mock("three-spritetext", () => ({
   default: class SpriteText {
-    color = ''
-    fontFace = ''
-    textHeight = 0
-    backgroundColor = ''
-    borderColor = ''
-    borderWidth = 0
-    borderRadius = 0
-    padding: unknown[] = []
-    scale = { clone: () => ({}), copy: vi.fn(), set: vi.fn() }
+    color = "";
+    fontFace = "";
+    textHeight = 0;
+    backgroundColor = "";
+    borderColor = "";
+    borderWidth = 0;
+    borderRadius = 0;
+    padding: unknown[] = [];
+    scale = { clone: () => ({}), copy: vi.fn(), set: vi.fn() };
   },
-}))
+}));
 
-describe('KnowledgeGraph', () => {
-  it('shows a retryable error when the graph fetch fails', async () => {
-    vi.stubGlobal('ResizeObserver', MockResizeObserver)
-    const graphError = new Error('network unavailable')
-    const consoleError = vi.spyOn(console, 'error').mockImplementation(() => {})
-    const fetchKnowledgeGraph = vi.fn()
+describe("KnowledgeGraph", () => {
+  it("shows a retryable error when the graph fetch fails", async () => {
+    vi.stubGlobal("ResizeObserver", MockResizeObserver);
+    const graphError = new Error("network unavailable");
+    const consoleError = vi
+      .spyOn(console, "error")
+      .mockImplementation(() => {});
+    const fetchKnowledgeGraph = vi
+      .fn()
       .mockRejectedValueOnce(graphError)
-      .mockResolvedValueOnce({ entities: [], relationships: [] })
+      .mockResolvedValueOnce({ entities: [], relationships: [] });
 
     render(
       <KnowledgeGraph
         fetchKnowledgeGraph={fetchKnowledgeGraph}
         fetchEntityNeighbors={vi.fn()}
       />,
-    )
+    );
 
     await waitFor(() => {
-      expect(screen.getByText('Failed to load knowledge graph')).toBeInTheDocument()
-    })
-    expect(screen.queryByText('No entities found')).not.toBeInTheDocument()
+      expect(
+        screen.getByText("Failed to load knowledge graph"),
+      ).toBeInTheDocument();
+    });
+    expect(screen.queryByText("No entities found")).not.toBeInTheDocument();
 
-    fireEvent.click(screen.getByRole('button', { name: 'Retry' }))
+    fireEvent.click(screen.getByRole("button", { name: "Retry" }));
 
-    await waitFor(() => expect(screen.getByText('No entities found')).toBeInTheDocument())
-    expect(fetchKnowledgeGraph).toHaveBeenCalledTimes(2)
-    expect(consoleError).toHaveBeenCalledWith('Failed to load knowledge graph', graphError)
-    consoleError.mockRestore()
-  })
+    await waitFor(() =>
+      expect(screen.getByText("No entities found")).toBeInTheDocument(),
+    );
+    expect(fetchKnowledgeGraph).toHaveBeenCalledTimes(2);
+    expect(consoleError).toHaveBeenCalledWith(
+      "Failed to load knowledge graph",
+      graphError,
+    );
+    consoleError.mockRestore();
+  });
 
-  it('mentions FalkorDB in the empty-state copy', async () => {
-    vi.stubGlobal('ResizeObserver', MockResizeObserver)
+  it("mentions FalkorDB in the empty-state copy", async () => {
+    vi.stubGlobal("ResizeObserver", MockResizeObserver);
 
     render(
       <KnowledgeGraph
-        fetchKnowledgeGraph={vi.fn().mockResolvedValue({ entities: [], relationships: [] })}
+        fetchKnowledgeGraph={vi
+          .fn()
+          .mockResolvedValue({ entities: [], relationships: [] })}
         fetchEntityNeighbors={vi.fn()}
       />,
-    )
+    );
 
-    await waitFor(() => expect(screen.getByText('No entities found')).toBeInTheDocument())
+    await waitFor(() =>
+      expect(screen.getByText("No entities found")).toBeInTheDocument(),
+    );
 
     expect(
-      screen.getByText('Connect a FalkorDB instance to explore knowledge graph entities and relationships.'),
-    ).toBeInTheDocument()
-  })
+      screen.getByText(
+        "Connect a FalkorDB instance to explore knowledge graph entities and relationships.",
+      ),
+    ).toBeInTheDocument();
+  });
 
-  it('escapes dynamic HTML in graph tooltips', async () => {
-    vi.stubGlobal('ResizeObserver', MockResizeObserver)
+  it("escapes dynamic HTML in graph tooltips", async () => {
+    vi.stubGlobal("ResizeObserver", MockResizeObserver);
 
     render(
       <KnowledgeGraph
         fetchKnowledgeGraph={vi.fn().mockResolvedValue({
           entities: [
             {
-              entity_key: 'entity-1',
-              name: '<img src=x onerror=alert(1)>',
-              entity_type: 'person<script>',
+              entity_key: "entity-1",
+              name: "<img src=x onerror=alert(1)>",
+              entity_type: "person<script>",
               project_id: null,
               properties: {
-                '<b>role</b>': '"admin" & <script>alert(1)</script>',
+                "<b>role</b>": '"admin" & <script>alert(1)</script>',
               },
               memory_count: 1,
               memory_preview: '"admin" & <script>alert(1)</script>',
             },
             {
-              entity_key: 'entity-2',
-              name: '<i>target</i>',
-              entity_type: 'file',
+              entity_key: "entity-2",
+              name: "<i>target</i>",
+              entity_type: "file",
               project_id: null,
               properties: {},
             },
           ],
           relationships: [
             {
-              source_key: 'entity-1',
-              target_key: 'entity-2',
-              type: '<script>alert(1)</script>',
+              source_key: "entity-1",
+              target_key: "entity-2",
+              type: "<script>alert(1)</script>",
               properties: {},
             },
           ],
         })}
         fetchEntityNeighbors={vi.fn()}
       />,
-    )
+    );
 
-    await waitFor(() => expect(screen.getByTestId('force-graph')).toBeInTheDocument())
+    await waitFor(() =>
+      expect(screen.getByTestId("force-graph")).toBeInTheDocument(),
+    );
 
-    const forceGraph = screen.getByTestId('force-graph')
-    const nodeTooltip = forceGraph.getAttribute('data-node-label') ?? ''
-    const linkTooltip = forceGraph.getAttribute('data-link-label') ?? ''
-    const linkColor = forceGraph.getAttribute('data-link-color') ?? ''
+    const forceGraph = screen.getByTestId("force-graph");
+    const nodeTooltip = forceGraph.getAttribute("data-node-label") ?? "";
+    const linkTooltip = forceGraph.getAttribute("data-link-label") ?? "";
+    const linkColor = forceGraph.getAttribute("data-link-color") ?? "";
 
-    expect(nodeTooltip).toContain('&lt;img src=x onerror=alert(1)&gt;')
+    expect(nodeTooltip).toContain("&lt;img src=x onerror=alert(1)&gt;");
     // Memory preview and connection names are escaped.
-    expect(nodeTooltip).toContain('&quot;admin&quot; &amp; &lt;script')
-    expect(nodeTooltip).toContain('&lt;i&gt;target&lt;/i&gt;')
-    expect(nodeTooltip).not.toContain('<img src=x')
-    expect(nodeTooltip).not.toContain('<i>target</i>')
-    expect(nodeTooltip).not.toContain('<script')
+    expect(nodeTooltip).toContain("&quot;admin&quot; &amp; &lt;script");
+    expect(nodeTooltip).toContain("&lt;i&gt;target&lt;/i&gt;");
+    expect(nodeTooltip).not.toContain("<img src=x");
+    expect(nodeTooltip).not.toContain("<i>target</i>");
+    expect(nodeTooltip).not.toContain("<script");
     // Raw properties are no longer dumped into the card (#19156).
-    expect(nodeTooltip).not.toContain('role')
-    expect(linkTooltip).toBe('&lt;script&gt;alert(1)&lt;/script&gt;')
+    expect(nodeTooltip).not.toContain("role");
+    expect(linkTooltip).toBe("&lt;script&gt;alert(1)&lt;/script&gt;");
     // Link colors reach three.js resolved (#19153): a concrete color — or empty
     // in jsdom, where custom properties don't resolve — never a `var()` literal,
     // which three.js renders as black.
-    expect(linkColor).not.toMatch(/var\(/)
-    expect(linkColor).not.toContain('hsl(')
-  })
-})
+    expect(linkColor).not.toMatch(/var\(/);
+    expect(linkColor).not.toContain("hsl(");
+  });
+});

@@ -1,9 +1,9 @@
-import {
-  InlineFilterFieldRow,
-  InlineFilterPanel,
-} from "../FilterPrimitives";
+import { InlineFilterFieldRow, InlineFilterPanel } from "../FilterPrimitives";
 import { SelectField } from "../fields";
-import { CHANNEL_DISPLAY_NAMES, INTEGRATION_CHANNEL_TYPES } from "./channelMetadata";
+import {
+  CHANNEL_DISPLAY_NAMES,
+  INTEGRATION_CHANNEL_TYPES,
+} from "./channelMetadata";
 import { type IntegrationFilters } from "./IntegrationsTabModel";
 
 interface IntegrationsFilterPanelProps {

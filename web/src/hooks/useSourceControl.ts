@@ -1,129 +1,129 @@
-import { useState, useEffect, useCallback, useRef } from 'react'
+import { useState, useEffect, useCallback, useRef } from "react";
 
 // =============================================================================
 // Types
 // =============================================================================
 
 export interface SourceControlStatus {
-  github_available: boolean
-  github_repo: string | null
-  current_branch: string | null
-  branch_count: number
-  worktree_count: number
-  clone_count: number
+  github_available: boolean;
+  github_repo: string | null;
+  current_branch: string | null;
+  branch_count: number;
+  worktree_count: number;
+  clone_count: number;
 }
 
 export interface GitBranch {
-  name: string
-  is_current: boolean
-  is_remote: boolean
-  ahead: number
-  behind: number
-  last_commit_date: string
-  worktree_id: string | null
+  name: string;
+  is_current: boolean;
+  is_remote: boolean;
+  ahead: number;
+  behind: number;
+  last_commit_date: string;
+  worktree_id: string | null;
 }
 
 export interface GitCommit {
-  sha: string
-  short_sha: string
-  message: string
-  author: string
-  date: string
+  sha: string;
+  short_sha: string;
+  message: string;
+  author: string;
+  date: string;
 }
 
 export interface PullRequest {
-  number: number
-  title: string
-  state: 'open' | 'closed' | 'merged'
-  author: string
-  head_branch: string
-  base_branch: string
-  created_at: string
-  updated_at: string
-  draft: boolean
-  checks_status: 'pending' | 'success' | 'failure' | null
-  linked_task_id: string | null
+  number: number;
+  title: string;
+  state: "open" | "closed" | "merged";
+  author: string;
+  head_branch: string;
+  base_branch: string;
+  created_at: string;
+  updated_at: string;
+  draft: boolean;
+  checks_status: "pending" | "success" | "failure" | null;
+  linked_task_id: string | null;
 }
 
 export interface WorktreeInfo {
-  id: string
-  branch_name: string
-  worktree_path: string
-  status: string
-  task_id: string | null
-  agent_session_id: string | null
-  project_id: string
-  base_branch: string
-  created_at: string
-  updated_at: string
-  merged_at: string | null
+  id: string;
+  branch_name: string;
+  worktree_path: string;
+  status: string;
+  task_id: string | null;
+  agent_session_id: string | null;
+  project_id: string;
+  base_branch: string;
+  created_at: string;
+  updated_at: string;
+  merged_at: string | null;
 }
 
 export interface CloneInfo {
-  id: string
-  branch_name: string
-  clone_path: string
-  remote_url: string | null
-  status: string
-  task_id: string | null
-  project_id: string
-  base_branch: string
-  created_at: string
-  updated_at: string
+  id: string;
+  branch_name: string;
+  clone_path: string;
+  remote_url: string | null;
+  status: string;
+  task_id: string | null;
+  project_id: string;
+  base_branch: string;
+  created_at: string;
+  updated_at: string;
 }
 
 export interface CIWorkflowRun {
-  id: number
-  name: string
-  status: string
-  conclusion: string | null
-  branch: string
-  event: string
-  created_at: string
-  html_url: string
+  id: number;
+  name: string;
+  status: string;
+  conclusion: string | null;
+  branch: string;
+  event: string;
+  created_at: string;
+  html_url: string;
 }
 
 export interface Issue {
-  number: number
-  title: string
-  state: 'open' | 'closed'
-  author: string
-  labels: { name: string; color: string }[]
-  created_at: string
-  updated_at: string
-  comments: number
+  number: number;
+  title: string;
+  state: "open" | "closed";
+  author: string;
+  labels: { name: string; color: string }[];
+  created_at: string;
+  updated_at: string;
+  comments: number;
 }
 
 export interface IssueDetail {
-  title: string
-  body: string | null
-  [key: string]: unknown
+  title: string;
+  body: string | null;
+  [key: string]: unknown;
 }
 
 export interface DiffResult {
-  diff_stat: string
-  files: { status: string; path: string }[]
-  patch: string
+  diff_stat: string;
+  files: { status: string; path: string }[];
+  patch: string;
 }
 
 // =============================================================================
 // Constants
 // =============================================================================
 
-const LOCAL_POLL_MS = 5000
-const GITHUB_POLL_MS = 30000
+const LOCAL_POLL_MS = 5000;
+const GITHUB_POLL_MS = 30000;
 
 function getBaseUrl(): string {
-  return ''
+  return "";
 }
 
 function isAbortError(error: unknown): boolean {
   return (
-    typeof error === 'object' &&
+    typeof error === "object" &&
     error !== null &&
-    'name' in error &&
-    error.name === 'AbortError'
-  )
+    "name" in error &&
+    error.name === "AbortError"
+  );
 }
 
 // =============================================================================
@@ -131,208 +131,271 @@ function isAbortError(error: unknown): boolean {
 // =============================================================================
 
 export function useSourceControl(projectId: string | null = null) {
-  const [status, setStatus] = useState<SourceControlStatus | null>(null)
-  const [branches, setBranches] = useState<GitBranch[]>([])
-  const [prs, setPrs] = useState<PullRequest[]>([])
-  const [worktrees, setWorktrees] = useState<WorktreeInfo[]>([])
-  const [clones, setClones] = useState<CloneInfo[]>([])
-  const [issues, setIssues] = useState<Issue[]>([])
-  const [ciRuns, setCiRuns] = useState<CIWorkflowRun[]>([])
+  const [status, setStatus] = useState<SourceControlStatus | null>(null);
+  const [branches, setBranches] = useState<GitBranch[]>([]);
+  const [prs, setPrs] = useState<PullRequest[]>([]);
+  const [worktrees, setWorktrees] = useState<WorktreeInfo[]>([]);
+  const [clones, setClones] = useState<CloneInfo[]>([]);
+  const [issues, setIssues] = useState<Issue[]>([]);
+  const [ciRuns, setCiRuns] = useState<CIWorkflowRun[]>([]);
 
-  const [isLoading, setIsLoading] = useState(true)
-  const [errors, setErrors] = useState<Record<string, string>>({})
+  const [isLoading, setIsLoading] = useState(true);
+  const [errors, setErrors] = useState<Record<string, string>>({});
 
   const setFetcherError = useCallback((key: string, message: string | null) => {
-    setErrors(prev => {
+    setErrors((prev) => {
       if (message === null) {
-        if (!(key in prev)) return prev
-        const next = { ...prev }
-        delete next[key]
-        return next
+        if (!(key in prev)) return prev;
+        const next = { ...prev };
+        delete next[key];
+        return next;
       }
-      return { ...prev, [key]: message }
-    })
-  }, [])
+      return { ...prev, [key]: message };
+    });
+  }, []);
 
-  const error = Object.values(errors).length > 0 ? Object.values(errors).join('; ') : null
+  const error =
+    Object.values(errors).length > 0 ? Object.values(errors).join("; ") : null;
 
-  const localPollRef = useRef<number | null>(null)
-  const githubPollRef = useRef<number | null>(null)
-  const requestIdsRef = useRef<Record<string, number>>({})
-  const fetchLocalRef = useRef<(signal: AbortSignal) => Promise<void>>(() => Promise.resolve())
-  const fetchGitHubRef = useRef<(signal: AbortSignal) => Promise<void>>(() => Promise.resolve())
+  const localPollRef = useRef<number | null>(null);
+  const githubPollRef = useRef<number | null>(null);
+  const requestIdsRef = useRef<Record<string, number>>({});
+  const fetchLocalRef = useRef<(signal: AbortSignal) => Promise<void>>(() =>
+    Promise.resolve(),
+  );
+  const fetchGitHubRef = useRef<(signal: AbortSignal) => Promise<void>>(() =>
+    Promise.resolve(),
+  );
 
   const beginRequest = useCallback((key: string) => {
-    const requestId = (requestIdsRef.current[key] ?? 0) + 1
-    requestIdsRef.current[key] = requestId
-    return requestId
-  }, [])
+    const requestId = (requestIdsRef.current[key] ?? 0) + 1;
+    requestIdsRef.current[key] = requestId;
+    return requestId;
+  }, []);
 
   const isCurrentRequest = useCallback(
     (key: string, requestId: number, signal?: AbortSignal) =>
       !signal?.aborted && requestIdsRef.current[key] === requestId,
-    []
-  )
+    [],
+  );
 
   const buildParams = useCallback(
     (extra?: Record<string, string>) => {
-      const params = new URLSearchParams()
-      if (projectId) params.set('project_id', projectId)
+      const params = new URLSearchParams();
+      if (projectId) params.set("project_id", projectId);
       if (extra) {
-        for (const [k, v] of Object.entries(extra)) params.set(k, v)
+        for (const [k, v] of Object.entries(extra)) params.set(k, v);
       }
-      return params.toString()
+      return params.toString();
     },
-    [projectId]
-  )
+    [projectId],
+  );
 
   // --- Fetch functions ---
 
-  const fetchStatus = useCallback(async (signal?: AbortSignal) => {
-    const requestId = beginRequest('status')
-    try {
-      const r = await fetch(`${getBaseUrl()}/api/source-control/status?${buildParams()}`, { signal })
-      if (r.ok) {
-        const data = await r.json()
-        if (!isCurrentRequest('status', requestId, signal)) return
-        setStatus(data)
-        setFetcherError('status', null)
-      } else if (isCurrentRequest('status', requestId, signal)) {
-        setFetcherError('status', `HTTP ${r.status}: ${r.statusText}`)
+  const fetchStatus = useCallback(
+    async (signal?: AbortSignal) => {
+      const requestId = beginRequest("status");
+      try {
+        const r = await fetch(
+          `${getBaseUrl()}/api/source-control/status?${buildParams()}`,
+          { signal },
+        );
+        if (r.ok) {
+          const data = await r.json();
+          if (!isCurrentRequest("status", requestId, signal)) return;
+          setStatus(data);
+          setFetcherError("status", null);
+        } else if (isCurrentRequest("status", requestId, signal)) {
+          setFetcherError("status", `HTTP ${r.status}: ${r.statusText}`);
+        }
+      } catch (e) {
+        if (isAbortError(e) || !isCurrentRequest("status", requestId, signal))
+          return;
+        const message = e instanceof Error ? e.message : String(e);
+        setFetcherError("status", message);
+        console.error("Failed to fetch source control status:", e);
       }
-    } catch (e) {
-      if (isAbortError(e) || !isCurrentRequest('status', requestId, signal)) return
-      const message = e instanceof Error ? e.message : String(e)
-      setFetcherError('status', message)
-      console.error('Failed to fetch source control status:', e)
-    }
-  }, [beginRequest, buildParams, isCurrentRequest, setFetcherError])
+    },
+    [beginRequest, buildParams, isCurrentRequest, setFetcherError],
+  );
 
-  const fetchBranches = useCallback(async (signal?: AbortSignal) => {
-    const requestId = beginRequest('branches')
-    try {
-      const r = await fetch(`${getBaseUrl()}/api/source-control/branches?${buildParams()}`, { signal })
-      if (r.ok) {
-        const data = await r.json()
-        if (!isCurrentRequest('branches', requestId, signal)) return
-        setBranches(data.branches || [])
-        setFetcherError('branches', null)
-      } else if (isCurrentRequest('branches', requestId, signal)) {
-        setFetcherError('branches', `Branches: HTTP ${r.status}`)
+  const fetchBranches = useCallback(
+    async (signal?: AbortSignal) => {
+      const requestId = beginRequest("branches");
+      try {
+        const r = await fetch(
+          `${getBaseUrl()}/api/source-control/branches?${buildParams()}`,
+          { signal },
+        );
+        if (r.ok) {
+          const data = await r.json();
+          if (!isCurrentRequest("branches", requestId, signal)) return;
+          setBranches(data.branches || []);
+          setFetcherError("branches", null);
+        } else if (isCurrentRequest("branches", requestId, signal)) {
+          setFetcherError("branches", `Branches: HTTP ${r.status}`);
+        }
+      } catch (e) {
+        if (isAbortError(e) || !isCurrentRequest("branches", requestId, signal))
+          return;
+        setFetcherError(
+          "branches",
+          e instanceof Error ? e.message : "Failed to fetch branches",
+        );
+        console.error("Failed to fetch branches:", e);
       }
-    } catch (e) {
-      if (isAbortError(e) || !isCurrentRequest('branches', requestId, signal)) return
-      setFetcherError('branches', e instanceof Error ? e.message : 'Failed to fetch branches')
-      console.error('Failed to fetch branches:', e)
-    }
-  }, [beginRequest, buildParams, isCurrentRequest, setFetcherError])
+    },
+    [beginRequest, buildParams, isCurrentRequest, setFetcherError],
+  );
 
   const fetchPrs = useCallback(
-    async (state = 'open', signal?: AbortSignal) => {
-      const requestId = beginRequest('prs')
+    async (state = "open", signal?: AbortSignal) => {
+      const requestId = beginRequest("prs");
       try {
         const r = await fetch(
           `${getBaseUrl()}/api/source-control/prs?${buildParams({ state })}`,
-          { signal }
-        )
+          { signal },
+        );
         if (r.ok) {
-          const data = await r.json()
-          if (!isCurrentRequest('prs', requestId, signal)) return
-          setPrs(data.prs || [])
-          setFetcherError('prs', null)
-        } else if (isCurrentRequest('prs', requestId, signal)) {
-          setFetcherError('prs', `PRs: HTTP ${r.status}`)
+          const data = await r.json();
+          if (!isCurrentRequest("prs", requestId, signal)) return;
+          setPrs(data.prs || []);
+          setFetcherError("prs", null);
+        } else if (isCurrentRequest("prs", requestId, signal)) {
+          setFetcherError("prs", `PRs: HTTP ${r.status}`);
         }
       } catch (e) {
-        if (isAbortError(e) || !isCurrentRequest('prs', requestId, signal)) return
-        setFetcherError('prs', e instanceof Error ? e.message : 'Failed to fetch PRs')
-        console.error('Failed to fetch PRs:', e)
+        if (isAbortError(e) || !isCurrentRequest("prs", requestId, signal))
+          return;
+        setFetcherError(
+          "prs",
+          e instanceof Error ? e.message : "Failed to fetch PRs",
+        );
+        console.error("Failed to fetch PRs:", e);
       }
     },
-    [beginRequest, buildParams, isCurrentRequest, setFetcherError]
-  )
+    [beginRequest, buildParams, isCurrentRequest, setFetcherError],
+  );
 
-  const fetchWorktrees = useCallback(async (signal?: AbortSignal) => {
-    const requestId = beginRequest('worktrees')
-    try {
-      const r = await fetch(`${getBaseUrl()}/api/source-control/worktrees?${buildParams()}`, { signal })
-      if (r.ok) {
-        const data = await r.json()
-        if (!isCurrentRequest('worktrees', requestId, signal)) return
-        setWorktrees(data.worktrees || [])
-        setFetcherError('worktrees', null)
-      } else if (isCurrentRequest('worktrees', requestId, signal)) {
-        setFetcherError('worktrees', `Worktrees: HTTP ${r.status}`)
+  const fetchWorktrees = useCallback(
+    async (signal?: AbortSignal) => {
+      const requestId = beginRequest("worktrees");
+      try {
+        const r = await fetch(
+          `${getBaseUrl()}/api/source-control/worktrees?${buildParams()}`,
+          { signal },
+        );
+        if (r.ok) {
+          const data = await r.json();
+          if (!isCurrentRequest("worktrees", requestId, signal)) return;
+          setWorktrees(data.worktrees || []);
+          setFetcherError("worktrees", null);
+        } else if (isCurrentRequest("worktrees", requestId, signal)) {
+          setFetcherError("worktrees", `Worktrees: HTTP ${r.status}`);
+        }
+      } catch (e) {
+        if (
+          isAbortError(e) ||
+          !isCurrentRequest("worktrees", requestId, signal)
+        )
+          return;
+        setFetcherError(
+          "worktrees",
+          e instanceof Error ? e.message : "Failed to fetch worktrees",
+        );
+        console.error("Failed to fetch worktrees:", e);
       }
-    } catch (e) {
-      if (isAbortError(e) || !isCurrentRequest('worktrees', requestId, signal)) return
-      setFetcherError('worktrees', e instanceof Error ? e.message : 'Failed to fetch worktrees')
-      console.error('Failed to fetch worktrees:', e)
-    }
-  }, [beginRequest, buildParams, isCurrentRequest, setFetcherError])
+    },
+    [beginRequest, buildParams, isCurrentRequest, setFetcherError],
+  );
 
-  const fetchClones = useCallback(async (signal?: AbortSignal) => {
-    const requestId = beginRequest('clones')
-    try {
-      const r = await fetch(`${getBaseUrl()}/api/source-control/clones?${buildParams()}`, { signal })
-      if (r.ok) {
-        const data = await r.json()
-        if (!isCurrentRequest('clones', requestId, signal)) return
-        setClones(data.clones || [])
-        setFetcherError('clones', null)
-      } else if (isCurrentRequest('clones', requestId, signal)) {
-        setFetcherError('clones', `Clones: HTTP ${r.status}`)
+  const fetchClones = useCallback(
+    async (signal?: AbortSignal) => {
+      const requestId = beginRequest("clones");
+      try {
+        const r = await fetch(
+          `${getBaseUrl()}/api/source-control/clones?${buildParams()}`,
+          { signal },
+        );
+        if (r.ok) {
+          const data = await r.json();
+          if (!isCurrentRequest("clones", requestId, signal)) return;
+          setClones(data.clones || []);
+          setFetcherError("clones", null);
+        } else if (isCurrentRequest("clones", requestId, signal)) {
+          setFetcherError("clones", `Clones: HTTP ${r.status}`);
+        }
+      } catch (e) {
+        if (isAbortError(e) || !isCurrentRequest("clones", requestId, signal))
+          return;
+        setFetcherError(
+          "clones",
+          e instanceof Error ? e.message : "Failed to fetch clones",
+        );
+        console.error("Failed to fetch clones:", e);
       }
-    } catch (e) {
-      if (isAbortError(e) || !isCurrentRequest('clones', requestId, signal)) return
-      setFetcherError('clones', e instanceof Error ? e.message : 'Failed to fetch clones')
-      console.error('Failed to fetch clones:', e)
-    }
-  }, [beginRequest, buildParams, isCurrentRequest, setFetcherError])
+    },
+    [beginRequest, buildParams, isCurrentRequest, setFetcherError],
+  );
 
-  const fetchCiRuns = useCallback(async (signal?: AbortSignal) => {
-    const requestId = beginRequest('ciRuns')
-    try {
-      const r = await fetch(`${getBaseUrl()}/api/source-control/cicd/runs?${buildParams()}`, { signal })
-      if (r.ok) {
-        const data = await r.json()
-        if (!isCurrentRequest('ciRuns', requestId, signal)) return
-        setCiRuns(data.runs || [])
-        setFetcherError('ciRuns', null)
-      } else if (isCurrentRequest('ciRuns', requestId, signal)) {
-        setFetcherError('ciRuns', `CI runs: HTTP ${r.status}`)
+  const fetchCiRuns = useCallback(
+    async (signal?: AbortSignal) => {
+      const requestId = beginRequest("ciRuns");
+      try {
+        const r = await fetch(
+          `${getBaseUrl()}/api/source-control/cicd/runs?${buildParams()}`,
+          { signal },
+        );
+        if (r.ok) {
+          const data = await r.json();
+          if (!isCurrentRequest("ciRuns", requestId, signal)) return;
+          setCiRuns(data.runs || []);
+          setFetcherError("ciRuns", null);
+        } else if (isCurrentRequest("ciRuns", requestId, signal)) {
+          setFetcherError("ciRuns", `CI runs: HTTP ${r.status}`);
+        }
+      } catch (e) {
+        if (isAbortError(e) || !isCurrentRequest("ciRuns", requestId, signal))
+          return;
+        setFetcherError(
+          "ciRuns",
+          e instanceof Error ? e.message : "Failed to fetch CI/CD runs",
+        );
+        console.error("Failed to fetch CI/CD runs:", e);
       }
-    } catch (e) {
-      if (isAbortError(e) || !isCurrentRequest('ciRuns', requestId, signal)) return
-      setFetcherError('ciRuns', e instanceof Error ? e.message : 'Failed to fetch CI/CD runs')
-      console.error('Failed to fetch CI/CD runs:', e)
-    }
-  }, [beginRequest, buildParams, isCurrentRequest, setFetcherError])
+    },
+    [beginRequest, buildParams, isCurrentRequest, setFetcherError],
+  );
 
   const fetchIssues = useCallback(
-    async (state = 'open', signal?: AbortSignal) => {
-      const requestId = beginRequest('issues')
+    async (state = "open", signal?: AbortSignal) => {
+      const requestId = beginRequest("issues");
       try {
         const r = await fetch(
           `${getBaseUrl()}/api/source-control/issues?${buildParams({ state })}`,
-          { signal }
-        )
+          { signal },
+        );
         if (r.ok) {
-          const data = await r.json()
-          if (!isCurrentRequest('issues', requestId, signal)) return
-          setIssues(data.issues || [])
-          setFetcherError('issues', null)
-        } else if (isCurrentRequest('issues', requestId, signal)) {
-          setFetcherError('issues', `Issues: HTTP ${r.status}`)
+          const data = await r.json();
+          if (!isCurrentRequest("issues", requestId, signal)) return;
+          setIssues(data.issues || []);
+          setFetcherError("issues", null);
+        } else if (isCurrentRequest("issues", requestId, signal)) {
+          setFetcherError("issues", `Issues: HTTP ${r.status}`);
         }
       } catch (e) {
-        if (isAbortError(e) || !isCurrentRequest('issues', requestId, signal)) return
-        setFetcherError('issues', e instanceof Error ? e.message : 'Failed to fetch issues')
-        console.error('Failed to fetch issues:', e)
+        if (isAbortError(e) || !isCurrentRequest("issues", requestId, signal))
+          return;
+        setFetcherError(
+          "issues",
+          e instanceof Error ? e.message : "Failed to fetch issues",
+        );
+        console.error("Failed to fetch issues:", e);
       }
     },
-    [beginRequest, buildParams, isCurrentRequest, setFetcherError]
-  )
+    [beginRequest, buildParams, isCurrentRequest, setFetcherError],
+  );
 
   // --- On-demand fetchers ---
 
@@ -340,91 +403,94 @@ export function useSourceControl(projectId: string | null = null) {
     async (branchName: string, limit = 20): Promise<GitCommit[]> => {
       try {
         const r = await fetch(
-          `${getBaseUrl()}/api/source-control/branches/${encodeURIComponent(branchName)}/commits?${buildParams({ limit: String(limit) })}`
-        )
+          `${getBaseUrl()}/api/source-control/branches/${encodeURIComponent(branchName)}/commits?${buildParams({ limit: String(limit) })}`,
+        );
         if (r.ok) {
-          const data = await r.json()
-          return data.commits || []
+          const data = await r.json();
+          return data.commits || [];
         }
       } catch (e) {
-        console.error('Failed to fetch commits:', e)
+        console.error("Failed to fetch commits:", e);
       }
-      return []
+      return [];
     },
-    [buildParams]
-  )
+    [buildParams],
+  );
 
   const fetchDiff = useCallback(
     async (base: string, head: string): Promise<DiffResult | null> => {
       try {
         const r = await fetch(
-          `${getBaseUrl()}/api/source-control/diff?${buildParams({ base, head })}`
-        )
-        if (r.ok) return await r.json()
+          `${getBaseUrl()}/api/source-control/diff?${buildParams({ base, head })}`,
+        );
+        if (r.ok) return await r.json();
       } catch (e) {
-        console.error('Failed to fetch diff:', e)
+        console.error("Failed to fetch diff:", e);
       }
-      return null
+      return null;
     },
-    [buildParams]
-  )
+    [buildParams],
+  );
 
   const fetchPrDetail = useCallback(
     async (number: number): Promise<Record<string, unknown> | null> => {
       try {
         const r = await fetch(
-          `${getBaseUrl()}/api/source-control/prs/${number}?${buildParams()}`
-        )
+          `${getBaseUrl()}/api/source-control/prs/${number}?${buildParams()}`,
+        );
         if (r.ok) {
-          const data = await r.json()
-          return data.pr || null
+          const data = await r.json();
+          return data.pr || null;
         }
       } catch (e) {
-        console.error('Failed to fetch PR detail:', e)
+        console.error("Failed to fetch PR detail:", e);
       }
-      return null
+      return null;
     },
-    [buildParams]
-  )
+    [buildParams],
+  );
 
   const fetchIssueDetail = useCallback(
     async (number: number): Promise<IssueDetail | null> => {
       try {
         const r = await fetch(
-          `${getBaseUrl()}/api/source-control/issues/${number}?${buildParams()}`
-        )
+          `${getBaseUrl()}/api/source-control/issues/${number}?${buildParams()}`,
+        );
         if (r.ok) {
-          const data = await r.json()
-          return data.issue || null
+          const data = await r.json();
+          return data.issue || null;
         }
       } catch (e) {
-        console.error('Failed to fetch issue detail:', e)
+        console.error("Failed to fetch issue detail:", e);
       }
-      return null
+      return null;
     },
-    [buildParams]
-  )
+    [buildParams],
+  );
 
   // --- Actions ---
 
   const deleteWorktree = useCallback(
     async (id: string): Promise<boolean> => {
       try {
-        const r = await fetch(`${getBaseUrl()}/api/source-control/worktrees/${id}`, {
-          method: 'DELETE',
-        })
+        const r = await fetch(
+          `${getBaseUrl()}/api/source-control/worktrees/${id}`,
+          {
+            method: "DELETE",
+          },
+        );
         if (r.ok) {
-          await fetchWorktrees()
-          await fetchStatus()
-          return true
+          await fetchWorktrees();
+          await fetchStatus();
+          return true;
         }
       } catch (e) {
-        console.error('Failed to delete worktree:', e)
+        console.error("Failed to delete worktree:", e);
       }
-      return false
+      return false;
     },
-    [fetchWorktrees, fetchStatus]
-  )
+    [fetchWorktrees, fetchStatus],
+  );
 
   const cleanupWorktrees = useCallback(
     async (hours = 24, dryRun = false): Promise<WorktreeInfo[]> => {
@@ -434,140 +500,162 @@ export function useSourceControl(projectId: string | null = null) {
             hours: String(hours),
             dry_run: String(dryRun),
           })}`,
-          { method: 'POST' }
-        )
+          { method: "POST" },
+        );
         if (r.ok) {
-          const data = await r.json()
+          const data = await r.json();
           if (!dryRun) {
-            await fetchWorktrees()
-            await fetchStatus()
+            await fetchWorktrees();
+            await fetchStatus();
           }
-          return data.candidates || []
+          return data.candidates || [];
         }
       } catch (e) {
-        console.error('Failed to cleanup worktrees:', e)
+        console.error("Failed to cleanup worktrees:", e);
       }
-      return []
+      return [];
     },
-    [buildParams, fetchWorktrees, fetchStatus]
-  )
+    [buildParams, fetchWorktrees, fetchStatus],
+  );
 
   const syncWorktree = useCallback(
     async (id: string): Promise<boolean> => {
       try {
-        const r = await fetch(`${getBaseUrl()}/api/source-control/worktrees/${id}/sync`, {
-          method: 'POST',
-        })
+        const r = await fetch(
+          `${getBaseUrl()}/api/source-control/worktrees/${id}/sync`,
+          {
+            method: "POST",
+          },
+        );
         if (r.ok) {
-          await fetchWorktrees()
-          return true
+          await fetchWorktrees();
+          return true;
         }
       } catch (e) {
-        console.error('Failed to sync worktree:', e)
+        console.error("Failed to sync worktree:", e);
       }
-      return false
+      return false;
     },
-    [fetchWorktrees]
-  )
+    [fetchWorktrees],
+  );
 
   const deleteClone = useCallback(
     async (id: string): Promise<boolean> => {
       try {
-        const r = await fetch(`${getBaseUrl()}/api/source-control/clones/${id}`, {
-          method: 'DELETE',
-        })
+        const r = await fetch(
+          `${getBaseUrl()}/api/source-control/clones/${id}`,
+          {
+            method: "DELETE",
+          },
+        );
         if (r.ok) {
-          await fetchClones()
-          await fetchStatus()
-          return true
+          await fetchClones();
+          await fetchStatus();
+          return true;
         }
       } catch (e) {
-        console.error('Failed to delete clone:', e)
+        console.error("Failed to delete clone:", e);
       }
-      return false
+      return false;
     },
-    [fetchClones, fetchStatus]
-  )
+    [fetchClones, fetchStatus],
+  );
 
   const syncClone = useCallback(
     async (id: string): Promise<boolean> => {
       try {
-        const r = await fetch(`${getBaseUrl()}/api/source-control/clones/${id}/sync`, {
-          method: 'POST',
-        })
+        const r = await fetch(
+          `${getBaseUrl()}/api/source-control/clones/${id}/sync`,
+          {
+            method: "POST",
+          },
+        );
         if (r.ok) {
-          await fetchClones()
-          return true
+          await fetchClones();
+          return true;
         }
       } catch (e) {
-        console.error('Failed to sync clone:', e)
+        console.error("Failed to sync clone:", e);
       }
-      return false
+      return false;
     },
-    [fetchClones]
-  )
+    [fetchClones],
+  );
 
   // --- Fetch all local data ---
 
-  const fetchLocal = useCallback(async (signal: AbortSignal) => {
-    await Promise.all([
-      fetchStatus(signal),
-      fetchBranches(signal),
-      fetchWorktrees(signal),
-      fetchClones(signal),
-    ])
-    if (!signal.aborted) setIsLoading(false)
-  }, [fetchStatus, fetchBranches, fetchWorktrees, fetchClones])
+  const fetchLocal = useCallback(
+    async (signal: AbortSignal) => {
+      await Promise.all([
+        fetchStatus(signal),
+        fetchBranches(signal),
+        fetchWorktrees(signal),
+        fetchClones(signal),
+      ]);
+      if (!signal.aborted) setIsLoading(false);
+    },
+    [fetchStatus, fetchBranches, fetchWorktrees, fetchClones],
+  );
 
   // --- Fetch GitHub data ---
 
-  const fetchGitHub = useCallback(async (signal: AbortSignal) => {
-    await Promise.all([fetchPrs('open', signal), fetchIssues('open', signal), fetchCiRuns(signal)])
-  }, [fetchPrs, fetchIssues, fetchCiRuns])
+  const fetchGitHub = useCallback(
+    async (signal: AbortSignal) => {
+      await Promise.all([
+        fetchPrs("open", signal),
+        fetchIssues("open", signal),
+        fetchCiRuns(signal),
+      ]);
+    },
+    [fetchPrs, fetchIssues, fetchCiRuns],
+  );
 
   // --- Refresh all ---
 
   const refresh = useCallback(async () => {
-    setIsLoading(true)
-    const controller = new AbortController()
-    await Promise.all([fetchLocal(controller.signal), fetchGitHub(controller.signal)])
-  }, [fetchLocal, fetchGitHub])
+    setIsLoading(true);
+    const controller = new AbortController();
+    await Promise.all([
+      fetchLocal(controller.signal),
+      fetchGitHub(controller.signal),
+    ]);
+  }, [fetchLocal, fetchGitHub]);
 
   // Keep refs updated with latest fetch functions
   useEffect(() => {
-    fetchLocalRef.current = fetchLocal
-    fetchGitHubRef.current = fetchGitHub
-  }, [fetchLocal, fetchGitHub])
+    fetchLocalRef.current = fetchLocal;
+    fetchGitHubRef.current = fetchGitHub;
+  }, [fetchLocal, fetchGitHub]);
 
   // --- Effects ---
 
   // Local data: initial fetch + polling (5s) — restarts on projectId change
   useEffect(() => {
-    const controller = new AbortController()
-    setIsLoading(true)
-    setErrors({})
-    fetchLocalRef.current(controller.signal)
+    const controller = new AbortController();
+    setIsLoading(true);
+    setErrors({});
+    fetchLocalRef.current(controller.signal);
     localPollRef.current = window.setInterval(() => {
-      fetchLocalRef.current(controller.signal)
-    }, LOCAL_POLL_MS)
+      fetchLocalRef.current(controller.signal);
+    }, LOCAL_POLL_MS);
     return () => {
-      controller.abort()
-      if (localPollRef.current) window.clearInterval(localPollRef.current)
-    }
-  }, [projectId])
+      controller.abort();
+      if (localPollRef.current) window.clearInterval(localPollRef.current);
+    };
+  }, [projectId]);
 
   // GitHub data: initial fetch + polling (30s) — restarts on projectId change
   useEffect(() => {
-    const controller = new AbortController()
-    fetchGitHubRef.current(controller.signal)
+    const controller = new AbortController();
+    fetchGitHubRef.current(controller.signal);
     githubPollRef.current = window.setInterval(() => {
-      fetchGitHubRef.current(controller.signal)
-    }, GITHUB_POLL_MS)
+      fetchGitHubRef.current(controller.signal);
+    }, GITHUB_POLL_MS);
     return () => {
-      controller.abort()
-      if (githubPollRef.current) window.clearInterval(githubPollRef.current)
-    }
-  }, [projectId])
+      controller.abort();
+      if (githubPollRef.current) window.clearInterval(githubPollRef.current);
+    };
+  }, [projectId]);
 
   return {
     // Data
@@ -598,5 +686,5 @@ export function useSourceControl(projectId: string | null = null) {
     deleteClone,
     syncClone,
     refresh,
-  }
+  };
 }

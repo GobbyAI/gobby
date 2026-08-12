@@ -1,5 +1,12 @@
 import { useState, type ReactNode } from "react";
-import { act, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
+import {
+  act,
+  fireEvent,
+  render,
+  screen,
+  waitFor,
+  within,
+} from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
@@ -100,7 +107,11 @@ function Harness({
 function renderMcp(props = makeProps()) {
   // The shared header buttons live above the tab in the real layout; render
   // them here so Add/Refresh are reachable in tests.
-  return render(<Harness props={props}><ActivityActionButtons /></Harness>);
+  return render(
+    <Harness props={props}>
+      <ActivityActionButtons />
+    </Harness>,
+  );
 }
 
 function treeItemFor(text: string): HTMLElement {
@@ -158,14 +169,17 @@ describe("ActivityMcpTab", () => {
     const user = userEvent.setup();
     renderMcp();
 
-    const serverRow = await screen.findByText("gobby-tasks").then(() =>
-      treeItemFor("gobby-tasks"),
-    );
+    const serverRow = await screen
+      .findByText("gobby-tasks")
+      .then(() => treeItemFor("gobby-tasks"));
     await user.click(serverRow);
 
     // Clicking the row selects it (canonical tree semantics) but does not expand.
     expect(treeItemFor("gobby-tasks")).toHaveAttribute("aria-selected", "true");
-    expect(treeItemFor("gobby-tasks")).toHaveAttribute("aria-expanded", "false");
+    expect(treeItemFor("gobby-tasks")).toHaveAttribute(
+      "aria-expanded",
+      "false",
+    );
     expect(screen.queryByText("list_tasks")).toBeNull();
   });
 
@@ -222,7 +236,10 @@ describe("ActivityMcpTab", () => {
     // The chevron toggled expansion, and the row was NOT also selected — i.e.
     // the treeitem keydown handler did not swallow the Enter meant for the button.
     expect(treeItemFor("gobby-tasks")).toHaveAttribute("aria-expanded", "true");
-    expect(treeItemFor("gobby-tasks")).toHaveAttribute("aria-selected", "false");
+    expect(treeItemFor("gobby-tasks")).toHaveAttribute(
+      "aria-selected",
+      "false",
+    );
     expect(screen.getByText("list_tasks")).toBeInTheDocument();
   });
 
@@ -242,7 +259,10 @@ describe("ActivityMcpTab", () => {
     expect(
       screen.getByRole("menuitem", { name: "View details" }),
     ).toBeInTheDocument();
-    expect(treeItemFor("gobby-tasks")).toHaveAttribute("aria-selected", "false");
+    expect(treeItemFor("gobby-tasks")).toHaveAttribute(
+      "aria-selected",
+      "false",
+    );
   });
 
   it("auto-expands matching servers on search but still allows collapse", async () => {
@@ -263,7 +283,10 @@ describe("ActivityMcpTab", () => {
         name: "Collapse gobby-tasks tools",
       }),
     );
-    expect(treeItemFor("gobby-tasks")).toHaveAttribute("aria-expanded", "false");
+    expect(treeItemFor("gobby-tasks")).toHaveAttribute(
+      "aria-expanded",
+      "false",
+    );
     expect(screen.queryByText("list_tasks")).toBeNull();
   });
 
@@ -303,10 +326,14 @@ describe("ActivityMcpTab", () => {
   it("sorts servers alphabetically and default-selects the first server (#19152)", async () => {
     renderMcp();
 
-    const tree = await screen.findByRole("tree", { name: "MCP servers and tools" });
+    const tree = await screen.findByRole("tree", {
+      name: "MCP servers and tools",
+    });
     const rows = within(tree).getAllByRole("treeitem");
     expect(rows[0]).toHaveAccessibleName("github server, External");
-    await waitFor(() => expect(rows[0]).toHaveAttribute("aria-selected", "true"));
+    await waitFor(() =>
+      expect(rows[0]).toHaveAttribute("aria-selected", "true"),
+    );
   });
 
   it("opens a new-server detail draft from the shared header", async () => {
@@ -315,9 +342,13 @@ describe("ActivityMcpTab", () => {
 
     await user.click(screen.getByRole("button", { name: "New MCP server" }));
 
-    expect(screen.queryByRole("heading", { name: "Add MCP Server" })).toBeNull();
+    expect(
+      screen.queryByRole("heading", { name: "Add MCP Server" }),
+    ).toBeNull();
     expect(screen.getByText("New MCP server")).toBeInTheDocument();
-    expect(screen.getByRole("textbox", { name: "Server name" })).toBeInTheDocument();
+    expect(
+      screen.getByRole("textbox", { name: "Server name" }),
+    ).toBeInTheDocument();
     expect(screen.getByLabelText("Project")).toBeInTheDocument();
   });
 
@@ -326,8 +357,12 @@ describe("ActivityMcpTab", () => {
     const removeServer = vi.fn(async () => true);
     renderMcp(makeProps({ removeServer }));
 
-    await user.click(screen.getByRole("button", { name: "Open actions for github server" }));
-    await user.click(screen.getByRole("menuitem", { name: "Remove server..." }));
+    await user.click(
+      screen.getByRole("button", { name: "Open actions for github server" }),
+    );
+    await user.click(
+      screen.getByRole("menuitem", { name: "Remove server..." }),
+    );
     await user.click(screen.getByRole("button", { name: "Remove" }));
 
     await waitFor(() => {
@@ -340,7 +375,9 @@ describe("ActivityMcpTab", () => {
     const setServerEnabled = vi.fn(async () => true);
     renderMcp(makeProps({ setServerEnabled }));
 
-    await user.click(screen.getByRole("button", { name: "Open actions for github server" }));
+    await user.click(
+      screen.getByRole("button", { name: "Open actions for github server" }),
+    );
     await user.click(screen.getByRole("menuitem", { name: "Disable server" }));
 
     await waitFor(() => {
@@ -353,13 +390,23 @@ describe("ActivityMcpTab", () => {
     renderMcp();
 
     await user.click(
-      screen.getByRole("button", { name: "Open actions for gobby-tasks server" }),
+      screen.getByRole("button", {
+        name: "Open actions for gobby-tasks server",
+      }),
     );
 
-    expect(screen.getByRole("menuitem", { name: "View details" })).toBeInTheDocument();
-    expect(screen.getByRole("menuitem", { name: "Refresh tools" })).toBeInTheDocument();
-    expect(screen.queryByRole("menuitem", { name: /Disable server|Enable server/ })).toBeNull();
-    expect(screen.queryByRole("menuitem", { name: "Remove server..." })).toBeNull();
+    expect(
+      screen.getByRole("menuitem", { name: "View details" }),
+    ).toBeInTheDocument();
+    expect(
+      screen.getByRole("menuitem", { name: "Refresh tools" }),
+    ).toBeInTheDocument();
+    expect(
+      screen.queryByRole("menuitem", { name: /Disable server|Enable server/ }),
+    ).toBeNull();
+    expect(
+      screen.queryByRole("menuitem", { name: "Remove server..." }),
+    ).toBeNull();
   });
 
   it("loads and displays tool schema details", async () => {
@@ -406,19 +453,17 @@ describe("ActivityMcpTab", () => {
     await user.click(screen.getByRole("button", { name: "Call tool" }));
 
     await waitFor(() => {
-      expect(callTool).toHaveBeenCalledWith(
-        "gobby-tasks",
-        "create_task",
-        { title: "Fix docs" },
-      );
+      expect(callTool).toHaveBeenCalledWith("gobby-tasks", "create_task", {
+        title: "Fix docs",
+      });
     });
     expect(screen.getByText(/"ok": true/)).toBeInTheDocument();
   });
 
   it("discards a tool result after selecting another tool", async () => {
     const user = userEvent.setup();
-    let resolveCall: ((value: { success: boolean; result: unknown }) => void) | null =
-      null;
+    let resolveCall:
+      ((value: { success: boolean; result: unknown }) => void) | null = null;
     const callTool = vi.fn(
       () =>
         new Promise<{ success: boolean; result: unknown }>((resolve) => {
@@ -453,10 +498,14 @@ describe("ActivityMcpTab", () => {
     const refreshToolCache = vi.fn(async () => true);
     renderMcp(makeProps({ refreshToolCache }));
 
-    expect(screen.queryByRole("button", { name: "Refresh MCP tools" })).toBeNull();
+    expect(
+      screen.queryByRole("button", { name: "Refresh MCP tools" }),
+    ).toBeNull();
 
     await user.click(
-      screen.getByRole("button", { name: "Open actions for gobby-tasks server" }),
+      screen.getByRole("button", {
+        name: "Open actions for gobby-tasks server",
+      }),
     );
     await user.click(screen.getByRole("menuitem", { name: "Refresh tools" }));
 

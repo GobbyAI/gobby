@@ -17,7 +17,11 @@ type ProfilePayload = {
   tags: string[];
 };
 
-async function sendJson<T>(url: string, method: string, body?: Record<string, unknown>): Promise<T> {
+async function sendJson<T>(
+  url: string,
+  method: string,
+  body?: Record<string, unknown>,
+): Promise<T> {
   const response = await fetch(url, {
     method,
     headers: body ? { "Content-Type": "application/json" } : undefined,
@@ -26,7 +30,9 @@ async function sendJson<T>(url: string, method: string, body?: Record<string, un
   if (!response.ok) {
     const data = await response.json().catch(() => null);
     const detail =
-      data && typeof data === "object" && "detail" in data ? String(data.detail) : "Request failed";
+      data && typeof data === "object" && "detail" in data
+        ? String(data.detail)
+        : "Request failed";
     throw new Error(detail);
   }
   return response.json() as Promise<T>;
@@ -52,7 +58,10 @@ function stagePayload(stage: StageEntry): StagePayload {
   };
 }
 
-function profilePayload(profile: BuildProfile, includeIdentity: boolean): ProfilePayload {
+function profilePayload(
+  profile: BuildProfile,
+  includeIdentity: boolean,
+): ProfilePayload {
   return {
     ...(includeIdentity ? { name: profile.name, source: profile.source } : {}),
     display_label: profile.display_label,
@@ -83,11 +92,17 @@ export async function saveStageDraft(stage: StageEntry): Promise<StageEntry> {
 }
 
 export async function deleteStage(stage: StageEntry): Promise<void> {
-  await sendJson(`/api/stages/registry/${encodeURIComponent(stage.name)}`, "DELETE");
+  await sendJson(
+    `/api/stages/registry/${encodeURIComponent(stage.name)}`,
+    "DELETE",
+  );
 }
 
 export async function restoreStage(stage: StageEntry): Promise<void> {
-  await sendJson(`/api/stages/registry/${encodeURIComponent(stage.name)}/restore`, "POST");
+  await sendJson(
+    `/api/stages/registry/${encodeURIComponent(stage.name)}/restore`,
+    "POST",
+  );
 }
 
 export async function saveProfileDraft(
@@ -95,7 +110,11 @@ export async function saveProfileDraft(
   creating: boolean,
 ): Promise<BuildProfile> {
   if (creating) {
-    return sendJson<BuildProfile>("/api/profiles", "POST", profilePayload(profile, true));
+    return sendJson<BuildProfile>(
+      "/api/profiles",
+      "POST",
+      profilePayload(profile, true),
+    );
   }
   const params = profileParams(profile);
   return sendJson<BuildProfile>(
@@ -105,7 +124,10 @@ export async function saveProfileDraft(
   );
 }
 
-export async function setProfileEnabled(profile: BuildProfile, enabled: boolean): Promise<void> {
+export async function setProfileEnabled(
+  profile: BuildProfile,
+  enabled: boolean,
+): Promise<void> {
   const params = profileParams(profile);
   await sendJson(
     `/api/profiles/${encodeURIComponent(profile.name)}/${enabled ? "enable" : "disable"}?${params}`,
@@ -115,12 +137,18 @@ export async function setProfileEnabled(profile: BuildProfile, enabled: boolean)
 
 export async function deleteProfile(profile: BuildProfile): Promise<void> {
   const params = profileParams(profile);
-  await sendJson(`/api/profiles/${encodeURIComponent(profile.name)}?${params}`, "DELETE");
+  await sendJson(
+    `/api/profiles/${encodeURIComponent(profile.name)}?${params}`,
+    "DELETE",
+  );
 }
 
 export async function restoreProfile(profile: BuildProfile): Promise<void> {
   const params = profileParams(profile);
-  await sendJson(`/api/profiles/${encodeURIComponent(profile.name)}/restore?${params}`, "POST");
+  await sendJson(
+    `/api/profiles/${encodeURIComponent(profile.name)}/restore?${params}`,
+    "POST",
+  );
 }
 
 export async function setProfileAsDefault(

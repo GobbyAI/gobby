@@ -1,202 +1,210 @@
-export type StageState5 = 'ready' | 'in_progress' | 'needs_review' | 'review_approved' | 'done'
+export type StageState5 =
+  "ready" | "in_progress" | "needs_review" | "review_approved" | "done";
 
-export type StageRowState = StageState5
+export type StageRowState = StageState5;
 
-export type ReviewPolicy = 'none' | 'required' | 'optional'
+export type ReviewPolicy = "none" | "required" | "optional";
 
 export type StageAdvanceAction =
-  | 'start'
-  | 'submit_for_review'
-  | 'approve_review'
-  | 'reject_review'
-  | 'complete'
+  | "start"
+  | "submit_for_review"
+  | "approve_review"
+  | "reject_review"
+  | "complete";
 
 export interface StageStateView {
-  name: string
-  display_name: string
-  category: string
-  state: StageState5
-  review_policy: ReviewPolicy
-  updated_at: string | null
-  position?: number | null
-  reviewer_agent?: string | null
-  work_attempt_count?: number | null
-  review_round_count?: number | null
-  max_work_attempts?: number | null
-  max_review_rounds?: number | null
-  artifact_refs?: Record<string, string> | null
-  entered_at?: string | null
-  entered_by_session_id?: string | null
-  completed_at?: string | null
-  completed_by_session_id?: string | null
-  completed_commit_sha?: string | null
-  notes?: string | null
+  name: string;
+  display_name: string;
+  category: string;
+  state: StageState5;
+  review_policy: ReviewPolicy;
+  updated_at: string | null;
+  position?: number | null;
+  reviewer_agent?: string | null;
+  work_attempt_count?: number | null;
+  review_round_count?: number | null;
+  max_work_attempts?: number | null;
+  max_review_rounds?: number | null;
+  artifact_refs?: Record<string, string> | null;
+  entered_at?: string | null;
+  entered_by_session_id?: string | null;
+  completed_at?: string | null;
+  completed_by_session_id?: string | null;
+  completed_commit_sha?: string | null;
+  notes?: string | null;
 }
 
 export interface LifecycleTask {
-  id: string
-  title: string
-  task_type: string
-  stages: StageStateView[]
+  id: string;
+  title: string;
+  task_type: string;
+  stages: StageStateView[];
   state?: {
-    owner_session_id?: string | null
-    owner_session_ref?: unknown | null
-    is_claimed?: boolean
-    is_closed?: boolean
-    is_escalated?: boolean
-    is_blocked?: boolean
-    blocked_reason?: string | null
-    closed_at?: string | null
-    closed_reason?: string | null
-    closed_in_session_id?: string | null
-    closed_commit_sha?: string | null
-    escalated_at?: string | null
-    escalation_reason?: string | null
-  } | null
-  is_blocked?: boolean
-  blocked_reason?: string | null
-  claimed_by_session_id?: string | null
-  closed_at?: string | null
-  closed_reason?: string | null
-  closed_in_session_id?: string | null
-  closed_commit_sha?: string | null
-  validation_fail_count?: number | null
-  dispatch_failure_count?: number | null
-  escalation_reason?: string | null
-  escalated_at?: string | null
-  is_escalated?: boolean
-  ref?: string
-  priority?: number | null
-  owner_session_ref?: unknown | null
+    owner_session_id?: string | null;
+    owner_session_ref?: unknown | null;
+    is_claimed?: boolean;
+    is_closed?: boolean;
+    is_escalated?: boolean;
+    is_blocked?: boolean;
+    blocked_reason?: string | null;
+    closed_at?: string | null;
+    closed_reason?: string | null;
+    closed_in_session_id?: string | null;
+    closed_commit_sha?: string | null;
+    escalated_at?: string | null;
+    escalation_reason?: string | null;
+  } | null;
+  is_blocked?: boolean;
+  blocked_reason?: string | null;
+  claimed_by_session_id?: string | null;
+  closed_at?: string | null;
+  closed_reason?: string | null;
+  closed_in_session_id?: string | null;
+  closed_commit_sha?: string | null;
+  validation_fail_count?: number | null;
+  dispatch_failure_count?: number | null;
+  escalation_reason?: string | null;
+  escalated_at?: string | null;
+  is_escalated?: boolean;
+  ref?: string;
+  priority?: number | null;
+  owner_session_ref?: unknown | null;
 }
 
 interface CurrentStageRow {
-  name?: string | null
-  stage_name?: string | null
-  position?: number | null
-  state?: string | null
+  name?: string | null;
+  stage_name?: string | null;
+  position?: number | null;
+  state?: string | null;
 }
 
 interface CurrentStageTask<TStage extends CurrentStageRow> {
-  stages?: readonly TStage[] | null
-  state?: object | null
-  current_stage?: TStage | null
+  stages?: readonly TStage[] | null;
+  state?: object | null;
+  current_stage?: TStage | null;
 }
 
 export function resolveAdvanceAction(
   currentState: StageState5,
   reviewPolicy: ReviewPolicy,
 ): StageAdvanceAction | null {
-  if (currentState === 'ready') return 'start'
-  if (currentState === 'in_progress') {
-    return reviewPolicy === 'required' ? 'submit_for_review' : 'complete'
+  if (currentState === "ready") return "start";
+  if (currentState === "in_progress") {
+    return reviewPolicy === "required" ? "submit_for_review" : "complete";
   }
-  if (currentState === 'needs_review') return 'approve_review'
-  if (currentState === 'review_approved') return 'complete'
-  if (currentState === 'done') return null
-  return null
+  if (currentState === "needs_review") return "approve_review";
+  if (currentState === "review_approved") return "complete";
+  if (currentState === "done") return null;
+  return null;
 }
 
 export function taskAtStage(task: LifecycleTask, stageName: string): boolean {
-  return task.stages?.some(row => row.name === stageName) ?? false
+  return task.stages?.some((row) => row.name === stageName) ?? false;
 }
 
 export function taskStateAt(
   task: LifecycleTask,
   stageName: string,
 ): StageRowState | undefined {
-  return task.stages?.find(row => row.name === stageName)?.state
+  return task.stages?.find((row) => row.name === stageName)?.state;
 }
 
 export function currentStage<TStage extends CurrentStageRow>(
   task: CurrentStageTask<TStage> | null | undefined,
 ): TStage | null {
-  if (!task) return null
+  if (!task) return null;
   if (Array.isArray(task.stages)) {
     if (task.stages.length > 0) {
-      return [...task.stages]
-        .sort((a, b) => {
-          const positionDifference = (a.position ?? 0) - (b.position ?? 0)
-          if (positionDifference !== 0) return positionDifference
-          const aName = a.name ?? a.stage_name ?? ''
-          const bName = b.name ?? b.stage_name ?? ''
-          return aName < bName ? -1 : aName > bName ? 1 : 0
-        })
-        .find(row => row.state !== 'done') ?? null
+      return (
+        [...task.stages]
+          .sort((a, b) => {
+            const positionDifference = (a.position ?? 0) - (b.position ?? 0);
+            if (positionDifference !== 0) return positionDifference;
+            const aName = a.name ?? a.stage_name ?? "";
+            const bName = b.name ?? b.stage_name ?? "";
+            return aName < bName ? -1 : aName > bName ? 1 : 0;
+          })
+          .find((row) => row.state !== "done") ?? null
+      );
     }
   }
-  const state = task.state as { current_stage?: TStage | null } | null | undefined
-  return state?.current_stage ?? task.current_stage ?? null
+  const state = task.state as
+    { current_stage?: TStage | null } | null | undefined;
+  return state?.current_stage ?? task.current_stage ?? null;
 }
 
 function sortedStages(task: LifecycleTask): StageStateView[] {
   return (task.stages ?? [])
     .map((row, index) => ({ row, index }))
     .sort((a, b) => {
-      const aHasPosition = a.row.position !== null && a.row.position !== undefined
-      const bHasPosition = b.row.position !== null && b.row.position !== undefined
+      const aHasPosition =
+        a.row.position !== null && a.row.position !== undefined;
+      const bHasPosition =
+        b.row.position !== null && b.row.position !== undefined;
       if (aHasPosition && bHasPosition) {
-        return a.row.position! - b.row.position! || a.index - b.index
+        return a.row.position! - b.row.position! || a.index - b.index;
       }
-      if (aHasPosition !== bHasPosition) return aHasPosition ? -1 : 1
-      return a.index - b.index
+      if (aHasPosition !== bHasPosition) return aHasPosition ? -1 : 1;
+      return a.index - b.index;
     })
-    .map(({ row }) => row)
+    .map(({ row }) => row);
 }
 
 export function terminalStage(task: LifecycleTask): StageStateView | null {
-  const stages = sortedStages(task)
-  return stages.length ? stages[stages.length - 1] : null
+  const stages = sortedStages(task);
+  return stages.length ? stages[stages.length - 1] : null;
 }
 
-export function canonicalBoardStage(task: LifecycleTask): StageStateView | null {
-  return currentStage(task) ?? terminalStage(task)
+export function canonicalBoardStage(
+  task: LifecycleTask,
+): StageStateView | null {
+  return currentStage(task) ?? terminalStage(task);
 }
 
 type OptimisticTaskState<T extends LifecycleTask> =
-  | T['state']
-  | (NonNullable<T['state']> & {
-    blocked_reason: null
-    escalation_reason: null
-    is_blocked: false
-  })
+  | T["state"]
+  | (NonNullable<T["state"]> & {
+      blocked_reason: null;
+      escalation_reason: null;
+      is_blocked: false;
+    });
 
 export type OptimisticMoveResult<T extends LifecycleTask> =
   | T
   | (Omit<
-    T,
-    | 'claimed_by_session_id'
-    | 'closed_at'
-    | 'closed_commit_sha'
-    | 'closed_in_session_id'
-    | 'closed_reason'
-    | 'current_stage'
-    | 'dispatch_failure_count'
-    | 'escalated_at'
-    | 'escalation_reason'
-    | 'is_escalated'
-    | 'owner_session_ref'
-    | 'stages'
-    | 'state'
-    | 'validation_fail_count'
-  > & {
-    claimed_by_session_id: null
-    closed_at: null
-    closed_commit_sha: null
-    closed_in_session_id: null
-    closed_reason: null
-    current_stage: StageStateView | null
-    dispatch_failure_count: 0
-    escalated_at: null
-    escalation_reason: null
-    is_blocked: false
-    is_escalated: false
-    owner_session_ref: null
-    blocked_reason: null
-    stages: StageStateView[]
-    state: OptimisticTaskState<T>
-    validation_fail_count: 0
-  })
+      T,
+      | "claimed_by_session_id"
+      | "closed_at"
+      | "closed_commit_sha"
+      | "closed_in_session_id"
+      | "closed_reason"
+      | "current_stage"
+      | "dispatch_failure_count"
+      | "escalated_at"
+      | "escalation_reason"
+      | "is_escalated"
+      | "owner_session_ref"
+      | "stages"
+      | "state"
+      | "validation_fail_count"
+    > & {
+      claimed_by_session_id: null;
+      closed_at: null;
+      closed_commit_sha: null;
+      closed_in_session_id: null;
+      closed_reason: null;
+      current_stage: StageStateView | null;
+      dispatch_failure_count: 0;
+      escalated_at: null;
+      escalation_reason: null;
+      is_blocked: false;
+      is_escalated: false;
+      owner_session_ref: null;
+      blocked_reason: null;
+      stages: StageStateView[];
+      state: OptimisticTaskState<T>;
+      validation_fail_count: 0;
+    });
 
 export function optimisticMoveTaskToStage<T extends LifecycleTask>(
   task: T,
@@ -206,21 +214,21 @@ export function optimisticMoveTaskToStage<T extends LifecycleTask>(
   const indexedStages = sortedStages(task).map((row, index) => ({
     row,
     position: row.position ?? index,
-  }))
-  const target = indexedStages.find(({ row }) => row.name === targetStageName)
-  if (!target) return task
-  const targetPosition = target.position
+  }));
+  const target = indexedStages.find(({ row }) => row.name === targetStageName);
+  if (!target) return task;
+  const targetPosition = target.position;
   const stages = indexedStages.map(({ row, position }) => {
     if (position < targetPosition) {
       return {
         ...row,
-        state: 'done' as const,
+        state: "done" as const,
         updated_at: updatedAt,
-      }
+      };
     }
     return {
       ...row,
-      state: 'ready' as const,
+      state: "ready" as const,
       entered_at: null,
       entered_by_session_id: null,
       completed_at: null,
@@ -229,29 +237,30 @@ export function optimisticMoveTaskToStage<T extends LifecycleTask>(
       artifact_refs: null,
       notes: null,
       updated_at: updatedAt,
-    }
-  })
-  const current_stage = stages.find(row => row.name === targetStageName) ?? null
+    };
+  });
+  const current_stage =
+    stages.find((row) => row.name === targetStageName) ?? null;
   return {
     ...task,
     current_stage,
     state: task.state
       ? {
-        ...task.state,
-        owner_session_id: null,
-        owner_session_ref: null,
-        is_claimed: false,
-        is_closed: false,
-        is_blocked: false,
-        is_escalated: false,
-        blocked_reason: null,
-        closed_at: null,
-        closed_reason: null,
-        closed_in_session_id: null,
-        closed_commit_sha: null,
-        escalated_at: null,
-        escalation_reason: null,
-      }
+          ...task.state,
+          owner_session_id: null,
+          owner_session_ref: null,
+          is_claimed: false,
+          is_closed: false,
+          is_blocked: false,
+          is_escalated: false,
+          blocked_reason: null,
+          closed_at: null,
+          closed_reason: null,
+          closed_in_session_id: null,
+          closed_commit_sha: null,
+          escalated_at: null,
+          escalation_reason: null,
+        }
       : task.state,
     claimed_by_session_id: null,
     owner_session_ref: null,
@@ -267,5 +276,5 @@ export function optimisticMoveTaskToStage<T extends LifecycleTask>(
     validation_fail_count: 0,
     dispatch_failure_count: 0,
     stages,
-  }
+  };
 }

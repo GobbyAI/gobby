@@ -18,7 +18,10 @@ function ref<T>(current: T): MutableRefObject<T> {
 const contentBlockSamples = {
   text: { type: "text", content: "Text block" },
   thinking: { type: "thinking", content: "Thinking block" },
-  compaction_summary: { type: "compaction_summary", content: "Conversation compacted (manual)" },
+  compaction_summary: {
+    type: "compaction_summary",
+    content: "Conversation compacted (manual)",
+  },
   tool_chain: {
     type: "tool_chain",
     tool_calls: [
@@ -163,9 +166,8 @@ function renderRestoreHook(setMessages = vi.fn(), setCurrentMode = vi.fn()) {
       },
       interactionMode: {
         pendingSessionInteractionModeRef: ref<"observe" | "proxy">("observe"),
-        sessionInteractionModeRef: ref<ContinuationRollbackSnapshot["sessionInteractionMode"]>(
-          "none",
-        ),
+        sessionInteractionModeRef:
+          ref<ContinuationRollbackSnapshot["sessionInteractionMode"]>("none"),
         setSessionInteractionMode: vi.fn(),
       },
     }),

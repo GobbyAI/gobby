@@ -10,7 +10,10 @@ import { CodeBlock } from "../../shared/CodeBlock";
 import { CodeMirrorEditor } from "../../shared/CodeMirrorEditor";
 import { Button } from "../../ui/Button";
 import { EditableViewActions } from "../../shared/EditableView";
-import { detectLanguageFromPath, useEditableContent } from "../../shared/editableContent";
+import {
+  detectLanguageFromPath,
+  useEditableContent,
+} from "../../shared/editableContent";
 import { MarkdownBody, markdownBodyClassName } from "../../shared/MarkdownBody";
 import { saveSkillFile } from "./SkillsTabActions";
 import {
@@ -82,7 +85,9 @@ export function SkillContentView({
       .catch((loadError: unknown) => {
         if (cancelled) return;
         setFileError(
-          loadError instanceof Error ? loadError.message : "Failed to load skill file",
+          loadError instanceof Error
+            ? loadError.message
+            : "Failed to load skill file",
         );
         setFileLoading(false);
       });
@@ -91,7 +96,8 @@ export function SkillContentView({
     };
   }, [skill.id, selectedPath]);
 
-  const activeContent = selectedPath === null ? (skill.content ?? "") : (fileContent ?? "");
+  const activeContent =
+    selectedPath === null ? (skill.content ?? "") : (fileContent ?? "");
 
   const handleSave = useCallback(
     async (next: string) => {
@@ -104,14 +110,19 @@ export function SkillContentView({
         setFileContent(next);
         return true;
       } catch (saveError) {
-        onError(saveError instanceof Error ? saveError.message : String(saveError));
+        onError(
+          saveError instanceof Error ? saveError.message : String(saveError),
+        );
         return false;
       }
     },
     [onError, onSaveContent, selectedPath, skill.id],
   );
 
-  const editState = useEditableContent({ content: activeContent, onSave: handleSave });
+  const editState = useEditableContent({
+    content: activeContent,
+    onSave: handleSave,
+  });
   const { cancelEdit } = editState;
 
   const selectPath = useCallback(
@@ -130,7 +141,8 @@ export function SkillContentView({
   );
 
   const activeLabel = selectedPath ?? SKILL_CONTENT_PATH;
-  const language = selectedPath === null ? "markdown" : detectLanguageFromPath(selectedPath);
+  const language =
+    selectedPath === null ? "markdown" : detectLanguageFromPath(selectedPath);
   const loading = selectedPath !== null && fileLoading;
   const loadError = selectedPath !== null ? fileError : null;
 
@@ -160,9 +172,13 @@ export function SkillContentView({
   return (
     <div className="flex min-h-0 min-w-0 flex-1 flex-col gap-2 p-3">
       <div className="flex items-center justify-between gap-3">
-        <span className="text-sm font-medium text-foreground">Skill content</span>
+        <span className="text-sm font-medium text-foreground">
+          Skill content
+        </span>
         <div className="flex min-w-0 shrink-0 items-center gap-2">
-          <span className="truncate text-xs text-muted-foreground">{activeLabel}</span>
+          <span className="truncate text-xs text-muted-foreground">
+            {activeLabel}
+          </span>
           <EditableViewActions
             isEditing={editState.isEditing}
             onEdit={editState.beginEdit}
@@ -188,7 +204,10 @@ export function SkillContentView({
           {loading ? (
             <div className="p-3 text-xs text-muted-foreground">Loading...</div>
           ) : loadError ? (
-            <div className="p-3 text-xs text-destructive-foreground" role="alert">
+            <div
+              className="p-3 text-xs text-destructive-foreground"
+              role="alert"
+            >
               {loadError}
             </div>
           ) : editState.isEditing ? (
@@ -197,7 +216,9 @@ export function SkillContentView({
               language={language}
               readOnly={false}
               ariaLabel={
-                selectedPath === null ? "Skill content markdown" : `${selectedPath} content`
+                selectedPath === null
+                  ? "Skill content markdown"
+                  : `${selectedPath} content`
               }
               editorId="skill-content-editor"
               onChange={editState.setEditContent}

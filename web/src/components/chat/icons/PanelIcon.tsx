@@ -1,10 +1,14 @@
 interface PanelIconProps {
-  visible?: boolean
-  size?: number
-  className?: string
+  visible?: boolean;
+  size?: number;
+  className?: string;
 }
 
-export function PanelIcon({ visible = false, size = 14, className }: PanelIconProps) {
+export function PanelIcon({
+  visible = false,
+  size = 14,
+  className,
+}: PanelIconProps) {
   return (
     <svg
       className={className}
@@ -21,5 +25,5 @@ export function PanelIcon({ visible = false, size = 14, className }: PanelIconPr
       <line x1="15" y1="3" x2="15" y2="21" />
       {visible && <line x1="18" y1="9" x2="21" y2="9" opacity="0.5" />}
     </svg>
-  )
+  );
 }

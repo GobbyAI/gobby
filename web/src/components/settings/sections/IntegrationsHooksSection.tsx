@@ -1,20 +1,20 @@
-import { NumberField, SwitchField, TextField } from '../../activity/fields'
-import { KeyValueMapField, StringListField, TypedListField } from '../fields'
+import { NumberField, SwitchField, TextField } from "../../activity/fields";
+import { KeyValueMapField, StringListField, TypedListField } from "../fields";
 import {
   asMap,
   asNumber,
   asString,
   asStringList,
   asTypedList,
-} from './configAccessors'
+} from "./configAccessors";
 import {
   NumberConfigField,
   StringListConfigField,
   Subsection,
   SwitchConfigField,
   TextConfigField,
-} from './configFields'
-import { SettingsSection, type SettingsSectionFields } from './SettingsSection'
+} from "./configFields";
+import { SettingsSection, type SettingsSectionFields } from "./SettingsSection";
 
 /**
  * Config rows this section owns, per the configuration audit (IA section 7,
@@ -25,47 +25,47 @@ import { SettingsSection, type SettingsSectionFields } from './SettingsSection'
  * `hook_extensions.webhooks.endpoints` (structured object list).
  */
 const OWNED_PATHS: readonly string[] = [
-  'communications.enabled',
-  'communications.webhook_base_url',
-  'communications.channel_defaults.rate_limit_per_minute',
-  'communications.channel_defaults.burst',
-  'communications.channel_defaults.retry_count',
-  'communications.channel_defaults.poll_interval_seconds',
-  'communications.channel_defaults.retention_days',
-  'communications.auto_create_sessions',
-  'hooks.adapter_timeout',
-  'hooks.provider_timeout',
-  'hook_extensions.websocket.enabled',
-  'hook_extensions.websocket.broadcast_events',
-  'hook_extensions.websocket.include_payload',
-  'hook_extensions.webhooks.enabled',
-  'hook_extensions.webhooks.endpoints',
-  'hook_extensions.webhooks.default_timeout',
-  'hook_extensions.webhooks.async_dispatch',
-]
+  "communications.enabled",
+  "communications.webhook_base_url",
+  "communications.channel_defaults.rate_limit_per_minute",
+  "communications.channel_defaults.burst",
+  "communications.channel_defaults.retry_count",
+  "communications.channel_defaults.poll_interval_seconds",
+  "communications.channel_defaults.retention_days",
+  "communications.auto_create_sessions",
+  "hooks.adapter_timeout",
+  "hooks.provider_timeout",
+  "hook_extensions.websocket.enabled",
+  "hook_extensions.websocket.broadcast_events",
+  "hook_extensions.websocket.include_payload",
+  "hook_extensions.webhooks.enabled",
+  "hook_extensions.webhooks.endpoints",
+  "hook_extensions.webhooks.default_timeout",
+  "hook_extensions.webhooks.async_dispatch",
+];
 
-const WEBHOOK_ENDPOINTS_PATH = 'hook_extensions.webhooks.endpoints'
+const WEBHOOK_ENDPOINTS_PATH = "hook_extensions.webhooks.endpoints";
 
 /** Editable view of one `WebhookEndpointConfig` (src/gobby/config/extensions.py). */
 interface WebhookEndpoint {
-  name: string
-  url: string
-  events: string[]
-  headers: Record<string, string>
-  timeout: number | null
-  retry_count: number | null
-  retry_delay: number | null
-  can_block: boolean
-  fail_closed: boolean
-  enabled: boolean
+  name: string;
+  url: string;
+  events: string[];
+  headers: Record<string, string>;
+  timeout: number | null;
+  retry_count: number | null;
+  retry_delay: number | null;
+  can_block: boolean;
+  fail_closed: boolean;
+  enabled: boolean;
 }
 
 /** Coerce a stored endpoint entry into the editor shape, defaulting safely. */
 function asEndpoint(value: unknown): WebhookEndpoint {
   const entry =
-    value && typeof value === 'object' && !Array.isArray(value)
+    value && typeof value === "object" && !Array.isArray(value)
       ? (value as Record<string, unknown>)
-      : {}
+      : {};
   return {
     name: asString(entry.name),
     url: asString(entry.url),
@@ -78,14 +78,14 @@ function asEndpoint(value: unknown): WebhookEndpoint {
     fail_closed: entry.fail_closed === true,
     // The daemon default is True; only an explicit stored `false` disables it.
     enabled: entry.enabled !== false,
-  }
+  };
 }
 
 /** A blank endpoint mirroring the config model's field defaults. */
 function createEndpoint(): WebhookEndpoint {
   return {
-    name: '',
-    url: '',
+    name: "",
+    url: "",
     events: [],
     headers: {},
     timeout: 10,
@@ -94,7 +94,7 @@ function createEndpoint(): WebhookEndpoint {
     can_block: false,
     fail_closed: false,
     enabled: true,
-  }
+  };
 }
 
 function CommunicationsGroup({ fields }: { fields: SettingsSectionFields }) {
@@ -123,7 +123,7 @@ function CommunicationsGroup({ fields }: { fields: SettingsSectionFields }) {
         ariaLabel="Auto-create sessions for inbound messages"
       />
     </Subsection>
-  )
+  );
 }
 
 function ChannelDefaultsGroup({ fields }: { fields: SettingsSectionFields }) {
@@ -163,7 +163,7 @@ function ChannelDefaultsGroup({ fields }: { fields: SettingsSectionFields }) {
         ariaLabel="Channel message retention (days)"
       />
     </Subsection>
-  )
+  );
 }
 
 function HookTimeoutsGroup({ fields }: { fields: SettingsSectionFields }) {
@@ -185,10 +185,14 @@ function HookTimeoutsGroup({ fields }: { fields: SettingsSectionFields }) {
         ariaLabel="Hook provider timeout (seconds)"
       />
     </Subsection>
-  )
+  );
 }
 
-function WebSocketBroadcastGroup({ fields }: { fields: SettingsSectionFields }) {
+function WebSocketBroadcastGroup({
+  fields,
+}: {
+  fields: SettingsSectionFields;
+}) {
   return (
     <Subsection
       title="WebSocket broadcasting"
@@ -215,7 +219,7 @@ function WebSocketBroadcastGroup({ fields }: { fields: SettingsSectionFields }) 
         ariaLabel="Include event payload in broadcasts"
       />
     </Subsection>
-  )
+  );
 }
 
 function WebhookEndpointFields({
@@ -223,11 +227,11 @@ function WebhookEndpointFields({
   index,
   onChange,
 }: {
-  endpoint: WebhookEndpoint
-  index: number
-  onChange: (next: WebhookEndpoint) => void
+  endpoint: WebhookEndpoint;
+  index: number;
+  onChange: (next: WebhookEndpoint) => void;
 }) {
-  const name = endpoint.name || `endpoint ${index + 1}`
+  const name = endpoint.name || `endpoint ${index + 1}`;
   return (
     <>
       <TextField
@@ -304,13 +308,13 @@ function WebhookEndpointFields({
         onChange={(value) => onChange({ ...endpoint, enabled: value })}
       />
     </>
-  )
+  );
 }
 
 function WebhooksGroup({ fields }: { fields: SettingsSectionFields }) {
   const endpoints = asTypedList<unknown>(
     fields.getValue(WEBHOOK_ENDPOINTS_PATH),
-  ).map(asEndpoint)
+  ).map(asEndpoint);
   return (
     <Subsection
       title="Webhooks"
@@ -354,7 +358,7 @@ function WebhooksGroup({ fields }: { fields: SettingsSectionFields }) {
         ariaLabel="Dispatch webhooks asynchronously"
       />
     </Subsection>
-  )
+  );
 }
 
 /**
@@ -375,5 +379,5 @@ export function IntegrationsHooksSection() {
         </>
       )}
     </SettingsSection>
-  )
+  );
 }

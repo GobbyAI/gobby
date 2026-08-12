@@ -1,21 +1,21 @@
-import { memo, useEffect } from 'react'
-import type { Plan } from '../../types/plans'
-import type { ApprovalOption } from '../../types/chat'
-import type { PlanPendingVariant } from '../chat/planPendingSurface'
-import { ActivityPanelEmpty, PlansEmptyIcon } from './ActivityPanelEmpty'
-import { PlanReviewCard } from './PlanReviewCard'
+import { memo, useEffect } from "react";
+import type { Plan } from "../../types/plans";
+import type { ApprovalOption } from "../../types/chat";
+import type { PlanPendingVariant } from "../chat/planPendingSurface";
+import { ActivityPanelEmpty, PlansEmptyIcon } from "./ActivityPanelEmpty";
+import { PlanReviewCard } from "./PlanReviewCard";
 
 interface PlansTabProps {
-  plans: Map<string, Plan>
-  activePlan: Plan | null
-  onOpenPlan: (id: string) => void
-  onSetPlanVersion: (id: string, index: number) => void
-  planPendingApproval?: boolean
-  planApproved?: boolean
-  planApprovalOptions?: ApprovalOption[]
-  onApprovePlan?: (option?: ApprovalOption) => void
-  onRequestPlanChanges?: (feedback: string) => void
-  planPendingVariant?: PlanPendingVariant
+  plans: Map<string, Plan>;
+  activePlan: Plan | null;
+  onOpenPlan: (id: string) => void;
+  onSetPlanVersion: (id: string, index: number) => void;
+  planPendingApproval?: boolean;
+  planApproved?: boolean;
+  planApprovalOptions?: ApprovalOption[];
+  onApprovePlan?: (option?: ApprovalOption) => void;
+  onRequestPlanChanges?: (feedback: string) => void;
+  planPendingVariant?: PlanPendingVariant;
 }
 
 export const PlansTab = memo(function PlansTab({
@@ -30,20 +30,19 @@ export const PlansTab = memo(function PlansTab({
   onRequestPlanChanges,
   planPendingVariant,
 }: PlansTabProps) {
-  const orderedPlans = Array.from(plans.values())
-    .sort((a, b) => {
-      const aTime = a.versions[a.versions.length - 1]?.timestamp.getTime() ?? 0
-      const bTime = b.versions[b.versions.length - 1]?.timestamp.getTime() ?? 0
-      return aTime - bTime
-    })
-  const latestPlan = orderedPlans[orderedPlans.length - 1] ?? null
+  const orderedPlans = Array.from(plans.values()).sort((a, b) => {
+    const aTime = a.versions[a.versions.length - 1]?.timestamp.getTime() ?? 0;
+    const bTime = b.versions[b.versions.length - 1]?.timestamp.getTime() ?? 0;
+    return aTime - bTime;
+  });
+  const latestPlan = orderedPlans[orderedPlans.length - 1] ?? null;
 
   // Auto-open the latest plan if none is active.
   useEffect(() => {
     if (!activePlan && latestPlan) {
-      onOpenPlan(latestPlan.id)
+      onOpenPlan(latestPlan.id);
     }
-  }, [activePlan, latestPlan, onOpenPlan])
+  }, [activePlan, latestPlan, onOpenPlan]);
 
   if (!latestPlan) {
     return (
@@ -52,11 +51,11 @@ export const PlansTab = memo(function PlansTab({
         heading="Plans"
         body="Plans appear here when the agent proposes one for review"
       />
-    )
+    );
   }
 
   // Show the active plan (or latest if none selected).
-  const displayPlan = activePlan ?? latestPlan
+  const displayPlan = activePlan ?? latestPlan;
 
   return (
     <PlanReviewCard
@@ -69,5 +68,5 @@ export const PlansTab = memo(function PlansTab({
       onSetVersion={onSetPlanVersion}
       planPendingVariant={planPendingVariant}
     />
-  )
-})
+  );
+});

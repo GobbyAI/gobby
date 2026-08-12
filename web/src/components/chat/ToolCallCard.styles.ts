@@ -13,17 +13,17 @@
  */
 export const TOOL_RESULT_CUSTOM_STYLE = {
   margin: 0,
-  background: 'transparent',
-  padding: '0.75rem',
-  fontSize: 'var(--text-sm)',
-  borderRadius: '0.25rem',
-  maxHeight: '24rem',
-  overflowY: 'auto' as const,
-  overflowX: 'hidden' as const,
-  whiteSpace: 'pre-wrap' as const,
-  overflowWrap: 'anywhere' as const,
-}
+  background: "transparent",
+  padding: "0.75rem",
+  fontSize: "var(--text-sm)",
+  borderRadius: "0.25rem",
+  maxHeight: "24rem",
+  overflowY: "auto" as const,
+  overflowX: "hidden" as const,
+  whiteSpace: "pre-wrap" as const,
+  overflowWrap: "anywhere" as const,
+};
 
 export const TOOL_ERROR_PRE_CLASS =
-  'bg-destructive/30 rounded p-2 whitespace-pre-wrap [overflow-wrap:anywhere] ' +
-  'overflow-x-hidden text-destructive-foreground'
+  "bg-destructive/30 rounded p-2 whitespace-pre-wrap [overflow-wrap:anywhere] " +
+  "overflow-x-hidden text-destructive-foreground";

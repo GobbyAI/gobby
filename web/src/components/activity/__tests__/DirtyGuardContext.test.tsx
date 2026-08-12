@@ -1,4 +1,10 @@
-import { act, render, renderHook, screen, waitFor } from "@testing-library/react";
+import {
+  act,
+  render,
+  renderHook,
+  screen,
+  waitFor,
+} from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { useState } from "react";
 import { afterEach, describe, expect, it, vi } from "vitest";
@@ -40,7 +46,11 @@ function DraftPane() {
   );
 }
 
-function DirtyGuardHarness({ startWithPane = true }: { startWithPane?: boolean }) {
+function DirtyGuardHarness({
+  startWithPane = true,
+}: {
+  startWithPane?: boolean;
+}) {
   const dirtyGuard = useDirtyGuardController();
   const [tab, setTab] = useState("sessions");
   const [showPane, setShowPane] = useState(startWithPane);
@@ -48,7 +58,10 @@ function DirtyGuardHarness({ startWithPane = true }: { startWithPane?: boolean }
   return (
     <DirtyGuardProvider value={dirtyGuard}>
       <div data-testid="active-tab">{tab}</div>
-      <button type="button" onClick={() => void dirtyGuard.guardedRun(() => setTab("tasks"))}>
+      <button
+        type="button"
+        onClick={() => void dirtyGuard.guardedRun(() => setTab("tasks"))}
+      >
         Tasks
       </button>
       <button type="button" onClick={() => setShowPane(false)}>
@@ -77,7 +90,10 @@ describe("DirtyGuardContext (#17018)", () => {
     render(<DirtyGuardHarness />);
 
     await userEvent.clear(screen.getByRole("textbox", { name: "Name" }));
-    await userEvent.type(screen.getByRole("textbox", { name: "Name" }), "Draft");
+    await userEvent.type(
+      screen.getByRole("textbox", { name: "Name" }),
+      "Draft",
+    );
     await userEvent.click(screen.getByRole("button", { name: "Tasks" }));
 
     expect(confirmSpy).toHaveBeenCalledWith("Discard unsaved changes?");
@@ -91,11 +107,16 @@ describe("DirtyGuardContext (#17018)", () => {
     render(<DirtyGuardHarness />);
 
     await userEvent.clear(screen.getByRole("textbox", { name: "Name" }));
-    await userEvent.type(screen.getByRole("textbox", { name: "Name" }), "Draft");
+    await userEvent.type(
+      screen.getByRole("textbox", { name: "Name" }),
+      "Draft",
+    );
     await userEvent.click(screen.getByRole("button", { name: "Tasks" }));
 
     expect(screen.getByTestId("active-tab")).toHaveTextContent("tasks");
-    expect(screen.getByRole("textbox", { name: "Name" })).toHaveValue("Original");
+    expect(screen.getByRole("textbox", { name: "Name" })).toHaveValue(
+      "Original",
+    );
   });
 
   it("unregisters draft guards when the pane unmounts", async () => {
@@ -104,7 +125,10 @@ describe("DirtyGuardContext (#17018)", () => {
     render(<DirtyGuardHarness />);
 
     await userEvent.clear(screen.getByRole("textbox", { name: "Name" }));
-    await userEvent.type(screen.getByRole("textbox", { name: "Name" }), "Draft");
+    await userEvent.type(
+      screen.getByRole("textbox", { name: "Name" }),
+      "Draft",
+    );
     await userEvent.click(screen.getByRole("button", { name: "Unmount pane" }));
     await userEvent.click(screen.getByRole("button", { name: "Tasks" }));
 
@@ -166,7 +190,9 @@ describe("DirtyGuardContext (#17018)", () => {
 
   it("returns a rejected promise when dirty confirmation fails", async () => {
     const error = new Error("confirm failed");
-    const consoleError = vi.spyOn(console, "error").mockImplementation(() => undefined);
+    const consoleError = vi
+      .spyOn(console, "error")
+      .mockImplementation(() => undefined);
     const { result } = renderHook(() => useDirtyGuardController());
 
     act(() => {
@@ -176,7 +202,12 @@ describe("DirtyGuardContext (#17018)", () => {
       });
     });
 
-    await expect(result.current.guardedRun(vi.fn())).rejects.toThrow("confirm failed");
-    expect(consoleError).toHaveBeenCalledWith("Dirty-guard confirmation failed", error);
+    await expect(result.current.guardedRun(vi.fn())).rejects.toThrow(
+      "confirm failed",
+    );
+    expect(consoleError).toHaveBeenCalledWith(
+      "Dirty-guard confirmation failed",
+      error,
+    );
   });
 });

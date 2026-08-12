@@ -76,15 +76,32 @@ function graphFixture(): KnowledgeGraphData {
       },
     ],
     relationships: [
-      { source_key: "entity-0", target_key: "entity-1", type: "USES", properties: {} },
-      { source_key: "entity-1", target_key: "legacy-fn", type: "DEPENDS_ON", properties: {} },
+      {
+        source_key: "entity-0",
+        target_key: "entity-1",
+        type: "USES",
+        properties: {},
+      },
+      {
+        source_key: "entity-1",
+        target_key: "legacy-fn",
+        type: "DEPENDS_ON",
+        properties: {},
+      },
     ],
   };
 }
 
 describe("KnowledgeGraph color resolution (#19153)", () => {
   it("edgeColor returns resolved colors, never var() literals three.js renders black", () => {
-    for (const relType of ["USES", "DEPENDS_ON", "MENTIONS", "RELATES_TO", "WORKS_ON", ""]) {
+    for (const relType of [
+      "USES",
+      "DEPENDS_ON",
+      "MENTIONS",
+      "RELATES_TO",
+      "WORKS_ON",
+      "",
+    ]) {
       const color = edgeColor(relType);
       expect(color).toMatch(/^resolved\(--/);
       expect(color).not.toMatch(/var\(/);
@@ -108,7 +125,9 @@ describe("KnowledgeGraph color resolution (#19153)", () => {
 
 describe("KnowledgeGraph entity taxonomy colors (#19153)", () => {
   it("gives each canonical extraction type a distinct token with no gray fallthrough", () => {
-    const vars = CANONICAL_ENTITY_TYPES.map((entityType) => entityColorVar(entityType));
+    const vars = CANONICAL_ENTITY_TYPES.map((entityType) =>
+      entityColorVar(entityType),
+    );
     expect(new Set(vars).size).toBe(CANONICAL_ENTITY_TYPES.length);
     for (const colorVar of vars) {
       expect(colorVar).not.toBe("--text-muted");
@@ -141,7 +160,9 @@ describe("KnowledgeGraph node card (#19156)", () => {
     ]);
     expect(html).toContain("Gobby");
     expect(html).toContain("project");
-    expect(html).toContain("“Gobby is a local-first daemon unifying AI coding tools.”");
+    expect(html).toContain(
+      "“Gobby is a local-first daemon unifying AI coding tools.”",
+    );
     expect(html).toContain("→ depends on ");
     expect(html).toContain("gcode");
     expect(html).toContain("← maintained by ");
@@ -152,7 +173,10 @@ describe("KnowledgeGraph node card (#19156)", () => {
 
   it("never shows a bare UUID as primary text", () => {
     const uuid = "b38dc83b-1234-4abc-9def-0123456789ab";
-    const html = buildNodeCardHtml(entity({ name: uuid, entity_type: "concept" }), []);
+    const html = buildNodeCardHtml(
+      entity({ name: uuid, entity_type: "concept" }),
+      [],
+    );
     expect(html).toContain("Unlabeled concept");
     expect(html).not.toContain(uuid);
     expect(html).toContain("b38dc83b…");
@@ -191,13 +215,19 @@ describe("KnowledgeGraph node card (#19156)", () => {
       { source: "a", target: "missing", type: "USES" },
     ];
     const index = buildNeighborIndex(nodes, links);
-    expect(index.get("a")).toEqual([{ name: "Beta", relation: "depends on", outgoing: true }]);
-    expect(index.get("b")).toEqual([{ name: "Alpha", relation: "depends on", outgoing: false }]);
+    expect(index.get("a")).toEqual([
+      { name: "Beta", relation: "depends on", outgoing: true },
+    ]);
+    expect(index.get("b")).toEqual([
+      { name: "Alpha", relation: "depends on", outgoing: false },
+    ]);
   });
 
   it("humanizes relation types and detects opaque identifiers", () => {
     expect(humanizeRelation("DEPENDS_ON")).toBe("depends on");
-    expect(isOpaqueIdentifier("b38dc83b-1234-4abc-9def-0123456789ab")).toBe(true);
+    expect(isOpaqueIdentifier("b38dc83b-1234-4abc-9def-0123456789ab")).toBe(
+      true,
+    );
     expect(isOpaqueIdentifier("0123456789abcdef0123")).toBe(true);
     expect(isOpaqueIdentifier("Gobby")).toBe(false);
   });
@@ -205,22 +235,30 @@ describe("KnowledgeGraph node card (#19156)", () => {
 
 describe("KnowledgeGraph limits (#19157)", () => {
   it("effectiveGraphLimits passes desktop values through, including 0 = no limit", () => {
-    expect(effectiveGraphLimits({ entities: 0, relationships: 12000 }, false)).toEqual({
+    expect(
+      effectiveGraphLimits({ entities: 0, relationships: 12000 }, false),
+    ).toEqual({
       entities: 0,
       relationships: 12000,
     });
   });
 
   it("effectiveGraphLimits hard-caps mobile and collapses 0 to the cap", () => {
-    expect(effectiveGraphLimits({ entities: 0, relationships: 0 }, true)).toEqual({
+    expect(
+      effectiveGraphLimits({ entities: 0, relationships: 0 }, true),
+    ).toEqual({
       entities: MOBILE_ENTITY_CAP,
       relationships: MOBILE_RELATIONSHIP_CAP,
     });
-    expect(effectiveGraphLimits({ entities: 9999, relationships: 99999 }, true)).toEqual({
+    expect(
+      effectiveGraphLimits({ entities: 9999, relationships: 99999 }, true),
+    ).toEqual({
       entities: MOBILE_ENTITY_CAP,
       relationships: MOBILE_RELATIONSHIP_CAP,
     });
-    expect(effectiveGraphLimits({ entities: 100, relationships: 400 }, true)).toEqual({
+    expect(
+      effectiveGraphLimits({ entities: 100, relationships: 400 }, true),
+    ).toEqual({
       entities: 100,
       relationships: 400,
     });
@@ -245,7 +283,9 @@ describe("KnowledgeGraph limits (#19157)", () => {
         limits={{ entities: 42, relationships: 84 }}
       />,
     );
-    await waitFor(() => expect(fetchKnowledgeGraph).toHaveBeenCalledWith(42, 84));
+    await waitFor(() =>
+      expect(fetchKnowledgeGraph).toHaveBeenCalledWith(42, 84),
+    );
     vi.unstubAllGlobals();
   });
 
@@ -306,7 +346,9 @@ describe("KnowledgeGraph stacking context (#19153)", () => {
     const { container } = render(
       <KnowledgeGraph
         // Never resolves — the loading branch renders the same container.
-        fetchKnowledgeGraph={vi.fn().mockReturnValue(new Promise(() => undefined))}
+        fetchKnowledgeGraph={vi
+          .fn()
+          .mockReturnValue(new Promise(() => undefined))}
         fetchEntityNeighbors={vi.fn()}
       />,
     );

@@ -89,10 +89,9 @@ describe("useAppSessionActions — ACP close/delete (#17400)", () => {
     });
 
     expect(outcome).toBe(true);
-    expect(mockFetch.fn).toHaveBeenCalledWith(
-      "/api/sessions/s1/acp/close",
-      { method: "POST" },
-    );
+    expect(mockFetch.fn).toHaveBeenCalledWith("/api/sessions/s1/acp/close", {
+      method: "POST",
+    });
     expect(showToast).not.toHaveBeenCalled();
   });
 
@@ -127,10 +126,9 @@ describe("useAppSessionActions — ACP close/delete (#17400)", () => {
 
     expect(outcome).toBe(true);
     expect(markSessionDeleting).toHaveBeenCalledWith("s1");
-    expect(mockFetch.fn).toHaveBeenCalledWith(
-      "/api/sessions/s1/acp/delete",
-      { method: "POST" },
-    );
+    expect(mockFetch.fn).toHaveBeenCalledWith("/api/sessions/s1/acp/delete", {
+      method: "POST",
+    });
     // Success leaves the optimistic removal in place; the session_deleted WS
     // event finalizes it, so the row is never restored.
     expect(restoreSession).not.toHaveBeenCalled();

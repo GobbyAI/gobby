@@ -1,138 +1,139 @@
-import { readFileSync } from 'node:fs'
-import { join } from 'node:path'
-import { describe, expect, it } from 'vitest'
-import { render } from '@testing-library/react'
+import { readFileSync } from "node:fs";
+import { join } from "node:path";
+import { describe, expect, it } from "vitest";
+import { render } from "@testing-library/react";
 import {
   ActivityPanelEmpty,
   ChangesEmptyIcon,
   PlansEmptyIcon,
-} from '../ActivityPanelEmpty'
+} from "../ActivityPanelEmpty";
 
-const cwd = process.cwd()
+const cwd = process.cwd();
 
 function readSource(rel: string): string {
-  return readFileSync(join(cwd, rel), 'utf8')
+  return readFileSync(join(cwd, rel), "utf8");
 }
 
-describe('ActivityPanelEmpty (#14246)', () => {
-  it('renders icon, heading, and body slots inside .activity-tab-empty', () => {
+describe("ActivityPanelEmpty (#14246)", () => {
+  it("renders icon, heading, and body slots inside .activity-tab-empty", () => {
     const { container } = render(
       <ActivityPanelEmpty
         icon={<svg data-testid="empty-icon" />}
         heading="Plans"
         body="Plans appear here when the agent proposes one for review"
       />,
-    )
+    );
 
-    const root = container.querySelector('.activity-tab-empty')
-    expect(root).not.toBeNull()
-    expect(root?.querySelector('.activity-tab-empty__icon')).not.toBeNull()
-    expect(root?.querySelector('.activity-tab-empty__heading')?.textContent).toBe('Plans')
-    expect(root?.querySelector('.activity-tab-empty__body')?.textContent).toBe(
-      'Plans appear here when the agent proposes one for review',
-    )
-    expect(root?.querySelector('[data-testid="empty-icon"]')).not.toBeNull()
-  })
+    const root = container.querySelector(".activity-tab-empty");
+    expect(root).not.toBeNull();
+    expect(root?.querySelector(".activity-tab-empty__icon")).not.toBeNull();
+    expect(
+      root?.querySelector(".activity-tab-empty__heading")?.textContent,
+    ).toBe("Plans");
+    expect(root?.querySelector(".activity-tab-empty__body")?.textContent).toBe(
+      "Plans appear here when the agent proposes one for review",
+    );
+    expect(root?.querySelector('[data-testid="empty-icon"]')).not.toBeNull();
+  });
 
-  it('marks the icon decorative for assistive tech', () => {
+  it("marks the icon decorative for assistive tech", () => {
     const { container } = render(
       <ActivityPanelEmpty
         icon={<svg />}
         heading="Changes"
         body="File changes appear here as the agent edits the working tree"
       />,
-    )
+    );
 
-    const iconWrap = container.querySelector('.activity-tab-empty__icon')
-    expect(iconWrap?.getAttribute('aria-hidden')).toBe('true')
-  })
+    const iconWrap = container.querySelector(".activity-tab-empty__icon");
+    expect(iconWrap?.getAttribute("aria-hidden")).toBe("true");
+  });
 
-  it('exposes one icon per panel using consistent stroke styling', () => {
-    const renders = [
-      render(<PlansEmptyIcon />),
-      render(<ChangesEmptyIcon />),
-    ]
+  it("exposes one icon per panel using consistent stroke styling", () => {
+    const renders = [render(<PlansEmptyIcon />), render(<ChangesEmptyIcon />)];
 
     for (const r of renders) {
-      const svg = r.container.querySelector('svg')
-      expect(svg).not.toBeNull()
-      expect(svg?.getAttribute('stroke')).toBe('currentColor')
-      expect(svg?.getAttribute('fill')).toBe('none')
-      expect(svg?.getAttribute('width')).toBe('48')
-      expect(svg?.getAttribute('height')).toBe('48')
+      const svg = r.container.querySelector("svg");
+      expect(svg).not.toBeNull();
+      expect(svg?.getAttribute("stroke")).toBe("currentColor");
+      expect(svg?.getAttribute("fill")).toBe("none");
+      expect(svg?.getAttribute("width")).toBe("48");
+      expect(svg?.getAttribute("height")).toBe("48");
     }
-  })
+  });
 
-  describe('panel migrations', () => {
-    it('PlansTab uses ActivityPanelEmpty with the spec heading + body', () => {
-      const source = readSource('src/components/activity/PlansTab.tsx')
-      expect(source).toContain('ActivityPanelEmpty')
-      expect(source).toContain('PlansEmptyIcon')
-      expect(source).toContain('heading="Plans"')
+  describe("panel migrations", () => {
+    it("PlansTab uses ActivityPanelEmpty with the spec heading + body", () => {
+      const source = readSource("src/components/activity/PlansTab.tsx");
+      expect(source).toContain("ActivityPanelEmpty");
+      expect(source).toContain("PlansEmptyIcon");
+      expect(source).toContain('heading="Plans"');
       expect(source).toContain(
         'body="Plans appear here when the agent proposes one for review"',
-      )
-      expect(source).not.toMatch(/No plans yet/)
-      expect(source).not.toMatch(/text-xs text-muted-foreground mt-1/)
-    })
+      );
+      expect(source).not.toMatch(/No plans yet/);
+      expect(source).not.toMatch(/text-xs text-muted-foreground mt-1/);
+    });
 
-    it('FileChangesTab uses ActivityPanelEmpty with the spec heading + body', () => {
-      const source = readSource('src/components/activity/FileChangesTab.tsx')
-      expect(source).toContain('ActivityPanelEmpty')
-      expect(source).toContain('ChangesEmptyIcon')
-      expect(source).toContain('heading="Changes"')
+    it("FileChangesTab uses ActivityPanelEmpty with the spec heading + body", () => {
+      const source = readSource("src/components/activity/FileChangesTab.tsx");
+      expect(source).toContain("ActivityPanelEmpty");
+      expect(source).toContain("ChangesEmptyIcon");
+      expect(source).toContain('heading="Changes"');
       expect(source).toContain(
         'body="Changes appear here as files are modified during the session"',
-      )
-      expect(source).not.toMatch(/No file changes detected/)
-    })
+      );
+      expect(source).not.toMatch(/No file changes detected/);
+    });
 
-    it('strips the trailing period from every empty-state body line', () => {
+    it("strips the trailing period from every empty-state body line", () => {
       const sources = [
-        readSource('src/components/activity/PlansTab.tsx'),
-        readSource('src/components/activity/FileChangesTab.tsx'),
-      ]
+        readSource("src/components/activity/PlansTab.tsx"),
+        readSource("src/components/activity/FileChangesTab.tsx"),
+      ];
       for (const source of sources) {
-        const match = source.match(/body="([^"]+)"/)
-        expect(match).not.toBeNull()
-        expect(match![1].endsWith('.')).toBe(false)
+        const match = source.match(/body="([^"]+)"/);
+        expect(match).not.toBeNull();
+        expect(match![1].endsWith(".")).toBe(false);
       }
-    })
+    });
 
-    it('keeps Sessions empty-state bylines punctuation-free', () => {
-      const source = readSource('src/components/activity/SessionsTab.tsx')
-      expect(source).toContain('? "No sessions match these filters"')
-      expect(source).not.toContain('No sessions match these filters.')
-      expect(source).not.toContain('sessions${scopeSuffix}.')
-    })
-  })
+    it("keeps Sessions empty-state bylines punctuation-free", () => {
+      const source = readSource("src/components/activity/SessionsTab.tsx");
+      expect(source).toContain('? "No sessions match these filters"');
+      expect(source).not.toContain("No sessions match these filters.");
+      expect(source).not.toContain("sessions${scopeSuffix}.");
+    });
+  });
 
-  describe('typography ladder hierarchy', () => {
-    it('matches the chat empty-state look: heading --text-xl / secondary, body --text-base / muted', () => {
-      const source = readSource('src/components/activity/ActivityPanelEmpty.tsx')
+  describe("typography ladder hierarchy", () => {
+    it("matches the chat empty-state look: heading --text-xl / secondary, body --text-base / muted", () => {
+      const source = readSource(
+        "src/components/activity/ActivityPanelEmpty.tsx",
+      );
 
-      expect(source).toContain('text-[length:var(--text-xl)]')
-      expect(source).toContain('text-[var(--text-secondary)]')
-      expect(source).toContain('max-w-[26rem]')
-      expect(source).toContain('text-[length:var(--text-base)]')
-      expect(source).toContain('text-[var(--text-muted)]')
-      expect(source).not.toContain("import '../chat/styles/empty-state.css'")
-    })
+      expect(source).toContain("text-[length:var(--text-xl)]");
+      expect(source).toContain("text-[var(--text-secondary)]");
+      expect(source).toContain("max-w-[26rem]");
+      expect(source).toContain("text-[length:var(--text-base)]");
+      expect(source).toContain("text-[var(--text-muted)]");
+      expect(source).not.toContain("import '../chat/styles/empty-state.css'");
+    });
 
-    it('routes every panel through ActivityPanelEmpty (no loose .activity-tab-empty literals)', () => {
+    it("routes every panel through ActivityPanelEmpty (no loose .activity-tab-empty literals)", () => {
       const sources = [
-        readSource('src/components/activity/TasksTab.tsx'),
-        readSource('src/components/activity/SessionsTab.tsx'),
-        readSource('src/components/activity/PipelinesTab.tsx'),
-        readSource('src/components/activity/CronTab.tsx'),
-        readSource('src/components/activity/FilesTab.tsx'),
-        readSource('src/components/activity/TracesTab.tsx'),
-        readSource('src/components/activity/FileChangesTab.tsx'),
-        readSource('src/components/activity/PlansTab.tsx'),
-      ]
+        readSource("src/components/activity/TasksTab.tsx"),
+        readSource("src/components/activity/SessionsTab.tsx"),
+        readSource("src/components/activity/PipelinesTab.tsx"),
+        readSource("src/components/activity/CronTab.tsx"),
+        readSource("src/components/activity/FilesTab.tsx"),
+        readSource("src/components/activity/TracesTab.tsx"),
+        readSource("src/components/activity/FileChangesTab.tsx"),
+        readSource("src/components/activity/PlansTab.tsx"),
+      ];
       for (const source of sources) {
-        expect(source).not.toMatch(/className="activity-tab-empty"/)
+        expect(source).not.toMatch(/className="activity-tab-empty"/);
       }
-    })
-  })
-})
+    });
+  });
+});

@@ -76,10 +76,14 @@ export function McpDetailPanel({
         </div>
         <div className="min-h-0 flex-[1_1_auto] overflow-auto p-3 text-[length:var(--text-sm)] text-[var(--text-primary)]">
           {server ? (
-            <dl className="m-0 grid gap-[0.45rem] [&>div]:grid [&>div]:grid-cols-[minmax(5.5rem,30%)_minmax(0,1fr)] [&>div]:gap-3 [&_dd]:m-0 [&_dd]:min-w-0 [&_dd]:[overflow-wrap:anywhere] [&_dt]:text-[var(--text-secondary)]">
+            <dl className="m-0 grid gap-[0.45rem] [&_dd]:m-0 [&_dd]:min-w-0 [&_dd]:[overflow-wrap:anywhere] [&_dt]:text-[var(--text-secondary)] [&>div]:grid [&>div]:grid-cols-[minmax(5.5rem,30%)_minmax(0,1fr)] [&>div]:gap-3">
               <div>
                 <dt>Type</dt>
-                <dd>{getServerType(server) === "internal" ? "Internal" : "External"}</dd>
+                <dd>
+                  {getServerType(server) === "internal"
+                    ? "Internal"
+                    : "External"}
+                </dd>
               </div>
               <div>
                 <dt>Transport</dt>
@@ -148,12 +152,15 @@ export function McpDetailPanel({
         ) : schema ? (
           <>
             {(schema.description || tool?.brief) && (
-              <p className="mb-3 mt-0 text-[var(--text-secondary)]">
+              <p className="mt-0 mb-3 text-[var(--text-secondary)]">
                 {schema.description || tool?.brief}
               </p>
             )}
             <section>
-              <Heading level={3} className="mb-[0.4rem] mt-0 text-[length:var(--text-sm)] font-[var(--font-weight-medium)]">
+              <Heading
+                level={3}
+                className="mt-0 mb-[0.4rem] text-[length:var(--text-sm)] font-[var(--font-weight-medium)]"
+              >
                 Input Schema
               </Heading>
               <JsonBlock
@@ -162,7 +169,10 @@ export function McpDetailPanel({
               />
             </section>
             <section className="mt-[0.9rem]">
-              <Heading level={3} className="mb-[0.4rem] mt-0 text-[length:var(--text-sm)] font-[var(--font-weight-medium)]">
+              <Heading
+                level={3}
+                className="mt-0 mb-[0.4rem] text-[length:var(--text-sm)] font-[var(--font-weight-medium)]"
+              >
                 Arguments
               </Heading>
               <ToolArgumentForm
@@ -175,7 +185,10 @@ export function McpDetailPanel({
             </section>
             {executionResult && (
               <section className="mt-[0.9rem]">
-                <Heading level={3} className="mb-[0.4rem] mt-0 text-[length:var(--text-sm)] font-[var(--font-weight-medium)]">
+                <Heading
+                  level={3}
+                  className="mt-0 mb-[0.4rem] text-[length:var(--text-sm)] font-[var(--font-weight-medium)]"
+                >
                   Result
                 </Heading>
                 <JsonResultBlock

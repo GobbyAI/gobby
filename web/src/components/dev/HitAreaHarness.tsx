@@ -1,14 +1,14 @@
-import { useState } from 'react'
-import { Input } from '../ui/Input'
-import { NativeSelect } from '../ui/NativeSelect'
+import { useState } from "react";
+import { Input } from "../ui/Input";
+import { NativeSelect } from "../ui/NativeSelect";
 import {
   Select,
   SelectContent,
   SelectItem,
   SelectTrigger,
   SelectValue,
-} from '../ui/Select'
-import { Textarea } from '../ui/Textarea'
+} from "../ui/Select";
+import { Textarea } from "../ui/Textarea";
 
 /**
  * Dev-only surface for the coarse-pointer hit-area Playwright spec
@@ -18,10 +18,14 @@ import { Textarea } from '../ui/Textarea'
  * to 36px so the spec exercises its vertical expansion too.
  */
 export function HitAreaHarness() {
-  const [selected, setSelected] = useState('a')
+  const [selected, setSelected] = useState("a");
   return (
     <main className="flex min-h-screen flex-col items-start gap-10 bg-background p-10">
-      <Input aria-label="Harness input" data-testid="harness-input" wrapperClassName="w-64" />
+      <Input
+        aria-label="Harness input"
+        data-testid="harness-input"
+        wrapperClassName="w-64"
+      />
       <Textarea
         aria-label="Harness textarea"
         data-testid="harness-textarea"
@@ -52,5 +56,5 @@ export function HitAreaHarness() {
         </SelectContent>
       </Select>
     </main>
-  )
+  );
 }

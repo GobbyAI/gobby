@@ -19,7 +19,11 @@ import {
 export interface WikiActionHelpers {
   refresh: () => Promise<void>;
   attach: (file: File) => Promise<unknown>;
-  ingest: (request: { urls?: string[]; paths?: string[]; path?: string }) => Promise<unknown>;
+  ingest: (request: {
+    urls?: string[];
+    paths?: string[];
+    path?: string;
+  }) => Promise<unknown>;
   compileWiki: () => Promise<unknown>;
   audit: () => Promise<unknown>;
 }
@@ -45,7 +49,9 @@ export interface UseWikiTabActionsOptions {
 export interface WikiTabActions {
   status: WikiActionStatus;
   clearStatus: () => void;
-  savePageAndRefresh: (request: WikiSaveRequest) => Promise<WikiSaveResult | null>;
+  savePageAndRefresh: (
+    request: WikiSaveRequest,
+  ) => Promise<WikiSaveResult | null>;
   deletePageAndNavigateBack: (path: string) => Promise<boolean>;
   refreshIndex: () => Promise<void>;
   runCompile: () => Promise<void>;
@@ -54,7 +60,11 @@ export interface WikiTabActions {
   ingestUrl: (url: string) => Promise<void>;
 }
 
-const IDLE_STATUS: WikiActionStatus = { busy: null, message: null, error: null };
+const IDLE_STATUS: WikiActionStatus = {
+  busy: null,
+  message: null,
+  error: null,
+};
 
 export function useWikiTabActions({
   scope,
@@ -65,7 +75,11 @@ export function useWikiTabActions({
   const [status, setStatus] = useState<WikiActionStatus>(IDLE_STATUS);
 
   const run = useCallback(
-    async <T>(key: string, action: () => Promise<T>, successMessage?: string): Promise<T | null> => {
+    async <T>(
+      key: string,
+      action: () => Promise<T>,
+      successMessage?: string,
+    ): Promise<T | null> => {
       setStatus({ busy: key, message: null, error: null });
       try {
         const result = await action();

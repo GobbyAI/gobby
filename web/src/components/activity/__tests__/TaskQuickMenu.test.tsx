@@ -74,13 +74,10 @@ describe("TaskQuickMenu — build_state drives build controls (#14770 / D3)", ()
     ["paused", ["Resume Build"]],
   ];
 
-  it.each(cases)(
-    "shows exactly the %s controls",
-    (buildState, expected) => {
-      renderMenu(makeTask({ build_state: buildState }));
-      expect(visibleBuildButtons().sort()).toEqual([...expected].sort());
-    },
-  );
+  it.each(cases)("shows exactly the %s controls", (buildState, expected) => {
+    renderMenu(makeTask({ build_state: buildState }));
+    expect(visibleBuildButtons().sort()).toEqual([...expected].sort());
+  });
 
   it("defaults to Start when build_state is absent", () => {
     renderMenu(makeTask({ build_state: undefined }));
@@ -92,7 +89,9 @@ describe("TaskQuickMenu — build_state drives build controls (#14770 / D3)", ()
   it("renders menu semantics for task actions", () => {
     renderMenu(makeTask({ build_state: "never_started" }));
     expect(screen.getByRole("menu", { name: "Task actions" })).toBeTruthy();
-    expect(screen.getAllByRole("menuitem").map((item) => item.textContent)).toContain("Build");
+    expect(
+      screen.getAllByRole("menuitem").map((item) => item.textContent),
+    ).toContain("Build");
     expect(screen.getAllByRole("separator").length).toBeGreaterThan(0);
   });
 
@@ -136,7 +135,9 @@ describe("TaskQuickMenu — build_state drives build controls (#14770 / D3)", ()
     const onClose = vi.fn();
     renderMenu(makeTask({ build_state: "never_started" }), { onClose });
     const menu = screen.getByRole("menu", { name: "Task actions" });
-    const assign = screen.getByRole("menuitem", { name: "Assign to Main Chat" });
+    const assign = screen.getByRole("menuitem", {
+      name: "Assign to Main Chat",
+    });
     const build = screen.getByRole("menuitem", { name: "Build" });
     const close = screen.getByRole("menuitem", { name: "Close..." });
 
@@ -154,7 +155,9 @@ describe("TaskQuickMenu — build_state drives build controls (#14770 / D3)", ()
   it("starts keyboard navigation from the first item when nothing is focused", () => {
     renderMenu(makeTask({ build_state: "never_started" }));
     const menu = screen.getByRole("menu", { name: "Task actions" });
-    const assign = screen.getByRole("menuitem", { name: "Assign to Main Chat" });
+    const assign = screen.getByRole("menuitem", {
+      name: "Assign to Main Chat",
+    });
 
     (document.activeElement as HTMLElement | null)?.blur();
     expect(document.activeElement).not.toBe(assign);

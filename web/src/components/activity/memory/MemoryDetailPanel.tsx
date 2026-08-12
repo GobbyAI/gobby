@@ -67,7 +67,8 @@ export function MemoryDetailPanel({
     source: sourceDraft,
     onSave,
   });
-  const { draft, dirty, saving, serverChanged, save, discard, confirmIfDirty } = detailDraft;
+  const { draft, dirty, saving, serverChanged, save, discard, confirmIfDirty } =
+    detailDraft;
   const [restoring, setRestoring] = useState(false);
   const [actionError, setActionError] = useState<string | null>(null);
 
@@ -109,7 +110,9 @@ export function MemoryDetailPanel({
           <span
             className={cn(
               "text-xs font-medium",
-              isDeleteFlag ? "text-destructive-foreground" : "text-warning-foreground",
+              isDeleteFlag
+                ? "text-destructive-foreground"
+                : "text-warning-foreground",
             )}
           >
             {flagLabel}
@@ -130,7 +133,9 @@ export function MemoryDetailPanel({
                   .then(() => onRestore(memory))
                   .catch((error) => {
                     setActionError(
-                      error instanceof Error ? error.message : "Failed to restore memory",
+                      error instanceof Error
+                        ? error.message
+                        : "Failed to restore memory",
                     );
                   })
                   .finally(() => setRestoring(false));
@@ -192,7 +197,9 @@ export function MemoryDetailPanel({
                 .then(() => onPromote(memory))
                 .catch((error: unknown) => {
                   setActionError(
-                    error instanceof Error ? error.message : "Failed to promote memory",
+                    error instanceof Error
+                      ? error.message
+                      : "Failed to promote memory",
                   );
                 });
             }
@@ -205,13 +212,19 @@ export function MemoryDetailPanel({
               {memoryScopeLabel(memory)}
             </Chip>
             <span className="truncate">
-              {memory.is_global ? "Available across projects" : "Current project"}
+              {memory.is_global
+                ? "Available across projects"
+                : "Current project"}
             </span>
           </dd>
           <dt className="text-muted-foreground">Created</dt>
-          <dd className="text-foreground">{new Date(memory.created_at).toLocaleString()}</dd>
+          <dd className="text-foreground">
+            {new Date(memory.created_at).toLocaleString()}
+          </dd>
           <dt className="text-muted-foreground">Updated</dt>
-          <dd className="text-foreground">{new Date(memory.updated_at).toLocaleString()}</dd>
+          <dd className="text-foreground">
+            {new Date(memory.updated_at).toLocaleString()}
+          </dd>
           <dt className="text-muted-foreground">Accesses</dt>
           <dd className="text-foreground">{memory.access_count}</dd>
           {hidden && (
@@ -219,7 +232,9 @@ export function MemoryDetailPanel({
               <dt className="text-muted-foreground">Flagged</dt>
               <dd className="text-foreground">{flagLabel}</dd>
               <dt className="text-muted-foreground">Last reviewed</dt>
-              <dd className="text-foreground">{formatTimestamp(memory.last_dreamed_at)}</dd>
+              <dd className="text-foreground">
+                {formatTimestamp(memory.last_dreamed_at)}
+              </dd>
               <dt className="text-muted-foreground">Purge</dt>
               <dd className="text-foreground">{purgeLabel ?? "—"}</dd>
             </>

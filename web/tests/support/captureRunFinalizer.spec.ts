@@ -15,9 +15,7 @@ import * as fs from "node:fs";
 import * as path from "node:path";
 import { fileURLToPath } from "node:url";
 import { expect, test } from "@playwright/test";
-import {
-  ACTIVITY_PANEL_TABS,
-} from "../../src/components/activity/ActivityPanelTabs";
+import { ACTIVITY_PANEL_TABS } from "../../src/components/activity/ActivityPanelTabs";
 import { SETTINGS_SECTIONS } from "../../src/components/settings/sections";
 import captureRunGlobalTeardown, {
   CAPTURE_POINTERS,
@@ -80,7 +78,12 @@ function stageAttempt(
   if (options.attested) {
     fs.writeFileSync(
       path.join(attemptDir, "attested.json"),
-      JSON.stringify({ runId, cellKey, attempt: options.attempt, status: "passed" }),
+      JSON.stringify({
+        runId,
+        cellKey,
+        attempt: options.attempt,
+        status: "passed",
+      }),
     );
   }
   return png;
@@ -105,9 +108,9 @@ test.describe("matrix expansion", () => {
     for (const tab of ACTIVITY_PANEL_TABS) {
       expect(scenarios.has(`tab-${tab.id}`)).toBe(true);
     }
-    expect(
-      [...scenarios].filter((id) => id.startsWith("tab-")).length,
-    ).toBe(ACTIVITY_PANEL_TABS.length);
+    expect([...scenarios].filter((id) => id.startsWith("tab-")).length).toBe(
+      ACTIVITY_PANEL_TABS.length,
+    );
 
     // One settings scenario per live settings section, derived.
     for (const section of SETTINGS_SECTIONS) {
@@ -131,7 +134,9 @@ test.describe("matrix expansion", () => {
 
     // Base states expand across the full matrix.
     const fullMatrix =
-      CAPTURE_THEMES.length * CAPTURE_POINTERS.length * CAPTURE_VIEWPORTS.length;
+      CAPTURE_THEMES.length *
+      CAPTURE_POINTERS.length *
+      CAPTURE_VIEWPORTS.length;
     const loginCells = cells.filter((cell) => cell.scenario === "login");
     expect(loginCells.length).toBe(fullMatrix);
 
@@ -149,7 +154,9 @@ test.describe("matrix expansion", () => {
     // Reduced-motion pairs: every family has a reduce cell and a
     // no-preference control.
     const rmCells = cells.filter((cell) => cell.motion !== null);
-    const rmStates = new Set(rmCells.map((cell) => `${cell.scenario}:${cell.state}`));
+    const rmStates = new Set(
+      rmCells.map((cell) => `${cell.scenario}:${cell.state}`),
+    );
     expect(rmStates).toEqual(
       new Set([
         "chat:streaming",
@@ -162,7 +169,10 @@ test.describe("matrix expansion", () => {
       const pair = rmCells.filter(
         (cell) => `${cell.scenario}:${cell.state}` === state,
       );
-      expect(pair.map((cell) => cell.motion).sort()).toEqual(["none", "reduce"]);
+      expect(pair.map((cell) => cell.motion).sort()).toEqual([
+        "none",
+        "reduce",
+      ]);
     }
 
     // Key format is the stable 5-segment pairing name.
@@ -388,9 +398,16 @@ test.describe("finalizeCaptureRun", () => {
     for (const key of TINY_KEYS) {
       stageAttempt(root, "run-k", key, { attempt: 0, attested: true });
     }
-    finalizeCaptureRun({ runId: "run-k", rootDir: root, expectedKeys: TINY_KEYS });
+    finalizeCaptureRun({
+      runId: "run-k",
+      rootDir: root,
+      expectedKeys: TINY_KEYS,
+    });
     const runDir = runDirFor(root, "run-k");
-    const before = fs.readFileSync(path.join(runDir, "run-manifest.json"), "utf8");
+    const before = fs.readFileSync(
+      path.join(runDir, "run-manifest.json"),
+      "utf8",
+    );
 
     // A second capture at the same label stages again and tries to publish.
     for (const key of TINY_KEYS) {
@@ -428,7 +445,10 @@ test.describe("globalTeardown activation gate", () => {
   test("no active run id is a no-op even with staged files present", async ({}, testInfo) => {
     const root = testInfo.outputPath("root");
     // Stale staging left by an earlier aborted capture run.
-    stageAttempt(root, "stale-run", TINY_KEYS[0]!, { attempt: 0, attested: true });
+    stageAttempt(root, "stale-run", TINY_KEYS[0]!, {
+      attempt: 0,
+      attested: true,
+    });
 
     const savedRunId = process.env[CAPTURE_RUN_ENV];
     const savedRoot = process.env[CAPTURE_ROOT_ENV];

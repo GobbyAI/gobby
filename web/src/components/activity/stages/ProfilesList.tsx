@@ -37,7 +37,8 @@ export function ProfilesList({
         const menuItems: QuickMenuItem[] = [
           {
             label: "Set as default",
-            disabled: busy || profile.name === "default" || Boolean(profile.deleted_at),
+            disabled:
+              busy || profile.name === "default" || Boolean(profile.deleted_at),
             onSelect: () => onSetDefault(profile),
           },
           {
@@ -57,7 +58,8 @@ export function ProfilesList({
                 destructive: true,
                 disabled: busy,
                 onSelect: () => {
-                  if (window.confirm(`Delete "${profile.display_label}"?`)) onDelete(profile);
+                  if (window.confirm(`Delete "${profile.display_label}"?`))
+                    onDelete(profile);
                 },
               },
         ];
@@ -84,12 +86,12 @@ export function ProfilesList({
                 label={profile.enabled ? "Profile enabled" : "Profile disabled"}
                 pulse={profile.enabled}
               />
-              <span className="activity-row-title">{profile.display_label}</span>
+              <span className="activity-row-title">
+                {profile.display_label}
+              </span>
               <Chip>{profile.source}</Chip>
               <Chip>{profile.isolation}</Chip>
-              {profile.name === "default" && (
-                <Chip tone="accent">default</Chip>
-              )}
+              {profile.name === "default" && <Chip tone="accent">default</Chip>}
             </Button>
             <div className="px-1">
               <QuickMenu

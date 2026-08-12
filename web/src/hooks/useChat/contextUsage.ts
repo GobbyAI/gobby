@@ -51,7 +51,9 @@ export function computeContextUsageFromSessionData(
   };
 }
 
-export function hasSessionUsage(session: Record<string, unknown> | null): boolean {
+export function hasSessionUsage(
+  session: Record<string, unknown> | null,
+): boolean {
   if (!session) return false;
   return (
     (numberOrNull(session.context_used_tokens) ?? 0) > 0 ||
@@ -92,7 +94,8 @@ export function buildContextUsageFromTotals(params: {
         : null,
     contextUsageSource: params.contextUsageSource ?? "web_chat",
     contextUsageConfidence:
-      params.contextUsageConfidence ?? (totalInputTokens > 0 ? "reported" : null),
+      params.contextUsageConfidence ??
+      (totalInputTokens > 0 ? "reported" : null),
   };
 }
 

@@ -25,7 +25,8 @@ function workflowPayload(draft: AgentDraft): Record<string, unknown> | null {
   if (draft.ruleSelectors) workflows.rule_selectors = draft.ruleSelectors;
   else delete workflows.rule_selectors;
 
-  if (Object.keys(draft.variables).length > 0) workflows.variables = draft.variables;
+  if (Object.keys(draft.variables).length > 0)
+    workflows.variables = draft.variables;
   else delete workflows.variables;
 
   const existingSkillSelectors = workflows.skill_selectors;
@@ -35,7 +36,9 @@ function workflowPayload(draft: AgentDraft): Record<string, unknown> | null {
     !Array.isArray(existingSkillSelectors)
       ? { ...existingSkillSelectors }
       : {};
-  const existingInclude = Array.isArray(skillSelectors.include) ? skillSelectors.include : [];
+  const existingInclude = Array.isArray(skillSelectors.include)
+    ? skillSelectors.include
+    : [];
   const include = [
     ...new Set([
       ...existingInclude.filter((skill) => skill === "*"),
@@ -68,9 +71,13 @@ export function buildAgentDefinitionBody(
     provider: draft.form.provider,
     model: optionalString(draft.form.model),
     reasoning_effort:
-      draft.form.reasoning_effort === "auto" ? null : draft.form.reasoning_effort,
+      draft.form.reasoning_effort === "auto"
+        ? null
+        : draft.form.reasoning_effort,
     reasoning_required:
-      draft.form.reasoning_effort === "auto" ? false : draft.form.reasoning_required,
+      draft.form.reasoning_effort === "auto"
+        ? false
+        : draft.form.reasoning_required,
     fallback_agent: optionalString(draft.form.fallback_agent),
     mode: draft.form.mode,
     isolation: draft.form.isolation,
@@ -105,7 +112,11 @@ export function buildDuplicateAgentBody(
   return body;
 }
 
-async function sendJson(url: string, method: string, body?: Record<string, unknown>) {
+async function sendJson(
+  url: string,
+  method: string,
+  body?: Record<string, unknown>,
+) {
   const response = await fetch(url, {
     method,
     headers: body ? { "Content-Type": "application/json" } : undefined,
@@ -134,16 +145,26 @@ export async function saveAgentDraft(options: {
   definitionId: string | null;
   projectId?: string | null;
 }): Promise<boolean> {
-  const body = buildAgentDefinitionBody(options.draft, options.definitionId ? null : options.projectId);
+  const body = buildAgentDefinitionBody(
+    options.draft,
+    options.definitionId ? null : options.projectId,
+  );
   if (options.definitionId) {
-    await sendJson(`${getBaseUrl()}/api/agents/definitions/${options.definitionId}`, "PUT", body);
+    await sendJson(
+      `${getBaseUrl()}/api/agents/definitions/${options.definitionId}`,
+      "PUT",
+      body,
+    );
     return true;
   }
   await sendJson(`${getBaseUrl()}/api/agents/definitions`, "POST", body);
   return true;
 }
 
-export async function setAgentEnabled(agent: AgentDefInfo, enabled: boolean): Promise<boolean> {
+export async function setAgentEnabled(
+  agent: AgentDefInfo,
+  enabled: boolean,
+): Promise<boolean> {
   if (!agent.db_id) return false;
   const draft = agentToDraft(agent);
   draft.enabled = enabled;
@@ -168,8 +189,13 @@ export async function duplicateAgentDefinition(
   return true;
 }
 
-export async function deleteAgentDefinition(agent: AgentDefInfo): Promise<boolean> {
+export async function deleteAgentDefinition(
+  agent: AgentDefInfo,
+): Promise<boolean> {
   if (!agent.db_id) return false;
-  await sendJson(`${getBaseUrl()}/api/agents/definitions/${agent.db_id}`, "DELETE");
+  await sendJson(
+    `${getBaseUrl()}/api/agents/definitions/${agent.db_id}`,
+    "DELETE",
+  );
   return true;
 }

@@ -1,7 +1,14 @@
 import { createElement, type ReactNode } from "react";
 import { cleanup, render } from "@testing-library/react";
 import { afterEach, describe, expect, it, vi } from "vitest";
-import type { Emphasis, Link, Paragraph, PhrasingContent, Root, Text } from "mdast";
+import type {
+  Emphasis,
+  Link,
+  Paragraph,
+  PhrasingContent,
+  Root,
+  Text,
+} from "mdast";
 
 import { MarkdownBody } from "../../../components/shared/MarkdownBody";
 import { remarkWikilink, type RemarkWikilinkOptions } from "../remarkWikilink";
@@ -31,14 +38,18 @@ function firstLink(para: Paragraph): Link {
 
 describe("remarkWikilink transformer", () => {
   it("converts a bare wikilink into a wikilink-scheme link with surrounding text", () => {
-    const para = transform(root([paragraph([text("see [[knowledge/concepts/gobby]] now")])]));
+    const para = transform(
+      root([paragraph([text("see [[knowledge/concepts/gobby]] now")])]),
+    );
 
     expect(para.children).toHaveLength(3);
     expect(para.children[0]).toEqual({ type: "text", value: "see " });
     expect(para.children[2]).toEqual({ type: "text", value: " now" });
 
     const link = firstLink(para);
-    expect(link.url).toBe(`wikilink:${encodeURIComponent("knowledge/concepts/gobby")}`);
+    expect(link.url).toBe(
+      `wikilink:${encodeURIComponent("knowledge/concepts/gobby")}`,
+    );
     expect(link.children).toEqual([{ type: "text", value: "gobby" }]);
     expect(link.data?.hProperties).toMatchObject({
       className: "wikilink",
@@ -48,11 +59,15 @@ describe("remarkWikilink transformer", () => {
 
   it("uses the alias as the link text when present", () => {
     const para = transform(
-      root([paragraph([text("[[knowledge/sources/src-0001|Session: 019efb0c]]")])]),
+      root([
+        paragraph([text("[[knowledge/sources/src-0001|Session: 019efb0c]]")]),
+      ]),
     );
 
     const link = firstLink(para);
-    expect(link.children).toEqual([{ type: "text", value: "Session: 019efb0c" }]);
+    expect(link.children).toEqual([
+      { type: "text", value: "Session: 019efb0c" },
+    ]);
     expect(link.data?.hProperties).toMatchObject({
       "data-wiki-target": "knowledge/sources/src-0001",
     });
@@ -60,13 +75,18 @@ describe("remarkWikilink transformer", () => {
 
   it("keeps the anchor in the url and label but resolves only the page part", () => {
     const resolve = vi.fn(() => ({ path: "knowledge/concepts/gobby.md" }));
-    const para = transform(root([paragraph([text("[[knowledge/concepts/gobby#History]]")])]), {
-      resolve,
-    });
+    const para = transform(
+      root([paragraph([text("[[knowledge/concepts/gobby#History]]")])]),
+      {
+        resolve,
+      },
+    );
 
     expect(resolve).toHaveBeenCalledWith("knowledge/concepts/gobby");
     const link = firstLink(para);
-    expect(link.url).toBe(`wikilink:${encodeURIComponent("knowledge/concepts/gobby#History")}`);
+    expect(link.url).toBe(
+      `wikilink:${encodeURIComponent("knowledge/concepts/gobby#History")}`,
+    );
     expect(link.children).toEqual([{ type: "text", value: "gobby#History" }]);
     expect(link.data?.hProperties).toMatchObject({ className: "wikilink" });
   });
@@ -102,12 +122,16 @@ describe("remarkWikilink transformer", () => {
   });
 
   it("degrades embeds to plain links", () => {
-    const para = transform(root([paragraph([text("![[knowledge/assets/diagram.png]]")])]));
+    const para = transform(
+      root([paragraph([text("![[knowledge/assets/diagram.png]]")])]),
+    );
 
     expect(para.children).toHaveLength(1);
     const link = firstLink(para);
     expect(link.type).toBe("link");
-    expect(link.url).toBe(`wikilink:${encodeURIComponent("knowledge/assets/diagram.png")}`);
+    expect(link.url).toBe(
+      `wikilink:${encodeURIComponent("knowledge/assets/diagram.png")}`,
+    );
     expect(link.children).toEqual([{ type: "text", value: "diagram.png" }]);
   });
 
@@ -116,7 +140,9 @@ describe("remarkWikilink transformer", () => {
 
     const link = firstLink(para);
     expect(link.children).toEqual([{ type: "text", value: "foo" }]);
-    expect(link.data?.hProperties).toMatchObject({ "data-wiki-target": "knowledge/foo.md" });
+    expect(link.data?.hProperties).toMatchObject({
+      "data-wiki-target": "knowledge/foo.md",
+    });
   });
 
   it("leaves text inside existing links untouched", () => {
@@ -132,7 +158,10 @@ describe("remarkWikilink transformer", () => {
   });
 
   it("recurses into nested phrasing containers", () => {
-    const emphasis: Emphasis = { type: "emphasis", children: [text("go [[b]]")] };
+    const emphasis: Emphasis = {
+      type: "emphasis",
+      children: [text("go [[b]]")],
+    };
     transform(root([paragraph([emphasis])]));
 
     expect(emphasis.children).toHaveLength(2);
@@ -152,7 +181,9 @@ describe("MarkdownBody extension seam", () => {
 
   it("renders identically with an empty extension list and keeps default components", () => {
     const content = "**bold** and [link](https://example.com)";
-    const { container: plain } = render(createElement(MarkdownBody, { content, id: "d1" }));
+    const { container: plain } = render(
+      createElement(MarkdownBody, { content, id: "d1" }),
+    );
     const { container: extended } = render(
       createElement(MarkdownBody, { content, id: "d1", remarkPlugins: [] }),
     );
@@ -174,8 +205,12 @@ describe("MarkdownBody extension seam", () => {
 
     const anchor = container.querySelector("a.wikilink");
     expect(anchor).not.toBeNull();
-    expect(anchor?.getAttribute("href")).toBe("wikilink:knowledge%2Fconcepts%2Fgobby");
-    expect(anchor?.getAttribute("data-wiki-target")).toBe("knowledge/concepts/gobby");
+    expect(anchor?.getAttribute("href")).toBe(
+      "wikilink:knowledge%2Fconcepts%2Fgobby",
+    );
+    expect(anchor?.getAttribute("data-wiki-target")).toBe(
+      "knowledge/concepts/gobby",
+    );
     expect(anchor?.textContent).toBe("Gobby");
   });
 
@@ -190,7 +225,9 @@ describe("MarkdownBody extension seam", () => {
 
     const anchor = container.querySelector("a.wikilink--unresolved");
     expect(anchor).not.toBeNull();
-    expect(anchor?.getAttribute("aria-description")).toBe("Page not created yet");
+    expect(anchor?.getAttribute("aria-description")).toBe(
+      "Page not created yet",
+    );
   });
 
   it("merges component overrides over the defaults", () => {
@@ -211,7 +248,11 @@ describe("MarkdownBody extension seam", () => {
   it("re-renders memoized blocks when the plugin set changes", () => {
     const content = "see [[missing/page]]";
     const { container, rerender } = render(
-      createElement(MarkdownBody, { content, id: "r1", remarkPlugins: [remarkWikilink] }),
+      createElement(MarkdownBody, {
+        content,
+        id: "r1",
+        remarkPlugins: [remarkWikilink],
+      }),
     );
     expect(container.querySelector("a.wikilink")).not.toBeNull();
     expect(container.querySelector("a.wikilink--unresolved")).toBeNull();

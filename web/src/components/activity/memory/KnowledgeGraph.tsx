@@ -1,14 +1,17 @@
-import { useState, useEffect, useRef, useMemo, useCallback } from 'react'
-import ForceGraph3D from 'react-force-graph-3d'
-import SpriteText from 'three-spritetext'
-import { SphereGeometry, MeshLambertMaterial, Mesh } from 'three'
-import { IS_IOS_DEVICE, IS_MOBILE_DEVICE } from '../../../utils/platform'
-import { resolveCssVar, cn, escapeHtml } from '../../../lib/utils'
-import type { KnowledgeGraphData, KnowledgeEntity } from '../../../hooks/useMemory'
-import { Button } from '../../ui/Button'
-import { Card } from '../../ui/Card'
-import { Input } from '../../ui/Input'
-import { coarseHitAreaCls } from '../../ui/controlStyles'
+import { useState, useEffect, useRef, useMemo, useCallback } from "react";
+import ForceGraph3D from "react-force-graph-3d";
+import SpriteText from "three-spritetext";
+import { SphereGeometry, MeshLambertMaterial, Mesh } from "three";
+import { IS_IOS_DEVICE, IS_MOBILE_DEVICE } from "../../../utils/platform";
+import { resolveCssVar, cn, escapeHtml } from "../../../lib/utils";
+import type {
+  KnowledgeGraphData,
+  KnowledgeEntity,
+} from "../../../hooks/useMemory";
+import { Button } from "../../ui/Button";
+import { Card } from "../../ui/Card";
+import { Input } from "../../ui/Input";
+import { coarseHitAreaCls } from "../../ui/controlStyles";
 import {
   DEFAULT_GRAPH_LIMITS,
   MOBILE_ENTITY_CAP,
@@ -22,7 +25,7 @@ import {
   numericId,
   sanitizeGraphLimit,
   type GraphLimits,
-} from './KnowledgeGraphModel'
+} from "./KnowledgeGraphModel";
 
 // `isolate` scopes the z-10 overlays to this container so panel chrome with a
 // lower z-index (.activity-panel-mobile-menu, z-5) still layers above the graph.
@@ -32,17 +35,19 @@ interface KnowledgeGraphProps {
   fetchKnowledgeGraph: (
     limit?: number,
     relationshipLimit?: number,
-  ) => Promise<KnowledgeGraphData | null>
-  fetchEntityNeighbors: (entityKey: string) => Promise<KnowledgeGraphData | null>
-  limits?: GraphLimits
-  onLimitsChange?: (next: GraphLimits) => void
-  onError?: () => void
-  onClose?: () => void
+  ) => Promise<KnowledgeGraphData | null>;
+  fetchEntityNeighbors: (
+    entityKey: string,
+  ) => Promise<KnowledgeGraphData | null>;
+  limits?: GraphLimits;
+  onLimitsChange?: (next: GraphLimits) => void;
+  onError?: () => void;
+  onClose?: () => void;
 }
 
-const DEFAULT_CHARGE = -120
-const DEFAULT_LINK_DIST = 60
-const DEFAULT_CENTER = 0.05
+const DEFAULT_CHARGE = -120;
+const DEFAULT_LINK_DIST = 60;
+const DEFAULT_CENTER = 0.05;
 
 // Close lives in the graph's floating toolbar (and alone in the loading/error/
 // empty branches) so the graph needs no chrome bar of its own.
@@ -53,7 +58,7 @@ function GraphCloseButton({ onClose }: { onClose: () => void }) {
       size="icon"
       dense
       className={cn(
-        'flex h-7 min-h-7 w-7 cursor-pointer items-center justify-center rounded border-0 bg-transparent text-[length:var(--text-base)] text-[var(--text-secondary)] hover:bg-[var(--bg-tertiary)] hover:text-[var(--text-primary)]',
+        "flex h-7 min-h-7 w-7 cursor-pointer items-center justify-center rounded border-0 bg-transparent text-[length:var(--text-base)] text-[var(--text-secondary)] hover:bg-[var(--bg-tertiary)] hover:text-[var(--text-primary)]",
         coarseHitAreaCls,
       )}
       onClick={onClose}
@@ -74,7 +79,7 @@ function GraphCloseButton({ onClose }: { onClose: () => void }) {
         <path d="m6 6 12 12" />
       </svg>
     </Button>
-  )
+  );
 }
 
 // Committed number field for the settings panel: draft state locally, persist
@@ -86,24 +91,25 @@ function GraphLimitRow({
   value,
   onCommit,
 }: {
-  label: string
-  ariaLabel: string
-  value: number
-  onCommit: (next: number) => void
+  label: string;
+  ariaLabel: string;
+  value: number;
+  onCommit: (next: number) => void;
 }) {
-  const [draft, setDraft] = useState(String(value))
+  const [draft, setDraft] = useState(String(value));
   // Re-sync the draft when the committed value changes from outside
   // (adjust-during-render — https://react.dev/learn/you-might-not-need-an-effect).
-  const [lastValue, setLastValue] = useState(value)
+  const [lastValue, setLastValue] = useState(value);
   if (value !== lastValue) {
-    setLastValue(value)
-    setDraft(String(value))
+    setLastValue(value);
+    setDraft(String(value));
   }
   const commit = () => {
-    const parsed = draft.trim() === '' ? value : sanitizeGraphLimit(Number(draft), value)
-    setDraft(String(parsed))
-    onCommit(parsed)
-  }
+    const parsed =
+      draft.trim() === "" ? value : sanitizeGraphLimit(Number(draft), value);
+    setDraft(String(parsed));
+    onCommit(parsed);
+  };
   return (
     <div className="flex items-center justify-between gap-1.5">
       <span className="min-w-[56px] text-[length:var(--text-xs)] text-[var(--text-secondary)]">
@@ -114,19 +120,19 @@ function GraphLimitRow({
         min={0}
         value={draft}
         wrapperClassName="w-auto"
-        className="h-6 w-[84px] rounded border-[var(--border)] bg-[var(--bg-primary)] px-1.5 text-right font-[inherit] text-[length:var(--text-xs)] tabular-nums text-[var(--text-primary)]"
+        className="h-6 w-[84px] rounded border-[var(--border)] bg-[var(--bg-primary)] px-1.5 text-right font-[inherit] text-[length:var(--text-xs)] text-[var(--text-primary)] tabular-nums"
         onChange={(e) => setDraft(e.target.value)}
         onBlur={commit}
         onKeyDown={(e) => {
-          if (e.key === 'Enter') {
-            e.preventDefault()
-            e.currentTarget.blur()
+          if (e.key === "Enter") {
+            e.preventDefault();
+            e.currentTarget.blur();
           }
         }}
         aria-label={ariaLabel}
       />
     </div>
-  )
+  );
 }
 
 export function KnowledgeGraph({
@@ -137,368 +143,396 @@ export function KnowledgeGraph({
   onError,
   onClose,
 }: KnowledgeGraphProps) {
-  const containerRef = useRef<HTMLDivElement>(null)
-  const fgRef = useRef<any>(null)
-  const [graphData, setGraphData] = useState<KnowledgeGraphData | null>(null)
-  const [loading, setLoading] = useState(true)
-  const [loadError, setLoadError] = useState(false)
-  const [loadAttempt, setLoadAttempt] = useState(0)
-  const [searchQuery, setSearchQuery] = useState('')
-  const [showSearch, setShowSearch] = useState(false)
-  const [expandingNode, setExpandingNode] = useState<string | null>(null)
-  const [dimensions, setDimensions] = useState({ width: 800, height: 600 })
+  const containerRef = useRef<HTMLDivElement>(null);
+  const fgRef = useRef<any>(null);
+  const [graphData, setGraphData] = useState<KnowledgeGraphData | null>(null);
+  const [loading, setLoading] = useState(true);
+  const [loadError, setLoadError] = useState(false);
+  const [loadAttempt, setLoadAttempt] = useState(0);
+  const [searchQuery, setSearchQuery] = useState("");
+  const [showSearch, setShowSearch] = useState(false);
+  const [expandingNode, setExpandingNode] = useState<string | null>(null);
+  const [dimensions, setDimensions] = useState({ width: 800, height: 600 });
   const [animateIdle, setAnimateIdle] = useState(() => {
     try {
-      return localStorage.getItem('gobby-kg-animate') === 'true'
+      return localStorage.getItem("gobby-kg-animate") === "true";
     } catch {
-      return false
+      return false;
     }
-  })
-  const [showPhysics, setShowPhysics] = useState(false)
+  });
+  const [showPhysics, setShowPhysics] = useState(false);
   const [charge, setCharge] = useState(() => {
     try {
-      const v = localStorage.getItem('gobby-kg-charge')
-      const n = Number(v)
-      return v && Number.isFinite(n) ? n : DEFAULT_CHARGE
+      const v = localStorage.getItem("gobby-kg-charge");
+      const n = Number(v);
+      return v && Number.isFinite(n) ? n : DEFAULT_CHARGE;
     } catch {
-      return DEFAULT_CHARGE
+      return DEFAULT_CHARGE;
     }
-  })
+  });
   const [linkDist, setLinkDist] = useState(() => {
     try {
-      const v = localStorage.getItem('gobby-kg-link-dist')
-      const n = Number(v)
-      return v && Number.isFinite(n) ? n : DEFAULT_LINK_DIST
+      const v = localStorage.getItem("gobby-kg-link-dist");
+      const n = Number(v);
+      return v && Number.isFinite(n) ? n : DEFAULT_LINK_DIST;
     } catch {
-      return DEFAULT_LINK_DIST
+      return DEFAULT_LINK_DIST;
     }
-  })
+  });
   const [centerStrength, setCenterStrength] = useState(() => {
     try {
-      const v = localStorage.getItem('gobby-kg-center')
-      const n = Number(v)
-      return v && Number.isFinite(n) ? n : DEFAULT_CENTER
+      const v = localStorage.getItem("gobby-kg-center");
+      const n = Number(v);
+      return v && Number.isFinite(n) ? n : DEFAULT_CENTER;
     } catch {
-      return DEFAULT_CENTER
+      return DEFAULT_CENTER;
     }
-  })
+  });
 
   // Catch async WebGL/Three.js errors that escape React error boundaries
-  const onErrorRef = useRef(onError)
+  const onErrorRef = useRef(onError);
   useEffect(() => {
-    onErrorRef.current = onError
-  }, [onError])
+    onErrorRef.current = onError;
+  }, [onError]);
   useEffect(() => {
     const handleError = (e: ErrorEvent) => {
-      const msg = (e.message || '').toLowerCase()
+      const msg = (e.message || "").toLowerCase();
       if (
-        msg.includes('webgl') ||
-        msg.includes('three') ||
-        msg.includes('context lost') ||
-        msg.includes('texture') ||
-        msg.includes('gl_')
+        msg.includes("webgl") ||
+        msg.includes("three") ||
+        msg.includes("context lost") ||
+        msg.includes("texture") ||
+        msg.includes("gl_")
       ) {
-        console.error('[KnowledgeGraph] WebGL/Three.js error caught:', e.message)
-        e.preventDefault()
-        onErrorRef.current?.()
+        console.error(
+          "[KnowledgeGraph] WebGL/Three.js error caught:",
+          e.message,
+        );
+        e.preventDefault();
+        onErrorRef.current?.();
       }
-    }
+    };
     const handleRejection = (e: PromiseRejectionEvent) => {
-      const msg = String(e.reason || '').toLowerCase()
-      if (msg.includes('webgl') || msg.includes('three') || msg.includes('context lost')) {
-        console.error('[KnowledgeGraph] Unhandled WebGL rejection:', e.reason)
-        e.preventDefault()
-        onErrorRef.current?.()
+      const msg = String(e.reason || "").toLowerCase();
+      if (
+        msg.includes("webgl") ||
+        msg.includes("three") ||
+        msg.includes("context lost")
+      ) {
+        console.error("[KnowledgeGraph] Unhandled WebGL rejection:", e.reason);
+        e.preventDefault();
+        onErrorRef.current?.();
       }
-    }
-    window.addEventListener('error', handleError)
-    window.addEventListener('unhandledrejection', handleRejection)
+    };
+    window.addEventListener("error", handleError);
+    window.addEventListener("unhandledrejection", handleRejection);
     return () => {
-      window.removeEventListener('error', handleError)
-      window.removeEventListener('unhandledrejection', handleRejection)
-    }
-  }, [])
+      window.removeEventListener("error", handleError);
+      window.removeEventListener("unhandledrejection", handleRejection);
+    };
+  }, []);
 
   // Handle WebGL context lost on the canvas element
   useEffect(() => {
-    const container = containerRef.current
-    if (!container) return
-    const canvas = container.querySelector('canvas')
-    if (!canvas) return
+    const container = containerRef.current;
+    if (!container) return;
+    const canvas = container.querySelector("canvas");
+    if (!canvas) return;
     const handleContextLost = (e: Event) => {
-      e.preventDefault()
-      console.error('[KnowledgeGraph] WebGL context lost')
-      onErrorRef.current?.()
-    }
-    canvas.addEventListener('webglcontextlost', handleContextLost)
-    return () => canvas.removeEventListener('webglcontextlost', handleContextLost)
-  }, [loading]) // re-run after loading completes since canvas only exists after render
+      e.preventDefault();
+      console.error("[KnowledgeGraph] WebGL context lost");
+      onErrorRef.current?.();
+    };
+    canvas.addEventListener("webglcontextlost", handleContextLost);
+    return () =>
+      canvas.removeEventListener("webglcontextlost", handleContextLost);
+  }, [loading]); // re-run after loading completes since canvas only exists after render
 
   // Track container size
   useEffect(() => {
-    const container = containerRef.current
-    if (!container) return
+    const container = containerRef.current;
+    if (!container) return;
 
     const observer = new ResizeObserver((entries) => {
       for (const entry of entries) {
         setDimensions({
           width: entry.contentRect.width,
           height: entry.contentRect.height,
-        })
+        });
       }
-    })
-    observer.observe(container)
-    return () => observer.disconnect()
-  }, [])
+    });
+    observer.observe(container);
+    return () => observer.disconnect();
+  }, []);
 
   // Persist animation toggle
   const toggleAnimate = useCallback(() => {
     setAnimateIdle((prev) => {
-      const next = !prev
+      const next = !prev;
       try {
-        localStorage.setItem('gobby-kg-animate', String(next))
+        localStorage.setItem("gobby-kg-animate", String(next));
       } catch {
         /* noop */
       }
-      return next
-    })
-  }, [])
+      return next;
+    });
+  }, []);
 
   // Manual auto-rotation (TrackballControls lacks autoRotate)
   useEffect(() => {
-    if (!animateIdle) return
-    let raf: number
+    if (!animateIdle) return;
+    let raf: number;
     const rotate = () => {
-      const fg = fgRef.current
+      const fg = fgRef.current;
       if (fg) {
-        const pos = fg.cameraPosition()
-        const dist = Math.sqrt(pos.x * pos.x + pos.z * pos.z)
-        const angle = Math.atan2(pos.z, pos.x) + 0.002
+        const pos = fg.cameraPosition();
+        const dist = Math.sqrt(pos.x * pos.x + pos.z * pos.z);
+        const angle = Math.atan2(pos.z, pos.x) + 0.002;
         fg.cameraPosition({
           x: dist * Math.cos(angle),
           y: pos.y,
           z: dist * Math.sin(angle),
-        })
+        });
       }
-      raf = requestAnimationFrame(rotate)
-    }
-    raf = requestAnimationFrame(rotate)
-    return () => cancelAnimationFrame(raf)
-  }, [animateIdle])
+      raf = requestAnimationFrame(rotate);
+    };
+    raf = requestAnimationFrame(rotate);
+    return () => cancelAnimationFrame(raf);
+  }, [animateIdle]);
 
   // Mobile GPUs get a hard cap regardless of the persisted setting (#19157)
-  const effectiveLimits = useMemo(() => effectiveGraphLimits(limits, IS_MOBILE_DEVICE), [limits])
+  const effectiveLimits = useMemo(
+    () => effectiveGraphLimits(limits, IS_MOBILE_DEVICE),
+    [limits],
+  );
 
   // Initial data fetch (refetches when limits change)
   useEffect(() => {
-    let cancelled = false
+    let cancelled = false;
     void (async () => {
       try {
         const data = await fetchKnowledgeGraph(
           effectiveLimits.entities,
           effectiveLimits.relationships,
-        )
+        );
         if (!cancelled) {
-          if (data) setGraphData(data)
-          setLoadError(false)
-          setLoading(false)
+          if (data) setGraphData(data);
+          setLoadError(false);
+          setLoading(false);
         }
       } catch (error) {
-        if (cancelled) return
-        console.error('Failed to load knowledge graph', error)
-        setLoadError(true)
-        setLoading(false)
+        if (cancelled) return;
+        console.error("Failed to load knowledge graph", error);
+        setLoadError(true);
+        setLoading(false);
       }
-    })()
+    })();
     return () => {
-      cancelled = true
-    }
-  }, [fetchKnowledgeGraph, effectiveLimits, loadAttempt])
+      cancelled = true;
+    };
+  }, [fetchKnowledgeGraph, effectiveLimits, loadAttempt]);
 
   // Build force graph data
   const forceData = useMemo(() => {
-    if (!graphData) return { nodes: [], links: [] }
-    return buildForceData(graphData)
-  }, [graphData])
+    if (!graphData) return { nodes: [], links: [] };
+    return buildForceData(graphData);
+  }, [graphData]);
 
   // Named connections per node for the hover card
   const neighborIndex = useMemo(
     () => buildNeighborIndex(forceData.nodes, forceData.links),
     [forceData],
-  )
+  );
 
   // Apply force parameters whenever data or physics values change
   useEffect(() => {
-    const fg = fgRef.current
-    if (!fg) return
-    fg.d3Force('charge')?.strength(charge)
-    fg.d3Force('link')?.distance(linkDist)
-    fg.d3Force('center')?.strength(centerStrength)
+    const fg = fgRef.current;
+    if (!fg) return;
+    fg.d3Force("charge")?.strength(charge);
+    fg.d3Force("link")?.distance(linkDist);
+    fg.d3Force("center")?.strength(centerStrength);
 
     // Cap pixel ratio on mobile — iPhone 16 PM is 3x; capping at 2x cuts framebuffer 9x → 4x
     if (IS_MOBILE_DEVICE) {
       try {
-        fg.renderer().setPixelRatio(Math.min(window.devicePixelRatio, 2))
+        fg.renderer().setPixelRatio(Math.min(window.devicePixelRatio, 2));
       } catch {
         /* renderer may not be ready */
       }
     }
-  }, [forceData, charge, linkDist, centerStrength])
+  }, [forceData, charge, linkDist, centerStrength]);
 
   // Reheat simulation only when physics sliders change (not on data load)
-  const physicsInitialized = useRef(false)
+  const physicsInitialized = useRef(false);
   useEffect(() => {
     if (!physicsInitialized.current) {
-      physicsInitialized.current = true
-      return
+      physicsInitialized.current = true;
+      return;
     }
-    const fg = fgRef.current
-    if (!fg) return
+    const fg = fgRef.current;
+    if (!fg) return;
     try {
-      fg.d3ReheatSimulation()
+      fg.d3ReheatSimulation();
     } catch {
       /* simulation may not be ready */
     }
-  }, [charge, linkDist, centerStrength])
+  }, [charge, linkDist, centerStrength]);
 
   // Search
-  const searchLower = searchQuery.toLowerCase()
-  const isSearchActive = searchQuery.length > 0
+  const searchLower = searchQuery.toLowerCase();
+  const isSearchActive = searchQuery.length > 0;
 
   // Node click: expand neighbors
   const handleNodeClick = useCallback(
     (node: any) => {
-      if (expandingNode) return
-      const entityKey = node.id as string
-      const displayName = (node.name as string) || entityKey
-      setExpandingNode(displayName)
+      if (expandingNode) return;
+      const entityKey = node.id as string;
+      const displayName = (node.name as string) || entityKey;
+      setExpandingNode(displayName);
       void (async () => {
         try {
-          const data = await fetchEntityNeighbors(entityKey)
+          const data = await fetchEntityNeighbors(entityKey);
           if (data) {
-            setGraphData((prev) => (prev ? mergeGraphData(prev, data) : data))
+            setGraphData((prev) => (prev ? mergeGraphData(prev, data) : data));
           }
         } finally {
-          setExpandingNode(null)
+          setExpandingNode(null);
         }
-      })()
+      })();
     },
     [fetchEntityNeighbors, expandingNode],
-  )
+  );
 
   // Shared sphere geometry (reused across all iOS nodes to reduce GPU allocations)
-  const sphereGeo = useMemo(() => (IS_IOS_DEVICE ? new SphereGeometry(3, 12, 8) : null), [])
+  const sphereGeo = useMemo(
+    () => (IS_IOS_DEVICE ? new SphereGeometry(3, 12, 8) : null),
+    [],
+  );
 
   // Custom node rendering — iOS: simple colored spheres (zero per-node textures);
   // other mobile: lightweight SpriteText; desktop: full SpriteText with backgrounds
   const nodeThreeObject = useCallback(
     (node: any) => {
       try {
-        const label = node.name as string
-        const color = node.color as string
-        const dimmed = isSearchActive && !label.toLowerCase().includes(searchLower)
+        const label = node.name as string;
+        const color = node.color as string;
+        const dimmed =
+          isSearchActive && !label.toLowerCase().includes(searchLower);
 
         // iOS: simple sphere mesh — no canvas textures at all
         if (IS_IOS_DEVICE && sphereGeo) {
           const mat = new MeshLambertMaterial({
-            color: dimmed ? resolveCssVar('--text-muted') : color,
+            color: dimmed ? resolveCssVar("--text-muted") : color,
             transparent: dimmed,
             opacity: dimmed ? 0.4 : 1,
-          })
-          return new Mesh(sphereGeo, mat)
+          });
+          return new Mesh(sphereGeo, mat);
         }
 
-        const sprite = new SpriteText(label)
-        sprite.color = dimmed ? resolveCssVar('--text-muted') : color
-        sprite.fontFace = 'SF Mono, Menlo, monospace'
+        const sprite = new SpriteText(label);
+        sprite.color = dimmed ? resolveCssVar("--text-muted") : color;
+        sprite.fontFace = "SF Mono, Menlo, monospace";
 
         if (IS_MOBILE_DEVICE) {
           // Other mobile: smaller text, no background/border (smaller canvas textures)
-          sprite.textHeight = 2
+          sprite.textHeight = 2;
         } else {
           // Desktop: full styling — textHeight 4 with a near-opaque backing plate
           // keeps labels legible against link clutter (#19153)
-          sprite.textHeight = 4
+          sprite.textHeight = 4;
           sprite.backgroundColor = dimmed
-            ? resolveCssVar('--bg-primary', 0.3)
-            : resolveCssVar('--bg-primary', 0.85)
-          sprite.borderColor = dimmed ? 'transparent' : color
-          sprite.borderWidth = 0.3
-          sprite.borderRadius = 3
-          sprite.padding = [2, 4] as any
+            ? resolveCssVar("--bg-primary", 0.3)
+            : resolveCssVar("--bg-primary", 0.85);
+          sprite.borderColor = dimmed ? "transparent" : color;
+          sprite.borderWidth = 0.3;
+          sprite.borderRadius = 3;
+          sprite.padding = [2, 4] as any;
         }
-        return sprite
+        return sprite;
       } catch (e) {
-        console.error('[KnowledgeGraph] SpriteText creation failed:', e)
-        const fallback = new SpriteText('?')
-        fallback.color = resolveCssVar('--text-muted')
-        fallback.textHeight = 3
-        return fallback
+        console.error("[KnowledgeGraph] SpriteText creation failed:", e);
+        const fallback = new SpriteText("?");
+        fallback.color = resolveCssVar("--text-muted");
+        fallback.textHeight = 3;
+        return fallback;
       }
     },
     [isSearchActive, searchLower, sphereGeo],
-  )
+  );
 
   // Link styling
   const linkColor = useCallback(
     (link: any) => {
       if (isSearchActive) {
         const sourceLabel =
-          typeof link.source === 'object' ? (link.source.name ?? link.source.id) : link.source
+          typeof link.source === "object"
+            ? (link.source.name ?? link.source.id)
+            : link.source;
         const targetLabel =
-          typeof link.target === 'object' ? (link.target.name ?? link.target.id) : link.target
-        const srcMatch = String(sourceLabel).toLowerCase().includes(searchLower)
-        const tgtMatch = String(targetLabel).toLowerCase().includes(searchLower)
-        if (!srcMatch && !tgtMatch) return resolveCssVar('--text-muted', 0.15)
+          typeof link.target === "object"
+            ? (link.target.name ?? link.target.id)
+            : link.target;
+        const srcMatch = String(sourceLabel)
+          .toLowerCase()
+          .includes(searchLower);
+        const tgtMatch = String(targetLabel)
+          .toLowerCase()
+          .includes(searchLower);
+        if (!srcMatch && !tgtMatch) return resolveCssVar("--text-muted", 0.15);
       }
-      return link.color || resolveCssVar('--text-muted', 0.4)
+      return link.color || resolveCssVar("--text-muted", 0.4);
     },
     [isSearchActive, searchLower],
-  )
+  );
 
-  const linkLabel = useCallback((link: any) => escapeHtml(String(link.type ?? '')), [])
+  const linkLabel = useCallback(
+    (link: any) => escapeHtml(String(link.type ?? "")),
+    [],
+  );
 
   // Node breathing effect — use ref to avoid prop changes that trigger graph rebuilds
-  const animateRef = useRef(animateIdle)
+  const animateRef = useRef(animateIdle);
   useEffect(() => {
-    animateRef.current = animateIdle
-  }, [animateIdle])
+    animateRef.current = animateIdle;
+  }, [animateIdle]);
   const nodePositionUpdate = useCallback((obj: any) => {
     if (!animateRef.current) {
       // Restore original scale when animation stops
       if (obj.__origScale) {
-        obj.scale.copy(obj.__origScale)
-        delete obj.__origScale
+        obj.scale.copy(obj.__origScale);
+        delete obj.__origScale;
       }
-      return
+      return;
     }
     // Capture SpriteText's dimensional scale on first animated frame
     if (!obj.__origScale) {
-      obj.__origScale = obj.scale.clone()
+      obj.__origScale = obj.scale.clone();
     }
-    const t = performance.now() * 0.001
-    const offset = (numericId(obj.id) % 100) * 0.1
-    const factor = 1 + Math.sin(t * 1.5 + offset) * 0.06
+    const t = performance.now() * 0.001;
+    const offset = (numericId(obj.id) % 100) * 0.1;
+    const factor = 1 + Math.sin(t * 1.5 + offset) * 0.06;
     obj.scale.set(
       obj.__origScale.x * factor,
       obj.__origScale.y * factor,
       obj.__origScale.z * factor,
-    )
-  }, [])
+    );
+  }, []);
 
   // Legend types
   const legendTypes = useMemo(() => {
-    if (!graphData) return []
-    return [...new Set(graphData.entities.map((e) => e.entity_type.toLowerCase()))]
-  }, [graphData])
+    if (!graphData) return [];
+    return [
+      ...new Set(graphData.entities.map((e) => e.entity_type.toLowerCase())),
+    ];
+  }, [graphData]);
 
   // Close must stay reachable in every branch, so the loading/error/empty
   // returns render a toolbar stub holding only the close button.
   const closeControls = onClose ? (
-    <Card className="absolute right-2 top-2 z-10 flex items-center gap-1 rounded-md border-[var(--border)] bg-[var(--bg-secondary)] p-[3px]">
+    <Card className="absolute top-2 right-2 z-10 flex items-center gap-1 rounded-md border-[var(--border)] bg-[var(--bg-secondary)] p-[3px]">
       <GraphCloseButton onClose={onClose} />
     </Card>
-  ) : null
+  ) : null;
 
   // Loading state
   if (loading) {
@@ -514,7 +548,7 @@ export function KnowledgeGraph({
           {closeControls}
         </div>
       </Card>
-    )
+    );
   }
 
   if (loadError) {
@@ -532,12 +566,12 @@ export function KnowledgeGraph({
               size="sm"
               dense
               className={cn(
-                'mt-2 rounded border-[var(--border)] px-3 py-1 text-[length:var(--text-sm)] font-normal hover:bg-[var(--bg-tertiary)]',
+                "mt-2 rounded border-[var(--border)] px-3 py-1 text-[length:var(--text-sm)] font-normal hover:bg-[var(--bg-tertiary)]",
                 coarseHitAreaCls,
               )}
               onClick={() => {
-                setLoading(true)
-                setLoadAttempt((attempt) => attempt + 1)
+                setLoading(true);
+                setLoadAttempt((attempt) => attempt + 1);
               }}
             >
               Retry
@@ -546,7 +580,7 @@ export function KnowledgeGraph({
           {closeControls}
         </div>
       </Card>
-    )
+    );
   }
 
   // Empty state
@@ -560,13 +594,14 @@ export function KnowledgeGraph({
           <div className="flex h-full min-h-[300px] flex-1 flex-col items-center justify-center gap-2 text-[var(--text-muted)]">
             <div>No entities found</div>
             <div className="mt-1 text-[length:var(--text-sm)]">
-              Connect a FalkorDB instance to explore knowledge graph entities and relationships.
+              Connect a FalkorDB instance to explore knowledge graph entities
+              and relationships.
             </div>
           </div>
           {closeControls}
         </div>
       </Card>
-    )
+    );
   }
 
   return (
@@ -582,8 +617,11 @@ export function KnowledgeGraph({
           graphData={forceData}
           nodeId="id"
           nodeLabel={(node: any) => {
-            const e = node.entity as KnowledgeEntity
-            return buildNodeCardHtml(e, neighborIndex.get(node.id as string) ?? [])
+            const e = node.entity as KnowledgeEntity;
+            return buildNodeCardHtml(
+              e,
+              neighborIndex.get(node.id as string) ?? [],
+            );
           }}
           nodeThreeObject={nodeThreeObject}
           nodeThreeObjectExtend={false}
@@ -608,15 +646,16 @@ export function KnowledgeGraph({
             ? {
                 rendererConfig: {
                   antialias: false,
-                  powerPreference: 'low-power' as const,
+                  powerPreference: "low-power" as const,
                 },
               }
             : {})}
         />
 
-        <div className="absolute left-2 top-2 z-10 flex flex-col items-start gap-1.5">
+        <div className="absolute top-2 left-2 z-10 flex flex-col items-start gap-1.5">
           <Card className="rounded-md border-[var(--border)] bg-[var(--bg-secondary)] px-2 py-1 text-[length:var(--text-xs)] text-[var(--text-muted)]">
-            {forceData.nodes.length} entities &middot; {forceData.links.length} relationships
+            {forceData.nodes.length} entities &middot; {forceData.links.length}{" "}
+            relationships
           </Card>
           {expandingNode && (
             <Card className="rounded-md border-[var(--border)] bg-[var(--bg-secondary)] px-2 py-1 text-[length:var(--text-xs)] text-[var(--accent)]">
@@ -641,7 +680,7 @@ export function KnowledgeGraph({
         )}
 
         {/* Controls (top-right) */}
-        <Card className="absolute right-2 top-2 z-10 flex items-center gap-1 rounded-md border-[var(--border)] bg-[var(--bg-secondary)] p-[3px]">
+        <Card className="absolute top-2 right-2 z-10 flex items-center gap-1 rounded-md border-[var(--border)] bg-[var(--bg-secondary)] p-[3px]">
           {showSearch && (
             <Input
               type="text"
@@ -659,14 +698,14 @@ export function KnowledgeGraph({
             size="icon"
             dense
             className={cn(
-              'flex h-7 min-h-7 w-7 cursor-pointer items-center justify-center rounded border-0 bg-transparent text-[length:var(--text-base)] text-[var(--text-secondary)] hover:bg-[var(--bg-tertiary)] hover:text-[var(--text-primary)]',
+              "flex h-7 min-h-7 w-7 cursor-pointer items-center justify-center rounded border-0 bg-transparent text-[length:var(--text-base)] text-[var(--text-secondary)] hover:bg-[var(--bg-tertiary)] hover:text-[var(--text-primary)]",
               coarseHitAreaCls,
               (showSearch || isSearchActive) &&
-                'bg-[var(--accent)] text-[var(--bg-primary)] hover:bg-[var(--accent)] hover:text-[var(--bg-primary)]',
+                "bg-[var(--accent)] text-[var(--bg-primary)] hover:bg-[var(--accent)] hover:text-[var(--bg-primary)]",
             )}
             onClick={() => {
-              if (showSearch) setSearchQuery('')
-              setShowSearch(!showSearch)
+              if (showSearch) setSearchQuery("");
+              setShowSearch(!showSearch);
             }}
             title="Filter entities"
             aria-label="Filter entities"
@@ -691,7 +730,7 @@ export function KnowledgeGraph({
             size="icon"
             dense
             className={cn(
-              'flex h-7 min-h-7 w-7 cursor-pointer items-center justify-center rounded border-0 bg-transparent text-[length:var(--text-base)] text-[var(--text-secondary)] hover:bg-[var(--bg-tertiary)] hover:text-[var(--text-primary)]',
+              "flex h-7 min-h-7 w-7 cursor-pointer items-center justify-center rounded border-0 bg-transparent text-[length:var(--text-base)] text-[var(--text-secondary)] hover:bg-[var(--bg-tertiary)] hover:text-[var(--text-primary)]",
               coarseHitAreaCls,
             )}
             onClick={() => fgRef.current?.zoomToFit(400)}
@@ -717,22 +756,34 @@ export function KnowledgeGraph({
             size="icon"
             dense
             className={cn(
-              'flex h-7 min-h-7 w-7 cursor-pointer items-center justify-center rounded border-0 bg-transparent text-[length:var(--text-base)] text-[var(--text-secondary)] hover:bg-[var(--bg-tertiary)] hover:text-[var(--text-primary)]',
+              "flex h-7 min-h-7 w-7 cursor-pointer items-center justify-center rounded border-0 bg-transparent text-[length:var(--text-base)] text-[var(--text-secondary)] hover:bg-[var(--bg-tertiary)] hover:text-[var(--text-primary)]",
               coarseHitAreaCls,
               animateIdle &&
-                'bg-[var(--accent)] text-[var(--bg-primary)] hover:bg-[var(--accent)] hover:text-[var(--bg-primary)]',
+                "bg-[var(--accent)] text-[var(--bg-primary)] hover:bg-[var(--accent)] hover:text-[var(--bg-primary)]",
             )}
             onClick={toggleAnimate}
-            title={animateIdle ? 'Pause idle animation' : 'Animate when idle'}
-            aria-label={animateIdle ? 'Pause idle animation' : 'Animate when idle'}
+            title={animateIdle ? "Pause idle animation" : "Animate when idle"}
+            aria-label={
+              animateIdle ? "Pause idle animation" : "Animate when idle"
+            }
           >
             {animateIdle ? (
-              <svg width="14" height="14" viewBox="0 0 24 24" fill="currentColor">
+              <svg
+                width="14"
+                height="14"
+                viewBox="0 0 24 24"
+                fill="currentColor"
+              >
                 <rect x="6" y="4" width="4" height="16" rx="1" />
                 <rect x="14" y="4" width="4" height="16" rx="1" />
               </svg>
             ) : (
-              <svg width="14" height="14" viewBox="0 0 24 24" fill="currentColor">
+              <svg
+                width="14"
+                height="14"
+                viewBox="0 0 24 24"
+                fill="currentColor"
+              >
                 <path d="M8 5v14l11-7z" />
               </svg>
             )}
@@ -743,10 +794,10 @@ export function KnowledgeGraph({
             size="icon"
             dense
             className={cn(
-              'flex h-7 min-h-7 w-7 cursor-pointer items-center justify-center rounded border-0 bg-transparent text-[length:var(--text-base)] text-[var(--text-secondary)] hover:bg-[var(--bg-tertiary)] hover:text-[var(--text-primary)]',
+              "flex h-7 min-h-7 w-7 cursor-pointer items-center justify-center rounded border-0 bg-transparent text-[length:var(--text-base)] text-[var(--text-secondary)] hover:bg-[var(--bg-tertiary)] hover:text-[var(--text-primary)]",
               coarseHitAreaCls,
               showPhysics &&
-                'bg-[var(--accent)] text-[var(--bg-primary)] hover:bg-[var(--accent)] hover:text-[var(--bg-primary)]',
+                "bg-[var(--accent)] text-[var(--bg-primary)] hover:bg-[var(--accent)] hover:text-[var(--bg-primary)]",
             )}
             onClick={() => setShowPhysics((p) => !p)}
             title="Graph settings"
@@ -771,13 +822,14 @@ export function KnowledgeGraph({
 
         {/* Graph settings panel: data limits + physics */}
         {showPhysics && (
-          <Card className="absolute right-2 top-[42px] z-10 flex min-w-[200px] flex-col gap-1.5 rounded-md border-[var(--border)] bg-[var(--bg-secondary)] px-2.5 py-2">
+          <Card className="absolute top-[42px] right-2 z-10 flex min-w-[200px] flex-col gap-1.5 rounded-md border-[var(--border)] bg-[var(--bg-secondary)] px-2.5 py-2">
             <GraphLimitRow
               label="Entities"
               ariaLabel="Entity limit"
               value={limits.entities}
               onCommit={(entities) => {
-                if (entities !== limits.entities) onLimitsChange?.({ ...limits, entities })
+                if (entities !== limits.entities)
+                  onLimitsChange?.({ ...limits, entities });
               }}
             />
             <GraphLimitRow
@@ -786,13 +838,13 @@ export function KnowledgeGraph({
               value={limits.relationships}
               onCommit={(relationships) => {
                 if (relationships !== limits.relationships)
-                  onLimitsChange?.({ ...limits, relationships })
+                  onLimitsChange?.({ ...limits, relationships });
               }}
             />
             {IS_MOBILE_DEVICE ? (
               <div className="max-w-[210px] text-[length:var(--text-2xs)] leading-snug text-[var(--text-muted)]">
-                Hard-capped at {MOBILE_ENTITY_CAP} entities / {MOBILE_RELATIONSHIP_CAP}{' '}
-                relationships on this device.
+                Hard-capped at {MOBILE_ENTITY_CAP} entities /{" "}
+                {MOBILE_RELATIONSHIP_CAP} relationships on this device.
               </div>
             ) : (
               <div
@@ -816,8 +868,8 @@ export function KnowledgeGraph({
                   <path d="M12 17h.01" />
                 </svg>
                 <span>
-                  0 = no limit. Rendering capability varies by machine — very high or unlimited
-                  values can be unstable.
+                  0 = no limit. Rendering capability varies by machine — very
+                  high or unlimited values can be unstable.
                 </span>
               </div>
             )}
@@ -836,16 +888,16 @@ export function KnowledgeGraph({
                 value={charge}
                 className="h-1 cursor-pointer border-0 bg-transparent p-0 accent-[var(--accent)]"
                 onChange={(e) => {
-                  const v = Number(e.target.value)
-                  setCharge(v)
+                  const v = Number(e.target.value);
+                  setCharge(v);
                   try {
-                    localStorage.setItem('gobby-kg-charge', String(v))
+                    localStorage.setItem("gobby-kg-charge", String(v));
                   } catch {
                     /* noop */
                   }
                 }}
               />
-              <span className="min-w-[36px] text-right font-[inherit] text-[length:var(--text-2xs)] tabular-nums text-[var(--text-muted)]">
+              <span className="min-w-[36px] text-right font-[inherit] text-[length:var(--text-2xs)] text-[var(--text-muted)] tabular-nums">
                 {charge}
               </span>
             </div>
@@ -863,16 +915,16 @@ export function KnowledgeGraph({
                 value={linkDist}
                 className="h-1 cursor-pointer border-0 bg-transparent p-0 accent-[var(--accent)]"
                 onChange={(e) => {
-                  const v = Number(e.target.value)
-                  setLinkDist(v)
+                  const v = Number(e.target.value);
+                  setLinkDist(v);
                   try {
-                    localStorage.setItem('gobby-kg-link-dist', String(v))
+                    localStorage.setItem("gobby-kg-link-dist", String(v));
                   } catch {
                     /* noop */
                   }
                 }}
               />
-              <span className="min-w-[36px] text-right font-[inherit] text-[length:var(--text-2xs)] tabular-nums text-[var(--text-muted)]">
+              <span className="min-w-[36px] text-right font-[inherit] text-[length:var(--text-2xs)] text-[var(--text-muted)] tabular-nums">
                 {linkDist}
               </span>
             </div>
@@ -890,16 +942,16 @@ export function KnowledgeGraph({
                 value={centerStrength}
                 className="h-1 cursor-pointer border-0 bg-transparent p-0 accent-[var(--accent)]"
                 onChange={(e) => {
-                  const v = Number(e.target.value)
-                  setCenterStrength(v)
+                  const v = Number(e.target.value);
+                  setCenterStrength(v);
                   try {
-                    localStorage.setItem('gobby-kg-center', String(v))
+                    localStorage.setItem("gobby-kg-center", String(v));
                   } catch {
                     /* noop */
                   }
                 }}
               />
-              <span className="min-w-[36px] text-right font-[inherit] text-[length:var(--text-2xs)] tabular-nums text-[var(--text-muted)]">
+              <span className="min-w-[36px] text-right font-[inherit] text-[length:var(--text-2xs)] text-[var(--text-muted)] tabular-nums">
                 {centerStrength.toFixed(3)}
               </span>
             </div>
@@ -909,17 +961,17 @@ export function KnowledgeGraph({
               size="sm"
               dense
               className={cn(
-                'mt-0.5 cursor-pointer self-end rounded border-[var(--border)] bg-[var(--bg-tertiary)] py-0.5 text-[length:var(--text-xs)] font-normal text-[var(--text-secondary)] hover:bg-[var(--bg-primary)] hover:text-[var(--text-primary)]',
+                "mt-0.5 cursor-pointer self-end rounded border-[var(--border)] bg-[var(--bg-tertiary)] py-0.5 text-[length:var(--text-xs)] font-normal text-[var(--text-secondary)] hover:bg-[var(--bg-primary)] hover:text-[var(--text-primary)]",
                 coarseHitAreaCls,
               )}
               onClick={() => {
-                setCharge(DEFAULT_CHARGE)
-                setLinkDist(DEFAULT_LINK_DIST)
-                setCenterStrength(DEFAULT_CENTER)
+                setCharge(DEFAULT_CHARGE);
+                setLinkDist(DEFAULT_LINK_DIST);
+                setCenterStrength(DEFAULT_CENTER);
                 try {
-                  localStorage.removeItem('gobby-kg-charge')
-                  localStorage.removeItem('gobby-kg-link-dist')
-                  localStorage.removeItem('gobby-kg-center')
+                  localStorage.removeItem("gobby-kg-charge");
+                  localStorage.removeItem("gobby-kg-link-dist");
+                  localStorage.removeItem("gobby-kg-center");
                 } catch {
                   /* noop */
                 }
@@ -931,5 +983,5 @@ export function KnowledgeGraph({
         )}
       </div>
     </Card>
-  )
+  );
 }

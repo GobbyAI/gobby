@@ -23,5 +23,5 @@ export function DropdownCaret({ open = false }: { open?: boolean }) {
         )}
       </svg>
     </span>
-  )
+  );
 }

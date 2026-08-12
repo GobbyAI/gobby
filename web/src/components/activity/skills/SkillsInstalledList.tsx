@@ -54,14 +54,23 @@ export function SkillsInstalledList({
         const selected = skill.id === selectedId;
         const busy = skill.id === busyId;
         const source = skillSourceKey(skill);
-        const canMoveToProject = Boolean(projectId) && source !== "project" && !skill.deleted_at;
+        const canMoveToProject =
+          Boolean(projectId) && source !== "project" && !skill.deleted_at;
         const canMoveToInstalled = source === "project" && !skill.deleted_at;
         // Soft-deleted skills can only be restored, exported, or purged; deleting
         // again is permanent, so the label says so.
         const menuItems: QuickMenuItem[] = skill.deleted_at
           ? [
-              { label: "Restore", disabled: busy, onSelect: () => onRestore(skill) },
-              { label: "Export", disabled: busy, onSelect: () => onExport(skill) },
+              {
+                label: "Restore",
+                disabled: busy,
+                onSelect: () => onRestore(skill),
+              },
+              {
+                label: "Export",
+                disabled: busy,
+                onSelect: () => onExport(skill),
+              },
               {
                 label: "Delete forever",
                 destructive: true,
@@ -76,12 +85,21 @@ export function SkillsInstalledList({
                 onSelect: () => onToggle(skill),
               },
               {
-                label: source === "project" ? "Move to installed" : "Move to project",
+                label:
+                  source === "project"
+                    ? "Move to installed"
+                    : "Move to project",
                 disabled: busy || (!canMoveToProject && !canMoveToInstalled),
                 onSelect: () =>
-                  source === "project" ? onMoveToInstalled(skill) : onMoveToProject(skill),
+                  source === "project"
+                    ? onMoveToInstalled(skill)
+                    : onMoveToProject(skill),
               },
-              { label: "Export", disabled: busy, onSelect: () => onExport(skill) },
+              {
+                label: "Export",
+                disabled: busy,
+                onSelect: () => onExport(skill),
+              },
               {
                 label: "Delete",
                 destructive: true,
@@ -113,9 +131,7 @@ export function SkillsInstalledList({
               />
               <span className="activity-row-title">{skill.name}</span>
               <Chip>{skillCategory(skill)}</Chip>
-              {source !== "installed" && (
-                <Chip>{skillSourceLabel(skill)}</Chip>
-              )}
+              {source !== "installed" && <Chip>{skillSourceLabel(skill)}</Chip>}
             </Button>
             <div className="px-1">
               <QuickMenu

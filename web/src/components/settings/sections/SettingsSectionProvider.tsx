@@ -1,29 +1,29 @@
-import { useCallback, useEffect, useMemo } from 'react'
-import type { ReactNode } from 'react'
-import { useConfiguration } from '../../../hooks/useConfiguration'
-import type { UseSettingsReturn } from '../../../hooks/useSettings'
+import { useCallback, useEffect, useMemo } from "react";
+import type { ReactNode } from "react";
+import { useConfiguration } from "../../../hooks/useConfiguration";
+import type { UseSettingsReturn } from "../../../hooks/useSettings";
 import {
   noopRegister,
   SettingsSectionContext,
   type ProjectSelectionContextValue,
   type ProviderSelectionContextValue,
   type SettingsSectionContextValue,
-} from './SettingsSectionContext'
+} from "./SettingsSectionContext";
 
 export interface SettingsSectionProviderProps {
   /** The overlay controller's dirty-guard registrar (see useSettingsOverlay). */
-  registerDirtyGuard?: SettingsSectionContextValue['registerDirtyGuard']
+  registerDirtyGuard?: SettingsSectionContextValue["registerDirtyGuard"];
   /**
    * The app-wide `useSettings` instance, supplied by the overlay so client-side
    * sections share the same ui_settings state as the chrome. Optional so tests
    * can mount the provider without it.
    */
-  clientSettings?: UseSettingsReturn
+  clientSettings?: UseSettingsReturn;
   /** App-owned default-provider selection for the Providers & Models section. */
-  providerSelection?: ProviderSelectionContextValue
+  providerSelection?: ProviderSelectionContextValue;
   /** App-owned active-project selection for the Projects & Sessions section. */
-  projectSelection?: ProjectSelectionContextValue
-  children: ReactNode
+  projectSelection?: ProjectSelectionContextValue;
+  children: ReactNode;
 }
 
 /**
@@ -38,7 +38,7 @@ export function SettingsSectionProvider({
   projectSelection,
   children,
 }: SettingsSectionProviderProps) {
-  const config = useConfiguration()
+  const config = useConfiguration();
   const {
     fetchConfig,
     saveConfig,
@@ -46,27 +46,27 @@ export function SettingsSectionProvider({
     fetchPrompts,
     fetchTemplate,
     importConfig: persistImport,
-  } = config
+  } = config;
 
   useEffect(() => {
-    void fetchConfig()
-    void fetchSecrets()
-    void fetchPrompts()
-    void fetchTemplate()
-  }, [fetchConfig, fetchSecrets, fetchPrompts, fetchTemplate])
+    void fetchConfig();
+    void fetchSecrets();
+    void fetchPrompts();
+    void fetchTemplate();
+  }, [fetchConfig, fetchSecrets, fetchPrompts, fetchTemplate]);
 
   // Import rewrites the config store, prompts, and config at once, so refetch
   // every surface this provider exposes once it succeeds.
   const importConfig = useCallback(
     async (content: string) => {
-      const result = await persistImport(content)
+      const result = await persistImport(content);
       if (result.success) {
-        await Promise.all([fetchConfig(), fetchPrompts(), fetchTemplate()])
+        await Promise.all([fetchConfig(), fetchPrompts(), fetchTemplate()]);
       }
-      return result
+      return result;
     },
     [persistImport, fetchConfig, fetchPrompts, fetchTemplate],
-  )
+  );
 
   const value = useMemo<SettingsSectionContextValue>(
     () => ({
@@ -139,11 +139,11 @@ export function SettingsSectionProvider({
       importConfig,
       config.runManagedAction,
     ],
-  )
+  );
 
   return (
     <SettingsSectionContext.Provider value={value}>
       {children}
     </SettingsSectionContext.Provider>
-  )
+  );
 }

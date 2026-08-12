@@ -38,7 +38,8 @@ const mockSrcTree = [
 ];
 
 const mockFileContent = {
-  content: 'def hello():\n    print("Hello, world!")\n\nif __name__ == "__main__":\n    hello()\n',
+  content:
+    'def hello():\n    print("Hello, world!")\n\nif __name__ == "__main__":\n    hello()\n',
   image: false,
   binary: false,
   mime_type: "text/x-python",
@@ -65,7 +66,8 @@ function setupApiMocks(page: import("@playwright/test").Page) {
     const url = new URL(route.request().url());
     const path = url.searchParams.get("path") || "";
 
-    const entries = path === "" ? mockRootTree : path === "src" ? mockSrcTree : [];
+    const entries =
+      path === "" ? mockRootTree : path === "src" ? mockSrcTree : [];
 
     route.fulfill({
       status: 200,

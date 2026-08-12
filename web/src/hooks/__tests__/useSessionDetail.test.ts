@@ -1,369 +1,411 @@
-import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest'
-import { renderHook, act, waitFor } from '@testing-library/react'
-import { createMockFetch, type MockFetchInstance } from '../../test/mocks/fetch'
-import { createMockWebSocket, type MockWebSocketInstance } from '../../test/mocks/websocket'
+import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
+import { renderHook, act, waitFor } from "@testing-library/react";
+import {
+  createMockFetch,
+  type MockFetchInstance,
+} from "../../test/mocks/fetch";
+import {
+  createMockWebSocket,
+  type MockWebSocketInstance,
+} from "../../test/mocks/websocket";
 
-let useSessionDetail: typeof import('../useSessionDetail').useSessionDetail
-let mockFetch: MockFetchInstance
+let useSessionDetail: typeof import("../useSessionDetail").useSessionDetail;
+let mockFetch: MockFetchInstance;
 let mockWs: {
-  instances: MockWebSocketInstance[]
-  MockWebSocket: typeof WebSocket
-  restore: () => void
-}
+  instances: MockWebSocketInstance[];
+  MockWebSocket: typeof WebSocket;
+  restore: () => void;
+};
 
 async function loadModule() {
-  vi.resetModules()
-  const mod = await import('../useSessionDetail')
-  useSessionDetail = mod.useSessionDetail
+  vi.resetModules();
+  const mod = await import("../useSessionDetail");
+  useSessionDetail = mod.useSessionDetail;
 }
 
-describe('useSessionDetail', () => {
+describe("useSessionDetail", () => {
   beforeEach(() => {
-    mockFetch = createMockFetch()
-    mockWs = createMockWebSocket()
-  })
+    mockFetch = createMockFetch();
+    mockWs = createMockWebSocket();
+  });
 
   afterEach(() => {
-    vi.useRealTimers()
-    mockFetch.restore()
-    mockWs.restore()
-    vi.restoreAllMocks()
-  })
+    vi.useRealTimers();
+    mockFetch.restore();
+    mockWs.restore();
+    vi.restoreAllMocks();
+  });
 
-  it('falls back to chat messages for parked web chats without transcript-backed history', async () => {
-    await loadModule()
+  it("falls back to chat messages for parked web chats without transcript-backed history", async () => {
+    await loadModule();
     mockFetch.mockJsonResponse(/^\/api\/sessions\/sess-web$/, {
       session: {
-        id: 'sess-web',
-        external_id: 'chat-ext-1',
-        session_type: 'web_chat',
-        status: 'paused',
+        id: "sess-web",
+        external_id: "chat-ext-1",
+        session_type: "web_chat",
+        status: "paused",
       },
-    })
-    mockFetch.mockJsonResponse('/api/sessions/sess-web/messages?limit=50&offset=0&order=tail', {
-      messages: [],
-      total_count: 0,
-    })
-    mockFetch.mockJsonResponse('/api/chat/sess-web/messages', {
+    });
+    mockFetch.mockJsonResponse(
+      "/api/sessions/sess-web/messages?limit=50&offset=0&order=tail",
+      {
+        messages: [],
+        total_count: 0,
+      },
+    );
+    mockFetch.mockJsonResponse("/api/chat/sess-web/messages", {
       messages: [
         {
-          id: 'chat-msg-1',
-          role: 'assistant',
-          content: 'Recovered after reboot',
-          created_at: '2026-04-09T00:00:00Z',
+          id: "chat-msg-1",
+          role: "assistant",
+          content: "Recovered after reboot",
+          created_at: "2026-04-09T00:00:00Z",
         },
       ],
-    })
+    });
 
-    const { result } = renderHook(() => useSessionDetail('sess-web'))
-    act(() => mockWs.instances[0]?.simulateOpen())
+    const { result } = renderHook(() => useSessionDetail("sess-web"));
+    act(() => mockWs.instances[0]?.simulateOpen());
 
-    await waitFor(() => expect(result.current.isLoading).toBe(false))
+    await waitFor(() => expect(result.current.isLoading).toBe(false));
 
-    expect(result.current.messages).toHaveLength(1)
-    expect(result.current.messages[0].content).toBe('Recovered after reboot')
+    expect(result.current.messages).toHaveLength(1);
+    expect(result.current.messages[0].content).toBe("Recovered after reboot");
     expect(
       mockFetch.fn.mock.calls.some(([url]) =>
-        String(url).includes('/api/chat/sess-web/messages'),
+        String(url).includes("/api/chat/sess-web/messages"),
       ),
-    ).toBe(true)
+    ).toBe(true);
     expect(
       mockFetch.fn.mock.calls.some(([url]) =>
-        String(url).includes('/api/sessions/sess-web/transcript/status'),
+        String(url).includes("/api/sessions/sess-web/transcript/status"),
       ),
-    ).toBe(false)
+    ).toBe(false);
     expect(
       mockFetch.fn.mock.calls.some(([url]) =>
-        String(url).includes('/api/sessions/sess-web/messages'),
+        String(url).includes("/api/sessions/sess-web/messages"),
       ),
-    ).toBe(true)
-  })
+    ).toBe(true);
+  });
 
-  it('prefers rendered session messages for transcript-backed web chats', async () => {
-    await loadModule()
-    mockFetch.mockJsonResponse('/api/sessions/sess-unknown/messages?limit=50&offset=0&order=tail', {
-      messages: [
-        {
-          id: 'sess-msg-1',
-          role: 'assistant',
-          content: 'Transcript-backed response',
-          timestamp: '2026-04-09T00:00:00Z',
-          content_blocks: [{ type: 'text', content: 'Transcript-backed response' }],
-        },
-      ],
-      total_count: 1,
-    })
+  it("prefers rendered session messages for transcript-backed web chats", async () => {
+    await loadModule();
+    mockFetch.mockJsonResponse(
+      "/api/sessions/sess-unknown/messages?limit=50&offset=0&order=tail",
+      {
+        messages: [
+          {
+            id: "sess-msg-1",
+            role: "assistant",
+            content: "Transcript-backed response",
+            timestamp: "2026-04-09T00:00:00Z",
+            content_blocks: [
+              { type: "text", content: "Transcript-backed response" },
+            ],
+          },
+        ],
+        total_count: 1,
+      },
+    );
     mockFetch.mockJsonResponse(/^\/api\/sessions\/sess-unknown$/, {
       session: {
-        id: 'sess-unknown',
-        external_id: 'unknown-ext-1',
-        session_type: 'web_chat',
-        transcript_path: '/tmp/unknown-session.json',
-        status: 'paused',
+        id: "sess-unknown",
+        external_id: "unknown-ext-1",
+        session_type: "web_chat",
+        transcript_path: "/tmp/unknown-session.json",
+        status: "paused",
       },
-    })
+    });
 
-    const { result } = renderHook(() => useSessionDetail('sess-unknown'))
-    act(() => mockWs.instances[0]?.simulateOpen())
+    const { result } = renderHook(() => useSessionDetail("sess-unknown"));
+    act(() => mockWs.instances[0]?.simulateOpen());
 
-    await waitFor(() => expect(result.current.isLoading).toBe(false))
+    await waitFor(() => expect(result.current.isLoading).toBe(false));
 
-    expect(result.current.messages).toHaveLength(1)
-    expect(result.current.messages[0].content).toBe('Transcript-backed response')
+    expect(result.current.messages).toHaveLength(1);
+    expect(result.current.messages[0].content).toBe(
+      "Transcript-backed response",
+    );
     expect(
       mockFetch.fn.mock.calls.some(([url]) =>
-        String(url).includes('/api/chat/unknown-ext-1/messages'),
+        String(url).includes("/api/chat/unknown-ext-1/messages"),
       ),
-    ).toBe(false)
-  })
+    ).toBe(false);
+  });
 
-  it('loads transcript status for empty transcript-backed sessions', async () => {
-    await loadModule()
+  it("loads transcript status for empty transcript-backed sessions", async () => {
+    await loadModule();
     mockFetch.mockJsonResponse(/^\/api\/sessions\/sess-empty$/, {
       session: {
-        id: 'sess-empty',
-        external_id: 'empty-ext-1',
-        session_type: 'terminal',
-        transcript_path: '/tmp/mystery.jsonl',
-        status: 'paused',
+        id: "sess-empty",
+        external_id: "empty-ext-1",
+        session_type: "terminal",
+        transcript_path: "/tmp/mystery.jsonl",
+        status: "paused",
       },
-    })
-    mockFetch.mockJsonResponse('/api/sessions/sess-empty/messages?limit=50&offset=0&order=tail', {
-      messages: [],
-      total_count: 941,
-    })
-    mockFetch.mockJsonResponse('/api/sessions/sess-empty/transcript/status', {
-      session_id: 'sess-empty',
+    });
+    mockFetch.mockJsonResponse(
+      "/api/sessions/sess-empty/messages?limit=50&offset=0&order=tail",
+      {
+        messages: [],
+        total_count: 941,
+      },
+    );
+    mockFetch.mockJsonResponse("/api/sessions/sess-empty/transcript/status", {
+      session_id: "sess-empty",
       live_exists: true,
       archive_exists: false,
-      availability: 'live',
-      content_state: 'unparseable',
-      session_source: 'claude',
+      availability: "live",
+      content_state: "unparseable",
+      session_source: "claude",
       detected_source: null,
       source_mismatch: false,
       raw_record_count: 941,
       parsed_message_count: 0,
-    })
+    });
 
-    const { result } = renderHook(() => useSessionDetail('sess-empty'))
-    act(() => mockWs.instances[0]?.simulateOpen())
+    const { result } = renderHook(() => useSessionDetail("sess-empty"));
+    act(() => mockWs.instances[0]?.simulateOpen());
 
-    await waitFor(() => expect(result.current.isLoading).toBe(false))
+    await waitFor(() => expect(result.current.isLoading).toBe(false));
 
-    expect(result.current.messages).toHaveLength(0)
-    expect(result.current.transcriptStatus?.content_state).toBe('unparseable')
-    expect(result.current.totalMessages).toBe(941)
-  })
+    expect(result.current.messages).toHaveLength(0);
+    expect(result.current.transcriptStatus?.content_state).toBe("unparseable");
+    expect(result.current.totalMessages).toBe(941);
+  });
 
-  it('surfaces a failed messages fetch instead of treating it as an empty transcript', async () => {
-    await loadModule()
+  it("surfaces a failed messages fetch instead of treating it as an empty transcript", async () => {
+    await loadModule();
     mockFetch.mockJsonResponse(/^\/api\/sessions\/sess-failed$/, {
       session: {
-        id: 'sess-failed',
-        external_id: 'failed-ext-1',
-        session_type: 'terminal',
-        transcript_path: '/tmp/failed.jsonl',
-        status: 'paused',
+        id: "sess-failed",
+        external_id: "failed-ext-1",
+        session_type: "terminal",
+        transcript_path: "/tmp/failed.jsonl",
+        status: "paused",
       },
-    })
+    });
     mockFetch.mockErrorResponse(
-      '/api/sessions/sess-failed/messages?limit=50&offset=0&order=tail',
+      "/api/sessions/sess-failed/messages?limit=50&offset=0&order=tail",
       500,
-    )
-    const warnSpy = vi.spyOn(console, 'warn').mockImplementation(() => {})
+    );
+    const warnSpy = vi.spyOn(console, "warn").mockImplementation(() => {});
 
-    const { result } = renderHook(() => useSessionDetail('sess-failed'))
+    const { result } = renderHook(() => useSessionDetail("sess-failed"));
 
-    await waitFor(() => expect(result.current.isLoading).toBe(false))
+    await waitFor(() => expect(result.current.isLoading).toBe(false));
 
-    expect(result.current.sessionError).toBe('Failed to load session messages')
-    expect(result.current.messages).toHaveLength(0)
-    expect(result.current.transcriptStatus).toBeNull()
-    expect(result.current.transcriptDownloadUrl).toBeNull()
-    expect(warnSpy).toHaveBeenCalledWith('Messages fetch returned 500')
-  })
+    expect(result.current.sessionError).toBe("Failed to load session messages");
+    expect(result.current.messages).toHaveLength(0);
+    expect(result.current.transcriptStatus).toBeNull();
+    expect(result.current.transcriptDownloadUrl).toBeNull();
+    expect(warnSpy).toHaveBeenCalledWith("Messages fetch returned 500");
+  });
 
-  it('offers the raw transcript download when rendered messages return 413', async () => {
-    await loadModule()
+  it("offers the raw transcript download when rendered messages return 413", async () => {
+    await loadModule();
     mockFetch.mockJsonResponse(/^\/api\/sessions\/sess-large$/, {
       session: {
-        id: 'sess-large',
-        external_id: 'large-ext-1',
-        session_type: 'terminal',
-        transcript_path: '/tmp/large.jsonl',
-        status: 'paused',
+        id: "sess-large",
+        external_id: "large-ext-1",
+        session_type: "terminal",
+        transcript_path: "/tmp/large.jsonl",
+        status: "paused",
       },
-    })
+    });
     mockFetch.mockErrorResponse(
-      '/api/sessions/sess-large/messages?limit=50&offset=0&order=tail',
+      "/api/sessions/sess-large/messages?limit=50&offset=0&order=tail",
       413,
-    )
-    vi.spyOn(console, 'warn').mockImplementation(() => {})
+    );
+    vi.spyOn(console, "warn").mockImplementation(() => {});
 
-    const { result } = renderHook(() => useSessionDetail('sess-large'))
+    const { result } = renderHook(() => useSessionDetail("sess-large"));
 
-    await waitFor(() => expect(result.current.isLoading).toBe(false))
+    await waitFor(() => expect(result.current.isLoading).toBe(false));
 
-    expect(result.current.sessionError).toBe('Transcript is too large to display.')
-    expect(result.current.transcriptDownloadUrl).toBe('/api/sessions/sess-large/transcript')
-  })
+    expect(result.current.sessionError).toBe(
+      "Transcript is too large to display.",
+    );
+    expect(result.current.transcriptDownloadUrl).toBe(
+      "/api/sessions/sess-large/transcript",
+    );
+  });
 
-  it('upserts rendered session_message websocket events by message id', async () => {
-    await loadModule()
+  it("upserts rendered session_message websocket events by message id", async () => {
+    await loadModule();
     mockFetch.mockJsonResponse(/^\/api\/sessions\/sess-cli$/, {
       session: {
-        id: 'sess-cli',
-        external_id: 'cli-ext-1',
-        session_type: 'terminal',
-        status: 'active',
+        id: "sess-cli",
+        external_id: "cli-ext-1",
+        session_type: "terminal",
+        status: "active",
       },
-    })
-    mockFetch.mockJsonResponse('/api/sessions/sess-cli/messages?limit=50&offset=0&order=tail', {
-      messages: [
-        {
-          id: 'sess-msg-1',
-          role: 'assistant',
-          content: 'Initial output',
-          timestamp: '2026-04-09T00:00:00Z',
-          content_blocks: [{ type: 'text', content: 'Initial output' }],
-        },
-      ],
-      total_count: 1,
-    })
-
-    const { result } = renderHook(() => useSessionDetail('sess-cli'))
-    const ws = mockWs.instances[0]
-    act(() => ws.simulateOpen())
-
-    await waitFor(() => expect(result.current.isLoading).toBe(false))
-
-    act(() => {
-      ws.simulateMessage({
-        type: 'session_message',
-        session_id: 'sess-cli',
-        message: {
-          id: 'sess-msg-1',
-          role: 'assistant',
-          content: 'Updated output',
-          timestamp: '2026-04-09T00:00:01Z',
-          content_blocks: [{ type: 'text', content: 'Updated output' }],
-        },
-      })
-    })
-
-    expect(result.current.messages).toHaveLength(1)
-    expect(result.current.messages[0].content).toBe('Updated output')
-    expect(result.current.totalMessages).toBe(1)
-  })
-
-  it('preserves a live message received during the initial transcript load', async () => {
-    await loadModule()
-
-    let resolveInitialMessages: ((response: Response) => void) | null = null
-    mockFetch.fn.mockImplementation(async (input: RequestInfo | URL) => {
-      const url = String(input)
-      if (url === '/api/sessions/sess-cli') {
-        return new Response(JSON.stringify({
-          session: {
-            id: 'sess-cli',
-            external_id: 'cli-ext-1',
-            session_type: 'terminal',
-            status: 'active',
+    });
+    mockFetch.mockJsonResponse(
+      "/api/sessions/sess-cli/messages?limit=50&offset=0&order=tail",
+      {
+        messages: [
+          {
+            id: "sess-msg-1",
+            role: "assistant",
+            content: "Initial output",
+            timestamp: "2026-04-09T00:00:00Z",
+            content_blocks: [{ type: "text", content: "Initial output" }],
           },
-        }), { status: 200 })
-      }
-      if (url === '/api/sessions/sess-cli/messages?limit=50&offset=0&order=tail') {
-        return new Promise<Response>((resolve) => {
-          resolveInitialMessages = resolve
-        })
-      }
-      throw new Error(`Unhandled fetch: ${url}`)
-    })
+        ],
+        total_count: 1,
+      },
+    );
 
-    const { result } = renderHook(() => useSessionDetail('sess-cli'))
-    const ws = mockWs.instances[0]
-    act(() => ws.simulateOpen())
+    const { result } = renderHook(() => useSessionDetail("sess-cli"));
+    const ws = mockWs.instances[0];
+    act(() => ws.simulateOpen());
 
-    await waitFor(() => expect(resolveInitialMessages).not.toBeNull())
+    await waitFor(() => expect(result.current.isLoading).toBe(false));
 
     act(() => {
       ws.simulateMessage({
-        type: 'session_message',
-        session_id: 'sess-cli',
+        type: "session_message",
+        session_id: "sess-cli",
         message: {
-          id: 'live-msg',
-          role: 'assistant',
-          content: 'Live output',
-          timestamp: '2026-04-09T00:00:01Z',
-          content_blocks: [{ type: 'text', content: 'Live output' }],
+          id: "sess-msg-1",
+          role: "assistant",
+          content: "Updated output",
+          timestamp: "2026-04-09T00:00:01Z",
+          content_blocks: [{ type: "text", content: "Updated output" }],
         },
-      })
-    })
+      });
+    });
+
+    expect(result.current.messages).toHaveLength(1);
+    expect(result.current.messages[0].content).toBe("Updated output");
+    expect(result.current.totalMessages).toBe(1);
+  });
+
+  it("preserves a live message received during the initial transcript load", async () => {
+    await loadModule();
+
+    let resolveInitialMessages: ((response: Response) => void) | null = null;
+    mockFetch.fn.mockImplementation(async (input: RequestInfo | URL) => {
+      const url = String(input);
+      if (url === "/api/sessions/sess-cli") {
+        return new Response(
+          JSON.stringify({
+            session: {
+              id: "sess-cli",
+              external_id: "cli-ext-1",
+              session_type: "terminal",
+              status: "active",
+            },
+          }),
+          { status: 200 },
+        );
+      }
+      if (
+        url === "/api/sessions/sess-cli/messages?limit=50&offset=0&order=tail"
+      ) {
+        return new Promise<Response>((resolve) => {
+          resolveInitialMessages = resolve;
+        });
+      }
+      throw new Error(`Unhandled fetch: ${url}`);
+    });
+
+    const { result } = renderHook(() => useSessionDetail("sess-cli"));
+    const ws = mockWs.instances[0];
+    act(() => ws.simulateOpen());
+
+    await waitFor(() => expect(resolveInitialMessages).not.toBeNull());
 
     act(() => {
-      resolveInitialMessages?.(new Response(JSON.stringify({
-        messages: [{
-          id: 'snapshot-msg',
-          role: 'assistant',
-          content: 'Snapshot output',
-          timestamp: '2026-04-09T00:00:00Z',
-          content_blocks: [{ type: 'text', content: 'Snapshot output' }],
-        }],
-        total_count: 1,
-      }), { status: 200 }))
-    })
+      ws.simulateMessage({
+        type: "session_message",
+        session_id: "sess-cli",
+        message: {
+          id: "live-msg",
+          role: "assistant",
+          content: "Live output",
+          timestamp: "2026-04-09T00:00:01Z",
+          content_blocks: [{ type: "text", content: "Live output" }],
+        },
+      });
+    });
 
-    await waitFor(() => expect(result.current.isLoading).toBe(false))
-    expect(result.current.messages.map((message) => message.id)).toContain('live-msg')
-  })
+    act(() => {
+      resolveInitialMessages?.(
+        new Response(
+          JSON.stringify({
+            messages: [
+              {
+                id: "snapshot-msg",
+                role: "assistant",
+                content: "Snapshot output",
+                timestamp: "2026-04-09T00:00:00Z",
+                content_blocks: [{ type: "text", content: "Snapshot output" }],
+              },
+            ],
+            total_count: 1,
+          }),
+          { status: 200 },
+        ),
+      );
+    });
 
-  it('fetches newer transcript pages when live messages reveal a tail gap', async () => {
-    await loadModule()
+    await waitFor(() => expect(result.current.isLoading).toBe(false));
+    expect(result.current.messages.map((message) => message.id)).toContain(
+      "live-msg",
+    );
+  });
 
-    const total = 300
+  it("fetches newer transcript pages when live messages reveal a tail gap", async () => {
+    await loadModule();
+
+    const total = 300;
     const makeMessages = (start: number, end: number) =>
       Array.from({ length: end - start }, (_, offset) => {
-        const index = start + offset
+        const index = start + offset;
         return {
           id: `sess-msg-${index}`,
-          role: 'assistant',
+          role: "assistant",
           content: `Output ${index}`,
-          timestamp: `2026-04-09T00:00:${String(index % 60).padStart(2, '0')}Z`,
-        }
-      })
+          timestamp: `2026-04-09T00:00:${String(index % 60).padStart(2, "0")}Z`,
+        };
+      });
 
     mockFetch.fn.mockImplementation(async (input: RequestInfo | URL) => {
       const url =
-        typeof input === 'string'
+        typeof input === "string"
           ? input
           : input instanceof URL
             ? input.toString()
-            : input.url
+            : input.url;
 
       if (/\/api\/sessions\/sess-gap$/.test(url)) {
         return new Response(
           JSON.stringify({
             session: {
-              id: 'sess-gap',
-              external_id: 'gap-ext-1',
-              session_type: 'terminal',
-              status: 'active',
+              id: "sess-gap",
+              external_id: "gap-ext-1",
+              session_type: "terminal",
+              status: "active",
             },
           }),
-          { status: 200, headers: { 'Content-Type': 'application/json' } },
-        )
+          { status: 200, headers: { "Content-Type": "application/json" } },
+        );
       }
 
       const messagesMatch = url.match(
         /\/api\/sessions\/sess-gap\/messages\?limit=50&offset=(\d+)&order=(head|tail)/,
-      )
+      );
       if (messagesMatch) {
-        const offset = Number(messagesMatch[1])
-        const order = messagesMatch[2]
+        const offset = Number(messagesMatch[1]);
+        const order = messagesMatch[2];
         const start =
-          order === 'tail' ? Math.max(0, total - offset - 50) : offset
+          order === "tail" ? Math.max(0, total - offset - 50) : offset;
         const end =
-          order === 'tail' ? Math.max(0, total - offset) : Math.min(total, offset + 50)
+          order === "tail"
+            ? Math.max(0, total - offset)
+            : Math.min(total, offset + 50);
         return new Response(
           JSON.stringify({
             messages: makeMessages(start, end),
@@ -371,201 +413,212 @@ describe('useSessionDetail', () => {
             rendered_count: total,
             returned_count: end - start,
           }),
-          { status: 200, headers: { 'Content-Type': 'application/json' } },
-        )
+          { status: 200, headers: { "Content-Type": "application/json" } },
+        );
       }
 
-      return new Response(JSON.stringify({ error: 'no mock route matched' }), {
+      return new Response(JSON.stringify({ error: "no mock route matched" }), {
         status: 404,
-        headers: { 'Content-Type': 'application/json' },
-      })
-    })
+        headers: { "Content-Type": "application/json" },
+      });
+    });
 
-    const { result } = renderHook(() => useSessionDetail('sess-gap'))
-    const ws = mockWs.instances[0]
-    act(() => ws.simulateOpen())
+    const { result } = renderHook(() => useSessionDetail("sess-gap"));
+    const ws = mockWs.instances[0];
+    act(() => ws.simulateOpen());
 
-    await waitFor(() => expect(result.current.isLoading).toBe(false))
+    await waitFor(() => expect(result.current.isLoading).toBe(false));
 
     for (let i = 0; i < 5; i += 1) {
       await act(async () => {
-        await result.current.loadMore()
-      })
+        await result.current.loadMore();
+      });
     }
-    expect(result.current.hasNewer).toBe(true)
+    expect(result.current.hasNewer).toBe(true);
 
     act(() => {
       ws.simulateMessage({
-        type: 'session_message',
-        session_id: 'sess-gap',
+        type: "session_message",
+        session_id: "sess-gap",
         message: {
-          id: 'sess-msg-300',
-          role: 'assistant',
-          content: 'Live output 300',
-          timestamp: '2026-04-09T00:00:00Z',
+          id: "sess-msg-300",
+          role: "assistant",
+          content: "Live output 300",
+          timestamp: "2026-04-09T00:00:00Z",
         },
-      })
-    })
+      });
+    });
 
     await waitFor(() =>
       expect(
         mockFetch.fn.mock.calls.some(([url]) =>
-          String(url).includes('/api/sessions/sess-gap/messages?limit=50&offset=250&order=head'),
+          String(url).includes(
+            "/api/sessions/sess-gap/messages?limit=50&offset=250&order=head",
+          ),
         ),
       ).toBe(true),
-    )
-  })
+    );
+  });
 
-  it('refreshes selected session metadata and transcript tail after matching session events', async () => {
-    await loadModule()
+  it("refreshes selected session metadata and transcript tail after matching session events", async () => {
+    await loadModule();
 
-    let sessionFetchCount = 0
-    let tailFetchCount = 0
+    let sessionFetchCount = 0;
+    let tailFetchCount = 0;
     mockFetch.fn.mockImplementation(async (input: RequestInfo | URL) => {
       const url =
-        typeof input === 'string'
+        typeof input === "string"
           ? input
           : input instanceof URL
             ? input.toString()
-            : input.url
+            : input.url;
 
       if (/\/api\/sessions\/sess-cli$/.test(url)) {
-        sessionFetchCount += 1
-        const digest = sessionFetchCount === 1 ? null : '## Updated digest'
+        sessionFetchCount += 1;
+        const digest = sessionFetchCount === 1 ? null : "## Updated digest";
         return new Response(
           JSON.stringify({
             session: {
-              id: 'sess-cli',
-              external_id: 'cli-ext-1',
-              session_type: 'terminal',
-              status: sessionFetchCount === 1 ? 'active' : 'expired',
+              id: "sess-cli",
+              external_id: "cli-ext-1",
+              session_type: "terminal",
+              status: sessionFetchCount === 1 ? "active" : "expired",
               summary_markdown: null,
               digest_markdown: digest,
             },
           }),
-          { status: 200, headers: { 'Content-Type': 'application/json' } },
-        )
+          { status: 200, headers: { "Content-Type": "application/json" } },
+        );
       }
 
-      if (url.includes('/api/sessions/sess-cli/messages?limit=50&offset=0&order=tail')) {
-        tailFetchCount += 1
-        const content = tailFetchCount === 1 ? 'Initial output' : 'Updated output'
+      if (
+        url.includes(
+          "/api/sessions/sess-cli/messages?limit=50&offset=0&order=tail",
+        )
+      ) {
+        tailFetchCount += 1;
+        const content =
+          tailFetchCount === 1 ? "Initial output" : "Updated output";
         return new Response(
           JSON.stringify({
             messages: [
               {
-                id: 'sess-msg-1',
-                role: 'assistant',
+                id: "sess-msg-1",
+                role: "assistant",
                 content,
-                timestamp: '2026-04-09T00:00:00Z',
+                timestamp: "2026-04-09T00:00:00Z",
               },
             ],
             total_count: 1,
             rendered_count: 1,
             returned_count: 1,
           }),
-          { status: 200, headers: { 'Content-Type': 'application/json' } },
-        )
+          { status: 200, headers: { "Content-Type": "application/json" } },
+        );
       }
 
-      return new Response(JSON.stringify({ error: 'no mock route matched' }), {
+      return new Response(JSON.stringify({ error: "no mock route matched" }), {
         status: 404,
-        headers: { 'Content-Type': 'application/json' },
-      })
-    })
+        headers: { "Content-Type": "application/json" },
+      });
+    });
 
-    const { result } = renderHook(() => useSessionDetail('sess-cli'))
-    const ws = mockWs.instances[0]
-    act(() => ws.simulateOpen())
+    const { result } = renderHook(() => useSessionDetail("sess-cli"));
+    const ws = mockWs.instances[0];
+    act(() => ws.simulateOpen());
 
-    await waitFor(() => expect(result.current.isLoading).toBe(false))
-    expect(result.current.session?.digest_markdown).toBeNull()
-    expect(result.current.messages[0].content).toBe('Initial output')
+    await waitFor(() => expect(result.current.isLoading).toBe(false));
+    expect(result.current.session?.digest_markdown).toBeNull();
+    expect(result.current.messages[0].content).toBe("Initial output");
 
-    vi.useFakeTimers()
+    vi.useFakeTimers();
 
     await act(async () => {
       ws.simulateMessage({
-        type: 'session_event',
-        event: 'session_updated',
-        session_id: 'sess-cli',
-      })
-      await Promise.resolve()
-      await Promise.resolve()
-    })
+        type: "session_event",
+        event: "session_updated",
+        session_id: "sess-cli",
+      });
+      await Promise.resolve();
+      await Promise.resolve();
+    });
 
-    expect(result.current.session?.digest_markdown).toBe('## Updated digest')
-    expect(result.current.session?.status).toBe('expired')
-    expect(result.current.messages[0].content).toBe('Initial output')
+    expect(result.current.session?.digest_markdown).toBe("## Updated digest");
+    expect(result.current.session?.status).toBe("expired");
+    expect(result.current.messages[0].content).toBe("Initial output");
 
     await act(async () => {
-      await vi.advanceTimersByTimeAsync(500)
-    })
+      await vi.advanceTimersByTimeAsync(500);
+    });
 
-    expect(result.current.messages).toHaveLength(1)
-    expect(result.current.messages[0].content).toBe('Updated output')
-    expect(result.current.totalMessages).toBe(1)
-    expect(tailFetchCount).toBe(2)
-  })
+    expect(result.current.messages).toHaveLength(1);
+    expect(result.current.messages[0].content).toBe("Updated output");
+    expect(result.current.totalMessages).toBe(1);
+    expect(tailFetchCount).toBe(2);
+  });
 
-  it('preserves older loaded messages while appending refreshed transcript tail', async () => {
-    await loadModule()
+  it("preserves older loaded messages while appending refreshed transcript tail", async () => {
+    await loadModule();
 
-    let tailFetchCount = 0
+    let tailFetchCount = 0;
     mockFetch.fn.mockImplementation(async (input: RequestInfo | URL) => {
       const url =
-        typeof input === 'string'
+        typeof input === "string"
           ? input
           : input instanceof URL
             ? input.toString()
-            : input.url
+            : input.url;
 
       if (/\/api\/sessions\/sess-cli$/.test(url)) {
         return new Response(
           JSON.stringify({
             session: {
-              id: 'sess-cli',
-              external_id: 'cli-ext-1',
-              session_type: 'terminal',
-              status: 'active',
+              id: "sess-cli",
+              external_id: "cli-ext-1",
+              session_type: "terminal",
+              status: "active",
             },
           }),
-          { status: 200, headers: { 'Content-Type': 'application/json' } },
-        )
+          { status: 200, headers: { "Content-Type": "application/json" } },
+        );
       }
 
-      if (url.includes('/api/sessions/sess-cli/messages?limit=50&offset=0&order=tail')) {
-        tailFetchCount += 1
+      if (
+        url.includes(
+          "/api/sessions/sess-cli/messages?limit=50&offset=0&order=tail",
+        )
+      ) {
+        tailFetchCount += 1;
         const messages =
           tailFetchCount === 1
             ? [
                 {
-                  id: 'sess-msg-2',
-                  role: 'assistant',
-                  content: 'Tail output 2',
-                  timestamp: '2026-04-09T00:00:02Z',
+                  id: "sess-msg-2",
+                  role: "assistant",
+                  content: "Tail output 2",
+                  timestamp: "2026-04-09T00:00:02Z",
                 },
                 {
-                  id: 'sess-msg-3',
-                  role: 'assistant',
-                  content: 'Tail output 3',
-                  timestamp: '2026-04-09T00:00:03Z',
+                  id: "sess-msg-3",
+                  role: "assistant",
+                  content: "Tail output 3",
+                  timestamp: "2026-04-09T00:00:03Z",
                 },
               ]
             : [
                 {
-                  id: 'sess-msg-3',
-                  role: 'assistant',
-                  content: 'Tail output 3 refreshed',
-                  timestamp: '2026-04-09T00:00:03Z',
+                  id: "sess-msg-3",
+                  role: "assistant",
+                  content: "Tail output 3 refreshed",
+                  timestamp: "2026-04-09T00:00:03Z",
                 },
                 {
-                  id: 'sess-msg-4',
-                  role: 'assistant',
-                  content: 'Tail output 4',
-                  timestamp: '2026-04-09T00:00:04Z',
+                  id: "sess-msg-4",
+                  role: "assistant",
+                  content: "Tail output 4",
+                  timestamp: "2026-04-09T00:00:04Z",
                 },
-              ]
+              ];
         return new Response(
           JSON.stringify({
             messages,
@@ -573,135 +626,141 @@ describe('useSessionDetail', () => {
             rendered_count: tailFetchCount === 1 ? 3 : 4,
             returned_count: 2,
           }),
-          { status: 200, headers: { 'Content-Type': 'application/json' } },
-        )
+          { status: 200, headers: { "Content-Type": "application/json" } },
+        );
       }
 
-      if (url.includes('/api/sessions/sess-cli/messages?limit=50&offset=2&order=tail')) {
+      if (
+        url.includes(
+          "/api/sessions/sess-cli/messages?limit=50&offset=2&order=tail",
+        )
+      ) {
         return new Response(
           JSON.stringify({
             messages: [
               {
-                id: 'sess-msg-1',
-                role: 'assistant',
-                content: 'Older output 1',
-                timestamp: '2026-04-09T00:00:01Z',
+                id: "sess-msg-1",
+                role: "assistant",
+                content: "Older output 1",
+                timestamp: "2026-04-09T00:00:01Z",
               },
             ],
             total_count: 3,
             rendered_count: 3,
             returned_count: 1,
           }),
-          { status: 200, headers: { 'Content-Type': 'application/json' } },
-        )
+          { status: 200, headers: { "Content-Type": "application/json" } },
+        );
       }
 
-      return new Response(JSON.stringify({ error: 'no mock route matched' }), {
+      return new Response(JSON.stringify({ error: "no mock route matched" }), {
         status: 404,
-        headers: { 'Content-Type': 'application/json' },
-      })
-    })
+        headers: { "Content-Type": "application/json" },
+      });
+    });
 
-    const { result } = renderHook(() => useSessionDetail('sess-cli'))
-    const ws = mockWs.instances[0]
-    act(() => ws.simulateOpen())
+    const { result } = renderHook(() => useSessionDetail("sess-cli"));
+    const ws = mockWs.instances[0];
+    act(() => ws.simulateOpen());
 
-    await waitFor(() => expect(result.current.isLoading).toBe(false))
+    await waitFor(() => expect(result.current.isLoading).toBe(false));
     expect(result.current.messages.map((message) => message.content)).toEqual([
-      'Tail output 2',
-      'Tail output 3',
-    ])
+      "Tail output 2",
+      "Tail output 3",
+    ]);
 
     await act(async () => {
-      await result.current.loadMore()
-    })
-    await waitFor(() => expect(result.current.messages).toHaveLength(3))
-    const firstItemIndexAfterOlderPage = result.current.firstItemIndex
+      await result.current.loadMore();
+    });
+    await waitFor(() => expect(result.current.messages).toHaveLength(3));
+    const firstItemIndexAfterOlderPage = result.current.firstItemIndex;
 
-    vi.useFakeTimers()
+    vi.useFakeTimers();
 
     act(() => {
       ws.simulateMessage({
-        type: 'session_event',
-        event: 'session_updated',
-        session_id: 'sess-cli',
-      })
-    })
+        type: "session_event",
+        event: "session_updated",
+        session_id: "sess-cli",
+      });
+    });
 
     await act(async () => {
-      await Promise.resolve()
-      await Promise.resolve()
-    })
+      await Promise.resolve();
+      await Promise.resolve();
+    });
 
     expect(result.current.messages.map((message) => message.content)).toEqual([
-      'Older output 1',
-      'Tail output 2',
-      'Tail output 3',
-    ])
+      "Older output 1",
+      "Tail output 2",
+      "Tail output 3",
+    ]);
 
     await act(async () => {
-      await vi.advanceTimersByTimeAsync(500)
-    })
+      await vi.advanceTimersByTimeAsync(500);
+    });
 
     expect(result.current.messages.map((message) => message.content)).toEqual([
-      'Older output 1',
-      'Tail output 2',
-      'Tail output 3 refreshed',
-      'Tail output 4',
-    ])
-    expect(result.current.firstItemIndex).toBe(firstItemIndexAfterOlderPage)
-    expect(result.current.totalMessages).toBe(4)
-    expect(result.current.hasMore).toBe(false)
-  })
+      "Older output 1",
+      "Tail output 2",
+      "Tail output 3 refreshed",
+      "Tail output 4",
+    ]);
+    expect(result.current.firstItemIndex).toBe(firstItemIndexAfterOlderPage);
+    expect(result.current.totalMessages).toBe(4);
+    expect(result.current.hasMore).toBe(false);
+  });
 
-  it('evicts far transcript pages and refetches newer pages on downward scroll', async () => {
-    await loadModule()
+  it("evicts far transcript pages and refetches newer pages on downward scroll", async () => {
+    await loadModule();
 
-    const total = 350
+    const total = 350;
     const makeMessages = (start: number, end: number) =>
       Array.from({ length: end - start }, (_, offset) => {
-        const index = start + offset
+        const index = start + offset;
         return {
           id: `sess-msg-${index}`,
-          role: 'assistant',
+          role: "assistant",
           content: `Output ${index}`,
-          timestamp: `2026-04-09T00:00:${String(index % 60).padStart(2, '0')}Z`,
-        }
-      })
+          timestamp: `2026-04-09T00:00:${String(index % 60).padStart(2, "0")}Z`,
+        };
+      });
 
     mockFetch.fn.mockImplementation(async (input: RequestInfo | URL) => {
       const url =
-        typeof input === 'string'
+        typeof input === "string"
           ? input
           : input instanceof URL
             ? input.toString()
-            : input.url
+            : input.url;
 
       if (/\/api\/sessions\/sess-window$/.test(url)) {
         return new Response(
           JSON.stringify({
             session: {
-              id: 'sess-window',
-              external_id: 'window-ext-1',
-              session_type: 'terminal',
-              status: 'active',
+              id: "sess-window",
+              external_id: "window-ext-1",
+              session_type: "terminal",
+              status: "active",
             },
           }),
-          { status: 200, headers: { 'Content-Type': 'application/json' } },
-        )
+          { status: 200, headers: { "Content-Type": "application/json" } },
+        );
       }
 
       const messagesMatch = url.match(
         /\/api\/sessions\/sess-window\/messages\?limit=50&offset=(\d+)&order=(head|tail)/,
-      )
+      );
       if (messagesMatch) {
-        const offset = Number(messagesMatch[1])
-        const order = messagesMatch[2]
+        const offset = Number(messagesMatch[1]);
+        const order = messagesMatch[2];
         const start =
-          order === 'tail' ? Math.max(0, total - offset - 50) : offset
+          order === "tail" ? Math.max(0, total - offset - 50) : offset;
         const end =
-          order === 'tail' ? Math.max(0, total - offset) : Math.min(total, offset + 50)
-        const messages = makeMessages(start, end)
+          order === "tail"
+            ? Math.max(0, total - offset)
+            : Math.min(total, offset + 50);
+        const messages = makeMessages(start, end);
         return new Response(
           JSON.stringify({
             messages,
@@ -709,148 +768,160 @@ describe('useSessionDetail', () => {
             rendered_count: total,
             returned_count: messages.length,
           }),
-          { status: 200, headers: { 'Content-Type': 'application/json' } },
-        )
+          { status: 200, headers: { "Content-Type": "application/json" } },
+        );
       }
 
-      return new Response(JSON.stringify({ error: 'no mock route matched' }), {
+      return new Response(JSON.stringify({ error: "no mock route matched" }), {
         status: 404,
-        headers: { 'Content-Type': 'application/json' },
-      })
-    })
+        headers: { "Content-Type": "application/json" },
+      });
+    });
 
-    const { result } = renderHook(() => useSessionDetail('sess-window'))
-    act(() => mockWs.instances[0]?.simulateOpen())
+    const { result } = renderHook(() => useSessionDetail("sess-window"));
+    act(() => mockWs.instances[0]?.simulateOpen());
 
-    await waitFor(() => expect(result.current.isLoading).toBe(false))
+    await waitFor(() => expect(result.current.isLoading).toBe(false));
 
     for (let i = 0; i < 5; i += 1) {
       await act(async () => {
-        await result.current.loadMore()
-      })
+        await result.current.loadMore();
+      });
     }
 
-    expect(result.current.messages).toHaveLength(250)
-    expect(result.current.messages[0].id).toBe('sess-msg-50')
-    expect(result.current.messages[result.current.messages.length - 1]?.id).toBe(
-      'sess-msg-299',
-    )
-    expect(new Set(result.current.messages.map((message) => message.id)).size).toBe(250)
-    expect(result.current.hasMore).toBe(true)
-    expect(result.current.hasNewer).toBe(true)
+    expect(result.current.messages).toHaveLength(250);
+    expect(result.current.messages[0].id).toBe("sess-msg-50");
+    expect(
+      result.current.messages[result.current.messages.length - 1]?.id,
+    ).toBe("sess-msg-299");
+    expect(
+      new Set(result.current.messages.map((message) => message.id)).size,
+    ).toBe(250);
+    expect(result.current.hasMore).toBe(true);
+    expect(result.current.hasNewer).toBe(true);
 
     await act(async () => {
-      await result.current.loadNewer()
-    })
+      await result.current.loadNewer();
+    });
 
-    expect(result.current.messages).toHaveLength(250)
-    expect(result.current.messages[0].id).toBe('sess-msg-100')
-    expect(result.current.messages[result.current.messages.length - 1]?.id).toBe(
-      'sess-msg-349',
-    )
-    expect(new Set(result.current.messages.map((message) => message.id)).size).toBe(250)
-    expect(result.current.hasMore).toBe(true)
-    expect(result.current.hasNewer).toBe(false)
-  })
+    expect(result.current.messages).toHaveLength(250);
+    expect(result.current.messages[0].id).toBe("sess-msg-100");
+    expect(
+      result.current.messages[result.current.messages.length - 1]?.id,
+    ).toBe("sess-msg-349");
+    expect(
+      new Set(result.current.messages.map((message) => message.id)).size,
+    ).toBe(250);
+    expect(result.current.hasMore).toBe(true);
+    expect(result.current.hasNewer).toBe(false);
+  });
 
-  it('prepends an older page after concurrent live appends', async () => {
-    await loadModule()
+  it("prepends an older page after concurrent live appends", async () => {
+    await loadModule();
 
-    let resolveOlderPage: ((response: Response) => void) | null = null
+    let resolveOlderPage: ((response: Response) => void) | null = null;
     mockFetch.fn.mockImplementation(async (input: RequestInfo | URL) => {
       const url =
-        typeof input === 'string'
+        typeof input === "string"
           ? input
           : input instanceof URL
             ? input.toString()
-            : input.url
+            : input.url;
 
       if (/\/api\/sessions\/sess-cli$/.test(url)) {
         return new Response(
           JSON.stringify({
             session: {
-              id: 'sess-cli',
-              external_id: 'cli-ext-1',
-              session_type: 'terminal',
-              status: 'active',
+              id: "sess-cli",
+              external_id: "cli-ext-1",
+              session_type: "terminal",
+              status: "active",
             },
           }),
-          { status: 200, headers: { 'Content-Type': 'application/json' } },
-        )
+          { status: 200, headers: { "Content-Type": "application/json" } },
+        );
       }
 
-      if (url.includes('/api/sessions/sess-cli/messages?limit=50&offset=0&order=tail')) {
+      if (
+        url.includes(
+          "/api/sessions/sess-cli/messages?limit=50&offset=0&order=tail",
+        )
+      ) {
         return new Response(
           JSON.stringify({
             messages: [
               {
-                id: 'sess-msg-2',
-                role: 'assistant',
-                content: 'Tail output 2',
-                timestamp: '2026-04-09T00:00:02Z',
+                id: "sess-msg-2",
+                role: "assistant",
+                content: "Tail output 2",
+                timestamp: "2026-04-09T00:00:02Z",
               },
               {
-                id: 'sess-msg-3',
-                role: 'assistant',
-                content: 'Tail output 3',
-                timestamp: '2026-04-09T00:00:03Z',
+                id: "sess-msg-3",
+                role: "assistant",
+                content: "Tail output 3",
+                timestamp: "2026-04-09T00:00:03Z",
               },
             ],
             total_count: 3,
             rendered_count: 3,
             returned_count: 2,
           }),
-          { status: 200, headers: { 'Content-Type': 'application/json' } },
+          { status: 200, headers: { "Content-Type": "application/json" } },
+        );
+      }
+
+      if (
+        url.includes(
+          "/api/sessions/sess-cli/messages?limit=50&offset=2&order=tail",
         )
-      }
-
-      if (url.includes('/api/sessions/sess-cli/messages?limit=50&offset=2&order=tail')) {
+      ) {
         return new Promise<Response>((resolve) => {
-          resolveOlderPage = resolve
-        })
+          resolveOlderPage = resolve;
+        });
       }
 
-      return new Response(JSON.stringify({ error: 'no mock route matched' }), {
+      return new Response(JSON.stringify({ error: "no mock route matched" }), {
         status: 404,
-        headers: { 'Content-Type': 'application/json' },
-      })
-    })
+        headers: { "Content-Type": "application/json" },
+      });
+    });
 
-    const { result } = renderHook(() => useSessionDetail('sess-cli'))
-    const ws = mockWs.instances[0]
-    act(() => ws.simulateOpen())
+    const { result } = renderHook(() => useSessionDetail("sess-cli"));
+    const ws = mockWs.instances[0];
+    act(() => ws.simulateOpen());
 
-    await waitFor(() => expect(result.current.isLoading).toBe(false))
-    expect(result.current.hasMore).toBe(true)
+    await waitFor(() => expect(result.current.isLoading).toBe(false));
+    expect(result.current.hasMore).toBe(true);
 
-    let loadMorePromise: Promise<void> | undefined
+    let loadMorePromise: Promise<void> | undefined;
     act(() => {
-      loadMorePromise = result.current.loadMore()
-    })
-    await waitFor(() => expect(resolveOlderPage).not.toBeNull())
+      loadMorePromise = result.current.loadMore();
+    });
+    await waitFor(() => expect(resolveOlderPage).not.toBeNull());
 
     act(() => {
       ws.simulateMessage({
-        type: 'session_message',
-        session_id: 'sess-cli',
+        type: "session_message",
+        session_id: "sess-cli",
         message: {
-          id: 'sess-msg-4',
-          role: 'assistant',
-          content: 'Tail output 4',
-          timestamp: '2026-04-09T00:00:04Z',
+          id: "sess-msg-4",
+          role: "assistant",
+          content: "Tail output 4",
+          timestamp: "2026-04-09T00:00:04Z",
         },
-      })
+      });
       ws.simulateMessage({
-        type: 'session_message',
-        session_id: 'sess-cli',
+        type: "session_message",
+        session_id: "sess-cli",
         message: {
-          id: 'sess-msg-5',
-          role: 'assistant',
-          content: 'Tail output 5',
-          timestamp: '2026-04-09T00:00:05Z',
+          id: "sess-msg-5",
+          role: "assistant",
+          content: "Tail output 5",
+          timestamp: "2026-04-09T00:00:05Z",
         },
-      })
-    })
+      });
+    });
 
     await act(async () => {
       resolveOlderPage?.(
@@ -858,124 +929,132 @@ describe('useSessionDetail', () => {
           JSON.stringify({
             messages: [
               {
-                id: 'sess-msg-1',
-                role: 'assistant',
-                content: 'Older output 1',
-                timestamp: '2026-04-09T00:00:01Z',
+                id: "sess-msg-1",
+                role: "assistant",
+                content: "Older output 1",
+                timestamp: "2026-04-09T00:00:01Z",
               },
             ],
             total_count: 4,
             rendered_count: 4,
             returned_count: 1,
           }),
-          { status: 200, headers: { 'Content-Type': 'application/json' } },
+          { status: 200, headers: { "Content-Type": "application/json" } },
         ),
-      )
-      await loadMorePromise
-    })
+      );
+      await loadMorePromise;
+    });
 
     expect(result.current.messages.map((message) => message.content)).toEqual([
-      'Older output 1',
-      'Tail output 2',
-      'Tail output 3',
-      'Tail output 4',
-      'Tail output 5',
-    ])
-    expect(result.current.hasMore).toBe(false)
-  })
+      "Older output 1",
+      "Tail output 2",
+      "Tail output 3",
+      "Tail output 4",
+      "Tail output 5",
+    ]);
+    expect(result.current.hasMore).toBe(false);
+  });
 
-  it('skips stale tail refreshes while an older page is loading', async () => {
-    await loadModule()
+  it("skips stale tail refreshes while an older page is loading", async () => {
+    await loadModule();
 
-    let tailFetchCount = 0
-    let resolveOlderPage: ((response: Response) => void) | null = null
+    let tailFetchCount = 0;
+    let resolveOlderPage: ((response: Response) => void) | null = null;
     mockFetch.fn.mockImplementation(async (input: RequestInfo | URL) => {
       const url =
-        typeof input === 'string'
+        typeof input === "string"
           ? input
           : input instanceof URL
             ? input.toString()
-            : input.url
+            : input.url;
 
       if (/\/api\/sessions\/sess-cli$/.test(url)) {
         return new Response(
           JSON.stringify({
             session: {
-              id: 'sess-cli',
-              external_id: 'cli-ext-1',
-              session_type: 'terminal',
-              status: 'active',
+              id: "sess-cli",
+              external_id: "cli-ext-1",
+              session_type: "terminal",
+              status: "active",
             },
           }),
-          { status: 200, headers: { 'Content-Type': 'application/json' } },
-        )
+          { status: 200, headers: { "Content-Type": "application/json" } },
+        );
       }
 
-      if (url.includes('/api/sessions/sess-cli/messages?limit=50&offset=0&order=tail')) {
-        tailFetchCount += 1
+      if (
+        url.includes(
+          "/api/sessions/sess-cli/messages?limit=50&offset=0&order=tail",
+        )
+      ) {
+        tailFetchCount += 1;
         return new Response(
           JSON.stringify({
             messages: [
               {
-                id: 'sess-msg-2',
-                role: 'assistant',
-                content: 'Tail output 2',
-                timestamp: '2026-04-09T00:00:02Z',
+                id: "sess-msg-2",
+                role: "assistant",
+                content: "Tail output 2",
+                timestamp: "2026-04-09T00:00:02Z",
               },
               {
-                id: 'sess-msg-3',
-                role: 'assistant',
-                content: 'Tail output 3',
-                timestamp: '2026-04-09T00:00:03Z',
+                id: "sess-msg-3",
+                role: "assistant",
+                content: "Tail output 3",
+                timestamp: "2026-04-09T00:00:03Z",
               },
             ],
             total_count: 3,
             rendered_count: 3,
             returned_count: 2,
           }),
-          { status: 200, headers: { 'Content-Type': 'application/json' } },
+          { status: 200, headers: { "Content-Type": "application/json" } },
+        );
+      }
+
+      if (
+        url.includes(
+          "/api/sessions/sess-cli/messages?limit=50&offset=2&order=tail",
         )
-      }
-
-      if (url.includes('/api/sessions/sess-cli/messages?limit=50&offset=2&order=tail')) {
+      ) {
         return new Promise<Response>((resolve) => {
-          resolveOlderPage = resolve
-        })
+          resolveOlderPage = resolve;
+        });
       }
 
-      return new Response(JSON.stringify({ error: 'no mock route matched' }), {
+      return new Response(JSON.stringify({ error: "no mock route matched" }), {
         status: 404,
-        headers: { 'Content-Type': 'application/json' },
-      })
-    })
+        headers: { "Content-Type": "application/json" },
+      });
+    });
 
-    const { result } = renderHook(() => useSessionDetail('sess-cli'))
-    const ws = mockWs.instances[0]
-    act(() => ws.simulateOpen())
+    const { result } = renderHook(() => useSessionDetail("sess-cli"));
+    const ws = mockWs.instances[0];
+    act(() => ws.simulateOpen());
 
-    await waitFor(() => expect(result.current.isLoading).toBe(false))
+    await waitFor(() => expect(result.current.isLoading).toBe(false));
 
-    let loadMorePromise: Promise<void> | undefined
+    let loadMorePromise: Promise<void> | undefined;
     act(() => {
-      loadMorePromise = result.current.loadMore()
-    })
-    await waitFor(() => expect(resolveOlderPage).not.toBeNull())
-    vi.useFakeTimers()
+      loadMorePromise = result.current.loadMore();
+    });
+    await waitFor(() => expect(resolveOlderPage).not.toBeNull());
+    vi.useFakeTimers();
 
     act(() => {
       ws.simulateMessage({
-        type: 'session_event',
-        event: 'session_updated',
-        session_id: 'sess-cli',
-      })
-    })
+        type: "session_event",
+        event: "session_updated",
+        session_id: "sess-cli",
+      });
+    });
     await act(async () => {
-      await Promise.resolve()
-      await Promise.resolve()
-      await vi.advanceTimersByTimeAsync(500)
-    })
+      await Promise.resolve();
+      await Promise.resolve();
+      await vi.advanceTimersByTimeAsync(500);
+    });
 
-    expect(tailFetchCount).toBe(1)
+    expect(tailFetchCount).toBe(1);
 
     await act(async () => {
       resolveOlderPage?.(
@@ -983,83 +1062,83 @@ describe('useSessionDetail', () => {
           JSON.stringify({
             messages: [
               {
-                id: 'sess-msg-1',
-                role: 'assistant',
-                content: 'Older output 1',
-                timestamp: '2026-04-09T00:00:01Z',
+                id: "sess-msg-1",
+                role: "assistant",
+                content: "Older output 1",
+                timestamp: "2026-04-09T00:00:01Z",
               },
               {
-                id: 'sess-msg-2',
-                role: 'assistant',
-                content: 'Tail output 2 duplicate',
-                timestamp: '2026-04-09T00:00:02Z',
+                id: "sess-msg-2",
+                role: "assistant",
+                content: "Tail output 2 duplicate",
+                timestamp: "2026-04-09T00:00:02Z",
               },
             ],
             total_count: 3,
             rendered_count: 3,
             returned_count: 2,
           }),
-          { status: 200, headers: { 'Content-Type': 'application/json' } },
+          { status: 200, headers: { "Content-Type": "application/json" } },
         ),
-      )
-      await loadMorePromise
-    })
+      );
+      await loadMorePromise;
+    });
 
     expect(result.current.messages.map((message) => message.content)).toEqual([
-      'Older output 1',
-      'Tail output 2',
-      'Tail output 3',
-    ])
-    expect(result.current.hasMore).toBe(false)
-  })
+      "Older output 1",
+      "Tail output 2",
+      "Tail output 3",
+    ]);
+    expect(result.current.hasMore).toBe(false);
+  });
 
-  it('updates transcript totals without appending refreshed tail while away from tail', async () => {
-    await loadModule()
+  it("updates transcript totals without appending refreshed tail while away from tail", async () => {
+    await loadModule();
 
     const makeMessages = (start: number, end: number) =>
       Array.from({ length: end - start }, (_, offset) => {
-        const index = start + offset
+        const index = start + offset;
         return {
           id: `sess-msg-${index}`,
-          role: 'assistant',
+          role: "assistant",
           content: `Output ${index}`,
-          timestamp: `2026-04-09T00:00:${String(index % 60).padStart(2, '0')}Z`,
-        }
-      })
+          timestamp: `2026-04-09T00:00:${String(index % 60).padStart(2, "0")}Z`,
+        };
+      });
 
-    let tailFetchCount = 0
+    let tailFetchCount = 0;
     mockFetch.fn.mockImplementation(async (input: RequestInfo | URL) => {
       const url =
-        typeof input === 'string'
+        typeof input === "string"
           ? input
           : input instanceof URL
             ? input.toString()
-            : input.url
+            : input.url;
 
       if (/\/api\/sessions\/sess-window$/.test(url)) {
         return new Response(
           JSON.stringify({
             session: {
-              id: 'sess-window',
-              external_id: 'window-ext-1',
-              session_type: 'terminal',
-              status: 'active',
+              id: "sess-window",
+              external_id: "window-ext-1",
+              session_type: "terminal",
+              status: "active",
             },
           }),
-          { status: 200, headers: { 'Content-Type': 'application/json' } },
-        )
+          { status: 200, headers: { "Content-Type": "application/json" } },
+        );
       }
 
       const tailMatch = url.match(
         /\/api\/sessions\/sess-window\/messages\?limit=50&offset=(\d+)&order=tail/,
-      )
+      );
       if (tailMatch) {
-        const offset = Number(tailMatch[1])
-        const total = tailFetchCount === 0 || offset > 0 ? 350 : 351
-        tailFetchCount += offset === 0 ? 1 : 0
-        const start = Math.max(0, total - offset - 50)
-        const end = Math.max(0, total - offset)
-        const messages = makeMessages(start, end)
+        const offset = Number(tailMatch[1]);
+        const total = tailFetchCount === 0 || offset > 0 ? 350 : 351;
+        tailFetchCount += offset === 0 ? 1 : 0;
+        const start = Math.max(0, total - offset - 50);
+        const end = Math.max(0, total - offset);
+        const messages = makeMessages(start, end);
         return new Response(
           JSON.stringify({
             messages,
@@ -1067,103 +1146,103 @@ describe('useSessionDetail', () => {
             rendered_count: total,
             returned_count: messages.length,
           }),
-          { status: 200, headers: { 'Content-Type': 'application/json' } },
-        )
+          { status: 200, headers: { "Content-Type": "application/json" } },
+        );
       }
 
-      return new Response(JSON.stringify({ error: 'no mock route matched' }), {
+      return new Response(JSON.stringify({ error: "no mock route matched" }), {
         status: 404,
-        headers: { 'Content-Type': 'application/json' },
-      })
-    })
+        headers: { "Content-Type": "application/json" },
+      });
+    });
 
-    const { result } = renderHook(() => useSessionDetail('sess-window'))
-    const ws = mockWs.instances[0]
-    act(() => ws.simulateOpen())
+    const { result } = renderHook(() => useSessionDetail("sess-window"));
+    const ws = mockWs.instances[0];
+    act(() => ws.simulateOpen());
 
-    await waitFor(() => expect(result.current.isLoading).toBe(false))
+    await waitFor(() => expect(result.current.isLoading).toBe(false));
     for (let i = 0; i < 5; i += 1) {
       await act(async () => {
-        await result.current.loadMore()
-      })
+        await result.current.loadMore();
+      });
     }
-    act(() => result.current.setTranscriptAtBottom(false))
-    expect(result.current.messages[0].id).toBe('sess-msg-50')
-    expect(result.current.messages[result.current.messages.length - 1]?.id).toBe(
-      'sess-msg-299',
-    )
+    act(() => result.current.setTranscriptAtBottom(false));
+    expect(result.current.messages[0].id).toBe("sess-msg-50");
+    expect(
+      result.current.messages[result.current.messages.length - 1]?.id,
+    ).toBe("sess-msg-299");
 
-    vi.useFakeTimers()
+    vi.useFakeTimers();
     act(() => {
       ws.simulateMessage({
-        type: 'session_event',
-        event: 'session_updated',
-        session_id: 'sess-window',
-      })
-    })
+        type: "session_event",
+        event: "session_updated",
+        session_id: "sess-window",
+      });
+    });
     await act(async () => {
-      await Promise.resolve()
-      await Promise.resolve()
-      await vi.advanceTimersByTimeAsync(500)
-    })
+      await Promise.resolve();
+      await Promise.resolve();
+      await vi.advanceTimersByTimeAsync(500);
+    });
 
-    expect(result.current.messages).toHaveLength(250)
-    expect(result.current.messages[0].id).toBe('sess-msg-50')
-    expect(result.current.messages[result.current.messages.length - 1]?.id).toBe(
-      'sess-msg-299',
-    )
-    expect(result.current.totalMessages).toBe(351)
-    expect(result.current.hasNewer).toBe(true)
-  })
+    expect(result.current.messages).toHaveLength(250);
+    expect(result.current.messages[0].id).toBe("sess-msg-50");
+    expect(
+      result.current.messages[result.current.messages.length - 1]?.id,
+    ).toBe("sess-msg-299");
+    expect(result.current.totalMessages).toBe(351);
+    expect(result.current.hasNewer).toBe(true);
+  });
 
-  it('merges refreshed tail messages at bottom and trims the head', async () => {
-    await loadModule()
+  it("merges refreshed tail messages at bottom and trims the head", async () => {
+    await loadModule();
 
     const makeMessages = (start: number, end: number) =>
       Array.from({ length: end - start }, (_, offset) => {
-        const index = start + offset
+        const index = start + offset;
         return {
           id: `sess-msg-${index}`,
-          role: 'assistant',
+          role: "assistant",
           content: `Output ${index}`,
-          timestamp: `2026-04-09T00:00:${String(index % 60).padStart(2, '0')}Z`,
-        }
-      })
+          timestamp: `2026-04-09T00:00:${String(index % 60).padStart(2, "0")}Z`,
+        };
+      });
 
-    let tailFetchCount = 0
+    let tailFetchCount = 0;
     mockFetch.fn.mockImplementation(async (input: RequestInfo | URL) => {
       const url =
-        typeof input === 'string'
+        typeof input === "string"
           ? input
           : input instanceof URL
             ? input.toString()
-            : input.url
+            : input.url;
 
       if (/\/api\/sessions\/sess-window$/.test(url)) {
         return new Response(
           JSON.stringify({
             session: {
-              id: 'sess-window',
-              external_id: 'window-ext-1',
-              session_type: 'terminal',
-              status: 'active',
+              id: "sess-window",
+              external_id: "window-ext-1",
+              session_type: "terminal",
+              status: "active",
             },
           }),
-          { status: 200, headers: { 'Content-Type': 'application/json' } },
-        )
+          { status: 200, headers: { "Content-Type": "application/json" } },
+        );
       }
 
       const tailMatch = url.match(
         /\/api\/sessions\/sess-window\/messages\?limit=50&offset=(\d+)&order=tail/,
-      )
+      );
       if (tailMatch) {
-        const offset = Number(tailMatch[1])
-        const isRefresh = offset === 0 && tailFetchCount > 0
-        const total = isRefresh ? 251 : 250
-        tailFetchCount += offset === 0 ? 1 : 0
-        const start = Math.max(0, total - offset - 50)
-        const end = Math.max(0, total - offset)
-        const messages = makeMessages(start, end)
+        const offset = Number(tailMatch[1]);
+        const isRefresh = offset === 0 && tailFetchCount > 0;
+        const total = isRefresh ? 251 : 250;
+        tailFetchCount += offset === 0 ? 1 : 0;
+        const start = Math.max(0, total - offset - 50);
+        const end = Math.max(0, total - offset);
+        const messages = makeMessages(start, end);
         return new Response(
           JSON.stringify({
             messages,
@@ -1171,280 +1250,288 @@ describe('useSessionDetail', () => {
             rendered_count: total,
             returned_count: messages.length,
           }),
-          { status: 200, headers: { 'Content-Type': 'application/json' } },
-        )
+          { status: 200, headers: { "Content-Type": "application/json" } },
+        );
       }
 
-      return new Response(JSON.stringify({ error: 'no mock route matched' }), {
+      return new Response(JSON.stringify({ error: "no mock route matched" }), {
         status: 404,
-        headers: { 'Content-Type': 'application/json' },
-      })
-    })
+        headers: { "Content-Type": "application/json" },
+      });
+    });
 
-    const { result } = renderHook(() => useSessionDetail('sess-window'))
-    const ws = mockWs.instances[0]
-    act(() => ws.simulateOpen())
+    const { result } = renderHook(() => useSessionDetail("sess-window"));
+    const ws = mockWs.instances[0];
+    act(() => ws.simulateOpen());
 
-    await waitFor(() => expect(result.current.isLoading).toBe(false))
+    await waitFor(() => expect(result.current.isLoading).toBe(false));
     for (let i = 0; i < 4; i += 1) {
       await act(async () => {
-        await result.current.loadMore()
-      })
+        await result.current.loadMore();
+      });
     }
-    expect(result.current.messages[0].id).toBe('sess-msg-0')
-    expect(result.current.messages[result.current.messages.length - 1]?.id).toBe(
-      'sess-msg-249',
-    )
+    expect(result.current.messages[0].id).toBe("sess-msg-0");
+    expect(
+      result.current.messages[result.current.messages.length - 1]?.id,
+    ).toBe("sess-msg-249");
 
-    vi.useFakeTimers()
+    vi.useFakeTimers();
     act(() => {
       ws.simulateMessage({
-        type: 'session_event',
-        event: 'session_updated',
-        session_id: 'sess-window',
-      })
-    })
+        type: "session_event",
+        event: "session_updated",
+        session_id: "sess-window",
+      });
+    });
     await act(async () => {
-      await Promise.resolve()
-      await Promise.resolve()
-      await vi.advanceTimersByTimeAsync(500)
-    })
+      await Promise.resolve();
+      await Promise.resolve();
+      await vi.advanceTimersByTimeAsync(500);
+    });
 
-    expect(result.current.messages).toHaveLength(250)
-    expect(result.current.messages[0].id).toBe('sess-msg-1')
-    expect(result.current.messages[result.current.messages.length - 1]?.id).toBe(
-      'sess-msg-250',
-    )
-    expect(result.current.totalMessages).toBe(251)
-    expect(result.current.hasMore).toBe(true)
-    expect(result.current.hasNewer).toBe(false)
-  })
+    expect(result.current.messages).toHaveLength(250);
+    expect(result.current.messages[0].id).toBe("sess-msg-1");
+    expect(
+      result.current.messages[result.current.messages.length - 1]?.id,
+    ).toBe("sess-msg-250");
+    expect(result.current.totalMessages).toBe(251);
+    expect(result.current.hasMore).toBe(true);
+    expect(result.current.hasNewer).toBe(false);
+  });
 
-  it('ignores pending transcript tail refreshes after session change or unmount', async () => {
-    await loadModule()
+  it("ignores pending transcript tail refreshes after session change or unmount", async () => {
+    await loadModule();
 
-    const sessionFetchCounts: Record<string, number> = {}
-    const tailFetchCounts: Record<string, number> = {}
-    let releaseSessionBMessages: (() => void) | null = null
+    const sessionFetchCounts: Record<string, number> = {};
+    const tailFetchCounts: Record<string, number> = {};
+    let releaseSessionBMessages: (() => void) | null = null;
     mockFetch.fn.mockImplementation(async (input: RequestInfo | URL) => {
       const url =
-        typeof input === 'string'
+        typeof input === "string"
           ? input
           : input instanceof URL
             ? input.toString()
-            : input.url
-      const sessionMatch = url.match(/\/api\/sessions\/(sess-[ab])$/)
+            : input.url;
+      const sessionMatch = url.match(/\/api\/sessions\/(sess-[ab])$/);
       if (sessionMatch) {
-        const sessionId = sessionMatch[1]
-        sessionFetchCounts[sessionId] = (sessionFetchCounts[sessionId] ?? 0) + 1
+        const sessionId = sessionMatch[1];
+        sessionFetchCounts[sessionId] =
+          (sessionFetchCounts[sessionId] ?? 0) + 1;
         return new Response(
           JSON.stringify({
             session: {
               id: sessionId,
               external_id: `${sessionId}-ext`,
-              session_type: 'terminal',
-              status: 'active',
+              session_type: "terminal",
+              status: "active",
             },
           }),
-          { status: 200, headers: { 'Content-Type': 'application/json' } },
-        )
+          { status: 200, headers: { "Content-Type": "application/json" } },
+        );
       }
 
       const messagesMatch = url.match(
         /\/api\/sessions\/(sess-[ab])\/messages\?limit=50&offset=0&order=tail/,
-      )
+      );
       if (messagesMatch) {
-        const sessionId = messagesMatch[1]
-        tailFetchCounts[sessionId] = (tailFetchCounts[sessionId] ?? 0) + 1
+        const sessionId = messagesMatch[1];
+        tailFetchCounts[sessionId] = (tailFetchCounts[sessionId] ?? 0) + 1;
         const response = new Response(
           JSON.stringify({
             messages: [
               {
                 id: `${sessionId}-msg-1`,
-                role: 'assistant',
+                role: "assistant",
                 content: `${sessionId} initial output`,
-                timestamp: '2026-04-09T00:00:00Z',
+                timestamp: "2026-04-09T00:00:00Z",
               },
             ],
             total_count: 1,
             rendered_count: 1,
             returned_count: 1,
           }),
-          { status: 200, headers: { 'Content-Type': 'application/json' } },
-        )
-        if (sessionId === 'sess-b') {
+          { status: 200, headers: { "Content-Type": "application/json" } },
+        );
+        if (sessionId === "sess-b") {
           return new Promise<Response>((resolve) => {
-            releaseSessionBMessages = () => resolve(response)
-          })
+            releaseSessionBMessages = () => resolve(response);
+          });
         }
-        return response
+        return response;
       }
 
-      return new Response(JSON.stringify({ error: 'no mock route matched' }), {
+      return new Response(JSON.stringify({ error: "no mock route matched" }), {
         status: 404,
-        headers: { 'Content-Type': 'application/json' },
-      })
-    })
+        headers: { "Content-Type": "application/json" },
+      });
+    });
 
     const { result, rerender, unmount } = renderHook(
       ({ selectedSessionId }) => useSessionDetail(selectedSessionId),
-      { initialProps: { selectedSessionId: 'sess-a' } },
-    )
-    const ws = mockWs.instances[0]
-    act(() => ws.simulateOpen())
+      { initialProps: { selectedSessionId: "sess-a" } },
+    );
+    const ws = mockWs.instances[0];
+    act(() => ws.simulateOpen());
 
-    await waitFor(() => expect(result.current.isLoading).toBe(false))
-    expect(result.current.session?.id).toBe('sess-a')
+    await waitFor(() => expect(result.current.isLoading).toBe(false));
+    expect(result.current.session?.id).toBe("sess-a");
 
-    vi.useFakeTimers()
-
-    act(() => {
-      ws.simulateMessage({
-        type: 'session_event',
-        event: 'session_updated',
-        session_id: 'sess-a',
-      })
-    })
-    await act(async () => {
-      await Promise.resolve()
-      await Promise.resolve()
-    })
-    expect(sessionFetchCounts['sess-a']).toBe(2)
-
-    await act(async () => {
-      rerender({ selectedSessionId: 'sess-b' })
-      await Promise.resolve()
-      await Promise.resolve()
-    })
-    expect(result.current.isLoading).toBe(true)
-    expect(result.current.messages).toEqual([])
-    expect(releaseSessionBMessages).not.toBeNull()
-
-    await act(async () => {
-      releaseSessionBMessages?.()
-      await Promise.resolve()
-    })
-    await act(async () => {
-      await vi.advanceTimersByTimeAsync(500)
-    })
-    expect(result.current.session?.id).toBe('sess-b')
-    expect(tailFetchCounts['sess-a']).toBe(1)
-    expect(result.current.messages[0].content).toBe('sess-b initial output')
+    vi.useFakeTimers();
 
     act(() => {
       ws.simulateMessage({
-        type: 'session_event',
-        event: 'session_updated',
-        session_id: 'sess-b',
-      })
-    })
+        type: "session_event",
+        event: "session_updated",
+        session_id: "sess-a",
+      });
+    });
     await act(async () => {
-      await Promise.resolve()
-      await Promise.resolve()
-    })
-    expect(sessionFetchCounts['sess-b']).toBe(2)
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+    expect(sessionFetchCounts["sess-a"]).toBe(2);
 
-    unmount()
     await act(async () => {
-      await vi.advanceTimersByTimeAsync(500)
-    })
-    expect(tailFetchCounts['sess-b']).toBe(1)
-  })
+      rerender({ selectedSessionId: "sess-b" });
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+    expect(result.current.isLoading).toBe(true);
+    expect(result.current.messages).toEqual([]);
+    expect(releaseSessionBMessages).not.toBeNull();
 
-  it('queues a transcript tail refresh while another refresh is in flight', async () => {
-    await loadModule()
+    await act(async () => {
+      releaseSessionBMessages?.();
+      await Promise.resolve();
+    });
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(500);
+    });
+    expect(result.current.session?.id).toBe("sess-b");
+    expect(tailFetchCounts["sess-a"]).toBe(1);
+    expect(result.current.messages[0].content).toBe("sess-b initial output");
 
-    let tailFetchCount = 0
-    let resolveFirstRefresh: ((response: Response) => void) | null = null
+    act(() => {
+      ws.simulateMessage({
+        type: "session_event",
+        event: "session_updated",
+        session_id: "sess-b",
+      });
+    });
+    await act(async () => {
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+    expect(sessionFetchCounts["sess-b"]).toBe(2);
+
+    unmount();
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(500);
+    });
+    expect(tailFetchCounts["sess-b"]).toBe(1);
+  });
+
+  it("queues a transcript tail refresh while another refresh is in flight", async () => {
+    await loadModule();
+
+    let tailFetchCount = 0;
+    let resolveFirstRefresh: ((response: Response) => void) | null = null;
     mockFetch.fn.mockImplementation(async (input: RequestInfo | URL) => {
       const url =
-        typeof input === 'string'
+        typeof input === "string"
           ? input
           : input instanceof URL
             ? input.toString()
-            : input.url
+            : input.url;
 
       if (/\/api\/sessions\/sess-cli$/.test(url)) {
         return new Response(
           JSON.stringify({
             session: {
-              id: 'sess-cli',
-              external_id: 'sess-cli-ext',
-              session_type: 'terminal',
-              status: 'active',
+              id: "sess-cli",
+              external_id: "sess-cli-ext",
+              session_type: "terminal",
+              status: "active",
             },
           }),
-          { status: 200, headers: { 'Content-Type': 'application/json' } },
-        )
+          { status: 200, headers: { "Content-Type": "application/json" } },
+        );
       }
 
-      if (url.includes('/api/sessions/sess-cli/messages?limit=50&offset=0&order=tail')) {
-        tailFetchCount += 1
+      if (
+        url.includes(
+          "/api/sessions/sess-cli/messages?limit=50&offset=0&order=tail",
+        )
+      ) {
+        tailFetchCount += 1;
         if (tailFetchCount === 2) {
           return new Promise<Response>((resolve) => {
-            resolveFirstRefresh = resolve
-          })
+            resolveFirstRefresh = resolve;
+          });
         }
         return new Response(
           JSON.stringify({
             messages: [
               {
-                id: 'sess-msg-1',
-                role: 'assistant',
-                content: tailFetchCount >= 3 ? 'Queued refresh output' : 'Initial output',
-                timestamp: '2026-04-09T00:00:00Z',
+                id: "sess-msg-1",
+                role: "assistant",
+                content:
+                  tailFetchCount >= 3
+                    ? "Queued refresh output"
+                    : "Initial output",
+                timestamp: "2026-04-09T00:00:00Z",
               },
             ],
             total_count: 1,
             rendered_count: 1,
             returned_count: 1,
           }),
-          { status: 200, headers: { 'Content-Type': 'application/json' } },
-        )
+          { status: 200, headers: { "Content-Type": "application/json" } },
+        );
       }
 
-      return new Response(JSON.stringify({ error: 'no mock route matched' }), {
+      return new Response(JSON.stringify({ error: "no mock route matched" }), {
         status: 404,
-        headers: { 'Content-Type': 'application/json' },
-      })
-    })
+        headers: { "Content-Type": "application/json" },
+      });
+    });
 
-    const { result } = renderHook(() => useSessionDetail('sess-cli'))
-    const ws = mockWs.instances[0]
-    act(() => ws.simulateOpen())
+    const { result } = renderHook(() => useSessionDetail("sess-cli"));
+    const ws = mockWs.instances[0];
+    act(() => ws.simulateOpen());
 
-    await waitFor(() => expect(result.current.isLoading).toBe(false))
-    expect(tailFetchCount).toBe(1)
+    await waitFor(() => expect(result.current.isLoading).toBe(false));
+    expect(tailFetchCount).toBe(1);
 
-    vi.useFakeTimers()
+    vi.useFakeTimers();
     act(() => {
       ws.simulateMessage({
-        type: 'session_event',
-        event: 'session_updated',
-        session_id: 'sess-cli',
-      })
-    })
+        type: "session_event",
+        event: "session_updated",
+        session_id: "sess-cli",
+      });
+    });
     await act(async () => {
-      await Promise.resolve()
-      await Promise.resolve()
-      await vi.advanceTimersByTimeAsync(500)
-    })
-    expect(tailFetchCount).toBe(2)
-    expect(resolveFirstRefresh).not.toBeNull()
+      await Promise.resolve();
+      await Promise.resolve();
+      await vi.advanceTimersByTimeAsync(500);
+    });
+    expect(tailFetchCount).toBe(2);
+    expect(resolveFirstRefresh).not.toBeNull();
 
     act(() => {
       ws.simulateMessage({
-        type: 'session_event',
-        event: 'session_updated',
-        session_id: 'sess-cli',
-      })
-    })
+        type: "session_event",
+        event: "session_updated",
+        session_id: "sess-cli",
+      });
+    });
     await act(async () => {
-      await Promise.resolve()
-      await Promise.resolve()
-      await vi.advanceTimersByTimeAsync(500)
-    })
-    expect(tailFetchCount).toBe(2)
+      await Promise.resolve();
+      await Promise.resolve();
+      await vi.advanceTimersByTimeAsync(500);
+    });
+    expect(tailFetchCount).toBe(2);
 
     await act(async () => {
       resolveFirstRefresh?.(
@@ -1452,315 +1539,337 @@ describe('useSessionDetail', () => {
           JSON.stringify({
             messages: [
               {
-                id: 'sess-msg-1',
-                role: 'assistant',
-                content: 'First refresh output',
-                timestamp: '2026-04-09T00:00:00Z',
+                id: "sess-msg-1",
+                role: "assistant",
+                content: "First refresh output",
+                timestamp: "2026-04-09T00:00:00Z",
               },
             ],
             total_count: 1,
             rendered_count: 1,
             returned_count: 1,
           }),
-          { status: 200, headers: { 'Content-Type': 'application/json' } },
+          { status: 200, headers: { "Content-Type": "application/json" } },
         ),
-      )
-      await Promise.resolve()
-      await Promise.resolve()
-      await vi.advanceTimersByTimeAsync(500)
-    })
+      );
+      await Promise.resolve();
+      await Promise.resolve();
+      await vi.advanceTimersByTimeAsync(500);
+    });
 
-    expect(tailFetchCount).toBe(3)
-    expect(result.current.messages[0].content).toBe('Queued refresh output')
-  })
+    expect(tailFetchCount).toBe(3);
+    expect(result.current.messages[0].content).toBe("Queued refresh output");
+  });
 
-  it('shows an error and clears stale detail when selected session refresh disappears', async () => {
-    await loadModule()
+  it("shows an error and clears stale detail when selected session refresh disappears", async () => {
+    await loadModule();
 
-    const warnSpy = vi.spyOn(console, 'warn').mockImplementation(() => {})
-    let sessionFetchCount = 0
+    const warnSpy = vi.spyOn(console, "warn").mockImplementation(() => {});
+    let sessionFetchCount = 0;
     mockFetch.fn.mockImplementation(async (input: RequestInfo | URL) => {
       const url =
-        typeof input === 'string'
+        typeof input === "string"
           ? input
           : input instanceof URL
             ? input.toString()
-            : input.url
+            : input.url;
 
       if (/\/api\/sessions\/sess-cli$/.test(url)) {
-        sessionFetchCount += 1
+        sessionFetchCount += 1;
         if (sessionFetchCount > 1) {
-          return new Response(JSON.stringify({ detail: 'missing' }), {
+          return new Response(JSON.stringify({ detail: "missing" }), {
             status: 404,
-            headers: { 'Content-Type': 'application/json' },
-          })
+            headers: { "Content-Type": "application/json" },
+          });
         }
         return new Response(
           JSON.stringify({
             session: {
-              id: 'sess-cli',
-              external_id: 'cli-ext-1',
-              session_type: 'terminal',
-              status: 'active',
+              id: "sess-cli",
+              external_id: "cli-ext-1",
+              session_type: "terminal",
+              status: "active",
             },
           }),
-          { status: 200, headers: { 'Content-Type': 'application/json' } },
-        )
+          { status: 200, headers: { "Content-Type": "application/json" } },
+        );
       }
 
-      if (url.includes('/api/sessions/sess-cli/messages?limit=50&offset=0&order=tail')) {
+      if (
+        url.includes(
+          "/api/sessions/sess-cli/messages?limit=50&offset=0&order=tail",
+        )
+      ) {
         return new Response(
           JSON.stringify({
             messages: [
               {
-                id: 'sess-msg-1',
-                role: 'assistant',
-                content: 'Initial output',
-                timestamp: '2026-04-09T00:00:00Z',
+                id: "sess-msg-1",
+                role: "assistant",
+                content: "Initial output",
+                timestamp: "2026-04-09T00:00:00Z",
               },
             ],
             total_count: 1,
           }),
-          { status: 200, headers: { 'Content-Type': 'application/json' } },
-        )
+          { status: 200, headers: { "Content-Type": "application/json" } },
+        );
       }
 
-      return new Response(JSON.stringify({ error: 'no mock route matched' }), {
+      return new Response(JSON.stringify({ error: "no mock route matched" }), {
         status: 404,
-        headers: { 'Content-Type': 'application/json' },
-      })
-    })
+        headers: { "Content-Type": "application/json" },
+      });
+    });
 
-    const { result } = renderHook(() => useSessionDetail('sess-cli'))
-    const ws = mockWs.instances[0]
-    act(() => ws.simulateOpen())
+    const { result } = renderHook(() => useSessionDetail("sess-cli"));
+    const ws = mockWs.instances[0];
+    act(() => ws.simulateOpen());
 
-    await waitFor(() => expect(result.current.isLoading).toBe(false))
-    expect(result.current.session?.id).toBe('sess-cli')
-    expect(result.current.messages).toHaveLength(1)
+    await waitFor(() => expect(result.current.isLoading).toBe(false));
+    expect(result.current.session?.id).toBe("sess-cli");
+    expect(result.current.messages).toHaveLength(1);
 
     act(() => {
       ws.simulateMessage({
-        type: 'session_event',
-        event: 'session_updated',
-        session_id: 'sess-cli',
-      })
-    })
+        type: "session_event",
+        event: "session_updated",
+        session_id: "sess-cli",
+      });
+    });
 
     await waitFor(() => {
       expect(result.current.sessionError).toBe(
-        'Session metadata is unavailable. It may have expired or been deleted.',
-      )
-      expect(result.current.session).toBeNull()
-      expect(result.current.messages).toHaveLength(0)
-      expect(result.current.totalMessages).toBe(0)
-    })
-    expect(warnSpy).toHaveBeenCalledWith('Session fetch returned 404')
-  })
+        "Session metadata is unavailable. It may have expired or been deleted.",
+      );
+      expect(result.current.session).toBeNull();
+      expect(result.current.messages).toHaveLength(0);
+      expect(result.current.totalMessages).toBe(0);
+    });
+    expect(warnSpy).toHaveBeenCalledWith("Session fetch returned 404");
+  });
 
-  it('keeps selected detail and reports refresh error when metadata refresh returns 500', async () => {
-    await loadModule()
+  it("keeps selected detail and reports refresh error when metadata refresh returns 500", async () => {
+    await loadModule();
 
-    const warnSpy = vi.spyOn(console, 'warn').mockImplementation(() => {})
-    const errorSpy = vi.spyOn(console, 'error').mockImplementation(() => {})
-    let sessionFetchCount = 0
+    const warnSpy = vi.spyOn(console, "warn").mockImplementation(() => {});
+    const errorSpy = vi.spyOn(console, "error").mockImplementation(() => {});
+    let sessionFetchCount = 0;
     mockFetch.fn.mockImplementation(async (input: RequestInfo | URL) => {
       const url =
-        typeof input === 'string'
+        typeof input === "string"
           ? input
           : input instanceof URL
             ? input.toString()
-            : input.url
+            : input.url;
 
       if (/\/api\/sessions\/sess-cli$/.test(url)) {
-        sessionFetchCount += 1
+        sessionFetchCount += 1;
         if (sessionFetchCount > 1) {
-          return new Response(JSON.stringify({ detail: 'database unavailable' }), {
-            status: 500,
-            statusText: 'Internal Server Error',
-            headers: { 'Content-Type': 'application/json' },
-          })
+          return new Response(
+            JSON.stringify({ detail: "database unavailable" }),
+            {
+              status: 500,
+              statusText: "Internal Server Error",
+              headers: { "Content-Type": "application/json" },
+            },
+          );
         }
         return new Response(
           JSON.stringify({
             session: {
-              id: 'sess-cli',
-              external_id: 'cli-ext-1',
-              session_type: 'terminal',
-              status: 'active',
+              id: "sess-cli",
+              external_id: "cli-ext-1",
+              session_type: "terminal",
+              status: "active",
             },
           }),
-          { status: 200, headers: { 'Content-Type': 'application/json' } },
-        )
+          { status: 200, headers: { "Content-Type": "application/json" } },
+        );
       }
 
-      if (url.includes('/api/sessions/sess-cli/messages?limit=50&offset=0&order=tail')) {
+      if (
+        url.includes(
+          "/api/sessions/sess-cli/messages?limit=50&offset=0&order=tail",
+        )
+      ) {
         return new Response(
           JSON.stringify({
             messages: [
               {
-                id: 'sess-msg-1',
-                role: 'assistant',
-                content: 'Initial output',
-                timestamp: '2026-04-09T00:00:00Z',
+                id: "sess-msg-1",
+                role: "assistant",
+                content: "Initial output",
+                timestamp: "2026-04-09T00:00:00Z",
               },
             ],
             total_count: 1,
           }),
-          { status: 200, headers: { 'Content-Type': 'application/json' } },
-        )
+          { status: 200, headers: { "Content-Type": "application/json" } },
+        );
       }
 
-      return new Response(JSON.stringify({ error: 'no mock route matched' }), {
+      return new Response(JSON.stringify({ error: "no mock route matched" }), {
         status: 404,
-        headers: { 'Content-Type': 'application/json' },
-      })
-    })
+        headers: { "Content-Type": "application/json" },
+      });
+    });
 
-    const { result } = renderHook(() => useSessionDetail('sess-cli'))
-    const ws = mockWs.instances[0]
-    act(() => ws.simulateOpen())
+    const { result } = renderHook(() => useSessionDetail("sess-cli"));
+    const ws = mockWs.instances[0];
+    act(() => ws.simulateOpen());
 
-    await waitFor(() => expect(result.current.isLoading).toBe(false))
-    expect(result.current.session?.id).toBe('sess-cli')
+    await waitFor(() => expect(result.current.isLoading).toBe(false));
+    expect(result.current.session?.id).toBe("sess-cli");
 
     act(() => {
       ws.simulateMessage({
-        type: 'session_event',
-        event: 'session_updated',
-        session_id: 'sess-cli',
-      })
-    })
+        type: "session_event",
+        event: "session_updated",
+        session_id: "sess-cli",
+      });
+    });
 
     await waitFor(() => {
-      expect(result.current.sessionError).toBe('Failed to refresh session metadata')
-      expect(result.current.session?.id).toBe('sess-cli')
-      expect(result.current.messages).toHaveLength(1)
-    })
-    act(() => result.current.clearSessionError())
-    expect(result.current.sessionError).toBeNull()
-    expect(warnSpy).toHaveBeenCalledWith('Session fetch returned 500')
-    expect(String(errorSpy.mock.calls[0]?.[1])).toContain('database unavailable')
-  })
+      expect(result.current.sessionError).toBe(
+        "Failed to refresh session metadata",
+      );
+      expect(result.current.session?.id).toBe("sess-cli");
+      expect(result.current.messages).toHaveLength(1);
+    });
+    act(() => result.current.clearSessionError());
+    expect(result.current.sessionError).toBeNull();
+    expect(warnSpy).toHaveBeenCalledWith("Session fetch returned 500");
+    expect(String(errorSpy.mock.calls[0]?.[1])).toContain(
+      "database unavailable",
+    );
+  });
 
-  it('clears selected session metadata after a matching delete event', async () => {
-    await loadModule()
+  it("clears selected session metadata after a matching delete event", async () => {
+    await loadModule();
     mockFetch.mockJsonResponse(/^\/api\/sessions\/sess-cli$/, {
       session: {
-        id: 'sess-cli',
-        external_id: 'cli-ext-1',
-        session_type: 'terminal',
-        status: 'active',
+        id: "sess-cli",
+        external_id: "cli-ext-1",
+        session_type: "terminal",
+        status: "active",
       },
-    })
-    mockFetch.mockJsonResponse('/api/sessions/sess-cli/messages?limit=50&offset=0&order=tail', {
-      messages: [
-        {
-          id: 'sess-msg-1',
-          role: 'assistant',
-          content: 'Initial output',
-          timestamp: '2026-04-09T00:00:00Z',
-        },
-      ],
-      total_count: 1,
-    })
+    });
+    mockFetch.mockJsonResponse(
+      "/api/sessions/sess-cli/messages?limit=50&offset=0&order=tail",
+      {
+        messages: [
+          {
+            id: "sess-msg-1",
+            role: "assistant",
+            content: "Initial output",
+            timestamp: "2026-04-09T00:00:00Z",
+          },
+        ],
+        total_count: 1,
+      },
+    );
 
-    const { result } = renderHook(() => useSessionDetail('sess-cli'))
-    const ws = mockWs.instances[0]
-    act(() => ws.simulateOpen())
+    const { result } = renderHook(() => useSessionDetail("sess-cli"));
+    const ws = mockWs.instances[0];
+    act(() => ws.simulateOpen());
 
-    await waitFor(() => expect(result.current.isLoading).toBe(false))
-    expect(result.current.session?.id).toBe('sess-cli')
-    await waitFor(() => expect(result.current.messages).toHaveLength(1))
+    await waitFor(() => expect(result.current.isLoading).toBe(false));
+    expect(result.current.session?.id).toBe("sess-cli");
+    await waitFor(() => expect(result.current.messages).toHaveLength(1));
 
     act(() => {
       ws.simulateMessage({
-        type: 'session_event',
-        event: 'session_deleted',
-        session_id: 'sess-cli',
-      })
-    })
+        type: "session_event",
+        event: "session_deleted",
+        session_id: "sess-cli",
+      });
+    });
 
-    expect(result.current.session).toBeNull()
-    expect(result.current.messages).toHaveLength(0)
+    expect(result.current.session).toBeNull();
+    expect(result.current.messages).toHaveLength(0);
     expect(result.current.sessionError).toBe(
-      'Session metadata is unavailable. It may have expired or been deleted.',
-    )
-    expect(result.current.totalMessages).toBe(0)
-  })
+      "Session metadata is unavailable. It may have expired or been deleted.",
+    );
+    expect(result.current.totalMessages).toBe(0);
+  });
 
-  it('polls chat-backed web chats for live updates', async () => {
-    vi.useFakeTimers()
-    await loadModule()
+  it("polls chat-backed web chats for live updates", async () => {
+    vi.useFakeTimers();
+    await loadModule();
 
-    let chatFetchCount = 0
+    let chatFetchCount = 0;
     mockFetch.fn.mockImplementation(async (input: RequestInfo | URL) => {
       const url =
-        typeof input === 'string'
+        typeof input === "string"
           ? input
           : input instanceof URL
             ? input.toString()
-            : input.url
+            : input.url;
 
-      if (url.includes('/api/sessions/sess-web/messages?limit=50&offset=0&order=tail')) {
-        return new Response(
-          JSON.stringify({ messages: [], total_count: 0 }),
-          { status: 200, headers: { 'Content-Type': 'application/json' } },
+      if (
+        url.includes(
+          "/api/sessions/sess-web/messages?limit=50&offset=0&order=tail",
         )
+      ) {
+        return new Response(JSON.stringify({ messages: [], total_count: 0 }), {
+          status: 200,
+          headers: { "Content-Type": "application/json" },
+        });
       }
 
       if (/\/api\/sessions\/sess-web$/.test(url)) {
         return new Response(
           JSON.stringify({
             session: {
-              id: 'sess-web',
-              external_id: 'chat-ext-2',
-              session_type: 'web_chat',
-              status: 'active',
+              id: "sess-web",
+              external_id: "chat-ext-2",
+              session_type: "web_chat",
+              status: "active",
             },
           }),
-          { status: 200, headers: { 'Content-Type': 'application/json' } },
-        )
+          { status: 200, headers: { "Content-Type": "application/json" } },
+        );
       }
 
-      if (url.includes('/api/chat/sess-web/messages')) {
-        chatFetchCount += 1
+      if (url.includes("/api/chat/sess-web/messages")) {
+        chatFetchCount += 1;
         const content =
-          chatFetchCount === 1 ? 'First parked reply' : 'Updated parked reply'
+          chatFetchCount === 1 ? "First parked reply" : "Updated parked reply";
         return new Response(
           JSON.stringify({
             messages: [
               {
                 id: `chat-msg-${chatFetchCount}`,
-                role: 'assistant',
+                role: "assistant",
                 content,
-                created_at: '2026-04-09T00:00:00Z',
+                created_at: "2026-04-09T00:00:00Z",
               },
             ],
           }),
-          { status: 200, headers: { 'Content-Type': 'application/json' } },
-        )
+          { status: 200, headers: { "Content-Type": "application/json" } },
+        );
       }
 
-      return new Response(JSON.stringify({ error: 'no mock route matched' }), {
+      return new Response(JSON.stringify({ error: "no mock route matched" }), {
         status: 404,
-        headers: { 'Content-Type': 'application/json' },
-      })
-    })
+        headers: { "Content-Type": "application/json" },
+      });
+    });
 
-    const { result } = renderHook(() => useSessionDetail('sess-web'))
-    act(() => mockWs.instances[0]?.simulateOpen())
-
-    await act(async () => {
-      await Promise.resolve()
-      await Promise.resolve()
-    })
-    expect(result.current.messages[0].content).toBe('First parked reply')
+    const { result } = renderHook(() => useSessionDetail("sess-web"));
+    act(() => mockWs.instances[0]?.simulateOpen());
 
     await act(async () => {
-      await vi.advanceTimersByTimeAsync(2000)
-    })
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+    expect(result.current.messages[0].content).toBe("First parked reply");
 
-    expect(result.current.messages[0].content).toBe('Updated parked reply')
-  })
-})
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(2000);
+    });
+
+    expect(result.current.messages[0].content).toBe("Updated parked reply");
+  });
+});

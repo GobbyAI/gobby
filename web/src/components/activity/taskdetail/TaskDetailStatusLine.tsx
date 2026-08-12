@@ -101,7 +101,7 @@ export function TaskDetailStatusLine({
         </span>
       ) : (
         <span
-          className="inline-flex min-w-0 items-baseline gap-[0.35rem] italic text-[var(--text-muted)]"
+          className="inline-flex min-w-0 items-baseline gap-[0.35rem] text-[var(--text-muted)] italic"
           data-task-owner
         >
           Unassigned

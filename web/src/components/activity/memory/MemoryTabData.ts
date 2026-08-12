@@ -40,7 +40,9 @@ export interface MemoryTabFilters {
   visibility: MemoryVisibility;
 }
 
-export function filtersFromMemoryHook(filters: MemoryFilters): MemoryTabFilters {
+export function filtersFromMemoryHook(
+  filters: MemoryFilters,
+): MemoryTabFilters {
   return {
     search: filters.search,
     memoryType: filters.memoryType,
@@ -50,14 +52,21 @@ export function filtersFromMemoryHook(filters: MemoryFilters): MemoryTabFilters 
 }
 
 export function memoryTypeLabel(type: string): string {
-  return MEMORY_TYPE_OPTIONS.find((option) => option.value === type)?.label ?? type;
+  return (
+    MEMORY_TYPE_OPTIONS.find((option) => option.value === type)?.label ?? type
+  );
 }
 
-export function memoryScopeLabel(memory: Pick<GobbyMemory, "is_global">): "Global" | "Project" {
+export function memoryScopeLabel(
+  memory: Pick<GobbyMemory, "is_global">,
+): "Global" | "Project" {
   return memory.is_global ? "Global" : "Project";
 }
 
-export function memoryTypeCount(stats: MemoryStats | null, type: string): number {
+export function memoryTypeCount(
+  stats: MemoryStats | null,
+  type: string,
+): number {
   return stats?.by_type?.[type] ?? 0;
 }
 
@@ -73,9 +82,14 @@ export function isHiddenMemory(memory: GobbyMemory): boolean {
   return Boolean(memory.deleted_at);
 }
 
-function matchesVisibility(memory: GobbyMemory, visibility: MemoryVisibility): boolean {
+function matchesVisibility(
+  memory: GobbyMemory,
+  visibility: MemoryVisibility,
+): boolean {
   if (visibility === "all") return true;
-  return visibility === "hidden" ? isHiddenMemory(memory) : !isHiddenMemory(memory);
+  return visibility === "hidden"
+    ? isHiddenMemory(memory)
+    : !isHiddenMemory(memory);
 }
 
 export function filterMemories(
@@ -86,7 +100,8 @@ export function filterMemories(
   const query = filters.search.trim().toLowerCase();
   return memories.filter((memory) => {
     if (!matchesVisibility(memory, filters.visibility)) return false;
-    if (filters.memoryType && memory.memory_type !== filters.memoryType) return false;
+    if (filters.memoryType && memory.memory_type !== filters.memoryType)
+      return false;
     if (filters.recentOnly && !isRecentMemory(memory, now)) return false;
     if (!query) return true;
     return (
@@ -144,14 +159,19 @@ export function purgeCountdownLabel(
 }
 
 function positiveNumber(value: unknown): number | null {
-  if (typeof value !== "number" || !Number.isFinite(value) || value <= 0) return null;
+  if (typeof value !== "number" || !Number.isFinite(value) || value <= 0)
+    return null;
   return value;
 }
 
-export function extractDreamPurgeGraceDays(values: unknown): DreamPurgeGraceDays | null {
-  if (!values || typeof values !== "object" || Array.isArray(values)) return null;
+export function extractDreamPurgeGraceDays(
+  values: unknown,
+): DreamPurgeGraceDays | null {
+  if (!values || typeof values !== "object" || Array.isArray(values))
+    return null;
   const memory = (values as { memory?: unknown }).memory;
-  if (!memory || typeof memory !== "object" || Array.isArray(memory)) return null;
+  if (!memory || typeof memory !== "object" || Array.isArray(memory))
+    return null;
   const dream = (memory as { dream?: unknown }).dream;
   if (!dream || typeof dream !== "object" || Array.isArray(dream)) return null;
 
@@ -175,18 +195,26 @@ export function extractDreamPurgeGraceDays(values: unknown): DreamPurgeGraceDays
  * back to the defaults so the graph always has usable limits (#19157).
  */
 export function extractGraphLimits(values: unknown): GraphLimits {
-  if (!values || typeof values !== "object" || Array.isArray(values)) return DEFAULT_GRAPH_LIMITS;
+  if (!values || typeof values !== "object" || Array.isArray(values))
+    return DEFAULT_GRAPH_LIMITS;
   const ui = (values as { ui?: unknown }).ui;
-  if (!ui || typeof ui !== "object" || Array.isArray(ui)) return DEFAULT_GRAPH_LIMITS;
-  const rawEntities = (ui as { knowledge_graph_limit?: unknown }).knowledge_graph_limit;
-  const rawRelationships = (ui as { knowledge_graph_relationship_limit?: unknown })
-    .knowledge_graph_relationship_limit;
+  if (!ui || typeof ui !== "object" || Array.isArray(ui))
+    return DEFAULT_GRAPH_LIMITS;
+  const rawEntities = (ui as { knowledge_graph_limit?: unknown })
+    .knowledge_graph_limit;
+  const rawRelationships = (
+    ui as { knowledge_graph_relationship_limit?: unknown }
+  ).knowledge_graph_relationship_limit;
   const numericLimit = (value: unknown) =>
-    typeof value === "number" || (typeof value === "string" && value.trim() !== "")
+    typeof value === "number" ||
+    (typeof value === "string" && value.trim() !== "")
       ? Number(value)
       : Number.NaN;
   return {
-    entities: sanitizeGraphLimit(numericLimit(rawEntities), DEFAULT_GRAPH_LIMITS.entities),
+    entities: sanitizeGraphLimit(
+      numericLimit(rawEntities),
+      DEFAULT_GRAPH_LIMITS.entities,
+    ),
     relationships: sanitizeGraphLimit(
       numericLimit(rawRelationships),
       DEFAULT_GRAPH_LIMITS.relationships,

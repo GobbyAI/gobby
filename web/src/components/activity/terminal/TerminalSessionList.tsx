@@ -4,10 +4,7 @@ import { QuickMenu, type QuickMenuItem } from "../QuickMenu";
 import { SourceIcon } from "../../shared/SourceIcon";
 import { Button } from "../../ui/Button";
 import { coarseHitAreaCls } from "../../ui/controlStyles";
-import {
-  type JoinedTerminalSession,
-  sessionKey,
-} from "./terminalSessions";
+import { type JoinedTerminalSession, sessionKey } from "./terminalSessions";
 
 interface TerminalSessionListProps {
   sessions: JoinedTerminalSession[];

@@ -1,27 +1,27 @@
-import type { Ref } from 'react'
+import type { Ref } from "react";
 
-import { cn } from '../../lib/utils'
-import { Button } from '../ui/Button'
-import { Card } from '../ui/Card'
-import { coarseHitAreaCls } from '../ui/controlStyles'
-import { Input } from '../ui/Input'
-import type { ContextMenuState, FileEntry } from './FilesTab.types'
+import { cn } from "../../lib/utils";
+import { Button } from "../ui/Button";
+import { Card } from "../ui/Card";
+import { coarseHitAreaCls } from "../ui/controlStyles";
+import { Input } from "../ui/Input";
+import type { ContextMenuState, FileEntry } from "./FilesTab.types";
 
 interface FilesTabContextMenuProps {
-  contextMenu: ContextMenuState | null
-  menuRef: Ref<HTMLDivElement>
-  onAddToChat?: (filePath: string) => void
-  onClose: () => void
-  onDuplicate: (entry: FileEntry) => void
-  onRename: (entry: FileEntry) => void
-  onMove: (entry: FileEntry) => void
-  onDelete: (entry: FileEntry) => void
+  contextMenu: ContextMenuState | null;
+  menuRef: Ref<HTMLDivElement>;
+  onAddToChat?: (filePath: string) => void;
+  onClose: () => void;
+  onDuplicate: (entry: FileEntry) => void;
+  onRename: (entry: FileEntry) => void;
+  onMove: (entry: FileEntry) => void;
+  onDelete: (entry: FileEntry) => void;
 }
 
 const contextMenuItemClassName = cn(
   coarseHitAreaCls,
-  'block w-full rounded bg-transparent px-2.5 py-1.5 text-left text-[length:var(--text-md)] text-[var(--text-primary)] transition-colors duration-100 hover:bg-[var(--bg-tertiary)]',
-)
+  "block w-full rounded bg-transparent px-2.5 py-1.5 text-left text-[length:var(--text-md)] text-[var(--text-primary)] transition-colors duration-100 hover:bg-[var(--bg-tertiary)]",
+);
 
 export function FilesTabContextMenu({
   contextMenu,
@@ -33,9 +33,9 @@ export function FilesTabContextMenu({
   onMove,
   onDelete,
 }: FilesTabContextMenuProps) {
-  if (!contextMenu) return null
+  if (!contextMenu) return null;
 
-  const { entry } = contextMenu
+  const { entry } = contextMenu;
   return (
     <>
       <div className="fixed inset-0 z-[90]" onClick={onClose} />
@@ -44,9 +44,9 @@ export function FilesTabContextMenu({
         className="z-[91] min-w-[140px] rounded-md border border-[var(--border)] bg-[var(--bg-secondary)] p-1 shadow-[var(--shadow-md)]"
         role="menu"
         aria-label={`Actions for ${entry.name}`}
-        style={{ position: 'fixed', left: contextMenu.x, top: contextMenu.y }}
+        style={{ position: "fixed", left: contextMenu.x, top: contextMenu.y }}
         onKeyDown={(event) => {
-          if (event.key === 'Escape') onClose()
+          if (event.key === "Escape") onClose();
         }}
       >
         {onAddToChat && !entry.is_dir && (
@@ -58,8 +58,8 @@ export function FilesTabContextMenu({
             dense
             className={contextMenuItemClassName}
             onClick={() => {
-              onAddToChat(entry.path)
-              onClose()
+              onAddToChat(entry.path);
+              onClose();
             }}
           >
             Add to chat
@@ -108,7 +108,7 @@ export function FilesTabContextMenu({
           dense
           className={cn(
             coarseHitAreaCls,
-            'block w-full rounded bg-transparent px-2.5 py-1.5 text-left text-[length:var(--text-md)] text-[var(--color-error)] transition-colors duration-100 hover:bg-[color-mix(in_srgb,var(--color-error)_10%,transparent)]',
+            "block w-full rounded bg-transparent px-2.5 py-1.5 text-left text-[length:var(--text-md)] text-[var(--color-error)] transition-colors duration-100 hover:bg-[color-mix(in_srgb,var(--color-error)_10%,transparent)]",
           )}
           onClick={() => onDelete(entry)}
         >
@@ -116,17 +116,17 @@ export function FilesTabContextMenu({
         </Button>
       </div>
     </>
-  )
+  );
 }
 
 interface FilesTabMoveDialogProps {
-  moving: FileEntry | null
-  formRef: Ref<HTMLFormElement>
-  movePath: string
-  error: string | null
-  onMovePathChange: (path: string) => void
-  onClose: () => void
-  onSubmit: () => void
+  moving: FileEntry | null;
+  formRef: Ref<HTMLFormElement>;
+  movePath: string;
+  error: string | null;
+  onMovePathChange: (path: string) => void;
+  onClose: () => void;
+  onSubmit: () => void;
 }
 
 export function FilesTabMoveDialog({
@@ -138,13 +138,13 @@ export function FilesTabMoveDialog({
   onClose,
   onSubmit,
 }: FilesTabMoveDialogProps) {
-  if (!moving) return null
+  if (!moving) return null;
 
   return (
     <div
       className="fixed inset-0 z-50 flex items-center justify-center bg-[var(--surface-scrim)] p-4"
       onMouseDown={(event) => {
-        if (event.target === event.currentTarget) onClose()
+        if (event.target === event.currentTarget) onClose();
       }}
     >
       <Card asChild padding="md" className="w-full max-w-md shadow-xl">
@@ -154,11 +154,14 @@ export function FilesTabMoveDialog({
           aria-modal="true"
           aria-labelledby="files-move-title"
           onSubmit={(event) => {
-            event.preventDefault()
-            onSubmit()
+            event.preventDefault();
+            onSubmit();
           }}
         >
-          <h2 id="files-move-title" className="mb-3 text-base font-semibold text-foreground">
+          <h2
+            id="files-move-title"
+            className="mb-3 text-base font-semibold text-foreground"
+          >
             Move {moving.name}
           </h2>
           <div className="grid gap-1.5 text-sm text-foreground">
@@ -168,11 +171,14 @@ export function FilesTabMoveDialog({
               aria-labelledby="files-move-path-label"
               value={movePath}
               onChange={(event) => onMovePathChange(event.target.value)}
-              className="min-h-10 rounded-md border border-border bg-background px-3 py-2 text-sm text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent"
+              className="min-h-10 rounded-md border border-border bg-background px-3 py-2 text-sm text-foreground focus-visible:ring-2 focus-visible:ring-accent focus-visible:outline-none"
             />
           </div>
           {error && (
-            <p className="mt-2 text-sm text-destructive-foreground" role="alert">
+            <p
+              className="mt-2 text-sm text-destructive-foreground"
+              role="alert"
+            >
               {error}
             </p>
           )}
@@ -201,5 +207,5 @@ export function FilesTabMoveDialog({
         </form>
       </Card>
     </div>
-  )
+  );
 }

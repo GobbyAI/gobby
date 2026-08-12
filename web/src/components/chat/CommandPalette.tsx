@@ -1,29 +1,36 @@
-import { useState, useCallback, useEffect, useId, useRef, useMemo } from 'react'
-import type { GobbySession } from '../../types/sessions'
-import { useNow } from '../../hooks/useNow'
-import { formatRelativeTime } from '../../utils/formatTime'
-import { getSessionTitleText } from '../../lib/sessionTitle'
-import { cn } from '../../lib/utils'
-import { Button } from '../ui/Button'
-import { Input } from '../ui/Input'
+import {
+  useState,
+  useCallback,
+  useEffect,
+  useId,
+  useRef,
+  useMemo,
+} from "react";
+import type { GobbySession } from "../../types/sessions";
+import { useNow } from "../../hooks/useNow";
+import { formatRelativeTime } from "../../utils/formatTime";
+import { getSessionTitleText } from "../../lib/sessionTitle";
+import { cn } from "../../lib/utils";
+import { Button } from "../ui/Button";
+import { Input } from "../ui/Input";
 
 export interface CommandPaletteAction {
-  id: string
-  label: string
-  icon?: string
-  category: 'action' | 'navigate'
-  onSelect: () => void
+  id: string;
+  label: string;
+  icon?: string;
+  category: "action" | "navigate";
+  onSelect: () => void;
 }
 
 interface CommandPaletteProps {
-  isOpen: boolean
-  onClose: () => void
-  sessions: GobbySession[]
-  activeSessionId: string | null
-  onSelectSession: (session: GobbySession) => void
-  onDeleteSession?: (session: GobbySession) => void
-  onRenameSession?: (id: string, title: string) => void  // future: inline rename
-  actions: CommandPaletteAction[]
+  isOpen: boolean;
+  onClose: () => void;
+  sessions: GobbySession[];
+  activeSessionId: string | null;
+  onSelectSession: (session: GobbySession) => void;
+  onDeleteSession?: (session: GobbySession) => void;
+  onRenameSession?: (id: string, title: string) => void; // future: inline rename
+  actions: CommandPaletteAction[];
 }
 
 export function CommandPalette({
@@ -36,33 +43,34 @@ export function CommandPalette({
   onRenameSession: _onRenameSession,
   actions,
 }: CommandPaletteProps) {
-  void _onRenameSession // future: inline rename
-  const [query, setQuery] = useState('')
-  const [selectedIndex, setSelectedIndex] = useState(0)
-  const inputRef = useRef<HTMLInputElement>(null)
-  const listRef = useRef<HTMLDivElement>(null)
-  const invokerRef = useRef<HTMLElement | null>(null)
-  const listboxId = useId()
-  const optionIdPrefix = useId()
-  const now = useNow()
+  void _onRenameSession; // future: inline rename
+  const [query, setQuery] = useState("");
+  const [selectedIndex, setSelectedIndex] = useState(0);
+  const inputRef = useRef<HTMLInputElement>(null);
+  const listRef = useRef<HTMLDivElement>(null);
+  const invokerRef = useRef<HTMLElement | null>(null);
+  const listboxId = useId();
+  const optionIdPrefix = useId();
+  const now = useNow();
 
   // Reset on open
   useEffect(() => {
     if (isOpen) {
-      invokerRef.current = document.activeElement instanceof HTMLElement
-        ? document.activeElement
-        : null
-      setQuery('')
-      setSelectedIndex(0)
+      invokerRef.current =
+        document.activeElement instanceof HTMLElement
+          ? document.activeElement
+          : null;
+      setQuery("");
+      setSelectedIndex(0);
       // Focus input after animation frame
-      const frame = requestAnimationFrame(() => inputRef.current?.focus())
+      const frame = requestAnimationFrame(() => inputRef.current?.focus());
       return () => {
-        cancelAnimationFrame(frame)
-        invokerRef.current?.focus()
-        invokerRef.current = null
-      }
+        cancelAnimationFrame(frame);
+        invokerRef.current?.focus();
+        invokerRef.current = null;
+      };
     }
-  }, [isOpen])
+  }, [isOpen]);
 
   // Filter items based on query
   const {
@@ -74,57 +82,71 @@ export function CommandPalette({
     weekSessions,
     olderSessions,
   } = useMemo(() => {
-    const q = query.toLowerCase().trim()
-    const showOnlySessions = q.startsWith('#')
-    const showOnlyActions = q.startsWith('>')
-    const searchTerm = showOnlySessions ? q.slice(1) : showOnlyActions ? q.slice(1).trim() : q
+    const q = query.toLowerCase().trim();
+    const showOnlySessions = q.startsWith("#");
+    const showOnlyActions = q.startsWith(">");
+    const searchTerm = showOnlySessions
+      ? q.slice(1)
+      : showOnlyActions
+        ? q.slice(1).trim()
+        : q;
 
     const filteredSessions = showOnlyActions
       ? []
       : sessions
           .filter((s) => {
-            if (!searchTerm) return true
-            const title = (s.title || '').toLowerCase()
-            const ref = (s.ref ?? '').toLowerCase()
-            const seq = s.seq_num != null ? `#${s.seq_num}` : ''
-            return title.includes(searchTerm) || ref.includes(searchTerm) || seq.includes(searchTerm)
+            if (!searchTerm) return true;
+            const title = (s.title || "").toLowerCase();
+            const ref = (s.ref ?? "").toLowerCase();
+            const seq = s.seq_num != null ? `#${s.seq_num}` : "";
+            return (
+              title.includes(searchTerm) ||
+              ref.includes(searchTerm) ||
+              seq.includes(searchTerm)
+            );
           })
           // Order by ref (#N) descending so each recency bucket lists newest first.
-          .sort((a, b) => (b.seq_num ?? 0) - (a.seq_num ?? 0))
+          .sort((a, b) => (b.seq_num ?? 0) - (a.seq_num ?? 0));
 
     const filteredActions = showOnlySessions
       ? []
       : actions.filter((a) => {
-          if (!searchTerm) return true
-          return a.label.toLowerCase().includes(searchTerm)
-        })
+          if (!searchTerm) return true;
+          return a.label.toLowerCase().includes(searchTerm);
+        });
 
-    const actionItems = filteredActions.filter((a) => a.category === 'action')
-    const navItems = filteredActions.filter((a) => a.category === 'navigate')
+    const actionItems = filteredActions.filter((a) => a.category === "action");
+    const navItems = filteredActions.filter((a) => a.category === "navigate");
 
-    const todaySessions: GobbySession[] = []
-    const weekSessions: GobbySession[] = []
-    const olderSessions: GobbySession[] = []
+    const todaySessions: GobbySession[] = [];
+    const weekSessions: GobbySession[] = [];
+    const olderSessions: GobbySession[] = [];
     for (const session of filteredSessions) {
-      const age = now - new Date(session.updated_at).getTime()
-      if (age < 86400000) todaySessions.push(session)
-      else if (age < 604800000) weekSessions.push(session)
-      else olderSessions.push(session)
+      const age = now - new Date(session.updated_at).getTime();
+      if (age < 86400000) todaySessions.push(session);
+      else if (age < 604800000) weekSessions.push(session);
+      else olderSessions.push(session);
     }
 
-    const allItems: Array<{ type: 'session'; session: GobbySession } | { type: 'action'; action: CommandPaletteAction }> = []
-    for (const session of todaySessions) allItems.push({ type: 'session', session })
-    for (const session of weekSessions) allItems.push({ type: 'session', session })
-    for (const session of olderSessions) allItems.push({ type: 'session', session })
-    for (const a of actionItems) allItems.push({ type: 'action', action: a })
-    for (const a of navItems) allItems.push({ type: 'action', action: a })
+    const allItems: Array<
+      | { type: "session"; session: GobbySession }
+      | { type: "action"; action: CommandPaletteAction }
+    > = [];
+    for (const session of todaySessions)
+      allItems.push({ type: "session", session });
+    for (const session of weekSessions)
+      allItems.push({ type: "session", session });
+    for (const session of olderSessions)
+      allItems.push({ type: "session", session });
+    for (const a of actionItems) allItems.push({ type: "action", action: a });
+    for (const a of navItems) allItems.push({ type: "action", action: a });
 
-    const sessionIndexMap = new Map<string, number>()
-    const actionIndexMap = new Map<string, number>()
+    const sessionIndexMap = new Map<string, number>();
+    const actionIndexMap = new Map<string, number>();
     allItems.forEach((item, index) => {
-      if (item.type === 'session') sessionIndexMap.set(item.session.id, index)
-      else actionIndexMap.set(item.action.id, index)
-    })
+      if (item.type === "session") sessionIndexMap.set(item.session.id, index);
+      else actionIndexMap.set(item.action.id, index);
+    });
 
     return {
       filteredActions,
@@ -134,68 +156,76 @@ export function CommandPalette({
       todaySessions,
       weekSessions,
       olderSessions,
-    }
-  }, [query, sessions, actions, now])
+    };
+  }, [query, sessions, actions, now]);
 
   // Clamp selection
   useEffect(() => {
-    setSelectedIndex((prev) => Math.min(prev, Math.max(0, allItems.length - 1)))
-  }, [allItems.length])
+    setSelectedIndex((prev) =>
+      Math.min(prev, Math.max(0, allItems.length - 1)),
+    );
+  }, [allItems.length]);
 
   // Scroll selected into view
   useEffect(() => {
-    const list = listRef.current
-    if (!list) return
-    const selected = list.querySelector('[data-selected="true"]') as HTMLElement | null
+    const list = listRef.current;
+    if (!list) return;
+    const selected = list.querySelector(
+      '[data-selected="true"]',
+    ) as HTMLElement | null;
     if (selected) {
-      selected.scrollIntoView({ block: 'nearest' })
+      selected.scrollIntoView({ block: "nearest" });
     }
-  }, [selectedIndex])
+  }, [selectedIndex]);
 
   const handleSelect = useCallback(
     (index: number) => {
-      const item = allItems[index]
-      if (!item) return
-      if (item.type === 'session') {
-        onSelectSession(item.session)
+      const item = allItems[index];
+      if (!item) return;
+      if (item.type === "session") {
+        onSelectSession(item.session);
       } else {
-        item.action.onSelect()
+        item.action.onSelect();
       }
-      onClose()
+      onClose();
     },
     [allItems, onSelectSession, onClose],
-  )
+  );
 
   const handleKeyDown = useCallback(
     (e: React.KeyboardEvent) => {
-      if (e.key === 'ArrowDown') {
-        e.preventDefault()
-        setSelectedIndex((i) => Math.min(i + 1, allItems.length - 1))
-      } else if (e.key === 'ArrowUp') {
-        e.preventDefault()
-        setSelectedIndex((i) => Math.max(i - 1, 0))
-      } else if (e.key === 'Enter') {
-        e.preventDefault()
-        handleSelect(selectedIndex)
-      } else if (e.key === 'Escape') {
-        e.preventDefault()
-        onClose()
-      } else if (e.key === 'Tab') {
-        e.preventDefault()
-        inputRef.current?.focus()
-      } else if (e.key === 'Backspace' && query === '' && allItems[selectedIndex]?.type === 'session') {
+      if (e.key === "ArrowDown") {
+        e.preventDefault();
+        setSelectedIndex((i) => Math.min(i + 1, allItems.length - 1));
+      } else if (e.key === "ArrowUp") {
+        e.preventDefault();
+        setSelectedIndex((i) => Math.max(i - 1, 0));
+      } else if (e.key === "Enter") {
+        e.preventDefault();
+        handleSelect(selectedIndex);
+      } else if (e.key === "Escape") {
+        e.preventDefault();
+        onClose();
+      } else if (e.key === "Tab") {
+        e.preventDefault();
+        inputRef.current?.focus();
+      } else if (
+        e.key === "Backspace" &&
+        query === "" &&
+        allItems[selectedIndex]?.type === "session"
+      ) {
         // Delete session with backspace when query is empty
-        const session = allItems[selectedIndex].session
-        if (onDeleteSession && session.session_type === 'web_chat') {
-          e.preventDefault()
-          onDeleteSession(session)
+        const session = allItems[selectedIndex].session;
+        if (onDeleteSession && session.session_type === "web_chat") {
+          e.preventDefault();
+          onDeleteSession(session);
         }
       }
     },
     [allItems, selectedIndex, handleSelect, onClose, query, onDeleteSession],
-  )
+  );
 
-  if (!isOpen) return null
+  if (!isOpen) return null;
 
   return (
     <>
@@ -204,7 +234,7 @@ export function CommandPalette({
         onClick={onClose}
       />
       <div
-        className="command-palette-container fixed left-1/2 top-[20%] z-[51] flex max-h-[60vh] w-[90%] max-w-[480px] -translate-x-1/2 flex-col overflow-hidden rounded-xl border border-[var(--border)] bg-[var(--bg-secondary)] shadow-[var(--shadow-lg)]"
+        className="command-palette-container fixed top-[20%] left-1/2 z-[51] flex max-h-[60vh] w-[90%] max-w-[480px] -translate-x-1/2 flex-col overflow-hidden rounded-xl border border-[var(--border)] bg-[var(--bg-secondary)] shadow-[var(--shadow-lg)]"
         role="dialog"
         aria-modal="true"
         aria-label="Command palette"
@@ -214,7 +244,7 @@ export function CommandPalette({
           <Input
             ref={inputRef}
             wrapperClassName="flex-1"
-            className="command-palette-input h-auto flex-1 rounded-none border-0 bg-transparent p-0 text-[length:var(--text-base)] text-[var(--text-primary)] outline-none [font-family:inherit] placeholder:text-[var(--text-muted)]"
+            className="command-palette-input h-auto flex-1 rounded-none border-0 bg-transparent p-0 [font-family:inherit] text-[length:var(--text-base)] text-[var(--text-primary)] outline-none placeholder:text-[var(--text-muted)]"
             placeholder="Search"
             value={query}
             onChange={(e) => setQuery(e.target.value)}
@@ -223,19 +253,27 @@ export function CommandPalette({
             aria-expanded="true"
             aria-controls={listboxId}
             aria-activedescendant={
-              allItems.length > 0 ? `${optionIdPrefix}-${selectedIndex}` : undefined
+              allItems.length > 0
+                ? `${optionIdPrefix}-${selectedIndex}`
+                : undefined
             }
             aria-autocomplete="list"
             autoComplete="off"
             spellCheck={false}
           />
-          <Button variant="accent" size="sm" dense onClick={onClose} aria-label="Close command palette">
+          <Button
+            variant="accent"
+            size="sm"
+            dense
+            onClick={onClose}
+            aria-label="Close command palette"
+          >
             Esc
           </Button>
         </div>
 
         <div
-          className="command-palette-list flex-1 overflow-y-auto py-1 [scrollbar-width:none] [&::-webkit-scrollbar]:hidden"
+          className="command-palette-list flex-1 [scrollbar-width:none] overflow-y-auto py-1 [&::-webkit-scrollbar]:hidden"
           ref={listRef}
           id={listboxId}
           role="listbox"
@@ -250,9 +288,11 @@ export function CommandPalette({
           {/* Sessions */}
           {todaySessions.length > 0 && (
             <>
-              <div className="command-palette-group-label px-3 pb-1 pt-2 text-[length:var(--text-xs)] font-semibold uppercase tracking-[0.05em] text-[var(--text-muted)]">Today</div>
+              <div className="command-palette-group-label px-3 pt-2 pb-1 text-[length:var(--text-xs)] font-semibold tracking-[0.05em] text-[var(--text-muted)] uppercase">
+                Today
+              </div>
               {todaySessions.map((s) => {
-                const idx = sessionIndexMap.get(s.id)!
+                const idx = sessionIndexMap.get(s.id)!;
                 return (
                   <SessionItem
                     key={s.id}
@@ -263,15 +303,17 @@ export function CommandPalette({
                     onSelect={() => handleSelect(idx)}
                     onHover={() => setSelectedIndex(idx)}
                   />
-                )
+                );
               })}
             </>
           )}
           {weekSessions.length > 0 && (
             <>
-              <div className="command-palette-group-label px-3 pb-1 pt-2 text-[length:var(--text-xs)] font-semibold uppercase tracking-[0.05em] text-[var(--text-muted)]">This Week</div>
+              <div className="command-palette-group-label px-3 pt-2 pb-1 text-[length:var(--text-xs)] font-semibold tracking-[0.05em] text-[var(--text-muted)] uppercase">
+                This Week
+              </div>
               {weekSessions.map((s) => {
-                const idx = sessionIndexMap.get(s.id)!
+                const idx = sessionIndexMap.get(s.id)!;
                 return (
                   <SessionItem
                     key={s.id}
@@ -282,15 +324,17 @@ export function CommandPalette({
                     onSelect={() => handleSelect(idx)}
                     onHover={() => setSelectedIndex(idx)}
                   />
-                )
+                );
               })}
             </>
           )}
           {olderSessions.length > 0 && (
             <>
-              <div className="command-palette-group-label px-3 pb-1 pt-2 text-[length:var(--text-xs)] font-semibold uppercase tracking-[0.05em] text-[var(--text-muted)]">Older</div>
+              <div className="command-palette-group-label px-3 pt-2 pb-1 text-[length:var(--text-xs)] font-semibold tracking-[0.05em] text-[var(--text-muted)] uppercase">
+                Older
+              </div>
               {olderSessions.map((s) => {
-                const idx = sessionIndexMap.get(s.id)!
+                const idx = sessionIndexMap.get(s.id)!;
                 return (
                   <SessionItem
                     key={s.id}
@@ -301,19 +345,22 @@ export function CommandPalette({
                     onSelect={() => handleSelect(idx)}
                     onHover={() => setSelectedIndex(idx)}
                   />
-                )
+                );
               })}
             </>
           )}
 
           {/* Actions */}
-          {filteredActions.filter((a) => a.category === 'action').length > 0 && (
+          {filteredActions.filter((a) => a.category === "action").length >
+            0 && (
             <>
-              <div className="command-palette-group-label px-3 pb-1 pt-2 text-[length:var(--text-xs)] font-semibold uppercase tracking-[0.05em] text-[var(--text-muted)]">Actions</div>
+              <div className="command-palette-group-label px-3 pt-2 pb-1 text-[length:var(--text-xs)] font-semibold tracking-[0.05em] text-[var(--text-muted)] uppercase">
+                Actions
+              </div>
               {filteredActions
-                .filter((a) => a.category === 'action')
+                .filter((a) => a.category === "action")
                 .map((a) => {
-                  const idx = actionIndexMap.get(a.id)!
+                  const idx = actionIndexMap.get(a.id)!;
                   return (
                     <ActionItem
                       key={a.id}
@@ -323,19 +370,22 @@ export function CommandPalette({
                       onSelect={() => handleSelect(idx)}
                       onHover={() => setSelectedIndex(idx)}
                     />
-                  )
+                  );
                 })}
             </>
           )}
 
           {/* Navigate */}
-          {filteredActions.filter((a) => a.category === 'navigate').length > 0 && (
+          {filteredActions.filter((a) => a.category === "navigate").length >
+            0 && (
             <>
-              <div className="command-palette-group-label px-3 pb-1 pt-2 text-[length:var(--text-xs)] font-semibold uppercase tracking-[0.05em] text-[var(--text-muted)]">Navigate</div>
+              <div className="command-palette-group-label px-3 pt-2 pb-1 text-[length:var(--text-xs)] font-semibold tracking-[0.05em] text-[var(--text-muted)] uppercase">
+                Navigate
+              </div>
               {filteredActions
-                .filter((a) => a.category === 'navigate')
+                .filter((a) => a.category === "navigate")
                 .map((a) => {
-                  const idx = actionIndexMap.get(a.id)!
+                  const idx = actionIndexMap.get(a.id)!;
                   return (
                     <ActionItem
                       key={a.id}
@@ -345,21 +395,29 @@ export function CommandPalette({
                       onSelect={() => handleSelect(idx)}
                       onHover={() => setSelectedIndex(idx)}
                     />
-                  )
+                  );
                 })}
             </>
           )}
         </div>
 
         <div className="command-palette-footer flex items-center gap-4 border-t border-[var(--border)] px-3 py-2 text-[length:var(--text-xs)] text-[var(--text-muted)] [&_kbd]:rounded-[0.125rem] [&_kbd]:border [&_kbd]:border-[var(--border)] [&_kbd]:bg-[var(--bg-tertiary)] [&_kbd]:px-1 [&_kbd]:py-px [&_kbd]:font-mono [&_kbd]:text-[length:inherit]">
-          <span><kbd>&uarr;&darr;</kbd> navigate</span>
-          <span><kbd>&crarr;</kbd> select</span>
-          <span><kbd>#</kbd> sessions</span>
-          <span><kbd>&gt;</kbd> actions</span>
+          <span>
+            <kbd>&uarr;&darr;</kbd> navigate
+          </span>
+          <span>
+            <kbd>&crarr;</kbd> select
+          </span>
+          <span>
+            <kbd>#</kbd> sessions
+          </span>
+          <span>
+            <kbd>&gt;</kbd> actions
+          </span>
         </div>
       </div>
     </>
-  )
+  );
 }
 
 function SessionItem({
@@ -370,24 +428,24 @@ function SessionItem({
   onSelect,
   onHover,
 }: {
-  id: string
-  session: GobbySession
-  isActive: boolean
-  isSelected: boolean
-  onSelect: () => void
-  onHover: () => void
+  id: string;
+  session: GobbySession;
+  isActive: boolean;
+  isSelected: boolean;
+  onSelect: () => void;
+  onHover: () => void;
 }) {
-  const seqLabel = session.seq_num != null ? `#${session.seq_num}` : null
-  const titleText = getSessionTitleText(session.title)
+  const seqLabel = session.seq_num != null ? `#${session.seq_num}` : null;
+  const titleText = getSessionTitleText(session.title);
 
   return (
     <div
       id={id}
       className={cn(
-        'command-palette-item flex cursor-pointer items-center gap-2 px-3 py-2 text-[length:var(--text-base)] [transition:background_0.05s] hover:bg-[var(--bg-tertiary)]',
-        isSelected && 'bg-[var(--bg-tertiary)]',
+        "command-palette-item flex cursor-pointer items-center gap-2 px-3 py-2 text-[length:var(--text-base)] [transition:background_0.05s] hover:bg-[var(--bg-tertiary)]",
+        isSelected && "bg-[var(--bg-tertiary)]",
         isActive &&
-          'bg-[color-mix(in_srgb,var(--accent)_12%,transparent)] text-[var(--text-primary)] hover:bg-[color-mix(in_srgb,var(--accent)_12%,transparent)] [[data-theme=light]_&]:bg-[var(--surface-selected)] [[data-theme=light]_&]:font-semibold [[data-theme=light]_&]:hover:bg-[var(--surface-selected)]',
+          "bg-[color-mix(in_srgb,var(--accent)_12%,transparent)] text-[var(--text-primary)] hover:bg-[color-mix(in_srgb,var(--accent)_12%,transparent)] [[data-theme=light]_&]:bg-[var(--surface-selected)] [[data-theme=light]_&]:font-semibold [[data-theme=light]_&]:hover:bg-[var(--surface-selected)]",
       )}
       onClick={onSelect}
       onMouseEnter={onHover}
@@ -396,11 +454,20 @@ function SessionItem({
       aria-selected={isSelected}
     >
       <span className="command-palette-item-dot size-[6px] shrink-0 rounded-full bg-[var(--text-muted)]" />
-      <span className="command-palette-item-ref shrink-0 text-[length:var(--text-md)] text-[var(--accent)]" data-testid="session-ref">{seqLabel}</span>
-      <span className="command-palette-item-title min-w-0 flex-1 overflow-hidden text-ellipsis whitespace-nowrap text-[var(--text-primary)]">{titleText}</span>
-      <span className="command-palette-item-time shrink-0 text-[length:var(--text-sm)] text-[var(--text-muted)]">{formatRelativeTime(session.updated_at)}</span>
+      <span
+        className="command-palette-item-ref shrink-0 text-[length:var(--text-md)] text-[var(--accent)]"
+        data-testid="session-ref"
+      >
+        {seqLabel}
+      </span>
+      <span className="command-palette-item-title min-w-0 flex-1 overflow-hidden text-ellipsis whitespace-nowrap text-[var(--text-primary)]">
+        {titleText}
+      </span>
+      <span className="command-palette-item-time shrink-0 text-[length:var(--text-sm)] text-[var(--text-muted)]">
+        {formatRelativeTime(session.updated_at)}
+      </span>
     </div>
-  )
+  );
 }
 
 function ActionItem({
@@ -410,18 +477,18 @@ function ActionItem({
   onSelect,
   onHover,
 }: {
-  id: string
-  action: CommandPaletteAction
-  isSelected: boolean
-  onSelect: () => void
-  onHover: () => void
+  id: string;
+  action: CommandPaletteAction;
+  isSelected: boolean;
+  onSelect: () => void;
+  onHover: () => void;
 }) {
   return (
     <div
       id={id}
       className={cn(
-        'command-palette-item flex cursor-pointer items-center gap-2 px-3 py-2 text-[length:var(--text-base)] [transition:background_0.05s] hover:bg-[var(--bg-tertiary)]',
-        isSelected && 'bg-[var(--bg-tertiary)]',
+        "command-palette-item flex cursor-pointer items-center gap-2 px-3 py-2 text-[length:var(--text-base)] [transition:background_0.05s] hover:bg-[var(--bg-tertiary)]",
+        isSelected && "bg-[var(--bg-tertiary)]",
       )}
       onClick={onSelect}
       onMouseEnter={onHover}
@@ -429,17 +496,31 @@ function ActionItem({
       role="option"
       aria-selected={isSelected}
     >
-      <span className="command-palette-item-icon w-5 shrink-0 text-center text-[var(--text-muted)]">{action.icon ?? (action.category === 'navigate' ? '\u2192' : '+')}</span>
-      <span className="command-palette-item-title min-w-0 flex-1 overflow-hidden text-ellipsis whitespace-nowrap text-[var(--text-primary)]">{action.label}</span>
+      <span className="command-palette-item-icon w-5 shrink-0 text-center text-[var(--text-muted)]">
+        {action.icon ?? (action.category === "navigate" ? "\u2192" : "+")}
+      </span>
+      <span className="command-palette-item-title min-w-0 flex-1 overflow-hidden text-ellipsis whitespace-nowrap text-[var(--text-primary)]">
+        {action.label}
+      </span>
     </div>
-  )
+  );
 }
 
 function SearchIcon() {
   return (
-    <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className="text-muted-foreground shrink-0">
+    <svg
+      width="16"
+      height="16"
+      viewBox="0 0 24 24"
+      fill="none"
+      stroke="currentColor"
+      strokeWidth="2"
+      strokeLinecap="round"
+      strokeLinejoin="round"
+      className="shrink-0 text-muted-foreground"
+    >
       <circle cx="11" cy="11" r="8" />
       <line x1="21" y1="21" x2="16.65" y2="16.65" />
     </svg>
-  )
+  );
 }

@@ -8,7 +8,11 @@ function isExpectedStorageError(error: unknown): boolean {
   return error instanceof DOMException || error instanceof TypeError;
 }
 
-function logUnexpectedStorageError(action: string, key: string, error: unknown) {
+function logUnexpectedStorageError(
+  action: string,
+  key: string,
+  error: unknown,
+) {
   if (!isExpectedStorageError(error) && import.meta.env.DEV) {
     console.warn("Unexpected localStorage error", { action, key, error });
   }
@@ -24,7 +28,10 @@ function storageGet(key: string): string | null {
   }
 }
 
-function storageSet(key: string, value: string): "stored" | "unavailable" | "failed" {
+function storageSet(
+  key: string,
+  value: string,
+): "stored" | "unavailable" | "failed" {
   try {
     if (!globalThis.localStorage) return "unavailable";
     globalThis.localStorage.setItem(key, value);
@@ -54,9 +61,10 @@ export function useProviderAgentState() {
 
   useEffect(() => {
     activeAgentRef.current = activeAgent;
-    const status = activeAgent === DEFAULT_AGENT
-      ? storageRemove(ACTIVE_AGENT_KEY)
-      : storageSet(ACTIVE_AGENT_KEY, activeAgent);
+    const status =
+      activeAgent === DEFAULT_AGENT
+        ? storageRemove(ACTIVE_AGENT_KEY)
+        : storageSet(ACTIVE_AGENT_KEY, activeAgent);
     if (status === "failed") {
       console.warn("Failed to persist active agent selection");
     }
@@ -78,7 +86,8 @@ export function useProviderAgentState() {
         return;
       }
       try {
-        if (event.storageArea && event.storageArea !== window.localStorage) return;
+        if (event.storageArea && event.storageArea !== window.localStorage)
+          return;
       } catch {
         return;
       }

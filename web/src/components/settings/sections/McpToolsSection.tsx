@@ -1,10 +1,10 @@
-import { useEffect, useState } from 'react'
+import { useEffect, useState } from "react";
 
-import { TextField } from '../../activity/fields'
-import { Button } from '../../ui/Button'
-import { Input } from '../../ui/Input'
-import { BoundedSelectField } from '../fields'
-import { SettingsSection, type SettingsSectionFields } from './SettingsSection'
+import { TextField } from "../../activity/fields";
+import { Button } from "../../ui/Button";
+import { Input } from "../../ui/Input";
+import { BoundedSelectField } from "../fields";
+import { SettingsSection, type SettingsSectionFields } from "./SettingsSection";
 import {
   NumberConfigField,
   NumberMapConfigField,
@@ -12,14 +12,14 @@ import {
   Subsection,
   SwitchConfigField,
   TextConfigField,
-} from './configFields'
+} from "./configFields";
 import {
   asString,
   decodeDynamicMapRows,
   encodeDynamicMapRows,
   hasBlankDynamicMapKey,
   type DynamicMapRow,
-} from './configAccessors'
+} from "./configAccessors";
 
 /**
  * MCP & Tools settings section: the MCP client proxy (connection timeouts and
@@ -31,48 +31,48 @@ import {
  */
 
 const PROXY_PATHS = [
-  'mcp_client_proxy.enabled',
-  'mcp_client_proxy.connect_timeout',
-  'mcp_client_proxy.proxy_timeout',
-  'mcp_client_proxy.tool_timeout',
-  'mcp_client_proxy.tool_timeouts',
-  'mcp_client_proxy.search_mode',
-  'mcp_client_proxy.min_similarity',
-  'mcp_client_proxy.top_k',
-  'mcp_client_proxy.refresh_on_server_add',
-  'mcp_client_proxy.refresh_timeout',
-] as const
+  "mcp_client_proxy.enabled",
+  "mcp_client_proxy.connect_timeout",
+  "mcp_client_proxy.proxy_timeout",
+  "mcp_client_proxy.tool_timeout",
+  "mcp_client_proxy.tool_timeouts",
+  "mcp_client_proxy.search_mode",
+  "mcp_client_proxy.min_similarity",
+  "mcp_client_proxy.top_k",
+  "mcp_client_proxy.refresh_on_server_add",
+  "mcp_client_proxy.refresh_timeout",
+] as const;
 
 const SKILLS_PATHS = [
-  'skills.inject_core_skills',
-  'skills.core_skills_path',
-  'skills.injection_format',
-  'skills.hubs',
-] as const
+  "skills.inject_core_skills",
+  "skills.core_skills_path",
+  "skills.injection_format",
+  "skills.hubs",
+] as const;
 
-const OWNED_PATHS: readonly string[] = [...PROXY_PATHS, ...SKILLS_PATHS]
+const OWNED_PATHS: readonly string[] = [...PROXY_PATHS, ...SKILLS_PATHS];
 
 /** Hub `type` enum from `HubConfig`. Stable, so listed explicitly here. */
 const HUB_TYPE_OPTIONS = [
-  { value: 'clawdhub', label: 'ClawdHub' },
-  { value: 'skillsmp', label: 'SkillsMP' },
-  { value: 'github-collection', label: 'GitHub collection' },
-  { value: 'claude-plugins', label: 'Claude plugins' },
-]
+  { value: "clawdhub", label: "ClawdHub" },
+  { value: "skillsmp", label: "SkillsMP" },
+  { value: "github-collection", label: "GitHub collection" },
+  { value: "claude-plugins", label: "Claude plugins" },
+];
 
-const REQUIRED_HUB_KEY_ERROR = 'Hub key is required before saving'
+const REQUIRED_HUB_KEY_ERROR = "Hub key is required before saving";
 
 /**
  * One configured skill hub. `type` is required; the rest are optional and clear
  * back to `null` when emptied so the daemon falls back to its hub-type default.
  */
 interface HubConfig {
-  type: string
-  base_url?: string | null
-  repo?: string | null
-  branch?: string | null
-  path?: string | null
-  auth_key_name?: string | null
+  type: string;
+  base_url?: string | null;
+  repo?: string | null;
+  branch?: string | null;
+  path?: string | null;
+  auth_key_name?: string | null;
 }
 
 function McpProxyGroup({ fields }: { fields: SettingsSectionFields }) {
@@ -145,7 +145,7 @@ function McpProxyGroup({ fields }: { fields: SettingsSectionFields }) {
         ariaLabel="Tool refresh timeout"
       />
     </Subsection>
-  )
+  );
 }
 
 /** The typed editor for one `skills.hubs` entry (a `HubConfig` object). */
@@ -154,11 +154,11 @@ function HubEntryFields({
   hubKey,
   onChange,
 }: {
-  hub: HubConfig
-  hubKey: string
-  onChange: (next: HubConfig) => void
+  hub: HubConfig;
+  hubKey: string;
+  onChange: (next: HubConfig) => void;
 }) {
-  const name = hubKey || 'new hub'
+  const name = hubKey || "new hub";
   return (
     <div className="flex flex-col gap-2.5">
       <BoundedSelectField
@@ -203,22 +203,22 @@ function HubEntryFields({
         onChange={(value) => onChange({ ...hub, auth_key_name: value || null })}
       />
     </div>
-  )
+  );
 }
 
 /** Coerce the stored `skills.hubs` value into a `Record<string, HubConfig>`. */
 function asHubMap(value: unknown): Record<string, HubConfig> {
-  if (!value || typeof value !== 'object' || Array.isArray(value)) return {}
-  const out: Record<string, HubConfig> = {}
+  if (!value || typeof value !== "object" || Array.isArray(value)) return {};
+  const out: Record<string, HubConfig> = {};
   for (const [key, entry] of Object.entries(value as Record<string, unknown>)) {
-    if (entry && typeof entry === 'object' && !Array.isArray(entry)) {
-      const hub = entry as Record<string, unknown>
-      out[key] = { ...hub, type: asString(hub.type) } as HubConfig
+    if (entry && typeof entry === "object" && !Array.isArray(entry)) {
+      const hub = entry as Record<string, unknown>;
+      out[key] = { ...hub, type: asString(hub.type) } as HubConfig;
     } else {
-      out[key] = { type: '' }
+      out[key] = { type: "" };
     }
   }
-  return out
+  return out;
 }
 
 /**
@@ -232,57 +232,69 @@ function SkillHubsField({
   fields,
   onValidityChange,
 }: {
-  fields: SettingsSectionFields
-  onValidityChange: (isValid: boolean) => void
+  fields: SettingsSectionFields;
+  onValidityChange: (isValid: boolean) => void;
 }) {
-  const entries = decodeDynamicMapRows(asHubMap(fields.getValue('skills.hubs')))
-  const [keyError, setKeyError] = useState<string | null>(null)
-  const hasBlankKey = hasBlankDynamicMapKey(entries)
-  const visibleKeyError = !hasBlankKey && keyError === REQUIRED_HUB_KEY_ERROR
-    ? null
-    : keyError
+  const entries = decodeDynamicMapRows(
+    asHubMap(fields.getValue("skills.hubs")),
+  );
+  const [keyError, setKeyError] = useState<string | null>(null);
+  const hasBlankKey = hasBlankDynamicMapKey(entries);
+  const visibleKeyError =
+    !hasBlankKey && keyError === REQUIRED_HUB_KEY_ERROR ? null : keyError;
 
   useEffect(() => {
-    onValidityChange(!hasBlankKey)
-  }, [hasBlankKey, onValidityChange])
+    onValidityChange(!hasBlankKey);
+  }, [hasBlankKey, onValidityChange]);
 
   function commit(next: DynamicMapRow<HubConfig>[]) {
-    const nextHasBlankKey = hasBlankDynamicMapKey(next)
-    setKeyError(nextHasBlankKey ? REQUIRED_HUB_KEY_ERROR : null)
-    onValidityChange(!nextHasBlankKey)
-    fields.setValue('skills.hubs', encodeDynamicMapRows(next))
+    const nextHasBlankKey = hasBlankDynamicMapKey(next);
+    setKeyError(nextHasBlankKey ? REQUIRED_HUB_KEY_ERROR : null);
+    onValidityChange(!nextHasBlankKey);
+    fields.setValue("skills.hubs", encodeDynamicMapRows(next));
   }
 
   function updateKey(index: number, nextKey: string) {
     const isDuplicate =
-      nextKey !== '' &&
-      entries.some((entry, i) => i !== index && entry.displayKey === nextKey)
+      nextKey !== "" &&
+      entries.some((entry, i) => i !== index && entry.displayKey === nextKey);
     if (isDuplicate) {
-      setKeyError(`Hub key "${nextKey}" already exists`)
-      onValidityChange(!hasBlankDynamicMapKey(entries))
+      setKeyError(`Hub key "${nextKey}" already exists`);
+      onValidityChange(!hasBlankDynamicMapKey(entries));
       console.warn(
         `SkillHubsField: ignored rename to duplicate hub "${nextKey}" to avoid overwriting an existing entry`,
-      )
-      return
+      );
+      return;
     }
-    commit(entries.map((entry, i) => (i === index ? { ...entry, displayKey: nextKey } : entry)))
+    commit(
+      entries.map((entry, i) =>
+        i === index ? { ...entry, displayKey: nextKey } : entry,
+      ),
+    );
   }
 
   function updateHub(index: number, nextHub: HubConfig) {
-    commit(entries.map((entry, i) => (i === index ? { ...entry, value: nextHub } : entry)))
+    commit(
+      entries.map((entry, i) =>
+        i === index ? { ...entry, value: nextHub } : entry,
+      ),
+    );
   }
 
   function removeEntry(index: number) {
-    commit(entries.filter((_, i) => i !== index))
+    commit(entries.filter((_, i) => i !== index));
   }
 
   function addEntry() {
-    commit([...entries, { storedKey: '', displayKey: '', value: { type: 'clawdhub' } }])
+    commit([
+      ...entries,
+      { storedKey: "", displayKey: "", value: { type: "clawdhub" } },
+    ]);
   }
 
   return (
     <div className="flex flex-col gap-2" role="group">
-      <span className="text-base font-medium leading-[1.3] text-foreground">
+      <span className="text-base leading-[1.3] font-medium text-foreground">
         Skill hubs
       </span>
       <p className="max-w-[48ch] text-sm leading-[1.4] text-muted-foreground">
@@ -307,7 +319,7 @@ function SkillHubsField({
                 <Input
                   type="text"
                   wrapperClassName="flex-1"
-                  className="min-w-0 flex-[1_1_10rem] text-foreground [font-family:inherit] pointer-coarse:min-h-11"
+                  className="min-w-0 flex-[1_1_10rem] [font-family:inherit] text-foreground pointer-coarse:min-h-11"
                   value={entry.displayKey}
                   placeholder="hub-name"
                   aria-label={`Skill hub key ${index + 1}`}
@@ -341,24 +353,20 @@ function SkillHubsField({
         </p>
       )}
       <div className="flex flex-wrap gap-2">
-        <Button
-          type="button"
-          size="sm"
-          onClick={addEntry}
-        >
+        <Button type="button" size="sm" onClick={addEntry}>
           Add skill hub
         </Button>
       </div>
     </div>
-  )
+  );
 }
 
 function SkillsGroup({
   fields,
   onHubsValidityChange,
 }: {
-  fields: SettingsSectionFields
-  onHubsValidityChange: (isValid: boolean) => void
+  fields: SettingsSectionFields;
+  onHubsValidityChange: (isValid: boolean) => void;
 }) {
   return (
     <Subsection
@@ -387,11 +395,11 @@ function SkillsGroup({
       />
       <SkillHubsField fields={fields} onValidityChange={onHubsValidityChange} />
     </Subsection>
-  )
+  );
 }
 
 export function McpToolsSection() {
-  const [hubsValid, setHubsValid] = useState(true)
+  const [hubsValid, setHubsValid] = useState(true);
   return (
     <SettingsSection
       sectionId="mcp-tools"
@@ -405,5 +413,5 @@ export function McpToolsSection() {
         </>
       )}
     </SettingsSection>
-  )
+  );
 }

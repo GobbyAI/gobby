@@ -1,6 +1,10 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
 
-import type { Channel, ChannelStatus, ChannelType } from "../../../hooks/useIntegrations";
+import type {
+  Channel,
+  ChannelStatus,
+  ChannelType,
+} from "../../../hooks/useIntegrations";
 import { Button } from "../../ui/Button";
 import { Chip } from "../../ui/Chip";
 import { Input } from "../../ui/Input";
@@ -47,7 +51,8 @@ function statusLabel(status: ChannelStatus | null): string {
 
 function configValue(value: unknown): string {
   if (value === null || value === undefined) return "";
-  if (typeof value === "string" && value.startsWith("$secret:")) return "Configured";
+  if (typeof value === "string" && value.startsWith("$secret:"))
+    return "Configured";
   return String(value);
 }
 
@@ -69,7 +74,7 @@ function SecretField({
       <span className="text-xs font-medium text-muted-foreground">{label}</span>
       <Input
         type="password"
-        className="min-h-11 rounded-md border border-border bg-[var(--bg-secondary)] px-3 py-2 text-sm text-foreground transition-colors placeholder:text-muted-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent focus-visible:ring-offset-2 focus-visible:ring-offset-background"
+        className="min-h-11 rounded-md border border-border bg-[var(--bg-secondary)] px-3 py-2 text-sm text-foreground transition-colors placeholder:text-muted-foreground focus-visible:ring-2 focus-visible:ring-accent focus-visible:ring-offset-2 focus-visible:ring-offset-background focus-visible:outline-none"
         aria-label={label}
         name={`integration-secret-${name}`}
         value={value}
@@ -112,7 +117,12 @@ export function ChannelDetailPanel({
   onConfirmLeaveChange,
 }: ChannelDetailPanelProps) {
   const source = useMemo(
-    () => (mode === "create" ? createEmptyDraft() : channel ? draftFromChannel(channel) : null),
+    () =>
+      mode === "create"
+        ? createEmptyDraft()
+        : channel
+          ? draftFromChannel(channel)
+          : null,
     [channel, mode],
   );
   const [statusState, setStatusState] = useState<{
@@ -151,7 +161,8 @@ export function ChannelDetailPanel({
       return;
     }
     void fetchIntegrationStatus(channel.id).then((nextStatus) => {
-      if (!cancelled) setStatusState({ channelId: channel.id, status: nextStatus });
+      if (!cancelled)
+        setStatusState({ channelId: channel.id, status: nextStatus });
     });
     return () => {
       cancelled = true;
@@ -160,7 +171,9 @@ export function ChannelDetailPanel({
 
   const draft = draftState.draft;
   const status =
-    statusState && statusState.channelId === channel?.id ? statusState.status : null;
+    statusState && statusState.channelId === channel?.id
+      ? statusState.status
+      : null;
   if (!draft) {
     return (
       <ActivityPanelEmpty
@@ -255,15 +268,15 @@ export function ChannelDetailPanel({
                   />
                   {statusLabel(status)}
                 </div>
-                <Chip>
-                  {CHANNEL_DISPLAY_NAMES[draft.channel_type]}
-                </Chip>
+                <Chip>{CHANNEL_DISPLAY_NAMES[draft.channel_type]}</Chip>
               </div>
               {status && (
                 <div className="mt-3 grid grid-cols-1 gap-2 text-xs text-muted-foreground">
                   <div className="flex justify-between gap-3">
                     <span>Webhooks</span>
-                    <span>{status.supports_webhooks ? "Supported" : "Not supported"}</span>
+                    <span>
+                      {status.supports_webhooks ? "Supported" : "Not supported"}
+                    </span>
                   </div>
                   <div className="flex justify-between gap-3">
                     <span>Polling</span>
@@ -354,7 +367,9 @@ export function ChannelDetailPanel({
 
           {webhookUrl && (
             <div className="rounded-lg border border-border bg-[var(--bg-secondary)] p-3">
-              <div className="mb-2 text-xs font-medium text-muted-foreground">Webhook URL</div>
+              <div className="mb-2 text-xs font-medium text-muted-foreground">
+                Webhook URL
+              </div>
               <div className="flex min-w-0 items-center gap-2">
                 <code className="min-w-0 flex-1 truncate rounded bg-[var(--code-bg)] px-2 py-1 text-xs text-foreground">
                   {webhookUrl}
@@ -363,7 +378,7 @@ export function ChannelDetailPanel({
                   type="button"
                   variant="secondary"
                   size="sm"
-                  className={`min-h-8 rounded-md border border-border px-2 text-xs font-medium text-foreground hover:bg-muted focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent ${coarseHitAreaCls}`}
+                  className={`min-h-8 rounded-md border border-border px-2 text-xs font-medium text-foreground hover:bg-muted focus-visible:ring-2 focus-visible:ring-accent focus-visible:outline-none ${coarseHitAreaCls}`}
                   onClick={() => void copyWebhookUrl()}
                 >
                   {copied ? "Copied" : "Copy"}

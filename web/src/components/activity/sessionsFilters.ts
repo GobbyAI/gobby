@@ -14,12 +14,25 @@ export type DatePreset = "24h" | "7d" | "30d" | "all" | "custom";
 export type SessionStatus = "active" | "paused" | "expired";
 
 const ALL_MODES: readonly SessionMode[] = ["interactive", "auto"];
-const ALL_TASK_REF_ROLES: readonly TaskRefRole[] = ["claimed", "created", "closed"];
-const ALL_DATE_PRESETS: readonly DatePreset[] = ["24h", "7d", "30d", "all", "custom"];
+const ALL_TASK_REF_ROLES: readonly TaskRefRole[] = [
+  "claimed",
+  "created",
+  "closed",
+];
+const ALL_DATE_PRESETS: readonly DatePreset[] = [
+  "24h",
+  "7d",
+  "30d",
+  "all",
+  "custom",
+];
 const ALL_STATUSES: readonly SessionStatus[] = ["active", "paused", "expired"];
 
 /** Default Live set — the SegmentedControl's "Live" option resolves here. */
-export const DEFAULT_LIVE_STATUSES: readonly SessionStatus[] = ["active", "paused"];
+export const DEFAULT_LIVE_STATUSES: readonly SessionStatus[] = [
+  "active",
+  "paused",
+];
 
 export interface SessionsFilters {
   modes: Set<SessionMode>;
@@ -56,9 +69,11 @@ export function defaultSessionsFilters(): SessionsFilters {
 /** Number of filter sections that have a non-default value. Drives the badge on the funnel button. */
 export function countActiveFilters(filters: SessionsFilters): number {
   let count = 0;
-  if (filters.modes.size > 0 && filters.modes.size < ALL_MODES.length) count += 1;
+  if (filters.modes.size > 0 && filters.modes.size < ALL_MODES.length)
+    count += 1;
   if (filters.providers.size > 0) count += 1;
-  if (filters.sessionRefMin !== null || filters.sessionRefMax !== null) count += 1;
+  if (filters.sessionRefMin !== null || filters.sessionRefMax !== null)
+    count += 1;
   if (filters.taskRefMin !== null || filters.taskRefMax !== null) count += 1;
   if (filters.datePreset !== "all") count += 1;
   if (filters.blockedOnly) count += 1;
@@ -102,9 +117,15 @@ export function resolveDateRange(
     case "all":
       return { after: null, before: null };
     case "24h":
-      return { after: new Date(now.getTime() - 24 * 60 * 60 * 1000).toISOString(), before: null };
+      return {
+        after: new Date(now.getTime() - 24 * 60 * 60 * 1000).toISOString(),
+        before: null,
+      };
     case "7d":
-      return { after: new Date(now.getTime() - 7 * 24 * 60 * 60 * 1000).toISOString(), before: null };
+      return {
+        after: new Date(now.getTime() - 7 * 24 * 60 * 60 * 1000).toISOString(),
+        before: null,
+      };
     case "30d":
       return {
         after: new Date(now.getTime() - 30 * 24 * 60 * 60 * 1000).toISOString(),
@@ -156,7 +177,10 @@ export function matchesSessionsFilters(
     return false;
   }
 
-  if (filters.statuses.size > 0 && !filters.statuses.has(session.status as SessionStatus)) {
+  if (
+    filters.statuses.size > 0 &&
+    !filters.statuses.has(session.status as SessionStatus)
+  ) {
     return false;
   }
 
@@ -174,10 +198,12 @@ export function matchesSessionsFilters(
   }
 
   if (filters.sessionRefMin !== null) {
-    if (session.seq_num === null || session.seq_num < filters.sessionRefMin) return false;
+    if (session.seq_num === null || session.seq_num < filters.sessionRefMin)
+      return false;
   }
   if (filters.sessionRefMax !== null) {
-    if (session.seq_num === null || session.seq_num > filters.sessionRefMax) return false;
+    if (session.seq_num === null || session.seq_num > filters.sessionRefMax)
+      return false;
   }
 
   if (filters.taskRefMin !== null || filters.taskRefMax !== null) {
@@ -215,19 +241,27 @@ export function matchesSessionsFilters(
  * Build URLSearchParams matching the backend /api/sessions filter contract.
  * Empty Sets and null bounds drop out (the server treats absence as "no filter").
  */
-export function serializeSessionsFilters(filters: SessionsFilters, now: Date): URLSearchParams {
+export function serializeSessionsFilters(
+  filters: SessionsFilters,
+  now: Date,
+): URLSearchParams {
   const params = new URLSearchParams();
   if (filters.modes.size > 0 && filters.modes.size < ALL_MODES.length) {
     for (const mode of filters.modes) params.append("mode", mode);
   }
   for (const provider of filters.providers) params.append("sources", provider);
   for (const status of filters.statuses) params.append("status_in", status);
-  if (filters.sessionRefMin !== null) params.set("session_seq_min", String(filters.sessionRefMin));
-  if (filters.sessionRefMax !== null) params.set("session_seq_max", String(filters.sessionRefMax));
-  if (filters.taskRefMin !== null) params.set("task_ref_min", String(filters.taskRefMin));
-  if (filters.taskRefMax !== null) params.set("task_ref_max", String(filters.taskRefMax));
+  if (filters.sessionRefMin !== null)
+    params.set("session_seq_min", String(filters.sessionRefMin));
+  if (filters.sessionRefMax !== null)
+    params.set("session_seq_max", String(filters.sessionRefMax));
+  if (filters.taskRefMin !== null)
+    params.set("task_ref_min", String(filters.taskRefMin));
+  if (filters.taskRefMax !== null)
+    params.set("task_ref_max", String(filters.taskRefMax));
   if (filters.taskRefMin !== null || filters.taskRefMax !== null) {
-    for (const role of filters.taskRefRoles) params.append("task_ref_role", role);
+    for (const role of filters.taskRefRoles)
+      params.append("task_ref_role", role);
   }
   const { after, before } = resolveDateRange(filters, now);
   if (after) params.set("created_after", after);
@@ -251,7 +285,9 @@ interface StoredSessionsFilters {
 }
 
 /** Round-trip through arrays for JSON.stringify-friendly localStorage payloads. */
-export function serializeForStorage(filters: SessionsFilters): StoredSessionsFilters {
+export function serializeForStorage(
+  filters: SessionsFilters,
+): StoredSessionsFilters {
   return {
     modes: [...filters.modes],
     providers: [...filters.providers],
@@ -285,35 +321,51 @@ export function deserializeFromStorage(raw: string | null): SessionsFilters {
         : [],
     );
     const providers = new Set<string>(
-      Array.isArray(parsed.providers) ? parsed.providers.filter((p) => typeof p === "string") : [],
+      Array.isArray(parsed.providers)
+        ? parsed.providers.filter((p) => typeof p === "string")
+        : [],
     );
     const taskRefRoles = new Set<TaskRefRole>(
       Array.isArray(parsed.taskRefRoles)
-        ? parsed.taskRefRoles.filter((r): r is TaskRefRole => ALL_TASK_REF_ROLES.includes(r))
+        ? parsed.taskRefRoles.filter((r): r is TaskRefRole =>
+            ALL_TASK_REF_ROLES.includes(r),
+          )
         : base.taskRefRoles,
     );
-    const datePreset = ALL_DATE_PRESETS.includes(parsed.datePreset as DatePreset)
+    const datePreset = ALL_DATE_PRESETS.includes(
+      parsed.datePreset as DatePreset,
+    )
       ? (parsed.datePreset as DatePreset)
       : base.datePreset;
     // Missing or non-array statuses → fall back to default Live (mirrors today's
     // initial state). Unknown values are stripped silently.
     const statuses = new Set<SessionStatus>(
       Array.isArray(parsed.statuses)
-        ? parsed.statuses.filter((s): s is SessionStatus => ALL_STATUSES.includes(s))
+        ? parsed.statuses.filter((s): s is SessionStatus =>
+            ALL_STATUSES.includes(s),
+          )
         : base.statuses,
     );
 
     return {
       modes,
       providers,
-      sessionRefMin: typeof parsed.sessionRefMin === "number" ? parsed.sessionRefMin : null,
-      sessionRefMax: typeof parsed.sessionRefMax === "number" ? parsed.sessionRefMax : null,
-      taskRefMin: typeof parsed.taskRefMin === "number" ? parsed.taskRefMin : null,
-      taskRefMax: typeof parsed.taskRefMax === "number" ? parsed.taskRefMax : null,
+      sessionRefMin:
+        typeof parsed.sessionRefMin === "number" ? parsed.sessionRefMin : null,
+      sessionRefMax:
+        typeof parsed.sessionRefMax === "number" ? parsed.sessionRefMax : null,
+      taskRefMin:
+        typeof parsed.taskRefMin === "number" ? parsed.taskRefMin : null,
+      taskRefMax:
+        typeof parsed.taskRefMax === "number" ? parsed.taskRefMax : null,
       taskRefRoles,
       datePreset,
-      dateCustomFrom: isValidLocalDate(parsed.dateCustomFrom) ? parsed.dateCustomFrom : null,
-      dateCustomTo: isValidLocalDate(parsed.dateCustomTo) ? parsed.dateCustomTo : null,
+      dateCustomFrom: isValidLocalDate(parsed.dateCustomFrom)
+        ? parsed.dateCustomFrom
+        : null,
+      dateCustomTo: isValidLocalDate(parsed.dateCustomTo)
+        ? parsed.dateCustomTo
+        : null,
       statuses,
       blockedOnly: parsed.blockedOnly === true,
     };

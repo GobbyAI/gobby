@@ -1,7 +1,10 @@
 import { useResolvedTheme } from "../../../hooks/useResolvedTheme";
 import { FormField } from "../../ui/FormField";
 import { Input } from "../../ui/Input";
-import { localInputValueToUtcIso, utcIsoToLocalInputValue } from "./dateTimeConversion";
+import {
+  localInputValueToUtcIso,
+  utcIsoToLocalInputValue,
+} from "./dateTimeConversion";
 import type { DraftFieldBaseProps } from "./types";
 
 interface DateTimeFieldProps extends DraftFieldBaseProps {
@@ -31,7 +34,9 @@ export function DateTimeField({
           placeholder={placeholder}
           step={60}
           style={{ colorScheme: resolvedTheme }}
-          onChange={(event) => onChange(localInputValueToUtcIso(event.target.value, value))}
+          onChange={(event) =>
+            onChange(localInputValueToUtcIso(event.target.value, value))
+          }
         />
       )}
     </FormField>

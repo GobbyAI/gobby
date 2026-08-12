@@ -14,7 +14,9 @@ describe("useDaemonRestart", () => {
   });
 
   it("uses Error.message directly for restart failures", async () => {
-    const consoleError = vi.spyOn(console, "error").mockImplementation(() => {});
+    const consoleError = vi
+      .spyOn(console, "error")
+      .mockImplementation(() => {});
     vi.mocked(requestDaemonRestart).mockRejectedValue(new Error(""));
     try {
       const { result } = renderHook(() => useDaemonRestart());
@@ -30,7 +32,9 @@ describe("useDaemonRestart", () => {
   });
 
   it("preserves thrown string restart failures", async () => {
-    const consoleError = vi.spyOn(console, "error").mockImplementation(() => {});
+    const consoleError = vi
+      .spyOn(console, "error")
+      .mockImplementation(() => {});
     vi.mocked(requestDaemonRestart).mockRejectedValue("daemon busy");
     try {
       const { result } = renderHook(() => useDaemonRestart());
@@ -46,7 +50,9 @@ describe("useDaemonRestart", () => {
   });
 
   it("uses a fallback message for undefined restart failures", async () => {
-    const consoleError = vi.spyOn(console, "error").mockImplementation(() => {});
+    const consoleError = vi
+      .spyOn(console, "error")
+      .mockImplementation(() => {});
     vi.mocked(requestDaemonRestart).mockRejectedValue(undefined);
     try {
       const { result } = renderHook(() => useDaemonRestart());

@@ -60,7 +60,9 @@ function isNullableString(value: unknown): value is string | null {
 }
 
 function isStringArray(value: unknown): value is string[] {
-  return Array.isArray(value) && value.every((item) => typeof item === "string");
+  return (
+    Array.isArray(value) && value.every((item) => typeof item === "string")
+  );
 }
 
 function isProviderModelRoutes(value: unknown): value is ProviderModelRoutes {
@@ -98,7 +100,8 @@ function isProviderModelRefresh(value: unknown): value is ProviderModelRefresh {
       isRecord(source) &&
       typeof source.source_key === "string" &&
       ["pending", "ok", "stale", "error"].includes(source.state as string) &&
-      (source.source_url === undefined || isNullableString(source.source_url)) &&
+      (source.source_url === undefined ||
+        isNullableString(source.source_url)) &&
       (source.required === undefined || typeof source.required === "boolean") &&
       (source.attempts === undefined || Number.isInteger(source.attempts)) &&
       (source.last_attempt_at === undefined ||
@@ -171,7 +174,8 @@ function isProviderMatrixModel(value: unknown): value is ProviderMatrixModel {
     (value.reasoning.supported_efforts === null ||
       isStringArray(value.reasoning.supported_efforts)) &&
     isNullableString(value.reasoning.default_effort) &&
-    (value.input_modalities === null || isStringArray(value.input_modalities)) &&
+    (value.input_modalities === null ||
+      isStringArray(value.input_modalities)) &&
     (value.supports_tools === null ||
       typeof value.supports_tools === "boolean") &&
     isProviderModelRoutes(value.routes) &&
@@ -179,9 +183,7 @@ function isProviderMatrixModel(value: unknown): value is ProviderMatrixModel {
   );
 }
 
-function isProviderModelOption(
-  value: unknown,
-): value is ProviderModelPayload {
+function isProviderModelOption(value: unknown): value is ProviderModelPayload {
   return isLegacyProviderModelOption(value) || isProviderMatrixModel(value);
 }
 
@@ -201,7 +203,8 @@ export function isProviderModelEntry(
       ["static", "live", "cache", "config", "failed", "unsupported"].includes(
         value.source as string,
       )) &&
-    (value.display_name === undefined || typeof value.display_name === "string") &&
+    (value.display_name === undefined ||
+      typeof value.display_name === "string") &&
     (value.provider_type === undefined ||
       typeof value.provider_type === "string") &&
     (value.installed === undefined || typeof value.installed === "boolean") &&

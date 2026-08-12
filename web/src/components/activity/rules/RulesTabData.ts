@@ -1,10 +1,15 @@
 import { useMemo, useState } from "react";
 import * as yaml from "js-yaml";
 
-import { useRules, type RuleDetail, type RuleSummary } from "../../../hooks/useRules";
+import {
+  useRules,
+  type RuleDetail,
+  type RuleSummary,
+} from "../../../hooks/useRules";
 
 export type RuleStatusSegment = "enabled" | "disabled";
-export type RuleSourceFilter = "all" | "project" | "installed" | "template" | "gobby";
+export type RuleSourceFilter =
+  "all" | "project" | "installed" | "template" | "gobby";
 
 export interface RulesFilters {
   event: string;
@@ -41,7 +46,10 @@ export const RULE_STATUS_OPTIONS = [
   { value: "disabled", label: "Disabled" },
 ] as const;
 
-export const RULE_SOURCE_OPTIONS: Array<{ value: RuleSourceFilter; label: string }> = [
+export const RULE_SOURCE_OPTIONS: Array<{
+  value: RuleSourceFilter;
+  label: string;
+}> = [
   { value: "all", label: "All sources" },
   { value: "project", label: "Project" },
   { value: "installed", label: "Installed" },
@@ -97,7 +105,9 @@ export function nextCopyName(name: string, existing: Iterable<string>): string {
   return candidate;
 }
 
-export function ruleEffects(rule: RuleSummary | RuleDetail): Array<Record<string, unknown>> | null {
+export function ruleEffects(
+  rule: RuleSummary | RuleDetail,
+): Array<Record<string, unknown>> | null {
   if (Array.isArray(rule.effects)) return rule.effects;
   if (rule.effect) return [rule.effect];
   return null;
@@ -105,7 +115,11 @@ export function ruleEffects(rule: RuleSummary | RuleDetail): Array<Record<string
 
 export function isBundledRule(rule: RuleSummary | RuleDetail | null): boolean {
   if (!rule) return false;
-  return rule.source === "template" || rule.source === "gobby" || Boolean(rule.tags?.includes("gobby"));
+  return (
+    rule.source === "template" ||
+    rule.source === "gobby" ||
+    Boolean(rule.tags?.includes("gobby"))
+  );
 }
 
 export function detailToDraft(detail: RuleDetail): RuleDraft {
@@ -194,7 +208,10 @@ function optionalStringArray(
 ): string[] {
   const value = source[key];
   if (value === undefined || value === null) return fallback;
-  if (!Array.isArray(value) || !value.every((entry) => typeof entry === "string")) {
+  if (
+    !Array.isArray(value) ||
+    !value.every((entry) => typeof entry === "string")
+  ) {
     throw new Error(`"${key}" must be a string array`);
   }
   return value;
@@ -241,16 +258,20 @@ function optionalEffects(
   source: Record<string, unknown>,
   fallback: Array<Record<string, unknown>> | null,
 ): Array<Record<string, unknown>> | null {
-  if (source.effects === undefined && source.effect === undefined) return fallback;
+  if (source.effects === undefined && source.effect === undefined)
+    return fallback;
   if (Array.isArray(source.effects)) {
-    if (!source.effects.every(isRecord)) throw new Error('"effects" must contain objects');
+    if (!source.effects.every(isRecord))
+      throw new Error('"effects" must contain objects');
     return source.effects;
   }
   if (isRecord(source.effect)) return [source.effect];
   throw new Error('"effects" must be an array of objects');
 }
 
-function extraDefinitionFields(source: Record<string, unknown>): Record<string, unknown> {
+function extraDefinitionFields(
+  source: Record<string, unknown>,
+): Record<string, unknown> {
   const extra: Record<string, unknown> = {};
   for (const [key, value] of Object.entries(source)) {
     if (!RULE_DRAFT_KEYS.has(key)) extra[key] = value;
@@ -280,7 +301,11 @@ export function yamlToDraft(content: string, fallback: RuleDraft): RuleDraft {
     priority: optionalNumber(parsed, "priority", fallback.priority),
     tags: optionalStringArray(parsed, "tags", fallback.tags),
     audience: optionalString(parsed, "audience", fallback.audience),
-    agent_scope: optionalStringArray(parsed, "agent_scope", fallback.agent_scope),
+    agent_scope: optionalStringArray(
+      parsed,
+      "agent_scope",
+      fallback.agent_scope,
+    ),
     enabled: optionalBoolean(parsed, "enabled", fallback.enabled),
     when: optionalString(parsed, "when", fallback.when ?? "") || null,
     match: optionalRecord(parsed, "match", fallback.match),
@@ -304,13 +329,16 @@ function matchesSearch(rule: RuleSummary, query: string): boolean {
     rule.group ?? "",
     rule.source,
     ...(rule.tags ?? []),
-  ].join(" ").toLowerCase();
+  ]
+    .join(" ")
+    .toLowerCase();
   return haystack.includes(query);
 }
 
 export function useRulesTabData() {
   const rulesApi = useRules();
-  const [statusSegment, setStatusSegment] = useState<RuleStatusSegment>("enabled");
+  const [statusSegment, setStatusSegment] =
+    useState<RuleStatusSegment>("enabled");
   const [search, setSearch] = useState("");
   const [filters, setFilters] = useState<RulesFilters>(DEFAULT_RULE_FILTERS);
 
@@ -321,7 +349,8 @@ export function useRulesTabData() {
       if (!matchesSearch(rule, normalizedSearch)) return false;
       if (filters.event && rule.event !== filters.event) return false;
       if (filters.group && rule.group !== filters.group) return false;
-      if (filters.source !== "all" && rule.source !== filters.source) return false;
+      if (filters.source !== "all" && rule.source !== filters.source)
+        return false;
       if (filters.tag && !rule.tags?.includes(filters.tag)) return false;
       return true;
     });

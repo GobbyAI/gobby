@@ -1,5 +1,5 @@
 interface MutedIconProps {
-  muted?: boolean
+  muted?: boolean;
 }
 
 export function SendIcon() {
@@ -17,7 +17,7 @@ export function SendIcon() {
       <line x1="22" y1="2" x2="11" y2="13" />
       <polygon points="22 2 15 22 11 13 2 9 22 2" />
     </svg>
-  )
+  );
 }
 
 export function StopIcon() {
@@ -25,7 +25,7 @@ export function StopIcon() {
     <svg width="16" height="16" viewBox="0 0 16 16" fill="currentColor">
       <rect x="3" y="3" width="10" height="10" rx="1" />
     </svg>
-  )
+  );
 }
 
 export function RecordIcon() {
@@ -42,7 +42,7 @@ export function RecordIcon() {
       <circle cx="12" cy="12" r="8" opacity="0.35" />
       <circle cx="12" cy="12" r="5" fill="currentColor" stroke="none" />
     </svg>
-  )
+  );
 }
 
 export function MicIcon({ muted = false }: MutedIconProps = {}) {
@@ -63,7 +63,7 @@ export function MicIcon({ muted = false }: MutedIconProps = {}) {
       <line x1="8" y1="23" x2="16" y2="23" />
       {muted && <line x1="3" y1="3" x2="21" y2="21" />}
     </svg>
-  )
+  );
 }
 
 export function PaperclipIcon() {
@@ -80,7 +80,7 @@ export function PaperclipIcon() {
     >
       <path d="M21.44 11.05l-9.19 9.19a6 6 0 0 1-8.49-8.49l9.19-9.19a4 4 0 0 1 5.66 5.66l-9.2 9.19a2 2 0 0 1-2.83-2.83l8.49-8.48" />
     </svg>
-  )
+  );
 }
 
 export function SpeakerIcon({ muted = false }: MutedIconProps) {
@@ -109,7 +109,7 @@ export function SpeakerIcon({ muted = false }: MutedIconProps) {
         </>
       )}
     </svg>
-  )
+  );
 }
 
 export function BrainIcon() {
@@ -132,5 +132,5 @@ export function BrainIcon() {
       <path d="M9 12h6" />
       <path d="M12 13v5" />
     </svg>
-  )
+  );
 }

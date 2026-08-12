@@ -55,10 +55,11 @@ export interface ActivityActionsContextValue {
   register: (actions: ActivityPanelActions | null) => void;
 }
 
-export const ActivityActionsContext = createContext<ActivityActionsContextValue>({
-  actions: null,
-  register: () => {},
-});
+export const ActivityActionsContext =
+  createContext<ActivityActionsContextValue>({
+    actions: null,
+    register: () => {},
+  });
 
 export function useActivityActions(): ActivityPanelActions | null {
   return useContext(ActivityActionsContext).actions;

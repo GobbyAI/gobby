@@ -54,7 +54,10 @@ export function RulesTabList({
           <div
             key={rule.id || rule.name}
             role="listitem"
-            className={cn("activity-list-row", isSelected && "activity-list-row--selected")}
+            className={cn(
+              "activity-list-row",
+              isSelected && "activity-list-row--selected",
+            )}
           >
             <Button
               type="button"
@@ -68,8 +71,16 @@ export function RulesTabList({
                 label={rule.enabled ? "Rule enabled" : "Rule disabled"}
               />
               <span className="activity-row-title">{rule.name}</span>
-              {rule.event && <Chip className="inline-block min-w-0 max-w-40 overflow-hidden text-ellipsis leading-5">{rule.event}</Chip>}
-              {rule.group && <Chip className="inline-block min-w-0 max-w-28 overflow-hidden text-ellipsis leading-5">{rule.group}</Chip>}
+              {rule.event && (
+                <Chip className="inline-block max-w-40 min-w-0 overflow-hidden leading-5 text-ellipsis">
+                  {rule.event}
+                </Chip>
+              )}
+              {rule.group && (
+                <Chip className="inline-block max-w-28 min-w-0 overflow-hidden leading-5 text-ellipsis">
+                  {rule.group}
+                </Chip>
+              )}
             </Button>
             <QuickMenu
               items={menuItems}

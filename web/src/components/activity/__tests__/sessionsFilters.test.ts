@@ -151,7 +151,11 @@ describe("serializeSessionsFilters", () => {
     f.taskRefMin = 1;
     f.taskRefRoles = new Set(["claimed", "created", "closed"]);
     const params = serializeSessionsFilters(f, NOW);
-    expect(params.getAll("task_ref_role").sort()).toEqual(["claimed", "closed", "created"]);
+    expect(params.getAll("task_ref_role").sort()).toEqual([
+      "claimed",
+      "closed",
+      "created",
+    ]);
   });
 
   it("resolves the 7d preset to created_after", () => {
@@ -176,7 +180,11 @@ describe("serializeSessionsFilters", () => {
     const f = defaultSessionsFilters();
     f.statuses = new Set(["active", "paused", "expired"]);
     const params = serializeSessionsFilters(f, NOW);
-    expect(params.getAll("status_in").sort()).toEqual(["active", "expired", "paused"]);
+    expect(params.getAll("status_in").sort()).toEqual([
+      "active",
+      "expired",
+      "paused",
+    ]);
   });
 
   it("omits status_in when statuses set is empty", () => {
@@ -192,10 +200,14 @@ describe("serializeSessionsFilters", () => {
     f.dateCustomFrom = "2026-04-01";
     f.dateCustomTo = "2026-04-15";
     const params = serializeSessionsFilters(f, NOW);
-    expect(params.get("created_after")).toBe(new Date(2026, 3, 1).toISOString());
+    expect(params.get("created_after")).toBe(
+      new Date(2026, 3, 1).toISOString(),
+    );
     // The bound is bumped a day so end-of-day stays inclusive when paired
     // with the backend's exclusive-before predicate.
-    expect(params.get("created_before")).toBe(new Date(2026, 3, 16).toISOString());
+    expect(params.get("created_before")).toBe(
+      new Date(2026, 3, 16).toISOString(),
+    );
   });
 });
 
@@ -225,10 +237,18 @@ describe("resolveDateRange", () => {
       before: "2026-03-09T05:00:00.000Z",
     });
     expect(
-      matchesSessionsFilters(makeSession({ created_at: "2026-03-09T04:59:59.999Z" }), f, NOW),
+      matchesSessionsFilters(
+        makeSession({ created_at: "2026-03-09T04:59:59.999Z" }),
+        f,
+        NOW,
+      ),
     ).toBe(true);
     expect(
-      matchesSessionsFilters(makeSession({ created_at: "2026-03-09T05:00:00.000Z" }), f, NOW),
+      matchesSessionsFilters(
+        makeSession({ created_at: "2026-03-09T05:00:00.000Z" }),
+        f,
+        NOW,
+      ),
     ).toBe(false);
   });
 
@@ -244,31 +264,49 @@ describe("resolveDateRange", () => {
 
 describe("matchesSessionsFilters", () => {
   it("default filters match every session", () => {
-    expect(matchesSessionsFilters(makeSession(), defaultSessionsFilters(), NOW)).toBe(true);
+    expect(
+      matchesSessionsFilters(makeSession(), defaultSessionsFilters(), NOW),
+    ).toBe(true);
   });
 
   it("mode interactive narrows to agent_depth 0", () => {
     const f = defaultSessionsFilters();
     f.modes.add("interactive");
-    expect(matchesSessionsFilters(makeSession({ agent_depth: 0 }), f, NOW)).toBe(true);
-    expect(matchesSessionsFilters(makeSession({ agent_depth: 2 }), f, NOW)).toBe(false);
+    expect(
+      matchesSessionsFilters(makeSession({ agent_depth: 0 }), f, NOW),
+    ).toBe(true);
+    expect(
+      matchesSessionsFilters(makeSession({ agent_depth: 2 }), f, NOW),
+    ).toBe(false);
   });
 
   it("provider narrows to matching source", () => {
     const f = defaultSessionsFilters();
     f.providers.add("codex");
-    expect(matchesSessionsFilters(makeSession({ source: "codex" }), f, NOW)).toBe(true);
-    expect(matchesSessionsFilters(makeSession({ source: "claude" }), f, NOW)).toBe(false);
+    expect(
+      matchesSessionsFilters(makeSession({ source: "codex" }), f, NOW),
+    ).toBe(true);
+    expect(
+      matchesSessionsFilters(makeSession({ source: "claude" }), f, NOW),
+    ).toBe(false);
   });
 
   it("session ref range filters by seq_num", () => {
     const f = defaultSessionsFilters();
     f.sessionRefMin = 100;
     f.sessionRefMax = 200;
-    expect(matchesSessionsFilters(makeSession({ seq_num: 150 }), f, NOW)).toBe(true);
-    expect(matchesSessionsFilters(makeSession({ seq_num: 50 }), f, NOW)).toBe(false);
-    expect(matchesSessionsFilters(makeSession({ seq_num: 250 }), f, NOW)).toBe(false);
-    expect(matchesSessionsFilters(makeSession({ seq_num: null }), f, NOW)).toBe(false);
+    expect(matchesSessionsFilters(makeSession({ seq_num: 150 }), f, NOW)).toBe(
+      true,
+    );
+    expect(matchesSessionsFilters(makeSession({ seq_num: 50 }), f, NOW)).toBe(
+      false,
+    );
+    expect(matchesSessionsFilters(makeSession({ seq_num: 250 }), f, NOW)).toBe(
+      false,
+    );
+    expect(matchesSessionsFilters(makeSession({ seq_num: null }), f, NOW)).toBe(
+      false,
+    );
   });
 
   it("task ref range matches when any selected role overlaps", () => {
@@ -278,17 +316,29 @@ describe("matchesSessionsFilters", () => {
     f.taskRefRoles = new Set(["claimed", "created"]);
 
     expect(
-      matchesSessionsFilters(makeSession({ claimed_task_refs: [1500] }), f, NOW),
+      matchesSessionsFilters(
+        makeSession({ claimed_task_refs: [1500] }),
+        f,
+        NOW,
+      ),
     ).toBe(true);
     expect(
-      matchesSessionsFilters(makeSession({ created_task_refs: [1500] }), f, NOW),
+      matchesSessionsFilters(
+        makeSession({ created_task_refs: [1500] }),
+        f,
+        NOW,
+      ),
     ).toBe(true);
     // closed is not in selected roles → match fails
     expect(
       matchesSessionsFilters(makeSession({ closed_task_refs: [1500] }), f, NOW),
     ).toBe(false);
     expect(
-      matchesSessionsFilters(makeSession({ claimed_task_refs: [3000] }), f, NOW),
+      matchesSessionsFilters(
+        makeSession({ claimed_task_refs: [3000] }),
+        f,
+        NOW,
+      ),
     ).toBe(false);
     // No task refs at all
     expect(matchesSessionsFilters(makeSession(), f, NOW)).toBe(false);
@@ -300,43 +350,75 @@ describe("matchesSessionsFilters", () => {
     f.taskRefMax = 2000;
 
     expect(
-      matchesSessionsFilters(makeSession({ claimed_task_refs: [1500] }), f, NOW),
+      matchesSessionsFilters(
+        makeSession({ claimed_task_refs: [1500] }),
+        f,
+        NOW,
+      ),
     ).toBe(true);
     expect(
-      matchesSessionsFilters(makeSession({ created_task_refs: [1500] }), f, NOW),
+      matchesSessionsFilters(
+        makeSession({ created_task_refs: [1500] }),
+        f,
+        NOW,
+      ),
     ).toBe(false);
   });
 
   it("status filter narrows to selected statuses", () => {
     const f = defaultSessionsFilters();
     f.statuses = new Set(["expired"]);
-    expect(matchesSessionsFilters(makeSession({ status: "expired" }), f, NOW)).toBe(true);
-    expect(matchesSessionsFilters(makeSession({ status: "active" }), f, NOW)).toBe(false);
-    expect(matchesSessionsFilters(makeSession({ status: "paused" }), f, NOW)).toBe(false);
+    expect(
+      matchesSessionsFilters(makeSession({ status: "expired" }), f, NOW),
+    ).toBe(true);
+    expect(
+      matchesSessionsFilters(makeSession({ status: "active" }), f, NOW),
+    ).toBe(false);
+    expect(
+      matchesSessionsFilters(makeSession({ status: "paused" }), f, NOW),
+    ).toBe(false);
   });
 
   it("default Live status filter excludes expired sessions", () => {
     const f = defaultSessionsFilters();
-    expect(matchesSessionsFilters(makeSession({ status: "active" }), f, NOW)).toBe(true);
-    expect(matchesSessionsFilters(makeSession({ status: "paused" }), f, NOW)).toBe(true);
-    expect(matchesSessionsFilters(makeSession({ status: "expired" }), f, NOW)).toBe(false);
+    expect(
+      matchesSessionsFilters(makeSession({ status: "active" }), f, NOW),
+    ).toBe(true);
+    expect(
+      matchesSessionsFilters(makeSession({ status: "paused" }), f, NOW),
+    ).toBe(true);
+    expect(
+      matchesSessionsFilters(makeSession({ status: "expired" }), f, NOW),
+    ).toBe(false);
   });
 
   it("empty statuses set acts as no filter", () => {
     const f = defaultSessionsFilters();
     f.statuses = new Set();
-    expect(matchesSessionsFilters(makeSession({ status: "active" }), f, NOW)).toBe(true);
-    expect(matchesSessionsFilters(makeSession({ status: "expired" }), f, NOW)).toBe(true);
+    expect(
+      matchesSessionsFilters(makeSession({ status: "active" }), f, NOW),
+    ).toBe(true);
+    expect(
+      matchesSessionsFilters(makeSession({ status: "expired" }), f, NOW),
+    ).toBe(true);
   });
 
   it("date preset 24h excludes older sessions", () => {
     const f = defaultSessionsFilters();
     f.datePreset = "24h";
     expect(
-      matchesSessionsFilters(makeSession({ created_at: NOW.toISOString() }), f, NOW),
+      matchesSessionsFilters(
+        makeSession({ created_at: NOW.toISOString() }),
+        f,
+        NOW,
+      ),
     ).toBe(true);
     expect(
-      matchesSessionsFilters(makeSession({ created_at: "2026-04-01T00:00:00.000Z" }), f, NOW),
+      matchesSessionsFilters(
+        makeSession({ created_at: "2026-04-01T00:00:00.000Z" }),
+        f,
+        NOW,
+      ),
     ).toBe(false);
   });
 });
@@ -383,7 +465,9 @@ describe("storage round-trip", () => {
     expect(restored.datePreset).toBe("custom");
     expect(restored.dateCustomFrom).toBeNull();
     expect(restored.dateCustomTo).toBeNull();
-    expect(() => matchesSessionsFilters(makeSession(), restored, NOW)).not.toThrow();
+    expect(() =>
+      matchesSessionsFilters(makeSession(), restored, NOW),
+    ).not.toThrow();
   });
 
   it("strips unknown enum values gracefully", () => {

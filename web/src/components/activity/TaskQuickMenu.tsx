@@ -1,5 +1,8 @@
 import type { BuildState, GobbyTask } from "../../types/tasks";
-import { getCanonicalTaskState, getTaskDisplayState } from "../../lib/taskState";
+import {
+  getCanonicalTaskState,
+  getTaskDisplayState,
+} from "../../lib/taskState";
 import { QuickMenu, type QuickMenuItem } from "./QuickMenu";
 
 export type TaskMenuAction =
@@ -80,10 +83,18 @@ export function TaskQuickMenu({
       );
     }
     if (showStopBuild) {
-      items.push({ label: "Stop Build", onSelect: onStopBuild, disabled: busy });
+      items.push({
+        label: "Stop Build",
+        onSelect: onStopBuild,
+        disabled: busy,
+      });
     }
     if (showResumeBuild) {
-      items.push({ label: "Resume Build", onSelect: onResumeBuild, disabled: busy });
+      items.push({
+        label: "Resume Build",
+        onSelect: onResumeBuild,
+        disabled: busy,
+      });
     }
   }
 

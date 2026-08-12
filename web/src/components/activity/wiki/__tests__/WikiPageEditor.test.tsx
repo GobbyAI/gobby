@@ -32,7 +32,10 @@ import {
 const confirmMock = vi.hoisted(() => vi.fn(async (_opts: unknown) => true));
 
 vi.mock("../../../../hooks/useConfirmDialog", () => ({
-  useConfirmDialog: () => ({ confirm: confirmMock, ConfirmDialogElement: null }),
+  useConfirmDialog: () => ({
+    confirm: confirmMock,
+    ConfirmDialogElement: null,
+  }),
 }));
 
 vi.mock("../../../shared/CodeMirrorEditor", () => ({
@@ -80,7 +83,10 @@ class MockIntersectionObserver {
 }
 
 vi.mock("mermaid", () => ({
-  default: { initialize: vi.fn(), render: vi.fn(async () => ({ svg: "<svg />" })) },
+  default: {
+    initialize: vi.fn(),
+    render: vi.fn(async () => ({ svg: "<svg />" })),
+  },
 }));
 
 vi.mock("react-syntax-highlighter", () => ({
@@ -136,40 +142,58 @@ function stubWikiFetch(
   const readByPath: Record<string, () => Response> = {};
   const writes: Array<Record<string, unknown>> = [];
   const deletes: Array<Record<string, unknown>> = [];
-  const fetchMock = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
-    const url = new URL(String(input), "http://localhost");
-    const route = url.pathname;
-    if (route.includes("/api/wiki/status")) return jsonResponse(statusEnvelope);
-    if (route.includes("/api/wiki/health")) return jsonResponse(healthEnvelope);
-    if (route.includes("/api/wiki/sources")) return jsonResponse(sourcesEnvelope);
-    if (route.includes("/api/wiki/pages")) return jsonResponse(pagesEnvelope);
-    if (route.includes("/api/wiki/graph")) return jsonResponse(browseGraphEnvelope);
-    if (route.includes("/api/wiki/backlinks")) return jsonResponse(backlinksEnvelope);
-    if (route.includes("/api/wiki/write")) {
-      const body = JSON.parse(String(init?.body ?? "{}")) as Record<string, unknown>;
-      writes.push(body);
-      return options.write?.(body, writes.length - 1) ?? jsonResponse(writeSuccessEnvelope);
-    }
-    if (route.includes("/api/wiki/delete")) {
-      const body = JSON.parse(String(init?.body ?? "{}")) as Record<string, unknown>;
-      deletes.push(body);
-      return jsonResponse({
-        ok: true,
-        command: "page-delete",
-        stderr: "",
-        payload: { path: body.path, deleted: true },
-      });
-    }
-    if (route.includes("/api/wiki/read")) {
-      const path = url.searchParams.get("path") ?? "";
-      const override = readByPath[path];
-      if (override) return override();
-      if (path === "knowledge/concepts/gwiki.md") return jsonResponse(browseReadGwikiEnvelope);
-      if (path === "code/_architecture.md") return jsonResponse(browseReadCodeEnvelope);
-      return jsonResponse(browseReadGobbyEnvelope);
-    }
-    return jsonResponse({ ok: true, payload: {} });
-  });
+  const fetchMock = vi.fn(
+    async (input: RequestInfo | URL, init?: RequestInit) => {
+      const url = new URL(String(input), "http://localhost");
+      const route = url.pathname;
+      if (route.includes("/api/wiki/status"))
+        return jsonResponse(statusEnvelope);
+      if (route.includes("/api/wiki/health"))
+        return jsonResponse(healthEnvelope);
+      if (route.includes("/api/wiki/sources"))
+        return jsonResponse(sourcesEnvelope);
+      if (route.includes("/api/wiki/pages")) return jsonResponse(pagesEnvelope);
+      if (route.includes("/api/wiki/graph"))
+        return jsonResponse(browseGraphEnvelope);
+      if (route.includes("/api/wiki/backlinks"))
+        return jsonResponse(backlinksEnvelope);
+      if (route.includes("/api/wiki/write")) {
+        const body = JSON.parse(String(init?.body ?? "{}")) as Record<
+          string,
+          unknown
+        >;
+        writes.push(body);
+        return (
+          options.write?.(body, writes.length - 1) ??
+          jsonResponse(writeSuccessEnvelope)
+        );
+      }
+      if (route.includes("/api/wiki/delete")) {
+        const body = JSON.parse(String(init?.body ?? "{}")) as Record<
+          string,
+          unknown
+        >;
+        deletes.push(body);
+        return jsonResponse({
+          ok: true,
+          command: "page-delete",
+          stderr: "",
+          payload: { path: body.path, deleted: true },
+        });
+      }
+      if (route.includes("/api/wiki/read")) {
+        const path = url.searchParams.get("path") ?? "";
+        const override = readByPath[path];
+        if (override) return override();
+        if (path === "knowledge/concepts/gwiki.md")
+          return jsonResponse(browseReadGwikiEnvelope);
+        if (path === "code/_architecture.md")
+          return jsonResponse(browseReadCodeEnvelope);
+        return jsonResponse(browseReadGobbyEnvelope);
+      }
+      return jsonResponse({ ok: true, payload: {} });
+    },
+  );
   vi.stubGlobal("fetch", fetchMock);
   return { fetchMock, readByPath, writes, deletes };
 }
@@ -178,11 +202,15 @@ function readRequests(fetchMock: ReturnType<typeof vi.fn>): string[] {
   return fetchMock.mock.calls
     .map((call) => String(call[0]))
     .filter((url) => url.includes("/api/wiki/read"))
-    .map((url) => new URL(url, "http://localhost").searchParams.get("path") ?? "");
+    .map(
+      (url) => new URL(url, "http://localhost").searchParams.get("path") ?? "",
+    );
 }
 
 function pagesRequestCount(fetchMock: ReturnType<typeof vi.fn>): number {
-  return fetchMock.mock.calls.filter((call) => String(call[0]).includes("/api/wiki/pages")).length;
+  return fetchMock.mock.calls.filter((call) =>
+    String(call[0]).includes("/api/wiki/pages"),
+  ).length;
 }
 
 function WikiHarness() {
@@ -201,8 +229,12 @@ function renderWiki() {
 async function openGobbyPage(user: ReturnType<typeof userEvent.setup>) {
   const tree = await screen.findByRole("tree", { name: /wiki pages/i });
   await user.click(within(tree).getByRole("treeitem", { name: /knowledge/i }));
-  await user.click(await within(tree).findByRole("treeitem", { name: /concepts/i }));
-  await user.click(await within(tree).findByRole("treeitem", { name: "Gobby" }));
+  await user.click(
+    await within(tree).findByRole("treeitem", { name: /concepts/i }),
+  );
+  await user.click(
+    await within(tree).findByRole("treeitem", { name: "Gobby" }),
+  );
   await screen.findByRole("heading", { name: "Gobby", level: 1 });
   return tree;
 }
@@ -260,10 +292,14 @@ describe("WikiPageEditor edit toggle (3.2.1)", () => {
 
     // Save awaits the reindex-backed write, exits edit mode, and refetches.
     await waitFor(() =>
-      expect(screen.queryByRole("textbox", { name: "Page editor" })).not.toBeInTheDocument(),
+      expect(
+        screen.queryByRole("textbox", { name: "Page editor" }),
+      ).not.toBeInTheDocument(),
     );
     await screen.findByRole("heading", { name: "Gobby", level: 1 });
-    await waitFor(() => expect(pagesRequestCount(stub.fetchMock)).toBeGreaterThan(pagesBefore));
+    await waitFor(() =>
+      expect(pagesRequestCount(stub.fetchMock)).toBeGreaterThan(pagesBefore),
+    );
   });
 
   it("discards edits back to the base content and closes without writing", async () => {
@@ -298,12 +334,16 @@ describe("WikiPageEditor edit toggle (3.2.1)", () => {
     const confirmSpy = vi.spyOn(window, "confirm").mockReturnValue(false);
     await user.click(within(tree).getByRole("treeitem", { name: "Gwiki" }));
     expect(confirmSpy).toHaveBeenCalled();
-    expect(screen.getByRole("textbox", { name: "Page editor" })).toBeInTheDocument();
+    expect(
+      screen.getByRole("textbox", { name: "Page editor" }),
+    ).toBeInTheDocument();
 
     confirmSpy.mockReturnValue(true);
     await user.click(within(tree).getByRole("treeitem", { name: "Gwiki" }));
     await screen.findByRole("heading", { name: "Gwiki", level: 1 });
-    expect(screen.queryByRole("textbox", { name: "Page editor" })).not.toBeInTheDocument();
+    expect(
+      screen.queryByRole("textbox", { name: "Page editor" }),
+    ).not.toBeInTheDocument();
   });
 });
 
@@ -343,9 +383,13 @@ describe("WikiPageEditor create flow (3.2.2)", () => {
     expect(stub.writes[0]).not.toHaveProperty("expected_hash");
 
     await waitFor(() =>
-      expect(readRequests(stub.fetchMock)).toContain("knowledge/concepts/new-idea.md"),
+      expect(readRequests(stub.fetchMock)).toContain(
+        "knowledge/concepts/new-idea.md",
+      ),
     );
-    expect(screen.queryByRole("textbox", { name: /page path/i })).not.toBeInTheDocument();
+    expect(
+      screen.queryByRole("textbox", { name: /page path/i }),
+    ).not.toBeInTheDocument();
   });
 
   it("validates the path inline and blocks the write until it resolves under knowledge/", async () => {
@@ -384,7 +428,9 @@ describe("WikiPageEditor create flow (3.2.2)", () => {
 
     await waitFor(() => expect(stub.writes).toHaveLength(1));
     expect(await screen.findByText(/already exists/i)).toBeInTheDocument();
-    expect(screen.getByRole("textbox", { name: /page path/i })).toBeInTheDocument();
+    expect(
+      screen.getByRole("textbox", { name: /page path/i }),
+    ).toBeInTheDocument();
   });
 
   it("seeds the folder prefix from the tree's New page here action", async () => {
@@ -393,34 +439,47 @@ describe("WikiPageEditor create flow (3.2.2)", () => {
     renderWiki();
 
     const tree = await screen.findByRole("tree", { name: /wiki pages/i });
-    await user.click(within(tree).getByRole("treeitem", { name: /knowledge/i }));
+    await user.click(
+      within(tree).getByRole("treeitem", { name: /knowledge/i }),
+    );
     await within(tree).findByRole("treeitem", { name: /concepts/i });
 
-    await user.click(screen.getByRole("button", { name: "Actions for concepts" }));
-    await user.click(await screen.findByRole("menuitem", { name: "New page here" }));
-
-    expect(await screen.findByRole("textbox", { name: /page path/i })).toHaveValue(
-      "knowledge/concepts/",
+    await user.click(
+      screen.getByRole("button", { name: "Actions for concepts" }),
     );
+    await user.click(
+      await screen.findByRole("menuitem", { name: "New page here" }),
+    );
+
+    expect(
+      await screen.findByRole("textbox", { name: /page path/i }),
+    ).toHaveValue("knowledge/concepts/");
   });
 
   it("offers page creation from a not-found read seeded with the missing path", async () => {
     const stub = stubWikiFetch();
-    stub.readByPath["knowledge/concepts/gwiki.md"] = () => jsonResponse(notFoundReadEnvelope);
+    stub.readByPath["knowledge/concepts/gwiki.md"] = () =>
+      jsonResponse(notFoundReadEnvelope);
     const user = userEvent.setup();
     renderWiki();
 
     const tree = await screen.findByRole("tree", { name: /wiki pages/i });
-    await user.click(within(tree).getByRole("treeitem", { name: /knowledge/i }));
-    await user.click(await within(tree).findByRole("treeitem", { name: /concepts/i }));
-    await user.click(await within(tree).findByRole("treeitem", { name: "Gwiki" }));
+    await user.click(
+      within(tree).getByRole("treeitem", { name: /knowledge/i }),
+    );
+    await user.click(
+      await within(tree).findByRole("treeitem", { name: /concepts/i }),
+    );
+    await user.click(
+      await within(tree).findByRole("treeitem", { name: "Gwiki" }),
+    );
 
     await screen.findByText(/has not been created yet/i);
     await user.click(screen.getByRole("button", { name: "Create this page" }));
 
-    expect(await screen.findByRole("textbox", { name: /page path/i })).toHaveValue(
-      "knowledge/concepts/gwiki.md",
-    );
+    expect(
+      await screen.findByRole("textbox", { name: /page path/i }),
+    ).toHaveValue("knowledge/concepts/gwiki.md");
   });
 });
 
@@ -437,7 +496,9 @@ describe("WikiPageEditor delete and read-only pages (3.2.3)", () => {
     await user.click(screen.getByRole("button", { name: "Page actions" }));
     await user.click(await screen.findByRole("menuitem", { name: "Delete" }));
 
-    expect(confirmMock).toHaveBeenCalledWith(expect.objectContaining({ destructive: true }));
+    expect(confirmMock).toHaveBeenCalledWith(
+      expect.objectContaining({ destructive: true }),
+    );
     await waitFor(() =>
       expect(stub.deletes).toEqual([{ path: "knowledge/concepts/gwiki.md" }]),
     );
@@ -456,7 +517,9 @@ describe("WikiPageEditor delete and read-only pages (3.2.3)", () => {
 
     await waitFor(() => expect(confirmMock).toHaveBeenCalled());
     expect(stub.deletes).toHaveLength(0);
-    expect(screen.getByRole("heading", { name: "Gobby", level: 1 })).toBeInTheDocument();
+    expect(
+      screen.getByRole("heading", { name: "Gobby", level: 1 }),
+    ).toBeInTheDocument();
   });
 
   // code pages read-only: no edit, delete, or create affordances for code/**.
@@ -470,15 +533,30 @@ describe("WikiPageEditor delete and read-only pages (3.2.3)", () => {
 
     const tree = await screen.findByRole("tree", { name: /wiki pages/i });
     // §4.2 promotes the mirror's top level to the roots — no "code" wrapper.
-    await user.click(await within(tree).findByRole("treeitem", { name: "Architecture Overview" }));
-    await screen.findByRole("heading", { name: "Architecture Overview", level: 1 });
+    await user.click(
+      await within(tree).findByRole("treeitem", {
+        name: "Architecture Overview",
+      }),
+    );
+    await screen.findByRole("heading", {
+      name: "Architecture Overview",
+      level: 1,
+    });
 
-    expect(screen.queryByRole("button", { name: "Edit" })).not.toBeInTheDocument();
+    expect(
+      screen.queryByRole("button", { name: "Edit" }),
+    ).not.toBeInTheDocument();
 
     await user.click(screen.getByRole("button", { name: "Page actions" }));
     const menu = await screen.findByRole("menu", { name: "Page actions" });
-    expect(within(menu).queryByRole("menuitem", { name: "Delete" })).not.toBeInTheDocument();
-    expect(within(menu).queryByRole("menuitem", { name: "New page" })).not.toBeInTheDocument();
-    expect(within(menu).getByRole("menuitem", { name: "Copy path" })).toBeInTheDocument();
+    expect(
+      within(menu).queryByRole("menuitem", { name: "Delete" }),
+    ).not.toBeInTheDocument();
+    expect(
+      within(menu).queryByRole("menuitem", { name: "New page" }),
+    ).not.toBeInTheDocument();
+    expect(
+      within(menu).getByRole("menuitem", { name: "Copy path" }),
+    ).toBeInTheDocument();
   });
 });

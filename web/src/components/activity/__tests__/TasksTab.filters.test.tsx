@@ -8,7 +8,12 @@ import {
   afterEach,
 } from "vitest";
 import type { ReactElement, ReactNode } from "react";
-import { fireEvent, render as baseRender, screen, waitFor } from "@testing-library/react";
+import {
+  fireEvent,
+  render as baseRender,
+  screen,
+  waitFor,
+} from "@testing-library/react";
 import {
   ActivityActionButtons,
   ActivityActionsProvider,
@@ -56,7 +61,9 @@ let mockFetch: MockFetchInstance;
 function taskListRequestUrls(): string[] {
   return mockFetch.fn.mock.calls
     .map(([url]) => String(url))
-    .filter((url) => url.includes("/api/tasks?") && !url.includes("parent_task_id="));
+    .filter(
+      (url) => url.includes("/api/tasks?") && !url.includes("parent_task_id="),
+    );
 }
 
 describe("TasksTab — filters", () => {
@@ -152,7 +159,9 @@ describe("TasksTab — filters", () => {
     expect(screen.getAllByText("Development").length).toBeGreaterThan(0);
     expect(await screen.findByText("Operator Review")).toBeTruthy();
     expect(screen.getByRole("checkbox", { name: "Development" })).toBeChecked();
-    expect(screen.getByRole("checkbox", { name: "Operator Review" })).toBeChecked();
+    expect(
+      screen.getByRole("checkbox", { name: "Operator Review" }),
+    ).toBeChecked();
     expect(screen.getByText("Needs Review")).toBeTruthy();
     expect(screen.getByText("Review Approved")).toBeTruthy();
     expect(screen.getByText("Closed")).toBeTruthy();
@@ -167,7 +176,9 @@ describe("TasksTab — filters", () => {
 
     mockFetch.fn.mockClear();
     fireEvent.click(screen.getByRole("button", { name: "Filter tasks" }));
-    fireEvent.click(await screen.findByRole("checkbox", { name: "Development" }));
+    fireEvent.click(
+      await screen.findByRole("checkbox", { name: "Development" }),
+    );
     fireEvent.click(screen.getByRole("button", { name: "Apply" }));
 
     await waitFor(() => {
@@ -188,8 +199,12 @@ describe("TasksTab — filters", () => {
 
     mockFetch.fn.mockClear();
     fireEvent.click(screen.getByRole("button", { name: "Filter tasks" }));
-    fireEvent.click(await screen.findByRole("checkbox", { name: "Development" }));
-    fireEvent.click(await screen.findByRole("checkbox", { name: "Operator Review" }));
+    fireEvent.click(
+      await screen.findByRole("checkbox", { name: "Development" }),
+    );
+    fireEvent.click(
+      await screen.findByRole("checkbox", { name: "Operator Review" }),
+    );
     fireEvent.click(screen.getByRole("button", { name: "Apply" }));
 
     await waitFor(() => {
@@ -198,7 +213,9 @@ describe("TasksTab — filters", () => {
       ).toBeTruthy();
     });
 
-    expect(taskListRequestUrls().every((url) => !/[?&]stage=/.test(url))).toBe(true);
+    expect(taskListRequestUrls().every((url) => !/[?&]stage=/.test(url))).toBe(
+      true,
+    );
   });
 
   it("hides retired lifecycle stages from the stage filter", async () => {
@@ -225,10 +242,16 @@ describe("TasksTab — filters", () => {
 
     render(<TasksTab projectId="proj-1" />);
 
-    fireEvent.click(await screen.findByRole("button", { name: "Filter tasks" }));
+    fireEvent.click(
+      await screen.findByRole("button", { name: "Filter tasks" }),
+    );
 
-    expect(await screen.findByRole("checkbox", { name: "Development" })).toBeTruthy();
-    expect(screen.queryByRole("checkbox", { name: "Test Architecture" })).toBeNull();
+    expect(
+      await screen.findByRole("checkbox", { name: "Development" }),
+    ).toBeTruthy();
+    expect(
+      screen.queryByRole("checkbox", { name: "Test Architecture" }),
+    ).toBeNull();
   });
 
   it("hides the active-filter badge while statusFilters matches the default set", async () => {
@@ -313,7 +336,9 @@ describe("TasksTab — filters", () => {
 
     await waitFor(() => {
       expect(
-        screen.getByLabelText("Filter tasks").querySelector("[data-filter-active-count]"),
+        screen
+          .getByLabelText("Filter tasks")
+          .querySelector("[data-filter-active-count]"),
       ).toBeNull();
       const taskFetch = taskListRequestUrls()[0];
       expect(taskFetch).toContain("include_stages=1");

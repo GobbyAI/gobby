@@ -1,24 +1,9 @@
-import {
-  act,
-  render,
-  screen,
-  waitFor,
-} from "@testing-library/react";
+import { act, render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { StrictMode, createRef, type ReactNode } from "react";
-import {
-  afterEach,
-  beforeEach,
-  describe,
-  expect,
-  it,
-  vi,
-} from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
-import {
-  TerminalView,
-  type TerminalViewHandle,
-} from "../TerminalView";
+import { TerminalView, type TerminalViewHandle } from "../TerminalView";
 
 interface Deferred<T> {
   promise: Promise<T>;
@@ -88,7 +73,9 @@ vi.mock("@wterm/dom", () => {
       this.options = options;
       this.textarea = document.createElement("textarea");
       this.marker = document.createElement("span");
-      this.marker.dataset.mockTerminal = String(terminalMock.instances.length + 1);
+      this.marker.dataset.mockTerminal = String(
+        terminalMock.instances.length + 1,
+      );
       this.marker.textContent = `terminal-${terminalMock.instances.length + 1}`;
       this.element.append(this.textarea, this.marker);
       this.element.addEventListener("click", () => {
@@ -172,10 +159,7 @@ describe("TerminalView", () => {
     const view = screen.getByTestId("terminal-view");
     const instance = latestInstance();
     expect(view).toHaveAttribute("role", "log");
-    expect(view).toHaveAttribute(
-      "aria-label",
-      "Terminal output (read-only)",
-    );
+    expect(view).toHaveAttribute("aria-label", "Terminal output (read-only)");
     expect(view).not.toHaveAttribute("aria-multiline");
     expect(view).not.toHaveAttribute("aria-readonly");
     expect(view).not.toHaveAttribute("tabindex");
@@ -337,13 +321,17 @@ describe("TerminalView", () => {
     const fallback = latestInstance();
     expect(fallback.options).not.toHaveProperty("core");
 
-    await user.click(screen.getByRole("button", { name: "Retry Ghostty renderer" }));
+    await user.click(
+      screen.getByRole("button", { name: "Retry Ghostty renderer" }),
+    );
     await waitFor(() => expect(terminalMock.instances).toHaveLength(2));
     await waitFor(() => expect(onReady).toHaveBeenCalledTimes(2));
 
     expect(fallback.destroy).toHaveBeenCalledOnce();
     expect(latestInstance().options.core).toBe(freshCore);
-    expect(screen.queryByText("Reduced terminal fidelity")).not.toBeInTheDocument();
+    expect(
+      screen.queryByText("Reduced terminal fidelity"),
+    ).not.toBeInTheDocument();
   });
 
   it("renders a recoverable error card when the built-in core also fails", async () => {
@@ -357,7 +345,9 @@ describe("TerminalView", () => {
     render(<TerminalView />);
 
     await screen.findByText("Reduced terminal fidelity");
-    await act(async () => fallbackGate.reject(new Error("Built-in core failed")));
+    await act(async () =>
+      fallbackGate.reject(new Error("Built-in core failed")),
+    );
 
     const alert = await screen.findByRole("alert");
     expect(alert).toHaveTextContent("Terminal renderer unavailable");
@@ -369,7 +359,9 @@ describe("TerminalView", () => {
     await waitFor(() =>
       expect(screen.queryByRole("alert")).not.toBeInTheDocument(),
     );
-    await waitFor(() => expect(latestInstance().options.core).toEqual({ kind: "recovered" }));
+    await waitFor(() =>
+      expect(latestInstance().options.core).toEqual({ kind: "recovered" }),
+    );
   });
 });
 
@@ -449,7 +441,9 @@ describe("lifecycle destroy", () => {
     await screen.findByText("Reduced terminal fidelity");
     const fallback = latestInstance();
 
-    await user.click(screen.getByRole("button", { name: "Retry Ghostty renderer" }));
+    await user.click(
+      screen.getByRole("button", { name: "Retry Ghostty renderer" }),
+    );
     await waitFor(() => expect(terminalMock.instances).toHaveLength(2));
     await waitFor(() => expect(onReady).toHaveBeenCalledOnce());
     const retried = latestInstance();

@@ -28,25 +28,28 @@ describe("useAppProjectSelection", () => {
 
   it("persists project selection through the universal config patch", async () => {
     const settingsResponse = deferred<Record<string, unknown>>();
-    const fetchMock = vi.fn((_url: string | URL | Request, init?: RequestInit) => {
-      if (!init) {
+    const fetchMock = vi.fn(
+      (_url: string | URL | Request, init?: RequestInit) => {
+        if (!init) {
+          return Promise.resolve({
+            ok: true,
+            json: () => settingsResponse.promise,
+          } as Response);
+        }
         return Promise.resolve({
           ok: true,
-          json: () => settingsResponse.promise,
+          json: () =>
+            Promise.resolve({
+              committed: true,
+              revision: 6,
+              changed_keys: ["ui_settings.selectedProjectId"],
+              apply_status: "applied",
+              pending_restart_keys: [],
+              failed_live_keys: {},
+            }),
         } as Response);
-      }
-      return Promise.resolve({
-        ok: true,
-        json: () => Promise.resolve({
-          committed: true,
-          revision: 6,
-          changed_keys: ["ui_settings.selectedProjectId"],
-          apply_status: "applied",
-          pending_restart_keys: [],
-          failed_live_keys: {},
-        }),
-      } as Response);
-    });
+      },
+    );
     vi.stubGlobal("fetch", fetchMock as unknown as typeof fetch);
 
     const { result } = renderHook(() => {
@@ -104,14 +107,18 @@ describe("useAppProjectSelection", () => {
       const patchBodies = fetchMock.mock.calls
         .filter(([, init]) => init?.method === "PATCH")
         .map(([, init]) => JSON.parse(String(init?.body)));
-      expect(patchBodies).toContainEqual(expect.objectContaining({
-        expected_revision: expect.any(Number),
-        values: { ui_settings: { selectedProjectId: "user-project" } },
-      }));
-      expect(patchBodies).toContainEqual(expect.objectContaining({
-        expected_revision: expect.any(Number),
-        values: { ui_settings: { selectedProvider: "qwen" } },
-      }));
+      expect(patchBodies).toContainEqual(
+        expect.objectContaining({
+          expected_revision: expect.any(Number),
+          values: { ui_settings: { selectedProjectId: "user-project" } },
+        }),
+      );
+      expect(patchBodies).toContainEqual(
+        expect.objectContaining({
+          expected_revision: expect.any(Number),
+          values: { ui_settings: { selectedProvider: "qwen" } },
+        }),
+      );
     });
   });
 });

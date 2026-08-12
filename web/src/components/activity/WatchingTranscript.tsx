@@ -218,7 +218,10 @@ export const WatchingTranscript = memo(function WatchingTranscript({
   );
 
   const setScrollerRef = useCallback(
-    (node: HTMLDivElement | null, forwardedRef: ForwardedRef<HTMLDivElement>) => {
+    (
+      node: HTMLDivElement | null,
+      forwardedRef: ForwardedRef<HTMLDivElement>,
+    ) => {
       scrollerRef.current = node;
       if (typeof forwardedRef === "function") {
         forwardedRef(node);
@@ -229,10 +232,13 @@ export const WatchingTranscript = memo(function WatchingTranscript({
     [],
   );
 
-  const handleAtBottomStateChange = useCallback((atBottom: boolean) => {
-    atBottomRef.current = atBottom;
-    setTranscriptAtBottom(atBottom);
-  }, [setTranscriptAtBottom]);
+  const handleAtBottomStateChange = useCallback(
+    (atBottom: boolean) => {
+      atBottomRef.current = atBottom;
+      setTranscriptAtBottom(atBottom);
+    },
+    [setTranscriptAtBottom],
+  );
 
   // Reverse infinite scroll: fetch the next older page when the top is reached.
   const handleStartReached = useCallback(() => {
@@ -307,7 +313,7 @@ export const WatchingTranscript = memo(function WatchingTranscript({
     <Virtuoso
       ref={virtuosoRef}
       key={sessionId ?? "none"}
-      className="min-h-0 flex-1 overflow-x-hidden overscroll-contain [overflow-anchor:none] [&_.text-sm]:text-[length:var(--text-base)] [&_.text-xs]:text-[length:var(--text-sm)] [&::-webkit-scrollbar]:w-2 [&::-webkit-scrollbar-track]:bg-transparent [&::-webkit-scrollbar-thumb]:rounded-full [&::-webkit-scrollbar-thumb]:bg-border [scrollbar-width:thin] [scrollbar-color:var(--border)_transparent]"
+      className="min-h-0 flex-1 [scrollbar-width:thin] [scrollbar-color:var(--border)_transparent] overflow-x-hidden overscroll-contain [overflow-anchor:none] [&_.text-sm]:text-[length:var(--text-base)] [&_.text-xs]:text-[length:var(--text-sm)] [&::-webkit-scrollbar]:w-2 [&::-webkit-scrollbar-thumb]:rounded-full [&::-webkit-scrollbar-thumb]:bg-border [&::-webkit-scrollbar-track]:bg-transparent"
       data={chatMessages}
       firstItemIndex={firstItemIndex}
       initialTopMostItemIndex={Math.max(chatMessages.length - 1, 0)}

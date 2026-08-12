@@ -104,7 +104,6 @@ describe("ChatPage – rendering", () => {
     expect(scrollToBottomSpy).toHaveBeenCalledTimes(1);
   });
 
-
   it("keeps the lower status bar visible for regular web chat sessions", async () => {
     render(
       <ChatPage
@@ -117,7 +116,9 @@ describe("ChatPage – rendering", () => {
     await waitFor(() => {
       expect(screen.getByTestId("agent-status-bar")).toBeInTheDocument();
       expect(screen.getByTestId("chat-input")).toBeInTheDocument();
-      expect(screen.getByTestId("command-bar-panel-toggle")).toBeInTheDocument();
+      expect(
+        screen.getByTestId("command-bar-panel-toggle"),
+      ).toBeInTheDocument();
     });
   });
 
@@ -259,5 +260,4 @@ describe("ChatPage – rendering", () => {
       );
     });
   });
-
 });

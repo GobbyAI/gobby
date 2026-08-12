@@ -8,7 +8,10 @@
 import { cn } from "../../../lib/utils";
 import { Button } from "../../ui/Button";
 import { coarseHitAreaCls } from "../../ui/controlStyles";
-import { SegmentedControl, type SegmentedControlOption } from "../../ui/SegmentedControl";
+import {
+  SegmentedControl,
+  type SegmentedControlOption,
+} from "../../ui/SegmentedControl";
 import { ActivityPanelSearch } from "../ActivityPanelSearch";
 import { QuickMenu, type QuickMenuItem } from "../QuickMenu";
 import type { WikiStatusSummary } from "./WikiTabData";
@@ -49,7 +52,15 @@ interface WikiTabToolbarProps {
 
 function GraphIcon() {
   return (
-    <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" aria-hidden="true">
+    <svg
+      width="14"
+      height="14"
+      viewBox="0 0 24 24"
+      fill="none"
+      stroke="currentColor"
+      strokeWidth="2"
+      aria-hidden="true"
+    >
       <circle cx="5" cy="6" r="2.2" />
       <circle cx="19" cy="6" r="2.2" />
       <circle cx="12" cy="18" r="2.2" />
@@ -75,12 +86,28 @@ export function WikiTabToolbar({
     { label: "New page", disabled: true, onSelect: noop },
     { label: "Quick open", disabled: true, onSelect: noop },
     { type: "separator" },
-    { label: "Refresh index", disabled: actionsDisabled, onSelect: actions.onRefreshIndex },
-    { label: "Compile", disabled: actionsDisabled, onSelect: actions.onCompile },
+    {
+      label: "Refresh index",
+      disabled: actionsDisabled,
+      onSelect: actions.onRefreshIndex,
+    },
+    {
+      label: "Compile",
+      disabled: actionsDisabled,
+      onSelect: actions.onCompile,
+    },
     { label: "Audit", disabled: actionsDisabled, onSelect: actions.onAudit },
     { type: "separator" },
-    { label: "Attach file…", disabled: actionsDisabled, onSelect: actions.onAttachFile },
-    { label: "Ingest URL…", disabled: actionsDisabled, onSelect: actions.onIngestUrl },
+    {
+      label: "Attach file…",
+      disabled: actionsDisabled,
+      onSelect: actions.onAttachFile,
+    },
+    {
+      label: "Ingest URL…",
+      disabled: actionsDisabled,
+      onSelect: actions.onIngestUrl,
+    },
     { type: "separator" },
     { label: "Manage sources…", onSelect: actions.onManageSources },
     { label: "Topic scope…", onSelect: actions.onTopicScope },
@@ -119,7 +146,11 @@ export function WikiTabToolbar({
             <GraphIcon />
             Graph
           </Button>
-          <QuickMenu items={menuItems} menuLabel="Wiki actions" triggerLabel="Wiki actions" />
+          <QuickMenu
+            items={menuItems}
+            menuLabel="Wiki actions"
+            triggerLabel="Wiki actions"
+          />
         </div>
       </div>
       {/* Row wrapper: the shared input is flex:1 1 9rem, which grows
@@ -131,7 +162,15 @@ export function WikiTabToolbar({
 
 function InfoIcon() {
   return (
-    <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" aria-hidden="true">
+    <svg
+      width="14"
+      height="14"
+      viewBox="0 0 24 24"
+      fill="none"
+      stroke="currentColor"
+      strokeWidth="2"
+      aria-hidden="true"
+    >
       <circle cx="12" cy="12" r="9" />
       <path d="M12 8h.01M12 11v5" />
     </svg>
@@ -143,7 +182,11 @@ function InfoIcon() {
  * hue-only per .impeccable.md); browse keeps working while degraded, so the
  * banner informs rather than blocks.
  */
-export function WikiDegradedBanner({ summary }: { summary: WikiStatusSummary }) {
+export function WikiDegradedBanner({
+  summary,
+}: {
+  summary: WikiStatusSummary;
+}) {
   // "loading" is the first fetch in flight — not an outage; stay quiet.
   if (summary.state === "ready" || summary.state === "loading") return null;
   const offline = summary.state === "unavailable";
@@ -154,7 +197,10 @@ export function WikiDegradedBanner({ summary }: { summary: WikiStatusSummary }) 
     ? "Browse is unavailable until the gateway recovers."
     : `${summary.brokenLinks} broken links · ${summary.stalePages} stale pages · ${summary.uncompiledSources} uncompiled sources`;
   return (
-    <div role="status" className="flex items-start gap-2 bg-info-soft px-3 py-1.5 text-xs text-info">
+    <div
+      role="status"
+      className="flex items-start gap-2 bg-info-soft px-3 py-1.5 text-xs text-info"
+    >
       <span className="mt-px shrink-0" aria-hidden="true">
         <InfoIcon />
       </span>

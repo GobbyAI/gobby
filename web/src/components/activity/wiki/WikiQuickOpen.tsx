@@ -4,7 +4,13 @@
  * the local index misses.
  */
 
-import { useEffect, useMemo, useRef, useState, type KeyboardEvent } from "react";
+import {
+  useEffect,
+  useMemo,
+  useRef,
+  useState,
+  type KeyboardEvent,
+} from "react";
 
 import { Card } from "../../ui/Card";
 import { Input } from "../../ui/Input";
@@ -40,7 +46,13 @@ interface WikiQuickOpenProps {
   onClose: () => void;
 }
 
-export function WikiQuickOpen({ scope, pages, nodeIndex, onOpen, onClose }: WikiQuickOpenProps) {
+export function WikiQuickOpen({
+  scope,
+  pages,
+  nodeIndex,
+  onOpen,
+  onClose,
+}: WikiQuickOpenProps) {
   const [query, setQuery] = useState("");
   const [activeIndex, setActiveIndex] = useState(0);
   const [serverMatches, setServerMatches] = useState<{
@@ -60,7 +72,8 @@ export function WikiQuickOpen({ scope, pages, nodeIndex, onOpen, onClose }: Wiki
     const matches: QuickOpenMatch[] = [];
     for (const page of pages) {
       const rank = scoreMatch(page, trimmed);
-      if (rank !== null) matches.push({ path: page.path, title: page.title, rank });
+      if (rank !== null)
+        matches.push({ path: page.path, title: page.title, rank });
     }
     matches.sort((a, b) => a.rank - b.rank || a.title.localeCompare(b.title));
     return matches.slice(0, MAX_RESULTS);
@@ -68,7 +81,9 @@ export function WikiQuickOpen({ scope, pages, nodeIndex, onOpen, onClose }: Wiki
 
   // Server fallback only when the local index comes up short — the node
   // index covers titles/paths; the server search also matches content.
-  const wantServer = trimmed.length >= MIN_SERVER_QUERY && localMatches.length < SERVER_FALLBACK_THRESHOLD;
+  const wantServer =
+    trimmed.length >= MIN_SERVER_QUERY &&
+    localMatches.length < SERVER_FALLBACK_THRESHOLD;
 
   useEffect(() => {
     if (!wantServer) return;
@@ -146,7 +161,7 @@ export function WikiQuickOpen({ scope, pages, nodeIndex, onOpen, onClose }: Wiki
       className="absolute inset-0 z-20 flex items-start justify-center bg-background/60 pt-10"
       role="presentation"
       onMouseDown={(event) => {
-        if (event.button === 0) onClose()
+        if (event.button === 0) onClose();
       }}
     >
       <Card
@@ -161,7 +176,9 @@ export function WikiQuickOpen({ scope, pages, nodeIndex, onOpen, onClose }: Wiki
           aria-expanded={matches.length > 0}
           aria-controls="wiki-quick-open-results"
           aria-activedescendant={
-            matches[clampedIndex] ? `wiki-quick-open-option-${clampedIndex}` : undefined
+            matches[clampedIndex]
+              ? `wiki-quick-open-option-${clampedIndex}`
+              : undefined
           }
           aria-label="Quick open"
           value={query}
@@ -180,7 +197,9 @@ export function WikiQuickOpen({ scope, pages, nodeIndex, onOpen, onClose }: Wiki
           className="flex max-h-72 list-none flex-col gap-1 overflow-y-auto p-1"
         >
           {trimmed && matches.length === 0 ? (
-            <li className="px-2 py-1.5 text-xs text-muted-foreground">No matching pages</li>
+            <li className="px-2 py-1.5 text-xs text-muted-foreground">
+              No matching pages
+            </li>
           ) : null}
           {matches.map((match, index) => (
             <Card key={match.path} asChild>
@@ -188,10 +207,10 @@ export function WikiQuickOpen({ scope, pages, nodeIndex, onOpen, onClose }: Wiki
                 id={`wiki-quick-open-option-${index}`}
                 role="option"
                 aria-selected={index === clampedIndex}
-                className="flex cursor-pointer items-baseline gap-2 bg-background px-2 py-1.5 text-sm text-foreground aria-selected:bg-muted hover:bg-muted"
+                className="flex cursor-pointer items-baseline gap-2 bg-background px-2 py-1.5 text-sm text-foreground hover:bg-muted aria-selected:bg-muted"
                 onMouseEnter={() => setActiveIndex(index)}
                 onMouseDown={(event) => {
-                  if (event.button === 0) open(match.path)
+                  if (event.button === 0) open(match.path);
                 }}
               >
                 <span className="truncate">{match.title}</span>

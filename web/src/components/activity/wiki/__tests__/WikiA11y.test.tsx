@@ -53,7 +53,10 @@ class MockIntersectionObserver {
 }
 
 vi.mock("mermaid", () => ({
-  default: { initialize: vi.fn(), render: vi.fn(async () => ({ svg: "<svg />" })) },
+  default: {
+    initialize: vi.fn(),
+    render: vi.fn(async () => ({ svg: "<svg />" })),
+  },
 }));
 
 vi.mock("react-syntax-highlighter", () => ({
@@ -104,7 +107,8 @@ function stubA11yFetch() {
   const fetchMock = vi.fn(async (input: RequestInfo | URL) => {
     const url = new URL(String(input), "http://localhost");
     const route = url.pathname;
-    if (route.includes("/api/providers/models")) return jsonResponse({ providers: [] });
+    if (route.includes("/api/providers/models"))
+      return jsonResponse({ providers: [] });
     if (route.includes("/api/wiki/code/status")) {
       return jsonResponse(codewikiStatusBody());
     }
@@ -113,11 +117,15 @@ function stubA11yFetch() {
     }
     if (route.includes("/api/wiki/status")) return jsonResponse(statusEnvelope);
     if (route.includes("/api/wiki/health")) return jsonResponse(healthEnvelope);
-    if (route.includes("/api/wiki/sources")) return jsonResponse(sourcesEnvelope);
+    if (route.includes("/api/wiki/sources"))
+      return jsonResponse(sourcesEnvelope);
     if (route.includes("/api/wiki/pages")) return jsonResponse(pagesEnvelope);
-    if (route.includes("/api/wiki/graph")) return jsonResponse(browseGraphEnvelope);
-    if (route.includes("/api/wiki/backlinks")) return jsonResponse(backlinksEnvelope);
-    if (route.includes("/api/wiki/read")) return jsonResponse(browseReadGobbyEnvelope);
+    if (route.includes("/api/wiki/graph"))
+      return jsonResponse(browseGraphEnvelope);
+    if (route.includes("/api/wiki/backlinks"))
+      return jsonResponse(backlinksEnvelope);
+    if (route.includes("/api/wiki/read"))
+      return jsonResponse(browseReadGobbyEnvelope);
     return jsonResponse({ ok: true, payload: {} });
   });
   vi.stubGlobal("fetch", fetchMock);
@@ -217,15 +225,21 @@ describe("browse mode keyboard operation", () => {
     within(tree).getAllByRole("treeitem")[0].focus();
     await user.keyboard("{Meta>}k{/Meta}");
 
-    const palette = await screen.findByRole("combobox", { name: /quick open/i });
+    const palette = await screen.findByRole("combobox", {
+      name: /quick open/i,
+    });
     await user.type(palette, "gobby");
     await waitFor(() =>
       expect(screen.getAllByRole("option").length).toBeGreaterThanOrEqual(1),
     );
     await user.keyboard("{Enter}");
 
-    expect(screen.queryByRole("dialog", { name: /quick open/i })).not.toBeInTheDocument();
-    expect(await screen.findByRole("heading", { level: 1, name: /gobby/i })).toBeInTheDocument();
+    expect(
+      screen.queryByRole("dialog", { name: /quick open/i }),
+    ).not.toBeInTheDocument();
+    expect(
+      await screen.findByRole("heading", { level: 1, name: /gobby/i }),
+    ).toBeInTheDocument();
   });
 
   it("claims Cmd+K inside the pane so the app-level palette never sees it", async () => {
@@ -240,7 +254,9 @@ describe("browse mode keyboard operation", () => {
     within(tree).getAllByRole("treeitem")[0].focus();
     await user.keyboard("{Meta>}k{/Meta}");
 
-    expect(await screen.findByRole("dialog", { name: /quick open/i })).toBeInTheDocument();
+    expect(
+      await screen.findByRole("dialog", { name: /quick open/i }),
+    ).toBeInTheDocument();
     const leakedK = seenAtWindow.mock.calls
       .map(([event]) => (event as KeyboardEvent).key)
       .filter((key) => key === "k");
@@ -254,7 +270,9 @@ describe("browse mode keyboard operation", () => {
     render(<WikiTab projectId="p1" />);
 
     const tree = await screen.findByRole("tree", { name: /wiki pages/i });
-    await user.click(within(tree).getByRole("treeitem", { name: /wiki index/i }));
+    await user.click(
+      within(tree).getByRole("treeitem", { name: /wiki index/i }),
+    );
     await screen.findByRole("heading", { level: 1 });
 
     const trigger = screen.getByRole("button", { name: "Page actions" });
@@ -268,7 +286,9 @@ describe("browse mode keyboard operation", () => {
     expect(document.activeElement).toBe(items[1]);
 
     await user.keyboard("{Escape}");
-    expect(screen.queryByRole("menu", { name: "Page actions" })).not.toBeInTheDocument();
+    expect(
+      screen.queryByRole("menu", { name: "Page actions" }),
+    ).not.toBeInTheDocument();
     expect(document.activeElement).toBe(trigger);
   });
 });
@@ -298,7 +318,9 @@ describe("code mode keyboard operation", () => {
     await waitFor(() => expect(document.activeElement).toBe(lastRow));
 
     await user.keyboard("{Home}");
-    expect(within(tree).getAllByRole("treeitem")[0]).toHaveAttribute("tabindex", "0");
+    expect(within(tree).getAllByRole("treeitem")[0]).toHaveAttribute(
+      "tabindex",
+      "0",
+    );
   });
 });
-

@@ -15,7 +15,9 @@ export function DetailPaneHeader({
   return (
     <div className="flex h-10 items-center justify-between gap-3 border-b border-border bg-[var(--bg-secondary)] px-3">
       <div className="flex min-w-0 items-center gap-2">
-        <div className="truncate text-sm font-medium text-foreground">{title}</div>
+        <div className="truncate text-sm font-medium text-foreground">
+          {title}
+        </div>
         {serverChanged && (
           <span className="rounded-md bg-[var(--color-warning-soft)] px-2 py-1 text-xs text-[var(--color-warning-foreground)]">
             Changed on server

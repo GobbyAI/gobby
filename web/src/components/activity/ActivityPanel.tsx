@@ -40,7 +40,7 @@ import type { PlanPendingVariant } from "../chat/planPendingSurface";
 import type { SessionsFilters } from "./sessionsFilters";
 import type { LayoutMode } from "./useActivityPanel";
 import { PanelIcon } from "../chat/icons/PanelIcon";
-import { Heading } from '../shared/Heading'
+import { Heading } from "../shared/Heading";
 import {
   ACTIVITY_PANEL_DROPDOWN_TABS,
   ACTIVITY_PANEL_TABS,
@@ -88,7 +88,7 @@ function activityPanelClassName(className?: string) {
     String.raw`@max-[479px]/activity-panel:[&_.activity-panel-action-btn\_\_label]:hidden`,
     String.raw`mobile:[&_.activity-panel-action-btn\_\_label]:hidden`,
     String.raw`@max-[360px]/activity-panel:[&_.activity-panel-status-bar\_\_watching-prefix]:hidden`,
-    "[&_.activity-row-title]:flex-1 [&_.activity-row-title]:min-w-0 [&_.activity-row-title]:truncate",
+    "[&_.activity-row-title]:min-w-0 [&_.activity-row-title]:flex-1 [&_.activity-row-title]:truncate",
     "[&_.activity-row-title]:text-[length:var(--text-base)] [&_.activity-row-title]:font-[var(--font-weight-medium)] [&_.activity-row-title]:text-[var(--text-primary)]",
     "[&_.activity-row-meta]:shrink-0 [&_.activity-row-meta]:text-[length:var(--text-sm)] [&_.activity-row-meta]:font-[var(--font-weight-normal)]",
     "[&_.activity-row-meta]:text-[var(--text-muted)] [&_.activity-row-meta]:tabular-nums",
@@ -97,9 +97,9 @@ function activityPanelClassName(className?: string) {
     "[&_.activity-list-row]:text-[var(--text-primary)] [&_.activity-list-row]:transition-colors [&_.activity-list-row:hover]:bg-[var(--bg-tertiary)]",
     "[&_.activity-list-row--selected]:bg-[color-mix(in_srgb,var(--accent)_8%,transparent)] [&_.activity-list-row--selected:hover]:bg-[color-mix(in_srgb,var(--accent)_8%,transparent)]",
     String.raw`[&_.activity-list-row\_\_body]:flex [&_.activity-list-row\_\_body]:min-w-0 [&_.activity-list-row\_\_body]:flex-[1_1_auto] [&_.activity-list-row\_\_body]:items-center`,
-    String.raw`[&_.activity-list-row\_\_body]:justify-start [&_.activity-list-row\_\_body]:gap-2 [&_.activity-list-row\_\_body]:appearance-none [&_.activity-list-row\_\_body]:border-0 [&_.activity-list-row\_\_body]:bg-transparent`,
+    String.raw`[&_.activity-list-row\_\_body]:appearance-none [&_.activity-list-row\_\_body]:justify-start [&_.activity-list-row\_\_body]:gap-2 [&_.activity-list-row\_\_body]:border-0 [&_.activity-list-row\_\_body]:bg-transparent`,
     String.raw`[&_.activity-list-row\_\_body]:px-3 [&_.activity-list-row\_\_body]:py-2 [&_.activity-list-row\_\_body]:text-left [&_.activity-list-row\_\_body]:font-[inherit] [&_.activity-list-row\_\_body]:text-[inherit]`,
-    String.raw`[&_.activity-list-row\_\_body]:cursor-pointer [&_.activity-list-row\_\_body:focus-visible]:outline-none [&_.activity-list-row\_\_body:focus-visible]:shadow-[inset_0_0_0_2px_var(--accent)]`,
+    String.raw`[&_.activity-list-row\_\_body]:cursor-pointer [&_.activity-list-row\_\_body:focus-visible]:shadow-[inset_0_0_0_2px_var(--accent)] [&_.activity-list-row\_\_body:focus-visible]:outline-none`,
     "[&_.activity-panel-toolbar]:[--control-row-height-sm:var(--status-bar-control-height)]",
     "[&_.activity-panel-toolbar]:relative [&_.activity-panel-toolbar]:flex [&_.activity-panel-toolbar]:min-h-[var(--activity-panel-bar-height)]",
     "[&_.activity-panel-toolbar]:shrink-0 [&_.activity-panel-toolbar]:flex-nowrap [&_.activity-panel-toolbar]:items-center [&_.activity-panel-toolbar]:gap-1.5",
@@ -108,7 +108,7 @@ function activityPanelClassName(className?: string) {
     "[&_.activity-panel-search]:rounded-[0.45rem] [&_.activity-panel-search]:border [&_.activity-panel-search]:border-border [&_.activity-panel-search]:bg-[var(--bg-primary)]",
     "[&_.activity-panel-search]:px-[0.55rem] [&_.activity-panel-search]:font-[inherit] [&_.activity-panel-search]:text-[length:var(--text-base)] [&_.activity-panel-search]:font-[var(--font-weight-normal)]",
     "[&_.activity-panel-search]:text-[var(--text-primary)] [&_.activity-panel-search]:transition-colors [&_.activity-panel-search:focus]:border-accent",
-    "[&_.activity-panel-search:focus-visible]:outline-2 [&_.activity-panel-search:focus-visible]:outline-accent [&_.activity-panel-search:focus-visible]:outline-offset-1",
+    "[&_.activity-panel-search:focus-visible]:outline-2 [&_.activity-panel-search:focus-visible]:outline-offset-1 [&_.activity-panel-search:focus-visible]:outline-accent",
     "[&_.activity-panel-search::placeholder]:text-[var(--text-muted)]",
     "[&_.activity-panel-status-bar]:flex [&_.activity-panel-status-bar]:min-h-[var(--activity-panel-bar-height)] [&_.activity-panel-status-bar]:shrink-0",
     "[&_.activity-panel-status-bar]:items-center [&_.activity-panel-status-bar]:gap-3 [&_.activity-panel-status-bar]:border-b [&_.activity-panel-status-bar]:border-border",
@@ -174,14 +174,22 @@ interface ActivityPanelProps {
   mcp?: ActivityMcpTabProps;
   // Sessions tab
   onKillAgent?: (runId: string) => Promise<boolean | void> | boolean | void;
-  onExpireSession?: (sessionId: string) => Promise<boolean | void> | boolean | void;
-  onAcpCloseSession?: (sessionId: string) => Promise<boolean | void> | boolean | void;
-  onAcpDeleteSession?: (sessionId: string) => Promise<boolean | void> | boolean | void;
+  onExpireSession?: (
+    sessionId: string,
+  ) => Promise<boolean | void> | boolean | void;
+  onAcpCloseSession?: (
+    sessionId: string,
+  ) => Promise<boolean | void> | boolean | void;
+  onAcpDeleteSession?: (
+    sessionId: string,
+  ) => Promise<boolean | void> | boolean | void;
   chatSessionId?: string | null;
   focusSessionId?: string | null;
   dirtyGuard?: DirtyGuardContextValue;
   onFocusSessionHandled?: () => void;
-  onSwapSession?: (target: import("../../types/chat").SwappedSessionTarget) => void;
+  onSwapSession?: (
+    target: import("../../types/chat").SwappedSessionTarget,
+  ) => void;
   onResumeSession?: (sessionId: string) => Promise<string> | string | void;
   // Terminal tab — separate focus channel from the Sessions tab routing.
   terminalFocusSessionId?: string | null;
@@ -212,7 +220,7 @@ function ActivityDropdown({
 }: ActivityDropdownProps) {
   return (
     <div
-      className="activity-panel-mobile-select-wrap relative flex min-w-0 max-w-full flex-[1_1_auto]"
+      className="activity-panel-mobile-select-wrap relative flex max-w-full min-w-0 flex-[1_1_auto]"
       ref={wrapperRef}
     >
       <Button
@@ -220,7 +228,7 @@ function ActivityDropdown({
         variant="ghost"
         size="sm"
         className={cn(
-          "activity-panel-mobile-trigger flex w-full items-center justify-between gap-1.5 rounded border-0 bg-transparent px-2 py-1 text-[length:var(--text-base)] font-[var(--font-weight-medium)] text-[var(--text-primary)] transition-colors hover:bg-[var(--bg-tertiary)] focus-visible:outline-2 focus-visible:outline-accent focus-visible:outline-offset-2 mobile:min-h-11 mobile:px-3 mobile:py-2 pointer-coarse:min-h-11",
+          "activity-panel-mobile-trigger flex w-full items-center justify-between gap-1.5 rounded border-0 bg-transparent px-2 py-1 text-[length:var(--text-base)] font-[var(--font-weight-medium)] text-[var(--text-primary)] transition-colors hover:bg-[var(--bg-tertiary)] focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-accent pointer-coarse:min-h-11 mobile:min-h-11 mobile:px-3 mobile:py-2",
           coarseHitAreaCls,
         )}
         onClick={onToggle}
@@ -235,35 +243,37 @@ function ActivityDropdown({
         <DropdownCaret open={isOpen} />
       </Button>
       {isOpen && (
-        <div className="activity-panel-mobile-menu absolute left-0 top-[calc(100%+0.25rem)] z-[5] grid max-h-[70vh] w-[min(19rem,calc(100vw-1.5rem))] grid-cols-2 gap-0.5 overflow-y-auto rounded-lg border border-border bg-[var(--bg-secondary)] p-1 shadow-[var(--shadow-lg)]">
-          {[...tabs].sort((a, b) => a.label.localeCompare(b.label)).map((tab) => (
-            <Button
-              key={tab.id}
-              type="button"
-              variant="ghost"
-              size="sm"
-              dense
-              aria-current={activeTab === tab.id ? "page" : undefined}
-              className={cn(
-                "activity-panel-mobile-menu__item",
-                "inline-flex min-h-7 w-full items-center justify-start gap-1.5 rounded-md border-0 bg-transparent px-2 py-1 text-left text-[length:var(--text-base)] font-[var(--font-weight-medium)] text-[var(--text-primary)] hover:bg-[var(--bg-tertiary)] hover:text-[var(--text-primary)] mobile:min-h-11 mobile:min-w-11 pointer-coarse:min-h-11 pointer-coarse:min-w-11",
-                // Active pill mirrors .activity-filter-dropdown__item--active:
-                // bg-tertiary on bg-secondary was too faint to read as the
-                // current tab (#20047).
-                activeTab === tab.id &&
-                  "active bg-[color-mix(in_srgb,var(--accent)_15%,transparent)] text-accent hover:bg-[color-mix(in_srgb,var(--accent)_15%,transparent)] hover:text-accent",
-                activeTab === tab.id &&
-                  "[[data-theme=light]_&]:bg-accent [[data-theme=light]_&]:text-accent-foreground [[data-theme=light]_&]:hover:bg-accent [[data-theme=light]_&]:hover:text-accent-foreground",
-                coarseHitAreaCls,
-              )}
-              onClick={() => onSelect(tab.id)}
-            >
-              <span className="activity-panel-tab-icon flex items-center justify-center">
-                {tab.icon}
-              </span>
-              <span>{tab.label}</span>
-            </Button>
-          ))}
+        <div className="activity-panel-mobile-menu absolute top-[calc(100%+0.25rem)] left-0 z-[5] grid max-h-[70vh] w-[min(19rem,calc(100vw-1.5rem))] grid-cols-2 gap-0.5 overflow-y-auto rounded-lg border border-border bg-[var(--bg-secondary)] p-1 shadow-[var(--shadow-lg)]">
+          {[...tabs]
+            .sort((a, b) => a.label.localeCompare(b.label))
+            .map((tab) => (
+              <Button
+                key={tab.id}
+                type="button"
+                variant="ghost"
+                size="sm"
+                dense
+                aria-current={activeTab === tab.id ? "page" : undefined}
+                className={cn(
+                  "activity-panel-mobile-menu__item",
+                  "inline-flex min-h-7 w-full items-center justify-start gap-1.5 rounded-md border-0 bg-transparent px-2 py-1 text-left text-[length:var(--text-base)] font-[var(--font-weight-medium)] text-[var(--text-primary)] hover:bg-[var(--bg-tertiary)] hover:text-[var(--text-primary)] pointer-coarse:min-h-11 pointer-coarse:min-w-11 mobile:min-h-11 mobile:min-w-11",
+                  // Active pill mirrors .activity-filter-dropdown__item--active:
+                  // bg-tertiary on bg-secondary was too faint to read as the
+                  // current tab (#20047).
+                  activeTab === tab.id &&
+                    "active bg-[color-mix(in_srgb,var(--accent)_15%,transparent)] text-accent hover:bg-[color-mix(in_srgb,var(--accent)_15%,transparent)] hover:text-accent",
+                  activeTab === tab.id &&
+                    "[[data-theme=light]_&]:bg-accent [[data-theme=light]_&]:text-accent-foreground [[data-theme=light]_&]:hover:bg-accent [[data-theme=light]_&]:hover:text-accent-foreground",
+                  coarseHitAreaCls,
+                )}
+                onClick={() => onSelect(tab.id)}
+              >
+                <span className="activity-panel-tab-icon flex items-center justify-center">
+                  {tab.icon}
+                </span>
+                <span>{tab.label}</span>
+              </Button>
+            ))}
         </div>
       )}
     </div>
@@ -370,7 +380,8 @@ export function ActivityPanel({
   }, [showMobileTabMenu]);
   const useOverlay = isMobile;
   const activeTabConfig =
-    ACTIVITY_PANEL_TABS.find((tab) => tab.id === activeTab) ?? ACTIVITY_PANEL_TABS[0];
+    ACTIVITY_PANEL_TABS.find((tab) => tab.id === activeTab) ??
+    ACTIVITY_PANEL_TABS[0];
 
   if (mode === "chat") return null;
 
@@ -498,7 +509,11 @@ export function ActivityPanel({
             className={activityPanelClassName("flex-1 border-l-0")}
             aria-labelledby="activity-panel-title"
           >
-            <Heading level={1} id="activity-panel-title" className="sr-only">{`Activity: ${activeTabConfig.label}`}</Heading>
+            <Heading
+              level={1}
+              id="activity-panel-title"
+              className="sr-only"
+            >{`Activity: ${activeTabConfig.label}`}</Heading>
             <ActivityActionsProvider>
               <div className="activity-panel-tabs flex min-h-[var(--activity-panel-bar-height)] shrink-0 items-center gap-2 border-b border-border bg-[var(--bg-secondary)] px-3 @max-[280px]/activity-panel:gap-1 @max-[280px]/activity-panel:px-1.5">
                 <ActivityDropdown
@@ -579,7 +594,11 @@ export function ActivityPanel({
         aria-labelledby="activity-panel-title"
         style={asideStyle}
       >
-        <Heading level={1} id="activity-panel-title" className="sr-only">{`Activity: ${activeTabConfig.label}`}</Heading>
+        <Heading
+          level={1}
+          id="activity-panel-title"
+          className="sr-only"
+        >{`Activity: ${activeTabConfig.label}`}</Heading>
         <ActivityActionsProvider>
           <div className="activity-panel-tabs flex min-h-[var(--activity-panel-bar-height)] shrink-0 items-center gap-2 border-b border-border bg-[var(--bg-secondary)] px-3 @max-[280px]/activity-panel:gap-1 @max-[280px]/activity-panel:px-1.5">
             <ActivityDropdown

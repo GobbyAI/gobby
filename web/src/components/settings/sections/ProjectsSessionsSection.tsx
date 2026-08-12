@@ -1,11 +1,11 @@
-import { useState } from 'react'
-import { SettingsSection, type SettingsSectionFields } from './SettingsSection'
+import { useState } from "react";
+import { SettingsSection, type SettingsSectionFields } from "./SettingsSection";
 import {
   useSettingsSectionContext,
   type ProjectSelectionContextValue,
-} from './SettingsSectionContext'
-import { ProjectSelectField } from '../../activity/fields'
-import { ValidationDetectionEditor } from '../../ValidationDetectionEditor'
+} from "./SettingsSectionContext";
+import { ProjectSelectField } from "../../activity/fields";
+import { ValidationDetectionEditor } from "../../ValidationDetectionEditor";
 import {
   MapConfigField,
   NumberConfigField,
@@ -15,7 +15,7 @@ import {
   SwitchConfigField,
   TextAreaConfigField,
   TextConfigField,
-} from './configFields'
+} from "./configFields";
 
 /**
  * Projects & Sessions settings (audit IA section 4). Owns the active-project
@@ -28,58 +28,58 @@ import {
  */
 
 const SESSION_SUMMARY_PATHS = [
-  'session_summary.profile',
-  'session_summary.candidates',
-  'session_summary.enabled',
-  'session_summary.prompt',
-  'session_summary.summary_file_path',
-]
+  "session_summary.profile",
+  "session_summary.candidates",
+  "session_summary.enabled",
+  "session_summary.prompt",
+  "session_summary.summary_file_path",
+];
 
 const SESSION_LIFECYCLE_PATHS = [
-  'session_lifecycle.active_session_pause_minutes',
-  'session_lifecycle.stale_session_timeout_hours',
-  'session_lifecycle.expire_check_interval_minutes',
-  'session_lifecycle.transcript_processing_interval_minutes',
-  'session_lifecycle.transcript_processing_batch_size',
-  'session_lifecycle.transcript_archive_dir',
-]
+  "session_lifecycle.active_session_pause_minutes",
+  "session_lifecycle.stale_session_timeout_hours",
+  "session_lifecycle.expire_check_interval_minutes",
+  "session_lifecycle.transcript_processing_interval_minutes",
+  "session_lifecycle.transcript_processing_batch_size",
+  "session_lifecycle.transcript_archive_dir",
+];
 
 const COMPACT_HANDOFF_PATHS = [
-  'compact_handoff.enabled',
-  'compact_handoff.refresh_timeout_seconds',
-]
+  "compact_handoff.enabled",
+  "compact_handoff.refresh_timeout_seconds",
+];
 
 const CHAT_HISTORY_PATHS = [
-  'chat_history.max_message_chars',
-  'chat_history.max_total_chars',
-]
+  "chat_history.max_message_chars",
+  "chat_history.max_total_chars",
+];
 
 const MESSAGE_TRACKING_PATHS = [
-  'message_tracking.enabled',
-  'message_tracking.poll_interval',
-  'message_tracking.debounce_delay',
-  'message_tracking.max_message_length',
-  'message_tracking.broadcast_enabled',
-]
+  "message_tracking.enabled",
+  "message_tracking.poll_interval",
+  "message_tracking.debounce_delay",
+  "message_tracking.max_message_length",
+  "message_tracking.broadcast_enabled",
+];
 
 const VERIFICATION_DEFAULTS_PATHS = [
-  'verification_defaults.unit_tests',
-  'verification_defaults.type_check',
-  'verification_defaults.lint',
-  'verification_defaults.format',
-  'verification_defaults.build',
-  'verification_defaults.doc_tests',
-  'verification_defaults.integration',
-  'verification_defaults.security',
-  'verification_defaults.code_review',
-  'verification_defaults.custom',
-]
+  "verification_defaults.unit_tests",
+  "verification_defaults.type_check",
+  "verification_defaults.lint",
+  "verification_defaults.format",
+  "verification_defaults.build",
+  "verification_defaults.doc_tests",
+  "verification_defaults.integration",
+  "verification_defaults.security",
+  "verification_defaults.code_review",
+  "verification_defaults.custom",
+];
 
 // `validation_detection` is owned as a single object subtree, edited as a whole
 // through ValidationDetectionEditor. This one path covers its sub-fields:
 // enabled, builtin_matchers_enabled, disabled_builtin_matcher_ids,
 // recognized_wrappers, wrapper_rules, and custom_matchers.
-const VALIDATION_DETECTION_PATH = 'validation_detection'
+const VALIDATION_DETECTION_PATH = "validation_detection";
 
 const OWNED_PATHS: readonly string[] = [
   ...SESSION_LIFECYCLE_PATHS,
@@ -89,27 +89,27 @@ const OWNED_PATHS: readonly string[] = [
   ...MESSAGE_TRACKING_PATHS,
   ...VERIFICATION_DEFAULTS_PATHS,
   VALIDATION_DETECTION_PATH,
-]
+];
 
 // Verification commands are all optional `str | None` daemon fields; an empty
 // input clears back to the default (null). Placeholders show the canonical
 // command shape without forcing it.
 const VERIFICATION_COMMAND_FIELDS: ReadonlyArray<[string, string, string]> = [
-  ['unit_tests', 'Unit tests', 'uv run pytest tests/ -v'],
-  ['type_check', 'Type check', 'uv run mypy src/'],
-  ['lint', 'Lint', 'uv run ruff check src/'],
-  ['format', 'Format check', 'uv run ruff format --check src/'],
-  ['build', 'Build', ''],
-  ['doc_tests', 'Doc tests', ''],
-  ['integration', 'Integration tests', ''],
-  ['security', 'Security scan', 'bandit -r src/'],
-  ['code_review', 'Code review', 'coderabbit review --ci'],
-]
+  ["unit_tests", "Unit tests", "uv run pytest tests/ -v"],
+  ["type_check", "Type check", "uv run mypy src/"],
+  ["lint", "Lint", "uv run ruff check src/"],
+  ["format", "Format check", "uv run ruff format --check src/"],
+  ["build", "Build", ""],
+  ["doc_tests", "Doc tests", ""],
+  ["integration", "Integration tests", ""],
+  ["security", "Security scan", "bandit -r src/"],
+  ["code_review", "Code review", "coderabbit review --ci"],
+];
 
 function ProjectSelectionGroup({
   projectSelection,
 }: {
-  projectSelection?: ProjectSelectionContextValue
+  projectSelection?: ProjectSelectionContextValue;
 }) {
   if (!projectSelection) {
     return (
@@ -121,7 +121,7 @@ function ProjectSelectionGroup({
           Project selection is unavailable.
         </p>
       </Subsection>
-    )
+    );
   }
   return (
     <Subsection
@@ -131,11 +131,11 @@ function ProjectSelectionGroup({
       <ProjectSelectField
         label="Active project"
         ariaLabel="Active project"
-        value={projectSelection.selectedProjectId ?? ''}
+        value={projectSelection.selectedProjectId ?? ""}
         onChange={projectSelection.onSelectProject}
       />
     </Subsection>
-  )
+  );
 }
 
 function SessionLifecycleGroup({ fields }: { fields: SettingsSectionFields }) {
@@ -182,7 +182,7 @@ function SessionLifecycleGroup({ fields }: { fields: SettingsSectionFields }) {
         placeholder="~/.gobby/session_transcripts"
       />
     </Subsection>
-  )
+  );
 }
 
 function SessionSummaryGroup({ fields }: { fields: SettingsSectionFields }) {
@@ -226,7 +226,7 @@ function SessionSummaryGroup({ fields }: { fields: SettingsSectionFields }) {
         rows={8}
       />
     </Subsection>
-  )
+  );
 }
 
 function CompactHandoffGroup({ fields }: { fields: SettingsSectionFields }) {
@@ -249,7 +249,7 @@ function CompactHandoffGroup({ fields }: { fields: SettingsSectionFields }) {
         step={1}
       />
     </Subsection>
-  )
+  );
 }
 
 function ChatHistoryGroup({ fields }: { fields: SettingsSectionFields }) {
@@ -271,7 +271,7 @@ function ChatHistoryGroup({ fields }: { fields: SettingsSectionFields }) {
         ariaLabel="Max total characters"
       />
     </Subsection>
-  )
+  );
 }
 
 function MessageTrackingGroup({ fields }: { fields: SettingsSectionFields }) {
@@ -313,10 +313,14 @@ function MessageTrackingGroup({ fields }: { fields: SettingsSectionFields }) {
         ariaLabel="Broadcast message events"
       />
     </Subsection>
-  )
+  );
 }
 
-function VerificationDefaultsGroup({ fields }: { fields: SettingsSectionFields }) {
+function VerificationDefaultsGroup({
+  fields,
+}: {
+  fields: SettingsSectionFields;
+}) {
   return (
     <Subsection
       title="Verification defaults"
@@ -342,15 +346,15 @@ function VerificationDefaultsGroup({ fields }: { fields: SettingsSectionFields }
         keyPlaceholder="name"
       />
     </Subsection>
-  )
+  );
 }
 
 function ValidationDetectionGroup({
   fields,
   onValidityChange,
 }: {
-  fields: SettingsSectionFields
-  onValidityChange: (isValid: boolean) => void
+  fields: SettingsSectionFields;
+  onValidityChange: (isValid: boolean) => void;
 }) {
   return (
     <Subsection
@@ -363,12 +367,13 @@ function ValidationDetectionGroup({
         onValidityChange={onValidityChange}
       />
     </Subsection>
-  )
+  );
 }
 
 export function ProjectsSessionsSection() {
-  const { projectSelection } = useSettingsSectionContext()
-  const [validationDetectionValid, setValidationDetectionValid] = useState(true)
+  const { projectSelection } = useSettingsSectionContext();
+  const [validationDetectionValid, setValidationDetectionValid] =
+    useState(true);
   return (
     <SettingsSection
       sectionId="projects-sessions"
@@ -391,5 +396,5 @@ export function ProjectsSessionsSection() {
         </>
       )}
     </SettingsSection>
-  )
+  );
 }

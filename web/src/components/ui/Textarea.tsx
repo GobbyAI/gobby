@@ -1,12 +1,11 @@
-import { forwardRef, type TextareaHTMLAttributes } from 'react'
-import { cn } from '../../lib/utils'
-import { controlSurfaceCls, controlWrapperCls } from './controlStyles'
+import { forwardRef, type TextareaHTMLAttributes } from "react";
+import { cn } from "../../lib/utils";
+import { controlSurfaceCls, controlWrapperCls } from "./controlStyles";
 
-export interface TextareaProps
-  extends TextareaHTMLAttributes<HTMLTextAreaElement> {
-  error?: boolean
+export interface TextareaProps extends TextareaHTMLAttributes<HTMLTextAreaElement> {
+  error?: boolean;
   /** Layout overrides for the wrapper label (flex-1, width caps, …). */
-  wrapperClassName?: string
+  wrapperClassName?: string;
 }
 
 // No height styling beyond the caller's: auto-grow implementations drive
@@ -17,17 +16,17 @@ export const Textarea = forwardRef<HTMLTextAreaElement, TextareaProps>(
       <label className={cn(controlWrapperCls, wrapperClassName)}>
         <textarea
           className={cn(
-            'py-2',
+            "py-2",
             controlSurfaceCls,
-            error ? 'border-destructive' : 'border-border',
-            className
+            error ? "border-destructive" : "border-border",
+            className,
           )}
           aria-invalid={!!error}
           ref={ref}
           {...props}
         />
       </label>
-    )
-  }
-)
-Textarea.displayName = 'Textarea'
+    );
+  },
+);
+Textarea.displayName = "Textarea";

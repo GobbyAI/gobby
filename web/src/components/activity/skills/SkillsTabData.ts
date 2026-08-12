@@ -1,7 +1,8 @@
 import { skillResponseError } from "./SkillsTabResponse";
 
 export type SkillSegment = "installed" | "hub";
-export type SkillSourceFilter = "all" | "installed" | "project" | "hub" | "deleted";
+export type SkillSourceFilter =
+  "all" | "installed" | "project" | "hub" | "deleted";
 
 export interface ActivitySkill {
   id: string;
@@ -73,12 +74,18 @@ export interface SkillScanResult {
   findings_count: number;
 }
 
-export const SKILL_SEGMENT_OPTIONS: Array<{ value: SkillSegment; label: string }> = [
+export const SKILL_SEGMENT_OPTIONS: Array<{
+  value: SkillSegment;
+  label: string;
+}> = [
   { value: "installed", label: "Installed" },
   { value: "hub", label: "Hub" },
 ];
 
-export const SKILL_SOURCE_OPTIONS: Array<{ value: SkillSourceFilter; label: string }> = [
+export const SKILL_SOURCE_OPTIONS: Array<{
+  value: SkillSourceFilter;
+  label: string;
+}> = [
   { value: "all", label: "All sources" },
   { value: "installed", label: "Installed" },
   { value: "project", label: "Project" },
@@ -103,7 +110,9 @@ export function skillCategory(skill: ActivitySkill): string {
   return "Uncategorized";
 }
 
-export function skillSourceKey(skill: ActivitySkill): Exclude<SkillSourceFilter, "all"> {
+export function skillSourceKey(
+  skill: ActivitySkill,
+): Exclude<SkillSourceFilter, "all"> {
   if (skill.deleted_at) return "deleted";
   if (skill.project_id || skill.source === "project") return "project";
   if (skill.hub_name || skill.source === "hub") return "hub";
@@ -124,8 +133,10 @@ export function filterInstalledSkills(
 
   return skills.filter((skill) => {
     if (skill.deleted_at && filters.source !== "deleted") return false;
-    if (filters.source !== "all" && skillSourceKey(skill) !== filters.source) return false;
-    if (filters.category !== "all" && skillCategory(skill) !== filters.category) return false;
+    if (filters.source !== "all" && skillSourceKey(skill) !== filters.source)
+      return false;
+    if (filters.category !== "all" && skillCategory(skill) !== filters.category)
+      return false;
     if (!query) return true;
 
     const haystack = [
@@ -169,12 +180,17 @@ export interface SkillFileMeta {
   content_hash: string;
 }
 
-export async function loadSkillFiles(skillId: string): Promise<SkillFileMeta[]> {
+export async function loadSkillFiles(
+  skillId: string,
+): Promise<SkillFileMeta[]> {
   const response = await fetch(
     `${getBaseUrl()}/api/skills/${encodeURIComponent(skillId)}/files`,
   );
   if (!response.ok) {
-    throw await skillResponseError(response, `Failed to load skill files (${response.status})`);
+    throw await skillResponseError(
+      response,
+      `Failed to load skill files (${response.status})`,
+    );
   }
   const data = (await response.json()) as { files?: SkillFileMeta[] };
   return data.files ?? [];
@@ -184,12 +200,18 @@ export function encodeSkillFilePath(path: string): string {
   return path.split("/").map(encodeURIComponent).join("/");
 }
 
-export async function loadSkillFileContent(skillId: string, path: string): Promise<string> {
+export async function loadSkillFileContent(
+  skillId: string,
+  path: string,
+): Promise<string> {
   const response = await fetch(
     `${getBaseUrl()}/api/skills/${encodeURIComponent(skillId)}/files/${encodeSkillFilePath(path)}`,
   );
   if (!response.ok) {
-    throw await skillResponseError(response, `Failed to load skill file (${response.status})`);
+    throw await skillResponseError(
+      response,
+      `Failed to load skill file (${response.status})`,
+    );
   }
   const data = (await response.json()) as { content?: string };
   if (typeof data.content !== "string") {

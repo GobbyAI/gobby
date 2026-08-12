@@ -31,7 +31,10 @@ import {
 const confirmMock = vi.hoisted(() => vi.fn(async (_opts: unknown) => true));
 
 vi.mock("../../../../hooks/useConfirmDialog", () => ({
-  useConfirmDialog: () => ({ confirm: confirmMock, ConfirmDialogElement: null }),
+  useConfirmDialog: () => ({
+    confirm: confirmMock,
+    ConfirmDialogElement: null,
+  }),
 }));
 
 vi.mock("../../../shared/CodeMirrorEditor", () => ({
@@ -79,7 +82,10 @@ class MockIntersectionObserver {
 }
 
 vi.mock("mermaid", () => ({
-  default: { initialize: vi.fn(), render: vi.fn(async () => ({ svg: "<svg />" })) },
+  default: {
+    initialize: vi.fn(),
+    render: vi.fn(async () => ({ svg: "<svg />" })),
+  },
 }));
 
 vi.mock("react-syntax-highlighter", () => ({
@@ -133,29 +139,43 @@ function stubWikiFetch(
 ): WikiFetchStub {
   const readByPath: Record<string, () => Response> = {};
   const writes: Array<Record<string, unknown>> = [];
-  const fetchMock = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
-    const url = new URL(String(input), "http://localhost");
-    const route = url.pathname;
-    if (route.includes("/api/wiki/status")) return jsonResponse(statusEnvelope);
-    if (route.includes("/api/wiki/health")) return jsonResponse(healthEnvelope);
-    if (route.includes("/api/wiki/sources")) return jsonResponse(sourcesEnvelope);
-    if (route.includes("/api/wiki/pages")) return jsonResponse(pagesEnvelope);
-    if (route.includes("/api/wiki/graph")) return jsonResponse(browseGraphEnvelope);
-    if (route.includes("/api/wiki/backlinks")) return jsonResponse(backlinksEnvelope);
-    if (route.includes("/api/wiki/write")) {
-      const body = JSON.parse(String(init?.body ?? "{}")) as Record<string, unknown>;
-      writes.push(body);
-      return options.write?.(body, writes.length - 1) ?? jsonResponse(writeSuccessEnvelope);
-    }
-    if (route.includes("/api/wiki/read")) {
-      const path = url.searchParams.get("path") ?? "";
-      const override = readByPath[path];
-      if (override) return override();
-      if (path === "knowledge/concepts/gwiki.md") return jsonResponse(browseReadGwikiEnvelope);
-      return jsonResponse(browseReadGobbyEnvelope);
-    }
-    return jsonResponse({ ok: true, payload: {} });
-  });
+  const fetchMock = vi.fn(
+    async (input: RequestInfo | URL, init?: RequestInit) => {
+      const url = new URL(String(input), "http://localhost");
+      const route = url.pathname;
+      if (route.includes("/api/wiki/status"))
+        return jsonResponse(statusEnvelope);
+      if (route.includes("/api/wiki/health"))
+        return jsonResponse(healthEnvelope);
+      if (route.includes("/api/wiki/sources"))
+        return jsonResponse(sourcesEnvelope);
+      if (route.includes("/api/wiki/pages")) return jsonResponse(pagesEnvelope);
+      if (route.includes("/api/wiki/graph"))
+        return jsonResponse(browseGraphEnvelope);
+      if (route.includes("/api/wiki/backlinks"))
+        return jsonResponse(backlinksEnvelope);
+      if (route.includes("/api/wiki/write")) {
+        const body = JSON.parse(String(init?.body ?? "{}")) as Record<
+          string,
+          unknown
+        >;
+        writes.push(body);
+        return (
+          options.write?.(body, writes.length - 1) ??
+          jsonResponse(writeSuccessEnvelope)
+        );
+      }
+      if (route.includes("/api/wiki/read")) {
+        const path = url.searchParams.get("path") ?? "";
+        const override = readByPath[path];
+        if (override) return override();
+        if (path === "knowledge/concepts/gwiki.md")
+          return jsonResponse(browseReadGwikiEnvelope);
+        return jsonResponse(browseReadGobbyEnvelope);
+      }
+      return jsonResponse({ ok: true, payload: {} });
+    },
+  );
   vi.stubGlobal("fetch", fetchMock);
   return { fetchMock, readByPath, writes };
 }
@@ -176,8 +196,12 @@ function renderWiki() {
 async function openDirtyGobbyEditor(user: ReturnType<typeof userEvent.setup>) {
   const tree = await screen.findByRole("tree", { name: /wiki pages/i });
   await user.click(within(tree).getByRole("treeitem", { name: /knowledge/i }));
-  await user.click(await within(tree).findByRole("treeitem", { name: /concepts/i }));
-  await user.click(await within(tree).findByRole("treeitem", { name: "Gobby" }));
+  await user.click(
+    await within(tree).findByRole("treeitem", { name: /concepts/i }),
+  );
+  await user.click(
+    await within(tree).findByRole("treeitem", { name: "Gobby" }),
+  );
   await screen.findByRole("heading", { name: "Gobby", level: 1 });
   await user.click(await screen.findByRole("button", { name: "Edit" }));
   const editor = await screen.findByRole("textbox", { name: "Page editor" });
@@ -215,11 +239,15 @@ describe("WikiPageEditor revision contract (3.2.4)", () => {
     await screen.findByText(/changed on disk/i);
     expect(stub.writes).toHaveLength(0);
     expect(screen.getByRole("button", { name: "Reload" })).toBeInTheDocument();
-    expect(screen.getByRole("button", { name: "Overwrite" })).toBeInTheDocument();
+    expect(
+      screen.getByRole("button", { name: "Overwrite" }),
+    ).toBeInTheDocument();
 
     // Keep editing dismisses the panel and preserves the local draft.
     await user.click(screen.getByRole("button", { name: "Keep editing" }));
-    await waitFor(() => expect(screen.queryByText(/changed on disk/i)).not.toBeInTheDocument());
+    await waitFor(() =>
+      expect(screen.queryByText(/changed on disk/i)).not.toBeInTheDocument(),
+    );
     expect((editor as HTMLTextAreaElement).value).toContain(" local-draft");
     expect(screen.getByText(/unsaved/i)).toBeInTheDocument();
   });
@@ -254,7 +282,9 @@ describe("WikiPageEditor revision contract (3.2.4)", () => {
   it("Overwrite requires a destructive confirmation and resaves against the fresh hash", async () => {
     const stub = stubWikiFetch({
       write: (_body, index) =>
-        index === 0 ? jsonResponse(writeConflictBody, 412) : jsonResponse(writeSuccessEnvelope),
+        index === 0
+          ? jsonResponse(writeConflictBody, 412)
+          : jsonResponse(writeSuccessEnvelope),
     });
     const user = userEvent.setup();
     renderWiki();
@@ -267,7 +297,9 @@ describe("WikiPageEditor revision contract (3.2.4)", () => {
       jsonResponse(browseReadGobbyChangedEnvelope);
     await user.click(screen.getByRole("button", { name: "Overwrite" }));
 
-    expect(confirmMock).toHaveBeenCalledWith(expect.objectContaining({ destructive: true }));
+    expect(confirmMock).toHaveBeenCalledWith(
+      expect.objectContaining({ destructive: true }),
+    );
     await waitFor(() => expect(stub.writes).toHaveLength(2));
     expect(stub.writes[1]).toMatchObject({
       path: "knowledge/concepts/gobby.md",
@@ -277,7 +309,9 @@ describe("WikiPageEditor revision contract (3.2.4)", () => {
 
     // Successful overwrite exits edit mode back to the reader.
     await waitFor(() =>
-      expect(screen.queryByRole("textbox", { name: "Page editor" })).not.toBeInTheDocument(),
+      expect(
+        screen.queryByRole("textbox", { name: "Page editor" }),
+      ).not.toBeInTheDocument(),
     );
   });
 

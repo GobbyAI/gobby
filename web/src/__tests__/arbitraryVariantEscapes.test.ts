@@ -1,7 +1,7 @@
-import { readdirSync, readFileSync } from 'node:fs'
-import { join } from 'node:path'
+import { readdirSync, readFileSync } from "node:fs";
+import { join } from "node:path";
 
-import { describe, expect, it } from 'vitest'
+import { describe, expect, it } from "vitest";
 
 // Tailwind converts bare `_` to a space inside arbitrary variants, so a
 // selector like `[&_.activity-list-row__body]:flex` silently compiles to the
@@ -11,38 +11,44 @@ import { describe, expect, it } from 'vitest'
 // This scan fails on any class-token that mixes `&`, a bare `__`, and a
 // variant terminator `]:` — the signature of an unescaped BEM target.
 
-const SRC_ROOT = join(process.cwd(), 'src')
+const SRC_ROOT = join(process.cwd(), "src");
 
 function sourceFiles(dir: string): string[] {
-  const out: string[] = []
+  const out: string[] = [];
   for (const entry of readdirSync(dir, { withFileTypes: true })) {
-    const path = join(dir, entry.name)
+    const path = join(dir, entry.name);
     if (entry.isDirectory()) {
-      if (entry.name === '__tests__' || entry.name === 'node_modules') continue
-      out.push(...sourceFiles(path))
+      if (entry.name === "__tests__" || entry.name === "node_modules") continue;
+      out.push(...sourceFiles(path));
     } else if (
       /\.(ts|tsx)$/.test(entry.name) &&
       !/\.test\.(ts|tsx)$/.test(entry.name)
     ) {
-      out.push(path)
+      out.push(path);
     }
   }
-  return out
+  return out;
 }
 
-describe('arbitrary variant underscore escapes', () => {
-  it('has no unescaped __ class targets inside &-variants in production sources', () => {
-    const violations: string[] = []
+describe("arbitrary variant underscore escapes", () => {
+  it("has no unescaped __ class targets inside &-variants in production sources", () => {
+    const violations: string[] = [];
     for (const file of sourceFiles(SRC_ROOT)) {
-      const lines = readFileSync(file, 'utf8').split('\n')
+      const lines = readFileSync(file, "utf8").split("\n");
       lines.forEach((line, i) => {
         for (const token of line.split(/[\s'"`]+/)) {
-          if (token.includes('&') && token.includes('__') && token.includes(']:')) {
-            violations.push(`${file.slice(SRC_ROOT.length + 1)}:${i + 1} ${token}`)
+          if (
+            token.includes("&") &&
+            token.includes("__") &&
+            token.includes("]:")
+          ) {
+            violations.push(
+              `${file.slice(SRC_ROOT.length + 1)}:${i + 1} ${token}`,
+            );
           }
         }
-      })
+      });
     }
-    expect(violations).toEqual([])
-  })
-})
+    expect(violations).toEqual([]);
+  });
+});

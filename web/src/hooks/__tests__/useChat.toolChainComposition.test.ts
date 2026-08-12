@@ -30,9 +30,9 @@ describe("live-stream tool_chain composition (item 11b)", () => {
     appendToolBlock(msg, makeTool("t3"));
 
     expect(msg.contentBlocks).toHaveLength(3);
-    expect(msg.contentBlocks?.every(b => b.type === "tool_chain")).toBe(true);
+    expect(msg.contentBlocks?.every((b) => b.type === "tool_chain")).toBe(true);
     expect(
-      (msg.contentBlocks ?? []).map(b =>
+      (msg.contentBlocks ?? []).map((b) =>
         b.type === "tool_chain" ? b.tool_calls.length : -1,
       ),
     ).toEqual([1, 1, 1]);
@@ -46,7 +46,7 @@ describe("live-stream tool_chain composition (item 11b)", () => {
     appendTextBlock(msg, "Second text");
     appendToolBlock(msg, makeTool("t3"));
 
-    expect(msg.contentBlocks?.map(b => b.type)).toEqual([
+    expect(msg.contentBlocks?.map((b) => b.type)).toEqual([
       "text",
       "tool_chain",
       "tool_chain",

@@ -20,7 +20,7 @@ import { markdownBodyClassName } from "../../shared/MarkdownBody";
  * are action controls elsewhere, never free-text PATCH inputs here.
  */
 
-const PRIORITY_SELECT_OPTIONS = TASK_PRIORITY_OPTIONS.map(option => ({
+const PRIORITY_SELECT_OPTIONS = TASK_PRIORITY_OPTIONS.map((option) => ({
   value: String(option.value),
   label: option.label,
 }));
@@ -57,10 +57,10 @@ export function TaskDetailEditableCore({
     if (!hasBody) return null;
     return (
       <section
-        className="flex flex-col gap-[0.7rem] border-b border-border bg-[var(--bg-primary)] px-4 pb-4 pt-[0.55rem]"
+        className="flex flex-col gap-[0.7rem] border-b border-border bg-[var(--bg-primary)] px-4 pt-[0.55rem] pb-4"
         data-task-detail-core
       >
-        <h3 className="mb-[0.35rem] mt-[0.55rem] text-[length:var(--text-2xs)] font-[var(--font-weight-semibold)] uppercase tracking-[0.08em] text-[var(--text-muted)]">
+        <h3 className="mt-[0.55rem] mb-[0.35rem] text-[length:var(--text-2xs)] font-[var(--font-weight-semibold)] tracking-[0.08em] text-[var(--text-muted)] uppercase">
           Details
         </h3>
         {labels.length > 0 && (
@@ -72,7 +72,7 @@ export function TaskDetailEditableCore({
               {labels.map((label) => (
                 <span
                   key={label}
-                  className="inline-flex h-5 items-center whitespace-nowrap rounded-full border border-border bg-[var(--bg-tertiary)] px-2 font-mono text-[length:var(--text-2xs)] font-medium tracking-[0.02em] text-[var(--text-secondary)]"
+                  className="inline-flex h-5 items-center rounded-full border border-border bg-[var(--bg-tertiary)] px-2 font-mono text-[length:var(--text-2xs)] font-medium tracking-[0.02em] whitespace-nowrap text-[var(--text-secondary)]"
                 >
                   {label}
                 </span>
@@ -80,9 +80,7 @@ export function TaskDetailEditableCore({
             </div>
           </div>
         )}
-        {description && (
-          <StaticBlock label="Description" value={description} />
-        )}
+        {description && <StaticBlock label="Description" value={description} />}
         {validationCriteria && (
           <StaticBlock label="Validation criteria" value={validationCriteria} />
         )}
@@ -92,10 +90,10 @@ export function TaskDetailEditableCore({
 
   return (
     <section
-      className="flex flex-col gap-[0.7rem] border-b border-border bg-[var(--bg-primary)] px-4 pb-4 pt-[0.55rem]"
+      className="flex flex-col gap-[0.7rem] border-b border-border bg-[var(--bg-primary)] px-4 pt-[0.55rem] pb-4"
       data-task-detail-core
     >
-      <h3 className="mb-[0.35rem] mt-[0.55rem] text-[length:var(--text-2xs)] font-[var(--font-weight-semibold)] uppercase tracking-[0.08em] text-[var(--text-muted)]">
+      <h3 className="mt-[0.55rem] mb-[0.35rem] text-[length:var(--text-2xs)] font-[var(--font-weight-semibold)] tracking-[0.08em] text-[var(--text-muted)] uppercase">
         Details
       </h3>
 

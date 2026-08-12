@@ -1,20 +1,20 @@
-import { CodeMirrorEditor } from '../shared/CodeMirrorEditor'
-import { Heading } from '../shared/Heading'
-import { Button } from '../ui/Button'
-import { coarseHitAreaCls } from '../ui/controlStyles'
-import { FormField } from '../ui/FormField'
-import { Input } from '../ui/Input'
-import { TabBar } from '../ui/TabBar'
-import { Textarea } from '../ui/Textarea'
-import { AgentEditPanel } from './AgentEditPanel'
-import type { AgentEditFormProps, AgentFormData } from './AgentEditForm.types'
-import { AgentProviderSettings } from './AgentProviderSettings'
-import { AgentReadOnlyDetails } from './AgentReadOnlyDetails'
-import { AgentRulesEditor } from './AgentRulesEditor'
-import { AgentSkillsEditor } from './AgentSkillsEditor'
-import { AgentStepsEditor } from './AgentStepsEditor'
-import { AgentToolBlocksEditor } from './AgentToolBlocksEditor'
-import { AgentVariablesEditor } from './AgentVariablesEditor'
+import { CodeMirrorEditor } from "../shared/CodeMirrorEditor";
+import { Heading } from "../shared/Heading";
+import { Button } from "../ui/Button";
+import { coarseHitAreaCls } from "../ui/controlStyles";
+import { FormField } from "../ui/FormField";
+import { Input } from "../ui/Input";
+import { TabBar } from "../ui/TabBar";
+import { Textarea } from "../ui/Textarea";
+import { AgentEditPanel } from "./AgentEditPanel";
+import type { AgentEditFormProps, AgentFormData } from "./AgentEditForm.types";
+import { AgentProviderSettings } from "./AgentProviderSettings";
+import { AgentReadOnlyDetails } from "./AgentReadOnlyDetails";
+import { AgentRulesEditor } from "./AgentRulesEditor";
+import { AgentSkillsEditor } from "./AgentSkillsEditor";
+import { AgentStepsEditor } from "./AgentStepsEditor";
+import { AgentToolBlocksEditor } from "./AgentToolBlocksEditor";
+import { AgentVariablesEditor } from "./AgentVariablesEditor";
 
 function FormInput({
   label,
@@ -23,27 +23,27 @@ function FormInput({
   placeholder,
   required,
 }: {
-  label: string
-  value: string
-  onChange: (value: string) => void
-  placeholder?: string
-  required?: boolean
+  label: string;
+  value: string;
+  onChange: (value: string) => void;
+  placeholder?: string;
+  required?: boolean;
 }) {
   return (
-    <FormField label={`${label}${required ? ' *' : ''}`}>
+    <FormField label={`${label}${required ? " *" : ""}`}>
       {({ id, describedBy, invalid }) => (
         <Input
           id={id}
           aria-describedby={describedBy}
           error={invalid}
           value={value}
-          onChange={event => onChange(event.target.value)}
+          onChange={(event) => onChange(event.target.value)}
           placeholder={placeholder}
           required={required}
         />
       )}
     </FormField>
-  )
+  );
 }
 
 function FormTextarea({
@@ -53,11 +53,11 @@ function FormTextarea({
   placeholder,
   rows = 3,
 }: {
-  label: string
-  value: string
-  onChange: (value: string) => void
-  placeholder?: string
-  rows?: number
+  label: string;
+  value: string;
+  onChange: (value: string) => void;
+  placeholder?: string;
+  rows?: number;
 }) {
   return (
     <FormField label={label}>
@@ -68,13 +68,13 @@ function FormTextarea({
           aria-describedby={describedBy}
           error={invalid}
           value={value}
-          onChange={event => onChange(event.target.value)}
+          onChange={(event) => onChange(event.target.value)}
           placeholder={placeholder}
           rows={rows}
         />
       )}
     </FormField>
-  )
+  );
 }
 
 export function AgentEditForm({
@@ -114,32 +114,36 @@ export function AgentEditForm({
   onBlockedMcpToolsChange,
   agentNames = [],
 }: AgentEditFormProps) {
-  const view = sidebarViewProp ?? 'form'
-  const set = <K extends keyof AgentFormData>(key: K, value: AgentFormData[K]) =>
-    onChange({ ...form, [key]: value })
+  const view = sidebarViewProp ?? "form";
+  const set = <K extends keyof AgentFormData>(
+    key: K,
+    value: AgentFormData[K],
+  ) => onChange({ ...form, [key]: value });
 
   const title = readOnly
-    ? agentItem?.definition.name || 'Agent'
+    ? agentItem?.definition.name || "Agent"
     : isEditing
-      ? 'Edit Agent'
-      : 'Create Agent'
+      ? "Edit Agent"
+      : "Create Agent";
 
   const headerContent = (
     <>
       {onViewChange && (
         <TabBar
           tabs={[
-            { id: 'form', label: 'Form' },
-            { id: 'yaml', label: 'YAML' },
+            { id: "form", label: "Form" },
+            { id: "yaml", label: "YAML" },
           ]}
           activeTab={view}
-          onTabChange={tabId => onViewChange(tabId === 'yaml' ? 'yaml' : 'form')}
+          onTabChange={(tabId) =>
+            onViewChange(tabId === "yaml" ? "yaml" : "form")
+          }
           ariaLabel="Agent editor view"
           className="mb-0"
         />
       )}
     </>
-  )
+  );
 
   const footer = readOnly ? undefined : (
     <>
@@ -149,14 +153,14 @@ export function AgentEditForm({
       <Button
         variant="primary"
         className={coarseHitAreaCls}
-        onClick={view === 'yaml' && onYamlSave ? onYamlSave : onSave}
+        onClick={view === "yaml" && onYamlSave ? onYamlSave : onSave}
         disabled={saveDisabled}
         type="button"
       >
-        {isEditing ? 'Save' : 'Create'}
+        {isEditing ? "Save" : "Create"}
       </Button>
     </>
-  )
+  );
 
   return (
     <AgentEditPanel
@@ -166,10 +170,10 @@ export function AgentEditForm({
       headerContent={headerContent}
       footer={footer}
     >
-      {view === 'yaml' ? (
+      {view === "yaml" ? (
         <div className="h-full [&_.codemirror-container]:h-full">
           <CodeMirrorEditor
-            content={yamlContent || ''}
+            content={yamlContent || ""}
             language="yaml"
             readOnly={readOnly}
             onChange={onYamlChange}
@@ -184,7 +188,7 @@ export function AgentEditForm({
             <FormInput
               label="Name"
               value={form.name}
-              onChange={value => set('name', value)}
+              onChange={(value) => set("name", value)}
               placeholder="my-agent"
               required
             />
@@ -203,32 +207,32 @@ export function AgentEditForm({
           <div className="flex flex-col gap-1.5 border-b border-border px-5 py-3">
             <Heading
               level={4}
-              className="mt-0 mb-1 text-sm font-semibold uppercase tracking-wider text-[var(--text-muted)]"
+              className="mt-0 mb-1 text-sm font-semibold tracking-wider text-[var(--text-muted)] uppercase"
             >
               Identity
             </Heading>
             <FormTextarea
               label="Description"
               value={form.description}
-              onChange={value => set('description', value)}
+              onChange={(value) => set("description", value)}
               placeholder="What this agent does..."
             />
             <FormTextarea
               label="Role"
               value={form.role}
-              onChange={value => set('role', value)}
+              onChange={(value) => set("role", value)}
               placeholder="e.g. Senior security engineer"
             />
             <FormTextarea
               label="Goal"
               value={form.goal}
-              onChange={value => set('goal', value)}
+              onChange={(value) => set("goal", value)}
               placeholder="What success looks like..."
             />
             <FormTextarea
               label="Personality"
               value={form.personality}
-              onChange={value => set('personality', value)}
+              onChange={(value) => set("personality", value)}
               placeholder="Communication style, tone..."
             />
           </div>
@@ -236,7 +240,7 @@ export function AgentEditForm({
           <div className="flex flex-col gap-1.5 border-b border-border px-5 py-3">
             <Heading
               level={4}
-              className="mt-0 mb-1 text-sm font-semibold uppercase tracking-wider text-[var(--text-muted)]"
+              className="mt-0 mb-1 text-sm font-semibold tracking-wider text-[var(--text-muted)] uppercase"
             >
               Instructions
             </Heading>
@@ -244,7 +248,7 @@ export function AgentEditForm({
               <CodeMirrorEditor
                 content={form.instructions}
                 language="markdown"
-                onChange={value => set('instructions', value)}
+                onChange={(value) => set("instructions", value)}
               />
             </div>
           </div>
@@ -253,7 +257,7 @@ export function AgentEditForm({
             <div className="flex flex-col gap-1.5 border-b border-border px-5 py-3">
               <Heading
                 level={4}
-                className="mt-0 mb-1 text-sm font-semibold uppercase tracking-wider text-[var(--text-muted)]"
+                className="mt-0 mb-1 text-sm font-semibold tracking-wider text-[var(--text-muted)] uppercase"
               >
                 Rules
               </Heading>
@@ -272,7 +276,7 @@ export function AgentEditForm({
             <div className="flex flex-col gap-1.5 border-b border-border px-5 py-3">
               <Heading
                 level={4}
-                className="mt-0 mb-1 text-sm font-semibold uppercase tracking-wider text-[var(--text-muted)]"
+                className="mt-0 mb-1 text-sm font-semibold tracking-wider text-[var(--text-muted)] uppercase"
               >
                 Skills
               </Heading>
@@ -288,7 +292,7 @@ export function AgentEditForm({
             <div className="flex flex-col gap-1.5 border-b border-border px-5 py-3">
               <Heading
                 level={4}
-                className="mt-0 mb-1 text-sm font-semibold uppercase tracking-wider text-[var(--text-muted)]"
+                className="mt-0 mb-1 text-sm font-semibold tracking-wider text-[var(--text-muted)] uppercase"
               >
                 Variables
               </Heading>
@@ -304,7 +308,7 @@ export function AgentEditForm({
             <div className="flex flex-col gap-1.5 border-b border-border px-5 py-3">
               <Heading
                 level={4}
-                className="mt-0 mb-1 text-sm font-semibold uppercase tracking-wider text-[var(--text-muted)]"
+                className="mt-0 mb-1 text-sm font-semibold tracking-wider text-[var(--text-muted)] uppercase"
               >
                 Tool Restrictions
               </Heading>
@@ -321,7 +325,7 @@ export function AgentEditForm({
             <div className="flex flex-col gap-1.5 border-b border-border px-5 py-3">
               <Heading
                 level={4}
-                className="mt-0 mb-1 text-sm font-semibold uppercase tracking-wider text-[var(--text-muted)]"
+                className="mt-0 mb-1 text-sm font-semibold tracking-wider text-[var(--text-muted)] uppercase"
               >
                 Steps
               </Heading>
@@ -331,5 +335,5 @@ export function AgentEditForm({
         </>
       )}
     </AgentEditPanel>
-  )
+  );
 }

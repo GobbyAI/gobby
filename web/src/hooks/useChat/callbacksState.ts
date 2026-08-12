@@ -13,7 +13,9 @@ export function useChatCallbacksState() {
   // switch. Lets the Plans panel tell approve from reject (#15681).
   const [planApproved, setPlanApproved] = useState(false);
   // Per-CLI plan-accept options carried in the plan_pending_approval payload.
-  const [planApprovalOptions, setPlanApprovalOptions] = useState<ApprovalOption[]>([]);
+  const [planApprovalOptions, setPlanApprovalOptions] = useState<
+    ApprovalOption[]
+  >([]);
   const planContentRef = useRef<string | null>(null);
   const planToolCallIdRef = useRef<string | null>(null);
   const currentModeRef = useRef<ChatMode>("plan");
