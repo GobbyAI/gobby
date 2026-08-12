@@ -764,6 +764,9 @@ class WorkflowHookHandler(WorkflowToolContextMixin):
 
         Primary entry point for workflow evaluation.
         """
+        enabled, _ = self._resolve_policy()
+        if not enabled:
+            return HookResponse(decision="allow")
         try:
             try:
                 asyncio.get_running_loop()

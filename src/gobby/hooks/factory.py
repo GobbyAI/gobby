@@ -167,14 +167,17 @@ class HookManagerFactory:
             HookManagerComponents with all wired subsystem instances
         """
         # Capture one typed configuration snapshot for the construction operation.
-        try:
-            config = cls._resolve_config(config, config_runtime)
-        except Exception as e:
-            hook_logger.exception(
-                "Failed to load config in HookManager, using bootstrap config: %s",
-                e,
-            )
-            config = cls._resolve_config(config, None)
+        # An explicitly injected config wins at construction; per-operation
+        # resolver lambdas below still prefer the live runtime snapshot.
+        if config is None:
+            try:
+                config = cls._resolve_config(config, config_runtime)
+            except Exception as e:
+                hook_logger.exception(
+                    "Failed to load config in HookManager, using bootstrap config: %s",
+                    e,
+                )
+                config = cls._resolve_config(None, None)
 
         # Initialize core components
         if session_manager is not None:

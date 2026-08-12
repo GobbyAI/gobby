@@ -25,6 +25,16 @@ from tests.runner_helpers import create_base_patches
 pytestmark = [pytest.mark.unit, pytest.mark.usefixtures("fast_stop_hook_grace_window")]
 
 
+@pytest.fixture(autouse=True)
+def _reset_tmux_globals() -> Any:
+    # Runner startup paths call configure_tmux with mocked configs; reset the
+    # module-global so later suites see the unconfigured default again.
+    from gobby.agents.tmux import reset_tmux_globals
+
+    yield
+    reset_tmux_globals()
+
+
 async def _never_complete() -> None:
     await asyncio.Event().wait()
 

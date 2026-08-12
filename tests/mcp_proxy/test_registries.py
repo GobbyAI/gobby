@@ -135,9 +135,17 @@ async def test_review_learning_registry_recovers_after_runtime_manager_rebuild()
     rebuilt = MagicMock()
     rebuilt.search_memories = AsyncMock(return_value=[])
     current[0] = rebuilt
-    with patch(
-        "gobby.utils.project_context.get_project_context",
-        return_value={"id": "11111111-1111-4111-8111-111111110001"},
+    # service.py from-imports both helpers, so patch the bindings it uses;
+    # a live GOBBY_SESSION_ID would otherwise route scope resolution at the DB.
+    with (
+        patch(
+            "gobby.review_learning.service.get_project_context",
+            return_value={"id": "11111111-1111-4111-8111-111111110001"},
+        ),
+        patch(
+            "gobby.review_learning.service.get_current_session_id",
+            return_value=None,
+        ),
     ):
         result = await registry.call(
             "recall_review_context",
