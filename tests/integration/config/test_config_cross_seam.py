@@ -39,7 +39,7 @@ from gobby.storage.embedding_generation_state import managed_projection_targets
 from gobby.storage.hub.protocol import HubDatabase
 from gobby.storage.secrets import SecretStore
 
-pytestmark = pytest.mark.integration
+pytestmark = [pytest.mark.integration, pytest.mark.asyncio]
 
 VOICE_SECRET_NAME = "voice_audio_api_key"
 VOICE_SECRET_VALUE = "voice-plaintext-token"

@@ -22,6 +22,7 @@ from gobby.config.runtime import (
     SecretIdentityMismatchError,
     UnavailableService,
 )
+from gobby.config.runtime_models import ConfigSnapshot
 from gobby.storage.config_notifications import ConfigNotificationListener, NotificationConnection
 from gobby.storage.hub.postgres import PostgresHubDatabase
 
@@ -230,6 +231,32 @@ async def test_snapshot_swap_is_atomic() -> None:
     await runtime.close()
 
 
+@pytest.mark.unit
+def test_snapshot_overrides_are_deeply_isolated_at_publish_and_access() -> None:
+    config = DaemonConfig()
+    overrides: dict[str, object] = {"provider": {"models": ["original"]}}
+    snapshot = ConfigSnapshot(
+        revision=1,
+        desired=config,
+        active=config,
+        row_revisions={},
+        pending_restart_keys=frozenset(),
+        failed_live_keys={},
+        desired_overrides=overrides,
+        active_overrides=overrides,
+    )
+
+    cast(dict[str, list[str]], overrides["provider"])["models"].append("caller-mutation")
+    desired = cast(dict[str, list[str]], snapshot.desired_overrides["provider"])
+    active = cast(dict[str, list[str]], snapshot.active_overrides["provider"])
+    desired["models"].append("reader-mutation")
+    active["models"].append("reader-mutation")
+
+    assert snapshot.desired_overrides == {"provider": {"models": ["original"]}}
+    assert snapshot.active_overrides == {"provider": {"models": ["original"]}}
+
+
+@pytest.mark.unit
 @pytest.mark.asyncio
 async def test_sparse_profile_override_propagates_to_omitted_feature_candidates() -> None:
     low_candidates = ["codex/gpt-5.6-luna", "claude/haiku"]
@@ -256,6 +283,7 @@ async def test_sparse_profile_override_propagates_to_omitted_feature_candidates(
     await runtime.close()
 
 
+@pytest.mark.unit
 @pytest.mark.asyncio
 async def test_live_profile_override_updates_inherited_feature_candidates() -> None:
     initial = ["codex/gpt-5.6-luna", "claude/haiku"]
@@ -287,6 +315,7 @@ async def test_live_profile_override_updates_inherited_feature_candidates() -> N
     await runtime.close()
 
 
+@pytest.mark.unit
 @pytest.mark.asyncio
 async def test_explicit_feature_candidates_override_profile_default() -> None:
     profile_candidates = ["codex/gpt-5.6-luna", "claude/haiku"]

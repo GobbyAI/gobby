@@ -26,6 +26,8 @@ from gobby.config.registry import (
     encode_dynamic_segment,
 )
 
+pytestmark = pytest.mark.unit
+
 
 def _model_type(annotation: object) -> type[BaseModel] | None:
     """Return a nested Pydantic model type from a field annotation."""

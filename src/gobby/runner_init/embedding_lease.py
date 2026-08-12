@@ -70,6 +70,7 @@ def _renew_embedding_lease(handle: _ManagedEmbeddingLease) -> None:
         except EmbeddingGenerationLeaseExpired:
             if handle.renewal_stop.is_set():
                 return
+            handle.lease.fence()
             logger.warning("Managed embedding generation lease was lost; attempting re-acquisition")
             if not _reacquire_lease_from_renewal_thread(handle):
                 return

@@ -130,7 +130,9 @@ class SessionEndMixin(EventHandlersBase):
                 )
 
         # Unregister from message processor
-        message_processor = self._resolve_message_processor()
+        message_processor = (
+            self._session_message_processors.pop(session_id, None) if session_id else None
+        )
         if message_processor is not None and session_id:
             try:
                 message_processor.unregister_session(session_id)

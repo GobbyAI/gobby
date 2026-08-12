@@ -88,6 +88,7 @@ fn join_request(handle: RequestHandle) -> String {
 
 fn served(values: impl IntoIterator<Item = (&'static str, &'static str)>) -> DaemonServedConfig {
     DaemonServedConfig::new(
+        7,
         values
             .into_iter()
             .map(|(key, value)| (key.to_string(), value.to_string()))
@@ -102,7 +103,7 @@ fn spawn_delayed_json_response(delay: Duration) -> std::io::Result<(String, Requ
         let (mut stream, _) = listener.accept()?;
         let request = read_http_request(&mut stream)?;
         thread::sleep(delay);
-        let body = r#"{"config":{}}"#;
+        let body = r#"{"revision":7,"config":{}}"#;
         write!(
             stream,
             "HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{}",
@@ -160,7 +161,7 @@ fn fetch_carries_bearer_and_parses_effective_config_envelope() {
     )
     .expect("write local CLI token");
     let (base_url, request) = spawn_json_response(
-        r#"{"config":{"ai.embeddings.model":"nomic-embed-text","databases.postgres.dsn":"postgresql://daemon/gobby"}}"#,
+        r#"{"revision":7,"config":{"ai.embeddings.model":"nomic-embed-text","databases.postgres.dsn":"postgresql://daemon/gobby"}}"#,
     )
     .expect("spawn daemon");
 
@@ -171,6 +172,7 @@ fn fetch_carries_bearer_and_parses_effective_config_envelope() {
         daemon.config_value("ai.embeddings.model").as_deref(),
         Some("nomic-embed-text")
     );
+    assert_eq!(daemon.revision(), 7);
     assert!(routing.is_none());
     let request = join_request(request);
     assert!(request.starts_with(&format!("GET {EFFECTIVE_CONFIG_PATH} HTTP/1.1")));
@@ -187,6 +189,7 @@ fn managed_tool_fetch_uses_typed_bundle_and_bound_identity_headers() {
     let home = temp_home();
     let body = r#"{
         "version": 1,
+        "revision": 7,
         "execution": {
             "owner_kind": "tool_chat",
             "execution_id": "tool-123",
@@ -277,6 +280,7 @@ fn managed_bundle_rejects_unapproved_config_keys() {
     let home = temp_home();
     let body = r#"{
         "version": 1,
+        "revision": 7,
         "execution": {
             "owner_kind": "agent_run",
             "execution_id": "run-123",
@@ -322,6 +326,7 @@ fn managed_bundle_rejects_unresolved_embedding_secret_reference() {
     let home = temp_home();
     let body = r#"{
         "version": 1,
+        "revision": 7,
         "execution": {
             "owner_kind": "agent_run",
             "execution_id": "run-123",
@@ -477,7 +482,7 @@ fn success_with_stalled_or_truncated_body_is_transport_failure() {
 fn success_with_invalid_json_or_missing_envelope_is_protocol_failure() {
     let home = temp_home();
 
-    for body in ["sensitive-response-body", "{}"] {
+    for body in ["sensitive-response-body", "{}", r#"{"config":{}}"#] {
         let (base_url, request) = spawn_json_response(body).expect("spawn daemon");
         let error =
             daemon_mode_layers_at(&base_url, home.path()).expect_err("protocol must be strict");
@@ -534,7 +539,7 @@ fn malformed_local_yaml_after_fetch_keeps_daemon_mode_without_routing() {
     fs::write(home.path().join("gcore.yaml"), "ai: [malformed")
         .expect("write malformed gcore yaml");
     let (base_url, request) =
-        spawn_json_response(r#"{"config":{"ai.embeddings.model":"served-model"}}"#)
+        spawn_json_response(r#"{"revision":7,"config":{"ai.embeddings.model":"served-model"}}"#)
             .expect("spawn daemon");
 
     let (mut daemon, routing) =
@@ -666,8 +671,10 @@ fn cached_state_is_cloneable() {
     ));
 
     let map = BTreeMap::from([("ai.embeddings.model".to_string(), "served".to_string())]);
-    let state =
-        EffectiveConfigState::Available((DaemonServedConfig::new(map), Some(Default::default())));
+    let state = EffectiveConfigState::Available((
+        DaemonServedConfig::new(7, map),
+        Some(Default::default()),
+    ));
     assert!(matches!(
         state.clone(),
         EffectiveConfigState::Available((_, Some(_)))

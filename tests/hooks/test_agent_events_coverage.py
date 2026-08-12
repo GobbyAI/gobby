@@ -43,6 +43,10 @@ def _make_event(
     )
 
 
+def _resolve_none() -> None:
+    return None
+
+
 class _TestHandler(AgentEventHandlerMixin):
     """Concrete implementation with required attributes for testing."""
 
@@ -50,10 +54,10 @@ class _TestHandler(AgentEventHandlerMixin):
         self.logger = MagicMock()
         self._session_manager = MagicMock()
         self._session_coordinator = None
-        self._message_processor_resolver = lambda: None
+        self._message_processor_resolver = _resolve_none
         self._task_manager = None
         self._workflow_handler = None
-        self._workflow_config_resolver = lambda: None
+        self._workflow_config_resolver = _resolve_none
         self._skill_manager = MagicMock()
         self._session_task_manager = None
         self._dispatch_session_summaries_fn = MagicMock()

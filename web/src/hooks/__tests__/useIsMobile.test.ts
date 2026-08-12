@@ -1,6 +1,6 @@
 import { act, renderHook } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { useIsMobile } from "../useIsMobile";
+import { useCoarsePointer, useIsMobile } from "../useIsMobile";
 
 const MOBILE_MAX_WIDTH_TOKEN = "--breakpoint-mobile-max-width";
 const MOBILE_MAX_HEIGHT_TOKEN = "--breakpoint-mobile-max-height";
@@ -8,6 +8,7 @@ const MOBILE_MAX_HEIGHT_TOKEN = "--breakpoint-mobile-max-height";
 interface Viewport {
   width: number;
   height: number;
+  coarsePointer?: boolean;
 }
 
 interface MatchMediaHarness {
@@ -17,6 +18,7 @@ interface MatchMediaHarness {
 }
 
 function queryMatches(query: string, viewport: Viewport): boolean {
+  if (query === "(pointer: coarse)") return viewport.coarsePointer ?? false;
   const maxWidth = query.match(/\(max-width:\s*(\d+)px\)/);
   const maxHeight = query.match(/\(max-height:\s*(\d+)px\)/);
   return (
@@ -198,5 +200,62 @@ describe("useIsMobile", () => {
     unmount();
 
     expect(removeEventListener).toHaveBeenCalledWith("change", listener);
+  });
+});
+
+describe("useCoarsePointer", () => {
+  afterEach(() => {
+    vi.restoreAllMocks();
+  });
+
+  it("reads the initial coarse-pointer state", () => {
+    const { matchMedia } = installMatchMedia({
+      width: 1200,
+      height: 900,
+      coarsePointer: true,
+    });
+
+    const { result } = renderHook(() => useCoarsePointer());
+
+    expect(result.current).toBe(true);
+    expect(matchMedia).toHaveBeenCalledWith("(pointer: coarse)");
+  });
+
+  it("updates when the pointer precision changes", () => {
+    const harness = installMatchMedia({ width: 1200, height: 900 });
+    const { result } = renderHook(() => useCoarsePointer());
+
+    act(() =>
+      harness.resize({ width: 1200, height: 900, coarsePointer: true }),
+    );
+
+    expect(result.current).toBe(true);
+  });
+
+  it("degrades when matchMedia is unavailable", () => {
+    Object.defineProperty(window, "matchMedia", {
+      configurable: true,
+      writable: true,
+      value: undefined,
+    });
+
+    const { result } = renderHook(() => useCoarsePointer());
+
+    expect(result.current).toBe(false);
+  });
+
+  it("removes the registered change listener on unmount", () => {
+    const { mediaQueries } = installMatchMedia({ width: 1200, height: 900 });
+    const { unmount } = renderHook(() => useCoarsePointer());
+    const mediaQuery = mediaQueries[0];
+    const addEventListener = vi.mocked(mediaQuery.addEventListener);
+    const listener = addEventListener.mock.calls[0][1];
+
+    unmount();
+
+    expect(mediaQuery.removeEventListener).toHaveBeenCalledWith(
+      "change",
+      listener,
+    );
   });
 });

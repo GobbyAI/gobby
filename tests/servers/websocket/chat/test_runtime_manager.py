@@ -67,9 +67,11 @@ class TestWebChatRuntimeManager:
         assert manager.sandbox_config.enabled is True
         assert manager.sandbox_config.extra_read_paths == ["/tmp/live"]
         assert manager.sandbox_policy_hash != initial_hash
+
         assert isinstance(session, ChatSession)
         assert session.sandbox_config is not None
         assert session.sandbox_config.enabled is True
+        assert session.sandbox_config.extra_read_paths == ["/tmp/live"]
 
     def test_live_sandbox_refresh_uses_backend_public_setters(self) -> None:
         current = [DaemonConfig(web_chat_sandbox={"enabled": False})]

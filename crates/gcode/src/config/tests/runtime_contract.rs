@@ -21,10 +21,13 @@ const NEW_SECRET: &str = "gAAAAABqeTBkwMABPndJJlia01OccTFyT6-40tAj4Pei5ZdQGisMXr
 #[serial_test::serial]
 fn gobby_mode_uses_registry_authority() {
     super::with_service_env(&[("GOBBY_FALKORDB_HOST", Some("env-host"))], || {
-        let served = DaemonServedConfig::new(BTreeMap::from([(
-            "databases.falkordb.host".to_string(),
-            "daemon-host".to_string(),
-        )]));
+        let served = DaemonServedConfig::new(
+            7,
+            BTreeMap::from([(
+                "databases.falkordb.host".to_string(),
+                "daemon-host".to_string(),
+            )]),
+        );
         let mut source = ServiceSource::daemon(served);
 
         assert_eq!(
@@ -135,6 +138,17 @@ fn hub_fallback_reads_atomic_snapshot() {
         let current = capture_hub_snapshot(&mut writer).expect("capture new snapshot");
         assert_eq!(current.revision(), 41);
         assert_embedding_snapshot(current, "new-model", "new-secret");
+
+        let stale_daemon = DaemonServedConfig::new(
+            40,
+            BTreeMap::from([("ai.embeddings.model".to_string(), "old-model".to_string())]),
+        );
+        let current = capture_hub_snapshot(&mut writer).expect("recapture new snapshot");
+        let error = match ServiceSource::daemon_with_snapshot(stale_daemon, current) {
+            Ok(_) => panic!("stale daemon and current secret snapshot must not combine"),
+            Err(error) => error,
+        };
+        assert!(error.to_string().contains("daemon=40, hub=41"));
     });
 
     setup

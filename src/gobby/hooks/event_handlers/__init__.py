@@ -112,6 +112,7 @@ class EventHandlers(
         self._workflow_handler = workflow_handler
         self._session_task_manager = session_task_manager
         self._message_processor_resolver = message_processor_resolver or (lambda: None)
+        self._session_message_processors: dict[str, Any] = {}
         self._task_manager = task_manager
         self._progress_tracker = progress_tracker
         self._worktree_manager = worktree_manager

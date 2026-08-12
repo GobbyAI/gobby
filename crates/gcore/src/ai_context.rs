@@ -388,6 +388,13 @@ impl<R> ConfigSource for PostgresAiConfigSource<'_, R>
 where
     R: FnMut(&str, &mut postgres::Client) -> anyhow::Result<String>,
 {
+    fn snapshot_revision(&mut self) -> anyhow::Result<Option<i64>> {
+        if !self.config_store_available {
+            return Ok(None);
+        }
+        crate::postgres::read_config_revision(self.conn).map(Some)
+    }
+
     fn config_value(&mut self, key: &str) -> Option<String> {
         if !self.config_store_available {
             return None;

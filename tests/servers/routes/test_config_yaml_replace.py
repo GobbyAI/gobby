@@ -36,6 +36,8 @@ from gobby.storage.config_repository import ConfigRepository
 from gobby.storage.config_store import flatten_config
 from gobby.storage.secrets import SecretStore
 
+pytestmark = pytest.mark.unit
+
 _CANDIDATE_REPOSITORY = ConfigRepository(
     cast(Any, object()),
     secret_store=cast(SecretStore, object()),

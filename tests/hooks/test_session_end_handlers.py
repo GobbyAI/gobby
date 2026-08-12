@@ -161,6 +161,10 @@ class TestSessionEndHandling:
     def test_session_end_unregister_message_processor(self, mock_dependencies: dict) -> None:
         """Test unregistering from message processor on session end."""
         handlers = EventHandlers(**mock_dependencies)
+        registered_processor = mock_dependencies["message_processor_resolver"]()
+        replacement_processor = MagicMock()
+        handlers._session_message_processors["sess-123"] = registered_processor
+        handlers._message_processor_resolver = lambda: replacement_processor
         event = make_event(
             HookEventType.SESSION_END,
             session_id="ext-123",
@@ -169,14 +173,9 @@ class TestSessionEndHandling:
 
         handlers.handle_session_end(event)
 
-        mock_dependencies[
-            "message_processor_resolver"
-        ]().unregister_session.assert_called_once_with("sess-123")
-        assert mock_dependencies["message_processor_resolver"]().unregister_session.call_count == 1
-        assert (
-            mock_dependencies["message_processor_resolver"]().unregister_session.call_args
-            is not None
-        )
+        registered_processor.unregister_session.assert_called_once_with("sess-123")
+        replacement_processor.unregister_session.assert_not_called()
+        assert "sess-123" not in handlers._session_message_processors
 
     def test_session_end_unregister_maps_external_id_to_platform_id(
         self, mock_dependencies: dict
@@ -185,6 +184,8 @@ class TestSessionEndHandling:
         mock_dependencies["session_manager"].lookup_session_id.return_value = "mapped-sess-123"
 
         handlers = EventHandlers(**mock_dependencies)
+        processor = mock_dependencies["message_processor_resolver"]()
+        handlers._session_message_processors["mapped-sess-123"] = processor
         event = make_event(
             HookEventType.SESSION_END,
             session_id="ext-123",
@@ -193,14 +194,7 @@ class TestSessionEndHandling:
 
         handlers.handle_session_end(event)
 
-        mock_dependencies[
-            "message_processor_resolver"
-        ]().unregister_session.assert_called_once_with("mapped-sess-123")
-        assert mock_dependencies["message_processor_resolver"]().unregister_session.call_count == 1
-        assert (
-            mock_dependencies["message_processor_resolver"]().unregister_session.call_args
-            is not None
-        )
+        processor.unregister_session.assert_called_once_with("mapped-sess-123")
 
     def test_session_end_lookup_miss_does_not_unregister_external_id(
         self, mock_dependencies: dict
@@ -226,6 +220,9 @@ class TestSessionEndHandling:
         ]().unregister_session.side_effect = Exception("Unregister error")
 
         handlers = EventHandlers(**mock_dependencies)
+        handlers._session_message_processors["sess-123"] = mock_dependencies[
+            "message_processor_resolver"
+        ]()
         event = make_event(
             HookEventType.SESSION_END,
             session_id="ext-123",

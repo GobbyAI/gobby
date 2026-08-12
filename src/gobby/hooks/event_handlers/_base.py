@@ -37,6 +37,7 @@ class EventHandlersBase:
     _workflow_config_resolver: Callable[[], WorkflowConfig | None]
     _session_task_manager: SessionTaskManager | None
     _message_processor_resolver: Callable[[], Any | None]
+    _session_message_processors: dict[str, Any]
     _task_manager: LocalTaskManager | None
     _progress_tracker: ProgressTracker | None
     _worktree_manager: LocalWorktreeManager | None

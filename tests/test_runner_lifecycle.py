@@ -3191,11 +3191,12 @@ class TestMessageProcessorPreparedService:
         assert prepared.value is processor
         processor.start.assert_not_called()
 
+        original_debug = loop.get_debug()
         loop.set_debug(True)
         try:
             await asyncio.to_thread(prepared.activate)
         finally:
-            loop.set_debug(False)
+            loop.set_debug(original_debug)
 
         assert runner.message_processor is processor
         assert processor.session_manager is runner.session_manager

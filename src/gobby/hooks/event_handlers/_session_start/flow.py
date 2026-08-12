@@ -531,6 +531,7 @@ def handle_session_start(handler: Any, event: HookEvent) -> HookResponse:
                 transcript_path,
                 source=cli_source,
             )
+            handler._session_message_processors[session_id] = message_processor
         except Exception as e:
             handler.logger.warning("Failed to register session with message processor: %s", e)
 
@@ -759,6 +760,7 @@ def handle_pre_created_session(
                 transcript_path,
                 source=cli_source,
             )
+            handler._session_message_processors[session_id] = message_processor
         except Exception as e:
             handler.logger.warning("Failed to register with message processor: %s", e)
 

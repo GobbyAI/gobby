@@ -47,6 +47,14 @@ pub fn read_config_value(conn: &mut Client, key: &str) -> anyhow::Result<Option<
     .transpose()
 }
 
+/// Read the committed global runtime configuration revision.
+pub fn read_config_revision(conn: &mut Client) -> anyhow::Result<i64> {
+    conn.query_one("SELECT revision FROM config_state WHERE id = true", &[])
+        .context("failed to read runtime configuration revision")?
+        .try_get("revision")
+        .context("runtime configuration revision was not an integer")
+}
+
 /// Result of a single schema object check (table, index, column, etc.).
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct SchemaCheck {

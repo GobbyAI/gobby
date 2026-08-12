@@ -1,12 +1,45 @@
 use super::*;
 use crate::provisioning::StandaloneConfig;
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, VecDeque};
 use std::fs;
 
 #[derive(Debug)]
 struct PrimarySource;
 
 impl ConfigSource for PrimarySource {
+    fn snapshot_revision(&mut self) -> anyhow::Result<Option<i64>> {
+        Ok(Some(7))
+    }
+
+    fn config_value(&mut self, key: &str) -> Option<String> {
+        Some(format!("primary:{key}"))
+    }
+
+    fn resolve_value(&mut self, value: &str) -> anyhow::Result<String> {
+        Ok(format!("primary:{value}"))
+    }
+}
+
+#[derive(Debug)]
+struct SequencedPrimarySource {
+    revisions: VecDeque<anyhow::Result<Option<i64>>>,
+}
+
+impl SequencedPrimarySource {
+    fn new(revisions: impl IntoIterator<Item = anyhow::Result<Option<i64>>>) -> Self {
+        Self {
+            revisions: revisions.into_iter().collect(),
+        }
+    }
+}
+
+impl ConfigSource for SequencedPrimarySource {
+    fn snapshot_revision(&mut self) -> anyhow::Result<Option<i64>> {
+        self.revisions
+            .pop_front()
+            .unwrap_or_else(|| anyhow::bail!("revision sequence exhausted"))
+    }
+
     fn config_value(&mut self, key: &str) -> Option<String> {
         Some(format!("primary:{key}"))
     }
@@ -18,14 +51,17 @@ impl ConfigSource for PrimarySource {
 
 #[test]
 fn daemon_served_config_filters_routing_keys_and_returns_stored_values() {
-    let mut source = DaemonServedConfig::new(BTreeMap::from([
-        ("ai.routing".to_string(), "daemon".to_string()),
-        ("ai.text_generate.routing".to_string(), "direct".to_string()),
-        (
-            "ai.embeddings.api_base".to_string(),
-            "http://daemon.example/v1".to_string(),
-        ),
-    ]));
+    let mut source = DaemonServedConfig::new(
+        7,
+        BTreeMap::from([
+            ("ai.routing".to_string(), "daemon".to_string()),
+            ("ai.text_generate.routing".to_string(), "direct".to_string()),
+            (
+                "ai.embeddings.api_base".to_string(),
+                "http://daemon.example/v1".to_string(),
+            ),
+        ]),
+    );
 
     assert_eq!(source.config_value("ai.routing"), None);
     assert_eq!(source.config_value("ai.text_generate.routing"), None);
@@ -37,7 +73,7 @@ fn daemon_served_config_filters_routing_keys_and_returns_stored_values() {
 
 #[test]
 fn daemon_served_config_resolves_values_verbatim() {
-    let mut source = DaemonServedConfig::default();
+    let mut source = DaemonServedConfig::new(7, BTreeMap::new());
 
     assert_eq!(
         source
@@ -49,11 +85,13 @@ fn daemon_served_config_resolves_values_verbatim() {
 
 #[test]
 fn daemon_or_primary_delegates_to_the_active_source() {
-    let mut daemon =
-        DaemonOrPrimary::<PrimarySource>::Daemon(DaemonServedConfig::new(BTreeMap::from([(
+    let mut daemon = DaemonOrPrimary::<PrimarySource>::Daemon(DaemonServedConfig::new(
+        7,
+        BTreeMap::from([(
             "ai.embeddings.model".to_string(),
             "daemon-model".to_string(),
-        )])));
+        )]),
+    ));
     assert_eq!(
         daemon.config_value("ai.embeddings.model").as_deref(),
         Some("daemon-model")
@@ -81,10 +119,13 @@ fn daemon_or_primary_delegates_to_the_active_source() {
 #[test]
 fn daemon_with_secrets_falls_through_only_for_secret_reference_keys() {
     let mut source = DaemonOrPrimary::DaemonWithSecrets(
-        DaemonServedConfig::new(BTreeMap::from([(
-            "ai.embeddings.model".to_string(),
-            "daemon-model".to_string(),
-        )])),
+        DaemonServedConfig::new(
+            7,
+            BTreeMap::from([(
+                "ai.embeddings.model".to_string(),
+                "daemon-model".to_string(),
+            )]),
+        ),
         PrimarySource,
     );
 
@@ -124,8 +165,10 @@ fn daemon_with_secrets_falls_through_only_for_secret_reference_keys() {
 
 #[test]
 fn daemon_with_secrets_resolves_secret_references_via_the_primary() {
-    let mut source =
-        DaemonOrPrimary::DaemonWithSecrets(DaemonServedConfig::default(), PrimarySource);
+    let mut source = DaemonOrPrimary::DaemonWithSecrets(
+        DaemonServedConfig::new(7, BTreeMap::new()),
+        PrimarySource,
+    );
 
     assert_eq!(
         source
@@ -146,6 +189,41 @@ fn daemon_with_secrets_resolves_secret_references_via_the_primary() {
             .expect("daemon value is already validated"),
         "${CLIENT_ENV_MUST_NOT_EXPAND}"
     );
+}
+
+#[test]
+fn daemon_with_secrets_fails_closed_for_unusable_primary_revisions() {
+    let primaries = [
+        SequencedPrimarySource::new([Ok(None)]),
+        SequencedPrimarySource::new([Err(anyhow::anyhow!("revision unavailable"))]),
+        SequencedPrimarySource::new([Ok(Some(8))]),
+    ];
+
+    for primary in primaries {
+        let mut source = DaemonOrPrimary::DaemonWithSecrets(
+            DaemonServedConfig::new(7, BTreeMap::new()),
+            primary,
+        );
+        assert_eq!(source.config_value("ai.embeddings.api_key"), None);
+    }
+}
+
+#[test]
+fn daemon_with_secrets_rejects_revision_changes_around_lookup_and_resolution() {
+    let mut lookup_source = DaemonOrPrimary::DaemonWithSecrets(
+        DaemonServedConfig::new(7, BTreeMap::new()),
+        SequencedPrimarySource::new([Ok(Some(7)), Ok(Some(8))]),
+    );
+    assert_eq!(lookup_source.config_value("ai.embeddings.api_key"), None);
+
+    let mut resolution_source = DaemonOrPrimary::DaemonWithSecrets(
+        DaemonServedConfig::new(7, BTreeMap::new()),
+        SequencedPrimarySource::new([Ok(Some(7)), Ok(Some(8))]),
+    );
+    let error = resolution_source
+        .resolve_value("$secret:embedding_api_key")
+        .expect_err("revision change must fail closed");
+    assert!(error.to_string().contains("daemon=7, primary=8"));
 }
 
 #[test]

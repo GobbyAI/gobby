@@ -511,6 +511,26 @@ class TestConditionalExpiry:
         assert stale_processor.unregistered == []
 
     @pytest.mark.asyncio
+    async def test_resolver_failure_is_best_effort_after_expiry(self) -> None:
+        storage = _Storage(expire_result=SimpleNamespace(status="expired"))
+        dispatch = MagicMock()
+
+        def fail_resolver() -> SessionMessageProcessor | None:
+            raise RuntimeError("processor runtime unavailable")
+
+        monitor = SessionLivenessMonitor(
+            session_storage=cast(Any, storage),
+            dispatch_summaries_fn=dispatch,
+            message_processor_resolver=fail_resolver,
+        )
+
+        result = await monitor._expire_session("session")
+
+        assert result is True
+        assert storage.expire_calls == ["session"]
+        dispatch.assert_called_once_with("session", False, None)
+
+    @pytest.mark.asyncio
     async def test_status_race_skips_summary_and_cleanup(self) -> None:
         storage = _Storage(expire_result=None)
         dispatch = MagicMock()

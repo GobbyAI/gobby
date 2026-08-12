@@ -99,7 +99,7 @@ class PipelineExecutor(
         pipeline_config: PipelineConfig | None = None,
         pipeline_config_resolver: Callable[[], PipelineConfig | None] | None = None,
         llm_service_resolver: Callable[[], Any] | None = None,
-    ):
+    ) -> None:
         """Initialize the pipeline executor.
 
         Args:

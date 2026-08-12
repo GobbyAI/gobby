@@ -495,7 +495,7 @@ class TestRunCommandDeadlines:
         caplog: pytest.LogCaptureFixture,
     ) -> None:
         mixin = EffectsMixin()
-        failure = PermissionError("materialization denied")
+        failure = ValueError("materialization denied")
         mixin.skill_script_materializer = cast(
             Any,
             _materializer(AsyncMock(side_effect=failure)),
@@ -519,6 +519,27 @@ class TestRunCommandDeadlines:
         assert len(records) == 1
         assert records[0].exc_info is not None
         assert records[0].exc_info[1] is failure
+        record_fields = vars(records[0])
+        assert record_fields["skill"] == "impeccable"
+        assert record_fields["script"] == "hook.mjs"
+
+    async def test_unexpected_skill_resolution_error_propagates(self) -> None:
+        mixin = EffectsMixin()
+        failure = PermissionError("unexpected materializer defect")
+        mixin.skill_script_materializer = cast(
+            Any,
+            _materializer(AsyncMock(side_effect=failure)),
+        )
+
+        with pytest.raises(PermissionError, match="unexpected materializer defect"):
+            await mixin._prepare_run_command(
+                ["node"],
+                project_id=None,
+                skill="impeccable",
+                script="hook.mjs",
+                timeout=1.0,
+                background=False,
+            )
 
 
 @pytest.mark.asyncio

@@ -414,15 +414,15 @@ fn generate_file_docs_pooled(
                                 &input.graph_edges,
                                 reuse,
                             );
-                            let sender = job_tx.as_ref().ok_or_else(|| {
+                            let sender = job_tx.take().ok_or_else(|| {
                                 anyhow::anyhow!("file generation queue closed while jobs remain")
                             })?;
                             sender.send(job).map_err(|_| {
                                 anyhow::anyhow!("all file generation workers exited")
                             })?;
                             next_dispatch += 1;
-                            if next_dispatch == file_total {
-                                job_tx.take();
+                            if next_dispatch < file_total {
+                                job_tx = Some(sender);
                             }
                         }
                     }

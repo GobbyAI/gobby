@@ -599,14 +599,14 @@ class SessionLivenessMonitor:
                     exc_info=True,
                 )
 
-        message_processor = self._message_processor_resolver()
-        if message_processor is not None:
-            try:
+        try:
+            message_processor = self._message_processor_resolver()
+            if message_processor is not None:
                 message_processor.unregister_session(session_id)
-            except Exception:
-                logger.debug(
-                    "SessionLivenessMonitor: failed to unregister session %s",
-                    session_id,
-                    exc_info=True,
-                )
+        except Exception:
+            logger.debug(
+                "SessionLivenessMonitor: failed to unregister session %s",
+                session_id,
+                exc_info=True,
+            )
         return True

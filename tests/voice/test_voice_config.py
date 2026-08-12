@@ -49,16 +49,12 @@ class TestVoiceConfig:
         assert config.stt_enabled is False
 
     def test_daemon_config_integration(self):
-        from gobby.config.app import DaemonConfig
-
         config = DaemonConfig()
         assert hasattr(config, "voice")
         assert isinstance(config.voice, VoiceConfig)
         assert config.voice.enabled is False
 
     def test_daemon_config_with_voice(self):
-        from gobby.config.app import DaemonConfig
-
         config = DaemonConfig(
             voice={
                 "enabled": True,
@@ -107,8 +103,6 @@ class TestVoiceConfig:
         openai_compatible_audio: list[dict[str, str]],
         match: str,
     ) -> None:
-        from gobby.config.app import DaemonConfig
-
         with pytest.raises(ValidationError, match=match):
             DaemonConfig(
                 voice={

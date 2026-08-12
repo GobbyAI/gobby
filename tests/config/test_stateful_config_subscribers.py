@@ -187,6 +187,7 @@ async def test_failed_activation_is_recorded_on_published_epoch() -> None:
     await runtime.close()
 
 
+@pytest.mark.unit
 @pytest.mark.asyncio
 async def test_reprepare_subscriber_retries_failed_prepare_at_same_revision() -> None:
     repository = FakeRepository([snapshot(0, alpha=0)])

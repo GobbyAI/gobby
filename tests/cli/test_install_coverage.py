@@ -766,7 +766,7 @@ class TestUninstallCommand:
     def test_uninstall_all_nothing_found(self, runner: CliRunner, tmp_path: Path) -> None:
         """When --all is used but no CLI hooks are detected."""
         # Use a clean tmp_path as home so no settings.json files are found
-        with patch("gobby.cli.install.Path.home", return_value=tmp_path):
+        with patch("gobby.cli.uninstall.Path.home", return_value=tmp_path):
             result = runner.invoke(uninstall, ["--all", "--yes"], catch_exceptions=False)
         assert result.exit_code == 0
         assert "No Gobby hooks found" in result.output
@@ -781,7 +781,7 @@ class TestUninstallCommand:
         (tmp_path / ".claude").mkdir()
         (tmp_path / ".claude" / "settings.json").write_text("{}")
         with (
-            patch("gobby.cli.install.Path.home", return_value=tmp_path),
+            patch("gobby.cli.uninstall.Path.home", return_value=tmp_path),
             patch(
                 "gobby.cli.uninstall.uninstall_claude",
                 return_value={"success": True, "hooks_removed": [], "files_removed": []},

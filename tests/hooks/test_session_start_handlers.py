@@ -539,6 +539,10 @@ class TestSessionStartPreCreatedSession:
         mock_dependencies["message_processor_resolver"]().register_session.assert_called_once_with(
             "sess-123", "/path/to/transcript.jsonl", source="claude"
         )
+        assert (
+            handlers._session_message_processors["sess-123"]
+            is mock_dependencies["message_processor_resolver"]()
+        )
         assert mock_dependencies["message_processor_resolver"]().register_session.call_count == 1
         assert (
             mock_dependencies["message_processor_resolver"]().register_session.call_args is not None
@@ -1353,6 +1357,10 @@ class TestSessionStartNewSession:
         mock_dependencies["message_processor_resolver"]().register_session.assert_called_once_with(
             "new-sess-456", "/path/to/transcript.jsonl", source="claude"
         )
+        assert (
+            handlers._session_message_processors["new-sess-456"]
+            is mock_dependencies["message_processor_resolver"]()
+        )
         assert mock_dependencies["message_processor_resolver"]().register_session.call_count == 1
         assert (
             mock_dependencies["message_processor_resolver"]().register_session.call_args is not None
@@ -1416,6 +1424,7 @@ class TestSessionStartNewSession:
 
         # Should still allow despite error
         assert response.decision == "allow"
+        assert "new-sess-456" not in handlers._session_message_processors
 
     @patch("gobby.workflows.state_manager.SessionVariableManager")
     def test_new_session_with_task_id_context(

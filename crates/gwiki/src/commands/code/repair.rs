@@ -213,4 +213,23 @@ mod tests {
 
         assert_eq!(resolver.resolve("src/lib.rs", 4), None);
     }
+
+    #[test]
+    fn single_current_identity_repairs_stale_line_range() {
+        let symbols = vec![symbol(20, 24)];
+        let mut snapshot = CodewikiIndexSnapshot::default();
+        snapshot.symbols.insert(
+            "old-symbol".to_string(),
+            CodewikiSymbolSnapshot {
+                file_path: "src/lib.rs".to_string(),
+                name: "run".to_string(),
+                qualified_name: "module::run".to_string(),
+                kind: "function".to_string(),
+                line_start: 10,
+            },
+        );
+        let resolver = IndexCitationResolver::build(&symbols, &snapshot);
+
+        assert_eq!(resolver.resolve("src/lib.rs", 10), Some((20, 24)));
+    }
 }

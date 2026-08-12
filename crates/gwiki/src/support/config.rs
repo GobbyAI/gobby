@@ -64,6 +64,19 @@ impl HubPrimary {
 }
 
 impl ConfigSource for HubPrimary {
+    fn snapshot_revision(&mut self) -> anyhow::Result<Option<i64>> {
+        match self.state() {
+            HubConnState::Open(conn) => {
+                gobby_core::postgres::read_config_revision(conn.as_mut()).map(Some)
+            }
+            HubConnState::Unavailable(cause) => {
+                anyhow::bail!(
+                    "runtime configuration revision requires the PostgreSQL hub ({cause})"
+                )
+            }
+        }
+    }
+
     fn config_value(&mut self, key: &str) -> Option<String> {
         let HubConnState::Open(conn) = self.state() else {
             return None;
@@ -399,10 +412,13 @@ mod tests {
 
     #[test]
     fn daemon_index_options_prefer_served_values_over_full_yaml() {
-        let served = DaemonServedConfig::new(BTreeMap::from([(
-            "indexing.respect_gitignore".to_string(),
-            "false".to_string(),
-        )]));
+        let served = DaemonServedConfig::new(
+            7,
+            BTreeMap::from([(
+                "indexing.respect_gitignore".to_string(),
+                "false".to_string(),
+            )]),
+        );
         let full_yaml = StandaloneConfig::from_yaml_str_raw(
             "indexing:\n  respect_gitignore: true\nai:\n  routing: direct\n",
         )
@@ -421,10 +437,13 @@ mod tests {
 
     #[test]
     fn daemon_index_options_ignore_malformed_full_yaml_fallback() {
-        let served = DaemonServedConfig::new(BTreeMap::from([(
-            "indexing.respect_gitignore".to_string(),
-            "false".to_string(),
-        )]));
+        let served = DaemonServedConfig::new(
+            7,
+            BTreeMap::from([(
+                "indexing.respect_gitignore".to_string(),
+                "false".to_string(),
+            )]),
+        );
 
         let options =
             resolve_index_options_from_layers(Some((served, None)), TestSource::default(), || {
@@ -454,10 +473,13 @@ mod tests {
             |primary| {
                 Ok(gobby_core::ai_context::AiConfigSource::with_primary(
                     DaemonOrPrimary::DaemonWithSecrets(
-                        DaemonServedConfig::new(BTreeMap::from([(
-                            "ai.embeddings.model".to_string(),
-                            "daemon-model".to_string(),
-                        )])),
+                        DaemonServedConfig::new(
+                            7,
+                            BTreeMap::from([(
+                                "ai.embeddings.model".to_string(),
+                                "daemon-model".to_string(),
+                            )]),
+                        ),
                         primary()?,
                     ),
                     None,

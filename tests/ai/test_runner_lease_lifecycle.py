@@ -7,6 +7,7 @@ import threading
 from contextlib import suppress
 from types import SimpleNamespace
 from typing import Any, cast
+from unittest.mock import MagicMock
 from uuid import uuid4
 
 import pytest
@@ -404,24 +405,27 @@ def test_renew_loop_routes_local_deadline_lapse_to_reacquisition(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     monkeypatch.setattr(embedding_lease, "_EMBEDDING_LEASE_RENEW_SECONDS", 0.0)
-    reacquired: list[object] = []
+    events: list[str] = []
 
     def deadline_lapsed(_lease: object, *, stop_event: threading.Event) -> bool:
         raise EmbeddingGenerationLeaseExpired("Embedding generation serving lease expired")
 
     def stop_after_reacquire(handle: object) -> bool:
-        reacquired.append(handle)
+        events.append("reacquire")
         return False
 
     monkeypatch.setattr(embedding_lease, "_renew_with_backoff", deadline_lapsed)
     monkeypatch.setattr(
         embedding_lease, "_reacquire_lease_from_renewal_thread", stop_after_reacquire
     )
-    handle = cast(Any, SimpleNamespace(lease=object(), renewal_stop=threading.Event()))
+    lease = MagicMock()
+    lease.fence.side_effect = lambda: events.append("fence")
+    handle = cast(Any, SimpleNamespace(lease=lease, renewal_stop=threading.Event()))
 
     embedding_lease._renew_embedding_lease(handle)
 
-    assert reacquired == [handle]
+    assert events == ["fence", "reacquire"]
+    lease.fence.assert_called_once_with()
 
 
 @pytest.mark.asyncio

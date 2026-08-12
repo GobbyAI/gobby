@@ -211,6 +211,7 @@ def test_service_capabilities_are_claim_bound_and_allowlisted(
     assert response.headers["Cache-Control"] == "no-store"
     payload = response.json()
     assert payload["version"] == 1
+    assert payload["revision"] == 7
     assert payload["execution"] == {
         "owner_kind": "agent_run",
         "execution_id": run.id,
@@ -555,7 +556,8 @@ def test_effective_config_never_serves_secrets_in_plaintext(
     response = client.get("/api/config/effective")
 
     assert response.status_code == 200
-    assert set(response.json()) == {"config"}
+    assert set(response.json()) == {"revision", "config"}
+    assert response.json()["revision"] == 7
     assert response.json()["config"]["ai.embeddings.model"] == "active-snapshot-model"
     assert "ai.embeddings.api_key" not in response.json()["config"]
     assert "databases.falkordb.password" not in response.json()["config"]
@@ -582,7 +584,10 @@ def test_effective_config_uses_machine_visibility(
     response = client.get("/api/config/effective")
 
     assert response.status_code == 200
-    assert response.json() == {"config": {"ai.embeddings.model": "machine-visible"}}
+    assert response.json() == {
+        "revision": 7,
+        "config": {"ai.embeddings.model": "machine-visible"},
+    }
 
 
 def test_machine_output_leaks_neither_secret_binding(
@@ -608,7 +613,7 @@ def test_machine_output_leaks_neither_secret_binding(
     response = client.get("/api/config/effective")
 
     assert response.status_code == 200
-    assert response.json() == {"config": {}}
+    assert response.json() == {"revision": 7, "config": {}}
     assert "activated-payload" not in response.text
     assert "rotated-unactivated-payload" not in response.text
     assert "$secret:" not in response.text

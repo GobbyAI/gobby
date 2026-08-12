@@ -31,6 +31,8 @@ from gobby.storage.config_mutations import (
     ConfigRevisionExhaustedError,
 )
 
+pytestmark = pytest.mark.unit
+
 
 def _snapshot(
     revision: int,

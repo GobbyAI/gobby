@@ -191,6 +191,10 @@ class TestTranscriptPathDerivation:
         mock_dependencies["message_processor_resolver"]().register_session.assert_called_once_with(
             "platform-session", str(current_session), source="qwen"
         )
+        assert (
+            handlers._session_message_processors["platform-session"]
+            is mock_dependencies["message_processor_resolver"]()
+        )
 
     def test_derive_qwen_dispatches(self, event_handlers: EventHandlers) -> None:
         """_derive_transcript_path should dispatch to _find_qwen_transcript for qwen."""

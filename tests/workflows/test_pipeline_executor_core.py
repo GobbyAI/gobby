@@ -799,6 +799,7 @@ class TestExecutePromptStep:
         mock_llm_service.call_feature.assert_awaited_once()
         assert mock_llm_service.call_feature.await_args.args[0] is pipeline_config.prompt_step
 
+    @pytest.mark.asyncio
     async def test_executor_prompt_step_resolves_current_llm_service(
         self,
         mock_db: MagicMock,

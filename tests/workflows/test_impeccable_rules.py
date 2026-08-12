@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import asyncio
 import json
+import shutil
 import subprocess
 from contextlib import suppress
 from datetime import UTC, datetime
@@ -241,6 +242,7 @@ async def _run_node_eval(script: str) -> str:
 
 @pytest.mark.integration
 @pytest.mark.asyncio
+@pytest.mark.skipif(shutil.which("node") is None, reason="Node.js is required")
 async def test_hook_project_root_resolves_nested_worktree_cwd(tmp_path: Path) -> None:
     worktree = tmp_path / "worktree"
     nested = worktree / "packages" / "web" / "src"
@@ -262,6 +264,7 @@ async def test_hook_project_root_resolves_nested_worktree_cwd(tmp_path: Path) ->
 
 @pytest.mark.integration
 @pytest.mark.asyncio
+@pytest.mark.skipif(shutil.which("node") is None, reason="Node.js is required")
 @pytest.mark.parametrize("event", [True, {"cwd": True}, {"workspace_roots": [42]}])
 async def test_hook_project_root_rejects_non_string_path_values(
     tmp_path: Path, event: object

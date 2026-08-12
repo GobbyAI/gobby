@@ -35,6 +35,57 @@ def test_masked_structured_references_follow_registry_identity_when_reordered() 
     ]
 
 
+def test_masked_duplicate_provider_references_follow_occurrence_order() -> None:
+    persisted = [
+        {"provider": "openai", "api_key": "$secret:FIRST"},
+        {"provider": "openai", "api_key": "$secret:SECOND"},
+    ]
+    submitted = [
+        {"provider": "openai", "api_key": MASKED_SECRET},
+        {"provider": "openai", "api_key": MASKED_SECRET},
+    ]
+
+    restored = restore_masked_structured_references(
+        "voice.providers",
+        submitted,
+        persisted,
+        ("api_key",),
+        "provider",
+    )
+
+    assert restored == persisted
+
+
+@pytest.mark.parametrize(
+    ("persisted_count", "incoming_count"),
+    [(2, 1), (1, 2)],
+)
+def test_masked_duplicate_provider_count_mismatch_is_rejected(
+    persisted_count: int,
+    incoming_count: int,
+) -> None:
+    persisted = [
+        {"provider": "openai", "api_key": f"$secret:KEY_{index}"}
+        for index in range(persisted_count)
+    ]
+    submitted = [{"provider": "openai", "api_key": MASKED_SECRET} for _ in range(incoming_count)]
+
+    with pytest.raises(
+        ValueError,
+        match=(
+            rf"has {incoming_count} incoming and {persisted_count} persisted occurrences "
+            "for provider 'openai'"
+        ),
+    ):
+        restore_masked_structured_references(
+            "voice.providers",
+            submitted,
+            persisted,
+            ("api_key",),
+            "provider",
+        )
+
+
 @pytest.mark.parametrize(
     "operation",
     [

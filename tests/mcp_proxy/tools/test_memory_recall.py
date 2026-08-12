@@ -271,6 +271,28 @@ async def test_request_is_scoped_to_ambient_session(temp_db: HubDatabase) -> Non
     assert "ambient Gobby session" in no_session["error"]
 
 
+@pytest.mark.asyncio
+async def test_queue_resolver_runtime_error_uses_retrieval_error_contract() -> None:
+    registry = InternalToolRegistry("test-memory-recall-resolver-error")
+
+    def unavailable_manager() -> MemoryManager | None:
+        raise RuntimeError("runtime is rebuilding")
+
+    register_memory_recall_tool(registry, unavailable_manager)
+
+    with session_context_for_test(SESSION_ID):
+        result = await registry.call(
+            "get_recall_memories",
+            {"recall_request_id": "request-runtime-error"},
+        )
+
+    assert result == {
+        "success": False,
+        "recall_request_id": "request-runtime-error",
+        "error": "Memory retrieval failed: runtime is rebuilding",
+    }
+
+
 def test_main_memory_registry_includes_inline_and_overflow_tools(
     temp_db: HubDatabase,
 ) -> None:

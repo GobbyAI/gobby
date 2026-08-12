@@ -465,6 +465,8 @@ def test_installer_consent_is_tri_state(monkeypatch: pytest.MonkeyPatch) -> None
         )
         is False
     )
+    probe.assert_not_called()
+    confirm.assert_not_called()
     assert (
         ui_exposure.resolve_installer_ui_exposure(
             None,
@@ -474,6 +476,8 @@ def test_installer_consent_is_tri_state(monkeypatch: pytest.MonkeyPatch) -> None
         )
         is False
     )
+    probe.assert_not_called()
+    confirm.assert_not_called()
     assert (
         ui_exposure.resolve_installer_ui_exposure(
             True,
@@ -483,6 +487,8 @@ def test_installer_consent_is_tri_state(monkeypatch: pytest.MonkeyPatch) -> None
         )
         is True
     )
+    probe.assert_not_called()
+    confirm.assert_not_called()
     assert (
         ui_exposure.resolve_installer_ui_exposure(
             False,

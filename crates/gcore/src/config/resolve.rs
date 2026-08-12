@@ -78,6 +78,11 @@ pub fn resolve_env_pattern(value: &str) -> anyhow::Result<Option<String>> {
 
 /// Source for config values and interpolation.
 pub trait ConfigSource {
+    /// Return the committed revision represented by this source, when revisioned.
+    fn snapshot_revision(&mut self) -> anyhow::Result<Option<i64>> {
+        Ok(None)
+    }
+
     /// Read a decoded config value by key.
     fn config_value(&mut self, key: &str) -> Option<String>;
 

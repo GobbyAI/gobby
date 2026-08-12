@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from collections import Counter, defaultdict
 from collections.abc import Callable, Collection
 from copy import deepcopy
 from typing import TYPE_CHECKING, Any
@@ -72,30 +73,45 @@ def restore_masked_structured_references(
     if not isinstance(restored, list):
         raise ValueError(f"{key} must be a list")
 
-    references: dict[tuple[str, str], str] = {}
+    references: dict[tuple[str, int, str], str] = {}
+    persisted_counts: Counter[str] = Counter()
     if isinstance(persisted_value, list):
+        occurrences: defaultdict[str, int] = defaultdict(int)
         for index, item in enumerate(persisted_value):
             if not isinstance(item, dict):
                 continue
+            identity = _structured_identity(key, index, item, identity_field)
+            occurrence = occurrences[identity]
+            occurrences[identity] += 1
+            persisted_counts[identity] += 1
             for field in reference_fields:
                 field_value = item.get(field)
                 if isinstance(field_value, str) and is_secret_reference(field_value):
-                    identity = _structured_identity(key, index, item, identity_field)
-                    reference_key = (identity, field)
-                    if reference_key in references:
-                        raise ValueError(
-                            f"{key} contains duplicate identity {identity!r} for {identity_field}"
-                        )
-                    references[reference_key] = field_value
+                    references[(identity, occurrence, field)] = field_value
 
+    incoming_counts: Counter[str] = Counter()
+    for index, item in enumerate(restored):
+        if isinstance(item, dict):
+            incoming_counts[_structured_identity(key, index, item, identity_field)] += 1
+    incoming_occurrences: defaultdict[str, int] = defaultdict(int)
     for index, item in enumerate(restored):
         if not isinstance(item, dict):
             continue
+        identity = _structured_identity(key, index, item, identity_field)
+        occurrence = incoming_occurrences[identity]
+        incoming_occurrences[identity] += 1
         for field in reference_fields:
             if item.get(field) != MASKED_SECRET:
                 continue
-            identity = _structured_identity(key, index, item, identity_field)
-            reference = references.get((identity, field))
+            if max(persisted_counts[identity], incoming_counts[identity]) > 1 and (
+                persisted_counts[identity] != incoming_counts[identity]
+            ):
+                raise ValueError(
+                    f"{key} has {incoming_counts[identity]} incoming and "
+                    f"{persisted_counts[identity]} persisted occurrences for "
+                    f"{identity_field} {identity!r}"
+                )
+            reference = references.get((identity, occurrence, field))
             if reference is None:
                 raise ValueError(
                     f"{key}[{index}].{field} is masked but no persisted secret reference "

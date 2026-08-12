@@ -29,11 +29,15 @@ def mock_dependencies() -> dict[str, Any]:
     session_storage.update.return_value = None
     session_storage.backfill_terminal_context.return_value = (None, False)
     message_processor = MagicMock()
+
+    def resolve_message_processor() -> MagicMock:
+        return message_processor
+
     return {
         "session_manager": session_manager,
         "workflow_handler": workflow_handler,
         "session_storage": session_storage,
-        "message_processor_resolver": lambda: message_processor,
+        "message_processor_resolver": resolve_message_processor,
         "task_manager": MagicMock(),
         "worktree_manager": MagicMock(),
         "session_coordinator": MagicMock(),

@@ -94,6 +94,7 @@ def test_setup_with_memory_manager_only() -> None:
     assert "gobby-workflows" in registry_names
 
 
+@pytest.mark.asyncio
 async def test_memory_registry_recovers_after_runtime_manager_rebuild() -> None:
     mock_config = MagicMock()
     mock_config.get_gobby_tasks_config.return_value.enabled = False
@@ -119,6 +120,7 @@ async def test_memory_registry_recovers_after_runtime_manager_rebuild() -> None:
     rebuilt.get_stats.assert_awaited_once()
 
 
+@pytest.mark.asyncio
 async def test_review_learning_registry_recovers_after_runtime_manager_rebuild() -> None:
     mock_config = MagicMock()
     mock_config.get_gobby_tasks_config.return_value.enabled = False

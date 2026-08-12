@@ -24,7 +24,7 @@ from gobby.hooks.effect_deadline import (
 from gobby.hooks.events import HookEvent
 from gobby.hooks.normalization import is_shell_tool
 from gobby.sessions.compact_markers import WORKFLOW_REQUESTED_SKILLS_VARIABLE
-from gobby.skills.materialization import SkillScriptMaterializer
+from gobby.skills.materialization import SkillMaterializationError, SkillScriptMaterializer
 from gobby.storage.workflow_definitions import WorkflowDefinitionRow
 from gobby.workflows.engine._offload import offload
 from gobby.workflows.engine.delivery_formatting import (
@@ -548,12 +548,10 @@ class EffectsMixin(DeliveryFormattingMixin):
                 skill=skill,
                 script=script,
             )
-        except Exception as exc:
+        except (SkillMaterializationError, ValueError):
             logger.debug(
-                "run_command: skill resolution failed for skill=%r script=%r: %s",
-                skill,
-                script,
-                exc,
+                "run_command: skill resolution failed",
+                extra={"skill": skill, "script": script},
                 exc_info=True,
             )
             return RunCommandResult.skill_resolution_failure(

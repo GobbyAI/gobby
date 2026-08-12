@@ -95,6 +95,7 @@ def ensure_qwen_transcript_tracking(
             transcript_path,
             source="qwen",
         )
+        handler._session_message_processors[platform_session_id] = message_processor
     return transcript_path
 
 

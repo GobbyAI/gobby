@@ -70,17 +70,22 @@ export function decodeDynamicMapRows<V>(
 export function encodeDynamicMapRows<V>(
   rows: DynamicMapRow<V>[],
 ): Record<string, V> {
-  return Object.fromEntries(
-    rows.map(({ storedKey, displayKey, value }) => {
-      const originalDisplayKey =
-        storedKey === "" ? storedKey : decodeDynamicSegmentLenient(storedKey);
-      const nextStoredKey =
-        displayKey === originalDisplayKey
-          ? storedKey
-          : displayKey === ""
-            ? displayKey
-            : encodeDynamicSegment(displayKey);
-      return [nextStoredKey, value];
-    }),
-  );
+  const entries: Array<[string, V]> = [];
+  const storedKeys = new Set<string>();
+  for (const { storedKey, displayKey, value } of rows) {
+    const originalDisplayKey =
+      storedKey === "" ? storedKey : decodeDynamicSegmentLenient(storedKey);
+    const nextStoredKey =
+      displayKey === originalDisplayKey
+        ? storedKey
+        : displayKey === ""
+          ? displayKey
+          : encodeDynamicSegment(displayKey);
+    if (storedKeys.has(nextStoredKey)) {
+      throw new Error(`Dynamic map rows collide at stored key ${nextStoredKey}`);
+    }
+    storedKeys.add(nextStoredKey);
+    entries.push([nextStoredKey, value]);
+  }
+  return Object.fromEntries(entries);
 }

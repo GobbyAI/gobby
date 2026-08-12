@@ -114,7 +114,10 @@ def register_memory_recall_tool(
                 "recall_request_id": recall_request_id,
                 "error": "No ambient Gobby session is available.",
             }
-        queue = _current_queue()
+        try:
+            queue = _current_queue()
+        except RuntimeError as exc:
+            return _retrieval_error(recall_request_id, f"Memory retrieval failed: {exc}")
         if queue is None:
             return _retrieval_error(recall_request_id, "Memory services are unavailable.")
         try:

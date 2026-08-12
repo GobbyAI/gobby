@@ -120,17 +120,15 @@ impl ServiceSource {
                 let Some(served) = layers.daemon.clone() else {
                     anyhow::bail!("daemon configuration mode is missing its served snapshot");
                 };
+                let daemon_revision = served.revision();
                 if hub_capture != HubConfigCapture::DeferredBestEffort {
                     return match capture_hub_snapshot(conn) {
-                        Ok(snapshot) => Ok((
-                            Self::Daemon {
-                                served,
-                                hub_secrets: Some(snapshot),
-                                hits: HashMap::new(),
-                            },
-                            None,
-                            HubConfigCaptureStatus::Complete,
-                        )),
+                        Ok(snapshot) => match Self::daemon_with_snapshot(served, snapshot) {
+                            Ok((source, revision)) => {
+                                Ok((source, Some(revision), HubConfigCaptureStatus::Complete))
+                            }
+                            Err(error) => capture_failure(error, None, hub_capture),
+                        },
                         Err(error) => capture_failure(error, None, hub_capture),
                     };
                 }
@@ -140,7 +138,7 @@ impl ServiceSource {
                         hub_secrets: None,
                         hits: HashMap::new(),
                     },
-                    None,
+                    Some(daemon_revision),
                     HubConfigCaptureStatus::Complete,
                 ))
             }
@@ -166,6 +164,27 @@ impl ServiceSource {
                 HubConfigCaptureStatus::Complete,
             )),
         }
+    }
+
+    pub(super) fn daemon_with_snapshot(
+        served: DaemonServedConfig,
+        snapshot: HubConfigSnapshot,
+    ) -> anyhow::Result<(Self, i64)> {
+        let daemon_revision = served.revision();
+        anyhow::ensure!(
+            snapshot.revision() == daemon_revision,
+            "configuration revision mismatch: daemon={}, hub={}",
+            daemon_revision,
+            snapshot.revision()
+        );
+        Ok((
+            Self::Daemon {
+                served,
+                hub_secrets: Some(snapshot),
+                hits: HashMap::new(),
+            },
+            daemon_revision,
+        ))
     }
 
     /// Served-only daemon source without a hub fall-through (tests).
@@ -343,6 +362,7 @@ mod tests {
         values: impl IntoIterator<Item = (&'static str, &'static str)>,
     ) -> DaemonServedConfig {
         DaemonServedConfig::new(
+            7,
             values
                 .into_iter()
                 .map(|(key, value)| (key.to_string(), value.to_string()))
@@ -477,7 +497,7 @@ mod tests {
                 .expect("read served-config request");
             let request = String::from_utf8_lossy(&request[..request_len]);
             assert!(request.starts_with("GET /api/config/effective HTTP/1.1"));
-            let body = r#"{"config":{"contract.unknown.key":"served-value"}}"#;
+            let body = r#"{"revision":7,"config":{"contract.unknown.key":"served-value"}}"#;
             write!(
                 stream,
                 "HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{body}",

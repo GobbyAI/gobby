@@ -89,6 +89,7 @@ class ServiceCapabilityBundle(BaseModel):
     model_config = ConfigDict(extra="forbid", frozen=True)
 
     version: Literal[1] = 1
+    revision: int
     execution: ExecutionBinding
     config: dict[str, str]
     services: ServiceCapabilities
@@ -284,9 +285,10 @@ def register_effective_routes(
     def get_effective_config() -> JSONResponse:
         """Serve resolved client configuration."""
         try:
-            values = _machine_config_values(context.get_config_snapshot())
+            snapshot = context.get_config_snapshot()
+            values = _machine_config_values(snapshot)
             return JSONResponse(
-                content={"config": values},
+                content={"revision": snapshot.revision, "config": values},
                 headers={"Cache-Control": "no-store"},
             )
         except ConfigValuesError as exc:
@@ -317,6 +319,7 @@ def register_effective_routes(
             raise HTTPException(status_code=401, detail="Invalid managed capability owner")
         response.headers["Cache-Control"] = "no-store"
         return ServiceCapabilityBundle(
+            revision=snapshot.revision,
             execution=ExecutionBinding(
                 owner_kind=owner_kind,
                 execution_id=execution_id,

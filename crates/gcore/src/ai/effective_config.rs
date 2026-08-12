@@ -69,6 +69,7 @@ pub enum EffectiveConfigState {
 
 #[derive(Deserialize)]
 struct EffectiveConfigEnvelope {
+    revision: i64,
     config: BTreeMap<String, String>,
 }
 
@@ -76,6 +77,7 @@ struct EffectiveConfigEnvelope {
 #[serde(deny_unknown_fields)]
 struct ServiceCapabilityBundle {
     version: u8,
+    revision: i64,
     execution: ManagedExecutionBinding,
     config: BTreeMap<String, String>,
     services: ManagedServices,
@@ -253,7 +255,7 @@ fn fetch_daemon_served_config_at_with_timeout(
             reason: "response did not match the required config envelope",
         })?;
     validate_served_values(&envelope.config)?;
-    Ok(DaemonServedConfig::new(envelope.config))
+    Ok(DaemonServedConfig::new(envelope.revision, envelope.config))
 }
 
 fn fetch_service_capabilities_at(
@@ -275,7 +277,7 @@ fn fetch_service_capabilities_at(
             reason: "response did not match the required service capability bundle",
         })?;
     validate_managed_bundle(&bundle, identity)?;
-    Ok(DaemonServedConfig::new(bundle.config))
+    Ok(DaemonServedConfig::new(bundle.revision, bundle.config))
 }
 
 fn fetch_config_body(

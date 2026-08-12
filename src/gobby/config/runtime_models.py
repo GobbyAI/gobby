@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from collections.abc import Mapping
+from copy import deepcopy
 from dataclasses import dataclass, field
 from types import MappingProxyType
 
@@ -86,12 +87,12 @@ class ConfigSnapshot:
         object.__setattr__(
             self,
             "_desired_overrides",
-            MappingProxyType(dict(desired_overrides or {})),
+            MappingProxyType(deepcopy(dict(desired_overrides or {}))),
         )
         object.__setattr__(
             self,
             "_active_overrides",
-            MappingProxyType(dict(active_overrides or {})),
+            MappingProxyType(deepcopy(dict(active_overrides or {}))),
         )
         object.__setattr__(
             self,
@@ -124,11 +125,11 @@ class ConfigSnapshot:
 
     @property
     def desired_overrides(self) -> Mapping[str, object]:
-        return self._desired_overrides
+        return MappingProxyType(deepcopy(dict(self._desired_overrides)))
 
     @property
     def active_overrides(self) -> Mapping[str, object]:
-        return self._active_overrides
+        return MappingProxyType(deepcopy(dict(self._active_overrides)))
 
     def desired_secret(self, key: str) -> str | None:
         binding = self._desired_bindings.get(key)
