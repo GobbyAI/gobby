@@ -100,10 +100,7 @@ class TestAgentNameOverride:
             )
 
             mock_repo.assert_called_once_with(handlers._session_manager.db)
-            assert mock_repo.call_count == 1
-            assert mock_repo.call_args is not None
             mock_repo.return_value.read.assert_called_once_with(resolve_secrets=False)
-            assert mock_repo.return_value.read.call_count == 1
             mock_resolve.assert_called_once_with(
                 configured_agent,
                 handlers._session_manager.db,
@@ -129,8 +126,6 @@ class TestAgentNameOverride:
         mock_resolve.assert_called_once_with(
             "my-agent", handlers._session_manager.db, project_id="proj-2"
         )
-        assert mock_resolve.call_count == 1
-        assert mock_resolve.call_args is not None
 
     @patch("gobby.workflows.state_manager.SessionVariableManager")
     @patch("gobby.workflows.agent_resolver.resolve_agent")

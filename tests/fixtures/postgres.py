@@ -31,6 +31,7 @@ from psycopg.types.json import Jsonb
 from gobby.runner_maintenance.storage_hygiene import sweep_orphaned_test_schemas
 from gobby.storage.hub.postgres import PostgresHubDatabase
 from gobby.storage.schema_contract import apply_schema
+from gobby.utils.env import is_test_protect_enabled
 from gobby.utils.machine_id import get_machine_id
 
 _POSTGRES_IDENTIFIER_MAX_BYTES = 63
@@ -149,7 +150,7 @@ def _require_test_database_url() -> str:
     url = os.environ.get("DATABASE_URL")
     if url:
         return url
-    if os.environ.get("GOBBY_TEST_PROTECT") == "1":
+    if is_test_protect_enabled():
         pytest.fail(_TEST_DSN_REQUIRED)
     pytest.skip(_TEST_DSN_REQUIRED)
 

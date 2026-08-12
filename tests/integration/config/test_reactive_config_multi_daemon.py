@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 import asyncio
-import time
 from concurrent.futures import ThreadPoolExecutor
 from typing import TYPE_CHECKING, Any, cast
 from uuid import uuid4
@@ -49,21 +48,13 @@ class _RecordingVectorStore:
         self.deleted.append((point_id, collection_name))
 
 
-def _expect_transient_renewal_failure(
-    worker: DaemonWorker,
-    *,
-    activated: float,
-    lease_seconds: float,
-) -> None:
+def _expect_transient_renewal_failure(worker: DaemonWorker) -> None:
     with pytest.raises(RuntimeError) as exc_info:
         worker.lease_renew()
 
     message = str(exc_info.value)
     if "lease renewal failed" in message:
         return
-    deadline_lapsed = "lease expired" in message or "serving is fenced" in message
-    if deadline_lapsed and time.monotonic() - activated >= lease_seconds * 0.5:
-        pytest.skip("serving lease reached its deadline before renewal failure assertion")
     pytest.fail(f"unexpected renewal error: {message}")
 
 
@@ -321,8 +312,7 @@ def test_restart_pending_state_across_daemons(two_daemons: TwoDaemonCluster) -> 
 
 def test_partitioned_daemon_self_fences_before_gc(two_daemons: TwoDaemonCluster) -> None:
     daemon_id = uuid4()
-    lease_seconds = 1.0
-    activated = time.monotonic()
+    lease_seconds = 5.0
     two_daemons.first.lease_activate(
         daemon_id,
         "old-generation",
@@ -338,16 +328,8 @@ def test_partitioned_daemon_self_fences_before_gc(two_daemons: TwoDaemonCluster)
     )
 
     two_daemons.first.partition()
-    if time.monotonic() - activated >= lease_seconds * 0.5:
-        pytest.skip("serving lease reached its deadline before live-ack assertion")
     assert two_daemons.second.can_collect("new-generation", 1) is False
-    _expect_transient_renewal_failure(
-        two_daemons.first,
-        activated=activated,
-        lease_seconds=lease_seconds,
-    )
-    if time.monotonic() - activated >= lease_seconds * 0.5:
-        pytest.skip("serving lease reached its deadline before transient-failure assertion")
+    _expect_transient_renewal_failure(two_daemons.first)
     two_daemons.first.lease_assert()
 
     fenced = two_daemons.first.lease_wait_fenced(timeout=lease_seconds + 1.0)
@@ -386,7 +368,6 @@ def test_partition_heal_reconciles_in_process(two_daemons: TwoDaemonCluster) -> 
         values={"rules.enforcement_enabled": False},
     )
     two_daemons.second.wait_for_revision(first_revision)
-    activated = time.monotonic()
     two_daemons.second.lease_activate(
         daemon_id,
         "healed-generation",
@@ -399,11 +380,7 @@ def test_partition_heal_reconciles_in_process(two_daemons: TwoDaemonCluster) -> 
         expected_revision=first_revision,
         values={"rules.enforcement_enabled": True},
     )
-    _expect_transient_renewal_failure(
-        two_daemons.second,
-        activated=activated,
-        lease_seconds=lease_seconds,
-    )
+    _expect_transient_renewal_failure(two_daemons.second)
 
     two_daemons.second.heal()
 

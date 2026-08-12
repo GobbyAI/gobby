@@ -194,6 +194,9 @@ class ConfigStore:
         setters without a decision snapshot pass ``retry_on_conflict`` instead
         and replay the same patch against one freshly read revision. Ambient
         transactions use one snapshot and therefore make one attempt.
+
+        This differs from ``gobby.cli.config_writes.apply_cas_config_patch``,
+        which rebuilds its patch from each freshly read snapshot.
         """
         structural_keys = AI_EMBEDDING_CONFIG_KEY_SET - {AI_EMBEDDING_API_KEY_KEY}
         patch_keys = set(patch.values) | set(patch.unset) | set(patch.secrets)

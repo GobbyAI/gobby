@@ -2078,6 +2078,7 @@ class TestTmuxSessionManagerExtended:
                     "QWEN_API_KEY": "qwen-secret",
                     "XAI_API_KEY": "xai-secret",
                     "FACTORY_API_KEY": "factory-secret",
+                    "GOBBY_CODEX_ENDPOINT_API_KEY": "codex-endpoint-secret",
                 },
             )
 
@@ -2094,6 +2095,8 @@ class TestTmuxSessionManagerExtended:
         assert "xai-secret" not in argv_text
         assert "FACTORY_API_KEY" not in argv_text
         assert "factory-secret" not in argv_text
+        assert "GOBBY_CODEX_ENDPOINT_API_KEY" not in argv_text
+        assert "codex-endpoint-secret" not in argv_text
 
         command_arg = next(arg for arg in new_session_args if "__gobby_env_file=" in str(arg))
         assert str(env_file) in command_arg
@@ -2107,6 +2110,7 @@ class TestTmuxSessionManagerExtended:
         assert "QWEN_API_KEY=qwen-secret\n" in env_file_text
         assert "XAI_API_KEY=xai-secret\n" in env_file_text
         assert "FACTORY_API_KEY=factory-secret\n" in env_file_text
+        assert "GOBBY_CODEX_ENDPOINT_API_KEY=codex-endpoint-secret\n" in env_file_text
 
     @pytest.mark.parametrize("prompt", ["finish this;", "continue with this\\"])
     @pytest.mark.asyncio

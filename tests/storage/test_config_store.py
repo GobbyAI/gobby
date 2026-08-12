@@ -6,6 +6,7 @@ import pytest
 
 from gobby.config.embedding_keys import (
     AI_EMBEDDING_API_KEY_KEY,
+    EMBEDDING_API_KEY_SECRET_NAME,
     EMBEDDING_API_KEY_SECRET_REF,
 )
 from gobby.storage.config_mutations import ConfigValidationError
@@ -181,6 +182,19 @@ class TestConfigStore:
         ) == {"source": "migrated"}
         assert store.delete("ui.enabled") is True
         assert store.delete("ui.enabled") is False
+
+    def test_delete_rejects_secret_key(
+        self,
+        store: ConfigStore,
+        secret_store: SecretStore,
+    ) -> None:
+        store.set_secret(AI_EMBEDDING_API_KEY_KEY, "secret-value", secret_store)
+
+        with pytest.raises(ValueError, match="use clear_secret"):
+            store.delete(AI_EMBEDDING_API_KEY_KEY)
+
+        assert store.get(AI_EMBEDDING_API_KEY_KEY) == EMBEDDING_API_KEY_SECRET_REF
+        assert secret_store.get(EMBEDDING_API_KEY_SECRET_NAME) == "secret-value"
 
     def test_preserves_registered_value_types(self, store: ConfigStore) -> None:
         values = {

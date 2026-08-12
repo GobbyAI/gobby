@@ -152,8 +152,8 @@ uv run gobby build <plan_or_task>      # Opt a plan, epic, or leaf task into sta
 ```
 
 **Coverage threshold**: 80%, enforced only by CI (`.github/workflows/ci.yml`), which
-runs on pushes to `main`/`0.4.9` and on PRs targeting `main` — feature branches get no
-automated pytest gate. The `pre-push` hook runs `lint`, `format`, `type_check`,
+runs on pushes to `main`/`0.4.9`/`0.5.0` and on PRs targeting `main`/`0.5.0` —
+feature branches get no automated pytest gate. The `pre-push` hook runs `lint`, `format`, `type_check`,
 `ts_check`, and `frontend_tests` from `.gobby/project.json`; it runs no pytest and
 checks no coverage. `pre-push-test.sh` does run the full suite with
 `--cov-fail-under=80`, but it is a standalone script — invoke it explicitly.

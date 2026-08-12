@@ -439,14 +439,17 @@
       "description": "Provider-scoped aliases into the OpenRouter model metadata registry.",
       "fields": {
         "openrouter_model_id": {
+          "identity": false,
           "secrecy": "none",
           "type": "string"
         },
         "provider": {
+          "identity": false,
           "secrecy": "none",
           "type": "string"
         },
         "provider_model_id": {
+          "identity": false,
           "secrecy": "none",
           "type": "string"
         }
@@ -2023,49 +2026,59 @@
       "fields": {
         "can_block": {
           "default": false,
+          "identity": false,
           "secrecy": "none",
           "type": "boolean"
         },
         "enabled": {
           "default": true,
+          "identity": false,
           "secrecy": "none",
           "type": "boolean"
         },
         "events": {
           "default": [],
+          "identity": false,
           "secrecy": "none",
           "type": "array"
         },
         "fail_closed": {
           "default": false,
+          "identity": false,
           "secrecy": "none",
           "type": "boolean"
         },
         "headers": {
           "default": [],
+          "identity": false,
           "secrecy": "none",
           "type": "object"
         },
         "name": {
+          "identity": false,
           "secrecy": "none",
           "type": "string"
         },
         "retry_count": {
           "default": 3,
+          "identity": false,
           "secrecy": "none",
           "type": "integer"
         },
         "retry_delay": {
           "default": 1.0,
+          "identity": false,
           "secrecy": "none",
           "type": "number"
         },
         "timeout": {
           "default": 10.0,
+          "identity": false,
           "secrecy": "none",
           "type": "number"
         },
         "url": {
+          "identity": false,
           "secrecy": "none",
           "type": "string"
         }
@@ -4397,16 +4410,19 @@
       "fields": {
         "policy": {
           "default": "always_ask",
+          "identity": false,
           "secrecy": "none",
           "type": "string"
         },
         "server_pattern": {
           "default": "*",
+          "identity": false,
           "secrecy": "none",
           "type": "string"
         },
         "tool_pattern": {
           "default": "*",
+          "identity": false,
           "secrecy": "none",
           "type": "string"
         }
@@ -4833,59 +4849,71 @@
       "fields": {
         "categories": {
           "default": [],
+          "identity": false,
           "secrecy": "none",
           "type": "array"
         },
         "enabled": {
           "default": true,
+          "identity": false,
           "secrecy": "none",
           "type": "boolean"
         },
         "evidence_weakening_args_any": {
           "default": [],
+          "identity": false,
           "secrecy": "none",
           "type": "array"
         },
         "evidence_weakening_bare_args_after": {
           "default": [],
+          "identity": false,
           "secrecy": "none",
           "type": "array"
         },
         "forbidden_args_any": {
           "default": [],
+          "identity": false,
           "secrecy": "none",
           "type": "array"
         },
         "id": {
+          "identity": false,
           "secrecy": "none",
           "type": "string"
         },
         "label": {
+          "identity": false,
           "secrecy": "none",
           "type": "string"
         },
         "languages": {
           "default": [],
+          "identity": false,
           "secrecy": "none",
           "type": "array"
         },
         "non_executing_args_any": {
           "default": [],
+          "identity": false,
           "secrecy": "none",
           "type": "array"
         },
         "prefixes": {
           "default": [],
+          "identity": false,
           "secrecy": "none",
           "type": "array"
         },
         "required_args_all": {
           "default": [],
+          "identity": false,
           "secrecy": "none",
           "type": "array"
         },
         "required_args_any": {
           "default": [],
+          "identity": false,
           "secrecy": "none",
           "type": "array"
         }
@@ -4945,29 +4973,35 @@
       "fields": {
         "delimiter": {
           "default": "--",
+          "identity": false,
           "secrecy": "none",
           "type": "string"
         },
         "id": {
+          "identity": false,
           "secrecy": "none",
           "type": "string"
         },
         "kind": {
           "default": "prefix",
+          "identity": false,
           "secrecy": "none",
           "type": "string"
         },
         "label": {
+          "identity": false,
           "secrecy": "none",
           "type": "string"
         },
         "prefixes": {
           "default": [],
+          "identity": false,
           "secrecy": "none",
           "type": "array"
         },
         "strip_options_with_values": {
           "default": [],
+          "identity": false,
           "secrecy": "none",
           "type": "array"
         }
@@ -5123,6 +5157,7 @@
       "fields": {
         "api_key": {
           "default": null,
+          "identity": false,
           "secrecy": "reference",
           "type": [
             "string",
@@ -5130,29 +5165,35 @@
           ]
         },
         "model": {
+          "identity": false,
           "secrecy": "none",
           "type": "string"
         },
         "provider": {
+          "identity": true,
           "secrecy": "none",
           "type": "string"
         },
         "timeout_seconds": {
           "default": 120.0,
+          "identity": false,
           "secrecy": "none",
           "type": "number"
         },
         "transcription_enabled": {
           "default": true,
+          "identity": false,
           "secrecy": "none",
           "type": "boolean"
         },
         "translation_enabled": {
           "default": true,
+          "identity": false,
           "secrecy": "none",
           "type": "boolean"
         },
         "url": {
+          "identity": false,
           "secrecy": "none",
           "type": "string"
         }
@@ -5669,10 +5710,12 @@
       "description": "Project and topic wiki roots to watch.",
       "fields": {
         "path": {
+          "identity": false,
           "secrecy": "none",
           "type": "string"
         },
         "scope": {
+          "identity": false,
           "secrecy": "none",
           "type": "string"
         }
@@ -5736,11 +5779,13 @@
       "description": "Named generation endpoints keyed by lowercase slug.",
       "fields": {
         "api_base": {
+          "identity": false,
           "secrecy": "none",
           "type": "string"
         },
         "api_key": {
           "default": null,
+          "identity": false,
           "secrecy": "reference",
           "type": [
             "string",
@@ -5748,26 +5793,31 @@
           ]
         },
         "model": {
+          "identity": false,
           "secrecy": "none",
           "type": "string"
         },
         "protocol": {
           "default": "openai-compatible",
+          "identity": false,
           "secrecy": "none",
           "type": "string"
         },
         "tool_chat": {
           "default": false,
+          "identity": false,
           "secrecy": "none",
           "type": "boolean"
         },
         "vision_extract": {
           "default": false,
+          "identity": false,
           "secrecy": "none",
           "type": "boolean"
         },
         "wire_api": {
           "default": "chat-completions",
+          "identity": false,
           "secrecy": "none",
           "type": "string"
         }
@@ -5945,6 +5995,7 @@
       "fields": {
         "auth_key_name": {
           "default": null,
+          "identity": false,
           "secrecy": "none",
           "type": [
             "string",
@@ -5953,11 +6004,13 @@
         },
         "auth_token_env": {
           "default": "GITHUB_TOKEN",
+          "identity": false,
           "secrecy": "none",
           "type": "string"
         },
         "base_url": {
           "default": null,
+          "identity": false,
           "secrecy": "none",
           "type": [
             "string",
@@ -5966,6 +6019,7 @@
         },
         "branch": {
           "default": null,
+          "identity": false,
           "secrecy": "none",
           "type": [
             "string",
@@ -5974,11 +6028,13 @@
         },
         "cache_ttl_seconds": {
           "default": 1800,
+          "identity": false,
           "secrecy": "none",
           "type": "integer"
         },
         "path": {
           "default": null,
+          "identity": false,
           "secrecy": "none",
           "type": [
             "string",
@@ -5987,6 +6043,7 @@
         },
         "repo": {
           "default": null,
+          "identity": false,
           "secrecy": "none",
           "type": [
             "string",
@@ -5995,10 +6052,12 @@
         },
         "topic": {
           "default": "gobby-skill",
+          "identity": false,
           "secrecy": "none",
           "type": "string"
         },
         "type": {
+          "identity": false,
           "secrecy": "none",
           "type": "string"
         }

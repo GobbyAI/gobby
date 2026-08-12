@@ -31,6 +31,9 @@ def apply_cas_config_patch(
     ``build_patch`` runs against each freshly read snapshot so a retry never
     replays state derived from the stale epoch. Validation failures never
     retry; a second conflict surfaces as a concurrent-change error.
+
+    This differs from ``ConfigStore._apply_internal(retry_on_conflict=True)``,
+    which replays the same patch against one freshly read revision.
     """
 
     def attempt() -> ConfigMutationResult:

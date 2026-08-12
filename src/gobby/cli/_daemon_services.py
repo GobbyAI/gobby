@@ -135,6 +135,7 @@ def _terminate_compose_process(
     graceful: bool,
 ) -> None:
     """Terminate the compose process tree and reap its root process."""
+    interrupted = False
     if sys.platform == "win32":
         with contextlib.suppress(OSError, subprocess.SubprocessError):
             subprocess.run(  # nosec B603 B607 # Windows process-tree cleanup
@@ -149,15 +150,29 @@ def _terminate_compose_process(
         try:
             process.wait(timeout=_COMPOSE_TERMINATION_GRACE_SECONDS)
             return
-        except subprocess.TimeoutExpired:
-            with contextlib.suppress(ProcessLookupError):
-                os.killpg(process.pid, signal.SIGKILL)
+        except KeyboardInterrupt:
+            interrupted = True
+        except (OSError, subprocess.SubprocessError):
+            pass
+        with contextlib.suppress(ProcessLookupError):
+            os.killpg(process.pid, signal.SIGKILL)
     else:
         with contextlib.suppress(ProcessLookupError):
             os.killpg(process.pid, signal.SIGKILL)
 
-    with contextlib.suppress(OSError, subprocess.SubprocessError):
-        process.wait()
+    try:
+        process.wait(timeout=_COMPOSE_TERMINATION_GRACE_SECONDS)
+    except KeyboardInterrupt:
+        interrupted = True
+        if sys.platform != "win32":
+            with contextlib.suppress(ProcessLookupError):
+                os.killpg(process.pid, signal.SIGKILL)
+        with contextlib.suppress(OSError, subprocess.SubprocessError, KeyboardInterrupt):
+            process.wait(timeout=_COMPOSE_TERMINATION_GRACE_SECONDS)
+    except (OSError, subprocess.SubprocessError):
+        pass
+    if interrupted:
+        raise KeyboardInterrupt
 
 
 def _run_compose_command(

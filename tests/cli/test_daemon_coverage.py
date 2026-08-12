@@ -355,11 +355,20 @@ class TestStatusCommand:
         config.daemon_port = 60888
         config.websocket.port = 60889
         config.ui.enabled = False
-        result = runner.invoke(status, [], obj=_cli_runtime(config), catch_exceptions=False)
+        bootstrap_path = tmp_path / "bootstrap.yaml"
+        bootstrap_path.write_text(
+            "daemon_port: 61999\nwebsocket_port: 62000\n",
+            encoding="utf-8",
+        )
+        bootstrap_path.chmod(0o600)
+        runtime = CliRuntime(config_file=str(bootstrap_path), config=config)
+        runtime._database = MagicMock()
+
+        result = runner.invoke(status, [], obj=runtime, catch_exceptions=False)
         assert result.exit_code == 0
         assert "Running PID 123" in result.output
         assert _fmt.call_args.kwargs["control_plane_error"] == (
-            "HTTP control plane unavailable at localhost:60887; "
+            "HTTP control plane unavailable at localhost:61999; "
             "PID exists but /api/admin/status did not respond"
         )
 

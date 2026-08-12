@@ -5,6 +5,7 @@ from __future__ import annotations
 import pytest
 
 from gobby.utils.env import is_test_protect_enabled
+from tests.fixtures.postgres import _require_test_database_url
 
 pytestmark = pytest.mark.unit
 
@@ -36,3 +37,13 @@ class TestTestProtectEnabled:
         monkeypatch.setenv("GOBBY_TEST_PROTECT", value)
 
         assert is_test_protect_enabled() is True
+
+
+def test_postgres_fixture_fails_closed_for_any_enabled_protect_value(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.delenv("DATABASE_URL", raising=False)
+    monkeypatch.setenv("GOBBY_TEST_PROTECT", "anything-unrecognized")
+
+    with pytest.raises(pytest.fail.Exception, match="DATABASE_URL"):
+        _require_test_database_url()

@@ -64,7 +64,7 @@ def test_compose_timeout_terminates_windows_process_tree(
         check=False,
         text=True,
     )
-    process.wait.assert_called_once_with()
+    process.wait.assert_called_once_with(timeout=daemon_services._COMPOSE_TERMINATION_GRACE_SECONDS)
 
 
 def test_compose_interrupt_terminates_process_group_and_reaps_child(
@@ -82,6 +82,37 @@ def test_compose_interrupt_terminates_process_group_and_reaps_child(
     killpg = MagicMock()
 
     monkeypatch.setattr(daemon_services, "resolves_to_real_run", lambda _run: True)
+    popen = MagicMock(return_value=process)
+    monkeypatch.setattr(subprocess, "Popen", popen)
+    monkeypatch.setattr(daemon_services.os, "killpg", killpg)
+    monkeypatch.setattr(sys, "platform", "darwin")
+
+    with pytest.raises(KeyboardInterrupt):
+        daemon_services._run_compose_command(command, timeout=10, env={}, cwd=".")
+
+    assert popen.call_args.kwargs["start_new_session"] is True
+    assert killpg.call_args_list == [
+        ((42, signal.SIGTERM),),
+        ((42, signal.SIGKILL),),
+    ]
+    assert process.wait.call_args_list == [
+        call(timeout=daemon_services._COMPOSE_TERMINATION_GRACE_SECONDS),
+        call(timeout=daemon_services._COMPOSE_TERMINATION_GRACE_SECONDS),
+    ]
+
+
+def test_second_interrupt_during_compose_reap_still_kills_process_group(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    command = ["docker", "compose", "up"]
+    process = MagicMock()
+    process.__enter__.return_value = process
+    process.pid = 42
+    process.communicate.side_effect = KeyboardInterrupt
+    process.wait.side_effect = [KeyboardInterrupt, 0]
+    killpg = MagicMock()
+
+    monkeypatch.setattr(daemon_services, "resolves_to_real_run", lambda _run: True)
     monkeypatch.setattr(subprocess, "Popen", MagicMock(return_value=process))
     monkeypatch.setattr(daemon_services.os, "killpg", killpg)
     monkeypatch.setattr(sys, "platform", "darwin")
@@ -95,7 +126,7 @@ def test_compose_interrupt_terminates_process_group_and_reaps_child(
     ]
     assert process.wait.call_args_list == [
         call(timeout=daemon_services._COMPOSE_TERMINATION_GRACE_SECONDS),
-        call(),
+        call(timeout=daemon_services._COMPOSE_TERMINATION_GRACE_SECONDS),
     ]
 
 
