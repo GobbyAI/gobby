@@ -4,8 +4,11 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import threading
+import time
 from collections.abc import Callable, Mapping
-from concurrent.futures import Future, ThreadPoolExecutor
+from concurrent.futures import CancelledError, Future, ThreadPoolExecutor
+from concurrent.futures import TimeoutError as FutureTimeoutError
 from dataclasses import dataclass
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, cast
@@ -138,6 +141,7 @@ class _ManagedEmbeddingLease:
         self.loop = loop
         self.read_completed_record = read_completed_record
         self.request_rebuild = request_rebuild
+        self.renewal_stop = threading.Event()
         self.renewal: Future[None] | None = None
 
     def assert_serving(self) -> None:
@@ -145,58 +149,118 @@ class _ManagedEmbeddingLease:
 
     def activate(self) -> None:
         self.lease.activate()
-        self.renewal = asyncio.run_coroutine_threadsafe(
-            _renew_embedding_lease(self),
-            self.loop,
-        )
+        self.renewal_stop.clear()
+        self.renewal = _EMBEDDING_LEASE_RENEW_EXECUTOR.submit(_renew_embedding_lease, self)
 
     def dispose(self) -> None:
+        self.renewal_stop.set()
         self.lease.fence()
         if self.renewal is not None:
             self.renewal.cancel()
 
 
-async def _renew_embedding_lease(handle: _ManagedEmbeddingLease) -> None:
-    while True:
-        await asyncio.sleep(_EMBEDDING_LEASE_RENEW_SECONDS)
+def _renew_embedding_lease(handle: _ManagedEmbeddingLease) -> None:
+    while not handle.renewal_stop.wait(_EMBEDDING_LEASE_RENEW_SECONDS):
         try:
-            renewed = await _renew_with_backoff(handle.lease)
+            renewed = _renew_with_backoff(handle.lease, stop_event=handle.renewal_stop)
         except EmbeddingGenerationLeaseExpired:
+            if handle.renewal_stop.is_set():
+                return
             logger.warning("Managed embedding generation lease was lost; attempting re-acquisition")
-            if not await _reacquire_lease(handle):
+            if not _reacquire_lease_from_renewal_thread(handle):
                 return
             continue
         except EmbeddingGenerationLeaseLost:
+            if handle.renewal_stop.is_set():
+                return
             logger.error("Managed embedding generation lease no longer matches; serving fenced")
+            return
+        if handle.renewal_stop.is_set():
             return
         if renewed:
             continue
-        if not await _reacquire_lease(handle):
+        if not _reacquire_lease_from_renewal_thread(handle):
             return
 
 
-async def _renew_with_backoff(lease: EmbeddingServingLease) -> bool:
+def _renew_with_backoff(
+    lease: EmbeddingServingLease,
+    *,
+    stop_event: threading.Event | None = None,
+) -> bool:
     """Renew once, retrying transient failures until the local deadline nears.
 
+    The managed renewal loop calls this on its reserved worker thread so event
+    loop stalls cannot delay either the renewal clock or the database write.
     Returns False after fencing because transient failures exhausted the
     deadline budget. An authoritative ``EmbeddingGenerationLeaseLost``
     propagates with the lease already fenced.
     """
     backoff = _EMBEDDING_RENEW_BACKOFF_INITIAL_SECONDS
-    loop = asyncio.get_running_loop()
+    attempt = 0
     while True:
+        attempt += 1
+        started_at = time.monotonic()
+        remaining_before_attempt = lease.remaining_seconds()
+
         try:
-            await loop.run_in_executor(_EMBEDDING_LEASE_RENEW_EXECUTOR, lease.renew)
+            lease.renew()
+            elapsed_ms = (time.monotonic() - started_at) * 1000.0
+            if elapsed_ms >= 1000.0:
+                logger.warning(
+                    "Embedding generation lease renewal completed slowly "
+                    "attempt=%d elapsed_ms=%.1f remaining_lease_seconds=%.3f",
+                    attempt,
+                    elapsed_ms,
+                    lease.remaining_seconds(),
+                )
             return True
-        except EmbeddingGenerationLeaseRenewTransient:
-            if lease.remaining_seconds() <= backoff:
+        except EmbeddingGenerationLeaseExpired:
+            logger.warning(
+                "Embedding generation lease renewal attempt reached local deadline "
+                "attempt=%d elapsed_ms=%.1f remaining_before_attempt=%.3f",
+                attempt,
+                (time.monotonic() - started_at) * 1000.0,
+                remaining_before_attempt,
+            )
+            raise
+        except EmbeddingGenerationLeaseRenewTransient as exc:
+            remaining_seconds = lease.remaining_seconds()
+            cause = exc.__cause__ or exc
+            logger.warning(
+                "Embedding generation lease renewal failed transiently "
+                "attempt=%d elapsed_ms=%.1f remaining_lease_seconds=%.3f cause=%s: %s",
+                attempt,
+                (time.monotonic() - started_at) * 1000.0,
+                remaining_seconds,
+                type(cause).__name__,
+                cause,
+            )
+            if remaining_seconds <= backoff:
                 lease.fence()
                 logger.warning(
                     "Embedding generation lease renewal kept failing transiently; serving fenced"
                 )
                 return False
-            await asyncio.sleep(backoff)
+            if stop_event is None:
+                time.sleep(backoff)
+            elif stop_event.wait(backoff):
+                return True
             backoff = min(backoff * 2.0, _EMBEDDING_RENEW_BACKOFF_CAP_SECONDS)
+
+
+def _reacquire_lease_from_renewal_thread(handle: _ManagedEmbeddingLease) -> bool:
+    reacquisition = asyncio.run_coroutine_threadsafe(_reacquire_lease(handle), handle.loop)
+    while True:
+        try:
+            return reacquisition.result(timeout=0.1)
+        except FutureTimeoutError:
+            if not handle.renewal_stop.is_set():
+                continue
+            reacquisition.cancel()
+            return False
+        except CancelledError:
+            return False
 
 
 async def _reacquire_lease(handle: _ManagedEmbeddingLease) -> bool:

@@ -3,10 +3,7 @@
 from __future__ import annotations
 
 import asyncio
-import gc
 import threading
-import weakref
-from concurrent.futures import ThreadPoolExecutor
 from contextlib import suppress
 from types import SimpleNamespace
 from typing import Any, cast
@@ -39,6 +36,7 @@ class _StubHubDatabase:
     def __init__(self) -> None:
         self.execute_calls: list[str] = []
         self.ack_inserted = threading.Event()
+        self.renewed = threading.Event()
         self.renew_rowcount = 1
         self.fail_execute: Exception | None = None
         self.fail_renew_times = 0
@@ -51,6 +49,8 @@ class _StubHubDatabase:
             self.fail_renew_times -= 1
             raise ConnectionError("transient database failure")
         self.execute_calls.append(sql)
+        if is_renew:
+            self.renewed.set()
         if "INSERT INTO embedding_generation_acks" in sql:
             self.ack_inserted.set()
         return _StubCursor(self.renew_rowcount if is_renew else 1)
@@ -224,56 +224,35 @@ def test_managed_lease_identity_uses_completed_record() -> None:
     assert identity == ("run-9", 12, 9)
 
 
-@pytest.mark.asyncio
-async def test_managed_lease_activate_schedules_and_retains_daemon_loop_renewal(
+def test_managed_lease_renews_while_daemon_event_loop_is_stalled(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    loop = asyncio.get_running_loop()
-    loop_thread_id = threading.get_ident()
-    started = asyncio.Event()
-    release = asyncio.Event()
-    observed: dict[str, object] = {}
-
-    async def record_renewal(_handle: services._ManagedEmbeddingLease) -> None:
-        observed["loop"] = asyncio.get_running_loop()
-        observed["thread_id"] = threading.get_ident()
-        started.set()
-        await release.wait()
-
-    monkeypatch.setattr(services, "_renew_embedding_lease", record_renewal)
+    monkeypatch.setattr(services, "_EMBEDDING_LEASE_RENEW_SECONDS", 0.01)
+    loop = asyncio.new_event_loop()
+    db = _StubHubDatabase()
     handle = services._ManagedEmbeddingLease(
-        _lease(EmbeddingGenerationState(cast(Any, _StubHubDatabase()))),
+        _lease(EmbeddingGenerationState(cast(Any, db))),
         loop,
         read_completed_record=lambda: None,
         request_rebuild=lambda _record: None,
     )
-    builder_thread_id: int | None = None
-
-    def activate() -> None:
-        nonlocal builder_thread_id
-        builder_thread_id = threading.get_ident()
-        handle.activate()
 
     try:
-        await asyncio.to_thread(activate)
-        await asyncio.wait_for(started.wait(), timeout=1.0)
-
-        assert observed == {"loop": loop, "thread_id": loop_thread_id}
-        assert builder_thread_id != loop_thread_id
+        handle.activate()
+        # The loop never runs, reproducing the scheduling resource stalled by spawn.
+        assert db.renewed.wait(timeout=1.0)
         assert handle.renewal is not None
-        renewal_ref = weakref.ref(handle.renewal)
-        gc.collect()
-        assert renewal_ref() is handle.renewal
+        assert not handle.renewal.done()
     finally:
-        release.set()
-        if handle.renewal is not None:
-            await asyncio.wrap_future(handle.renewal)
         handle.dispose()
+        if handle.renewal is not None:
+            handle.renewal.result(timeout=1.0)
+        loop.close()
 
 
-@pytest.mark.asyncio
-async def test_renew_with_backoff_retries_transient_then_succeeds(
+def test_renew_with_backoff_retries_transient_then_succeeds(
     monkeypatch: pytest.MonkeyPatch,
+    caplog: pytest.LogCaptureFixture,
 ) -> None:
     monkeypatch.setattr(services, "_EMBEDDING_RENEW_BACKOFF_INITIAL_SECONDS", 0.01)
     db = _StubHubDatabase()
@@ -282,48 +261,24 @@ async def test_renew_with_backoff_retries_transient_then_succeeds(
     lease.activate()
     db.fail_renew_times = 2
 
-    assert await services._renew_with_backoff(lease) is True
+    assert services._renew_with_backoff(lease) is True
 
     lease.assert_serving()
     assert db.fail_renew_times == 0
+    transient_logs = [
+        message
+        for message in caplog.messages
+        if message.startswith("Embedding generation lease renewal failed transiently")
+    ]
+    assert len(transient_logs) == 2
+    for attempt, message in enumerate(transient_logs, start=1):
+        assert f"attempt={attempt}" in message
+        assert "elapsed_ms=" in message
+        assert "remaining_lease_seconds=" in message
+        assert "cause=ConnectionError: transient database failure" in message
 
 
-def test_renew_with_backoff_bypasses_saturated_default_executor() -> None:
-    async def scenario() -> None:
-        loop = asyncio.get_running_loop()
-        loop.set_default_executor(ThreadPoolExecutor(max_workers=1))
-        blocker_started = asyncio.Event()
-        release_blocker = threading.Event()
-        renewed = asyncio.Event()
-
-        def block_default_executor() -> None:
-            loop.call_soon_threadsafe(blocker_started.set)
-            release_blocker.wait(timeout=5.0)
-
-        def renew() -> None:
-            loop.call_soon_threadsafe(renewed.set)
-
-        blocker = loop.run_in_executor(None, block_default_executor)
-        await asyncio.wait_for(blocker_started.wait(), timeout=1.0)
-        lease = cast(Any, SimpleNamespace(renew=renew))
-        renew_task = asyncio.create_task(services._renew_with_backoff(lease))
-
-        try:
-            await asyncio.wait_for(renewed.wait(), timeout=1.0)
-            assert await asyncio.wait_for(renew_task, timeout=1.0) is True
-        finally:
-            release_blocker.set()
-            await blocker
-            if not renew_task.done():
-                renew_task.cancel()
-                with suppress(asyncio.CancelledError):
-                    await renew_task
-
-    asyncio.run(scenario())
-
-
-@pytest.mark.asyncio
-async def test_renew_with_backoff_fences_when_deadline_budget_exhausted() -> None:
+def test_renew_with_backoff_fences_when_deadline_budget_exhausted() -> None:
     db = _StubHubDatabase()
     state = EmbeddingGenerationState(cast(Any, db))
     # TTL 1.0 -> margin 0.1 -> remaining ~0.9, below the 1.0s initial backoff,
@@ -332,7 +287,7 @@ async def test_renew_with_backoff_fences_when_deadline_budget_exhausted() -> Non
     lease.activate()
     db.fail_execute = ConnectionError("partition")
 
-    assert await services._renew_with_backoff(lease) is False
+    assert services._renew_with_backoff(lease) is False
 
     with pytest.raises(EmbeddingGenerationLeaseLost, match="fenced"):
         lease.assert_serving()
@@ -437,25 +392,24 @@ async def test_reacquire_unmanaged_lease_rejects_stale_encoded_revision(
     assert db.ack_insert_count() == 1
 
 
-@pytest.mark.asyncio
-async def test_renew_loop_routes_local_deadline_lapse_to_reacquisition(
+def test_renew_loop_routes_local_deadline_lapse_to_reacquisition(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     monkeypatch.setattr(services, "_EMBEDDING_LEASE_RENEW_SECONDS", 0.0)
     reacquired: list[object] = []
 
-    async def deadline_lapsed(_lease: object) -> bool:
+    def deadline_lapsed(_lease: object, *, stop_event: threading.Event) -> bool:
         raise EmbeddingGenerationLeaseExpired("Embedding generation serving lease expired")
 
-    async def stop_after_reacquire(handle: object) -> bool:
+    def stop_after_reacquire(handle: object) -> bool:
         reacquired.append(handle)
         return False
 
     monkeypatch.setattr(services, "_renew_with_backoff", deadline_lapsed)
-    monkeypatch.setattr(services, "_reacquire_lease", stop_after_reacquire)
-    handle = cast(Any, SimpleNamespace(lease=object()))
+    monkeypatch.setattr(services, "_reacquire_lease_from_renewal_thread", stop_after_reacquire)
+    handle = cast(Any, SimpleNamespace(lease=object(), renewal_stop=threading.Event()))
 
-    await services._renew_embedding_lease(handle)
+    services._renew_embedding_lease(handle)
 
     assert reacquired == [handle]
 
@@ -578,7 +532,7 @@ async def test_renew_loop_fences_reacquires_and_resumes(
         request_rebuild=lambda record: pytest.fail("unexpected rebuild request"),
     )
     db.fail_execute = ConnectionError("partition")
-    loop_task = asyncio.create_task(services._renew_embedding_lease(handle))
+    loop_task = asyncio.create_task(asyncio.to_thread(services._renew_embedding_lease, handle))
     try:
         acknowledged = await asyncio.wait_for(asyncio.to_thread(db.ack_inserted.wait), timeout=5.0)
         assert acknowledged
@@ -591,6 +545,6 @@ async def test_renew_loop_fences_reacquires_and_resumes(
             handle.assert_serving()
     finally:
         if not loop_task.done():
-            loop_task.cancel()
-            with suppress(asyncio.CancelledError):
-                await loop_task
+            handle.renewal_stop.set()
+            with suppress(asyncio.TimeoutError):
+                await asyncio.wait_for(loop_task, timeout=5.0)
