@@ -137,7 +137,7 @@ def cleanup_replaced_mcp_secrets(
     new_headers: dict[str, str] | None,
 ) -> None:
     """Delete managed secrets whose owning MCP slot no longer references them."""
-    new_references = SecretStore.find_secret_references((new_env, new_headers))
+    new_references = secret_store.find_persisted_secret_references((new_env, new_headers))
     for field, values in (("env", old_env), ("headers", old_headers)):
         for key, value in (values or {}).items():
             slot = MCPSecretSlot(persistence, scope, server_name, field, key)

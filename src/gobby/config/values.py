@@ -22,8 +22,8 @@ from gobby.config.registry import (
     decode_dynamic_segment,
 )
 from gobby.config.runtime import ConfigSnapshot
+from gobby.config.secret_mask import MASKED_SECRET
 from gobby.config.voice_secrets import (
-    MASKED_VOICE_AUDIO_API_KEY,
     mask_structured_references,
     restore_masked_structured_references,
     validate_structured_references,
@@ -38,7 +38,6 @@ from gobby.storage.config_mutations import (
 )
 from gobby.storage.config_store import unflatten_config
 
-MASKED_SECRET = "********"
 _GENERATION_ENDPOINT_PREFIX = "ai.generation.endpoints."
 
 
@@ -95,6 +94,8 @@ def reject_unprobed_responses_endpoints(
     unset: Collection[str],
     resolved_paths: Mapping[str, tuple[str, ...]],
     desired: DaemonConfig,
+    *,
+    document: bool = False,
 ) -> None:
     """Require probe-gated activation for every changed responses endpoint."""
     touched = {
@@ -118,14 +119,25 @@ def reject_unprobed_responses_endpoints(
             wire_key,
             ("ai", "generation", "endpoints", segment),
         )
-        raise ConfigValuesError(
-            "probe_required",
-            (
+        path_root = "content" if document else "values"
+        action = (
+            f"Probe and activate endpoint {segment!r} before importing YAML"
+            if document
+            else f"/api/config/generation-endpoints/{segment}/activate"
+        )
+        message = (
+            f"Responses endpoint {segment!r} must be probed and activated before YAML import"
+            if document
+            else (
                 f"Responses endpoint {segment!r} must be saved through "
                 f"/api/config/generation-endpoints/{segment}/activate"
-            ),
-            ("values", *path),
-            action=f"/api/config/generation-endpoints/{segment}/activate",
+            )
+        )
+        raise ConfigValuesError(
+            "probe_required",
+            message,
+            (path_root, *path),
+            action=action,
         )
 
 
@@ -223,6 +235,12 @@ class ConfigValuesService:
                         "Secret configuration value must be a string",
                         ("values", *path),
                     )
+                if value.startswith("$secret:"):
+                    raise ConfigValuesError(
+                        "validation_error",
+                        "Secret references are not accepted as plaintext values",
+                        ("values", *path),
+                    )
                 secret_updates[key] = SecretUpdate(plaintext=value, category="general")
             elif reference_fields := config_reference_fields(self.registry.resolve(key)):
                 value_updates[key] = self._prepared_structured_references(
@@ -317,7 +335,7 @@ class ConfigValuesService:
             return value
         has_masked = any(
             isinstance(item, Mapping)
-            and any(item.get(field) == MASKED_VOICE_AUDIO_API_KEY for field in reference_fields)
+            and any(item.get(field) == MASKED_SECRET for field in reference_fields)
             for item in value
         )
         if has_masked:
@@ -515,4 +533,4 @@ async def _run_in_thread[T](operation: Callable[[], T]) -> T:
     return await asyncio.to_thread(operation)
 
 
-__all__ = ["MASKED_SECRET", "ConfigValuesError", "ConfigValuesService"]
+__all__ = ["ConfigValuesError", "ConfigValuesService"]

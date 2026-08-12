@@ -11,6 +11,7 @@ from typing import TYPE_CHECKING, Any
 
 import yaml
 
+from gobby.config.secret_mask import MASKED_SECRET
 from gobby.config.voice_secrets import mask_voice_audio_api_keys
 from gobby.storage.secret_names import SECRET_REF_PATTERN
 from gobby.utils.env import is_test_protect_enabled
@@ -31,7 +32,6 @@ _BOOTSTRAP_PRE_DATABASE_KEYS = (
     "database_url",
     "postgres_pool",
 )
-_MASKED_REFERENCE = "********"
 
 
 def _mask_reference_values(
@@ -69,11 +69,16 @@ def _mask_reference_values(
             spec = CONFIG_REGISTRY.resolve(".".join(child_prefix))
         except UnknownConfigKeyError:
             spec = None
+            if not isinstance(child, (dict, list)):
+                logger.warning(
+                    "Cannot resolve exported configuration key %s for secret masking",
+                    ".".join(child_prefix),
+                )
         if (
             spec is not None
             and config_key_secrecy(spec, ".".join(child_prefix)) is ConfigSecrecy.REFERENCE
         ):
-            masked[key] = _MASKED_REFERENCE
+            masked[key] = MASKED_SECRET
         else:
             masked[key] = _mask_reference_values(child, child_prefix)
     return masked
@@ -361,7 +366,7 @@ def export_config_to_yaml(config: DaemonConfig, config_file: str | None = None) 
 
     # Convert config to dict, excluding None values to keep file clean
     # mode="json" ensures Path objects are converted to strings for YAML serialization
-    config_dict = config.model_dump(mode="json", exclude_none=True, by_alias=True)
+    config_dict = config.model_dump(mode="json", exclude_none=True, by_alias=False)
     masked_config = _mask_reference_values(config_dict)
     if not isinstance(masked_config, dict):
         raise TypeError("Daemon configuration must serialize as a mapping")

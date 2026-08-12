@@ -21,7 +21,13 @@ from gobby.config.embedding_keys import (
     EMBEDDING_SWITCH_JOURNAL_KEY,
     validate_embedding_storage_config_key,
 )
-from gobby.config.registry import ConfigRegistry, UnknownConfigKeyError, decode_dynamic_segment
+from gobby.config.registry import (
+    ConfigRegistry,
+    ConfigSecrecy,
+    UnknownConfigKeyError,
+    config_key_secrecy,
+    decode_dynamic_segment,
+)
 from gobby.storage.config_mutations import (
     ConfigConflictError,
     ConfigMutationResult,
@@ -36,6 +42,7 @@ from gobby.storage.config_mutations import (
 from gobby.storage.config_repository import ConfigReadSnapshot, ConfigRepository
 from gobby.storage.hub._ambient import ambient_transaction
 from gobby.storage.hub.protocol import HubDatabase
+from gobby.storage.secret_names import normalize_secret_name
 from gobby.storage.secrets import SecretInfo, SecretStore
 
 # Suffixes that indicate a key holds a secret value
@@ -438,23 +445,28 @@ class ConfigStore:
         description: str | None,
     ) -> SecretInfo:
         """Mutate a generic secret under embedding-switch admission control."""
-        self._bind_secret_store(secret_store)
+        mutations = self._bind_secret_store(secret_store)
+        normalized_name = normalize_secret_name(name)
         with embedding_mutation_context(self.db) as transaction:
-            if name == EMBEDDING_API_KEY_SECRET_NAME:
+            if normalized_name == EMBEDDING_API_KEY_SECRET_NAME:
                 self._assert_embedding_mutation_allowed(AI_EMBEDDING_CONFIG_KEY_SET, transaction)
             revision = self.repository.read_revision(transaction, lock=True)
             rows = self.repository._read_rows(transaction)
             snapshot = self.repository.snapshot_from_rows(transaction, revision, rows)
-            referencing = {
-                key for key, value in snapshot.overrides.items() if value == f"$secret:{name}"
-            }
+            referencing: set[str] = set()
+            for key, value in snapshot.overrides.items():
+                if normalized_name not in secret_store.find_secret_references((value,)):
+                    continue
+                spec = mutations.registry.resolve(key)
+                if config_key_secrecy(spec, key) is ConfigSecrecy.REFERENCE:
+                    referencing.add(key)
             if referencing:
                 self._apply_internal(
                     ConfigPatch(
                         secrets={
                             key: SecretUpdate(
                                 plaintext_value,
-                                name=name,
+                                name=normalized_name,
                                 category=category,
                                 description=description,
                             )
@@ -465,12 +477,30 @@ class ConfigStore:
                     secret_store=secret_store,
                     expected_revision=snapshot.revision,
                 )
-                info = next((item for item in secret_store.list() if item.name == name), None)
+                info = next(
+                    (item for item in secret_store.list() if item.name == normalized_name),
+                    None,
+                )
                 if info is None:
-                    raise RuntimeError(f"Secret mutation did not persist {name!r}")
+                    raise RuntimeError(f"Secret mutation did not persist {normalized_name!r}")
                 return info
+            canonical_key = next(
+                (
+                    spec.key
+                    for spec in mutations.registry.key_specs
+                    if config_key_secrecy(spec, spec.key) is ConfigSecrecy.REFERENCE
+                    and config_key_to_secret_name(spec.key) == normalized_name
+                ),
+                None,
+            )
+            if canonical_key is not None:
+                mutations.validate_named_secret(
+                    key=canonical_key,
+                    plaintext=plaintext_value,
+                    snapshot=snapshot,
+                )
             return secret_store.set(
-                name=name,
+                name=normalized_name,
                 plaintext_value=plaintext_value,
                 category=category,
                 description=description,
@@ -479,24 +509,13 @@ class ConfigStore:
     def delete_named_secret(self, secret_store: SecretStore, name: str) -> bool:
         """Delete a generic secret under embedding-switch admission control."""
         self._bind_secret_store(secret_store)
+        normalized_name = normalize_secret_name(name)
         with embedding_mutation_context(self.db) as transaction:
-            if name == EMBEDDING_API_KEY_SECRET_NAME:
+            if normalized_name == EMBEDDING_API_KEY_SECRET_NAME:
                 self._assert_embedding_mutation_allowed(AI_EMBEDDING_CONFIG_KEY_SET, transaction)
-            revision = self.repository.read_revision(transaction, lock=True)
-            rows = self.repository._read_rows(transaction)
-            snapshot = self.repository.snapshot_from_rows(transaction, revision, rows)
-            referencing = frozenset(
-                key for key, value in snapshot.overrides.items() if value == f"$secret:{name}"
-            )
-            if referencing:
-                result = self._apply_internal(
-                    ConfigPatch(unset=referencing),
-                    source="user",
-                    secret_store=secret_store,
-                    expected_revision=snapshot.revision,
-                )
-                return bool(result.changed_keys)
-            return bool(secret_store.delete(name))
+            if normalized_name in secret_store.find_persisted_secret_references():
+                return False
+            return bool(secret_store.delete(normalized_name))
 
     @staticmethod
     def _validate_internal_lifecycle_key(key: str) -> None:

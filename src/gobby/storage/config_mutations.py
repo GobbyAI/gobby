@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import logging
 import math
 import re
 from collections.abc import Collection, Iterable, Mapping
@@ -44,6 +45,8 @@ from gobby.storage.hub.protocol import HubDatabase, Transaction
 from gobby.storage.secret_names import normalize_secret_name
 from gobby.storage.secrets import SecretStore
 from gobby.utils.datetime import utc_now
+
+logger = logging.getLogger(__name__)
 
 CONFIG_CHANGED_CHANNEL = "gobby_config_changed"
 _CONFIG_SECRET_NAMES = {"databases.falkordb.password": "falkordb_password"}
@@ -245,6 +248,20 @@ class ConfigMutations:
             embedding_run_id=None,
         )
 
+    def validate_named_secret(
+        self,
+        *,
+        key: str,
+        plaintext: str,
+        snapshot: ConfigReadSnapshot,
+    ) -> None:
+        """Validate an unbound canonical secret without persisting it."""
+        self._validate_candidate(
+            ConfigPatch(secrets={key: SecretUpdate(plaintext)}),
+            snapshot,
+            allow_internal=True,
+        )
+
     def _apply(
         self,
         *,
@@ -406,7 +423,13 @@ class ConfigMutations:
                     references[key] = validated
                     existing_binding = candidate_bindings.get(key)
                     if existing_binding is None or existing_binding.reference != validated:
-                        candidate_bindings[key] = SecretBinding(validated, None)
+                        plaintext = self.secret_store.get(validated.removeprefix("$secret:"))
+                        if plaintext is None:
+                            raise ConfigValidationError(
+                                f"Secret reference for {key!r} cannot be resolved",
+                                key=key,
+                            )
+                        candidate_bindings[key] = SecretBinding(validated, plaintext)
                 if reference_fields := config_reference_fields(spec):
                     try:
                         validate_structured_references(
@@ -440,23 +463,60 @@ class ConfigMutations:
             self.repository.runtime_candidate(candidate, candidate_bindings)
         except ConfigValidationError:
             raise
-        except (ValidationError, ValueError, TypeError) as exc:
-            secret_key = next(iter(patch.secrets), None)
-            if secret_key is not None:
+        except ValidationError as exc:
+            detail = self._validation_detail(exc)
+            error_key = self._validation_error_key(exc)
+            changed_keys = (*patch.values, *patch.secrets, *patch.unset)
+            if error_key is None and len(changed_keys) == 1:
+                error_key = changed_keys[0]
+            if error_key is not None and self._is_reference_key(error_key):
+                logger.warning(
+                    "Secret configuration validation failed for %s: %s", error_key, detail
+                )
                 secret_error = ConfigValidationError(
                     "Secret configuration value is invalid",
-                    key=secret_key,
+                    key=error_key,
                 )
             else:
-                changed_keys = (*patch.values, *patch.secrets, *patch.unset)
-                error_key = changed_keys[0] if len(changed_keys) == 1 else None
                 raise ConfigValidationError(
-                    f"Complete configuration candidate is invalid: {exc}",
+                    f"Complete configuration candidate is invalid: {detail}",
                     key=error_key,
                 ) from exc
+        except (ValueError, TypeError) as exc:
+            changed_keys = (*patch.values, *patch.secrets, *patch.unset)
+            error_key = changed_keys[0] if len(changed_keys) == 1 else None
+            raise ConfigValidationError(
+                f"Complete configuration candidate is invalid: {exc}",
+                key=error_key,
+            ) from exc
         if secret_error is not None:
             raise secret_error
         return values, references
+
+    @staticmethod
+    def _validation_detail(exc: ValidationError) -> str:
+        parts: list[str] = []
+        for error in exc.errors(include_input=False, include_url=False):
+            path = ".".join(str(segment) for segment in error["loc"])
+            parts.append(f"{path}: {error['msg']}" if path else str(error["msg"]))
+        return "; ".join(parts)
+
+    def _validation_error_key(self, exc: ValidationError) -> str | None:
+        for error in exc.errors(include_input=False, include_url=False):
+            key = ".".join(str(segment) for segment in error["loc"])
+            try:
+                self.registry.resolve(key)
+            except UnknownConfigKeyError:
+                continue
+            return key
+        return None
+
+    def _is_reference_key(self, key: str) -> bool:
+        try:
+            spec = self.registry.resolve(key)
+        except UnknownConfigKeyError:
+            return False
+        return config_key_secrecy(spec, key) is ConfigSecrecy.REFERENCE
 
     @staticmethod
     def _authorize(spec: RegistrySpec, key: str, *, allow_internal: bool) -> None:
@@ -593,7 +653,7 @@ class ConfigMutations:
         """Delete a released secret only when no config row still references it."""
         if not released:
             return
-        retained = self.secret_store.find_secret_references(retained_values)
+        retained = self.secret_store.find_persisted_secret_references(retained_values)
         for name in released:
             if name in retained:
                 continue

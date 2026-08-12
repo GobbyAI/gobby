@@ -79,6 +79,8 @@ class ConfigurationRouteContext:
                 service = ConfigDocumentsService(
                     runtime=self.get_config_runtime(),
                     mutations=ConfigMutations(database, secret_store=secret_store),
+                    # ConfigDocumentsService restores scalar secret references to
+                    # plaintext before this callback, so no bindings are required.
                     runtime_candidate=lambda overrides: repository.runtime_candidate(overrides, {}),
                     resolve_secret=secret_store.get,
                     run_blocking=self.run_config_db,

@@ -8,6 +8,7 @@ from typing import Any
 from fastapi import APIRouter, Depends, HTTPException, Request
 
 from gobby.config.persistence import validate_falkordb_password
+from gobby.config.secret_mask import MASKED_SECRET
 from gobby.servers.responses import JSONResponse
 from gobby.servers.routes.configuration_context import ConfigurationRouteContext
 from gobby.servers.routes.configuration_models import SaveSecretRequest
@@ -15,7 +16,6 @@ from gobby.storage.config_mutations import config_key_to_secret_name
 from gobby.storage.config_store import ConfigStore, is_secret_key_name
 from gobby.storage.secrets import VALID_CATEGORIES
 
-MASKED_SECRET = "********"
 FALKOR_PASSWORD_KEY = "databases.falkordb.password"
 FALKOR_RESTART_HINT = (
     "Run `gobby restart` for the new FalkorDB password to take effect on the running container."
@@ -145,11 +145,17 @@ def register_secret_routes(router: APIRouter, context: ConfigurationRouteContext
     async def delete_secret(name: str) -> JSONResponse:
         try:
             secret_store = context.get_secret_store()
+            existed = secret_store.exists(name)
             deleted = ConfigStore(secret_store.db).delete_named_secret(
                 secret_store,
                 name,
             )
             if not deleted:
+                if existed:
+                    raise HTTPException(
+                        status_code=409,
+                        detail=f"Secret '{name}' is still referenced",
+                    )
                 raise HTTPException(status_code=404, detail=f"Secret '{name}' not found")
             return JSONResponse(content={"ok": True})
         except HTTPException:

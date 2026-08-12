@@ -6,13 +6,13 @@ from collections.abc import Callable, Collection
 from copy import deepcopy
 from typing import TYPE_CHECKING, Any
 
+from gobby.config.secret_mask import MASKED_SECRET
 from gobby.storage.secret_names import SECRET_REF_PATTERN
 
 if TYPE_CHECKING:
     from gobby.config.app import DaemonConfig
 
 VOICE_AUDIO_BINDINGS_KEY = "voice.openai_compatible_audio"
-MASKED_VOICE_AUDIO_API_KEY = "********"
 
 
 class VoiceSecretResolutionError(ValueError):
@@ -89,7 +89,7 @@ def restore_masked_structured_references(
         identity = item.get("provider")
         identity_key = identity if isinstance(identity, str) else index
         for field in reference_fields:
-            if item.get(field) != MASKED_VOICE_AUDIO_API_KEY:
+            if item.get(field) != MASKED_SECRET:
                 continue
             reference = references.get((identity_key, field))
             if reference is None:
@@ -115,7 +115,7 @@ def mask_structured_references(
             continue
         for field in reference_fields:
             if item.get(field) not in (None, ""):
-                item[field] = MASKED_VOICE_AUDIO_API_KEY
+                item[field] = MASKED_SECRET
     return masked
 
 
@@ -138,7 +138,7 @@ def mask_voice_audio_api_keys(
             continue
         if preserve_secret_references and is_secret_reference(value):
             continue
-        binding["api_key"] = MASKED_VOICE_AUDIO_API_KEY
+        binding["api_key"] = MASKED_SECRET
     return masked
 
 

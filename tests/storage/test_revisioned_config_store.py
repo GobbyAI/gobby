@@ -14,6 +14,7 @@ import psycopg
 import pytest
 from psycopg import sql
 from psycopg.conninfo import make_conninfo
+from pydantic import ValidationError
 
 from gobby.config.embedding_keys import AI_EMBEDDING_API_KEY_KEY, EMBEDDING_API_KEY_SECRET_NAME
 from gobby.storage.config_mutations import (
@@ -34,6 +35,9 @@ from gobby.storage.config_repository import (
 from gobby.storage.config_store import ConfigStore
 from gobby.storage.hub.postgres import PostgresHubDatabase
 from gobby.storage.hub.protocol import HubDatabase, Row, Transaction
+from gobby.storage.mcp import LocalMCPManager
+from gobby.storage.mcp_secrets import MCPSecretSlot, cleanup_replaced_mcp_secrets
+from gobby.storage.projects import LocalProjectManager
 from gobby.storage.secrets import SecretStore
 
 pytestmark = pytest.mark.integration
@@ -540,6 +544,83 @@ def test_secret_reference_in_ordinary_string_value_prevents_deletion(
     assert secret_store.get("shared_endpoint_key") == "shared-secret"
 
 
+def test_named_secret_delete_normalizes_and_protects_composite_references(
+    revision_db: HubDatabase,
+    mutations: ConfigMutations,
+    secret_store: SecretStore,
+) -> None:
+    name = "Case_Shared_Secret"
+    key = "ai.generation.endpoints.alpha.api_key"
+    mutations.patch(
+        expected_revision=0,
+        patch=ConfigPatch(
+            values={
+                "ai.generation.endpoints.alpha.api_base": "https://alpha.example/v1",
+                "ai.generation.endpoints.alpha.model": "model-a",
+                "telemetry.service_name": f"prefix $secret:{name.lower()} suffix",
+            },
+            secrets={key: SecretUpdate("shared-secret", name=name)},
+        ),
+    )
+
+    deleted = ConfigStore(revision_db).delete_named_secret(secret_store, name.upper())
+
+    assert deleted is False
+    assert secret_store.get(name) == "shared-secret"
+
+
+def test_mcp_holder_prevents_named_secret_deletion(
+    revision_db: HubDatabase,
+    secret_store: SecretStore,
+) -> None:
+    project = LocalProjectManager(revision_db).create(name="secret-holder")
+    name = "mcp_shared_secret"
+    secret_store.set(name=name, plaintext_value="shared-secret")
+    LocalMCPManager(revision_db).upsert(
+        name="secret-holder-server",
+        transport="stdio",
+        project_id=project.id,
+        command="server",
+        env={"TOKEN": f"prefix $secret:{name.upper()} suffix"},
+    )
+
+    deleted = ConfigStore(revision_db).delete_named_secret(secret_store, name.upper())
+
+    assert deleted is False
+    assert secret_store.get(name) == "shared-secret"
+
+
+def test_mcp_cleanup_preserves_secret_held_by_config(
+    revision_db: HubDatabase,
+    secret_store: SecretStore,
+) -> None:
+    slot = MCPSecretSlot("global", "shared", "server", "env", "TOKEN")
+    reference = f"$secret:{slot.name}"
+    secret_store.set(
+        name=slot.name,
+        plaintext_value="shared-secret",
+        category="mcp_server",
+        description=slot.description,
+    )
+    ConfigStore(revision_db, secret_store=secret_store).set(
+        "telemetry.service_name",
+        f"config holds {reference}",
+    )
+
+    cleanup_replaced_mcp_secrets(
+        secret_store,
+        persistence=slot.persistence,
+        scope=slot.scope,
+        server_name=slot.server_name,
+        old_env={slot.key: reference},
+        old_headers=None,
+        new_env={},
+        new_headers=None,
+    )
+
+    assert secret_store.get(slot.name) == "shared-secret"
+
+
 def test_namespace_replacement_preserves_managed_embedding_keys(
     mutations: ConfigMutations,
 ) -> None:
@@ -731,6 +812,7 @@ def test_runtime_candidate_resolves_secret_references(
 def test_invalid_secret_candidate_error_does_not_contain_plaintext(
     revision_db: HubDatabase,
     mutations: ConfigMutations,
+    caplog: pytest.LogCaptureFixture,
 ) -> None:
     key = "databases.falkordb.password"
     invalid = "plaintext must not leak"
@@ -746,6 +828,77 @@ def test_invalid_secret_candidate_error_does_not_contain_plaintext(
     assert captured.value.__cause__ is None
     assert captured.value.__context__ is None
     assert invalid not in str(captured.value)
+    assert key in caplog.text
+    assert invalid not in caplog.text
+
+
+def test_candidate_validation_attributes_nonsecret_failure_with_secret_patch(
+    mutations: ConfigMutations,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    error = ValidationError.from_exception_data(
+        "DaemonConfig",
+        [
+            {
+                "type": "greater_than",
+                "loc": ("websocket", "ping_interval"),
+                "input": 0,
+                "ctx": {"gt": 0},
+            }
+        ],
+    )
+
+    def invalid_candidate(*_args: object) -> None:
+        raise error
+
+    monkeypatch.setattr(mutations.repository, "runtime_candidate", invalid_candidate)
+
+    with pytest.raises(ConfigValidationError) as captured:
+        mutations.patch(
+            expected_revision=0,
+            patch=ConfigPatch(
+                values={"websocket.ping_interval": 10},
+                secrets={"databases.falkordb.password": SecretUpdate("Valid-Password-123")},
+            ),
+        )
+
+    assert captured.value.key == "websocket.ping_interval"
+    assert "greater than 0" in str(captured.value)
+
+
+def test_reference_repoint_validates_resolved_plaintext(
+    mutations: ConfigMutations,
+    secret_store: SecretStore,
+) -> None:
+    key = "databases.falkordb.password"
+    secret_store.set(name="invalid_falkor", plaintext_value="invalid password")
+
+    with pytest.raises(ConfigValidationError) as captured:
+        mutations.patch(
+            expected_revision=0,
+            patch=ConfigPatch(values={key: "$secret:invalid_falkor"}),
+        )
+
+    assert captured.value.key == key
+    assert str(captured.value) == "Secret configuration value is invalid"
+
+
+def test_unbound_canonical_named_secret_is_validated(
+    revision_db: HubDatabase,
+    secret_store: SecretStore,
+) -> None:
+    name = config_key_to_secret_name("databases.falkordb.password")
+
+    with pytest.raises(ConfigValidationError):
+        ConfigStore(revision_db).set_named_secret(
+            secret_store,
+            name,
+            "invalid password",
+            category="general",
+            description=None,
+        )
+
+    assert secret_store.get(name) is None
 
 
 def test_expected_revision_domain_is_rejected(mutations: ConfigMutations) -> None:

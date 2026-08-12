@@ -273,6 +273,19 @@ class SecretStore:
             visit(value)
         return refs
 
+    def find_persisted_secret_references(
+        self,
+        additional_values: Iterable[Any] = (),
+    ) -> set[str]:
+        """Return normalized references held by config and MCP server rows."""
+        config_rows = self.db.fetchall("SELECT value FROM config_store")
+        mcp_rows = self.db.fetchall("SELECT env, headers FROM mcp_servers")
+        values = [*additional_values]
+        values.extend(row["value"] for row in config_rows)
+        for row in mcp_rows:
+            values.extend((row["env"], row["headers"]))
+        return self.find_secret_references(values)
+
     def _load_key_material(self) -> Any | None:
         return self.db.fetchone(
             """SELECT id, wrapped_dek, kek_posture, kek_salt, kek_kdf_n, kek_kdf_r, kek_kdf_p

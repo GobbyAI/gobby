@@ -27,7 +27,12 @@ from gobby.storage.auth import (
     hash_password,
     hash_token,
 )
-from gobby.storage.config_mutations import ConfigMutations, ConfigPatch, SecretUpdate
+from gobby.storage.config_mutations import (
+    ConfigMutations,
+    ConfigPatch,
+    SecretUpdate,
+    config_key_to_secret_name,
+)
 from gobby.storage.config_repository import ConfigRepository
 from gobby.storage.config_store import ConfigStore
 from gobby.storage.hub.protocol import HubDatabase
@@ -368,6 +373,97 @@ class TestSecretsEndpoints:
             "Secret configuration value is invalid"
         )
         assert invalid not in patch_response.text
+
+    def test_unbound_canonical_secret_is_validated(
+        self,
+        client: TestClient,
+        temp_db: HubDatabase,
+        mock_machine_id: Any,
+    ) -> None:
+        name = config_key_to_secret_name("databases.falkordb.password")
+        invalid = "plaintext must not leak"
+
+        response = client.post(
+            "/api/config/secrets",
+            json={"name": name, "value": invalid, "category": "general"},
+        )
+
+        assert response.status_code == 400
+        assert invalid not in response.text
+        assert SecretStore(temp_db).get(name) is None
+
+    def test_values_reject_literal_secret_reference(
+        self,
+        client: TestClient,
+        temp_db: HubDatabase,
+    ) -> None:
+        repository = ConfigRepository(temp_db)
+
+        response = client.patch(
+            "/api/config/values",
+            json={
+                "expected_revision": repository.current_revision(),
+                "values": {"databases": {"qdrant": {"api_key": "$secret:external"}}},
+            },
+        )
+
+        assert response.status_code == 422
+        assert response.json()["error"]["message"] == (
+            "Secret references are not accepted as plaintext values"
+        )
+        assert SecretStore(temp_db).get("external") is None
+
+    def test_values_plaintext_secret_uses_general_category(
+        self,
+        client: TestClient,
+        temp_db: HubDatabase,
+    ) -> None:
+        key = "databases.qdrant.api_key"
+        repository = ConfigRepository(temp_db)
+
+        response = client.patch(
+            "/api/config/values",
+            json={
+                "expected_revision": repository.current_revision(),
+                "values": {"databases": {"qdrant": {"api_key": "qdrant-secret"}}},
+            },
+        )
+
+        assert response.status_code == 200
+        name = config_key_to_secret_name(key)
+        info = next(item for item in SecretStore(temp_db).list() if item.name == name)
+        assert info.category == "general"
+
+    def test_case_mismatched_referenced_secret_delete_is_refused(
+        self,
+        client: TestClient,
+        temp_db: HubDatabase,
+        mock_machine_id: Any,
+    ) -> None:
+        secret_store = SecretStore(temp_db)
+        name = "Case_Referenced_Secret"
+        repository = ConfigRepository(temp_db, secret_store=secret_store)
+        ConfigMutations(temp_db, secret_store=secret_store).patch(
+            expected_revision=repository.current_revision(),
+            patch=ConfigPatch(
+                values={
+                    "ai.generation.endpoints.alpha.api_base": "https://alpha.example/v1",
+                    "ai.generation.endpoints.alpha.model": "model-a",
+                },
+                secrets={
+                    "ai.generation.endpoints.alpha.api_key": SecretUpdate(
+                        "shared-secret",
+                        name=name,
+                    )
+                },
+            ),
+        )
+
+        response = client.delete(f"/api/config/secrets/{name.upper()}")
+
+        assert response.status_code == 409
+        assert "still referenced" in response.json()["detail"]
+        assert secret_store.get(name) == "shared-secret"
 
     def test_secret_routes_accept_hub_database_protocol(
         self, non_local_hub_db: Any, real_config: Any, tmp_path: Any, mock_machine_id: Any

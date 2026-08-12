@@ -10,6 +10,7 @@ import yaml
 from fastapi import APIRouter, FastAPI
 from fastapi.testclient import TestClient
 
+from gobby.config._loading import _mask_reference_values
 from gobby.config.app import DaemonConfig
 from gobby.config.documents import ConfigDocumentsService
 from gobby.config.registry import CONFIG_REGISTRY, DYNAMIC_SEGMENT_CODEC_VECTORS
@@ -18,7 +19,8 @@ from gobby.config.runtime import (
     ConfigSnapshot,
     RuntimeSecretBinding,
 )
-from gobby.config.values import MASKED_SECRET, ConfigValuesError
+from gobby.config.secret_mask import MASKED_SECRET
+from gobby.config.values import ConfigValuesError
 from gobby.servers.routes.configuration_context import ConfigurationRouteContext
 from gobby.servers.routes.configuration_import_export import register_import_export_routes
 from gobby.servers.routes.configuration_templates import register_template_routes
@@ -28,6 +30,7 @@ from gobby.storage.config_mutations import (
     ConfigPatch,
     ConfigRevisionExhaustedError,
     EmbeddingConfigMutationBlocked,
+    SecretUpdate,
 )
 from gobby.storage.config_repository import ConfigRepository
 from gobby.storage.config_store import flatten_config
@@ -201,7 +204,10 @@ def test_yaml_paths_reject_unprobed_responses_endpoint(method: str, path: str) -
     )
 
     assert response.status_code == 422
-    assert response.json()["error"]["code"] == "probe_required"
+    error = response.json()["error"]
+    assert error["code"] == "probe_required"
+    assert error["path"][0] == "content"
+    assert "YAML" in error["action"]
     assert mutations.calls == []
 
 
@@ -210,6 +216,9 @@ def test_yaml_paths_reject_unprobed_responses_endpoint(method: str, path: str) -
     (("PUT", "/api/config/template"), ("POST", "/api/config/import")),
 )
 def test_yaml_paths_accept_unchanged_probed_responses_endpoint(method: str, path: str) -> None:
+    api_key = "ai.generation.endpoints.neo.api_key"
+    reference = "$secret:neo_api_key"
+    plaintext = "neo-secret"
     desired = DaemonConfig(
         ai={
             "generation": {
@@ -218,6 +227,7 @@ def test_yaml_paths_accept_unchanged_probed_responses_endpoint(method: str, path
                         "wire_api": "responses",
                         "api_base": "https://neo.example/v1",
                         "model": "neo-model",
+                        "api_key": plaintext,
                     }
                 }
             }
@@ -227,10 +237,21 @@ def test_yaml_paths_accept_unchanged_probed_responses_endpoint(method: str, path
         "ai.generation.endpoints.neo.wire_api": "responses",
         "ai.generation.endpoints.neo.api_base": "https://neo.example/v1",
         "ai.generation.endpoints.neo.model": "neo-model",
+        api_key: reference,
     }
     service, _runtime, mutations = _service(
-        _snapshot(2, desired=desired, desired_values=values),
-        reconciled=_snapshot(3, desired=desired, desired_values=values),
+        _snapshot(
+            2,
+            desired=desired,
+            desired_values=values,
+            desired_secrets={api_key: plaintext},
+        ),
+        reconciled=_snapshot(
+            3,
+            desired=desired,
+            desired_values=values,
+            desired_secrets={api_key: plaintext},
+        ),
     )
     content = yaml.safe_dump(
         {
@@ -241,6 +262,7 @@ def test_yaml_paths_accept_unchanged_probed_responses_endpoint(method: str, path
                             "wire_api": "responses",
                             "api_base": "https://neo.example/v1",
                             "model": "neo-model",
+                            "api_key": MASKED_SECRET,
                         }
                     }
                 }
@@ -257,6 +279,7 @@ def test_yaml_paths_accept_unchanged_probed_responses_endpoint(method: str, path
 
     assert response.status_code == 200
     assert len(mutations.calls) == 1
+    assert mutations.calls[0][2].values[api_key] == reference
 
 
 @pytest.mark.asyncio
@@ -361,17 +384,78 @@ def test_masked_export_round_trip() -> None:
     assert mutations.calls[0][2] == ConfigPatch(values=values)
 
 
+def test_default_projection_with_unset_secrets_round_trips() -> None:
+    values = _CANDIDATE_REPOSITORY._complete_values({})
+    desired = _CANDIDATE_REPOSITORY.runtime_candidate(values, {})
+    snapshot = _snapshot(0, desired=desired, desired_values=values)
+    service, _runtime, _mutations = _service(
+        snapshot,
+        reconciled=_snapshot(1, desired=desired, desired_values=values),
+    )
+    client = _client(service)
+
+    exported = client.get("/api/config/template")
+    document = yaml.safe_load(exported.json()["content"])
+    imported = client.put(
+        "/api/config/template",
+        json={"expected_revision": 0, "content": exported.json()["content"]},
+    )
+
+    assert document["databases"]["falkordb"]["password"] is None
+    assert document["databases"]["qdrant"]["api_key"] is None
+    assert imported.status_code == 200
+
+
+@pytest.mark.asyncio
+async def test_document_plaintext_secret_uses_general_category() -> None:
+    key = "databases.qdrant.api_key"
+    service, _runtime, mutations = _service(_snapshot(0), reconciled=_snapshot(1))
+
+    await service.replace_yaml(
+        expected_revision=0,
+        content="databases:\n  qdrant:\n    api_key: qdrant-secret\n",
+    )
+
+    assert mutations.calls[0][2].secrets[key].category == "general"
+
+
+def test_masking_warns_for_unresolvable_export_key(caplog: pytest.LogCaptureFixture) -> None:
+    with caplog.at_level("WARNING", logger="gobby.config._loading"):
+        masked = _mask_reference_values({"unknown_export_key": "value"})
+
+    assert masked == {"unknown_export_key": "value"}
+    assert "Cannot resolve exported configuration key unknown_export_key" in caplog.text
+
+
 def test_export_masks_reference_key_even_when_stored_value_is_plaintext() -> None:
     key = "ai.generation.endpoints.openrouter.api_key"
     plaintext = "legacy-plaintext-must-never-export"
-    service, _runtime, _mutations = _service(_snapshot(3, desired_values={key: plaintext}))
+    values = {
+        "ai.generation.endpoints.openrouter.api_base": "https://openrouter.example/v1",
+        key: plaintext,
+        "ai.generation.endpoints.openrouter.model": "model-a",
+    }
+    service, _runtime, mutations = _service(
+        _snapshot(3, desired_values=values),
+        reconciled=_snapshot(4),
+    )
+    client = _client(service)
 
-    response = _client(service).get("/api/config/template")
+    response = client.get("/api/config/template")
     content = response.json()["content"]
+    imported = client.put(
+        "/api/config/template",
+        json={"expected_revision": 3, "content": content},
+    )
 
     assert response.status_code == 200
     assert MASKED_SECRET in content
     assert plaintext not in content
+    assert imported.status_code == 200
+    assert mutations.calls[0][2].secrets[key] == SecretUpdate(
+        plaintext,
+        category="general",
+    )
 
 
 _VOICE_KEY = "voice.openai_compatible_audio"

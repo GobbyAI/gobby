@@ -19,8 +19,8 @@ from gobby.config.registry import (
     config_reference_fields,
 )
 from gobby.config.runtime import ConfigSnapshot
+from gobby.config.secret_mask import MASKED_SECRET
 from gobby.config.values import (
-    MASKED_SECRET,
     ConfigValuesError,
     reject_unprobed_responses_endpoints,
 )
@@ -38,7 +38,7 @@ from gobby.storage.config_mutations import (
     EmbeddingConfigMutationBlocked,
     SecretUpdate,
 )
-from gobby.storage.config_repository import MAX_CONFIG_REVISION
+from gobby.storage.config_repository import MAX_CONFIG_REVISION, ConfigRepositoryError
 from gobby.storage.config_store import flatten_config, unflatten_config
 
 DAEMON_NAMESPACE = "daemon"
@@ -195,6 +195,7 @@ class ConfigDocumentsService:
         values: dict[str, object] = {}
         secrets: dict[str, SecretUpdate] = {}
         validation_values: dict[str, object] = {}
+        wire_values: dict[str, object] = {}
         restored_masked_reference = False
         for key, value in flat.items():
             if not isinstance(key, str):
@@ -219,6 +220,7 @@ class ConfigDocumentsService:
                         values=values,
                         secrets=secrets,
                         validation_values=validation_values,
+                        wire_values=wire_values,
                     )
                     or restored_masked_reference
                 )
@@ -237,21 +239,23 @@ class ConfigDocumentsService:
                 )
             values[key] = value
             validation_values[key] = value
+            wire_values[key] = value
         changed_values = {
             key: value
-            for key, value in validation_values.items()
+            for key, value in wire_values.items()
             if key not in snapshot.desired_values or snapshot.desired_values[key] != value
         }
-        omitted = frozenset(set(snapshot.desired_values) - set(validation_values))
+        omitted = frozenset(set(snapshot.desired_values) - set(wire_values))
         reject_unprobed_responses_endpoints(
             changed_values,
             omitted,
             {key: tuple(key.split(".")) for key in (*changed_values, *omitted)},
             snapshot.desired,
+            document=True,
         )
         try:
             self.runtime_candidate(validation_values)
-        except (ValueError, TypeError) as exc:
+        except (ConfigRepositoryError, ValueError, TypeError) as exc:
             raise ConfigValuesError(
                 "validation_error",
                 f"Complete configuration candidate is invalid: {exc}",
@@ -298,23 +302,35 @@ class ConfigDocumentsService:
         values: dict[str, object],
         secrets: dict[str, SecretUpdate],
         validation_values: dict[str, object],
+        wire_values: dict[str, object],
     ) -> bool:
         if value in (None, ""):
             # An unset secret contributes no override: the namespace replace
             # clears any stored reference, and the projection default applies.
             validation_values[key] = None
+            wire_values[key] = None
             return False
         if not isinstance(value, str):
             raise self._invalid_key(key, "Secret configuration value must be a string")
         if value == MASKED_SECRET:
             reference = snapshot.desired_values.get(key)
-            if not isinstance(reference, str) or not reference.startswith("$secret:"):
-                raise self._invalid_key(key, "Masked secret has no persisted reference")
+            if reference in (None, ""):
+                validation_values[key] = None
+                wire_values[key] = reference
+                return False
+            if not isinstance(reference, str):
+                raise self._invalid_key(key, "Masked secret has no persisted value")
+            if not reference.startswith("$secret:"):
+                secrets[key] = SecretUpdate(plaintext=reference, category="general")
+                validation_values[key] = reference
+                wire_values[key] = reference
+                return True
             plaintext = snapshot.desired_secret(key)
             if plaintext is None:
                 raise self._invalid_key(key, "Persisted secret cannot be resolved")
             values[key] = reference
             validation_values[key] = plaintext
+            wire_values[key] = reference
             return True
         if value.startswith("$secret:"):
             name = value.removeprefix("$secret:")
@@ -323,9 +339,11 @@ class ConfigDocumentsService:
                 raise self._invalid_key(key, "Secret reference cannot be resolved")
             values[key] = value
             validation_values[key] = plaintext
+            wire_values[key] = value
             return False
         secrets[key] = SecretUpdate(plaintext=value, category="general")
         validation_values[key] = value
+        wire_values[key] = value
         return False
 
     def _dump(self, snapshot: ConfigSnapshot) -> str:
@@ -342,7 +360,7 @@ class ConfigDocumentsService:
             ):
                 continue
             if config_key_secrecy(spec, key) is ConfigSecrecy.REFERENCE:
-                values[key] = MASKED_SECRET
+                values[key] = MASKED_SECRET if value not in (None, "") else value
             elif reference_fields := config_reference_fields(spec):
                 values[key] = mask_structured_references(
                     value,
