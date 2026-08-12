@@ -5800,3 +5800,6 @@ GRANT EXECUTE ON FUNCTION gobby_agent_auth.list_active_principals()
 TO gobby_daemon_runtime;
 GRANT EXECUTE ON FUNCTION gobby_agent_auth.drain_ephemeral_principals()
 TO gobby_daemon_runtime;
+
+ALTER TABLE clones ALTER COLUMN branch_name DROP NOT NULL;
+ALTER TABLE worktrees ALTER COLUMN branch_name DROP NOT NULL;

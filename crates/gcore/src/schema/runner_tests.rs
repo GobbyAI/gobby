@@ -4,7 +4,7 @@ use std::fs;
 use std::sync::{Mutex, mpsc};
 use std::time::Duration as StdDuration;
 
-use postgres::{Client, Config, NoTls};
+use postgres::{Client, Config, NoTls, error::SqlState};
 use time::format_description::well_known::Rfc3339;
 use time::{Duration, OffsetDateTime};
 use uuid::Uuid;
@@ -43,6 +43,19 @@ static DESTRUCTIVE_MIGRATIONS: &[EmbeddedMigration] = &[DESTRUCTIVE_MIGRATION];
 
 static DATABASE_TEST_LOCK: Mutex<()> = Mutex::new(());
 
+const GCODE_RLS_TABLES: [&str; 10] = [
+    "code_indexed_projects",
+    "code_indexed_project_states",
+    "code_indexed_file_states",
+    "code_indexed_files",
+    "code_symbols",
+    "code_imports",
+    "code_calls",
+    "code_content_chunks",
+    "code_index_projection_cleanup_pending",
+    "code_index_prune_dirty_projects",
+];
+
 struct ScratchDatabase {
     admin: Client,
     config: Config,
@@ -71,6 +84,12 @@ impl ScratchDatabase {
 
     fn connect(&self) -> Result<Client, postgres::Error> {
         self.config.connect(NoTls)
+    }
+
+    fn connect_as(&self, user: &str, password: &str) -> Result<Client, postgres::Error> {
+        let mut config = self.config.clone();
+        config.user(user).password(password);
+        config.connect(NoTls)
     }
 }
 
@@ -140,6 +159,63 @@ fn assert_runtime_crud_privileges(client: &mut Client, table: &str) -> anyhow::R
             "runtime role lacks {privilege} privilege on {table}"
         );
     }
+    Ok(())
+}
+
+fn assert_gcode_rls_policies(client: &mut Client) -> anyhow::Result<()> {
+    let rows = client.query(
+        "SELECT tablename, policyname, cmd, COALESCE(qual, ''), COALESCE(with_check, '') \
+         FROM pg_policies \
+         WHERE schemaname = 'public' \
+         AND roles @> ARRAY['gobby_gcode_capability']::name[] \
+         AND policyname LIKE 'gobby_gcode_project_%' \
+         ORDER BY tablename, policyname",
+        &[],
+    )?;
+    let mut actual = BTreeMap::<String, Vec<(String, String, String, String)>>::new();
+    for row in rows {
+        actual.entry(row.get(0)).or_default().push((
+            row.get(1),
+            row.get(2),
+            row.get(3),
+            row.get(4),
+        ));
+    }
+    let expected = [
+        ("gobby_gcode_project_delete".to_owned(), "DELETE".to_owned()),
+        ("gobby_gcode_project_insert".to_owned(), "INSERT".to_owned()),
+        ("gobby_gcode_project_read".to_owned(), "SELECT".to_owned()),
+        ("gobby_gcode_project_update".to_owned(), "UPDATE".to_owned()),
+    ];
+    for table in GCODE_RLS_TABLES {
+        let policies = actual
+            .remove(table)
+            .expect("gcode table must have RLS policies");
+        let operations: Vec<(String, String)> = policies
+            .iter()
+            .map(|(name, command, _, _)| (name.clone(), command.clone()))
+            .collect();
+        assert_eq!(operations, expected);
+        for (_, _, using_expression, check_expression) in policies {
+            let predicate = format!("{using_expression} {check_expression}");
+            assert!(predicate.contains("current_code_overlay_project_id"));
+            assert!(predicate.contains("current_project_id"));
+            if [
+                "code_indexed_project_states",
+                "code_indexed_file_states",
+                "code_index_prune_dirty_projects",
+            ]
+            .contains(&table)
+            {
+                assert!(predicate.contains("current_machine_id"));
+            }
+            assert_ne!(predicate.trim().to_ascii_lowercase(), "true");
+        }
+    }
+    assert!(
+        actual.is_empty(),
+        "unexpected gcode RLS policies: {actual:?}"
+    );
     Ok(())
 }
 
@@ -300,8 +376,195 @@ fn existing_hub_reapplies_updated_baseline() -> anyhow::Result<()> {
             "refresh must make {table}.branch_name nullable"
         );
     }
+    assert_gcode_rls_policies(&mut client)?;
     let verification = SchemaRunner::new(&mut client, "public")?.verify()?;
     assert!(verification.checked_catalog_objects > 0);
+    Ok(())
+}
+
+#[test]
+fn isolated_gcode_principal_reads_parent_and_writes_only_its_overlay() -> anyhow::Result<()> {
+    let _serial = DATABASE_TEST_LOCK
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner);
+    let Some((database, mut client)) = test_database()? else {
+        return Ok(());
+    };
+    install_baseline(&mut client)?;
+
+    let machine_id = Uuid::new_v4();
+    let other_machine_id = Uuid::new_v4();
+    let project_id = Uuid::new_v4();
+    let unrelated_project_id = Uuid::new_v4();
+    let parent_session_id = Uuid::new_v4();
+    let child_session_id = Uuid::new_v4();
+    let agent_run_id = Uuid::new_v4();
+    let worktree_id = Uuid::new_v4();
+    let execution_id = Uuid::new_v4();
+    let overlay_project_id = Uuid::parse_str("bee23f80-d127-5e8f-9dd1-30670378e19a")?;
+    let password = format!("gobby-schema-rls-{}", Uuid::new_v4().simple());
+
+    client.execute(
+        "INSERT INTO machines(id, hostname) VALUES ($1, 'schema-test'), ($2, 'other')",
+        &[&machine_id, &other_machine_id],
+    )?;
+    client.execute(
+        "INSERT INTO projects(id, name, repo_path) \
+         VALUES ($1, 'parent', '/tmp/gobby-parent'), ($2, 'unrelated', '/tmp/unrelated')",
+        &[&project_id, &unrelated_project_id],
+    )?;
+    client.execute(
+        "INSERT INTO sessions(id, external_id, machine_id, source, project_id) \
+         VALUES ($1, 'schema-parent', $2, 'test', $3)",
+        &[&parent_session_id, &machine_id, &project_id],
+    )?;
+    client.execute(
+        "INSERT INTO worktrees(id, project_id, machine_id, branch_name, worktree_path) \
+         VALUES ($1, $2, $3, 'schema-test', '/tmp/gobby-rls-overlay')",
+        &[&worktree_id, &project_id, &machine_id],
+    )?;
+    client.execute(
+        "INSERT INTO agent_runs(id, machine_id, parent_session_id, provider, prompt, worktree_id) \
+         VALUES ($1, $2, $3, 'test', 'schema test', $4)",
+        &[&agent_run_id, &machine_id, &parent_session_id, &worktree_id],
+    )?;
+    client.execute(
+        "INSERT INTO sessions( \
+             id, external_id, machine_id, source, project_id, parent_session_id, agent_run_id \
+         ) VALUES ($1, 'schema-child', $2, 'test', $3, $4, $5)",
+        &[
+            &child_session_id,
+            &machine_id,
+            &project_id,
+            &parent_session_id,
+            &agent_run_id,
+        ],
+    )?;
+
+    let role_name: String = client
+        .query_one(
+            "SELECT role_name::TEXT FROM gobby_agent_auth.issue_principal( \
+                 $1, 'agent_run', $2, $3, $4, \
+                 clock_timestamp() + INTERVAL '10 minutes', $5 \
+             )",
+            &[
+                &execution_id,
+                &child_session_id,
+                &agent_run_id,
+                &machine_id,
+                &password,
+            ],
+        )?
+        .get(0);
+    let bound_overlay_id: Option<Uuid> = client
+        .query_one(
+            "SELECT code_overlay_project_id FROM gobby_agent_auth.principal_bindings \
+             WHERE managed_execution_id = $1",
+            &[&execution_id],
+        )?
+        .get(0);
+    assert_eq!(bound_overlay_id, Some(overlay_project_id));
+
+    client.execute(
+        "INSERT INTO code_indexed_projects(id) VALUES ($1), ($2)",
+        &[&project_id, &unrelated_project_id],
+    )?;
+    client.execute(
+        "INSERT INTO code_indexed_project_states(machine_id, project_id, root_path) \
+         VALUES ($1, $2, '/tmp/gobby-parent'), ($3, $2, '/tmp/gobby-parent')",
+        &[&machine_id, &project_id, &other_machine_id],
+    )?;
+    client.execute(
+        "INSERT INTO code_indexed_files( \
+             id, project_id, file_path, language, content_hash \
+         ) VALUES ($1, $2, 'parent.rs', 'rust', 'parent'), \
+                  ($3, $2, 'other-machine.rs', 'rust', 'other')",
+        &[&Uuid::new_v4(), &project_id, &Uuid::new_v4()],
+    )?;
+    client.execute(
+        "INSERT INTO code_indexed_file_states(machine_id, project_id, file_path, content_hash) \
+         VALUES ($1, $2, 'parent.rs', 'parent'), \
+                ($3, $2, 'other-machine.rs', 'other')",
+        &[&machine_id, &project_id, &other_machine_id],
+    )?;
+
+    let validation = match database.connect_as(&role_name, &password) {
+        Ok(mut scoped) => (|| -> anyhow::Result<()> {
+            let parent_exists: bool = scoped
+                .query_one(
+                    "SELECT EXISTS( \
+                         SELECT 1 FROM code_indexed_file_states \
+                         WHERE machine_id = $1 AND project_id = $2 \
+                     )",
+                    &[&machine_id, &project_id],
+                )?
+                .get(0);
+            assert!(parent_exists, "spawn preflight must see the parent index");
+            let visible_parent_states: i64 = scoped
+                .query_one(
+                    "SELECT count(*) FROM code_indexed_file_states WHERE project_id = $1",
+                    &[&project_id],
+                )?
+                .get(0);
+            assert_eq!(
+                visible_parent_states, 1,
+                "machine scope must filter parent state"
+            );
+
+            scoped.execute(
+                "INSERT INTO code_indexed_projects(id) VALUES ($1)",
+                &[&overlay_project_id],
+            )?;
+            scoped.execute(
+                "INSERT INTO code_indexed_project_states( \
+                     machine_id, project_id, root_path, total_files, total_symbols \
+                 ) VALUES ($1, $2, '/tmp/gobby-rls-overlay', 1, 0)",
+                &[&machine_id, &overlay_project_id],
+            )?;
+            let visible_projects: i64 = scoped
+                .query_one("SELECT count(*) FROM code_indexed_projects", &[])?
+                .get(0);
+            assert_eq!(
+                visible_projects, 2,
+                "only parent and overlay must be readable"
+            );
+
+            assert_eq!(
+                scoped.execute(
+                    "UPDATE code_indexed_projects SET updated_at = NOW() WHERE id = $1",
+                    &[&project_id],
+                )?,
+                0,
+                "isolated principal must not update parent facts",
+            );
+            assert_eq!(
+                scoped.execute(
+                    "DELETE FROM code_indexed_projects WHERE id = $1",
+                    &[&project_id]
+                )?,
+                0,
+                "isolated principal must not delete parent facts",
+            );
+            let error = scoped
+                .execute(
+                    "UPDATE code_indexed_project_states SET machine_id = $1 \
+                     WHERE machine_id = $2 AND project_id = $3",
+                    &[&other_machine_id, &machine_id, &overlay_project_id],
+                )
+                .expect_err("overlay writes for another machine must fail RLS");
+            assert_eq!(error.code(), Some(&SqlState::INSUFFICIENT_PRIVILEGE));
+            Ok(())
+        })(),
+        Err(error) => Err(error.into()),
+    };
+
+    let revoke_result = client.query_one(
+        "SELECT gobby_agent_auth.revoke_principal($1, 1)",
+        &[&execution_id],
+    );
+    validation?;
+    revoke_result?;
+    assert_gcode_rls_policies(&mut client)?;
     Ok(())
 }
 
@@ -359,8 +622,8 @@ fn baseline_refresh_accepts_exactly_the_predecessor_statement_difference() -> an
 
 #[test]
 fn baseline_refresh_prefix_ignores_leading_comments_and_checks_identifier_boundary() {
-    let refreshable = "-- retained context\nALTER TABLE config_store ADD COLUMN marker text";
-    let misleading = "ALTER TABLE config_store_extra ADD COLUMN marker text";
+    let refreshable = "-- retained context\nCREATE EXTENSION IF NOT EXISTS pgcrypto";
+    let misleading = "CREATE EXTENSION IF NOT EXISTS pgcrypto_extra";
 
     assert!(baseline_refresh_statement(refreshable).is_some());
     assert!(baseline_refresh_statement(misleading).is_none());
@@ -369,13 +632,9 @@ fn baseline_refresh_prefix_ignores_leading_comments_and_checks_identifier_bounda
 #[test]
 fn baseline_refresh_rejects_identifier_prefix_collisions() {
     assert!(
-        baseline_refresh_statement("CREATE TABLE IF NOT EXISTS config_state_history (id integer)")
-            .is_none()
+        baseline_refresh_statement("CREATE EXTENSION IF NOT EXISTS pgcrypto_history").is_none()
     );
-    assert!(
-        baseline_refresh_statement("CREATE TABLE IF NOT EXISTS config_state (id integer)")
-            .is_some()
-    );
+    assert!(baseline_refresh_statement("CREATE EXTENSION IF NOT EXISTS pgcrypto").is_some());
 }
 
 #[test]
