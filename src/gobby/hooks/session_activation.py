@@ -290,6 +290,13 @@ def _bool_variable(value: Any) -> bool:
     return False
 
 
+def _has_assigned_or_active_task(variables: dict[str, Any]) -> bool:
+    return any(
+        isinstance(value, str) and bool(value.strip())
+        for value in (variables.get("assigned_task_id"), variables.get("active_task_id"))
+    )
+
+
 def _fallback_agent_updates(
     variables: dict[str, Any],
     session: Any,
@@ -613,7 +620,7 @@ def _missing_step_workflow(
     agent_run: _AgentRunRecovery | None,
 ) -> list[str]:
     spawned = _bool_variable(variables.get("is_spawned_agent")) or _session_is_spawned(session)
-    if not spawned:
+    if not spawned or not _has_assigned_or_active_task(variables):
         return []
 
     step_name = variables.get("_step_workflow_name")
@@ -653,6 +660,10 @@ def _ensure_step_workflow_from_definition(
     variables: dict[str, Any],
     session: Any,
 ) -> bool:
+    spawned = _bool_variable(variables.get("is_spawned_agent")) or _session_is_spawned(session)
+    if spawned and not _has_assigned_or_active_task(variables):
+        return False
+
     step_name = variables.get("_step_workflow_name")
     if not isinstance(step_name, str) or not step_name:
         return False

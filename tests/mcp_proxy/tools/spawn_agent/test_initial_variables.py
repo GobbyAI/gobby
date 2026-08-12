@@ -550,7 +550,7 @@ class TestSpawnAgentStepVariables:
         assert instance is None
         assert initial_variables is not None
         assert "assigned_task_id" not in initial_variables
-        assert initial_variables["_step_workflow_name"] == f"{agent_name}-steps"
+        assert "_step_workflow_name" not in initial_variables
         assert initial_variables["_agent_type"] == agent_name
         assert spawn_request.agent_name == agent_name
         assert agent_body.workflows.rule_selectors is not None

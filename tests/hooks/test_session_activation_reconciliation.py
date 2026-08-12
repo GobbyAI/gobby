@@ -128,7 +128,7 @@ def _register_session(
     )
 
 
-def _variables(db: HubDatabase, session_id: str) -> dict:
+def _variables(db: HubDatabase, session_id: str) -> dict[str, Any]:
     return SessionVariableManager(db).get_variables(session_id)
 
 
@@ -228,8 +228,12 @@ def test_before_agent_fast_noop_when_current(
     event = _event(HookEventType.BEFORE_AGENT, session_id, tmp_path)
     reconcile_session_activation(event, handlers)
 
-    handlers._activate_default_agent = MagicMock(side_effect=AssertionError("slow path"))
-    result = reconcile_session_activation(event, handlers)
+    with patch.object(
+        handlers,
+        "_activate_default_agent",
+        side_effect=AssertionError("slow path"),
+    ):
+        result = reconcile_session_activation(event, handlers)
 
     assert result.changed is False
     assert result.reason == "current"
@@ -672,6 +676,7 @@ def test_spawned_step_agent_restores_workflow_variable_and_instance(
 ) -> None:
     _create_worker_agent(db)
     _, child_id = _create_parent_and_child(db, session_manager, project_id, tmp_path)
+    SessionVariableManager(db).set_variable(child_id, "assigned_task_id", "#14475")
 
     result = reconcile_session_activation(
         _event(HookEventType.BEFORE_AGENT, child_id, tmp_path),
@@ -685,6 +690,42 @@ def test_spawned_step_agent_restores_workflow_variable_and_instance(
     assert variables["step_workflow_complete"] is False
     assert instance is not None
     assert instance.current_step == "claim"
+
+
+@pytest.mark.parametrize("step_name", [None, "worker-steps"])
+def test_taskless_spawn_does_not_restore_step_workflow_from_agent_run(
+    db: HubDatabase,
+    session_manager: SessionManager,
+    handlers: EventHandlers,
+    project_id: str,
+    tmp_path: Path,
+    step_name: str | None,
+) -> None:
+    _create_worker_agent(db)
+    _, child_id = _create_parent_and_child(db, session_manager, project_id, tmp_path)
+    initial_variables: dict[str, Any] = {
+        "_agent_type": "worker",
+        "_active_rule_names": [],
+        "_active_skill_names": [],
+        "_skill_format": None,
+        "_agent_blocked_tools": ["Bash"],
+        "_agent_blocked_mcp_tools": ["gobby-tasks.close_task"],
+        "is_spawned_agent": True,
+    }
+    if step_name is not None:
+        initial_variables["_step_workflow_name"] = step_name
+    SessionVariableManager(db).merge_variables(child_id, initial_variables)
+
+    result = reconcile_session_activation(
+        _event(HookEventType.BEFORE_AGENT, child_id, tmp_path),
+        handlers,
+    )
+
+    variables = _variables(db, child_id)
+    instance = WorkflowInstanceManager(db).get_instance(child_id, "worker-steps")
+    assert "worker-steps" not in result.missing
+    assert variables["is_spawned_agent"] is True
+    assert instance is None
 
 
 def test_existing_step_workflow_current_step_is_preserved(
@@ -1086,14 +1127,18 @@ def test_hook_manager_reconciles_before_rules(
     components.webhook_dispatcher.get_blocking_decision.return_value = (None, None)
 
     call_order: list[str] = []
-    handler = MagicMock(
-        side_effect=lambda event: call_order.append("handler") or HookResponse(decision="allow")
-    )
+
+    def record_handler(event: HookEvent) -> HookResponse:
+        call_order.append("handler")
+        return HookResponse(decision="allow")
+
+    def record_rules(event: HookEvent, blocking_deadline: float | None = None) -> HookResponse:
+        call_order.append("rules")
+        return HookResponse(decision="allow")
+
+    handler = MagicMock(side_effect=record_handler)
     components.event_handlers.get_handler.return_value = handler
-    components.workflow_handler.handle.side_effect = (
-        lambda event, blocking_deadline=None: call_order.append("rules")
-        or HookResponse(decision="allow")
-    )
+    components.workflow_handler.handle.side_effect = record_rules
 
     event = HookEvent(
         event_type=event_type,
@@ -1121,9 +1166,11 @@ def test_hook_manager_reconciles_before_rules(
         patch("gobby.storage.inter_session_messages.InterSessionMessageManager"),
     ):
         manager = HookManager()
-        manager._session_lookup.resolve.return_value = None
-        manager._enricher.enrich = MagicMock()
-        manager._handle_internal(event)
+        with (
+            patch.object(manager._session_lookup, "resolve", return_value=None),
+            patch.object(manager._enricher, "enrich"),
+        ):
+            manager._handle_internal(event)
 
     assert len(call_order) == 3
     assert call_order == ["reconcile", "rules", "handler"]
