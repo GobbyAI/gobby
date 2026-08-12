@@ -124,6 +124,12 @@ Validation runs when the task has validation criteria. Skip-style reasons such a
 `already_implemented`, `wont_fix`, `obsolete`, and `out_of_repo` are for
 no-work or out-of-repo closes; they still require a useful `changes_summary`.
 
+Human operators may disposition an unneeded leaf directly with
+`gobby tasks close #14390 --reason already_implemented`. The CLI accepts only
+the five canonical no-work reasons for direct leaf closure and still refuses a
+task with open children. Completed and custom-reason leaf closures use the MCP
+contract above.
+
 An escalated task returns an actionable `task_escalated` blocker instead of
 running another bounded review. Either use `de_escalate_task`/`reopen_task`, or
 provide a non-empty `override_justification` to close it deliberately. A

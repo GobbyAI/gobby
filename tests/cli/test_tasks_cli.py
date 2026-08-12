@@ -1308,6 +1308,13 @@ class TestUpdateTaskCommand:
 class TestCloseTaskCommand:
     """Tests for gobby tasks close command."""
 
+    def test_close_task_help_describes_no_work_leaf_disposition(self, runner: CliRunner) -> None:
+        result = runner.invoke(cli, ["tasks", "close", "--help"])
+
+        assert result.exit_code == 0
+        normalized_output = " ".join(result.output.split())
+        assert "canonical no-work reasons allow direct leaf disposition" in normalized_output
+
     @patch("gobby.cli.tasks.crud.get_task_manager")
     @patch("gobby.cli.tasks.crud.resolve_task_id")
     def test_close_task(
@@ -1354,21 +1361,47 @@ class TestCloseTaskCommand:
 
     @patch("gobby.cli.tasks.crud.get_task_manager")
     @patch("gobby.cli.tasks.crud.resolve_task_id")
-    def test_close_task_with_reason(
+    @pytest.mark.parametrize(
+        "reason",
+        ["duplicate", "already_implemented", "wont_fix", "obsolete", "out_of_repo"],
+    )
+    def test_close_task_with_no_work_reason(
         self,
         mock_resolve: MagicMock,
         mock_get_manager: MagicMock,
         runner: CliRunner,
         mock_task: MagicMock,
+        reason: str,
     ) -> None:
-        """A close reason does not bypass the leaf evidence contract."""
+        """Canonical no-work reasons close leaf tasks through the operator CLI."""
         mock_resolve.return_value = mock_task
         mock_manager = MagicMock()
         mock_manager.list_tasks.return_value = []
         mock_manager.close_task.return_value = mock_task
         mock_get_manager.return_value = mock_manager
 
-        result = runner.invoke(cli, ["tasks", "close", "gt-abc123", "--reason", "wont_fix"])
+        result = runner.invoke(cli, ["tasks", "close", "gt-abc123", "--reason", reason])
+
+        assert result.exit_code == 0
+        assert f"Closed task #1 ({reason})" in result.output
+        mock_manager.close_task.assert_called_once_with(mock_task.id, reason=reason)
+
+    @patch("gobby.cli.tasks.crud.get_task_manager")
+    @patch("gobby.cli.tasks.crud.resolve_task_id")
+    def test_close_task_with_custom_reason_requires_evidence_contract(
+        self,
+        mock_resolve: MagicMock,
+        mock_get_manager: MagicMock,
+        runner: CliRunner,
+        mock_task: MagicMock,
+    ) -> None:
+        """Custom reasons do not bypass the leaf evidence contract."""
+        mock_resolve.return_value = mock_task
+        mock_manager = MagicMock()
+        mock_manager.list_tasks.return_value = []
+        mock_get_manager.return_value = mock_manager
+
+        result = runner.invoke(cli, ["tasks", "close", "gt-abc123", "--reason", "paused"])
 
         assert result.exit_code == 1
         assert "criterion-to-evidence close_task contract" in result.output
@@ -1394,7 +1427,10 @@ class TestCloseTaskCommand:
         mock_manager.list_tasks.return_value = [child_task]
         mock_get_manager.return_value = mock_manager
 
-        result = runner.invoke(cli, ["tasks", "close", "gt-abc123"])
+        result = runner.invoke(
+            cli,
+            ["tasks", "close", "gt-abc123", "--reason", "obsolete"],
+        )
 
         assert result.exit_code == 1
         assert "Cannot close" in result.output

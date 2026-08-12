@@ -282,7 +282,12 @@ def update_task(
 
 @click.command("close")
 @click.argument("task_ids", metavar="TASK", nargs=-1, required=True)
-@click.option("--reason", "-r", default="completed", help="Reason for closing")
+@click.option(
+    "--reason",
+    "-r",
+    default="completed",
+    help="Reason for closing; canonical no-work reasons allow direct leaf disposition",
+)
 def close_task_cmd(task_ids: tuple[str, ...], reason: str) -> None:
     """Close one or more tasks.
 
@@ -294,8 +299,9 @@ def close_task_cmd(task_ids: tuple[str, ...], reason: str) -> None:
         gobby tasks close 42 43 44
         gobby tasks close abc123,#45,46
 
-    Structural parents require all children to be closed first. Non-epic leaves
-    must use the evidence-aware close_task MCP contract.
+    Structural parents require all children to be closed first. Canonical no-work
+    reasons may disposition non-epic leaves directly; other leaf closures must use
+    the evidence-aware close_task MCP contract.
     """
     close_task_impl(
         services=_services(),

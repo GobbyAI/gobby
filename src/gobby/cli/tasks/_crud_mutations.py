@@ -9,6 +9,7 @@ from gobby.cli.tasks._crud_services import CrudServices
 from gobby.storage.tasks import TaskStaleStateError
 from gobby.tasks.criteria_contract import TaskCriteriaError, require_validation_criteria
 from gobby.tasks.state_semantics import is_task_closed
+from gobby.tasks.validation import NO_WORK_CLOSE_REASONS
 
 
 def create_task_impl(
@@ -163,7 +164,7 @@ def close_task_impl(
 
         children = manager.list_tasks(parent_task_id=resolved.id, limit=1000)
         task_ref = f"#{resolved.seq_num}" if resolved.seq_num else resolved.id[:8]
-        if resolved.task_type != "epic" and not children:
+        if resolved.task_type != "epic" and not children and reason not in NO_WORK_CLOSE_REASONS:
             click.echo(
                 f"Cannot close {task_ref} through the direct CLI: non-epic leaves require "
                 "the criterion-to-evidence close_task contract.",
