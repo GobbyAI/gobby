@@ -619,6 +619,7 @@ class WorkflowHookHandler(WorkflowToolContextMixin):
                     "has_dirty_files": LazyBool(_check_dirty),
                     "target_task_has_edits": target_task_had_edits,
                     "has_target_task_dirty_files": LazyBool(_check_target_task_dirty),
+                    "foreign_dirty_edit_conflict": "",
                 }
                 if (
                     event.event_type == HookEventType.BEFORE_TOOL
@@ -626,7 +627,10 @@ class WorkflowHookHandler(WorkflowToolContextMixin):
                     and event.project_id
                     and project_path
                 ):
-                    from gobby.workflows.commit_guard import foreign_staged_commit_conflict
+                    from gobby.workflows.commit_guard import (
+                        foreign_dirty_edit_conflict,
+                        foreign_staged_commit_conflict,
+                    )
 
                     eval_context["foreign_staged_commit_conflict"] = await asyncio.to_thread(
                         foreign_staged_commit_conflict,
@@ -636,6 +640,20 @@ class WorkflowHookHandler(WorkflowToolContextMixin):
                         project_id=event.project_id,
                         project_path=project_path,
                     )
+                    event_data = event.data if isinstance(event.data, dict) else {}
+                    canonical_paths = event_data.get("canonical_file_paths") or event_data.get(
+                        "canonical_file_path"
+                    )
+                    if event_data.get("canonical_repo_mutation") is True and canonical_paths:
+                        eval_context["foreign_dirty_edit_conflict"] = await asyncio.to_thread(
+                            foreign_dirty_edit_conflict,
+                            self.rule_engine.db,
+                            event,
+                            session_id=session_id,
+                            project_id=event.project_id,
+                            project_path=project_path,
+                            dirty_files=lambda: _load_dirty_files().all,
+                        )
                 else:
                     eval_context["foreign_staged_commit_conflict"] = ""
 

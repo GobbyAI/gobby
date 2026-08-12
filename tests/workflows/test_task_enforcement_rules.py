@@ -122,6 +122,7 @@ async def _evaluate_close_event(
 
 
 TASK_ENFORCEMENT_RULES = {
+    "block-cross-session-foreign-dirty-edit",
     "block-native-task-tools-unclaimed",
     "block-native-todo-write",
     "block-reopen-task",

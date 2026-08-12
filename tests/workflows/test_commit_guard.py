@@ -30,6 +30,7 @@ from gobby.workflows.sync_rules import get_bundled_rules_path, sync_bundled_rule
 pytestmark = pytest.mark.unit
 
 RULE_NAME = "block-cross-session-foreign-staged-commit"
+DIRTY_EDIT_RULE_NAME = "block-cross-session-foreign-dirty-edit"
 
 LOCAL_MACHINE_ID = "21000000-0000-4000-8000-000000000002"
 
@@ -113,6 +114,31 @@ class GuardHarness:
             },
         )
 
+    def edit_event(
+        self,
+        file_path: str,
+        *,
+        checkout: Path | None = None,
+        cwd: Path | None = None,
+    ) -> HookEvent:
+        selected_checkout = checkout or self.repo
+        return HookEvent(
+            event_type=HookEventType.BEFORE_TOOL,
+            session_id=self.current_session.external_id,
+            source=SessionSource.CODEX,
+            timestamp=datetime.now(UTC),
+            cwd=str(cwd or selected_checkout),
+            project_id=self.project.id,
+            data={
+                "tool_name": "Edit",
+                "tool_input": {"file_path": file_path},
+            },
+            metadata={
+                "_platform_session_id": self.current_session.id,
+                "project_path": str(selected_checkout),
+            },
+        )
+
     def foreign_close_event(self) -> HookEvent:
         return HookEvent(
             event_type=HookEventType.BEFORE_TOOL,
@@ -187,6 +213,7 @@ def guard_harness(temp_db: HubDatabase, repo: Path) -> GuardHarness:
             "task_edited_file_checkouts": {
                 current_task.id: {str(repo): ["owned.txt"]},
             },
+            "baseline_dirty_files": [],
         },
     )
     variables.merge_variables(
@@ -211,8 +238,8 @@ def guard_harness(temp_db: HubDatabase, repo: Path) -> GuardHarness:
         "UPDATE workflow_definitions SET source = 'installed' WHERE source = 'template'"
     )
     temp_db.execute(
-        "UPDATE workflow_definitions SET enabled = (name = %s) WHERE workflow_type = 'rule'",
-        (RULE_NAME,),
+        "UPDATE workflow_definitions SET enabled = (name IN (%s, %s)) WHERE workflow_type = 'rule'",
+        (RULE_NAME, DIRTY_EDIT_RULE_NAME),
     )
 
     engine = RuleEngine(temp_db, task_manager=task_manager)
@@ -232,6 +259,168 @@ def guard_harness(temp_db: HubDatabase, repo: Path) -> GuardHarness:
         foreign_task=foreign_task,
         repo=repo,
     )
+
+
+@pytest.mark.asyncio
+async def test_dirty_foreign_edit_blocks_with_recovery_guidance(
+    guard_harness: GuardHarness,
+) -> None:
+    (guard_harness.repo / "foreign.txt").write_text("foreign change\n", encoding="utf-8")
+
+    response = await guard_harness.handler._evaluate_rules(guard_harness.edit_event("foreign.txt"))
+
+    assert response.decision == "block"
+    assert response.reason is not None
+    assert "foreign.txt" in response.reason
+    assert guard_harness.foreign_session.ref in response.reason
+    assert f"#{guard_harness.foreign_task.seq_num}" in response.reason
+    assert "gobby-agents.send_message" in response.reason
+    assert "buildable WIP commit" in response.reason
+    assert "gobby-worktrees" in response.reason
+    assert "claim_task" in response.reason
+    assert "force=true" in response.reason
+
+
+@pytest.mark.asyncio
+async def test_normalized_bash_dirty_foreign_edit_blocks(guard_harness: GuardHarness) -> None:
+    (guard_harness.repo / "foreign.txt").write_text("foreign change\n", encoding="utf-8")
+    event = guard_harness.event("printf changed > foreign.txt")
+    event.data = {
+        "tool_name": "Bash",
+        "tool_input": {"command": "printf changed > foreign.txt"},
+    }
+
+    response = await guard_harness.handler._evaluate_rules(event)
+
+    assert response.decision == "block"
+    assert response.reason is not None
+    assert "foreign.txt" in response.reason
+
+
+@pytest.mark.asyncio
+async def test_clean_foreign_edit_is_allowed(guard_harness: GuardHarness) -> None:
+    response = await guard_harness.handler._evaluate_rules(guard_harness.edit_event("foreign.txt"))
+
+    assert response.decision == "allow"
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("path", "contents"),
+    [("owned.txt", "owned change\n"), ("unattributed.txt", "new change\n")],
+)
+async def test_dirty_nonforeign_edit_is_allowed(
+    guard_harness: GuardHarness,
+    path: str,
+    contents: str,
+) -> None:
+    (guard_harness.repo / path).write_text(contents, encoding="utf-8")
+
+    response = await guard_harness.handler._evaluate_rules(guard_harness.edit_event(path))
+
+    assert response.decision == "allow"
+
+
+@pytest.mark.asyncio
+async def test_dirty_foreign_path_in_other_checkout_is_allowed(
+    guard_harness: GuardHarness,
+    tmp_path: Path,
+) -> None:
+    other_checkout = tmp_path / "other-checkout"
+    _git(
+        guard_harness.repo,
+        "worktree",
+        "add",
+        "-q",
+        "-b",
+        "dirty-edit-other-checkout",
+        str(other_checkout),
+    )
+    (other_checkout / "foreign.txt").write_text("other checkout\n", encoding="utf-8")
+
+    response = await guard_harness.handler._evaluate_rules(
+        guard_harness.edit_event("foreign.txt", checkout=other_checkout)
+    )
+
+    assert response.decision == "allow"
+
+
+@pytest.mark.asyncio
+async def test_completed_foreign_session_allows_dirty_edit(guard_harness: GuardHarness) -> None:
+    guard_harness.session_manager.update_status(guard_harness.foreign_session.id, "completed")
+    (guard_harness.repo / "foreign.txt").write_text("foreign change\n", encoding="utf-8")
+
+    response = await guard_harness.handler._evaluate_rules(guard_harness.edit_event("foreign.txt"))
+
+    assert response.decision == "allow"
+
+
+@pytest.mark.asyncio
+async def test_tool_cwd_relative_dirty_foreign_edit_blocks(guard_harness: GuardHarness) -> None:
+    nested = guard_harness.repo / "nested"
+    nested.mkdir()
+    nested_file = nested / "foreign.txt"
+    nested_file.write_text("base\n", encoding="utf-8")
+    _git(guard_harness.repo, "add", "--", "nested/foreign.txt")
+    _git(guard_harness.repo, "commit", "-q", "-m", "add nested file")
+    SessionVariableManager(guard_harness.db).merge_variables(
+        guard_harness.foreign_session.id,
+        {
+            "task_edited_file_checkouts": {
+                guard_harness.foreign_task.id: {
+                    str(guard_harness.repo): ["nested/foreign.txt"],
+                }
+            }
+        },
+    )
+    nested_file.write_text("dirty\n", encoding="utf-8")
+
+    response = await guard_harness.handler._evaluate_rules(
+        guard_harness.edit_event("foreign.txt", cwd=nested)
+    )
+
+    assert response.decision == "block"
+    assert response.reason is not None
+    assert "nested/foreign.txt" in response.reason
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("event_kind", ["noncanonical", "outside-checkout"])
+async def test_skipped_mutations_do_not_inspect_dirty_files(
+    guard_harness: GuardHarness,
+    tmp_path: Path,
+    event_kind: str,
+) -> None:
+    event = (
+        guard_harness.event("gcode search foreign")
+        if event_kind == "noncanonical"
+        else guard_harness.edit_event(str(tmp_path / "outside.txt"))
+    )
+
+    with patch(
+        "gobby.workflows.git_utils.get_dirty_files_categorized",
+        side_effect=AssertionError("dirty status inspection must be skipped"),
+    ):
+        response = await guard_harness.handler._evaluate_rules(event)
+
+    assert response.decision == "allow"
+
+
+@pytest.mark.asyncio
+async def test_dirty_edit_ownership_inspection_failure_allows(
+    guard_harness: GuardHarness,
+) -> None:
+    (guard_harness.repo / "foreign.txt").write_text("foreign change\n", encoding="utf-8")
+
+    with patch(
+        "gobby.workflows.commit_guard._active_foreign_path_owners",
+        side_effect=RuntimeError("database unavailable"),
+    ):
+        response = await guard_harness.handler._evaluate_rules(
+            guard_harness.edit_event("foreign.txt")
+        )
+
+    assert response.decision == "allow"
 
 
 @pytest.mark.asyncio

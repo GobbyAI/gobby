@@ -7,6 +7,8 @@ import logging
 import os
 import shlex
 import subprocess
+from collections.abc import Callable
+from collections.abc import Set as AbstractSet
 from dataclasses import dataclass
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
@@ -178,6 +180,84 @@ def foreign_staged_commit_conflict(
         )
 
 
+def foreign_dirty_edit_conflict(
+    db: HubDatabase,
+    event: HookEvent,
+    *,
+    session_id: str,
+    project_id: str,
+    project_path: str,
+    dirty_files: Callable[[], AbstractSet[str]],
+) -> str:
+    """Return an actionable block reason for edits to dirty foreign-owned paths."""
+    data = event.data if isinstance(event.data, dict) else {}
+    if data.get("canonical_repo_mutation") is not True:
+        return ""
+
+    try:
+        mutation_paths = _canonical_mutation_paths(event, project_path)
+        if not mutation_paths:
+            return ""
+
+        normalized_dirty = {
+            normalized
+            for path in dirty_files()
+            if (normalized := normalize_task_edited_path(path)) is not None
+        }
+        candidate_paths = mutation_paths & normalized_dirty
+        if not candidate_paths:
+            return ""
+
+        owners = _active_foreign_path_owners(
+            db,
+            session_id=session_id,
+            project_id=project_id,
+            checkout_root=project_path,
+        )
+        conflicts = {owner for path in candidate_paths for owner in owners.get(path, ())}
+        if not conflicts:
+            return ""
+        return _format_dirty_edit_reason(conflicts)
+    except Exception:
+        logger.warning(
+            "Cross-session dirty edit ownership inspection failed",
+            extra={"session_id": session_id, "project_id": project_id},
+            exc_info=True,
+        )
+        return ""
+
+
+def _canonical_mutation_paths(event: HookEvent, project_path: str) -> set[str]:
+    data = event.data if isinstance(event.data, dict) else {}
+    raw_paths = data.get("canonical_file_paths")
+    if not isinstance(raw_paths, list):
+        single_path = data.get("canonical_file_path")
+        raw_paths = [single_path] if isinstance(single_path, str) else []
+
+    repository_root = Path(project_path).resolve()
+    raw_cwd = data.get("cwd")
+    tool_cwd = Path(raw_cwd) if isinstance(raw_cwd, str) and raw_cwd else Path(event.cwd or "")
+    if not tool_cwd.is_absolute():
+        tool_cwd = repository_root / tool_cwd
+    tool_cwd = tool_cwd.resolve()
+
+    paths: set[str] = set()
+    for raw_path in raw_paths:
+        if not isinstance(raw_path, str) or not raw_path:
+            continue
+        path = Path(raw_path)
+        if not path.is_absolute():
+            path = tool_cwd / path
+        try:
+            relative_path = path.resolve().relative_to(repository_root).as_posix()
+        except ValueError:
+            continue
+        normalized = normalize_task_edited_path(relative_path)
+        if normalized is not None:
+            paths.add(normalized)
+    return paths
+
+
 def _active_foreign_path_owners(
     db: HubDatabase,
     *,
@@ -275,3 +355,27 @@ def _format_conflict_reason(conflicts: set[ForeignPathOwner]) -> str:
         "foreign staged entries will remain intact.",
     ]
     return "\n".join(lines)
+
+
+def _format_dirty_edit_reason(conflicts: set[ForeignPathOwner]) -> str:
+    ordered_conflicts = sorted(
+        conflicts,
+        key=lambda item: (item.path, item.session_ref, item.task_ref),
+    )
+    return "\n".join(
+        [
+            "Edit blocked: dirty path(s) belong to another active task/session:",
+            *[
+                f"- {owner.path} — session {owner.session_ref}, task {owner.task_ref}"
+                for owner in ordered_conflicts
+            ],
+            "Ask each owner with `gobby-agents.send_message` to make a buildable WIP "
+            "commit before you continue.",
+            "For work that cannot be committed, migrate it through `gobby-worktrees`.",
+            "For a stale owner, reclaim its task with:",
+            *[
+                f"- `gobby-tasks.claim_task(task_id={json.dumps(owner.task_ref)}, force=true)`"
+                for owner in ordered_conflicts
+            ],
+        ]
+    )

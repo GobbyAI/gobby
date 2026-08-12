@@ -278,6 +278,7 @@ class RuleEngine(EvaluationMixin, EffectsMixin, TemplatingMixin, EnforcementMixi
 
                 if eval_context is None:
                     eval_context = {}
+                eval_context.setdefault("foreign_dirty_edit_conflict", "")
                 eval_context.setdefault("foreign_staged_commit_conflict", "")
                 eval_context.setdefault("_blocking_deadline", blocking_deadline)
 

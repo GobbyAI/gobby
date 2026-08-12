@@ -1,0 +1,12 @@
+tags: [task-enforcement, enforcement, tasks, git, shared-worktree, default, guardrail]
+
+rules:
+  block-cross-session-foreign-dirty-edit:
+    description: "Block edits to dirty paths owned by another active task session"
+    event: before_tool
+    enabled: true
+    priority: 26
+    when: foreign_dirty_edit_conflict
+    effects:
+      - type: block
+        reason: "{{ foreign_dirty_edit_conflict }}"

@@ -9,7 +9,7 @@ This directory contains bundled rule groups. These are **templates** — they ar
 | `worker-safety` | `worker-safety/` | 50 | Block git push (global + worker-scoped), force push, destructive git/shell, bash sleep, agent spawn from merge, external GitHub issues, package install/publish, remote-script exec, full test suite, daemon management, data exfiltration (curl/wget upload, scp/sftp, secret-path reads) |
 | `tool-hygiene` | `tool-hygiene/` | 4 | Require `uv` and route memory operations through Gobby |
 | `progressive-discovery` | `progressive-discovery/` | 5 | Require a current-context schema lease before ordinary MCP calls; track optional inventory discovery |
-| `task-enforcement` | `task-enforcement/` | 18 | Require claimed tasks and lifecycle skills, protect shared-worktree commits, and enforce valid task transitions |
+| `task-enforcement` | `task-enforcement/` | 20 | Require claimed tasks and lifecycle skills, protect shared-worktree edits and commits, and enforce valid task transitions |
 | `stop-gates` | `stop-gates/` | 3 | Require workflow step completion, task close, and epic tree close before turn end |
 | `plan-mode` | `plan-mode/` | 6 | Track plan-mode entry and exit, block edits, teach plan navigation, and reset state |
 | `memory-lifecycle` | `memory-lifecycle/` | 10 | Recall, digest, capture, plan-memory guards, turn sequencing, and tracking reset |
