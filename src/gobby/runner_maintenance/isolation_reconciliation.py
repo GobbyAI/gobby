@@ -18,6 +18,7 @@ from gobby.storage.projects import LocalProjectManager, Project
 from gobby.storage.worktrees import LocalWorktreeManager
 from gobby.utils.machine_id import require_machine_id
 from gobby.worktrees.git import WorktreeGitManager
+from gobby.worktrees.git import _status as worktree_git_status
 
 logger = logging.getLogger(__name__)
 
@@ -101,7 +102,11 @@ async def _reconcile_project_worktrees(
     manager = WorktreeGitManager(project.repo_path)
     try:
         primary_path = await asyncio.to_thread(_canonical_path, project.repo_path)
-        worktrees = await asyncio.to_thread(manager.list_worktrees)
+        worktrees = await asyncio.to_thread(
+            worktree_git_status.list_worktrees,
+            manager,
+            failure_log_level=logging.DEBUG,
+        )
     except Exception as exc:
         logger.debug("Skipping worktree reconciliation for %s: %s", project.name, exc)
         return 0

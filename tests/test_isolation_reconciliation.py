@@ -28,7 +28,8 @@ from gobby.storage.hub.protocol import (
 )
 from gobby.storage.projects import LocalProjectManager, Project
 from gobby.storage.worktrees import LocalWorktreeManager
-from gobby.worktrees.git import WorktreeInfo
+from gobby.worktrees.git import WorktreeGitManager, WorktreeInfo
+from gobby.worktrees.git import _status as worktree_git_status
 
 pytestmark = pytest.mark.integration
 
@@ -164,11 +165,19 @@ async def test_worktree_scan_skips_primary_bare_prunable_and_reserved_names(
         registrations.append(args)
         return object(), True
 
+    def list_worktrees(
+        _manager: object,
+        *,
+        failure_log_level: int,
+    ) -> list[WorktreeInfo]:
+        assert failure_log_level == logging.DEBUG
+        return worktrees
+
     manager = SimpleNamespace(
-        list_worktrees=lambda: worktrees,
         inspect_worktree=inspect_worktree,
     )
     monkeypatch.setattr(reconciliation, "WorktreeGitManager", lambda _path: manager)
+    monkeypatch.setattr(worktree_git_status, "list_worktrees", list_worktrees)
     storage = cast(
         "LocalWorktreeManager",
         SimpleNamespace(register_adopted=register_adopted),
@@ -190,6 +199,47 @@ async def test_worktree_scan_skips_primary_bare_prunable_and_reserved_names(
     assert adopted == 1
     assert inspected_paths == [valid_path.resolve()]
     assert registrations == [("project-1", "task/valid", str(valid_path.resolve()), "main")]
+
+
+@pytest.mark.asyncio
+async def test_worktree_scan_skips_git_probe_failure_without_error_log(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    repo = tmp_path / "repo"
+    repo.mkdir()
+    mock_run = MagicMock(
+        return_value=subprocess.CompletedProcess(
+            args=["git", "worktree", "list", "--porcelain"],
+            returncode=128,
+            stdout="",
+            stderr="fatal: not a git repository",
+        )
+    )
+    monkeypatch.setattr(WorktreeGitManager, "_run_git", mock_run)
+    storage = cast(
+        "LocalWorktreeManager",
+        SimpleNamespace(register_adopted=MagicMock()),
+    )
+    project = cast(
+        "Project",
+        SimpleNamespace(id="project-1", name="project", repo_path=str(repo)),
+    )
+    caplog.set_level(logging.DEBUG, logger="gobby.worktrees.git._status")
+
+    adopted = await reconciliation._reconcile_project_worktrees(
+        project,
+        storage,
+        run_db=None,
+    )
+
+    assert adopted == 0
+    assert not [record for record in caplog.records if record.levelno >= logging.ERROR]
+    assert any(
+        record.levelno == logging.DEBUG and "Failed to list worktrees" in record.message
+        for record in caplog.records
+    )
 
 
 @pytest.mark.asyncio

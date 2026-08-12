@@ -968,7 +968,7 @@ class TestWorktreeGitManagerListWorktrees:
         assert worktrees[0].branch is None
 
     @patch("subprocess.run")
-    def test_list_handles_failure(self, mock_run, manager) -> None:
+    def test_list_handles_failure(self, mock_run, manager, caplog) -> None:
         """List returns empty list on git failure."""
         mock_run.return_value = subprocess.CompletedProcess(
             args=["git", "worktree", "list"],
@@ -980,6 +980,10 @@ class TestWorktreeGitManagerListWorktrees:
         worktrees = manager.list_worktrees()
 
         assert worktrees == []
+        assert any(
+            record.levelname == "ERROR" and "Failed to list worktrees" in record.message
+            for record in caplog.records
+        )
 
 
 class TestWorktreeGitManagerPrune:

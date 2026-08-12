@@ -111,9 +111,16 @@ def get_worktree_status(
         return None
 
 
-def list_worktrees(runner: GitRunner) -> list[WorktreeInfo]:
+def list_worktrees(
+    runner: GitRunner,
+    *,
+    failure_log_level: int = logging.ERROR,
+) -> list[WorktreeInfo]:
     """
     List all worktrees for this repository.
+
+    Args:
+        failure_log_level: Logging level for git failures.
 
     Returns:
         List of WorktreeInfo objects
@@ -125,7 +132,7 @@ def list_worktrees(runner: GitRunner) -> list[WorktreeInfo]:
         )
 
         if result.returncode != 0:
-            logger.error("Failed to list worktrees: %s", result.stderr)
+            logger.log(failure_log_level, "Failed to list worktrees: %s", result.stderr)
             return []
 
         worktrees = []
@@ -187,7 +194,7 @@ def list_worktrees(runner: GitRunner) -> list[WorktreeInfo]:
         return worktrees
 
     except Exception as e:
-        logger.error("Error listing worktrees: %s", e)
+        logger.log(failure_log_level, "Error listing worktrees: %s", e)
         return []
 
 
