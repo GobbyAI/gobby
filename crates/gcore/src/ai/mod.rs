@@ -45,14 +45,38 @@ pub enum AiNoticeKind {
     GenerationFailed,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum DaemonProbeState {
+    Available,
+    Unavailable,
+    Unreachable,
+}
+
 pub fn effective_route(context: &AiContext, capability: AiCapability) -> AiRouting {
     resolve_route_observed(context, capability).route
 }
 
 pub fn resolve_route_observed(context: &AiContext, capability: AiCapability) -> ObservedAiRoute {
-    resolve_route_observed_with_probe(context, capability, |capability| {
-        probe::probe_daemon_capability(capability).available
+    resolve_route_observed_with_probe_state(context, capability, |capability| {
+        let availability = probe::probe_daemon_capability(capability);
+        daemon_probe_state(&availability)
     })
+}
+
+fn daemon_probe_state(availability: &probe::CapabilityAvailability) -> DaemonProbeState {
+    if availability.available {
+        DaemonProbeState::Available
+    } else if availability
+        .degradation
+        .as_ref()
+        .is_some_and(|degradation| {
+            degradation.reason == probe::CapabilityDegradationReason::Unreachable
+        })
+    {
+        DaemonProbeState::Unreachable
+    } else {
+        DaemonProbeState::Unavailable
+    }
 }
 
 #[cfg(test)]
@@ -69,25 +93,43 @@ pub fn resolve_route_observed_with_probe(
     capability: AiCapability,
     mut daemon_available: impl FnMut(AiCapability) -> bool,
 ) -> ObservedAiRoute {
+    resolve_route_observed_with_probe_state(context, capability, |capability| {
+        if daemon_available(capability) {
+            DaemonProbeState::Available
+        } else {
+            DaemonProbeState::Unavailable
+        }
+    })
+}
+
+fn resolve_route_observed_with_probe_state(
+    context: &AiContext,
+    capability: AiCapability,
+    mut daemon_state: impl FnMut(AiCapability) -> DaemonProbeState,
+) -> ObservedAiRoute {
     match context.binding(capability).routing {
         AiRouting::Off => observed(AiRouting::Off, false, None),
         AiRouting::Direct => observed(AiRouting::Direct, false, None),
         AiRouting::Daemon => observed(AiRouting::Daemon, false, None),
-        AiRouting::Auto => daemon_route_or_fallback(context, capability, &mut daemon_available),
+        AiRouting::Auto => daemon_route_or_fallback(context, capability, &mut daemon_state),
     }
 }
 
 fn daemon_route_or_fallback(
     context: &AiContext,
     capability: AiCapability,
-    daemon_available: &mut impl FnMut(AiCapability) -> bool,
+    daemon_state: &mut impl FnMut(AiCapability) -> DaemonProbeState,
 ) -> ObservedAiRoute {
-    // Auto is fail-safe: use daemon only when its status route advertises the
-    // capability, then fall back to a configured direct route or Off.
-    if daemon_available(capability) {
-        observed(AiRouting::Daemon, false, None)
-    } else {
-        match direct_route_or_off(context, capability) {
+    let direct_fallback = direct_route_or_off(context, capability);
+    match daemon_state(capability) {
+        DaemonProbeState::Available => observed(AiRouting::Daemon, false, None),
+        // Reachability is a transport observation. Keep the configured daemon
+        // route when no direct fallback exists so callers receive the actual
+        // daemon transport failure instead of a false disabled-capability state.
+        DaemonProbeState::Unreachable if direct_fallback == AiRouting::Off => {
+            observed(AiRouting::Daemon, false, None)
+        }
+        DaemonProbeState::Unavailable | DaemonProbeState::Unreachable => match direct_fallback {
             AiRouting::Direct => observed(
                 AiRouting::Direct,
                 true,
@@ -95,7 +137,7 @@ fn daemon_route_or_fallback(
             ),
             AiRouting::Off => observed(AiRouting::Off, true, Some(AiNoticeKind::AutoFallbackToOff)),
             route => observed(route, true, None),
-        }
+        },
     }
 }
 
@@ -687,6 +729,76 @@ mod tests {
                 fallback: true,
                 reason: Some(AiNoticeKind::AutoFallbackToOff),
             }
+        );
+    }
+
+    #[test]
+    fn unreachable_probe_preserves_daemon_route_without_direct_fallback() {
+        use crate::config::{AiRouting, AiTuning};
+
+        let context = AiContext {
+            bindings: crate::ai_context::AiBindings {
+                embed: binding(AiRouting::Auto, None),
+                audio_transcribe: binding(AiRouting::Auto, None),
+                audio_translate: binding(AiRouting::Auto, None),
+                vision_extract: binding(AiRouting::Auto, None),
+                text_generate: binding(AiRouting::Auto, Some("http://direct.test")),
+            },
+            tuning: AiTuning {
+                max_concurrency: 1,
+                keep_alive: None,
+            },
+            limiter: crate::ai_context::AiLimiter::new(1),
+            tool_loop_limits: crate::ai::generation::ToolLoopLimits::default(),
+            project_id: None,
+        };
+
+        let unreachable = probe::CapabilityAvailability {
+            capability: AiCapability::Embed,
+            available: false,
+            status_route: None,
+            degradation: Some(probe::CapabilityDegradation {
+                capability: AiCapability::Embed,
+                reason: probe::CapabilityDegradationReason::Unreachable,
+                message: "daemon starting".to_string(),
+                http_status: None,
+            }),
+        };
+        let unavailable = probe::CapabilityAvailability {
+            degradation: Some(probe::CapabilityDegradation {
+                reason: probe::CapabilityDegradationReason::NotAdvertised,
+                message: "capability disabled".to_string(),
+                ..unreachable
+                    .degradation
+                    .clone()
+                    .expect("unreachable degradation")
+            }),
+            ..unreachable.clone()
+        };
+
+        assert_eq!(
+            resolve_route_observed_with_probe_state(&context, AiCapability::Embed, |_| {
+                daemon_probe_state(&unreachable)
+            }),
+            ObservedAiRoute {
+                route: AiRouting::Daemon,
+                fallback: false,
+                reason: None,
+            }
+        );
+        assert_eq!(
+            resolve_route_observed_with_probe_state(&context, AiCapability::TextGenerate, |_| {
+                DaemonProbeState::Unreachable
+            },),
+            ObservedAiRoute {
+                route: AiRouting::Direct,
+                fallback: true,
+                reason: Some(AiNoticeKind::AutoFallbackToDirect),
+            }
+        );
+        assert_eq!(
+            daemon_probe_state(&unavailable),
+            DaemonProbeState::Unavailable
         );
     }
 
