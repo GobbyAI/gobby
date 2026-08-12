@@ -43,6 +43,8 @@ const PROXY_PATHS = [
   "mcp_client_proxy.refresh_timeout",
 ] as const;
 
+const TOOL_RESULT_OFFLOAD_PATHS = ["tool_result_offload.enabled"] as const;
+
 const SKILLS_PATHS = [
   "skills.inject_core_skills",
   "skills.core_skills_path",
@@ -50,7 +52,11 @@ const SKILLS_PATHS = [
   "skills.hubs",
 ] as const;
 
-const OWNED_PATHS: readonly string[] = [...PROXY_PATHS, ...SKILLS_PATHS];
+const OWNED_PATHS: readonly string[] = [
+  ...PROXY_PATHS,
+  ...TOOL_RESULT_OFFLOAD_PATHS,
+  ...SKILLS_PATHS,
+];
 
 /** Hub `type` enum from `HubConfig`. Stable, so listed explicitly here. */
 const HUB_TYPE_OPTIONS = [
@@ -86,6 +92,12 @@ function McpProxyGroup({ fields }: { fields: SettingsSectionFields }) {
         path="mcp_client_proxy.enabled"
         label="Enable MCP proxy"
         ariaLabel="Enable MCP proxy"
+      />
+      <SwitchConfigField
+        fields={fields}
+        path="tool_result_offload.enabled"
+        label="Enable tool result offload"
+        ariaLabel="Enable tool result offload"
       />
       <NumberConfigField
         fields={fields}
