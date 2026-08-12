@@ -166,6 +166,9 @@ def _get_embedding_api_key(
     Expected import, OS, and database failures are logged and fall through to
     the prompt/skip path. Programming and configuration errors propagate.
     Required non-interactive missing keys record a failed embedding result.
+    Interactive runs always offer the prompt — local endpoints (LM Studio,
+    llama.cpp, vLLM) can require authentication — but only a required
+    provider treats a blank or aborted entry as a failure.
     """
     embedding_api_key: str | None = None
     try:
@@ -192,30 +195,37 @@ def _get_embedding_api_key(
     if embedding_api_key:
         return embedding_api_key
 
-    if not required:
-        return None
-
     if no_interactive:
+        if not required:
+            return None
         click.echo("Embedding API key not set - skipping embedding setup")
         results["embedding"] = {"success": False, "error": "Embedding API key not available"}
         return None
 
+    prompt_label = (
+        "  Embedding API Key" if required else "  Embedding API Key (optional, blank for none)"
+    )
     try:
         embedding_api_key = click.prompt(
-            "  Embedding API Key",
+            prompt_label,
             default="",
             hide_input=True,
             show_default=False,
         )
     except (click.Abort, EOFError):
         click.echo("")
+        if not required:
+            return None
         results["embedding"] = {"success": False, "error": "API key prompt aborted"}
         return None
-    if not embedding_api_key.strip():
+    embedding_api_key = embedding_api_key.strip()
+    if not embedding_api_key:
+        if not required:
+            return None
         click.echo("No API key provided - skipping")
         results["embedding"] = {"success": False, "error": "No API key provided"}
         return None
-    return embedding_api_key.strip()
+    return embedding_api_key
 
 
 def _prompt_customization(

@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import subprocess
+from collections.abc import Iterator
 from unittest.mock import MagicMock, patch
 
 import click
@@ -505,6 +506,15 @@ class TestRunEmbeddingInstallInteractive:
 class TestRunEmbeddingInstallOverrides:
     """CLI flag and interactive customize behavior."""
 
+    @pytest.fixture(autouse=True)
+    def _skip_key_prompt(self) -> Iterator[None]:
+        """Bypass the optional key prompt so stdin scripts drive customization only."""
+        with patch(
+            "gobby.cli._install_embedding_prompts._get_embedding_api_key",
+            return_value=None,
+        ):
+            yield
+
     @patch("gobby.cli._detectors._is_ollama_available", return_value=False)
     @patch("gobby.cli._detectors._is_lmstudio_available", return_value=True)
     def test_cli_overrides_skip_customize_prompt(
@@ -720,3 +730,66 @@ class TestEmbeddingKeyLookup:
             "success": False,
             "error": "Embedding API key not available",
         }
+
+
+class TestOptionalEmbeddingKeyPrompt:
+    """Interactive installs offer an optional key prompt for every provider."""
+
+    @patch("gobby.storage.hub.runtime.runtime_hub_database", side_effect=RuntimeError("bug"))
+    @patch("click.prompt", return_value=" sk-lm-test ")
+    def test_optional_interactive_prompt_returns_stripped_key(
+        self, mock_prompt: MagicMock, mock_database: MagicMock
+    ) -> None:
+        results: dict[str, dict[str, object]] = {}
+
+        key = _get_embedding_api_key(no_interactive=False, results=results, required=False)
+
+        assert key == "sk-lm-test"
+        assert results == {}
+        assert mock_prompt.call_args.args == ("  Embedding API Key (optional, blank for none)",)
+
+    @patch("gobby.storage.hub.runtime.runtime_hub_database", side_effect=RuntimeError("bug"))
+    @patch("click.prompt", return_value="")
+    def test_optional_blank_entry_skips_without_failure(
+        self, mock_prompt: MagicMock, mock_database: MagicMock
+    ) -> None:
+        results: dict[str, dict[str, object]] = {}
+
+        key = _get_embedding_api_key(no_interactive=False, results=results, required=False)
+
+        assert key is None
+        assert results == {}
+
+    @patch("gobby.storage.hub.runtime.runtime_hub_database", side_effect=RuntimeError("bug"))
+    @patch("click.prompt", side_effect=click.Abort())
+    def test_optional_abort_skips_without_failure(
+        self, mock_prompt: MagicMock, mock_database: MagicMock
+    ) -> None:
+        results: dict[str, dict[str, object]] = {}
+
+        key = _get_embedding_api_key(no_interactive=False, results=results, required=False)
+
+        assert key is None
+        assert results == {}
+
+    @patch("gobby.storage.hub.runtime.runtime_hub_database", side_effect=RuntimeError("bug"))
+    def test_optional_noninteractive_still_skips_silently(self, mock_database: MagicMock) -> None:
+        results: dict[str, dict[str, object]] = {}
+
+        key = _get_embedding_api_key(no_interactive=True, results=results, required=False)
+
+        assert key is None
+        assert results == {}
+
+    @patch("gobby.storage.hub.runtime.runtime_hub_database", side_effect=RuntimeError("bug"))
+    @patch("click.prompt", return_value="")
+    def test_required_blank_entry_records_failure(
+        self, mock_prompt: MagicMock, mock_database: MagicMock
+    ) -> None:
+        results: dict[str, dict[str, object]] = {}
+
+        key = _get_embedding_api_key(no_interactive=False, results=results, required=True)
+
+        assert key is None
+        assert results["embedding"] == {"success": False, "error": "No API key provided"}
+        assert mock_prompt.call_args.args == ("  Embedding API Key",)
