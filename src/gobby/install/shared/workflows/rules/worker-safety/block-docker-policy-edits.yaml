@@ -1,0 +1,20 @@
+tags: [worker-safety, enforcement, default, gobby]
+
+rules:
+  block-docker-policy-edits:
+    description: >-
+      Block canonical Docker and Compose policy writes. toggle_rule is an ordinary MCP tool; the
+      operator-controlled mutation and its audit trail are the accepted escape hatch. Accepted
+      residual: path-less shell mutations that normalize as execute, including git apply, patch,
+      python -c, and git checkout/revert -- <file>, bypass path-based matching.
+    event: before_tool
+    enabled: true
+    priority: 15
+    when: >-
+      event.data.get('canonical_tool_kind') == 'write'
+      and touches_docker_policy_path(event.data, tool_input)
+    effects:
+      - type: block
+        reason: >-
+          Docker and Compose policy edits are operator-controlled. The operator can disable this
+          rule with toggle_rule('block-docker-policy-edits', enabled=false) or gobby rules toggle.

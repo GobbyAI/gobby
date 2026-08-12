@@ -18,11 +18,11 @@ from gobby.config.persistence import validate_falkordb_password
 from .compose_env import ComposeEnvironmentError, resolve_compose_runtime
 from .docker_guard import ensure_docker_allowed
 from .managed_services_lock import ManagedServicesLockError, managed_services_lock
+from .postgres import compose_restart_required_notice, reconcile_unified_compose
 
 logger = logging.getLogger(__name__)
 
-_DATA_DIR = Path(__file__).resolve().parents[2] / "data"
-_COMPOSE_SRC = _DATA_DIR / "docker-compose.services.yml"
+_COMPOSE_SRC = Path(__file__).resolve().parents[2] / "data" / "docker-compose.services.yml"
 
 DEFAULT_FALKORDB_HOST = "127.0.0.1"
 DEFAULT_FALKORDB_PORT = 16379
@@ -115,29 +115,6 @@ def _resolve_falkordb_password(
     )
 
 
-def _refresh_unified_compose(services_dir: Path, env: dict[str, str]) -> Path:
-    """Overwrite the services compose file with the current FalkorDB template."""
-    services_dir.mkdir(parents=True, exist_ok=True)
-    compose_file = services_dir / "docker-compose.yml"
-    if compose_file.exists():
-        legacy_profile = "".join(("neo", "4j"))
-        try:
-            ensure_docker_allowed("falkordb legacy-profile compose down", runner=subprocess.run)
-            subprocess.run(  # nosec B603 B607
-                ["docker", "compose", "-f", str(compose_file), "--profile", legacy_profile, "down"],
-                capture_output=True,
-                text=True,
-                timeout=60,
-                env=env,
-                cwd=str(services_dir),
-                check=False,
-            )
-        except (FileNotFoundError, subprocess.TimeoutExpired, OSError):
-            pass
-    shutil.copy2(_COMPOSE_SRC, compose_file)
-    return compose_file
-
-
 def install_falkordb(
     *,
     gobby_home: Path | None = None,
@@ -183,7 +160,8 @@ def _install_falkordb_locked(
         return {"success": False, "error": f"Failed to resolve FalkorDB config: {exc}"}
 
     services_dir = home / "services"
-    compose_file = _refresh_unified_compose(services_dir, runtime.environment)
+    reconciliation = reconcile_unified_compose(services_dir)
+    compose_file = reconciliation.compose_file
 
     try:
         ensure_docker_allowed("falkordb install compose up", runner=subprocess.run)
@@ -232,6 +210,12 @@ def _install_falkordb_locked(
         "password_source": resolved.source,
         "password": resolved.value if resolved.expose_value else None,
     }
+    restart_notice = compose_restart_required_notice(
+        reconciliation,
+        started_services=frozenset({"falkordb"}),
+    )
+    if restart_notice:
+        response["restart_required"] = restart_notice
     return response
 
 

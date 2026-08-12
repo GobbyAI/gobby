@@ -12,6 +12,7 @@ import pytest
 
 from gobby.cli import _daemon_services as daemon_services
 from gobby.cli import daemon
+from gobby.cli.installers import postgres as postgres_installer
 from gobby.cli.installers.compose_env import (
     MANAGED_SERVICE_PROFILES,
     ComposeEnvironmentError,
@@ -121,7 +122,8 @@ def test_missing_required_compose_profile_is_fatal(
     tmp_path: Path,
 ) -> None:
     monkeypatch.setattr(shutil, "which", lambda _name: "/usr/bin/docker")
-    _write_compose(tmp_path, include_falkordb=False)
+    compose_file = _write_compose(tmp_path, include_falkordb=False)
+    monkeypatch.setattr(postgres_installer, "_COMPOSE_SRC", compose_file)
 
     result = daemon._services_start(tmp_path)
 
@@ -134,7 +136,7 @@ def test_compose_starts_all_profiles_and_waits_for_health(
     tmp_path: Path,
 ) -> None:
     monkeypatch.setattr(shutil, "which", lambda _name: "/usr/bin/docker")
-    _write_compose(tmp_path)
+    compose_file = _write_compose(tmp_path)
     environment = {"PATH": "/usr/bin"}
     monkeypatch.setattr(
         daemon,
@@ -155,6 +157,9 @@ def test_compose_starts_all_profiles_and_waits_for_health(
     result = daemon._services_start(tmp_path)
 
     assert result.outcome == "success"
+    assert compose_file.read_text(encoding="utf-8") == postgres_installer._COMPOSE_SRC.read_text(
+        encoding="utf-8"
+    )
     assert len(calls) == 2
     assert [profile for profile in MANAGED_SERVICE_PROFILES if profile in calls[0]] == ["postgres"]
     command = calls[1]

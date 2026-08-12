@@ -294,12 +294,19 @@ def _is_docker_policy_path(path: str) -> bool:
     filename = lowered_parts[-1]
     if ".docker" in lowered_parts:
         return True
-    if filename == "dockerfile" or filename.startswith("dockerfile."):
+    if (
+        filename == "dockerfile"
+        or filename.startswith(("dockerfile.", "dockerfile-"))
+        or filename.endswith(".dockerfile")
+        or filename == "containerfile"
+    ):
         return True
-    if filename in {".dockerignore", "docker-bake.hcl", "docker-bake.json"}:
+    if filename == ".dockerignore" or (
+        filename.startswith("docker-bake.") and filename.endswith((".hcl", ".json"))
+    ):
         return True
     return filename.endswith((".yml", ".yaml")) and (
-        filename.startswith("docker-compose") or filename.startswith("compose.")
+        filename.startswith(("docker-compose", "podman-compose", "compose.", "compose-"))
     )
 
 

@@ -2,12 +2,14 @@
 
 from __future__ import annotations
 
+import os
 import subprocess
 from pathlib import Path
 from typing import Any
 
 import click
 import pytest
+import yaml
 
 pytestmark = pytest.mark.unit
 
@@ -178,16 +180,81 @@ def test_postgres_install_refreshes_stale_unified_compose(
     services_dir = tmp_path / "services"
     services_dir.mkdir()
     compose_file = services_dir / "docker-compose.yml"
-    compose_file.write_text("services:\n  qdrant: {}\n", encoding="utf-8")
+    compose_file.write_text(
+        'services:\n  qdrant:\n    image: qdrant/qdrant:old\n    restart: "no"\n',
+        encoding="utf-8",
+    )
     bundled_compose = tmp_path / "bundled-compose.yml"
-    bundled_compose.write_text("services:\n  postgres: {}\n", encoding="utf-8")
+    bundled_compose.write_text(
+        "services:\n  qdrant:\n    image: qdrant/qdrant:latest\n    restart: unless-stopped\n"
+        "  postgres:\n    image: postgres:18\n    restart: unless-stopped\n",
+        encoding="utf-8",
+    )
     monkeypatch.setattr(installer, "_COMPOSE_SRC", bundled_compose)
 
-    result = installer._ensure_unified_compose(services_dir)
+    result = installer.reconcile_unified_compose(services_dir)
 
-    assert result == compose_file
-    assert "postgres" in compose_file.read_text(encoding="utf-8")
-    assert "qdrant" not in compose_file.read_text(encoding="utf-8")
+    assert result.compose_file == compose_file
+    assert result.refreshed is True
+    assert result.changed_services == frozenset({"postgres", "qdrant"})
+    deployed = yaml.safe_load(compose_file.read_text(encoding="utf-8"))
+    assert deployed["services"]["qdrant"]["image"] == "qdrant/qdrant:latest"
+    assert deployed["services"]["qdrant"]["restart"] == "no"
+    assert deployed["services"]["postgres"]["restart"] == "no"
+
+
+def test_matching_unified_compose_is_untouched(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    installer = _import_installer()
+    services_dir = tmp_path / "services"
+    services_dir.mkdir()
+    compose_file = services_dir / "docker-compose.yml"
+    bundled_compose = tmp_path / "bundled-compose.yml"
+    content = "services:\n  postgres:\n    image: postgres:18\n    restart: unless-stopped\n"
+    compose_file.write_text(content, encoding="utf-8")
+    bundled_compose.write_text(content, encoding="utf-8")
+    monkeypatch.setattr(installer, "_COMPOSE_SRC", bundled_compose)
+    fixed_timestamp = 1_700_000_000
+    os.utime(compose_file, (fixed_timestamp, fixed_timestamp))
+    original_mtime = compose_file.stat().st_mtime_ns
+
+    result = installer.reconcile_unified_compose(services_dir)
+
+    assert result.refreshed is False
+    assert result.changed_services == frozenset()
+    assert compose_file.stat().st_mtime_ns == original_mtime
+
+
+def test_reconciliation_reports_changed_services_not_started_by_installer(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    installer = _import_installer()
+    services_dir = tmp_path / "services"
+    services_dir.mkdir()
+    (services_dir / "docker-compose.yml").write_text(
+        "services:\n  postgres:\n    image: postgres:17\n  qdrant:\n    image: qdrant/qdrant:old\n",
+        encoding="utf-8",
+    )
+    bundled_compose = tmp_path / "bundled-compose.yml"
+    bundled_compose.write_text(
+        "services:\n  postgres:\n    image: postgres:18\n"
+        "  qdrant:\n    image: qdrant/qdrant:latest\n",
+        encoding="utf-8",
+    )
+    monkeypatch.setattr(installer, "_COMPOSE_SRC", bundled_compose)
+
+    reconciliation = installer.reconcile_unified_compose(services_dir)
+    notice = installer.compose_restart_required_notice(
+        reconciliation,
+        started_services=frozenset({"postgres"}),
+    )
+
+    assert (
+        notice == "Managed Compose definitions changed for qdrant; restart required to apply them."
+    )
 
 
 def test_pg_search_manifest_selects_current_arch_checksum(

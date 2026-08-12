@@ -172,11 +172,11 @@ class TestInstallQdrant:
 
     def test_install_creates_compose_file(self, tmp_path: Path) -> None:
         """install_qdrant copies compose template to services directory."""
-        from gobby.cli.installers.qdrant import _ensure_unified_compose
+        from gobby.cli.installers.postgres import reconcile_unified_compose
 
         services_dir = tmp_path / "services"
         services_dir.mkdir()
-        compose_file = _ensure_unified_compose(services_dir)
+        compose_file = reconcile_unified_compose(services_dir).compose_file
 
         assert compose_file.exists()
         assert compose_file.name == "docker-compose.yml"

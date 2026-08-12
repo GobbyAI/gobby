@@ -438,9 +438,9 @@ class TestUninstallFalkorDB:
                 password="secret",
                 gobby_home=tmp_path,
             )
-            compose_file = module._refresh_unified_compose(
-                tmp_path / "services", {"GOBBY_FALKORDB_PASSWORD": "secret"}
-            )
+            from gobby.cli.installers.postgres import reconcile_unified_compose
+
+            compose_file = reconcile_unified_compose(tmp_path / "services").compose_file
             result = module.uninstall_falkordb(gobby_home=tmp_path)
 
         assert result["success"] is True

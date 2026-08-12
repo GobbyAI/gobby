@@ -31,6 +31,7 @@ from .installers.managed_services_lock import (
     ManagedServicesLockError,
     managed_services_lock,
 )
+from .installers.postgres import reconcile_unified_compose
 
 logger = logging.getLogger(__name__)
 
@@ -95,6 +96,11 @@ def _start_managed_services_locked(
         return ServiceStartResult(
             "failed", f"Compose file is missing: {compose_file}; run `gobby install`"
         )
+
+    try:
+        compose_file = reconcile_unified_compose(services_dir).compose_file
+    except (OSError, RuntimeError) as exc:
+        return ServiceStartResult("failed", f"Could not refresh managed Compose file: {exc}")
 
     compose_error = _validate_managed_compose_profiles(compose_file)
     if compose_error:

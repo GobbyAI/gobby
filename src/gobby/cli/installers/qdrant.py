@@ -17,27 +17,14 @@ import httpx
 from .compose_env import ComposeEnvironmentError, resolve_compose_runtime
 from .docker_guard import ensure_docker_allowed
 from .managed_services_lock import ManagedServicesLockError, managed_services_lock
+from .postgres import compose_restart_required_notice, reconcile_unified_compose
 
 logger = logging.getLogger(__name__)
 
-# Bundled unified compose template
-_DATA_DIR = Path(__file__).resolve().parents[2] / "data"
-_COMPOSE_SRC = _DATA_DIR / "docker-compose.services.yml"
+_COMPOSE_SRC = Path(__file__).resolve().parents[2] / "data" / "docker-compose.services.yml"
 
 DEFAULT_QDRANT_HTTP_URL = "http://localhost:6333"
 DEFAULT_QDRANT_PORT = 6333
-
-
-def _ensure_unified_compose(services_dir: Path) -> Path:
-    """Ensure the unified Docker Compose file exists, copying from template if needed.
-
-    Returns the path to the compose file.
-    """
-    dest = services_dir / "docker-compose.yml"
-    if not dest.exists():
-        services_dir.mkdir(parents=True, exist_ok=True)
-        shutil.copy2(_COMPOSE_SRC, dest)
-    return dest
 
 
 def install_qdrant(
@@ -71,7 +58,8 @@ def _install_qdrant_locked(*, gobby_home: Path, port: int) -> dict[str, Any]:
         return {"success": False, "error": "Docker not found. Install Docker to use Qdrant."}
 
     services_dir = home / "services"
-    compose_file = _ensure_unified_compose(services_dir)
+    reconciliation = reconcile_unified_compose(services_dir)
+    compose_file = reconciliation.compose_file
 
     try:
         _update_config(qdrant_port=port, gobby_home=home)
@@ -120,11 +108,18 @@ def _install_qdrant_locked(*, gobby_home: Path, port: int) -> dict[str, Any]:
             "error": "Health check failed: Qdrant did not become healthy in time",
         }
 
-    return {
+    response: dict[str, Any] = {
         "success": True,
         "qdrant_url": url,
         "compose_file": str(compose_file),
     }
+    restart_notice = compose_restart_required_notice(
+        reconciliation,
+        started_services=frozenset({"qdrant"}),
+    )
+    if restart_notice:
+        response["restart_required"] = restart_notice
+    return response
 
 
 def _wait_for_health(url: str, retries: int = 30, interval: float = 2.0) -> bool:

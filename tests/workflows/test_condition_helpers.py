@@ -631,10 +631,17 @@ class TestTouchesDockerPolicyPath:
         [
             "Dockerfile",
             "containers/Dockerfile.dev",
+            "containers/dev.Dockerfile",
+            "containers/web.Dockerfile",
+            "containers/Dockerfile-dev",
+            "containers/Containerfile",
             "deploy/docker-compose.services.yml",
+            "deploy/podman-compose.override.yml",
             "deploy/compose.prod.yaml",
+            "deploy/compose-dev.yml",
             ".dockerignore",
             "docker-bake.hcl",
+            "docker-bake.override.hcl",
             ".docker/config.json",
         ],
     )
@@ -649,7 +656,7 @@ class TestTouchesDockerPolicyPath:
         assert touches_docker_policy_path(event_data, {}) is True
 
     def test_skips_unrelated_paths(self) -> None:
-        event_data = {"canonical_file_paths": ["README.md", "config/app.yaml"]}
+        event_data = {"canonical_file_paths": ["README.md", "config/app.yaml", "docker-bakery.hcl"]}
 
         assert touches_docker_policy_path(event_data, {}) is False
 

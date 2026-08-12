@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import hashlib
 import json
 import logging
 import os
@@ -10,6 +11,7 @@ import secrets
 import shutil
 import subprocess  # nosec B404 # subprocess needed for docker, pg_isready, dpkg
 import time
+from dataclasses import dataclass
 from importlib import resources
 from pathlib import Path
 from typing import Any, cast
@@ -17,6 +19,7 @@ from urllib.parse import quote, urlparse
 
 import click
 import psycopg
+import yaml
 
 from gobby.cli import postgres_bootstrap as _bootstrap
 from gobby.code_index.bm25_health import (
@@ -42,6 +45,124 @@ DEFAULT_POSTGRES_DB = "gobby"
 DEFAULT_POSTGRES_USER = "gobby"
 
 
+@dataclass(frozen=True, slots=True)
+class ComposeManifestReconciliation:
+    """Result of reconciling the installer-owned Compose manifest."""
+
+    compose_file: Path
+    refreshed: bool
+    had_deployed_manifest: bool
+    changed_services: frozenset[str]
+
+
+def reconcile_unified_compose(services_dir: Path) -> ComposeManifestReconciliation:
+    """Refresh a stale deployed manifest while preserving the managed restart policy."""
+    compose_file = services_dir / "docker-compose.yml"
+    template_content = _COMPOSE_SRC.read_text(encoding="utf-8")
+    had_deployed_manifest = compose_file.exists()
+    deployed_content = compose_file.read_text(encoding="utf-8") if had_deployed_manifest else None
+    candidate_content = _preserve_disabled_restart_policy(
+        template_content,
+        deployed_content,
+    )
+
+    if deployed_content is not None and _content_checksum(deployed_content) == _content_checksum(
+        candidate_content
+    ):
+        return ComposeManifestReconciliation(
+            compose_file=compose_file,
+            refreshed=False,
+            had_deployed_manifest=True,
+            changed_services=frozenset(),
+        )
+
+    changed_services = (
+        _changed_compose_services(deployed_content, candidate_content)
+        if deployed_content is not None
+        else frozenset()
+    )
+    services_dir.mkdir(parents=True, exist_ok=True)
+    if candidate_content == template_content:
+        shutil.copy2(_COMPOSE_SRC, compose_file)
+    else:
+        compose_file.write_text(candidate_content, encoding="utf-8")
+    return ComposeManifestReconciliation(
+        compose_file=compose_file,
+        refreshed=True,
+        had_deployed_manifest=had_deployed_manifest,
+        changed_services=changed_services,
+    )
+
+
+def compose_restart_required_notice(
+    reconciliation: ComposeManifestReconciliation,
+    *,
+    started_services: frozenset[str],
+) -> str | None:
+    """Describe changed service definitions not applied by the current install command."""
+    pending = reconciliation.changed_services - started_services
+    if not reconciliation.had_deployed_manifest or not pending:
+        return None
+    names = ", ".join(sorted(pending))
+    return f"Managed Compose definitions changed for {names}; restart required to apply them."
+
+
+def _content_checksum(content: str) -> bytes:
+    return hashlib.sha256(content.encode("utf-8")).digest()
+
+
+def _compose_services(content: str | None) -> dict[str, object]:
+    if content is None:
+        return {}
+    try:
+        document = yaml.safe_load(content)
+    except yaml.YAMLError:
+        return {}
+    if not isinstance(document, dict):
+        return {}
+    services = document.get("services")
+    if not isinstance(services, dict):
+        return {}
+    return {str(name): definition for name, definition in services.items()}
+
+
+def _preserve_disabled_restart_policy(template_content: str, deployed_content: str | None) -> str:
+    """Preserve the only supported deployed customization made by container_restart."""
+    template_services = _compose_services(template_content)
+    deployed_services = _compose_services(deployed_content)
+    managed_deployed_services = [
+        definition for name, definition in deployed_services.items() if name in template_services
+    ]
+    if (
+        not template_services
+        or not managed_deployed_services
+        or not all(
+            _service_restart_is_disabled(definition) for definition in managed_deployed_services
+        )
+    ):
+        return template_content
+
+    default_line = "restart: unless-stopped"
+    if template_content.count(default_line) != len(template_services):
+        raise RuntimeError(
+            "Managed service Compose template must define one default restart policy per service"
+        )
+    return template_content.replace(default_line, 'restart: "no"')
+
+
+def _service_restart_is_disabled(definition: object) -> bool:
+    return isinstance(definition, dict) and definition.get("restart") == "no"
+
+
+def _changed_compose_services(previous: str, current: str) -> frozenset[str]:
+    previous_services = _compose_services(previous)
+    current_services = _compose_services(current)
+    names = previous_services.keys() | current_services.keys()
+    return frozenset(
+        name for name in names if previous_services.get(name) != current_services.get(name)
+    )
+
+
 def install_postgres(
     *,
     gobby_home: Path | None = None,
@@ -65,7 +186,8 @@ def _install_docker(*, gobby_home: Path | None, port: int) -> dict[str, Any]:
         }
 
     services_dir = home / "services"
-    compose_file = _ensure_unified_compose(services_dir)
+    reconciliation = reconcile_unified_compose(services_dir)
+    compose_file = reconciliation.compose_file
     _sync_postgres_pgsearch_assets(gobby_home=home)
     try:
         database_url, runtime = _resolve_postgres_install_database_url(
@@ -121,12 +243,19 @@ def _install_docker(*, gobby_home: Path | None, port: int) -> dict[str, Any]:
         )
     _write_bootstrap_defaults(gobby_home=home, database_url=database_url)
 
-    return {
+    response: dict[str, Any] = {
         "success": True,
         "database_url": database_url,
         "compose_file": str(compose_file),
         "message": "PostgreSQL installed via Docker Compose.",
     }
+    restart_notice = compose_restart_required_notice(
+        reconciliation,
+        started_services=frozenset({"postgres"}),
+    )
+    if restart_notice:
+        response["restart_required"] = restart_notice
+    return response
 
 
 async def get_postgres_status(
@@ -221,13 +350,6 @@ def render_postgres_status(payload: dict[str, Any]) -> str:
     if error:
         lines.append(f"Error:       {error}")
     return "\n".join(lines)
-
-
-def _ensure_unified_compose(services_dir: Path) -> Path:
-    dest = services_dir / "docker-compose.yml"
-    services_dir.mkdir(parents=True, exist_ok=True)
-    shutil.copy2(_COMPOSE_SRC, dest)
-    return dest
 
 
 def _sync_postgres_pgsearch_assets(*, gobby_home: Path | None = None) -> Path:

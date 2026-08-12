@@ -15,6 +15,7 @@ import pytest
 import yaml
 
 from gobby.hooks.events import HookEvent, HookEventType, SessionSource
+from gobby.hooks.normalization import normalize_tool_fields
 from gobby.storage.hub.protocol import HubDatabase
 from gobby.storage.workflow_definitions import LocalWorkflowDefinitionManager
 from gobby.workflows.definitions import RuleDefinitionBody, RuleEffect
@@ -387,17 +388,13 @@ class TestManagedGitIsolationRules:
         assert ("Ask the user for permission to disable this rule" in reason) is not spawned
 
 
-class TestDockerPolicyApprovalRule:
-    """Verify Docker policy writes require direct, one-turn user approval."""
+class TestDockerPolicyBlockRule:
+    """Verify Docker policy writes are blocked until the installed rule is toggled off."""
 
     @staticmethod
     def _isolated_engine(db: HubDatabase) -> RuleEngine:
         _sync_bundled(db)
-        db.execute(
-            "DELETE FROM workflow_definitions "
-            "WHERE name NOT IN "
-            "('set-docker-policy-approval-for-turn', 'require-docker-policy-approval')"
-        )
+        db.execute("DELETE FROM workflow_definitions WHERE name != 'block-docker-policy-edits'")
         return RuleEngine(db)
 
     @staticmethod
@@ -410,35 +407,28 @@ class TestDockerPolicyApprovalRule:
             data=data,
         )
 
-    @pytest.mark.asyncio
-    async def test_approval_requires_exact_interactive_user_prompt(self, db: HubDatabase) -> None:
-        engine = self._isolated_engine(db)
-        variables: dict[str, object] = {}
+    def test_rule_is_one_enabled_plain_block(
+        self,
+        db: HubDatabase,
+        manager: LocalWorkflowDefinitionManager,
+    ) -> None:
+        self._isolated_engine(db)
 
-        await engine.evaluate(
-            self._event(HookEventType.BEFORE_AGENT, {"prompt": "/approve-docker-policy"}),
-            session_id=SESSION_ID,
-            variables=variables,
-        )
-        assert variables["docker_policy_user_approved_this_turn"] is True
-
-        await engine.evaluate(
-            self._event(
-                HookEventType.BEFORE_AGENT,
-                {"prompt": "please use /approve-docker-policy"},
-            ),
-            session_id=SESSION_ID,
-            variables=variables,
-        )
-        assert variables["docker_policy_user_approved_this_turn"] is False
-
-        variables["is_spawned_agent"] = True
-        await engine.evaluate(
-            self._event(HookEventType.BEFORE_AGENT, {"prompt": "/approve-docker-policy"}),
-            session_id=SESSION_ID,
-            variables=variables,
-        )
-        assert variables["docker_policy_user_approved_this_turn"] is False
+        row = manager.get_by_name("block-docker-policy-edits")
+        assert row is not None
+        assert row.enabled is True
+        body = RuleDefinitionBody.model_validate_json(row.definition_json)
+        assert body.event.value == "before_tool"
+        assert body.when is not None
+        assert "canonical_tool_kind" in body.when
+        assert "touches_docker_policy_path" in body.when
+        assert "variables" not in body.when
+        assert "ordinary MCP tool" in (row.description or "")
+        assert "path-less shell mutations" in (row.description or "")
+        effects = body.effects
+        assert effects is not None
+        assert len(effects) == 1
+        assert effects[0].type == "block"
 
     @pytest.mark.asyncio
     @pytest.mark.parametrize(
@@ -453,7 +443,7 @@ class TestDockerPolicyApprovalRule:
             ".docker/config.json",
         ],
     )
-    async def test_protected_paths_require_approval(self, db: HubDatabase, path: str) -> None:
+    async def test_protected_paths_are_blocked(self, db: HubDatabase, path: str) -> None:
         engine = self._isolated_engine(db)
         event = self._event(
             HookEventType.BEFORE_TOOL,
@@ -467,16 +457,75 @@ class TestDockerPolicyApprovalRule:
         )
 
         blocked = await engine.evaluate(event, session_id=SESSION_ID, variables={})
-        allowed = await engine.evaluate(
-            event,
-            session_id=SESSION_ID,
-            variables={"docker_policy_user_approved_this_turn": True},
-        )
 
         assert blocked.decision == "block"
         assert blocked.reason is not None
-        assert "/approve-docker-policy" in blocked.reason
-        assert allowed.decision == "allow"
+        assert "toggle_rule('block-docker-policy-edits', enabled=false)" in blocked.reason
+        assert "gobby rules toggle" in blocked.reason
+
+    @pytest.mark.asyncio
+    async def test_toggle_rule_off_allows_write_and_on_blocks_again(
+        self,
+        db: HubDatabase,
+        manager: LocalWorkflowDefinitionManager,
+    ) -> None:
+        from gobby.mcp_proxy.tools.workflows._rules import toggle_rule
+
+        engine = self._isolated_engine(db)
+        event = self._event(
+            HookEventType.BEFORE_TOOL,
+            {
+                "canonical_tool_kind": "write",
+                "canonical_file_paths": ["Dockerfile"],
+                "tool_input": {"file_path": "Dockerfile"},
+                "tool_name": "Edit",
+            },
+        )
+
+        assert (
+            await engine.evaluate(event, session_id=SESSION_ID, variables={})
+        ).decision == "block"
+        assert toggle_rule(manager, name="block-docker-policy-edits", enabled=False)["success"]
+        assert (
+            await engine.evaluate(event, session_id=SESSION_ID, variables={})
+        ).decision == "allow"
+        assert toggle_rule(manager, name="block-docker-policy-edits", enabled=True)["success"]
+        assert (
+            await engine.evaluate(event, session_id=SESSION_ID, variables={})
+        ).decision == "block"
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize(
+        ("command", "target"),
+        [
+            ("echo x > Dockerfile", "Dockerfile"),
+            ("printf x | tee ops/compose-prod.yml", "ops/compose-prod.yml"),
+            ("cp template.yml deploy/podman-compose.yml", "deploy/podman-compose.yml"),
+        ],
+    )
+    async def test_canonical_shell_writes_are_blocked(
+        self,
+        db: HubDatabase,
+        command: str,
+        target: str,
+    ) -> None:
+        engine = self._isolated_engine(db)
+        data: dict[str, object] = {
+            "tool_input": {"command": command},
+            "tool_name": "Bash",
+        }
+        normalize_tool_fields(data)
+
+        assert data["canonical_tool_kind"] == "write"
+        canonical_file_paths = data["canonical_file_paths"]
+        assert isinstance(canonical_file_paths, list)
+        assert target in canonical_file_paths
+        response = await engine.evaluate(
+            self._event(HookEventType.BEFORE_TOOL, data),
+            session_id=SESSION_ID,
+            variables={},
+        )
+        assert response.decision == "block"
 
     @pytest.mark.asyncio
     async def test_multi_path_patch_and_unrelated_write(self, db: HubDatabase) -> None:

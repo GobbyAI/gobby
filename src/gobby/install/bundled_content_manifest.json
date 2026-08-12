@@ -544,6 +544,7 @@
     "workflows/rules/tool-hygiene/block-claude-memory-search.yaml": "cd0ae13eeace602dc7591877dc496b5c969b39710cf52618328171be60283079",
     "workflows/rules/tool-hygiene/block-claude-memory-write.yaml": "16feaf70a087fa7974be646bf8f55fa3b96fe323a6d353f5d5dcb6b8162a9dde",
     "workflows/rules/tool-hygiene/require-uv.yaml": "80787035529caa6756d1a7947cbdf0fb34da1d88331ecb766e6cf196b5d07d09",
+    "workflows/rules/worker-safety/block-docker-policy-edits.yaml": "41aaceec5d5c969faabed08967933cede0f1f5ece3e313a74b541efb1cd9e23d",
     "workflows/rules/worker-safety/block-git-clone.yaml": "ffe19d3b9ee9c11f1c61d85a25a9b564204cc73fe36cf2d1279fa73b0d1bb11e",
     "workflows/rules/worker-safety/block-git-worktree-mutations.yaml": "855ee00c030264a866eb062dbf274783ef29bd98553259c1ae32b1bced05b10f",
     "workflows/rules/worker-safety/no-agent-spawn-for-merge.yaml": "3c8477a91af15df56ac4be029db90f063b4d486fc04d2e7e8a6f914c002c850c",
@@ -563,7 +564,6 @@
     "workflows/rules/worker-safety/no-push-for-workers.yaml": "0f2a1c8e014b2cb20ad102d434e53e03e0c26af7c8cc05aa354c25f66b628292",
     "workflows/rules/worker-safety/no-push.yaml": "d1eb1d46a70ec0557c7f99a7ce17eca07ffca503cd7bfe2531f029bb163c0c59",
     "workflows/rules/worker-safety/no-remote-exec.yaml": "d1cf30a69804add69ee11394f376c4d33e68fe0c5d3eabb6d955595adc0cc7e5",
-    "workflows/rules/worker-safety/require-docker-policy-approval.yaml": "984102909c02c9405ec1683eb38b4e60bc29a6c21edc5115f4d6d4454c0e023b",
     "workflows/variables/gobby-default-variables.yaml": "5c63dc88eb19e7f2c3cace888172405a81c68994c0c1fd6388a0a95de59da884"
   },
   "hash_algorithm": "sha256",
