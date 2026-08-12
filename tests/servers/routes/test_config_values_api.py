@@ -510,6 +510,68 @@ def test_voice_binding_masked_key_is_restored_from_anchored_epoch() -> None:
     assert submitted[0]["api_key"] == reference
 
 
+def test_voice_binding_masked_keys_follow_provider_identity_when_reordered() -> None:
+    first = {**_voice_binding("$secret:FIRST"), "provider": "first"}
+    second = {**_voice_binding("$secret:SECOND"), "provider": "second"}
+    stored = {_VOICE_KEY: [first, second]}
+    service, runtime, mutations = _service(
+        _snapshot(5, desired_values=stored),
+        result=ConfigMutationResult(6, frozenset({_VOICE_KEY})),
+    )
+    runtime.reconciled = _snapshot(6, desired_values=stored)
+    submitted = [
+        {**second, "api_key": "********"},
+        {**first, "api_key": "********"},
+    ]
+
+    response = _client(service).patch(
+        "/api/config/values",
+        json={
+            "expected_revision": 5,
+            "values": {"voice": {"openai_compatible_audio": submitted}},
+        },
+    )
+
+    assert response.status_code == 200
+    persisted = cast(list[dict[str, object]], mutations.calls[-1][1].values[_VOICE_KEY])
+    assert [item["api_key"] for item in persisted] == ["$secret:SECOND", "$secret:FIRST"]
+
+
+def test_voice_binding_contract_rejects_non_list_value() -> None:
+    service, _runtime, mutations = _service(_snapshot(3))
+
+    response = _client(service).patch(
+        "/api/config/values",
+        json={
+            "expected_revision": 3,
+            "values": {"voice": {"openai_compatible_audio": {}}},
+        },
+    )
+
+    assert response.status_code == 422
+    assert "must be a list" in response.json()["error"]["message"]
+    assert mutations.calls == []
+
+
+def test_internal_mutation_type_error_returns_logged_500(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    service, _runtime, _mutations = _service(
+        _snapshot(3),
+        error=TypeError("adapter implementation failed"),
+    )
+
+    response = _client(service).patch(
+        "/api/config/values",
+        json={"expected_revision": 3, "values": {"ui": {"enabled": True}}},
+    )
+
+    assert response.status_code == 500
+    assert response.json()["error"]["code"] == "persistence_indeterminate"
+    assert "Configuration persistence outcome is indeterminate" in caplog.text
+    assert "adapter implementation failed" not in response.text
+
+
 def test_voice_binding_masked_key_requires_matching_epoch() -> None:
     stored = {_VOICE_KEY: [_voice_binding("$secret:SPEACHES_KEY")]}
     service, _runtime, mutations = _service(_snapshot(6, desired_values=stored))

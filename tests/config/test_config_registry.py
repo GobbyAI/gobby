@@ -1,6 +1,7 @@
 """Acceptance tests for the typed runtime configuration registry."""
 
 from collections.abc import Iterator, Mapping
+from dataclasses import fields
 from types import UnionType
 from typing import Union, cast, get_args, get_origin
 
@@ -20,6 +21,7 @@ from gobby.config.registry import (
     ConfigSecrecy,
     ConfigVisibility,
     UnknownConfigKeyError,
+    config_structured_identity_field,
     decode_dynamic_segment,
     encode_dynamic_segment,
 )
@@ -158,6 +160,7 @@ def test_visibility_partitions_are_disjoint() -> None:
 def test_structured_voice_api_key_secrecy_is_registry_owned() -> None:
     spec = CONFIG_REGISTRY.resolve("voice.openai_compatible_audio")
 
+    assert config_structured_identity_field(spec).name == "provider"
     assert {field.name: field.secrecy for field in spec.field_specs}["api_key"] is (
         ConfigSecrecy.REFERENCE
     )
@@ -169,11 +172,20 @@ def test_structured_voice_api_key_secrecy_is_registry_owned() -> None:
     fields = cast(Mapping[str, object], metadata["fields"])
     api_key = cast(Mapping[str, object], fields["api_key"])
     assert api_key["secrecy"] == "reference"
+    provider = cast(Mapping[str, object], fields["provider"])
+    assert provider["identity"] is True
 
 
 def test_postgres_pool_is_bootstrap_only() -> None:
     with pytest.raises(UnknownConfigKeyError):
         CONFIG_REGISTRY.resolve("postgres_pool")
+
+
+def test_bootstrap_field_names_never_enter_runtime_registry() -> None:
+    bootstrap_field_names = {field.name for field in fields(BootstrapConfig)}
+    runtime_keys = {spec.key for spec in CONFIG_REGISTRY.key_specs}
+
+    assert bootstrap_field_names.isdisjoint(runtime_keys)
 
 
 def _pattern_segments(pattern: ConfigPatternSpec) -> dict[str, str]:

@@ -31,7 +31,7 @@ from gobby.config.registry import (
     RegistrySpec,
     UnknownConfigKeyError,
     config_key_secrecy,
-    config_reference_fields,
+    config_structured_reference_fields,
 )
 from gobby.config.voice_secrets import validate_structured_references
 from gobby.storage.config_repository import (
@@ -278,7 +278,7 @@ class ConfigMutations:
             revision = self.repository.read_revision(transaction, lock=True)
             if revision != expected_revision:
                 raise ConfigConflictError(expected_revision, revision)
-            rows = self.repository._read_rows(transaction)
+            rows = self.repository.read_rows(transaction)
             snapshot = self.repository.snapshot_from_rows(transaction, revision, rows)
             effective_patch = self._scoped_patch(patch, snapshot, namespace)
             self._validate_embedding_admission(
@@ -430,7 +430,7 @@ class ConfigMutations:
                                 key=key,
                             )
                         candidate_bindings[key] = SecretBinding(validated, plaintext)
-                if reference_fields := config_reference_fields(spec):
+                if reference_fields := config_structured_reference_fields(spec):
                     try:
                         validate_structured_references(
                             key,
@@ -482,7 +482,7 @@ class ConfigMutations:
                     f"Complete configuration candidate is invalid: {detail}",
                     key=error_key,
                 ) from exc
-        except (ValueError, TypeError) as exc:
+        except ValueError as exc:
             changed_keys = (*patch.values, *patch.secrets, *patch.unset)
             error_key = changed_keys[0] if len(changed_keys) == 1 else None
             raise ConfigValidationError(
@@ -544,16 +544,25 @@ class ConfigMutations:
                 raise ConfigValidationError(f"Unsupported patterned configuration key {key!r}")
             annotation = field_spec.annotation
         try:
+            _require_json_domain(value)
+        except (TypeError, ValueError) as exc:
+            raise ConfigValidationError(
+                f"Invalid value for configuration key {key!r}: {exc}",
+                key=key,
+            ) from exc
+        try:
             # Values arrive as decoded JSON/YAML documents, so strictness must
             # use JSON semantics: '5' never coerces to 5, but enum-keyed maps
             # accept their canonical string keys (python-strict would reject
             # the JSON form of a key's own default).
-            _require_json_domain(value)
             return cast(
                 object,
                 TypeAdapter(annotation).validate_json(to_json(value), strict=True),
             )
-        except (ValidationError, PydanticSerializationError, TypeError, ValueError) as exc:
+        except TypeError:
+            logger.exception("Configuration type adapter failed for %s", key)
+            raise
+        except (ValidationError, PydanticSerializationError, ValueError) as exc:
             raise ConfigValidationError(
                 f"Invalid value for configuration key {key!r}: {exc}",
                 key=key,
@@ -608,7 +617,7 @@ class ConfigMutations:
         source: str,
         revision: int,
     ) -> None:
-        released: dict[str, set[str]] = {}
+        released: set[str] = set()
         retained_values = dict(snapshot.overrides)
         for key in patch.unset:
             retained_values.pop(key, None)
@@ -619,7 +628,7 @@ class ConfigMutations:
             binding = snapshot.secret_bindings.get(key)
             if binding is not None:
                 name = normalize_secret_name(binding.reference.removeprefix("$secret:"))
-                released.setdefault(name, set()).add(key)
+                released.add(name)
 
         for key in sorted(set(patch.unset) & set(changed)):
             release_binding(key)

@@ -6,6 +6,8 @@ import logging
 from dataclasses import dataclass
 from typing import Any
 
+import psycopg
+
 from gobby.storage.config_repository import ConfigRepositoryError
 
 DEFAULT_ATTACHMENT_MAX_FILE_BYTES = 100_000_000
@@ -142,7 +144,7 @@ def resolve_server_attachment_limits(server: Any) -> ChatAttachmentLimits:
 def _store_limit(store: Any, key: str, fallback: int) -> int:
     try:
         value = store.get(key)
-    except (ConfigRepositoryError, ValueError):
+    except (ConfigRepositoryError, ValueError, psycopg.Error):
         logger.warning("Config store read failed for %s; using fallback", key)
         return fallback
     return _positive_int(value, fallback)

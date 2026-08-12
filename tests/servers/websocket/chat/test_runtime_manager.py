@@ -71,6 +71,34 @@ class TestWebChatRuntimeManager:
         assert session.sandbox_config is not None
         assert session.sandbox_config.enabled is True
 
+    def test_live_sandbox_refresh_uses_backend_public_setters(self) -> None:
+        current = [DaemonConfig(web_chat_sandbox={"enabled": False})]
+        manager = WebChatRuntimeManager(
+            codex_client=None,
+            daemon_config=current[0],
+            config_resolver=lambda: current[0],
+        )
+        backends = (
+            manager._claude_backend,
+            manager._codex_backend,
+            manager._grok_backend,
+            manager._qwen_backend,
+            manager._droid_backend,
+        )
+        setters = [
+            patch.object(backend, "set_sandbox_config", wraps=backend.set_sandbox_config)
+            for backend in backends
+        ]
+        mocks = [setter.start() for setter in setters]
+        try:
+            current[0] = DaemonConfig(web_chat_sandbox={"enabled": True})
+            assert manager.sandbox_config.enabled is True
+        finally:
+            for setter in setters:
+                setter.stop()
+
+        assert all(mock.call_count == 1 for mock in mocks)
+
     def test_create_session_routes_by_provider(self) -> None:
         manager = WebChatRuntimeManager(
             codex_client=None,

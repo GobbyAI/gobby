@@ -16,7 +16,8 @@ from gobby.config.registry import (
     ConfigVisibility,
     UnknownConfigKeyError,
     config_key_secrecy,
-    config_reference_fields,
+    config_structured_identity_field,
+    config_structured_reference_fields,
 )
 from gobby.config.runtime import ConfigSnapshot
 from gobby.config.secret_mask import MASKED_SECRET
@@ -225,7 +226,7 @@ class ConfigDocumentsService:
                     or restored_masked_reference
                 )
                 continue
-            if reference_fields := config_reference_fields(spec):
+            if reference_fields := config_structured_reference_fields(spec):
                 fields = tuple(field.name for field in reference_fields)
                 restored_masked_reference = (
                     self._has_masked_structured_reference(value, fields)
@@ -236,6 +237,7 @@ class ConfigDocumentsService:
                     value,
                     snapshot,
                     fields,
+                    config_structured_identity_field(spec).name,
                 )
             values[key] = value
             validation_values[key] = value
@@ -277,16 +279,16 @@ class ConfigDocumentsService:
         value: object,
         snapshot: ConfigSnapshot,
         reference_fields: tuple[str, ...],
+        identity_field: str,
     ) -> object:
         """Restore masked structured fields and reject plaintext on import."""
-        if not isinstance(value, list):
-            return value
         try:
             value = restore_masked_structured_references(
                 key,
                 value,
                 snapshot.desired_values.get(key),
                 reference_fields,
+                identity_field,
             )
             validate_structured_references(key, value, reference_fields)
         except ValueError as exc:
@@ -361,7 +363,7 @@ class ConfigDocumentsService:
                 continue
             if config_key_secrecy(spec, key) is ConfigSecrecy.REFERENCE:
                 values[key] = MASKED_SECRET if value not in (None, "") else value
-            elif reference_fields := config_reference_fields(spec):
+            elif reference_fields := config_structured_reference_fields(spec):
                 values[key] = mask_structured_references(
                     value,
                     tuple(field.name for field in reference_fields),

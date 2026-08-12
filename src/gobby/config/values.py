@@ -4,7 +4,6 @@ from __future__ import annotations
 
 import asyncio
 from collections.abc import Awaitable, Callable, Collection, Mapping
-from dataclasses import dataclass
 from typing import Protocol
 
 from pydantic_core import to_jsonable_python
@@ -16,9 +15,11 @@ from gobby.config.registry import (
     ConfigRegistry,
     ConfigSecrecy,
     ConfigVisibility,
+    RegistrySpec,
     UnknownConfigKeyError,
     config_key_secrecy,
-    config_reference_fields,
+    config_structured_identity_field,
+    config_structured_reference_fields,
     decode_dynamic_segment,
 )
 from gobby.config.runtime import ConfigSnapshot
@@ -60,18 +61,29 @@ class RunBlocking(Protocol):
     def __call__[T](self, operation: Callable[[], T]) -> Awaitable[T]: ...
 
 
-@dataclass(frozen=True, slots=True)
 class ConfigValuesError(RuntimeError):
     """Transport-neutral public configuration error."""
 
-    code: str
-    message: str
-    path: tuple[str, ...]
-    status_code: int = 422
-    retryable: bool = False
-    action: str | None = None
-    expected_revision: int | None = None
-    actual_revision: int | None = None
+    def __init__(
+        self,
+        code: str,
+        message: str,
+        path: tuple[str, ...],
+        status_code: int = 422,
+        retryable: bool = False,
+        action: str | None = None,
+        expected_revision: int | None = None,
+        actual_revision: int | None = None,
+    ) -> None:
+        super().__init__(message)
+        self.code = code
+        self.message = message
+        self.path = path
+        self.status_code = status_code
+        self.retryable = retryable
+        self.action = action
+        self.expected_revision = expected_revision
+        self.actual_revision = actual_revision
 
     def public_body(self) -> dict[str, object]:
         error: dict[str, object] = {
@@ -225,7 +237,8 @@ class ConfigValuesService:
         resolved_paths = dict(paths or {})
         for key, value in values.items():
             path = resolved_paths.setdefault(key, tuple(key.split(".")))
-            secrecy = self._authorize(key, path)
+            spec = self._authorize(key, path)
+            secrecy = config_key_secrecy(spec, key)
             if secrecy is ConfigSecrecy.REFERENCE:
                 if value == MASKED_SECRET:
                     continue
@@ -242,12 +255,13 @@ class ConfigValuesService:
                         ("values", *path),
                     )
                 secret_updates[key] = SecretUpdate(plaintext=value, category="general")
-            elif reference_fields := config_reference_fields(self.registry.resolve(key)):
+            elif reference_fields := config_structured_reference_fields(spec):
                 value_updates[key] = self._prepared_structured_references(
                     key,
                     value,
                     path,
                     tuple(field.name for field in reference_fields),
+                    config_structured_identity_field(spec).name,
                     expected_revision=expected_revision,
                 )
             else:
@@ -327,13 +341,12 @@ class ConfigValuesService:
         value: object,
         path: tuple[str, ...],
         reference_fields: tuple[str, ...],
+        identity_field: str,
         *,
         expected_revision: int,
     ) -> object:
         """Restore masked structured fields and reject plaintext before CAS."""
-        if not isinstance(value, list):
-            return value
-        has_masked = any(
+        has_masked = isinstance(value, list) and any(
             isinstance(item, Mapping)
             and any(item.get(field) == MASKED_SECRET for field in reference_fields)
             for item in value
@@ -346,6 +359,7 @@ class ConfigValuesService:
                     value,
                     snapshot.desired_values.get(key),
                     reference_fields,
+                    identity_field,
                 )
             except ValueError as exc:
                 raise ConfigValuesError(
@@ -372,8 +386,6 @@ class ConfigValuesService:
         expected_revision: int,
     ) -> None:
         """Require the probe-gated activation route for responses-wire endpoints."""
-        if not any(key.startswith(_GENERATION_ENDPOINT_PREFIX) for key in (*values, *unset)):
-            return
         reject_unprobed_responses_endpoints(
             values,
             unset,
@@ -381,7 +393,7 @@ class ConfigValuesService:
             self._anchored_snapshot(expected_revision).desired,
         )
 
-    def _authorize(self, key: str, path: tuple[str, ...]) -> ConfigSecrecy:
+    def _authorize(self, key: str, path: tuple[str, ...]) -> RegistrySpec:
         try:
             spec = self.registry.resolve(key)
         except UnknownConfigKeyError as exc:
@@ -403,7 +415,7 @@ class ConfigValuesService:
                 ("values", *path),
                 action="/api/embeddings/switch/start",
             )
-        return config_key_secrecy(spec, key)
+        return spec
 
     def _flatten_values(
         self,
@@ -479,7 +491,7 @@ class ConfigValuesService:
                 is_set = isinstance(value, str) and value.startswith("$secret:")
                 secret_set[key] = is_set
                 projected[key] = MASKED_SECRET if is_set else None
-            elif reference_fields := config_reference_fields(spec):
+            elif reference_fields := config_structured_reference_fields(spec):
                 projected[key] = mask_structured_references(
                     to_jsonable_python(value),
                     tuple(field.name for field in reference_fields),

@@ -17,6 +17,7 @@ from gobby.agents.tmux.text_injection import (
     AttentionInjectionError,
     inject_attention_answer_to_tmux_target,
 )
+from gobby.servers.routes.configuration_context import require_config_snapshot
 from gobby.storage.agents import AgentRun, LocalAgentRunManager
 from gobby.storage.attention import AttentionRosterSnapshot, AttentionState
 from gobby.storage.session_models import Session
@@ -455,7 +456,7 @@ async def _load_roster_entries(
                 "task": task_cache.get(run.task_id) if run.task_id is not None else None,
                 "provider": run.provider,
                 "model": run.model,
-                "tmux": _run_tmux_payload(services, run),
+                "tmux": _run_tmux_payload(server, run),
                 "last_activity_at": _serialize_timestamp(run.updated_at),
                 **_metadata_payload(snapshot, entry_id),
             }
@@ -566,14 +567,11 @@ def _serialize_attention(state: AttentionState | None) -> dict[str, object] | No
     }
 
 
-def _run_tmux_payload(services: Any, run: Any) -> dict[str, object] | None:
+def _run_tmux_payload(server: HTTPServer, run: Any) -> dict[str, object] | None:
     session_name = run.tmux_session_name
     if not isinstance(session_name, str) or not session_name:
         return None
-    config_runtime = services.config_runtime
-    if config_runtime is None:
-        raise RuntimeError("Config runtime unavailable")
-    tmux_config = config_runtime.snapshot.active.tmux
+    tmux_config = require_config_snapshot(server).active.tmux
     socket_path = getattr(tmux_config, "socket_path", None)
     return {
         "socket_path": socket_path if isinstance(socket_path, str) and socket_path else None,
@@ -646,10 +644,7 @@ async def _resolve_attention_pane(
 
     from gobby.agents.tmux import get_tmux_session_manager
 
-    config_runtime = services.config_runtime
-    if config_runtime is None:
-        raise RuntimeError("Config runtime unavailable")
-    tmux_config = config_runtime.snapshot.active.tmux
+    tmux_config = require_config_snapshot(server).active.tmux
     tmux = get_tmux_session_manager(tmux_config)
     session_name = run.tmux_session_name
 

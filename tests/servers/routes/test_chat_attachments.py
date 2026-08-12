@@ -5,13 +5,14 @@ from __future__ import annotations
 from pathlib import Path
 from typing import Any, cast
 
+import psycopg
 import pytest
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
 
 import gobby.servers.routes.chat_attachments as chat_attachment_routes
 from gobby.config.app import DaemonConfig
-from gobby.servers.chat_attachment_limits import resolve_server_attachment_limits
+from gobby.servers.chat_attachment_limits import _store_limit, resolve_server_attachment_limits
 from gobby.servers.routes.chat_attachments import (
     create_chat_attachments_router,
     resolve_mime_type,
@@ -23,6 +24,14 @@ from gobby.storage.projects import PERSONAL_PROJECT_ID, LocalProjectManager
 from tests.servers.conftest import create_http_server
 
 pytestmark = pytest.mark.unit
+
+
+def test_store_limit_uses_fallback_on_database_driver_error() -> None:
+    class FailingStore:
+        def get(self, key: str) -> object:
+            raise psycopg.OperationalError("database unavailable")
+
+    assert _store_limit(FailingStore(), "chat.attachment_max_file_bytes", 123) == 123
 
 
 @pytest.fixture

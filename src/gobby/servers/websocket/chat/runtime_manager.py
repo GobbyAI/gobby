@@ -308,13 +308,13 @@ class WebChatRuntimeManager:
             return self._sandbox_config
         self._sandbox_config = web_chat_sandbox_config(daemon_config)
         self._sandbox_policy_hash = web_chat_sandbox_policy_hash(daemon_config)
-        self._claude_backend._sandbox_config = self._sandbox_config.model_copy(deep=True)
-        self._codex_backend._sandbox_config = self._sandbox_config.model_copy(deep=True)
+        self._claude_backend.set_sandbox_config(self._sandbox_config)
+        self._codex_backend.set_sandbox_config(self._sandbox_config)
         for backend in self._codex_endpoint_backends.values():
-            backend._sandbox_config = self._sandbox_config.model_copy(deep=True)
-        self._grok_backend._sandbox_config = self._sandbox_config.model_copy(deep=True)
-        self._qwen_backend._sandbox_config = self._sandbox_config.model_copy(deep=True)
-        self._droid_backend._sandbox_config = self._sandbox_config.model_copy(deep=True)
+            backend.set_sandbox_config(self._sandbox_config)
+        self._grok_backend.set_sandbox_config(self._sandbox_config)
+        self._qwen_backend.set_sandbox_config(self._sandbox_config)
+        self._droid_backend.set_sandbox_config(self._sandbox_config)
         return self._sandbox_config
 
     def _codex_backend_for_model(self, model: str | None) -> tuple[CodexWebChatBackend, str | None]:

@@ -413,6 +413,9 @@ class DroidWebChatBackend:
         self._handles: dict[str, _DroidProcessHandle] = {}
         self._permission_resolver = DroidPermissionResolver(droid_tool_name_adapter)
 
+    def set_sandbox_config(self, config: SandboxConfig) -> None:
+        self._sandbox_config = config.model_copy(deep=True)
+
     async def start(self, *, background: bool = False) -> None:
         del background
         path = shutil.which("droid")

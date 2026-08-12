@@ -315,6 +315,9 @@ class CodexWebChatBackend:
         self.transcript_retry_attempts = transcript_retry_attempts
         self.transcript_retry_delay_seconds = transcript_retry_delay_seconds
 
+    def set_sandbox_config(self, config: SandboxConfig) -> None:
+        self._sandbox_config = config.model_copy(deep=True)
+
     @property
     def client(self) -> CodexAppServerClient | None:
         """Expose the shared Codex app-server client for callers."""

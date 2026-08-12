@@ -15,11 +15,13 @@ from __future__ import annotations
 import json
 import logging
 from typing import Any, Literal
+from unittest.mock import MagicMock, PropertyMock
 
 import pytest
 from starlette.testclient import TestClient
 
 from gobby.config.app import DaemonConfig
+from gobby.config.runtime import ConfigRuntime
 from gobby.config.runtime_models import ConfigSnapshot
 from gobby.storage.hub.protocol import HubDatabase
 from gobby.storage.workflow_definitions import LocalWorkflowDefinitionManager
@@ -102,6 +104,18 @@ def _seed_invalid_rule(def_manager: LocalWorkflowDefinitionManager) -> None:
 
 class TestListRules:
     """GET /api/rules returns only rules with optional filters."""
+
+    def test_startup_returns_retryable_503(self, db: HubDatabase) -> None:
+        server = create_http_server(database=db)
+        runtime = MagicMock(spec=ConfigRuntime)
+        type(runtime).snapshot = PropertyMock(side_effect=RuntimeError("runtime starting"))
+        server.services.config_runtime = runtime
+
+        response = TestClient(server.app).get("/api/rules")
+
+        assert response.status_code == 503
+        assert response.json()["detail"]["code"] == "runtime_unavailable"
+        assert response.json()["detail"]["retryable"] is True
 
     def test_list_all_rules(
         self, client: TestClient, def_manager: LocalWorkflowDefinitionManager

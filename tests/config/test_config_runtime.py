@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+import logging
 import os
 import threading
 import time
@@ -925,7 +926,11 @@ async def test_bogus_revision_request_unwedges_and_adopts_stored() -> None:
 
 
 @pytest.mark.asyncio
-async def test_listener_drops_out_of_domain_notification_payloads() -> None:
+async def test_listener_drops_out_of_domain_notification_payloads(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    caplog.set_level(logging.DEBUG, logger="gobby.storage.config_notifications")
+
     class _Conn:
         autocommit = True
 
@@ -956,6 +961,8 @@ async def test_listener_drops_out_of_domain_notification_payloads() -> None:
     await listener.close()
 
     assert revisions == [7]
+    assert "garbage" in caplog.text
+    assert str(1 << 60) in caplog.text
 
 
 @pytest.mark.asyncio
@@ -975,9 +982,9 @@ async def test_concurrent_revision_request_survives_bogus_request_adoption() -> 
         ) -> StoredSnapshot:
             captured = self.snapshots[self.index]
             self.read_count += 1
-            if self.read_count == 4:
+            if self.read_count == 1 + ConfigRuntime._CONFIRMING_READS:
                 self.final_read_entered.set()
-                self.release_final_read.wait(1)
+                assert self.release_final_read.wait(1)
             return captured
 
     repository = BlockingFinalReadRepository(
@@ -990,7 +997,7 @@ async def test_concurrent_revision_request_survives_bogus_request_adoption() -> 
     await runtime.start()
 
     bogus = asyncio.create_task(runtime.reconcile_revision(1 << 60))
-    await asyncio.to_thread(repository.final_read_entered.wait, 1)
+    assert await asyncio.to_thread(repository.final_read_entered.wait, 1)
     legitimate = asyncio.create_task(runtime.reconcile_revision(1))
     await wait_until(lambda: bool(runtime._pending_revision_requests))
     repository.index = 1
@@ -1023,11 +1030,120 @@ async def test_revision_poll_heals_dead_listener() -> None:
         revision_poll_interval=0.02,
     )
     await runtime.start()
+    listener = runtime._listener_task
+    assert listener is not None
+    listener.cancel()
+    with pytest.raises(asyncio.CancelledError):
+        await listener
 
     repository.index = 1
 
     await wait_until(lambda: runtime.capture().snapshot.revision == 1)
     await wait_until(lambda: notifications.connect_count == 2)
+    replacement = runtime._listener_task
+    assert replacement is not None
+    assert replacement is not listener
+    assert not replacement.done()
     assert runtime.capture().snapshot.active.ui.enabled is True
+    assert runtime.healthy is True
+    await runtime.close()
+
+
+@pytest.mark.asyncio
+async def test_revision_poll_ignores_revision_already_being_reconciled() -> None:
+    class BlockingPollingRepository(FakeRepository):
+        def __init__(self, snapshots: list[StoredSnapshot]) -> None:
+            super().__init__(snapshots)
+            self.block_reads = False
+            self.revision_polled = threading.Event()
+            self.read_entered = threading.Event()
+            self.release_read = threading.Event()
+
+        def current_revision(self) -> int:
+            self.revision_polled.set()
+            return self.snapshots[self.index].revision
+
+        def read_bounded(
+            self,
+            *,
+            resolve_secrets: bool = True,
+            statement_timeout_ms: int,
+            lock_timeout_ms: int,
+        ) -> StoredSnapshot:
+            captured = self.snapshots[self.index]
+            self.read_count += 1
+            if self.block_reads:
+                self.read_entered.set()
+                assert self.release_read.wait(1)
+            return captured
+
+    repository = BlockingPollingRepository(
+        [
+            stored_snapshot(0),
+            stored_snapshot(1, ui_enabled=True, changed={"ui.enabled": 1}),
+        ]
+    )
+    notifications = FakeNotificationSource()
+    runtime = ConfigRuntime(
+        repository,
+        registry=FakeRegistry(),
+        notification_source=notifications,
+        revision_poll_interval=0.02,
+    )
+    await runtime.start()
+    repository.index = 1
+    repository.block_reads = True
+
+    reconcile = asyncio.create_task(runtime.reconcile_revision(1))
+    assert await asyncio.to_thread(repository.read_entered.wait, 1)
+    repository.revision_polled.clear()
+    assert await asyncio.to_thread(repository.revision_polled.wait, 1)
+
+    assert notifications.connect_count == 1
+    assert notifications.close_count == 0
+    repository.release_read.set()
+    assert (await reconcile).revision == 1
+    await runtime.close()
+
+
+@pytest.mark.asyncio
+async def test_revision_poll_has_single_reconnect_owner() -> None:
+    class PollingRepository(FakeRepository):
+        poll_count = 0
+
+        def current_revision(self) -> int:
+            self.poll_count += 1
+            return self.snapshots[self.index].revision
+
+    class ClosingNotificationSource(FakeNotificationSource):
+        async def close(self) -> None:
+            trigger_listener = self.close_count == 0
+            await super().close()
+            if trigger_listener:
+                await self.queue.put(ConnectionError("poll closed listener"))
+
+    repository = PollingRepository(
+        [
+            stored_snapshot(0),
+            stored_snapshot(1, ui_enabled=True, changed={"ui.enabled": 1}),
+        ]
+    )
+    notifications = ClosingNotificationSource()
+    runtime = ConfigRuntime(
+        repository,
+        registry=FakeRegistry(),
+        notification_source=notifications,
+        revision_poll_interval=0.02,
+        reconnect_backoff=0,
+    )
+    await runtime.start()
+    repository.index = 1
+
+    await wait_until(lambda: runtime.capture().snapshot.revision == 1)
+    await wait_until(lambda: notifications.connect_count == 2)
+    poll_count = repository.poll_count
+    await wait_until(lambda: repository.poll_count >= poll_count + 2)
+
+    assert notifications.connect_count == 2
     assert runtime.healthy is True
     await runtime.close()

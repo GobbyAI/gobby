@@ -34,9 +34,9 @@ class ConfigurationRouteContext:
 
     def get_config_runtime(self) -> ConfigRuntime:
         runtime = getattr(self.server.services, "config_runtime", None)
-        if not isinstance(runtime, ConfigRuntime):
+        if runtime is None:
             raise HTTPException(status_code=503, detail="Config runtime not available")
-        return runtime
+        return cast(ConfigRuntime, runtime)
 
     def get_config_snapshot(self) -> ConfigSnapshot:
         """Return the current snapshot or a retryable startup error."""
@@ -108,3 +108,14 @@ class ConfigurationRouteContext:
             db=self.server.services.database,
             project_id=self.server.services.project_id,
         )
+
+
+def require_config_snapshot(server: HTTPServer) -> ConfigSnapshot:
+    """Translate runtime startup into the shared retryable HTTP contract."""
+    try:
+        return ConfigurationRouteContext(server).get_config_snapshot()
+    except ConfigValuesError as exc:
+        raise HTTPException(
+            status_code=exc.status_code,
+            detail=exc.public_body()["error"],
+        ) from exc

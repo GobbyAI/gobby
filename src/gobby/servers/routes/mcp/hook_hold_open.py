@@ -8,6 +8,7 @@ from typing import TYPE_CHECKING, Any
 
 from starlette.requests import Request
 
+from gobby.servers.routes.configuration_context import require_config_snapshot
 from gobby.servers.tool_approvals import (
     approval_key_for_tool,
     get_global_approval_rules,
@@ -125,10 +126,7 @@ async def _maybe_hold_open(
             raw_session_rules = []
         session_rules = normalize_approved_tool_keys(raw_session_rules)
         project_rules = load_project_approval_rules(project_path)
-        config_runtime = resolved_server.services.config_runtime
-        if config_runtime is None:
-            raise RuntimeError("Config runtime unavailable")
-        config_snapshot = config_runtime.snapshot
+        config_snapshot = require_config_snapshot(resolved_server)
         global_rules = get_global_approval_rules(config_snapshot)
         if tool_name and is_tool_auto_allowed(
             tool_name,

@@ -886,17 +886,31 @@ class ConfigRuntime:
                 logger.debug("Configuration revision poll failed", exc_info=True)
                 continue
             bundle = self._bundle
-            if bundle is not None and observed > bundle.snapshot.revision:
-                self._healthy = False
-                try:
+            if (
+                bundle is None
+                or observed <= bundle.snapshot.revision
+                or observed <= self._max_requested_revision
+            ):
+                continue
+            self._healthy = False
+            try:
+                listener = self._listener_task
+                if listener is not None and not listener.done():
+                    assert self._notifications is not None
+                    await self._notifications.close()
+                else:
                     await self._reconnect()
-                except asyncio.CancelledError:
-                    raise
-                except Exception:
-                    logger.warning(
-                        "Configuration revision poll reconnect failed",
-                        exc_info=True,
-                    )
+                    if not self._closed:
+                        self._listener_task = asyncio.create_task(
+                            self._listen(), name="config-runtime-listener"
+                        )
+            except asyncio.CancelledError:
+                raise
+            except Exception:
+                logger.warning(
+                    "Configuration revision poll reconnect failed",
+                    exc_info=True,
+                )
 
     async def _listen(self) -> None:
         assert self._notifications is not None

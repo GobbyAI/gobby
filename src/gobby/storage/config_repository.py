@@ -110,7 +110,7 @@ class ConfigRepository:
         with self.db.transaction() as transaction:
             transaction.execute("SET TRANSACTION ISOLATION LEVEL REPEATABLE READ READ ONLY")
             revision = self.read_revision(transaction)
-            rows = self._read_rows(transaction)
+            rows = self.read_rows(transaction)
             return self.snapshot_from_rows(
                 transaction,
                 revision,
@@ -138,7 +138,7 @@ class ConfigRepository:
             repeatable_read_read_only=True,
         ) as transaction:
             revision = self.read_revision(transaction)
-            rows = self._read_rows(transaction)
+            rows = self.read_rows(transaction)
             return self.snapshot_from_rows(
                 transaction,
                 revision,
@@ -180,7 +180,8 @@ class ConfigRepository:
         ).fetchone()
         return self._validated_revision(row)
 
-    def _read_rows(self, transaction: Transaction) -> list[Row]:
+    def read_rows(self, transaction: Transaction) -> list[Row]:
+        """Read all stored configuration rows in key order."""
         return transaction.execute(
             "SELECT key, value, is_secret, revision FROM config_store ORDER BY key"
         ).fetchall()

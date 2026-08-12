@@ -20,6 +20,7 @@ from gobby.servers.models import (
     SessionRegisterRequest,
     WebChatSessionRequest,
 )
+from gobby.servers.routes.configuration_context import require_config_snapshot
 from gobby.sessions.acp_lifecycle import attach_acp_block
 from gobby.storage.sessions._update_sentinel import UNSET
 from gobby.storage.token_events import TokenEventStore
@@ -229,10 +230,7 @@ def register_core_routes(
             if runtime_manager is not None:
                 sandbox_policy_hash = runtime_manager.sandbox_policy_hash
             else:
-                config_runtime = server.services.config_runtime
-                if config_runtime is None:
-                    raise RuntimeError("Config runtime unavailable")
-                config = config_runtime.snapshot.active
+                config = require_config_snapshot(server).active
                 sandbox_policy_hash = web_chat_sandbox_policy_hash(config)
 
             session = await server.run_db(

@@ -22,6 +22,7 @@ class OpenAICompatibleAudioBindingConfig(BaseModel):
     provider: str = Field(
         description="Provider id exposed in the AI capability registry.",
         min_length=1,
+        json_schema_extra={"x-config-identity": True},
     )
     url: str = Field(
         description="OpenAI-compatible API base URL, including the /v1 prefix.",

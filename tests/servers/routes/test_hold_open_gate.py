@@ -13,15 +13,17 @@ Covers:
 from __future__ import annotations
 
 from types import SimpleNamespace
-from typing import Any
-from unittest.mock import AsyncMock, MagicMock, patch
+from typing import Any, cast
+from unittest.mock import AsyncMock, MagicMock, PropertyMock, patch
 
 import pytest
+from fastapi import HTTPException
 from fastapi.testclient import TestClient
 from starlette.datastructures import State
 
 from gobby.app_context import ServiceContainer
 from gobby.config.bootstrap import BootstrapConfig
+from gobby.config.runtime import ConfigRuntime
 from gobby.servers.http import HTTPServer
 from gobby.servers.routes.mcp.hook_hold_open import MAX_PENDING_PER_SESSION, _maybe_hold_open
 from gobby.storage.sessions import SessionManager
@@ -250,6 +252,34 @@ async def test_web_chat_pre_tool_use_approve() -> None:
     assert result == {"decision": "approve"}
     manager.create.assert_called_once()
     manager.wait.assert_called_once_with("interaction-1")
+
+
+@pytest.mark.asyncio
+async def test_web_chat_pre_tool_use_startup_returns_retryable_503() -> None:
+    session = _make_session(session_id="sess-web-1", session_type="web_chat")
+    manager = AsyncMock()
+    request = _make_request(db=MagicMock(), pending_manager=manager)
+    runtime = MagicMock(spec=ConfigRuntime)
+    type(runtime).snapshot = PropertyMock(side_effect=RuntimeError("runtime starting"))
+    request.app.state.server.services.config_runtime = runtime
+
+    with (
+        patch(_SESSION_MANAGER_PATCH) as mock_session_manager,
+        pytest.raises(HTTPException) as raised,
+    ):
+        mock_session_manager.return_value.get.return_value = session
+        await _maybe_hold_open(
+            request,
+            "sess-web-1",
+            "PreToolUse",
+            {"input_data": {"tool_name": "bash", "arguments": {}}},
+            "web_chat",
+        )
+
+    detail = cast(dict[str, object], raised.value.detail)
+    assert raised.value.status_code == 503
+    assert detail["code"] == "runtime_unavailable"
+    assert detail["retryable"] is True
 
 
 @pytest.mark.asyncio

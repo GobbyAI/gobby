@@ -64,6 +64,9 @@ class ACPWebChatBackend:
         self._default_model = default_model
         self._startup_task: asyncio.Task[None] | None = None
 
+    def set_sandbox_config(self, config: SandboxConfig) -> None:
+        self._sandbox_config = config.model_copy(deep=True)
+
     async def _start_inner(self) -> None:
         if self._client.is_started:
             self._health = ProviderBackendHealth(provider=self.provider, available=True)

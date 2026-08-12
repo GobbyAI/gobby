@@ -7,13 +7,14 @@ create_http_server() with real managers backed by temp_db.
 from __future__ import annotations
 
 from typing import Any
-from unittest.mock import AsyncMock, MagicMock, patch
+from unittest.mock import AsyncMock, MagicMock, PropertyMock, patch
 
 import pytest
 from starlette.testclient import TestClient
 
 from gobby.agents.launcher_session import get_or_create_launcher_session
 from gobby.config.app import DaemonConfig
+from gobby.config.runtime import ConfigRuntime
 from gobby.config.runtime_models import ConfigSnapshot
 from gobby.events.completion_registry import CompletionEventRegistry
 from gobby.servers.http import HTTPServer
@@ -101,12 +102,49 @@ def client(server: HTTPServer) -> TestClient:
     return TestClient(server.app)
 
 
+def test_launch_defaults_startup_returns_retryable_503(
+    client: TestClient,
+    server: HTTPServer,
+) -> None:
+    runtime = MagicMock(spec=ConfigRuntime)
+    type(runtime).snapshot = PropertyMock(side_effect=RuntimeError("runtime starting"))
+    server.services.config_runtime = runtime
+
+    response = client.get("/api/agents/launch-defaults", params={"project_id": "project-1"})
+
+    assert response.status_code == 503
+    assert response.json()["detail"]["code"] == "runtime_unavailable"
+    assert response.json()["detail"]["retryable"] is True
+
+
 # ---------------------------------------------------------------------------
 # POST /api/agents/spawn
 # ---------------------------------------------------------------------------
 
 
 class TestSpawnAgent:
+    def test_startup_returns_retryable_503(
+        self,
+        client: TestClient,
+        server: HTTPServer,
+        task_manager: LocalTaskManager,
+        test_project: Any,
+    ) -> None:
+        task = _create_task(task_manager, test_project.id)
+        runtime = MagicMock(spec=ConfigRuntime)
+        type(runtime).snapshot = PropertyMock(side_effect=RuntimeError("runtime starting"))
+        server.services.config_runtime = runtime
+
+        with patch(
+            "gobby.utils.project_context.get_project_context",
+            return_value={"id": test_project.id},
+        ):
+            response = client.post("/api/agents/spawn", json={"task_id": task.id})
+
+        assert response.status_code == 503
+        assert response.json()["detail"]["code"] == "runtime_unavailable"
+        assert response.json()["detail"]["retryable"] is True
+
     def test_spawn_session_writers_use_required_machine_identity(
         self,
         client: TestClient,

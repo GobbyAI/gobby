@@ -170,6 +170,7 @@ class PatternFieldSpec:
     annotation: object
     default: object = _MISSING
     secrecy: ConfigSecrecy = ConfigSecrecy.NONE
+    identity: bool = False
 
     @property
     def has_default(self) -> bool:
@@ -326,6 +327,8 @@ class ConfigRegistry:
                 spec.visibility is not ConfigVisibility.RESTRICTED
             ):
                 raise RegistryError(f"Secret payload must be restricted: {spec.key}")
+            if config_structured_reference_fields(spec):
+                config_structured_identity_field(spec)
         for key in self._by_key:
             matches = [pattern for pattern in self.pattern_specs if pattern.match(key) is not None]
             if matches:
@@ -430,6 +433,23 @@ def config_reference_fields(spec: RegistrySpec) -> tuple[PatternFieldSpec, ...]:
     return tuple(field for field in spec.field_specs if field.secrecy is ConfigSecrecy.REFERENCE)
 
 
+def config_structured_reference_fields(spec: RegistrySpec) -> tuple[PatternFieldSpec, ...]:
+    """Return secret-reference fields only for exact list-valued keys."""
+    if not isinstance(spec, ConfigKeySpec) or get_origin(spec.annotation) is not list:
+        return ()
+    return config_reference_fields(spec)
+
+
+def config_structured_identity_field(spec: RegistrySpec) -> PatternFieldSpec:
+    """Return the sole registry-declared identity for a structured secret list."""
+    identities = tuple(field for field in spec.field_specs if field.identity)
+    if len(identities) != 1:
+        raise RegistryError(
+            f"Structured secret-bearing key requires exactly one identity field: {spec.key}"
+        )
+    return identities[0]
+
+
 def _patterns_overlap(left: ConfigPatternSpec, right: ConfigPatternSpec) -> bool:
     left_parts = left.pattern.split(".")
     right_parts = right.pattern.split(".")
@@ -481,6 +501,7 @@ def _schema_metadata(spec: RegistrySpec) -> dict[str, object]:
             field.name: {
                 "type": _json_type(field.annotation),
                 "secrecy": field.secrecy.value,
+                "identity": field.identity,
                 **({"default": _json_default(field.default)} if field.has_default else {}),
             }
             for field in spec.field_specs
@@ -569,6 +590,10 @@ def _field_specs(annotation: object) -> tuple[PatternFieldSpec, ...]:
             annotation=field.annotation,
             default=_field_default(field),
             secrecy=_secrecy(name),
+            identity=(
+                isinstance(field.json_schema_extra, dict)
+                and field.json_schema_extra.get("x-config-identity") is True
+            ),
         )
         for name, field in model.model_fields.items()
     )

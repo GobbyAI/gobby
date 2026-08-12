@@ -17,6 +17,7 @@ from gobby.agents.launcher_session import aget_or_create_launcher_session
 from gobby.agents.reasoning import normalize_reasoning_effort
 from gobby.agents.sandbox import web_chat_sandbox_policy_hash
 from gobby.providers.capabilities.apply import SpeedResultData
+from gobby.servers.routes.configuration_context import require_config_snapshot
 from gobby.storage.task_dependencies import TaskDependencyManager
 from gobby.tasks.state_semantics import get_claimed_session_id, is_task_actionable
 from gobby.telemetry.instruments import inc_counter
@@ -183,10 +184,7 @@ def create_agent_spawn_router(server: HTTPServer) -> APIRouter:
         effective_project_id = project_id or getattr(task, "project_id", None)
         if not effective_project_id:
             return AgentSpawnResponse(success=False, error="Could not determine project_id")
-        config_runtime = server.services.config_runtime
-        if config_runtime is None:
-            return AgentSpawnResponse(success=False, error="Config runtime unavailable")
-        config_snapshot = config_runtime.snapshot
+        config_snapshot = require_config_snapshot(server)
 
         # Build prompt
         prompt = req.prompt
@@ -457,12 +455,11 @@ def create_agent_spawn_router(server: HTTPServer) -> APIRouter:
         """Get per-category launch defaults for the project."""
         try:
             key = f"launch_defaults.{project_id}"
-            config_runtime = server.services.config_runtime
-            if config_runtime is None:
-                raise RuntimeError("Config runtime unavailable")
-            saved = config_runtime.snapshot.active_values.get(key) or {}
+            saved = require_config_snapshot(server).active_values.get(key) or {}
             # Merge with built-in defaults for any missing categories
             return {"status": "success", "defaults": saved, "built_in": _BUILT_IN_DEFAULTS}
+        except HTTPException:
+            raise
         except Exception as e:
             logger.exception("Error fetching launch defaults: %s", e)
             raise HTTPException(status_code=500, detail="Internal server error") from e

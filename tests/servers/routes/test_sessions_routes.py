@@ -10,7 +10,7 @@ import asyncio
 import threading
 from collections.abc import Iterator
 from datetime import UTC, datetime
-from unittest.mock import AsyncMock, MagicMock, call, patch
+from unittest.mock import AsyncMock, MagicMock, PropertyMock, call, patch
 
 import pytest
 from fastapi import FastAPI
@@ -18,6 +18,7 @@ from fastapi.testclient import TestClient
 
 from gobby.app_context import ServiceContainer
 from gobby.config.bootstrap import BootstrapConfig
+from gobby.config.runtime import ConfigRuntime
 from gobby.servers.http import HTTPServer
 from gobby.servers.routes.sessions import (
     _get_commit_count,
@@ -662,6 +663,30 @@ class TestRegisterSession:
 
 class TestCreateWebChatSession:
     """Test POST /sessions/web-chat endpoint."""
+
+    def test_startup_returns_retryable_503(self, client, mock_server) -> None:
+        mock_server.services = MagicMock()
+        mock_server.services.web_chat_runtime_manager = None
+        runtime = MagicMock(spec=ConfigRuntime)
+        type(runtime).snapshot = PropertyMock(side_effect=RuntimeError("runtime starting"))
+        mock_server.services.config_runtime = runtime
+
+        with patch(
+            "gobby.utils.machine_id.get_machine_id",
+            return_value="20000000-0000-4000-8000-000000000001",
+        ):
+            response = client.post(
+                "/api/sessions/web-chat",
+                json={
+                    "provider": "claude",
+                    "project_id": "proj-123",
+                    "cwd": "/repo",
+                },
+            )
+
+        assert response.status_code == 503
+        assert response.json()["detail"]["code"] == "runtime_unavailable"
+        assert response.json()["detail"]["retryable"] is True
 
     def test_create_web_chat_session_success(self, client, mock_server) -> None:
         session = _make_session(source="claude", model="sonnet", chat_mode="plan")

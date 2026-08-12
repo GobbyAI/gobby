@@ -2,10 +2,13 @@
 
 from __future__ import annotations
 
+import logging
 from collections.abc import AsyncIterator, Awaitable, Callable
 from typing import Protocol
 
 from gobby.storage.config_repository import MAX_CONFIG_REVISION
+
+logger = logging.getLogger(__name__)
 
 
 class Notification(Protocol):
@@ -62,9 +65,18 @@ class ConfigNotificationListener:
             try:
                 revision = int(notification.payload)
             except ValueError:
+                logger.debug(
+                    "Ignoring invalid configuration revision notification payload %r",
+                    notification.payload,
+                )
                 continue
-            if 0 <= revision <= MAX_CONFIG_REVISION:
-                yield revision
+            if not 0 <= revision <= MAX_CONFIG_REVISION:
+                logger.debug(
+                    "Ignoring invalid configuration revision notification payload %r",
+                    notification.payload,
+                )
+                continue
+            yield revision
 
     async def close(self) -> None:
         connection = self._connection

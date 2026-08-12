@@ -46,7 +46,7 @@ def validate_structured_references(
 ) -> None:
     """Reject plaintext values in registry-declared structured secret fields."""
     if not isinstance(value, list):
-        return
+        raise ValueError(f"{key} must be a list")
     for index, item in enumerate(value):
         if not isinstance(item, dict):
             continue
@@ -65,33 +65,37 @@ def restore_masked_structured_references(
     value: object,
     persisted_value: object,
     reference_fields: Collection[str],
+    identity_field: str,
 ) -> object:
     """Restore masked structured fields from persisted secret references."""
     restored = deepcopy(value)
     if not isinstance(restored, list):
-        return restored
+        raise ValueError(f"{key} must be a list")
 
-    references: dict[tuple[str | int, str], str] = {}
+    references: dict[tuple[str, str], str] = {}
     if isinstance(persisted_value, list):
         for index, item in enumerate(persisted_value):
             if not isinstance(item, dict):
                 continue
-            identity = item.get("provider")
-            identity_key = identity if isinstance(identity, str) else index
             for field in reference_fields:
                 field_value = item.get(field)
                 if isinstance(field_value, str) and is_secret_reference(field_value):
-                    references[(identity_key, field)] = field_value
+                    identity = _structured_identity(key, index, item, identity_field)
+                    reference_key = (identity, field)
+                    if reference_key in references:
+                        raise ValueError(
+                            f"{key} contains duplicate identity {identity!r} for {identity_field}"
+                        )
+                    references[reference_key] = field_value
 
     for index, item in enumerate(restored):
         if not isinstance(item, dict):
             continue
-        identity = item.get("provider")
-        identity_key = identity if isinstance(identity, str) else index
         for field in reference_fields:
             if item.get(field) != MASKED_SECRET:
                 continue
-            reference = references.get((identity_key, field))
+            identity = _structured_identity(key, index, item, identity_field)
+            reference = references.get((identity, field))
             if reference is None:
                 raise ValueError(
                     f"{key}[{index}].{field} is masked but no persisted secret reference "
@@ -100,6 +104,18 @@ def restore_masked_structured_references(
             item[field] = reference
 
     return restored
+
+
+def _structured_identity(
+    key: str,
+    index: int,
+    item: dict[str, Any],
+    identity_field: str,
+) -> str:
+    identity = item.get(identity_field)
+    if not isinstance(identity, str) or not identity:
+        raise ValueError(f"{key}[{index}].{identity_field} must be a non-empty string")
+    return identity
 
 
 def mask_structured_references(

@@ -20,6 +20,7 @@ from gobby.mcp_proxy.tools.workflows._rules import (
     list_rules,
     toggle_rule,
 )
+from gobby.servers.routes.configuration_context import require_config_snapshot
 from gobby.workflows.definitions import split_rule_definition_data
 from gobby.workflows.loader import _is_bundled_template
 
@@ -170,10 +171,7 @@ def create_rules_router(server: "HTTPServer") -> APIRouter:
                 enabled=enabled,
                 project_id=project_id,
             )
-            config_runtime = server.services.config_runtime
-            if config_runtime is None:
-                raise RuntimeError("Config runtime unavailable")
-            config_values = config_runtime.snapshot.active_values
+            config_values = require_config_snapshot(server).active_values
             enforcement = config_values.get("rules.enforcement_enabled", True)
             aggregate_blocks = config_values.get("rules.aggregate_blocks", True)
             return {
@@ -183,6 +181,8 @@ def create_rules_router(server: "HTTPServer") -> APIRouter:
                 "enforcement_enabled": enforcement is not False,
                 "aggregate_blocks": aggregate_blocks is not False,
             }
+        except HTTPException:
+            raise
         except Exception as e:
             logger.exception("Error listing rules")
             raise HTTPException(status_code=500, detail="Internal server error") from e

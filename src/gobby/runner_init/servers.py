@@ -172,7 +172,9 @@ def init_servers(runner: GobbyRunner) -> None:
     services.web_chat_runtime_manager = WebChatRuntimeManager(
         codex_client=codex_client,
         daemon_config=config,
-        config_resolver=lambda: runner.config_runtime.snapshot.active,
+        config_resolver=lambda: (
+            runner.config_runtime.snapshot.active if runner.config_runtime.ready else None
+        ),
     )
 
     runner.http_server = HTTPServer(

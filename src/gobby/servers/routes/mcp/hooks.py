@@ -734,6 +734,8 @@ def create_hooks_router(server: "HTTPServer") -> APIRouter:
                     _hook_timeout_response(adapter, hook_type, source, timeout_seconds)
                 )
 
+            except HTTPException:
+                raise
             except Exception as e:
                 # Hook execution error - return graceful response so tool proceeds
                 # This prevents confusing "hook failed" warnings in Claude Code

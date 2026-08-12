@@ -451,7 +451,7 @@ class ConfigStore:
             if normalized_name == EMBEDDING_API_KEY_SECRET_NAME:
                 self._assert_embedding_mutation_allowed(AI_EMBEDDING_CONFIG_KEY_SET, transaction)
             revision = self.repository.read_revision(transaction, lock=True)
-            rows = self.repository._read_rows(transaction)
+            rows = self.repository.read_rows(transaction)
             snapshot = self.repository.snapshot_from_rows(transaction, revision, rows)
             referencing: set[str] = set()
             for key, value in snapshot.overrides.items():

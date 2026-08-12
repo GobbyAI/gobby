@@ -17,6 +17,7 @@ from psycopg.conninfo import make_conninfo
 from pydantic import ValidationError
 
 from gobby.config.embedding_keys import AI_EMBEDDING_API_KEY_KEY, EMBEDDING_API_KEY_SECRET_NAME
+from gobby.config.values import ConfigValuesError
 from gobby.storage.config_mutations import (
     MAX_CONFIG_REVISION,
     ConfigConflictError,
@@ -41,6 +42,31 @@ from gobby.storage.projects import LocalProjectManager
 from gobby.storage.secrets import SecretStore
 
 pytestmark = pytest.mark.integration
+
+
+def test_config_values_error_survives_database_transaction_context(
+    revision_db: HubDatabase,
+) -> None:
+    error = ConfigValuesError(
+        code="invalid_value",
+        message="invalid configuration value",
+        path=("values", "ui.enabled"),
+        status_code=422,
+    )
+
+    with pytest.raises(ConfigValuesError) as raised:
+        with revision_db.transaction():
+            raise error
+
+    assert raised.value is error
+    assert raised.value.public_body() == {
+        "error": {
+            "code": "invalid_value",
+            "message": "invalid configuration value",
+            "path": ["values", "ui.enabled"],
+            "retryable": False,
+        }
+    }
 
 
 @pytest.fixture
@@ -183,6 +209,28 @@ def test_invalid_candidate_has_no_side_effects(
     assert notifications == []
 
 
+def test_type_adapter_internal_type_error_propagates_and_is_logged(
+    mutations: ConfigMutations,
+    monkeypatch: pytest.MonkeyPatch,
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    def fail_adapter(*_args: object, **_kwargs: object) -> object:
+        raise TypeError("adapter implementation failed")
+
+    monkeypatch.setattr(
+        "gobby.storage.config_mutations.TypeAdapter.validate_json",
+        fail_adapter,
+    )
+
+    with pytest.raises(TypeError, match="adapter implementation failed"):
+        mutations.patch(
+            expected_revision=0,
+            patch=ConfigPatch(values={"ui.enabled": True}),
+        )
+
+    assert "Configuration type adapter failed for ui.enabled" in caplog.text
+
+
 def test_effective_change_controls_revision(
     mutations: ConfigMutations,
     secret_store: SecretStore,
@@ -235,10 +283,10 @@ def test_snapshot_read_is_repeatable_read_coherent(
     writer_committed = Event()
 
     class PausingRepository(ConfigRepository):
-        def _read_rows(self, transaction: Transaction) -> list[Row]:
+        def read_rows(self, transaction: Transaction) -> list[Row]:
             revision_read.set()
             assert writer_committed.wait(timeout=5)
-            return super()._read_rows(transaction)
+            return super().read_rows(transaction)
 
     repository = PausingRepository(revision_db, secret_store=secret_store)
     with ThreadPoolExecutor(max_workers=2) as executor:
