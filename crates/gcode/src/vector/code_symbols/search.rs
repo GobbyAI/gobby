@@ -76,6 +76,13 @@ pub fn search_code_symbols(
 /// transport/config errors lets degraded hybrid-search callers keep lexical and
 /// graph sources instead of failing the whole user query.
 pub fn semantic_search(ctx: &Context, query: &str, limit: usize) -> Vec<(String, f64)> {
+    if ctx.runtime_config_capture_degraded() {
+        log::debug!(
+            "semantic vector search skipped: runtime configuration capture degraded to local \
+             defaults"
+        );
+        return Vec::new();
+    }
     let Some(qdrant_config) = &ctx.qdrant else {
         log::warn!(
             "semantic vector search skipped: {}",
@@ -255,6 +262,18 @@ mod tests {
         let ctx = test_context();
 
         assert_eq!(visible_vector_project_ids(&ctx), vec!["single"]);
+    }
+
+    #[test]
+    fn scoped_capture_degrade_disables_semantic_search() {
+        let mut ctx = test_context();
+
+        ctx.set_runtime_config_capture_degraded_for_test(false);
+        assert!(!ctx.runtime_config_capture_degraded());
+
+        ctx.set_runtime_config_capture_degraded_for_test(true);
+        assert!(ctx.runtime_config_capture_degraded());
+        assert!(semantic_search(&ctx, "query", 10).is_empty());
     }
 
     #[test]

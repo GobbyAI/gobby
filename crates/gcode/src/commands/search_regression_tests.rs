@@ -83,7 +83,7 @@ fn hybrid_search_excludes_indexed_file_deleted_from_disk() -> anyhow::Result<()>
         falkordb: None,
         qdrant: None,
         embedding: None,
-        code_vectors: CodeVectorSettings { vector_dim: None },
+        code_vectors: CodeVectorSettings::default(),
         indexing: gobby_core::config::IndexingConfig::default(),
         daemon_url: None,
         index_scope: ProjectIndexScope::Single,

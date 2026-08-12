@@ -3,7 +3,7 @@
 use std::collections::BTreeMap;
 
 use anyhow::Context as _;
-use postgres::{Client, IsolationLevel};
+use postgres::{Client, IsolationLevel, error::SqlState};
 
 #[derive(Debug)]
 pub(super) struct HubConfigSnapshot {
@@ -75,4 +75,13 @@ pub(super) fn capture_hub_snapshot_with_hook(
         .commit()
         .context("failed to finish runtime configuration snapshot")?;
     Ok(HubConfigSnapshot { revision, values })
+}
+
+pub(super) fn hub_capture_permission_denied(error: &anyhow::Error) -> bool {
+    error.chain().any(|cause| {
+        cause
+            .downcast_ref::<postgres::Error>()
+            .and_then(postgres::Error::code)
+            .is_some_and(|code| *code == SqlState::INSUFFICIENT_PRIVILEGE)
+    })
 }

@@ -1,6 +1,8 @@
 use std::collections::HashMap;
 
-use gobby_core::ai::effective_config::daemon_mode_layers;
+use gobby_core::ai::effective_config::{
+    EffectiveConfigError, EffectiveConfigLayers, daemon_mode_layers,
+};
 use gobby_core::config::{ConfigSource, DaemonServedConfig};
 use gobby_core::provisioning::StandaloneConfig;
 use gobby_core::runtime_mode::{RuntimeMode, runtime_mode};
@@ -14,6 +16,7 @@ pub(crate) struct ConfigLayers {
     daemon: Option<DaemonServedConfig>,
     standalone: Option<StandaloneConfig>,
     mode: ConfigMode,
+    hub_fallback_reason: Option<String>,
 }
 
 #[derive(Debug, Clone, Copy)]
@@ -23,43 +26,58 @@ enum ConfigMode {
     Standalone,
 }
 
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub(super) enum HubConfigCapture {
+    DeferredBestEffort,
+    ImmediateBestEffort,
+    Required,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub(super) enum HubConfigCaptureStatus {
+    Complete,
+    Degraded,
+}
+
 pub(crate) fn read_config_layers() -> anyhow::Result<ConfigLayers> {
     if runtime_mode()? == RuntimeMode::Standalone {
         return Ok(ConfigLayers {
             daemon: None,
             standalone: read_standalone_config_optional(),
             mode: ConfigMode::Standalone,
+            hub_fallback_reason: None,
         });
     }
-    match daemon_mode_layers() {
+    Ok(layers_from_daemon_result(daemon_mode_layers()))
+}
+
+fn layers_from_daemon_result(
+    result: Result<Option<EffectiveConfigLayers>, EffectiveConfigError>,
+) -> ConfigLayers {
+    match result {
         Ok(Some((daemon, _routing))) => {
             warn_for_unregistered_served_keys(&daemon);
-            Ok(ConfigLayers {
+            ConfigLayers {
                 daemon: Some(daemon),
                 standalone: None,
                 mode: ConfigMode::Daemon,
-            })
+                hub_fallback_reason: None,
+            }
         }
-        Ok(None) => {
-            log::warn!(
-                "daemon runtime mode returned no served configuration; using PostgreSQL snapshot"
-            );
-            Ok(ConfigLayers {
-                daemon: None,
-                standalone: None,
-                mode: ConfigMode::Hub,
-            })
-        }
-        Err(error) => {
-            log::warn!(
-                "daemon runtime configuration unavailable; using PostgreSQL snapshot: {error}"
-            );
-            Ok(ConfigLayers {
-                daemon: None,
-                standalone: None,
-                mode: ConfigMode::Hub,
-            })
-        }
+        Ok(None) => ConfigLayers {
+            daemon: None,
+            standalone: None,
+            mode: ConfigMode::Hub,
+            hub_fallback_reason: Some(
+                "daemon runtime mode returned no served configuration".to_string(),
+            ),
+        },
+        Err(error) => ConfigLayers {
+            daemon: None,
+            standalone: None,
+            mode: ConfigMode::Hub,
+            hub_fallback_reason: Some(format!("daemon runtime configuration unavailable: {error}")),
+        },
     }
 }
 
@@ -74,12 +92,12 @@ fn warn_for_unregistered_served_keys(served: &DaemonServedConfig) {
     }
 }
 
-pub(super) enum ServiceSource<'a> {
+pub(super) enum ServiceSource {
     Daemon {
         served: DaemonServedConfig,
-        /// Hub connection reserved for secret-reference keys the daemon never
-        /// serves in plaintext; consumed once to capture a resolved snapshot.
-        hub: Option<&'a mut Client>,
+        /// Resolved hub values for secret-reference keys the daemon never
+        /// serves in plaintext. Read commands without service dependencies
+        /// leave this absent.
         hub_secrets: Option<HubConfigSnapshot>,
         hits: HashMap<String, &'static str>,
     },
@@ -91,32 +109,62 @@ pub(super) enum ServiceSource<'a> {
     },
 }
 
-impl<'a> ServiceSource<'a> {
+impl ServiceSource {
     pub(super) fn new(
-        conn: &'a mut Client,
+        conn: &mut Client,
         layers: &ConfigLayers,
-    ) -> anyhow::Result<(Self, Option<i64>)> {
+        hub_capture: HubConfigCapture,
+    ) -> anyhow::Result<(Self, Option<i64>, HubConfigCaptureStatus)> {
         match layers.mode {
             ConfigMode::Daemon => {
                 let Some(served) = layers.daemon.clone() else {
                     anyhow::bail!("daemon configuration mode is missing its served snapshot");
                 };
+                if hub_capture != HubConfigCapture::DeferredBestEffort {
+                    return match capture_hub_snapshot(conn) {
+                        Ok(snapshot) => Ok((
+                            Self::Daemon {
+                                served,
+                                hub_secrets: Some(snapshot),
+                                hits: HashMap::new(),
+                            },
+                            None,
+                            HubConfigCaptureStatus::Complete,
+                        )),
+                        Err(error) => capture_failure(error, None, hub_capture),
+                    };
+                }
                 Ok((
                     Self::Daemon {
                         served,
-                        hub: Some(conn),
                         hub_secrets: None,
                         hits: HashMap::new(),
                     },
                     None,
+                    HubConfigCaptureStatus::Complete,
                 ))
             }
-            ConfigMode::Hub => {
-                let snapshot = capture_hub_snapshot(conn)?;
-                let revision = snapshot.revision();
-                Ok((Self::hub(snapshot), Some(revision)))
-            }
-            ConfigMode::Standalone => Ok((Self::standalone(layers.standalone.clone()), None)),
+            ConfigMode::Hub => match capture_hub_snapshot(conn) {
+                Ok(snapshot) => {
+                    if let Some(reason) = &layers.hub_fallback_reason {
+                        log::warn!("{reason}; using PostgreSQL snapshot");
+                    }
+                    let revision = snapshot.revision();
+                    Ok((
+                        Self::hub(snapshot),
+                        Some(revision),
+                        HubConfigCaptureStatus::Complete,
+                    ))
+                }
+                Err(error) => {
+                    capture_failure(error, layers.hub_fallback_reason.as_deref(), hub_capture)
+                }
+            },
+            ConfigMode::Standalone => Ok((
+                Self::standalone(layers.standalone.clone()),
+                None,
+                HubConfigCaptureStatus::Complete,
+            )),
         }
     }
 
@@ -125,7 +173,6 @@ impl<'a> ServiceSource<'a> {
     pub(super) fn daemon(served: DaemonServedConfig) -> Self {
         Self::Daemon {
             served,
-            hub: None,
             hub_secrets: None,
             hits: HashMap::new(),
         }
@@ -144,12 +191,11 @@ impl<'a> ServiceSource<'a> {
     }
 }
 
-impl ServiceConfigSource for ServiceSource<'_> {
+impl ServiceConfigSource for ServiceSource {
     fn config_value(&mut self, key: &str) -> anyhow::Result<Option<String>> {
         match self {
             Self::Daemon {
                 served,
-                hub,
                 hub_secrets,
                 hits,
             } => {
@@ -165,11 +211,6 @@ impl ServiceConfigSource for ServiceSource<'_> {
                 // snapshot captured on first need.
                 if !gobby_core::config::is_secret_reference_key(key) {
                     return Ok(None);
-                }
-                if hub_secrets.is_none()
-                    && let Some(conn) = hub.take()
-                {
-                    *hub_secrets = Some(capture_hub_snapshot(conn)?);
                 }
                 let value = hub_secrets
                     .as_ref()
@@ -230,6 +271,57 @@ impl ServiceConfigSource for ServiceSource<'_> {
     }
 }
 
+fn capture_failure(
+    error: anyhow::Error,
+    daemon_reason: Option<&str>,
+    hub_capture: HubConfigCapture,
+) -> anyhow::Result<(ServiceSource, Option<i64>, HubConfigCaptureStatus)> {
+    if hub_capture == HubConfigCapture::Required {
+        return Err(required_capture_error(error));
+    }
+    warn_capture_failure(daemon_reason, &error);
+    Ok((
+        ServiceSource::standalone(read_standalone_config_optional()),
+        None,
+        HubConfigCaptureStatus::Degraded,
+    ))
+}
+
+fn warn_capture_failure(daemon_reason: Option<&str>, error: &anyhow::Error) {
+    if super::runtime_contract::hub_capture_permission_denied(error) {
+        log::warn!(
+            "runtime configuration is unavailable to this scoped database role; using \
+             defaults/env/gcore.yaml because scoped roles intentionally cannot read config_store \
+             values or secret material directly"
+        );
+    } else if let Some(reason) = daemon_reason {
+        log::warn!(
+            "{reason}; PostgreSQL runtime configuration capture also failed; using \
+             defaults/env/gcore.yaml: {error:#}"
+        );
+    } else {
+        log::warn!(
+            "PostgreSQL runtime configuration capture failed; using defaults/env/gcore.yaml: \
+             {error:#}"
+        );
+    }
+}
+
+fn required_capture_error(error: anyhow::Error) -> anyhow::Error {
+    if super::runtime_contract::hub_capture_permission_denied(&error) {
+        error.context(
+            "required runtime configuration cannot be read directly by this scoped database role; \
+             embedding-backed indexing and doctor require the Gobby daemon \
+             runtime-configuration route",
+        )
+    } else {
+        error.context(
+            "required runtime configuration is unavailable; embedding-backed indexing and doctor \
+             require a reachable Gobby daemon runtime-configuration route",
+        )
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use std::collections::BTreeMap;
@@ -238,7 +330,10 @@ mod tests {
     use std::net::TcpListener;
     use std::thread;
 
-    use super::{ServiceSource, read_config_layers, warn_for_unregistered_served_keys};
+    use super::{
+        ConfigLayers, ConfigMode, HubConfigCapture, HubConfigCaptureStatus, ServiceSource,
+        capture_failure, layers_from_daemon_result, warn_for_unregistered_served_keys,
+    };
     use crate::config::services::{
         ServiceConfigSource, resolve_embedding_config_details_from_service_source,
     };
@@ -253,6 +348,122 @@ mod tests {
                 .map(|(key, value)| (key.to_string(), value.to_string()))
                 .collect::<BTreeMap<_, _>>(),
         )
+    }
+
+    fn scoped_connection(purpose: &str) -> postgres::Client {
+        let database_url = crate::test_env::postgres_test_database_url(purpose);
+        let mut connection =
+            gobby_core::postgres::connect_readwrite(&database_url).expect("test database");
+        connection
+            .batch_execute("SET ROLE gobby_gcode_capability")
+            .expect("assume scoped gcode capability role");
+        connection
+    }
+
+    #[test]
+    #[serial_test::serial(serial_db)]
+    fn scoped_hub_capture_degrades_once_for_best_effort_reads() {
+        install_capture_logger();
+        captured_warnings().clear();
+        let mut connection = scoped_connection("best-effort scoped hub capture");
+        let layers = ConfigLayers {
+            daemon: None,
+            standalone: None,
+            mode: ConfigMode::Hub,
+            hub_fallback_reason: Some("daemon runtime configuration unavailable".to_string()),
+        };
+
+        let (source, revision, status) = ServiceSource::new(
+            &mut connection,
+            &layers,
+            HubConfigCapture::ImmediateBestEffort,
+        )
+        .expect("scoped reads fall back to standalone layers");
+
+        assert!(matches!(source, ServiceSource::Standalone { .. }));
+        assert_eq!(revision, None);
+        assert_eq!(status, HubConfigCaptureStatus::Degraded);
+        let warnings = captured_warnings();
+        assert_eq!(warnings.len(), 1);
+        assert!(warnings[0].contains("scoped database role"));
+        assert!(warnings[0].contains("defaults/env/gcore.yaml"));
+        assert!(!warnings[0].contains("database corruption"));
+    }
+
+    #[test]
+    #[serial_test::serial(serial_db)]
+    fn arbitrary_hub_capture_failure_degrades_with_one_warning() {
+        install_capture_logger();
+        captured_warnings().clear();
+
+        let (source, revision, status) = capture_failure(
+            anyhow::anyhow!("connection refused"),
+            Some("daemon runtime configuration unavailable"),
+            HubConfigCapture::ImmediateBestEffort,
+        )
+        .expect("best-effort reads tolerate every runtime capture failure");
+
+        assert!(matches!(source, ServiceSource::Standalone { .. }));
+        assert_eq!(revision, None);
+        assert_eq!(status, HubConfigCaptureStatus::Degraded);
+        let warnings = captured_warnings();
+        assert_eq!(warnings.len(), 1);
+        assert!(warnings[0].contains("daemon runtime configuration unavailable"));
+        assert!(warnings[0].contains("connection refused"));
+        assert!(warnings[0].contains("defaults/env/gcore.yaml"));
+    }
+
+    #[test]
+    #[serial_test::serial(serial_db)]
+    fn scoped_daemon_capture_discards_served_services_for_best_effort_reads() {
+        install_capture_logger();
+        captured_warnings().clear();
+        let mut connection = scoped_connection("best-effort scoped daemon capture");
+        let layers = ConfigLayers {
+            daemon: Some(served([(
+                "databases.qdrant.url",
+                "http://daemon-qdrant.example",
+            )])),
+            standalone: None,
+            mode: ConfigMode::Daemon,
+            hub_fallback_reason: None,
+        };
+
+        let (source, revision, status) = ServiceSource::new(
+            &mut connection,
+            &layers,
+            HubConfigCapture::ImmediateBestEffort,
+        )
+        .expect("hybrid reads fall back instead of mixing served and local config");
+
+        assert!(matches!(source, ServiceSource::Standalone { .. }));
+        assert_eq!(revision, None);
+        assert_eq!(status, HubConfigCaptureStatus::Degraded);
+        assert_eq!(captured_warnings().len(), 1);
+    }
+
+    #[test]
+    #[serial_test::serial(serial_db)]
+    fn scoped_required_capture_names_daemon_route() {
+        install_capture_logger();
+        captured_warnings().clear();
+        let mut connection = scoped_connection("required scoped hub capture");
+        let layers = ConfigLayers {
+            daemon: None,
+            standalone: None,
+            mode: ConfigMode::Hub,
+            hub_fallback_reason: Some("daemon runtime configuration unavailable".to_string()),
+        };
+
+        let error = match ServiceSource::new(&mut connection, &layers, HubConfigCapture::Required) {
+            Ok(_) => panic!("required runtime config must reject direct scoped capture"),
+            Err(error) => error,
+        };
+        let message = format!("{error:#}");
+
+        assert!(message.contains("scoped database role"));
+        assert!(message.contains("daemon runtime-configuration route"));
+        assert!(captured_warnings().is_empty());
     }
 
     fn spawn_served_config() -> (String, thread::JoinHandle<()>) {
@@ -469,19 +680,16 @@ mod tests {
         )
         .expect("write local CLI token");
         let (daemon_url, daemon) = spawn_served_config();
-        let home = home.path().to_str().expect("UTF-8 temporary home");
-        temp_env::with_vars(
-            [
-                ("GOBBY_HOME", Some(home)),
-                ("GOBBY_DAEMON_URL", Some(daemon_url.as_str())),
-                (gobby_core::runtime_mode::RUNTIME_MODE_ENV, Some("auto")),
-                ("GOBBY_MANAGED_EXECUTION_BOOTSTRAP", None),
-            ],
-            || {
-                read_config_layers().expect("read daemon-served config layers");
-            },
-        );
+        // Fetch through the explicit-argument seam: read_config_layers()
+        // consults gcore's process-global runtime-mode and effective-config
+        // caches, which earlier tests in this binary may have initialized —
+        // that would bypass the spawned server and hang its one-shot accept.
+        let layers = temp_env::with_var("GOBBY_MANAGED_EXECUTION_BOOTSTRAP", None::<&str>, || {
+            gobby_core::ai::effective_config::daemon_mode_layers_at(&daemon_url, home.path())
+                .expect("fetch daemon-served config layers")
+        });
         daemon.join().expect("served-config daemon thread");
+        layers_from_daemon_result(Ok(Some(layers)));
 
         let warning = captured_warnings()
             .iter()

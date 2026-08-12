@@ -195,7 +195,7 @@ fn test_context(database_url: String, project_root: PathBuf, project_id: String)
         falkordb: None,
         qdrant: None,
         embedding: None,
-        code_vectors: crate::config::CodeVectorSettings { vector_dim: None },
+        code_vectors: crate::config::CodeVectorSettings::default(),
         indexing: gobby_core::config::IndexingConfig::default(),
         daemon_url: None,
         index_scope: ProjectIndexScope::Single,

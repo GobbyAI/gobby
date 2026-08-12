@@ -22,9 +22,7 @@ fn sync_rejects_embedding_vectors_with_wrong_dimension() {
             query_prefix: None,
             timeout_seconds: 10,
         },
-        CodeVectorSettings {
-            vector_dim: Some(3),
-        },
+        CodeVectorSettings::with_vector_dim(Some(3)),
     )
     .expect("lifecycle");
 
@@ -65,9 +63,7 @@ fn sync_rejects_embedding_vector_count_mismatch() {
             query_prefix: None,
             timeout_seconds: 10,
         },
-        CodeVectorSettings {
-            vector_dim: Some(3),
-        },
+        CodeVectorSettings::with_vector_dim(Some(3)),
     )
     .expect("lifecycle");
     let mut second = test_symbol(None);
@@ -128,9 +124,7 @@ fn sync_file_symbols_batches_embedding_and_qdrant_upsert() {
             query_prefix: None,
             timeout_seconds: 10,
         },
-        CodeVectorSettings {
-            vector_dim: Some(3),
-        },
+        CodeVectorSettings::with_vector_dim(Some(3)),
     )
     .expect("lifecycle");
     let symbols = (0..129).map(test_symbol_with_index).collect::<Vec<_>>();
@@ -185,7 +179,7 @@ fn dim_probe_with_override() {
             query_prefix: None,
             timeout_seconds: 10,
         },
-        CodeVectorSettings { vector_dim: None },
+        CodeVectorSettings::default(),
     )
     .expect("lifecycle");
 
@@ -219,9 +213,7 @@ fn dim_probe_with_override() {
             query_prefix: None,
             timeout_seconds: 10,
         },
-        CodeVectorSettings {
-            vector_dim: Some(1536),
-        },
+        CodeVectorSettings::with_vector_dim(Some(1536)),
     )
     .expect("lifecycle with explicit size");
 

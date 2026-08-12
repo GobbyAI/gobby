@@ -65,9 +65,7 @@ fn ensure_creates_missing_and_reuses_compatible() {
             query_prefix: None,
             timeout_seconds: 10,
         },
-        CodeVectorSettings {
-            vector_dim: Some(3),
-        },
+        CodeVectorSettings::with_vector_dim(Some(3)),
     )
     .expect("lifecycle");
 
@@ -151,9 +149,7 @@ fn clear_and_rebuild_delete_project_and_upsert_current_symbols() {
             query_prefix: None,
             timeout_seconds: 10,
         },
-        CodeVectorSettings {
-            vector_dim: Some(3),
-        },
+        CodeVectorSettings::with_vector_dim(Some(3)),
     )
     .expect("lifecycle");
 
@@ -214,9 +210,7 @@ fn incompatible_existing_collection_errors_without_migration() {
             query_prefix: None,
             timeout_seconds: 10,
         },
-        CodeVectorSettings {
-            vector_dim: Some(3),
-        },
+        CodeVectorSettings::with_vector_dim(Some(3)),
     )
     .expect("lifecycle");
 

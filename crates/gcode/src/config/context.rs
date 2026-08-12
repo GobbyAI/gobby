@@ -13,7 +13,7 @@ use gobby_core::project::{find_project_root, read_project_id};
 use postgres::Client;
 use uuid::Uuid;
 
-use super::layers::{ServiceSource, read_config_layers};
+use super::layers::{HubConfigCapture, HubConfigCaptureStatus, ServiceSource, read_config_layers};
 use super::services::{
     resolve_code_vector_settings_from_source, resolve_embedding_config_from_service_source,
     resolve_falkordb_config_from_source, resolve_indexing_settings_from_source,
@@ -52,6 +52,16 @@ pub const FALKORDB_PASSWORD_CONFIG_KEY: &str = "databases.falkordb.password";
 #[derive(Debug, Clone, PartialEq, Eq, Default)]
 pub struct CodeVectorSettings {
     pub vector_dim: Option<usize>,
+    runtime_config_capture_degraded: bool,
+}
+
+impl CodeVectorSettings {
+    pub(crate) fn with_vector_dim(vector_dim: Option<usize>) -> Self {
+        Self {
+            vector_dim,
+            runtime_config_capture_degraded: false,
+        }
+    }
 }
 
 pub type IndexingSettings = gobby_core::config::IndexingConfig;
@@ -65,6 +75,16 @@ pub struct ServiceConfigSelection {
 }
 
 impl ServiceConfigSelection {
+    fn hub_capture(&self) -> HubConfigCapture {
+        if self.embedding && self.code_vectors {
+            HubConfigCapture::Required
+        } else if self.falkordb || self.qdrant || self.embedding || self.code_vectors {
+            HubConfigCapture::ImmediateBestEffort
+        } else {
+            HubConfigCapture::DeferredBestEffort
+        }
+    }
+
     pub const fn all() -> Self {
         Self {
             falkordb: true,
@@ -206,7 +226,8 @@ fn resolve_services(
     layers: &super::layers::ConfigLayers,
     services: ServiceConfigSelection,
 ) -> anyhow::Result<ResolvedServices> {
-    let (mut source, revision) = ServiceSource::new(conn, layers)?;
+    let (mut source, revision, capture_status) =
+        ServiceSource::new(conn, layers, services.hub_capture())?;
     let falkordb = if services.falkordb {
         resolve_falkordb_config_from_source(&mut source)?
     } else {
@@ -223,11 +244,13 @@ fn resolve_services(
         None
     };
     let indexing = resolve_indexing_settings_from_source(&mut source)?;
-    let code_vectors = if services.code_vectors {
+    let mut code_vectors = if services.code_vectors {
         resolve_code_vector_settings_from_source(&mut source)?
     } else {
         CodeVectorSettings::default()
     };
+    code_vectors.runtime_config_capture_degraded =
+        capture_status == HubConfigCaptureStatus::Degraded;
     Ok((
         falkordb,
         qdrant,
@@ -277,6 +300,15 @@ pub struct ProjectIdentity {
 }
 
 impl Context {
+    pub(crate) fn runtime_config_capture_degraded(&self) -> bool {
+        self.code_vectors.runtime_config_capture_degraded
+    }
+
+    #[cfg(test)]
+    pub(crate) fn set_runtime_config_capture_degraded_for_test(&mut self, degraded: bool) {
+        self.code_vectors.runtime_config_capture_degraded = degraded;
+    }
+
     /// Resolve context from CLI args and filesystem state.
     pub fn resolve(project_override: Option<&str>, quiet: bool) -> anyhow::Result<Self> {
         Self::resolve_with_services(project_override, quiet, ServiceConfigSelection::all())
@@ -649,5 +681,30 @@ fn absolute_fallback(path: &Path) -> PathBuf {
         std::env::current_dir()
             .unwrap_or_else(|_| std::env::temp_dir())
             .join(path)
+    }
+}
+
+#[cfg(test)]
+mod capture_tests {
+    use super::{HubConfigCapture, ServiceConfigSelection};
+
+    #[test]
+    fn service_selection_sets_capture_strictness() {
+        assert_eq!(
+            ServiceConfigSelection::database_only().hub_capture(),
+            HubConfigCapture::DeferredBestEffort
+        );
+        assert_eq!(
+            ServiceConfigSelection::hybrid_search().hub_capture(),
+            HubConfigCapture::ImmediateBestEffort
+        );
+        assert_eq!(
+            ServiceConfigSelection::all().hub_capture(),
+            HubConfigCapture::Required
+        );
+        assert_eq!(
+            ServiceConfigSelection::vectors().hub_capture(),
+            HubConfigCapture::Required
+        );
     }
 }

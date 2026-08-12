@@ -14,7 +14,7 @@ use crate::config::context::{
     GOBBY_FALKORDB_HOST_ENV, GOBBY_FALKORDB_PASSWORD_ENV, GOBBY_FALKORDB_PORT_ENV,
     IndexingSettings,
 };
-use crate::config::layers::{ConfigLayers, ServiceSource};
+use crate::config::layers::{ConfigLayers, HubConfigCapture, ServiceSource};
 use crate::db;
 
 pub(super) trait ServiceConfigSource {
@@ -395,7 +395,8 @@ pub(crate) fn resolve_embedding_config_details(
     conn: &mut Client,
     layers: &ConfigLayers,
 ) -> anyhow::Result<Option<EmbeddingConfigDetails>> {
-    let (mut source, _revision) = ServiceSource::new(conn, layers)?;
+    let (mut source, _revision, _capture_status) =
+        ServiceSource::new(conn, layers, HubConfigCapture::Required)?;
     resolve_embedding_config_details_from_service_source(&mut source)
 }
 
@@ -474,7 +475,7 @@ pub(super) fn resolve_code_vector_settings_from_source(
 ) -> Result<CodeVectorSettings, CodeVectorConfigError> {
     let vector_dim = resolve_vector_dim(source, embedding_keys::AI_DIM)?;
 
-    Ok(CodeVectorSettings { vector_dim })
+    Ok(CodeVectorSettings::with_vector_dim(vector_dim))
 }
 
 fn resolve_vector_dim(

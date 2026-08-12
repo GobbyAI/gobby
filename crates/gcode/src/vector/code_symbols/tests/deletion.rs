@@ -167,9 +167,7 @@ fn clear_project_vectors_does_not_touch_memory_vector_collections() {
             query_prefix: None,
             timeout_seconds: 10,
         },
-        CodeVectorSettings {
-            vector_dim: Some(3),
-        },
+        CodeVectorSettings::with_vector_dim(Some(3)),
     )
     .expect("lifecycle");
 
