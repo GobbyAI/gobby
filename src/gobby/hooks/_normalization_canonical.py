@@ -1,6 +1,7 @@
 """Canonical tool metadata inference."""
 
 import posixpath
+import re
 from collections.abc import Mapping
 from dataclasses import dataclass
 from typing import Any
@@ -89,6 +90,10 @@ _GCODE_PIPELINE_READ_ONLY_FILTERS = frozenset(
 # Characters in echo arguments that imply command substitution rather than a plain marker.
 _ECHO_UNSAFE_CHARS = frozenset({"$", "`"})
 _CURL_SHORT_OPTIONS_WITH_VALUES = frozenset("AbcCdDeEFHKmoPQrTtuwxXYz")
+
+# `$` opening a variable (`$VAR`, `${VAR}`), command substitution (`$(cmd)`),
+# or positional parameter (`$1`) — anything the shell would expand at runtime.
+_UNEXPANDED_SHELL_REFERENCE = re.compile(r"\$[\w{(]")
 
 
 @dataclass(frozen=True, slots=True)
@@ -342,6 +347,16 @@ def _rebase_shell_path(path: str, cwd: str | None) -> str:
     return posixpath.normpath(posixpath.join(cwd, path))
 
 
+def _contains_unexpanded_shell_reference(path: str) -> bool:
+    """Detect ``$VAR``, ``${VAR}``, ``$(cmd)``, and positional-parameter tokens.
+
+    Shell-extracted path tokens keep their source text, so a token containing
+    an unexpanded reference names an unknowable location; recording it verbatim
+    fabricates attribution and rule-match paths.
+    """
+    return _UNEXPANDED_SHELL_REFERENCE.search(path) is not None
+
+
 def _rebase_shell_paths(paths: list[str], cwd: str | None) -> list[str]:
     return [_rebase_shell_path(path, cwd) for path in paths]
 
@@ -470,8 +485,12 @@ def _merge_shell_segment_metadata(metadata: list[_ShellSegmentMetadata]) -> dict
         return _build_canonical_tool_metadata("execute")
 
     paths: list[str] = []
+    mutation_scope_unknown = False
     for item in active:
-        for path in item.paths:
+        resolvable = [path for path in item.paths if not _contains_unexpanded_shell_reference(path)]
+        if item.repo_mutation and not resolvable:
+            mutation_scope_unknown = True
+        for path in resolvable:
             if path not in paths:
                 paths.append(path)
 
@@ -492,7 +511,7 @@ def _merge_shell_segment_metadata(metadata: list[_ShellSegmentMetadata]) -> dict
     extra = _merge_code_navigation_extra(active)
     if not pure_gcode_navigation:
         extra = _without_code_index_navigation(extra)
-    if any(item.repo_mutation and not item.paths for item in active):
+    if mutation_scope_unknown:
         extra["_canonical_repo_mutation_scope_unknown"] = True
 
     return _build_canonical_tool_metadata(

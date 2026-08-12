@@ -1929,3 +1929,82 @@ class TestStringArgumentCoercion:
         assert data["_input_coerced"] is True
         assert data["mcp_server"] == "gobby-tasks"
         assert data["mcp_tool"] == "create_task"
+
+
+class TestUnexpandedShellReferencePaths:
+    """Shell path tokens holding unexpanded references never become canonical paths."""
+
+    @pytest.mark.parametrize(
+        "command",
+        [
+            "curl -s -o $SP/out.json http://localhost:60887/api/config/template",
+            "curl -s -o ${SP}/out.json http://localhost:60887/api/config/template",
+            "curl -s --output=$SP/out.json http://localhost:60887/api/config/template",
+        ],
+    )
+    def test_curl_variable_output_is_pathless_write(self, command: str) -> None:
+        data = {"tool_name": "Bash", "tool_input": {"command": command}}
+
+        normalize_tool_fields(data)
+
+        assert data["canonical_tool_kind"] == "write"
+        assert "canonical_file_path" not in data
+        assert "canonical_file_paths" not in data
+
+    def test_variable_redirection_target_stays_pathless(self) -> None:
+        # extract_redirection_paths already drops variable targets; the segment
+        # then normalizes as the documented path-less execute residual. Pin that
+        # no phantom path appears either way.
+        data = {
+            "tool_name": "Bash",
+            "tool_input": {"command": "echo probe > $OUT/log.txt"},
+        }
+
+        normalize_tool_fields(data)
+
+        assert "canonical_file_path" not in data
+        assert "canonical_file_paths" not in data
+
+    def test_variable_tee_target_is_pathless_write(self) -> None:
+        data: dict[str, Any] = {
+            "tool_name": "Bash",
+            "tool_input": {"command": "tee $OUT/log.txt"},
+        }
+
+        normalize_tool_fields(data)
+
+        assert data["canonical_tool_kind"] == "write"
+        assert data["canonical_repo_mutation"] is True
+        assert "canonical_file_path" not in data
+        assert "canonical_file_paths" not in data
+
+    def test_literal_curl_output_still_extracts_path(self) -> None:
+        data = {
+            "tool_name": "Bash",
+            "tool_input": {"command": "curl -s -o out.json http://localhost:60887/api"},
+        }
+
+        normalize_tool_fields(data)
+
+        assert data["canonical_tool_kind"] == "write"
+        assert data["canonical_file_path"] == "out.json"
+        assert data["canonical_file_paths"] == ["out.json"]
+
+    @pytest.mark.parametrize(
+        ("path", "expected"),
+        [
+            ("$SP/out.json", True),
+            ("${SP}/out.json", True),
+            ("$(mktemp -d)/out.json", True),
+            ("$1/out.json", True),
+            ("out$.json", False),
+            ("price$.md", False),
+            ("plain/out.json", False),
+        ],
+    )
+    def test_reference_detector_boundaries(self, path: str, expected: bool) -> None:
+        from gobby.hooks._normalization_canonical import (
+            _contains_unexpanded_shell_reference,
+        )
+
+        assert _contains_unexpanded_shell_reference(path) is expected
