@@ -39,6 +39,16 @@ def test_stage_review_approval_lock_key_is_task_scoped() -> None:
     )
 
 
+def test_isolation_reconciliation_lock_key_is_machine_scoped() -> None:
+    from gobby.storage.hub.protocol import IsolationRegistryReconciliation
+
+    pool_module = _postgres_pool_module()
+    lock = IsolationRegistryReconciliation(machine_id="machine-1")
+
+    assert lock.PRIORITY == 550
+    assert pool_module.advisory_lock_keys(lock) == ("isolation_registry_reconciliation:machine-1",)
+
+
 def test_postgres_transaction_is_closed_when_context_exits(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:

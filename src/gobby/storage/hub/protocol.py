@@ -19,6 +19,7 @@ __all__ = [
     "HubDatabase",
     "GitHubIssueTriageMutation",
     "IntegrationWorkspaceMutex",
+    "IsolationRegistryReconciliation",
     "LockAcquisitionOrderError",
     "LockTarget",
     "PlanReviewEvidenceMutation",
@@ -200,6 +201,18 @@ class WebChatSessionBootstrap:
     source: str
     project_id: str | None
     session_type: str
+
+
+@dataclass(frozen=True)
+class IsolationRegistryReconciliation:
+    """Serializes reverse isolation-registry reconciliation for one machine.
+
+    Future nested typed locks acquired during reconciliation must use a priority
+    greater than 550.
+    """
+
+    PRIORITY: ClassVar[int] = 550
+    machine_id: str
 
 
 @dataclass(frozen=True)

@@ -30,6 +30,7 @@ from gobby.storage.hub.protocol import (
     DispatchMutexRow,
     GitHubIssueTriageMutation,
     IntegrationWorkspaceMutex,
+    IsolationRegistryReconciliation,
     LockAcquisitionOrderError,
     LockTarget,
     PlanReviewEvidenceMutation,
@@ -570,6 +571,8 @@ def advisory_lock_keys(lock: LockTarget) -> tuple[str, ...]:
         return (f"plan_review_evidence:{lock.project_id}:{lock.plan_path}",)
     if isinstance(lock, IntegrationWorkspaceMutex):
         return (f"integration_workspace_mutex:{lock.integration_key}",)
+    if isinstance(lock, IsolationRegistryReconciliation):
+        return (f"isolation_registry_reconciliation:{lock.machine_id}",)
     if isinstance(lock, SessionRegistration):
         return (f"session_register:{lock.external_id}|{lock.source}|{lock.session_type}",)
     if isinstance(lock, SessionLineageMutation):

@@ -9,6 +9,7 @@ from collections.abc import Awaitable, Callable
 from typing import Any
 
 from gobby.agents.tmux.session_manager import TmuxProbeState
+from gobby.runner_maintenance.isolation_reconciliation import reconcile_isolation_registry
 from gobby.runner_maintenance_helpers import _positive_int_or_default, _run_db
 from gobby.runner_tmux_repair import (
     TmuxRepairSessionManager,
@@ -267,6 +268,7 @@ async def cleanup_expired_isolation_loop(
                 clone_storage,
                 run_db=run_db,
             )
+            await reconcile_isolation_registry(db, run_db=run_db)
 
         except asyncio.CancelledError:
             break
