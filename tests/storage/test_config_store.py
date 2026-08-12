@@ -159,11 +159,12 @@ class TestConfigStore:
     def test_secret_reference_is_registry_derived(
         self,
         store: ConfigStore,
+        secret_store: SecretStore,
         temp_db: HubDatabase,
     ) -> None:
-        store.set(AI_EMBEDDING_API_KEY_KEY, EMBEDDING_API_KEY_SECRET_REF)
-        store.mark_secret_keys({AI_EMBEDDING_API_KEY_KEY})
+        store.set_secret(AI_EMBEDDING_API_KEY_KEY, "secret-value", secret_store)
 
+        assert store.get(AI_EMBEDDING_API_KEY_KEY) == EMBEDDING_API_KEY_SECRET_REF
         assert store.get_secret_keys() == [AI_EMBEDDING_API_KEY_KEY]
         assert temp_db.fetchone(
             "SELECT is_secret FROM config_store WHERE key = %s",
