@@ -8,7 +8,7 @@ from collections.abc import Awaitable, Callable, Iterable, Mapping
 from concurrent.futures import Future as ThreadFuture
 from concurrent.futures import ThreadPoolExecutor
 from contextlib import suppress
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from types import MappingProxyType
 from typing import TypeVar, cast
 
@@ -78,8 +78,6 @@ class _PreparationFailure:
 
 
 class ConfigRuntime:
-    """Serialize complete reloads and publish desired/active bundles atomically."""
-
     def __init__(
         self,
         repository: ConfigSnapshotRepository,
@@ -235,7 +233,6 @@ class ConfigRuntime:
             self._pending_revision_requests.pop(request, None)
 
     async def reprepare_subscriber(self, name: str) -> ConfigSnapshot:
-        """Force one subscriber replacement at the currently adopted revision."""
         if self._closed:
             raise RuntimeError("ConfigRuntime is closed")
         subscriber = next(
@@ -848,19 +845,25 @@ class ConfigRuntime:
             activate = getattr(resource, "activate", None)
             if activate is None:
                 continue
-            activate_callback = cast(Callable[[], None], activate)
-
-            def activate_resource(
-                _activate: Callable[[], None] = activate_callback,
-                _resource: PreparedSubscriber = resource,
-            ) -> PreparedSubscriber:
-                _activate()
-                return _resource
-
-            await self._run_constructor(
-                activate_resource,
-                timeout=by_name[name].prepare_timeout,
-            )
+            subscriber = by_name[name]
+            try:
+                await self._run_constructor(
+                    cast(
+                        Callable[[], PreparedSubscriber],
+                        lambda activate=activate, resource=resource: (activate(), resource)[1],
+                    ),
+                    timeout=subscriber.prepare_timeout,
+                )
+            except BaseException as exc:
+                bundle = self._bundle
+                if bundle is None or isinstance(exc, asyncio.CancelledError):
+                    raise
+                failure = self._apply_failure(subscriber, subscriber.keys, exc)
+                failed = dict(bundle.snapshot.failed_live_keys)
+                failed.update(dict.fromkeys(subscriber.keys, failure))
+                snapshot = self._copy_snapshot(bundle.snapshot, failed_live_keys=failed)
+                self._bundle = replace(bundle, snapshot=snapshot)
+                raise
 
     async def _dispose(
         self,

@@ -18,7 +18,7 @@ from gobby.memory.services.knowledge_graph import (
     KnowledgeGraphStatus,
 )
 from gobby.memory.write_result import MemoryWriteResult
-from gobby.storage.memories import LocalMemoryManager, Memory
+from gobby.storage.memories import LocalMemoryManager, Memory, MemoryType
 from tests._timing import wait_for_async_condition
 
 pytestmark = pytest.mark.unit
@@ -37,6 +37,7 @@ def _mock_llm_service() -> MagicMock:
 def _make_manager(
     falkordb_host: str | None = None,
     llm_service: MagicMock | None = None,
+    llm_service_resolver: Callable[[], MagicMock | None] | None = None,
     vector_store: AsyncMock | None = None,
     embed_fn: AsyncMock | None = None,
     config: MemoryConfig | None = None,
@@ -60,6 +61,7 @@ def _make_manager(
         "db": db,
         "config": config,
         "llm_service": llm_service,
+        "llm_service_resolver": llm_service_resolver,
         "vector_store": vector_store,
         "embed_fn": embed_fn,
         "falkordb_host": falkordb_host,
@@ -147,6 +149,14 @@ class TestKnowledgeGraphServiceInitialization:
         manager = _make_manager(
             falkordb_host="127.0.0.1",
             llm_service=None,
+        )
+
+        assert manager._kg_service is None
+
+    def test_kg_service_none_when_runtime_llm_is_disabled(self) -> None:
+        manager = _make_manager(
+            falkordb_host="127.0.0.1",
+            llm_service_resolver=lambda: None,
         )
 
         assert manager._kg_service is None
@@ -427,7 +437,7 @@ class TestKnowledgeGraphRebuildService:
         memories = [
             Memory(
                 id="mem-1",
-                memory_type="fact",
+                memory_type=MemoryType.FACT,
                 content="Python memory",
                 created_at="2026-01-01T00:00:00+00:00",
                 updated_at="2026-01-01T00:00:00+00:00",
@@ -659,7 +669,10 @@ class TestGraphBackgroundTask:
 
     async def test_create_memory_no_graph_task_when_no_kg_service(self) -> None:
         """create_memory doesn't fire graph task when KnowledgeGraphService is unavailable."""
-        manager = _make_manager(falkordb_host=None)
+        manager = _make_manager(
+            falkordb_host="127.0.0.1",
+            llm_service_resolver=lambda: None,
+        )
 
         manager._backend = AsyncMock()
         manager._backend.content_exists = AsyncMock(return_value=False)
@@ -690,6 +703,7 @@ class TestGraphBackgroundTask:
         graph_tasks = [t for t in manager._background_tasks if "graph" in (t.get_name() or "")]
         assert len(graph_tasks) == 0
         assert manager._kg_service is None
+        manager._backend.record_graph_failure.assert_not_called()
 
     async def test_graph_task_failure_logged_not_raised(self) -> None:
         """Graph background task failure is logged but doesn't propagate."""

@@ -5,7 +5,6 @@ from __future__ import annotations
 import asyncio
 import logging
 from collections.abc import Callable, Mapping
-from concurrent.futures import Future
 from dataclasses import dataclass
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, cast
@@ -90,6 +89,14 @@ class AIServiceBundle:
     text_generation_service: TextGenerationService
     llm_service: LLMService
     tool_chat_service: ToolChatService
+
+
+def _resolve_llm_service(runner: GobbyRunner) -> LLMService | None:
+    runtime = getattr(runner, "config_runtime", None)
+    if runtime is not None and runtime.ready:
+        service = runtime.capture().services.get("ai_services")
+        return service.llm_service if isinstance(service, AIServiceBundle) else None
+    return getattr(runner, "llm_service", None)
 
 
 @dataclass
@@ -278,6 +285,7 @@ def _build_memory_services(
         runner.database,
         config.memory,
         llm_service=llm_service,
+        llm_service_resolver=lambda: _resolve_llm_service(runner),
         vector_store=vector_store,
         embed_fn=embed_fn,
         falkordb_host=falkor_cfg.host if falkor_cfg else None,
@@ -356,7 +364,6 @@ def _read_completed_switch_record(runner: GobbyRunner) -> CompletedSwitchRecord 
 
 
 _background_runtime_tasks: set[asyncio.Task[None]] = set()
-_background_runtime_futures: set[Future[None]] = set()
 
 
 def _request_memory_services_rebuild(
@@ -460,11 +467,19 @@ def _build_message_processor(
             processor.set_hook_manager(hook_manager)
         runner.message_processor = processor
         future = asyncio.run_coroutine_threadsafe(processor.start(), loop)
-        _background_runtime_futures.add(future)
-        future.add_done_callback(_background_runtime_futures.discard)
-        future.result(timeout=4.5)
+        try:
+            future.result(timeout=4.5)
+        except BaseException:
+            future.cancel()
+            if runner.message_processor is processor:
+                runner.message_processor = None
+            raise
+        if hook_manager is not None:
+            hook_manager._session_coordinator.reregister_active_sessions()
 
     def dispose() -> None:
+        if runner.message_processor is processor:
+            runner.message_processor = None
         _dispose_async(loop, processor.stop)
 
     return PreparedService(processor, dispose, activate)

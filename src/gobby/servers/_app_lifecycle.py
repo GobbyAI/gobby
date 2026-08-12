@@ -37,8 +37,7 @@ def create_lifespan(
         if server.test_mode:
             logger.debug("Running in test mode - external connections disabled")
 
-        runtime_bundle = server.capture_runtime_bundle()
-        config = runtime_bundle.snapshot.active if runtime_bundle else server.startup_config
+        config = server.resolve_runtime_config()
         hook_manager_kwargs: dict[str, Any] = {
             "daemon_host": "localhost",
             "daemon_port": server.port,

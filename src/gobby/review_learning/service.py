@@ -109,7 +109,7 @@ class ReviewLearningService:
 
     def __init__(
         self,
-        memory_manager: ReviewLearningMemoryManager,
+        memory_manager: ReviewLearningMemoryManager | None,
         task_manager: PromotionTaskManager,
         memory_manager_resolver: Callable[[], ReviewLearningMemoryManager | None] | None = None,
     ):
@@ -124,6 +124,8 @@ class ReviewLearningService:
             resolved = self._memory_manager_resolver()
             if resolved is not None:
                 return resolved
+        if self._seed_memory_manager is None:
+            raise RuntimeError("Review-learning memory manager is unavailable")
         return self._seed_memory_manager
 
     async def recall_context(

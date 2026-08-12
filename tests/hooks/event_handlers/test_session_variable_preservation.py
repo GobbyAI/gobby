@@ -15,7 +15,6 @@ from unittest.mock import MagicMock, patch
 
 import pytest
 
-from gobby.config.sessions import MemoryRecallConfig
 from gobby.hooks.event_handlers import EventHandlers
 from gobby.hooks.events import HookEvent, HookEventType, HookResponse, SessionSource
 from gobby.storage.hub.protocol import HubDatabase
@@ -34,10 +33,7 @@ def _local_machine_identity() -> Iterator[None]:
         yield
 
 
-def _make_event_handlers(
-    *,
-    memory_recall_config: MemoryRecallConfig | None = None,
-) -> EventHandlers:
+def _make_event_handlers() -> EventHandlers:
     """Create an EventHandlers instance with minimal mocked dependencies."""
     session_storage = MagicMock()
     session_storage.db = MagicMock()
@@ -47,7 +43,6 @@ def _make_event_handlers(
     return EventHandlers(
         session_manager=session_manager,
         session_storage=session_storage,
-        memory_recall_config=memory_recall_config,
         logger=logging.getLogger("test"),
     )
 
@@ -101,12 +96,9 @@ def _make_project(db: HubDatabase, tmp_path: Path) -> str:
 def _make_real_event_handlers(
     db: HubDatabase,
     project_id: str,
-    *,
-    memory_recall_config: MemoryRecallConfig | None = None,
 ) -> EventHandlers:
     return EventHandlers(
         session_manager=SessionManager(db),  # type: ignore[arg-type]
-        memory_recall_config=memory_recall_config,
         get_machine_id=lambda: "21000000-0000-4000-8000-000000000001",
         resolve_project_id=lambda _project_id, _cwd: project_id,
         logger=logging.getLogger("test"),
@@ -205,14 +197,6 @@ def test_gobby_session_id_binding_merges_terminal_context(
         "gobby_session_id": session.id,
         "parent_pid": 1234,
     }
-
-
-def test_event_handlers_round_trips_memory_recall_config() -> None:
-    config = MemoryRecallConfig(enabled=False)
-
-    handlers = _make_event_handlers(memory_recall_config=config)
-
-    assert handlers._memory_recall_config is config
 
 
 class TestNewSessionGetsAllDefaults:

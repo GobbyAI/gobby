@@ -264,7 +264,10 @@ class MemoryManager(MemoryManagerFacadeMethods):
         collection_prefix: str,
         embedding_dim: int,
     ) -> KnowledgeGraphService | None:
-        if (llm_service is None and llm_service_resolver is None) or not self._falkor_client:
+        resolved_llm = llm_service
+        if resolved_llm is None and llm_service_resolver is not None:
+            resolved_llm = llm_service_resolver()
+        if resolved_llm is None or not self._falkor_client:
             return None
         try:
             from gobby.prompts.loader import PromptLoader
@@ -398,10 +401,6 @@ class MemoryManager(MemoryManagerFacadeMethods):
     @property
     def llm_service(self) -> LLMService | None:
         return self._llm_service_resolver()
-
-    @llm_service.setter
-    def llm_service(self, service: LLMService | None) -> None:
-        self._llm_service = service
 
     @property
     def falkor_client(self) -> FalkorClient | None:

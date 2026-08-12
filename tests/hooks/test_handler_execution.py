@@ -201,6 +201,22 @@ class TestApplyDebugEcho:
 
         assert response.system_message is None
 
+    def test_debug_echo_resolves_current_workflow_config(self) -> None:
+        disabled = MagicMock(debug_echo_context=False)
+        enabled = MagicMock(debug_echo_context=True)
+        current = [disabled]
+        handlers = EventHandlers(workflow_config_resolver=lambda: current[0])
+
+        first = HookResponse(decision="allow", context="first")
+        handlers._apply_debug_echo(first)
+        assert first.system_message is None
+
+        current[0] = enabled
+        second = HookResponse(decision="allow", context="second")
+        handlers._apply_debug_echo(second)
+        assert second.system_message is not None
+        assert "second" in second.system_message
+
     def test_debug_echo_empty_context(self) -> None:
         """Test no echo when context is empty."""
         mock_config = MagicMock()

@@ -166,15 +166,15 @@ class HookManagerFactory:
         Returns:
             HookManagerComponents with all wired subsystem instances
         """
-        # Capture one typed configuration snapshot for the full construction operation.
-        if config is None:
-            try:
-                config = cls._resolve_config(config, config_runtime)
-            except Exception as e:
-                hook_logger.exception(
-                    "Failed to load config in HookManager, using defaults: %s",
-                    e,
-                )
+        # Capture one typed configuration snapshot for the construction operation.
+        try:
+            config = cls._resolve_config(config, config_runtime)
+        except Exception as e:
+            hook_logger.exception(
+                "Failed to load config in HookManager, using bootstrap config: %s",
+                e,
+            )
+            config = cls._resolve_config(config, None)
 
         # Initialize core components
         if session_manager is not None:
@@ -269,10 +269,9 @@ class HookManagerFactory:
             session_coordinator=session_coordinator,
             session_end_auto_link_worker=session_end_auto_link_worker,
             skill_manager=workflow_components.skill_manager,
-            skills_config=config.skills if config else None,
-            memory_recall_config=config.memory_recall if config else None,
             call_tool=call_tool_fn,
             workflow_config=config.workflow if config else None,
+            workflow_config_resolver=lambda: cls._resolve_config(config, config_runtime).workflow,
             get_machine_id=get_machine_id,
             resolve_project_id=resolve_project_id,
             code_index_trigger=code_index_trigger,
@@ -310,10 +309,10 @@ class HookManagerFactory:
     @staticmethod
     def _resolve_config(config: Any | None, config_runtime: ConfigRuntimeReader | None) -> Any:
         """Resolve hook configuration from one runtime snapshot or bootstrap inputs."""
-        if config is not None:
-            return config
         if config_runtime is not None:
             return config_runtime.snapshot.active
+        if config is not None:
+            return config
         bootstrap = load_bootstrap(resolve_database_url=True)
         return DaemonConfig(**bootstrap.to_config_dict())
 
@@ -636,6 +635,9 @@ class HookManagerFactory:
                 tool_proxy_getter=tool_proxy_getter,
                 session_manager=storage.session,
                 pipeline_config=config.pipelines if config else None,
+                pipeline_config_resolver=lambda: HookManagerFactory._resolve_config(
+                    config, config_runtime
+                ).pipelines,
             )
         except Exception as e:
             logger.debug("Pipeline executor not available: %s", e)
@@ -656,6 +658,7 @@ class HookManagerFactory:
                 session_manager=storage.session,
                 session_task_manager=storage.session_task,
                 config=config,
+                config_resolver=lambda: HookManagerFactory._resolve_config(config, config_runtime),
                 evaluation_runtime=evaluation_runtime,
             )
         except Exception:

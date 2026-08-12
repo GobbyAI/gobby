@@ -511,6 +511,8 @@ class TestAgentRunCompletion:
         agent_run_manager.get.return_value = MagicMock(status="running", tmux_session_name=None)
         agent_run_manager.db.fetchone.return_value = None
         message_processor = MagicMock()
+        stale_processor = MagicMock()
+        current = [stale_processor]
         flush_completed = False
 
         async def flush_session(session_id: str) -> None:
@@ -537,7 +539,7 @@ class TestAgentRunCompletion:
         session_manager.get.side_effect = get_refreshed_session
         coordinator = SessionCoordinator(
             session_storage=session_manager,
-            message_processor_resolver=lambda: message_processor,
+            message_processor_resolver=lambda: current[0],
             agent_run_manager=agent_run_manager,
         )
         coordinator.set_completion_registry(MagicMock())
@@ -549,10 +551,12 @@ class TestAgentRunCompletion:
             tool_call_count=0,
             turn_count=0,
         )
+        current[0] = message_processor
 
         await asyncio.to_thread(coordinator.complete_agent_run, original_session)
 
         message_processor.flush_session.assert_awaited_once_with("sess-short")
+        stale_processor.flush_session.assert_not_called()
         agent_run_manager.fail.assert_not_called()
         agent_run_manager.complete.assert_called_once_with(
             run_id="run-short",

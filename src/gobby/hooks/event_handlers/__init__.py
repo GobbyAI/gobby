@@ -27,8 +27,6 @@ if TYPE_CHECKING:
     from gobby.agents.attention_metadata import AttentionMetadataStore
     from gobby.autonomous.progress_tracker import ProgressTracker
     from gobby.code_index.trigger import CodeIndexTrigger
-    from gobby.config.sessions import MemoryRecallConfig
-    from gobby.config.skills import SkillsConfig
     from gobby.config.tasks import WorkflowConfig
     from gobby.hooks.session_coordinator import SessionCoordinator
     from gobby.hooks.session_end_auto_link import SessionEndAutoLinkWorker
@@ -68,10 +66,9 @@ class EventHandlers(
         session_coordinator: SessionCoordinator | None = None,
         session_end_auto_link_worker: SessionEndAutoLinkWorker | None = None,
         skill_manager: HookSkillManager | None = None,
-        skills_config: SkillsConfig | None = None,
-        memory_recall_config: MemoryRecallConfig | None = None,
         call_tool: Callable[[str, str, dict[str, Any]], dict[str, Any] | None] | None = None,
         workflow_config: WorkflowConfig | None = None,
+        workflow_config_resolver: Callable[[], WorkflowConfig | None] | None = None,
         get_machine_id: Callable[[], str | None] | None = None,
         resolve_project_id: Callable[[str | None, str | None], str] | None = None,
         code_index_trigger: CodeIndexTrigger | None = None,
@@ -92,9 +89,8 @@ class EventHandlers(
             session_coordinator: SessionCoordinator for session tracking
             session_end_auto_link_worker: Managed worker for session commit auto-linking
             skill_manager: HookSkillManager for skill discovery
-            skills_config: SkillsConfig for skill discovery/manifest settings
-            memory_recall_config: MemoryRecallConfig for memory recall settings
             workflow_config: WorkflowConfig for workflow settings (debug_echo_context)
+            workflow_config_resolver: Resolves current workflow settings
             get_machine_id: Function to get machine ID
             resolve_project_id: Function to resolve project ID from cwd
             code_index_trigger: Optional trigger for code indexing on file changes.
@@ -122,10 +118,8 @@ class EventHandlers(
         self._session_coordinator = session_coordinator
         self._session_end_auto_link_worker = session_end_auto_link_worker
         self._skill_manager = skill_manager
-        self._skills_config = skills_config
-        self._memory_recall_config = memory_recall_config
         self._call_tool = call_tool
-        self._workflow_config = workflow_config
+        self._workflow_config_resolver = workflow_config_resolver or (lambda: workflow_config)
         self._get_machine_id = get_machine_id or (lambda: "unknown-machine")
         self._resolve_project_id = resolve_project_id or (lambda p, c: p or "")
         self._code_index_trigger = code_index_trigger

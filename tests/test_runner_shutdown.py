@@ -4,7 +4,7 @@ import asyncio
 from contextlib import ExitStack
 from pathlib import Path
 from types import SimpleNamespace
-from typing import TYPE_CHECKING, cast
+from typing import TYPE_CHECKING, Any, cast
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
@@ -377,6 +377,84 @@ class TestGobbyRunnerShutdown:
 
             assert mock_mcp_manager.disconnect_all.await_count == 1
             assert runner.database.close.called is True
+
+    @pytest.mark.asyncio
+    async def test_run_starts_message_processor(self, mock_config) -> None:
+        """Test that run starts the message processor when enabled."""
+        mock_config.message_tracking = MagicMock()
+        mock_config.message_tracking.enabled = True
+        mock_config.message_tracking.poll_interval = 5.0
+        mock_config.databases.qdrant.url = ""
+        mock_config.databases.falkordb.password = None
+        mock_config.embeddings.api_base = ""
+        mock_config.ui.enabled = False
+
+        mock_mcp_manager = AsyncMock()
+        mock_mcp_manager.connect_all = AsyncMock()
+        mock_mcp_manager.disconnect_all = AsyncMock()
+
+        mock_message_processor = AsyncMock()
+        mock_message_processor.start = AsyncMock()
+        mock_message_processor.stop = AsyncMock()
+
+        patches = create_base_patches(
+            mock_config=mock_config,
+            mock_mcp_manager=mock_mcp_manager,
+        )
+        config_runtime_patch = next(p for p in patches if p.attribute == "ConfigRuntime")
+        config_runtime = config_runtime_patch.kwargs["return_value"]
+
+        async def register_subscriber(subscriber: Any) -> Any:
+            if subscriber.name == "message_processor":
+                prepared = subscriber.builder(SimpleNamespace(desired=mock_config))
+                assert prepared is not None
+                await asyncio.to_thread(prepared.activate)
+            return config_runtime.snapshot
+
+        config_runtime.register_subscriber = AsyncMock(side_effect=register_subscriber)
+        patches = [p for p in patches if p.attribute != "SessionMessageProcessor"]
+
+        def apply_stateful_services(runner: GobbyRunner) -> None:
+            runner.text_generation_service = None
+            runner.llm_service = None
+            runner.tool_chat_service = None
+            runner.vector_store = None
+            runner.memory_manager = None
+            runner.memory_backup_manager = None
+            runner.code_indexer = None
+            runner.mcp_proxy = mock_mcp_manager
+            runner.message_processor = mock_message_processor
+            runner.task_validator = None
+
+        patches.append(
+            patch(
+                "gobby.runner_init.services._apply_stateful_services",
+                side_effect=apply_stateful_services,
+            )
+        )
+        patches.append(
+            patch(
+                "gobby.runner_init.services.SessionMessageProcessor",
+                return_value=mock_message_processor,
+            )
+        )
+
+        with ExitStack() as stack:
+            [stack.enter_context(p) for p in patches]
+
+            runner = await GobbyRunner.create()
+            mock_message_processor.start.assert_awaited_once()
+            runner._shutdown_requested = True
+
+            with patch("uvicorn.Config"), patch("uvicorn.Server") as mock_server_cls:
+                mock_server = AsyncMock()
+                mock_server.serve = AsyncMock()
+                mock_server_cls.return_value = mock_server
+
+                with patch("gobby.runner_maintenance.setup_signal_handlers"):
+                    await runner.run(ownership_resolution=FailOpenPidOwnership("test"))
+
+            assert runner._shutdown_requested is True
 
     @pytest.mark.asyncio
     async def test_run_runs_startup_metrics_cleanup(self, mock_config) -> None:

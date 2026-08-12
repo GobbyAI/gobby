@@ -3129,6 +3129,28 @@ class TestRuntimeServiceIdentityAfterRebuild:
         assert manager.memory_manager is rebuilt_memory.memory_manager
         assert manager.llm_service is rebuilt_ai.llm_service
 
+    def test_memory_manager_llm_resolver_observes_runtime_rebuilds(self) -> None:
+        from gobby.runner_init.services import AIServiceBundle, _resolve_llm_service
+
+        services: dict[str, object] = {}
+        runtime = SimpleNamespace(
+            ready=True,
+            capture=static_runtime_capture(DaemonConfig(), services=services),
+        )
+        runner = SimpleNamespace(config_runtime=runtime, llm_service=object())
+
+        assert _resolve_llm_service(runner) is None
+
+        first = MagicMock(spec=AIServiceBundle)
+        first.llm_service = object()
+        services["ai_services"] = first
+        assert _resolve_llm_service(runner) is first.llm_service
+
+        rebuilt = MagicMock(spec=AIServiceBundle)
+        rebuilt.llm_service = object()
+        services["ai_services"] = rebuilt
+        assert _resolve_llm_service(runner) is rebuilt.llm_service
+
 
 class TestMessageProcessorPreparedService:
     """Lifecycle contract for the rebuilt message-processor subscriber."""
@@ -3175,9 +3197,46 @@ class TestMessageProcessorPreparedService:
         assert processor.websocket_server is runner.websocket_server
         processor.set_hook_manager.assert_called_once_with(hook_manager)
         processor.start.assert_awaited_once()
+        hook_manager._session_coordinator.reregister_active_sessions.assert_called_once_with()
 
         await asyncio.to_thread(prepared.dispose)
+        assert runner.message_processor is None
         processor.stop.assert_awaited_once()
+
+    def test_failed_activation_cancels_future_and_clears_runner_reference(self) -> None:
+        from gobby.runner_init.services import _build_message_processor
+
+        config = MagicMock()
+        config.message_tracking.enabled = True
+        processor = MagicMock()
+        future = MagicMock()
+        future.result.side_effect = RuntimeError("start failed")
+        runner = SimpleNamespace(
+            database=MagicMock(),
+            session_manager=MagicMock(),
+            db_executor=SimpleNamespace(run=AsyncMock()),
+            websocket_server=MagicMock(),
+            http_server=SimpleNamespace(_hook_manager=None),
+            message_processor=None,
+        )
+
+        with (
+            patch(
+                "gobby.runner_init.services.SessionMessageProcessor",
+                return_value=processor,
+            ),
+            patch(
+                "gobby.runner_init.services.asyncio.run_coroutine_threadsafe",
+                return_value=future,
+            ),
+        ):
+            prepared = _build_message_processor(runner, config, MagicMock())
+            assert prepared is not None
+            with pytest.raises(RuntimeError, match="start failed"):
+                prepared.activate()
+
+        future.cancel.assert_called_once_with()
+        assert runner.message_processor is None
 
     def test_disabled_tracking_builds_no_service(self) -> None:
         from gobby.runner_init.services import _build_message_processor
@@ -3187,6 +3246,112 @@ class TestMessageProcessorPreparedService:
         runner = SimpleNamespace()
 
         assert _build_message_processor(runner, config, MagicMock()) is None
+
+    @pytest.mark.asyncio
+    async def test_runtime_disable_and_rebuild_updates_production_resolver(self) -> None:
+        from gobby.app_context import ServiceContainer
+        from gobby.config.runtime import ConfigRuntime
+        from gobby.config.sessions import MessageTrackingConfig
+        from gobby.hooks.session_coordinator import SessionCoordinator
+        from gobby.runner_init.servers import _resolve_message_processor
+        from gobby.runner_init.services import _build_message_processor
+        from tests.config.test_stateful_config_subscribers import (
+            FakeRegistry,
+            FakeRepository,
+            StoredSnapshot,
+            snapshot,
+            subscriber,
+        )
+
+        class MessageRepository(FakeRepository):
+            def runtime_candidate(
+                self, overrides: dict[str, object], _secret_bindings: object
+            ) -> DaemonConfig:
+                enabled = cast(bool, overrides["message_tracking.enabled"])
+                return DaemonConfig(
+                    message_tracking=MessageTrackingConfig(enabled=enabled, poll_interval=0.1)
+                )
+
+        repository = MessageRepository(
+            cast(
+                list[StoredSnapshot],
+                [
+                    snapshot(0, **{"message_tracking.enabled": True}),
+                    snapshot(1, **{"message_tracking.enabled": False}),
+                    snapshot(2, **{"message_tracking.enabled": True}),
+                ],
+            )
+        )
+        session = MagicMock(
+            id="session-1",
+            transcript_path="/tmp/transcript.jsonl",
+            source="claude",
+        )
+        session_storage = MagicMock()
+        session_storage.list.side_effect = lambda status, limit: (
+            [session] if status == "active" else []
+        )
+        processors = [MagicMock(), MagicMock()]
+        for processor in processors:
+            processor.start = AsyncMock()
+            processor.stop = AsyncMock()
+        runner = SimpleNamespace(
+            config_runtime=None,
+            database=MagicMock(),
+            session_manager=session_storage,
+            db_executor=SimpleNamespace(run=AsyncMock()),
+            websocket_server=MagicMock(),
+            http_server=None,
+            message_processor=None,
+        )
+        loop = asyncio.get_running_loop()
+        runtime = ConfigRuntime(
+            repository,
+            registry=FakeRegistry(),
+            subscribers=[
+                subscriber(
+                    "message_processor",
+                    {"message_tracking.enabled"},
+                    lambda change: _build_message_processor(runner, change.desired, loop),
+                )
+            ],
+        )
+        runner.config_runtime = runtime
+        container = ServiceContainer(
+            database=MagicMock(),
+            session_manager=session_storage,
+            task_manager=MagicMock(),
+            message_processor_resolver=lambda: _resolve_message_processor(cast(Any, runner)),
+        )
+        coordinator = SessionCoordinator(
+            session_storage=session_storage,
+            message_processor_resolver=container.resolve_message_processor,
+        )
+        runner.http_server = SimpleNamespace(
+            _hook_manager=SimpleNamespace(_session_coordinator=coordinator)
+        )
+
+        with patch(
+            "gobby.runner_init.services.SessionMessageProcessor",
+            side_effect=processors,
+        ):
+            await runtime.start()
+            assert container.resolve_message_processor() is processors[0]
+            processors[0].register_session.assert_called_once()
+
+            repository.index = 1
+            await runtime.reconcile_revision(1)
+            assert container.resolve_message_processor() is None
+            assert runner.message_processor is None
+            assert coordinator.reregister_active_sessions() == 0
+            processors[0].register_session.assert_called_once()
+
+            repository.index = 2
+            await runtime.reconcile_revision(2)
+            assert container.resolve_message_processor() is processors[1]
+            processors[1].register_session.assert_called_once()
+
+        await runtime.close()
 
 
 class TestProjectPurgeRuntimeResolvers:
@@ -3871,13 +4036,16 @@ class TestAgentRestartRecoveryHelpers:
         run_manager.get.return_value = terminal
         wake = AsyncMock(return_value={"ism_persisted": True})
         registry = CompletionEventRegistry(wake_callback=wake)
-        runner = SimpleNamespace(
-            database=MagicMock(),
-            db_executor=None,
-            completion_registry=registry,
-            wake_dispatcher=SimpleNamespace(wake=wake),
-            agent_lifecycle_monitor=None,
-            pipeline_execution_manager=None,
+        runner = cast(
+            GobbyRunner,
+            SimpleNamespace(
+                database=MagicMock(),
+                db_executor=None,
+                completion_registry=registry,
+                wake_dispatcher=SimpleNamespace(wake=wake),
+                agent_lifecycle_monitor=None,
+                pipeline_execution_manager=None,
+            ),
         )
 
         with (
@@ -3950,13 +4118,16 @@ class TestAgentRestartRecoveryHelpers:
         run_manager.list_active_for_machine.return_value = [run]
         run_manager.get.return_value = run
         wake = AsyncMock(return_value={"ism_persisted": True})
-        runner = SimpleNamespace(
-            database=MagicMock(),
-            db_executor=None,
-            completion_registry=CompletionEventRegistry(wake_callback=wake),
-            wake_dispatcher=SimpleNamespace(wake=wake),
-            agent_lifecycle_monitor=None,
-            pipeline_execution_manager=None,
+        runner = cast(
+            GobbyRunner,
+            SimpleNamespace(
+                database=MagicMock(),
+                db_executor=None,
+                completion_registry=CompletionEventRegistry(wake_callback=wake),
+                wake_dispatcher=SimpleNamespace(wake=wake),
+                agent_lifecycle_monitor=None,
+                pipeline_execution_manager=None,
+            ),
         )
 
         with (
@@ -4003,14 +4174,17 @@ class TestAgentRestartRecoveryHelpers:
         run_manager = MagicMock()
         run_manager.list_active_for_machine.return_value = [run]
         registry = CompletionEventRegistry()
-        runner = SimpleNamespace(
-            database=MagicMock(),
-            db_executor=None,
-            completion_registry=registry,
-            wake_dispatcher=SimpleNamespace(wake=AsyncMock()),
-            agent_lifecycle_monitor=MagicMock(),
-            pipeline_execution_manager=None,
-            agent_runner=SimpleNamespace(run_storage=run_manager),
+        runner = cast(
+            GobbyRunner,
+            SimpleNamespace(
+                database=MagicMock(),
+                db_executor=None,
+                completion_registry=registry,
+                wake_dispatcher=SimpleNamespace(wake=AsyncMock()),
+                agent_lifecycle_monitor=MagicMock(),
+                pipeline_execution_manager=None,
+                agent_runner=SimpleNamespace(run_storage=run_manager),
+            ),
         )
 
         with (

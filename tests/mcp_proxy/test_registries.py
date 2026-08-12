@@ -119,6 +119,35 @@ async def test_memory_registry_recovers_after_runtime_manager_rebuild() -> None:
     rebuilt.get_stats.assert_awaited_once()
 
 
+async def test_review_learning_registry_recovers_after_runtime_manager_rebuild() -> None:
+    mock_config = MagicMock()
+    mock_config.get_gobby_tasks_config.return_value.enabled = False
+    current: list[Any | None] = [None]
+
+    manager = setup_internal_registries(
+        config_resolver=lambda: mock_config,
+        memory_manager_resolver=lambda: current[0],
+        task_manager=MagicMock(),
+    )
+    registry = manager.get_registry("gobby-review-learning")
+    assert registry is not None
+
+    rebuilt = MagicMock()
+    rebuilt.search_memories = AsyncMock(return_value=[])
+    current[0] = rebuilt
+    with patch(
+        "gobby.utils.project_context.get_project_context",
+        return_value={"id": "11111111-1111-4111-8111-111111110001"},
+    ):
+        result = await registry.call(
+            "recall_review_context",
+            {"findings": ["runtime service was rebuilt"]},
+        )
+
+    assert result["success"] is True
+    rebuilt.search_memories.assert_awaited()
+
+
 def test_setup_with_metrics_manager_only() -> None:
     """Test setup with only metrics manager enabled."""
     mock_config = MagicMock()

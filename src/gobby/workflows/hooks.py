@@ -140,6 +140,7 @@ class WorkflowHookHandler(WorkflowToolContextMixin):
         session_manager: "SessionManager | None" = None,
         session_task_manager: "SessionTaskManager | None" = None,
         config: Any | None = None,
+        config_resolver: Callable[[], Any | None] | None = None,
         evaluation_runtime: "WorkflowEvaluationRuntime | None" = None,
     ):
         self.rule_engine = rule_engine
@@ -147,6 +148,7 @@ class WorkflowHookHandler(WorkflowToolContextMixin):
         self._session_manager = session_manager
         self._session_task_manager = session_task_manager
         self._config = config
+        self._config_resolver = config_resolver or (lambda: self._config)
         self._evaluation_runtime = evaluation_runtime
         self.timeout = timeout if timeout > 0 else None
         self._enabled = enabled
@@ -164,6 +166,13 @@ class WorkflowHookHandler(WorkflowToolContextMixin):
 
         self._eval_locks_lock = threading.Lock()
         self._eval_locks: dict[str, _EvalLockState] = {}
+
+    def _resolve_policy(self) -> tuple[bool, float | None]:
+        config = self._config_resolver()
+        if config is None:
+            return self._enabled, self.timeout
+        timeout = config.workflow.timeout
+        return config.workflow.enabled, timeout if timeout > 0 else None
 
     def _reserve_eval_lock(self, session_id: str) -> _EvalLockState:
         """Reserve the per-session evaluation lock for one active or waiting event."""
@@ -726,22 +735,23 @@ class WorkflowHookHandler(WorkflowToolContextMixin):
         blocking_deadline: float | None = None,
     ) -> HookResponse:
         """Evaluate rules asynchronously for callers that already own the loop."""
-        if not self._enabled:
+        enabled, timeout = self._resolve_policy()
+        if not enabled:
             return HookResponse(decision="allow")
-        if self.timeout is None:
+        if timeout is None:
             return await self._evaluate_rules(event, blocking_deadline=blocking_deadline)
 
         try:
             return await asyncio.wait_for(
                 self._evaluate_rules(event, blocking_deadline=blocking_deadline),
-                timeout=self.timeout,
+                timeout=timeout,
             )
         except TimeoutError as exc:
             session_id = event.metadata.get("_platform_session_id") or ""
             raise WorkflowEvaluationTimeout(
                 event_type=event.event_type,
                 session_id=session_id,
-                timeout_seconds=self.timeout,
+                timeout_seconds=timeout,
             ) from exc
 
     def evaluate(
@@ -754,9 +764,6 @@ class WorkflowHookHandler(WorkflowToolContextMixin):
 
         Primary entry point for workflow evaluation.
         """
-        if not self._enabled:
-            return HookResponse(decision="allow")
-
         try:
             try:
                 asyncio.get_running_loop()

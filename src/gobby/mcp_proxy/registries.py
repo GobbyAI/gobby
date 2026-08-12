@@ -126,7 +126,9 @@ def setup_internal_registries(
         memory_manager_resolver() if memory_manager_resolver is not None else None
     )
     review_learning_service = None
-    if initial_memory_manager is not None and task_manager is not None:
+    if task_manager is not None and (
+        initial_memory_manager is not None or memory_manager_resolver is not None
+    ):
         from gobby.review_learning.service import ReviewLearningService
 
         review_learning_service = ReviewLearningService(

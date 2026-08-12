@@ -255,6 +255,11 @@ class ServiceContainer:
                 completion_registry=self.completion_registry,
                 run_db=self.run_db,
                 pipeline_config=pipeline_config,
+                pipeline_config_resolver=lambda: (
+                    runtime.capture().snapshot.active.pipelines
+                    if runtime is not None and runtime.ready
+                    else pipeline_config
+                ),
             )
 
             # Wire event broadcasting via WebSocket

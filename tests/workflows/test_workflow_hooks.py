@@ -211,6 +211,37 @@ class TestWorkflowHookHandlerDisabled:
         handler = WorkflowHookHandler()
         assert handler._enabled is True
 
+    @pytest.mark.asyncio
+    async def test_evaluate_async_resolves_current_runtime_policy(self) -> None:
+        disabled = MagicMock()
+        disabled.workflow.enabled = False
+        disabled.workflow.timeout = 5.0
+        enabled = MagicMock()
+        enabled.workflow.enabled = True
+        enabled.workflow.timeout = 0.0
+        current = [disabled]
+        handler = WorkflowHookHandler(config_resolver=lambda: current[0])
+        event = HookEvent(
+            event_type=HookEventType.SESSION_START,
+            session_id=MOCK_EXTERNAL_ID,
+            source=SessionSource.CLAUDE,
+            timestamp=MOCK_TIMESTAMP,
+            data={},
+        )
+
+        with patch.object(
+            handler,
+            "_evaluate_rules",
+            new=AsyncMock(return_value=HookResponse(decision="block")),
+        ) as evaluate_rules:
+            first = await handler.evaluate_async(event)
+            current[0] = enabled
+            second = await handler.evaluate_async(event)
+
+        assert first.decision == "allow"
+        assert second.decision == "block"
+        evaluate_rules.assert_awaited_once_with(event, blocking_deadline=None)
+
     def test_enabled_true_evaluates_rules(self) -> None:
         """When enabled=True (explicit), handle() evaluates rules."""
         handler = WorkflowHookHandler(

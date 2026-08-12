@@ -61,6 +61,33 @@ class TestPipelineExecutorInit:
         assert executor.renderer is not None
         assert executor.approval_manager is not None
 
+    @pytest.mark.asyncio
+    async def test_execute_captures_one_runtime_pipeline_config(
+        self, mock_db, mock_execution_manager, mock_llm_service
+    ) -> None:
+        from gobby.workflows.pipeline_executor import PipelineExecutor
+
+        first = PipelineConfig()
+        rebuilt = PipelineConfig()
+        current = [first]
+        executor = PipelineExecutor(
+            db=mock_db,
+            execution_manager=mock_execution_manager,
+            llm_service=mock_llm_service,
+            pipeline_config_resolver=lambda: current[0],
+        )
+
+        async def inspect_epoch(*_args: object) -> MagicMock:
+            assert executor.pipeline_config is first
+            current[0] = rebuilt
+            assert executor.pipeline_config is first
+            return MagicMock()
+
+        with patch.object(executor, "_execute", side_effect=inspect_epoch):
+            await executor.execute(MagicMock(), {}, "project")
+
+        assert executor.pipeline_config is rebuilt
+
 
 class TestPipelineExecutorExecute:
     """Tests for PipelineExecutor.execute() method."""
@@ -746,7 +773,10 @@ class TestExecutePromptStep:
 
     @pytest.mark.asyncio
     async def test_executor_prompt_step_uses_pipeline_config(
-        self, mock_db, mock_execution_manager, mock_llm_service
+        self,
+        mock_db: MagicMock,
+        mock_execution_manager: MagicMock,
+        mock_llm_service: MagicMock,
     ) -> None:
         """Test that executor prompt steps use the configured prompt-step feature."""
         from gobby.workflows.definitions import PipelineStep

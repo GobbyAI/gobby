@@ -1599,11 +1599,9 @@ class TestLLMServiceProperty:
         """llm_service getter returns value from ingestion service."""
         assert memory_manager.llm_service is None
 
-    def test_set_llm_service(self, memory_manager: MemoryManager) -> None:
-        """llm_service setter updates both internal and ingestion service."""
-        mock_service = MagicMock()
-        memory_manager.llm_service = mock_service
-        assert memory_manager._llm_service is mock_service
+    def test_llm_service_resolver_cannot_be_replaced(self, memory_manager: MemoryManager) -> None:
+        with pytest.raises(AttributeError):
+            object.__setattr__(memory_manager, "llm_service", MagicMock())
 
     def test_embed_fn_property(self, memory_manager: MemoryManager) -> None:
         """embed_fn property returns None when not configured."""

@@ -6,6 +6,7 @@ import asyncio
 import json
 import logging
 from collections.abc import Awaitable, Callable
+from contextvars import ContextVar
 from typing import TYPE_CHECKING, Any, ParamSpec, TypeVar, cast
 
 from opentelemetry.trace import Status, StatusCode
@@ -96,6 +97,7 @@ class PipelineExecutor(
         completion_registry: Any | None = None,
         run_db: Callable[..., Awaitable[Any]] | None = None,
         pipeline_config: PipelineConfig | None = None,
+        pipeline_config_resolver: Callable[[], PipelineConfig | None] | None = None,
         llm_service_resolver: Callable[[], Any] | None = None,
     ):
         """Initialize the pipeline executor.
@@ -114,6 +116,7 @@ class PipelineExecutor(
             completion_registry: Optional CompletionEventRegistry for wait steps
             run_db: Optional bounded executor bridge for hub database work
             pipeline_config: Optional pipeline configuration for step defaults
+            pipeline_config_resolver: Resolves current pipeline configuration
             llm_service_resolver: Resolves the current LLM service for prompt steps
         """
         self.db = db
@@ -127,7 +130,11 @@ class PipelineExecutor(
         self.session_manager = session_manager
         self.completion_registry = completion_registry
         self.run_db = run_db
-        self.pipeline_config = pipeline_config or PipelineConfig()
+        self._pipeline_config = pipeline_config or PipelineConfig()
+        self._pipeline_config_resolver = pipeline_config_resolver or (lambda: self._pipeline_config)
+        self._pipeline_config_context: ContextVar[PipelineConfig | None] = ContextVar(
+            "gobby_pipeline_config", default=None
+        )
 
         self.renderer = StepRenderer(template_engine)
         self.approval_manager = ApprovalManager(
@@ -142,6 +149,14 @@ class PipelineExecutor(
         # sweep tell live runs apart from restart orphans.
         self._detached_tasks: set[asyncio.Task[Any]] = set()
         self._detached_execution_ids: set[str] = set()
+
+    @property
+    def pipeline_config(self) -> PipelineConfig:
+        return (
+            self._pipeline_config_context.get()
+            or self._pipeline_config_resolver()
+            or self._pipeline_config
+        )
 
     async def _run_db(self, func: Callable[_P, _T], *args: _P.args, **kwargs: _P.kwargs) -> _T:
         """Run synchronous storage work through the configured database executor."""
@@ -267,6 +282,37 @@ class PipelineExecutor(
         return None
 
     async def execute(
+        self,
+        pipeline: PipelineDefinition,
+        inputs: dict[str, Any],
+        project_id: str,
+        execution_id: str | None = None,
+        session_id: str | None = None,
+        _depth: int = 0,
+        _pipeline_stack: frozenset[str] | None = None,
+        _parent_session_id: str | None = None,
+    ) -> PipelineExecution:
+        """Execute one pipeline against a single runtime configuration epoch."""
+        token = self._pipeline_config_context.set(
+            self._pipeline_config_context.get()
+            or self._pipeline_config_resolver()
+            or self._pipeline_config
+        )
+        try:
+            return await self._execute(
+                pipeline,
+                inputs,
+                project_id,
+                execution_id,
+                session_id,
+                _depth,
+                _pipeline_stack,
+                _parent_session_id,
+            )
+        finally:
+            self._pipeline_config_context.reset(token)
+
+    async def _execute(
         self,
         pipeline: PipelineDefinition,
         inputs: dict[str, Any],

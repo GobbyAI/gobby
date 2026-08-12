@@ -492,12 +492,15 @@ class TestConditionalExpiry:
     async def test_success_dispatches_summary_and_unregisters(self) -> None:
         storage = _Storage(expire_result=SimpleNamespace(status="expired"))
         dispatch = MagicMock()
+        stale_processor = _Processor()
         processor = _Processor()
+        current = [stale_processor]
         monitor = SessionLivenessMonitor(
             session_storage=cast(Any, storage),
             dispatch_summaries_fn=dispatch,
-            message_processor_resolver=lambda: cast(SessionMessageProcessor, processor),
+            message_processor_resolver=lambda: cast(SessionMessageProcessor, current[0]),
         )
+        current[0] = processor
 
         result = await monitor._expire_session("session")
 
@@ -505,6 +508,7 @@ class TestConditionalExpiry:
         assert storage.expire_calls == ["session"]
         dispatch.assert_called_once_with("session", False, None)
         assert processor.unregistered == ["session"]
+        assert stale_processor.unregistered == []
 
     @pytest.mark.asyncio
     async def test_status_race_skips_summary_and_cleanup(self) -> None:

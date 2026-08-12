@@ -77,6 +77,14 @@ def test_hook_manager_forwards_injected_database_and_session_manager() -> None:
     assert manager._session_manager is session_manager
 
 
+def test_factory_config_resolution_prefers_active_runtime_snapshot() -> None:
+    startup = MagicMock()
+    active = MagicMock()
+    runtime = MagicMock(snapshot=SimpleNamespace(active=active))
+
+    assert HookManagerFactory._resolve_config(startup, runtime) is active
+
+
 def test_hook_manager_shutdown_leaves_injected_database_open() -> None:
     """HookManager shutdown should leave daemon-owned storage handles open."""
     database = MagicMock()

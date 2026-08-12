@@ -57,6 +57,19 @@ def register_config_event_publisher(runner: GobbyRunner) -> None:
     runner.config_runtime.register_revision_publisher(websocket_server.broadcast_config_event)
 
 
+def _resolve_message_processor(runner: GobbyRunner) -> object | None:
+    runtime = runner.config_runtime
+    if not runtime.ready:
+        return runner.message_processor
+    bundle = runtime.capture()
+    if any(
+        failure.subscriber == "message_processor"
+        for failure in bundle.snapshot.failed_live_keys.values()
+    ):
+        return None
+    return bundle.services.get("message_processor")
+
+
 def init_servers(runner: GobbyRunner) -> None:
     """Initialize HTTP server, WebSocket server, and broadcasting."""
     config = runner.startup_config
@@ -110,7 +123,7 @@ def init_servers(runner: GobbyRunner) -> None:
         mcp_db_manager=runner.mcp_db_manager,
         metrics_manager=runner.metrics_manager,
         agent_runner=runner.agent_runner,
-        message_processor_resolver=lambda: runner.message_processor,
+        message_processor_resolver=lambda: _resolve_message_processor(runner),
         task_validator=runner.task_validator,
         worktree_storage=runner.worktree_storage,
         clone_storage=runner.clone_storage,

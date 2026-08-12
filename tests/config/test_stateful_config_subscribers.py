@@ -155,6 +155,39 @@ async def test_failed_prepare_keeps_last_good_services() -> None:
 
 
 @pytest.mark.asyncio
+async def test_failed_activation_is_recorded_on_published_epoch() -> None:
+    repository = FakeRepository([snapshot(0, alpha=0), snapshot(1, alpha=1)])
+    disposed: list[int] = []
+
+    def build(change: ConfigChange) -> PreparedService:
+        client = Client(change.revision, disposed)
+
+        def activate() -> None:
+            if change.revision == 1:
+                raise RuntimeError("broken activation")
+
+        return PreparedService(client, client.close, activate)
+
+    runtime = ConfigRuntime(
+        repository,
+        registry=FakeRegistry(),
+        subscribers=[subscriber("client", {"alpha"}, build)],
+    )
+    await runtime.start()
+    repository.index = 1
+
+    with pytest.raises(RuntimeError, match="broken activation"):
+        await runtime.reconcile_revision(1)
+
+    failure = runtime.snapshot.failed_live_keys["alpha"]
+    assert runtime.snapshot.revision == 1
+    assert failure.subscriber == "client"
+    assert failure.message == "broken activation"
+    assert disposed == [0]
+    await runtime.close()
+
+
+@pytest.mark.asyncio
 async def test_reprepare_subscriber_retries_failed_prepare_at_same_revision() -> None:
     repository = FakeRepository([snapshot(0, alpha=0)])
     disposed: list[int] = []

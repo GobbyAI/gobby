@@ -13,8 +13,6 @@ from gobby.hooks.session_types import HookSessionManager
 if TYPE_CHECKING:
     from gobby.agents.attention_metadata import AttentionMetadataStore
     from gobby.autonomous.progress_tracker import ProgressTracker
-    from gobby.config.sessions import MemoryRecallConfig
-    from gobby.config.skills import SkillsConfig
     from gobby.config.tasks import WorkflowConfig
     from gobby.hooks.session_coordinator import SessionCoordinator
     from gobby.hooks.session_end_auto_link import SessionEndAutoLinkWorker
@@ -36,7 +34,7 @@ class EventHandlersBase:
     _liveness_monitor: SessionLivenessMonitor | None
     _attention_metadata_store: AttentionMetadataStore | None
     _workflow_handler: WorkflowHookHandler | None
-    _workflow_config: WorkflowConfig | None
+    _workflow_config_resolver: Callable[[], WorkflowConfig | None]
     _session_task_manager: SessionTaskManager | None
     _message_processor_resolver: Callable[[], Any | None]
     _task_manager: LocalTaskManager | None
@@ -45,8 +43,6 @@ class EventHandlersBase:
     _session_coordinator: SessionCoordinator | None
     _session_end_auto_link_worker: SessionEndAutoLinkWorker | None
     _skill_manager: HookSkillManager | None
-    _skills_config: SkillsConfig | None
-    _memory_recall_config: MemoryRecallConfig | None
     _call_tool: Callable[[str, str, dict[str, Any]], dict[str, Any] | None] | None
     _get_machine_id: Callable[[], str | None]
     _resolve_project_id: Callable[[str | None, str | None], str]
@@ -90,7 +86,8 @@ class EventHandlersBase:
         Reads the flag from WorkflowConfig.
         Mutates ``response`` in place (HookResponse is a non-frozen dataclass).
         """
-        debug_echo = bool(self._workflow_config and self._workflow_config.debug_echo_context)
+        workflow_config = self._workflow_config_resolver()
+        debug_echo = bool(workflow_config and workflow_config.debug_echo_context)
 
         if not debug_echo or not response.context:
             return
