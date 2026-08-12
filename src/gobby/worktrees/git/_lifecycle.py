@@ -8,11 +8,50 @@ import subprocess  # nosec B404 # subprocess.TimeoutExpired re-raised from runne
 from pathlib import Path
 from typing import Literal
 
-from gobby.worktrees.git._models import GitOperationResult
+from gobby.worktrees.git._models import GitOperationResult, WorktreeInfo
 from gobby.worktrees.git._runner import GitRunner
-from gobby.worktrees.git._status import get_worktree_status
+from gobby.worktrees.git._status import get_worktree_status, list_worktrees
 
 logger = logging.getLogger(__name__)
+
+
+def inspect_linked_worktree(runner: GitRunner, worktree_path: str | Path) -> WorktreeInfo:
+    """Inspect an existing linked worktree and return canonical Git metadata."""
+    try:
+        canonical_path = Path(worktree_path).expanduser().resolve(strict=True)
+    except OSError as exc:
+        raise ValueError(f"Worktree path does not exist: {worktree_path}") from exc
+
+    if not canonical_path.is_dir():
+        raise ValueError(f"Worktree path is not a directory: {canonical_path}")
+
+    registered = list_worktrees(runner)
+    if not registered:
+        raise ValueError(f"Unable to inspect linked worktrees for {runner.repo_path}")
+
+    primary_path = Path(registered[0].path).expanduser().resolve()
+    if canonical_path == primary_path:
+        raise ValueError(f"Primary checkout cannot be adopted: {canonical_path}")
+
+    for worktree in registered[1:]:
+        candidate_path = Path(worktree.path).expanduser().resolve()
+        if candidate_path != canonical_path:
+            continue
+        if worktree.is_bare:
+            raise ValueError(f"Bare worktree cannot be adopted: {canonical_path}")
+        if worktree.prunable:
+            raise ValueError(f"Prunable worktree cannot be adopted: {canonical_path}")
+        return WorktreeInfo(
+            path=str(canonical_path),
+            branch=worktree.branch,
+            commit=worktree.commit,
+            is_bare=worktree.is_bare,
+            is_detached=worktree.is_detached,
+            locked=worktree.locked,
+            prunable=worktree.prunable,
+        )
+
+    raise ValueError(f"Path is not a linked worktree: {canonical_path}")
 
 
 def create_worktree(

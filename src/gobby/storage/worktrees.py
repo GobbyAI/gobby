@@ -10,6 +10,8 @@ from datetime import datetime, timedelta
 from enum import Enum
 from typing import Any
 
+import psycopg
+
 from gobby.storage.hub.protocol import HubDatabase
 from gobby.storage.workspace_machine_scope import (
     get_owned_workspace_row,
@@ -228,6 +230,43 @@ class LocalWorktreeManager:
             (worktree_path, require_machine_id()),
         )
         return row is not None
+
+    def register_adopted(
+        self,
+        project_id: str,
+        branch_name: str | None,
+        worktree_path: str,
+        base_branch: str,
+    ) -> tuple[Worktree, bool]:
+        """Register an inspected worktree, collapsing same-path insertion races."""
+        if self.has_path_on_other_machine(worktree_path):
+            raise ValueError(f"Worktree path is registered on another machine: {worktree_path}")
+
+        existing = self.get_by_path(worktree_path)
+        if existing is not None:
+            if existing.project_id != project_id:
+                raise ValueError(f"Worktree path belongs to another project: {worktree_path}")
+            return existing, False
+
+        try:
+            return (
+                self.create(
+                    project_id=project_id,
+                    branch_name=branch_name,
+                    worktree_path=worktree_path,
+                    base_branch=base_branch,
+                ),
+                True,
+            )
+        except psycopg.IntegrityError:
+            existing = self.get_by_path(worktree_path)
+            if existing is None:
+                raise
+            if existing.project_id != project_id:
+                raise ValueError(
+                    f"Worktree path belongs to another project: {worktree_path}"
+                ) from None
+            return existing, False
 
     def get_by_branch(self, project_id: str, branch_name: str) -> Worktree | None:
         """Get worktree by project and branch name."""

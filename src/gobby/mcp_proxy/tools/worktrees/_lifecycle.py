@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 import logging
 from typing import Any
 
@@ -112,12 +113,9 @@ def create_lifecycle_registry(ctx: RegistryContext) -> InternalToolRegistry:
         )
         return {"success": True, "event": event}
 
-    @registry.tool(
-        name="delete_worktree",
-        description="Delete a worktree (both git and database record).",
-    )
     async def delete_worktree(
-        worktree_id: str,
+        worktree_id: str | None = None,
+        worktree_path: str | None = None,
         force: bool | str = False,
         force_delete_branch: bool | str = False,
         project_path: str | None = None,
@@ -133,7 +131,8 @@ def create_lifecycle_registry(ctx: RegistryContext) -> InternalToolRegistry:
         Do NOT manually run `git worktree remove` - use this tool instead.
 
         Args:
-            worktree_id: The worktree ID (uuid) to delete.
+            worktree_id: The registered worktree ID (uuid) to delete.
+            worktree_path: An existing linked worktree path to adopt and delete.
             force: Force deletion even if there are uncommitted changes.
             force_delete_branch: Force-delete the branch even if it is unmerged.
             project_path: Optional path to project root to resolve git context.
@@ -141,6 +140,12 @@ def create_lifecycle_registry(ctx: RegistryContext) -> InternalToolRegistry:
         Returns:
             Dict with success status.
         """
+        if (worktree_id is None) == (worktree_path is None):
+            return {
+                "success": False,
+                "error": "Provide exactly one of worktree_id or worktree_path",
+            }
+
         force = force in (True, "true", "True", "1") if isinstance(force, str) else force
         force_delete_branch = (
             force_delete_branch in (True, "true", "True", "1")
@@ -148,7 +153,60 @@ def create_lifecycle_registry(ctx: RegistryContext) -> InternalToolRegistry:
             else force_delete_branch
         )
 
+        resolved_adoption_manager = None
+        if worktree_path is not None:
+            resolved_manager, resolved_project_id, context_error = resolve_project_context(
+                project_path,
+                ctx.git_manager,
+                ctx.project_id,
+            )
+            if context_error or resolved_manager is None or resolved_project_id is None:
+                return {
+                    "success": False,
+                    "error": context_error or "Unable to resolve project context",
+                }
+
+            try:
+                inspected = await asyncio.to_thread(
+                    resolved_manager.inspect_worktree,
+                    worktree_path,
+                )
+                base_branch = await asyncio.to_thread(resolved_manager.get_default_branch)
+                worktree, adopted = ctx.worktree_storage.register_adopted(
+                    project_id=resolved_project_id,
+                    branch_name=inspected.branch,
+                    worktree_path=inspected.path,
+                    base_branch=base_branch,
+                )
+            except (OSError, ValueError) as error:
+                return {"success": False, "error": str(error)}
+
+            worktree_id = worktree.id
+            resolved_adoption_manager = resolved_manager
+            if adopted:
+                try:
+                    emit_worktree_event(
+                        "worktree_adopted",
+                        worktree_id=worktree.id,
+                        project_id=worktree.project_id,
+                        branch_name=worktree.branch_name,
+                        worktree_path=worktree.worktree_path,
+                        base_branch=worktree.base_branch,
+                    )
+                except Exception as event_error:
+                    logger.warning(
+                        "Failed to emit worktree_adopted event for %s at %s: %s",
+                        worktree.id,
+                        worktree.worktree_path,
+                        event_error,
+                        exc_info=True,
+                    )
+
+        assert worktree_id is not None
+
         def resolve_git_manager(_worktree: Any) -> Any:
+            if resolved_adoption_manager is not None:
+                return resolved_adoption_manager
             resolved = ctx.git_manager
             if project_path:
                 try:
@@ -194,6 +252,29 @@ def create_lifecycle_registry(ctx: RegistryContext) -> InternalToolRegistry:
             "artifact_refs_cleared": result.artifact_refs_cleared,
             "event": result.event,
         }
+
+    registry.register(
+        name="delete_worktree",
+        description=(
+            "Delete a registered worktree by ID, or adopt and delete an existing linked "
+            "worktree by path."
+        ),
+        input_schema={
+            "type": "object",
+            "properties": {
+                "worktree_id": {"type": "string"},
+                "worktree_path": {"type": "string"},
+                "force": {"type": "boolean", "default": False},
+                "force_delete_branch": {"type": "boolean", "default": False},
+                "project_path": {"type": "string"},
+            },
+            "oneOf": [
+                {"required": ["worktree_id"], "not": {"required": ["worktree_path"]}},
+                {"required": ["worktree_path"], "not": {"required": ["worktree_id"]}},
+            ],
+        },
+        func=delete_worktree,
+    )
 
     @registry.tool(
         name="mark_worktree_merged",

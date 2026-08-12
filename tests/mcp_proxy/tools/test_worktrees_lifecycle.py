@@ -11,6 +11,7 @@ from gobby.mcp_proxy.tools.worktrees import create_worktrees_registry
 from gobby.storage.workspace_machine_scope import MachineOwnershipMismatchError
 from gobby.storage.worktrees import Worktree, WorktreeStatus
 from gobby.worktrees.executor import WorktreeDeleteExecutor
+from gobby.worktrees.git._models import WorktreeInfo
 
 pytestmark = pytest.mark.unit
 
@@ -1850,3 +1851,140 @@ async def test_get_worktree_by_task_downgrades_stale_merged_status(
     assert result["worktree"]["stored_status"] == WorktreeStatus.MERGED.value
     assert result["worktree"]["git_merge_state"]["git_merged"] is False
     mock_worktree_storage.get_by_task.assert_called_once_with("task-1")
+
+
+def test_delete_worktree_schema_requires_exactly_one_identifier(registry: Any) -> None:
+    schema = registry.get_schema("delete_worktree")
+
+    assert schema is not None
+    input_schema = schema["inputSchema"]
+    assert input_schema["oneOf"] == [
+        {"required": ["worktree_id"], "not": {"required": ["worktree_path"]}},
+        {"required": ["worktree_path"], "not": {"required": ["worktree_id"]}},
+    ]
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "arguments",
+    [{}, {"worktree_id": "worktree-1", "worktree_path": "/tmp/adopted"}],
+)
+async def test_delete_worktree_runtime_rejects_invalid_identifier_count(
+    registry: Any,
+    arguments: dict[str, str],
+) -> None:
+    result = await registry.call("delete_worktree", arguments)
+
+    assert result == {
+        "success": False,
+        "error": "Provide exactly one of worktree_id or worktree_path",
+    }
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("branch_name", ["feature/adopt", None])
+async def test_delete_worktree_adopts_path_before_deletion(
+    registry: Any,
+    mock_worktree_storage: MagicMock,
+    mock_git_manager: MagicMock,
+    branch_name: str | None,
+) -> None:
+    project_id = "11111111-1111-4111-8111-111111110001"
+    worktree = Worktree(
+        id="worktree-adopted",
+        project_id=project_id,
+        branch_name=branch_name,
+        worktree_path="/tmp/adopted",
+        base_branch="main",
+        status="active",
+        created_at=datetime.fromisoformat(_VALID_TIMESTAMP),
+        updated_at=datetime.fromisoformat(_VALID_TIMESTAMP),
+        task_id=None,
+        agent_session_id=None,
+    )
+    mock_git_manager.inspect_worktree.return_value = WorktreeInfo(
+        path="/tmp/adopted",
+        branch=branch_name,
+        commit="abc123",
+        is_detached=branch_name is None,
+    )
+    mock_git_manager.get_default_branch.return_value = "main"
+    mock_worktree_storage.register_adopted.return_value = (worktree, True)
+    mock_worktree_storage.get.return_value = worktree
+    mock_git_manager.get_worktree_status.return_value.has_uncommitted_changes = False
+    mock_git_manager.delete_worktree.return_value.success = True
+    mock_worktree_storage.delete.return_value = True
+
+    with (
+        patch("pathlib.Path.exists", return_value=True),
+        patch("gobby.mcp_proxy.tools.worktrees._lifecycle.emit_worktree_event") as emit_adoption,
+    ):
+        result = await registry.call("delete_worktree", {"worktree_path": "/tmp/../tmp/adopted"})
+
+    assert result["success"] is True
+    mock_git_manager.inspect_worktree.assert_called_once_with("/tmp/../tmp/adopted")
+    mock_worktree_storage.register_adopted.assert_called_once_with(
+        project_id=project_id,
+        branch_name=branch_name,
+        worktree_path="/tmp/adopted",
+        base_branch="main",
+    )
+    emit_adoption.assert_called_once_with(
+        "worktree_adopted",
+        worktree_id="worktree-adopted",
+        project_id=project_id,
+        branch_name=branch_name,
+        worktree_path="/tmp/adopted",
+        base_branch="main",
+    )
+
+
+@pytest.mark.asyncio
+async def test_delete_worktree_reuses_registered_path_without_adoption_event(
+    registry: Any,
+    mock_worktree_storage: MagicMock,
+    mock_git_manager: MagicMock,
+) -> None:
+    worktree = Worktree(
+        id="worktree-existing",
+        project_id="11111111-1111-4111-8111-111111110001",
+        branch_name="feature/adopt",
+        worktree_path="/tmp/adopted",
+        base_branch="main",
+        status="active",
+        created_at=datetime.fromisoformat(_VALID_TIMESTAMP),
+        updated_at=datetime.fromisoformat(_VALID_TIMESTAMP),
+        task_id=None,
+        agent_session_id=None,
+    )
+    mock_git_manager.inspect_worktree.return_value = WorktreeInfo(
+        path="/tmp/adopted", branch="feature/adopt", commit="abc123"
+    )
+    mock_git_manager.get_default_branch.return_value = "main"
+    mock_worktree_storage.register_adopted.return_value = (worktree, False)
+    mock_worktree_storage.get.return_value = worktree
+    mock_git_manager.get_worktree_status.return_value.has_uncommitted_changes = False
+    mock_git_manager.delete_worktree.return_value.success = True
+    mock_worktree_storage.delete.return_value = True
+
+    with (
+        patch("pathlib.Path.exists", return_value=True),
+        patch("gobby.mcp_proxy.tools.worktrees._lifecycle.emit_worktree_event") as emit_adoption,
+    ):
+        result = await registry.call("delete_worktree", {"worktree_path": "/tmp/adopted"})
+
+    assert result["success"] is True
+    emit_adoption.assert_not_called()
+
+
+@pytest.mark.asyncio
+async def test_delete_worktree_invalid_path_is_not_idempotent(
+    registry: Any,
+    mock_git_manager: MagicMock,
+) -> None:
+    mock_git_manager.inspect_worktree.side_effect = ValueError("Path is not a linked worktree")
+
+    result = await registry.call("delete_worktree", {"worktree_path": "/tmp/unlinked"})
+
+    assert result == {"success": False, "error": "Path is not a linked worktree"}
+    assert "already_deleted" not in result

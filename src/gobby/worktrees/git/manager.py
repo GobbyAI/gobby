@@ -79,6 +79,9 @@ class WorktreeGitManager(GitRunner):
     def list_worktrees(self) -> list[WorktreeInfo]:
         return _status.list_worktrees(self)
 
+    def inspect_worktree(self, worktree_path: str | Path) -> WorktreeInfo:
+        return _lifecycle.inspect_linked_worktree(self, worktree_path)
+
     def prune_worktrees(self) -> GitOperationResult:
         return _status.prune_worktrees(self)
 
