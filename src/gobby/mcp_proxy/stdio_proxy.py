@@ -34,10 +34,10 @@ from gobby.mcp_proxy.terminal_context import (
 )
 from gobby.mcp_proxy.wait_tools import (
     EXTENDED_TIMEOUT_TOOL_NAMES,
-    MCP_WRAPPER_FINGERPRINT_HEADER,
+    MCP_WRAPPER_PROTOCOL_VERSION,
+    MCP_WRAPPER_PROTOCOL_VERSION_HEADER,
     WAIT_TOOL_HTTP_TIMEOUT_BUFFER_SECONDS,
     WAIT_TOOL_NAMES,
-    mcp_wrapper_process_fingerprint,
 )
 from gobby.utils.local_token import daemon_auth_headers
 from gobby.utils.session_context import AGENT_RUN_ID_HEADER, TERMINAL_CONTEXT_HEADER
@@ -182,7 +182,7 @@ class DaemonProxy:
                 self._last_health_ok_at = time.monotonic()
 
         headers: dict[str, str] = {
-            MCP_WRAPPER_FINGERPRINT_HEADER: mcp_wrapper_process_fingerprint(),
+            MCP_WRAPPER_PROTOCOL_VERSION_HEADER: MCP_WRAPPER_PROTOCOL_VERSION,
         }
         effective_project_id = project_id or self._project_id
         caller_project_id = self._project_id

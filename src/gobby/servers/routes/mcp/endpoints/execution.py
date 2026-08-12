@@ -15,8 +15,8 @@ from fastapi import Depends, HTTPException, Request
 from gobby.mcp_proxy.services.schema_guidance import record_schema_shown
 from gobby.mcp_proxy.tools.internal import normalize_internal_success_result
 from gobby.mcp_proxy.wait_tools import (
-    MCP_WRAPPER_FINGERPRINT_HEADER,
-    mcp_wrapper_fingerprint_stale_result,
+    MCP_WRAPPER_PROTOCOL_VERSION_HEADER,
+    mcp_wrapper_protocol_mismatch_result,
 )
 from gobby.servers.routes.dependencies import get_internal_manager, get_mcp_manager, get_server
 from gobby.servers.routes.mcp.endpoints import request_context
@@ -63,17 +63,18 @@ def _timeout_response_payload(timeout: float, response_time_ms: float) -> dict[s
     }
 
 
-def _stale_stdio_wrapper_wait_result(
+def _incompatible_stdio_wrapper_wait_result(
     request: Request,
     tool_name: str,
     *,
     require_stdio_proxy: bool,
 ) -> dict[str, Any] | None:
-    if not require_stdio_proxy:
+    provided_protocol_version = request.headers.get(MCP_WRAPPER_PROTOCOL_VERSION_HEADER)
+    if provided_protocol_version is None and not require_stdio_proxy:
         return None
-    return mcp_wrapper_fingerprint_stale_result(
+    return mcp_wrapper_protocol_mismatch_result(
         tool_name,
-        request.headers.get(MCP_WRAPPER_FINGERPRINT_HEADER),
+        provided_protocol_version,
     )
 
 
@@ -534,15 +535,13 @@ async def call_mcp_tool(
                 detail={"success": False, "error": "Required fields: server_name, tool_name"},
             )
 
-        # Structured call_tool requests bypass stale stdio-wrapper recovery; see
-        # test_call_tool_ignores_explicit_stale_wait_wrapper_fingerprint.
-        stale_wrapper_result = _stale_stdio_wrapper_wait_result(
+        incompatible_wrapper_result = _incompatible_stdio_wrapper_wait_result(
             request,
             tool_name,
             require_stdio_proxy=False,
         )
-        if stale_wrapper_result is not None:
-            return stale_wrapper_result
+        if incompatible_wrapper_result is not None:
+            return incompatible_wrapper_result
 
         # Set project context from session_id or stdio proxy headers
         ctx_token = await request_context._set_context_for_request(server, arguments, request)
@@ -647,13 +646,13 @@ async def mcp_proxy(
         raw_intent = request.query_params.get("intent")
         intent = raw_intent if isinstance(raw_intent, str) and raw_intent else None
 
-        stale_wrapper_result = _stale_stdio_wrapper_wait_result(
+        incompatible_wrapper_result = _incompatible_stdio_wrapper_wait_result(
             request,
             tool_name,
             require_stdio_proxy=True,
         )
-        if stale_wrapper_result is not None:
-            return stale_wrapper_result
+        if incompatible_wrapper_result is not None:
+            return incompatible_wrapper_result
 
         # Set project context from session_id or stdio proxy headers
         ctx_token = await request_context._set_context_for_request(server, arguments, request)

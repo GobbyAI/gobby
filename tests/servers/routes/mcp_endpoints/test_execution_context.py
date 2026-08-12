@@ -18,7 +18,10 @@ from unittest.mock import AsyncMock, MagicMock, patch
 import pytest
 from fastapi import HTTPException
 
-from gobby.mcp_proxy.wait_tools import MCP_WRAPPER_FINGERPRINT_HEADER
+from gobby.mcp_proxy.wait_tools import (
+    MCP_WRAPPER_PROTOCOL_VERSION,
+    MCP_WRAPPER_PROTOCOL_VERSION_HEADER,
+)
 from gobby.servers.routes.mcp.endpoints.request_context import _set_context_for_request
 from gobby.utils.session_context import TERMINAL_CONTEXT_HEADER, SeededContextTokens
 
@@ -58,7 +61,7 @@ def _make_request(
     if session_id:
         headers["x-gobby-session-id"] = session_id
     if wrapper:
-        headers[MCP_WRAPPER_FINGERPRINT_HEADER] = "test-wrapper"
+        headers[MCP_WRAPPER_PROTOCOL_VERSION_HEADER] = MCP_WRAPPER_PROTOCOL_VERSION
     if terminal_context is not None:
         headers[TERMINAL_CONTEXT_HEADER] = terminal_context
     request.headers = headers

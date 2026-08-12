@@ -52,9 +52,9 @@ from gobby.mcp_proxy.schema_hash import SchemaHashManager, compute_schema_hash
 from gobby.mcp_proxy.services.tool_proxy import ToolProxyService
 from gobby.mcp_proxy.tools.internal import InternalRegistryManager
 from gobby.mcp_proxy.wait_tools import (
-    MCP_WRAPPER_FINGERPRINT_HEADER,
+    MCP_WRAPPER_PROTOCOL_VERSION,
+    MCP_WRAPPER_PROTOCOL_VERSION_HEADER,
     MCP_WRAPPER_STALE_ERROR_CODE,
-    mcp_wrapper_current_source_fingerprint,
 )
 from gobby.servers.http import HTTPServer
 from gobby.storage.hub.protocol import HubDatabase
@@ -1356,10 +1356,10 @@ class TestCallMCPTool:
         }
         assert "response_time_ms" in data
 
-    def test_call_tool_allows_structured_wait_without_wrapper_fingerprint(
+    def test_call_tool_allows_structured_wait_without_wrapper_protocol_header(
         self, session_storage: SessionManager
     ) -> None:
-        """Structured calls are not stdio wrapper calls without a fingerprint header."""
+        """Structured calls remain available to callers outside the stdio wrapper."""
         server = create_http_server(
             port=60887,
             test_mode=True,
@@ -1400,7 +1400,87 @@ class TestCallMCPTool:
             "notification_session_id": "session-123",
         }
 
-    def test_call_tool_stale_wrapper_without_identity_fails_closed(
+    def test_call_tool_dispatches_drifted_wrapper_with_same_protocol_version(
+        self,
+        session_storage: SessionManager,
+        test_project: dict[str, Any],
+    ) -> None:
+        """Source-byte drift has no effect when the wait protocol remains compatible."""
+        session = session_storage.register(
+            external_id="wrapper-session",
+            machine_id=LOCAL_MACHINE_ID,
+            source="codex",
+            project_id=test_project["id"],
+        )
+        server = create_http_server(
+            port=60887,
+            test_mode=True,
+            session_manager=session_storage,
+        )
+        registry = FakeInternalRegistry(
+            name="gobby-agents",
+            tools=[{"name": "wait_for_output", "description": "Wait for output"}],
+        )
+        registry_call = AsyncMock(wraps=registry.call)
+        server._internal_manager = cast(Any, FakeInternalManager([registry]))
+
+        with patch.object(registry, "call", registry_call), TestClient(server.app) as client:
+            response = client.post(
+                "/api/mcp/tools/call",
+                headers={
+                    MCP_WRAPPER_PROTOCOL_VERSION_HEADER: MCP_WRAPPER_PROTOCOL_VERSION,
+                    "X-Gobby-MCP-Wrapper-Fingerprint": "digest-before-source-drift",
+                    "X-Gobby-Session-Id": session.id,
+                    "X-Gobby-Caller-Project-Id": test_project["id"],
+                },
+                json={
+                    "server_name": "gobby-agents",
+                    "tool_name": "wait_for_output",
+                    "arguments": {"run_id": "run-123", "timeout_seconds": 1},
+                },
+            )
+
+        assert response.status_code == 200
+        assert response.json()["success"] is True
+        registry_call.assert_awaited_once()
+
+    def test_call_tool_rejects_incompatible_wrapper_protocol_version(
+        self, session_storage: SessionManager
+    ) -> None:
+        """Wait dispatch refuses wrappers whose explicit protocol version differs."""
+        server = create_http_server(
+            port=60887,
+            test_mode=True,
+            session_manager=session_storage,
+        )
+        registry = FakeInternalRegistry(
+            name="gobby-agents",
+            tools=[{"name": "wait_for_output", "description": "Wait for output"}],
+        )
+        registry_call = AsyncMock(wraps=registry.call)
+        server._internal_manager = cast(Any, FakeInternalManager([registry]))
+
+        with patch.object(registry, "call", registry_call), TestClient(server.app) as client:
+            response = client.post(
+                "/api/mcp/tools/call",
+                headers={MCP_WRAPPER_PROTOCOL_VERSION_HEADER: "0"},
+                json={
+                    "server_name": "gobby-agents",
+                    "tool_name": "wait_for_output",
+                    "arguments": {"run_id": "run-123", "timeout_seconds": 1},
+                },
+            )
+
+        assert response.status_code == 200
+        data = response.json()
+        assert data["success"] is False
+        assert data["error_code"] == MCP_WRAPPER_STALE_ERROR_CODE
+        assert data["provided_wrapper_protocol_version"] == "0"
+        assert data["expected_wrapper_protocol_version"] == MCP_WRAPPER_PROTOCOL_VERSION
+        assert data["restart_required"] is True
+        registry_call.assert_not_awaited()
+
+    def test_call_tool_wrapper_without_identity_fails_closed(
         self, session_storage: SessionManager
     ) -> None:
         """Structured wrapper calls still require independent caller identity."""
@@ -1421,7 +1501,7 @@ class TestCallMCPTool:
                 "/api/mcp/tools/call",
                 headers={
                     "X-Gobby-Caller-Project-Id": "project-123",
-                    MCP_WRAPPER_FINGERPRINT_HEADER: "stale-wrapper",
+                    MCP_WRAPPER_PROTOCOL_VERSION_HEADER: MCP_WRAPPER_PROTOCOL_VERSION,
                 },
                 json={
                     "server_name": "gobby-agents",
@@ -2555,10 +2635,10 @@ class TestMCPProxy:
             "updated_at": "2026-07-03T12:35:00+00:00",
         }
 
-    def test_proxy_rejects_missing_wait_wrapper_fingerprint(
+    def test_proxy_rejects_missing_wait_wrapper_protocol_version(
         self, session_storage: SessionManager
     ) -> None:
-        """Legacy route rejects older wrappers without fingerprint headers."""
+        """Legacy route rejects wrappers without protocol version headers."""
         server = create_http_server(
             port=60887,
             test_mode=True,
@@ -2585,10 +2665,10 @@ class TestMCPProxy:
         assert data["error_code"] == MCP_WRAPPER_STALE_ERROR_CODE
         assert data["restart_required"] is True
 
-    def test_proxy_rejects_stale_wait_wrapper_fingerprint(
+    def test_proxy_rejects_incompatible_wait_wrapper_protocol_version(
         self, session_storage: SessionManager
     ) -> None:
-        """Legacy route rejects already-running wrappers with stale fingerprints."""
+        """Legacy route rejects wrappers with incompatible protocol versions."""
         server = create_http_server(
             port=60887,
             test_mode=True,
@@ -2606,7 +2686,7 @@ class TestMCPProxy:
         with TestClient(server.app) as client:
             response = client.post(
                 "/api/mcp/gobby-sessions/tools/wait_for_summary",
-                headers={MCP_WRAPPER_FINGERPRINT_HEADER: "stale-wrapper"},
+                headers={MCP_WRAPPER_PROTOCOL_VERSION_HEADER: "0"},
                 json={"session_id": "sess-123"},
             )
 
@@ -2614,10 +2694,11 @@ class TestMCPProxy:
         data = response.json()
         assert data["success"] is False
         assert data["error_code"] == MCP_WRAPPER_STALE_ERROR_CODE
-        assert data["provided_wrapper_fingerprint"] == "stale-wrapper"
+        assert data["provided_wrapper_protocol_version"] == "0"
+        assert data["expected_wrapper_protocol_version"] == MCP_WRAPPER_PROTOCOL_VERSION
         assert data["restart_required"] is True
 
-    def test_proxy_accepts_current_wait_wrapper_fingerprint(
+    def test_proxy_accepts_current_wait_wrapper_protocol_version(
         self,
         session_storage: SessionManager,
         test_project: dict[str, Any],
@@ -2649,7 +2730,7 @@ class TestMCPProxy:
             response = client.post(
                 "/api/mcp/gobby-sessions/tools/wait_for_summary",
                 headers={
-                    MCP_WRAPPER_FINGERPRINT_HEADER: mcp_wrapper_current_source_fingerprint(),
+                    MCP_WRAPPER_PROTOCOL_VERSION_HEADER: MCP_WRAPPER_PROTOCOL_VERSION,
                     TERMINAL_CONTEXT_HEADER: json.dumps(terminal_context),
                     "X-Gobby-Caller-Project-Id": test_project["id"],
                 },

@@ -10,7 +10,7 @@ from typing import TYPE_CHECKING, Any, Literal, NoReturn
 from fastapi import HTTPException, Request
 
 from gobby.mcp_proxy.models import ToolProxyErrorCode
-from gobby.mcp_proxy.wait_tools import MCP_WRAPPER_FINGERPRINT_HEADER
+from gobby.mcp_proxy.wait_tools import MCP_WRAPPER_PROTOCOL_VERSION_HEADER
 from gobby.storage.agents import LocalAgentRunManager
 from gobby.storage.session_resolution import resolve_session_reference
 from gobby.utils.session_context import (
@@ -154,7 +154,7 @@ async def _set_context_for_request(
     header_session_id = headers.get("x-gobby-session-id")
     project_id_header = headers.get("x-gobby-project-id")
     caller_project_id_header = headers.get("x-gobby-caller-project-id")
-    wrapper_request = _header_seen(headers, MCP_WRAPPER_FINGERPRINT_HEADER)
+    wrapper_request = _header_seen(headers, MCP_WRAPPER_PROTOCOL_VERSION_HEADER)
     terminal_context_seen = _header_seen(headers, TERMINAL_CONTEXT_HEADER)
     argument_session_id = _get_argument_session_id(arguments)
 

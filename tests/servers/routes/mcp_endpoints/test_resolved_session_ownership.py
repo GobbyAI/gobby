@@ -11,8 +11,8 @@ from unittest.mock import AsyncMock, MagicMock, patch
 import pytest
 
 from gobby.mcp_proxy.wait_tools import (
-    MCP_WRAPPER_FINGERPRINT_HEADER,
-    mcp_wrapper_current_source_fingerprint,
+    MCP_WRAPPER_PROTOCOL_VERSION,
+    MCP_WRAPPER_PROTOCOL_VERSION_HEADER,
 )
 from gobby.servers.routes.mcp.endpoints.execution import (
     call_mcp_tool,
@@ -47,7 +47,7 @@ def _make_server() -> MagicMock:
 def _make_request(body: dict[str, Any]) -> MagicMock:
     request = MagicMock()
     request.headers = {
-        MCP_WRAPPER_FINGERPRINT_HEADER: mcp_wrapper_current_source_fingerprint(),
+        MCP_WRAPPER_PROTOCOL_VERSION_HEADER: MCP_WRAPPER_PROTOCOL_VERSION,
         TERMINAL_CONTEXT_HEADER: json.dumps(TERMINAL_CONTEXT),
         "x-gobby-caller-project-id": PROJECT_ID,
     }

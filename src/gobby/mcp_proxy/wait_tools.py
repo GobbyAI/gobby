@@ -1,11 +1,9 @@
 """Helpers for MCP wrapper tools that intentionally wait."""
 
 import asyncio
-import hashlib
 import logging
 from collections.abc import Awaitable
 from dataclasses import dataclass
-from pathlib import Path
 from typing import Any
 
 from mcp.server.fastmcp import Context
@@ -15,7 +13,8 @@ WAIT_TOOL_HTTP_TIMEOUT_BUFFER_SECONDS = 30.0
 MCP_WRAPPER_WAIT_TOOL_TIMEOUT_SECONDS = 300.0
 WAIT_TOOL_NAMES = ("wait_for_output", "wait_for_summary")
 MCP_WRAPPER_EXTENDED_TOOL_TIMEOUT_SECONDS = 300.0
-MCP_WRAPPER_FINGERPRINT_HEADER = "X-Gobby-MCP-Wrapper-Fingerprint"
+MCP_WRAPPER_PROTOCOL_VERSION = "1"
+MCP_WRAPPER_PROTOCOL_VERSION_HEADER = "X-Gobby-MCP-Wrapper-Protocol-Version"
 MCP_WRAPPER_STALE_ERROR_CODE = "GOBBY_MCP_WRAPPER_STALE"
 WAIT_TOOL_WRAPPER_GRACE_SECONDS = 5.0
 EXTENDED_TIMEOUT_TOOL_NAMES = (
@@ -74,10 +73,6 @@ def wait_tool_timeout_limit(tool_name: str) -> float:
 
 CLIENT_GUARDED_TOOL_NAMES = (*WAIT_TOOL_NAMES, *EXTENDED_TIMEOUT_TOOL_NAMES)
 HEARTBEAT_TOOL_NAMES = (*WAIT_TOOL_NAMES, *EXTENDED_TIMEOUT_TOOL_NAMES)
-MCP_WRAPPER_SOURCE_PATHS = (
-    Path(__file__),
-    Path(__file__).with_name("stdio.py"),
-)
 
 logger = logging.getLogger("gobby.mcp.wait_tools")
 
@@ -91,69 +86,26 @@ class PreparedClientGuard:
     wait_timeout_capped: bool = False
 
 
-def _hash_source(path: Path) -> str | None:
-    try:
-        return hashlib.sha256(path.read_bytes()).hexdigest()
-    except OSError:
-        return None
-
-
-def _capture_source_digests(paths: tuple[Path, ...]) -> dict[str, str | None]:
-    return {str(path): _hash_source(path) for path in paths}
-
-
-_MCP_WRAPPER_SOURCE_DIGESTS = _capture_source_digests(MCP_WRAPPER_SOURCE_PATHS)
-
-
-def _source_fingerprint(source_digests: dict[str, str | None]) -> str:
-    digest = hashlib.sha256()
-    for path, source_digest in sorted(source_digests.items()):
-        digest.update(path.encode("utf-8"))
-        digest.update(b"\0")
-        digest.update((source_digest or "").encode("utf-8"))
-        digest.update(b"\0")
-    return digest.hexdigest()
-
-
-def mcp_wrapper_process_fingerprint() -> str:
-    return _source_fingerprint(_MCP_WRAPPER_SOURCE_DIGESTS)
-
-
-def mcp_wrapper_current_source_fingerprint() -> str:
-    return _source_fingerprint(_capture_source_digests(MCP_WRAPPER_SOURCE_PATHS))
-
-
-def mcp_wrapper_source_stale_result(tool_name: str) -> dict[str, Any] | None:
-    """Allow the daemon to decide whether a running wrapper is compatible.
-
-    On-disk byte drift cannot determine protocol compatibility. Dispatching lets
-    the structured proxy recover in place while the daemon fingerprint gate
-    retains authority over genuine incompatibilities.
-    """
-    return None
-
-
-def mcp_wrapper_fingerprint_stale_result(
+def mcp_wrapper_protocol_mismatch_result(
     tool_name: str,
-    provided_fingerprint: str | None,
+    provided_protocol_version: str | None,
 ) -> dict[str, Any] | None:
     if tool_name not in WAIT_TOOL_NAMES:
         return None
 
-    expected_fingerprint = mcp_wrapper_current_source_fingerprint()
-    if provided_fingerprint == expected_fingerprint:
+    if provided_protocol_version == MCP_WRAPPER_PROTOCOL_VERSION:
         return None
 
     return {
         "success": False,
         "error_code": MCP_WRAPPER_STALE_ERROR_CODE,
         "error": (
-            "Gobby MCP stdio wrapper fingerprint is stale or missing. "
-            "Restart the Gobby MCP server before running wait tools."
+            "Gobby MCP stdio wrapper protocol version is missing or incompatible. "
+            "Restart the MCP client session before running wait tools."
         ),
         "tool_name": tool_name,
-        "provided_wrapper_fingerprint": provided_fingerprint,
-        "expected_wrapper_fingerprint": expected_fingerprint,
+        "provided_wrapper_protocol_version": provided_protocol_version,
+        "expected_wrapper_protocol_version": MCP_WRAPPER_PROTOCOL_VERSION,
         "restart_required": True,
     }
 

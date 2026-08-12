@@ -11,7 +11,10 @@ from fastapi import HTTPException
 from starlette.requests import Request
 
 from gobby.mcp_proxy.stdio_proxy import DaemonProxy, DaemonProxyDependencies
-from gobby.mcp_proxy.wait_tools import MCP_WRAPPER_FINGERPRINT_HEADER
+from gobby.mcp_proxy.wait_tools import (
+    MCP_WRAPPER_PROTOCOL_VERSION,
+    MCP_WRAPPER_PROTOCOL_VERSION_HEADER,
+)
 from gobby.servers.routes.mcp.endpoints.request_context import (
     _reset_context,
     _set_context_for_request,
@@ -68,7 +71,7 @@ async def test_run_identity_transport_chain(monkeypatch: pytest.MonkeyPatch) -> 
             "X-Gobby-Session-Id": "session-1",
             AGENT_RUN_ID_HEADER: "run-1",
             "X-Gobby-Project-Id": "project-1",
-            MCP_WRAPPER_FINGERPRINT_HEADER: "managed-wrapper",
+            MCP_WRAPPER_PROTOCOL_VERSION_HEADER: MCP_WRAPPER_PROTOCOL_VERSION,
         }
     )
 
@@ -92,7 +95,7 @@ async def test_run_identity_transport_chain(monkeypatch: pytest.MonkeyPatch) -> 
             **{
                 "X-Gobby-Session-Id": "session-1",
                 "X-Gobby-Project-Id": "project-1",
-                MCP_WRAPPER_FINGERPRINT_HEADER: "managed-wrapper",
+                MCP_WRAPPER_PROTOCOL_VERSION_HEADER: MCP_WRAPPER_PROTOCOL_VERSION,
             }
         )
         with pytest.raises(HTTPException, match="agent run identity"):
@@ -104,7 +107,7 @@ async def test_run_identity_transport_chain(monkeypatch: pytest.MonkeyPatch) -> 
                 "X-Gobby-Session-Id": "session-1",
                 AGENT_RUN_ID_HEADER: "run-forged",
                 "X-Gobby-Project-Id": "project-1",
-                MCP_WRAPPER_FINGERPRINT_HEADER: "managed-wrapper",
+                MCP_WRAPPER_PROTOCOL_VERSION_HEADER: MCP_WRAPPER_PROTOCOL_VERSION,
             }
         )
         with pytest.raises(HTTPException, match="agent run identity"):
@@ -120,7 +123,7 @@ async def test_run_identity_transport_chain(monkeypatch: pytest.MonkeyPatch) -> 
                 "X-Gobby-Session-Id": "session-1",
                 AGENT_RUN_ID_HEADER: "run-other",
                 "X-Gobby-Project-Id": "project-1",
-                MCP_WRAPPER_FINGERPRINT_HEADER: "managed-wrapper",
+                MCP_WRAPPER_PROTOCOL_VERSION_HEADER: MCP_WRAPPER_PROTOCOL_VERSION,
             }
         )
         with pytest.raises(HTTPException, match="agent run identity"):

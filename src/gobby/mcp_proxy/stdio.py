@@ -74,7 +74,6 @@ from gobby.mcp_proxy.stdio_tools import (
 )
 from gobby.mcp_proxy.wait_tools import (
     call_with_wait_heartbeat,
-    mcp_wrapper_source_stale_result,
     prepare_client_guard,
 )
 
@@ -101,7 +100,6 @@ __all__ = [
     "httpx",
     "is_daemon_running",
     "main",
-    "mcp_wrapper_source_stale_result",
     "prepare_client_guard",
     "register_proxy_tools",
     "restart_daemon_process",
@@ -133,7 +131,6 @@ def _tool_registration_dependencies() -> ToolRegistrationDependencies:
     return ToolRegistrationDependencies(
         canonicalize_call_tool_wrapper=canonicalize_call_tool_wrapper,
         input_error_type=CallToolWrapperInputError,
-        mcp_wrapper_source_stale_result=mcp_wrapper_source_stale_result,
         prepare_client_guard=prepare_client_guard,
         call_with_wait_heartbeat=call_with_wait_heartbeat,
     )

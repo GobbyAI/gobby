@@ -4,7 +4,6 @@ import asyncio
 import signal
 import sys
 from collections.abc import Awaitable, Callable, Coroutine
-from pathlib import Path
 from types import SimpleNamespace
 from typing import Any, cast
 from unittest.mock import AsyncMock, MagicMock, patch
@@ -65,62 +64,35 @@ def test_generation_gwiki_timeout_sits_below_extended_http_cap() -> None:
     assert GENERATION_GWIKI_TIMEOUT_SECONDS < wait_tools.MCP_WRAPPER_EXTENDED_TOOL_TIMEOUT_SECONDS
 
 
-def test_wait_tool_source_drift_uses_in_place_recovery(tmp_path: Path) -> None:
+def test_wait_tool_protocol_mismatch_result_detects_missing_header() -> None:
     from gobby.mcp_proxy import wait_tools
 
-    source_path = tmp_path / "wait_tools.py"
-    source_path.write_text("before")
-    startup_digests = {str(source_path): wait_tools._hash_source(source_path)}
-    source_path.write_text("after")
-
-    with patch.object(wait_tools, "_MCP_WRAPPER_SOURCE_DIGESTS", startup_digests):
-        result = wait_tools.mcp_wrapper_source_stale_result("wait_for_summary")
-
-    assert result is None
-
-
-def test_source_stale_result_ignores_non_wait_tool(tmp_path: Path) -> None:
-    from gobby.mcp_proxy import wait_tools
-
-    source_path = tmp_path / "wait_tools.py"
-    source_path.write_text("before")
-    startup_digests = {str(source_path): wait_tools._hash_source(source_path)}
-    source_path.write_text("after")
-
-    with patch.object(wait_tools, "_MCP_WRAPPER_SOURCE_DIGESTS", startup_digests):
-        result = wait_tools.mcp_wrapper_source_stale_result("get_task")
-
-    assert result is None
-
-
-def test_wait_tool_fingerprint_stale_result_detects_missing_header() -> None:
-    from gobby.mcp_proxy import wait_tools
-
-    result = wait_tools.mcp_wrapper_fingerprint_stale_result("wait_for_summary", None)
+    result = wait_tools.mcp_wrapper_protocol_mismatch_result("wait_for_summary", None)
 
     assert result is not None
     assert result["success"] is False
     assert result["error_code"] == "GOBBY_MCP_WRAPPER_STALE"
     assert result["tool_name"] == "wait_for_summary"
-    assert result["provided_wrapper_fingerprint"] is None
+    assert result["provided_wrapper_protocol_version"] is None
+    assert result["expected_wrapper_protocol_version"] == wait_tools.MCP_WRAPPER_PROTOCOL_VERSION
     assert result["restart_required"] is True
 
 
-def test_wait_tool_fingerprint_stale_result_accepts_current_fingerprint() -> None:
+def test_wait_tool_protocol_mismatch_result_accepts_current_version() -> None:
     from gobby.mcp_proxy import wait_tools
 
-    result = wait_tools.mcp_wrapper_fingerprint_stale_result(
+    result = wait_tools.mcp_wrapper_protocol_mismatch_result(
         "wait_for_summary",
-        wait_tools.mcp_wrapper_current_source_fingerprint(),
+        wait_tools.MCP_WRAPPER_PROTOCOL_VERSION,
     )
 
     assert result is None
 
 
-def test_fingerprint_stale_result_ignores_non_wait_tool() -> None:
+def test_protocol_mismatch_result_ignores_non_wait_tool() -> None:
     from gobby.mcp_proxy import wait_tools
 
-    assert wait_tools.mcp_wrapper_fingerprint_stale_result("list_tasks", None) is None
+    assert wait_tools.mcp_wrapper_protocol_mismatch_result("list_tasks", None) is None
 
 
 class TestGetDaemonPid:
@@ -937,6 +909,28 @@ class TestDaemonProxy:
             result = await proxy._request("GET", "/some/path")
             assert result["success"] is False
             assert result["error"] == "Exception: (no message)"
+
+    @pytest.mark.asyncio
+    async def test_request_sends_wrapper_protocol_version_header(self) -> None:
+        from gobby.mcp_proxy.stdio import DaemonProxy
+        from gobby.mcp_proxy.wait_tools import (
+            MCP_WRAPPER_PROTOCOL_VERSION,
+            MCP_WRAPPER_PROTOCOL_VERSION_HEADER,
+        )
+
+        proxy = DaemonProxy(60887)
+        mock_response = MagicMock(status_code=200)
+        mock_response.json.return_value = {"success": True}
+        with patch("gobby.mcp_proxy.stdio.httpx.AsyncClient") as mock_client_cls:
+            mock_client = AsyncMock()
+            mock_client.request.return_value = mock_response
+            mock_client_cls.return_value = mock_client
+
+            result = await proxy._request("GET", "/some/path")
+
+        assert result == {"success": True}
+        headers = mock_client.request.await_args.kwargs["headers"]
+        assert headers[MCP_WRAPPER_PROTOCOL_VERSION_HEADER] == MCP_WRAPPER_PROTOCOL_VERSION
 
     @pytest.mark.asyncio
     async def test_request_preflight_fails_fast_when_daemon_http_is_unavailable(self) -> None:
@@ -1983,25 +1977,15 @@ class TestMCPToolsWrapper:
         )
 
     @pytest.mark.asyncio
-    async def test_call_tool_dispatches_wait_when_wrapper_source_drifted(
-        self, tmp_path: Path
-    ) -> None:
-        from gobby.mcp_proxy import wait_tools
-
+    async def test_call_tool_dispatches_wait_without_local_source_gate(self) -> None:
         _, mock_proxy, run_tool = self._register_tools()
         mock_proxy.call_tool.return_value = {"success": True, "completed": True}
-        source_path = tmp_path / "wait_tools.py"
-        source_path.write_text("before")
-        startup_digests = {str(source_path): wait_tools._hash_source(source_path)}
-        source_path.write_text("after")
-
-        with patch.object(wait_tools, "_MCP_WRAPPER_SOURCE_DIGESTS", startup_digests):
-            result = await run_tool(
-                "call_tool",
-                server_name="gobby-sessions",
-                tool_name="wait_for_summary",
-                arguments={"session_id": "session-123", "timeout_seconds": 300},
-            )
+        result = await run_tool(
+            "call_tool",
+            server_name="gobby-sessions",
+            tool_name="wait_for_summary",
+            arguments={"session_id": "session-123", "timeout_seconds": 300},
+        )
 
         assert result == {"success": True, "completed": True}
         mock_proxy.call_tool.assert_awaited_once_with(
@@ -2012,15 +1996,15 @@ class TestMCPToolsWrapper:
         )
 
     @pytest.mark.asyncio
-    async def test_call_tool_propagates_daemon_fingerprint_refusal(self) -> None:
+    async def test_call_tool_propagates_daemon_protocol_refusal(self) -> None:
         _, mock_proxy, run_tool = self._register_tools()
         stale_result = {
             "success": False,
             "error_code": "GOBBY_MCP_WRAPPER_STALE",
             "error": "wrapper protocol is incompatible",
             "tool_name": "wait_for_summary",
-            "provided_wrapper_fingerprint": "stale-wrapper",
-            "expected_wrapper_fingerprint": "current-wrapper",
+            "provided_wrapper_protocol_version": "0",
+            "expected_wrapper_protocol_version": "1",
             "restart_required": True,
         }
         mock_proxy.call_tool.return_value = stale_result

@@ -17,7 +17,6 @@ from gobby.mcp_proxy._call_tool_wrapper import (
 from gobby.mcp_proxy.stdio_proxy import DaemonProxy
 from gobby.mcp_proxy.wait_tools import (
     call_with_wait_heartbeat,
-    mcp_wrapper_source_stale_result,
     prepare_client_guard,
 )
 
@@ -51,7 +50,6 @@ class CallWithWaitHeartbeat(Protocol):
 class ToolRegistrationDependencies:
     canonicalize_call_tool_wrapper: CanonicalizeCallToolWrapper
     input_error_type: type[CallToolWrapperInputError]
-    mcp_wrapper_source_stale_result: Callable[[str], dict[str, Any] | None]
     prepare_client_guard: Callable[..., Any]
     call_with_wait_heartbeat: CallWithWaitHeartbeat
 
@@ -60,7 +58,6 @@ def default_tool_registration_dependencies() -> ToolRegistrationDependencies:
     return ToolRegistrationDependencies(
         canonicalize_call_tool_wrapper=canonicalize_call_tool_wrapper,
         input_error_type=CallToolWrapperInputError,
-        mcp_wrapper_source_stale_result=mcp_wrapper_source_stale_result,
         prepare_client_guard=prepare_client_guard,
         call_with_wait_heartbeat=call_with_wait_heartbeat,
     )
@@ -193,9 +190,6 @@ def register_proxy_tools(
                 "success": False,
                 "error": "Missing required parameters: server_name, tool_name",
             }
-
-        if stale_result := deps.mcp_wrapper_source_stale_result(tool_name):
-            return stale_result
 
         guard = deps.prepare_client_guard(tool_name=tool_name, arguments=final_args)
         final_args = guard.arguments
