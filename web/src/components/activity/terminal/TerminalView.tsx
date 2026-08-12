@@ -66,6 +66,9 @@ function applyGobbyTheme(element: HTMLElement): void {
   element.style.boxSizing = "border-box";
   element.style.borderRadius = "0";
   element.style.boxShadow = "none";
+  element.style.touchAction = "pan-y pinch-zoom";
+  element.style.overscrollBehaviorY = "contain";
+  element.style.setProperty("-webkit-overflow-scrolling", "touch");
   element.style.setProperty("--term-fg", "var(--text-primary)");
   element.style.setProperty("--term-bg", "var(--bg-primary)");
   element.style.setProperty("--term-cursor", "var(--accent)");
@@ -162,6 +165,11 @@ function TerminalInstance({
       .init()
       .then((readyTerminal) => {
         if (disposed) return;
+        const input = readyTerminal.element.querySelector("textarea");
+        input?.setAttribute("inputmode", "text");
+        input?.setAttribute("autocomplete", "on");
+        input?.setAttribute("autocorrect", "on");
+        input?.setAttribute("spellcheck", "true");
         // Own the container-to-grid fit: resize the terminal whenever the
         // outer container changes size (dock expand/collapse, panel resize)
         // and once fonts finish loading so the first measurement isn't

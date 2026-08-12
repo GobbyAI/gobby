@@ -72,6 +72,9 @@ vi.mock("@wterm/dom", () => {
       this.element = element;
       this.options = options;
       this.textarea = document.createElement("textarea");
+      this.textarea.setAttribute("autocomplete", "off");
+      this.textarea.setAttribute("autocorrect", "off");
+      this.textarea.setAttribute("spellcheck", "false");
       this.marker = document.createElement("span");
       this.marker.dataset.mockTerminal = String(
         terminalMock.instances.length + 1,
@@ -166,6 +169,12 @@ describe("TerminalView", () => {
     // Direct input: the renderer's textarea stays enabled so clicking the
     // terminal focuses it and typing flows to the PTY via onData.
     expect(instance.textarea).not.toBeDisabled();
+    expect(instance.textarea).toHaveAttribute("inputmode", "text");
+    expect(instance.textarea).toHaveAttribute("autocomplete", "on");
+    expect(instance.textarea).toHaveAttribute("autocorrect", "on");
+    expect(instance.textarea).toHaveAttribute("spellcheck", "true");
+    expect(instance.element.style.touchAction).toBe("pan-y pinch-zoom");
+    expect(instance.element.style.overscrollBehaviorY).toBe("contain");
     expect(instance.element.style.getPropertyValue("--term-bg")).toBe(
       "var(--bg-primary)",
     );
