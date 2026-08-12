@@ -337,8 +337,8 @@ def _issue_prelaunch_credential(
     credential_manager = vars(database).get("managed_credential_manager")
     if credential_manager is None:
         return prepared
-    lifetime_seconds = min(timeout_seconds or 3540.0, 3540.0)
-    lifetime_seconds = max(lifetime_seconds, 1.0)
+    lifetime_seconds = 3540.0 if timeout_seconds is None else timeout_seconds
+    lifetime_seconds = max(lifetime_seconds + 300.0, 1.0)
     credential = credential_manager.issue(
         managed_execution_id=uuid.UUID(prepared.agent_run_id),
         owner_kind="agent_run",

@@ -7,8 +7,9 @@ update_terminal_pickup_metadata.
 
 import os
 import uuid
+from datetime import UTC, datetime, timedelta
 from pathlib import Path
-from unittest.mock import ANY, MagicMock
+from unittest.mock import MagicMock, patch
 
 import pytest
 
@@ -116,10 +117,24 @@ class TestPrepareTerminalSpawnMetadata:
 
         assert str(uuid.UUID(result.agent_run_id)) == result.agent_run_id
 
-    def test_issues_managed_credential_before_returning_provider_environment(self) -> None:
+    @pytest.mark.parametrize(
+        ("timeout_seconds", "expected_lifetime_seconds"),
+        [
+            (7200.0, 7500.0),
+            (None, 3840.0),
+            (0.0, 300.0),
+            (-300.0, 1.0),
+        ],
+    )
+    def test_issues_managed_credential_before_returning_provider_environment(
+        self,
+        timeout_seconds: float | None,
+        expected_lifetime_seconds: float,
+    ) -> None:
         session_id = str(uuid.uuid4())
         project_id = str(uuid.uuid4())
         run_id = str(uuid.uuid4())
+        issued_at = datetime(2026, 8, 12, tzinfo=UTC)
         sm = _make_session_manager(child_session_id=session_id)
         credential_manager = MagicMock()
         credential_manager.issue.return_value.bootstrap_path = Path(
@@ -127,20 +142,23 @@ class TestPrepareTerminalSpawnMetadata:
         )
         sm._storage.db.managed_credential_manager = credential_manager
 
-        result = prepare_terminal_spawn(
-            session_manager=sm,
-            parent_session_id=str(uuid.uuid4()),
-            project_id=project_id,
-            machine_id=str(uuid.uuid4()),
-            agent_run_id=run_id,
-        )
+        with patch("gobby.agents.spawn.datetime") as mock_datetime:
+            mock_datetime.now.return_value = issued_at
+            result = prepare_terminal_spawn(
+                session_manager=sm,
+                parent_session_id=str(uuid.uuid4()),
+                project_id=project_id,
+                machine_id=str(uuid.uuid4()),
+                agent_run_id=run_id,
+                timeout_seconds=timeout_seconds,
+            )
 
         credential_manager.issue.assert_called_once_with(
             managed_execution_id=uuid.UUID(run_id),
             owner_kind="agent_run",
             session_id=uuid.UUID(session_id),
             agent_run_id=uuid.UUID(run_id),
-            expires_at=ANY,
+            expires_at=issued_at + timedelta(seconds=expected_lifetime_seconds),
         )
         assert result.env_vars["GOBBY_MANAGED_EXECUTION_BOOTSTRAP"] == (
             "/private/runtime/bootstrap.json"
