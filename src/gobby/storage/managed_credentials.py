@@ -20,7 +20,9 @@ from gobby.storage.hub.protocol import HubDatabase, Row
 
 AUTH_SCHEMA = "gobby_agent_auth"
 MANAGED_EXECUTION_BOOTSTRAP_ENV = "GOBBY_MANAGED_EXECUTION_BOOTSTRAP"
-MAX_ROLE_LIFETIME = timedelta(hours=1)
+# Bounds runaway lifetime requests while covering long-running agent spawns,
+# whose credential lifetime derives from the run timeout (spawn timeout + 5min).
+MAX_ROLE_LIFETIME = timedelta(hours=24)
 DAEMON_LEASE_DURATION = timedelta(minutes=2)
 REVOCATION_DRAIN_TIMEOUT_SECONDS = 5.0
 REVOCATION_POLL_SECONDS = 0.05
@@ -423,7 +425,9 @@ class ManagedCredentialManager:
         if normalized <= issued_at:
             raise ValueError("managed credential expiry must be in the future")
         if normalized > issued_at + MAX_ROLE_LIFETIME:
-            raise ValueError("managed credential lifetime exceeds one hour")
+            raise ValueError(
+                f"managed credential lifetime exceeds {MAX_ROLE_LIFETIME.total_seconds() / 3600:g} hours"
+            )
         return normalized
 
     def _scoped_dsn(self, role_name: str, password: str, execution_id: UUID) -> str:

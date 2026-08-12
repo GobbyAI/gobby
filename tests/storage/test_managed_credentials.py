@@ -37,6 +37,18 @@ pytestmark = pytest.mark.integration
 pytest_plugins = ("tests.storage.test_postgres_agent_authorization",)
 
 
+def test_validate_expiry_covers_spawn_timeouts_and_bounds_runaways() -> None:
+    """Spawn-derived lifetimes (timeout + 5min) must pass; runaways must not."""
+    issued_at = datetime(2026, 8, 12, 12, 0, 0, tzinfo=UTC)
+
+    two_hour_run = issued_at + timedelta(seconds=7500)
+    assert ManagedCredentialManager._validate_expiry(issued_at, two_hour_run) == two_hour_run
+
+    runaway = issued_at + managed_credentials_module.MAX_ROLE_LIFETIME + timedelta(seconds=1)
+    with pytest.raises(ValueError, match="exceeds 24 hours"):
+        ManagedCredentialManager._validate_expiry(issued_at, runaway)
+
+
 def _manager(fixture: AuthorizationFixture, runtime_root: Path) -> ManagedCredentialManager:
     database = PostgresHubDatabase(fixture.database_url, runtime_role=RUNTIME_ROLE)
     database.open()
