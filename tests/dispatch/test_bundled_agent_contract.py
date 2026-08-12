@@ -57,8 +57,9 @@ def _tool_inventory(temp_db: Any, sample_project: dict[str, Any]) -> dict[str, s
     from gobby.worktrees.merge.resolver import MergeResolver
 
     task_manager = LocalTaskManager(temp_db)
+    config = DaemonConfig()
     manager = setup_internal_registries(
-        DaemonConfig(),
+        config_resolver=lambda: config,
         task_manager=task_manager,
         session_manager=SessionManager(temp_db),
         db=temp_db,

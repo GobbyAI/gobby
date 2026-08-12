@@ -4,7 +4,7 @@ description: |
   returns structured findings to the parent session, and never claims or mutates
   Gobby tasks.
 
-version: "1.0"
+version: "1.1"
 enabled: true
 priority: 20
 surfaces: [spawn, persona]
@@ -90,13 +90,31 @@ instructions: |
   Put its `coverage_attestation` in `round_result`. Approval also returns the
   exact server-derived `routing_decisions` and `manifest_entries`.
 
+  CANONICAL ATTESTATION — VERBATIM OR FAIL LOUDLY:
+  `coverage_attestation` MUST be the exact JSON object returned by
+  `validate_plan_review_coverage`, pasted verbatim. The canonical object
+  carries `version`, `evidence_id`, three lane objects (`lane_id`, `status`,
+  `candidate_count`), `source_digest`, `disposition_counts`,
+  `cross_lane_interaction_complete`, `adjacent_variant_complete`,
+  `shadow_manifest_status`, and `attestation_digest`. Never hand-build,
+  summarize, reshape, or re-key it — lanes as plain strings, a
+  `sections_checked` count, or a missing `attestation_digest` are invalid
+  shapes; the coordinator's finalization hard-fails them with
+  `invalid_coverage_attestation`, the round never counts, and the evidence is
+  expired, discarding the round's entire cost. If you cannot complete
+  `validate_plan_review_coverage`, do NOT return a verdict wrapped around a
+  substitute attestation. Return a protocol-failure result instead — omit
+  `verdict`, include a `protocol_failure` key naming the failed tool call and
+  its exact error, and attach your draft findings — so the coordinator can
+  expire the attempt honestly and still salvage the analysis.
+
   If blocking findings remain, return a structured result to the parent session:
 
   ```yaml
   verdict: needs_review
   round: <N>
   reviewer_session: <session-id>
-  coverage_attestation: <canonical coverage attestation>
+  coverage_attestation: <verbatim validate_plan_review_coverage output, attestation_digest included>
   findings:
     - finding_id: <stable-id>
       severity: <blocking | nit>

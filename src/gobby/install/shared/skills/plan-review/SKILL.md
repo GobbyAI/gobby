@@ -1,7 +1,7 @@
 ---
 name: plan-review
 description: Review a gobby plan document for missing requirements, bad sequencing, unhandled edge cases, weak testability, and traceability gaps. Use when asked to review or critique a plan.
-version: "1.3.0"
+version: "1.3.1"
 category: methodology
 internal: true
 triggers: plan review, plan critique, adversarial review, plan audit
@@ -384,6 +384,22 @@ derivation. The returned `coverage_attestation` is mandatory in
 `round_result`; it contains exactly three completed lanes, the source digest,
 disposition counts, cross-lane and adjacent-variant completion, and
 shadow-manifest status.
+
+**Verbatim or fail loudly.** Embed the exact JSON object
+`validate_plan_review_coverage` returned — `version`, lane objects carrying
+`lane_id`/`status`/`candidate_count`, `source_digest`, `disposition_counts`,
+`cross_lane_interaction_complete`, `adjacent_variant_complete`,
+`shadow_manifest_status`, and `attestation_digest`, byte-for-byte. A
+hand-built or summarized attestation — lanes as plain strings, a
+`sections_checked` count, a missing `attestation_digest` — is not a lesser
+attestation; it is an invalid round result. The coordinator's finalization
+rejects it with `invalid_coverage_attestation`, the round never counts toward
+`completed_plan_review_rounds`, and the evidence is expired, discarding the
+review's entire cost. When `validate_plan_review_coverage` cannot be
+completed, never substitute a reconstruction: return a protocol-failure
+result with no `verdict`, a `protocol_failure` field naming the failed tool
+call and its exact error, and your draft findings, so the coordinator can
+expire the attempt honestly while salvaging the analysis.
 
 Every terminal result is one JSON object with `verdict: approved` or
 `verdict: needs_review`, plus `findings` and `coverage_attestation`. Approved

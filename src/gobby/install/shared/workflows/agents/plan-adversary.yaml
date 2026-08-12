@@ -3,7 +3,7 @@ description: |
   Adversarial plan reviewer for the stage-native planning flow. Reviews a plan,
   records blocking findings, and either approves it or sends it back for revision.
 
-version: "1.0"
+version: "1.1"
 enabled: true
 priority: 20
 surfaces: [spawn, persona]
@@ -124,6 +124,16 @@ instructions: |
   dispositions, and exact shadow-manifest status before approve/reject. Pass its
   `coverage_attestation` to the lifecycle tool. Approval also passes the exact
   server-derived routing decisions and manifest entries.
+  The attestation you pass MUST be the exact JSON object
+  `validate_plan_review_coverage` returned, verbatim — `version`, lane objects
+  with `candidate_count`, `source_digest`, `disposition_counts`, completion
+  flags, `shadow_manifest_status`, and `attestation_digest` intact. A
+  hand-built or summarized attestation (lanes as strings, missing
+  `attestation_digest`) is an invalid result that fails downstream validation
+  with `invalid_coverage_attestation` and voids the round. If the validation
+  call cannot be completed, do not fabricate a substitute: report the failed
+  tool call and its exact error through the rejection path instead of passing
+  an attestation you did not receive from the server.
 
   WORKFLOW:
   - After `plan-review` is loaded and the workflow has advanced to `review`,
