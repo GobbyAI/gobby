@@ -5,6 +5,7 @@ from __future__ import annotations
 from datetime import datetime
 from pathlib import Path
 from types import SimpleNamespace
+from typing import Any
 from unittest.mock import MagicMock, patch
 
 import pytest
@@ -84,6 +85,7 @@ class _TestHandler(SessionEventHandlerMixin):
         self._task_manager = MagicMock()
         self._workflow_handler = MagicMock()
         self._workflow_config = None
+        self._workflow_config_resolver = lambda: None
         self._message_manager = None
         self._skill_manager = None
         self._skills_config = None
@@ -561,9 +563,17 @@ class TestSessionStartAndHelpers:
             assert rules == {"rule1"}
             assert skills == {"skill1"}
 
-    def test_build_agent_changes_marks_depth_child_as_spawned(self) -> None:
+    @pytest.mark.parametrize(
+        "session_kwargs",
+        [{"agent_depth": 1}, {"parent_session_id": "parent-session"}],
+        ids=["agent-depth", "parent-session"],
+    )
+    def test_build_agent_changes_marks_child_as_spawned(
+        self,
+        session_kwargs: dict[str, Any],
+    ) -> None:
         handler = _TestHandler()
-        handler._session_manager.get.return_value = _make_session(agent_depth=1)
+        handler._session_manager.get.return_value = _make_session(**session_kwargs)
 
         mock_agent_body = MagicMock()
         mock_agent_body.name = "test-agent"

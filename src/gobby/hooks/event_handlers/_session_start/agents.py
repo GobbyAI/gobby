@@ -51,10 +51,11 @@ def build_agent_changes(
     if handler._session_manager is None:
         raise RuntimeError("session storage is not initialized")
 
+    from gobby.hooks.session_activation import _session_is_spawned
     from gobby.mcp_proxy.tools.apply_persona import build_persona_changes
 
     session = handler._session_manager.get(session_id)
-    is_spawned = bool(session and (session.agent_run_id or session.agent_depth))
+    is_spawned = _session_is_spawned(session)
 
     return build_persona_changes(
         agent_body=agent_body,

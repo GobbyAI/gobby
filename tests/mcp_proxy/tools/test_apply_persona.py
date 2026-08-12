@@ -174,10 +174,64 @@ class TestBuildPersonaChanges:
         instance = WorkflowInstanceManager(db).get_instance(session_id, "stepper-steps")
         assert instance is None
 
-    def test_step_workflow_creates_instance_for_spawned_session(self, db: HubDatabase) -> None:
+    @pytest.mark.parametrize(
+        "task_variables",
+        [{}, {"assigned_task_id": None, "active_task_id": None}],
+        ids=["missing", "json-null"],
+    )
+    def test_step_workflow_not_created_for_taskless_spawn(
+        self,
+        db: HubDatabase,
+        task_variables: dict[str, object],
+    ) -> None:
         from gobby.mcp_proxy.tools.apply_persona import build_persona_changes
         from gobby.workflows.definitions import WorkflowStep
-        from gobby.workflows.state_manager import WorkflowInstanceManager
+        from gobby.workflows.state_manager import SessionVariableManager, WorkflowInstanceManager
+
+        db.execute(
+            "INSERT INTO projects (id, name, repo_path) VALUES (%s, %s, %s)",
+            ("11111111-1111-4111-8111-111111110004", "taskless-project", "/tmp/test"),
+        )
+        session_id = "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaa4005"
+        db.execute(
+            "INSERT INTO sessions (id, external_id, project_id, machine_id, source, status) "
+            "VALUES (%s, %s, %s, %s, %s, %s)",
+            (
+                session_id,
+                "ext-taskless",
+                "11111111-1111-4111-8111-111111110004",
+                "21000000-0000-4000-8000-000000000001",
+                "test",
+                "active",
+            ),
+        )
+        SessionVariableManager(db).merge_variables(session_id, task_variables)
+        agent = AgentDefinitionBody(
+            name="stepper",
+            steps=[WorkflowStep(name="plan", instructions="Plan the work")],
+        )
+
+        changes, _, _ = build_persona_changes(
+            agent_body=agent,
+            session_id=session_id,
+            db=db,
+            is_spawned=True,
+        )
+
+        assert "_step_workflow_name" not in changes
+        assert "step_workflow_complete" not in changes
+        instance = WorkflowInstanceManager(db).get_instance(session_id, "stepper-steps")
+        assert instance is None
+
+    @pytest.mark.parametrize("task_key", ["assigned_task_id", "active_task_id"])
+    def test_step_workflow_creates_instance_for_spawned_session(
+        self,
+        db: HubDatabase,
+        task_key: str,
+    ) -> None:
+        from gobby.mcp_proxy.tools.apply_persona import build_persona_changes
+        from gobby.workflows.definitions import WorkflowStep
+        from gobby.workflows.state_manager import SessionVariableManager, WorkflowInstanceManager
 
         db.execute(
             "INSERT INTO projects (id, name, repo_path) VALUES (%s, %s, %s)",
@@ -196,6 +250,7 @@ class TestBuildPersonaChanges:
                 "active",
             ),
         )
+        SessionVariableManager(db).merge_variables(session_id, {task_key: "#20144"})
 
         agent = AgentDefinitionBody(
             name="stepper",
@@ -221,7 +276,7 @@ class TestBuildPersonaChanges:
     def test_spawned_session_preserves_existing_step_workflow(self, db: HubDatabase) -> None:
         from gobby.mcp_proxy.tools.apply_persona import build_persona_changes
         from gobby.workflows.definitions import WorkflowInstance, WorkflowStep
-        from gobby.workflows.state_manager import WorkflowInstanceManager
+        from gobby.workflows.state_manager import SessionVariableManager, WorkflowInstanceManager
 
         db.execute(
             "INSERT INTO projects (id, name, repo_path) VALUES (%s, %s, %s)",
@@ -240,6 +295,7 @@ class TestBuildPersonaChanges:
                 "active",
             ),
         )
+        SessionVariableManager(db).merge_variables(session_id, {"assigned_task_id": "#20144"})
 
         instance_mgr = WorkflowInstanceManager(db)
         instance_mgr.save_instance(

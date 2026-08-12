@@ -24,6 +24,16 @@ from gobby.workflows.definitions import AgentDefinitionBody
 logger = logging.getLogger(__name__)
 
 
+def _session_has_assigned_or_active_task(db: HubDatabase, session_id: str) -> bool:
+    from gobby.workflows.state_manager import SessionVariableManager
+
+    variables = SessionVariableManager(db).get_variables(session_id)
+    return any(
+        isinstance(value, str) and bool(value.strip())
+        for value in (variables.get("assigned_task_id"), variables.get("active_task_id"))
+    )
+
+
 def build_persona_changes(
     agent_body: AgentDefinitionBody,
     session_id: str,
@@ -92,7 +102,7 @@ def build_persona_changes(
     if agent_body.blocked_mcp_tools:
         changes["_agent_blocked_mcp_tools"] = agent_body.blocked_mcp_tools
 
-    if agent_body.steps and is_spawned:
+    if agent_body.steps and is_spawned and _session_has_assigned_or_active_task(db, session_id):
         from gobby.workflows.definitions import WorkflowInstance
         from gobby.workflows.state_manager import WorkflowInstanceManager
 
