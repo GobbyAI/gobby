@@ -204,9 +204,11 @@ class CronScheduler:
             task.cancel()
         if tasks:
             await asyncio.gather(*tasks, return_exceptions=True)
-        # Wait for in-flight job executions to finish
-        if self._active_tasks:
-            await asyncio.gather(*self._active_tasks, return_exceptions=True)
+        active_tasks = list(self._active_tasks)
+        for task in active_tasks:
+            task.cancel()
+        if active_tasks:
+            await asyncio.gather(*active_tasks, return_exceptions=True)
         await self.executor.shutdown()
         logger.info("Cron scheduler stopped")
 

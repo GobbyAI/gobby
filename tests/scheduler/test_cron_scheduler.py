@@ -227,6 +227,16 @@ async def test_stop_shuts_down_executor(
 
 
 @pytest.mark.asyncio
+async def test_stop_cancels_active_run_tasks(scheduler: CronScheduler) -> None:
+    active_task = asyncio.create_task(asyncio.Event().wait())
+    scheduler._active_tasks.add(active_task)
+
+    await asyncio.wait_for(scheduler.stop(), timeout=0.5)
+
+    assert active_task.cancelled()
+
+
+@pytest.mark.asyncio
 async def test_double_start_is_noop(scheduler: CronScheduler) -> None:
     """Calling start() twice doesn't create duplicate tasks."""
     await scheduler.start()
@@ -655,7 +665,7 @@ async def test_due_jobs_skip_removed_automation_jobs_returned_after_cleanup(
         created_at="2026-02-10T00:00:00+00:00",
         updated_at="2026-02-10T00:00:00+00:00",
         interval_seconds=60,
-        next_run_at=(datetime.now(UTC) - timedelta(minutes=5)).isoformat(),
+        next_run_at=datetime.now(UTC) - timedelta(minutes=5),
     )
     storage = MagicMock()
     storage.delete_removed_automation_jobs.return_value = 0

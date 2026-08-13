@@ -40,7 +40,7 @@ dependencies = [
     "falkordb>=1.1.0",
     "jsonschema>=4.23.0",
     "faster-whisper>=1.0.0",
-    "qdrant-client==1.17.1",
+    "qdrant-client==1.19.0",
     # pydantic-settings 2.15.0 warns on mcp's unresolved lifespan annotation.
     "pydantic-settings==2.14.2",
     # python-multipart <0.0.31 has CVE-2026-24486, CVE-2026-40347,
