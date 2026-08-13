@@ -26,7 +26,7 @@ from gobby.servers.routes.sessions import (
     create_sessions_router,
 )
 from gobby.sessions.transcript_window import WindowResult
-from gobby.storage.machines import LocalMachineManager
+from gobby.storage.machines import LocalMachineManager, MachineNotRegisteredError
 from gobby.storage.sessions import SessionManager
 from tests._timing import wait_for_condition
 from tests.fixtures.postgres import TEST_USER_ID
@@ -751,6 +751,24 @@ class TestCreateWebChatSession:
         )
         mock_server.session_manager.update_model.assert_not_called()
         mock_server.session_manager.update_chat_mode.assert_not_called()
+
+    def test_create_web_chat_unknown_machine_returns_enrollment_conflict(
+        self, client, mock_server
+    ) -> None:
+        mock_server.session_manager.create_web_chat_session.side_effect = MachineNotRegisteredError(
+            "Machine renamed-machine is not registered; run authenticated enrollment first"
+        )
+        mock_server.services = MagicMock()
+        mock_server.services.web_chat_runtime_manager = MagicMock()
+        mock_server.services.web_chat_runtime_manager.sandbox_policy_hash = "hash-123"
+
+        response = client.post(
+            "/api/sessions/web-chat",
+            json={"provider": "claude", "project_id": "proj-123", "cwd": "/repo"},
+        )
+
+        assert response.status_code == 409
+        assert "authenticated enrollment" in response.json()["detail"]
 
     def test_create_web_chat_session_rejects_invalid_provider(self, client, mock_server) -> None:
         response = client.post(

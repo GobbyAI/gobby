@@ -8,6 +8,7 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING, Any
 
+from gobby.storage.machines import MachineNotRegisteredError
 from gobby.storage.sessions._title_defaults import manual_title_source
 from gobby.storage.sessions._update_sentinel import UNSET
 
@@ -141,5 +142,7 @@ machine_id and project_id are auto-resolved from the local environment if omitte
                 "source": session.source,
                 "project_id": session.project_id,
             }
+        except MachineNotRegisteredError as e:
+            return {"error": str(e), "error_code": "machine_not_registered"}
         except Exception as e:
             return {"error": f"Failed to register session: {e}"}

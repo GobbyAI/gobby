@@ -236,6 +236,36 @@ class TestRegisterSessionEdgeCases:
         data = response.json()
         assert "Internal server error" in data["detail"]
 
+    def test_register_unknown_machine_returns_enrollment_conflict(
+        self,
+        client: TestClient,
+        session_storage: SessionManager,
+        test_project: dict[str, Any],
+    ) -> None:
+        external_id = "missing-machine-registration"
+        missing_machine_id = "21000000-0000-4000-8000-000000000099"
+
+        with patch("gobby.utils.machine_id.get_machine_id", return_value=missing_machine_id):
+            response = client.post(
+                "/api/sessions/register",
+                json={
+                    "external_id": external_id,
+                    "source": "claude",
+                    "project_id": test_project["id"],
+                },
+            )
+
+        assert response.status_code == 409
+        assert "authenticated enrollment" in response.json()["detail"]
+        assert (
+            session_storage.find_by_external_id(
+                external_id,
+                test_project["id"],
+                "claude",
+            )
+            is None
+        )
+
     @pytest.mark.parametrize("machine_id", [None, "", "   "])
     def test_register_ignores_client_machine_id_and_attributes_locally(
         self,

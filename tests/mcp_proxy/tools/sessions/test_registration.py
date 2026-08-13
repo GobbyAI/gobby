@@ -10,6 +10,8 @@ import pytest
 
 from gobby.mcp_proxy.tools.internal import InternalToolRegistry
 from gobby.mcp_proxy.tools.sessions import create_session_messages_registry
+from gobby.runner_init.helpers import ensure_machine_identity
+from gobby.storage.machines import MachineNotRegisteredError
 from gobby.storage.sessions import SessionManager
 from gobby.storage.sessions._update_sentinel import UNSET
 from gobby.utils.session_context import session_context_for_test
@@ -128,6 +130,8 @@ class TestRegisterSession:
         from gobby.utils.machine_id import get_machine_id
 
         machine_id = get_machine_id()
+        assert machine_id is not None
+        ensure_machine_identity(session_manager.db, machine_id)
         external_id = "mcp-machine-attribution-transition"
         project_id = str(sample_project["id"])
         canonical = session_manager.register(
@@ -308,6 +312,30 @@ class TestRegisterSession:
 
         assert "error" in result
         assert "DB locked" in result["error"]
+
+    def test_unknown_machine_returns_actionable_stable_error(self) -> None:
+        session_manager = MagicMock()
+        session_manager.register.side_effect = MachineNotRegisteredError(
+            "Machine renamed-machine is not registered; run authenticated enrollment first"
+        )
+
+        registry = _make_registry(session_manager=session_manager)
+        register = registry.get_tool("register_session")
+        assert register is not None
+
+        result = register(
+            external_id="ext-unknown-machine",
+            source="claude",
+            machine_id="21000000-0000-4000-8000-000000000099",
+            project_id="11111111-1111-4111-8111-111111110001",
+        )
+
+        assert result == {
+            "error": (
+                "Machine renamed-machine is not registered; run authenticated enrollment first"
+            ),
+            "error_code": "machine_not_registered",
+        }
 
     def test_ambient_matching_identity_reactivates_and_rereads_same_row(self) -> None:
         session_manager = MagicMock()

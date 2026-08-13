@@ -11,6 +11,7 @@ from gobby.runner_init.helpers import ensure_machine_identity
 from gobby.storage.hub.protocol import HubDatabase
 from gobby.storage.machines import (
     LocalMachineManager,
+    Machine,
     MachineNotRegisteredError,
     MachineOwnershipConflictError,
 )
@@ -36,6 +37,13 @@ def _count_machines(temp_db: HubDatabase) -> int:
 
 
 class TestLocalMachineManager:
+    def test_machine_from_row_rejects_missing_owner(self, temp_db: HubDatabase) -> None:
+        row = temp_db.fetchone("SELECT * FROM machines ORDER BY id LIMIT 1")
+        assert row is not None
+
+        with pytest.raises(ValueError, match="missing owner_user_id"):
+            Machine.from_row({**row, "owner_user_id": None})
+
     def test_upsert_seen_inserts_and_refreshes_last_seen(self, temp_db) -> None:
         manager = LocalMachineManager(temp_db)
 
@@ -155,6 +163,14 @@ def test_session_registration_rejects_unknown_local_machine(
         )
 
     assert LocalMachineManager(session_manager.db).get(MACHINE_A) is None
+    assert (
+        session_manager.find_by_external_id(
+            "session-machine-registration-unknown",
+            sample_project["id"],
+            "claude",
+        )
+        is None
+    )
 
 
 def test_session_registration_rejects_foreign_machine(

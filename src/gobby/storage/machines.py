@@ -56,13 +56,16 @@ class Machine:
     @classmethod
     def from_row(cls, row: Mapping[str, Any]) -> Machine:
         """Create a Machine from a database row."""
+        owner_user_id = row["owner_user_id"]
+        if owner_user_id is None:
+            raise ValueError("Machine row is missing owner_user_id")
         return cls(
             id=str(row["id"]),
             hostname=row.get("hostname"),
             os=row.get("os"),
             label=row.get("label"),
             tailscale_name=row.get("tailscale_name"),
-            owner_user_id=str(row["owner_user_id"]),
+            owner_user_id=str(owner_user_id),
             first_seen=row["first_seen"],
             last_seen=row["last_seen"],
         )

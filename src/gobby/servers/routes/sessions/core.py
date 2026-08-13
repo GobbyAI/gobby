@@ -22,6 +22,7 @@ from gobby.servers.models import (
 )
 from gobby.servers.routes.configuration_context import require_config_snapshot
 from gobby.sessions.acp_lifecycle import attach_acp_block
+from gobby.storage.machines import MachineNotRegisteredError
 from gobby.storage.sessions._update_sentinel import UNSET
 from gobby.storage.token_events import TokenEventStore
 from gobby.telemetry.instruments import inc_counter
@@ -255,6 +256,8 @@ def register_core_routes(
 
         except HTTPException:
             raise
+        except MachineNotRegisteredError as e:
+            raise HTTPException(status_code=409, detail=str(e)) from e
         except ValueError as e:
             raise HTTPException(status_code=400, detail=str(e)) from e
         except Exception as e:
@@ -327,6 +330,9 @@ def register_core_routes(
 
         except HTTPException:
             raise
+
+        except MachineNotRegisteredError as e:
+            raise HTTPException(status_code=409, detail=str(e)) from e
 
         except ValueError as e:
             # ValueError from _resolve_project_id when project not initialized
