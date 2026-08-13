@@ -47,6 +47,9 @@ pub mod ai;
 pub mod postgres;
 
 #[cfg(feature = "postgres")]
+pub(crate) mod baseline_refresh;
+
+#[cfg(feature = "postgres")]
 pub mod schema;
 
 #[cfg(feature = "postgres")]

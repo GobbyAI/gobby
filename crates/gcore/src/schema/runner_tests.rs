@@ -1,4 +1,4 @@
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 use std::env;
 use std::fs;
 use std::sync::{Mutex, mpsc};
@@ -9,12 +9,17 @@ use time::format_description::well_known::Rfc3339;
 use time::{Duration, OffsetDateTime};
 use uuid::Uuid;
 
+use super::assets::BASELINE_SQL;
 use super::assets::{BASELINE_CHECKSUM, BASELINE_VERSION, EmbeddedMigration, MIGRATIONS};
 use super::error::SchemaError;
 use super::gate::{
     BackupGateContext, SourceIdentity, VerifiedBackupManifest, parse_backup_manifest,
 };
-use super::runner::{PREDECESSOR_BASELINE_CHECKSUM, SchemaRunner};
+use super::runner::{
+    ACCOUNT_IDENTITY_PREDECESSOR_CHECKSUM, PREDECESSOR_BASELINE_CHECKSUM, SchemaRunner,
+};
+use super::sql_splitter::split_sql_statements;
+use crate::baseline_refresh::{REFRESH_STATEMENT_PREFIXES, baseline_refresh_statement};
 
 static RECOVERY_MIGRATION: EmbeddedMigration = EmbeddedMigration {
     version: 376,
@@ -358,7 +363,55 @@ fn predecessor_checksum_matches_python_cutover_contract() {
         .map(|(_, value)| value.trim().trim_matches('"'))
         .expect("Python predecessor checksum declaration must contain '='");
 
-    assert_eq!(python_checksum, PREDECESSOR_BASELINE_CHECKSUM);
+    assert_eq!(python_checksum, ACCOUNT_IDENTITY_PREDECESSOR_CHECKSUM);
+}
+
+#[test]
+fn predecessor_fixture_matches_pinned_checksum() {
+    const PREDECESSOR_BASELINE_SQL: &str =
+        include_str!("../../tests/fixtures/schema/predecessor_baseline.sql");
+    assert_eq!(
+        super::assets::sha256_hex(PREDECESSOR_BASELINE_SQL.as_bytes()),
+        PREDECESSOR_BASELINE_CHECKSUM
+    );
+}
+
+#[test]
+fn baseline_refresh_accepts_exactly_the_predecessor_statement_difference() {
+    const PREDECESSOR_BASELINE_SQL: &str =
+        include_str!("../../tests/fixtures/schema/predecessor_baseline.sql");
+    let current = split_sql_statements(BASELINE_SQL).expect("current baseline splits");
+    let predecessor =
+        split_sql_statements(PREDECESSOR_BASELINE_SQL).expect("predecessor baseline splits");
+    let predecessor_set = predecessor.iter().cloned().collect::<BTreeSet<_>>();
+    let added = current
+        .into_iter()
+        .filter(|statement| !predecessor_set.contains(statement))
+        .collect::<Vec<_>>();
+
+    let unexpected = added
+        .iter()
+        .filter(|statement| !baseline_refresh_statement(statement))
+        .cloned()
+        .collect::<Vec<_>>();
+    assert!(
+        unexpected.is_empty(),
+        "refresh acceptance missed added statements: {unexpected:?}"
+    );
+
+    let matched = REFRESH_STATEMENT_PREFIXES
+        .iter()
+        .map(|prefix| {
+            added
+                .iter()
+                .filter(|statement| statement.trim_start().starts_with(prefix))
+                .count()
+        })
+        .collect::<Vec<_>>();
+    assert!(
+        matched.iter().all(|count| *count == 1),
+        "each refresh prefix must match exactly one added statement: {matched:?}"
+    );
 }
 
 #[test]
