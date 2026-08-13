@@ -149,7 +149,8 @@ Decisions made with the operator (2026-07-26, mechanism updated 2026-08-12):
   idempotent guards, so both shapes coexist in the baseline mid-epic; each
   domain ships a guarded copy as an `EmbeddedMigration` entry in the same
   commit as its code cutover; a final `-- gobby:destructive` drop migration
-  removes the legacy tables behind the backup-gated `--destructive` apply,
+  removes the legacy tables behind the backup-gated, epoch-fenced
+  destructive apply (7.1),
   with the same-commit baseline edit removing their DDL. The drop migration
   RAISEs if legacy rows were written after their copy or never copied at all
   (the directional `legacy_copy_ledger` backstop for mid-epic writes through
@@ -259,8 +260,21 @@ Decisions made with the operator (2026-07-26, mechanism updated 2026-08-12):
   asymmetry governs the guard's join — live rows match on the live natural key,
   soft-deleted rows match on the preserved `id`, because deleted natural keys
   are not unique and two retired rows can share a name.
-- **Every copy migration's transaction opens with `LOCK TABLE <legacy
-  source> IN ACCESS EXCLUSIVE MODE`** (adversary round 4 APR4-008). The
+- **Every copy migration takes `LOCK TABLE <legacy source> IN ACCESS
+  EXCLUSIVE MODE` inside its existence guard, before its first source
+  read** (adversary round 4 APR4-008; guard-first ordering, adversary round
+  5 APR5-001). The migration's first statement checks the legacy source
+  exists (`to_regclass` inside the guarded `DO` block); only the guarded
+  branch acquires the lock (`EXECUTE 'LOCK TABLE …'` — a table lock taken
+  inside a `DO` block holds to transaction end), then copies, validates,
+  and checkpoints under it. The ordering is load-bearing: the runner
+  executes every pending non-destructive migration's SQL before stamping
+  its receipt (`apply_pending_migrations`, `runner.rs:676-742`; 1.5.3 pins
+  fresh-lineage receipted-no-op reapply), and after 7.1 the final baseline
+  no longer creates the legacy tables, so an unconditional opening `LOCK
+  TABLE` would abort every fresh install on `undefined_table`. With the
+  guard first, an absent source records a receipted no-op. On live hubs the
+  lock is still required: the
   runner's advisory lock (`pg_advisory_lock(hashtext('postgres_migrations_apply'),
   hashtext(current_schema()))`, `runner.rs:105-113`) serializes migration
   runners only; runtime writers hold disjoint one-arg per-row advisory keys or
@@ -274,8 +288,11 @@ Decisions made with the operator (2026-07-26, mechanism updated 2026-08-12):
   copy never saw, which would let 7.1's backstop pass over real drift. The
   table lock waits out in-flight writers and freezes the source for the
   migration's whole transaction, so copy, guard, and checkpoint read one
-  snapshot. join every legacy
-  source row to its typed target by that rule and compare **both identity and
+  snapshot.
+- **Copy equivalence guard**: inside the guarded branch, after the copy,
+  join every legacy source row to its typed target by the conflict-target
+  bullet's join rule above (live rows on the live natural key, soft-deleted
+  rows on the preserved `id`) and compare **both identity and
   payload** — `target.id = source.id`, then the payload after the migration's
   documented normalization and shape transformation — RAISEing with the
   offending source ids and names on mismatch. `ON CONFLICT DO NOTHING` plus a
@@ -324,8 +341,11 @@ Decisions made with the operator (2026-07-26, mechanism updated 2026-08-12):
   changed, then `uv run gobby restart` — startup applies the baseline refresh
   and pending non-destructive migrations. The P7 drop is destructive-gated: a
   normal restart refuses it loudly, and the operator applies it once per hub
-  with `gdaemon schema apply --destructive` against a verified hub backup
-  manifest, then restarts.
+  with `gobby hub-maintenance run schema-apply` — the epoch-opening
+  orchestrator that stops the daemon, quiesces backends, validates the hub
+  backup manifest, and runs the epoch-bound destructive apply (7.1; a raw
+  `gdaemon schema apply --destructive` refuses without the epoch GUC,
+  adversary round 5 APR5-002) — then restarts.
 
 ## P1: Storage Foundation
 `kind: framing`
@@ -1087,11 +1107,15 @@ Targets:
   signature `name ~ '-steps$' AND source = 'agent'`, and 7.1's drop preflight
   RAISEs on any `workflow_type='workflow'` row that does not match it
   (adversary round 2 APR2-005), so exclusion here cannot silently strand an
-  unsupported standalone workflow row. The migration transaction opens with
-`LOCK TABLE workflow_definitions IN ACCESS EXCLUSIVE MODE` per the
-Constraints copy-fence rule (adversary round 4 APR4-008), so the copy, the
-equivalence guard, and the ledger hashes read one frozen snapshot with no
-concurrent agent-row write torn between them.
+  unsupported standalone workflow row. Inside the existence guard — before
+the first source read — the migration takes `LOCK TABLE
+workflow_definitions IN ACCESS EXCLUSIVE MODE` per the Constraints
+copy-fence rule (adversary round 4 APR4-008; guard-first ordering round 5
+APR5-001), so on a live hub the copy, the equivalence guard, and the
+ledger hashes read one frozen snapshot with no concurrent agent-row write
+torn between them, while a post-7.1 fresh lineage with no
+`workflow_definitions` records a receipted no-op instead of failing on the
+lock.
 The migration also writes one `legacy_copy_ledger` row per copied
   source row — preserved legacy id, domain `'agents'`, MD5 of the normalized
   source payload — with `ON CONFLICT (legacy_id) DO NOTHING`, the copy-time
@@ -1791,11 +1815,14 @@ inside `resume_agent_run`.
     the payload check passes, the row migrates, readers return no step, and
     enforcement silently stops. Equality of a copied `current_step` value
     proves nothing about membership on either branch.
-  - **Write fence (adversary round 4 APR4-008)**: the migration transaction
-    opens with `LOCK TABLE workflow_instances IN ACCESS EXCLUSIVE MODE` (the
-    Constraints copy-fence rule) and, before committing, installs an
-    idempotent BEFORE INSERT/UPDATE/DELETE trigger on `workflow_instances`
-    that RAISEs unconditionally. Unlike the definition domains, instance
+  - **Write fence (adversary round 4 APR4-008; guard-first ordering round 5
+    APR5-001)**: inside the existence guard — before the first source read —
+    the migration takes `LOCK TABLE workflow_instances IN ACCESS EXCLUSIVE
+    MODE` (the Constraints copy-fence rule) and, before committing, installs
+    an idempotent BEFORE INSERT/UPDATE/DELETE trigger on `workflow_instances`
+    that RAISEs unconditionally. Lock and trigger both live inside the
+    guarded branch, so a post-7.1 fresh lineage with no `workflow_instances`
+    records a receipted no-op instead of failing on the lock. Unlike the definition domains, instance
     rows have no `legacy_copy_ledger` backstop — a post-copy legacy write is
     runtime state the typed table never saw, silently destroyed at 7.1 —
     and the writers that survive version skew (a predecessor daemon not yet
@@ -2178,10 +2205,13 @@ Targets:
   (priority, sources, tags intact; source normalized); targetless `ON CONFLICT
   DO NOTHING` per the Constraints conflict-target rule; count validation and
   the Constraints equivalence guard, including `target.id = source.id`.
-  The migration transaction opens with `LOCK TABLE workflow_definitions IN
-  ACCESS EXCLUSIVE MODE` per the Constraints copy-fence rule (adversary
-  round 4 APR4-008), so the copy, the guard, and the ledger hashes read one
-  frozen snapshot with no concurrent rule-row write torn between them.
+  Inside the existence guard — before the first source read — the migration
+  takes `LOCK TABLE workflow_definitions IN ACCESS EXCLUSIVE MODE` per the
+  Constraints copy-fence rule (adversary round 4 APR4-008; guard-first
+  ordering round 5 APR5-001), so on a live hub the copy, the guard, and the
+  ledger hashes read one frozen snapshot with no concurrent rule-row write
+  torn between them, while a post-7.1 fresh lineage records a receipted
+  no-op instead of failing on the lock.
   The migration also writes one `legacy_copy_ledger` row per copied source
   row (preserved legacy id, domain `'rules'`, normalized payload hash, `ON
   CONFLICT (legacy_id) DO NOTHING`) for 7.1's directional drop backstop
@@ -2296,10 +2326,13 @@ Targets:
   reader-visible again); dup-check, targetless `ON CONFLICT DO NOTHING` per the
   Constraints conflict-target rule, count validation, and the Constraints
   equivalence guard including `target.id = source.id`.
-  The migration transaction opens with `LOCK TABLE workflow_definitions IN
-  ACCESS EXCLUSIVE MODE` per the Constraints copy-fence rule (adversary
-  round 4 APR4-008), so the copy, the guard, and the ledger hashes read one
-  frozen snapshot with no concurrent variable-row write torn between them.
+  Inside the existence guard — before the first source read — the migration
+  takes `LOCK TABLE workflow_definitions IN ACCESS EXCLUSIVE MODE` per the
+  Constraints copy-fence rule (adversary round 4 APR4-008; guard-first
+  ordering round 5 APR5-001), so on a live hub the copy, the guard, and the
+  ledger hashes read one frozen snapshot with no concurrent variable-row
+  write torn between them, while a post-7.1 fresh lineage records a
+  receipted no-op instead of failing on the lock.
   The migration also writes one `legacy_copy_ledger` row per copied source
   row (preserved legacy id, domain `'variables'`, normalized payload hash,
   `ON CONFLICT (legacy_id) DO NOTHING`) for 7.1's directional drop backstop
@@ -2481,10 +2514,13 @@ Targets:
   canvas_json); dup-check; targetless `ON CONFLICT DO NOTHING` per the
   Constraints conflict-target rule; count validation; the Constraints
   equivalence guard including `target.id = source.id`.
-  The migration transaction opens with `LOCK TABLE workflow_definitions IN
-  ACCESS EXCLUSIVE MODE` per the Constraints copy-fence rule (adversary
-  round 4 APR4-008), so the copy, the guard, and the ledger hashes read one
-  frozen snapshot with no concurrent pipeline-row write torn between them.
+  Inside the existence guard — before the first source read — the migration
+  takes `LOCK TABLE workflow_definitions IN ACCESS EXCLUSIVE MODE` per the
+  Constraints copy-fence rule (adversary round 4 APR4-008; guard-first
+  ordering round 5 APR5-001), so on a live hub the copy, the guard, and the
+  ledger hashes read one frozen snapshot with no concurrent pipeline-row
+  write torn between them, while a post-7.1 fresh lineage records a
+  receipted no-op instead of failing on the lock.
   The migration also writes one `legacy_copy_ledger` row per copied source
   row (preserved legacy id, domain `'pipelines'`, normalized payload hash,
   `ON CONFLICT (legacy_id) DO NOTHING`) for 7.1's directional drop backstop
@@ -2946,6 +2982,8 @@ Targets:
 - `tests/agents/test_merge_orchestrator_contract.py::*` — scope-reason: legacy fixture-seeding rewrite
 - `tests/storage/tasks/test_stage_registry_default_agent_fk.py::*` — scope-reason: legacy fixture-seeding rewrite
 - `tests/storage/test_drop_legacy_migration.py` (new)
+- `crates/gdaemon/src/main.rs::apply_schema`
+- `crates/gdaemon/tests/schema_cli.rs::*` — scope-reason: destructive epoch-fence contract coverage
 
 - The former `workflow_states` slice is gone: the table is already absent from
   the baseline and `get_claimed_task_owners` already reads `tasks JOIN
@@ -2980,17 +3018,34 @@ Targets:
   precedence — reword it. Both are matched by 7.2's audit.
 - Drop migration (a `-- gobby:destructive` `EmbeddedMigration` per 1.5:
   receipt-stamped without executing on fresh lineages, refused on a plain
-  restart of an existing hub, and applied once per hub via `gdaemon schema
-  apply --destructive` against a verified backup manifest): the destructive
-  path runs only inside an open **maintenance epoch** (adversary round 4
-  APR4-008, narrowed — the write fence already exists in code):
+  restart of an existing hub, and applied once per hub via `gobby
+  hub-maintenance run schema-apply` against a verified backup manifest): the
+  destructive path runs only inside an open **maintenance epoch** (adversary
+  round 4 APR4-008, narrowed — the write fence already exists in code):
   `gobby schema apply --destructive` refuses without one
   (`cli/schema.py:114-146`), and `gobby hub-maintenance run schema-apply`
   stops the daemon first (`hub_maintenance.py:185-196`), terminates every
   `gobby%` backend and polls to proven quiescence
   (`maintenance_epoch.py:174-271`), and blocks reconnects via the baseline's
-  login event trigger (`baseline.sql:4240-4317`). The backstop preflight and
-  the DROPs therefore execute over a hub with no live gobby writer — no
+  login event trigger (`baseline.sql:4240-4317`). That fence has one
+  unfenced entry point today (adversary round 5 APR5-002): the orchestrated
+  path itself ends in a shell-out to the raw binary —
+  `_apply_verified_batch` binds the epoch GUC into the DSN
+  (`bind_maintenance_epoch`, `cli/schema.py:168`) and
+  `schema_contract.apply_schema(..., destructive=True)`
+  (`schema_contract.py:112-125`) runs `gdaemon schema apply --destructive` —
+  but `crates/gdaemon/src/main.rs::apply_schema` authorizes destructive work
+  from the backup manifest alone, so a direct operator invocation of that
+  same command bypasses daemon stop, backend quiescence, and the reconnect
+  fence entirely. This task closes that hole in the gdaemon binary: when
+  `--destructive` is set, `apply_schema` additionally requires its own
+  connection to carry the maintenance-epoch GUC
+  (`current_setting('gobby.maintenance_epoch', true)`) naming the currently
+  open maintenance-epoch record, and refuses otherwise with a message
+  directing the operator to `gobby hub-maintenance run schema-apply`. The
+  orchestrated path already satisfies the check — the GUC rides the bound
+  DSN — so no new plumbing is added anywhere else. The backstop preflight
+  and the DROPs therefore execute over a hub with no live gobby writer — no
   additional table locking is needed for the check-to-drop gap. **Backstop
   first**, and the backstop is **directional** (adversary round 3 APR3-011,
   replacing the earlier symmetric payload-equivalence design): between each
@@ -3056,10 +3111,12 @@ Targets:
 - 7.1.3 - Both legacy tables and legacy_copy_ledger are gone from the baseline, the catalog manifest, and the live schema after the destructive apply, and the refresh contract enumerates exactly the removed statements. file: `crates/gcore/assets/schema/baseline.sql`. file: `crates/gcore/src/schema/runner_tests.rs`.
 - 7.1.4 - storage/workflow_definitions.py is deleted and no source or test imports it. file: `src/gobby/storage/definitions/_shared.py`.
 - 7.1.5 - The scheduled soft-deleted-definition purge drops the legacy manager import and fans out over the four typed parent managers, with agent step-workflow children removed by cascade and no step-instance branch. symbol: `_purge_soft_deleted_definitions`. file: `src/gobby/sessions/lifecycle.py`.
-- 7.1.6 - A fresh lineage receipt-stamps the drop without executing it; an existing hub refuses it on plain restart and applies it under --destructive with a verified backup manifest. file: `crates/gcore/src/schema/runner_tests.rs`. test: `tests/storage/test_drop_legacy_migration.py`.
+- 7.1.6 - A fresh lineage receipt-stamps the drop without executing it; an existing hub refuses it on plain restart and applies it under --destructive with a verified backup manifest inside an open maintenance epoch. file: `crates/gcore/src/schema/runner_tests.rs`. test: `tests/storage/test_drop_legacy_migration.py`.
 - 7.1.7 - Template hashing and the skills metadata docstring carry no legacy storage reference. file: `src/gobby/workflows/template_hashes.py`. file: `src/gobby/storage/skills/_metadata.py`.
 - 7.1.8 - A signature-matching generated row is excluded from the backstop, while a workflow_type='workflow' row failing the generated signature and a row with an unknown workflow_type each fail the preflight loudly with ids and names. test: `tests/storage/test_drop_legacy_migration.py::test_unsupported_row_classification`.
 - 7.1.9 - Typed-side evolution after copy — an edit, a sync refresh, a restore, and a hard-delete of typed rows — does not block the drop, while a legacy-only write and a post-copy legacy insertion each block it loudly. test: `tests/storage/test_drop_legacy_migration.py::test_directional_backstop`.
+- 7.1.10 - Replaying every embedded copy migration against a fresh final-baseline lineage, where neither legacy table exists, records receipted no-ops with no error and no typed-row writes. file: `crates/gcore/src/schema/runner_tests.rs`.
+- 7.1.11 - gdaemon schema apply --destructive refuses when its connection lacks the open maintenance-epoch GUC, naming gobby hub-maintenance run schema-apply in the refusal, and succeeds over an epoch-bound DSN with a verified backup manifest. symbol: `apply_schema`. file: `crates/gdaemon/src/main.rs`. test: `crates/gdaemon/tests/schema_cli.rs`.
 
 ### 7.2 Legacy-reference audit test [category: test] (depends: 7.1, 7.3)
 `kind: deliverable`
@@ -3199,7 +3256,7 @@ has no `CLAUDE.md`; the module guidance that mentions the legacy tables lives in
 Per-phase: rebuild and reinstall gdaemon when crate schema assets changed,
 then `uv run gobby restart` — startup applies the baseline refresh and that
 phase's pending non-destructive migrations (the P7 drop instead needs the
-explicit `gdaemon schema apply --destructive` operator step from
+`gobby hub-maintenance run schema-apply` orchestrator step from
 Constraints); then focused tests only
 (`GOBBY_TEST_PROTECT=1 uv run pytest <paths> -v`) — storage
 (`tests/storage/definitions/`, per-migration tests), runtime
@@ -3207,9 +3264,13 @@ Constraints); then focused tests only
 `tests/workflows/test_step_snapshot_semantics.py`), surfaces
 (`tests/servers/routes/`, `tests/mcp_proxy/tools/workflows/`), UI (vitest for
 the retargeted suites). Epic-final: restore a copy of the live hub into an
-isolated database, replay the baseline refresh and every pending migration
-through `gdaemon schema apply` (adding `--destructive` with a verified backup
-manifest for the drop), confirm **249 definition rows** land in the typed
+isolated database, replay the baseline refresh and every pending
+non-destructive migration through `gdaemon schema apply`; for the drop, open
+a maintenance epoch on the isolated hub and run the epoch-bound destructive
+apply with a verified backup manifest through the `gobby hub-maintenance run
+schema-apply` machinery — a raw `--destructive` invocation now refuses
+without the epoch GUC (adversary round 5 APR5-002). Confirm **249 definition
+rows** land in the typed
 tables — 167
 rules (162 live + 5 soft-deleted), 29 agents (28 live + 1 soft-deleted),
 42 variables, 11 pipelines — plus **25** `agent_step_workflows` children (every
@@ -3405,6 +3466,52 @@ pass; the P7 audit test is the standing regression gate.
 
 ```json plan-review-round
 {"evidence_id":"239757c3-df39-4a00-a56e-caaa4e2f3b22","plan_hash":"ad3553dd6f61f7f5cb94c6113d3c5862eff1eca9097cdcdb535e437ea8b1f190","round_number":4,"round_result":{"coverage_attestation":{"adjacent_variant_complete":true,"attestation_digest":"5ec8ee4dac76f30646f0a755b7f782c5c0d24b08843f4c54fb1fa46cd7dbc788","cross_lane_interaction_complete":true,"disposition_counts":{"dismissed":2,"emitted_findings":8,"total":10},"evidence_id":"239757c3-df39-4a00-a56e-caaa4e2f3b22","lanes":[{"candidate_count":1,"lane_id":"requirements_traceability","status":"completed"},{"candidate_count":6,"lane_id":"repository_blast_radius","status":"completed"},{"candidate_count":3,"lane_id":"runtime_invariants","status":"completed"}],"shadow_manifest_status":{"entry_count":23,"manifest_digest":"3fcea5628c8ed7d26f7ded567f47ba475b6019a129daba156c54b2ede44a7392","status":"valid"},"source_digest":"25206f5963a12794520364fd7adbcaed165640c2eb5bd9beb38e9aab53029c61","version":1},"findings":[{"category":"traceability","causal_finding_id":"APR3-011","causal_section_ids":["1.1","2.3","4.1","4.2","4.3","7.1","E1"],"check_key":"p7-directional-guard-contract-parity","description":"Constraints still state that `target.id = source.id` is part of the P7 drop backstop, while §7.1 says typed state is never consulted and validates only each legacy row against `legacy_copy_ledger`. Implementers can follow either mutually exclusive contract, reintroducing the typed-evolution blockage APR3-011 repaired.","finding_id":"APR4-001","fix":"Rewrite the Constraints equivalence paragraph so target identity and payload checks apply only inside the domain copy migrations. Define P7 separately as a legacy-only `(legacy_id, domain, normalized source_hash)` checkpoint check, with no typed-row lookup, and keep §7.1's directional tests.","introduced_in_round":3,"location":"Constraints and Phase 7 / § 7.1","prevention":"After replacing a cross-phase invariant, sweep governing framing, every producer, every consumer, acceptance cases, and changelog text for the superseded predicate.","principle":"Governing constraints and a destructive deliverable must prescribe one unambiguous safety predicate.","root_cause":"APR3-011 replaced the symmetric P7 guard with a directional ledger check across §§1.1, 2.3, 4.1-4.3, 7.1, and E1, while the governing Constraints retained the superseded requirement that P7 compare typed target identity, including `target.id = source.id`.","section_id":"7.1","severity":"blocking"},{"category":"traceability","check_key":"agent-nested-step-workflow-web-consumer-closure","description":"`AgentsTabData`, `AgentEditForm.types.ts`, and `AgentReadOnlyDetails.tsx` still model or read top-level step fields. The final API moves them under `step_workflow`, and none of these files is targeted for that cutover, so hydrated agent details and edit drafts can silently lose the step workflow.","finding_id":"APR4-002","fix":"Add `AgentEditForm.types.ts`, `AgentReadOnlyDetails.tsx`, `AgentsTabData.ts`, `AgentEditors.test.tsx`, and `AgentsTabActions.test.ts` to §6.2. Type and decode `step_workflow.{steps,variables,exit_condition}` end to end, and add a hydrated-details-to-draft regression that preserves all three fields.","location":"Phases 2 and 6 / §§ 2.2, 2.3, and 6.2","prevention":"For every response-shape move, trace the payload from fetch through shared types, normalization, drafts, read-only views, editors, and their fixtures.","principle":"An API shape cutover must migrate every typed consumer, adapter, display, draft path, and fixture in the same change.","root_cause":"The plan retargets the main agent editor but omits shared web types and read-only/detail adapters that still model `steps` and `step_variables` as top-level fields.","section_id":"6.2","severity":"blocking"},{"category":"traceability","check_key":"runtime-cleanup-result-key-owner-closure","description":"`src/gobby/mcp_proxy/tools/agents_termination.py` still emits `workflow_instances_deleted`. The file is absent from all Targets, and that production token is absent from §7.2's owner inventory even though the final audit rejects every `workflow_instances` occurrence.","finding_id":"APR4-003","fix":"Target `agents_termination.py` in §3.3, rename the result key to `agent_step_instances_deleted`, retarget result-shape tests and fakes, and add this occurrence to §7.2's checked owner inventory.","location":"Phases 3 and 7 / §§ 3.3 and 7.2","prevention":"For every storage/model rename, sweep result dictionaries, serialized payloads, logs, metrics, fakes, and assertions in addition to class and table references.","principle":"A renamed runtime model must update externally returned field names and their tests alongside internal storage owners.","root_cause":"The cleanup cutover targets the manager and terminal log field but misses the MCP termination wrapper that exposes the legacy model name in its result.","section_id":"3.3","severity":"blocking"},{"category":"traceability","check_key":"generic-workflow-template-module-deletion-closure","description":"`workflow_templates.py` is used by the generic `/api/workflows/templates` handler that §5.1 deletes. The orphan module and `test_workflow_templates.py` remain untargeted, and the module's public `workflow_type` payloads make §7.2's production-token audit fail.","finding_id":"APR4-004","fix":"Add `src/gobby/workflows/workflow_templates.py` and `tests/workflows/test_workflow_templates.py` to §5.1 and delete them with the generic template route. Record their `workflow_type` occurrences in §7.2's preexisting owner inventory.","location":"Phases 5 and 7 / §§ 5.1 and 7.2","prevention":"For every deleted router, walk each handler import and call edge, then assign delete, retarget, or retained-consumer evidence to every reached module and test.","principle":"Deleting a route surface must disposition its private implementation modules and dedicated tests.","root_cause":"The generic route deletion removes the sole production consumer of `workflow_templates.py` without assigning that module or its test suite to any deliverable.","section_id":"5.1","severity":"blocking"},{"category":"weak-testability","check_key":"removed-step-workflow-variable-test-closure","description":"`tests/dispatch/test_dispatcher.py::test_spawn_action_uses_services_and_records_agent_run` asserts that initial variables contain `_step_workflow_name == 'backend-developer-steps'`. Section 3.2 removes that seed, yet no deliverable targets this test, leaving a deterministic focused-suite failure.","finding_id":"APR4-005","fix":"Add `tests/dispatch/test_dispatcher.py` to §3.2. Retarget the assertion to require `_step_workflow_name` absence while preserving the selected agent identity; keep durable typed-instance creation covered at the real spawn boundary.","location":"Phase 3 / § 3.2","prevention":"Before deleting a variable writer, run a class-wide production-and-test token sweep and target every positive assertion, absence assertion, fixture seed, and patch path.","principle":"Removing a runtime variable requires an exact disposition for every positive assertion and fixture that encodes its former writer contract.","root_cause":"The `_step_workflow_name` writer sweep covers spawn/persona tests but misses a dispatcher service test that still requires the deleted initial-variable seed.","section_id":"3.2","severity":"blocking"},{"category":"unhandled-edge","causal_finding_id":"APR3-009","causal_section_ids":["3.2"],"check_key":"instance-copy-persona-signal-authority","description":"`apply_persona_impl` uses `build_session_persona_changes`, which writes `_agent_type` and deliberately leaves `_step_workflow_name` untouched. A valid pre-cutover A→B switch can therefore hold `_agent_type=B` beside stale `A-steps`; §3.2 now classifies that reachable state as corruption and aborts the instance migration.","finding_id":"APR4-006","fix":"Make `_agent_type` authoritative when present on this legacy path. Treat conflicting `_step_workflow_name` as stale metadata, resolve B's typed child and rebuild B's snapshot when no matching legacy row exists, migrate no row for a step-less B, and add A→B stepful and step-less fixtures while retaining loud failure for genuinely unresolved identity.","introduced_in_round":3,"location":"Phase 3 / § 3.2","prevention":"For every migration that reconciles redundant identity signals, inventory every live writer and enumerate precedence for each reachable partial-update state.","principle":"Migration identity resolution must distinguish an authoritative current signal from stale redundant metadata for every reachable writer state.","root_cause":"APR3-009 made `_agent_type` and `_step_workflow_name` disagreement fatal without accounting for the public persona path, which intentionally updates `_agent_type` alone.","section_id":"3.2","severity":"blocking"},{"category":"unhandled-edge","check_key":"persona-custom-variable-reserved-key-integrity","description":"The public persona tool accepts an arbitrary variables dictionary, and `apply_persona_impl` applies it after setting `_agent_type`. A caller can submit another `_agent_type`, committing agent B's session identity beside agent A's requested snapshot even after §3.2 adds cross-row atomicity.","finding_id":"APR4-007","fix":"Define and reject collisions with the reserved persona/runtime field set before opening the transition transaction, including `_agent_type`, `_step_workflow_name`, and completion/step-state fields. Add adversarial tool and implementation tests proving rejection leaves both session variables and the typed instance unchanged.","location":"Phase 3 / § 3.2","prevention":"At every custom-variable merge boundary, define a reserved field set and test adversarial collisions against identity, lifecycle, completion, and snapshot metadata.","principle":"Caller-supplied extension data must never overwrite authoritative fields of the state transition that consumes it.","root_cause":"`apply_persona_impl` overlays public `variables` after building the authoritative persona delta, with no reserved-key validation.","section_id":"3.2","severity":"blocking"},{"category":"bad-sequencing","check_key":"staged-legacy-runtime-write-fence","description":"A pre-cutover daemon can update `workflow_instances` during or after the P3 copy because its writes do not participate in the schema advisory lock. At P7, another write can also commit after the preflight SELECT and before DROP obtains its table lock, so valid runtime state can be omitted from `agent_step_instances` and then destroyed.","finding_id":"APR4-008","fix":"At P3, acquire an `ACCESS EXCLUSIVE` lock before copying `workflow_instances`, wait out existing writers, and install a persistent database rejection barrier for later legacy runtime writes before releasing the lock. At P7, lock all legacy tables before running any backstop query and hold those locks through DROP. Add a two-connection stale-writer fault test for during-copy, post-copy, and check-to-drop attempts.","location":"Phases 3 and 7 / §§ 3.2 and 7.1","prevention":"For every online copy/drop sequence, test a stale writer before copy, during copy, after copy, during preflight, and immediately before drop under a second connection.","principle":"A staged copy followed by destructive drop must fence source writers before the copy snapshot and hold the fence through final verification and drop.","root_cause":"The schema advisory lock serializes migration runners only; legacy runtime writes use independent per-session transactions, and §7.1 does not acquire table locks until each DROP executes.","section_id":"3.2","severity":"blocking"}],"reviewer_session":"6e9db1b7-a15c-4621-b571-cc5c171df1d7","round":4,"round_number":4,"verdict":"needs_review"},"session_id":"24384cfe-8cb0-4aaa-bfaa-5b86560252aa"}
+```
+
+
+**Round 5** `kind: verification`
+
+- reviewer_run: 06a44bb9-a57d-49c3-9959-569c86e8a61f
+- reviewer_session: c21c4a4b-6c55-413c-98f0-525408988521
+- verdict: needs_review
+- findings:
+- APR5-001 / blocking / copy-fence LOCK TABLE ordered ahead of the existence guard breaks fresh final-baseline lineages (fixer-induced, APR4-008)
+- APR5-002 / blocking / raw gdaemon schema apply --destructive bypasses the maintenance-epoch fence the plan's own recipes invoked (fixer-induced, APR4-008)
+- resolution_notes: Both findings accepted after repository verification
+  (unattended, operator-delegated) and repaired in this revision. APR5-001:
+  apply_pending_migrations (runner.rs:676-742) executes every pending
+  non-destructive migration's SQL before stamping its receipt, and 7.1
+  removes the legacy DDL from the final baseline, so the round-4 wording
+  "the transaction opens with LOCK TABLE" would abort every post-P7 fresh
+  install on undefined_table. The Constraints copy-fence bullet and all
+  five per-domain copy sections now order the fence guard-first: existence
+  check, then the conditional ACCESS EXCLUSIVE lock as the first
+  source-table action (a lock taken inside the guarded DO block holds to
+  transaction end), then copy, equivalence guard, and ledger checkpoint
+  under it; the 3.2 write-rejection trigger installs inside the same
+  guarded branch; new acceptance 7.1.10 replays every embedded copy
+  migration against a fresh final-baseline lineage and requires receipted
+  no-ops. The same sweep repaired a round-4 editing splice that had
+  beheaded the Constraints equivalence-guard sentence, restoring it as its
+  own bullet. APR5-002: the orchestrated path is fenced end-to-end (epoch
+  discovery and orchestrator-epoch checks in cli/schema.py:114-146, the
+  epoch GUC bound into the DSN at cli/schema.py:168, shell-out via
+  schema_contract.apply_schema), but
+  crates/gdaemon/src/main.rs::apply_schema authorizes destructive work
+  from the backup manifest alone, so the raw command the plan's
+  Constraints and E1 recipes named bypassed daemon stop, backend
+  quiescence, and the reconnect fence. Both recipes now route through
+  gobby hub-maintenance run schema-apply; 7.1 gains
+  crates/gdaemon/src/main.rs::apply_schema and
+  crates/gdaemon/tests/schema_cli.rs as targets and specifies the
+  least-mechanism fence — destructive apply requires the connection to
+  carry the open maintenance-epoch GUC the orchestrator already binds,
+  refusing otherwise with the orchestrator command named (acceptance
+  7.1.11; the epoch condition is added to 7.1.6); E1's epic-final replay
+  opens an epoch on the isolated hub for the drop.
+
+```json plan-review-round
+{"evidence_id":"aef46355-a6cb-4dc4-9b79-4730dacef070","plan_hash":"00b2839f45b87d2ee3a3ebbb8e7bd505e22ac9d0fdb5aae38bf3da78ab7bcda0","round_number":5,"round_result":{"coverage_attestation":{"adjacent_variant_complete":true,"attestation_digest":"c592b1967bf06a53a8819296edc2a815ba106a32fa8c63b4fea026e2c3153a1c","cross_lane_interaction_complete":true,"disposition_counts":{"dismissed":0,"emitted_findings":2,"total":2},"evidence_id":"aef46355-a6cb-4dc4-9b79-4730dacef070","lanes":[{"candidate_count":0,"lane_id":"requirements_traceability","status":"completed"},{"candidate_count":0,"lane_id":"repository_blast_radius","status":"completed"},{"candidate_count":2,"lane_id":"runtime_invariants","status":"completed"}],"shadow_manifest_status":{"entry_count":23,"manifest_digest":"80884a918647794becbd61e64df0d775263717903cee83262cb189165b4104fc","status":"valid"},"source_digest":"a99432887900b7bf4dff3bbabc78f24893dd12eed946618d4d15557e60743184","version":1},"findings":[{"category":"bad-sequencing","causal_finding_id":"APR4-008","causal_section_ids":["Constraints","2.3","3.2","4.1","4.2","4.3"],"check_key":"fresh-lineage-conditional-copy-lock","description":"All five copy migrations are specified to open with an unconditional LOCK TABLE on a legacy source. On a fresh lineage built from the final P7 baseline those relations do not exist, and the runner executes each pending migration's SQL before stamping its receipt, so the lock fails before the existing absence guard can no-op.","finding_id":"APR5-001","fix":"Rewrite Constraints and §§ 2.3, 3.2, 4.1–4.3 so each migration checks source existence first, conditionally acquires ACCESS EXCLUSIVE as its first source-table action, then copies and validates under that lock; conditionally install the workflow_instances rejection trigger. Add an end-state-baseline test that replays the actual embedded copy migrations with both legacy tables absent.","introduced_in_round":4,"location":"Constraints; §§ 2.3, 3.2, 4.1–4.3; § 7.1","prevention":"For every legacy copy migration, replay the final baseline with the source absent and verify the order: existence guard, conditional ACCESS EXCLUSIVE lock, copy, equivalence check, and ledger checkpoint.","principle":"A guarded migration must establish that a legacy relation exists before referencing it, while taking its concurrency fence before the first source read.","root_cause":"APR4-008 placed each legacy LOCK TABLE at transaction opening, ahead of the information_schema guard that makes the copy fresh-redundant.","section_id":"2.3","severity":"blocking"},{"category":"unhandled-edge","causal_finding_id":"APR4-008","causal_section_ids":["Constraints","7.1"],"check_key":"destructive-apply-maintenance-epoch-entrypoint","description":"The repaired P7 argument requires the drop to run only inside the stopped, backend-quiesced maintenance epoch, yet Constraints and E1 still instruct the operator to run gdaemon schema apply --destructive. crates/gdaemon/src/main.rs::apply_schema verifies the backup and applies destructive migrations without discovering or requiring an epoch, so the documented path bypasses the fence and reopens the backstop-to-DROP race.","finding_id":"APR5-002","fix":"Replace both direct gdaemon instructions with gobby hub-maintenance run schema-apply. Add crates/gdaemon/src/main.rs::apply_schema and its contract tests to § 7.1, then remove the raw destructive path or require an epoch-bound invocation token/connection so direct execution cannot bypass daemon stop, backend quiescence, and the reconnect fence.","introduced_in_round":4,"location":"Constraints; § 7.1; E1 End-to-End Verification","prevention":"Sweep every destructive operator recipe and executable entry point together; prove direct invocation outside an orchestrator-owned maintenance epoch is rejected.","principle":"Every reachable destructive entry point must enforce hub quiescence before the preflight-and-drop sequence, and operator recipes must route through that enforcing entry point.","root_cause":"APR4-008 repaired the P7 safety argument around the Python maintenance orchestrator while leaving direct gdaemon destructive commands and a raw Rust entry point that authorizes destructive work from backup verification alone.","section_id":"7.1","severity":"blocking"}],"reviewer_session":"c21c4a4b-6c55-413c-98f0-525408988521","round":5,"round_number":5,"verdict":"needs_review"},"session_id":"24384cfe-8cb0-4aaa-bfaa-5b86560252aa"}
 ```
 
 

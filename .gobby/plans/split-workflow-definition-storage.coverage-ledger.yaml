@@ -1,6 +1,6 @@
 project_id: d45545c5-ded5-4335-b115-0245752edacf
 plan_id: split-workflow-definition-storage
-plan_hash: "00b2839f45b87d2ee3a3ebbb8e7bd505e22ac9d0fdb5aae38bf3da78ab7bcda0"
+plan_hash: "13205930eb627cc8f6e36dc343d698f9682443fbccf986a5d294c9bcc6787046"
 root_task_ref: "18879"
 
 sections:
@@ -278,6 +278,8 @@ sections:
       "7.1.7": {expected_leaves: [{title: Drop migration and legacy module deletion, owner_agent: backend-developer}]}
       "7.1.8": {expected_leaves: [{title: Drop migration and legacy module deletion, owner_agent: backend-developer}]}
       "7.1.9": {expected_leaves: [{title: Drop migration and legacy module deletion, owner_agent: backend-developer}]}
+      "7.1.10": {expected_leaves: [{title: Drop migration and legacy module deletion, owner_agent: backend-developer}]}
+      "7.1.11": {expected_leaves: [{title: Drop migration and legacy module deletion, owner_agent: backend-developer}]}
   "7.2":
     acceptance_items:
       "7.2.1": {expected_leaves: [{title: Legacy-reference audit test, owner_agent: backend-developer}]}
