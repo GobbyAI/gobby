@@ -182,6 +182,25 @@ def test_run_owns_open_backup_apply_verify_release_and_restart(
     assert str(epoch.id) in result.output
 
 
+def test_account_identity_cutover_leaves_daemon_stopped_for_binary_install(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    events: list[str] = []
+    epoch = _epoch("account-identity-cutover")
+    batch = _batch(epoch)
+    _install_lifecycle_fakes(monkeypatch, epoch=epoch, batch=batch, events=events)
+
+    result = CliRunner().invoke(
+        cli,
+        ["hub-maintenance", "run", "account-identity-cutover"],
+    )
+
+    assert result.exit_code == 0, result.output
+    assert events[-2:] == ["mark-verified", "release"]
+    assert "restart" not in events
+    assert "Install the staged gdaemon and gcode binaries" in result.output
+
+
 def test_resume_uses_only_hub_epoch_and_batch_state(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -217,6 +236,28 @@ def test_resume_uses_only_hub_epoch_and_batch_state(
         "restart",
     ]
     assert "reconcile" in result.output
+
+
+def test_account_identity_cutover_resume_leaves_daemon_stopped(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    events: list[str] = []
+    epoch = _epoch("account-identity-cutover")
+    batch = replace(
+        _batch(epoch, status="applied"),
+        backup_manifest_path="/tmp/manifest.json",
+        backup_manifest_sha256="a" * 64,
+    )
+    _install_lifecycle_fakes(monkeypatch, epoch=epoch, batch=batch, events=events)
+    monkeypatch.setattr(command, "discover_active_maintenance_epoch", lambda _dsn: epoch)
+    monkeypatch.setattr(command, "get_destructive_batch", lambda *_args, **_kwargs: batch)
+
+    result = CliRunner().invoke(cli, ["hub-maintenance", "resume"])
+
+    assert result.exit_code == 0, result.output
+    assert "apply" not in events
+    assert events[-2:] == ["mark-verified", "release"]
+    assert "restart" not in events
 
 
 def test_run_aborts_before_fence_when_daemon_stop_fails(

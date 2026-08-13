@@ -70,7 +70,7 @@ def install_account_identity_cutover_executor() -> None:
 
 def _collect_identity() -> AccountIdentity:
     name = normalize_user_name(str(click.prompt("Name")))
-    email = normalize_user_email(str(click.prompt("Email")))
+    email = _prompt_email()
     password = validate_password(
         str(click.prompt("Password", hide_input=True, confirmation_prompt=True))
     )
@@ -80,6 +80,14 @@ def _collect_identity() -> AccountIdentity:
         email=email,
         password_hash=hash_password(password),
     )
+
+
+def _prompt_email() -> str:
+    while True:
+        try:
+            return normalize_user_email(str(click.prompt("Email")))
+        except ValueError as exc:
+            click.echo(f"Error: {exc}", err=True)
 
 
 def _bound_database_url(epoch_id: uuid.UUID) -> str:

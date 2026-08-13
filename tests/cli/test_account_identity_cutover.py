@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import uuid
+from collections.abc import Callable
 from datetime import UTC, datetime
 from unittest.mock import MagicMock
 
@@ -46,6 +47,19 @@ def _batch(epoch: MaintenanceEpoch) -> DestructiveBatch:
     )
 
 
+def _install_executor_fakes(
+    monkeypatch: pytest.MonkeyPatch,
+    *,
+    already_applied: Callable[..., bool],
+    preflight: Callable[[str], object] | None = None,
+) -> None:
+    monkeypatch.setattr(command, "_bound_database_url", lambda _epoch_id: "postgresql://test")
+    monkeypatch.setattr(command, "_target_checksum", lambda: "b" * 64)
+    monkeypatch.setattr(command, "account_identity_cutover_already_applied", already_applied)
+    if preflight is not None:
+        monkeypatch.setattr(command, "preflight_account_identity_cutover", preflight)
+
+
 def test_collect_identity_normalizes_and_hashes_before_return(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -59,15 +73,46 @@ def test_collect_identity_normalizes_and_hashes_before_return(
     assert identity.password_hash.startswith("$argon2id$")
 
 
+def test_collect_identity_reprompts_for_invalid_email_before_hashing(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    hash_password = MagicMock(return_value="$argon2id$valid")
+    monkeypatch.setattr(command, "hash_password", hash_password)
+
+    runner = CliRunner()
+
+    @click.command()
+    def collect() -> None:
+        identity = command._collect_identity()
+        click.echo(identity.email)
+
+    result = runner.invoke(
+        collect,
+        input=(
+            "Test Operator\n"
+            "missing-domain\n"
+            "operator@example.com\n"
+            "long-enough-password\n"
+            "long-enough-password\n"
+        ),
+    )
+
+    assert result.exit_code == 0, result.output
+    assert "valid email address" in result.output
+    assert result.output.rstrip().endswith("operator@example.com")
+    hash_password.assert_called_once_with("long-enough-password")
+
+
 def test_apply_runs_preflight_before_prompt(monkeypatch: pytest.MonkeyPatch) -> None:
     epoch = _epoch()
-    monkeypatch.setattr(command, "_bound_database_url", lambda _epoch_id: "postgresql://test")
-    monkeypatch.setattr(command, "_target_checksum", lambda: "b" * 64)
-    monkeypatch.setattr(command, "account_identity_cutover_already_applied", lambda *a, **k: False)
-    monkeypatch.setattr(
-        command,
-        "preflight_account_identity_cutover",
-        lambda _url: (_ for _ in ()).throw(AccountIdentityCutoverError("unsafe predecessor")),
+
+    def refuse_preflight(_database_url: str) -> object:
+        raise AccountIdentityCutoverError("unsafe predecessor")
+
+    _install_executor_fakes(
+        monkeypatch,
+        already_applied=lambda *_args, **_kwargs: False,
+        preflight=refuse_preflight,
     )
     monkeypatch.setattr(
         command,
@@ -81,10 +126,13 @@ def test_apply_runs_preflight_before_prompt(monkeypatch: pytest.MonkeyPatch) -> 
 
 def test_resume_after_commit_skips_prompts(monkeypatch: pytest.MonkeyPatch) -> None:
     epoch = _epoch()
-    monkeypatch.setattr(command, "_bound_database_url", lambda _epoch_id: "postgresql://test")
-    monkeypatch.setattr(command, "_target_checksum", lambda: "b" * 64)
-    already_applied = MagicMock(return_value=True)
-    monkeypatch.setattr(command, "account_identity_cutover_already_applied", already_applied)
+    already_applied_calls: list[tuple[str, dict[str, object]]] = []
+
+    def already_applied(database_url: str, **kwargs: object) -> bool:
+        already_applied_calls.append((database_url, kwargs))
+        return True
+
+    _install_executor_fakes(monkeypatch, already_applied=already_applied)
     monkeypatch.setattr(
         command,
         "_collect_identity",
@@ -94,11 +142,12 @@ def test_resume_after_commit_skips_prompts(monkeypatch: pytest.MonkeyPatch) -> N
     batch = _batch(epoch)
     command.AccountIdentityCutoverExecutor().apply(epoch, batch)
 
-    already_applied.assert_called_once_with(
-        "postgresql://test",
-        batch_id=batch.id,
-        target_checksum="b" * 64,
-    )
+    assert already_applied_calls == [
+        (
+            "postgresql://test",
+            {"batch_id": batch.id, "target_checksum": "b" * 64},
+        )
+    ]
 
 
 def test_collect_identity_reprompts_confirmation_through_click() -> None:

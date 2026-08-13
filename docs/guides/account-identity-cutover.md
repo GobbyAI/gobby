@@ -139,6 +139,11 @@ and staged binaries as one evidence bundle.
    uv run gobby hub-maintenance run account-identity-cutover
    ```
 
+   Do not set `GOBBY_TEST_PROTECT=1` during the live window. That test guard
+   makes daemon shutdown a no-op. The campaign deliberately leaves the daemon
+   stopped after committing and verifying this cutover so installed predecessor
+   binaries cannot reopen the transformed datastore.
+
 7. After verified release of the maintenance fence, confirm final schema
    identity and exact non-auth counts.
 8. Install the staged `gdaemon` and `gcode` into the normal binary directory.
@@ -146,6 +151,12 @@ and staged binaries as one evidence bundle.
 9. Restart the local daemon. Perform a fresh email/password login and smoke
    tasks, memories, wiki, code index, and session creation/read paths.
 10. Soak locally before scheduling the independent Hub-PC move.
+
+Do not run `gobby install` or another datastore-opening command with the new
+binaries installed before step 6. If post-commit verification fails because a
+predecessor binary was resolved, install the staged binaries and run
+`hub-maintenance resume`; the applied batch re-verifies without collecting
+identity again.
 
 ## Failure and rollback
 

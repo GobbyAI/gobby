@@ -2,6 +2,7 @@
 
 import base64
 import binascii
+import re
 import secrets
 
 from argon2.low_level import ARGON2_VERSION, Type, hash_secret, hash_secret_raw
@@ -14,6 +15,11 @@ _ARGON2_SALT_LEN = 16
 _ARGON2_PARAMETERS = f"m={_ARGON2_MEMORY_COST},t={_ARGON2_TIME_COST},p={_ARGON2_PARALLELISM}"
 _INVALID_PASSWORD_DIGEST = bytes([0xFF]) * _ARGON2_HASH_LEN
 _EMPTY_PASSWORD_DIGEST = bytes(_ARGON2_HASH_LEN)
+_EMAIL_PATTERN = re.compile(
+    r"^[A-Za-z0-9!#$%&'*+/=?^_`{|}~-]+(?:\.[A-Za-z0-9!#$%&'*+/=?^_`{|}~-]+)*"
+    r"@[A-Za-z0-9](?:[A-Za-z0-9-]{0,61}[A-Za-z0-9])?"
+    r"(?:\.[A-Za-z0-9](?:[A-Za-z0-9-]{0,61}[A-Za-z0-9])?)+$"
+)
 
 # Valid canonical hash used to keep unknown-email login attempts in the same
 # Argon2 work class as wrong-password attempts.
@@ -36,6 +42,8 @@ def normalize_user_email(email: str) -> str:
     normalized = email.strip()
     if not normalized:
         raise ValueError("User email must not be blank")
+    if len(normalized) > 254 or _EMAIL_PATTERN.fullmatch(normalized) is None:
+        raise ValueError("User email must be a valid email address")
     return normalized
 
 

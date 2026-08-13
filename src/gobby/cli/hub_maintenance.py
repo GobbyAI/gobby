@@ -266,6 +266,9 @@ def _finish_or_report(
         raise click.ClickException(
             f"Maintenance epoch {epoch.id} remains open for resume: {exc}"
         ) from exc
+    if epoch.campaign == "account-identity-cutover":
+        click.echo("Install the staged gdaemon and gcode binaries, then start the daemon manually.")
+        return
     _start_daemon()
 
 
