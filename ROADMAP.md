@@ -46,13 +46,13 @@ Rust port.
 0.6.0 is the Rust port release. It is an incremental strangler port, not a
 rewrite. The destination shape is decided in
 `docs/architecture/evolution.md`: one daemon binary named `gdaemon`
-(package `gobby-daemon`) with standalone/hub/spoke modes. The interactive
+(package `gobby-daemon`) with standalone/hub/node modes. The interactive
 product people run is `gobby` (the TUI). The sidecar below is the
 transition vehicle, not the end state.
 
 - Python remains the public daemon and behavioral reference until each boundary
   passes parity, observability, and rollback gates.
-- The `gobby-daemon` sidecar (`gobbyd`) runs on internal port `:60890`, with
+- The `gobby-daemon` sidecar (`gdaemon`) runs on internal port `:60890`, with
   Python delegating selected route families behind explicit flags.
 - Compare mode calls both implementations and returns the Python response until
   parity is proven.

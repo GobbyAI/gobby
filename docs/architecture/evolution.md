@@ -1,7 +1,7 @@
 # Gobby Architecture Evolution
 
-The big-picture path from today's local-first Python daemon to the hub/spoke
-Rust platform, with the decisions that shape it and citations to the plans and
+The big-picture path from today's local-first Python daemon to the
+hub-and-node Rust platform, with the decisions that shape it and citations to the plans and
 tasks that carry each stage. `ROADMAP.md` tracks what/when; this document is
 the why/how. Decided 2026-08-13 during the herdr-terminal-client planning
 session (task #18802); update it when a stage decision changes, not for
@@ -40,14 +40,14 @@ user never learns the word "topology."
 **B. Multi-machine homelab (Tailscale).** A home server runs the hub daemon
 and the data stack — the authority for tasks, sessions, memory, machine
 registration, and API keys. Workstation and laptop each run `gdaemon` in
-spoke (client-mode) plus a gterm host; agents and PTYs live where the
+node mode plus a gterm host; agents and PTYs live where the
 checkout lives. From anywhere, the roster shows every machine's agents (hub
-data); an attention response routes to the owning machine's spoke daemon over
+data); an attention response routes to the owning machine's node daemon over
 its authenticated channel; remote terminal viewing rides the daemon WS proxy.
 Coming home, `gobby` attaches locally at full fidelity to the same terminals.
 
 **C. Hosted Gobby.** gobby.ai runs the data stack and hub daemon. The user
-installs `gdaemon` in spoke (client-mode) and `gobby`, registers over
+installs `gdaemon` in node mode and `gobby`, registers over
 WebSocket, receives an API key, and routes all semantics through the hub —
 the machine never holds datastore credentials. Everything physical (code,
 worktrees, agents, PTYs) stays local; day-to-day feels identical to story A.
@@ -57,12 +57,11 @@ privacy stance (#20203).
 ## Target architecture
 
 - **One daemon binary named `gdaemon` (package `gobby-daemon`)**, three
-  modes: `standalone` (default; hub + spoke capabilities on one box — story
-  A), `hub` (semantic authority, auth/API keys, datastore ownership), `spoke`
-  (also called client-mode — a `gdaemon` mode, not the product; registers to
-  a hub; owns machine-local duties: gterm host supervision, worktrees, agent
-  spawning). The interactive product people run is `gobby` (package
-  `gobby-client`). One service container assembled per daemon mode; `gcore`
+  modes: `standalone` (default; hub + node capabilities on one box — story
+  A), `hub` (semantic authority, auth/API keys, datastore ownership), `node`
+  (registers to a hub; owns machine-local duties: gterm host supervision,
+  worktrees, agent spawning). The interactive product people run is `gobby`
+  (package `gobby-client`). One service container assembled per daemon mode; `gcore`
   stays the shared library. Rationale: the roles share ~90% of their
   substance — a binary split would fork identical semantics or hide a library
   behind two thin mains, and the solo topology is simply both capability sets
@@ -76,8 +75,9 @@ privacy stance (#20203).
   terminal work exists to buy.
 - **`gobby` is permanently a separate interactive process.** Zero-to-N
   viewers, each living exactly as long as a human is looking; a TUI crash must
-  never take PTYs down. Users type `gobby` (crate/package `gobby-client`; the
-  implementation binary may still be `gclient`). It builds without the VT
+  never take PTYs down. Users type `gobby` at the destination (crate/package
+  `gobby-client`; the binary ships as `gclient` until the Stage-2 rename frees
+  the name). It builds without the VT
   engine (the `vt-engine` feature is host-only), couples to the daemon
   exclusively through the public HTTP/WS API, and reads frames through a
   frame-source trait (local Unix socket today; a daemon-WS remote source
@@ -86,7 +86,7 @@ privacy stance (#20203).
   JSON-lines control protocol (daemon ↔ host), the bincode frame protocol
   (clients ← host), and the backend-neutral WS terminal messages survive the
   Python→Rust migration byte-for-byte — a committed golden wire corpus is the
-  enforcement. The WS message set doubles as the future hub↔spoke-daemon
+  enforcement. The WS message set doubles as the future hub↔node-daemon
   relay contract for hosted web viewing.
 - **The public CLI + daemon API is the plugin surface.** The herdr-style
   plugin system (manifest-driven external processes declaring actions, event
@@ -100,14 +100,15 @@ privacy stance (#20203).
 remote-attach, and relay-privacy deferrals seeded as #20201/#20202/#20203).
 Fork herdr once at its Apache-tagged v0.8.0 release and own the code: the
 `gobby-terminal` core (Ghostty VT engine kept, vendored with Zig builds
-gated host-only), the `gterm` host, the `gobby` TUI people run
-(`gobby-client`; implementation crate/binary may still be `gclient`)
+gated host-only), the `gterm` host, the `gclient` workspace TUI
+(`gobby-client` — the binary that becomes `gobby` at Stage 2)
 importing herdr's UI chrome restyled to the `.impeccable.md` design system, a
 durable `terminals` resource, and a backend-neutral `TerminalRuntime` contract
 with tmux wrapped first and native launches opt-in behind an evidence-gated
-default flip. Bare `gobby` / `gobby --project` execs that TUI via the existing
-Python Click entry point; `gobby start`, `gobby stop`, and the other operator
-commands stay on the same entry point. tmux remains first-class for
+default flip. Users run `gclient` directly: the Python `gobby` CLI neither
+wraps nor execs the TUI (plan 3.5 — startup checks live in the binary itself),
+and `gobby start`, `gobby stop`, and the other operator commands stay on the
+Python entry point until Stage 2. tmux remains first-class for
 externally discovered sessions.
 The earlier idea-only exploration was epic #18520
 (`.gobby/plans/completed/herdr-interface-backend-foundation.md`, superseded
@@ -117,7 +118,8 @@ on licensing by the fork).
 surface, subsystem by subsystem, with Python remaining the behavioral
 reference until each boundary passes parity (route-contract freeze per
 `ROADMAP.md` 0.5.0+/0.6.0). This stage reconciles the roadmap's earlier
-strangler-sidecar framing (`gobbyd` on `:60890`, compare mode): the port and
+strangler-sidecar framing (the `gobby-daemon` sidecar on `:60890`, compare
+mode): the port and
 compare/delegation mechanics stand — `:60890` is the Stage-1 `gdaemon`
 sidecar port — and the destination daemon is `gdaemon` in standalone mode,
 not a permanently distinct sidecar product.
@@ -127,12 +129,15 @@ construction: the new daemon adopts the same gterm host over the same
 protocols.
 
 **Stage 2 — standalone parity.** The Rust `gdaemon` replaces the Python
-daemon on a single machine; the Python package retires. Story A is fully
+daemon on a single machine; the Python package retires, freeing the `gobby`
+name: `gclient` is renamed `gobby` and carries the operator verbs (`start`,
+`stop`, `status`, `tasks`, …) as subcommands over the public API — the binary
+is Zig-free, so carrying the CLI costs nothing. Story A is fully
 served by `gdaemon` plus `gterm` and `gobby`. Related in-flight foundations:
 `.gobby/plans/daemon-native-runtime-boundary.md`,
 `.gobby/plans/reactive-config-store.md`.
 
-**Stage 3 — mode split and the hub.** `hub` and `spoke` modes, machine
+**Stage 3 — mode split and the hub.** `hub` and `node` modes, machine
 registration over WS, API keys minted at the network boundary (the boundary
 recorded in the account-identity work:
 `.gobby/plans/account-identity-machine-ownership.md`,
@@ -157,13 +162,17 @@ the public API surface exist; Gobby Pro fleet surfaces per `ROADMAP.md`
    it.
 3. **Import herdr's UI chrome and make it Gobby's** — rewired to daemon data,
    restyled to the deutan-safe `.impeccable.md` token system.
-4. **One daemon binary named `gdaemon`, three modes (standalone/hub/spoke);
+4. **One daemon binary named `gdaemon`, three modes (standalone/hub/node);
    the product command is `gobby` (the TUI).** Mode split is the last
-   migration step, not the first.
+   migration step, not the first. At Stage 2 the retiring Python package
+   frees the `gobby` name for the renamed client, which also carries the
+   operator verbs over the public API. (Revised 2026-08-13 at the plan's
+   enhancement round from the earlier "daemon named `gobby`" form; `node`
+   replaces the "spoke"/"client-mode" wording.)
 5. **gterm and the TUI stay separate processes and separate binaries**,
    permanently (terminal durability; crash isolation; VT payload is
-   host-only). The TUI people run is `gobby`; the implementation crate/binary
-   may still be `gclient`.
+   host-only). The TUI people run is `gobby`; the binary ships as `gclient`
+   until the Stage-2 rename.
 6. **SRT sandbox wrapping has one chokepoint** at the TerminalRuntime spawn
    seam (was six per-provider call sites), so new providers and backends
    inherit the invariant structurally.
@@ -182,4 +191,4 @@ the public API surface exist; Gobby Pro fleet surfaces per `ROADMAP.md`
 | `.gobby/plans/two-daemon-hub.md`, `.gobby/plans/m0-shared-datastores-bridge.md`, `.gobby/plans/hub-pc-datastore-move.md` | Shared-datastore / lease groundwork |
 | `.gobby/plans/daemon-native-runtime-boundary.md`, `.gobby/plans/reactive-config-store.md` | Rust-daemon boundary foundations |
 | `.gobby/plans/account-identity-machine-ownership.md`, `.gobby/plans/machine-scoped-worktrees-clones.md`, `.gobby/plans/shared-remote-stack.md` | Stage 3 identity/machine/remote groundwork |
-| `ROADMAP.md` | Release-line what/when; 0.6.0 sidecar `gobbyd` on `:60890` is the transition vehicle; destination daemon is `gdaemon` |
+| `ROADMAP.md` | Release-line what/when; the 0.6.0 sidecar on `:60890` is the transition vehicle; destination daemon is `gdaemon` |
