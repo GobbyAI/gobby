@@ -53,6 +53,12 @@ def run_expansion_qa_coverage(
     if task_tree != "db":
         return {"ok": False, "error": "unsupported_task_tree", "task_tree": task_tree}
 
+    # Coverage-manifest identity treats ref spelling as significant
+    # (write_manifest raises PathIdentityMismatchError on "#127" vs "127"),
+    # and the gobby-plans registry writes root_task_ref unprefixed, so the QA
+    # writer must use the same spelling to target the registry-written manifest.
+    root_task_ref = root_task_ref.strip().removeprefix("#")
+
     root_task = _resolve_root_task(task_manager, root_task_ref, project_id, run)
     artifact_manager = TaskArtifactManager(task_manager.db)
     artifacts = artifact_manager.get_artifacts(root_task.id)
