@@ -217,12 +217,20 @@
       "definition": "timestamp with time zone|timestamptz|NO||NEVER"
     },
     {
+      "name": "auth_sessions.id",
+      "definition": "uuid|uuid|NO||NEVER"
+    },
+    {
       "name": "auth_sessions.remember_me",
       "definition": "boolean|bool|NO|false|NEVER"
     },
     {
       "name": "auth_sessions.token_hash",
       "definition": "text|text|NO||NEVER"
+    },
+    {
+      "name": "auth_sessions.user_id",
+      "definition": "uuid|uuid|NO||NEVER"
     },
     {
       "name": "bin_update_state.binary_path",
@@ -1894,7 +1902,7 @@
     },
     {
       "name": "machines.owner_user_id",
-      "definition": "text|text|YES||NEVER"
+      "definition": "uuid|uuid|NO||NEVER"
     },
     {
       "name": "machines.tailscale_name",
@@ -5157,6 +5165,30 @@
       "definition": "text|text|NO|''::text|NEVER"
     },
     {
+      "name": "users.created_at",
+      "definition": "timestamp with time zone|timestamptz|NO|now()|NEVER"
+    },
+    {
+      "name": "users.email",
+      "definition": "text|text|NO||NEVER"
+    },
+    {
+      "name": "users.id",
+      "definition": "uuid|uuid|NO||NEVER"
+    },
+    {
+      "name": "users.name",
+      "definition": "text|text|NO||NEVER"
+    },
+    {
+      "name": "users.password_hash",
+      "definition": "text|text|NO||NEVER"
+    },
+    {
+      "name": "users.updated_at",
+      "definition": "timestamp with time zone|timestamptz|NO|now()|NEVER"
+    },
+    {
       "name": "workflow_audit_log.condition",
       "definition": "text|text|YES||NEVER"
     },
@@ -5432,7 +5464,15 @@
     },
     {
       "name": "auth_sessions.auth_sessions_pkey",
-      "definition": "PRIMARY KEY (token_hash)"
+      "definition": "PRIMARY KEY (id)"
+    },
+    {
+      "name": "auth_sessions.auth_sessions_token_hash_key",
+      "definition": "UNIQUE (token_hash)"
+    },
+    {
+      "name": "auth_sessions.auth_sessions_user_id_fkey",
+      "definition": "FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE"
     },
     {
       "name": "bin_update_state.bin_update_state_floor_drift_check",
@@ -5816,7 +5856,7 @@
     },
     {
       "name": "destructive_batches.destructive_batches_campaign_check",
-      "definition": "CHECK (campaign = ANY (ARRAY['schema-apply'::text, 'purge'::text, 'reconcile'::text, 'flatten'::text]))"
+      "definition": "CHECK (campaign = ANY (ARRAY['account-identity-cutover'::text, 'schema-apply'::text, 'purge'::text, 'reconcile'::text, 'flatten'::text]))"
     },
     {
       "name": "destructive_batches.destructive_batches_check",
@@ -6011,12 +6051,16 @@
       "definition": "FOREIGN KEY (session_id) REFERENCES sessions(id) ON DELETE CASCADE DEFERRABLE"
     },
     {
+      "name": "machines.machines_owner_user_id_fkey",
+      "definition": "FOREIGN KEY (owner_user_id) REFERENCES users(id) ON DELETE RESTRICT"
+    },
+    {
       "name": "machines.machines_pkey",
       "definition": "PRIMARY KEY (id)"
     },
     {
       "name": "maintenance_epochs.maintenance_epochs_campaign_check",
-      "definition": "CHECK (campaign = ANY (ARRAY['schema-apply'::text, 'purge'::text, 'reconcile'::text, 'flatten'::text]))"
+      "definition": "CHECK (campaign = ANY (ARRAY['account-identity-cutover'::text, 'schema-apply'::text, 'purge'::text, 'reconcile'::text, 'flatten'::text]))"
     },
     {
       "name": "maintenance_epochs.maintenance_epochs_check",
@@ -6911,6 +6955,18 @@
       "definition": "PRIMARY KEY (source, kind, name, server_name, tool_type)"
     },
     {
+      "name": "users.users_email_check",
+      "definition": "CHECK (btrim(email) <> ''::text)"
+    },
+    {
+      "name": "users.users_name_check",
+      "definition": "CHECK (btrim(name) <> ''::text)"
+    },
+    {
+      "name": "users.users_pkey",
+      "definition": "PRIMARY KEY (id)"
+    },
+    {
       "name": "workflow_audit_log.workflow_audit_log_pkey",
       "definition": "PRIMARY KEY (id)"
     },
@@ -7008,7 +7064,11 @@
     },
     {
       "name": "auth_sessions_pkey",
-      "definition": "CREATE UNIQUE INDEX auth_sessions_pkey ON $schema.auth_sessions USING btree (token_hash)"
+      "definition": "CREATE UNIQUE INDEX auth_sessions_pkey ON $schema.auth_sessions USING btree (id)"
+    },
+    {
+      "name": "auth_sessions_token_hash_key",
+      "definition": "CREATE UNIQUE INDEX auth_sessions_token_hash_key ON $schema.auth_sessions USING btree (token_hash)"
     },
     {
       "name": "bin_update_state_pkey",
@@ -7265,6 +7325,10 @@
     {
       "name": "idx_auth_sessions_expires",
       "definition": "CREATE INDEX idx_auth_sessions_expires ON $schema.auth_sessions USING btree (expires_at)"
+    },
+    {
+      "name": "idx_auth_sessions_user_id",
+      "definition": "CREATE INDEX idx_auth_sessions_user_id ON $schema.auth_sessions USING btree (user_id)"
     },
     {
       "name": "idx_build_history_events_project",
@@ -7636,7 +7700,7 @@
     },
     {
       "name": "idx_machines_owner_user_id",
-      "definition": "CREATE INDEX idx_machines_owner_user_id ON $schema.machines USING btree (owner_user_id) WHERE (owner_user_id IS NOT NULL)"
+      "definition": "CREATE INDEX idx_machines_owner_user_id ON $schema.machines USING btree (owner_user_id)"
     },
     {
       "name": "idx_mcp_servers_enabled",
@@ -8653,6 +8717,14 @@
     {
       "name": "unmodeled_observations_pkey",
       "definition": "CREATE UNIQUE INDEX unmodeled_observations_pkey ON $schema.unmodeled_observations USING btree (source, kind, name, server_name, tool_type)"
+    },
+    {
+      "name": "users_email_lower_key",
+      "definition": "CREATE UNIQUE INDEX users_email_lower_key ON $schema.users USING btree (lower(email))"
+    },
+    {
+      "name": "users_pkey",
+      "definition": "CREATE UNIQUE INDEX users_pkey ON $schema.users USING btree (id)"
     },
     {
       "name": "workflow_audit_log_pkey",

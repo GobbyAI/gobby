@@ -113,8 +113,7 @@ async function setupMocks(page: Page, current: SessionRecord) {
         body: JSON.stringify(body),
       });
 
-    if (path === "/api/auth/status")
-      return json({ auth_required: false, authenticated: true });
+    if (path === "/api/auth/status") return json({ authenticated: true });
     if (path === "/api/config/ui-settings")
       return json({
         selectedProjectId: "proj-1",

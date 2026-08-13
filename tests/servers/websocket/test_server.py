@@ -51,6 +51,7 @@ def test_daemon_config_reads_live_runtime_snapshot() -> None:
     server = WebSocketServer(
         config=WebSocketConfig(),
         mcp_manager=MagicMock(),
+        auth_callback=AsyncMock(return_value="test-user"),
         daemon_config=startup,
         config_runtime=cast(Any, runtime),
     )
@@ -72,6 +73,7 @@ def test_daemon_config_serves_one_projection_per_epoch() -> None:
     server = WebSocketServer(
         config=WebSocketConfig(),
         mcp_manager=MagicMock(),
+        auth_callback=AsyncMock(return_value="test-user"),
         config_runtime=cast(Any, runtime),
     )
 
@@ -86,6 +88,7 @@ def test_daemon_config_overlays_bootstrap_fields_on_live_snapshot() -> None:
     server = WebSocketServer(
         config=WebSocketConfig(),
         mcp_manager=MagicMock(),
+        auth_callback=AsyncMock(return_value="test-user"),
         bootstrap_config=BootstrapConfig(daemon_port=62000),
         config_runtime=cast(Any, runtime),
     )
@@ -103,6 +106,7 @@ def test_daemon_config_falls_back_before_runtime_ready() -> None:
     server = WebSocketServer(
         config=WebSocketConfig(),
         mcp_manager=MagicMock(),
+        auth_callback=AsyncMock(return_value="test-user"),
         daemon_config=startup,
         config_runtime=cast(Any, runtime),
     )
@@ -111,7 +115,11 @@ def test_daemon_config_falls_back_before_runtime_ready() -> None:
     assert captured == startup
     assert captured is not startup
 
-    no_runtime = WebSocketServer(config=WebSocketConfig(), mcp_manager=MagicMock())
+    no_runtime = WebSocketServer(
+        config=WebSocketConfig(),
+        mcp_manager=MagicMock(),
+        auth_callback=AsyncMock(return_value="test-user"),
+    )
     assert no_runtime.daemon_config is None
 
 
@@ -121,6 +129,7 @@ async def test_message_dispatch_pins_one_runtime_bundle() -> None:
     server = WebSocketServer(
         config=WebSocketConfig(),
         mcp_manager=MagicMock(),
+        auth_callback=AsyncMock(return_value="test-user"),
         config_runtime=cast(Any, runtime),
     )
     observed: list[bool] = []
@@ -152,7 +161,11 @@ async def test_start_passes_warning_level_websockets_logger() -> None:
     config.ping_timeout = 10
     config.max_message_size = 1024
 
-    server = WebSocketServer(config=config, mcp_manager=MagicMock())
+    server = WebSocketServer(
+        config=config,
+        mcp_manager=MagicMock(),
+        auth_callback=AsyncMock(return_value="test-user"),
+    )
     server._cleanup_idle_sessions = AsyncMock()
 
     with patch("gobby.servers.websocket.server.serve", new_callable=AsyncMock) as mock_serve:

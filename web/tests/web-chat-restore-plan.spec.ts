@@ -160,7 +160,7 @@ async function mockApi(
       await route.fulfill({
         status: 200,
         contentType: "application/json",
-        body: JSON.stringify({ auth_required: false, authenticated: true }),
+        body: JSON.stringify({ authenticated: true }),
       });
       return;
     }

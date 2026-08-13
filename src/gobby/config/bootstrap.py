@@ -37,7 +37,6 @@ DEFAULT_WEBSOCKET_PORT = 60888
 DEFAULT_UI_PORT = 60889
 DEFAULT_SERVICES_BIND_ADDRESS = "127.0.0.1"
 
-AuthMode = Literal["required", "disabled"]
 DatastoreMode = Literal["local", "remote"]
 UiExposureMode = Literal["tailscale"]
 HUB_BACKEND_MIGRATION_DOCS = "docs/guides/configuration.md#bootstrap"
@@ -59,7 +58,6 @@ class BootstrapConfig:
     bind_host: str = DEFAULT_DAEMON_BIND_HOST
     websocket_port: int = DEFAULT_WEBSOCKET_PORT
     ui_port: int = DEFAULT_UI_PORT
-    auth_mode: AuthMode = "required"
     datastore_mode: DatastoreMode = "local"
     services_bind_address: str = DEFAULT_SERVICES_BIND_ADDRESS
     database_url: str | None = None
@@ -77,7 +75,6 @@ class BootstrapConfig:
             "bind_host": self.bind_host,
             "websocket": {"port": self.websocket_port},
             "ui": {"port": self.ui_port},
-            "auth_mode": self.auth_mode,
             "datastore_mode": self.datastore_mode,
             "database_url": self.database_url,
             "postgres_pool": self.postgres_pool.to_dict(),
@@ -138,7 +135,6 @@ def load_bootstrap(
                 "postgres_install_mode has been removed; PostgreSQL is always Docker-managed"
             )
         postgres_pool = _parse_postgres_pool(data.get("postgres_pool"))
-        auth_mode = _parse_auth_mode(data.get("auth_mode", BootstrapConfig.auth_mode))
         datastore_mode = _parse_datastore_mode(
             data.get("datastore_mode", BootstrapConfig.datastore_mode)
         )
@@ -157,7 +153,6 @@ def load_bootstrap(
                 data.get("websocket_port", BootstrapConfig.websocket_port), "websocket_port"
             ),
             ui_port=_parse_int(data.get("ui_port", BootstrapConfig.ui_port), "ui_port"),
-            auth_mode=auth_mode,
             datastore_mode=datastore_mode,
             services_bind_address=_parse_str(
                 data.get(
@@ -180,12 +175,6 @@ def load_bootstrap(
 
 def _default_bootstrap_config() -> BootstrapConfig:
     return BootstrapConfig()
-
-
-def _parse_auth_mode(value: object) -> AuthMode:
-    if value in ("required", "disabled"):
-        return cast(AuthMode, value)
-    raise BootstrapConfigError("auth_mode must be one of: required, disabled")
 
 
 def _parse_datastore_mode(value: object) -> DatastoreMode:

@@ -228,7 +228,7 @@ test("can swap to another web chat, send a message, and receive a response", asy
       await route.fulfill({
         status: 200,
         contentType: "application/json",
-        body: JSON.stringify({ auth_required: false, authenticated: true }),
+        body: JSON.stringify({ authenticated: true }),
       });
       return;
     }

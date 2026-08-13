@@ -2,7 +2,7 @@
 Authentication routes for Gobby web UI.
 
 Provides login/logout/status endpoints with cookie-based sessions.
-Auth is optional — disabled when no username/password is configured.
+Authentication is backed by the canonical user table.
 """
 
 import logging
@@ -82,7 +82,7 @@ class _LoginRateLimiter:
 class LoginRequest(BaseModel):
     """Request body for POST /api/auth/login."""
 
-    username: str
+    email: str
     password: str
     remember_me: bool = False
 
@@ -99,13 +99,7 @@ def create_auth_router(server: "HTTPServer") -> APIRouter:
 
     @router.post("/login")
     async def login(req: LoginRequest, request: Request) -> JSONResponse:
-        """Authenticate with username/password, set session cookie."""
-        if not server.auth_service.credentials_configured:
-            return JSONResponse(
-                status_code=400,
-                content={"ok": False, "error": "Authentication not configured"},
-            )
-
+        """Authenticate with email/password, set session cookie."""
         client_id = request.client.host if request.client else "unknown"
         retry_after = login_rate_limiter.retry_after(client_id)
         if retry_after is not None:
@@ -115,12 +109,13 @@ def create_auth_router(server: "HTTPServer") -> APIRouter:
                 headers={"Retry-After": str(retry_after)},
             )
 
-        if not await server.run_db(server.auth_service.verify_password, req.username, req.password):
+        user = await server.run_db(server.auth_service.verify_password, req.email, req.password)
+        if user is None:
             login_rate_limiter.record_failure(client_id)
             logger.warning("Failed login attempt", extra={"client_id": client_id})
             return JSONResponse(
                 status_code=401,
-                content={"ok": False, "error": "Invalid username or password"},
+                content={"ok": False, "error": "Invalid email or password"},
             )
 
         login_rate_limiter.reset(client_id)
@@ -128,7 +123,7 @@ def create_auth_router(server: "HTTPServer") -> APIRouter:
         # Create session
         auth_store = _get_auth_store(server)
         token, expires_at = await server.run_db(
-            auth_store.create_session, remember_me=req.remember_me
+            auth_store.create_session, user.id, remember_me=req.remember_me
         )
 
         response = JSONResponse(content={"ok": True})
@@ -164,23 +159,8 @@ def create_auth_router(server: "HTTPServer") -> APIRouter:
 
     @router.get("/status")
     async def auth_status(request: Request) -> JSONResponse:
-        """Check current auth state.
-
-        Returns whether auth is required and if the current session is valid.
-        """
-        auth_required = server.auth_service.enabled
-        authenticated = (
-            await server.run_db(server.auth_service.is_request_authenticated, request)
-            if auth_required
-            else True
-        )
-
-        return JSONResponse(
-            content={
-                "auth_required": auth_required,
-                "authenticated": authenticated,
-                "credentials_configured": server.auth_service.credentials_configured,
-            }
-        )
+        """Return whether the request carries accepted credentials."""
+        authenticated = await server.run_db(server.auth_service.is_request_authenticated, request)
+        return JSONResponse(content={"authenticated": authenticated})
 
     return router

@@ -1,3 +1,4 @@
+from collections.abc import Iterator
 from pathlib import Path
 from unittest.mock import MagicMock, patch
 
@@ -13,20 +14,19 @@ from gobby.storage.auth import (
 
 
 @pytest.fixture
-def mock_stores():
+def mock_stores() -> Iterator[tuple[MagicMock, MagicMock]]:
     with (
         patch("gobby.cli.auth.require_cli_database", return_value=MagicMock()),
         patch("gobby.cli.auth.ConfigStore") as mock_config,
-        patch("gobby.cli.auth.SecretStore") as mock_secret,
+        patch("gobby.cli.auth.LocalUserManager") as mock_users,
     ):
         config_inst = mock_config.return_value
-        secret_inst = mock_secret.return_value
+        users_inst = mock_users.return_value
 
-        yield config_inst, secret_inst
+        yield config_inst, users_inst
 
 
-def test_auth_no_db(mock_stores):
-    config, secret = mock_stores
+def test_auth_no_db(mock_stores: tuple[MagicMock, MagicMock]) -> None:
     runner = CliRunner()
     with patch(
         "gobby.cli.auth.require_cli_database",
@@ -37,64 +37,31 @@ def test_auth_no_db(mock_stores):
     assert "hub missing" in result.output
 
 
-def test_auth_remove_not_configured(mock_stores):
-    config, secret = mock_stores
-    config.get.return_value = None
+def test_auth_requires_canonical_user(mock_stores: tuple[MagicMock, MagicMock]) -> None:
+    _config, users = mock_stores
+    users.require_sole_user.side_effect = RuntimeError("No canonical user is installed")
     runner = CliRunner()
-    result = runner.invoke(auth, ["credentials", "--remove"])
-    assert result.exit_code == 0
-    assert "No auth configured. Nothing to remove." in result.output
+    result = runner.invoke(auth, ["credentials"])
+    assert result.exit_code == 1
+    assert "No canonical user is installed" in result.output
 
 
-def test_auth_remove_configured(mock_stores):
-    config, secret = mock_stores
-    config.get.return_value = "admin"
-    runner = CliRunner()
-    result = runner.invoke(auth, ["credentials", "--remove"])
-    assert result.exit_code == 0
-    assert "Auth removed for user 'admin'." in result.output
-    config.delete.assert_any_call("auth.username")
-    assert config.delete.call_count == 2
-    config.delete.assert_any_call("auth.password_hash")
-    config.clear_secret.assert_called_with("auth.password", secret)
-
-
-def test_auth_setup_new(mock_stores):
-    config, secret = mock_stores
-    config.get.return_value = None
-    runner = CliRunner()
-    # Provide username, password, confirm password
-    with patch("gobby.cli.auth.hash_password", return_value="$argon2id$v=19$params$salt$hash"):
-        result = runner.invoke(auth, ["credentials"], input="admin\nmypass\nmypass\n")
-    assert result.exit_code == 0
-    assert "Auth enabled for user 'admin'." in result.output
-    config.set.assert_any_call("auth.username", "admin", source="user")
-    assert config.set.call_count == 2
-    config.set.assert_any_call(
-        "auth.password_hash",
-        "$argon2id$v=19$params$salt$hash",
-        source="user",
+def test_auth_reset_password(mock_stores: tuple[MagicMock, MagicMock]) -> None:
+    _config, users = mock_stores
+    users.require_sole_user.return_value = MagicMock(
+        id="6c71924f-1e3e-4d16-863a-dfdc3b917fea",
+        email="owner@example.com",
     )
-    config.set_secret.assert_not_called()
-    config.clear_secret.assert_called_once_with("auth.password", secret)
-
-
-def test_auth_reset_password(mock_stores):
-    config, secret = mock_stores
-    config.get.return_value = "admin"
     runner = CliRunner()
-    # Provide password, confirm password
     with patch("gobby.cli.auth.hash_password", return_value="$argon2id$v=19$params$salt$hash"):
         result = runner.invoke(auth, ["credentials"], input="newpass\nnewpass\n")
     assert result.exit_code == 0
-    assert "Password updated for user 'admin'." in result.output
-    config.set.assert_called_once_with(
-        "auth.password_hash",
+    assert "Resetting web UI password for owner@example.com." in result.output
+    assert "Password updated for owner@example.com." in result.output
+    users.update_password.assert_called_once_with(
+        "6c71924f-1e3e-4d16-863a-dfdc3b917fea",
         "$argon2id$v=19$params$salt$hash",
-        source="user",
     )
-    config.set_secret.assert_not_called()
-    config.clear_secret.assert_called_once_with("auth.password", secret)
 
 
 def test_auth_group_has_credentials_and_token_commands() -> None:
@@ -109,7 +76,7 @@ def test_auth_token_status_and_show(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    config, _secret = mock_stores
+    config, _users = mock_stores
     gobby_home = tmp_path / "gobby-home"
     token_path = gobby_home / "local_cli_token"
     token_path.parent.mkdir(parents=True)
@@ -132,7 +99,7 @@ def test_auth_token_rotate(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    config, _secret = mock_stores
+    config, _users = mock_stores
     gobby_home = tmp_path / "gobby-home"
     token_path = gobby_home / "local_cli_token"
     token_path.parent.mkdir(parents=True)

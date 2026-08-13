@@ -805,8 +805,6 @@ def _supplemental_key_specs() -> tuple[ConfigKeySpec, ...]:
         )
         for key, annotation in (
             ("auth.api_token_hash", str),
-            ("auth.password_hash", str),
-            ("auth.password", str),
             (EMBEDDING_SWITCH_JOURNAL_KEY, dict[str, object]),
             (EMBEDDING_SWITCH_COMPLETED_KEY, dict[str, object]),
         )

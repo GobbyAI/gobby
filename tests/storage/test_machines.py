@@ -6,18 +6,25 @@ from typing import Any
 
 import pytest
 
+from gobby.identity import hash_password
 from gobby.runner_init.helpers import ensure_machine_identity
 from gobby.storage.hub.protocol import HubDatabase
-from gobby.storage.machines import LocalMachineManager
+from gobby.storage.machines import (
+    LocalMachineManager,
+    MachineNotRegisteredError,
+    MachineOwnershipConflictError,
+)
 from gobby.storage.sessions import SessionManager
+from gobby.storage.users import LocalUserManager
 from gobby.storage.workspace_machine_scope import MachineOwnershipMismatchError
 from gobby.utils.machine_id import require_machine_id
-from tests.fixtures.postgres import TEST_MACHINE_ID_PREFIX
+from tests.fixtures.postgres import TEST_MACHINE_ID_PREFIX, TEST_USER_ID
 
 pytestmark = pytest.mark.unit
 
 MACHINE_A = "8fa1247f-e924-4bd7-a54e-b9dd5704304a"
 MACHINE_B = "54ba70ce-3ec4-470d-905a-dcb40704abfd"
+OTHER_USER_ID = "20000000-0000-4000-8000-000000000002"
 
 
 def _count_machines(temp_db: HubDatabase) -> int:
@@ -34,12 +41,14 @@ class TestLocalMachineManager:
 
         first = manager.upsert_seen(
             MACHINE_A,
+            TEST_USER_ID,
             hostname="host-a",
             os="Darwin",
             seen_at="2026-01-01T00:00:00+00:00",
         )
         refreshed = manager.upsert_seen(
             MACHINE_A,
+            TEST_USER_ID,
             os="Linux",
             label="laptop",
             seen_at="2026-01-02T00:00:00+00:00",
@@ -54,40 +63,66 @@ class TestLocalMachineManager:
         assert refreshed.first_seen == first.first_seen
         assert str(refreshed.last_seen).startswith("2026-01-02")
 
-    def test_upsert_seen_skips_missing_attribution(self, temp_db) -> None:
+    def test_refresh_seen_does_not_create_unknown_machine(self, temp_db) -> None:
         manager = LocalMachineManager(temp_db)
         before = _count_machines(temp_db)
 
-        assert manager.upsert_seen(None) is None
+        assert manager.refresh_seen(MACHINE_A) is None
 
         assert _count_machines(temp_db) == before
 
     def test_manager_canonicalizes_uuid_and_rejects_non_uuid(self, temp_db) -> None:
         manager = LocalMachineManager(temp_db)
-        manager.upsert_seen(MACHINE_A)
+        manager.upsert_seen(MACHINE_A, TEST_USER_ID)
 
         assert manager.get(f" {MACHINE_A} ") is not None
         with pytest.raises(ValueError, match="badly formed hexadecimal UUID"):
             manager.get("unknown-machine")
         with pytest.raises(ValueError, match="badly formed hexadecimal UUID"):
-            manager.upsert_seen("unknown-machine")
+            manager.upsert_seen("unknown-machine", TEST_USER_ID)
 
     def test_upsert_seen_throttles_last_seen_refresh(self, temp_db) -> None:
         manager = LocalMachineManager(temp_db)
-        first = manager.upsert_seen(MACHINE_A, seen_at="2026-01-01T00:00:00+00:00")
-        throttled = manager.upsert_seen(MACHINE_A, seen_at="2026-01-01T00:01:00+00:00")
+        first = manager.upsert_seen(MACHINE_A, TEST_USER_ID, seen_at="2026-01-01T00:00:00+00:00")
+        throttled = manager.refresh_seen(MACHINE_A, seen_at="2026-01-01T00:01:00+00:00")
 
         assert first is not None
         assert throttled is not None
         assert throttled.last_seen == first.last_seen
 
+    def test_upsert_seen_rejects_conflicting_owner_without_mutation(self, temp_db) -> None:
+        users = LocalUserManager(temp_db)
+        users.create(
+            user_id=OTHER_USER_ID,
+            name="Other User",
+            email="other-owner@example.com",
+            password_hash=hash_password("password"),
+        )
+        manager = LocalMachineManager(temp_db)
+        original = manager.upsert_seen(MACHINE_A, TEST_USER_ID, label="original")
 
-def test_session_registration_upserts_machine(
+        with pytest.raises(MachineOwnershipConflictError) as raised:
+            manager.upsert_seen(MACHINE_A, OTHER_USER_ID, label="changed")
+
+        assert raised.value.owner_user_id == TEST_USER_ID
+        assert manager.get(MACHINE_A) == original
+
+    def test_list_for_user_returns_owned_machines(self, temp_db: HubDatabase) -> None:
+        manager = LocalMachineManager(temp_db)
+        manager.upsert_seen(MACHINE_A, TEST_USER_ID)
+        manager.upsert_seen(MACHINE_B, TEST_USER_ID)
+
+        machine_ids = {machine.id for machine in manager.list_for_user(TEST_USER_ID)}
+
+        assert {MACHINE_A, MACHINE_B}.issubset(machine_ids)
+
+
+def test_session_registration_refreshes_registered_machine(
     session_manager: SessionManager, sample_project: dict[str, Any]
 ) -> None:
-    # Registration is machine-scoped: an explicit foreign id is rejected, so the
-    # registry row this upserts is always the current machine's.
     local_machine_id = require_machine_id()
+    before = LocalMachineManager(session_manager.db).get(local_machine_id)
+    assert before is not None
     session_manager.register(
         external_id="session-machine-registration",
         machine_id=local_machine_id,
@@ -98,6 +133,28 @@ def test_session_registration_upserts_machine(
     machine = LocalMachineManager(session_manager.db).get(local_machine_id)
     assert machine is not None
     assert machine.id == local_machine_id
+    assert machine.owner_user_id == before.owner_user_id
+
+
+def test_session_registration_rejects_unknown_local_machine(
+    session_manager: SessionManager,
+    sample_project: dict[str, Any],
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(
+        "gobby.storage.workspace_machine_scope.require_machine_id",
+        lambda: MACHINE_A,
+    )
+
+    with pytest.raises(MachineNotRegisteredError, match="authenticated enrollment"):
+        session_manager.register(
+            external_id="session-machine-registration-unknown",
+            machine_id=MACHINE_A,
+            source="claude",
+            project_id=sample_project["id"],
+        )
+
+    assert LocalMachineManager(session_manager.db).get(MACHINE_A) is None
 
 
 def test_session_registration_rejects_foreign_machine(
@@ -116,4 +173,6 @@ def test_fresh_boot_registers_identity(temp_db: HubDatabase) -> None:
     registered_id = ensure_machine_identity(temp_db, MACHINE_A)
 
     assert registered_id == MACHINE_A
-    assert LocalMachineManager(temp_db).get(MACHINE_A) is not None
+    machine = LocalMachineManager(temp_db).get(MACHINE_A)
+    assert machine is not None
+    assert machine.owner_user_id == TEST_USER_ID

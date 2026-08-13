@@ -1,7 +1,6 @@
 """Tests for WebSocket authentication mixin.
 
 Exercises the real AuthMixin._authenticate method with all code paths:
-- Local-first mode (no auth_callback)
 - Missing Authorization header
 - Invalid Authorization format (not Bearer)
 - Valid Bearer token with successful callback
@@ -35,12 +34,9 @@ async def test_wired_callback_rejects_and_accepts(monkeypatch: pytest.MonkeyPatc
     websocket_init: dict[str, object] = {}
 
     class FakeHTTPServer:
-        auth_service_enabled = True
-
         def __init__(self, *, services: object, **_kwargs: object) -> None:
             self.services = services
             self.auth_service = SimpleNamespace(
-                enabled=self.auth_service_enabled,
                 verify_ws_token=auth_callback,
             )
             self._internal_manager = object()
@@ -110,12 +106,6 @@ async def test_wired_callback_rejects_and_accepts(monkeypatch: pytest.MonkeyPatc
     assert websocket.user_id == "local-cli"
     auth_callback.assert_awaited_once_with("daemon-token")
 
-    websocket_init.clear()
-    FakeHTTPServer.auth_service_enabled = False
-    runner_servers.init_servers(runner)
-
-    assert websocket_init.get("auth_callback") is None
-
 
 class ConcreteAuthServer(AuthMixin):
     """Concrete class using AuthMixin for testing."""
@@ -137,63 +127,6 @@ def _make_request(auth_header: str | None = None) -> MagicMock:
     request.headers = MagicMock()
     request.headers.get = MagicMock(return_value=auth_header)
     return request
-
-
-class TestLocalFirstMode:
-    """Tests for local-first mode (auth_callback=None)."""
-
-    async def test_accepts_connection(self) -> None:
-        server = ConcreteAuthServer(auth_callback=None)
-        ws = _make_ws()
-        request = _make_request()
-
-        result = await server._authenticate(ws, request)
-
-        assert result is None
-
-    async def test_assigns_local_user_id(self) -> None:
-        server = ConcreteAuthServer(auth_callback=None)
-        ws = _make_ws()
-        request = _make_request()
-
-        await server._authenticate(ws, request)
-
-        assert hasattr(ws, "user_id")
-        assert ws.user_id.startswith("local-")
-
-    async def test_local_user_id_has_hex_suffix(self) -> None:
-        server = ConcreteAuthServer(auth_callback=None)
-        ws = _make_ws()
-        request = _make_request()
-
-        await server._authenticate(ws, request)
-
-        # Format is "local-" + 8 hex chars
-        prefix, hex_part = ws.user_id.split("-", 1)
-        assert prefix == "local"
-        assert len(hex_part) == 8
-        # Validate it's valid hex
-        int(hex_part, 16)
-
-    async def test_each_connection_gets_unique_id(self) -> None:
-        server = ConcreteAuthServer(auth_callback=None)
-        ids = set()
-        for _ in range(10):
-            ws = _make_ws()
-            await server._authenticate(ws, _make_request())
-            ids.add(ws.user_id)
-        assert len(ids) == 10
-
-    async def test_ignores_auth_header_in_local_mode(self) -> None:
-        """Even if auth header is present, local mode ignores it."""
-        server = ConcreteAuthServer(auth_callback=None)
-        ws = _make_ws()
-        request = _make_request(auth_header="Bearer some-token")
-
-        result = await server._authenticate(ws, request)
-
-        assert result is None
-        assert ws.user_id.startswith("local-")
 
 
 class TestMissingAuthHeader:

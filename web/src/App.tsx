@@ -62,14 +62,7 @@ const SlashCommandModal = lazy(() =>
 );
 
 export default function App() {
-  const {
-    authRequired,
-    authenticated,
-    credentialsConfigured,
-    loading: authLoading,
-    login,
-    logout,
-  } = useAuth();
+  const { authenticated, loading: authLoading, login, logout } = useAuth();
   const {
     messages,
     conversationId,
@@ -135,7 +128,7 @@ export default function App() {
     selectedProvider,
     setSelectedProvider,
   } = useChat({
-    connectionEnabled: !authLoading && (!authRequired || authenticated),
+    connectionEnabled: !authLoading && authenticated,
   });
   const clientSettings = useSettings();
   const {
@@ -475,13 +468,8 @@ export default function App() {
       </div>
     );
   }
-  if (authRequired && !authenticated) {
-    return (
-      <LoginPage
-        credentialsConfigured={credentialsConfigured}
-        onLogin={login}
-      />
-    );
+  if (!authenticated) {
+    return <LoginPage onLogin={login} />;
   }
 
   const visibleToastMessage = toastMessage ?? transportError?.message ?? null;
@@ -547,7 +535,7 @@ export default function App() {
             >
               <SettingsCogIcon />
             </Button>
-            {!isMobile && authRequired && authenticated && (
+            {!isMobile && (
               <Button
                 type="button"
                 variant="accent"
@@ -725,7 +713,7 @@ export default function App() {
               clientSettings={clientSettings}
               providerSelection={providerSelection}
               projectSelection={projectSelection}
-              onLogout={authRequired && authenticated ? logout : undefined}
+              onLogout={logout}
             />
           </Suspense>
         )}

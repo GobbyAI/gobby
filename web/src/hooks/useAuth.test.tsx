@@ -8,16 +8,14 @@ afterEach(() => {
 });
 
 describe("useAuth", () => {
-  it("surfaces whether web credentials are configured", async () => {
+  it("surfaces unauthenticated status", async () => {
     vi.stubGlobal(
       "fetch",
       vi.fn(() =>
         Promise.resolve({
           ok: true,
           json: async () => ({
-            auth_required: true,
             authenticated: false,
-            credentials_configured: false,
           }),
         } as Response),
       ),
@@ -27,9 +25,7 @@ describe("useAuth", () => {
 
     await waitFor(() => expect(result.current.loading).toBe(false));
     expect(result.current).toMatchObject({
-      authRequired: true,
       authenticated: false,
-      credentialsConfigured: false,
     });
   });
 
@@ -43,9 +39,7 @@ describe("useAuth", () => {
 
     await waitFor(() => expect(result.current.loading).toBe(false));
     expect(result.current).toMatchObject({
-      authRequired: true,
       authenticated: false,
-      credentialsConfigured: true,
     });
   });
 });

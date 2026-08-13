@@ -230,6 +230,7 @@ def create_base_patches(
         patch("gobby.runner_init.services.build_daemon_text_generation_service"),
         patch("gobby.runner_init.services.build_daemon_tool_chat_service"),
         patch("gobby.runner_init.services.MemoryManager"),
+        patch("gobby.runner_init.services.VectorStore"),
         patch("gobby.runner_init.servers.HTTPServer", return_value=mock_http),
         patch("gobby.storage.secrets.SecretStore"),
         patch("gobby.storage.config_store.ConfigStore"),

@@ -22,6 +22,7 @@ from gobby.utils.local_token import (
     local_token_path,
     read_local_api_token,
 )
+from tests.fixtures.postgres import TEST_USER_ID
 
 pytestmark = pytest.mark.unit
 
@@ -179,14 +180,14 @@ def test_rotate_local_api_token_replaces_file_and_hash(
 
 class TestAuthStoreCreateSession:
     def test_create_session_returns_token_and_expiry(self, auth_store: AuthStore) -> None:
-        token, expires_at = auth_store.create_session()
+        token, expires_at = auth_store.create_session(TEST_USER_ID)
         assert isinstance(token, str)
         assert len(token) == 64  # 32 bytes hex
         assert expires_at is not None
 
     def test_create_session_stores_only_token_hash(self, db: HubDatabase) -> None:
         auth_store = AuthStore(db)
-        token, _ = auth_store.create_session()
+        token, _ = auth_store.create_session(TEST_USER_ID)
 
         columns = {
             row["column_name"]
@@ -195,21 +196,22 @@ class TestAuthStoreCreateSession:
                 ("auth_sessions",),
             )
         }
-        row = db.fetchone("SELECT token_hash FROM auth_sessions")
+        row = db.fetchone("SELECT id, user_id, token_hash FROM auth_sessions")
 
         assert "token" not in columns
         assert row is not None
+        assert str(row["user_id"]) == TEST_USER_ID
         assert row["token_hash"] == hashlib.sha256(token.encode("utf-8")).hexdigest()
 
     def test_remember_me_extends_expiry(self, auth_store: AuthStore) -> None:
-        _, short_exp = auth_store.create_session(remember_me=False)
-        _, long_exp = auth_store.create_session(remember_me=True)
+        _, short_exp = auth_store.create_session(TEST_USER_ID, remember_me=False)
+        _, long_exp = auth_store.create_session(TEST_USER_ID, remember_me=True)
         assert long_exp > short_exp
 
 
 class TestAuthStoreValidateSession:
     def test_valid_session(self, auth_store: AuthStore) -> None:
-        token, _ = auth_store.create_session()
+        token, _ = auth_store.create_session(TEST_USER_ID)
         assert auth_store.validate_session(token) is True
 
     def test_invalid_token(self, auth_store: AuthStore) -> None:
@@ -221,7 +223,7 @@ class TestAuthStoreValidateSession:
 
 class TestAuthStoreDeleteSession:
     def test_delete_invalidates(self, auth_store: AuthStore) -> None:
-        token, _ = auth_store.create_session()
+        token, _ = auth_store.create_session(TEST_USER_ID)
         assert auth_store.validate_session(token) is True
         auth_store.delete_session(token)
         assert auth_store.validate_session(token) is False
@@ -230,7 +232,7 @@ class TestAuthStoreDeleteSession:
 class TestAuthStoreExpiry:
     def test_expired_session_is_invalid(self, db: HubDatabase) -> None:
         auth_store = AuthStore(db)
-        token, _ = auth_store.create_session()
+        token, _ = auth_store.create_session(TEST_USER_ID)
         # Manually expire the session
         db.execute(
             """

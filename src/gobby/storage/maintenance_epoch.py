@@ -17,6 +17,7 @@ from psycopg.rows import dict_row
 from psycopg.types.json import Jsonb
 
 type Campaign = Literal[
+    "account-identity-cutover",
     "schema-apply",
     "purge",
     "reconcile",
@@ -27,6 +28,7 @@ type JsonValue = None | bool | int | float | str | list[JsonValue] | dict[str, J
 type JsonObject = dict[str, JsonValue]
 
 CAMPAIGNS: tuple[Campaign, ...] = (
+    "account-identity-cutover",
     "schema-apply",
     "purge",
     "reconcile",
@@ -200,6 +202,12 @@ def open_maintenance_epoch(
         autocommit=False,
         application_name=f"gobby-hub-maintenance-{campaign}",
     ) as connection:
+        if campaign == "account-identity-cutover":
+            from gobby.storage.account_identity_cutover import (
+                admit_account_identity_campaign,
+            )
+
+            admit_account_identity_campaign(connection)
         try:
             row = connection.execute(
                 """

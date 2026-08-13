@@ -3,8 +3,6 @@ use std::collections::{BTreeMap, BTreeSet};
 
 use postgres::{Client, GenericClient};
 
-use crate::baseline_refresh::{baseline_refresh_statement, statement_body};
-
 use super::assets::{
     BASELINE_CHECKSUM, BASELINE_SQL, BASELINE_VERSION, EmbeddedMigration, MIGRATIONS, sha256_hex,
 };
@@ -12,20 +10,6 @@ use super::error::SchemaError;
 use super::gate::{SourceIdentity, VerifiedBackupManifest};
 use super::sql_splitter::split_sql_statements;
 use super::verify::{VerificationReport, qualified_name, validate_identifier, verify_schema};
-
-/// Checksum of the immediate predecessor of the current embedded baseline.
-///
-/// Single-hop refresh policy: the runner upgrades a hub in place only from
-/// this one predecessor revision. When `baseline.sql` changes, re-arm all five
-/// artifacts together: move this constant to the outgoing baseline's checksum,
-/// replace the exact match in [`baseline_refresh_statement`], replace
-/// `tests/fixtures/schema/predecessor_baseline.sql`, update the predecessor
-/// reapply test, and update the `baseline@<version>` identity in both
-/// [`recognized_baseline_receipt`] and `assets::root_hash`. The set-difference
-/// tripwire in `runner_tests` fails until the five artifacts stay in lockstep.
-/// Hubs more than one hop behind must recreate from a verified backup.
-pub(super) const PREDECESSOR_BASELINE_CHECKSUM: &str =
-    "d8bddb9b33fe29673d7eee4ffcc1beb840b3483b4e5f85dd12780c102e5b0bf8";
 
 #[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
 pub struct ApplyReport {
@@ -156,8 +140,7 @@ impl<'a> SchemaRunner<'a> {
             BaselineState::Fresh
             | BaselineState::FreshWithInstallInfra
             | BaselineState::GcoreCodeIndex
-            | BaselineState::GwikiStandalone
-            | BaselineState::PredecessorBaseline => {
+            | BaselineState::GwikiStandalone => {
                 require_pg_search(self.client)?;
                 verify_adopted_columns(self.client, &self.schema, state)?;
                 apply_baseline(self.client, &self.schema, state)?;
@@ -185,7 +168,6 @@ enum BaselineState {
     FreshWithInstallInfra,
     GcoreCodeIndex,
     GwikiStandalone,
-    PredecessorBaseline,
     AlreadyBaselined,
     CorruptPartial,
 }
@@ -321,7 +303,6 @@ fn recognized_baseline_receipt(
     let checksum = row.get::<_, Option<String>>(1);
     Ok(match checksum.as_deref() {
         Some(BASELINE_CHECKSUM) => Some(BaselineState::AlreadyBaselined),
-        Some(PREDECESSOR_BASELINE_CHECKSUM) => Some(BaselineState::PredecessorBaseline),
         _ => None,
     })
 }
@@ -381,12 +362,6 @@ fn apply_baseline(
             transaction.batch_execute(&statement)?;
         }
     }
-    if state == BaselineState::PredecessorBaseline {
-        transaction.execute(
-            &format!("DELETE FROM {receipt_table} WHERE version = $1"),
-            &[&BASELINE_VERSION],
-        )?;
-    }
     transaction.execute(
         &format!(
             "INSERT INTO {receipt_table}(version, filename, checksum, applied_at) VALUES ($1, $2, $3, NOW())"
@@ -416,9 +391,6 @@ pub(super) fn render_sql_for_schema<'a>(sql: &'a str, schema: &str) -> Cow<'a, s
 }
 
 fn baseline_statement_for_state(statement: &str, state: BaselineState) -> Option<String> {
-    if state == BaselineState::PredecessorBaseline {
-        return baseline_refresh_statement(statement);
-    }
     if !matches!(
         state,
         BaselineState::GcoreCodeIndex | BaselineState::GwikiStandalone
@@ -450,6 +422,21 @@ fn baseline_statement_for_state(statement: &str, state: BaselineState) -> Option
         }
     }
     Some(statement.to_owned())
+}
+
+fn statement_body(mut statement: &str) -> &str {
+    loop {
+        statement = statement.trim_start();
+        if let Some(comment) = statement.strip_prefix("--") {
+            statement = comment
+                .find('\n')
+                .map_or("", |newline| &comment[newline + 1..]);
+        } else if let Some(comment) = statement.strip_prefix("/*") {
+            statement = comment.find("*/").map_or("", |end| &comment[end + 2..]);
+        } else {
+            return statement;
+        }
+    }
 }
 
 fn create_table_name(statement: &str) -> Option<&str> {

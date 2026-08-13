@@ -141,12 +141,13 @@ async def test_disconnect_during_welcome_cleans_up_without_unexpected_error(
     config.ping_interval = 30
     config.ping_timeout = 10
     config.max_message_size = 1024
-    websocket_server = WebSocketServer(config, MagicMock())
+    websocket_server = WebSocketServer(config, MagicMock(), AsyncMock(return_value="local-cli"))
+    cast(Any, websocket_server).run_db = AsyncMock(side_effect=lambda func, *args: func(*args))
     cleanup_tmux_client = AsyncMock()
 
     app = FastAPI()
     server = SimpleNamespace(
-        auth_service=SimpleNamespace(enabled=False),
+        auth_service=SimpleNamespace(is_request_authenticated=lambda _request: True),
         services=SimpleNamespace(websocket_server=websocket_server),
         websocket_server=websocket_server,
     )
@@ -164,7 +165,7 @@ async def test_disconnect_during_welcome_cleans_up_without_unexpected_error(
     websocket.close = AsyncMock()
     caplog.set_level(logging.DEBUG, logger="gobby.servers.websocket.server")
 
-    with patch.object(websocket_server, "_cleanup_tmux_client", cleanup_tmux_client):
+    with patch.object(cast(Any, websocket_server), "_cleanup_tmux_client", cleanup_tmux_client):
         await route.endpoint(websocket)
 
     assert websocket_server.clients == {}
@@ -253,13 +254,16 @@ def test_missing_websocket_server_returns_retry_later_close() -> None:
     assert exc_info.value.reason == "WebSocket server unavailable"
 
 
-def test_authentication_disabled_skips_handshake_check() -> None:
+def test_authentication_is_always_checked() -> None:
     websocket_server = _WebSocketServer(return_immediately=True)
-    client = _client(websocket_server, auth_service=SimpleNamespace(enabled=False))
+    client = _client(
+        websocket_server,
+        auth_service=SimpleNamespace(is_request_authenticated=lambda _request: False),
+    )
 
-    with client.websocket_connect("/ws") as websocket:
-        with pytest.raises(WebSocketDisconnect) as exc_info:
-            websocket.receive_text()
+    with pytest.raises(WebSocketDisconnect) as exc_info:
+        with client.websocket_connect("/ws"):
+            pass
 
-    assert exc_info.value.code == 1011
-    assert websocket_server.handler_calls == 1
+    assert exc_info.value.code == 4401
+    assert websocket_server.handler_calls == 0

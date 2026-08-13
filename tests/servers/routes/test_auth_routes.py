@@ -1,191 +1,127 @@
-"""Tests for auth routes — login, logout, status.
-
-Uses real DaemonConfig + real temp_db (no LLM mocking needed).
-"""
+"""Tests for canonical-user login, logout, and status routes."""
 
 from __future__ import annotations
 
+from unittest.mock import patch
+
 import pytest
+from httpx2 import Response
 from starlette.testclient import TestClient
 
 from gobby.config.app import DaemonConfig
-from gobby.storage.auth import hash_password
-from gobby.storage.config_store import ConfigStore
+from gobby.identity import DUMMY_PASSWORD_HASH, hash_password, verify_password_hash
+from gobby.servers.http import HTTPServer
+from gobby.storage.auth import hash_token
+from gobby.storage.hub.protocol import HubDatabase
 from gobby.storage.tasks import LocalTaskManager
+from gobby.storage.users import LocalUserManager
+from tests.fixtures.postgres import TEST_USER_EMAIL, TEST_USER_ID
 from tests.servers.conftest import create_http_server
 
 pytestmark = pytest.mark.unit
 
 
 @pytest.fixture
-def temp_db(hub_db):
+def temp_db(hub_db: HubDatabase) -> HubDatabase:
     return hub_db
 
 
-@pytest.fixture
-def task_manager(temp_db):
-    return LocalTaskManager(temp_db)
+def _server(db: HubDatabase) -> HTTPServer:
+    return create_http_server(
+        config=DaemonConfig(),
+        database=db,
+        task_manager=LocalTaskManager(db),
+        authenticated_requests=False,
+    )
 
 
-@pytest.fixture
-def config_with_auth() -> DaemonConfig:
-    """Config with auth username set (password stored separately in secrets)."""
-    return DaemonConfig(auth={"username": "testuser", "password": ""})
+def _set_password(db: HubDatabase, password: str = "correctpassword") -> None:
+    LocalUserManager(db).update_password(TEST_USER_ID, hash_password(password))
 
 
-@pytest.fixture
-def config_no_auth() -> DaemonConfig:
-    return DaemonConfig()
-
-
-def _setup_auth_password(db, password: str = "correctpassword") -> None:
-    """Store web credentials in the shared auth service's config keys."""
-    config_store = ConfigStore(db)
-    config_store.set("auth.username", "testuser", source="user")
-    config_store.set("auth.password_hash", hash_password(password), source="user")
-
-
-# ---------------------------------------------------------------------------
-# GET /api/auth/status
-# ---------------------------------------------------------------------------
+def _login(client: TestClient, *, email: str = TEST_USER_EMAIL, password: str) -> Response:
+    return client.post(
+        "/api/auth/login",
+        json={"email": email, "password": password, "remember_me": False},
+    )
 
 
 class TestAuthStatus:
-    def test_status_credentials_configured(self, temp_db, config_no_auth, task_manager) -> None:
-        _setup_auth_password(temp_db)
-        server = create_http_server(
-            config=config_no_auth,
-            database=temp_db,
-            task_manager=task_manager,
-            auth_mode="required",
-        )
-
-        response = TestClient(server.app).get("/api/auth/status")
+    def test_status_reports_unauthenticated_request(self, temp_db) -> None:
+        response = TestClient(_server(temp_db).app).get("/api/auth/status")
 
         assert response.status_code == 200
-        assert response.json() == {
-            "auth_required": True,
-            "authenticated": False,
-            "credentials_configured": True,
-        }
+        assert response.json() == {"authenticated": False}
 
-    def test_auth_not_required_when_unconfigured(
-        self, temp_db, config_no_auth, task_manager
-    ) -> None:
-        server = create_http_server(
-            config=config_no_auth, database=temp_db, task_manager=task_manager
-        )
-        client = TestClient(server.app)
-        resp = client.get("/api/auth/status")
-        assert resp.status_code == 200
-        data = resp.json()
-        assert data["auth_required"] is False
-        assert data["authenticated"] is True
+    def test_status_accepts_user_owned_session(self, temp_db) -> None:
+        _set_password(temp_db)
+        client = TestClient(_server(temp_db).app)
+        assert _login(client, password="correctpassword").status_code == 200
 
-    def test_auth_required_when_configured(self, temp_db, config_with_auth, task_manager) -> None:
-        _setup_auth_password(temp_db)
-        server = create_http_server(
-            config=config_with_auth,
-            database=temp_db,
-            task_manager=task_manager,
-            auth_mode="required",
-        )
-        client = TestClient(server.app)
-        resp = client.get("/api/auth/status")
-        assert resp.status_code == 200
-        data = resp.json()
-        assert data["auth_required"] is True
-        assert data["authenticated"] is False
+        response = client.get("/api/auth/status")
 
-    def test_auth_required_with_hub_database_protocol(
-        self, non_local_hub_db, config_with_auth
-    ) -> None:
-        _setup_auth_password(non_local_hub_db)
-        server = create_http_server(
-            config=config_with_auth,
-            database=non_local_hub_db,
-            task_manager=LocalTaskManager(non_local_hub_db),
-            auth_mode="required",
-        )
-        client = TestClient(server.app)
-
-        resp = client.get("/api/auth/status")
-
-        assert resp.status_code == 200
-        data = resp.json()
-        assert data["auth_required"] is True
-        assert data["authenticated"] is False
-
-
-# ---------------------------------------------------------------------------
-# POST /api/auth/login
-# ---------------------------------------------------------------------------
+        assert response.json() == {"authenticated": True}
 
 
 class TestAuthLogin:
-    def test_login_success(self, temp_db, config_with_auth, task_manager) -> None:
-        _setup_auth_password(temp_db, "mypassword")
-        server = create_http_server(
-            config=config_with_auth,
-            database=temp_db,
-            task_manager=task_manager,
-            auth_mode="required",
-        )
-        client = TestClient(server.app)
-        resp = client.post(
-            "/api/auth/login", json={"username": "testuser", "password": "mypassword"}
-        )
-        assert resp.status_code == 200
-        assert resp.json()["ok"] is True
-        assert "gobby_session" in resp.cookies
+    def test_login_is_case_insensitive_and_creates_user_owned_session(self, temp_db) -> None:
+        _set_password(temp_db, "mypassword")
+        client = TestClient(_server(temp_db).app)
 
-    def test_login_success_with_hub_database_protocol(
-        self, non_local_hub_db, config_with_auth
+        response = _login(
+            client,
+            email=f"  {TEST_USER_EMAIL.upper()}  ",
+            password="mypassword",
+        )
+
+        assert response.status_code == 200
+        assert response.json() == {"ok": True}
+        token = response.cookies["gobby_session"]
+        row = temp_db.fetchone(
+            "SELECT user_id FROM auth_sessions WHERE token_hash = %s",
+            (hash_token(token),),
+        )
+        assert row is not None
+        assert row["user_id"] == TEST_USER_ID
+
+    def test_login_works_with_hub_database_protocol(self, non_local_hub_db) -> None:
+        _set_password(non_local_hub_db, "mypassword")
+
+        response = _login(TestClient(_server(non_local_hub_db).app), password="mypassword")
+
+        assert response.status_code == 200
+        assert "gobby_session" in response.cookies
+
+    def test_wrong_password_and_unknown_email_share_response_and_argon2_work(
+        self,
+        temp_db,
     ) -> None:
-        _setup_auth_password(non_local_hub_db, "mypassword")
-        server = create_http_server(
-            config=config_with_auth,
-            database=non_local_hub_db,
-            task_manager=LocalTaskManager(non_local_hub_db),
-        )
-        client = TestClient(server.app)
+        _set_password(temp_db, "mypassword")
+        client = TestClient(_server(temp_db).app)
 
-        resp = client.post(
-            "/api/auth/login", json={"username": "testuser", "password": "mypassword"}
-        )
+        with patch(
+            "gobby.servers.auth_service.verify_password_hash",
+            wraps=verify_password_hash,
+        ) as verify:
+            wrong_password = _login(client, password="wrong")
+            unknown_email = _login(
+                client,
+                email="missing@example.com",
+                password="wrong",
+            )
 
-        assert resp.status_code == 200
-        assert resp.json()["ok"] is True
-        assert "gobby_session" in resp.cookies
+        assert wrong_password.status_code == 401
+        assert unknown_email.status_code == 401
+        expected = {"ok": False, "error": "Invalid email or password"}
+        assert wrong_password.json() == expected
+        assert unknown_email.json() == expected
+        assert verify.call_count == 2
+        assert verify.call_args_list[1].args[1] == DUMMY_PASSWORD_HASH
 
-    def test_login_wrong_password(self, temp_db, config_with_auth, task_manager) -> None:
-        _setup_auth_password(temp_db, "mypassword")
-        server = create_http_server(
-            config=config_with_auth, database=temp_db, task_manager=task_manager
-        )
-        client = TestClient(server.app)
-        resp = client.post("/api/auth/login", json={"username": "testuser", "password": "wrong"})
-        assert resp.status_code == 401
-        assert resp.json()["ok"] is False
-
-    def test_login_wrong_username(self, temp_db, config_with_auth, task_manager) -> None:
-        _setup_auth_password(temp_db, "mypassword")
-        server = create_http_server(
-            config=config_with_auth, database=temp_db, task_manager=task_manager
-        )
-        client = TestClient(server.app)
-        resp = client.post("/api/auth/login", json={"username": "wrong", "password": "mypassword"})
-        assert resp.status_code == 401
-
-    def test_repeated_failed_logins_are_locked_out(
-        self, temp_db, config_with_auth, task_manager
-    ) -> None:
-        _setup_auth_password(temp_db, "mypassword")
-        server = create_http_server(
-            config=config_with_auth, database=temp_db, task_manager=task_manager
-        )
-        client = TestClient(server.app)
-        credentials = {"username": "testuser", "password": "wrong"}
+    def test_repeated_failed_logins_are_locked_out(self, temp_db) -> None:
+        _set_password(temp_db, "mypassword")
+        client = TestClient(_server(temp_db).app)
+        credentials = {"email": TEST_USER_EMAIL, "password": "wrong"}
 
         for _ in range(5):
             assert client.post("/api/auth/login", json=credentials).status_code == 401
@@ -194,71 +130,30 @@ class TestAuthLogin:
 
         assert response.status_code == 429
         assert response.headers["Retry-After"] == "60"
-        assert response.json() == {"ok": False, "error": "Too many failed login attempts"}
 
-    def test_successful_login_resets_failed_attempts(
-        self, temp_db, config_with_auth, task_manager
-    ) -> None:
-        _setup_auth_password(temp_db, "mypassword")
-        server = create_http_server(
-            config=config_with_auth, database=temp_db, task_manager=task_manager
-        )
-        client = TestClient(server.app)
-        wrong_credentials = {"username": "testuser", "password": "wrong"}
+    def test_successful_login_resets_failed_attempts(self, temp_db) -> None:
+        _set_password(temp_db, "mypassword")
+        client = TestClient(_server(temp_db).app)
+        wrong = {"email": TEST_USER_EMAIL, "password": "wrong"}
 
         for _ in range(4):
-            assert client.post("/api/auth/login", json=wrong_credentials).status_code == 401
+            assert client.post("/api/auth/login", json=wrong).status_code == 401
 
-        response = client.post(
-            "/api/auth/login",
-            json={"username": "testuser", "password": "mypassword"},
-        )
-        assert response.status_code == 200
-
+        assert _login(client, password="mypassword").status_code == 200
         for _ in range(5):
-            assert client.post("/api/auth/login", json=wrong_credentials).status_code == 401
-
-    def test_login_when_not_configured(self, temp_db, config_no_auth, task_manager) -> None:
-        server = create_http_server(
-            config=config_no_auth, database=temp_db, task_manager=task_manager
-        )
-        client = TestClient(server.app)
-        resp = client.post("/api/auth/login", json={"username": "any", "password": "any"})
-        assert resp.status_code == 400
-
-
-# ---------------------------------------------------------------------------
-# POST /api/auth/logout
-# ---------------------------------------------------------------------------
+            assert client.post("/api/auth/login", json=wrong).status_code == 401
 
 
 class TestAuthLogout:
-    def test_logout_clears_session(self, temp_db, config_with_auth, task_manager) -> None:
-        _setup_auth_password(temp_db, "mypassword")
-        server = create_http_server(
-            config=config_with_auth,
-            database=temp_db,
-            task_manager=task_manager,
-            auth_mode="required",
-        )
+    def test_logout_clears_session(self, temp_db) -> None:
+        _set_password(temp_db, "mypassword")
+        server = _server(temp_db)
         client = TestClient(server.app)
+        assert _login(client, password="mypassword").status_code == 200
+        assert client.get("/api/auth/status").json()["authenticated"] is True
 
-        # Login first
-        login_resp = client.post(
-            "/api/auth/login", json={"username": "testuser", "password": "mypassword"}
-        )
-        assert login_resp.status_code == 200
+        response = client.post("/api/auth/logout")
 
-        # Verify authenticated
-        status_resp = client.get("/api/auth/status")
-        assert status_resp.json()["authenticated"] is True
-
-        # Logout
-        logout_resp = client.post("/api/auth/logout")
-        assert logout_resp.status_code == 200
-        assert logout_resp.json()["ok"] is True
-
-        # Verify no longer authenticated (fresh client, no cookies)
-        fresh_client = TestClient(server.app)
-        status_resp = fresh_client.get("/api/auth/status")
-        assert status_resp.json()["authenticated"] is False
+        assert response.status_code == 200
+        assert response.json() == {"ok": True}
+        assert TestClient(server.app).get("/api/auth/status").json() == {"authenticated": False}

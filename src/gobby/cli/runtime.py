@@ -62,7 +62,6 @@ class CliRuntime:
         config.bind_host = bootstrap.bind_host
         config.websocket.port = bootstrap.websocket_port
         config.ui.port = bootstrap.ui_port
-        config.auth_mode = bootstrap.auth_mode
         config.datastore_mode = bootstrap.datastore_mode
         config.database_url = bootstrap.database_url
         config.postgres_pool = bootstrap.postgres_pool

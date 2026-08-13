@@ -17,8 +17,10 @@ from gobby.storage.agents import AgentRun, LocalAgentRunManager
 from gobby.storage.auth import LOCAL_API_TOKEN_HASH_KEY, AuthStore, hash_token
 from gobby.storage.config_store import ConfigStore
 from gobby.storage.hub.protocol import HubDatabase
+from gobby.storage.machines import LocalMachineManager
 from gobby.storage.tasks import LocalTaskManager
 from gobby.utils.local_token import AgentApiTokenClaims, issue_agent_api_token
+from tests.fixtures.postgres import TEST_USER_ID
 from tests.servers.conftest import create_http_server
 
 if TYPE_CHECKING:
@@ -30,8 +32,9 @@ LOCAL_MACHINE_ID = "22000000-0000-4000-8000-000000000001"
 
 
 @pytest.fixture(autouse=True)
-def _local_machine_identity() -> Iterator[None]:
+def _local_machine_identity(hub_db: HubDatabase) -> Iterator[None]:
     with patch("gobby.utils.machine_id._cached_machine_id", LOCAL_MACHINE_ID):
+        LocalMachineManager(hub_db).upsert_seen(LOCAL_MACHINE_ID, TEST_USER_ID)
         yield
 
 
@@ -124,13 +127,11 @@ def server(
         config=runtime_config,
         database=hub_db,
         task_manager=LocalTaskManager(hub_db),
-        auth_mode="disabled",
     )
     token_file = tmp_path / "local-cli-token"
     token_file.write_text(LOCAL_RUNTIME_TOKEN, encoding="utf-8")
     http_server.auth_service = AuthService(
         lambda: hub_db,
-        mode="disabled",
         token_file=token_file,
     )
     runtime = MagicMock(spec=ConfigRuntime)
@@ -577,7 +578,7 @@ def test_effective_config_uses_machine_visibility(
         active_values={
             "ai.embeddings.model": "machine-visible",
             "websocket.ping_interval": 17.0,
-            "auth.password": "restricted-value",
+            "auth.api_token_hash": "restricted-value",
         },
     )
 
@@ -650,7 +651,7 @@ def test_effective_config_auth_and_cache_contract(
 ) -> None:
     unauthenticated = TestClient(server.app)
     cookie_client = TestClient(server.app)
-    session_token, _ = AuthStore(hub_db).create_session()
+    session_token, _ = AuthStore(hub_db).create_session(TEST_USER_ID)
 
     no_credentials = unauthenticated.get("/api/config/effective")
     cookie_client.cookies.set("gobby_session", session_token)
@@ -668,7 +669,6 @@ def test_effective_config_auth_and_cache_contract(
         headers={"X-Gobby-Local-Token": LOCAL_RUNTIME_TOKEN},
     )
 
-    assert server.auth_service.enabled is False
     assert no_credentials.status_code == 401
     assert cookie_only.status_code == 401
     assert invalid_bearer.status_code == 401

@@ -12,7 +12,10 @@ from gobby.config.bootstrap import BootstrapConfig
 from gobby.servers.http import HTTPServer
 from gobby.storage.sessions import SessionManager
 
-pytestmark = pytest.mark.unit
+pytestmark = [
+    pytest.mark.unit,
+    pytest.mark.usefixtures("authenticated_http_requests", "isolated_http_runtime"),
+]
 
 
 class TestExceptionHandlers:
@@ -58,7 +61,7 @@ class TestExceptionHandlers:
             services=services,
             port=60887,
             test_mode=True,
-            bootstrap_config=BootstrapConfig(auth_mode="disabled"),
+            bootstrap_config=BootstrapConfig(),
         )
 
         @server.app.get("/api/hooks/custom-error")

@@ -43,7 +43,7 @@ context; any `session_id` inside the JSON body remains a target-tool argument.
 
 ## Authentication
 
-Daemon auth is required by default. Protected HTTP requests accept these
+Daemon auth is mandatory. Protected HTTP requests accept these
 credentials, in precedence order:
 
 1. `Authorization: Bearer <local_cli_token>`
@@ -162,9 +162,13 @@ Returns a JSON object with daemon health and runtime details:
 
 | Method | Route | Purpose |
 | --- | --- | --- |
-| `POST` | `/api/auth/login` | Create a UI auth session cookie. |
+| `POST` | `/api/auth/login` | Authenticate `{email, password, remember_me}` and create a user-owned UI session cookie. |
 | `POST` | `/api/auth/logout` | Clear the UI auth session cookie. |
-| `GET` | `/api/auth/status` | Report whether auth is enabled and whether the request is authenticated. |
+| `GET` | `/api/auth/status` | Return `{authenticated}` for the current request. |
+
+Email lookup is normalized and case-insensitive. Login failures use one generic
+response for unknown email and wrong password, perform Argon2id work in both
+cases, and share the same per-client rate limit.
 
 ## Sessions
 

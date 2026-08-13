@@ -57,13 +57,15 @@ from gobby.mcp_proxy.wait_tools import (
     MCP_WRAPPER_STALE_ERROR_CODE,
 )
 from gobby.servers.http import HTTPServer
+from gobby.storage.auth import LOCAL_API_TOKEN_HASH_KEY, hash_token
+from gobby.storage.config_store import ConfigStore
 from gobby.storage.hub.protocol import HubDatabase
 from gobby.storage.projects import LocalProjectManager
 from gobby.storage.sessions import SessionManager
 from gobby.utils.session_context import TERMINAL_CONTEXT_HEADER
 from gobby.workflows.evaluation_runtime import WorkflowEvaluationRuntime
 from gobby.workflows.hooks import WorkflowEvaluationTimeout, WorkflowHookHandler
-from tests.servers.conftest import create_http_server
+from tests.servers.conftest import authenticate_test_server, create_http_server
 
 pytestmark = pytest.mark.unit
 
@@ -144,11 +146,13 @@ def basic_http_server(session_storage: SessionManager) -> HTTPServer:
         session_manager=session_storage,
         task_manager=MagicMock(),
     )
-    return HTTPServer(
-        services=services,
-        port=60887,
-        test_mode=True,
-        bootstrap_config=BootstrapConfig(auth_mode="disabled"),
+    return authenticate_test_server(
+        HTTPServer(
+            services=services,
+            port=60887,
+            test_mode=True,
+            bootstrap_config=BootstrapConfig(),
+        )
     )
 
 
@@ -3240,7 +3244,7 @@ class TestHooksEndpoints:
             port=60887,
             test_mode=True,
             session_manager=session_storage,
-            config=None,  # No config means HookManager won't be initialized
+            config=DaemonConfig(),
         )
 
         with TestClient(server.app) as client:
@@ -3971,18 +3975,23 @@ class TestHooksEndpoints:
         )
         server.app.state.hook_manager = hook_manager
 
-        with patch("gobby.hooks.inbox.load_bootstrap") as load_bootstrap:
-            load_bootstrap.return_value.auth_mode = "disabled"
-            first = await drain_hook_inbox_barrier(
-                server.app,
-                inbox_dir,
-                timeout_seconds=1.0,
-            )
-            second = await drain_hook_inbox_barrier(
-                server.app,
-                inbox_dir,
-                timeout_seconds=1.0,
-            )
+        token = "test-token"
+        (tmp_path / "local_cli_token").write_text(token, encoding="utf-8")
+        ConfigStore(session_storage.db).set(
+            LOCAL_API_TOKEN_HASH_KEY,
+            hash_token(token),
+            source="test",
+        )
+        first = await drain_hook_inbox_barrier(
+            server.app,
+            inbox_dir,
+            timeout_seconds=1.0,
+        )
+        second = await drain_hook_inbox_barrier(
+            server.app,
+            inbox_dir,
+            timeout_seconds=1.0,
+        )
 
         assert first.replayed == 1
         assert first.timed_out is False
@@ -4650,13 +4659,16 @@ class TestWebhooksEndpoints:
             port=60887,
             test_mode=True,
             session_manager=session_storage,
+            config=None,
         )
 
     @pytest.fixture
     def webhooks_client(self, webhooks_server: HTTPServer) -> Iterator[TestClient]:
         """Create test client for webhooks endpoints."""
-        with TestClient(webhooks_server.app) as c:
-            yield c
+        with patch("gobby.servers.app_factory.HookManager") as mock_hook_manager:
+            mock_hook_manager.return_value.shutdown_async = AsyncMock()
+            with TestClient(webhooks_server.app) as client:
+                yield client
 
     def test_list_webhooks_no_config(self, webhooks_client: TestClient) -> None:
         """Test list webhooks when config is None."""

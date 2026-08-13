@@ -57,17 +57,15 @@ its file/hash agreement with:
 uv run gobby auth token
 ```
 
-Browser authentication is configured separately. The username lives at
-`auth.username`; the salted scrypt password hash lives at
-`auth.password_hash`:
+Browser authentication uses the canonical user stored in PostgreSQL. Reset the
+sole installed user's Argon2id password with:
 
 ```bash
 uv run gobby auth credentials
-uv run gobby auth credentials --remove
 ```
 
-Restart the daemon after changing browser credentials. The browser session
-cookie is `gobby_session`.
+Existing browser sessions remain valid after a password reset. The browser
+session cookie is `gobby_session`.
 
 HTTP auth routes:
 

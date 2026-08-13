@@ -24,6 +24,15 @@ from gobby.storage.config_mutations import ConfigPatch
 pytestmark = pytest.mark.unit
 
 
+@pytest.fixture(autouse=True)
+def _installed_identity() -> Any:
+    with patch(
+        "gobby.cli.install.ensure_install_identity",
+        return_value=MagicMock(email="owner@example.com"),
+    ):
+        yield
+
+
 def test_standard_cli_install_forwards_provider_hook_timeout(tmp_path: Path) -> None:
     installer = MagicMock(return_value={"success": False, "error": "expected"})
     results: dict[str, dict[str, Any]] = {}
@@ -440,7 +449,6 @@ class TestInstallCommandSharedStores:
                 embedding_model=None,
                 embedding_dim=None,
                 secret_kek_posture="key-file",
-                auth_mode="local",
                 ide_settings_flag=None,
                 expose_ui_flag=None,
                 no_interactive_flag=True,
@@ -512,7 +520,6 @@ class TestInstallCommandSharedStores:
                 embedding_model=None,
                 embedding_dim=None,
                 secret_kek_posture="key-file",
-                auth_mode="disabled",
                 ide_settings_flag=None,
                 expose_ui_flag=None,
                 no_interactive_flag=True,
@@ -582,7 +589,6 @@ class TestInstallCommandSharedStores:
                 embedding_model=None,
                 embedding_dim=None,
                 secret_kek_posture="key-file",
-                auth_mode="disabled",
                 ide_settings_flag=None,
                 expose_ui_flag=None,
                 no_interactive_flag=True,
@@ -683,7 +689,6 @@ class TestInstallCommandSharedStores:
                 embedding_model=None,
                 embedding_dim=None,
                 secret_kek_posture="key-file",
-                auth_mode="disabled",
                 ide_settings_flag=None,
                 expose_ui_flag=None,
                 no_interactive_flag=True,

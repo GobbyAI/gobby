@@ -21,6 +21,7 @@ from gobby.config.postgres_pool import PostgresPoolConfig
 from gobby.storage.concurrency import BOOTSTRAP_POOL_SIZE
 from gobby.storage.machines import LocalMachineManager
 from gobby.storage.maintenance_epoch import admitted_database_url
+from gobby.storage.users import LocalUserManager
 
 logger = logging.getLogger(__name__)
 
@@ -114,13 +115,13 @@ def ensure_machine_identity(
     machine_id: str,
 ) -> str:
     """Canonically register this daemon's machine identity."""
+    owner = LocalUserManager(database).require_sole_user()
     registered = LocalMachineManager(database).upsert_seen(
         machine_id,
+        owner.id,
         hostname=socket.gethostname(),
         os=platform.system(),
     )
-    if registered is None:
-        raise RuntimeError("local machine registration did not produce a row")
     return registered.id
 
 

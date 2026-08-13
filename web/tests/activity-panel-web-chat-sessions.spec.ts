@@ -151,7 +151,7 @@ test("activity panel shows non-current web chats with a web badge", async ({
       await route.fulfill({
         status: 200,
         contentType: "application/json",
-        body: JSON.stringify({ auth_required: false, authenticated: true }),
+        body: JSON.stringify({ authenticated: true }),
       });
       return;
     }
@@ -372,7 +372,7 @@ test("activity panel refreshes sessions after a session_event websocket message"
       await route.fulfill({
         status: 200,
         contentType: "application/json",
-        body: JSON.stringify({ auth_required: false, authenticated: true }),
+        body: JSON.stringify({ authenticated: true }),
       });
       return;
     }

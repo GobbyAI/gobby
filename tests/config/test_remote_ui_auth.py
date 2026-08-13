@@ -3,7 +3,6 @@
 from unittest.mock import MagicMock
 
 import pytest
-from pydantic import ValidationError
 
 from gobby.app_context import ServiceContainer
 from gobby.config.app import DaemonConfig
@@ -47,45 +46,35 @@ def test_loopback_bind_host_rejects_wildcard_external_and_ambiguous_names(host: 
     assert not is_loopback_bind_host(host)
 
 
-def test_remote_ui_requires_authentication() -> None:
-    with pytest.raises(ValidationError, match="ui.enabled requires auth_mode='required'"):
-        DaemonConfig(
-            bind_host="0.0.0.0",
-            auth_mode="disabled",
-            ui={"enabled": True},
-        )
-
-
-def test_remote_ui_allows_required_auth_without_web_credentials() -> None:
+def test_remote_ui_allows_external_bind() -> None:
     config = DaemonConfig(
         bind_host="0.0.0.0",
-        auth_mode="required",
         ui={"enabled": True},
     )
 
-    assert config.auth.username == ""
+    assert config.ui.enabled
 
 
-def test_disabled_ui_allows_external_bind_with_disabled_auth() -> None:
+def test_disabled_ui_allows_external_bind() -> None:
     config = DaemonConfig(
         bind_host="0.0.0.0",
-        auth_mode="disabled",
         ui={"enabled": False},
     )
 
     assert not config.ui.enabled
 
 
-def test_http_server_rejects_remote_ui_when_bootstrap_disables_auth() -> None:
+def test_http_server_allows_remote_ui_with_mandatory_auth() -> None:
     services = ServiceContainer(
         database=MagicMock(),
         session_manager=MagicMock(),
         task_manager=MagicMock(),
     )
 
-    with pytest.raises(ValueError, match="ui.enabled requires bootstrap auth_mode='required'"):
-        HTTPServer(
-            services=services,
-            startup_config=DaemonConfig(ui={"enabled": True}),
-            bootstrap_config=BootstrapConfig(bind_host="0.0.0.0", auth_mode="disabled"),
-        )
+    server = HTTPServer(
+        services=services,
+        startup_config=DaemonConfig(ui={"enabled": True}),
+        bootstrap_config=BootstrapConfig(bind_host="0.0.0.0"),
+    )
+
+    assert server.auth_service is not None

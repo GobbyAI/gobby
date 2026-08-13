@@ -9,20 +9,15 @@ use time::format_description::well_known::Rfc3339;
 use time::{Duration, OffsetDateTime};
 use uuid::Uuid;
 
-use crate::baseline_refresh::{baseline_refresh_statement, statement_body};
-
-use super::assets::{
-    BASELINE_CHECKSUM, BASELINE_SQL, BASELINE_VERSION, EmbeddedMigration, MIGRATIONS, sha256_hex,
-};
+use super::assets::{BASELINE_CHECKSUM, BASELINE_VERSION, EmbeddedMigration, MIGRATIONS};
 use super::error::SchemaError;
 use super::gate::{
     BackupGateContext, SourceIdentity, VerifiedBackupManifest, parse_backup_manifest,
 };
-use super::runner::{PREDECESSOR_BASELINE_CHECKSUM, SchemaRunner, render_sql_for_schema};
-use super::sql_splitter::split_sql_statements;
+use super::runner::SchemaRunner;
 
-const PREDECESSOR_BASELINE_SQL: &str =
-    include_str!("../../tests/fixtures/schema/predecessor_baseline.sql");
+const OBSOLETE_BASELINE_CHECKSUM: &str =
+    "855576453641152d2ef9199dc418fcc3dd2ad69e78eff924b05a7b3b122cf398";
 
 static RECOVERY_MIGRATION: EmbeddedMigration = EmbeddedMigration {
     version: 376,
@@ -122,29 +117,6 @@ fn install_baseline(client: &mut Client) -> anyhow::Result<()> {
     Ok(())
 }
 
-fn install_predecessor_baseline(client: &mut Client) -> anyhow::Result<()> {
-    assert_eq!(
-        sha256_hex(PREDECESSOR_BASELINE_SQL.as_bytes()),
-        PREDECESSOR_BASELINE_CHECKSUM,
-        "fixture must be the exact predecessor baseline the runner refreshes from",
-    );
-    let mut transaction = client.transaction()?;
-    for statement in split_sql_statements(PREDECESSOR_BASELINE_SQL)? {
-        transaction.batch_execute(&statement)?;
-    }
-    transaction.execute(
-        "INSERT INTO schema_migrations(version, filename, checksum, applied_at) \
-         VALUES ($1, $2, $3, NOW())",
-        &[
-            &BASELINE_VERSION,
-            &format!("baseline@{BASELINE_VERSION}"),
-            &PREDECESSOR_BASELINE_CHECKSUM,
-        ],
-    )?;
-    transaction.commit()?;
-    Ok(())
-}
-
 fn projection_change_sequence_cache_size(client: &mut Client) -> anyhow::Result<i64> {
     Ok(client
         .query_one(
@@ -152,17 +124,6 @@ fn projection_change_sequence_cache_size(client: &mut Client) -> anyhow::Result<
              WHERE seqrelid = pg_get_serial_sequence(\
                  'embedding_projection_changes', 'sequence'\
              )::regclass",
-            &[],
-        )?
-        .get(0))
-}
-
-fn principal_lifetime_guard_def(client: &mut Client) -> anyhow::Result<String> {
-    Ok(client
-        .query_one(
-            "SELECT pg_get_functiondef(\
-                 'gobby_agent_auth.enforce_principal_lifetime()'::regprocedure\
-             )",
             &[],
         )?
         .get(0))
@@ -180,33 +141,6 @@ fn assert_runtime_crud_privileges(client: &mut Client, table: &str) -> anyhow::R
             granted,
             "runtime role lacks {privilege} privilege on {table}"
         );
-    }
-    Ok(())
-}
-
-fn assert_gcode_config_state_read_privileges(client: &mut Client) -> anyhow::Result<()> {
-    for column in ["id", "revision"] {
-        let granted: bool = client
-            .query_one(
-                "SELECT has_column_privilege(\
-                     'gobby_gcode_capability', 'config_state', $1, 'SELECT'\
-                 )",
-                &[&column],
-            )?
-            .get(0);
-        assert!(
-            granted,
-            "gcode capability lacks SELECT on config_state.{column}"
-        );
-    }
-    for privilege in ["INSERT", "UPDATE", "DELETE"] {
-        let granted: bool = client
-            .query_one(
-                "SELECT has_table_privilege('gobby_gcode_capability', 'config_state', $1)",
-                &[&privilege],
-            )?
-            .get(0);
-        assert!(!granted, "gcode capability has {privilege} on config_state");
     }
     Ok(())
 }
@@ -372,26 +306,32 @@ fn fresh_baseline_creates_embedding_coordination_state() -> anyhow::Result<()> {
 }
 
 #[test]
-fn existing_hub_reapplies_updated_baseline() -> anyhow::Result<()> {
+fn obsolete_baseline_receipt_is_rejected_without_mutation() -> anyhow::Result<()> {
     let _serial = DATABASE_TEST_LOCK
         .lock()
         .unwrap_or_else(std::sync::PoisonError::into_inner);
     let Some((_database, mut client)) = test_database()? else {
         return Ok(());
     };
-    install_predecessor_baseline(&mut client)?;
-    assert!(
-        principal_lifetime_guard_def(&mut client)?.contains("1 hour"),
-        "predecessor baseline must carry the one-hour lifetime guard"
-    );
+    SchemaRunner::new(&mut client, "public")?.apply()?;
     client.execute(
         "INSERT INTO config_store(key, value) VALUES ('preserved.key', 'preserved')",
         &[],
     )?;
+    client.execute(
+        "UPDATE schema_migrations SET checksum = $1 WHERE version = $2",
+        &[&OBSOLETE_BASELINE_CHECKSUM, &BASELINE_VERSION],
+    )?;
 
-    let report = SchemaRunner::new(&mut client, "public")?.apply()?;
+    let error = SchemaRunner::new(&mut client, "public")?
+        .apply()
+        .expect_err("obsolete baseline receipts require a dedicated campaign");
 
-    assert!(report.baseline_applied);
+    assert!(
+        error
+            .to_string()
+            .contains("unrecognized or pre-375 schema lineage")
+    );
     let row = client.query_one(
         "SELECT value, revision FROM config_store WHERE key = 'preserved.key'",
         &[],
@@ -404,41 +344,7 @@ fn existing_hub_reapplies_updated_baseline() -> anyhow::Result<()> {
             &[&BASELINE_VERSION],
         )?
         .get(0);
-    assert_eq!(checksum, BASELINE_CHECKSUM);
-    assert_eq!(projection_change_sequence_cache_size(&mut client)?, 1);
-    assert!(
-        principal_lifetime_guard_def(&mut client)?.contains("24 hours"),
-        "refresh must supersede the one-hour lifetime guard"
-    );
-    for table in [
-        "config_state",
-        "embedding_generation_acks",
-        "embedding_projection_changes",
-    ] {
-        let exists: bool = client
-            .query_one("SELECT to_regclass($1) IS NOT NULL", &[&table])?
-            .get(0);
-        assert!(exists, "refresh must create {table}");
-        assert_runtime_crud_privileges(&mut client, table)?;
-    }
-    assert_gcode_config_state_read_privileges(&mut client)?;
-    for table in ["clones", "worktrees"] {
-        let nullable: String = client
-            .query_one(
-                "SELECT is_nullable FROM information_schema.columns \
-                 WHERE table_schema = 'public' AND table_name = $1 \
-                 AND column_name = 'branch_name'",
-                &[&table],
-            )?
-            .get(0);
-        assert_eq!(
-            nullable, "YES",
-            "refresh must make {table}.branch_name nullable"
-        );
-    }
-    assert_gcode_rls_policies(&mut client)?;
-    let verification = SchemaRunner::new(&mut client, "public")?.verify()?;
-    assert!(verification.checked_catalog_objects > 0);
+    assert_eq!(checksum, OBSOLETE_BASELINE_CHECKSUM);
     Ok(())
 }
 
@@ -454,6 +360,7 @@ fn isolated_gcode_principal_reads_parent_and_writes_only_its_overlay() -> anyhow
 
     let machine_id = Uuid::new_v4();
     let other_machine_id = Uuid::new_v4();
+    let owner_user_id = Uuid::new_v4();
     let project_id = Uuid::new_v4();
     let unrelated_project_id = Uuid::new_v4();
     let parent_session_id = Uuid::new_v4();
@@ -465,8 +372,14 @@ fn isolated_gcode_principal_reads_parent_and_writes_only_its_overlay() -> anyhow
     let password = format!("gobby-schema-rls-{}", Uuid::new_v4().simple());
 
     client.execute(
-        "INSERT INTO machines(id, hostname) VALUES ($1, 'schema-test'), ($2, 'other')",
-        &[&machine_id, &other_machine_id],
+        "INSERT INTO users(id, email, name, password_hash) \
+         VALUES ($1, 'schema-test@example.invalid', 'Schema Test', 'test-only')",
+        &[&owner_user_id],
+    )?;
+    client.execute(
+        "INSERT INTO machines(id, hostname, owner_user_id) \
+         VALUES ($1, 'schema-test', $3), ($2, 'other', $3)",
+        &[&machine_id, &other_machine_id, &owner_user_id],
     )?;
     client.execute(
         "INSERT INTO projects(id, name, repo_path) \
@@ -635,148 +548,6 @@ fn isolated_gcode_principal_reads_parent_and_writes_only_its_overlay() -> anyhow
     Ok(())
 }
 
-fn verify_baseline_refresh_contract(predecessor: &str, current: &str) -> anyhow::Result<usize> {
-    let normalized = |sql: &str| -> anyhow::Result<Vec<(String, String)>> {
-        Ok(split_sql_statements(sql)?
-            .into_iter()
-            .map(|statement| {
-                let identity = statement_body(&statement)
-                    .split_whitespace()
-                    .collect::<Vec<_>>()
-                    .join(" ");
-                (identity, statement)
-            })
-            .collect())
-    };
-    let counts = |statements: &[(String, String)]| -> BTreeMap<String, usize> {
-        let mut counts = BTreeMap::<String, usize>::new();
-        for (identity, _) in statements {
-            *counts.entry(identity.clone()).or_default() += 1;
-        }
-        counts
-    };
-
-    let predecessor_sequence = normalized(predecessor)?;
-    let current_sequence = normalized(current)?;
-    let predecessor_counts = counts(&predecessor_sequence);
-    let current_predecessor_sequence: Vec<(String, String)> = current_sequence
-        .iter()
-        .filter(|(_, statement)| baseline_refresh_statement(statement).is_none())
-        .cloned()
-        .collect();
-    let current_predecessor_counts = counts(&current_predecessor_sequence);
-    if predecessor_sequence.len() == current_predecessor_sequence.len() {
-        let modified: Vec<(&String, &String)> = predecessor_sequence
-            .iter()
-            .map(|(identity, _)| identity)
-            .zip(
-                current_predecessor_sequence
-                    .iter()
-                    .map(|(identity, _)| identity),
-            )
-            .filter(|(predecessor, current)| predecessor != current)
-            .collect();
-        anyhow::ensure!(
-            modified.is_empty(),
-            "current baseline modified predecessor statements: {modified:?}"
-        );
-    }
-    let removed: Vec<(&String, usize, usize)> = predecessor_counts
-        .iter()
-        .filter_map(|(statement, expected)| {
-            let actual = current_predecessor_counts
-                .get(statement)
-                .copied()
-                .unwrap_or_default();
-            (actual < *expected).then_some((statement, *expected, actual))
-        })
-        .collect();
-    anyhow::ensure!(
-        removed.is_empty(),
-        "current baseline removed predecessor statement occurrences \
-         (statement, predecessor count, current count): {removed:?}"
-    );
-
-    let added: Vec<(&String, usize, usize)> = current_predecessor_counts
-        .iter()
-        .filter_map(|(statement, actual)| {
-            let expected = predecessor_counts
-                .get(statement)
-                .copied()
-                .unwrap_or_default();
-            (*actual > expected).then_some((statement, expected, *actual))
-        })
-        .collect();
-    anyhow::ensure!(
-        added.is_empty(),
-        "baseline_refresh_statement rejected added statement occurrences \
-         (statement, predecessor count, current count): {added:?}"
-    );
-
-    let refreshed = current_sequence
-        .iter()
-        .filter(|(_, statement)| baseline_refresh_statement(statement).is_some())
-        .count();
-    anyhow::ensure!(refreshed > 0, "the refresh set must not be empty");
-    Ok(refreshed)
-}
-
-#[test]
-fn baseline_refresh_accepts_exactly_the_predecessor_statement_difference() -> anyhow::Result<()> {
-    assert_eq!(
-        sha256_hex(PREDECESSOR_BASELINE_SQL.as_bytes()),
-        PREDECESSOR_BASELINE_CHECKSUM,
-        "fixture must be the exact predecessor baseline the runner refreshes from",
-    );
-    let predecessor = render_sql_for_schema(PREDECESSOR_BASELINE_SQL, "tripwire");
-    let current = render_sql_for_schema(BASELINE_SQL, "tripwire");
-    verify_baseline_refresh_contract(&predecessor, &current)?;
-    Ok(())
-}
-
-#[test]
-fn baseline_refresh_contract_rejects_removed_statements() {
-    let error = verify_baseline_refresh_contract(
-        "CREATE TABLE preserved_predecessor_table (id integer);\
-         CREATE TABLE removed_predecessor_table (id integer);",
-        "CREATE TABLE preserved_predecessor_table (id integer);",
-    )
-    .expect_err("removing a predecessor statement must trip the refresh contract");
-    assert!(
-        error
-            .to_string()
-            .contains("removed predecessor statement occurrences")
-    );
-}
-
-#[test]
-fn baseline_refresh_contract_rejects_modified_statements_distinctly() {
-    let error = verify_baseline_refresh_contract(
-        "CREATE TABLE predecessor_table (id integer);",
-        "CREATE TABLE predecessor_table (id bigint);",
-    )
-    .expect_err("modifying a predecessor statement must trip the refresh contract");
-    assert!(
-        error
-            .to_string()
-            .contains("modified predecessor statements")
-    );
-}
-
-#[test]
-fn baseline_refresh_contract_counts_duplicate_statements() {
-    let error = verify_baseline_refresh_contract(
-        "CREATE TABLE duplicate_table (id integer);\
-         CREATE TABLE duplicate_table (id integer);",
-        "CREATE TABLE duplicate_table (id integer);",
-    )
-    .expect_err("losing one duplicate occurrence must trip the refresh contract");
-    let display = error.to_string();
-    assert!(display.contains("removed predecessor statement occurrences"));
-    assert!(display.contains("2"));
-    assert!(display.contains("1"));
-}
-
 #[test]
 fn config_revision_baseline_is_nondestructive() -> anyhow::Result<()> {
     let _serial = DATABASE_TEST_LOCK
@@ -785,7 +556,7 @@ fn config_revision_baseline_is_nondestructive() -> anyhow::Result<()> {
     let Some((_database, mut client)) = test_database()? else {
         return Ok(());
     };
-    install_predecessor_baseline(&mut client)?;
+    SchemaRunner::new(&mut client, "public")?.apply()?;
     client.execute(
         "INSERT INTO config_store(key, value) VALUES ('stable.key', 'stable')",
         &[],
@@ -794,7 +565,7 @@ fn config_revision_baseline_is_nondestructive() -> anyhow::Result<()> {
     let first = SchemaRunner::new(&mut client, "public")?.apply()?;
     let second = SchemaRunner::new(&mut client, "public")?.apply()?;
 
-    assert!(first.baseline_applied);
+    assert!(!first.baseline_applied);
     assert!(!second.baseline_applied);
     let value: String = client
         .query_one(

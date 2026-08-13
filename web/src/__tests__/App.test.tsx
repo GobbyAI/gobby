@@ -37,9 +37,7 @@ vi.mock("../hooks/useIsMobile", () => ({
 
 vi.mock("../hooks/useAuth", () => ({
   useAuth: vi.fn(() => ({
-    authRequired: false,
     authenticated: true,
-    credentialsConfigured: true,
     loading: false,
     login: vi.fn(),
     logout: vi.fn(),
@@ -915,9 +913,7 @@ describe("App wiring", () => {
   it("shows a header Log out button that signs out when auth is enabled", async () => {
     const logout = vi.fn();
     vi.mocked(useAuth).mockReturnValue({
-      authRequired: true,
       authenticated: true,
-      credentialsConfigured: true,
       loading: false,
       login: vi.fn(),
       logout,
@@ -949,12 +945,10 @@ describe("App wiring", () => {
       });
       expect(logout).toHaveBeenCalled();
     } finally {
-      // Restore the suite default (auth off) so later tests are unaffected;
+      // Restore the suite default so later tests are unaffected;
       // clearAllMocks does not drop a mockReturnValue override.
       vi.mocked(useAuth).mockReturnValue({
-        authRequired: false,
         authenticated: true,
-        credentialsConfigured: true,
         loading: false,
         login: vi.fn(),
         logout: vi.fn(),
@@ -965,9 +959,7 @@ describe("App wiring", () => {
   it("collapses the header to a single settings entry at the mobile tier (#19185)", async () => {
     const logout = vi.fn();
     vi.mocked(useAuth).mockReturnValue({
-      authRequired: true,
       authenticated: true,
-      credentialsConfigured: true,
       loading: false,
       login: vi.fn(),
       logout,
@@ -1006,9 +998,7 @@ describe("App wiring", () => {
     } finally {
       vi.mocked(useIsMobile).mockReturnValue(false);
       vi.mocked(useAuth).mockReturnValue({
-        authRequired: false,
         authenticated: true,
-        credentialsConfigured: true,
         loading: false,
         login: vi.fn(),
         logout: vi.fn(),
@@ -1018,9 +1008,7 @@ describe("App wiring", () => {
 
   it("keeps the three-button header cluster on the desktop tier (#19185)", async () => {
     vi.mocked(useAuth).mockReturnValue({
-      authRequired: true,
       authenticated: true,
-      credentialsConfigured: true,
       loading: false,
       login: vi.fn(),
       logout: vi.fn(),
@@ -1045,9 +1033,7 @@ describe("App wiring", () => {
       ).toBeInTheDocument();
     } finally {
       vi.mocked(useAuth).mockReturnValue({
-        authRequired: false,
         authenticated: true,
-        credentialsConfigured: true,
         loading: false,
         login: vi.fn(),
         logout: vi.fn(),

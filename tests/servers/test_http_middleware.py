@@ -16,7 +16,6 @@ from starlette.responses import JSONResponse, Response
 
 from gobby.app_context import ServiceContainer
 from gobby.config.app import DaemonConfig
-from gobby.config.bootstrap import BootstrapConfig
 from gobby.servers.auth_service import AuthService
 from gobby.servers.http import HTTPServer
 from gobby.servers.middleware.auth import AuthMiddleware
@@ -24,6 +23,7 @@ from gobby.storage.auth import LOCAL_API_TOKEN_HASH_KEY, AuthStore, hash_token
 from gobby.storage.config_store import ConfigStore
 from gobby.storage.hub.protocol import HubDatabase
 from gobby.storage.sessions import SessionManager
+from tests.fixtures.postgres import TEST_USER_ID
 
 pytestmark = pytest.mark.unit
 
@@ -38,9 +38,8 @@ async def _run_db(func: Callable[_P, _T], *args: _P.args, **kwargs: _P.kwargs) -
 def _required_auth_middleware_app(
     *,
     bind_host: str = "localhost",
-    auth_enabled: bool = True,
 ) -> FastAPI:
-    auth_service = MagicMock(enabled=auth_enabled)
+    auth_service = MagicMock()
     auth_service.is_request_authenticated.side_effect = (
         lambda request: request.headers.get("Authorization") == "Bearer shared-token"
     )
@@ -60,12 +59,8 @@ def _required_auth_middleware_app(
 def _required_auth_app(
     *,
     bind_host: str = "localhost",
-    auth_enabled: bool = True,
 ) -> FastAPI:
-    app = _required_auth_middleware_app(
-        bind_host=bind_host,
-        auth_enabled=auth_enabled,
-    )
+    app = _required_auth_middleware_app(bind_host=bind_host)
 
     @app.api_route("/{path:path}", methods=["GET", "POST"])
     async def echo_path(path: str) -> dict[str, str]:
@@ -74,21 +69,16 @@ def _required_auth_app(
     return app
 
 
-def test_non_loopback_hooks_require_auth_when_auth_mode_is_disabled() -> None:
-    client = TestClient(_required_auth_app(bind_host="0.0.0.0", auth_enabled=False))
+def test_non_loopback_hooks_require_auth() -> None:
+    client = TestClient(_required_auth_app(bind_host="0.0.0.0"))
 
     response = client.post("/api/hooks/execute")
 
     assert response.status_code == 401
 
 
-def test_non_loopback_hooks_accept_shared_token_when_auth_mode_is_disabled() -> None:
-    client = TestClient(
-        _required_auth_app(
-            bind_host="0.0.0.0",
-            auth_enabled=False,
-        )
-    )
+def test_non_loopback_hooks_accept_shared_token() -> None:
+    client = TestClient(_required_auth_app(bind_host="0.0.0.0"))
 
     response = client.post(
         "/api/hooks/execute",
@@ -98,12 +88,12 @@ def test_non_loopback_hooks_accept_shared_token_when_auth_mode_is_disabled() -> 
     assert response.status_code == 200
 
 
-def test_loopback_hooks_remain_open_when_auth_mode_is_disabled() -> None:
-    client = TestClient(_required_auth_app(bind_host="127.0.0.1", auth_enabled=False))
+def test_loopback_hooks_require_auth() -> None:
+    client = TestClient(_required_auth_app(bind_host="127.0.0.1"))
 
     response = client.post("/api/hooks/execute")
 
-    assert response.status_code == 200
+    assert response.status_code == 401
 
 
 def test_required_by_default(temp_db: HubDatabase) -> None:
@@ -117,22 +107,9 @@ def test_required_by_default(temp_db: HubDatabase) -> None:
             llm_service=MagicMock(),
         )
 
-    fallback_server = HTTPServer(services())
-    runtime_disabled_server = HTTPServer(
-        services(),
-        startup_config=DaemonConfig(auth_mode="disabled"),
-    )
-    bootstrap_disabled_server = HTTPServer(
-        services(),
-        startup_config=DaemonConfig(auth_mode="required"),
-        bootstrap_config=BootstrapConfig(auth_mode="disabled"),
-    )
+    server = HTTPServer(services())
 
-    assert fallback_server.auth_service.enabled is True
-    assert runtime_disabled_server.startup_config is not None
-    assert runtime_disabled_server.startup_config.auth_mode == "disabled"
-    assert runtime_disabled_server.auth_service.enabled is True
-    assert bootstrap_disabled_server.auth_service.enabled is False
+    assert isinstance(server.auth_service, AuthService)
 
 
 def test_cors_wraps_auth_rejections_and_protected_preflights(temp_db: HubDatabase) -> None:
@@ -256,13 +233,12 @@ def test_public_webhooks_signature_gated() -> None:
 def test_bearer_and_alias_accepted(temp_db: HubDatabase, tmp_path: Path) -> None:
     token = "local-cli-token"
     ConfigStore(temp_db).set(LOCAL_API_TOKEN_HASH_KEY, hash_token(token), source="system")
-    session_token, _ = AuthStore(temp_db).create_session()
+    session_token, _ = AuthStore(temp_db).create_session(TEST_USER_ID)
     server = cast(
         HTTPServer,
         SimpleNamespace(
             auth_service=AuthService(
                 lambda: temp_db,
-                "required",
                 token_file=tmp_path / "missing",
             ),
             run_db=_run_db,
@@ -302,7 +278,12 @@ class TestLifespan:
             task_manager=MagicMock(),
             web_chat_runtime_manager=runtime_manager,
         )
-        server = HTTPServer(services=services, port=60887, test_mode=True)
+        server = HTTPServer(
+            services=services,
+            port=60887,
+            test_mode=True,
+            startup_config=DaemonConfig(),
+        )
 
         assert server._running is False
         with TestClient(server.app):
@@ -323,6 +304,7 @@ class TestLifespan:
             services=services,
             port=60887,
             test_mode=True,
+            startup_config=DaemonConfig(),
         )
 
         assert server._running is False
@@ -351,6 +333,7 @@ class TestLifespan:
             services=services,
             port=60887,
             test_mode=True,
+            startup_config=DaemonConfig(),
         )
 
         with patch("gobby.servers.app_factory.HookManager") as MockHM:
@@ -376,6 +359,7 @@ class TestLifespan:
             services=services,
             port=60887,
             test_mode=True,
+            startup_config=DaemonConfig(),
         )
 
         with patch("gobby.servers.app_factory.HookManager") as MockHM:
@@ -395,6 +379,7 @@ class TestLifespan:
             services=services,
             port=60887,
             test_mode=True,
+            startup_config=DaemonConfig(),
         )
         mock_ws_server = MagicMock()
         mock_ws_server.cleanup_voice = AsyncMock()
@@ -422,6 +407,7 @@ class TestLifespan:
             services=services,
             port=60887,
             test_mode=True,
+            startup_config=DaemonConfig(),
         )
 
         with (

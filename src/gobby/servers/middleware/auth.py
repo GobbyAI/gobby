@@ -1,6 +1,6 @@
 """Authentication middleware for Gobby web UI.
 
-Required-mode authentication protects daemon API, MCP, and memory routes.
+Authentication protects daemon API, MCP, and memory routes.
 Only login, health, startup readiness, signature-verified webhooks, and static
 browser assets are public. Other browser routes reach the SPA login shell.
 """
@@ -65,7 +65,7 @@ def _matches_path_prefix(path: str, prefix: str) -> bool:
 
 
 class AuthMiddleware(BaseHTTPMiddleware):
-    """Enforce the server's configured auth mode at HTTP route boundaries."""
+    """Enforce authentication at HTTP route boundaries."""
 
     def __init__(self, app: Any, server: "HTTPServer") -> None:
         super().__init__(app)
@@ -82,9 +82,6 @@ class AuthMiddleware(BaseHTTPMiddleware):
             return await call_next(request)
 
         auth_service = self.server.auth_service
-        if not auth_service.enabled and not remote_hook_requires_auth:
-            return await call_next(request)
-
         if await self.server.run_db(auth_service.is_request_authenticated, request):
             return await call_next(request)
 

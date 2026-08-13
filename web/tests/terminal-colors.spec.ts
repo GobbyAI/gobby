@@ -92,7 +92,7 @@ async function installApiMocks(page: Page): Promise<void> {
       });
 
     if (path === "/api/auth/status") {
-      return json({ auth_required: false, authenticated: true });
+      return json({ authenticated: true });
     }
     if (path === "/api/config/ui-settings") {
       return json({

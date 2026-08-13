@@ -20,20 +20,19 @@ from starlette.requests import Request
 import gobby.servers.auth_service as auth_service_module
 import gobby.servers.http as http_module
 from gobby.app_context import ServiceContainer
-from gobby.config.bootstrap import BootstrapConfig
-from gobby.config.ui import AuthConfig
+from gobby.identity import hash_password, verify_password_hash
 from gobby.servers.auth_service import AuthService
 from gobby.storage.agents import AgentRun, LocalAgentRunManager
 from gobby.storage.auth import (
     LOCAL_API_TOKEN_HASH_KEY,
     AuthStore,
-    hash_password,
     hash_token,
-    verify_password_hash,
 )
 from gobby.storage.config_store import ConfigStore
 from gobby.storage.hub.protocol import HubDatabase
+from gobby.storage.users import LocalUserManager
 from gobby.utils.local_token import issue_agent_api_token, issue_tool_api_token
+from tests.fixtures.postgres import TEST_USER_EMAIL, TEST_USER_ID
 
 pytestmark = pytest.mark.unit
 
@@ -109,21 +108,6 @@ def test_password_hash_is_salted_argon2id() -> None:
     assert verify_password_hash("wrong-password", first_hash) is False
 
 
-def test_auth_config_ignores_removed_credentials() -> None:
-    config = AuthConfig.model_validate(
-        {
-            "username": "admin",
-            "password": "legacy-password",
-            "session_secret": "legacy-secret",
-            "api_token_hash": "hash",
-            "password_hash": "hash",
-        }
-    )
-
-    assert config.username == "admin"
-    assert set(type(config).model_fields) == {"username"}
-
-
 def test_verify_bearer_rotation_refresh(
     temp_db: HubDatabase,
     tmp_path: Path,
@@ -134,7 +118,7 @@ def test_verify_bearer_rotation_refresh(
     token_file = tmp_path / "local_cli_token"
     token_file.write_text("old-token")
     _set_api_token(temp_db, "old-token")
-    service = AuthService(lambda: temp_db, mode="required", token_file=token_file)
+    service = AuthService(lambda: temp_db, token_file=token_file)
 
     assert service.verify_bearer("old-token") is True
 
@@ -155,8 +139,8 @@ def test_is_request_authenticated_precedence(
     token_file = tmp_path / "local_cli_token"
     token_file.write_text("api-token")
     _set_api_token(temp_db, "api-token")
-    session_token, _ = AuthStore(temp_db).create_session()
-    service = AuthService(lambda: temp_db, mode="required", token_file=token_file)
+    session_token, _ = AuthStore(temp_db).create_session(TEST_USER_ID)
+    service = AuthService(lambda: temp_db, token_file=token_file)
 
     assert service.is_request_authenticated(
         _request(
@@ -203,7 +187,7 @@ def test_agent_bearer_is_bound_to_run_identity_and_routes(
     token_file = tmp_path / "local_cli_token"
     token_file.write_text("operator-token")
     _set_api_token(temp_db, "operator-token")
-    service = AuthService(lambda: temp_db, mode="required", token_file=token_file)
+    service = AuthService(lambda: temp_db, token_file=token_file)
     token = issue_agent_api_token(
         "operator-token",
         agent_run_id=live_agent_run.id,
@@ -255,7 +239,7 @@ def test_local_token_refreshes_after_rotation(
     token_file = tmp_path / "local_cli_token"
     token_file.write_text("old-token")
     _set_api_token(temp_db, "old-token")
-    service = AuthService(lambda: temp_db, mode="required", token_file=token_file)
+    service = AuthService(lambda: temp_db, token_file=token_file)
 
     assert service.local_token() == "old-token"
 
@@ -267,7 +251,7 @@ def test_local_token_refreshes_after_rotation(
     assert service.local_token() == "new-token"
 
 
-def test_server_auth_mode_uses_bootstrap(temp_db: HubDatabase) -> None:
+def test_server_installs_auth_service(temp_db: HubDatabase) -> None:
     services = ServiceContainer(
         database=temp_db,
         session_manager=MagicMock(),
@@ -277,30 +261,23 @@ def test_server_auth_mode_uses_bootstrap(temp_db: HubDatabase) -> None:
         llm_service=MagicMock(),
     )
 
-    default_server = http_module.HTTPServer(services)
-    bootstrap_server = http_module.HTTPServer(
-        services,
-        bootstrap_config=BootstrapConfig(auth_mode="disabled"),
-    )
+    server = http_module.HTTPServer(services)
 
-    assert isinstance(default_server.auth_service, AuthService)
-    assert default_server.auth_service.enabled is True
-    assert bootstrap_server.auth_service.enabled is False
+    assert isinstance(server.auth_service, AuthService)
 
 
 def test_verify_password_uses_argon2id_hash(temp_db: HubDatabase, tmp_path: Path) -> None:
-    config_store = ConfigStore(temp_db)
-    config_store.set("auth.username", "operator")
-    config_store.set("auth.password_hash", _password_hash("correct-password"))
+    LocalUserManager(temp_db).update_password(TEST_USER_ID, _password_hash("correct-password"))
     service = AuthService(
         lambda: temp_db,
-        mode="required",
         token_file=tmp_path / "missing-local-token",
     )
 
-    assert service.verify_password("operator", "correct-password") is True
-    assert service.verify_password("intruder", "correct-password") is False
-    assert service.verify_password("operator", "wrong-password") is False
+    user = service.verify_password(TEST_USER_EMAIL.upper(), "correct-password")
+    assert user is not None
+    assert user.id == TEST_USER_ID
+    assert service.verify_password("intruder@example.com", "correct-password") is None
+    assert service.verify_password(TEST_USER_EMAIL, "wrong-password") is None
 
 
 @pytest.mark.asyncio
@@ -308,8 +285,8 @@ async def test_session_and_ws_verifiers(temp_db: HubDatabase, tmp_path: Path) ->
     token_file = tmp_path / "local_cli_token"
     token_file.write_text("api-token")
     _set_api_token(temp_db, "api-token")
-    session_token, _ = AuthStore(temp_db).create_session()
-    service = AuthService(lambda: temp_db, mode="required", token_file=token_file)
+    session_token, _ = AuthStore(temp_db).create_session(TEST_USER_ID)
+    service = AuthService(lambda: temp_db, token_file=token_file)
 
     assert service.validate_session(session_token) is True
     assert service.validate_session("wrong-session") is False
@@ -326,7 +303,7 @@ def test_agent_capability_matrix(
     token_file = tmp_path / "local_cli_token"
     token_file.write_text("operator-token")
     _set_api_token(temp_db, "operator-token")
-    service = AuthService(lambda: temp_db, mode="required", token_file=token_file)
+    service = AuthService(lambda: temp_db, token_file=token_file)
     session_uuid = "11111111-2222-3333-4444-555555555555"
     token = issue_agent_api_token(
         "operator-token",
@@ -456,7 +433,7 @@ def test_tool_capability_is_bound_to_live_managed_execution(
         return original_fetchone(query, params)
 
     monkeypatch.setattr(temp_db, "fetchone", fetchone)
-    service = AuthService(lambda: temp_db, mode="required", token_file=token_file)
+    service = AuthService(lambda: temp_db, token_file=token_file)
     execution_id = "11111111-2222-4333-8444-555555555555"
     session_id = "22222222-3333-4444-8555-666666666666"
     token = issue_tool_api_token(
@@ -505,7 +482,7 @@ def _agent_service_and_headers(
     token_file = tmp_path / "local_cli_token"
     token_file.write_text("operator-token")
     _set_api_token(temp_db, "operator-token")
-    service = AuthService(lambda: temp_db, mode="required", token_file=token_file)
+    service = AuthService(lambda: temp_db, token_file=token_file)
 
     def mint() -> str:
         return issue_agent_api_token(

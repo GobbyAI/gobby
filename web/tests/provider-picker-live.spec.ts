@@ -78,9 +78,9 @@ async function loadLiveCatalog(
   expect(authResponse.ok()).toBeTruthy();
   const authStatus = await authResponse.json();
   expect(
-    authStatus.auth_required && !authStatus.authenticated,
+    authStatus.authenticated,
     "Live provider verification requires an authenticated daemon session.",
-  ).toBe(false);
+  ).toBe(true);
 
   const providersResponse = await request.get(
     getApiUrl("/api/providers/models"),

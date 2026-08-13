@@ -349,9 +349,7 @@ def test_attention_router_is_registered_in_real_app(temp_db: HubDatabase) -> Non
         attention_manager=_manager(temp_db),
         detection_registry=DETECTION_REGISTRY,
     )
-    server = HTTPServer(
-        services=services, test_mode=True, bootstrap_config=BootstrapConfig(auth_mode="disabled")
-    )
+    server = HTTPServer(services=services, test_mode=True, bootstrap_config=BootstrapConfig())
 
     paths = {route.path for route in server.app.routes}
 

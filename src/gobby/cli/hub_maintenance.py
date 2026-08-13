@@ -314,6 +314,13 @@ def _child_cli_failure_detail(result: subprocess.CompletedProcess[str]) -> str:
 
 def _load_campaign_executor(campaign: Campaign) -> CampaignExecutor:
     executor = _CAMPAIGN_EXECUTORS.get(campaign)
+    if executor is None and campaign == "account-identity-cutover":
+        from gobby.cli.account_identity_cutover import (
+            install_account_identity_cutover_executor,
+        )
+
+        install_account_identity_cutover_executor()
+        executor = _CAMPAIGN_EXECUTORS.get(campaign)
     if executor is None:
         raise click.ClickException(
             f"Maintenance campaign {campaign!r} has no installed implementation"

@@ -15,6 +15,7 @@ import pytest
 from tests.e2e.conftest import (
     DaemonInstance,
     _postgres_url_for_schema,
+    _seed_e2e_runtime_state,
     find_free_port,
     prepare_daemon_env,
     terminate_process_tree,
@@ -36,9 +37,7 @@ def _write_daemon_home(
     home = root
     log_dir = home / "logs"
     log_dir.mkdir(parents=True)
-    machine_state_dir = home / ".gobby"
-    machine_state_dir.mkdir()
-    (machine_state_dir / "machine_id").write_text(machine_id)
+    (home / "machine_id").write_text(machine_id)
     config_path = home / "config.yaml"
     config_path.write_text(
         f"""daemon_port: {http_port}
@@ -74,7 +73,6 @@ database_url: {database_url}
 daemon_port: {http_port}
 bind_host: localhost
 websocket_port: {ws_port}
-auth_mode: required
 """
     )
     bootstrap_path.chmod(0o600)
@@ -152,7 +150,7 @@ def test_single_active_daemon_and_explicit_handoff(
     postgres_db: object,
 ) -> None:
     """One full runtime owns the lease until an explicit, quiescent handoff."""
-    _ = postgres_db
+    _seed_e2e_runtime_state(postgres_db, e2e_project_dir)
     ports: list[int] = []
     while len(ports) < 4:
         port = find_free_port()

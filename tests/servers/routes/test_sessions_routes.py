@@ -29,8 +29,12 @@ from gobby.sessions.transcript_window import WindowResult
 from gobby.storage.machines import LocalMachineManager
 from gobby.storage.sessions import SessionManager
 from tests._timing import wait_for_condition
+from tests.fixtures.postgres import TEST_USER_ID
 
-pytestmark = pytest.mark.unit
+pytestmark = [
+    pytest.mark.unit,
+    pytest.mark.usefixtures("authenticated_http_requests", "isolated_http_runtime"),
+]
 
 NOW_ISO = "2026-02-10T12:00:00+00:00"
 
@@ -203,10 +207,16 @@ def test_app_wires_session_change_listener_to_websocket(session_storage, sample_
         services=services,
         port=60887,
         test_mode=True,
-        bootstrap_config=BootstrapConfig(auth_mode="disabled"),
+        bootstrap_config=BootstrapConfig(),
     )
 
     with TestClient(server.app):
+        LocalMachineManager(session_storage.db).upsert_seen(
+            machine_id=LOCAL_MACHINE_ID,
+            hostname="session-route-test",
+            os="test",
+            owner_user_id=TEST_USER_ID,
+        )
         session = session_storage.register(
             external_id="app-session-change-test",
             machine_id="20000000-0000-4000-8000-000000000001",
@@ -253,10 +263,16 @@ def test_app_cancels_session_broadcast_tasks_on_shutdown(session_storage, sample
         services=services,
         port=60887,
         test_mode=True,
-        bootstrap_config=BootstrapConfig(auth_mode="disabled"),
+        bootstrap_config=BootstrapConfig(),
     )
 
     with TestClient(server.app):
+        LocalMachineManager(session_storage.db).upsert_seen(
+            machine_id=LOCAL_MACHINE_ID,
+            hostname="session-route-test",
+            os="test",
+            owner_user_id=TEST_USER_ID,
+        )
         session_storage.register(
             external_id="app-session-shutdown-test",
             machine_id="20000000-0000-4000-8000-000000000001",
@@ -570,13 +586,18 @@ class TestRegisterSession:
         machine_id = "20000000-0000-4000-8000-000000000001"
         external_id = "http-machine-attribution-transition"
         project_id = sample_project["id"]
+        LocalMachineManager(session_manager.db).upsert_seen(
+            machine_id=machine_id,
+            hostname="session-route-test",
+            os="test",
+            owner_user_id=TEST_USER_ID,
+        )
         canonical = session_manager.register(
             external_id=external_id,
             machine_id=None,
             source="codex",
             project_id=project_id,
         )
-        LocalMachineManager(session_manager.db).upsert_seen(machine_id)
         mock_server.session_manager = session_manager
         mock_server.resolve_project_id.return_value = project_id
 

@@ -56,7 +56,6 @@ def test_bootstrap_overlay_wins_for_bootstrap_owned_fields() -> None:
         bind_host="0.0.0.0",
         websocket_port=61112,
         ui_port=61113,
-        auth_mode="disabled",
         datastore_mode="remote",
         database_url="postgresql://gobby:pw@db.example:5432/hub",
     )
@@ -67,7 +66,6 @@ def test_bootstrap_overlay_wins_for_bootstrap_owned_fields() -> None:
     assert merged.bind_host == "0.0.0.0"
     assert merged.websocket.port == 61112
     assert merged.ui.port == 61113
-    assert merged.auth_mode == "disabled"
     assert merged.datastore_mode == "remote"
     assert merged.database_url == "postgresql://gobby:pw@db.example:5432/hub"
 

@@ -57,7 +57,7 @@ def mock_mcp_manager() -> MagicMock:
 
 @pytest.fixture
 def server(mock_config: MagicMock, mock_mcp_manager: MagicMock) -> WebSocketServer:
-    return WebSocketServer(mock_config, mock_mcp_manager)
+    return WebSocketServer(mock_config, mock_mcp_manager, AsyncMock(return_value="test-user"))
 
 
 @pytest.mark.asyncio

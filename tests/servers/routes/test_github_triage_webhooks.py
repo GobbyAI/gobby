@@ -47,6 +47,7 @@ def test_github_triage_webhook_persists_delivery_and_returns_202(
     server = create_http_server(
         session_manager=session_manager,
         database=temp_db,
+        authenticated_requests=False,
     )
 
     response = TestClient(server.app).post(
@@ -91,7 +92,11 @@ def test_github_triage_webhook_rejects_missing_or_bad_signature(
             webhook_secret_ref=secret,
         )
     )
-    server = create_http_server(session_manager=session_manager, database=temp_db)
+    server = create_http_server(
+        session_manager=session_manager,
+        database=temp_db,
+        authenticated_requests=False,
+    )
 
     response = TestClient(server.app).post(
         f"/api/github/webhooks/triage/{sample_project['id']}",
@@ -119,7 +124,11 @@ def test_github_triage_webhook_authentication_failures_are_indistinguishable(
         webhook_secret_ref=secret,
     )
     store.upsert_config(config)
-    server = create_http_server(session_manager=session_manager, database=temp_db)
+    server = create_http_server(
+        session_manager=session_manager,
+        database=temp_db,
+        authenticated_requests=False,
+    )
     client = TestClient(server.app)
     raw_body = b"{}"
     endpoint = f"/api/github/webhooks/triage/{sample_project['id']}"

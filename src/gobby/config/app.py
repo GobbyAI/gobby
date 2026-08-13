@@ -72,10 +72,8 @@ from gobby.config.system_loops import SystemLoopsConfig
 from gobby.config.tasks import CompactHandoffConfig, GobbyTasksConfig, WorkflowConfig
 from gobby.config.tmux import TmuxConfig
 from gobby.config.ui import (
-    AuthConfig,
     ToolApprovalConfig,
     UIConfig,
-    is_loopback_bind_host,
 )
 from gobby.config.ui import (
     ToolApprovalPolicy as ToolApprovalPolicy,
@@ -188,10 +186,6 @@ class DaemonConfig(BaseModel):
         default="localhost",
         description="Host/IP to bind servers to. Use 'localhost' for local-only access, "
         "'0.0.0.0' for all interfaces, or a specific IP (e.g., Tailscale IP) for restricted access.",
-    )
-    auth_mode: str = Field(
-        default="required",
-        description="Daemon API authentication mode selected by bootstrap.yaml.",
     )
     datastore_mode: Literal["local", "remote"] = Field(
         default="local",
@@ -385,10 +379,6 @@ class DaemonConfig(BaseModel):
         default_factory=UIConfig,
         description="Web UI configuration",
     )
-    auth: AuthConfig = Field(
-        default_factory=AuthConfig,
-        description="Web UI authentication configuration",
-    )
     tmux: TmuxConfig = Field(
         default_factory=TmuxConfig,
         description="Tmux agent spawning configuration",
@@ -503,20 +493,6 @@ class DaemonConfig(BaseModel):
             raise ValueError(
                 "Hook timeouts must satisfy memory_recall.timeout < workflow.timeout < "
                 "hooks.adapter_timeout < hooks.provider_timeout"
-            )
-        return self
-
-    @model_validator(mode="after")
-    def validate_remote_ui_auth(self) -> DaemonConfig:
-        """Refuse unauthenticated UI exposure beyond the loopback interface."""
-        if (
-            self.ui.enabled
-            and self.auth_mode != "required"
-            and not is_loopback_bind_host(self.bind_host)
-        ):
-            raise ValueError(
-                "ui.enabled requires auth_mode='required' when bind_host is not localhost "
-                "or a numeric loopback address"
             )
         return self
 

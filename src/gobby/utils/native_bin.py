@@ -7,6 +7,8 @@ import shutil
 import sys
 from pathlib import Path
 
+NATIVE_BIN_DIR_ENV = "GOBBY_NATIVE_BIN_DIR"
+
 
 def native_bin_name(name: str) -> str:
     """Return the platform-specific executable name for a native binary."""
@@ -17,6 +19,9 @@ def native_bin_name(name: str) -> str:
 
 def native_bin_dir() -> Path:
     """Return the managed native binary directory."""
+    configured_dir = os.environ.get(NATIVE_BIN_DIR_ENV)
+    if configured_dir:
+        return Path(configured_dir)
     return Path.home() / ".gobby" / "bin"
 
 

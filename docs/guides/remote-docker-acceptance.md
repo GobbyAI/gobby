@@ -314,7 +314,6 @@ source.update(
         "bind_host": "localhost",
         "websocket_port": int(os.environ["ACCEPT_WS_PORT"]),
         "ui_port": int(os.environ["ACCEPT_UI_PORT"]),
-        "auth_mode": "required",
     }
 )
 target = home / "bootstrap.yaml"

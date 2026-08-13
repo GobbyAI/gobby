@@ -9,7 +9,6 @@ from __future__ import annotations
 import logging
 from collections.abc import Callable, Coroutine
 from typing import Any
-from uuid import uuid4
 
 from websockets.datastructures import Headers
 from websockets.http11 import Response
@@ -20,18 +19,14 @@ logger = logging.getLogger(__name__)
 class AuthMixin:
     """Mixin providing authentication for WebSocketServer.
 
-    Requires on the host class:
-    - ``self.auth_callback: Callable | None``
+    Requires ``self.auth_callback`` on the host class.
     """
 
-    auth_callback: Callable[[str], Coroutine[Any, Any, str | None]] | None
+    auth_callback: Callable[[str], Coroutine[Any, Any, str | None]]
 
     async def _authenticate(self, websocket: Any, request: Any) -> Response | None:
         """
         Authenticate WebSocket connection via Bearer token.
-
-        In local-first mode (no auth_callback), all connections are accepted
-        with a generated local user ID.
 
         Args:
             websocket: WebSocket connection
@@ -40,12 +35,7 @@ class AuthMixin:
         Returns:
             None to accept connection, Response to reject
         """
-        # Local-first mode: accept all connections
-        if self.auth_callback is None:
-            websocket.user_id = f"local-{uuid4().hex[:8]}"
-            return None
-
-        # Auth callback provided - require Bearer token
+        # Direct WebSocket clients authenticate with the daemon bearer token.
         auth_header = request.headers.get("Authorization")
 
         if not auth_header:

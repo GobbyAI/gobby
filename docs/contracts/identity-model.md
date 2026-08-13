@@ -13,28 +13,27 @@ and workflow tables should derive user ownership by joining `session.machine_id`
 
 ## Machines
 
-`machines.id` is an install-generated UUID primary key. The registry stores optional descriptive
-metadata (`hostname`, `os`, `label`, `tailscale_name`) plus `first_seen`,
-`last_seen`, and nullable `owner_user_id`.
+`machines.id` is an install-generated UUID primary key. The registry stores
+optional descriptive metadata (`hostname`, `os`, `label`, `tailscale_name`)
+plus `first_seen`, `last_seen`, and required UUID `owner_user_id`.
 
-`owner_user_id` intentionally has no foreign key yet. It is a forward-compatible
-seam for future auth and fleet ownership without forcing a user table or auth
-provider into the local-first stack today.
-
-Missing machine attribution is represented by an absent value. Sentinel strings are
-retired and never become registry rows.
+`owner_user_id` references `users.id` with restricted deletion. Installation
+and authenticated enrollment establish ownership. Startup may idempotently
+register the canonical local machine for the sole installed user. Hook and
+session ingress only refresh known-machine metadata; an unknown UUID is never
+auto-claimed.
 
 ## Daemon Access Credentials
 
 Daemon auth establishes access to one operator-controlled daemon. The
 install-scoped `local_cli_token` authorizes CLI, hook, MCP, HTTP, and direct
-WebSocket clients. Web credentials in `auth.username` and the scrypt
-`auth.password_hash` create `gobby_session` browser sessions.
+WebSocket clients. Canonical email credentials in `users` create
+`gobby_session` browser sessions linked through `auth_sessions.user_id`.
 
-These credentials represent daemon access capabilities. They do not populate
-`machines.owner_user_id`, identify the calling machine, or add row-level user
-ownership to tasks, sessions, memory, agents, or workflows. The daemon stamps its
-install-generated machine UUID on session registration and web-chat creation.
+The local token remains a machine-local access capability. Browser sessions
+identify a canonical user. Neither path adds parallel user columns to task,
+session, memory, agent, or workflow rows; those domains derive user identity
+through machine ownership where needed.
 
 See [Secrets Contract](./secrets.md#daemon-api-token) for token storage, header,
 and rotation semantics.

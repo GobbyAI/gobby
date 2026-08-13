@@ -3,23 +3,29 @@
 from collections.abc import Iterator
 from pathlib import Path
 from types import MappingProxyType
-from typing import Any
+from typing import Any, cast
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 from fastapi.testclient import TestClient
 
 from gobby.app_context import ServiceContainer
-from gobby.config.bootstrap import AuthMode, BootstrapConfig
+from gobby.config.app import DaemonConfig
+from gobby.config.bootstrap import BootstrapConfig
 from gobby.config.runtime import ConfigRuntime, RuntimeActiveBundle
 from gobby.config.runtime_models import ConfigSnapshot
+from gobby.hooks.factory import HookManagerFactory
+from gobby.servers.auth_service import AuthService
 from gobby.servers.http import HTTPServer
+from gobby.storage.auth import LOCAL_API_TOKEN_HASH_KEY, hash_token
+from gobby.storage.config_store import ConfigStore
 from gobby.storage.hub.protocol import HubDatabase
 from gobby.storage.projects import LocalProjectManager
 from gobby.storage.sessions import SessionManager
 
 # Sentinel to distinguish "not provided" from "explicitly None"
 _NOT_PROVIDED = object()
+TEST_LOCAL_TOKEN = "server-test-local-token"
 
 
 class StubConfigRuntime(ConfigRuntime):
@@ -45,11 +51,40 @@ class StubConfigRuntime(ConfigRuntime):
         return self.current
 
 
+def authenticate_test_server(server: HTTPServer) -> HTTPServer:
+    """Mark requests authenticated for tests outside the authentication contract."""
+    cast(Any, server.auth_service).is_request_authenticated = MagicMock(return_value=True)
+    return server
+
+
+@pytest.fixture
+def authenticated_http_requests(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Authenticate every HTTP request in a module that opts into this fixture."""
+    monkeypatch.setattr(
+        AuthService,
+        "is_request_authenticated",
+        lambda _service, _request: True,
+    )
+
+
+@pytest.fixture
+def isolated_http_runtime(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Keep generic HTTP lifespan tests independent from operator bootstrap state."""
+    original_resolve = HookManagerFactory._resolve_config
+
+    def resolve_config(config: Any | None, runtime: ConfigRuntime | None) -> Any:
+        if config is None and runtime is None:
+            return DaemonConfig()
+        return original_resolve(config, runtime)
+
+    monkeypatch.setattr(HookManagerFactory, "_resolve_config", staticmethod(resolve_config))
+
+
 def create_http_server(
     port: int = 60887,
     test_mode: bool = True,
     mcp_manager: Any | None = None,
-    config: Any | None = None,
+    config: Any = _NOT_PROVIDED,
     session_manager: Any = _NOT_PROVIDED,
     task_manager: Any = _NOT_PROVIDED,
     message_processor: Any | None = None,
@@ -68,7 +103,7 @@ def create_http_server(
     database: Any | None = None,
     span_storage: Any | None = None,
     transcript_reader: Any | None = None,
-    auth_mode: AuthMode = "disabled",
+    authenticated_requests: bool = True,
 ) -> HTTPServer:
     """
     Create an HTTPServer instance with the new ServiceContainer API.
@@ -109,14 +144,18 @@ def create_http_server(
         transcript_reader=transcript_reader,
     )
 
-    return HTTPServer(
+    startup_config = DaemonConfig() if config is _NOT_PROVIDED else config
+    server = HTTPServer(
         services=services,
-        startup_config=config,
+        startup_config=startup_config,
         port=port,
         test_mode=test_mode,
         codex_client=codex_client,
-        bootstrap_config=BootstrapConfig(auth_mode=auth_mode),
+        bootstrap_config=BootstrapConfig(),
     )
+    if authenticated_requests:
+        authenticate_test_server(server)
+    return server
 
 
 @pytest.fixture
@@ -146,6 +185,7 @@ def test_project(project_storage: LocalProjectManager, temp_dir: Path) -> dict[s
 @pytest.fixture
 def http_server(
     session_storage: SessionManager,
+    tmp_path: Path,
 ) -> HTTPServer:
     """Create an HTTP server instance for testing."""
     services = ServiceContainer(
@@ -153,12 +193,17 @@ def http_server(
         session_manager=session_storage,
         task_manager=MagicMock(),
     )
-    return HTTPServer(
+    server = HTTPServer(
         services=services,
         port=60887,
         test_mode=True,
-        bootstrap_config=BootstrapConfig(auth_mode="disabled"),
+        bootstrap_config=BootstrapConfig(),
     )
+    token_file = tmp_path / "local_cli_token"
+    token_file.write_text(TEST_LOCAL_TOKEN)
+    ConfigStore(session_storage.db).set(LOCAL_API_TOKEN_HASH_KEY, hash_token(TEST_LOCAL_TOKEN))
+    server.auth_service = AuthService(lambda: session_storage.db, token_file=token_file)
+    return server
 
 
 @pytest.fixture
@@ -175,5 +220,8 @@ def client(http_server: HTTPServer) -> Iterator[TestClient]:
         mock_instance._stop_registry = MagicMock()
         mock_instance.shutdown = MagicMock()
         mock_instance.shutdown_async = AsyncMock()
-        with TestClient(http_server.app) as client:
+        with TestClient(
+            http_server.app,
+            headers={"X-Gobby-Local-Token": TEST_LOCAL_TOKEN},
+        ) as client:
             yield client
