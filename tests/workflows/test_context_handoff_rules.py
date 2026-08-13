@@ -223,6 +223,8 @@ class TestInjectCompactHandoff:
         assert body.effects[0].type == "inject_context"
         assert body.effects[0].template is not None
         assert "Continuation Context" in body.effects[0].template
+        assert "Durable Tool-Call Evidence" in body.effects[0].template
+        assert "mcp_calls" in body.effects[0].template
         assert "skill_fetch_batch_directive" in body.effects[0].template
         assert "Advisory Skill Reload" in body.effects[0].template
         assert "compact_resume_advisory_skills" in body.effects[0].template
@@ -239,6 +241,73 @@ class TestInjectCompactHandoff:
         body = RuleDefinitionBody.model_validate_json(row.definition_json)
         assert body.when is not None
         assert "compact" in body.when
+
+    @pytest.mark.asyncio
+    async def test_durable_tool_call_evidence_reasserted_after_compaction(self, db) -> None:
+        """Satisfy -> compact -> stop regression seam for stop-gate goal evaluators.
+
+        A tool-invocation goal satisfied before compaction leaves its only
+        durable evidence in the session's `mcp_calls` ledger; the transcript
+        window the evaluator reads is truncated by the compaction. The
+        post-compaction injection must re-assert that ledger so the evaluator
+        sees the satisfied call and does not re-arm the goal (#20168).
+        """
+        _sync_bundled(db)
+        engine = RuleEngine(db)
+        event = HookEvent(
+            event_type=HookEventType.SESSION_START,
+            session_id=SESSION_ID,
+            source=SessionSource.CLAUDE,
+            timestamp=datetime.now(UTC),
+            data={"source": "compact"},
+        )
+
+        satisfied = await engine.evaluate(
+            event,
+            session_id=SESSION_ID,
+            variables={
+                "session_summary": "Prior-window summary",
+                "mcp_calls": {
+                    "gobby-sessions": ["compact_self"],
+                    "gobby-tasks": ["claim_task", "close_task"],
+                },
+            },
+        )
+        assert satisfied.context is not None
+        assert "Durable Tool-Call Evidence" in satisfied.context
+        assert "`gobby-sessions`: compact_self" in satisfied.context
+        assert "`gobby-tasks`: claim_task, close_task" in satisfied.context
+
+    @pytest.mark.asyncio
+    async def test_unmet_tool_invocation_goal_gains_no_evidence(self, db) -> None:
+        """A tool never durably recorded must not appear as evidence."""
+        _sync_bundled(db)
+        engine = RuleEngine(db)
+        event = HookEvent(
+            event_type=HookEventType.SESSION_START,
+            session_id=SESSION_ID,
+            source=SessionSource.CLAUDE,
+            timestamp=datetime.now(UTC),
+            data={"source": "compact"},
+        )
+
+        uncalled = await engine.evaluate(
+            event,
+            session_id=SESSION_ID,
+            variables={
+                "session_summary": "Prior-window summary",
+                "mcp_calls": {"gobby-tasks": ["claim_task"]},
+            },
+        )
+        assert uncalled.context is not None
+        assert "compact_self" not in uncalled.context
+
+        empty_ledger = await engine.evaluate(
+            event,
+            session_id=SESSION_ID,
+            variables={"session_summary": "Prior-window summary"},
+        )
+        assert not (empty_ledger.context and "Durable Tool-Call Evidence" in empty_ledger.context)
 
 
 # ═══════════════════════════════════════════════════════════════════════

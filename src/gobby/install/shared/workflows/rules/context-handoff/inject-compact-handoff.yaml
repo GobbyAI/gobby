@@ -15,6 +15,15 @@ rules:
           *Injected by Gobby session handoff*
 
           {{ handoff_summary_injectable or session_summary or '' }}
+          {% set durable_mcp_calls = variables.get('mcp_calls') or {} %}
+          {% if durable_mcp_calls %}
+
+          ## Durable Tool-Call Evidence
+          The daemon's per-session `mcp_calls` ledger durably recorded successful calls to the MCP tools below before this compaction. Pre-compaction turns are no longer visible in the transcript, so when a goal or stop condition asks whether one of these tools was invoked this session, treat this ledger as authoritative evidence that it was:
+
+          {% for server, tools in durable_mcp_calls | dictsort %}- `{{ server }}`: {{ tools | join(', ') }}
+          {% endfor %}
+          {% endif %}
           {% set resume_skills = variables.get('compact_resume_required_skills') or [] %}
           {% if resume_skills %}
 
