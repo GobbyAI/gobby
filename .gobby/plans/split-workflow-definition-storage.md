@@ -3521,3 +3521,1308 @@ pass; the P7 audit test is the standing regression gate.
 <!-- Updated after task creation -->
 | Plan Item | Task Ref | Status |
 |-----------|----------|--------|
+
+## M1 Task Manifest
+`kind: manifest`
+
+```yaml
+- title: Domain-table DDL in the revisioned baseline
+  category: code
+  task_type: feature
+  depends_on: []
+  validation_criteria: '1.1.1: Baseline contains the eight new tables (including legacy_copy_ledger)
+    with partial unique live-name indexes and `enabled_pinned` on the four definition
+    domains, and retains the legacy tables. file: `crates/gcore/assets/schema/baseline.sql`.
+
+    1.1.2: The schema-artifact lockstep is re-armed: the refresh-statement acceptance
+    in its implementation module enumerates exactly the added statements and the predecessor
+    fixture matches its pinned checksum. file: `crates/gcore/src/baseline_refresh.rs`.
+    file: `crates/gcore/src/schema/runner.rs`. file: `crates/gcore/src/schema/runner_tests.rs`.
+
+    1.1.3: The regenerated catalog manifest carries the eight tables and the freshness
+    test passes without the update flag; the regenerated expected identity matches
+    the rebuilt gdaemon. file: `crates/gcore/assets/schema/catalog.manifest.json`.
+    file: `src/gobby/storage/schema_expected_identity.json`.
+
+    1.1.4: The applied-schema catalog pins the eight tables, the reconciliation columns,
+    and the partial unique predicates. test: `tests/storage/test_domain_tables_schema.py`.'
+  labels:
+  - covers:split-workflow-definition-storage:1.1:1.1.1
+  - covers:split-workflow-definition-storage:1.1:1.1.2
+  - covers:split-workflow-definition-storage:1.1:1.1.3
+  - covers:split-workflow-definition-storage:1.1:1.1.4
+  tdd: true
+  source_section: '1.1'
+  implementation_domain: backend
+- title: Typed definition managers package
+  category: code
+  task_type: feature
+  depends_on:
+  - '1.1'
+  - '1.4'
+  validation_criteria: "1.2.1: Shared scope/soft-delete/conflict utilities exist with\
+    \ typed errors. file: `src/gobby/storage/definitions/_shared.py`.\n1.2.2: Rule\
+    \ manager supports event/group listing with priority ordering. symbol: `RuleDefinitionManager`.\
+    \ file: `src/gobby/storage/definitions/rules.py`.\n1.2.3: Variable-defaults manager\
+    \ returns a typed defaults map. symbol: `SessionVariableDefaultManager`. file:\
+    \ `src/gobby/storage/definitions/variables.py`.\n1.2.4: Pipeline manager covers\
+    \ CRUD, duplicate, scope moves, canvas/version updates. symbol: `PipelineDefinitionManager`.\
+    \ file: `src/gobby/storage/definitions/pipelines.py`.\n1.2.5: CRUD, scope fallback,\
+    \ cross-domain same-name, same-domain live conflict, restore collision, and purge\
+    \ behaviors are covered for rules. test: `tests/storage/definitions/test_rules_manager.py`.\n\
+    1.2.6: The same behavior set is covered for variable defaults. test: `tests/storage/definitions/test_variables_manager.py`.\n\
+    1.2.7: The same behavior set is covered for pipelines, including duplicate and\
+    \ canvas/version updates. test: `tests/storage/definitions/test_pipelines_manager.py`.\n\
+    1.2.8: The parameterized reconciliation contract holds for rules, variables, and\
+    \ pipelines: user update/toggle stamps enabled_pinned, sync adopts a changed template\
+    \ enabled default while unpinned, and sync preserves the user's value while pinned.\
+    \ test: `tests/storage/definitions/test_enabled_reconciliation.py`.\n1.2.9: Manager\
+    \ mutators bump post-commit only: a mutator that raises mid-transaction leaves\
+    \ the persistent revision, the local counter, and the listeners untouched \u2014\
+    \ including when the mutator runs nested inside a caller's ambient transaction\
+    \ that later rolls back. test: `tests/storage/definitions/test_rules_manager.py`."
+  labels:
+  - covers:split-workflow-definition-storage:1.2:1.2.1
+  - covers:split-workflow-definition-storage:1.2:1.2.2
+  - covers:split-workflow-definition-storage:1.2:1.2.3
+  - covers:split-workflow-definition-storage:1.2:1.2.4
+  - covers:split-workflow-definition-storage:1.2:1.2.5
+  - covers:split-workflow-definition-storage:1.2:1.2.6
+  - covers:split-workflow-definition-storage:1.2:1.2.7
+  - covers:split-workflow-definition-storage:1.2:1.2.8
+  - covers:split-workflow-definition-storage:1.2:1.2.9
+  tdd: true
+  source_section: '1.2'
+  implementation_domain: backend
+- title: Agent definition manager with step-workflow child
+  category: code
+  task_type: feature
+  depends_on:
+  - '1.2'
+  validation_criteria: "1.3.1: Reads hydrate the nested step_workflow from the child\
+    \ table in one query. symbol: `AgentDefinitionManager`. file: `src/gobby/storage/definitions/agents.py`.\n\
+    1.3.2: `upsert_with_steps` writes parent and child atomically, deleting the child\
+    \ when steps are removed. test: `tests/storage/definitions/test_agents_manager.py::test_upsert_with_steps_atomic`.\n\
+    1.3.3: Child cascade on parent hard-delete and orphan-free child lifecycle are\
+    \ covered. test: `tests/storage/definitions/test_agents_manager.py`.\n1.3.6: Soft\
+    \ delete leaves the child row in place and a delete\u2192restore round trip returns\
+    \ the parent with its step workflow payload intact. test: `tests/storage/definitions/test_agents_manager.py::test_soft_delete_restore_preserves_child`.\n\
+    1.3.4: A child-only create, update, or delete bumps both the agent_step_workflows\
+    \ and agents revisions after commit; a rolled-back child write bumps neither.\
+    \ test: `tests/storage/definitions/test_agents_manager.py`.\n1.3.5: AgentDefinitionManager\
+    \ satisfies the parameterized enabled_pinned reconciliation contract. test: `tests/storage/definitions/test_enabled_reconciliation.py`."
+  labels:
+  - covers:split-workflow-definition-storage:1.3:1.3.1
+  - covers:split-workflow-definition-storage:1.3:1.3.2
+  - covers:split-workflow-definition-storage:1.3:1.3.3
+  - covers:split-workflow-definition-storage:1.3:1.3.6
+  - covers:split-workflow-definition-storage:1.3:1.3.4
+  - covers:split-workflow-definition-storage:1.3:1.3.5
+  tdd: true
+  source_section: '1.3'
+  implementation_domain: backend
+- title: Domain cache revisions with cross-daemon invalidation
+  category: code
+  task_type: feature
+  depends_on:
+  - '1.1'
+  validation_criteria: "1.4.1: Per-domain counters, the persistent advance/notify\
+    \ half, and the listener registry exist with thread-safety. file: `src/gobby/storage/definitions/revisions.py`.\n\
+    1.4.2: Bumping one domain fires only that domain's listeners and leaves other\
+    \ domains' revisions unchanged. test: `tests/storage/definitions/test_revisions.py`.\n\
+    1.4.3: A committed advance_persistent_revision advances definition_revisions and\
+    \ delivers exactly one notification; a rolled-back transaction leaves the table\
+    \ unchanged and delivers none. test: `tests/storage/definitions/test_revisions.py`.\n\
+    1.4.4: The listener service maps observed persistent revisions into local bumps,\
+    \ and poll-healing recovers a missed notification. file: `src/gobby/storage/definitions/notifications.py`.\
+    \ test: `tests/storage/definitions/test_revisions.py`.\n1.4.5: A definition mutation\
+    \ through daemon A is observed by daemon B without a restart, in an isolated two-daemon\
+    \ cluster. test: `tests/integration/definitions/test_definition_revisions_multi_daemon.py`.\n\
+    1.4.6: The listener service has a complete lifecycle: synchronous storage init\
+    \ only constructs it, the async stateful-services phase starts it, the graceful-shutdown\
+    \ tail closes it cancelling both tasks and closing the LISTEN connection, and\
+    \ a listen-task crash reconnects with poll-healing covering the gap \u2014 proven\
+    \ through the injectable connection-factory fake. file: `src/gobby/runner_init/services.py`.\
+    \ file: `src/gobby/runner_lifecycle_shutdown.py`. test: `tests/storage/definitions/test_revisions.py`.\n\
+    1.4.8: Direct synchronous GobbyRunner construction succeeds with no event loop,\
+    \ and a construction failure after listener creation rolls the listener back with\
+    \ the other runner resources. file: `src/gobby/runner_rollback.py`. test: `tests/test_runner_init.py`.\n\
+    1.4.7: A mutation nested inside an outer ambient transaction bumps and notifies\
+    \ exactly once when the outer transaction commits, and neither bumps, notifies,\
+    \ nor fires listeners when the outer transaction rolls back. test: `tests/storage/definitions/test_revisions.py::test_ambient_nested_commit_visibility`."
+  labels:
+  - covers:split-workflow-definition-storage:1.4:1.4.1
+  - covers:split-workflow-definition-storage:1.4:1.4.2
+  - covers:split-workflow-definition-storage:1.4:1.4.3
+  - covers:split-workflow-definition-storage:1.4:1.4.4
+  - covers:split-workflow-definition-storage:1.4:1.4.5
+  - covers:split-workflow-definition-storage:1.4:1.4.6
+  - covers:split-workflow-definition-storage:1.4:1.4.8
+  - covers:split-workflow-definition-storage:1.4:1.4.7
+  tdd: true
+  source_section: '1.4'
+  implementation_domain: backend
+- title: Re-arm the embedded migration machinery
+  category: code
+  task_type: feature
+  depends_on:
+  - '1.1'
+  validation_criteria: '1.5.1: The migrations asset directory and include_str wiring
+    exist with versions above the baseline and pinned checksums. file: `crates/gcore/src/schema/assets.rs`.
+
+    1.5.2: A destructive migration on a fresh lineage is receipt-stamped without executing,
+    and still refuses without authorization on an existing lineage. file: `crates/gcore/src/schema/runner_tests.rs`.
+
+    1.5.3: A guarded non-destructive migration applies on fresh and predecessor lineages
+    and re-applies as a receipted no-op. file: `crates/gcore/src/schema/runner_tests.rs`.'
+  labels:
+  - covers:split-workflow-definition-storage:1.5:1.5.1
+  - covers:split-workflow-definition-storage:1.5:1.5.2
+  - covers:split-workflow-definition-storage:1.5:1.5.3
+  tdd: true
+  source_section: '1.5'
+  implementation_domain: backend
+- title: Model split and nested step_workflow model
+  category: code
+  task_type: feature
+  depends_on:
+  - '1.1'
+  - '1.2'
+  - '1.3'
+  - '1.4'
+  - '1.5'
+  validation_criteria: '2.1.1: AgentStepWorkflowBody exists and AgentDefinitionBody
+    carries the optional nested step_workflow field alongside the still-present legacy
+    fields. symbol: `AgentStepWorkflowBody`. file: `src/gobby/workflows/agent_models.py`.
+
+    2.1.2: Pipeline models live in their own module with definitions.py re-exports
+    intact. file: `src/gobby/workflows/pipeline_models.py`.
+
+    2.1.3: definitions.py is under 1,000 lines after the split. file: `src/gobby/workflows/definitions.py`.
+
+    2.1.5: Model validation round-trips nested YAML (stepful and step-less). test:
+    `tests/workflows/test_agent_models.py::test_step_workflow_nesting`.'
+  labels:
+  - covers:split-workflow-definition-storage:2.1:2.1.1
+  - covers:split-workflow-definition-storage:2.1:2.1.2
+  - covers:split-workflow-definition-storage:2.1:2.1.3
+  - covers:split-workflow-definition-storage:2.1:2.1.5
+  tdd: true
+  source_section: '2.1'
+  implementation_domain: backend
+- title: Atomic model-and-YAML step_workflow cutover
+  category: code
+  task_type: feature
+  depends_on:
+  - '2.1'
+  validation_criteria: '2.2.1: All 21 stepful agent YAMLs use the nested step_workflow
+    shape and none of the 25 bundled files carries top-level steps/step_variables/exit_condition.
+    file: `src/gobby/install/shared/workflows/agents/planner.yaml`.
+
+    2.2.2: Every rewritten YAML still validates through AgentDefinitionBody with a
+    populated step_workflow, and all 25 bundled definitions load under the new model.
+    test: `tests/agents/test_sync.py::test_bundled_agents_nested_step_workflow`.
+
+    2.2.3: The bundled-agent contract suite reads steps from the nested key and passes
+    against the rewritten YAML in the same commit. test: `tests/dispatch/test_bundled_agent_contract.py`.
+
+    2.2.4: AgentDefinitionBody carries no top-level step fields, and validating a
+    body with top-level steps, step_variables, or exit_condition raises with a message
+    naming the nested replacement key. symbol: `AgentDefinitionBody`. file: `src/gobby/workflows/agent_models.py`.
+    test: `tests/workflows/test_agent_models.py::test_legacy_step_keys_rejected`.
+
+    2.2.5: Every direct-access site reads through step_workflow and handles the step-less
+    case, across the CLI, dispatch, persona, and spawn readers. file: `src/gobby/mcp_proxy/tools/spawn_agent/_implementation.py`.
+    file: `src/gobby/cli/agents.py`. file: `src/gobby/dispatch/spawn.py`.
+
+    2.2.6: Agent-shape tests and mocks assert the nested shape with no residual top-level
+    step fields, including direct AgentDefinitionBody constructors that passed removed
+    fields and the field-inventory assertions, which move to the nested body rather
+    than being deleted. test: `tests/agents/test_discovery_agents.py`. test: `tests/dispatch/test_skill_composition.py`.
+    test: `tests/workflows/test_agent_definitions_v2.py`.
+
+    2.2.7: The bundled-definition contract suites and raw step fixtures read the nested
+    shape and none asserts a top-level steps or step_variables key. test: `tests/agents/test_qa_reviewer_definition.py`.
+    test: `tests/agents/test_merge_orchestrator_contract.py`. test: `tests/agents/test_sync.py`.
+    test: `tests/agents/test_plan_adversary_taskless_definition.py`.
+
+    2.2.8: The bundled content manifest is regenerated in the same commit and its
+    freshness test passes without an update flag. file: `src/gobby/install/bundled_content_manifest.json`.
+    test: `tests/install/test_bundled_content_manifest.py`.
+
+    2.2.9: Scaffolded register_agent_step_workflow reads the nested shape. symbol:
+    `register_agent_step_workflow`. file: `src/gobby/agents/step_workflow.py`.'
+  labels:
+  - covers:split-workflow-definition-storage:2.2:2.2.1
+  - covers:split-workflow-definition-storage:2.2:2.2.2
+  - covers:split-workflow-definition-storage:2.2:2.2.3
+  - covers:split-workflow-definition-storage:2.2:2.2.4
+  - covers:split-workflow-definition-storage:2.2:2.2.5
+  - covers:split-workflow-definition-storage:2.2:2.2.6
+  - covers:split-workflow-definition-storage:2.2:2.2.7
+  - covers:split-workflow-definition-storage:2.2:2.2.8
+  - covers:split-workflow-definition-storage:2.2:2.2.9
+  tdd: true
+  source_section: '2.2'
+  implementation_domain: backend
+- title: Agent sync, write surfaces, and agent copy migration
+  category: code
+  task_type: feature
+  depends_on:
+  - '2.2'
+  validation_criteria: '2.3.1: Agent sync upserts parent and child in one transaction
+    and no longer manages step data in the parent body. symbol: `sync_bundled_agents`.
+    file: `src/gobby/agents/sync.py`.
+
+    2.3.2: MCP agent CRUD operates on the typed manager with a nested step_workflow
+    surface. symbol: `update_agent_step_workflow`. file: `src/gobby/mcp_proxy/tools/workflows/_agents.py`.
+
+    2.3.3: HTTP agent definition routes read and write the typed tables. file: `src/gobby/servers/routes/agents.py`.
+
+    2.3.4: Copy migration migrates every agent row and one child per row carrying
+    a non-empty steps array (29 and 25 at planning time), preserves soft-deleted rows,
+    skips the four `"steps": null` rows without a scalar-length error, and fails loudly
+    on count mismatch. test: `tests/storage/test_agent_copy_migration.py`.
+
+    2.3.5: Sync produces child workflows for all 21 stepful bundled agents, none for
+    the 4 step-less, and leaves no stale child rows (filesystem-derived counts; the
+    29-row/25-child hub-derived counts belong to the copy migration in 2.3.4 and E1).
+    test: `tests/agents/test_sync.py`.
+
+    2.3.6: The equivalence guard succeeds idempotently on an identical pre-existing
+    typed row and fails loudly on a divergent one. test: `tests/storage/test_agent_copy_migration.py`.
+
+    2.3.9: Rerunning the copy over an already-migrated soft-deleted agent row completes
+    without a primary-key abort, and two soft-deleted rows sharing a natural key each
+    match their own target by preserved id. test: `tests/storage/test_agent_copy_migration.py::test_rerun_over_soft_deleted_rows`.
+
+    2.3.7: A public agent write carrying legacy top-level step keys is rejected instead
+    of silently dropping the step workflow. test: `tests/servers/routes/test_agents_routes.py`.
+
+    2.3.8: Template hashing reads the nested body shape, so a step_workflow edit registers
+    as drift. symbol: `TemplateHashCache._load_agents`. file: `src/gobby/workflows/template_hashes.py`.
+
+    2.3.10: No generic surface can create or mutate a legacy agent row post-cutover:
+    the generic HTTP routes, generic MCP tools, and the import path each reject kind
+    `agent` naming the surviving domain surface. test: `tests/servers/routes/test_workflows.py`.
+    test: `tests/mcp_proxy/tools/test_workflow_crud.py`. test: `tests/workflows/test_imports.py`.
+
+    2.3.11: Bundled agent sync reaches the typed table through update_from_sync: a
+    changed template enabled default is adopted on an untouched row and preserved
+    on a pinned row. test: `tests/agents/test_sync.py`.
+
+    2.3.12: The pinned schema root hashes and the release-pinned expected identity
+    match the rebuilt gdaemon after the migration entry lands. file: `crates/gcore/tests/schema_contract.rs`.
+    file: `src/gobby/storage/schema_expected_identity.json`.
+
+    2.3.13: The copy migration strips and extracts both the flat pre-2.2 shape and
+    the nested 2.2 shape equivalently: a row synced by the 2.2 cutover then migrated
+    yields a stripped parent and a correct child, and mixed-shape populations migrate
+    without child loss or child data retained in a parent body. test: `tests/storage/test_agent_copy_migration.py::test_nested_and_flat_source_shapes`.
+
+    2.3.14: The copy migration writes one legacy_copy_ledger row per copied agent
+    source row with the normalized payload hash, and reruns keep the copy-time hash.
+    test: `tests/storage/test_agent_copy_migration.py`.
+
+    2.3.15: The copy migration holds ACCESS EXCLUSIVE on workflow_definitions: a concurrent
+    second-connection agent-row write blocks until the migration commits, and its
+    post-commit landing is the post-copy drift the 7.1 backstop refuses. test: `tests/storage/test_agent_copy_migration.py::test_copy_lock_fences_concurrent_writes`.'
+  labels:
+  - covers:split-workflow-definition-storage:2.3:2.3.1
+  - covers:split-workflow-definition-storage:2.3:2.3.2
+  - covers:split-workflow-definition-storage:2.3:2.3.3
+  - covers:split-workflow-definition-storage:2.3:2.3.4
+  - covers:split-workflow-definition-storage:2.3:2.3.5
+  - covers:split-workflow-definition-storage:2.3:2.3.6
+  - covers:split-workflow-definition-storage:2.3:2.3.9
+  - covers:split-workflow-definition-storage:2.3:2.3.7
+  - covers:split-workflow-definition-storage:2.3:2.3.8
+  - covers:split-workflow-definition-storage:2.3:2.3.10
+  - covers:split-workflow-definition-storage:2.3:2.3.11
+  - covers:split-workflow-definition-storage:2.3:2.3.12
+  - covers:split-workflow-definition-storage:2.3:2.3.13
+  - covers:split-workflow-definition-storage:2.3:2.3.14
+  - covers:split-workflow-definition-storage:2.3:2.3.15
+  tdd: true
+  source_section: '2.3'
+  implementation_domain: backend
+- title: Agent read-consumer rewiring
+  category: code
+  task_type: feature
+  depends_on:
+  - '2.3'
+  validation_criteria: '2.4.1: resolve_agent resolves via the typed manager with hydrated
+    step_workflow; the row-returning variant exists. symbol: `resolve_agent`. file:
+    `src/gobby/workflows/agent_resolver.py`.
+
+    2.4.2: RuleEngine agent cache keys on the agents domain revision. symbol: `RuleEngine`.
+    file: `src/gobby/workflows/engine/core.py`.
+
+    2.4.3: Dispatch agent loading reads the typed manager. file: `src/gobby/dispatch/context.py`.
+
+    2.4.4: agents/dry_run.py uses resolve_agent; the untyped name lookup is gone.
+    file: `src/gobby/agents/dry_run.py`.
+
+    2.4.5: Agent resolution, dry-run, and required-skills composition behave identically
+    for stepful and step-less agents. test: `tests/workflows/test_agent_resolver.py`.
+
+    2.4.6: Expansion agent loading reads the typed manager across the common loader,
+    the service, and the compiler. file: `src/gobby/tasks/expansion/_common.py`. file:
+    `src/gobby/tasks/expansion_service.py`. file: `src/gobby/tasks/expansion/_compile.py`.
+
+    2.4.7: The CLI agent listing and detail dict read the typed manager and emit the
+    nested step_workflow key. file: `src/gobby/cli/agents.py`.
+
+    2.4.8: dry_run.py is under 1,000 lines after the trace extraction and the agent
+    rewrite. file: `src/gobby/workflows/dry_run.py`. file: `src/gobby/workflows/dry_run_trace.py`.
+
+    2.4.9: A child-only step-workflow edit or delete invalidates the cached hydrated
+    agent, and the next resolution returns the updated body. test: `tests/workflows/test_agent_resolver.py`.'
+  labels:
+  - covers:split-workflow-definition-storage:2.4:2.4.1
+  - covers:split-workflow-definition-storage:2.4:2.4.2
+  - covers:split-workflow-definition-storage:2.4:2.4.3
+  - covers:split-workflow-definition-storage:2.4:2.4.4
+  - covers:split-workflow-definition-storage:2.4:2.4.5
+  - covers:split-workflow-definition-storage:2.4:2.4.6
+  - covers:split-workflow-definition-storage:2.4:2.4.7
+  - covers:split-workflow-definition-storage:2.4:2.4.8
+  - covers:split-workflow-definition-storage:2.4:2.4.9
+  tdd: true
+  source_section: '2.4'
+  implementation_domain: backend
+- title: Step instance model and manager
+  category: code
+  task_type: feature
+  depends_on:
+  - '2.1'
+  - '2.2'
+  - '2.3'
+  - '2.4'
+  validation_criteria: '3.1.1: AgentStepInstance and its manager exist with one-instance-per-session
+    upsert semantics. symbol: `AgentStepInstanceManager`. file: `src/gobby/workflows/step_instances.py`.
+
+    3.1.2: Snapshot, lineage id, and created_at are immutable across saves. test:
+    `tests/workflows/test_step_instances.py::test_snapshot_immutable_on_upsert`.
+
+    3.1.3: AgentStepInstanceMutation replaces WorkflowInstanceMutation in the hub
+    protocol. symbol: `AgentStepInstanceMutation`. file: `src/gobby/storage/hub/protocol.py`.
+
+    3.1.4: `replace_for_session` swaps snapshot, lineage id, agent name, and step
+    position together, and is the only mutator that changes snapshot, lineage, or
+    agent identity. test: `tests/workflows/test_step_instances.py::test_replace_for_session_swaps_snapshot_and_lineage`.
+
+    3.1.5: A step-scope variable merge concurrent with an enforcement save is not
+    lost. test: `tests/workflows/test_step_instances.py::test_merge_variables_serializes_against_save`.
+
+    3.1.6: The mutation lock is re-entrant through the real Postgres adapter with
+    ambient nesting on one shared adapter instance: a caller-held section wrapping
+    a read and its computed save does not deadlock the mutators, and a merge committed
+    outside that section cannot interleave into it. test: `tests/workflows/test_step_instances.py::test_mutation_lock_is_reentrant`.
+
+    3.1.7: A save carrying a compare-and-set precondition from a pre-persona read
+    is rejected as stale rather than rewriting the replaced instance''s step position
+    and variables. test: `tests/workflows/test_step_instances.py::test_stale_save_after_persona_replacement_rejected`.
+
+    3.1.8: A save whose agent_name differs from the stored row is rejected as a stale
+    identity write, with or without the compare-and-set precondition. test: `tests/workflows/test_step_instances.py::test_save_rejects_agent_identity_change`.'
+  labels:
+  - covers:split-workflow-definition-storage:3.1:3.1.1
+  - covers:split-workflow-definition-storage:3.1:3.1.2
+  - covers:split-workflow-definition-storage:3.1:3.1.3
+  - covers:split-workflow-definition-storage:3.1:3.1.4
+  - covers:split-workflow-definition-storage:3.1:3.1.5
+  - covers:split-workflow-definition-storage:3.1:3.1.6
+  - covers:split-workflow-definition-storage:3.1:3.1.7
+  - covers:split-workflow-definition-storage:3.1:3.1.8
+  tdd: true
+  source_section: '3.1'
+  implementation_domain: backend
+- title: Data-plane cutover and instance copy migration
+  category: code
+  task_type: feature
+  depends_on:
+  - '3.1'
+  validation_criteria: "3.2.1: Spawn creates the per-session snapshot instance and\
+    \ no generated-row registration remains in the spawn path. file: `src/gobby/mcp_proxy/tools/spawn_agent/_step_state.py`.\
+    \ file: `src/gobby/mcp_proxy/tools/spawn_agent/_factory.py`. file: `src/gobby/dispatch/spawn.py`.\n\
+    3.2.1a: Persona activation creates, preserves, or removes the instance on the\
+    \ public apply_persona_impl path. symbol: `apply_persona_impl`. file: `src/gobby/mcp_proxy/tools/apply_persona.py`.\n\
+    3.2.2: agents/step_workflow.py is deleted and the sync scaffolding call is gone.\
+    \ file: `src/gobby/agents/step_workflow.py`. file: `src/gobby/agents/sync.py`.\n\
+    3.2.3: Enforcement reads resolve the step from the instance snapshot in one row\
+    \ lookup. symbol: `EnforcementCheckMixin._get_step_for_session`. file: `src/gobby/workflows/engine/enforcement_checks.py`.\n\
+    3.2.3a: Transition and completion writers read and write the snapshot instance\
+    \ with agent_name in place of workflow_name. file: `src/gobby/workflows/engine/enforcement_handlers.py`.\
+    \ file: `src/gobby/workflows/engine/enforcement_completion.py`. file: `src/gobby/workflows/engine/enforcement.py`.\n\
+    3.2.3b: Step context and the coordinator completion gate read the snapshot instead\
+    \ of the definition manager. file: `src/gobby/workflows/step_context.py`. file:\
+    \ `src/gobby/hooks/session_coordinator.py`.\n3.2.4: The instance copy migration\
+    \ preserves live-session step state with a valid snapshot and fails loudly when\
+    \ none is recoverable. test: `tests/storage/test_instance_copy_migration.py`.\n\
+    3.2.5: _step_workflow_name is gone from the spawn, persona, context-injection,\
+    \ and idle-reprompt writers. file: `src/gobby/workflows/hooks.py`. file: `src/gobby/agents/idle_check_handler.py`.\
+    \ file: `src/gobby/mcp_proxy/tools/spawn_agent/_step_state.py`. file: `src/gobby/mcp_proxy/tools/apply_persona.py`.\n\
+    3.2.6: spawn_agent/_implementation.py is under 1,000 lines after extraction. file:\
+    \ `src/gobby/mcp_proxy/tools/spawn_agent/_implementation.py`.\n3.2.7: The equivalence\
+    \ guard fails on the generated-row branch when snapshot or step position diverges,\
+    \ and fails on both branches when current_step is absent from the copied snapshot's\
+    \ steps, including a generated row whose refresh removed the active step. test:\
+    \ `tests/storage/test_instance_copy_migration.py`.\n3.2.8: A failed step-instance\
+    \ save aborts before any child process starts or task is claimed, deletes the\
+    \ child session and agent-run rows created by pre-launch preparation, and aborts\
+    \ the persona switch with the prior instance intact. test: `tests/workflows/test_step_snapshot_semantics.py`.\n\
+    3.2.9: A handoff_ready session keeps its step position and variables through the\
+    \ migration. test: `tests/storage/test_instance_copy_migration.py::test_handoff_ready_session_continuity`.\n\
+    3.2.10: Variables, both action counters, timestamps, enabled, and context_injected\
+    \ survive the copy with nullable legacy values normalized; agent_step_workflow_id\
+    \ is populated wherever the typed child exists and left NULL for a valid snapshot\
+    \ whose child does not, while a row with neither lineage nor a recoverable snapshot\
+    \ fails the migration. test: `tests/storage/test_instance_copy_migration.py::test_runtime_field_equivalence`.\
+    \ test: `tests/storage/test_instance_copy_migration.py::test_definitionless_snapshot_migrates_with_null_lineage`.\n\
+    3.2.11: A persona switch to a different agent replaces snapshot and lineage together;\
+    \ a switch to a step-less agent removes the instance. test: `tests/workflows/test_step_snapshot_semantics.py`.\n\
+    3.2.12: RuleEngine constructs AgentStepInstanceManager in the same commit as the\
+    \ typed readers. symbol: `RuleEngine`. file: `src/gobby/workflows/engine/core.py`.\n\
+    3.2.13: The caller calls prepare_terminal_spawn and saves the step instance before\
+    \ launch, so the instance row is durable before any provider process exists. symbol:\
+    \ `prepare_terminal_spawn`. file: `src/gobby/agents/spawn.py`. file: `src/gobby/mcp_proxy/tools/spawn_agent/_implementation.py`.\n\
+    3.2.13a: SpawnRequest carries the prepared spawn and every provider path consumes\
+    \ it without creating a second session across all five executor call sites. file:\
+    \ `src/gobby/agents/spawn_models.py`. file: `src/gobby/agents/spawn_executor.py`.\n\
+    3.2.13b: The spawn, executor, droid, SRT, resume, and execution suites are retargeted\
+    \ to the moved boundary and still pin agent_run persistence and per-provider spawn\
+    \ context. test: `tests/agents/test_spawn.py`. test: `tests/agents/test_spawn_executor.py`.\
+    \ test: `tests/agents/test_spawn_executor_droid.py`. test: `tests/agents/test_srt_spawn.py`.\
+    \ test: `tests/agents/test_resume_executor.py`. test: `tests/mcp_proxy/tools/spawn_agent/test_execution.py`.\n\
+    3.2.13c: The resume path keeps its inline prepare_terminal_resume call, and a\
+    \ daemon-stop resume returns on the same child session with its retained typed\
+    \ instance at the same step and variables \u2014 the #18974 continuity contract\
+    \ holds across the storage cutover. symbol: `resume_agent_run`. file: `src/gobby/agents/resume_executor.py`.\
+    \ test: `tests/agents/test_spawn_prepare_resume.py`.\n3.2.21: Persona tests are\
+    \ retargeted off _step_workflow_name and WorkflowInstanceManager onto the typed\
+    \ instance. test: `tests/mcp_proxy/tools/test_apply_persona.py`.\n3.2.22: The\
+    \ spawn factory suite's self-healing registration tests are retargeted at prepared\
+    \ snapshot creation, since the symbol they import is deleted in this task. test:\
+    \ `tests/mcp_proxy/tools/spawn_agent/test_factory.py`.\n3.2.14: cleanup_failed_spawn\
+    \ terminates the recorded PID and tmux session before deleting the child session\
+    \ row, and tolerates an already-dead process. symbol: `cleanup_failed_spawn`.\
+    \ file: `src/gobby/mcp_proxy/tools/spawn_agent/_failure_cleanup.py`.\n3.2.14a:\
+    \ Provider process identity is available to cleanup at every post-launch failure\
+    \ point, and the tmux live-pane verification failure routes through cleanup instead\
+    \ of falling through. file: `src/gobby/mcp_proxy/tools/spawn_agent/_implementation.py`.\n\
+    3.2.14b: Fault injection at lease attach, live-pane verification, run start, and\
+    \ the post-claim update each leave no surviving PID, no tmux session, and no attached\
+    \ lease. test: `tests/workflows/test_step_snapshot_semantics.py::test_post_launch_faults_leave_no_live_process`.\n\
+    3.2.15: An auto-claimed spawn reaches the same effective initial step and variables\
+    \ as before the reordering, via the atomic post-claim update. test: `tests/workflows/test_step_snapshot_semantics.py::test_auto_claimed_spawn_initial_step_preserved`.\n\
+    3.2.16: A persona switch commits instance replacement and the _agent_type variable\
+    \ merge in one immediate transaction with the instance lock outermost; a fault\
+    \ in either leaves neither applied, for stepful and step-less targets. test: `tests/workflows/test_step_snapshot_semantics.py::test_persona_switch_is_atomic_across_rows`.\n\
+    3.2.17: Persona activation targeting the same agent with no existing instance\
+    \ creates a fresh snapshot rather than reporting a successful no-op, and a persistence\
+    \ fault on that branch fails the activation. test: `tests/workflows/test_step_snapshot_semantics.py::test_persona_same_agent_missing_instance_creates_snapshot`.\n\
+    3.2.18: A persona failure on the web-chat path propagates: the runtime is stopped,\
+    \ the session is not registered, and the caller does not report success. file:\
+    \ `src/gobby/servers/websocket/chat/_session.py`.\n3.2.19: Enforcement read-compute-write\
+    \ pairs hold one mutation section, so a concurrent step-scope merge cannot be\
+    \ lost across a transition or completion write. test: `tests/workflows/test_step_snapshot_semantics.py::test_enforcement_write_paths_hold_one_critical_section`.\n\
+    3.2.20: A live session whose only legacy instance is disabled migrates with enabled\
+    \ preserved, and activation neither re-enables it nor rewinds its step. test:\
+    \ `tests/storage/test_instance_copy_migration.py::test_disabled_instance_continuity`.\n\
+    3.2.23: The pinned schema root hashes and the release-pinned expected identity\
+    \ match the rebuilt gdaemon after the migration entry lands. file: `crates/gcore/tests/schema_contract.rs`.\
+    \ file: `src/gobby/storage/schema_expected_identity.json`.\n3.2.24: Fault injection\
+    \ at every pre-launch boundary \u2014 after each acquisition inside preparation\
+    \ (child session, initial variables, run row and prompt file, credential), after\
+    \ the instance save, and between save and launch \u2014 leaves no session, variable,\
+    \ run, or instance rows, no prompt file, and no live credentials, and running\
+    \ the cleanup owner twice is safe. test: `tests/workflows/test_step_snapshot_semantics.py::test_prelaunch_faults_leave_no_rows`.\
+    \ test: `tests/agents/test_spawn.py`.\n3.2.25: Candidate selection is deterministic\
+    \ within the resolved active identity: equal-timestamp duplicates resolve by the\
+    \ id tie-break, child lineage resolves project-first with global fallback, a non-qualifying\
+    \ instance row on a live session fails loudly, and a live session with no qualifying\
+    \ row and no persona state migrates nothing. test: `tests/storage/test_instance_copy_migration.py::test_candidate_resolution_determinism`.\n\
+    3.2.26: The enforcement, transition, audit, error-code, coordinator, step-context,\
+    \ and completion-gate suites construct the typed instance manager with no WorkflowInstanceManager\
+    \ import or patch remaining. test: `tests/workflows/test_step_enforcement.py`.\
+    \ test: `tests/workflows/test_step_runtime_transitions.py`. test: `tests/workflows/test_step_enforcement_audit.py`.\
+    \ test: `tests/workflows/test_step_error_codes.py`. test: `tests/hooks/test_session_coordinator.py`.\
+    \ test: `tests/workflows/test_step_context.py`. test: `tests/workflows/test_agent_workflow_completion.py`.\n\
+    3.2.27: The instance copy resolves the active identity from _agent_type alone:\
+    \ an A\u2192B\u2192A persona history with a stale-newer B row migrates A's snapshot\
+    \ and agent_name; an A\u2192B switch with a stale A-steps _step_workflow_name\
+    \ and no B row migrates nothing for stepful and step-less B alike, without RAISEing;\
+    \ qualifying rows with no _agent_type fail loudly; and ordering applies only within\
+    \ the resolved identity's rows. test: `tests/storage/test_instance_copy_migration.py::test_active_identity_resolution`.\n\
+    3.2.28: The dispatcher spawn test asserts _step_workflow_name is absent from initial\
+    \ variables while still pinning the selected agent and task identity. test: `tests/dispatch/test_dispatcher.py::test_spawn_action_uses_services_and_records_agent_run`.\n\
+    3.2.29: apply_persona rejects caller variables colliding with the persona delta,\
+    \ the task overlay, or the runtime-reserved set before the transition transaction\
+    \ opens, leaving session variables and the typed instance unchanged, at both the\
+    \ tool wrapper and impl seams, while non-reserved variables still merge. test:\
+    \ `tests/mcp_proxy/tools/test_apply_persona.py`. test: `tests/workflows/test_step_snapshot_semantics.py`.\n\
+    3.2.30: The instance copy holds ACCESS EXCLUSIVE on workflow_instances and installs\
+    \ the legacy write-rejection trigger: a concurrent second-connection write blocks\
+    \ at the lock and then fails on the trigger, a post-commit write fails on the\
+    \ trigger, and typed rows are untouched in both cases. test: `tests/storage/test_instance_copy_migration.py::test_legacy_write_fence`."
+  labels:
+  - covers:split-workflow-definition-storage:3.2:3.2.1
+  - covers:split-workflow-definition-storage:3.2:3.2.1a
+  - covers:split-workflow-definition-storage:3.2:3.2.2
+  - covers:split-workflow-definition-storage:3.2:3.2.3
+  - covers:split-workflow-definition-storage:3.2:3.2.3a
+  - covers:split-workflow-definition-storage:3.2:3.2.3b
+  - covers:split-workflow-definition-storage:3.2:3.2.4
+  - covers:split-workflow-definition-storage:3.2:3.2.5
+  - covers:split-workflow-definition-storage:3.2:3.2.6
+  - covers:split-workflow-definition-storage:3.2:3.2.7
+  - covers:split-workflow-definition-storage:3.2:3.2.8
+  - covers:split-workflow-definition-storage:3.2:3.2.9
+  - covers:split-workflow-definition-storage:3.2:3.2.10
+  - covers:split-workflow-definition-storage:3.2:3.2.11
+  - covers:split-workflow-definition-storage:3.2:3.2.12
+  - covers:split-workflow-definition-storage:3.2:3.2.13
+  - covers:split-workflow-definition-storage:3.2:3.2.13a
+  - covers:split-workflow-definition-storage:3.2:3.2.13b
+  - covers:split-workflow-definition-storage:3.2:3.2.13c
+  - covers:split-workflow-definition-storage:3.2:3.2.21
+  - covers:split-workflow-definition-storage:3.2:3.2.22
+  - covers:split-workflow-definition-storage:3.2:3.2.14
+  - covers:split-workflow-definition-storage:3.2:3.2.14a
+  - covers:split-workflow-definition-storage:3.2:3.2.14b
+  - covers:split-workflow-definition-storage:3.2:3.2.15
+  - covers:split-workflow-definition-storage:3.2:3.2.16
+  - covers:split-workflow-definition-storage:3.2:3.2.17
+  - covers:split-workflow-definition-storage:3.2:3.2.18
+  - covers:split-workflow-definition-storage:3.2:3.2.19
+  - covers:split-workflow-definition-storage:3.2:3.2.20
+  - covers:split-workflow-definition-storage:3.2:3.2.23
+  - covers:split-workflow-definition-storage:3.2:3.2.24
+  - covers:split-workflow-definition-storage:3.2:3.2.25
+  - covers:split-workflow-definition-storage:3.2:3.2.26
+  - covers:split-workflow-definition-storage:3.2:3.2.27
+  - covers:split-workflow-definition-storage:3.2:3.2.28
+  - covers:split-workflow-definition-storage:3.2:3.2.29
+  - covers:split-workflow-definition-storage:3.2:3.2.30
+  tdd: true
+  source_section: '3.2'
+  implementation_domain: backend
+- title: Recovery, cleanup, and auxiliary surfaces
+  category: code
+  task_type: feature
+  depends_on:
+  - '3.2'
+  validation_criteria: '3.3.1: Restart recovery rebuilds step state from the agent
+    definition without any -steps name parsing. symbol: `_ensure_step_instance`. file:
+    `src/gobby/hooks/session_activation.py`.
+
+    3.3.2: Session-end and agent-terminal cleanup delete the per-session instance.
+    file: `src/gobby/hooks/event_handlers/_session_end.py`. file: `src/gobby/agents/runtime_cleanup.py`.
+
+    3.3.3: Workflow-scoped variable tools use the scope parameter against the single
+    instance. file: `src/gobby/mcp_proxy/tools/workflows/_variables.py`.
+
+    3.3.4: WorkflowInstance and WorkflowInstanceManager no longer exist. file: `src/gobby/workflows/state_manager.py`.
+
+    3.3.5: _step_workflow_name is absent from reserved variables and all rule/variable
+    plumbing. file: `src/gobby/workflows/reserved_variables.py`.
+
+    3.3.6: Fresh-snapshot recovery emits one structured warning carrying the session,
+    agent name, resolved definition ids, and a stable recovery marker. test: `tests/workflows/test_step_snapshot_semantics.py`.
+
+    3.3.7: step_workflow_complete is seeded from the typed instance after recovery
+    creates it, with no reference to the removed variable. test: `tests/hooks/test_session_activation_reconciliation.py::test_completion_seed_after_step_instance_recovery`.
+
+    3.3.8: The MCP tool registrations and generic runtime-variable routes use the
+    typed manager before WorkflowInstanceManager is deleted, so the tree imports at
+    that commit. file: `src/gobby/servers/routes/workflows.py`. file: `src/gobby/mcp_proxy/tools/workflows/__init__.py`.
+
+    3.3.9: The agent terminal-cleanup log no longer names workflow_instances. file:
+    `src/gobby/agents/terminal_cleanup.py`.
+
+    3.3.10: Session-end cleanup keeps the terminal-outcome gate, so a COMPACT or IDLE
+    web-chat end retains the typed instance and only an expired end deletes it. file:
+    `src/gobby/hooks/event_handlers/_session_end.py`. test: `tests/hooks/test_session_end_handlers.py`.
+
+    3.3.12: In-place compact reactivation (#18994) leaves the typed instance keyed
+    to the same session across a compact restart, with no ownership move and no legacy
+    table named. file: `src/gobby/storage/session_lifecycle.py`. file: `src/gobby/hooks/event_handlers/_session_start/flow.py`.
+
+    3.3.13: Orphan handoff expiry only flips status; the marker-gated retention sweep
+    deletes typed instances for sessions expired past the revival horizon, with no
+    legacy table named. symbol: `expire_orphaned_handoff_sessions`. symbol: `prune_stale_compact_workflow_instances`.
+    file: `src/gobby/storage/session_lifecycle.py`.
+
+    3.3.14: A compacted mid-workflow agent resumes on its same session at the same
+    nonzero step with the same variables after the port. test: `tests/storage/sessions/test_lifecycle.py`.
+    test: `tests/workflows/test_step_snapshot_semantics.py`.
+
+    3.3.11: The spawn initial-variables suite queries the typed instance instead of
+    importing the deleted WorkflowInstanceManager, dropping its `<agent>-steps` name
+    arguments. test: `tests/mcp_proxy/tools/spawn_agent/test_initial_variables.py`.
+
+    3.3.15: Daemon-stop terminal cleanup retains the typed instance and a resumed
+    run on the same session sees the same step and variables; every other terminal
+    reason deletes the instance. file: `src/gobby/agents/runtime_cleanup.py`. test:
+    `tests/workflows/test_agent_workflow_runtime_cleanup.py`.
+
+    3.3.16: Every legacy instance-manager test seam is deleted or rewritten onto the
+    typed manager and no test imports or patches WorkflowInstanceManager. test: `tests/workflows/test_instance_manager.py`.
+    test: `tests/workflows/test_session_end_cleanup.py`. test: `tests/workflows/test_session_variable_manager.py`.
+
+    3.3.17: The termination tool result reports the cleanup count as agent_step_instances_deleted,
+    the old key is gone, and the termination-result case asserts the renamed key.
+    file: `src/gobby/mcp_proxy/tools/agents_termination.py`. test: `tests/mcp_proxy/tools/test_agents.py`.'
+  labels:
+  - covers:split-workflow-definition-storage:3.3:3.3.1
+  - covers:split-workflow-definition-storage:3.3:3.3.2
+  - covers:split-workflow-definition-storage:3.3:3.3.3
+  - covers:split-workflow-definition-storage:3.3:3.3.4
+  - covers:split-workflow-definition-storage:3.3:3.3.5
+  - covers:split-workflow-definition-storage:3.3:3.3.6
+  - covers:split-workflow-definition-storage:3.3:3.3.7
+  - covers:split-workflow-definition-storage:3.3:3.3.8
+  - covers:split-workflow-definition-storage:3.3:3.3.9
+  - covers:split-workflow-definition-storage:3.3:3.3.10
+  - covers:split-workflow-definition-storage:3.3:3.3.12
+  - covers:split-workflow-definition-storage:3.3:3.3.13
+  - covers:split-workflow-definition-storage:3.3:3.3.14
+  - covers:split-workflow-definition-storage:3.3:3.3.11
+  - covers:split-workflow-definition-storage:3.3:3.3.15
+  - covers:split-workflow-definition-storage:3.3:3.3.16
+  - covers:split-workflow-definition-storage:3.3:3.3.17
+  tdd: true
+  source_section: '3.3'
+  implementation_domain: backend
+- title: Snapshot behavior regression suite
+  category: test
+  task_type: feature
+  depends_on:
+  - '3.3'
+  validation_criteria: '3.4.1: All fourteen pinned behaviors pass against the snapshot
+    runtime. test: `tests/workflows/test_step_snapshot_semantics.py`.
+
+    3.4.2: Post-launch fault injection runs against the real spawn executor at all
+    four failure points and proves no PID, tmux session, or attached lease survives.
+    test: `tests/workflows/test_step_snapshot_semantics.py::test_post_launch_failure_terminates_process`.'
+  labels:
+  - covers:split-workflow-definition-storage:3.4:3.4.1
+  - covers:split-workflow-definition-storage:3.4:3.4.2
+  tdd: false
+  source_section: '3.4'
+  assigned_agent: backend-developer
+- title: Rules cutover and copy migration
+  category: code
+  task_type: feature
+  depends_on:
+  - '3.1'
+  - '3.2'
+  - '3.3'
+  - '3.4'
+  validation_criteria: '4.1.1: Rule evaluation loads through the typed rule manager
+    with event/group filtering and priority order. symbol: `RuleEngine._load_rules`.
+    file: `src/gobby/workflows/engine/core.py`.
+
+    4.1.2: Bundled rule sync writes the typed table and the self-heal UPDATE is gone.
+    file: `src/gobby/workflows/sync_rules.py`.
+
+    4.1.3: Rule mutations invalidate the active-rule-names cache via the rules revision
+    listener. file: `src/gobby/hooks/session_activation.py`.
+
+    4.1.4: Copy migration migrates 160+ rules including soft-deleted rows with counts
+    validated. test: `tests/storage/test_rule_copy_migration.py`.
+
+    4.1.5: Rule HTTP routes behave identically on the typed manager. file: `src/gobby/servers/routes/rules.py`.
+    test: `tests/servers/routes/test_rules_routes.py`.
+
+    4.1.5a: Rule MCP tools and the rules CLI behave identically on the typed manager.
+    file: `src/gobby/mcp_proxy/tools/workflows/_rules.py`. file: `src/gobby/cli/rules.py`.
+
+    4.1.5b: The rule row type propagates as RuleDefinitionRow through effects, selectors,
+    and the hook rule tuples. file: `src/gobby/workflows/engine/effects.py`. file:
+    `src/gobby/workflows/selectors.py`. file: `src/gobby/workflows/hooks.py`.
+
+    4.1.6: The equivalence guard fails when a pre-existing typed rule row diverges
+    from its legacy source. test: `tests/storage/test_rule_copy_migration.py`.
+
+    4.1.7: Rerunning the rule copy over already-migrated soft-deleted rows completes
+    without a primary-key abort. test: `tests/storage/test_rule_copy_migration.py::test_rerun_over_soft_deleted_rows`.
+
+    4.1.8: Rerunning the rule copy over already-migrated live rows is a clean no-op,
+    and two soft-deleted rule rows sharing a natural key both migrate. test: `tests/storage/test_rule_copy_migration.py::test_rerun_over_live_rows`.
+
+    4.1.9: A live typed rule row matching a legacy row on natural key and payload
+    but carrying a different UUID fails the guard loudly. test: `tests/storage/test_rule_copy_migration.py::test_divergent_identity_fails`.
+
+    4.1.10: EvaluationMixin and is_internal_rule accept RuleDefinitionRow, and no
+    rule-path module imports WorkflowDefinitionRow. file: `src/gobby/workflows/engine/evaluation.py`.
+    file: `src/gobby/workflows/reserved_variables.py`.
+
+    4.1.11: No generic surface can create or mutate a legacy rule row post-cutover:
+    the generic HTTP routes, generic MCP tools, and the import path each reject kind
+    `rule` naming the surviving domain surface. test: `tests/servers/routes/test_workflows.py`.
+    test: `tests/mcp_proxy/tools/test_workflow_crud.py`. test: `tests/workflows/test_imports.py`.
+
+    4.1.12: Bundled rule sync reaches the typed table through update_from_sync: a
+    changed template enabled default is adopted on an untouched row and preserved
+    on a pinned row. test: `tests/workflows/test_rule_yaml_sync.py`.
+
+    4.1.13: The pinned schema root hashes and the release-pinned expected identity
+    match the rebuilt gdaemon after the migration entry lands. file: `crates/gcore/tests/schema_contract.rs`.
+    file: `src/gobby/storage/schema_expected_identity.json`.
+
+    4.1.14: The rule copy migration writes one legacy_copy_ledger row per copied source
+    row and reruns keep the copy-time hash. test: `tests/storage/test_rule_copy_migration.py`.
+
+    4.1.15: The rule-engine suite seeds rules through the typed manager and observes
+    its own fixtures after the cutover. test: `tests/workflows/test_rule_engine.py`.
+
+    4.1.16: The rule copy migration holds ACCESS EXCLUSIVE on workflow_definitions:
+    a concurrent second-connection rule-row write blocks until the migration commits,
+    and its post-commit landing is the post-copy drift the 7.1 backstop refuses. test:
+    `tests/storage/test_rule_copy_migration.py::test_copy_lock_fences_concurrent_writes`.'
+  labels:
+  - covers:split-workflow-definition-storage:4.1:4.1.1
+  - covers:split-workflow-definition-storage:4.1:4.1.2
+  - covers:split-workflow-definition-storage:4.1:4.1.3
+  - covers:split-workflow-definition-storage:4.1:4.1.4
+  - covers:split-workflow-definition-storage:4.1:4.1.5
+  - covers:split-workflow-definition-storage:4.1:4.1.5a
+  - covers:split-workflow-definition-storage:4.1:4.1.5b
+  - covers:split-workflow-definition-storage:4.1:4.1.6
+  - covers:split-workflow-definition-storage:4.1:4.1.7
+  - covers:split-workflow-definition-storage:4.1:4.1.8
+  - covers:split-workflow-definition-storage:4.1:4.1.9
+  - covers:split-workflow-definition-storage:4.1:4.1.10
+  - covers:split-workflow-definition-storage:4.1:4.1.11
+  - covers:split-workflow-definition-storage:4.1:4.1.12
+  - covers:split-workflow-definition-storage:4.1:4.1.13
+  - covers:split-workflow-definition-storage:4.1:4.1.14
+  - covers:split-workflow-definition-storage:4.1:4.1.15
+  - covers:split-workflow-definition-storage:4.1:4.1.16
+  tdd: true
+  source_section: '4.1'
+  implementation_domain: backend
+- title: Variables cutover and copy migration
+  category: code
+  task_type: feature
+  depends_on:
+  - '4.1'
+  validation_criteria: '4.2.1: One helper feeds all four default-application paths
+    with identical visibility, each path resolving its session''s project_id, with
+    project-first global-fallback deduplication. symbol: `load_variable_defaults`.
+    file: `src/gobby/workflows/variable_defaults.py`.
+
+    4.2.2: The session-variables TTL cache is keyed by project_id and the variables
+    revision, and invalidates on the variables domain revision. file: `src/gobby/workflows/state_manager.py`.
+
+    4.2.3: Variable sync writes typed columns. file: `src/gobby/workflows/sync_variables.py`.
+
+    4.2.3a: Variable-definition MCP CRUD reads and writes typed columns. file: `src/gobby/mcp_proxy/tools/workflows/_variables.py`.
+
+    4.2.4: Copy migration lands 42 variable rows including the normalized source anomaly.
+    test: `tests/storage/test_variable_copy_migration.py`.
+
+    4.2.5: The equivalence guard fails when a pre-existing typed variable row diverges
+    from its legacy source. test: `tests/storage/test_variable_copy_migration.py`.
+
+    4.2.6: Rerunning the variable copy over already-migrated soft-deleted rows completes
+    without a primary-key abort. test: `tests/storage/test_variable_copy_migration.py::test_rerun_over_soft_deleted_rows`.
+
+    4.2.7: Rerunning the variable copy over already-migrated live rows is a clean
+    no-op, and two soft-deleted variable rows sharing a natural key both migrate.
+    test: `tests/storage/test_variable_copy_migration.py::test_rerun_over_live_rows`.
+
+    4.2.8: A live typed variable row matching a legacy row on natural key and payload
+    but carrying a different UUID fails the guard loudly. test: `tests/storage/test_variable_copy_migration.py::test_divergent_identity_fails`.
+
+    4.2.9: No generic surface can create or mutate a legacy variable row post-cutover:
+    the generic HTTP routes, generic MCP tools, and the import path each reject kind
+    `variable` naming the surviving domain surface. test: `tests/servers/routes/test_workflows.py`.
+    test: `tests/mcp_proxy/tools/test_workflow_crud.py`. test: `tests/workflows/test_imports.py`.
+
+    4.2.10: Bundled variable sync reaches the typed table through update_from_sync:
+    a changed template enabled default is adopted on an untouched row and preserved
+    on a pinned row. test: `tests/workflows/test_sync.py`.
+
+    4.2.11: The pinned schema root hashes and the release-pinned expected identity
+    match the rebuilt gdaemon after the migration entry lands. file: `crates/gcore/tests/schema_contract.rs`.
+    file: `src/gobby/storage/schema_expected_identity.json`.
+
+    4.2.12: Alternating sessions across project A, project B, and no-project see exactly
+    their own overrides plus globals on all four application paths, with no cross-project
+    cache leakage. test: `tests/workflows/test_session_defaults.py::test_project_scoped_defaults_isolation`.
+
+    4.2.13: The variable copy migration writes one legacy_copy_ledger row per copied
+    source row and reruns keep the copy-time hash. test: `tests/storage/test_variable_copy_migration.py`.
+
+    4.2.14: The variable copy migration holds ACCESS EXCLUSIVE on workflow_definitions:
+    a concurrent second-connection variable-row write blocks until the migration commits,
+    and its post-commit landing is the post-copy drift the 7.1 backstop refuses. test:
+    `tests/storage/test_variable_copy_migration.py::test_copy_lock_fences_concurrent_writes`.'
+  labels:
+  - covers:split-workflow-definition-storage:4.2:4.2.1
+  - covers:split-workflow-definition-storage:4.2:4.2.2
+  - covers:split-workflow-definition-storage:4.2:4.2.3
+  - covers:split-workflow-definition-storage:4.2:4.2.3a
+  - covers:split-workflow-definition-storage:4.2:4.2.4
+  - covers:split-workflow-definition-storage:4.2:4.2.5
+  - covers:split-workflow-definition-storage:4.2:4.2.6
+  - covers:split-workflow-definition-storage:4.2:4.2.7
+  - covers:split-workflow-definition-storage:4.2:4.2.8
+  - covers:split-workflow-definition-storage:4.2:4.2.9
+  - covers:split-workflow-definition-storage:4.2:4.2.10
+  - covers:split-workflow-definition-storage:4.2:4.2.11
+  - covers:split-workflow-definition-storage:4.2:4.2.12
+  - covers:split-workflow-definition-storage:4.2:4.2.13
+  - covers:split-workflow-definition-storage:4.2:4.2.14
+  tdd: true
+  source_section: '4.2'
+  implementation_domain: backend
+- title: Pipelines cutover and copy migration
+  category: code
+  task_type: feature
+  depends_on:
+  - '4.2'
+  validation_criteria: '4.3.1: PipelineLoader serves load/discover/validate with extends
+    resolution and a revision-aware cache. symbol: `PipelineLoader`. file: `src/gobby/workflows/pipeline_loader.py`.
+
+    4.3.2: loader.py and loader_discovery.py are deleted and no source or test module
+    imports WorkflowLoader. file: `src/gobby/workflows/loader.py`. file: `src/gobby/workflows/loader_discovery.py`.
+
+    4.3.3: Pipeline dry-run is pipeline-only and agent dry-run is unchanged. symbol:
+    `evaluate_pipeline_definition`. file: `src/gobby/workflows/dry_run.py`.
+
+    4.3.9: The construction and injection layer types the loader as PipelineLoader,
+    so the tree imports at this commit. file: `src/gobby/hooks/factory.py`. file:
+    `src/gobby/mcp_proxy/registries.py`. file: `src/gobby/runner_init/orchestration.py`.
+
+    4.3.10: WorkflowEvaluation no longer carries workflow_type. symbol: `WorkflowEvaluation`.
+    file: `src/gobby/workflows/dry_run.py`.
+
+    4.3.4: Copy migration lands 11 pipelines with counts validated. test: `tests/storage/test_pipeline_copy_migration.py`.
+
+    4.3.5: Dynamic pipeline MCP tool exposure and stage/scheduler execution load through
+    the typed manager. test: `tests/workflows/test_pipeline_loader.py`.
+
+    4.3.6: The equivalence guard fails when a pre-existing typed pipeline row diverges
+    from its legacy source. test: `tests/storage/test_pipeline_copy_migration.py`.
+
+    4.3.8: Rerunning the pipeline copy over already-migrated soft-deleted rows completes
+    without a primary-key abort. test: `tests/storage/test_pipeline_copy_migration.py::test_rerun_over_soft_deleted_rows`.
+
+    4.3.11: Rerunning the pipeline copy over already-migrated live rows is a clean
+    no-op, and two soft-deleted pipeline rows sharing a natural key both migrate.
+    test: `tests/storage/test_pipeline_copy_migration.py::test_rerun_over_live_rows`.
+
+    4.3.12: A live typed pipeline row matching a legacy row on natural key and payload
+    but carrying a different UUID fails the guard loudly. test: `tests/storage/test_pipeline_copy_migration.py::test_divergent_identity_fails`.
+
+    4.3.7: Pipeline sync and per-kind import dispatch write the typed tables and refuse
+    a kind change by target table; imports work for all four kinds through typed managers.
+    file: `src/gobby/workflows/imports.py`. file: `src/gobby/workflows/sync_pipelines.py`.
+    test: `tests/workflows/test_imports.py`.
+
+    4.3.13: No generic surface can create or mutate a legacy pipeline row post-cutover:
+    the generic HTTP routes and generic MCP tools reject kind `pipeline` naming the
+    surviving domain surface. test: `tests/servers/routes/test_workflows.py`. test:
+    `tests/mcp_proxy/tools/test_workflow_crud.py`.
+
+    4.3.14: Bundled pipeline sync reaches the typed table through update_from_sync:
+    a changed template enabled default is adopted on an untouched row and preserved
+    on a pinned row. test: `tests/workflows/test_sync.py`.
+
+    4.3.15: loader_validation.py survives with no WorkflowLoader reference, and every
+    former loader test seam is absorbed, retargeted, or retyped per the closure inventory,
+    including the hooks-factory patch sites. file: `src/gobby/workflows/loader_validation.py`.
+    test: `tests/workflows/test_pipeline_loader.py`. test: `tests/workflows/test_workflow_hooks.py`.
+
+    4.3.16: The pinned schema root hashes and the release-pinned expected identity
+    match the rebuilt gdaemon after the migration entry lands. file: `crates/gcore/tests/schema_contract.rs`.
+    file: `src/gobby/storage/schema_expected_identity.json`.
+
+    4.3.17: Pipeline MCP create/update/delete/export operate on PipelineDefinitionManager
+    with auto-export preserved, and _pipelines.py imports neither the generic definitions
+    module nor the legacy manager. file: `src/gobby/mcp_proxy/tools/workflows/_pipelines.py`.
+    test: `tests/mcp_proxy/tools/workflows/test_pipeline_crud.py`.
+
+    4.3.18: The pipeline copy migration writes one legacy_copy_ledger row per copied
+    source row and reruns keep the copy-time hash. test: `tests/storage/test_pipeline_copy_migration.py`.
+
+    4.3.19: The pipeline copy migration holds ACCESS EXCLUSIVE on workflow_definitions:
+    a concurrent second-connection pipeline-row write blocks until the migration commits,
+    and its post-commit landing is the post-copy drift the 7.1 backstop refuses. test:
+    `tests/storage/test_pipeline_copy_migration.py::test_copy_lock_fences_concurrent_writes`.'
+  labels:
+  - covers:split-workflow-definition-storage:4.3:4.3.1
+  - covers:split-workflow-definition-storage:4.3:4.3.2
+  - covers:split-workflow-definition-storage:4.3:4.3.3
+  - covers:split-workflow-definition-storage:4.3:4.3.9
+  - covers:split-workflow-definition-storage:4.3:4.3.10
+  - covers:split-workflow-definition-storage:4.3:4.3.4
+  - covers:split-workflow-definition-storage:4.3:4.3.5
+  - covers:split-workflow-definition-storage:4.3:4.3.6
+  - covers:split-workflow-definition-storage:4.3:4.3.8
+  - covers:split-workflow-definition-storage:4.3:4.3.11
+  - covers:split-workflow-definition-storage:4.3:4.3.12
+  - covers:split-workflow-definition-storage:4.3:4.3.7
+  - covers:split-workflow-definition-storage:4.3:4.3.13
+  - covers:split-workflow-definition-storage:4.3:4.3.14
+  - covers:split-workflow-definition-storage:4.3:4.3.15
+  - covers:split-workflow-definition-storage:4.3:4.3.16
+  - covers:split-workflow-definition-storage:4.3:4.3.17
+  - covers:split-workflow-definition-storage:4.3:4.3.18
+  - covers:split-workflow-definition-storage:4.3:4.3.19
+  tdd: true
+  source_section: '4.3'
+  implementation_domain: backend
+- title: HTTP surface rebuild
+  category: code
+  task_type: feature
+  depends_on:
+  - '3.1'
+  - '3.2'
+  - '3.3'
+  - '3.4'
+  - '4.1'
+  - '4.2'
+  - '4.3'
+  validation_criteria: '5.1.1: The generic workflows router no longer exists and nothing
+    registers it. file: `src/gobby/servers/_app_routes.py`.
+
+    5.1.2: Pipeline definition routes cover the full UI demand set and mount before
+    the execution router. file: `src/gobby/servers/routes/pipeline_definitions.py`.
+
+    5.1.3: Variable definition routes cover the settings-editor demand set. file:
+    `src/gobby/servers/routes/variable_definitions.py`.
+
+    5.1.4: Session variable get/set live under the sessions API with scope semantics.
+    file: `src/gobby/servers/routes/sessions/variables.py`. test: `tests/servers/routes/test_session_variables.py`.
+
+    5.1.5: Template drift annotation works per domain through the re-keyed cache.
+    symbol: `TemplateHashCache`. file: `src/gobby/workflows/template_hashes.py`.
+
+    5.1.6: The daemon-proxy client calls the relocated session-variable endpoints
+    with scope, proven at the client seam, and no /api/workflows literal remains in
+    it. file: `src/gobby/mcp_proxy/stdio_proxy.py`. test: `tests/mcp_proxy/test_stdio_proxy.py`.
+
+    5.1.7: No /api/workflows reference remains in the project-context middleware.
+    file: `src/gobby/servers/middleware/project_context.py`.
+
+    5.1.8: Both generic workflows route suites are deleted in this commit and the
+    variables get/set coverage survives under the sessions API. test: `tests/servers/routes/test_workflows.py`.
+    test: `tests/servers/test_workflow_routes.py`. test: `tests/servers/routes/test_session_variables.py`.
+
+    5.1.9: An agent token authorizes the relocated session-variable routes for its
+    own session only, the old workflow-variable grants are gone, and the authenticated
+    DaemonProxy round trip passes at the integration seam. file: `src/gobby/servers/auth_service.py`.
+    test: `tests/servers/test_auth_service.py`. test: `tests/mcp_proxy/test_mcp_proxy_stdio.py`.
+
+    5.1.10: workflow_templates.py and its suite are deleted with the generic router
+    and nothing in the tree imports either. file: `src/gobby/workflows/workflow_templates.py`.
+    test: `tests/workflows/test_workflow_templates.py`.'
+  labels:
+  - covers:split-workflow-definition-storage:5.1:5.1.1
+  - covers:split-workflow-definition-storage:5.1:5.1.2
+  - covers:split-workflow-definition-storage:5.1:5.1.3
+  - covers:split-workflow-definition-storage:5.1:5.1.4
+  - covers:split-workflow-definition-storage:5.1:5.1.5
+  - covers:split-workflow-definition-storage:5.1:5.1.6
+  - covers:split-workflow-definition-storage:5.1:5.1.7
+  - covers:split-workflow-definition-storage:5.1:5.1.8
+  - covers:split-workflow-definition-storage:5.1:5.1.9
+  - covers:split-workflow-definition-storage:5.1:5.1.10
+  tdd: true
+  source_section: '5.1'
+  implementation_domain: fullstack
+- title: MCP surface prune and re-scope
+  category: code
+  task_type: feature
+  depends_on:
+  - '3.1'
+  - '3.2'
+  - '3.3'
+  - '3.4'
+  - '4.1'
+  - '4.2'
+  - '4.3'
+  validation_criteria: '5.2.1: Generic definition CRUD tools are gone from the registry;
+    domain tools remain. file: `src/gobby/mcp_proxy/tools/workflows/__init__.py`.
+
+    5.2.2: evaluate_pipeline and evaluate_agent expose the complete dry-run story.
+    test: `tests/mcp_proxy/tools/workflows/test_registry_surface.py::test_evaluate_tools_cover_pipeline_and_agent`.
+
+    5.2.3: get_step_status is registered under its new name and reports the snapshot
+    step list for a session. symbol: `get_step_status`. file: `src/gobby/mcp_proxy/tools/workflows/_query.py`.
+
+    5.2.4: One sync registry feeds install, reload_cache, and CLI sync. symbol: `sync_bundled_content_to_db`.
+    file: `src/gobby/sync_registry.py`.
+
+    5.2.5: Auto-export dispatches on explicit kind with per-domain collision checks.
+    file: `src/gobby/mcp_proxy/tools/workflows/_auto_export.py`.
+
+    5.2.5a: Every auto-export caller passes its kind explicitly. file: `src/gobby/mcp_proxy/tools/workflows/_agents.py`.
+    file: `src/gobby/mcp_proxy/tools/workflows/_rules.py`. file: `src/gobby/mcp_proxy/tools/workflows/_variables.py`.
+    file: `src/gobby/mcp_proxy/tools/workflows/_pipelines.py`.
+
+    5.2.6: Registry tool inventory and schemas match the disposition table. test:
+    `tests/mcp_proxy/tools/workflows/test_registry_surface.py`.
+
+    5.2.7: The generic-CRUD and get_workflow not-found suites are deleted and the
+    import, project-scope, and query suites are retargeted at surviving tools with
+    their domain assertions intact. test: `tests/mcp_proxy/tools/test_workflow_crud.py`.
+    test: `tests/mcp_proxy/tools/workflows/test_get_workflow_not_found.py`. test:
+    `tests/mcp_proxy/tools/workflows/test_import.py`. test: `tests/mcp_proxy/tools/workflows/test_project_scope.py`.
+    test: `tests/mcp_proxy/tools/workflows/test_query.py`.
+
+    5.2.8: The dispatch prompt and bundled agent instructions name get_step_status,
+    the regenerated bundled content manifest passes its freshness test, and the prompt
+    and definition regressions pin the rename. file: `src/gobby/dispatch/prompts.py`.
+    file: `src/gobby/install/shared/workflows/agents/qa-reviewer.yaml`. test: `tests/dispatch/test_prompts.py`.
+    test: `tests/agents/test_qa_reviewer_definition.py`.
+
+    5.2.9: The registry-inventory and E2E suites assert the final tool set: no list_workflows,
+    get_step_status present and callable. test: `tests/events/test_mcp_tool_changes.py`.
+    test: `tests/e2e/test_parallel_clones.py`. test: `tests/e2e/test_sequential_review_loop.py`.'
+  labels:
+  - covers:split-workflow-definition-storage:5.2:5.2.1
+  - covers:split-workflow-definition-storage:5.2:5.2.2
+  - covers:split-workflow-definition-storage:5.2:5.2.3
+  - covers:split-workflow-definition-storage:5.2:5.2.4
+  - covers:split-workflow-definition-storage:5.2:5.2.5
+  - covers:split-workflow-definition-storage:5.2:5.2.5a
+  - covers:split-workflow-definition-storage:5.2:5.2.6
+  - covers:split-workflow-definition-storage:5.2:5.2.7
+  - covers:split-workflow-definition-storage:5.2:5.2.8
+  - covers:split-workflow-definition-storage:5.2:5.2.9
+  tdd: true
+  source_section: '5.2'
+  implementation_domain: backend
+- title: CLI restructure
+  category: code
+  task_type: feature
+  depends_on:
+  - '5.1'
+  - '5.2'
+  validation_criteria: '6.1.1: The gobby workflows group is gone and per-domain replacements
+    exist. file: `src/gobby/cli/__init__.py`.
+
+    6.1.2: Reinstall runs per-domain through the sync registry with no raw legacy
+    SQL. file: `src/gobby/cli/sync.py`.
+
+    6.1.4: Filesystem imports cover the per-kind directories. symbol: `sync_imported_workflows`.
+    file: `src/gobby/workflows/imports.py`.
+
+    6.1.5: New CLI subcommands are covered by focused tests. test: `tests/cli/test_agents_steps.py`.
+
+    6.1.6: `gobby variables get|set --session` reads and writes both scopes and replaces
+    the deleted set-var/get-var commands. file: `src/gobby/cli/variables.py`.
+
+    6.1.7: The new agent subcommands live in the extracted module and both it and
+    the registration surface stay below 1,000 lines. file: `src/gobby/cli/agents_steps.py`.
+    file: `src/gobby/cli/agents.py`.
+
+    6.1.8: `gobby pipelines` imports cleanly after the package deletion: no production
+    module imports gobby.cli.workflows, and the re-homed helpers serve the pipelines
+    CLI. file: `src/gobby/cli/pipelines.py`.
+
+    6.1.9: The three workflows-group suites are deleted with the package and the pipelines-coverage
+    patch paths point at the re-homed helper. test: `tests/cli/test_cli_workflows.py`.
+    test: `tests/cli/test_workflows.py`. test: `tests/cli/test_workflows_coverage.py`.
+    test: `tests/cli/test_pipelines_coverage.py`.'
+  labels:
+  - covers:split-workflow-definition-storage:6.1:6.1.1
+  - covers:split-workflow-definition-storage:6.1:6.1.2
+  - covers:split-workflow-definition-storage:6.1:6.1.4
+  - covers:split-workflow-definition-storage:6.1:6.1.5
+  - covers:split-workflow-definition-storage:6.1:6.1.6
+  - covers:split-workflow-definition-storage:6.1:6.1.7
+  - covers:split-workflow-definition-storage:6.1:6.1.8
+  - covers:split-workflow-definition-storage:6.1:6.1.9
+  tdd: true
+  source_section: '6.1'
+  implementation_domain: backend
+- title: Web UI migration
+  category: code
+  task_type: feature
+  depends_on:
+  - '5.1'
+  - '5.2'
+  validation_criteria: '6.2.1: No web code references /api/workflows or workflow_type.
+    file: `web/src/hooks/usePipelineDefs.ts`.
+
+    6.2.2: Pipeline definitions UI performs full CRUD against the domain routes. file:
+    `web/src/components/activity/pipelines/PipelinesDefsActions.ts`.
+
+    6.2.3: Variable defaults editor works against /api/variables under its new name.
+    file: `web/src/components/settings/VariableDefaultsEditor.tsx`.
+
+    6.2.4: The agent editor''s pipeline picker is populated (data.definitions bug
+    fixed). file: `web/src/components/activity/agents/AgentsTabData.ts`.
+
+    6.2.5: The retargeted pipeline-definition and editor suites pass. test: `web/src/components/activity/pipelines/__tests__/PipelinesDefs.test.tsx`.
+    test: `web/src/components/activity/pipelines/__tests__/PipelineEditor.test.tsx`.
+
+    6.2.6: The retargeted settings and agents-tab suites pass. test: `web/src/components/settings/__tests__/WorkflowVariablesEditor.test.tsx`.
+    test: `web/src/components/settings/sections/__tests__/AutomationWorkflowsSection.test.tsx`.
+    test: `web/src/components/activity/__tests__/AgentsTab.test.tsx`.
+
+    6.2.7: The refetch and selection-race hook suites pass against the new hooks.
+    test: `web/src/hooks/__tests__/useFilteredRefetches.test.ts`. test: `web/src/hooks/__tests__/useSelectionFetchRaces.test.ts`.
+
+    6.2.8: The variable display helper reads default_value, and the style-surface
+    capture fake serves the domain routes with no generic /api/workflows branch, so
+    the migrated editors render populated in visual coverage. file: `web/src/components/settings/workflowVariables.ts`.
+    test: `web/tests/style-surfaces.spec.ts`.
+
+    6.2.9: The web definition types and adapters model step data only under the nested
+    step_workflow object, and the read-only panel renders steps from it. file: `web/src/components/agents/AgentEditForm.types.ts`.
+    file: `web/src/components/activity/agents/AgentsTabData.ts`. file: `web/src/components/agents/AgentReadOnlyDetails.tsx`.
+    file: `web/src/components/activity/agents/AgentsTabActions.ts`.
+
+    6.2.10: A hydrated agent definition round-trips to a draft and back to a save
+    body with steps, step variables, and exit condition intact, asserted in the retargeted
+    adapter and editor suites. test: `web/src/components/activity/__tests__/AgentsTabActions.test.ts`.
+    test: `web/src/components/agents/__tests__/AgentEditors.test.tsx`.'
+  labels:
+  - covers:split-workflow-definition-storage:6.2:6.2.1
+  - covers:split-workflow-definition-storage:6.2:6.2.2
+  - covers:split-workflow-definition-storage:6.2:6.2.3
+  - covers:split-workflow-definition-storage:6.2:6.2.4
+  - covers:split-workflow-definition-storage:6.2:6.2.5
+  - covers:split-workflow-definition-storage:6.2:6.2.6
+  - covers:split-workflow-definition-storage:6.2:6.2.7
+  - covers:split-workflow-definition-storage:6.2:6.2.8
+  - covers:split-workflow-definition-storage:6.2:6.2.9
+  - covers:split-workflow-definition-storage:6.2:6.2.10
+  tdd: true
+  source_section: '6.2'
+  implementation_domain: fullstack
+- title: Drop migration and legacy module deletion
+  category: code
+  task_type: feature
+  depends_on:
+  - '6.1'
+  - '6.2'
+  validation_criteria: "7.1.1: The drop is a destructive EmbeddedMigration whose backstop\
+    \ verifies every non-generated legacy row, live and soft-deleted, against its\
+    \ legacy_copy_ledger checkpoint hash and RAISEs with offending ids and names.\
+    \ test: `tests/storage/test_drop_legacy_migration.py`.\n7.1.2: The backstop refuses\
+    \ to drop when a legacy row was written after its copy (hash mismatch) and when\
+    \ a legacy row has no ledger entry (post-copy insertion). test: `tests/storage/test_drop_legacy_migration.py`.\n\
+    7.1.2a: The backstop also covers soft-deleted legacy rows by preserved id, refusing\
+    \ to drop a definition created after its copy migration and soft-deleted before\
+    \ P5. test: `tests/storage/test_drop_legacy_migration.py::test_backstop_covers_soft_deleted_rows`.\n\
+    7.1.3: Both legacy tables and legacy_copy_ledger are gone from the baseline, the\
+    \ catalog manifest, and the live schema after the destructive apply, and the refresh\
+    \ contract enumerates exactly the removed statements. file: `crates/gcore/assets/schema/baseline.sql`.\
+    \ file: `crates/gcore/src/schema/runner_tests.rs`.\n7.1.4: storage/workflow_definitions.py\
+    \ is deleted and no source or test imports it. file: `src/gobby/storage/definitions/_shared.py`.\n\
+    7.1.5: The scheduled soft-deleted-definition purge drops the legacy manager import\
+    \ and fans out over the four typed parent managers, with agent step-workflow children\
+    \ removed by cascade and no step-instance branch. symbol: `_purge_soft_deleted_definitions`.\
+    \ file: `src/gobby/sessions/lifecycle.py`.\n7.1.6: A fresh lineage receipt-stamps\
+    \ the drop without executing it; an existing hub refuses it on plain restart and\
+    \ applies it under --destructive with a verified backup manifest inside an open\
+    \ maintenance epoch. file: `crates/gcore/src/schema/runner_tests.rs`. test: `tests/storage/test_drop_legacy_migration.py`.\n\
+    7.1.7: Template hashing and the skills metadata docstring carry no legacy storage\
+    \ reference. file: `src/gobby/workflows/template_hashes.py`. file: `src/gobby/storage/skills/_metadata.py`.\n\
+    7.1.8: A signature-matching generated row is excluded from the backstop, while\
+    \ a workflow_type='workflow' row failing the generated signature and a row with\
+    \ an unknown workflow_type each fail the preflight loudly with ids and names.\
+    \ test: `tests/storage/test_drop_legacy_migration.py::test_unsupported_row_classification`.\n\
+    7.1.9: Typed-side evolution after copy \u2014 an edit, a sync refresh, a restore,\
+    \ and a hard-delete of typed rows \u2014 does not block the drop, while a legacy-only\
+    \ write and a post-copy legacy insertion each block it loudly. test: `tests/storage/test_drop_legacy_migration.py::test_directional_backstop`.\n\
+    7.1.10: Replaying every embedded copy migration against a fresh final-baseline\
+    \ lineage, where neither legacy table exists, records receipted no-ops with no\
+    \ error and no typed-row writes. file: `crates/gcore/src/schema/runner_tests.rs`.\n\
+    7.1.11: gdaemon schema apply --destructive refuses when its connection lacks the\
+    \ open maintenance-epoch GUC, naming gobby hub-maintenance run schema-apply in\
+    \ the refusal, and succeeds over an epoch-bound DSN with a verified backup manifest.\
+    \ symbol: `apply_schema`. file: `crates/gdaemon/src/main.rs`. test: `crates/gdaemon/tests/schema_cli.rs`."
+  labels:
+  - covers:split-workflow-definition-storage:7.1:7.1.1
+  - covers:split-workflow-definition-storage:7.1:7.1.2
+  - covers:split-workflow-definition-storage:7.1:7.1.2a
+  - covers:split-workflow-definition-storage:7.1:7.1.3
+  - covers:split-workflow-definition-storage:7.1:7.1.4
+  - covers:split-workflow-definition-storage:7.1:7.1.5
+  - covers:split-workflow-definition-storage:7.1:7.1.6
+  - covers:split-workflow-definition-storage:7.1:7.1.7
+  - covers:split-workflow-definition-storage:7.1:7.1.8
+  - covers:split-workflow-definition-storage:7.1:7.1.9
+  - covers:split-workflow-definition-storage:7.1:7.1.10
+  - covers:split-workflow-definition-storage:7.1:7.1.11
+  tdd: true
+  source_section: '7.1'
+  implementation_domain: backend
+- title: Legacy-reference audit test
+  category: test
+  task_type: feature
+  depends_on:
+  - '7.1'
+  - '7.3'
+  validation_criteria: '7.2.1: The audit fails on any production reference to removed
+    storage and passes on the final tree. test: `tests/audit/test_legacy_workflow_storage_removed.py`.
+
+    7.2.2: The audit covers the baseline SQL and bundled YAML/skill/prompt sources,
+    and fails when an allowlist entry no longer matches anything. test: `tests/audit/test_legacy_workflow_storage_removed.py::test_allowlist_is_self_pruning`.
+
+    7.2.3: Every occurrence in the owner inventory is either absent from the final
+    tree or covered by an exact allowlist triple, asserted rather than assumed. test:
+    `tests/audit/test_legacy_workflow_storage_removed.py::test_every_preexisting_occurrence_has_an_owner`.'
+  labels:
+  - covers:split-workflow-definition-storage:7.2:7.2.1
+  - covers:split-workflow-definition-storage:7.2:7.2.2
+  - covers:split-workflow-definition-storage:7.2:7.2.3
+  tdd: false
+  source_section: '7.2'
+  assigned_agent: backend-developer
+- title: Documentation sweep
+  category: docs
+  task_type: feature
+  depends_on:
+  - '7.1'
+  validation_criteria: '7.3.1: Guides and architecture docs describe the domain-table
+    model and snapshot runtime. file: `docs/guides/workflows-overview.md`. file: `docs/architecture/architecture.md`.
+
+    7.3.2: The conflicting prior design doc is deleted and the false review claim
+    corrected. file: `docs/reviews/cli-build-ops.md`.
+
+    7.3.3: Bundled skills and prompts reference only surviving MCP tools. file: `src/gobby/install/shared/skills/persona/SKILL.md`.
+
+    7.3.4: No audited legacy token remains in config/tasks.py. file: `src/gobby/config/tasks.py`.
+
+    7.3.5: The HTTP endpoint and pipelines guides describe the domain routes with
+    no /api/workflows or workflow_type reference. file: `docs/guides/http-endpoints.md`.
+    file: `docs/guides/pipelines.md`.
+
+    7.3.9: The CLI guide documents the replacement command surface with no gobby workflows
+    group, and the MCP tools and variables guides name only surviving tools. file:
+    `docs/guides/cli-commands.md`. file: `docs/guides/mcp-tools.md`. file: `docs/guides/variables.md`.
+
+    7.3.6: The configuration audit carries an explicit active-or-historical disposition.
+    file: `docs/audits/configuration-audit.md`.
+
+    7.3.7: Module guidance describes the domain tables. file: `src/gobby/dispatch/CLAUDE.md`.
+    file: `src/gobby/install/shared/workflows/rules/CLAUDE.md`.
+
+    7.3.8: The bundled content manifest is regenerated for every rewritten bundled
+    skill and prompt and its freshness test passes without an update flag. file: `src/gobby/install/bundled_content_manifest.json`.
+    test: `tests/install/test_bundled_content_manifest.py`.'
+  labels:
+  - covers:split-workflow-definition-storage:7.3:7.3.1
+  - covers:split-workflow-definition-storage:7.3:7.3.2
+  - covers:split-workflow-definition-storage:7.3:7.3.3
+  - covers:split-workflow-definition-storage:7.3:7.3.4
+  - covers:split-workflow-definition-storage:7.3:7.3.5
+  - covers:split-workflow-definition-storage:7.3:7.3.9
+  - covers:split-workflow-definition-storage:7.3:7.3.6
+  - covers:split-workflow-definition-storage:7.3:7.3.7
+  - covers:split-workflow-definition-storage:7.3:7.3.8
+  tdd: false
+  source_section: '7.3'
+  assigned_agent: tech-writer
+```
