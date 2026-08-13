@@ -11,7 +11,9 @@ independent domain tables — `rule_definitions`, `agent_definitions`,
 `agent_step_workflows` (optional 1:1 child of agent_definitions),
 `session_variable_defaults`, `pipeline_definitions` — plus an agent-step-specific
 runtime table `agent_step_instances` that stores an **immutable step-workflow
-snapshot** taken at spawn/persona activation. No new discriminator, no generic
+snapshot** taken at spawn/persona activation, and a small
+`definition_revisions` invalidation-state table backing commit-visible,
+cross-daemon cache invalidation. No new discriminator, no generic
 registry, no dual-read/dual-write facades, no backward compatibility (pre-0.5).
 
 Why: today five kinds share one table keyed by `UNIQUE NULLS NOT DISTINCT
@@ -34,7 +36,8 @@ Research corrections to the epic text (verified against code and the live hub):
 
 1. The claimed `(name, workflow_type, project_id)` uniqueness does not exist;
    the real key is `UNIQUE NULLS NOT DISTINCT (name, project_id, source)` with
-   no partial indexes (`postgres_baseline_schema.sql:1420-1449`).
+   no partial indexes (`crates/gcore/assets/schema/baseline.sql:2375-2376`,
+   indexes at `:3176-3186`).
 2. A fifth discriminator value `workflow_type='workflow'` exists (29 generated
    `-steps` rows, 4 orphaned) outside `SUPPORTED_WORKFLOW_DEFINITION_TYPES`.
 3. The epic's MCP tool names (`list_workflow_definitions`,
@@ -52,10 +55,16 @@ Research corrections to the epic text (verified against code and the live hub):
    whose generated `-steps` row and instances outlive them. Retiring a bundled
    agent leaves exactly this residue, so treat these as a standing class rather
    than a fixed row list.
-6. 25 stepful / 4 step-less bundled agents: confirmed exact. The DB row count
-   can exceed the bundled file count whenever a retired agent is still present
-   as a soft-deleted row, so derive migration counts from the hub, never from
-   the bundled file inventory.
+6. Bundled agent file inventory at HEAD (re-verified 2026-08-12, adversary
+   round 2 APR2-004): **25 files total — 21 stepful + 4 step-less**
+   (comms-agent, default, goal-taskmaster, triage-agent). The four retired
+   stepful agents (nightly-linter, nightly-test-fixer,
+   plan-review-researcher-taskless, wiki-researcher) have no bundled file and
+   survive only as soft-deleted hub rows, which is why the hub holds 29 agent
+   rows of which 25 are stepful (21 bundled + 4 retired). File counts and hub
+   counts are different inventories: derive migration counts from the hub,
+   never from the bundled file inventory, and derive conversion lists from the
+   filesystem, never from hub row counts.
 7. `docs/plans/workflow-refactor.md` is a conflicting older design (generic
    `definition_registry` + inline step workflows) — superseded and deleted by
    this plan. `docs/reviews/cli-build-ops.md:56-60` falsely claims the new
@@ -65,21 +74,139 @@ Research corrections to the epic text (verified against code and the live hub):
 retargeted in P7; only the new legacy-reference absence audit is written from
 scratch there.
 
-Decisions made with the operator (2026-07-26):
+Research corrections from the 2026-08-12 refresh (verified against HEAD):
 
-- **Staged per-domain migrations** (not the epic's single copy+drop
-  transaction): a create-tables migration first (baseline keeps BOTH shapes
-  during the epic); each domain ships a guarded copy migration in the same
-  commit as its code cutover; a final drop migration removes the legacy
-  tables and the baseline entries. The drop migration RAISEs if live legacy
-  rows exist that never reached the typed tables (backstop for mid-epic
-  writes through old surfaces).
+9. **Schema authority moved to Rust gcore** (commits `e322fc28c` "flatten
+   migrations into post-M0 baseline", `144a85fd2` "add gcore schema authority",
+   `0617b44ca` "delegate PostgreSQL schema authority to gdaemon").
+   `src/gobby/storage/postgres_baseline_schema.sql` and
+   `src/gobby/storage/migrations/` no longer exist. All DDL lives in
+   `crates/gcore/assets/schema/baseline.sql` (frozen `BASELINE_VERSION = 375`),
+   embedded in gdaemon and applied out-of-process with a release-pinned
+   identity check. A tripwire test
+   (`tests/storage/test_schema_contract.py::test_production_python_has_no_persistent_postgres_ddl`)
+   forbids persistent DDL in production Python. P1 and every migration
+   deliverable were rewritten against this mechanism; see Constraints.
+10. **`workflow_states` is already gone.** The table is absent from the
+    baseline and `get_claimed_task_owners`
+    (`src/gobby/cli/tasks/_utils/claims.py`) already reads
+    `tasks JOIN sessions`. The former P7.1 rewrite/drop slice for it is
+    removed from this plan; only stale docstring cleanup remains (7.3).
+11. **`enabled_user_modified` reconciliation column added** (`9071a6209`,
+    2026-08-02) with `update_from_sync()`: a sticky user-toggle provenance bit
+    that bundled sync respects when propagating template `enabled` defaults.
+    The four definition domain tables carry it under the clearer name
+    `enabled_pinned` (Decision Record); the legacy column keeps its old name
+    until the P7 drop removes it.
+12. **Web pipeline-definition callers moved.** The pipeline editor's fetch
+    layer now lives in
+    `web/src/components/activity/pipelines/PipelinesDefsActions.ts`
+    (`f04e1eafd`, 2026-08-09); `usePipelineDefs.ts` has never existed. 6.2
+    retargeted.
+13. **Drifted anchors fixed in place**: the `workflow_instances=` log key
+    moved from `agent_cleanup.py:454` to
+    `src/gobby/agents/terminal_cleanup.py:180`; the `stdio_proxy.py`
+    `/api/workflows/variables` literals moved from `:462`/`:476` to
+    `:500`/`:514`. Body line references elsewhere were spot-verified on
+    2026-08-12; symbols in Targets are the durable anchors.
+14. **The `gobby-workflows` MCP registry has grown to 31 tools**: the 10
+    generic tools 5.2 deletes or re-scopes plus 21 domain tools that already
+    exist, confirming 5.2's premise that domain CRUD needs no new tools.
+15. **The root `gobby export`/`gobby import` CLI is gone** (adversary round 2,
+    BR-008): `src/gobby/cli/export_import.py` sits in `DEAD_PYTHON_PATHS`
+    within the import-hygiene meta test, and a CLI contract test pins the
+    commands' absence from root help. The Jul-29 draft's export/import
+    vocabulary migration in 6.1 referenced a surface that no longer exists and
+    is dropped rather than resurrected.
+16. **#18974 landed same-session daemon-stop resume** (closed 2026-07-27;
+    adversary round 2 APR2-001). A daemon-stop-terminalized run is relaunched
+    as a new run on the **same child session** via `prepare_terminal_resume`
+    (`src/gobby/agents/spawn.py:227`, called from
+    `src/gobby/agents/resume_executor.py:192` with a CAS session rebind), and
+    `cleanup_agent_runtime_state` (`src/gobby/agents/runtime_cleanup.py`)
+    deletes workflow-instance rows only when `terminal_reason !=
+    'daemon_stop'` — daemon-stop retains them so the resumed run continues at
+    its step. `tests/agents/test_spawn_prepare_resume.py` pins the seam. The
+    Jul-29 draft's §3.2 exclusion ("resume creates a new child session; the
+    row does not follow it") described the pre-#18974 runtime and is
+    rewritten: resume continuity is now a live contract this epic must
+    preserve, not a deferred feature.
+17. **After-commit callbacks already exist in the ambient transaction layer**
+    (adversary round 2 APR2-015): `Transaction.after_commit`
+    (`src/gobby/storage/hub/postgres_pool.py:304`) queues callbacks that fire
+    only after the outermost pooled transaction commits and never on rollback,
+    and the adapter routes `after_commit` to the current ambient transaction
+    (`src/gobby/storage/hub/postgres.py:365`). The commit-visible revision
+    contract binds to this existing seam instead of "after the manager's
+    transaction block", which under ambient nesting is earlier than the true
+    commit.
+
+Decisions made with the operator (2026-07-26, mechanism updated 2026-08-12):
+
+- **Staged per-domain migrations via re-armed gcore `MIGRATIONS`** (mechanism
+  updated 2026-08-12; the Jul 26 staging survives, its carrier changed): the
+  eight new tables ride `crates/gcore/assets/schema/baseline.sql` with
+  idempotent guards, so both shapes coexist in the baseline mid-epic; each
+  domain ships a guarded copy as an `EmbeddedMigration` entry in the same
+  commit as its code cutover; a final `-- gobby:destructive` drop migration
+  removes the legacy tables behind the backup-gated `--destructive` apply,
+  with the same-commit baseline edit removing their DDL. The drop migration
+  RAISEs if legacy rows were written after their copy or never copied at all
+  (the directional `legacy_copy_ledger` backstop for mid-epic writes through
+  old surfaces). Live hubs upgrade in place.
+- **Migration flatten is deferred**: re-flattening the epic's numbered
+  migrations into the baseline before 0.5.0 ships is an explicit out-of-scope
+  release chore, not part of this epic (operator decision 2026-08-12).
+- **`enabled` + `enabled_pinned` on all four definition domains**
+  (rules, agents, variables, pipelines) with the sync guard;
+  `agent_step_workflows` carries neither — the child follows its parent agent
+  (operator decision 2026-08-12). The typed tables rename the legacy
+  `enabled_user_modified` bit to `enabled_pinned` — same semantics: the user
+  pinned the value, sync keeps its hands off (operator decision 2026-08-12,
+  enhancement round 1).
 - **One step instance per session**: `UNIQUE(session_id)`, no `priority`
   column. Persona activation with a different agent replaces the instance;
-  the same agent preserves it.
-- **`workflow_states` legacy table removal is IN scope** (P7): rewrite its one
-  reader (`cli/tasks/_utils/claims.py`) against the session-variables store,
-  drop the table in the drop migration.
+  the same agent preserves it (re-confirmed 2026-08-12).
+- **Sequencing**: P1 lands after the in-flight gcode agent-auth/overlay
+  baseline change merges; the schema-artifact lockstep in Constraints re-arms
+  on top of whatever that lands as (operator decision 2026-08-12).
+- **Enhancement round 1 accepted in full** (operator decision 2026-08-12):
+  commit-visible revision bumps with dual-domain child bumps (E1 — 1.3, 1.4,
+  2.4); a parameterized `enabled_pinned` reconciliation contract over all four
+  definition managers with a sync seam per domain (E2 — 1.2, 1.3, 2.3,
+  4.1–4.3); staged generic-surface kind rejection in the same commit as each
+  domain cutover, serializing 4.3 after 4.2 (E3 — 2.3, 4.1–4.3, 5.1, 5.2);
+  persistent per-domain revisions with cross-daemon LISTEN/NOTIFY
+  invalidation and a two-daemon test (E4 — 1.1, 1.4, E1).
+- **Adversary attempt (evidence 3d6e2eee, run f9553136) — findings accepted
+  in full, round not countable** (operator decision 2026-08-12, all five
+  findings): explicit delete/retarget/absorb dispositions for every
+  legacy-manager and WorkflowLoader test seam (BR-002 — 2.3, 2.4, 4.1, 4.2,
+  5.1, 5.2, 7.1; BR-003 — 4.3); complete DefinitionRevisionListener lifecycle
+  with a shutdown seam and injectable connection factory (BR-006 — 1.4);
+  export/import CLI work dropped as targeting a deleted surface (BR-008 —
+  6.1); the retargeted web suites promoted into 6.2's Targets (BR-011 — 6.2).
+  The reviewer returned a summarized coverage attestation instead of the
+  canonical `validate_plan_review_coverage` output, so the round result fails
+  the server's round-result validation and can never finalize; the evidence
+  was expired as a dead attempt and `completed_plan_review_rounds` stays 0.
+  The five findings stand as these operator-approved repairs; no V1
+  verification entry exists for this attempt because no canonical checkpoint
+  fence can.
+- **Adversary round 2 (evidence cd52d419, run 038eb7bb) — all 15 findings
+  accepted, judged unattended** (operator delegation 2026-08-12: "use your
+  best judgment on the findings"): every finding was verified against the
+  repository before acceptance. Two findings were accepted with a narrower
+  repair than proposed, recorded here: APR2-015's fix binds to the
+  **existing** `after_commit` seam (correction 17) instead of building a new
+  callback mechanism; APR2-008's lockstep targets were added to the five
+  deliverables that register `MIGRATIONS` entries (2.3, 3.2, 4.1, 4.2, 4.3)
+  and not to 1.5, which creates the entry convention with an empty list and
+  therefore leaves `root_hash()` and the expected identity unchanged.
+  APR2-006's ledger ships as the companion file itself rather than a §7.2
+  audit clause: `verify_bootstrap_ledger` and adversary review are the
+  contract's enforcement points, and the §7.2 audit test scans legacy tokens,
+  not coverage artifacts.
 
 ## Constraints
 `kind: framing`
@@ -88,13 +215,40 @@ Decisions made with the operator (2026-07-26):
   single sanctioned scaffolding: `register_agent_step_workflow` keeps writing
   generated legacy rows (reading `body.step_workflow`) from P2 until P3 task
   3.2 deletes it — this keeps every intermediate commit a working daemon.
-- Migration ordinals: allocate the next free `NNN` under
-  `src/gobby/storage/migrations/` at implementation time (tail is 342 at
-  planning time). Relative order must hold: create-tables < all domain copies
-  < drop. Every migration is guarded (`IF NOT EXISTS` DDL / DO-block
-  `information_schema` checks) so it is valid against both the pre-migration
-  shape and the current baseline (fresh installs replay all migrations on top
-  of the baseline — see `tests/storage/test_migration_contract.py`).
+- **Schema mechanism (2026-08-12)**: all DDL lives in
+  `crates/gcore/assets/schema/baseline.sql` (idempotent, pg_dump-normalized
+  style), embedded in gdaemon; `src/gobby/storage/migrations/` and the Python
+  baseline no longer exist, and a tripwire test forbids persistent DDL in
+  production Python. Data migrations are `EmbeddedMigration` entries in
+  `crates/gcore/src/schema/assets.rs` `MIGRATIONS` (re-armed by 1.5), with SQL
+  assets under `crates/gcore/assets/schema/migrations/NNN_<name>.sql` and
+  versions allocated `> 375` at implementation time. Relative order must hold:
+  all domain copies < drop. Every copy migration is guarded (DO-block
+  `information_schema` checks) so it is valid whether or not the legacy tables
+  exist; every migration added by this epic must be **fresh-redundant** — its
+  effect on an empty hub is subsumed by the current baseline (copies no-op,
+  the drop targets tables the end-state baseline no longer creates).
+- **Schema-artifact lockstep**: every `baseline.sql` edit re-arms, in one
+  commit: `BASELINE_CHECKSUM` (`crates/gcore/src/schema/assets.rs`),
+  `PREDECESSOR_BASELINE_CHECKSUM` and the `baseline_refresh_statement` prefix
+  list (`crates/gcore/src/schema/runner.rs`), the fixture
+  `crates/gcore/tests/fixtures/schema/predecessor_baseline.sql`,
+  `crates/gcore/assets/schema/catalog.manifest.json` (regenerated via
+  `UPDATE_GCORE_SCHEMA_MANIFEST=1 cargo test -p gobby-core --test
+  catalog_manifest_freshness` against an isolated database), the pinned
+  checksums in `crates/gcore/tests/schema_contract.rs`, and
+  `src/gobby/storage/schema_expected_identity.json` (regenerated via
+  `uv run python scripts/generate_schema_expected_identity.py --gdaemon
+  target/release/gdaemon` after `cargo build --release -p gobby-daemon`).
+  Reinstall gdaemon to `~/.gobby/bin/` afterward — a committed change is not
+  live until the binary is reinstalled. Recipe precedents: commits
+  `4a5b8f9e3` (smallest complete fan-out) and `d7707cacd` (adds tables);
+  `.gobby/plans/reactive-config-store.md:182-195` documents the sequence.
+  Hubs more than one baseline hop behind must recreate from a verified
+  backup; each phase that edits the baseline is one hop.
+- **Migration flatten is out of scope** (non-goal): folding this epic's
+  numbered migrations back into the baseline is a pre-0.5.0 release chore
+  owned outside this epic (operator decision 2026-08-12).
 - Copy migrations preserve row UUIDs and timestamps; unknown `source` values
   normalize to `'installed'`. **Conflict target**: every copy INSERT uses
   targetless `ON CONFLICT DO NOTHING`, never `ON CONFLICT (name, project_id)
@@ -127,19 +281,31 @@ Decisions made with the operator (2026-07-26):
   soft-deleted rows sharing a natural key, a divergent payload conflict (loud
   failure), and a live same-key/same-payload/**different-UUID** row (loud
   failure).
-- 1,000-line rule: `workflows/definitions.py` (911), `state_manager.py` (774),
-  `workflows/hooks.py` (965), `dry_run.py` (992),
-  `spawn_agent/_implementation.py` (954), `mcp_proxy/tools/workflows/__init__.py`
-  (818) are all near the cap — the named extractions in P2/P3/P5 are mandatory,
-  not optional. Each extraction is scheduled in or before the first task that
+- 1,000-line rule (counts re-verified 2026-08-12): `workflows/definitions.py`
+  (965), `dry_run.py` (992), `spawn_agent/_implementation.py` (972),
+  `mcp_proxy/tools/workflows/__init__.py` (826), `cli/agents.py` (861),
+  `workflows/hooks.py` (804), `state_manager.py` (790) are near the cap — the
+  named extractions in P2/P3/P5 are mandatory, not optional. Each extraction is scheduled in or before the first task that
   grows its file, never as a later cleanup: `definitions.py` splits in 2.1,
   `dry_run.py`'s trace helpers move in 2.4 (eight lines of headroom cannot absorb
   2.4's nested-agent rewrite), and `_implementation.py`'s step-state block moves
   in 3.2. A conditional "extract if it gets close" leaves an over-cap commit in
   between and is not used anywhere in this plan.
+- **Companion coverage ledger** (adversary round 2 APR2-006):
+  `.gobby/plans/split-workflow-definition-storage.coverage-ledger.yaml`
+  enumerates every deliverable acceptance item and its expected implementation
+  leaf per the Plan-Coverage Contract's Bootstrap Ledger section
+  (`docs/contracts/plan-coverage.md`). It is maintained alongside this plan,
+  adversary-reviewed before expansion, and verified against the generated
+  manifest by `verify_bootstrap_ledger` at close time.
 - Tests: focused runs only with `GOBBY_TEST_PROTECT=1`; never the full suite.
-- Daemon must be restarted (`uv run gobby restart`) after each phase lands to
-  run its migrations.
+  Rust: `cargo test -p gobby-core <name>`; never bare `cargo test`.
+- After each phase lands: rebuild and reinstall gdaemon if crate schema assets
+  changed, then `uv run gobby restart` — startup applies the baseline refresh
+  and pending non-destructive migrations. The P7 drop is destructive-gated: a
+  normal restart refuses it loudly, and the operator applies it once per hub
+  with `gdaemon schema apply --destructive` against a verified hub backup
+  manifest, then restarts.
 
 ## P1: Storage Foundation
 `kind: framing`
@@ -147,25 +313,57 @@ Decisions made with the operator (2026-07-26):
 **Goal**: New tables exist (empty), typed managers and per-domain cache
 revisions are available, nothing consumes them yet.
 
-### 1.1 Create domain tables migration and baseline DDL [category: code]
+### 1.1 Domain-table DDL in the revisioned baseline [category: code]
 `kind: deliverable`
 
-Targets: `src/gobby/storage/postgres_baseline_schema.sql`,
-`src/gobby/storage/migrations/NNN_create_domain_definition_tables.sql` (new),
-`tests/storage/test_migration_contract.py`
+Targets:
+- `crates/gcore/assets/schema/baseline.sql`
+- `crates/gcore/src/schema/assets.rs::*` — scope-reason: baseline checksum re-arm
+- `crates/gcore/src/schema/runner.rs::*` — scope-reason: predecessor checksum and refresh-statement prefix list re-arm
+- `crates/gcore/src/schema/runner_tests.rs::*` — scope-reason: refresh-contract fixture and added-statement assertions
+- `crates/gcore/src/baseline_refresh.rs::*` — scope-reason: refresh-statement acceptance re-arm for the added baseline statements (adversary round 3 APR3-013)
+- `crates/gcore/tests/fixtures/schema/predecessor_baseline.sql`
+- `crates/gcore/assets/schema/catalog.manifest.json::*` — scope-reason: regenerated catalog rows for the eight new tables
+- `crates/gcore/tests/schema_contract.rs::*` — scope-reason: pinned checksum and root-hash constants
+- `src/gobby/storage/schema_expected_identity.json::*` — scope-reason: regenerated release-pinned identity
+- `tests/storage/test_domain_tables_schema.py`
 
-Add six tables to the baseline (KEEP `workflow_definitions` and
-`workflow_instances` in the baseline until P7) and an identical guarded
-DDL-only migration (`CREATE TABLE IF NOT EXISTS` / `CREATE INDEX IF NOT
-EXISTS` throughout):
+Add the eight tables to `crates/gcore/assets/schema/baseline.sql` with
+idempotent guards (`CREATE TABLE IF NOT EXISTS` / `CREATE UNIQUE INDEX IF NOT
+EXISTS`), KEEPING `workflow_definitions` and `workflow_instances` in the
+baseline until P7. Follow the checked-in pg_dump-normalized style — `USING
+btree`, parenthesized `WHERE (...)` — because `catalog.manifest.json` stores
+round-tripped definitions and the freshness test compares bytes. Grants ride
+the grants section on the `workflow_definitions` precedent (`GRANT SELECT,
+INSERT, DELETE, UPDATE ... TO gobby_daemon_runtime`);
+`crates/gcode/security/managed_postgres_privileges.json` needs no change for
+daemon-owned tables. Partial-unique live-name precedent in the baseline:
+`idx_build_profiles_active_unique`. Re-arm the full schema-artifact lockstep
+from Constraints in the same commit, then rebuild and reinstall gdaemon.
+
+**Refresh-statement acceptance owner (adversary round 3 APR3-013).** The
+refresh-hop acceptance for added baseline statements does not live in
+`runner.rs`: `runner.rs::baseline_statement_for_state` (`:418-453`) only
+delegates the `PredecessorBaseline` branch to
+`crates/gcore/src/baseline_refresh.rs::baseline_refresh_statement`
+(`baseline_refresh.rs:25-29`), which today accepts exactly one statement by
+exact-string equality against a single `const` (`REFRESH_STATEMENT`,
+`baseline_refresh.rs:4`). This deliverable extends that module to an
+enumerated acceptance of exactly the added statements — the eight CREATE
+TABLEs, their indexes, and their grants — so the set-difference tripwire in
+`runner_tests.rs` passes on the real inventory rather than a relaxed match.
+`runner.rs` keeps its unrelated `GcoreCodeIndex`/`GwikiStandalone` filtering
+branches; only the predecessor-refresh acceptance changes, in its actual
+implementation module.
 
 ```sql
-CREATE TABLE rule_definitions (
+CREATE TABLE IF NOT EXISTS rule_definitions (
     id UUID PRIMARY KEY,
     project_id UUID REFERENCES projects(id) ON DELETE CASCADE DEFERRABLE INITIALLY IMMEDIATE,
     name TEXT NOT NULL,
     description TEXT,
     enabled BOOLEAN NOT NULL DEFAULT TRUE,
+    enabled_pinned BOOLEAN NOT NULL DEFAULT FALSE,
     priority INTEGER NOT NULL DEFAULT 100,
     sources JSONB,
     definition_json JSONB NOT NULL,
@@ -175,24 +373,28 @@ CREATE TABLE rule_definitions (
     created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
     updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );
-CREATE INDEX idx_rule_defs_project ON rule_definitions(project_id);
-CREATE INDEX idx_rule_defs_event ON rule_definitions((definition_json->>'event')) WHERE deleted_at IS NULL;
-CREATE UNIQUE INDEX uq_rule_defs_live_name
-    ON rule_definitions (name, project_id) NULLS NOT DISTINCT WHERE deleted_at IS NULL;
+CREATE INDEX IF NOT EXISTS idx_rule_defs_project ON rule_definitions USING btree (project_id);
+CREATE INDEX IF NOT EXISTS idx_rule_defs_event ON rule_definitions USING btree ((definition_json->>'event')) WHERE (deleted_at IS NULL);
+CREATE UNIQUE INDEX IF NOT EXISTS uq_rule_defs_live_name
+    ON rule_definitions USING btree (name, project_id) NULLS NOT DISTINCT WHERE (deleted_at IS NULL);
 ```
 
 `agent_definitions`: same shape minus `priority`/`sources` (body =
 `AgentDefinitionBody` JSON **without** step fields). `pipeline_definitions`:
 same shape minus `priority`/`sources`, plus `version TEXT NOT NULL DEFAULT
 '1.0'` and `canvas_json JSONB`. `session_variable_defaults`: fully typed — no
-JSON body: `id, project_id, name, description, enabled, default_value JSONB,
-source, tags, deleted_at, created_at, updated_at` (same indexes/partial unique
-pattern; `default_value` holds any JSON scalar/object). Each definition table
-gets `idx_<t>_project`, and partial unique `uq_<t>_live_name (name, project_id)
-NULLS NOT DISTINCT WHERE deleted_at IS NULL`.
+JSON body: `id, project_id, name, description, enabled,
+enabled_pinned, default_value JSONB, source, tags, deleted_at,
+created_at, updated_at` (same indexes/partial unique pattern; `default_value`
+holds any JSON scalar/object). All four definition tables carry `enabled` +
+`enabled_pinned` (Decision Record: the sync guard from `9071a6209` survives
+the split; the typed tables rename the legacy `enabled_user_modified` bit to
+`enabled_pinned`); `agent_step_workflows` carries neither. Each definition
+table gets `idx_<t>_project`, and partial unique `uq_<t>_live_name (name,
+project_id) NULLS NOT DISTINCT WHERE (deleted_at IS NULL)`.
 
 ```sql
-CREATE TABLE agent_step_workflows (
+CREATE TABLE IF NOT EXISTS agent_step_workflows (
     id UUID PRIMARY KEY,
     agent_definition_id UUID NOT NULL UNIQUE
         REFERENCES agent_definitions(id) ON DELETE CASCADE DEFERRABLE INITIALLY IMMEDIATE,
@@ -203,7 +405,7 @@ CREATE TABLE agent_step_workflows (
     updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );
 
-CREATE TABLE agent_step_instances (
+CREATE TABLE IF NOT EXISTS agent_step_instances (
     id UUID PRIMARY KEY,
     session_id UUID NOT NULL UNIQUE
         REFERENCES sessions(id) ON DELETE CASCADE DEFERRABLE INITIALLY IMMEDIATE,
@@ -220,29 +422,61 @@ CREATE TABLE agent_step_instances (
     created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
     updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );
-CREATE INDEX idx_asi_step_workflow ON agent_step_instances(agent_step_workflow_id);
+CREATE INDEX IF NOT EXISTS idx_asi_step_workflow ON agent_step_instances USING btree (agent_step_workflow_id);
+
+CREATE TABLE IF NOT EXISTS definition_revisions (
+    domain TEXT PRIMARY KEY,
+    revision BIGINT NOT NULL DEFAULT 0,
+    updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+
+CREATE TABLE IF NOT EXISTS legacy_copy_ledger (
+    legacy_id UUID PRIMARY KEY,
+    domain TEXT NOT NULL,
+    source_hash TEXT NOT NULL,
+    copied_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
 ```
 
-Extend `tests/storage/test_migration_contract.py` two ways. Fast snippet
-assertions stay as diagnostics: the migration contains the six `CREATE TABLE IF
-NOT EXISTS` statements and the partial unique indexes; the baseline contains
-DDL for the six tables and still contains the legacy tables. The acceptance
-proof is executable catalog equivalence — build the six tables once from the
-baseline and once from the guarded migration into two isolated schemas in the
-test database, then compare normalized `pg_catalog`/`information_schema`
-metadata: column names, types, nullability and defaults; constraint definitions
-including CHECK bodies; FK referenced columns, `ON DELETE` actions and
-deferrability; and index definitions including partial predicates and `NULLS
-NOT DISTINCT`. Text-identical DDL is the weaker claim: a drifted default, FK
-action, or partial predicate passes every snippet check while splitting the
-fresh-install and migrated lineages, and catalog comparison is what closes it.
+`definition_revisions` (enhancement E4) is cross-daemon invalidation state:
+one row per `DefinitionDomain` (1.4), created lazily by 1.4's UPSERT bump. It
+needs no seed rows, no copy migration, and no partial-unique index; it rides
+the same grants section as the other daemon-owned tables.
+
+`legacy_copy_ledger` (adversary round 3 APR3-011) is the copy-time checkpoint
+that makes P7's drop backstop **directional**: each definition copy migration
+(2.3, 4.1, 4.2, 4.3) inserts one row per copied legacy source row — the
+preserved legacy UUID, its domain, and the MD5 of that domain's normalized
+source payload (`jsonb` text output is deterministic, so the hash is a stable
+equality proof) — with `ON CONFLICT (legacy_id) DO NOTHING`, so reruns keep
+the first copy-time hash. At P7 the drop backstop compares each surviving
+legacy row against its checkpoint hash instead of against the (legitimately
+evolving) typed rows. The table exists only to prove the drop safe: 7.1's
+destructive migration drops it together with the legacy tables and removes
+its DDL from the baseline in the same commit, so fresh lineages never create
+it after P7. It rides the same grants section as the other daemon-owned
+tables and needs no partial-unique index.
+
+The pre-refresh plan's dual-DDL catalog-equivalence test is obsolete: tables
+ride only the baseline now, so there is no second DDL copy to drift.
+Fresh-vs-refresh lineage equivalence is enforced by gcore's existing contract
+tests — the set-difference tripwire
+(`baseline_refresh_accepts_exactly_the_predecessor_statement_difference`)
+fails until the refresh prefix list names exactly the added statements, and
+the nondestructive-reapply test proves the refresh hop preserves data. New
+`tests/storage/test_domain_tables_schema.py` pins the Python-visible surface
+against `catalog.manifest.json` (the checked-in catalog of the applied
+schema): the eight tables exist, the four definition tables carry
+`enabled_pinned`, `agent_step_workflows` carries no enabled columns,
+and the four partial unique live-name indexes keep their `WHERE (deleted_at
+IS NULL)` predicate and `NULLS NOT DISTINCT` key.
 
 **Acceptance:**
 
-- 1.1.1 - Baseline contains the six new tables with partial unique live-name indexes and retains the legacy tables. file: `src/gobby/storage/postgres_baseline_schema.sql`.
-- 1.1.2 - Guarded DDL-only migration creates the six tables idempotently on both lineages. file: `src/gobby/storage/migrations/NNN_create_domain_definition_tables.sql`.
-- 1.1.3 - Snippet diagnostics pin the six CREATE TABLE statements and the partial unique indexes in both files. test: `tests/storage/test_migration_contract.py`.
-- 1.1.4 - Baseline-built and migration-built schemas are catalog-identical across columns, defaults, constraints, FK actions, deferrability, and index predicates. test: `tests/storage/test_migration_contract.py::test_domain_tables_catalog_equivalence`.
+- 1.1.1 - Baseline contains the eight new tables (including legacy_copy_ledger) with partial unique live-name indexes and `enabled_pinned` on the four definition domains, and retains the legacy tables. file: `crates/gcore/assets/schema/baseline.sql`.
+- 1.1.2 - The schema-artifact lockstep is re-armed: the refresh-statement acceptance in its implementation module enumerates exactly the added statements and the predecessor fixture matches its pinned checksum. file: `crates/gcore/src/baseline_refresh.rs`. file: `crates/gcore/src/schema/runner.rs`. file: `crates/gcore/src/schema/runner_tests.rs`.
+- 1.1.3 - The regenerated catalog manifest carries the eight tables and the freshness test passes without the update flag; the regenerated expected identity matches the rebuilt gdaemon. file: `crates/gcore/assets/schema/catalog.manifest.json`. file: `src/gobby/storage/schema_expected_identity.json`.
+- 1.1.4 - The applied-schema catalog pins the eight tables, the reconciliation columns, and the partial unique predicates. test: `tests/storage/test_domain_tables_schema.py`.
 
 ### 1.2 Typed definition managers package [category: code] (depends: 1.1, 1.4)
 `kind: deliverable`
@@ -254,7 +488,8 @@ Targets: `src/gobby/storage/definitions/__init__.py` (new),
 `src/gobby/storage/definitions/pipelines.py` (new),
 `tests/storage/definitions/test_rules_manager.py` (new),
 `tests/storage/definitions/test_variables_manager.py` (new),
-`tests/storage/definitions/test_pipelines_manager.py` (new)
+`tests/storage/definitions/test_pipelines_manager.py` (new),
+`tests/storage/definitions/test_enabled_reconciliation.py` (new)
 
 New package `gobby.storage.definitions`. Rows are dataclasses (match
 `WorkflowDefinitionRow` convention); managers use `db.transaction()` with
@@ -272,7 +507,20 @@ Common manager surface (per-table SQL, shared helpers): `create`, `get`,
 `project_id`), `toggle_enabled`, `delete`, `hard_delete`, `restore`,
 `purge_deleted`, `list_all(project_id, enabled, include_deleted)`,
 `move_to_project`, `move_to_global`, `duplicate(id, new_name)` (conflict
-pre-check). Domain additions: `RuleDefinitionManager.list_by_event(event,
+pre-check), and `update_from_sync(**fields)`. The reconciliation semantics
+port from `storage/workflow_definitions.py` (`9071a6209`) with the bit
+renamed `enabled_pinned`, as a three-clause contract shared by every
+definition manager: (a) `update` and `toggle_enabled` stamp `enabled_pinned =
+TRUE` whenever they change `enabled`; (b) `update_from_sync` restricts writes
+to the sync allow-list, propagates a changed template `enabled` default only
+while `enabled_pinned` is FALSE, and never sets the flag; (c) once pinned, a
+user's value survives sync even when it equals the template default. New
+`tests/storage/definitions/test_enabled_reconciliation.py` proves the
+contract parameterized over `RuleDefinitionManager`,
+`SessionVariableDefaultManager`, and `PipelineDefinitionManager`
+(`AgentDefinitionManager` joins the same parameterization in 1.3). The
+bundled-sync tasks (2.3, 4.1, 4.2, 4.3) route template refreshes through
+`update_from_sync` so user toggles survive template drift on every domain. Domain additions: `RuleDefinitionManager.list_by_event(event,
 project_id, enabled)` and `list_by_group(group, ...)` using native
 `definition_json->>'event'`, `ORDER BY priority, name` (ports of
 `storage/workflow_definitions.py:380-438`);
@@ -280,7 +528,14 @@ project_id, enabled)` and `list_by_group(group, ...)` using native
 enabled_only=True) -> dict[str, Any]` reading typed `name`/`default_value`
 columns (no `source` filter — see 4.2); no `duplicate` for variables.
 `PipelineDefinitionManager.update` additionally allows `version`,
-`canvas_json`. Every mutator bumps its domain revision (1.4).
+`canvas_json`. Every mutator follows 1.4's commit-visible revision contract:
+it advances the persistent revision inside its transaction and registers the
+process-local bump on the transaction's `after_commit` seam (Epic Review
+Notes correction 17), which the ambient layer fires only after the
+**outermost** transaction commits — so a mutation nested inside a caller's
+ambient transaction bumps nothing until that outer transaction truly commits,
+and a rollback at any nesting depth publishes no revision and fires no
+listener.
 
 1.2 depends on 1.4 rather than the reverse because the manager mutators call
 `bump_definitions_revision` in their first commit. Ordering revisions after the
@@ -298,12 +553,15 @@ without acquiring a dependency of its own.
 - 1.2.5 - CRUD, scope fallback, cross-domain same-name, same-domain live conflict, restore collision, and purge behaviors are covered for rules. test: `tests/storage/definitions/test_rules_manager.py`.
 - 1.2.6 - The same behavior set is covered for variable defaults. test: `tests/storage/definitions/test_variables_manager.py`.
 - 1.2.7 - The same behavior set is covered for pipelines, including duplicate and canvas/version updates. test: `tests/storage/definitions/test_pipelines_manager.py`.
+- 1.2.8 - The parameterized reconciliation contract holds for rules, variables, and pipelines: user update/toggle stamps enabled_pinned, sync adopts a changed template enabled default while unpinned, and sync preserves the user's value while pinned. test: `tests/storage/definitions/test_enabled_reconciliation.py`.
+- 1.2.9 - Manager mutators bump post-commit only: a mutator that raises mid-transaction leaves the persistent revision, the local counter, and the listeners untouched — including when the mutator runs nested inside a caller's ambient transaction that later rolls back. test: `tests/storage/definitions/test_rules_manager.py`.
 
 ### 1.3 Agent definition manager with step-workflow child [category: code] (depends: 1.2)
 `kind: deliverable`
 
 Targets: `src/gobby/storage/definitions/agents.py` (new),
-`tests/storage/definitions/test_agents_manager.py` (new)
+`tests/storage/definitions/test_agents_manager.py` (new),
+`tests/storage/definitions/test_enabled_reconciliation.py` (new)
 
 `AgentDefinitionRow` (exposes `step_workflow_id: str | None`),
 `AgentStepWorkflowRow`, `AgentDefinitionManager`. **Hydration contract**:
@@ -316,44 +574,202 @@ Targets: `src/gobby/storage/definitions/agents.py` (new),
   project_id, enabled, tags, description) -> AgentDefinitionRow`: one
   `db.transaction()` covering parent insert/update (body stored WITHOUT step
   fields) and child insert/update/delete (`step_workflow is None` ⇒ delete
-  child). Bumps `agents` + `agent_step_workflows` revisions.
+  child).
 - `set_step_workflow(agent_definition_id, step_workflow: dict | None)`
-  primitive for surfaces that already hold the parent.
+  primitive for surfaces that already hold the parent; one `db.transaction()`.
 - `get_step_workflow(agent_definition_id) -> AgentStepWorkflowRow | None`.
+
+**Soft delete preserves the child (adversary round 3 APR3-001)**: the parent
+body no longer carries step fields, so the child row is the **only**
+restorable step-workflow payload. `AgentDefinitionManager.delete` (soft
+delete) therefore only hides the parent (`deleted_at`); the child row is
+untouched, and `restore` returns the parent with its step workflow intact.
+The child is removed through exactly four paths: `set_step_workflow(None)`,
+`upsert_with_steps` without steps, parent `hard_delete` (FK cascade), and the
+scheduled soft-deleted-definition purge (7.1.5, also by cascade). A
+delete→restore round trip preserves the child payload byte-for-byte;
+`tests/storage/definitions/test_agents_manager.py` pins that round trip and
+its revision behavior (soft delete and restore bump `agents`; the untouched
+child bumps nothing by itself).
+
+**Dual-domain bump contract (enhancement E1)**: every write that creates,
+updates, or deletes a child row — `upsert_with_steps`, `set_step_workflow`,
+and child deletion via parent hard-delete or purge cascade — bumps **both**
+`agent_step_workflows` and `agents` under 1.4's commit-visible contract,
+because hydrated agent bodies embed the child and 2.4's engine cache keys on
+the `agents` revision alone. A child-only edit must therefore invalidate a
+cached hydrated parent. `AgentDefinitionManager` also joins the parameterized
+`enabled_pinned` reconciliation contract from 1.2 in
+`tests/storage/definitions/test_enabled_reconciliation.py`.
 
 **Acceptance:**
 
 - 1.3.1 - Reads hydrate the nested step_workflow from the child table in one query. symbol: `AgentDefinitionManager`. file: `src/gobby/storage/definitions/agents.py`.
 - 1.3.2 - `upsert_with_steps` writes parent and child atomically, deleting the child when steps are removed. test: `tests/storage/definitions/test_agents_manager.py::test_upsert_with_steps_atomic`.
 - 1.3.3 - Child cascade on parent hard-delete and orphan-free child lifecycle are covered. test: `tests/storage/definitions/test_agents_manager.py`.
+- 1.3.6 - Soft delete leaves the child row in place and a delete→restore round trip returns the parent with its step workflow payload intact. test: `tests/storage/definitions/test_agents_manager.py::test_soft_delete_restore_preserves_child`.
+- 1.3.4 - A child-only create, update, or delete bumps both the agent_step_workflows and agents revisions after commit; a rolled-back child write bumps neither. test: `tests/storage/definitions/test_agents_manager.py`.
+- 1.3.5 - AgentDefinitionManager satisfies the parameterized enabled_pinned reconciliation contract. test: `tests/storage/definitions/test_enabled_reconciliation.py`.
 
-### 1.4 Domain cache revisions with listener registry [category: code] (depends: 1.1)
+### 1.4 Domain cache revisions with cross-daemon invalidation [category: code] (depends: 1.1)
 `kind: deliverable`
 
-Targets: `src/gobby/storage/definitions/revisions.py` (new),
-`tests/storage/definitions/test_revisions.py` (new)
+Targets:
+- `src/gobby/storage/definitions/revisions.py` (new)
+- `src/gobby/storage/definitions/notifications.py` (new)
+- `src/gobby/runner_init/storage.py::*` — scope-reason: definition-revision listener construction during storage init
+- `src/gobby/runner_init/services.py::*` — scope-reason: listener start in the async stateful-services phase (adversary round 3 APR3-014)
+- `src/gobby/runner_rollback.py::*` — scope-reason: listener rollback branch for construction failures (adversary round 3 APR3-014)
+- `src/gobby/runner_lifecycle_shutdown.py::*` — scope-reason: definition-revision listener stop in the graceful-shutdown tail
+- `tests/test_runner_init.py::*` — scope-reason: init-rollback coverage for the listener branch
+- `tests/storage/definitions/test_revisions.py` (new)
+- `tests/integration/definitions/test_definition_revisions_multi_daemon.py` (new)
 
 ```python
 DefinitionDomain = Literal["rules", "agents", "agent_step_workflows", "variables", "pipelines"]
 def get_definitions_revision(domain: DefinitionDomain) -> int: ...
-def bump_definitions_revision(*domains: DefinitionDomain) -> None: ...
+def bump_definitions_revision(*domains: DefinitionDomain) -> None: ...   # registered via Transaction.after_commit: local counter + listeners
+def advance_persistent_revision(conn, *domains: DefinitionDomain) -> None: ...  # in-transaction: UPSERT + pg_notify
 def register_revision_listener(domain: DefinitionDomain, cb: Callable[[], None]) -> None: ...
 ```
 
-Thread-safe per-domain counters (process-local, same semantics as today's
-`_WORKFLOW_DEFINITIONS_REVISION`). This lands before 1.2 so the typed managers
-can call `bump_definitions_revision` in the same commit that introduces them.
-The listener registry replaces the current
-storage→hooks import cycle (`storage/workflow_definitions.py:49-56` importing
+Thread-safe per-domain process-local counters (same semantics as today's
+`_WORKFLOW_DEFINITIONS_REVISION`) plus persistent cross-daemon state
+(enhancement E4 — two daemons share one PostgreSQL hub, and a process-local
+counter in daemon A cannot invalidate daemon B). This lands before 1.2 so the
+typed managers can call both halves in the same commit that introduces them.
+
+**Commit-visible revision contract (enhancement E1)**, binding on every
+manager mutator in 1.2/1.3:
+
+- Inside its transaction the mutator calls `advance_persistent_revision`:
+  `INSERT INTO definition_revisions (domain, revision) VALUES (%s, 1) ON
+  CONFLICT (domain) DO UPDATE SET revision = definition_revisions.revision +
+  1, updated_at = NOW()` plus `SELECT pg_notify('gobby_definition_revisions',
+  '<domain>:<new revision>')`. PostgreSQL delivers NOTIFY only on commit, so a
+  rolled-back mutation publishes nothing.
+- Inside the same transaction the mutator registers
+  `bump_definitions_revision` through the transaction's `after_commit` seam
+  (`Transaction.after_commit`, `postgres_pool.py:304` — Epic Review Notes
+  correction 17). The ambient layer fires registered callbacks only after the
+  **outermost** pooled transaction commits, and a rollback at any depth
+  discards them, so the local counter and listeners advance if and only if
+  the persistent revision and the definition write themselves became durable.
+  "After the manager's transaction block exits" is NOT the contract: under
+  ambient nesting that point precedes the true commit, and a later outer
+  rollback would strand an advanced local counter and fired listeners against
+  a rolled-back write. Listeners never fire inside a transaction and never
+  for a rolled-back one.
+
+`notifications.py`: `DefinitionRevisionListener`, modeled on
+`src/gobby/storage/config_notifications.py` (pool-exempt LISTEN connection,
+poll-healing loop). On NOTIFY, if the payload revision exceeds the last
+observed persistent revision for that domain, it records it and calls
+`bump_definitions_revision(domain)`. The poll-healing pass SELECTs
+`definition_revisions` on the same interval pattern as config notifications
+and bumps any domain whose persistent revision advanced past the observed
+one, healing dropped notifications and connection gaps. Startup seeds the
+observed map from the current table so a fresh daemon fires no spurious
+listeners. Self-notifications are not deduplicated — the writer daemon's own
+NOTIFY causes one extra local bump, a harmless extra cache reload.
+
+**Listener lifecycle ownership (adversary BR-006)**. The config precedent is
+ownership, and construction alone: `ConfigNotificationListener` is built in
+`runner_init/storage.py` and handed to `ConfigRuntime`, which starts its
+listen/poll tasks and is closed by the shutdown tail
+(`runner_lifecycle_shutdown.py:788-790` via `_best_effort`).
+`DefinitionRevisionListener` gets the same complete shape as a runner-owned
+service: `start()` spawns the LISTEN task and the poll-healing task;
+`close()` cancels both and closes the pool-exempt connection.
+**Construction and start are separate phases (adversary round 3 APR3-014)**:
+`init_storage_and_config` (`runner_init/storage.py:99`, a plain `def`) runs
+during synchronous `GobbyRunner` construction — including the direct
+synchronous constructor the runner-init tests use — so it may only
+**construct** the listener and hang it on runner state; `start()` spawns
+asyncio tasks and is called from the async stateful-services phase
+(`runner_init/services.py::init_stateful_services`, reached via
+`GobbyRunner.create`), exactly the config-runtime split the precedent uses.
+`rollback_runner_resources` (`runner_rollback.py:40-93`) gains a listener
+branch beside its config-runtime branch, so a later construction failure
+cancels any started tasks and closes the pool-exempt connection; the
+graceful-shutdown tail calls `close()` through `_best_effort` beside the
+config-runtime close, so a failed
+listener stop never blocks the rest of shutdown. A listen-task exception is
+logged, the connection is dropped and re-established with backoff, and
+poll-healing covers the gap — the mutating writer is never affected because
+listener callbacks already run outside the write path. The connection factory
+is injectable (the `ConnectionFactory` protocol pattern from
+`config_notifications.py`), which is the unit-test seam: NOTIFY delivery,
+crash-reconnect, and shutdown cancellation are all driven through a fake
+factory without a live LISTEN connection.
+
+The listener registry replaces the current storage→hooks import cycle
+(`storage/workflow_definitions.py:49-56` importing
 `clear_active_rule_names_cache`). Reader wiring lands with each consumer phase
 (engine agent cache in 2.4, active-rule-names listener in 4.1, variables TTL
 invalidation in 4.2, pipeline loader in 4.3). Listener exceptions are caught
-and logged, never propagated to the mutating caller.
+and logged, never propagated to the mutating caller. The two-daemon suite
+follows the `two_daemons` cluster pattern from
+`tests/integration/config/conftest.py`.
 
 **Acceptance:**
 
-- 1.4.1 - Per-domain counters and listener registry exist with thread-safety. file: `src/gobby/storage/definitions/revisions.py`.
+- 1.4.1 - Per-domain counters, the persistent advance/notify half, and the listener registry exist with thread-safety. file: `src/gobby/storage/definitions/revisions.py`.
 - 1.4.2 - Bumping one domain fires only that domain's listeners and leaves other domains' revisions unchanged. test: `tests/storage/definitions/test_revisions.py`.
+- 1.4.3 - A committed advance_persistent_revision advances definition_revisions and delivers exactly one notification; a rolled-back transaction leaves the table unchanged and delivers none. test: `tests/storage/definitions/test_revisions.py`.
+- 1.4.4 - The listener service maps observed persistent revisions into local bumps, and poll-healing recovers a missed notification. file: `src/gobby/storage/definitions/notifications.py`. test: `tests/storage/definitions/test_revisions.py`.
+- 1.4.5 - A definition mutation through daemon A is observed by daemon B without a restart, in an isolated two-daemon cluster. test: `tests/integration/definitions/test_definition_revisions_multi_daemon.py`.
+- 1.4.6 - The listener service has a complete lifecycle: synchronous storage init only constructs it, the async stateful-services phase starts it, the graceful-shutdown tail closes it cancelling both tasks and closing the LISTEN connection, and a listen-task crash reconnects with poll-healing covering the gap — proven through the injectable connection-factory fake. file: `src/gobby/runner_init/services.py`. file: `src/gobby/runner_lifecycle_shutdown.py`. test: `tests/storage/definitions/test_revisions.py`.
+- 1.4.8 - Direct synchronous GobbyRunner construction succeeds with no event loop, and a construction failure after listener creation rolls the listener back with the other runner resources. file: `src/gobby/runner_rollback.py`. test: `tests/test_runner_init.py`.
+- 1.4.7 - A mutation nested inside an outer ambient transaction bumps and notifies exactly once when the outer transaction commits, and neither bumps, notifies, nor fires listeners when the outer transaction rolls back. test: `tests/storage/definitions/test_revisions.py::test_ambient_nested_commit_visibility`.
+
+### 1.5 Re-arm the embedded migration machinery [category: code] (depends: 1.1)
+`kind: deliverable`
+
+Targets:
+- `crates/gcore/src/schema/assets.rs::*` — scope-reason: MIGRATIONS include_str wiring and checksum constants
+- `crates/gcore/src/schema/runner.rs::*` — scope-reason: thread the classified lineage into pending-migration application
+- `crates/gcore/src/schema/runner_tests.rs::*` — scope-reason: fresh-stamp, destructive-refusal, and receipt coverage
+- `crates/gcode/security/managed_postgres_privileges.json::*` — scope-reason: source_inventory refresh if runner call counts change
+
+`MIGRATIONS` is deliberately empty pre-0.5.0 ("numbered migrations resume
+after the release boundary", `assets.rs:19-21`); the recorded policy names
+destructive or transforming DDL as the trigger for re-arming, and this epic is
+that trigger (Decision Record 2026-08-12). Re-arm without changing the
+checksum/receipt protocol:
+
+- Create `crates/gcore/assets/schema/migrations/` and the entry convention:
+  `EmbeddedMigration { version, filename, checksum, sql:
+  include_str!("../../assets/schema/migrations/NNN_<name>.sql") }` with
+  versions allocated `> 375` in list order and sha256 checksums pinned in
+  `assets.rs`. `root_hash()` already folds MIGRATIONS entries; the pinned
+  root hashes in `crates/gcore/tests/schema_contract.rs` and the expected
+  identity re-arm with each added entry via the Constraints lockstep.
+- **Fresh lineages receipt-stamp destructive migrations instead of refusing.**
+  `apply_pending_migrations` (`runner.rs:676-742`) refuses any destructive
+  entry without authorization on every lineage, which would break fresh
+  installs once P7's drop lands: a fresh hub has no legacy tables to drop —
+  the end-state baseline never creates them — yet the static directive check
+  aborts the apply. Thread the classified baseline state into
+  `apply_pending_migrations`; on a fresh lineage, write the receipt through
+  the existing `insert_receipt` path without executing the destructive entry.
+  Sound because of the Constraints fresh-redundancy invariant: every
+  migration this epic adds has no effect on an empty hub. Non-destructive
+  entries still execute on every lineage (the copy migrations are
+  DO-block-guarded no-ops on fresh).
+- Existing-hub semantics unchanged: pending non-destructive migrations apply
+  on daemon restart; destructive ones require `--destructive` plus a verified
+  backup manifest matching the live DB, and destructive-plus-non-transactional
+  stays rejected.
+- Update `managed_postgres_privileges.json`'s `source_inventory` only if the
+  runner's postgres call counts change — the exact-equality privilege test
+  recomputes the inventory over all production Rust.
+
+**Acceptance:**
+
+- 1.5.1 - The migrations asset directory and include_str wiring exist with versions above the baseline and pinned checksums. file: `crates/gcore/src/schema/assets.rs`.
+- 1.5.2 - A destructive migration on a fresh lineage is receipt-stamped without executing, and still refuses without authorization on an existing lineage. file: `crates/gcore/src/schema/runner_tests.rs`.
+- 1.5.3 - A guarded non-destructive migration applies on fresh and predecessor lineages and re-applies as a receipted no-op. file: `crates/gcore/src/schema/runner_tests.rs`.
 
 ## P2: Agent Definition Shape
 `kind: framing`
@@ -362,23 +778,32 @@ and logged, never propagated to the mutating caller.
 fields end-to-end; agent storage reads/writes the typed tables; generated-row
 scaffolding remains only for the P3 runtime readers.
 
-### 2.1 Model split and step_workflow field [category: code] (depends: P1)
+### 2.1 Model split and nested step_workflow model [category: code] (depends: P1)
 `kind: deliverable`
 
-Targets: `src/gobby/workflows/agent_models.py` (new),
-`src/gobby/workflows/pipeline_models.py` (new),
-`src/gobby/workflows/definitions.py`, `src/gobby/agents/step_workflow.py`,
-`src/gobby/agents/sync.py`, `src/gobby/mcp_proxy/tools/spawn_agent/_factory.py`,
-`src/gobby/cli/agents.py`, `src/gobby/dispatch/skill_composition.py`,
-`src/gobby/dispatch/spawn.py`, `src/gobby/mcp_proxy/tools/apply_persona.py`,
-`src/gobby/mcp_proxy/tools/spawn_agent/_implementation.py`,
-`src/gobby/workflows/dry_run.py`, `tests/agents/test_discovery_agents.py`
+Targets:
+- `src/gobby/workflows/agent_models.py` (new)
+- `src/gobby/workflows/pipeline_models.py` (new)
+- `src/gobby/workflows/definitions.py::*` — scope-reason: model split with permanent re-exports
+- `tests/workflows/test_agent_models.py` (new)
 
-`workflows/definitions.py` is 911 lines — split before growing. Move
-`AgentSelector`, `AgentWorkflows`, `AgentDefinitionBody`
-(`definitions.py:387-517`) to `agent_models.py`; move `WebhookEndpoint`,
+This deliverable is **additive only** (adversary round 2 APR2-002): it splits
+the module and introduces the nested model while the legacy top-level step
+fields remain in place and populated, so every intermediate reader, the
+bundled flat YAML, and sync all keep working. The breaking half — field
+deletion, the rejecting validator, the reader rewrite, and the YAML
+conversion — is one atomic cutover owned entirely by 2.2, because a model
+that has dropped its step fields cannot load the checked-in flat YAML:
+with the validator the bundled sync fails loudly on all 21 stepful agents,
+and without it `extra="ignore"` silently discards their steps. Either way an
+intermediate commit that changes the model ahead of the YAML is not a working
+daemon.
+
+`workflows/definitions.py` is 965 lines with 20 top-level models — split
+before growing. Move `AgentSelector`, `AgentWorkflows`, `AgentDefinitionBody`
+(`definitions.py:441-573`) to `agent_models.py`; move `WebhookEndpoint`,
 `WebhookConfig`, `PipelineApproval`, `MCPStepConfig`, `PipelineStep`,
-`PipelineDefinition` (`definitions.py:646-809`) to `pipeline_models.py`.
+`PipelineDefinition` (`definitions.py:700-915`) to `pipeline_models.py`.
 `definitions.py` keeps rule models, `WorkflowStep`, `WorkflowTransition`,
 `WorkflowDefinition` (survives only as the internal dry-run step-program
 shape), `validate_workflow_definition_data`, and permanently re-exports the
@@ -394,17 +819,106 @@ class AgentStepWorkflowBody(BaseModel):
     def get_step(self, step_name: str) -> WorkflowStep | None: ...
 ```
 
-`AgentDefinitionBody`: delete `steps`, `step_variables`, `exit_condition`
-(currently `definitions.py:471-474`); add
-`step_workflow: AgentStepWorkflowBody | None = None`. Keep `extra="ignore"` for
-unrelated stale metadata, and add a `mode="before"` model validator that
-**rejects** exactly those three removed top-level keys with an actionable
-message naming `step_workflow.steps`, `step_workflow.variables`, and
-`step_workflow.exit_condition`. Without it `extra="ignore"` discards a
-hand-authored or imported step workflow and still reports success — a silent
-data loss the audited bundled YAML does nothing to prevent. The validator lives
-on the model, so every HTTP, MCP, sync, and import consumer inherits the
-fail-loud behavior with no per-surface check and no compatibility layer.
+`AgentDefinitionBody`: add
+`step_workflow: AgentStepWorkflowBody | None = None` **alongside** the legacy
+top-level `steps`, `step_variables`, and `exit_condition` fields, which remain
+present and populated in this deliverable. Deleting them, and the
+`mode="before"` validator that rejects them, land atomically with the YAML
+conversion in 2.2.
+
+**Acceptance:**
+
+- 2.1.1 - AgentStepWorkflowBody exists and AgentDefinitionBody carries the optional nested step_workflow field alongside the still-present legacy fields. symbol: `AgentStepWorkflowBody`. file: `src/gobby/workflows/agent_models.py`.
+- 2.1.2 - Pipeline models live in their own module with definitions.py re-exports intact. file: `src/gobby/workflows/pipeline_models.py`.
+- 2.1.3 - definitions.py is under 1,000 lines after the split. file: `src/gobby/workflows/definitions.py`.
+- 2.1.5 - Model validation round-trips nested YAML (stepful and step-less). test: `tests/workflows/test_agent_models.py::test_step_workflow_nesting`.
+
+### 2.2 Atomic model-and-YAML step_workflow cutover [category: code] (depends: 2.1)
+`kind: deliverable`
+
+Targets:
+- `src/gobby/workflows/agent_models.py`
+- `src/gobby/agents/step_workflow.py::*` — scope-reason: scaffolded nested-shape read
+- `src/gobby/agents/sync.py::*` — scope-reason: nested-shape read in sync validation
+- `src/gobby/mcp_proxy/tools/spawn_agent/_factory.py::*` — scope-reason: step_workflow reader rewrite
+- `src/gobby/cli/agents.py::*` — scope-reason: step_workflow reader rewrite
+- `src/gobby/dispatch/skill_composition.py::*` — scope-reason: step_workflow reader rewrite
+- `src/gobby/dispatch/spawn.py::*` — scope-reason: step_workflow reader rewrite
+- `src/gobby/mcp_proxy/tools/apply_persona.py::*` — scope-reason: step_workflow reader rewrite
+- `src/gobby/mcp_proxy/tools/spawn_agent/_implementation.py::*` — scope-reason: step_workflow reader rewrite
+- `src/gobby/workflows/dry_run.py::*` — scope-reason: agent-branch step_workflow rewrite
+- `src/gobby/install/bundled_content_manifest.json::*` — scope-reason: regenerated hashes for the rewritten agent YAMLs
+- `tests/agents/test_discovery_agents.py::*` — scope-reason: nested-shape assertions
+- `tests/agents/test_doc_reviewer_definition.py::*` — scope-reason: nested-shape retarget of raw-key assertions
+- `tests/agents/test_epic_reviewer_definition.py::*` — scope-reason: nested-shape retarget of raw-key assertions
+- `tests/agents/test_qa_reviewer_definition.py::*` — scope-reason: nested-shape retarget of raw-key assertions
+- `tests/agents/test_tech_writer_definition.py::*` — scope-reason: nested-shape retarget of raw-key assertions
+- `tests/agents/test_merge_lifecycle.py::*` — scope-reason: nested-shape retarget of raw-key assertions
+- `tests/agents/test_merge_orchestrator_contract.py::*` — scope-reason: nested-shape retarget of raw-key assertions
+- `tests/agents/test_sync.py::*` — scope-reason: raw step fixture retarget
+- `tests/agents/test_lifecycle_monitor.py::*` — scope-reason: raw step fixture retarget
+- `tests/agents/test_lifecycle_monitor_extra.py::*` — scope-reason: raw step fixture retarget
+- `tests/agents/test_plan_adversary_taskless_definition.py::*` — scope-reason: raw steps-key reader retarget
+- `tests/dispatch/test_skill_composition.py::*` — scope-reason: direct constructor passing a removed field
+- `tests/mcp_proxy/tools/test_apply_persona.py::*` — scope-reason: direct constructor passing a removed field
+- `tests/workflows/test_agent_definitions_v2.py::*` — scope-reason: field-inventory assertions moved to the nested body
+- `tests/workflows/test_agent_models.py`
+- `src/gobby/install/shared/workflows/agents/analyst.yaml::*` — scope-reason: nested step_workflow rewrite
+- `src/gobby/install/shared/workflows/agents/architect.yaml::*` — scope-reason: nested step_workflow rewrite
+- `src/gobby/install/shared/workflows/agents/backend-developer.yaml::*` — scope-reason: nested step_workflow rewrite
+- `src/gobby/install/shared/workflows/agents/doc-reviewer.yaml::*` — scope-reason: nested step_workflow rewrite
+- `src/gobby/install/shared/workflows/agents/epic-reviewer.yaml::*` — scope-reason: nested step_workflow rewrite
+- `src/gobby/install/shared/workflows/agents/expansion-qa.yaml::*` — scope-reason: nested step_workflow rewrite
+- `src/gobby/install/shared/workflows/agents/frontend-developer.yaml::*` — scope-reason: nested step_workflow rewrite
+- `src/gobby/install/shared/workflows/agents/fullstack-developer.yaml::*` — scope-reason: nested step_workflow rewrite
+- `src/gobby/install/shared/workflows/agents/merge-orchestrator.yaml::*` — scope-reason: nested step_workflow rewrite
+- `src/gobby/install/shared/workflows/agents/merge-worker.yaml::*` — scope-reason: nested step_workflow rewrite
+- `src/gobby/install/shared/workflows/agents/plan-adversary.yaml::*` — scope-reason: nested step_workflow rewrite
+- `src/gobby/install/shared/workflows/agents/plan-adversary-taskless.yaml::*` — scope-reason: nested step_workflow rewrite
+- `src/gobby/install/shared/workflows/agents/plan-enhancer.yaml::*` — scope-reason: nested step_workflow rewrite
+- `src/gobby/install/shared/workflows/agents/plan-enhancer-taskless.yaml::*` — scope-reason: nested step_workflow rewrite
+- `src/gobby/install/shared/workflows/agents/planner.yaml::*` — scope-reason: nested step_workflow rewrite
+- `src/gobby/install/shared/workflows/agents/product-manager.yaml::*` — scope-reason: nested step_workflow rewrite
+- `src/gobby/install/shared/workflows/agents/qa-dev.yaml::*` — scope-reason: nested step_workflow rewrite
+- `src/gobby/install/shared/workflows/agents/qa-reviewer.yaml::*` — scope-reason: nested step_workflow rewrite
+- `src/gobby/install/shared/workflows/agents/researcher.yaml::*` — scope-reason: nested step_workflow rewrite
+- `src/gobby/install/shared/workflows/agents/tech-writer.yaml::*` — scope-reason: nested step_workflow rewrite
+- `src/gobby/install/shared/workflows/agents/trajectory-monitor.yaml::*` — scope-reason: nested step_workflow rewrite
+- `tests/dispatch/test_bundled_agent_contract.py::*` — scope-reason: nested-key retarget of the per-file walker
+
+One atomic cutover (adversary round 2 APR2-002): the model's legacy fields,
+the bundled YAML, every direct reader, and every shape-asserting suite change
+in the same commit, because each half is broken without the other.
+
+**Model half.** In `agent_models.py`, delete the top-level `steps`,
+`step_variables`, and `exit_condition` fields from `AgentDefinitionBody`.
+Keep `extra="ignore"` for unrelated stale metadata, and add a `mode="before"`
+model validator that **rejects** exactly those three removed top-level keys
+with an actionable message naming `step_workflow.steps`,
+`step_workflow.variables`, and `step_workflow.exit_condition`. Without it
+`extra="ignore"` discards a hand-authored or imported step workflow and still
+reports success — a silent data loss the audited bundled YAML does nothing to
+prevent. The validator lives on the model, so every HTTP, MCP, sync, and
+import consumer inherits the fail-loud behavior with no per-surface check and
+no compatibility layer.
+
+**YAML half.** Nest top-level `steps:` → `step_workflow.steps:`,
+`step_variables:` → `step_workflow.variables:`, `exit_condition:` →
+`step_workflow.exit_condition:` in the **21** stepful agents (Epic Review
+Notes correction 6): analyst, architect, backend-developer, doc-reviewer,
+epic-reviewer, expansion-qa, frontend-developer, fullstack-developer,
+merge-orchestrator, merge-worker, plan-adversary, plan-adversary-taskless,
+plan-enhancer, plan-enhancer-taskless, planner, product-manager, qa-dev,
+qa-reviewer, researcher, tech-writer, trajectory-monitor. Verify the 4
+step-less agents (comms-agent, default, goal-taskmaster, triage-agent) carry no
+stray legacy keys — with `extra="ignore"` a stray key would be silently
+dropped. Bump each rewritten file's `version` so template drift detection
+re-syncs. Regenerate `src/gobby/install/bundled_content_manifest.json` in the
+same commit (adversary round 2 APR2-003): the manifest hashes every bundled
+file, so the YAML rewrite otherwise leaves the checked-in index stale and the
+freshness test red. This deliverable's validation includes loading all 25
+bundled definitions through `AgentDefinitionBody` — the atomic cutover is
+proven by the checked-in artifacts parsing under the new model.
 
 Scaffolding (removed in 3.2): `register_agent_step_workflow`
 (`agents/step_workflow.py`) switches to reading
@@ -462,65 +976,56 @@ the model split loses its only direct field-inventory assertion. One further
 raw reader: `tests/agents/test_plan_adversary_taskless_definition.py:27,32,42,72,106`
 reads `agent["steps"]` off loaded bundled YAML.
 
-**Acceptance:**
-
-- 2.1.1 - AgentStepWorkflowBody exists and AgentDefinitionBody nests it, with old fields removed. symbol: `AgentStepWorkflowBody`. file: `src/gobby/workflows/agent_models.py`.
-- 2.1.2 - Pipeline models live in their own module with definitions.py re-exports intact. file: `src/gobby/workflows/pipeline_models.py`.
-- 2.1.3 - definitions.py is under 1,000 lines after the split. file: `src/gobby/workflows/definitions.py`.
-- 2.1.4 - Scaffolded register_agent_step_workflow reads the nested shape. symbol: `register_agent_step_workflow`. file: `src/gobby/agents/step_workflow.py`.
-- 2.1.5 - Model validation round-trips nested YAML (stepful and step-less). test: `tests/workflows/test_agent_models.py::test_step_workflow_nesting`.
-- 2.1.6 - Validating a body that carries top-level steps, step_variables, or exit_condition raises with a message naming the nested replacement key. test: `tests/workflows/test_agent_models.py::test_legacy_step_keys_rejected`.
-- 2.1.7 - Every direct-access site reads through step_workflow and handles the step-less case, across the CLI, dispatch, persona, and spawn readers. file: `src/gobby/mcp_proxy/tools/spawn_agent/_implementation.py`. file: `src/gobby/cli/agents.py`. file: `src/gobby/dispatch/spawn.py`.
-- 2.1.8 - Agent-shape tests and mocks assert the nested shape with no residual top-level step fields, including direct AgentDefinitionBody constructors that passed removed fields and the field-inventory assertions, which move to the nested body rather than being deleted. test: `tests/agents/test_discovery_agents.py`. test: `tests/dispatch/test_skill_composition.py`. test: `tests/workflows/test_agent_definitions_v2.py`.
-- 2.1.9 - The bundled-definition contract suites and raw step fixtures read the nested shape and none asserts a top-level steps or step_variables key. test: `tests/agents/test_qa_reviewer_definition.py`. test: `tests/agents/test_merge_orchestrator_contract.py`. test: `tests/agents/test_sync.py`. test: `tests/agents/test_plan_adversary_taskless_definition.py`.
-
-### 2.2 Bundled agent YAML rewrite [category: config] (depends: 2.1)
-`kind: deliverable`
-
-Targets: `src/gobby/install/shared/workflows/agents/` (29 files, e.g.
-`src/gobby/install/shared/workflows/agents/planner.yaml`),
-`tests/dispatch/test_bundled_agent_contract.py`
-
-Nest top-level `steps:` → `step_workflow.steps:`, `step_variables:` →
-`step_workflow.variables:`, `exit_condition:` → `step_workflow.exit_condition:`
-in the 25 stepful agents: analyst, architect, backend-developer, doc-reviewer,
-epic-reviewer, expansion-qa, frontend-developer, fullstack-developer,
-merge-orchestrator, merge-worker, nightly-linter, nightly-test-fixer,
-plan-adversary, plan-adversary-taskless, plan-enhancer, plan-enhancer-taskless,
-plan-review-researcher-taskless, planner, product-manager, qa-dev, qa-reviewer,
-researcher, tech-writer, trajectory-monitor, wiki-researcher. Verify the 4
-step-less agents (comms-agent, default, goal-taskmaster, triage-agent) carry no
-stray legacy keys — with `extra="ignore"` a stray key would be silently
-dropped. Bump each rewritten file's `version` so template drift detection
-re-syncs.
-
 Suites that parse these YAML files directly rather than through the model —
 `tests/dispatch/test_bundled_agent_contract.py`, which walks
-`data.get("steps")` per file, and the per-agent contract tests listed in 2.1's
-test inventory — are retargeted in the same commit as the rewrite. A YAML-shape
-change and the assertions about that shape cannot land in different commits
-without leaving the suite red in between.
+`data.get("steps")` per file, and the per-agent contract tests in the test
+inventory above — are retargeted in the same commit as the rewrite. A
+YAML-shape change and the assertions about that shape cannot land in different
+commits without leaving the suite red in between.
 
 **Acceptance:**
 
-- 2.2.1 - All 25 stepful agent YAMLs use the nested step_workflow shape and none of the 29 carries top-level steps/step_variables/exit_condition. file: `src/gobby/install/shared/workflows/agents/planner.yaml`.
-- 2.2.2 - Every rewritten YAML still validates through AgentDefinitionBody with a populated step_workflow. test: `tests/agents/test_sync.py::test_bundled_agents_nested_step_workflow`.
+- 2.2.1 - All 21 stepful agent YAMLs use the nested step_workflow shape and none of the 25 bundled files carries top-level steps/step_variables/exit_condition. file: `src/gobby/install/shared/workflows/agents/planner.yaml`.
+- 2.2.2 - Every rewritten YAML still validates through AgentDefinitionBody with a populated step_workflow, and all 25 bundled definitions load under the new model. test: `tests/agents/test_sync.py::test_bundled_agents_nested_step_workflow`.
 - 2.2.3 - The bundled-agent contract suite reads steps from the nested key and passes against the rewritten YAML in the same commit. test: `tests/dispatch/test_bundled_agent_contract.py`.
+- 2.2.4 - AgentDefinitionBody carries no top-level step fields, and validating a body with top-level steps, step_variables, or exit_condition raises with a message naming the nested replacement key. symbol: `AgentDefinitionBody`. file: `src/gobby/workflows/agent_models.py`. test: `tests/workflows/test_agent_models.py::test_legacy_step_keys_rejected`.
+- 2.2.5 - Every direct-access site reads through step_workflow and handles the step-less case, across the CLI, dispatch, persona, and spawn readers. file: `src/gobby/mcp_proxy/tools/spawn_agent/_implementation.py`. file: `src/gobby/cli/agents.py`. file: `src/gobby/dispatch/spawn.py`.
+- 2.2.6 - Agent-shape tests and mocks assert the nested shape with no residual top-level step fields, including direct AgentDefinitionBody constructors that passed removed fields and the field-inventory assertions, which move to the nested body rather than being deleted. test: `tests/agents/test_discovery_agents.py`. test: `tests/dispatch/test_skill_composition.py`. test: `tests/workflows/test_agent_definitions_v2.py`.
+- 2.2.7 - The bundled-definition contract suites and raw step fixtures read the nested shape and none asserts a top-level steps or step_variables key. test: `tests/agents/test_qa_reviewer_definition.py`. test: `tests/agents/test_merge_orchestrator_contract.py`. test: `tests/agents/test_sync.py`. test: `tests/agents/test_plan_adversary_taskless_definition.py`.
+- 2.2.8 - The bundled content manifest is regenerated in the same commit and its freshness test passes without an update flag. file: `src/gobby/install/bundled_content_manifest.json`. test: `tests/install/test_bundled_content_manifest.py`.
+- 2.2.9 - Scaffolded register_agent_step_workflow reads the nested shape. symbol: `register_agent_step_workflow`. file: `src/gobby/agents/step_workflow.py`.
 
 ### 2.3 Agent sync, write surfaces, and agent copy migration [category: code] (depends: 2.2)
 `kind: deliverable`
 
-Targets: `src/gobby/agents/sync.py`,
-`src/gobby/mcp_proxy/tools/workflows/_agents.py`,
-`src/gobby/servers/routes/agents.py`, `src/gobby/workflows/template_hashes.py`,
-`src/gobby/storage/migrations/NNN_copy_agent_definitions.sql` (new),
-`tests/storage/test_agent_copy_migration.py` (new)
+Targets:
+- `src/gobby/agents/sync.py::*` — scope-reason: sync cutover to the typed manager
+- `src/gobby/mcp_proxy/tools/workflows/_agents.py::*` — scope-reason: agent MCP CRUD cutover
+- `src/gobby/servers/routes/agents.py::*` — scope-reason: agent HTTP route cutover
+- `src/gobby/workflows/template_hashes.py::*` — scope-reason: nested-body hashing
+- `crates/gcore/assets/schema/migrations/NNN_copy_agent_definitions.sql` (new)
+- `crates/gcore/src/schema/assets.rs::*` — scope-reason: MIGRATIONS entry registration per 1.5
+- `crates/gcore/tests/schema_contract.rs::*` — scope-reason: pinned root hashes re-armed for the added MIGRATIONS entry
+- `src/gobby/storage/schema_expected_identity.json::*` — scope-reason: regenerated release-pinned identity for the added MIGRATIONS entry
+- `src/gobby/servers/routes/workflows.py::*` — scope-reason: agent-kind rejection on the generic router
+- `src/gobby/mcp_proxy/tools/workflows/_definitions.py::*` — scope-reason: agent-kind rejection on the generic MCP tools
+- `src/gobby/workflows/imports.py::*` — scope-reason: agent-kind import rejection until 4.3's typed dispatch
+- `tests/servers/routes/test_workflows.py::*` — scope-reason: agent-kind rejection cases
+- `tests/mcp_proxy/tools/test_workflow_crud.py::*` — scope-reason: agent-kind rejection cases
+- `tests/workflows/test_imports.py::*` — scope-reason: agent-kind import rejection fixture (adversary round 3 APR3-003; the suite today exercises only `type: step` and stubs the domain syncs, so the rejection case is added, not retargeted)
+- `tests/agents/test_sync.py::*` — scope-reason: typed-manager retarget of the agent sync suite
+- `tests/servers/routes/test_agents_routes.py::*` — scope-reason: typed-manager retarget of the agent routes suite
+- `tests/mcp_proxy/tools/test_agent_definitions.py::*` — scope-reason: typed-manager retarget of the agent MCP CRUD suite
+- `tests/storage/test_agent_copy_migration.py` (new)
 
 - `sync_bundled_agents` (`agents/sync.py:95-274`): validate YAML →
   `AgentDefinitionManager.upsert_with_steps` (parent body stripped of step
-  fields, child from `step_workflow`). KEEP the `_refresh_step_workflow` call
-  (generated legacy row) as P3 scaffolding. Orphan cleanup moves to the typed
-  table.
+  fields, child from `step_workflow`). Template refreshes keep the
+  `_build_agent_update_fields` guard semantics (legacy `enabled_user_modified`,
+  now `enabled_pinned`) through the manager's `update_from_sync` path (1.2).
+  KEEP the
+  `_refresh_step_workflow` call (generated legacy row) as P3 scaffolding.
+  Orphan cleanup moves to the typed table.
 - MCP `update_agent_steps` (`_agents.py:375-419`) → rename
   `update_agent_step_workflow(name, step_workflow: dict | None)`: validate
   `AgentStepWorkflowBody`, call `set_step_workflow`; all `_agents.py` CRUD and
@@ -530,24 +1035,64 @@ Targets: `src/gobby/agents/sync.py`,
   import move to the typed manager; the PUT merge (`:446-454`) accepts the
   `step_workflow` key wholesale (validated) instead of three flat keys.
 - `template_hashes.py::_load_agents` hashes the nested body shape.
-- Copy migration (guarded by `information_schema` check for
-  `workflow_definitions`; skips if absent): validate no duplicate live
-  `(name, project_id)` among `workflow_type='agent'` rows; INSERT parents
-  (body minus `'steps','step_variables','exit_condition'`, source normalized,
-  UUID/timestamps preserved) with targetless `ON CONFLICT DO NOTHING` per the
-  Constraints conflict-target rule (tolerates rows sync already created and
-  reruns over soft-deleted rows); INSERT children from
-  agent bodies where `jsonb_typeof(definition_json->'steps') = 'array' AND
-  jsonb_array_length(definition_json->'steps') > 0` — the four step-less rows
-  store `"steps": null`, and `jsonb_array_length` on a JSON scalar aborts the
-  migration with `cannot get array length of a scalar`, so the type guard is
-  required, not defensive — including soft-deleted parents so restore keeps
-  steps; validate counts and run the Constraints equivalence guard across both
-  parent bodies and child step rows; RAISE on mismatch. Generated
-  `workflow_type='workflow'` rows are NOT copied.
+- Copy migration (an `EmbeddedMigration` SQL asset per 1.5, guarded by an
+  `information_schema` check for `workflow_definitions`; skips if absent —
+  which also makes it a fresh-lineage no-op): validate no duplicate live
+  `(name, project_id)` among `workflow_type='agent'` rows.
+  **The migration normalizes two source shapes (adversary round 3 APR3-007,
+  fixer-induced by the APR2-002 atomic cutover)**: rows written before 2.2
+  carry flat top-level `steps`/`step_variables`/`exit_condition`, while rows
+  written by 2.2's cutover commit — bundled sync and MCP/HTTP writes still
+  landing in `workflow_definitions` until this deliverable's cutover — nest
+  them under `step_workflow`. INSERT parents with the body stripped of
+  **either** representation (`- 'steps' - 'step_variables' -
+  'exit_condition' - 'step_workflow'`, source normalized, UUID/timestamps
+  preserved) with targetless `ON CONFLICT DO NOTHING` per the Constraints
+  conflict-target rule (tolerates rows sync already created and reruns over
+  soft-deleted rows); INSERT children from the nested
+  `definition_json->'step_workflow'->'steps'` when
+  `jsonb_typeof(...) = 'array' AND jsonb_array_length(...) > 0`, otherwise
+  from the flat `definition_json->'steps'` under the same
+  `jsonb_typeof`/length guard — the four step-less rows store `"steps": null`,
+  and `jsonb_array_length` on a JSON scalar aborts the migration with
+  `cannot get array length of a scalar`, so the type guard is required on
+  both branches, not defensive — including soft-deleted parents so restore
+  keeps steps; validate counts and run the Constraints equivalence guard
+  across both parent bodies and child step rows **per source shape**; RAISE
+  on mismatch. `tests/storage/test_agent_copy_migration.py` seeds all three
+  populations — pre-2.2 flat rows, a 2.2-shape row produced by running the
+  cutover sync, and a mixed set — and proves each parent is stripped and each
+  child extracted equivalently. Generated
+  `workflow_type='workflow'` rows are NOT copied — "generated" is the exact
+  signature `name ~ '-steps$' AND source = 'agent'`, and 7.1's drop preflight
+  RAISEs on any `workflow_type='workflow'` row that does not match it
+  (adversary round 2 APR2-005), so exclusion here cannot silently strand an
+  unsupported standalone workflow row. The migration also writes one `legacy_copy_ledger` row per copied
+  source row — preserved legacy id, domain `'agents'`, MD5 of the normalized
+  source payload — with `ON CONFLICT (legacy_id) DO NOTHING`, the copy-time
+  checkpoint 7.1's directional drop backstop verifies against (adversary
+  round 3 APR3-011). Registering the `EmbeddedMigration`
+  entry changes `root_hash()` (1.5), so the same commit re-arms the pinned
+  root hashes in `crates/gcore/tests/schema_contract.rs` and regenerates
+  `src/gobby/storage/schema_expected_identity.json` against the rebuilt,
+  reinstalled gdaemon per the Constraints lockstep (adversary round 2
+  APR2-008).
 
-Known dev-window caveat (accepted): agent reads still hit legacy until 2.4
-lands; the P7 drop migration backstop catches any legacy-only stragglers.
+- **Generic-surface shrink for kind `agent` (enhancement E3, same commit)**:
+  after this cutover the legacy tables must gain no agent rows the typed
+  tables never see. The generic router (`routes/workflows.py`) omits
+  `workflow_type='agent'` rows from list/get and rejects
+  create/update/delete/toggle/import/restore for that kind with an error
+  naming `/api/agents`; the generic MCP tools (`_definitions.py`) reject kind
+  `agent` naming the agent domain tools; `imports.py::sync_imported_definition`
+  refuses agent definitions naming the agent import path (typed per-kind
+  dispatch arrives in 4.3). Accepted dev-window caveat: agents disappear from
+  generic listings until the web UI retargets in 6.2 — the domain surfaces cut
+  over in this commit are the read path.
+
+Known dev-window caveat (accepted): internal agent reads still hit legacy
+until 2.4 lands; the P7 drop migration backstop catches any legacy-only
+stragglers.
 
 **Acceptance:**
 
@@ -555,28 +1100,43 @@ lands; the P7 drop migration backstop catches any legacy-only stragglers.
 - 2.3.2 - MCP agent CRUD operates on the typed manager with a nested step_workflow surface. symbol: `update_agent_step_workflow`. file: `src/gobby/mcp_proxy/tools/workflows/_agents.py`.
 - 2.3.3 - HTTP agent definition routes read and write the typed tables. file: `src/gobby/servers/routes/agents.py`.
 - 2.3.4 - Copy migration migrates every agent row and one child per row carrying a non-empty steps array (29 and 25 at planning time), preserves soft-deleted rows, skips the four `"steps": null` rows without a scalar-length error, and fails loudly on count mismatch. test: `tests/storage/test_agent_copy_migration.py`.
-- 2.3.5 - Sync produces child workflows for all 25 stepful bundled agents, none for the 4 step-less, and leaves no stale child rows. test: `tests/agents/test_sync.py`.
+- 2.3.5 - Sync produces child workflows for all 21 stepful bundled agents, none for the 4 step-less, and leaves no stale child rows (filesystem-derived counts; the 29-row/25-child hub-derived counts belong to the copy migration in 2.3.4 and E1). test: `tests/agents/test_sync.py`.
 - 2.3.6 - The equivalence guard succeeds idempotently on an identical pre-existing typed row and fails loudly on a divergent one. test: `tests/storage/test_agent_copy_migration.py`.
 - 2.3.9 - Rerunning the copy over an already-migrated soft-deleted agent row completes without a primary-key abort, and two soft-deleted rows sharing a natural key each match their own target by preserved id. test: `tests/storage/test_agent_copy_migration.py::test_rerun_over_soft_deleted_rows`.
-- 2.3.7 - A public agent write carrying legacy top-level step keys is rejected instead of silently dropping the step workflow. test: `tests/servers/routes/test_agents.py`.
+- 2.3.7 - A public agent write carrying legacy top-level step keys is rejected instead of silently dropping the step workflow. test: `tests/servers/routes/test_agents_routes.py`.
 - 2.3.8 - Template hashing reads the nested body shape, so a step_workflow edit registers as drift. symbol: `TemplateHashCache._load_agents`. file: `src/gobby/workflows/template_hashes.py`.
+- 2.3.10 - No generic surface can create or mutate a legacy agent row post-cutover: the generic HTTP routes, generic MCP tools, and the import path each reject kind `agent` naming the surviving domain surface. test: `tests/servers/routes/test_workflows.py`. test: `tests/mcp_proxy/tools/test_workflow_crud.py`. test: `tests/workflows/test_imports.py`.
+- 2.3.11 - Bundled agent sync reaches the typed table through update_from_sync: a changed template enabled default is adopted on an untouched row and preserved on a pinned row. test: `tests/agents/test_sync.py`.
+- 2.3.12 - The pinned schema root hashes and the release-pinned expected identity match the rebuilt gdaemon after the migration entry lands. file: `crates/gcore/tests/schema_contract.rs`. file: `src/gobby/storage/schema_expected_identity.json`.
+- 2.3.13 - The copy migration strips and extracts both the flat pre-2.2 shape and the nested 2.2 shape equivalently: a row synced by the 2.2 cutover then migrated yields a stripped parent and a correct child, and mixed-shape populations migrate without child loss or child data retained in a parent body. test: `tests/storage/test_agent_copy_migration.py::test_nested_and_flat_source_shapes`.
+- 2.3.14 - The copy migration writes one legacy_copy_ledger row per copied agent source row with the normalized payload hash, and reruns keep the copy-time hash. test: `tests/storage/test_agent_copy_migration.py`.
 
 ### 2.4 Agent read-consumer rewiring [category: code] (depends: 2.3)
 `kind: deliverable`
 
-Targets: `src/gobby/workflows/agent_resolver.py`,
-`src/gobby/workflows/engine/core.py`, `src/gobby/dispatch/context.py`,
-`src/gobby/tasks/expansion/_common.py`, `src/gobby/cli/agents.py`,
-`src/gobby/agents/dry_run.py`, `src/gobby/workflows/dry_run.py`,
-`src/gobby/dispatch/skill_composition.py`,
-`src/gobby/mcp_proxy/tools/spawn_agent/_factory.py`, `src/gobby/dispatch/spawn.py`,
-`src/gobby/mcp_proxy/tools/apply_persona.py`,
-`src/gobby/hooks/event_handlers/_session_start/agents.py`,
-`src/gobby/hooks/event_handlers/_agent.py`, `src/gobby/build/observability.py`,
-`src/gobby/servers/routes/agent_spawn.py`, `src/gobby/hooks/factory.py`,
-`src/gobby/tasks/expansion_service.py`,
-`src/gobby/tasks/expansion/_compile.py`,
-`src/gobby/workflows/dry_run_trace.py` (new)
+Targets:
+- `src/gobby/workflows/agent_resolver.py::*` — scope-reason: typed-manager resolution rewrite
+- `src/gobby/workflows/engine/core.py::*` — scope-reason: agent cache on the typed manager and domain revision
+- `src/gobby/dispatch/context.py::*` — scope-reason: bulk loader cutover
+- `src/gobby/tasks/expansion/_common.py::*` — scope-reason: bulk loader cutover
+- `src/gobby/cli/agents.py::*` — scope-reason: listing and detail-dict cutover
+- `src/gobby/agents/dry_run.py::*` — scope-reason: delete the untyped name lookup
+- `src/gobby/workflows/dry_run.py::*` — scope-reason: agent evaluation from step_workflow after trace extraction
+- `src/gobby/dispatch/skill_composition.py::*` — scope-reason: required-skills read through step_workflow
+- `src/gobby/mcp_proxy/tools/spawn_agent/_factory.py::*` — scope-reason: resolve_agent consumer
+- `src/gobby/dispatch/spawn.py::*` — scope-reason: resolve_agent consumer
+- `src/gobby/mcp_proxy/tools/apply_persona.py::*` — scope-reason: resolve_agent consumer
+- `src/gobby/hooks/event_handlers/_session_start/agents.py::*` — scope-reason: resolve_agent consumer
+- `src/gobby/hooks/event_handlers/_agent.py::*` — scope-reason: resolve_agent consumer
+- `src/gobby/build/observability.py::*` — scope-reason: resolve_agent consumer
+- `src/gobby/servers/routes/agent_spawn.py::*` — scope-reason: resolve_agent consumer
+- `src/gobby/hooks/factory.py::*` — scope-reason: manager construction wiring
+- `src/gobby/tasks/expansion_service.py::*` — scope-reason: loader-output consumer
+- `src/gobby/tasks/expansion/_compile.py::*` — scope-reason: loader-output consumer
+- `src/gobby/workflows/dry_run_trace.py` (new)
+- `tests/workflows/test_agent_resolver.py::*` — scope-reason: typed-resolution retarget of the resolver suite
+- `tests/agents/test_dry_run.py::*` — scope-reason: deleted _load_agent_body retarget
+- `tests/cli/test_agent_definitions_cli.py::*` — scope-reason: typed listing and nested step_workflow CLI retarget
 
 - `resolve_agent` (`agent_resolver.py:17-53`) →
   `AgentDefinitionManager.get_by_name` (hydrated). Add
@@ -585,9 +1145,12 @@ Targets: `src/gobby/workflows/agent_resolver.py`,
   needs `row.step_workflow_id`); plain `resolve_agent` keeps its signature for
   the other callers (spawn factory, dispatch/spawn, apply_persona,
   `_session_start/agents.py`, `_agent.py`, build/observability).
-- `RuleEngine` (`engine/core.py:88-111, 592-628`): `self.agent_manager =
-  AgentDefinitionManager(db)`; `_agent_def_cache` invalidates on
-  `get_definitions_revision("agents")`.
+- `RuleEngine` (`engine/core.py`; construction at `:128`, cache invalidation
+  at `:689-715`): `self.agent_manager = AgentDefinitionManager(db)`;
+  `_agent_def_cache` invalidates on `get_definitions_revision("agents")`.
+  Child-only step-workflow mutations reach this cache because every child
+  write bumps both `agent_step_workflows` and `agents` (1.3's dual-domain
+  bump contract).
 - Bulk loaders → `AgentDefinitionManager.list_all`: `dispatch/context.py:200-253`,
   `tasks/expansion/_common.py:153`, `cli/agents.py:318-380` (detail dict:
   flat step keys → nested `step_workflow`). `expansion_service.py` and
@@ -618,6 +1181,7 @@ Targets: `src/gobby/workflows/agent_resolver.py`,
 - 2.4.6 - Expansion agent loading reads the typed manager across the common loader, the service, and the compiler. file: `src/gobby/tasks/expansion/_common.py`. file: `src/gobby/tasks/expansion_service.py`. file: `src/gobby/tasks/expansion/_compile.py`.
 - 2.4.7 - The CLI agent listing and detail dict read the typed manager and emit the nested step_workflow key. file: `src/gobby/cli/agents.py`.
 - 2.4.8 - dry_run.py is under 1,000 lines after the trace extraction and the agent rewrite. file: `src/gobby/workflows/dry_run.py`. file: `src/gobby/workflows/dry_run_trace.py`.
+- 2.4.9 - A child-only step-workflow edit or delete invalidates the cached hydrated agent, and the next resolution returns the updated body. test: `tests/workflows/test_agent_resolver.py`.
 
 ## P3: Runtime Snapshot Cutover
 `kind: framing`
@@ -629,9 +1193,10 @@ the `-steps` name coupling are gone.
 ### 3.1 Step instance model and manager [category: code] (depends: P2)
 `kind: deliverable`
 
-Targets: `src/gobby/workflows/step_instances.py` (new),
-`src/gobby/storage/hub/protocol.py`,
-`tests/workflows/test_step_instances.py` (new)
+Targets:
+- `src/gobby/workflows/step_instances.py` (new)
+- `src/gobby/storage/hub/protocol.py::*` — scope-reason: mutation-lock rename and lock users
+- `tests/workflows/test_step_instances.py` (new)
 
 New module (old `WorkflowInstance`/`WorkflowInstanceManager` untouched until
 3.3):
@@ -657,7 +1222,9 @@ class AgentStepInstanceManager:
     def get_for_session(self, session_id) -> AgentStepInstance | None
     def save(self, instance) -> None    # upsert ON CONFLICT(session_id);
                                         # DO UPDATE never overwrites snapshot_json,
-                                        # agent_step_workflow_id, or created_at
+                                        # agent_step_workflow_id, or created_at,
+                                        # and REJECTS an agent_name differing from
+                                        # the stored row as a stale identity write
     def replace_for_session(self, instance) -> None
                                         # DELETE + INSERT in one statement pair;
                                         # the ONLY mutator that may change
@@ -680,6 +1247,13 @@ change `agent_name` and `current_step` while retaining the previous agent's
 snapshot — the enforcement-disappears failure this epic exists to remove,
 reintroduced through the very primitive meant to prevent it. Replacement is a
 lineage change, so it gets its own operation rather than a flag on `save`.
+`agent_name` is therefore part of the immutable identity, not merely
+`snapshot_json` (adversary round 2 APR2-012): a `save` whose `agent_name`
+differs from the stored row is rejected loudly as a stale identity write —
+silently keeping the stored name would hide the caller's bug, and writing the
+new name would relabel the prior agent's snapshot and lineage.
+`replace_for_session` is the only mutator that may change `agent_name`,
+`snapshot_json`, or `agent_step_workflow_id`, and it changes them together.
 
 **Writer serialization**: every mutator (`save`, `replace_for_session`,
 `merge_variables`, `delete_for_session`) runs inside
@@ -700,7 +1274,19 @@ that make such a span expressible, and nothing that widens a production path:
 
 - The mutation lock is exposed as a **re-entrant** context, so a caller may
   wrap a read and its write in `AgentStepInstanceMutation(session_id)` without
-  the mutators inside double-acquiring it.
+  the mutators inside double-acquiring it. The re-entrancy is load-bearing
+  adapter behavior, not a new mechanism (adversary round 3 APR3-008): a
+  nested `transaction_immediate` on the **same adapter instance** joins the
+  ambient transaction (`storage/hub/_ambient.py:43-49`) and routes through
+  `_PostgresTransaction.acquire_additional_lock`, whose exact-target equality
+  short-circuit (`postgres_pool.py:313-314`; `LockTarget` cases are frozen
+  dataclasses, so `in` is value equality) returns without touching the
+  priority check. Two constraints follow and are pinned here: the re-entrancy
+  test MUST run through the real `PostgresHubDatabase` adapter with ambient
+  nesting — a fake proves nothing about the short-circuit — and every caller
+  that wraps a span MUST reuse the injected adapter instance, because a
+  second adapter instance opens a second transaction and self-deadlocks on
+  the advisory lock instead of re-entering.
 - `save` accepts an optional **compare-and-set precondition** — the read row's
   `agent_step_workflow_id` and `updated_at` — and rejects a mismatch as a stale
   write, for callers that cannot hold the span.
@@ -720,42 +1306,65 @@ halves are pinned here at the manager level only.
 - 3.1.1 - AgentStepInstance and its manager exist with one-instance-per-session upsert semantics. symbol: `AgentStepInstanceManager`. file: `src/gobby/workflows/step_instances.py`.
 - 3.1.2 - Snapshot, lineage id, and created_at are immutable across saves. test: `tests/workflows/test_step_instances.py::test_snapshot_immutable_on_upsert`.
 - 3.1.3 - AgentStepInstanceMutation replaces WorkflowInstanceMutation in the hub protocol. symbol: `AgentStepInstanceMutation`. file: `src/gobby/storage/hub/protocol.py`.
-- 3.1.4 - `replace_for_session` swaps snapshot, lineage id, agent name, and step position together, and is the only mutator that changes snapshot or lineage. test: `tests/workflows/test_step_instances.py::test_replace_for_session_swaps_snapshot_and_lineage`.
+- 3.1.4 - `replace_for_session` swaps snapshot, lineage id, agent name, and step position together, and is the only mutator that changes snapshot, lineage, or agent identity. test: `tests/workflows/test_step_instances.py::test_replace_for_session_swaps_snapshot_and_lineage`.
 - 3.1.5 - A step-scope variable merge concurrent with an enforcement save is not lost. test: `tests/workflows/test_step_instances.py::test_merge_variables_serializes_against_save`.
-- 3.1.6 - The mutation lock is re-entrant: a caller-held section wrapping a read and its computed save does not deadlock the mutators, and a merge committed outside that section cannot interleave into it. test: `tests/workflows/test_step_instances.py::test_mutation_lock_is_reentrant`.
+- 3.1.6 - The mutation lock is re-entrant through the real Postgres adapter with ambient nesting on one shared adapter instance: a caller-held section wrapping a read and its computed save does not deadlock the mutators, and a merge committed outside that section cannot interleave into it. test: `tests/workflows/test_step_instances.py::test_mutation_lock_is_reentrant`.
 - 3.1.7 - A save carrying a compare-and-set precondition from a pre-persona read is rejected as stale rather than rewriting the replaced instance's step position and variables. test: `tests/workflows/test_step_instances.py::test_stale_save_after_persona_replacement_rejected`.
+- 3.1.8 - A save whose agent_name differs from the stored row is rejected as a stale identity write, with or without the compare-and-set precondition. test: `tests/workflows/test_step_instances.py::test_save_rejects_agent_identity_change`.
 
 ### 3.2 Data-plane cutover and instance copy migration [category: code] (depends: 3.1)
 `kind: deliverable`
 
-Targets: `src/gobby/mcp_proxy/tools/spawn_agent/_step_state.py` (new),
-`src/gobby/mcp_proxy/tools/spawn_agent/_implementation.py`,
-`src/gobby/mcp_proxy/tools/spawn_agent/_factory.py`,
-`src/gobby/dispatch/spawn.py`, `src/gobby/mcp_proxy/tools/apply_persona.py`,
-`src/gobby/workflows/engine/enforcement_checks.py`,
-`src/gobby/workflows/engine/enforcement_completion.py`,
-`src/gobby/workflows/engine/enforcement_handlers.py`,
-`src/gobby/workflows/engine/enforcement.py`,
-`src/gobby/workflows/engine/core.py`, `src/gobby/hooks/factory.py`,
-`src/gobby/workflows/step_context.py`, `src/gobby/hooks/session_coordinator.py`,
-`src/gobby/workflows/hooks.py`, `src/gobby/agents/idle_check_handler.py`,
-`src/gobby/agents/step_workflow.py` (deleted), `src/gobby/agents/sync.py`,
-`src/gobby/mcp_proxy/tools/spawn_agent/_failure_cleanup.py`,
-`src/gobby/agents/spawn_executor.py`, `src/gobby/agents/spawn.py`,
-`src/gobby/agents/spawn_models.py`, `src/gobby/agents/resume_executor.py`,
-`src/gobby/runner_lifecycle_agents.py`,
-`src/gobby/dispatch/daemon_resume.py`,
-`src/gobby/workflows/state_manager.py`,
-`src/gobby/mcp_proxy/tools/agents_spawn_tools.py`,
-`src/gobby/servers/websocket/chat/_session.py`,
-`src/gobby/storage/migrations/NNN_copy_agent_step_instances.sql` (new),
-`tests/storage/test_instance_copy_migration.py` (new),
-`tests/agents/test_spawn.py`, `tests/agents/test_spawn_executor.py`,
-`tests/agents/test_spawn_executor_droid.py`, `tests/agents/test_srt_spawn.py`,
-`tests/agents/test_resume_executor.py`,
-`tests/mcp_proxy/tools/spawn_agent/test_execution.py`,
-`tests/mcp_proxy/tools/test_apply_persona.py`,
-`tests/mcp_proxy/tools/spawn_agent/test_factory.py`
+Targets:
+- `src/gobby/mcp_proxy/tools/spawn_agent/_step_state.py` (new)
+- `src/gobby/mcp_proxy/tools/spawn_agent/_implementation.py::*` — scope-reason: spawn cutover, extraction, and failure-boundary rework
+- `src/gobby/mcp_proxy/tools/spawn_agent/_factory.py::*` — scope-reason: registration deletion and prepared-spawn threading
+- `src/gobby/dispatch/spawn.py::*` — scope-reason: registration deletion
+- `src/gobby/mcp_proxy/tools/apply_persona.py::*` — scope-reason: persona instance transitions and cross-row atomicity
+- `src/gobby/workflows/engine/enforcement_checks.py::*` — scope-reason: snapshot reader rewrite
+- `src/gobby/workflows/engine/enforcement_completion.py::*` — scope-reason: snapshot writer rewrite
+- `src/gobby/workflows/engine/enforcement_handlers.py::*` — scope-reason: snapshot writer rewrite
+- `src/gobby/workflows/engine/enforcement.py::*` — scope-reason: unpacker signature updates
+- `src/gobby/workflows/engine/core.py::*` — scope-reason: instance-manager construction cutover
+- `src/gobby/hooks/factory.py::*` — scope-reason: instance-manager wiring
+- `src/gobby/workflows/step_context.py::*` — scope-reason: snapshot reader rewrite
+- `src/gobby/hooks/session_coordinator.py::*` — scope-reason: exit-condition read from the snapshot
+- `src/gobby/workflows/hooks.py::*` — scope-reason: context-injection field rename
+- `src/gobby/agents/idle_check_handler.py::*` — scope-reason: idle-reprompt field rename
+- `src/gobby/agents/step_workflow.py::*` — scope-reason: module deleted in this task
+- `src/gobby/agents/sync.py::*` — scope-reason: scaffolding call removal
+- `src/gobby/mcp_proxy/tools/spawn_agent/_failure_cleanup.py::*` — scope-reason: process-termination compensation
+- `src/gobby/agents/spawn_executor.py::*` — scope-reason: prepared-spawn consumption at five call sites
+- `src/gobby/agents/spawn.py::*` — scope-reason: preparation inversion
+- `src/gobby/agents/spawn_models.py::*` — scope-reason: SpawnRequest gains the prepared-spawn field
+- `src/gobby/agents/resume_executor.py::*` — scope-reason: same-session resume continuity preserved across the typed-instance cutover (#18974)
+- `src/gobby/runner_lifecycle_agents.py::*` — scope-reason: daemon_stop terminal-reason anchor for resume continuity
+- `src/gobby/dispatch/daemon_resume.py::*` — scope-reason: sole resume_agent_run caller; continuity anchor, no edit
+- `src/gobby/workflows/state_manager.py::*` — scope-reason: legacy merge-path lock user
+- `src/gobby/mcp_proxy/tools/agents_spawn_tools.py::*` — scope-reason: persona caller transaction audit
+- `src/gobby/servers/websocket/chat/_session.py::*` — scope-reason: fail-closed persona propagation
+- `crates/gcore/assets/schema/migrations/NNN_copy_agent_step_instances.sql` (new)
+- `crates/gcore/src/schema/assets.rs::*` — scope-reason: MIGRATIONS entry registration per 1.5
+- `crates/gcore/tests/schema_contract.rs::*` — scope-reason: pinned root hashes re-armed for the added MIGRATIONS entry
+- `src/gobby/storage/schema_expected_identity.json::*` — scope-reason: regenerated release-pinned identity for the added MIGRATIONS entry
+- `tests/storage/test_instance_copy_migration.py` (new)
+- `tests/workflows/test_step_snapshot_semantics.py` (new)
+- `tests/workflows/test_step_enforcement.py::*` — scope-reason: enforcement suite rewritten onto AgentStepInstanceManager
+- `tests/workflows/test_step_runtime_transitions.py::*` — scope-reason: transition suite rewritten onto the typed instance (adversary round 3 APR3-015)
+- `tests/workflows/test_step_enforcement_audit.py::*` — scope-reason: enforcement-audit fixtures rewritten onto the typed instance (adversary round 3 APR3-015)
+- `tests/workflows/test_step_error_codes.py::*` — scope-reason: error-code fixtures rewritten onto the typed instance (adversary round 3 APR3-015)
+- `tests/hooks/test_session_coordinator.py::*` — scope-reason: exit-condition coordinator fixtures rewritten onto the typed instance (adversary round 3 APR3-015)
+- `tests/workflows/test_step_context.py::*` — scope-reason: WorkflowInstanceManager patch paths retargeted at the typed manager
+- `tests/workflows/test_agent_workflow_completion.py::*` — scope-reason: completion-gate suite rewritten onto the typed instance
+- `tests/agents/test_spawn_prepare_resume.py::*` — scope-reason: same-session resume seam; continuity assertions onto the typed instance
+- `tests/agents/test_spawn.py::*` — scope-reason: moved preparation boundary
+- `tests/agents/test_spawn_executor.py::*` — scope-reason: moved preparation boundary
+- `tests/agents/test_spawn_executor_droid.py::*` — scope-reason: moved preparation boundary
+- `tests/agents/test_srt_spawn.py::*` — scope-reason: moved preparation boundary
+- `tests/agents/test_resume_executor.py::*` — scope-reason: moved preparation boundary
+- `tests/mcp_proxy/tools/spawn_agent/test_execution.py::*` — scope-reason: moved preparation boundary
+- `tests/mcp_proxy/tools/test_apply_persona.py::*` — scope-reason: typed-instance retarget
+- `tests/mcp_proxy/tools/spawn_agent/test_factory.py::*` — scope-reason: deleted-symbol retarget
 
 One atomic cutover — writers and readers share the data plane:
 
@@ -830,38 +1439,68 @@ prepare call is deleted from the five provider consumers that reach it
 through `SpawnRequest`: `spawn_executor.py:171, 301, 401, 513, 628`.
 Reuse `PreparedSpawn`; do not introduce a second prepared-spawn type.
 
-Hoisting preparation creates a new pre-launch failure boundary: by the time the
-caller saves the step instance, `prepare_terminal_spawn` has already created both
-the child session and its `agent_runs` row. If that save fails, the caller runs
-bounded compensation that deletes those exact two newly-created rows before
-returning the error. No provider process exists yet, so this path does not invoke
-post-launch termination cleanup; it simply leaves no durable spawn rows and does
-not claim a task. A compensation failure is surfaced with both row ids for
-operator recovery rather than hiding the leak behind the original save error.
+Hoisting preparation creates a new pre-launch failure envelope, and it gets
+**one idempotent cleanup owner**, not per-boundary ad-hoc handling (adversary
+round 2 APR2-013). The owner deletes whatever pre-launch acquisitions exist —
+the child session row, its initial `session_variables` row, the `agent_runs`
+row, the on-disk prompt file, and the `agent_step_instances` row — revokes a
+never-launched run's managed credential, tolerates already-deleted rows so
+repeated cleanup is safe, and is invoked on failure at every boundary between
+preparation and provider launch:
+(a) failure **inside** `prepare_terminal_spawn` (adversary round 3 APR3-012,
+fixer-induced by APR2-013): the function acquires in sequence — child session
+(`spawn.py:171`), initial variables (`:177-179`), the `agent_runs` row plus
+pickup metadata and prompt file (`_prepare_run_for_session`, `:354-446`), and
+the pre-launch credential (`_issue_prelaunch_credential`, `:329-351`) — and
+today contains **no** exception handling, so a mid-sequence raise propagates
+with no handle to the partial state and the caller cannot compensate what it
+cannot see. The owner therefore lives **inside** `prepare_terminal_spawn`: an
+exception path (`try`/`except` re-raise after teardown) that tears down every
+acquisition already made, verified by fault injection after each acquisition
+in `tests/agents/test_spawn.py`. `PreparedSpawn` remains success-only; no
+partial-result type is introduced;
+(b) failure of the step-instance save after successful preparation;
+(c) failure between the save and the provider launch (spawn-context
+construction, credential/bootstrap work) — this boundary also deletes the
+already-saved instance row, which the save-failure branch alone would miss.
+Boundaries (b) and (c) invoke the same owner from the caller, passing the
+returned `PreparedSpawn`.
+No provider process exists at any of these points, so the owner never invokes
+post-launch termination cleanup; it leaves no durable spawn rows, no live
+credentials attached to a never-launched run, and no claimed task. A cleanup
+failure is surfaced with the surviving row ids for operator recovery rather
+than hiding the leak behind the original error. Post-launch failures route
+through the termination compensation below, which is the other half of the
+same completeness requirement.
 
-**`resume_executor.py:192` is deliberately excluded.** It is a sixth
-caller of `prepare_terminal_spawn`, but it is not on the `SpawnRequest`
-path: `resume_agent_run` builds its own `spawn_context` inline and its
-    sole caller supplies no `PreparedSpawn`, so deleting the call there leaves
-    the resume path with nothing to construct a session from. Preparation
-    stays inside `resume_agent_run`.
+**`resume_executor.py:192` is excluded from the preparation inversion.** The
+resume path calls `prepare_terminal_resume` (`spawn.py:227`), the #18974
+sibling of `prepare_terminal_spawn` that relaunches a daemon-stopped run on
+the **same child session** via a CAS session rebind; it is not on the
+`SpawnRequest` path — `resume_agent_run` builds its own `spawn_context`
+inline and its sole caller supplies no `PreparedSpawn`. Preparation stays
+inside `resume_agent_run`.
 
-    **Resume step-state continuity is out of scope; see #18974.** A resumed run
-    creates a new child session and `agent_step_instances` is keyed
-    `UNIQUE(session_id)`, so the original session's row does not follow it — a
-    daemon-stop resume comes back at `steps[0]` with empty variables. That is
-    the behavior today and this task preserves it: `runtime_cleanup.py:24-65`
-    already deletes the source row when shutdown terminalizes the run with
-    `terminal_reason='daemon_stop'` (`runner_lifecycle_agents.py:349-411`), so a
-    clone-on-resume rule stated here would have no source to read. Making resume
-    continuous requires source retention across terminal cleanup, a defined
-    commit point, and a prepared-child rollback contract shared with spawn —
-    `_fail_run` (`resume_executor.py:604-625`) does not delete the prepared
-    child, unlike `spawn_agent/_failure_cleanup.py:23-50`. That is a lifecycle
-    change, not a storage split, and it is task #18974.
-    `dispatch/daemon_resume.py:70` is the sole caller of `resume_agent_run` and
-    stays in Targets only so the exclusion is anchored to a real call site; this
-    task makes no edit there.
+    **Resume step-state continuity is a live contract this task must
+    preserve** (#18974, closed 2026-07-27 — Epic Review Notes correction 16;
+    adversary round 2 APR2-001). A daemon-stop resume reuses the same child
+    session, and `cleanup_agent_runtime_state` (`runtime_cleanup.py`) deletes
+    instance rows only when `terminal_reason != 'daemon_stop'`
+    (`runner_lifecycle_agents.py` terminalizes shutdown-killed runs with
+    `daemon_stop`), so the retained row is found again by the resumed run
+    under the `UNIQUE(session_id)` key: the agent continues at its step with
+    its variables. The cutover must carry all three halves of that contract
+    onto `agent_step_instances`: (a) the copy migration's live-status filter
+    includes the paused sessions daemon-stop parking produces; (b) 3.3's
+    typed `delete_for_session` cleanup keeps the same `terminal_reason` gate;
+    (c) the resumed run resolves its retained typed row rather than building
+    a fresh snapshot — recovery's fresh-snapshot path (3.3) remains the
+    fallback for a genuinely missing row, never the resume path's normal
+    behavior. `tests/agents/test_spawn_prepare_resume.py` pins the seam today
+    against the legacy table and retargets its instance assertions here.
+    `dispatch/daemon_resume.py:70` is the sole caller of `resume_agent_run`
+    and stays in Targets as the continuity anchor; this task makes no edit
+    there.
 
     `tests/agents/test_spawn.py` asserts `prepare_terminal_spawn`'s current
     return and persistence contract, `tests/agents/test_spawn_executor.py`
@@ -969,6 +1608,22 @@ path: `resume_agent_run` builds its own `spawn_context` inline and its
   `updated_at` as the compare-and-set precondition instead and treat rejection
   as a lost race, not an error to swallow. 3.1 ships the primitives; the
   widening lands here because these three files are Targets of this task.
+- **Enforcement test-seam wave (adversary round 2 APR2-009)**: the
+  enforcement-side legacy suites move with their production files in this
+  commit — `tests/workflows/test_step_enforcement.py` constructs
+  `WorkflowInstanceManager` and `WorkflowInstance` throughout,
+  `tests/workflows/test_step_context.py` patches
+  `step_context.WorkflowInstanceManager` at `:36` and `:204`, and
+  `tests/workflows/test_agent_workflow_completion.py` seeds instances through
+  the legacy manager. All three are rewritten onto `AgentStepInstanceManager`
+  fixtures here; the cleanup-side suites move in 3.3 with their files.
+- **Snapshot regression suite created here (adversary round 2 APR2-007)**:
+  this task creates `tests/workflows/test_step_snapshot_semantics.py` with
+  the behaviors its own acceptance cites — the fault-injection, atomicity,
+  auto-claim, and web-chat propagation cases ((g)–(l) of the 3.4 matrix).
+  3.3 adds its recovery and compaction cases; 3.4 completes and audits the
+  full matrix. An acceptance command may depend only on test artifacts that
+  exist when its deliverable executes.
 - **Readers**: `_get_step_for_session` (`enforcement_checks.py:64-92`) becomes
   a single-row lookup returning `(step, instance)` with
   `instance.snapshot.get_step(instance.current_step)`; update mixin protocol
@@ -983,9 +1638,40 @@ path: `resume_agent_run` builds its own `spawn_context` inline and its
 - **Context injection** (`workflows/hooks.py:660-694`) and idle reprompt
   (`idle_check_handler.py:638-676`): field rename; drop `_step_workflow_name`
   writes.
-- **Instance copy migration** (same commit): guarded; one row per session
-  (latest `updated_at` wins, **over all candidate rows regardless of
-  `enabled`**); `agent_name = regexp_replace(workflow_name, '-steps$', '')`.
+- **Instance copy migration** (same commit; an `EmbeddedMigration` SQL asset
+  per 1.5, `information_schema`-guarded and fresh-lineage no-op): one row per
+  session, selected deterministically (adversary round 2 APR2-014):
+  - **Qualification**: only rows with `workflow_name ~ '-steps$'` are
+    agent-step candidates; `agent_name = regexp_replace(workflow_name,
+    '-steps$', '')`. A live-session instance row that does not match the
+    predicate RAISEs with its session and workflow name — after the split
+    there is no table to hold it, and dropping it silently would be the
+    mid-epic data loss the fail-loud contract forbids. (The known
+    non-matching rows — `session-lifecycle`, `auto-task` — sit on dead
+    sessions and are excluded by the live-status filter, not by this
+    predicate.)
+  - **Active-identity resolution before ordering (adversary round 3
+    APR3-009, fixer-induced by APR2-014)**: a timestamp total order across
+    ALL suffix-matching rows can deterministically pick the wrong agent,
+    because `build_persona_changes` preserves an existing instance without
+    touching `updated_at` (`apply_persona.py:132-139`) — an A→B→A persona
+    sequence leaves B's row newest while A is active. The session's persona
+    state is the authoritative identity: resolve the active agent from the
+    session's `_agent_type` and `_step_workflow_name` session variables,
+    reconcile the two against each other and against the candidate rows'
+    derived `agent_name`s, and RAISE with the session id and both values on
+    contradiction (persona state names an agent with no qualifying row while
+    other qualifying rows exist, or the two variables disagree). Restrict
+    candidates to the resolved identity's rows first; a live session with
+    qualifying rows but **no** persona state also RAISEs — after the split
+    there is no way to know which snapshot is authoritative, and guessing is
+    the silent wrong-agent migration this repair exists to prevent.
+  - **Total order within the resolved identity**: among the matching rows,
+    latest `updated_at` wins **regardless of `enabled`**, with `id` ascending
+    as the final tie-break so equal timestamps cannot copy an arbitrary row.
+  - **Zero candidates**: a live session with no qualifying row migrates
+    nothing — a step-less or non-agent session legitimately has no instance,
+    and 3.3's recovery builds a fresh snapshot only if the agent is stepful.
   Dead-session rows (incl. the 21 `session-lifecycle`/`auto-task` orphans and
   24 `developer-steps` rows) are dropped with the legacy table in P7.
   Selecting only enabled rows would contradict the column mapping below, which
@@ -1004,8 +1690,12 @@ path: `resume_agent_run` builds its own `spawn_context` inline and its
   - **Column mapping**: copy `id`, `session_id`, `enabled`, `current_step`,
     `step_entered_at`, `variables`, `context_injected`, `created_at`, and
     `updated_at` verbatim; resolve `agent_step_workflow_id` from
-    `agent_step_workflows` via the derived `agent_name` and populate it
-    **whenever that child row exists**, since it is the typed lineage column
+    `agent_step_workflows` via the derived `agent_name` **scope-aware**:
+    resolve the agent definition project-first against the session's
+    `project_id` with global fallback — the same precedence `get_by_name`
+    uses at runtime — then take that definition's child row, so a
+    project-scoped agent's instance cannot attach to the global agent's
+    lineage. Populate it **whenever that child row exists**, since it is the typed lineage column
     and a target-only field with no legacy source — leaving it NULL where a
     child does exist silently detaches the migrated row from its definition,
     which is the FK the snapshot-vs-definition distinction is built on. Where
@@ -1061,7 +1751,7 @@ path: `resume_agent_run` builds its own `spawn_context` inline and its
 - 3.2.13 - The caller calls prepare_terminal_spawn and saves the step instance before launch, so the instance row is durable before any provider process exists. symbol: `prepare_terminal_spawn`. file: `src/gobby/agents/spawn.py`. file: `src/gobby/mcp_proxy/tools/spawn_agent/_implementation.py`.
 - 3.2.13a - SpawnRequest carries the prepared spawn and every provider path consumes it without creating a second session across all five executor call sites. file: `src/gobby/agents/spawn_models.py`. file: `src/gobby/agents/spawn_executor.py`.
 - 3.2.13b - The spawn, executor, droid, SRT, resume, and execution suites are retargeted to the moved boundary and still pin agent_run persistence and per-provider spawn context. test: `tests/agents/test_spawn.py`. test: `tests/agents/test_spawn_executor.py`. test: `tests/agents/test_spawn_executor_droid.py`. test: `tests/agents/test_srt_spawn.py`. test: `tests/agents/test_resume_executor.py`. test: `tests/mcp_proxy/tools/spawn_agent/test_execution.py`.
-- 3.2.13c - The resume path keeps its inline prepare_terminal_spawn call and gains no step-state transfer, so daemon-stop resume behavior is unchanged by this task and remains task #18974. symbol: `resume_agent_run`. file: `src/gobby/agents/resume_executor.py`.
+- 3.2.13c - The resume path keeps its inline prepare_terminal_resume call, and a daemon-stop resume returns on the same child session with its retained typed instance at the same step and variables — the #18974 continuity contract holds across the storage cutover. symbol: `resume_agent_run`. file: `src/gobby/agents/resume_executor.py`. test: `tests/agents/test_spawn_prepare_resume.py`.
 - 3.2.21 - Persona tests are retargeted off _step_workflow_name and WorkflowInstanceManager onto the typed instance. test: `tests/mcp_proxy/tools/test_apply_persona.py`.
 - 3.2.22 - The spawn factory suite's self-healing registration tests are retargeted at prepared snapshot creation, since the symbol they import is deleted in this task. test: `tests/mcp_proxy/tools/spawn_agent/test_factory.py`.
 - 3.2.14 - cleanup_failed_spawn terminates the recorded PID and tmux session before deleting the child session row, and tolerates an already-dead process. symbol: `cleanup_failed_spawn`. file: `src/gobby/mcp_proxy/tools/spawn_agent/_failure_cleanup.py`.
@@ -1073,28 +1763,54 @@ path: `resume_agent_run` builds its own `spawn_context` inline and its
 - 3.2.18 - A persona failure on the web-chat path propagates: the runtime is stopped, the session is not registered, and the caller does not report success. file: `src/gobby/servers/websocket/chat/_session.py`.
 - 3.2.19 - Enforcement read-compute-write pairs hold one mutation section, so a concurrent step-scope merge cannot be lost across a transition or completion write. test: `tests/workflows/test_step_snapshot_semantics.py::test_enforcement_write_paths_hold_one_critical_section`.
 - 3.2.20 - A live session whose only legacy instance is disabled migrates with enabled preserved, and activation neither re-enables it nor rewinds its step. test: `tests/storage/test_instance_copy_migration.py::test_disabled_instance_continuity`.
+- 3.2.23 - The pinned schema root hashes and the release-pinned expected identity match the rebuilt gdaemon after the migration entry lands. file: `crates/gcore/tests/schema_contract.rs`. file: `src/gobby/storage/schema_expected_identity.json`.
+- 3.2.24 - Fault injection at every pre-launch boundary — after each acquisition inside preparation (child session, initial variables, run row and prompt file, credential), after the instance save, and between save and launch — leaves no session, variable, run, or instance rows, no prompt file, and no live credentials, and running the cleanup owner twice is safe. test: `tests/workflows/test_step_snapshot_semantics.py::test_prelaunch_faults_leave_no_rows`. test: `tests/agents/test_spawn.py`.
+- 3.2.25 - Candidate selection is deterministic within the resolved active identity: equal-timestamp duplicates resolve by the id tie-break, child lineage resolves project-first with global fallback, a non-qualifying instance row on a live session fails loudly, and a live session with no qualifying row and no persona state migrates nothing. test: `tests/storage/test_instance_copy_migration.py::test_candidate_resolution_determinism`.
+- 3.2.26 - The enforcement, transition, audit, error-code, coordinator, step-context, and completion-gate suites construct the typed instance manager with no WorkflowInstanceManager import or patch remaining. test: `tests/workflows/test_step_enforcement.py`. test: `tests/workflows/test_step_runtime_transitions.py`. test: `tests/workflows/test_step_enforcement_audit.py`. test: `tests/workflows/test_step_error_codes.py`. test: `tests/hooks/test_session_coordinator.py`. test: `tests/workflows/test_step_context.py`. test: `tests/workflows/test_agent_workflow_completion.py`.
+- 3.2.27 - The instance copy resolves the active identity from session persona state: an A→B→A persona history with a stale-newer B row migrates A's snapshot and agent_name, contradictory or missing persona state over qualifying rows fails loudly, and ordering applies only within the resolved identity's rows. test: `tests/storage/test_instance_copy_migration.py::test_active_identity_resolution`.
 
 ### 3.3 Recovery, cleanup, and auxiliary surfaces [category: code] (depends: 3.2)
 `kind: deliverable`
 
-Targets: `src/gobby/hooks/session_activation.py`,
-`src/gobby/hooks/event_handlers/_session_end.py`,
-`src/gobby/agents/runtime_cleanup.py`, `src/gobby/agents/agent_cleanup.py`,
-`src/gobby/workflows/reserved_variables.py`,
-`src/gobby/mcp_proxy/tools/workflows/_variables.py`,
-`src/gobby/mcp_proxy/tools/workflows/_query.py`,
-`src/gobby/mcp_proxy/tools/workflows/__init__.py`,
-`src/gobby/servers/routes/workflows.py`,
-`src/gobby/workflows/state_manager.py`, `src/gobby/workflows/definitions.py`,
-`src/gobby/storage/session_lifecycle.py`,
-`src/gobby/storage/sessions/_lifecycle_delegate.py`,
-`src/gobby/hooks/event_handlers/_session_start/flow.py`,
-`tests/mcp_proxy/tools/spawn_agent/test_initial_variables.py`,
-`tests/storage/sessions/test_lifecycle.py`,
-`tests/storage/sessions/test_pruning.py`,
-`tests/hooks/test_session_end_handlers.py`,
-`tests/hooks/test_session_start_handlers.py`,
-`tests/hooks/test_session_handoff_handlers.py`
+Targets:
+- `src/gobby/hooks/session_activation.py::*` — scope-reason: recovery rewrite onto the typed instance
+- `src/gobby/hooks/event_handlers/_session_end.py::*` — scope-reason: gated instance cleanup
+- `src/gobby/agents/runtime_cleanup.py::*` — scope-reason: typed delete_for_session
+- `src/gobby/agents/terminal_cleanup.py::*` — scope-reason: cleared-state log key rename
+- `src/gobby/workflows/reserved_variables.py::*` — scope-reason: remove _step_workflow_name
+- `src/gobby/mcp_proxy/tools/workflows/_variables.py::*` — scope-reason: scope-parameter rewrite
+- `src/gobby/mcp_proxy/tools/workflows/_query.py::*` — scope-reason: get_step_status rewrite
+- `src/gobby/mcp_proxy/tools/workflows/__init__.py::*` — scope-reason: typed-manager tool registrations
+- `src/gobby/servers/routes/workflows.py::*` — scope-reason: runtime-variable routes onto the typed manager
+- `src/gobby/workflows/state_manager.py::*` — scope-reason: WorkflowInstanceManager deletion
+- `src/gobby/workflows/definitions.py::*` — scope-reason: WorkflowInstance model deletion
+- `src/gobby/storage/session_lifecycle.py::*` — scope-reason: sweep retarget at agent_step_instances
+- `src/gobby/storage/sessions/_lifecycle_delegate.py::*` — scope-reason: sweep delegate retarget
+- `src/gobby/hooks/event_handlers/_session_start/flow.py::*` — scope-reason: in-place compact reactivation continuity
+- `tests/mcp_proxy/tools/spawn_agent/test_initial_variables.py::*` — scope-reason: typed-instance queries
+- `tests/hooks/test_session_activation_reconciliation.py::*` — scope-reason: typed-instance recovery retarget
+- `tests/workflows/test_instance_manager.py::*` — scope-reason: legacy-manager CRUD suite deleted; superseded by test_step_instances.py
+- `tests/workflows/test_agent_workflow_runtime_cleanup.py::*` — scope-reason: runtime-cleanup suite rewritten onto the typed manager with the daemon_stop gate
+- `tests/workflows/test_session_end_cleanup.py::*` — scope-reason: session-end cleanup suite rewritten onto the typed manager
+- `tests/workflows/test_session_variable_manager.py::*` — scope-reason: legacy instance-manager fixture replaced with the typed manager
+- `tests/workflows/test_step_snapshot_semantics.py`
+- `tests/storage/sessions/test_lifecycle.py::*` — scope-reason: typed-table retarget
+- `tests/storage/sessions/test_pruning.py::*` — scope-reason: typed-table retarget
+- `tests/hooks/test_session_end_handlers.py::*` — scope-reason: typed-table retarget
+- `tests/hooks/test_session_start_handlers.py::*` — scope-reason: typed-table retarget
+- `tests/hooks/test_session_handoff_handlers.py::*` — scope-reason: typed-table retarget
+- `tests/agents/test_runtime_cleanup.py::*` — scope-reason: runtime-cleanup fixtures onto the typed manager (adversary round 3 APR3-015)
+- `tests/agents/test_lifecycle_monitor.py::*` — scope-reason: instance fixtures onto the typed manager (adversary round 3 APR3-015)
+- `tests/agents/test_lifecycle_monitor_extra.py::*` — scope-reason: instance fixtures onto the typed manager (adversary round 3 APR3-015)
+- `tests/agents/test_merge_lifecycle.py::*` — scope-reason: instance fixtures onto the typed manager (adversary round 3 APR3-015)
+- `tests/agents/test_merge_orchestrator_contract.py::*` — scope-reason: instance constructor onto the typed manager (adversary round 3 APR3-015)
+- `tests/e2e/test_build_dispatcher_autonomy.py::*` — scope-reason: E2E instance fixture onto the typed manager (adversary round 3 APR3-015)
+- `tests/hooks/test_block_observability.py::*` — scope-reason: observability fixtures onto the typed manager (adversary round 3 APR3-015)
+- `tests/mcp_proxy/tools/workflows/test_query.py::*` — scope-reason: WorkflowInstance fixtures onto the typed manager at the class deletion, ahead of 5.2's rename retarget (adversary round 3 APR3-015)
+- `tests/mcp_proxy/tools/workflows/test_variables.py::*` — scope-reason: scope-parameter and typed-instance retarget at the class deletion (adversary round 3 APR3-015)
+- `tests/scheduler/test_cron_scheduler.py::*` — scope-reason: instance seeding onto the typed manager (adversary round 3 APR3-015)
+- `tests/servers/routes/mcp_endpoints/test_execution_session_end_cleanup.py::*` — scope-reason: server-cleanup instance constructors onto the typed manager (adversary round 3 APR3-015)
+- `tests/workflows/test_definitions.py::*` — scope-reason: WorkflowInstance model cases deleted with the model (adversary round 3 APR3-015)
 
 - `session_activation.py`: `_activation_agent_name` (:531-547) drops both
   `-steps`-suffix branches; `_missing_step_workflow` (:594-621) →
@@ -1113,9 +1829,44 @@ Targets: `src/gobby/hooks/session_activation.py`,
   reconstructed continuity from original continuity. No new metric or logging
   subsystem.
 - Cleanup: `_session_end.py:107-118` and `runtime_cleanup.py:53` →
-  `delete_for_session`. `agent_cleanup.py:454` logs the cleared-state summary
-  under a `workflow_instances=` key; rename it to `agent_step_instances=`, since
+  `delete_for_session`, **preserving the `terminal_reason != 'daemon_stop'`
+  retention gate** in `cleanup_agent_runtime_state` (#18974 — adversary round
+  2 APR2-001): daemon-stop terminalization retains the typed instance so the
+  same-session resume returns at its step; every other terminal reason
+  deletes it. `terminal_cleanup.py:180` logs the cleared-state
+  summary under a `workflow_instances=` key (moved from `agent_cleanup.py`
+  since the original draft); rename it to `agent_step_instances=`, since
   7.2's audit matches the token and nothing else owns this occurrence.
+- **Cleanup-side test-seam disposition (adversary round 2 APR2-009)**, same
+  commit as the class deletion: `tests/workflows/test_instance_manager.py`
+  (the legacy manager's CRUD suite) is deleted — its behaviors are superseded
+  by `tests/workflows/test_step_instances.py` (3.1);
+  `tests/workflows/test_agent_workflow_runtime_cleanup.py` rewrites onto the
+  typed manager and keeps pinning the daemon_stop retention gate;
+  `tests/workflows/test_session_end_cleanup.py` rewrites onto the typed
+  manager; `tests/workflows/test_session_variable_manager.py` replaces its
+  legacy instance-manager fixture with the typed one. **The full class-wide
+  sweep (adversary round 3 APR3-015, fixer-induced by APR2-009's partial
+  repair)** additionally dispositions every remaining `WorkflowInstance`/
+  `WorkflowInstanceManager` import, constructor, and string patch under
+  `tests/`: the transition/audit/error-code/coordinator suites move in 3.2;
+  this task owns `tests/agents/test_runtime_cleanup.py`,
+  `test_lifecycle_monitor.py`, `test_lifecycle_monitor_extra.py`,
+  `test_merge_lifecycle.py`, `test_merge_orchestrator_contract.py`,
+  `tests/e2e/test_build_dispatcher_autonomy.py`,
+  `tests/hooks/test_block_observability.py` and
+  `test_session_end_handlers.py` (string patches of
+  `gobby.workflows.state_manager.WorkflowInstanceManager`),
+  `tests/mcp_proxy/tools/workflows/test_query.py` and `test_variables.py`
+  (their WorkflowInstance fixtures break at this commit, before 5.2's rename
+  retarget), `tests/scheduler/test_cron_scheduler.py`,
+  `tests/servers/routes/mcp_endpoints/test_execution_session_end_cleanup.py`,
+  and the `WorkflowInstance` model cases in
+  `tests/workflows/test_definitions.py`, which are deleted with the model.
+  The symbol-and-string sweep is re-run at implementation time and every
+  remaining hit is dispositioned in this commit — together with 3.2's
+  enforcement-side wave this dispositions every `WorkflowInstanceManager`
+  seam under `tests/`, so the class deletion below leaves no red suite.
 - **Compaction continuity must survive the port** (landed as #18973, commit
   `92b3ca567`; this plan preserves it rather than introducing it).
   `_session_end.py` now classifies the end reason *first* and derives
@@ -1165,8 +1916,8 @@ Targets: `src/gobby/hooks/session_activation.py`,
   here, before the classes are deleted; otherwise every intermediate commit
   from P3 to P5 fails to import and the "working daemon at every commit"
   constraint is violated.
-- Delete `WorkflowInstance` from `definitions.py:863-911` and
-  `WorkflowInstanceManager` from `state_manager.py:66-192`; fix remaining
+- Delete `WorkflowInstance` from `definitions.py:917-965` and
+  `WorkflowInstanceManager` from `state_manager.py:68-194`; fix remaining
   test imports.
 
 **Acceptance:**
@@ -1177,22 +1928,29 @@ Targets: `src/gobby/hooks/session_activation.py`,
 - 3.3.4 - WorkflowInstance and WorkflowInstanceManager no longer exist. file: `src/gobby/workflows/state_manager.py`.
 - 3.3.5 - _step_workflow_name is absent from reserved variables and all rule/variable plumbing. file: `src/gobby/workflows/reserved_variables.py`.
 - 3.3.6 - Fresh-snapshot recovery emits one structured warning carrying the session, agent name, resolved definition ids, and a stable recovery marker. test: `tests/workflows/test_step_snapshot_semantics.py`.
-- 3.3.7 - step_workflow_complete is seeded from the typed instance after recovery creates it, with no reference to the removed variable. test: `tests/hooks/test_session_activation.py::test_completion_seed_after_step_instance_recovery`.
+- 3.3.7 - step_workflow_complete is seeded from the typed instance after recovery creates it, with no reference to the removed variable. test: `tests/hooks/test_session_activation_reconciliation.py::test_completion_seed_after_step_instance_recovery`.
 - 3.3.8 - The MCP tool registrations and generic runtime-variable routes use the typed manager before WorkflowInstanceManager is deleted, so the tree imports at that commit. file: `src/gobby/servers/routes/workflows.py`. file: `src/gobby/mcp_proxy/tools/workflows/__init__.py`.
-- 3.3.9 - The agent runtime-cleanup log no longer names workflow_instances. file: `src/gobby/agents/agent_cleanup.py`.
+- 3.3.9 - The agent terminal-cleanup log no longer names workflow_instances. file: `src/gobby/agents/terminal_cleanup.py`.
 - 3.3.10 - Session-end cleanup keeps the terminal-outcome gate, so a COMPACT or IDLE web-chat end retains the typed instance and only an expired end deletes it. file: `src/gobby/hooks/event_handlers/_session_end.py`. test: `tests/hooks/test_session_end_handlers.py`.
 - 3.3.12 - In-place compact reactivation (#18994) leaves the typed instance keyed to the same session across a compact restart, with no ownership move and no legacy table named. file: `src/gobby/storage/session_lifecycle.py`. file: `src/gobby/hooks/event_handlers/_session_start/flow.py`.
 - 3.3.13 - Orphan handoff expiry only flips status; the marker-gated retention sweep deletes typed instances for sessions expired past the revival horizon, with no legacy table named. symbol: `expire_orphaned_handoff_sessions`. symbol: `prune_stale_compact_workflow_instances`. file: `src/gobby/storage/session_lifecycle.py`.
 - 3.3.14 - A compacted mid-workflow agent resumes on its same session at the same nonzero step with the same variables after the port. test: `tests/storage/sessions/test_lifecycle.py`. test: `tests/workflows/test_step_snapshot_semantics.py`.
 - 3.3.11 - The spawn initial-variables suite queries the typed instance instead of importing the deleted WorkflowInstanceManager, dropping its `<agent>-steps` name arguments. test: `tests/mcp_proxy/tools/spawn_agent/test_initial_variables.py`.
+- 3.3.15 - Daemon-stop terminal cleanup retains the typed instance and a resumed run on the same session sees the same step and variables; every other terminal reason deletes the instance. file: `src/gobby/agents/runtime_cleanup.py`. test: `tests/workflows/test_agent_workflow_runtime_cleanup.py`.
+- 3.3.16 - Every legacy instance-manager test seam is deleted or rewritten onto the typed manager and no test imports or patches WorkflowInstanceManager. test: `tests/workflows/test_instance_manager.py`. test: `tests/workflows/test_session_end_cleanup.py`. test: `tests/workflows/test_session_variable_manager.py`.
 
 ### 3.4 Snapshot behavior regression suite [category: test] (depends: 3.3)
 `kind: deliverable`
 
-Target: `tests/workflows/test_step_snapshot_semantics.py` (new)
+Target: `tests/workflows/test_step_snapshot_semantics.py`
 
 Standalone behavior-pinning suite (isolated test daemon state,
-`GOBBY_TEST_PROTECT=1`): (a) definition edited during an active run — running
+`GOBBY_TEST_PROTECT=1`). The file is created by 3.2 with the fault-injection
+and atomicity cases its acceptance cites, extended by 3.3 with the recovery
+and compaction cases, and completed here — this task adds the remaining
+behaviors and audits the whole matrix, so every earlier acceptance command
+ran against a file that existed when its deliverable executed (adversary
+round 2 APR2-007): (a) definition edited during an active run — running
 snapshot unaffected, next spawn sees the edit; (b) definition deleted during a
 run — FK SET NULL, snapshot still drives enforcement and the completion gate;
 (c) two concurrent spawns of the same agent get independent snapshots — a step
@@ -1225,11 +1983,14 @@ registered, and the caller reports failure rather than a started session with no
 snapshot; (m) compaction continuity — a COMPACT end retains the instance, the in-place
 compact reactivation (#18994) keeps it keyed to the same session, and the
 agent resumes at the same nonzero step with the same variables, while an
-expired end still deletes it.
+expired end still deletes it; (n) daemon-stop resume continuity (#18974) — a
+daemon-stop-terminalized run's instance survives cleanup, and the resumed run
+on the same session continues at the same nonzero step with the same
+variables, while every other terminal reason deletes the instance.
 
 **Acceptance:**
 
-- 3.4.1 - All thirteen pinned behaviors pass against the snapshot runtime. test: `tests/workflows/test_step_snapshot_semantics.py`.
+- 3.4.1 - All fourteen pinned behaviors pass against the snapshot runtime. test: `tests/workflows/test_step_snapshot_semantics.py`.
 - 3.4.2 - Post-launch fault injection runs against the real spawn executor at all four failure points and proves no PID, tmux session, or attached lease survives. test: `tests/workflows/test_step_snapshot_semantics.py::test_post_launch_failure_terminates_process`.
 
 ## P4: Rules, Variables, Pipelines Rewiring
@@ -1238,36 +1999,59 @@ expired end still deletes it.
 **Goal**: each remaining domain reads and writes only its typed table; each
 task ships its copy migration in the same commit as its cutover.
 
-**Ordering**: every P4 cutover depends on completed P3, and 4.2 additionally
-depends on 4.1. The domains are independent in storage but not in source files.
-P2 and P3 still own `apply_persona.py`, `engine/core.py`,
-`hooks/session_activation.py`, `workflows/hooks.py`, `state_manager.py`, and the
-spawn factory while P4 would otherwise be free to start; 4.1 and 4.2 overlap
-each other on `hooks.py`, `_session_start/agents.py`, `apply_persona.py`, and
-`state_manager.py`. Starting P4 off P1/P2 lets a rule or variable cutover edit
-the pre-P3 shape of a file P3 is concurrently rewriting, which produces merge
-conflicts and intermediate commits that do not run. 4.3 keeps its parallelism
-with 4.1 and 4.2 because it shares no production file with either once its
-`dry_run.py` extraction has moved into 2.4 (see 2.4's mandatory extraction).
+**Ordering**: every P4 cutover depends on completed P3; 4.2 depends on 4.1,
+and 4.3 depends on 4.2 (fully serialized). The domains are independent in
+storage but not in source files. P2 and P3 still own `apply_persona.py`,
+`engine/core.py`, `hooks/session_activation.py`, `workflows/hooks.py`,
+`state_manager.py`, and the spawn factory while P4 would otherwise be free to
+start; 4.1 and 4.2 overlap each other on `hooks.py`,
+`_session_start/agents.py`, `apply_persona.py`, and `state_manager.py`.
+Starting P4 off P1/P2 lets a rule or variable cutover edit the pre-P3 shape of
+a file P3 is concurrently rewriting, which produces merge conflicts and
+intermediate commits that do not run. 4.3 serializes after 4.2 because the E3
+generic-surface shrink puts `routes/workflows.py`, `_definitions.py`, and
+`workflows/imports.py` in every cutover's commit: 4.1 and 4.2 add their kind
+rejections to those files, and 4.3 both adds the pipeline rejection and
+replaces `sync_imported_definition`'s per-kind rejections with typed dispatch
+— a rewrite that is only correct once every domain it dispatches to has cut
+over.
 
 ### 4.1 Rules cutover and copy migration [category: code] (depends: P3)
 `kind: deliverable`
 
-Targets: `src/gobby/workflows/engine/core.py`,
-`src/gobby/workflows/sync_rules.py`, `src/gobby/hooks/session_activation.py`,
-`src/gobby/mcp_proxy/tools/workflows/_rules.py`,
-`src/gobby/servers/routes/rules.py`, `src/gobby/cli/rules.py`,
-`src/gobby/mcp_proxy/tools/apply_persona.py`,
-`src/gobby/hooks/event_handlers/_session_start/agents.py`,
-`src/gobby/workflows/engine/effects.py`, `src/gobby/workflows/selectors.py`,
-`src/gobby/workflows/hooks.py`,
-`src/gobby/workflows/engine/evaluation.py`,
-`src/gobby/workflows/reserved_variables.py`,
-`src/gobby/storage/migrations/NNN_copy_rule_definitions.sql` (new),
-`tests/storage/test_rule_copy_migration.py` (new)
+Targets:
+- `src/gobby/workflows/engine/core.py::*` — scope-reason: rule loading onto the typed manager
+- `src/gobby/workflows/sync_rules.py::*` — scope-reason: sync cutover with the enabled guard
+- `src/gobby/hooks/session_activation.py::*` — scope-reason: rules revision listener registration
+- `src/gobby/mcp_proxy/tools/workflows/_rules.py::*` — scope-reason: rule MCP CRUD cutover
+- `src/gobby/servers/routes/rules.py::*` — scope-reason: rule HTTP route cutover
+- `src/gobby/cli/rules.py::*` — scope-reason: rules CLI cutover
+- `src/gobby/mcp_proxy/tools/apply_persona.py::*` — scope-reason: persona rule-load cutover
+- `src/gobby/hooks/event_handlers/_session_start/agents.py::*` — scope-reason: session-start rule-load cutover
+- `src/gobby/workflows/engine/effects.py::*` — scope-reason: RuleDefinitionRow type propagation
+- `src/gobby/workflows/selectors.py::*` — scope-reason: RuleDefinitionRow type propagation
+- `src/gobby/workflows/hooks.py::*` — scope-reason: RuleDefinitionRow type propagation
+- `src/gobby/workflows/engine/evaluation.py::*` — scope-reason: RuleDefinitionRow import closure
+- `src/gobby/workflows/reserved_variables.py::*` — scope-reason: RuleDefinitionRow import closure
+- `crates/gcore/assets/schema/migrations/NNN_copy_rule_definitions.sql` (new)
+- `crates/gcore/src/schema/assets.rs::*` — scope-reason: MIGRATIONS entry registration per 1.5
+- `crates/gcore/tests/schema_contract.rs::*` — scope-reason: pinned root hashes re-armed for the added MIGRATIONS entry
+- `src/gobby/storage/schema_expected_identity.json::*` — scope-reason: regenerated release-pinned identity for the added MIGRATIONS entry
+- `src/gobby/servers/routes/workflows.py::*` — scope-reason: rule-kind rejection on the generic router
+- `src/gobby/mcp_proxy/tools/workflows/_definitions.py::*` — scope-reason: rule-kind rejection on the generic MCP tools
+- `src/gobby/workflows/imports.py::*` — scope-reason: rule-kind import rejection until 4.3's typed dispatch
+- `tests/servers/routes/test_workflows.py::*` — scope-reason: rule-kind rejection cases
+- `tests/mcp_proxy/tools/test_workflow_crud.py::*` — scope-reason: rule-kind rejection cases
+- `tests/workflows/test_imports.py::*` — scope-reason: rule-kind import rejection fixture (adversary round 3 APR3-003)
+- `tests/workflows/test_rule_engine.py::*` — scope-reason: rule-behavior suite seeding moved off LocalWorkflowDefinitionManager (adversary round 3 APR3-004)
+- `tests/workflows/test_session_defaults.py::*` — scope-reason: rule-sync-seeded halves retargeted with the sync cutover (adversary round 3 APR3-004; the variable-seeded halves move in 4.2)
+- `tests/workflows/test_rule_yaml_sync.py::*` — scope-reason: typed-manager retarget of the rule sync suite
+- `tests/servers/routes/test_rules_routes.py::*` — scope-reason: typed-manager retarget of the rule routes suite
+- `tests/mcp_proxy/tools/test_rule_tools.py::*` — scope-reason: typed-manager retarget of the rule MCP suite
+- `tests/storage/test_rule_copy_migration.py` (new)
 
 - `RuleEngine`: `self.rule_manager = RuleDefinitionManager(db)`; `_load_rules`
-  (`core.py:471-494`) → `list_by_event`; row type becomes `RuleDefinitionRow`
+  (`core.py:584-607`) → `list_by_event`; row type becomes `RuleDefinitionRow`
   (propagate hints through `engine/effects.py`, `workflows/selectors.py:130`,
   `hooks.py` rule tuples).
 - **Row-type import closure**: two more production modules import
@@ -1285,7 +2069,18 @@ Targets: `src/gobby/workflows/engine/core.py`,
   genuine consumer, so the grep is not optional.
 - `sync_rules.py`: typed manager; DELETE the self-healing `workflow_type`
   UPDATE (:113-127) — impossible by construction;
-  `_has_gobby_rule_name_collision` → manager query.
+  `_has_gobby_rule_name_collision` → manager query. Template refreshes go
+  through `update_from_sync` so `_build_rule_update_fields`'s guard semantics
+  (legacy `enabled_user_modified`, now `enabled_pinned`) survive the cutover
+  (1.2); `tests/workflows/test_rule_yaml_sync.py` retargets its
+  adoption-while-unpinned and preservation-while-pinned cases at the typed
+  manager.
+- **Generic-surface shrink for kind `rule` (enhancement E3, same commit)**:
+  the generic router omits `workflow_type='rule'` rows from list/get and
+  rejects writes for that kind naming `/api/rules`; the generic MCP tools
+  reject kind `rule` naming the rule domain tools;
+  `imports.py::sync_imported_definition` refuses rule definitions naming the
+  rule tools (typed dispatch arrives in 4.3).
 - Register `clear_active_rule_names_cache` as a `"rules"` revision listener in
   `session_activation.py` (replaces the bump's hardcoded import).
 - Rule surfaces swap managers internally (`_rules.py`, `routes/rules.py`,
@@ -1294,6 +2089,10 @@ Targets: `src/gobby/workflows/engine/core.py`,
   (priority, sources, tags intact; source normalized); targetless `ON CONFLICT
   DO NOTHING` per the Constraints conflict-target rule; count validation and
   the Constraints equivalence guard, including `target.id = source.id`.
+  The migration also writes one `legacy_copy_ledger` row per copied source
+  row (preserved legacy id, domain `'rules'`, normalized payload hash, `ON
+  CONFLICT (legacy_id) DO NOTHING`) for 7.1's directional drop backstop
+  (adversary round 3 APR3-011).
   `tests/storage/test_rule_copy_migration.py` covers all six cases in full,
   restated here rather than referenced, because an expansion agent receives
   only this deliverable section and cannot read Constraints: (1) first run;
@@ -1302,6 +2101,19 @@ Targets: `src/gobby/workflows/engine/core.py`,
   (5) a pre-existing typed row with a divergent payload — loud failure;
   (6) a pre-existing live typed row with the same natural key and payload but
   a different UUID — loud failure.
+- **Test-seam wave**: once the engine loads rules from the typed manager,
+  every rule-behavior suite that seeds rules through the legacy manager stops
+  observing its own fixtures, so this commit also moves that seeding to
+  `RuleDefinitionManager` across the rule-behavior suites. The two known
+  suites are exact Targets rather than an implementation-time discovery
+  (adversary round 3 APR3-004): `tests/workflows/test_rule_engine.py` (its
+  `manager` fixture at `:52-53` and `_insert_rule` at `:70-89` seed
+  `LocalWorkflowDefinitionManager` across ~55 tests) and the rule-seeded
+  halves of `tests/workflows/test_session_defaults.py`, whose fixtures reach
+  the legacy store through `sync_rules.py`'s own manager construction
+  (`sync_rules.py:70,136`) and go dark when this commit cuts that over. The
+  grep-derived sweep still runs at implementation time for stragglers; 7.1
+  deletes any leftovers and 7.2's audit asserts closure.
 
 **Acceptance:**
 
@@ -1309,7 +2121,7 @@ Targets: `src/gobby/workflows/engine/core.py`,
 - 4.1.2 - Bundled rule sync writes the typed table and the self-heal UPDATE is gone. file: `src/gobby/workflows/sync_rules.py`.
 - 4.1.3 - Rule mutations invalidate the active-rule-names cache via the rules revision listener. file: `src/gobby/hooks/session_activation.py`.
 - 4.1.4 - Copy migration migrates 160+ rules including soft-deleted rows with counts validated. test: `tests/storage/test_rule_copy_migration.py`.
-- 4.1.5 - Rule HTTP routes behave identically on the typed manager. file: `src/gobby/servers/routes/rules.py`. test: `tests/servers/routes/test_rules.py`.
+- 4.1.5 - Rule HTTP routes behave identically on the typed manager. file: `src/gobby/servers/routes/rules.py`. test: `tests/servers/routes/test_rules_routes.py`.
 - 4.1.5a - Rule MCP tools and the rules CLI behave identically on the typed manager. file: `src/gobby/mcp_proxy/tools/workflows/_rules.py`. file: `src/gobby/cli/rules.py`.
 - 4.1.5b - The rule row type propagates as RuleDefinitionRow through effects, selectors, and the hook rule tuples. file: `src/gobby/workflows/engine/effects.py`. file: `src/gobby/workflows/selectors.py`. file: `src/gobby/workflows/hooks.py`.
 - 4.1.6 - The equivalence guard fails when a pre-existing typed rule row diverges from its legacy source. test: `tests/storage/test_rule_copy_migration.py`.
@@ -1317,30 +2129,72 @@ Targets: `src/gobby/workflows/engine/core.py`,
 - 4.1.8 - Rerunning the rule copy over already-migrated live rows is a clean no-op, and two soft-deleted rule rows sharing a natural key both migrate. test: `tests/storage/test_rule_copy_migration.py::test_rerun_over_live_rows`.
 - 4.1.9 - A live typed rule row matching a legacy row on natural key and payload but carrying a different UUID fails the guard loudly. test: `tests/storage/test_rule_copy_migration.py::test_divergent_identity_fails`.
 - 4.1.10 - EvaluationMixin and is_internal_rule accept RuleDefinitionRow, and no rule-path module imports WorkflowDefinitionRow. file: `src/gobby/workflows/engine/evaluation.py`. file: `src/gobby/workflows/reserved_variables.py`.
+- 4.1.11 - No generic surface can create or mutate a legacy rule row post-cutover: the generic HTTP routes, generic MCP tools, and the import path each reject kind `rule` naming the surviving domain surface. test: `tests/servers/routes/test_workflows.py`. test: `tests/mcp_proxy/tools/test_workflow_crud.py`. test: `tests/workflows/test_imports.py`.
+- 4.1.12 - Bundled rule sync reaches the typed table through update_from_sync: a changed template enabled default is adopted on an untouched row and preserved on a pinned row. test: `tests/workflows/test_rule_yaml_sync.py`.
+- 4.1.13 - The pinned schema root hashes and the release-pinned expected identity match the rebuilt gdaemon after the migration entry lands. file: `crates/gcore/tests/schema_contract.rs`. file: `src/gobby/storage/schema_expected_identity.json`.
+- 4.1.14 - The rule copy migration writes one legacy_copy_ledger row per copied source row and reruns keep the copy-time hash. test: `tests/storage/test_rule_copy_migration.py`.
+- 4.1.15 - The rule-engine suite seeds rules through the typed manager and observes its own fixtures after the cutover. test: `tests/workflows/test_rule_engine.py`.
 
 ### 4.2 Variables cutover and copy migration [category: code] (depends: 4.1)
 `kind: deliverable`
 
-Targets: `src/gobby/workflows/variable_defaults.py` (new),
-`src/gobby/workflows/state_manager.py`, `src/gobby/workflows/hooks.py`,
-`src/gobby/hooks/event_handlers/_session_start/agents.py`,
-`src/gobby/mcp_proxy/tools/apply_persona.py`,
-`src/gobby/workflows/sync_variables.py`,
-`src/gobby/mcp_proxy/tools/workflows/_variables.py`,
-`src/gobby/storage/migrations/NNN_copy_session_variable_defaults.sql` (new),
-`tests/storage/test_variable_copy_migration.py` (new)
+Targets:
+- `src/gobby/workflows/variable_defaults.py` (new)
+- `src/gobby/workflows/state_manager.py::*` — scope-reason: defaults path unification and revision invalidation
+- `src/gobby/workflows/hooks.py::*` — scope-reason: lazy-backfill unification
+- `src/gobby/hooks/event_handlers/_session_start/agents.py::*` — scope-reason: defaults path unification
+- `src/gobby/mcp_proxy/tools/apply_persona.py::*` — scope-reason: defaults path unification
+- `src/gobby/workflows/sync_variables.py::*` — scope-reason: typed-column sync with the enabled guard
+- `src/gobby/mcp_proxy/tools/workflows/_variables.py::*` — scope-reason: typed-field CRUD cutover
+- `crates/gcore/assets/schema/migrations/NNN_copy_session_variable_defaults.sql` (new)
+- `crates/gcore/src/schema/assets.rs::*` — scope-reason: MIGRATIONS entry registration per 1.5
+- `crates/gcore/tests/schema_contract.rs::*` — scope-reason: pinned root hashes re-armed for the added MIGRATIONS entry
+- `src/gobby/storage/schema_expected_identity.json::*` — scope-reason: regenerated release-pinned identity for the added MIGRATIONS entry
+- `src/gobby/servers/routes/workflows.py::*` — scope-reason: variable-kind rejection on the generic router
+- `src/gobby/mcp_proxy/tools/workflows/_definitions.py::*` — scope-reason: variable-kind rejection on the generic MCP tools
+- `src/gobby/workflows/imports.py::*` — scope-reason: variable-kind import rejection until 4.3's typed dispatch
+- `tests/servers/routes/test_workflows.py::*` — scope-reason: variable-kind rejection cases
+- `tests/mcp_proxy/tools/test_workflow_crud.py::*` — scope-reason: variable-kind rejection cases
+- `tests/workflows/test_imports.py::*` — scope-reason: variable-kind import rejection fixture (adversary round 3 APR3-003)
+- `tests/workflows/test_session_defaults.py::*` — scope-reason: defaults-application and variable-seeded retarget (adversary round 3 APR3-004)
+- `tests/workflows/test_sync.py::*` — scope-reason: typed-manager retarget of the variable sync suite
+- `tests/mcp_proxy/tools/workflows/test_variables.py::*` — scope-reason: typed-field CRUD retarget of the variable MCP suite
+- `tests/storage/test_variable_copy_migration.py` (new)
 
-- New `variable_defaults.py`: `load_variable_defaults(db, project_id=None) ->
+- New `variable_defaults.py`: `load_variable_defaults(db, project_id) ->
   dict[str, Any]` on `SessionVariableDefaultManager.get_defaults_map`.
   **Unify all four application paths on it** and drop the `source='installed'`
   filter inconsistency: `SessionVariableManager._get_variable_defaults`
-  (`state_manager.py:227-256`; keep TTL cache, add variables-revision
-  invalidation), `workflows/hooks.py:705-750` lazy backfill (replace the
-  inline loop; keep the `_variable_defaults_loaded` sentinel),
+  (`state_manager.py:227-256`), `workflows/hooks.py:705-750` lazy backfill
+  (replace the inline loop; keep the `_variable_defaults_loaded` sentinel),
   `_session_start/agents.py:211-225`, `apply_persona.py:48-88`.
+  **Project scope is part of the contract, not an optional parameter
+  (adversary round 3 APR3-010)**: today no application path passes a project
+  — `_get_variable_defaults` has no project parameter and its SQL carries no
+  `project_id` predicate, the hook backfill and session-start paths call
+  `list_all(workflow_type="variable")` without the `project_id` they hold in
+  scope, and `build_persona_changes` has no project at all — so project
+  overrides are invisible or leak across projects depending on the reader.
+  Each path therefore resolves the session's `project_id` from its session
+  row before calling the helper; `get_defaults_map` defines the merge as
+  project-first with global fallback deduplicated by name (the `get_by_name`
+  precedence); and the `SessionVariableManager` TTL cache is **keyed by
+  `(project_id, variables revision)`** — one flat unkeyed dict would serve
+  project A's defaults to project B — with the variables-revision listener
+  (1.4) invalidating all keys. A regression alternates sessions in project A,
+  project B, and no-project across all four application paths and asserts
+  each sees exactly its own overrides plus globals.
 - `sync_variables.py`: write typed columns (`name`, `default_value`,
-  `description`); variable-definition MCP tools (`_variables.py`
-  list/get/create/update/delete/export) move to typed fields.
+  `description`) through `update_from_sync` on refresh; variable-definition
+  MCP tools (`_variables.py` list/get/create/update/delete/export) move to
+  typed fields. `TestSyncBundledVariables` in `tests/workflows/test_sync.py`
+  retargets at the typed manager.
+- **Generic-surface shrink for kind `variable` (enhancement E3, same
+  commit)**: the generic router omits `workflow_type='variable'` rows from
+  list/get and rejects writes for that kind; the generic MCP tools reject kind
+  `variable`; `imports.py::sync_imported_definition` refuses variable
+  definitions. Rejections name the variable domain MCP tools — the HTTP
+  `/api/variables` router arrives in 5.1.
 - Copy migration: guarded; copy `workflow_type='variable'` rows into typed
   columns (`name = COALESCE(definition_json->>'variable', name)`,
   `default_value = definition_json->'value'`); normalize the `source='gobby'`
@@ -1348,6 +2202,10 @@ Targets: `src/gobby/workflows/variable_defaults.py` (new),
   reader-visible again); dup-check, targetless `ON CONFLICT DO NOTHING` per the
   Constraints conflict-target rule, count validation, and the Constraints
   equivalence guard including `target.id = source.id`.
+  The migration also writes one `legacy_copy_ledger` row per copied source
+  row (preserved legacy id, domain `'variables'`, normalized payload hash,
+  `ON CONFLICT (legacy_id) DO NOTHING`) for 7.1's directional drop backstop
+  (adversary round 3 APR3-011).
   `tests/storage/test_variable_copy_migration.py` covers all six cases in full,
   restated here rather than referenced, because an expansion agent receives
   only this deliverable section: (1) first run; (2) rerun over already-migrated
@@ -1358,8 +2216,8 @@ Targets: `src/gobby/workflows/variable_defaults.py` (new),
 
 **Acceptance:**
 
-- 4.2.1 - One helper feeds all four default-application paths with identical visibility. symbol: `load_variable_defaults`. file: `src/gobby/workflows/variable_defaults.py`.
-- 4.2.2 - The session-variables TTL cache invalidates on the variables domain revision. file: `src/gobby/workflows/state_manager.py`.
+- 4.2.1 - One helper feeds all four default-application paths with identical visibility, each path resolving its session's project_id, with project-first global-fallback deduplication. symbol: `load_variable_defaults`. file: `src/gobby/workflows/variable_defaults.py`.
+- 4.2.2 - The session-variables TTL cache is keyed by project_id and the variables revision, and invalidates on the variables domain revision. file: `src/gobby/workflows/state_manager.py`.
 - 4.2.3 - Variable sync writes typed columns. file: `src/gobby/workflows/sync_variables.py`.
 - 4.2.3a - Variable-definition MCP CRUD reads and writes typed columns. file: `src/gobby/mcp_proxy/tools/workflows/_variables.py`.
 - 4.2.4 - Copy migration lands 42 variable rows including the normalized source anomaly. test: `tests/storage/test_variable_copy_migration.py`.
@@ -1367,36 +2225,71 @@ Targets: `src/gobby/workflows/variable_defaults.py` (new),
 - 4.2.6 - Rerunning the variable copy over already-migrated soft-deleted rows completes without a primary-key abort. test: `tests/storage/test_variable_copy_migration.py::test_rerun_over_soft_deleted_rows`.
 - 4.2.7 - Rerunning the variable copy over already-migrated live rows is a clean no-op, and two soft-deleted variable rows sharing a natural key both migrate. test: `tests/storage/test_variable_copy_migration.py::test_rerun_over_live_rows`.
 - 4.2.8 - A live typed variable row matching a legacy row on natural key and payload but carrying a different UUID fails the guard loudly. test: `tests/storage/test_variable_copy_migration.py::test_divergent_identity_fails`.
+- 4.2.9 - No generic surface can create or mutate a legacy variable row post-cutover: the generic HTTP routes, generic MCP tools, and the import path each reject kind `variable` naming the surviving domain surface. test: `tests/servers/routes/test_workflows.py`. test: `tests/mcp_proxy/tools/test_workflow_crud.py`. test: `tests/workflows/test_imports.py`.
+- 4.2.10 - Bundled variable sync reaches the typed table through update_from_sync: a changed template enabled default is adopted on an untouched row and preserved on a pinned row. test: `tests/workflows/test_sync.py`.
+- 4.2.11 - The pinned schema root hashes and the release-pinned expected identity match the rebuilt gdaemon after the migration entry lands. file: `crates/gcore/tests/schema_contract.rs`. file: `src/gobby/storage/schema_expected_identity.json`.
+- 4.2.12 - Alternating sessions across project A, project B, and no-project see exactly their own overrides plus globals on all four application paths, with no cross-project cache leakage. test: `tests/workflows/test_session_defaults.py::test_project_scoped_defaults_isolation`.
+- 4.2.13 - The variable copy migration writes one legacy_copy_ledger row per copied source row and reruns keep the copy-time hash. test: `tests/storage/test_variable_copy_migration.py`.
 
-### 4.3 Pipelines cutover and copy migration [category: code] (depends: P3)
+### 4.3 Pipelines cutover and copy migration [category: code] (depends: 4.2)
 `kind: deliverable`
 
-Targets: `src/gobby/workflows/pipeline_loader.py` (new),
-`src/gobby/workflows/loader.py` (deleted),
-`src/gobby/workflows/loader_discovery.py` (deleted),
-`src/gobby/workflows/loader_sync.py`, `src/gobby/workflows/loader_cache.py`,
-`src/gobby/workflows/dry_run.py`, `src/gobby/workflows/sync_pipelines.py`,
-`src/gobby/workflows/imports.py`,
-`src/gobby/workflows/pipeline_executor_steps.py`,
-`src/gobby/mcp_proxy/tools/workflows/_pipeline_execution.py`,
-`src/gobby/mcp_proxy/tools/workflows/_pipeline_discovery.py`,
-`src/gobby/mcp_proxy/tools/workflows/_pipelines.py`,
-`src/gobby/mcp_proxy/tools/workflows/_query.py`,
-`src/gobby/mcp_proxy/tools/spawn_agent/_factory.py`,
-`src/gobby/servers/routes/pipelines.py`, `src/gobby/scheduler/executor.py`,
-`src/gobby/dispatch/stage_pipeline.py`, `src/gobby/cli/pipelines_catalog.py`,
-`src/gobby/agents/dry_run.py`, `src/gobby/hooks/factory.py`,
-`src/gobby/mcp_proxy/registries.py`, `src/gobby/runner.py`,
-`src/gobby/runner_init/orchestration.py`, `src/gobby/app_context.py`,
-`src/gobby/mcp_proxy/tools/agents_context.py`,
-`src/gobby/mcp_proxy/tools/agents_registry.py`,
-`src/gobby/cli/workflows/common.py`,
-`src/gobby/mcp_proxy/tools/workflows/__init__.py`,
-`src/gobby/mcp_proxy/tools/workflows/_definitions.py`,
-`src/gobby/mcp_proxy/tools/workflows/_import.py`,
-`src/gobby/storage/migrations/NNN_copy_pipeline_definitions.sql` (new),
-`tests/storage/test_pipeline_copy_migration.py` (new),
-`tests/workflows/test_pipeline_loader.py` (new)
+Targets:
+- `src/gobby/workflows/pipeline_loader.py` (new)
+- `src/gobby/workflows/loader.py::*` — scope-reason: module deleted in this task
+- `src/gobby/workflows/loader_discovery.py::*` — scope-reason: module deleted in this task
+- `src/gobby/workflows/loader_sync.py::*` — scope-reason: slimmed sync-mixin protocol
+- `src/gobby/workflows/loader_cache.py::*` — scope-reason: revision-aware cache rewrite
+- `src/gobby/workflows/loader_validation.py::*` — scope-reason: retained validation helpers re-homed under PipelineLoader; WorkflowLoader docstring reference removed
+- `src/gobby/workflows/dry_run.py::*` — scope-reason: pipeline-only evaluation rewrite
+- `src/gobby/workflows/sync_pipelines.py::*` — scope-reason: typed-manager sync with the enabled guard
+- `src/gobby/workflows/imports.py::*` — scope-reason: per-kind import dispatch
+- `src/gobby/workflows/pipeline_executor_steps.py::*` — scope-reason: loader call rewiring
+- `src/gobby/mcp_proxy/tools/workflows/_pipeline_execution.py::*` — scope-reason: loader call rewiring
+- `src/gobby/mcp_proxy/tools/workflows/_pipeline_discovery.py::*` — scope-reason: loader call rewiring
+- `src/gobby/mcp_proxy/tools/workflows/_pipelines.py::*` — scope-reason: loader call rewiring and pipeline CRUD cutover off the generic definitions helpers (adversary round 3 APR3-005)
+- `src/gobby/mcp_proxy/tools/workflows/_query.py::*` — scope-reason: loader call rewiring
+- `src/gobby/mcp_proxy/tools/spawn_agent/_factory.py::*` — scope-reason: spawn workflow param to pipeline lookup
+- `src/gobby/servers/routes/pipelines.py::*` — scope-reason: loader call rewiring
+- `src/gobby/scheduler/executor.py::*` — scope-reason: loader call rewiring
+- `src/gobby/dispatch/stage_pipeline.py::*` — scope-reason: loader call rewiring
+- `src/gobby/cli/pipelines_catalog.py::*` — scope-reason: loader call rewiring
+- `src/gobby/agents/dry_run.py::*` — scope-reason: loader call rewiring
+- `src/gobby/hooks/factory.py::*` — scope-reason: PipelineLoader construction retype
+- `src/gobby/mcp_proxy/registries.py::*` — scope-reason: PipelineLoader construction retype
+- `src/gobby/runner.py::*` — scope-reason: PipelineLoader construction retype
+- `src/gobby/runner_init/orchestration.py::*` — scope-reason: PipelineLoader construction retype
+- `src/gobby/app_context.py::*` — scope-reason: PipelineLoader construction retype
+- `src/gobby/mcp_proxy/tools/agents_context.py::*` — scope-reason: PipelineLoader annotation retype
+- `src/gobby/mcp_proxy/tools/agents_registry.py::*` — scope-reason: PipelineLoader annotation retype
+- `src/gobby/cli/workflows/common.py::*` — scope-reason: CLI factory retype until its 6.1 deletion
+- `src/gobby/mcp_proxy/tools/workflows/__init__.py::*` — scope-reason: PipelineLoader annotation retype
+- `src/gobby/mcp_proxy/tools/workflows/_definitions.py::*` — scope-reason: PipelineLoader annotation retype
+- `src/gobby/mcp_proxy/tools/workflows/_import.py::*` — scope-reason: PipelineLoader annotation retype
+- `crates/gcore/assets/schema/migrations/NNN_copy_pipeline_definitions.sql` (new)
+- `crates/gcore/src/schema/assets.rs::*` — scope-reason: MIGRATIONS entry registration per 1.5
+- `crates/gcore/tests/schema_contract.rs::*` — scope-reason: pinned root hashes re-armed for the added MIGRATIONS entry
+- `src/gobby/storage/schema_expected_identity.json::*` — scope-reason: regenerated release-pinned identity for the added MIGRATIONS entry
+- `src/gobby/servers/routes/workflows.py::*` — scope-reason: pipeline-kind rejection on the generic router
+- `src/gobby/mcp_proxy/tools/workflows/_definitions.py::*` — scope-reason: pipeline-kind rejection on the generic MCP tools
+- `tests/servers/routes/test_workflows.py::*` — scope-reason: pipeline-kind rejection cases
+- `tests/mcp_proxy/tools/test_workflow_crud.py::*` — scope-reason: pipeline-kind rejection cases
+- `tests/workflows/test_sync.py::*` — scope-reason: typed-manager retarget of the pipeline sync suite
+- `tests/workflows/test_imports.py::*` — scope-reason: per-kind typed dispatch retarget
+- `tests/workflows/conftest.py::*` — scope-reason: db_loader fixture retarget to PipelineLoader
+- `tests/workflows/test_loader.py::*` — scope-reason: comprehensive WorkflowLoader suite absorbed into test_pipeline_loader.py
+- `tests/workflows/test_loader_pipeline.py::*` — scope-reason: loader-validation suite absorbed into test_pipeline_loader.py
+- `tests/workflows/test_loader_overrides.py::*` — scope-reason: override-behavior retarget onto PipelineLoader
+- `tests/workflows/test_workflow_variables.py::*` — scope-reason: db_loader fixture consumer retarget
+- `tests/mcp_proxy/tools/spawn_agent/test_factory.py::*` — scope-reason: WorkflowLoader patch-path retarget
+- `tests/mcp_proxy/tools/spawn_agent/test_initial_variables.py::*` — scope-reason: WorkflowLoader patch-path retarget
+- `tests/workflows/test_workflow_hooks.py::*` — scope-reason: hooks-factory WorkflowLoader patch-path retarget
+- `tests/mcp_proxy/tools/workflows/test_get_workflow_not_found.py::*` — scope-reason: loader-fixture retype ahead of its 5.2 deletion
+- `tests/mcp_proxy/tools/workflows/test_import.py::*` — scope-reason: loader-fixture retype ahead of its 5.2 retarget
+- `tests/mcp_proxy/tools/workflows/test_project_scope.py::*` — scope-reason: loader-fixture retype ahead of its 5.2 retarget
+- `tests/storage/test_pipeline_copy_migration.py` (new)
+- `tests/workflows/test_pipeline_loader.py` (new)
+- `tests/mcp_proxy/tools/workflows/test_pipeline_crud.py` (new)
 
 - New `PipelineLoader` replacing `WorkflowLoader`/discovery: `load_pipeline`
   (extends-chain resolution with cycle detection, row-`enabled` forcing,
@@ -1419,8 +2312,29 @@ Targets: `src/gobby/workflows/pipeline_loader.py` (new),
   docstring holders in `mcp_proxy/tools/workflows/__init__.py:61,104,135`,
   `_definitions.py:19,60,137,244,302`, and `_import.py:17,23,131`. Retype each
   to `PipelineLoader` here; the ones later deleted in 5.2 and 6.1 simply stop
-  existing then. Sweep the test seams (`tests/workflows/test_workflow_variables.py`
-  and its siblings that construct a loader fixture) in the same commit.
+  existing then.
+- **Helper and test-seam closure (adversary BR-003)**, same commit:
+  `loader_validation.py` is retained — it is self-contained validation logic
+  with no WorkflowLoader dependency — imported by `pipeline_loader.py`, with
+  its "for WorkflowLoader" docstring reworded. The loader test seams each get
+  an explicit disposition: the `db_loader` fixture in
+  `tests/workflows/conftest.py` constructs `PipelineLoader`;
+  `tests/workflows/test_loader.py` (the comprehensive WorkflowLoader suite)
+  and `tests/workflows/test_loader_pipeline.py` (the loader-validation suite)
+  are absorbed into the new `tests/workflows/test_pipeline_loader.py` with
+  their behavior assertions preserved; `tests/workflows/test_loader_overrides.py`
+  retargets its override cases onto `PipelineLoader`;
+  `tests/workflows/test_workflow_variables.py` follows the retargeted
+  `db_loader` fixture; `tests/mcp_proxy/tools/spawn_agent/test_factory.py` and
+  `test_initial_variables.py` re-point their
+  `gobby.workflows.loader.WorkflowLoader` patch paths;
+  `tests/workflows/test_workflow_hooks.py` re-points its two
+  `gobby.hooks.factory.WorkflowLoader` patches (`:92`, `:137`) onto the
+  PipelineLoader seam in the same commit as the factory retype (adversary
+  round 2 APR2-010); and the three
+  workflows-tool suites (`test_get_workflow_not_found.py`, `test_import.py`,
+  `test_project_scope.py`) retype their loader fixtures here ahead of their
+  5.2 deletion/retarget, so the tree's tests import cleanly at this commit.
 - Rewire callers: `pipeline_executor_steps.py:188,284`,
   `_pipeline_execution.py:334,428,659`, `_pipeline_discovery.py:27`,
   `routes/pipelines.py:299`, `scheduler/executor.py:379`,
@@ -1428,6 +2342,21 @@ Targets: `src/gobby/workflows/pipeline_loader.py` (new),
   `_pipelines.py:174,537-579` (dynamic `pipeline:<name>` tools),
   `_query.py:44`, `_factory.py:411-426` (spawn `workflow` param → pipeline
   lookup only), `agents/dry_run.py:181`.
+- **Pipeline MCP CRUD cutover (adversary round 3 APR3-005, same commit)**:
+  `_pipelines.py` imports `create/update/delete/export_workflow_definition`
+  and `_resolve_definition` from the generic `_definitions.py` module
+  (`_pipelines.py:13-19`) and `LocalWorkflowDefinitionManager`
+  (`:35,140`) for its `create_pipeline`/`update_pipeline`/`delete_pipeline`/
+  `export_pipeline` handlers — and 5.2 deletes `_definitions.py`, which would
+  strand those imports. This task moves the four handlers and
+  `_require_pipeline`/`_resolve_definition` resolution onto
+  `PipelineDefinitionManager`, preserving the auto-export/auto-delete
+  behavior the generic helpers performed internally
+  (`_definitions.py:114-116,221-223,287`) by calling the `_auto_export.py`
+  helpers directly from the pipeline handlers (5.2 then makes the kind
+  argument explicit). After this commit `_pipelines.py` imports nothing from
+  `_definitions.py` and no legacy manager. Focused CRUD coverage lands in
+  `tests/mcp_proxy/tools/workflows/test_pipeline_crud.py`.
 - `dry_run.py`: `evaluate_workflow` → `evaluate_pipeline_definition`; the
   step-workflow fallback branch dies (agent steps evaluate only via
   `evaluate_agent_definition`). The `_build_step_trace`/`_build_lifecycle_path`
@@ -1435,13 +2364,28 @@ Targets: `src/gobby/workflows/pipeline_loader.py` (new),
   task consumes it and does not repeat it. Retire the now-unowned
   `WorkflowEvaluation.workflow_type` field (`dry_run.py:101,111,189,200,264`) —
   the audit in 7.2 matches that token, and no other deliverable removes it.
-- `sync_pipelines.py` → typed manager (root `dev.yaml`/`qa.yaml`/`review.yaml`
-  scan preserved); `imports.py::sync_imported_definition` dispatches per-kind
-  to typed managers and refuses kind changes by table instead of stored type.
+- `sync_pipelines.py` → typed manager through `update_from_sync` on refresh
+  (root `dev.yaml`/`qa.yaml`/`review.yaml` scan preserved;
+  `TestSyncBundledPipelines` in `tests/workflows/test_sync.py` retargets at
+  the typed manager). `imports.py::sync_imported_definition` dispatches
+  per-kind to typed managers and refuses kind changes by table instead of
+  stored type — this replaces the per-kind rejections staged by 2.3, 4.1, and
+  4.2, restoring imports for all four kinds through typed managers (the
+  reason 4.3 depends on 4.2).
+- **Generic-surface shrink for kind `pipeline` (enhancement E3, same
+  commit)**: the generic router omits `workflow_type='pipeline'` rows from
+  list/get and rejects writes for that kind; the generic MCP tools reject
+  kind `pipeline`. Rejections name the pipeline domain MCP tools — the HTTP
+  `/api/pipelines/definitions` router arrives in 5.1. With all four kinds
+  now rejected, the generic surfaces are exhausted; 5.1 and 5.2 delete them.
 - Copy migration: guarded; copy `workflow_type='pipeline'` rows (version,
   canvas_json); dup-check; targetless `ON CONFLICT DO NOTHING` per the
   Constraints conflict-target rule; count validation; the Constraints
   equivalence guard including `target.id = source.id`.
+  The migration also writes one `legacy_copy_ledger` row per copied source
+  row (preserved legacy id, domain `'pipelines'`, normalized payload hash,
+  `ON CONFLICT (legacy_id) DO NOTHING`) for 7.1's directional drop backstop
+  (adversary round 3 APR3-011).
   `tests/storage/test_pipeline_copy_migration.py` covers all six cases in full,
   restated here rather than referenced, because an expansion agent receives
   only this deliverable section: (1) first run; (2) rerun over already-migrated
@@ -1463,7 +2407,13 @@ Targets: `src/gobby/workflows/pipeline_loader.py` (new),
 - 4.3.8 - Rerunning the pipeline copy over already-migrated soft-deleted rows completes without a primary-key abort. test: `tests/storage/test_pipeline_copy_migration.py::test_rerun_over_soft_deleted_rows`.
 - 4.3.11 - Rerunning the pipeline copy over already-migrated live rows is a clean no-op, and two soft-deleted pipeline rows sharing a natural key both migrate. test: `tests/storage/test_pipeline_copy_migration.py::test_rerun_over_live_rows`.
 - 4.3.12 - A live typed pipeline row matching a legacy row on natural key and payload but carrying a different UUID fails the guard loudly. test: `tests/storage/test_pipeline_copy_migration.py::test_divergent_identity_fails`.
-- 4.3.7 - Pipeline sync and per-kind import dispatch write the typed tables and refuse a kind change by target table. file: `src/gobby/workflows/imports.py`. file: `src/gobby/workflows/sync_pipelines.py`.
+- 4.3.7 - Pipeline sync and per-kind import dispatch write the typed tables and refuse a kind change by target table; imports work for all four kinds through typed managers. file: `src/gobby/workflows/imports.py`. file: `src/gobby/workflows/sync_pipelines.py`. test: `tests/workflows/test_imports.py`.
+- 4.3.13 - No generic surface can create or mutate a legacy pipeline row post-cutover: the generic HTTP routes and generic MCP tools reject kind `pipeline` naming the surviving domain surface. test: `tests/servers/routes/test_workflows.py`. test: `tests/mcp_proxy/tools/test_workflow_crud.py`.
+- 4.3.14 - Bundled pipeline sync reaches the typed table through update_from_sync: a changed template enabled default is adopted on an untouched row and preserved on a pinned row. test: `tests/workflows/test_sync.py`.
+- 4.3.15 - loader_validation.py survives with no WorkflowLoader reference, and every former loader test seam is absorbed, retargeted, or retyped per the closure inventory, including the hooks-factory patch sites. file: `src/gobby/workflows/loader_validation.py`. test: `tests/workflows/test_pipeline_loader.py`. test: `tests/workflows/test_workflow_hooks.py`.
+- 4.3.16 - The pinned schema root hashes and the release-pinned expected identity match the rebuilt gdaemon after the migration entry lands. file: `crates/gcore/tests/schema_contract.rs`. file: `src/gobby/storage/schema_expected_identity.json`.
+- 4.3.17 - Pipeline MCP create/update/delete/export operate on PipelineDefinitionManager with auto-export preserved, and _pipelines.py imports neither the generic definitions module nor the legacy manager. file: `src/gobby/mcp_proxy/tools/workflows/_pipelines.py`. test: `tests/mcp_proxy/tools/workflows/test_pipeline_crud.py`.
+- 4.3.18 - The pipeline copy migration writes one legacy_copy_ledger row per copied source row and reruns keep the copy-time hash. test: `tests/storage/test_pipeline_copy_migration.py`.
 
 ## P5: HTTP and MCP Surfaces
 `kind: framing`
@@ -1474,22 +2424,32 @@ gone; domain surfaces exist for everything the UI and agents need.
 ### 5.1 HTTP surface rebuild [category: code] (depends: P3, P4)
 `kind: deliverable`
 
-Targets: `src/gobby/servers/routes/workflows.py` (deleted),
-`src/gobby/servers/routes/pipeline_definitions.py` (new),
-`src/gobby/servers/routes/variable_definitions.py` (new),
-`src/gobby/servers/_app_routes.py`, `src/gobby/servers/routes/__init__.py`,
-`src/gobby/workflows/template_hashes.py`,
-`src/gobby/servers/routes/sessions/variables.py` (new),
-`src/gobby/servers/routes/sessions/__init__.py`,
-`src/gobby/mcp_proxy/stdio_proxy.py`,
-`src/gobby/servers/middleware/project_context.py`,
-`tests/servers/routes/test_pipeline_definitions.py` (new),
-`tests/servers/routes/test_variable_definitions.py` (new),
-`tests/servers/routes/test_session_variables.py` (new),
-`tests/mcp_proxy/test_stdio_proxy.py`,
-`tests/servers/routes/test_workflows.py` (deleted)
+Targets:
+- `src/gobby/servers/routes/workflows.py::*` — scope-reason: generic router deleted in this task
+- `src/gobby/servers/routes/pipeline_definitions.py` (new)
+- `src/gobby/servers/routes/variable_definitions.py` (new)
+- `src/gobby/servers/_app_routes.py::*` — scope-reason: router registration changes
+- `src/gobby/servers/routes/__init__.py::*` — scope-reason: router exports
+- `src/gobby/workflows/template_hashes.py::*` — scope-reason: kind-keyed cache
+- `src/gobby/servers/routes/sessions/variables.py` (new)
+- `src/gobby/servers/routes/sessions/__init__.py::*` — scope-reason: sessions package registration
+- `src/gobby/mcp_proxy/stdio_proxy.py::*` — scope-reason: relocated variable-endpoint client
+- `src/gobby/servers/auth_service.py::*` — scope-reason: agent-token capability grants for the relocated session-variable routes (adversary round 3 APR3-016)
+- `src/gobby/servers/middleware/project_context.py::*` — scope-reason: route comment update
+- `tests/servers/routes/test_pipeline_definitions.py` (new)
+- `tests/servers/routes/test_variable_definitions.py` (new)
+- `tests/servers/routes/test_session_variables.py` (new)
+- `tests/mcp_proxy/test_stdio_proxy.py::*` — scope-reason: client-seam literal retarget
+- `tests/mcp_proxy/test_mcp_proxy_stdio.py::*` — scope-reason: DaemonProxy integration seam retarget (adversary round 3 APR3-016)
+- `tests/servers/test_auth_service.py::*` — scope-reason: capability-matrix cases for the relocated routes
+- `tests/servers/test_auth_middleware.py::*` — scope-reason: agent-token route authorization cases
+- `tests/servers/routes/test_workflows.py::*` — scope-reason: suite deleted in this task
+- `tests/servers/test_workflow_routes.py::*` — scope-reason: second generic-routes suite deleted in this task
 
-- DELETE the 16-route generic router and its registration.
+- DELETE the 16-route generic router and its registration. By this commit the
+  router is exhausted: every kind is already rejected by the staged E3 shrinks
+  (agent in 2.3, rule in 4.1, variable in 4.2, pipeline in 4.3), so deletion
+  removes only rejection stubs and the omitted-kind list/get shell.
 - New `/api/pipelines/definitions` router: list (enabled/include_deleted
   filters + template-drift annotation), `GET /templates`, get, create, update,
   delete, toggle, duplicate, import (YAML), export, restore,
@@ -1506,7 +2466,7 @@ Targets: `src/gobby/servers/routes/workflows.py` (deleted),
   `sessions/variables.py` registered from `sessions/__init__.py` alongside
   `core.py`, `lifecycle.py`, and the rest.
 - The daemon-proxy client of the old endpoints is `mcp_proxy/stdio_proxy.py`
-  (the `/api/workflows/variables/set|get` literals at `:462` and `:476`), not
+  (the `/api/workflows/variables/set|get` literals at `:500` and `:514`), not
   `mcp_proxy/stdio.py`; retarget it at the relocated paths in the same commit.
   Its focused client tests are `tests/mcp_proxy/test_stdio_proxy.py`, which
   asserts the old literal at `:63` — that suite is the seam that proves
@@ -1517,13 +2477,32 @@ Targets: `src/gobby/servers/routes/workflows.py` (deleted),
   `servers/middleware/project_context.py:10` names the old route in the comment
   that documents why the middleware exists — update it here, since 7.2's audit
   matches `/api/workflows` and no other deliverable owns that line.
+- **Agent-token capability matrix moves with the routes (adversary round 3
+  APR3-016, same commit)**: `_AGENT_CAPABILITY_MATRIX`
+  (`auth_service.py:62-99`) grants agent tokens exactly
+  `POST /api/workflows/variables/get|set` (`:74-75`) and nothing under
+  `/api/sessions/`, so relocating the endpoints without retargeting the
+  grants leaves the authenticated `DaemonProxy` client unauthorized even
+  while the route suite and the client suite both pass in isolation. Replace
+  the two grants with the parameterized
+  `POST /api/sessions/*/variables/get|set` entries — the matcher's
+  one-segment `*` wildcard (`auth_service.py:56-57,112-122`) covers the path
+  parameter — preserving the session-identity binding flag so an agent token
+  still reaches only its own session. The matrix cases in
+  `tests/servers/test_auth_service.py`/`test_auth_middleware.py` and the
+  end-to-end DaemonProxy seam in `tests/mcp_proxy/test_mcp_proxy_stdio.py`
+  retarget in the same commit.
 - **Deleted-surface test closure**: deleting the router in this commit breaks
   `tests/servers/routes/test_workflows.py`, which exercises all sixteen routes
   (`/api/workflows` literals at `:77` through `:400`). It is deleted here, not
   in P7. Deferring it would leave the phase's own prescribed focused test run
   red for two phases, which contradicts the working-daemon-per-commit rule.
   Behavior worth keeping — the variables get/set cases at `:379-400` — moves
-  into `test_session_variables.py` rather than being dropped.
+  into `test_session_variables.py` rather than being dropped. The second
+  generic suite, `tests/servers/test_workflow_routes.py` at the servers root,
+  exercises the same deleted routes through the legacy manager and is deleted
+  in the same commit; its CRUD coverage already exists per-domain in the
+  domain route suites.
 - `template_hashes.py`: key by `kind` instead of `workflow_type` (same five
   loaders); consumers are the domain list routes and restore-from-template
   handlers.
@@ -1537,31 +2516,49 @@ Targets: `src/gobby/servers/routes/workflows.py` (deleted),
 - 5.1.5 - Template drift annotation works per domain through the re-keyed cache. symbol: `TemplateHashCache`. file: `src/gobby/workflows/template_hashes.py`.
 - 5.1.6 - The daemon-proxy client calls the relocated session-variable endpoints with scope, proven at the client seam, and no /api/workflows literal remains in it. file: `src/gobby/mcp_proxy/stdio_proxy.py`. test: `tests/mcp_proxy/test_stdio_proxy.py`.
 - 5.1.7 - No /api/workflows reference remains in the project-context middleware. file: `src/gobby/servers/middleware/project_context.py`.
-- 5.1.8 - The generic workflows route suite is deleted in this commit and its variables get/set coverage survives under the sessions API. test: `tests/servers/routes/test_workflows.py`. test: `tests/servers/routes/test_session_variables.py`.
+- 5.1.8 - Both generic workflows route suites are deleted in this commit and the variables get/set coverage survives under the sessions API. test: `tests/servers/routes/test_workflows.py`. test: `tests/servers/test_workflow_routes.py`. test: `tests/servers/routes/test_session_variables.py`.
+- 5.1.9 - An agent token authorizes the relocated session-variable routes for its own session only, the old workflow-variable grants are gone, and the authenticated DaemonProxy round trip passes at the integration seam. file: `src/gobby/servers/auth_service.py`. test: `tests/servers/test_auth_service.py`. test: `tests/mcp_proxy/test_mcp_proxy_stdio.py`.
 
 ### 5.2 MCP surface prune and re-scope [category: code] (depends: P3, P4)
 `kind: deliverable`
 
-Targets: `src/gobby/mcp_proxy/tools/workflows/__init__.py`,
-`src/gobby/mcp_proxy/tools/workflows/_definitions.py` (deleted),
-`src/gobby/mcp_proxy/tools/workflows/_query.py`,
-`src/gobby/mcp_proxy/tools/workflows/_import.py`,
-`src/gobby/mcp_proxy/tools/workflows/_auto_export.py`,
-`src/gobby/mcp_proxy/tools/workflows/_agents.py`,
-`src/gobby/mcp_proxy/tools/workflows/_rules.py`,
-`src/gobby/mcp_proxy/tools/workflows/_variables.py`,
-`src/gobby/sync_registry.py` (new),
-`src/gobby/cli/installers/shared.py`, `src/gobby/cli/install_setup.py`,
-`src/gobby/cli/sync.py`, `src/gobby/runner_init/storage.py`,
-`tests/mcp_proxy/tools/test_workflow_crud.py` (deleted),
-`tests/mcp_proxy/tools/workflows/test_import.py`,
-`tests/mcp_proxy/tools/workflows/test_project_scope.py`,
-`tests/mcp_proxy/tools/workflows/test_query.py`
+Targets:
+- `src/gobby/mcp_proxy/tools/workflows/__init__.py::*` — scope-reason: registry disposition rewrite
+- `src/gobby/mcp_proxy/tools/workflows/_definitions.py::*` — scope-reason: module deleted in this task
+- `src/gobby/mcp_proxy/tools/workflows/_query.py::*` — scope-reason: get_step_status re-scope
+- `src/gobby/mcp_proxy/tools/workflows/_import.py::*` — scope-reason: reload_cache over the sync registry
+- `src/gobby/mcp_proxy/tools/workflows/_auto_export.py::*` — scope-reason: explicit-kind dispatch
+- `src/gobby/mcp_proxy/tools/workflows/_agents.py::*` — scope-reason: explicit-kind auto-export caller
+- `src/gobby/mcp_proxy/tools/workflows/_rules.py::*` — scope-reason: explicit-kind auto-export caller
+- `src/gobby/mcp_proxy/tools/workflows/_variables.py::*` — scope-reason: explicit-kind auto-export caller
+- `src/gobby/mcp_proxy/tools/workflows/_pipelines.py::*` — scope-reason: fourth explicit-kind auto-export caller after 4.3's CRUD cutover (adversary round 3 APR3-005)
+- `src/gobby/dispatch/prompts.py::*` — scope-reason: dispatch prompt names the renamed status tool (adversary round 3 APR3-017)
+- `src/gobby/install/shared/workflows/agents/doc-reviewer.yaml::*` — scope-reason: agent instructions name the renamed status tool (adversary round 3 APR3-017)
+- `src/gobby/install/shared/workflows/agents/qa-reviewer.yaml::*` — scope-reason: agent instructions name the renamed status tool (adversary round 3 APR3-017)
+- `src/gobby/install/bundled_content_manifest.json::*` — scope-reason: regenerated hashes for the rewritten agent YAMLs
+- `src/gobby/sync_registry.py` (new)
+- `src/gobby/cli/installers/shared.py::*` — scope-reason: fan-out extraction and delegation
+- `src/gobby/cli/install_setup.py::*` — scope-reason: sync-registry consumer
+- `src/gobby/cli/sync.py::*` — scope-reason: sync-registry consumer
+- `src/gobby/runner_init/storage.py::*` — scope-reason: sync-registry consumer
+- `tests/mcp_proxy/tools/test_workflow_crud.py::*` — scope-reason: suite deleted in this task
+- `tests/mcp_proxy/tools/workflows/test_import.py::*` — scope-reason: per-kind import retarget
+- `tests/mcp_proxy/tools/workflows/test_project_scope.py::*` — scope-reason: domain-surface retarget
+- `tests/mcp_proxy/tools/workflows/test_query.py::*` — scope-reason: get_step_status retarget
+- `tests/mcp_proxy/tools/workflows/test_get_workflow_not_found.py::*` — scope-reason: suite deleted with the generic get_workflow tool
+- `tests/dispatch/test_prompts.py::*` — scope-reason: prompt regression names the renamed tool (adversary round 3 APR3-017)
+- `tests/agents/test_qa_reviewer_definition.py::*` — scope-reason: instruction assertions name the renamed tool (adversary round 3 APR3-017)
+- `tests/events/test_mcp_tool_changes.py::*` — scope-reason: registry inventory drops list_workflows and tracks the rename (adversary round 3 APR3-017)
+- `tests/e2e/test_parallel_clones.py::*` — scope-reason: E2E tool inventory and call retarget (adversary round 3 APR3-017)
+- `tests/e2e/test_sequential_review_loop.py::*` — scope-reason: E2E status-tool call retarget (adversary round 3 APR3-017)
+- `tests/mcp_proxy/tools/workflows/test_registry_surface.py` (new)
 
 Server name stays `gobby-workflows` (bundled pipelines/skills reference it).
 Disposition: DELETE `create_workflow`, `update_workflow`, `delete_workflow`,
 `export_workflow`, `restore_workflow`, `get_workflow`, `list_workflows`,
-`import_workflow` (domain CRUD already exists for all four kinds). RE-SCOPE
+`import_workflow` (domain CRUD already exists for all four kinds; by this
+commit every kind is already rejected by the staged E3 shrinks, so the
+deleted tools are rejection stubs). RE-SCOPE
 `get_workflow_status` → `get_step_status` (3.3) and `evaluate_workflow` →
 `evaluate_pipeline` + new `evaluate_agent` (wraps `resolve_agent` +
 `evaluate_agent_definition`). KEEP `reload_cache`, reimplemented over the new
@@ -1576,8 +2573,26 @@ sync registry.
   clears `PipelineLoader` cache; the third copy of the fan-out dies with the
   CLI group in 6.1.
 - `_auto_export.py`: `auto_export_definition`/`auto_delete_definition` take an
-  explicit `kind: Literal["rule","variable","agent","pipeline"]` from each
-  caller; `has_gobby_name_collision` becomes a per-domain manager query.
+  explicit `kind: Literal["rule","variable","agent","pipeline"]` from each of
+  the four domain callers — `_agents.py`, `_rules.py`, `_variables.py`, and
+  `_pipelines.py` (whose direct auto-export calls arrived with 4.3's CRUD
+  cutover); `has_gobby_name_collision` becomes a per-domain manager query.
+- **Renamed/removed tool consumer closure (adversary round 3 APR3-017), same
+  commit as the disposition**: the rename `get_workflow_status` →
+  `get_step_status` breaks every consumer that names the old tool, and the
+  `list_workflows` deletion breaks every inventory that asserts it. The
+  executable consumers move here atomically: the dispatch prompt instruction
+  at `dispatch/prompts.py:244` (pinned by `tests/dispatch/test_prompts.py:99`),
+  the bundled agent instructions in `doc-reviewer.yaml` (`:73,:121`) and
+  `qa-reviewer.yaml` (`:83,:102,:151,:186`; pinned by
+  `tests/agents/test_qa_reviewer_definition.py:148,:158`) with the bundled
+  content manifest regenerated in the same commit, the registry inventory
+  assertion `tests/events/test_mcp_tool_changes.py:109`, and the E2E
+  inventory and calls in `tests/e2e/test_parallel_clones.py:124,:574` and
+  `tests/e2e/test_sequential_review_loop.py:689`. Documentation references
+  (`docs/guides/mcp-tools.md`, `docs/guides/variables.md`) follow in 7.3.
+  After this commit no production, bundled, or test reference to
+  `list_workflows` or `get_workflow_status` remains outside 7.3's doc sweep.
 - **Deleted-tool test closure**, in this commit rather than P7, for the same
   working-commit reason as 5.1: `tests/mcp_proxy/tools/test_workflow_crud.py`
   imports the deleted `_definitions` module at `:7` and asserts
@@ -1590,7 +2605,9 @@ sync registry.
   domain list surfaces, preserving its project-scope assertions;
   `workflows/test_query.py` tests `list_workflows` throughout and is retargeted
   at `get_step_status`, keeping the DB/filesystem-merge cases that still apply
-  to pipeline discovery. Retarget preserves domain behavior; only assertions
+  to pipeline discovery; `workflows/test_get_workflow_not_found.py` exists
+  solely to pin `get_workflow` not-found responses, so it is deleted with its
+  tool. Retarget preserves domain behavior; only assertions
   that a deleted generic tool exists are dropped.
 
 **Acceptance:**
@@ -1600,9 +2617,11 @@ sync registry.
 - 5.2.3 - get_step_status is registered under its new name and reports the snapshot step list for a session. symbol: `get_step_status`. file: `src/gobby/mcp_proxy/tools/workflows/_query.py`.
 - 5.2.4 - One sync registry feeds install, reload_cache, and CLI sync. symbol: `sync_bundled_content_to_db`. file: `src/gobby/sync_registry.py`.
 - 5.2.5 - Auto-export dispatches on explicit kind with per-domain collision checks. file: `src/gobby/mcp_proxy/tools/workflows/_auto_export.py`.
-- 5.2.5a - Every auto-export caller passes its kind explicitly. file: `src/gobby/mcp_proxy/tools/workflows/_agents.py`. file: `src/gobby/mcp_proxy/tools/workflows/_rules.py`. file: `src/gobby/mcp_proxy/tools/workflows/_variables.py`.
+- 5.2.5a - Every auto-export caller passes its kind explicitly. file: `src/gobby/mcp_proxy/tools/workflows/_agents.py`. file: `src/gobby/mcp_proxy/tools/workflows/_rules.py`. file: `src/gobby/mcp_proxy/tools/workflows/_variables.py`. file: `src/gobby/mcp_proxy/tools/workflows/_pipelines.py`.
 - 5.2.6 - Registry tool inventory and schemas match the disposition table. test: `tests/mcp_proxy/tools/workflows/test_registry_surface.py`.
-- 5.2.7 - The generic-CRUD suite is deleted and the import, project-scope, and query suites are retargeted at surviving tools with their domain assertions intact. test: `tests/mcp_proxy/tools/test_workflow_crud.py`. test: `tests/mcp_proxy/tools/workflows/test_import.py`. test: `tests/mcp_proxy/tools/workflows/test_project_scope.py`. test: `tests/mcp_proxy/tools/workflows/test_query.py`.
+- 5.2.7 - The generic-CRUD and get_workflow not-found suites are deleted and the import, project-scope, and query suites are retargeted at surviving tools with their domain assertions intact. test: `tests/mcp_proxy/tools/test_workflow_crud.py`. test: `tests/mcp_proxy/tools/workflows/test_get_workflow_not_found.py`. test: `tests/mcp_proxy/tools/workflows/test_import.py`. test: `tests/mcp_proxy/tools/workflows/test_project_scope.py`. test: `tests/mcp_proxy/tools/workflows/test_query.py`.
+- 5.2.8 - The dispatch prompt and bundled agent instructions name get_step_status, the regenerated bundled content manifest passes its freshness test, and the prompt and definition regressions pin the rename. file: `src/gobby/dispatch/prompts.py`. file: `src/gobby/install/shared/workflows/agents/qa-reviewer.yaml`. test: `tests/dispatch/test_prompts.py`. test: `tests/agents/test_qa_reviewer_definition.py`.
+- 5.2.9 - The registry-inventory and E2E suites assert the final tool set: no list_workflows, get_step_status present and callable. test: `tests/events/test_mcp_tool_changes.py`. test: `tests/e2e/test_parallel_clones.py`. test: `tests/e2e/test_sequential_review_loop.py`.
 
 ## P6: CLI and Web UI
 `kind: framing`
@@ -1613,11 +2632,27 @@ vocabulary.
 ### 6.1 CLI restructure [category: code] (depends: P5)
 `kind: deliverable`
 
-Targets: `src/gobby/cli/workflows/` (deleted), `src/gobby/cli/__init__.py`,
-`src/gobby/cli/agents.py`, `src/gobby/cli/pipelines_catalog.py`,
-`src/gobby/cli/sync.py`, `src/gobby/cli/export_import.py`,
-`src/gobby/cli/variables.py` (new), `src/gobby/workflows/imports.py`,
-`src/gobby/mcp_proxy/tools/workflows/_import.py`
+Targets:
+- `src/gobby/cli/workflows/__init__.py::*` — scope-reason: package deleted in this task
+- `src/gobby/cli/workflows/manage.py::*` — scope-reason: package deleted in this task
+- `src/gobby/cli/workflows/inspect.py::*` — scope-reason: package deleted in this task
+- `src/gobby/cli/workflows/check.py::*` — scope-reason: package deleted in this task
+- `src/gobby/cli/workflows/variables.py::*` — scope-reason: package deleted in this task
+- `src/gobby/cli/workflows/common.py::*` — scope-reason: package deleted in this task
+- `src/gobby/cli/__init__.py::*` — scope-reason: command-group re-registration
+- `src/gobby/cli/pipelines.py::*` — scope-reason: cli.workflows.common import rewire before the package deletion (adversary round 3 APR3-006)
+- `src/gobby/cli/agents.py::*` — scope-reason: registration surface for the extracted subcommand module
+- `src/gobby/cli/agents_steps.py` (new)
+- `src/gobby/cli/pipelines_catalog.py::*` — scope-reason: show/check subcommands
+- `src/gobby/cli/sync.py::*` — scope-reason: per-domain reinstall
+- `src/gobby/cli/variables.py` (new)
+- `src/gobby/workflows/imports.py::*` — scope-reason: per-kind directory globs
+- `src/gobby/mcp_proxy/tools/workflows/_import.py::*` — scope-reason: import-path alignment
+- `tests/cli/test_agents_steps.py` (new)
+- `tests/cli/test_cli_workflows.py::*` — scope-reason: suite deleted with the package (adversary round 3 APR3-006)
+- `tests/cli/test_workflows.py::*` — scope-reason: suite deleted with the package (adversary round 3 APR3-006)
+- `tests/cli/test_workflows_coverage.py::*` — scope-reason: suite deleted with the package (adversary round 3 APR3-006)
+- `tests/cli/test_pipelines_coverage.py::*` — scope-reason: cli.workflows.common patch paths re-pointed at the rewired home (adversary round 3 APR3-006)
 
 - DELETE the `gobby workflows` group (list/show/status/check/audit/import/
   reload/reinstall — including the raw `DELETE FROM workflow_definitions`
@@ -1627,12 +2662,39 @@ Targets: `src/gobby/cli/workflows/` (deleted), `src/gobby/cli/__init__.py`,
   `evaluate_agent_definition`), `gobby pipelines show <name>` and
   `gobby pipelines check <name>` (catalog + `evaluate_pipeline_definition`),
   `gobby sync --reinstall [rules|agents|pipelines|variables|all]` (typed
-  managers via the sync registry). If `cli/agents.py` (857 lines) approaches
-  the cap, put the new subcommands in `cli/agents_steps.py`.
-- `gobby export/import` (`export_import.py`): public resource type `workflow`
-  → `pipeline`; validation via `PipelineDefinition` only.
+  managers via the sync registry). The new agent subcommands land
+  **unconditionally** in a new `src/gobby/cli/agents_steps.py` registered from
+  `cli/agents.py` (adversary round 2 APR2-011): `cli/agents.py` is already at
+  861 lines, so adding command surface in place projects across the cap, and
+  Constraints bans conditional extraction — the destination module is part of
+  this deliverable's contract, not an implementation-time judgment call.
+- No export/import work: the root `gobby export`/`gobby import` CLI no longer
+  exists — its module path sits in `DEAD_PYTHON_PATHS` within
+  `tests/meta/test_import_hygiene.py`, and
+  `tests/cli/test_export_import.py::test_export_import_commands_are_absent_from_root_help`
+  pins the commands' absence from root help; both contracts stay untouched.
+  This epic does not resurrect that surface; the earlier draft's vocabulary
+  migration for it is moot (adversary BR-008).
 - `cli/workflows/variables.py` (set-var/get-var) → `gobby variables get|set
   --session` in new `cli/variables.py` with the scope model.
+- **Package-deletion closure (adversary round 3 APR3-006)**: the deletion is
+  not confined to the group's own modules. `src/gobby/cli/pipelines.py`
+  imports `get_project_path` and `get_workflow_loader` from
+  `cli.workflows.common` at module scope (`pipelines.py:30-31`), and the
+  package `__init__` eagerly imports its submodules, so deleting the package
+  breaks `gobby pipelines` at import time. Re-home `get_project_path` into
+  `cli/pipelines.py` (its only surviving consumer) and replace
+  `get_workflow_loader` with the `PipelineLoader` factory 4.3 retyped, in the
+  same commit as the deletion. Test dispositions, same commit:
+  `tests/cli/test_cli_workflows.py`, `tests/cli/test_workflows.py`, and
+  `tests/cli/test_workflows_coverage.py` import the package at module scope
+  and exist to test the deleted group — they are deleted with it (surviving
+  behavior is covered by `tests/cli/test_agents_steps.py` and the pipelines
+  suites); `tests/cli/test_pipelines_coverage.py` re-points its two
+  `@patch("gobby.cli.workflows.common.Path")` sites (`:52,:62`) at the
+  re-homed helper. `tests/cli/test_pipelines.py` holds no `cli.workflows`
+  reference (verified) and needs no edit — recorded so the closure is
+  deliberate, not an omission.
 - `imports.py::sync_imported_workflows`: glob per-kind subdirectories
   `.gobby/workflows/{rules,agents,pipelines,variables}/*.yaml` (symmetry with
   auto-export); drop the root-only glob.
@@ -1641,30 +2703,53 @@ Targets: `src/gobby/cli/workflows/` (deleted), `src/gobby/cli/__init__.py`,
 
 - 6.1.1 - The gobby workflows group is gone and per-domain replacements exist. file: `src/gobby/cli/__init__.py`.
 - 6.1.2 - Reinstall runs per-domain through the sync registry with no raw legacy SQL. file: `src/gobby/cli/sync.py`.
-- 6.1.3 - Export/import public vocabulary uses pipeline instead of workflow. file: `src/gobby/cli/export_import.py`.
 - 6.1.4 - Filesystem imports cover the per-kind directories. symbol: `sync_imported_workflows`. file: `src/gobby/workflows/imports.py`.
 - 6.1.5 - New CLI subcommands are covered by focused tests. test: `tests/cli/test_agents_steps.py`.
 - 6.1.6 - `gobby variables get|set --session` reads and writes both scopes and replaces the deleted set-var/get-var commands. file: `src/gobby/cli/variables.py`.
+- 6.1.7 - The new agent subcommands live in the extracted module and both it and the registration surface stay below 1,000 lines. file: `src/gobby/cli/agents_steps.py`. file: `src/gobby/cli/agents.py`.
+- 6.1.8 - `gobby pipelines` imports cleanly after the package deletion: no production module imports gobby.cli.workflows, and the re-homed helpers serve the pipelines CLI. file: `src/gobby/cli/pipelines.py`.
+- 6.1.9 - The three workflows-group suites are deleted with the package and the pipelines-coverage patch paths point at the re-homed helper. test: `tests/cli/test_cli_workflows.py`. test: `tests/cli/test_workflows.py`. test: `tests/cli/test_workflows_coverage.py`. test: `tests/cli/test_pipelines_coverage.py`.
 
 ### 6.2 Web UI migration [category: code] (depends: P5)
 `kind: deliverable`
 
-Targets: `web/src/hooks/useWorkflows.ts` (deleted),
-`web/src/hooks/usePipelineDefs.ts` (new),
-`web/src/hooks/useVariableDefs.ts` (new),
-`web/src/components/activity/pipelines/PipelinesDefsActions.ts`,
-`web/src/components/activity/pipelines/PipelineEditor.types.ts`,
-`web/src/components/settings/WorkflowVariablesEditor.tsx` (renamed
-`web/src/components/settings/VariableDefaultsEditor.tsx`),
-`web/src/components/settings/sections/AutomationWorkflowsSection.tsx`,
-`web/src/components/activity/agents/AgentsTabData.ts`
+Targets:
+- `web/src/hooks/useWorkflows.ts::*` — scope-reason: hook deleted in this task
+- `web/src/hooks/usePipelineDefs.ts` (new)
+- `web/src/hooks/useVariableDefs.ts` (new)
+- `web/src/components/activity/pipelines/PipelinesDefsActions.ts::*` — scope-reason: fetch layer onto domain endpoints
+- `web/src/components/activity/pipelines/PipelineEditor.types.ts::*` — scope-reason: PipelineDefDetail types
+- `web/src/components/settings/WorkflowVariablesEditor.tsx::*` — scope-reason: renamed onto useVariableDefs
+- `web/src/components/settings/workflowVariables.ts::*` — scope-reason: display helper retyped off the definition_json payload (adversary round 3 APR3-018)
+- `web/src/components/settings/VariableDefaultsEditor.tsx` (new name)
+- `web/src/components/settings/sections/AutomationWorkflowsSection.tsx::*` — scope-reason: section reference updates
+- `web/src/components/activity/agents/AgentsTabData.ts::*` — scope-reason: pipeline picker endpoint and data.definitions fix
+- `web/src/components/activity/pipelines/__tests__/PipelinesDefs.test.tsx::*` — scope-reason: domain-endpoint retarget of the pipeline-defs suite
+- `web/src/components/activity/pipelines/__tests__/PipelineEditor.test.tsx::*` — scope-reason: PipelineDefDetail type retarget
+- `web/src/components/settings/__tests__/WorkflowVariablesEditor.test.tsx::*` — scope-reason: renamed with its component onto useVariableDefs
+- `web/src/components/settings/sections/__tests__/AutomationWorkflowsSection.test.tsx::*` — scope-reason: section-reference retarget
+- `web/src/components/activity/__tests__/AgentsTab.test.tsx::*` — scope-reason: pipeline-picker endpoint and data.definitions assertions
+- `web/src/hooks/__tests__/useFilteredRefetches.test.ts::*` — scope-reason: refetch-filter suite onto the new hooks
+- `web/src/hooks/__tests__/useSelectionFetchRaces.test.ts::*` — scope-reason: selection-race suite onto the new hooks
+- `web/tests/style-surfaces.spec.ts::*` — scope-reason: network-capture fake taught the domain routes (adversary round 3 APR3-018)
 
 - Replace `useWorkflows.ts` with `usePipelineDefs.ts`
   (`/api/pipelines/definitions`, `WorkflowDetail` → `PipelineDefDetail`, no
   `workflow_type`) and `useVariableDefs.ts` (`/api/variables`).
 - `PipelinesDefsActions.ts` + editors → new endpoints/types.
 - `WorkflowVariablesEditor.tsx` → `VariableDefaultsEditor.tsx` on
-  `useVariableDefs`; update section references.
+  `useVariableDefs`; update section references. Its extracted display helper
+  `workflowVariables.ts::variableDisplayValue` parses the legacy
+  `definition_json` string payload and reads `.value` (`:19-22`) — the new
+  `/api/variables` shape exposes `default_value` directly, so the helper is
+  retyped around it (adversary round 3 APR3-018).
+- **Visual-coverage fake follows the endpoints (adversary round 3
+  APR3-018)**: the Playwright style-surface capture fake serves definitions
+  only through `case "/api/workflows"` branching on `workflow_type`
+  (`style-surfaces.spec.ts:1233-1241`, fixtures `:394,:407`), so after this
+  migration the pipeline and variable editors would render empty in visual
+  coverage. Teach the fake `/api/pipelines/definitions` and `/api/variables`
+  response shapes and delete its generic-workflow branch in the same commit.
 - `AgentsTabData.ts::loadPipelineList` → `/api/pipelines/definitions` and fix
   the latent bug: read `data.definitions` (it reads `data.workflows`, which is
   always undefined, so the agent editor's pipeline picker is empty today).
@@ -1682,6 +2767,7 @@ Targets: `web/src/hooks/useWorkflows.ts` (deleted),
 - 6.2.5 - The retargeted pipeline-definition and editor suites pass. test: `web/src/components/activity/pipelines/__tests__/PipelinesDefs.test.tsx`. test: `web/src/components/activity/pipelines/__tests__/PipelineEditor.test.tsx`.
 - 6.2.6 - The retargeted settings and agents-tab suites pass. test: `web/src/components/settings/__tests__/WorkflowVariablesEditor.test.tsx`. test: `web/src/components/settings/sections/__tests__/AutomationWorkflowsSection.test.tsx`. test: `web/src/components/activity/__tests__/AgentsTab.test.tsx`.
 - 6.2.7 - The refetch and selection-race hook suites pass against the new hooks. test: `web/src/hooks/__tests__/useFilteredRefetches.test.ts`. test: `web/src/hooks/__tests__/useSelectionFetchRaces.test.ts`.
+- 6.2.8 - The variable display helper reads default_value, and the style-surface capture fake serves the domain routes with no generic /api/workflows branch, so the migrated editors render populated in visual coverage. file: `web/src/components/settings/workflowVariables.ts`. test: `web/tests/style-surfaces.spec.ts`.
 
 ## P7: Legacy Removal, Audit, Documentation
 `kind: framing`
@@ -1692,21 +2778,31 @@ regression, docs describe the final state.
 ### 7.1 Drop migration and legacy module deletion [category: code] (depends: P6)
 `kind: deliverable`
 
-Targets: `src/gobby/storage/migrations/NNN_drop_legacy_workflow_tables.sql`
-(new), `src/gobby/storage/postgres_baseline_schema.sql`,
-`src/gobby/storage/workflow_definitions.py` (deleted),
-`src/gobby/storage/definitions/_shared.py`,
-`src/gobby/cli/tasks/_utils/claims.py`,
-`src/gobby/sessions/lifecycle.py`,
-`src/gobby/workflows/template_hashes.py`,
-`src/gobby/storage/skills/_metadata.py`,
-`tests/storage/test_migration_contract.py`,
-`tests/storage/test_drop_legacy_migration.py` (new)
+Targets:
+- `crates/gcore/assets/schema/migrations/NNN_drop_legacy_workflow_tables.sql` (new)
+- `crates/gcore/assets/schema/baseline.sql`
+- `crates/gcore/src/schema/assets.rs::*` — scope-reason: MIGRATIONS entry and baseline checksum re-arm
+- `crates/gcore/src/schema/runner.rs::*` — scope-reason: refresh contract gains an enumerated removed-statement allowlist
+- `crates/gcore/src/schema/runner_tests.rs::*` — scope-reason: removed-statement assertions and destructive-apply coverage
+- `crates/gcore/tests/fixtures/schema/predecessor_baseline.sql`
+- `crates/gcore/assets/schema/catalog.manifest.json::*` — scope-reason: legacy catalog rows removed
+- `crates/gcore/tests/schema_contract.rs::*` — scope-reason: pinned checksum and root-hash constants
+- `src/gobby/storage/schema_expected_identity.json::*` — scope-reason: regenerated release-pinned identity
+- `src/gobby/storage/workflow_definitions.py::*` — scope-reason: module deleted in this task
+- `src/gobby/storage/definitions/_shared.py`
+- `src/gobby/sessions/lifecycle.py::*` — scope-reason: purge fan-out over typed managers
+- `src/gobby/workflows/template_hashes.py::*` — scope-reason: legacy import removal
+- `src/gobby/storage/skills/_metadata.py::*` — scope-reason: docstring reword
+- `tests/storage/test_workflow_definitions.py::*` — scope-reason: comprehensive legacy-manager suite deleted; behavior superseded by the typed-manager suites
+- `tests/storage/test_workflow_definitions_rules.py::*` — scope-reason: legacy rule-listing suite deleted; behavior superseded by test_rules_manager.py
+- `tests/agents/test_merge_orchestrator_contract.py::*` — scope-reason: legacy fixture-seeding rewrite
+- `tests/storage/tasks/test_stage_registry_default_agent_fk.py::*` — scope-reason: legacy fixture-seeding rewrite
+- `tests/storage/test_drop_legacy_migration.py` (new)
 
-- Rewrite `get_claimed_task_owners` (`claims.py:11-88`): source `session_task`
-  from the session-variables store (join `sessions.status='active'`) instead
-  of `workflow_states.variables`; preserve the `#N`/UUID/prefix resolution and
-  wildcard/list handling.
+- The former `workflow_states` slice is gone: the table is already absent from
+  the baseline and `get_claimed_task_owners` already reads `tasks JOIN
+  sessions` (Epic Review Notes correction 10). Only the two legacy runtime
+  tables remain to drop.
 - `src/gobby/sessions/lifecycle.py:347` calls
   `_purge_soft_deleted_definitions`, which imports
   `LocalWorkflowDefinitionManager` and calls `purge_deleted(older_than_days=30)`.
@@ -1718,75 +2814,107 @@ Targets: `src/gobby/storage/migrations/NNN_drop_legacy_workflow_tables.sql`
   cascades. Step instances are session-owned and never appear here —
   `agent_step_instances.session_id` cascades on session delete, and per-agent-run
   runtime cleanup is `agents/agent_cleanup.py`, which 3.3 owns.
-- **Baseline contract test**: 1.1 taught `tests/storage/test_migration_contract.py`
-  to assert the baseline still contains the legacy tables, and its UUID identity
-  inventory includes `workflow_instances`. Removing those objects from the
-  baseline here without updating that test makes the final focused storage run
-  fail even when the drop migration is correct. Delete only the legacy identity
-  and presence expectations; the six typed-table catalog-equivalence checks added
-  in 1.1.4 stay and are what keeps the two lineages pinned after the drop.
+- **Refresh-contract removal handling**: this is the epic's only baseline edit
+  that removes statements, and the set-difference tripwire
+  (`baseline_refresh_accepts_exactly_the_predecessor_statement_difference`)
+  fails any removal today. Extend `verify_baseline_refresh_contract` with an
+  explicit enumerated removed-statement allowlist naming exactly the legacy
+  DDL this hop deletes (the three CREATE TABLEs — both legacy tables and
+  `legacy_copy_ledger` — their constraints, indexes, FK, and grants) so
+  removal is a deliberate, checked property rather than a relaxed assertion. Statement removal never executes anything on a refresh
+  hop — existing hubs lose the tables only through the destructive drop
+  migration below.
 - **Residual audited tokens with no other owner**: `workflows/template_hashes.py:20`
   imports from `storage/workflow_definitions.py` and must lose that import in the
   same commit the module is deleted (5.1 re-keys the cache by `kind`; it does not
   touch the import). `src/gobby/storage/skills/_metadata.py:250` names the
   `workflow_definitions` pattern in a docstring describing installed-copy
   precedence — reword it. Both are matched by 7.2's audit.
-- Drop migration (guarded): **backstop first**, and the backstop re-runs each
-  domain's normalized **payload equivalence** at drop time rather than checking
-  key presence. It covers **every non-generated legacy row, live and
-  soft-deleted**, not just live ones — matching live rows on the live natural
-  key and soft-deleted rows on the preserved `id`, the same asymmetry the copy
-  guards use, and requiring `target.id = source.id` in both cases. Restricting
-  the backstop to live rows would be unsound because the copy migrations
-  deliberately include soft-deleted rows so a restore keeps its payload, and
-  the generic legacy CRUD surfaces survive until P5: a definition created after
-  its domain's copy ran and then soft-deleted before P5 is invisible to a
-  live-only check, so the drop takes its restorable payload with it. For every
-  such row require exactly one typed match whose payload equals the source
-  after that domain's documented normalization, and RAISE with the offending
-  ids and names otherwise; explicitly exclude the generated
-  `workflow_type='workflow'` rows, which are never copied. A presence-only
-  check passes for a legacy row updated after its copy migration ran, and for a
-  same-name/different-source row that matches a typed row it has nothing to do
-  with — both then get dropped, which is exactly the mid-epic-write data loss
-  the backstop exists to prevent. Then
+- Drop migration (a `-- gobby:destructive` `EmbeddedMigration` per 1.5:
+  receipt-stamped without executing on fresh lineages, refused on a plain
+  restart of an existing hub, and applied once per hub via `gdaemon schema
+  apply --destructive` against a verified backup manifest): **backstop
+  first**, and the backstop is **directional** (adversary round 3 APR3-011,
+  replacing the earlier symmetric payload-equivalence design): between each
+  domain's copy migration and this drop, the typed tables are the sole
+  writable authority, so typed rows legitimately evolve — user edits, sync
+  refreshes, restores, hard-deletes — while the legacy rows are supposed to
+  stay frozen. Comparing legacy payloads against current typed payloads
+  cannot tell safe typed-side evolution from dangerous legacy-side drift and
+  would permanently block the drop on any hub that used the system after
+  cutover. The backstop therefore proves **the legacy side is unchanged
+  since its copy**, using the `legacy_copy_ledger` checkpoint (1.1) the four
+  copy migrations wrote: for **every non-generated legacy row, live and
+  soft-deleted**, require a ledger entry with the row's preserved `id` AND
+  the MD5 of the row's current normalized payload equal to the recorded
+  `source_hash`; RAISE with the offending ids and names on a missing entry
+  (a row created after its domain's copy ran — including one soft-deleted
+  before P5, which is why soft-deleted rows are covered) or a hash mismatch
+  (a legacy write after the copy — data the typed tables never saw). Typed
+  state is not consulted: typed evolution and deliberate typed deletion
+  never block the drop, and a timestamp comparison is not a substitute
+  because legacy `updated_at` values are client-stamped and skew across the
+  hub's daemons. Exclusion of `workflow_type='workflow'` rows is
+  **by proven provenance, never by discriminator alone** (adversary round 2
+  APR2-005): a row is generated — and only then excluded — when it matches
+  the exact signature `name ~ '-steps$' AND source = 'agent'`, the shape
+  `register_agent_step_workflow` writes. The preflight RAISEs with ids and
+  names on every `workflow_type='workflow'` row that fails the signature and
+  on every row whose `workflow_type` is outside the five known values: a
+  standalone user-authored workflow row is unsupported by the split, and the
+  epic's fail-loud contract requires the migration to refuse rather than
+  silently drop it. Then
   `DROP TABLE workflow_instances`, `DROP TABLE workflow_definitions`,
-  `DROP TABLE workflow_states`.
-- Remove all three tables from the baseline.
+  `DROP TABLE legacy_copy_ledger` — the ledger exists only to prove this
+  drop safe and leaves with the tables it guards.
+- Remove all three tables' DDL from the baseline (CREATE TABLE, constraints,
+  indexes, FK, grants — both legacy tables and `legacy_copy_ledger`) and
+  their catalog-manifest rows in the same commit,
+  with the full Constraints lockstep re-arm.
 - Delete `src/gobby/storage/workflow_definitions.py` (row, manager, global
   revision helpers — `compute_definition_hash` already lives in
-  `src/gobby/storage/definitions/_shared.py`); sweep remaining test imports (~45 files;
-  most already rewritten in P1–P6 — this task deletes stragglers, rewriting
-  tests that still seed `workflow_definitions` fixtures such as
+  `src/gobby/storage/definitions/_shared.py`). **Legacy-suite disposition
+  (adversary BR-002)**: the module's own comprehensive suites are deleted with
+  it — `tests/storage/test_workflow_definitions.py`, whose CRUD,
+  scope-fallback, conflict, soft-delete/restore, and purge coverage is
+  superseded by the per-domain typed-manager suites from 1.2/1.3, and
+  `tests/storage/test_workflow_definitions_rules.py`, whose event/group
+  listing coverage is superseded by `test_rules_manager.py`. Then sweep
+  remaining test imports of the legacy module (~45 files; most already
+  rewritten by their domain cutovers in P1–P6 — this task deletes stragglers,
+  rewriting tests that still seed `workflow_definitions` fixtures such as
   `tests/agents/test_merge_orchestrator_contract.py:119` and
-  `tests/storage/tasks/test_stage_registry_default_agent_fk.py:30`).
+  `tests/storage/tasks/test_stage_registry_default_agent_fk.py:30`). The
+  grep-derived import inventory at this commit must come back empty; 7.2's
+  audit pins that property.
 
 **Acceptance:**
 
-- 7.1.1 - Claims lookup reads session variables and workflow_states has no reader. symbol: `get_claimed_task_owners`. file: `src/gobby/cli/tasks/_utils/claims.py`.
-- 7.1.2 - The drop migration backstop refuses to drop when a live legacy row was updated after its copy, and when a same-name/different-source row has no true typed counterpart. test: `tests/storage/test_drop_legacy_migration.py`.
+- 7.1.1 - The drop is a destructive EmbeddedMigration whose backstop verifies every non-generated legacy row, live and soft-deleted, against its legacy_copy_ledger checkpoint hash and RAISEs with offending ids and names. test: `tests/storage/test_drop_legacy_migration.py`.
+- 7.1.2 - The backstop refuses to drop when a legacy row was written after its copy (hash mismatch) and when a legacy row has no ledger entry (post-copy insertion). test: `tests/storage/test_drop_legacy_migration.py`.
 - 7.1.2a - The backstop also covers soft-deleted legacy rows by preserved id, refusing to drop a definition created after its copy migration and soft-deleted before P5. test: `tests/storage/test_drop_legacy_migration.py::test_backstop_covers_soft_deleted_rows`.
-- 7.1.3 - All three legacy tables are gone from the baseline and the live schema after migration. file: `src/gobby/storage/postgres_baseline_schema.sql`.
+- 7.1.3 - Both legacy tables and legacy_copy_ledger are gone from the baseline, the catalog manifest, and the live schema after the destructive apply, and the refresh contract enumerates exactly the removed statements. file: `crates/gcore/assets/schema/baseline.sql`. file: `crates/gcore/src/schema/runner_tests.rs`.
 - 7.1.4 - storage/workflow_definitions.py is deleted and no source or test imports it. file: `src/gobby/storage/definitions/_shared.py`.
 - 7.1.5 - The scheduled soft-deleted-definition purge drops the legacy manager import and fans out over the four typed parent managers, with agent step-workflow children removed by cascade and no step-instance branch. symbol: `_purge_soft_deleted_definitions`. file: `src/gobby/sessions/lifecycle.py`.
-- 7.1.6 - The migration contract test drops its legacy identity and presence expectations while retaining the six typed-table catalog-equivalence checks. test: `tests/storage/test_migration_contract.py`.
+- 7.1.6 - A fresh lineage receipt-stamps the drop without executing it; an existing hub refuses it on plain restart and applies it under --destructive with a verified backup manifest. file: `crates/gcore/src/schema/runner_tests.rs`. test: `tests/storage/test_drop_legacy_migration.py`.
 - 7.1.7 - Template hashing and the skills metadata docstring carry no legacy storage reference. file: `src/gobby/workflows/template_hashes.py`. file: `src/gobby/storage/skills/_metadata.py`.
+- 7.1.8 - A signature-matching generated row is excluded from the backstop, while a workflow_type='workflow' row failing the generated signature and a row with an unknown workflow_type each fail the preflight loudly with ids and names. test: `tests/storage/test_drop_legacy_migration.py::test_unsupported_row_classification`.
+- 7.1.9 - Typed-side evolution after copy — an edit, a sync refresh, a restore, and a hard-delete of typed rows — does not block the drop, while a legacy-only write and a post-copy legacy insertion each block it loudly. test: `tests/storage/test_drop_legacy_migration.py::test_directional_backstop`.
 
 ### 7.2 Legacy-reference audit test [category: test] (depends: 7.1, 7.3)
 `kind: deliverable`
 
-Targets: `tests/audit/test_legacy_workflow_storage_removed.py` (new),
-`src/gobby/storage/postgres_baseline_schema.sql`,
-`src/gobby/install/shared/`
+Target: `tests/audit/test_legacy_workflow_storage_removed.py` (new)
 
 Grep-style pytest failing on word-boundary occurrences of
 `workflow_definitions`, `workflow_instances`, `workflow_states`,
 `LocalWorkflowDefinitionManager`, `WorkflowDefinitionRow`, `workflow_type`,
 `register_agent_step_workflow`, `_step_workflow_name`, `/api/workflows`, and
-`-steps` name-derivation patterns. Scope: `src/gobby/**/*.py` excluding
-`storage/migrations/` (historical migrations legitimately name the dropped
-tables), `web/src/**/*.{ts,tsx}`, the live baseline schema
-`src/gobby/storage/postgres_baseline_schema.sql`, and the current bundled
+`-steps` name-derivation patterns. Scan scope (read-only; the audit changes no
+scanned file): `src/gobby/**/*.py`, `web/src/**/*.{ts,tsx}`, the live baseline
+schema `crates/gcore/assets/schema/baseline.sql` — excluding this epic's
+historical migration assets under `crates/gcore/assets/schema/migrations/`,
+which legitimately name the dropped tables — and the current bundled
 YAML/skill/prompt sources under `src/gobby/install/shared/`. The baseline SQL
 and the bundled templates are precisely what 7.1 and 7.3 rewrite, so leaving
 them unscanned lets the removal regress exactly where regression is easiest.
@@ -1795,7 +2923,7 @@ both when a non-allowlisted occurrence appears **and** when an allowlisted
 occurrence no longer exists, so exceptions stay narrow and self-prune instead of
 outliving their reason. Additionally assert no bundled agent YAML contains
 top-level `steps:`/`step_variables:`/`exit_condition:` keys (guards the
-`extra="ignore"` silent-drop trap that 2.1's validator closes at runtime).
+`extra="ignore"` silent-drop trap that 2.2's validator closes at runtime).
 
 The dependency on 7.3 is load-bearing, not bookkeeping: 7.2 scans the bundled
 YAML/skill/prompt sources that 7.3 rewrites, so as siblings the audit lands red
@@ -1805,20 +2933,21 @@ after 7.1 completes and phase-by-phase expansion has no valid ordering.
 deliverable that removes it or a justified allowlist entry; an audit written
 against an unowned occurrence lands red at the end of the epic with no
 deliverable left to fix it. The occurrences that are not obviously owned by the
-domain cutover that renames them are assigned as follows: `workflow_states` in
-`src/gobby/config/tasks.py` → 7.3; the `workflow_definitions` import in
+domain cutover that renames them are assigned as follows: the stale
+`workflow_states` docstring in `src/gobby/config/tasks.py:611` → 7.3; the
+`workflow_definitions` import in
 `src/gobby/workflows/template_hashes.py:20` and the `workflow_definitions`
 docstring in `src/gobby/storage/skills/_metadata.py:250` → 7.1; the
-`workflow_instances` log key in `src/gobby/agents/agent_cleanup.py:454` → 3.3;
-the `/api/workflows` comment in
+`workflow_instances` log key in `src/gobby/agents/terminal_cleanup.py:180` →
+3.3; the `/api/workflows` comment in
 `src/gobby/servers/middleware/project_context.py:10` → 5.1;
 `WorkflowEvaluation.workflow_type` in `src/gobby/workflows/dry_run.py:101` → 4.3;
 the `WorkflowDefinitionRow` import and annotations in
 `src/gobby/workflows/engine/evaluation.py:12,96,207,229` → 4.1; the same import
 and the `is_internal_rule` annotation in
 `src/gobby/workflows/reserved_variables.py:6,39` → 4.1; and the `workflow_type`
-column and index in
-`src/gobby/storage/postgres_baseline_schema.sql:1425,1443` → 7.1.
+column and `idx_wf_defs_type` index in
+`crates/gcore/assets/schema/baseline.sql:2140-2158,3182` → 7.1.
 
 The audit itself asserts this closure: it enumerates every occurrence present in
 the tree at the time it is written, and fails if any of them is neither removed
@@ -1834,15 +2963,24 @@ a checked property rather than a claim in prose.
 ### 7.3 Documentation sweep [category: docs] (depends: 7.1)
 `kind: deliverable`
 
-Targets: `docs/guides/agents.md`, `docs/guides/rules.md`,
-`docs/guides/variables.md`, `docs/guides/workflows-overview.md`,
-`docs/guides/http-endpoints.md`, `docs/guides/pipelines.md`,
-`docs/architecture/architecture.md`, `docs/reviews/cli-build-ops.md`,
-`docs/audits/configuration-audit.md`,
-`docs/plans/workflow-refactor.md` (deleted),
-`src/gobby/install/shared/workflows/rules/CLAUDE.md`,
-`src/gobby/dispatch/CLAUDE.md`, `src/gobby/config/tasks.py`, bundled skill
-docs (e.g. `src/gobby/install/shared/skills/persona/SKILL.md`)
+Targets:
+- `docs/guides/agents.md`
+- `docs/guides/rules.md`
+- `docs/guides/variables.md`
+- `docs/guides/workflows-overview.md`
+- `docs/guides/http-endpoints.md`
+- `docs/guides/pipelines.md`
+- `docs/guides/cli-commands.md`
+- `docs/guides/mcp-tools.md`
+- `docs/architecture/architecture.md`
+- `docs/reviews/cli-build-ops.md`
+- `docs/audits/configuration-audit.md`
+- `docs/plans/workflow-refactor.md` (deleted)
+- `src/gobby/install/shared/workflows/rules/CLAUDE.md`
+- `src/gobby/dispatch/CLAUDE.md`
+- `src/gobby/config/tasks.py::*` — scope-reason: stale workflow_states docstring removal
+- `src/gobby/install/shared/skills/persona/SKILL.md`
+- `src/gobby/install/bundled_content_manifest.json::*` — scope-reason: regenerated hashes for the rewritten bundled skills and prompts
 
 Update guides to the nested `step_workflow` agent shape, domain tables, new
 HTTP routes, MCP tool set, and CLI commands. Verify every MCP tool named in
@@ -1859,10 +2997,19 @@ the typed tables already existed). `architecture.md:101`
 inventory.
 
 **Active-doc inventory.** The sweep is scoped by searching the active docs tree
-for every removed route, command, table, and discriminator rather than by the
-guide list this plan started with. That search adds three artifacts the initial
+— including every guide under `docs/guides/` — for every removed route,
+command, tool name, table, and discriminator rather than by the
+guide list this plan started with. That search adds five artifacts the initial
 list missed: `docs/guides/http-endpoints.md` and `docs/guides/pipelines.md` both
-document `/api/workflows` or `workflow_type` as current behavior, and
+document `/api/workflows` or `workflow_type` as current behavior;
+`docs/guides/cli-commands.md` presents the entire `gobby workflows` command
+group 6.1 deletes (the top-level table row at `:77` and the `### Workflows`
+subcommand block at `:589-601`) and is rewritten around the `gobby agents`,
+`gobby pipelines`, `gobby variables`, and `gobby sync` replacements
+(adversary round 3 APR3-019); `docs/guides/mcp-tools.md` documents the
+removed `list_workflows` (`:614`) and renamed `get_workflow_status` (`:624`),
+and `docs/guides/variables.md:434` names the old status tool — both retarget
+at the 5.2 disposition (adversary round 3 APR3-017); and
 `docs/audits/configuration-audit.md` needs an explicit active-versus-historical
 disposition — either updated to the final state, or marked as a dated historical
 audit so a future reader does not treat it as current. `src/gobby/workflows/`
@@ -1876,40 +3023,178 @@ has no `CLAUDE.md`; the module guidance that mentions the legacy tables lives in
 - 7.3.3 - Bundled skills and prompts reference only surviving MCP tools. file: `src/gobby/install/shared/skills/persona/SKILL.md`.
 - 7.3.4 - No audited legacy token remains in config/tasks.py. file: `src/gobby/config/tasks.py`.
 - 7.3.5 - The HTTP endpoint and pipelines guides describe the domain routes with no /api/workflows or workflow_type reference. file: `docs/guides/http-endpoints.md`. file: `docs/guides/pipelines.md`.
+- 7.3.9 - The CLI guide documents the replacement command surface with no gobby workflows group, and the MCP tools and variables guides name only surviving tools. file: `docs/guides/cli-commands.md`. file: `docs/guides/mcp-tools.md`. file: `docs/guides/variables.md`.
 - 7.3.6 - The configuration audit carries an explicit active-or-historical disposition. file: `docs/audits/configuration-audit.md`.
 - 7.3.7 - Module guidance describes the domain tables. file: `src/gobby/dispatch/CLAUDE.md`. file: `src/gobby/install/shared/workflows/rules/CLAUDE.md`.
+- 7.3.8 - The bundled content manifest is regenerated for every rewritten bundled skill and prompt and its freshness test passes without an update flag. file: `src/gobby/install/bundled_content_manifest.json`. test: `tests/install/test_bundled_content_manifest.py`.
 
 ## E1 End-to-End Verification
 `kind: verification`
 
-Per-phase: `uv run gobby restart` runs that phase's migrations; then focused
-tests only (`GOBBY_TEST_PROTECT=1 uv run pytest <paths> -v`) — storage
+Per-phase: rebuild and reinstall gdaemon when crate schema assets changed,
+then `uv run gobby restart` — startup applies the baseline refresh and that
+phase's pending non-destructive migrations (the P7 drop instead needs the
+explicit `gdaemon schema apply --destructive` operator step from
+Constraints); then focused tests only
+(`GOBBY_TEST_PROTECT=1 uv run pytest <paths> -v`) — storage
 (`tests/storage/definitions/`, per-migration tests), runtime
 (`tests/workflows/test_step_instances.py`,
 `tests/workflows/test_step_snapshot_semantics.py`), surfaces
 (`tests/servers/routes/`, `tests/mcp_proxy/tools/workflows/`), UI (vitest for
-the retargeted suites). Epic-final: restore a copy of the live hub, replay all
-migrations, confirm **249 definition rows** land in the typed tables — 167
+the retargeted suites). Epic-final: restore a copy of the live hub into an
+isolated database, replay the baseline refresh and every pending migration
+through `gdaemon schema apply` (adding `--destructive` with a verified backup
+manifest for the drop), confirm **249 definition rows** land in the typed
+tables — 167
 rules (162 live + 5 soft-deleted), 29 agents (28 live + 1 soft-deleted),
 42 variables, 11 pipelines — plus **25** `agent_step_workflows` children (every
 agent row carrying a non-empty `steps` array), for 274 rows total; the 29
 generated `workflow_type='workflow'` rows are not copied. Re-derive these five
 counts from the restored hub before asserting them: the legacy tables are still
 live and writable until P7, so a sync or a retired bundled agent moves them.
+Confirm every copied definition row left a `legacy_copy_ledger` checkpoint,
+that the directional backstop passes over typed edits made after the copies,
+and that the destructive apply drops the ledger with the legacy tables.
 Confirm only live-session instances survive; spawn a stepful agent (e.g. planner) and observe step
 enforcement, transitions, and the completion gate from the snapshot; edit the
 agent definition mid-run and confirm the run is unaffected while a second
 spawn picks up the edit; restart the daemon against a session whose instance
 was deleted and confirm the structured fresh-snapshot recovery warning appears
 in `~/.gobby/logs/` with the session, agent name, and resolved ids; exercise
-the pipelines and variables editors in the web UI; run `gobby sync`,
-`gobby agents steps`, `gobby pipelines check`;
+the pipelines and variables editors in the web UI; run the isolated
+two-daemon definition-revision test
+(`tests/integration/definitions/test_definition_revisions_multi_daemon.py`)
+proving a mutation through daemon A invalidates daemon B without a restart;
+run `gobby sync`, `gobby agents steps`, `gobby pipelines check`;
 `uv run ruff check src/`, `uv run mypy src/`, and the test-types ratchet must
 pass; the P7 audit test is the standing regression gate.
 
 ## V1 Plan Changelog
 
 `kind: verification`
+
+**Round 1** `kind: enhancement`
+
+- enhancer_run: afd50f90-e9e9-4802-8bb8-67a0a7ab6e28
+- enhancer_session: 2b57d1d0-211f-49d3-8992-7e90b947856c
+- converged: false
+- suggestions_presented: 4
+- accepted:
+  - E1 / better / commit-visible revision contract with dual-domain child bumps
+  - E2 / better / parameterized enabled reconciliation contract across all four domains
+  - E3 / better / staged generic-surface kind rejection at each domain cutover
+  - E4 / bigger / persistent revisions with cross-daemon LISTEN/NOTIFY invalidation
+- declined:
+  - (none)
+- resolution_notes: All four suggestions folded in. The operator additionally
+  renamed the reconciliation bit `enabled_user_modified` → `enabled_pinned`
+  on the typed tables (the legacy column keeps its name until the P7 drop).
+  E4 adds the `definition_revisions` table — 1.1 now ships seven tables — and
+  a notifications module modeled on `config_notifications.py` with a
+  two-daemon integration test. E3 serializes 4.3 after 4.2 because the
+  staged shrink shares `routes/workflows.py`, `_definitions.py`, and
+  `workflows/imports.py` across the P4 cutovers.
+
+**Round 2** `kind: verification`
+
+- reviewer_run: 038eb7bb-00f8-40c9-85cb-5b007c2c5ed6
+- reviewer_session: b40679e5-fd7c-4581-8ccc-4509141525fe
+- verdict: needs_review
+- findings:
+- APR2-001 / blocking / stale #18974 resume exclusion in 3.2-3.4
+- APR2-002 / blocking / model-before-YAML cutover not atomic (2.1/2.2)
+- APR2-003 / blocking / bundled content manifest unowned by 2.2
+- APR2-004 / blocking / bundled agent inventory conflated files with hub rows
+- APR2-005 / blocking / workflow_type=workflow exclusion lacked provenance predicate
+- APR2-006 / blocking / no .coverage-ledger.yaml companion
+- APR2-007 / blocking / 3.2/3.3 acceptance cited a suite 3.4 creates
+- APR2-008 / blocking / copy migrations missed schema-identity lockstep targets
+- APR2-009 / blocking / WorkflowInstanceManager test seams undispositioned
+- APR2-010 / blocking / hooks-factory WorkflowLoader patch sites unowned
+- APR2-011 / blocking / 6.1 conditional extraction of 861-line agents.py
+- APR2-012 / blocking / agent_name writable through generic save
+- APR2-013 / blocking / pre-launch compensation boundaries incomplete
+- APR2-014 / blocking / instance copy candidate resolution nondeterministic
+- APR2-015 / blocking / revision bump earlier than outermost ambient commit
+- resolution_notes: All 15 findings accepted (unattended, operator-delegated)
+  and repaired in this revision with whole-plan sweeps per class. 2.1 became
+  additive-only and 2.2 the atomic model+YAML cutover owning every reader and
+  shape suite; the 3.2-3.4 resume block was rewritten around the completed
+  #18974 same-session continuity contract with the daemon_stop retention gate
+  carried onto the typed table; schema-identity lockstep targets were added to
+  all five migration-registering deliverables; the generated-row signature,
+  deterministic instance-copy resolution, agent_name immutability, the
+  pre-launch cleanup owner, after-commit revision binding, unconditional
+  agents_steps.py extraction, and the full WorkflowInstanceManager /
+  WorkflowLoader test-seam dispositions were folded into their owning
+  sections; the coverage-ledger companion ships alongside the plan. Two
+  narrowed repairs are recorded in the Decision Record (APR2-015 existing
+  after_commit seam; APR2-008 not applied to 1.5).
+
+```json plan-review-round
+{"evidence_id":"cd52d419-de72-4e44-8517-7840a45f6633","plan_hash":"e46380804ad1a347e413be2c3899fb16562f7c7e47bfaa5fae4669b2a117f4ce","round_number":2,"round_result":{"coverage_attestation":{"adjacent_variant_complete":true,"attestation_digest":"0f518d735f7e678f7d900ad08e759e02daad8a51b9cf6e6252e494cc1f7e3238","cross_lane_interaction_complete":true,"disposition_counts":{"dismissed":4,"emitted_findings":15,"total":19},"evidence_id":"cd52d419-de72-4e44-8517-7840a45f6633","lanes":[{"candidate_count":8,"lane_id":"requirements_traceability","status":"completed"},{"candidate_count":6,"lane_id":"repository_blast_radius","status":"completed"},{"candidate_count":5,"lane_id":"runtime_invariants","status":"completed"}],"shadow_manifest_status":{"entry_count":23,"manifest_digest":"7db866952dce5da506749eeec432697e001576c9fa803801b9f7521b3b6f1c94","status":"valid"},"source_digest":"0a268a954ae860cbe0b783031f02e4a32dc5b540d4fe450f7c9a42c7e5430b70","version":1},"findings":[{"category":"bad-sequencing","check_key":"daemon-resume-state-continuity","description":"The current runtime resumes prepared same-session agents through resume_executor, spawn, and runtime_cleanup, with tests in tests/agents/test_spawn_prepare_resume.py. The plan's stale exclusion would route the storage split around that live contract and leave resume behavior unowned.","finding_id":"APR2-001","fix":"Rewrite §§ 3.2-3.4 around the completed #18974 seam. Target resume_executor.py, spawn.py, runtime_cleanup.py, and test_spawn_prepare_resume.py; require same-session daemon resume, snapshot persistence, and cleanup behavior to remain intact.","location":"Phase 3 / §§ 3.2-3.4","prevention":"Before finalizing a refreshed plan, re-read every completed prerequisite task and map its current regression tests to the affected deliverables.","principle":"A refreshed plan must build on completed prerequisite contracts and preserve their tested runtime invariants.","root_cause":"Sections 3.2-3.4 still treat same-session daemon resume as excluded even though #18974 completed and established the prepare/resume cleanup seam.","section_id":"3.2","severity":"blocking"},{"category":"bad-sequencing","check_key":"atomic-schema-shape-cutover","description":"Applying § 2.1 first makes the existing bundled agent YAML incompatible with the new model. The split also leaves raw-definition consumers and tests such as test_agent_definitions.py, test_agent_definitions_v2.py, and test_skill_composition.py outside exact ownership.","finding_id":"APR2-002","fix":"Combine §§ 2.1 and 2.2 into one atomic model-and-YAML cutover. Add every raw reader and named regression file to exact Targets and require the bundled definitions to load successfully in that deliverable's validation.","location":"Phase 2 / §§ 2.1-2.2","prevention":"For every serialized shape change, inventory all producers/readers/tests and prove each ordered commit can load the checked-in artifacts.","principle":"A serialized schema cutover must leave every implementation boundary executable and own every producer, reader, and regression target.","root_cause":"Section 2.1 changes the Definition model before § 2.2 converts bundled YAML, creating an invalid intermediate shape while omitting raw readers and named regression files from exact Targets.","section_id":"2.1","severity":"blocking"},{"category":"traceability","check_key":"generated-bundled-manifest-lockstep","description":"The bundled content manifest hashes the agent YAML payload. The planned YAML conversion would leave that generated index stale and fail its repository freshness contract.","finding_id":"APR2-003","fix":"Add src/gobby/install/bundled_content_manifest.json and tests/install/test_bundled_content_manifest.py to § 2.2 Targets. Require manifest regeneration plus a passing freshness test without an update flag.","location":"Phase 2 / § 2.2","prevention":"Whenever bundled install content changes, include its generated manifest and the no-update freshness command in Targets and Acceptance.","principle":"Checked-in bundled-content indexes must be regenerated and freshness-tested in the same deliverable as their source assets.","root_cause":"Section 2.2 changes bundled YAML files without owning src/gobby/install/bundled_content_manifest.json or its freshness test.","section_id":"2.2","severity":"blocking"},{"category":"traceability","check_key":"bundled-agent-inventory-parity","description":"The current bundled manifest contains 25 total agent YAML files: 21 stepful and 4 step-less. nightly-linter, nightly-test-fixer, plan-review-researcher-taskless, and wiki-researcher are absent, so the stated conversion set and its acceptance count cannot be satisfied.","finding_id":"APR2-004","fix":"Replace the stale inventory with the verified 25-file total set, remove the four nonexistent names, and state the separate legacy database-row count and reconciliation rule used by § 2.3.","location":"Phase 2 / §§ 2.2-2.3","prevention":"Generate and record the current asset inventory before specifying bulk conversion counts; separately label any source-database counts.","principle":"Migration and conversion inventories must be derived from the current filesystem and kept distinct from legacy database-row counts.","root_cause":"The plan claims 25 stepful plus 4 step-less bundled agents and names four absent files, conflating the 25-file current inventory with a legacy count.","section_id":"2.2","severity":"blocking"},{"category":"missing-requirement","check_key":"unsupported-definition-row-rejection","description":"The epic requires unsupported standalone workflow rows to fail migration. workflow_type alone does not establish generated provenance, so the current exclusion can silently leave unsupported user definitions behind.","finding_id":"APR2-005","fix":"Define the exact generated-workflow signature and project/global lineage rules. Migrate only rows satisfying that signature, make preflight fail on every remaining standalone workflow row, and test generated and unsupported examples.","location":"Phase 2 / § 2.3 and Phase 7 / § 7.1","prevention":"For each excluded migration row class, specify the provenance predicate, preflight failure rule, and positive and negative fixtures.","principle":"A destructive migration must classify supported rows by a proven discriminator and fail on every unsupported row.","root_cause":"The plan excludes all workflow_type=workflow rows without defining evidence that those rows are generated rather than unsupported standalone definitions.","section_id":"7.1","severity":"blocking"},{"category":"missing-requirement","check_key":"coverage-ledger-companion","description":"docs/contracts/plan-coverage.md requires every new epic plan to ship an adversary-reviewed .coverage-ledger.yaml companion. The existing coverage artifacts do not provide that required companion for this plan.","finding_id":"APR2-006","fix":"Add .gobby/plans/split-workflow-definition-storage.coverage-ledger.yaml and populate it with every acceptance item and expected implementation leaf; include ledger validation in § 7.2.","location":"Whole plan / § 7.2","prevention":"Before adversary approval, verify the canonical .gobby/plans/<plan-id>.coverage-ledger.yaml exists and covers every deliverable acceptance item.","principle":"Every new epic plan must include the governing bootstrap coverage ledger before expansion.","root_cause":"The plan has no .coverage-ledger.yaml companion mapping acceptance items to expected implementation leaves.","section_id":"7.2","severity":"blocking"},{"category":"bad-sequencing","check_key":"acceptance-test-producer-order","description":"The Phase 3 ordering makes § 3.2 and § 3.3 validation impossible in isolation because their referenced regression module is a downstream § 3.4 target.","finding_id":"APR2-007","fix":"Move creation and ownership of tests/workflows/test_step_snapshot_semantics.py into § 3.2, make §§ 3.3-3.4 depend on that producer, and update Targets and acceptance commands accordingly.","location":"Phase 3 / §§ 3.2-3.4","prevention":"For each acceptance test path, map its producing deliverable and ensure that producer precedes every consumer.","principle":"A deliverable's acceptance command may depend only on test artifacts that exist when that deliverable executes.","root_cause":"Sections 3.2 and 3.3 invoke tests/workflows/test_step_snapshot_semantics.py, which § 3.4 creates later.","section_id":"3.2","severity":"blocking"},{"category":"traceability","check_key":"migration-identity-lockstep","description":"Changing an embedded migration changes the schema root/latest asset identity. Leaving crates/gcore/tests/schema_contract.rs or src/gobby/storage/schema_expected_identity.json outside any one copy step produces an internally inconsistent commit.","finding_id":"APR2-008","fix":"Add crates/gcore/tests/schema_contract.rs and src/gobby/storage/schema_expected_identity.json to every listed copy-migration deliverable, and require the schema-contract and rebuilt-daemon identity checks after each asset replacement.","location":"Phases 1-4 / §§ 1.5, 2.3, 3.2, 4.1, 4.2, 4.3","prevention":"For every EmbeddedMigration Target, require the Rust contract fixture, expected daemon identity, and their freshness/rebuild checks in the same deliverable.","principle":"Every embedded schema migration update must advance all checked-in schema identity locks in the same commit.","root_cause":"The copy-migration deliverables replace EmbeddedMigration assets without consistently targeting schema_contract.rs and schema_expected_identity.json.","section_id":"2.3","severity":"blocking"},{"category":"weak-testability","check_key":"deleted-instance-test-seam-closure","description":"WorkflowInstance and WorkflowInstanceManager remain embedded in tests/workflows/test_instance_manager.py and tests/workflows/test_step_enforcement.py, yet the sections deleting them do not target or disposition those seams.","finding_id":"APR2-009","fix":"Add the complete instance-manager and enforcement test inventory to §§ 3.2-3.3 Targets. State which fixtures are deleted or rewritten for the new storage API and require focused regressions for both suites.","location":"Phase 3 / §§ 3.2-3.3","prevention":"Before deleting a class, sweep constructors, imports, monkeypatches, fakes, and fixtures across production and tests; list a rewrite or deletion for each hit.","principle":"Deleting a runtime abstraction requires an exhaustive disposition of its constructors, fakes, fixtures, and enforcement tests.","root_cause":"The repaired target inventory still omits WorkflowInstanceManager consumers in test_instance_manager.py and adjacent step-enforcement fixtures.","section_id":"3.3","severity":"blocking"},{"category":"weak-testability","check_key":"deleted-loader-test-seam-closure","description":"Section 4.3 now owns the main loader deletion surface, yet tests/workflows/test_workflow_hooks.py still patches the removed factory symbol twice. Those tests will break or continue asserting the obsolete seam.","finding_id":"APR2-010","fix":"Add tests/workflows/test_workflow_hooks.py to § 4.3 Targets, replace both WorkflowLoader patches with the domain-loader seam, and include the focused workflow-hook test command.","location":"Phase 4 / § 4.3","prevention":"After repairing a deletion inventory, repeat the class-wide symbol and string-patch sweep across tests and verify every match has an exact Target.","principle":"A deletion repair is complete only when every adjacent monkeypatch and fake is migrated to the replacement seam.","root_cause":"The WorkflowLoader repair misses two gobby.hooks.factory.WorkflowLoader patch sites in tests/workflows/test_workflow_hooks.py.","section_id":"4.3","severity":"blocking"},{"category":"bad-sequencing","check_key":"source-size-preemptive-decomposition","description":"The proposed conditional extraction can leave agents.py at or beyond the enforced ceiling during implementation, and its Targets do not identify the required destination module.","finding_id":"APR2-011","fix":"Make decomposition unconditional in § 6.1. Move the new definition-related commands into a focused submodule first, target both that module and the remaining registration surface, and require both production files to stay below 1,000 lines.","location":"Phase 6 / § 6.1","prevention":"Record current and projected line counts for every touched production source and make decomposition an explicit predecessor whenever the projection approaches the ceiling.","principle":"A production module already near the 1,000-line ceiling must be decomposed before adding another command surface.","root_cause":"Section 6.1 makes extraction conditional even though src/gobby/cli/agents.py is already 861 lines before the planned CLI additions.","section_id":"6.1","severity":"blocking"},{"category":"unhandled-edge","check_key":"instance-lineage-identity-immutability","description":"A caller can save an instance under a different agent_name while retaining the prior snapshot and lineage. Resume resolution can then combine the wrong definition identity with historical execution state.","finding_id":"APR2-012","fix":"Make agent_name immutable in ordinary save/update operations. Permit identity changes only through the explicit replacement operation, define its snapshot/lineage reset behavior, and add rejection and replacement tests.","location":"Phase 3 / §§ 3.1-3.2","prevention":"Classify every persisted identity field as immutable or replace-only and test generic updates against that classification.","principle":"A persisted execution lineage record must not change its agent identity through a generic save path.","root_cause":"The proposed save semantics preserve snapshot and lineage fields while leaving agent_name writable, allowing mixed identity and snapshot state.","section_id":"3.1","severity":"blocking"},{"category":"unhandled-edge","check_key":"prelaunch-compensation-completeness","description":"Preparation can mutate state and issue credentials before it returns. A failure during preparation or after credential/bootstrap acquisition can escape the plan's cleanup branch, leaving active credentials or partial runtime state.","finding_id":"APR2-013","fix":"Specify one idempotent prelaunch cleanup owner covering failures inside preparation, snapshot persistence, credential activation, bootstrap, and launch. Add fault-injection tests at every boundary and prove repeated cleanup is safe.","location":"Phase 3 / §§ 3.2 and 3.4","prevention":"Enumerate acquisition boundaries in prepare-to-launch order and inject a failure after each one to prove one cleanup owner restores the prelaunch state.","principle":"Every acquired prelaunch resource and side effect needs an idempotent compensation owner for failures at each subsequent boundary.","root_cause":"The plan compensates snapshot-save failure after successful preparation but does not cover partial failures inside preparation, active credential issuance, bootstrap, or launch.","section_id":"3.2","severity":"blocking"},{"category":"unhandled-edge","check_key":"instance-copy-deterministic-resolution","description":"Multiple definition candidates can share names or timestamps across project and global scope. 'Latest' alone can copy an arbitrary snapshot or attach the wrong lineage, and the zero-candidate path is unspecified.","finding_id":"APR2-014","fix":"Define the qualifying agent-step predicate, project-first then global fallback, lineage resolution, and a stable total order including a final ID tie-break. Add fixtures for duplicates, equal timestamps, fallback, and no candidate.","location":"Phase 3 / § 3.2","prevention":"For every migration lookup, specify qualification, scope precedence, total ordering, missing-row behavior, and duplicate fixtures.","principle":"Data-copy migrations must define deterministic, scope-aware resolution when zero, one, or many candidates exist.","root_cause":"The latest-candidate rule lacks an agent-step predicate, project-first/global fallback lineage, and a deterministic tie-break.","section_id":"3.2","severity":"blocking"},{"category":"unhandled-edge","check_key":"ambient-transaction-after-commit","description":"The planned post-manager-transaction bump is earlier than the true commit boundary under ambient nesting. An outer rollback can therefore leave local revisions and listeners advanced while the definition write and persistent revision disappear.","finding_id":"APR2-015","fix":"Add an outermost after-commit callback mechanism to the ambient transaction layer and route all definition revision/local-listener work through it. Test outer commit, outer rollback, nested mutation failure, and exactly-once delivery.","location":"Phase 1 / §§ 1.2-1.4","prevention":"Test definition mutations inside nested ambient transactions and assert persistent revision, local counter, and listener state before commit and after rollback.","principle":"Revision counters and listener delivery must occur only after the outermost ambient transaction commits.","root_cause":"A manager's inner transaction can finish and bump local state while an ambient outer transaction remains able to roll back.","section_id":"1.4","severity":"blocking"}],"reviewer_session":"b40679e5-fd7c-4581-8ccc-4509141525fe","round":2,"verdict":"needs_review"},"session_id":"24384cfe-8cb0-4aaa-bfaa-5b86560252aa"}
+```
+
+
+**Round 3** `kind: verification`
+
+- reviewer_run: 4866bfa1-37c5-4e46-9c16-ab3a58051aca
+- reviewer_session: 32bf2f1b-08ca-410d-baa2-e0eb8b9fd979
+- verdict: needs_review
+- findings:
+- APR3-001 / blocking / 1.3 removed the child on ordinary soft delete
+- APR3-002 / blocking / 2.3.5 kept the stale 25-stepful bundled count (fixer-induced, APR2-004)
+- APR3-003 / blocking / staged import rejections lacked an owned test_imports.py seam
+- APR3-004 / blocking / rule-engine and session-defaults suites unowned by the 4.1/4.2 cutovers
+- APR3-005 / blocking / pipeline MCP CRUD still imported the generic module 5.2 deletes
+- APR3-006 / blocking / cli/pipelines.py and four CLI suites undispositioned at the package deletion
+- APR3-007 / blocking / 2.3 copy migration assumed only the flat pre-2.2 shape (fixer-induced, APR2-002)
+- APR3-008 / blocking / claimed non-reentrant same-target lock reacquisition
+- APR3-009 / blocking / timestamp order could migrate the wrong persona's snapshot (fixer-induced, APR2-014)
+- APR3-010 / blocking / variable-defaults cache and paths lacked project scope
+- APR3-011 / blocking / symmetric drop backstop blocked on legitimate typed evolution
+- APR3-012 / blocking / prepare_terminal_spawn raise left partial acquisitions unreachable (fixer-induced, APR2-013)
+- APR3-013 / blocking / baseline_refresh.rs implementation owner untargeted in 1.1
+- APR3-014 / blocking / listener started from sync init with no rollback branch
+- APR3-015 / blocking / sixteen instance-manager test seams undispositioned (fixer-induced, APR2-009)
+- APR3-016 / blocking / agent-token capability matrix missed the relocated variable routes
+- APR3-017 / blocking / renamed/removed MCP tool consumers outside Targets
+- APR3-018 / blocking / web variable helper and style-surface fake untargeted
+- APR3-019 / blocking / cli-commands.md still documents the deleted workflows group
+- resolution_notes: Eighteen findings repaired in this revision (unattended,
+  operator-delegated), with class-wide sweeps per finding class. APR3-008's
+  core claim was refuted against the repository — nested same-target
+  acquisition short-circuits on frozen-dataclass value equality in
+  _PostgresTransaction.acquire_additional_lock (postgres_pool.py:313-314) via
+  the ambient path, so the mutation lock is re-entrant and the proposed
+  optional-Transaction plumbing was not applied; 3.1 instead now pins the
+  mechanism and requires the re-entrancy test to run through the real adapter
+  on one shared adapter instance. Narrowed repairs recorded against verified
+  evidence: APR3-006 (tests/cli/test_pipelines.py holds no cli.workflows
+  reference, so its retarget was dropped and the closure records it
+  deliberately), APR3-013 (the refresh acceptance is a single-const equality,
+  not an allowlist; 1.1 extends it to an enumerated added-statement
+  acceptance), APR3-017 (list_workflows appears in no prompt or bundled YAML;
+  the closure covers its registry/E2E inventories plus every
+  get_workflow_status consumer), APR3-018 (workflowVariables.ts is coupled
+  through its definitionJson parameter rather than reading the field
+  directly). Major repairs: soft delete now preserves the step-workflow
+  child with a delete-restore acceptance (1.3); the agent copy migration
+  normalizes flat and nested source shapes (2.3); the instance copy resolves
+  the active persona identity before ordering (3.2); prepare_terminal_spawn
+  owns its internal compensation with per-acquisition fault injection (3.2);
+  the P7 drop backstop became directional via a new legacy_copy_ledger
+  checkpoint table written by all four definition copy migrations and
+  dropped with the legacy tables (1.1, 2.3, 4.1-4.3, 7.1, E1); variable
+  defaults are project-scoped with a keyed cache (4.2); the listener splits
+  construction from async start with a rollback branch (1.4); the capability
+  matrix, MCP tool consumers, CLI/web/docs closures gained exact Targets and
+  acceptance (5.1, 5.2, 6.1, 6.2, 7.3).
+
+```json plan-review-round
+{"evidence_id":"b11eb9aa-e9ed-42d9-ab8e-1f97330cca7d","plan_hash":"ccfda402f8b2bf479bc92c484f459c9fc4a1a59fdd650d1ad26fa5fb9a26f1e1","round_number":3,"round_result":{"coverage_attestation":{"adjacent_variant_complete":true,"attestation_digest":"19308048690d00eb4ac857bcb281598b02c31c9a7b8bacbfe107e9ef62065af6","cross_lane_interaction_complete":true,"disposition_counts":{"dismissed":6,"emitted_findings":19,"total":25},"evidence_id":"b11eb9aa-e9ed-42d9-ab8e-1f97330cca7d","lanes":[{"candidate_count":10,"lane_id":"requirements_traceability","status":"completed"},{"candidate_count":8,"lane_id":"repository_blast_radius","status":"completed"},{"candidate_count":7,"lane_id":"runtime_invariants","status":"completed"}],"shadow_manifest_status":{"entry_count":23,"manifest_digest":"f70d5c2f556f44e0ec0f99677662079afccefa3792a2be635920e4e349f7640a","status":"valid"},"source_digest":"7c5ae3db9b911dfb59a71629a0767876ba1959b7f7576b2471606ae9c05ff870","version":1},"findings":[{"category":"unhandled-edge","check_key":"soft-delete-child-payload-preservation","description":"Section 1.3 says parent delete/hard-delete removes the child, while §§ 2.3 and 7.1 rely on agent_step_workflows surviving soft deletion. Removing the child on ordinary delete destroys the only restorable step-workflow payload.","finding_id":"APR3-001","fix":"State that AgentDefinitionManager.delete preserves the child and only hides the parent. Delete the child only through set_step_workflow(None), upsert-without-steps, hard_delete, or purge; add delete→restore tests for payload and revision behavior.","location":"Phase 1 / § 1.3, with §§ 2.3 and 7.1","prevention":"For every parent-child soft-delete model, test delete→restore and classify child behavior separately for soft-delete, explicit child removal, hard-delete, and purge.","principle":"Soft deletion must preserve every payload needed for a lossless restore.","root_cause":"The child-lifecycle text conflates ordinary soft-delete with hard-delete even though the parent JSON no longer carries step-workflow data.","section_id":"1.3","severity":"blocking"},{"category":"traceability","causal_finding_id":"APR2-004","causal_section_ids":["Epic Review Notes","2.2","2.3","E1"],"check_key":"bundled-agent-count-parity-after-repair","description":"The repaired inventory is 25 bundled files total—21 stepful and four step-less—yet acceptance 2.3.5 still requires 25 stepful bundled agents plus four step-less agents, an unsatisfiable 29-file set.","finding_id":"APR3-002","fix":"Change 2.3.5 to 21 stepful and four step-less bundled agents. Keep 29 agent rows and 25 child rows only in the hub-migration acceptance and E1, explicitly labeled hub-derived.","introduced_in_round":2,"location":"Phase 2 / §§ 2.2-2.3","prevention":"After repairing an inventory, sweep every numeric acceptance and end-to-end count and label each as filesystem-derived or database-derived.","principle":"Filesystem conversion counts and persisted-hub migration counts must remain distinct in every acceptance criterion.","root_cause":"The APR2-004 inventory repair updated the plan narrative and YAML set but left acceptance 2.3.5 on the old 25-stepful bundled count.","section_id":"2.3","severity":"blocking"},{"category":"bad-sequencing","check_key":"staged-import-test-target-ownership","description":"Agent, rule, and variable cutovers each change sync_imported_definition and cite tests/workflows/test_imports.py, but none targets that test before § 4.3. Their phase-local rejection acceptances therefore lack an owned implementation seam.","finding_id":"APR3-003","fix":"Add tests/workflows/test_imports.py to Targets in §§ 2.3, 4.1, and 4.2, with exact agent/rule/variable rejection fixtures in each phase before § 4.3 retargets the suite to final typed dispatch.","location":"Phases 2 and 4 / §§ 2.3, 4.1, 4.2","prevention":"For every staged mutation of one shared module, assign the shared tests to each stage that changes their expected behavior.","principle":"A serialized behavior change must own its changed regression seam in the same deliverable.","root_cause":"The plan stages import rejection across three cutovers but leaves the shared import suite targeted only by the later final-dispatch rewrite.","section_id":"2.3","severity":"blocking"},{"category":"weak-testability","check_key":"typed-cutover-behavior-suite-closure","description":"tests/workflows/test_rule_engine.py and test_session_defaults.py seed LocalWorkflowDefinitionManager. Once rules/defaults read typed tables, these suites stop exercising their own fixtures or fail, yet neither has exact 4.1/4.2 ownership.","finding_id":"APR3-004","fix":"Target and retarget test_rule_engine.py in § 4.1. Split test_session_defaults.py ownership across §§ 4.1 and 4.2, naming the manager fixture replacements and focused validation commands.","location":"Phase 4 / §§ 4.1-4.2","prevention":"Before deleting a storage seam, enumerate test constructors and fixture seeders and assign each file to the first cutover that stops reading its fixtures.","principle":"A storage cutover must retarget every behavior suite that seeds the replaced store before the reader changes.","root_cause":"The plan defers a grep-derived test inventory to implementation while omitting known rule-engine and default-loading suites from exact Targets.","section_id":"4.1","severity":"blocking"},{"category":"bad-sequencing","check_key":"pipeline-mcp-deletion-closure","description":"The current pipeline MCP module imports create/update/delete/export helpers and LocalWorkflowDefinitionManager from modules § 5.2 deletes. The plan neither replaces pipeline CRUD in § 4.3 nor targets the pipeline callers in § 5.2.","finding_id":"APR3-005","fix":"In § 4.3, replace pipeline MCP CRUD with PipelineDefinitionManager operations and add focused CRUD acceptance. In § 5.2, target _pipelines.py, pass kind='pipeline' to auto-export/delete, and assert no generic-definition or legacy-manager import remains.","location":"Phases 4-5 / §§ 4.3 and 5.2","prevention":"For every deleted module, sweep imports, helper calls, and auto-export/delete callers and assign each surviving consumer to a preceding deliverable.","principle":"A surviving module must shed every import from a module before that dependency is deleted.","root_cause":"The pipeline MCP task owns only loader rewiring, while its CRUD and auto-export paths still depend on the generic definitions module and legacy manager removed in § 5.2.","section_id":"4.3","severity":"blocking"},{"category":"bad-sequencing","check_key":"cli-package-deletion-closure","description":"src/gobby/cli/pipelines.py still imports get_project_path/get_workflow_loader from cli.workflows.common, and multiple CLI suites import or patch cli.workflows at collection time. The planned deletion leaves a broken production import and red tests.","finding_id":"APR3-006","fix":"Retarget tests/cli/test_pipelines.py with PipelineLoader in § 4.3. In § 6.1 target pipelines.py and explicitly delete, split, or retarget test_cli_workflows.py, test_workflows.py, test_workflows_coverage.py, and test_pipelines_coverage.py into surviving domain suites.","location":"Phases 4 and 6 / §§ 4.3 and 6.1","prevention":"Before deleting a command package, sweep production imports plus test imports, patches, runners, and coverage suites and give each an explicit delete or retarget disposition.","principle":"Deleting a CLI package requires rewiring surviving production imports and disposing every module-scope test import and patch path in the same commit.","root_cause":"The CLI restructure inventories the package files but omits src/gobby/cli/pipelines.py and the existing workflow/pipeline test suites that import or patch the deleted package.","section_id":"6.1","severity":"blocking"},{"category":"bad-sequencing","causal_finding_id":"APR2-002","causal_section_ids":["2.1","2.2","2.3"],"check_key":"nested-legacy-agent-copy-normalization","description":"After § 2.2, bundled sync and MCP writes serialize nested step_workflow into legacy agent rows. The § 2.3 copy migration strips and extracts only top-level steps, step_variables, and exit_condition, so newly written nested rows lose children or retain child data in the parent.","finding_id":"APR3-007","fix":"Normalize both flat and nested source shapes in the copy migration: strip either representation from the parent, extract the child from nested step_workflow when present and otherwise from flat fields, add type guards and per-shape equivalence checks, and test a § 2.2 sync followed by migration plus mixed-shape rows.","introduced_in_round":2,"location":"Phase 2 / §§ 2.1-2.3","prevention":"For each staged shape change, serialize data through every live writer in the preceding commit and use those bytes as migration fixtures.","principle":"A migration following a serialized shape cutover must accept every source shape the preceding working commit can persist.","root_cause":"APR2-002 made the model/YAML cutover atomic but § 2.3 still assumes only the pre-repair flat legacy JSON shape.","section_id":"2.3","severity":"blocking"},{"category":"unhandled-edge","check_key":"instance-lock-real-adapter-reentry","description":"Persona and enforcement are planned to hold AgentStepInstanceMutation around reads and call manager mutators inside it. Current ambient nesting reacquires that equal-priority target through acquire_additional_lock, so the real adapter can raise LockAcquisitionOrderError.","finding_id":"APR3-008","fix":"Give AgentStepInstanceManager mutators an optional Transaction parameter and require outer persona/enforcement sections to pass their held immediate transaction, avoiding reacquisition. Add real-adapter tests for nested save/replace/merge/delete and keep the instance-before-session-variable lock order.","location":"Phase 3 / §§ 3.1-3.2","prevention":"Exercise nested manager calls through the real PostgresHubDatabase adapter and inspect equal-target/equal-priority lock behavior before declaring re-entry.","principle":"A caller-held critical section must not reacquire the same non-reentrant lock through an inner manager call.","root_cause":"The plan declares the renamed descriptor re-entrant, but current nested transaction_immediate routes through equal-priority additional-lock acquisition, which raises.","section_id":"3.1","severity":"blocking"},{"category":"unhandled-edge","causal_finding_id":"APR2-014","causal_section_ids":["3.2"],"check_key":"instance-copy-active-identity-resolution","description":"Legacy storage permits multiple per-session rows. A reachable A→B→A persona sequence can leave stale B newer than active A, so latest updated_at deterministically migrates the wrong snapshot and agent_name.","finding_id":"APR3-009","fix":"Resolve active agent identity from the active run/session persona state, reconcile it with _agent_type and _step_workflow_name, fail on contradictions, and apply timestamp/id ordering only to rows for that identity. Add A→B→A, stale-newer-row, equal-timestamp, and suffix-matching non-generated fixtures.","introduced_in_round":2,"location":"Phase 3 / §§ 3.2-3.4","prevention":"For migration lookups with historical duplicates, resolve authoritative identity first, reconcile redundant signals, and order only within the matching identity set.","principle":"Deterministic ordering is valid only after candidates are restricted to the authoritative runtime identity.","root_cause":"APR2-014 added a total order across all suffix-matching rows but did not resolve which agent is active for the session.","section_id":"3.2","severity":"blocking"},{"category":"unhandled-edge","check_key":"project-scoped-defaults-cache-isolation","description":"SessionVariableManager currently has only session_id and one unkeyed defaults cache. Routing it through load_variable_defaults(db, project_id=None) can omit project overrides or leak project A defaults into project B while the other three application paths disagree.","finding_id":"APR3-010","fix":"Require each defaults path to resolve session.project_id, define project-first/global fallback deduplication in get_defaults_map, key the TTL cache by project_id plus variables revision, and add alternating project-A/project-B/global-fallback tests across all four application paths.","location":"Phases 1 and 4 / §§ 1.2 and 4.2","prevention":"For every scoped cache, enumerate key dimensions and alternate two scopes plus global fallback in one regression.","principle":"A cache for project-scoped fallback data must include project scope in both lookup and key.","root_cause":"The plan retains one SessionVariableManager TTL cache and adds revision invalidation without specifying project resolution or per-project cache entries.","section_id":"4.2","severity":"blocking"},{"category":"bad-sequencing","check_key":"drop-backstop-directional-drift-proof","description":"After each cutover, valid edits, sync refreshes, restores, or hard-deletes change only typed rows. P7's current payload-equivalence backstop treats those safe changes exactly like a dangerous legacy-only write and can permanently block the destructive migration.","finding_id":"APR3-011","fix":"Add a copy-time per-row ledger containing legacy id, domain, and normalized source hash plus an explicit typed-deletion outcome. At P7 compare legacy rows to that checkpoint, allow recorded typed evolution, and test typed-only update/sync/delete separately from legacy-only update and post-copy legacy insertion.","location":"Phases 2, 4, and 7 / §§ 2.3, 4.1-4.3, 7.1","prevention":"For staged copies, record a copy-time source checkpoint and test source-only and target-only mutations independently before defining the final drop guard.","principle":"A destructive backstop must distinguish source-side drift from legitimate target-side evolution after cutover.","root_cause":"The plan compares current legacy and typed payloads symmetrically even though typed tables become the sole writable authority months or phases before the drop.","section_id":"7.1","severity":"blocking"},{"category":"unhandled-edge","causal_finding_id":"APR2-013","causal_section_ids":["3.2","3.4"],"check_key":"preparation-partial-result-compensation","description":"prepare_terminal_spawn creates the child session, initial variables, run metadata, and managed credential before returning PreparedSpawn. On an exception inside that sequence the caller has no partial result, so the claimed single cleanup owner cannot identify what to remove or revoke.","finding_id":"APR3-012","fix":"Move the cleanup owner inside prepare_terminal_spawn or raise a structured partial PreparedSpawn carrying every acquired row and credential handle. Specify idempotent compensation in a finally/exception path and fault-inject after child creation, variable merge, run persistence, and credential issuance.","introduced_in_round":2,"location":"Phase 3 / §§ 3.2 and 3.4","prevention":"Fault-inject after each internal acquisition and require the exception/return contract to expose a complete compensation handle.","principle":"A cleanup owner can compensate an internal failure only if the failing operation exposes every acquisition made before raising.","root_cause":"APR2-013 added prose for cleanup inside prepare_terminal_spawn without defining how the caller obtains child, run, and credential identities when preparation raises before returning.","section_id":"3.2","severity":"blocking"},{"category":"traceability","check_key":"baseline-refresh-owner-target","description":"crates/gcore/src/schema/runner.rs only delegates to baseline_refresh_statement. The exact allowlist that must accept seven new-table statements lives in crates/gcore/src/baseline_refresh.rs, which § 1.1 does not target.","finding_id":"APR3-013","fix":"Add crates/gcore/src/baseline_refresh.rs::* and its focused module tests to § 1.1 Targets, and specify the exact seven-table added-statement inventory there.","location":"Phase 1 / § 1.1","prevention":"Resolve each planned symbol to its current qualified file immediately before review and target the implementation owner plus its tests.","principle":"Every changed production owner must appear as an exact Target; naming a delegating caller does not cover the implementation module.","root_cause":"The refreshed plan still locates baseline_refresh_statement in runner.rs, while the current implementation moved the allowlist to baseline_refresh.rs.","section_id":"1.1","severity":"blocking"},{"category":"bad-sequencing","check_key":"listener-async-start-and-init-rollback","description":"init_storage_and_config is used by direct synchronous GobbyRunner construction, so start() cannot assume an event loop. If later initialization fails after listener creation/start, runner_rollback has no branch to cancel its tasks or close its pool-exempt connection.","finding_id":"APR3-014","fix":"Construct the listener during storage setup, start it from the existing async runtime startup phase, add it to runner state, construction rollback, and graceful shutdown, and target runner.py, runner_rollback.py, and the runner init/shutdown tests.","location":"Phase 1 / § 1.4","prevention":"For every runner-owned service, trace construction, async start, later-init failure rollback, normal shutdown, and direct-constructor tests.","principle":"A background service must start only under a running async runtime and must be owned by both construction rollback and graceful shutdown.","root_cause":"The plan starts the new listener from synchronous storage construction and targets only the graceful-shutdown tail.","section_id":"1.4","severity":"blocking"},{"category":"weak-testability","causal_finding_id":"APR2-009","causal_section_ids":["3.2","3.3"],"check_key":"instance-deletion-adjacent-test-seam-closure","description":"tests/workflows/test_step_runtime_transitions.py, test_step_enforcement_audit.py, tests/agents/test_runtime_cleanup.py, and adjacent suites still import or instantiate WorkflowInstance/WorkflowInstanceManager. They fail collection or retain obsolete fixtures when § 3.3 deletes the classes.","finding_id":"APR3-015","fix":"Extend §§ 3.2-3.3 with exact Targets and rewrite/delete dispositions for every remaining WorkflowInstance and WorkflowInstanceManager hit across transition, enforcement-audit/error-code, lifecycle-monitor, merge, cleanup, coordinator, observability, server cleanup, and E2E fixtures.","introduced_in_round":2,"location":"Phase 3 / §§ 3.2-3.3","prevention":"Repeat the full class-wide symbol and string-patch sweep after applying a deletion repair and list every remaining test hit in Targets.","principle":"A class deletion repair is complete only after every constructor, annotation, fixture, patch, and adjacent behavior suite has an exact disposition.","root_cause":"APR2-009 repaired named primary suites but missed additional transition, audit, cleanup, lifecycle, observability, and E2E consumers.","section_id":"3.3","severity":"blocking"},{"category":"missing-requirement","check_key":"relocated-route-agent-auth-capability","description":"DaemonProxy moves session-variable calls to /api/sessions/{id}/variables/*, but the agent-token capability matrix still grants only the deleted /api/workflows/variables paths. The exact client can become unauthorized despite both route and client tests passing.","finding_id":"APR3-016","fix":"Target auth_service.py, auth middleware/capability tests, and tests/mcp_proxy/test_mcp_proxy_stdio.py. Replace old grants with parameterized session-variable routes while retaining session identity binding, and retarget both DaemonProxy suites.","location":"Phase 5 / § 5.1","prevention":"For every route move, trace router registration, client literal, auth/capability matching, middleware identity binding, and all client test suites.","principle":"A relocated endpoint used by an authenticated internal client must be added to that client's capability matrix in the same change.","root_cause":"The HTTP relocation inventories router and stdio client paths but omits authorization policy and its separate regression seams.","section_id":"5.1","severity":"blocking"},{"category":"traceability","check_key":"removed-mcp-tool-consumer-closure","description":"list_workflows and get_workflow_status remain required by MCP inventory tests, E2E calls, production dispatch prompts, and agent instructions outside current Targets. The final tree can therefore retain calls to tools § 5.2 removes or renames.","finding_id":"APR3-017","fix":"Add registry/E2E consumers to § 5.2 and retarget them to the final tool set. Add dispatch/prompts.py, bundled agent instruction sources, and their tests to § 5.2 or § 7.3 and update them atomically.","location":"Phases 5 and 7 / §§ 5.2 and 7.3","prevention":"For every removed tool name, sweep production strings, prompt assets, bundled YAML, MCP inventories, E2E calls, and assertion fixtures.","principle":"Tool deletion and rename must update registries, executable consumers, prompts, bundled agent instructions, and their tests atomically.","root_cause":"The disposition table focuses on the workflows registry suites and the documentation sweep omits live prompt/E2E consumers.","section_id":"5.2","severity":"blocking"},{"category":"traceability","check_key":"typed-variable-ui-helper-and-capture-fixture","description":"web/src/components/settings/workflowVariables.ts still reads definition_json while the new variable API exposes default_value directly. web/tests/style-surfaces.spec.ts only fakes /api/workflows, so the migrated editors can receive no data in visual coverage.","finding_id":"APR3-018","fix":"Add both files to § 6.2 Targets, retype the helper around default_value, teach the capture fake /api/pipelines/definitions and /api/variables response shapes, and remove its generic-workflow branch.","location":"Phase 6 / § 6.2","prevention":"Trace response data from network fake through hooks, adapters, and components for every endpoint migration.","principle":"A frontend API-shape migration must include extracted data adapters and integration fakes, not only hooks and components.","root_cause":"The UI target inventory misses the helper that decodes the old definition_json shape and the capture harness that serves only the old generic route.","section_id":"6.2","severity":"blocking"},{"category":"traceability","check_key":"active-cli-guide-command-parity","description":"docs/guides/cli-commands.md still presents the entire gobby workflows group that § 6.1 deletes. The scoped audit can pass while users are still directed to nonexistent commands.","finding_id":"APR3-019","fix":"Add docs/guides/cli-commands.md to § 7.3 Targets, replace the workflows command table with agents, pipelines, variables, and sync replacements, and include active guides in the documentation search assertion.","location":"Phase 7 / § 7.3","prevention":"Search the full active docs tree for every removed command, route, table, and discriminator and target every current-behavior hit.","principle":"Active user documentation must be included in the same inventory as the command surface it describes.","root_cause":"The documentation sweep's explicit guide list omits cli-commands.md, and the legacy audit does not scan active docs.","section_id":"7.3","severity":"blocking"}],"reviewer_session":"32bf2f1b-08ca-410d-baa2-e0eb8b9fd979","round":3,"round_number":3,"verdict":"needs_review"},"session_id":"24384cfe-8cb0-4aaa-bfaa-5b86560252aa"}
+```
+
 
 ## Task Mapping
 `kind: framing`
