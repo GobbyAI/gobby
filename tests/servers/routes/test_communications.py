@@ -58,7 +58,6 @@ def client(server):
 def ui_auth_client(server: Any, tmp_path) -> TestClient:
     server.auth_service = AuthService(
         lambda: server.services.database,
-        "required",
         token_file=tmp_path / "missing-local-token",
     )
     return TestClient(server.app)

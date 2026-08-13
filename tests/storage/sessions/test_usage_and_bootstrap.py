@@ -12,11 +12,12 @@ from gobby.storage.machines import LocalMachineManager
 from gobby.storage.sessions import SessionManager, ensure_system_session
 from gobby.storage.sessions._constants import system_session_external_id, system_session_id
 from gobby.storage.workspace_machine_scope import MachineOwnershipMismatchError
+from tests.fixtures.postgres import TEST_USER_ID
 
 
 @pytest.fixture(autouse=True)
 def _local_machine_identity(temp_db: HubDatabase) -> Iterator[None]:
-    LocalMachineManager(temp_db).upsert_seen("20000000-0000-4000-8000-000000000002")
+    LocalMachineManager(temp_db).upsert_seen("20000000-0000-4000-8000-000000000002", TEST_USER_ID)
     with patch(
         "gobby.utils.machine_id.get_machine_id",
         return_value="20000000-0000-4000-8000-000000000002",
@@ -28,8 +29,8 @@ def test_system_session_bootstrap_creates_machine_scoped_rows(temp_db: HubDataba
     first_machine = "20000000-0000-4000-8000-000000000001"
     later_machine = "20000000-0000-4000-8000-000000000002"
     machines = LocalMachineManager(temp_db)
-    machines.upsert_seen(first_machine)
-    machines.upsert_seen(later_machine)
+    machines.upsert_seen(first_machine, TEST_USER_ID)
+    machines.upsert_seen(later_machine, TEST_USER_ID)
     first_id = system_session_id(first_machine)
     later_id = system_session_id(later_machine)
 
@@ -55,8 +56,8 @@ def test_system_session_bootstrap_rejects_wrong_owner(temp_db: HubDatabase) -> N
     local_machine = "20000000-0000-4000-8000-000000000001"
     foreign_machine = "20000000-0000-4000-8000-000000000002"
     machines = LocalMachineManager(temp_db)
-    machines.upsert_seen(local_machine)
-    machines.upsert_seen(foreign_machine)
+    machines.upsert_seen(local_machine, TEST_USER_ID)
+    machines.upsert_seen(foreign_machine, TEST_USER_ID)
 
     with patch("gobby.utils.machine_id.get_machine_id", return_value=local_machine):
         ensure_system_session(temp_db)

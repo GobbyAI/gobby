@@ -26,6 +26,7 @@ from gobby.install.bin_freshness_updater import update_all_managed_bins, update_
 from gobby.storage.bin_update_state import BinUpdateStateStore
 from gobby.storage.hub.protocol import HubDatabase
 from gobby.storage.machines import LocalMachineManager
+from tests.fixtures.postgres import TEST_USER_ID
 
 pytestmark = pytest.mark.unit
 
@@ -869,4 +870,4 @@ def _isolate_machine_identity(
     )
     if "postgres_db" in request.fixturenames:
         database = request.getfixturevalue("postgres_db")
-        LocalMachineManager(database).upsert_seen(TEST_MACHINE_ID)
+        LocalMachineManager(database).upsert_seen(TEST_MACHINE_ID, TEST_USER_ID)

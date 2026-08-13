@@ -7,6 +7,7 @@ import pytest
 
 from gobby.storage.session_models import Session
 from gobby.storage.sessions import SessionManager
+from tests.fixtures.postgres import TEST_USER_ID
 
 pytestmark = pytest.mark.unit
 
@@ -357,7 +358,7 @@ class TestResolveReferenceExternalId:
         from gobby.storage.machines import LocalMachineManager
         from gobby.storage.projects import LocalProjectManager
 
-        LocalMachineManager(temp_db).upsert_seen(LOCAL_MACHINE_ID)
+        LocalMachineManager(temp_db).upsert_seen(LOCAL_MACHINE_ID, TEST_USER_ID)
         pm = LocalProjectManager(temp_db)
         p1 = pm.create(name="amb-p1", repo_path="/tmp/amb-p1")
         p2 = pm.create(name="amb-p2", repo_path="/tmp/amb-p2")

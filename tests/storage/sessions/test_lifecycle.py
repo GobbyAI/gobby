@@ -23,6 +23,7 @@ from gobby.terminal_ownership import (
 )
 from gobby.workflows.definitions import WorkflowInstance
 from gobby.workflows.state_manager import WorkflowInstanceManager
+from tests.fixtures.postgres import TEST_USER_ID
 
 pytestmark = pytest.mark.unit
 
@@ -1704,7 +1705,7 @@ class TestSessionManagerLifecycle:
         from gobby.storage.machines import LocalMachineManager
         from gobby.storage.sessions import ensure_system_session
 
-        LocalMachineManager(session_manager.db).upsert_seen(LOCAL_MACHINE_ID)
+        LocalMachineManager(session_manager.db).upsert_seen(LOCAL_MACHINE_ID, TEST_USER_ID)
         ensure_system_session(session_manager.db)
         s1 = session_manager.register(
             external_id="status-count-1",
@@ -1745,7 +1746,7 @@ class TestSessionManagerLifecycle:
         from gobby.storage.machines import LocalMachineManager
         from gobby.storage.sessions import ensure_system_session
 
-        LocalMachineManager(session_manager.db).upsert_seen(LOCAL_MACHINE_ID)
+        LocalMachineManager(session_manager.db).upsert_seen(LOCAL_MACHINE_ID, TEST_USER_ID)
         ensure_system_session(session_manager.db)
         counts = session_manager.count_by_status()
         # The bootstrapped system session is always present
