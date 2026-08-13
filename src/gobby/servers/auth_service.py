@@ -15,11 +15,9 @@ from starlette.requests import HTTPConnection
 from gobby.identity import DUMMY_PASSWORD_HASH, verify_password_hash
 from gobby.storage.agents import ACTIVE_AGENT_RUN_STATUSES
 from gobby.storage.auth import (
-    LOCAL_API_TOKEN_HASH_KEY,
     AuthStore,
     hash_token,
 )
-from gobby.storage.config_store import ConfigStore
 from gobby.storage.hub.protocol import HubDatabase
 from gobby.storage.session_resolution import resolve_session_reference
 from gobby.storage.users import LocalUserManager, User
@@ -149,10 +147,6 @@ def _agent_identity_matches(
     if supplied_owner is not None:
         return supplied_owner == expected_owner
     return not bind_identity
-
-
-def _optional_string(value: object) -> str | None:
-    return value if isinstance(value, str) and value else None
 
 
 def _read_token_file(path: Path) -> str | None:
@@ -318,8 +312,7 @@ class AuthService:
             if now - self._last_refresh < self.MIN_REFRESH_INTERVAL:
                 return
 
-            config_store = ConfigStore(self._database_getter())
-            token_hash = _optional_string(config_store.get(LOCAL_API_TOKEN_HASH_KEY))
+            token_hash = AuthStore(self._database_getter()).get_local_api_token_hash()
             local_token_plaintext = _read_token_file(self._token_file)
 
             self._token_hash = token_hash

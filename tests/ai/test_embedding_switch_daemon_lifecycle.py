@@ -38,6 +38,7 @@ from gobby.config.embedding_keys import (
 from gobby.config.runtime import ConfigRuntime
 from gobby.memory.vectorstore import VectorStore
 from gobby.runner_init.services import _managed_embedding_collection
+from gobby.storage.config_mutations import ConfigMutations, ConfigPatch
 from gobby.storage.config_repository import ConfigRepository
 from gobby.storage.config_store import ConfigStore
 from gobby.storage.embedding_generation_state import (
@@ -634,7 +635,10 @@ def test_managed_projection_survives_post_switch_mutation(temp_db: HubDatabase) 
     store = ConfigStore(temp_db)
     _journal, revision = _complete_managed_switch(store)
 
-    store.set("ui.enabled", True)
+    ConfigMutations(temp_db).patch(
+        expected_revision=revision,
+        patch=ConfigPatch(values={"ui.enabled": True}),
+    )
 
     snapshot = store.read_snapshot()
     assert snapshot.revision == revision + 1
@@ -648,17 +652,24 @@ def test_managed_projection_accepts_unchanged_structural_row_revisions(
     temp_db: HubDatabase,
 ) -> None:
     store = ConfigStore(temp_db)
-    store.set_many(
-        {
-            AI_EMBEDDING_CATALOG_KEY: "qwen3-8b-q8",
-            AI_EMBEDDING_DIM_KEY: 4096,
-        },
+    mutations = ConfigMutations(temp_db)
+    mutations.patch_internal(
+        expected_revision=0,
+        patch=ConfigPatch(
+            values={
+                AI_EMBEDDING_CATALOG_KEY: "qwen3-8b-q8",
+                AI_EMBEDDING_DIM_KEY: 4096,
+            }
+        ),
         source="install",
     )
     structural_revision = store.read_snapshot().revision
     _journal, committed_revision = _complete_managed_switch(store)
 
-    store.set("ui.enabled", True)
+    mutations.patch(
+        expected_revision=committed_revision,
+        patch=ConfigPatch(values={"ui.enabled": True}),
+    )
 
     snapshot = store.read_snapshot()
     assert snapshot.row_revisions[AI_EMBEDDING_CATALOG_KEY] == structural_revision

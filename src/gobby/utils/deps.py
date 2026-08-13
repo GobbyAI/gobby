@@ -458,10 +458,14 @@ def get_configured_embedding_provider(
         )
         from gobby.storage.config_repository import ConfigRepository
 
-        values = ConfigRepository(db).read().values
+        snapshot = ConfigRepository(db).read()
+        values = snapshot.values
         model = _strip_config_string(values.get(AI_EMBEDDING_MODEL_KEY))
         api_base = _strip_config_string(values.get(AI_EMBEDDING_API_BASE_KEY))
-        api_key = _strip_config_string(values.get(AI_EMBEDDING_API_KEY_KEY))
+        api_key_binding = snapshot.secret_bindings.get(AI_EMBEDDING_API_KEY_KEY)
+        api_key = _strip_config_string(
+            api_key_binding.plaintext if api_key_binding is not None else None
+        )
         dim = _strip_config_string(values.get(AI_EMBEDDING_DIM_KEY))
 
         inferred_from_config = _infer_from_config_or_none(

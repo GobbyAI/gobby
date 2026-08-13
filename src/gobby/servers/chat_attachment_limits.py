@@ -108,7 +108,7 @@ def resolve_server_attachment_limits(server: Any) -> ChatAttachmentLimits:
         return resolve_chat_attachment_limits(daemon_config=capture().snapshot.active)
     daemon_config = getattr(server, "config", None)
     store = getattr(services, "config_store", None)
-    if store is not None and callable(getattr(store, "get", None)):
+    if store is not None and callable(getattr(store, "read_snapshot", None)):
         return ChatAttachmentLimits(
             max_file_bytes=_store_limit(
                 store,
@@ -143,7 +143,7 @@ def resolve_server_attachment_limits(server: Any) -> ChatAttachmentLimits:
 
 def _store_limit(store: Any, key: str, fallback: int) -> int:
     try:
-        value = store.get(key)
+        value = store.read_snapshot().values.get(key)
     except (ConfigRepositoryError, ValueError, psycopg.Error):
         logger.warning("Config store read failed for %s; using fallback", key)
         return fallback

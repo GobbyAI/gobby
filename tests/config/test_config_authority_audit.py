@@ -10,6 +10,7 @@ import sys
 from pathlib import Path
 
 from gobby.runner_init.config_subscribers import live_consumer_matrix
+from gobby.storage.config_store import ConfigStore
 
 REPOSITORY_ROOT = Path(__file__).resolve().parents[2]
 PYTHON_ROOT = REPOSITORY_ROOT / "src" / "gobby"
@@ -41,16 +42,6 @@ RAW_CONFIG_METHODS = frozenset(
         "set",
         "set_many",
         "set_secret",
-    }
-)
-AUTH_OWNED_RAW_SEAM = frozenset(
-    {
-        "src/gobby/cli/auth.py",
-        "src/gobby/cli/secrets.py",
-        "src/gobby/servers/auth_service.py",
-        "src/gobby/servers/routes/configuration_secrets.py",
-        "src/gobby/storage/auth.py",
-        "src/gobby/storage/config_store.py",
     }
 )
 AUDITED_RUNTIME_PATHS = (
@@ -142,8 +133,6 @@ def _is_raw_store_receiver(receiver: ast.expr, store_names: set[str]) -> bool:
 
 def _raw_access_violations(path: Path, tree: ast.AST) -> list[str]:
     relative = _relative(path)
-    if relative in AUTH_OWNED_RAW_SEAM:
-        return []
     store_names = _store_names(tree)
     violations: list[str] = []
     for node in ast.walk(tree):
@@ -261,6 +250,9 @@ def test_audit_status_legend_documents_cli_only_rows() -> None:
 
 
 def test_legacy_config_surfaces_are_absent() -> None:
+    for method_name in RAW_CONFIG_METHODS:
+        assert not hasattr(ConfigStore, method_name)
+
     app_tree = ast.parse((PYTHON_ROOT / "config" / "app.py").read_text())
     definitions = {node.name for node in ast.walk(app_tree) if isinstance(node, ast.FunctionDef)}
     assert "load_config" not in definitions

@@ -16,7 +16,7 @@ from gobby.config.embedding_keys import (
     AI_EMBEDDING_DIM_KEY,
     AI_EMBEDDING_MODEL_KEY,
 )
-from gobby.storage.config_store import ConfigStore
+from gobby.storage.config_mutations import ConfigMutations, ConfigPatch
 from tests.e2e.conftest import CLIEventSimulator, DaemonInstance, MCPTestClient, find_free_port
 
 pytestmark = pytest.mark.e2e
@@ -95,13 +95,16 @@ def fake_embedding_api() -> Generator[str]:
 
 @pytest.fixture
 def e2e_pre_daemon_setup(fake_embedding_api: str, postgres_db: Any) -> None:
-    config_store = ConfigStore(postgres_db)
-    config_store.set_many(
-        {
-            AI_EMBEDDING_API_BASE_KEY: fake_embedding_api,
-            AI_EMBEDDING_MODEL_KEY: EMBEDDING_MODEL,
-            AI_EMBEDDING_DIM_KEY: EMBEDDING_DIM,
-        },
+    mutations = ConfigMutations(postgres_db)
+    mutations.patch_internal(
+        expected_revision=mutations.repository.current_revision(),
+        patch=ConfigPatch(
+            values={
+                AI_EMBEDDING_API_BASE_KEY: fake_embedding_api,
+                AI_EMBEDDING_MODEL_KEY: EMBEDDING_MODEL,
+                AI_EMBEDDING_DIM_KEY: EMBEDDING_DIM,
+            }
+        ),
         source="test",
     )
 

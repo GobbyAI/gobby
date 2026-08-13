@@ -1,4 +1,4 @@
-"""Tests for the registry-backed ConfigStore facade and path utilities."""
+"""Tests for registry-backed config mutations, reads, and path utilities."""
 
 from pathlib import Path
 
@@ -9,10 +9,14 @@ from gobby.config.embedding_keys import (
     EMBEDDING_API_KEY_SECRET_NAME,
     EMBEDDING_API_KEY_SECRET_REF,
 )
-from gobby.storage.config_mutations import ConfigValidationError
-from gobby.storage.config_repository import ConfigRepositoryError
+from gobby.storage.config_mutations import (
+    ConfigMutations,
+    ConfigPatch,
+    ConfigValidationError,
+    SecretUpdate,
+)
+from gobby.storage.config_repository import ConfigRepository, ConfigRepositoryError
 from gobby.storage.config_store import (
-    ConfigStore,
     flatten_config,
     is_secret_key_name,
     unflatten_config,
@@ -24,17 +28,22 @@ pytestmark = pytest.mark.integration
 
 
 @pytest.fixture
-def store(temp_db: HubDatabase) -> ConfigStore:
-    return ConfigStore(temp_db)
-
-
-@pytest.fixture
 def secret_store(
     temp_db: HubDatabase,
     tmp_path: Path,
     mock_machine_id: str,
 ) -> SecretStore:
     return SecretStore(temp_db, gobby_home=tmp_path)
+
+
+@pytest.fixture
+def mutations(temp_db: HubDatabase, secret_store: SecretStore) -> ConfigMutations:
+    return ConfigMutations(temp_db, secret_store=secret_store)
+
+
+@pytest.fixture
+def repository(temp_db: HubDatabase, secret_store: SecretStore) -> ConfigRepository:
+    return ConfigRepository(temp_db, secret_store=secret_store)
 
 
 class TestFlatten:
@@ -72,132 +81,167 @@ class TestUnflatten:
             unflatten_config(flat)
 
 
-class TestConfigStore:
-    def test_set_get_upsert_and_revision(self, store: ConfigStore, temp_db: HubDatabase) -> None:
-        store.set("ui.enabled", True)
-        store.set("ui.enabled", False)
+class TestConfigPersistence:
+    def test_patch_read_upsert_and_revision(
+        self,
+        mutations: ConfigMutations,
+        repository: ConfigRepository,
+        temp_db: HubDatabase,
+    ) -> None:
+        mutations.patch(expected_revision=0, patch=ConfigPatch(values={"ui.enabled": True}))
+        mutations.patch(expected_revision=1, patch=ConfigPatch(values={"ui.enabled": False}))
 
-        assert store.get("ui.enabled") is False
+        assert repository.read(resolve_secrets=False).overrides["ui.enabled"] is False
         assert temp_db.fetchone("SELECT revision FROM config_state WHERE id = %s", (True,)) == {
             "revision": 2
         }
 
-    def test_get_all_and_list_keys(self, store: ConfigStore) -> None:
-        assert (
-            store.set_many(
-                {
-                    "rules.enforcement_enabled": False,
-                    "rules.aggregate_blocks": False,
-                    "ui.enabled": True,
-                }
-            )
-            == 3
-        )
-
-        assert store.get_all() == {
+    def test_snapshot_contains_batch_and_supports_prefix_filtering(
+        self,
+        mutations: ConfigMutations,
+        repository: ConfigRepository,
+    ) -> None:
+        values = {
             "rules.enforcement_enabled": False,
             "rules.aggregate_blocks": False,
             "ui.enabled": True,
         }
-        assert store.list_keys("rules.") == [
+        mutations.patch(expected_revision=0, patch=ConfigPatch(values=values))
+
+        overrides = repository.read(resolve_secrets=False).overrides
+        assert overrides == values
+        assert sorted(key for key in overrides if key.startswith("rules.")) == [
             "rules.aggregate_blocks",
             "rules.enforcement_enabled",
         ]
 
     def test_invalid_complete_candidate_rolls_back_batch(
         self,
-        store: ConfigStore,
+        mutations: ConfigMutations,
+        repository: ConfigRepository,
         temp_db: HubDatabase,
     ) -> None:
         with pytest.raises(ConfigValidationError, match="Complete configuration candidate"):
-            store.set_many({"ui.enabled": True, "hooks.adapter_timeout": 130.0})
+            mutations.patch(
+                expected_revision=0,
+                patch=ConfigPatch(values={"ui.enabled": True, "hooks.adapter_timeout": 130.0}),
+            )
 
         assert temp_db.fetchall("SELECT key FROM config_store") == []
-        assert store.repository.current_revision() == 0
+        assert repository.current_revision() == 0
 
     def test_corrupt_registered_row_names_key(
         self,
-        store: ConfigStore,
+        mutations: ConfigMutations,
+        repository: ConfigRepository,
         temp_db: HubDatabase,
     ) -> None:
-        store.set("ui.enabled", True)
+        mutations.patch(expected_revision=0, patch=ConfigPatch(values={"ui.enabled": True}))
         temp_db.execute(
             "UPDATE config_store SET value = %s WHERE key = %s",
             ("{broken", "ui.enabled"),
         )
 
         with pytest.raises(ConfigRepositoryError, match="ui.enabled"):
-            store.get_all()
+            repository.read(resolve_secrets=False)
 
     @pytest.mark.parametrize(
-        "method,args",
+        "patch",
         [
-            ("set", ("embeddings.model", "old")),
-            ("set_many", ({"ai.embeddings.provider": "old"},)),
-            ("set_secret", ("embeddings.api_key", "secret")),
-            ("clear_secret", ("ai.embeddings.provider",)),
+            ConfigPatch(values={"embeddings.model": "old"}),
+            ConfigPatch(values={"ai.embeddings.provider": "old"}),
+            ConfigPatch(secrets={"embeddings.api_key": SecretUpdate("secret")}),
+            ConfigPatch(unset=frozenset({"ai.embeddings.provider"})),
         ],
     )
     def test_removed_embedding_keys_are_rejected(
         self,
-        store: ConfigStore,
-        secret_store: SecretStore,
-        method: str,
-        args: tuple[object, ...],
+        mutations: ConfigMutations,
+        patch: ConfigPatch,
     ) -> None:
-        call = getattr(store, method)
-        if method in {"set_secret", "clear_secret"}:
-            args = (*args, secret_store)
-        with pytest.raises(ValueError, match="removed"):
-            call(*args)
+        with pytest.raises(ConfigValidationError, match="Unknown configuration key"):
+            mutations.patch(expected_revision=0, patch=patch)
 
     @pytest.mark.parametrize("key", ["llm_providers", "llm_providers.openai.api_key"])
-    def test_removed_provider_keys_are_rejected(self, store: ConfigStore, key: str) -> None:
-        with pytest.raises(ValueError, match="removed"):
-            store.set(key, "value")
+    def test_removed_provider_keys_are_rejected(
+        self,
+        mutations: ConfigMutations,
+        key: str,
+    ) -> None:
+        with pytest.raises(ConfigValidationError, match="Unknown configuration key"):
+            mutations.patch(expected_revision=0, patch=ConfigPatch(values={key: "value"}))
 
     def test_secret_reference_is_registry_derived(
         self,
-        store: ConfigStore,
-        secret_store: SecretStore,
+        mutations: ConfigMutations,
+        repository: ConfigRepository,
         temp_db: HubDatabase,
     ) -> None:
-        store.set_secret(AI_EMBEDDING_API_KEY_KEY, "secret-value", secret_store)
+        mutations.patch(
+            expected_revision=0,
+            patch=ConfigPatch(secrets={AI_EMBEDDING_API_KEY_KEY: SecretUpdate("secret-value")}),
+        )
 
-        assert store.get(AI_EMBEDDING_API_KEY_KEY) == EMBEDDING_API_KEY_SECRET_REF
-        assert store.get_secret_keys() == [AI_EMBEDDING_API_KEY_KEY]
+        snapshot = repository.read(resolve_secrets=False)
+        assert snapshot.overrides[AI_EMBEDDING_API_KEY_KEY] == EMBEDDING_API_KEY_SECRET_REF
+        binding = snapshot.secret_bindings[AI_EMBEDDING_API_KEY_KEY]
+        assert binding.reference == EMBEDDING_API_KEY_SECRET_REF
+        assert binding.plaintext is None
         assert temp_db.fetchone(
             "SELECT is_secret FROM config_store WHERE key = %s",
             (AI_EMBEDDING_API_KEY_KEY,),
         ) == {"is_secret": True}
 
-    def test_cross_key_secret_reference_is_rejected(self, store: ConfigStore) -> None:
-        with pytest.raises(ValueError, match="looks like a secret"):
-            store.set(AI_EMBEDDING_API_KEY_KEY, "$secret:falkordb_password")
+    def test_unresolved_secret_reference_is_rejected(self, mutations: ConfigMutations) -> None:
+        with pytest.raises(ConfigValidationError, match="cannot be resolved"):
+            mutations.patch(
+                expected_revision=0,
+                patch=ConfigPatch(values={AI_EMBEDDING_API_KEY_KEY: "$secret:falkordb_password"}),
+            )
 
-    def test_delete_and_source_tracking(self, store: ConfigStore, temp_db: HubDatabase) -> None:
-        store.set("ui.enabled", True, source="migrated")
+    def test_unset_and_source_tracking(
+        self,
+        mutations: ConfigMutations,
+        repository: ConfigRepository,
+        temp_db: HubDatabase,
+    ) -> None:
+        mutations.patch_internal(
+            expected_revision=0,
+            patch=ConfigPatch(values={"ui.enabled": True}),
+            source="migrated",
+        )
         assert temp_db.fetchone(
             "SELECT source FROM config_store WHERE key = %s",
             ("ui.enabled",),
         ) == {"source": "migrated"}
-        assert store.delete("ui.enabled") is True
-        assert store.delete("ui.enabled") is False
+        mutations.patch(expected_revision=1, patch=ConfigPatch(unset=frozenset({"ui.enabled"})))
+        assert repository.read(resolve_secrets=False).overrides == {}
 
-    def test_delete_rejects_secret_key(
+    def test_unset_secret_key_clears_binding(
         self,
-        store: ConfigStore,
+        mutations: ConfigMutations,
+        repository: ConfigRepository,
         secret_store: SecretStore,
     ) -> None:
-        store.set_secret(AI_EMBEDDING_API_KEY_KEY, "secret-value", secret_store)
+        mutations.patch(
+            expected_revision=0,
+            patch=ConfigPatch(secrets={AI_EMBEDDING_API_KEY_KEY: SecretUpdate("secret-value")}),
+        )
+        mutations.patch(
+            expected_revision=1,
+            patch=ConfigPatch(unset=frozenset({AI_EMBEDDING_API_KEY_KEY})),
+        )
 
-        with pytest.raises(ValueError, match="use clear_secret"):
-            store.delete(AI_EMBEDDING_API_KEY_KEY)
+        snapshot = repository.read(resolve_secrets=False)
+        assert AI_EMBEDDING_API_KEY_KEY not in snapshot.overrides
+        assert snapshot.secret_bindings == {}
+        assert secret_store.get(EMBEDDING_API_KEY_SECRET_NAME) is None
 
-        assert store.get(AI_EMBEDDING_API_KEY_KEY) == EMBEDDING_API_KEY_SECRET_REF
-        assert secret_store.get(EMBEDDING_API_KEY_SECRET_NAME) == "secret-value"
-
-    def test_preserves_registered_value_types(self, store: ConfigStore) -> None:
+    def test_preserves_registered_value_types(
+        self,
+        mutations: ConfigMutations,
+        repository: ConfigRepository,
+    ) -> None:
         values = {
             "ui.enabled": True,
             "ui_settings.fontSize": 14,
@@ -206,8 +250,8 @@ class TestConfigStore:
             "launch_defaults.123": {"provider": "codex"},
         }
 
-        assert store.set_many(values) == len(values)
-        assert store.get_all() == values
+        mutations.patch(expected_revision=0, patch=ConfigPatch(values=values))
+        assert repository.read(resolve_secrets=False).overrides == values
 
 
 class TestSecretKeyDetection:

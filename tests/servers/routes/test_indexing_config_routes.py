@@ -8,7 +8,6 @@ from starlette.testclient import TestClient
 
 from gobby.config.runtime import ConfigRuntime
 from gobby.storage.config_repository import ConfigRepository
-from gobby.storage.config_store import ConfigStore
 from gobby.storage.hub.protocol import HubDatabase
 from gobby.storage.tasks import LocalTaskManager
 from tests.servers.conftest import create_http_server
@@ -54,7 +53,8 @@ def test_config_values_round_trip_indexing_respect_gitignore(
 
     assert response.status_code == 200
     assert response.json()["revision"] == 1
-    assert ConfigStore(hub_db).get("indexing.respect_gitignore") is False
+    snapshot = ConfigRepository(hub_db).read(resolve_secrets=False)
+    assert snapshot.overrides["indexing.respect_gitignore"] is False
 
     values = client.get("/api/config/values").json()["desired"]
     assert values["indexing"]["respect_gitignore"] is False
@@ -76,7 +76,8 @@ def test_config_values_round_trip_indexing_extra_excludes(
 
     assert response.status_code == 200
     assert response.json()["revision"] == 1
-    assert ConfigStore(hub_db).get("indexing.extra_excludes") == patterns
+    snapshot = ConfigRepository(hub_db).read(resolve_secrets=False)
+    assert snapshot.overrides["indexing.extra_excludes"] == patterns
 
     values = client.get("/api/config/values").json()["desired"]
     assert values["indexing"]["extra_excludes"] == patterns

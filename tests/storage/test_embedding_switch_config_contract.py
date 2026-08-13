@@ -21,45 +21,60 @@ from gobby.config.embedding_keys import (
     EMBEDDING_API_KEY_SECRET_NAME,
     EMBEDDING_SWITCH_JOURNAL_KEY,
 )
-from gobby.storage.config_mutations import ConfigValidationError
+from gobby.storage.config_mutations import (
+    ConfigMutations,
+    ConfigPatch,
+    ConfigValidationError,
+    EmbeddingConfigMutationBlocked,
+    SecretUpdate,
+)
 from gobby.storage.config_repository import ConfigRepository
 from gobby.storage.config_store import ConfigStore
 from gobby.storage.hub.protocol import HubDatabase
 from gobby.storage.secrets import SecretStore
 
 
-def test_internal_switch_journal_is_real_but_invisible_to_public_reads(
+def test_internal_switch_journal_is_stored_but_excluded_from_runtime_candidate(
     temp_db: HubDatabase,
 ) -> None:
     store = ConfigStore(temp_db)
     store.set_internal_lifecycle(EMBEDDING_SWITCH_JOURNAL_KEY, {"run_id": "run-1"})
 
     assert store.get_internal_lifecycle(EMBEDDING_SWITCH_JOURNAL_KEY) == {"run_id": "run-1"}
-    assert store.get(EMBEDDING_SWITCH_JOURNAL_KEY) is None
-    assert EMBEDDING_SWITCH_JOURNAL_KEY not in store.get_all()
-    assert EMBEDDING_SWITCH_JOURNAL_KEY not in store.list_keys()
-    assert ConfigRepository(temp_db).runtime_candidate({}, {}).embeddings is not None
+    repository = ConfigRepository(temp_db)
+    snapshot = repository.read(resolve_secrets=False)
+    assert snapshot.overrides[EMBEDDING_SWITCH_JOURNAL_KEY] == {"run_id": "run-1"}
+    assert repository.runtime_candidate(dict(snapshot.overrides), {}).embeddings is not None
 
 
 def test_public_writes_reject_internal_lifecycle_key(temp_db: HubDatabase) -> None:
-    store = ConfigStore(temp_db)
+    mutations = ConfigMutations(temp_db)
 
-    with pytest.raises(ValueError, match="internal lifecycle"):
-        store.set(EMBEDDING_SWITCH_JOURNAL_KEY, "payload")
-    with pytest.raises(ValueError, match="internal lifecycle"):
-        store.set_many({EMBEDDING_SWITCH_JOURNAL_KEY: "payload"})
+    with pytest.raises(ConfigValidationError, match="restricted"):
+        mutations.patch(
+            expected_revision=0,
+            patch=ConfigPatch(values={EMBEDDING_SWITCH_JOURNAL_KEY: "payload"}),
+        )
 
 
 def test_live_journal_blocks_embedding_mutation(
     temp_db: HubDatabase,
 ) -> None:
     store = ConfigStore(temp_db)
-    store.set("rules.enforcement_enabled", False)
+    mutations = ConfigMutations(temp_db)
+    mutations.patch(
+        expected_revision=0,
+        patch=ConfigPatch(values={"rules.enforcement_enabled": False}),
+    )
     store.set_internal_lifecycle(EMBEDDING_SWITCH_JOURNAL_KEY, {"run_id": "run-1"})
 
-    with pytest.raises(ConfigValidationError, match="managed activation"):
-        store.set(AI_EMBEDDING_MODEL_KEY, "new-model")
-    assert store.get("rules.enforcement_enabled") is False
+    with pytest.raises(EmbeddingConfigMutationBlocked, match="active"):
+        mutations.patch(
+            expected_revision=mutations.repository.current_revision(),
+            patch=ConfigPatch(values={AI_EMBEDDING_MODEL_KEY: "new-model"}),
+        )
+    snapshot = mutations.repository.read(resolve_secrets=False)
+    assert snapshot.overrides["rules.enforcement_enabled"] is False
     assert store.get_internal_lifecycle(EMBEDDING_SWITCH_JOURNAL_KEY) is not None
 
 
@@ -73,27 +88,38 @@ def test_lifecycle_owner_can_write_config_and_delete_journal_atomically(
         "run-1",
         {AI_EMBEDDING_MODEL_KEY: "new-model"},
     )
-    assert store.get(AI_EMBEDDING_MODEL_KEY) == "new-model"
+    snapshot = ConfigRepository(temp_db).read(resolve_secrets=False)
+    assert snapshot.overrides[AI_EMBEDDING_MODEL_KEY] == "new-model"
 
     assert store.delete_internal_lifecycle(EMBEDDING_SWITCH_JOURNAL_KEY, "run-1")
     assert store.get_internal_lifecycle(EMBEDDING_SWITCH_JOURNAL_KEY) is None
 
 
 def test_structural_keys_require_switch(temp_db: HubDatabase) -> None:
-    store = ConfigStore(temp_db)
+    mutations = ConfigMutations(temp_db)
 
     with pytest.raises(ConfigValidationError, match="managed"):
-        store.set(AI_EMBEDDING_MODEL_KEY, "text-embedding-3-large")
+        mutations.patch(
+            expected_revision=0,
+            patch=ConfigPatch(values={AI_EMBEDDING_MODEL_KEY: "text-embedding-3-large"}),
+        )
 
 
 def test_api_key_rotation_is_live(temp_db: HubDatabase, tmp_path: Path) -> None:
     secrets = SecretStore(temp_db, gobby_home=tmp_path)
     store = ConfigStore(temp_db, secret_store=secrets)
-    store.set_secret(AI_EMBEDDING_API_KEY_KEY, "first-key", secrets)
+    mutations = ConfigMutations(temp_db, secret_store=secrets)
+    mutations.patch(
+        expected_revision=0,
+        patch=ConfigPatch(secrets={AI_EMBEDDING_API_KEY_KEY: SecretUpdate("first-key")}),
+    )
     store.set_internal_lifecycle(EMBEDDING_SWITCH_JOURNAL_KEY, {"run_id": "run-1"})
     before = store.read_snapshot()
 
-    store.set_secret(AI_EMBEDDING_API_KEY_KEY, "rotated-key", secrets)
+    mutations.patch(
+        expected_revision=before.revision,
+        patch=ConfigPatch(secrets={AI_EMBEDDING_API_KEY_KEY: SecretUpdate("rotated-key")}),
+    )
 
     after = store.read_snapshot()
     assert secrets.get(EMBEDDING_API_KEY_SECRET_NAME) == "rotated-key"
@@ -137,8 +163,13 @@ def test_malformed_switch_journal_blocks_embedding_mutation(
         (json.dumps("{not json"), EMBEDDING_SWITCH_JOURNAL_KEY),
     )
 
-    with pytest.raises(ConfigValidationError, match="managed activation"):
-        store.set(AI_EMBEDDING_MODEL_KEY, "recovered-model")
+    with pytest.raises(EmbeddingConfigMutationBlocked, match="Malformed"):
+        mutations = ConfigMutations(temp_db)
+        mutations.patch(
+            expected_revision=mutations.repository.current_revision(),
+            patch=ConfigPatch(values={AI_EMBEDDING_MODEL_KEY: "recovered-model"}),
+        )
 
-    assert store.get(AI_EMBEDDING_MODEL_KEY) is None
+    snapshot = ConfigRepository(temp_db).read(resolve_secrets=False)
+    assert AI_EMBEDDING_MODEL_KEY not in snapshot.overrides
     assert store.get_internal_lifecycle(EMBEDDING_SWITCH_JOURNAL_KEY) is not None

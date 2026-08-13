@@ -102,7 +102,7 @@ def _reject_plaintext_secret_value(key: str, value: Any) -> None:
     if _is_secret_reference(value) and _is_canonical_secret_reference(key, value):
         return
     raise ValueError(
-        f"Config key '{key}' looks like a secret. Use ConfigStore.set_secret() "
+        f"Config key '{key}' looks like a secret. Use ConfigMutations with a SecretUpdate "
         "to store the value encrypted at rest."
     )
 
@@ -233,69 +233,6 @@ class ConfigStore:
                 if attempt + 1 >= attempts:
                     raise
         raise AssertionError("unreachable")
-
-    def get(self, key: str) -> Any | None:
-        """Get a single config value, deserialized from JSON.
-
-        Returns None if key doesn't exist.
-        """
-        if key in EMBEDDING_INTERNAL_LIFECYCLE_KEYS:
-            return None
-        return self.repository.read(resolve_secrets=False).overrides.get(key)
-
-    def get_all(self) -> dict[str, Any]:
-        """Get all config entries as flat key-value pairs."""
-        snapshot = self.repository.read(resolve_secrets=False)
-        return {
-            key: value
-            for key, value in snapshot.overrides.items()
-            if key not in EMBEDDING_INTERNAL_LIFECYCLE_KEYS
-        }
-
-    def set(self, key: str, value: Any, source: str = "user") -> None:
-        """Upsert a single config value (JSON-encoded)."""
-        _validate_storage_config_key(key)
-        _reject_plaintext_secret_value(key, value)
-        self._apply_internal(
-            ConfigPatch(values={key: value}),
-            source=source,
-            retry_on_conflict=True,
-        )
-
-    def set_many(self, entries: dict[str, Any], source: str = "user") -> int:
-        """Bulk upsert config entries. Returns count of entries written."""
-        for key, value in entries.items():
-            _validate_storage_config_key(key)
-            _reject_plaintext_secret_value(key, value)
-        result = self._apply_internal(
-            ConfigPatch(values=entries),
-            source=source,
-            retry_on_conflict=True,
-        )
-        return len(result.changed_keys)
-
-    def delete(self, key: str) -> bool:
-        """Delete a non-secret key. Returns True if it existed.
-
-        Secret keys must use ``clear_secret`` so the encrypted value is also removed.
-        """
-        _validate_storage_config_key(key)
-        snapshot = self.repository.read(resolve_secrets=False)
-        if key not in snapshot.overrides:
-            return False
-        if key in snapshot.secret_bindings:
-            raise ValueError(f"Config key {key!r} is secret; use clear_secret")
-        result = self._apply_internal(
-            ConfigPatch(unset=frozenset({key})),
-            source="user",
-            expected_revision=snapshot.revision,
-        )
-        return key in result.changed_keys
-
-    def list_keys(self, prefix: str | None = None) -> list[str]:
-        """List all keys, optionally filtered by prefix."""
-        keys = sorted(self.get_all())
-        return [key for key in keys if prefix is None or key.startswith(prefix)]
 
     def get_internal_lifecycle(self, key: str) -> Any | None:
         """Read lifecycle state through the daemon-owner-only surface."""
@@ -559,76 +496,6 @@ class ConfigStore:
     # -----------------------------------------------------------------
     # Secret-aware methods
     # -----------------------------------------------------------------
-
-    def set_secret(
-        self,
-        key: str,
-        plaintext_value: str,
-        secret_store: SecretStore,
-        source: str = "user",
-        *,
-        secret_name: str | None = None,
-        category: str = "general",
-    ) -> None:
-        """Encrypt a config value via SecretStore and store a reference.
-
-        Stores ``$secret:<secret_name>`` in config_store with ``is_secret=true``.
-        When ``secret_name`` is omitted, it is derived from the config key.
-        The actual value is encrypted in the ``secrets`` table.
-        Both writes happen in a single transaction for consistency.
-        """
-        _validate_storage_config_key(key)
-        self._apply_internal(
-            ConfigPatch(
-                secrets={
-                    key: SecretUpdate(
-                        plaintext_value,
-                        name=secret_name,
-                        category=category,
-                    )
-                }
-            ),
-            source=source,
-            secret_store=secret_store,
-            retry_on_conflict=True,
-        )
-
-    def get_secret_keys(self) -> list[str]:
-        """Return all config keys flagged as secrets."""
-        snapshot = self.repository.read(resolve_secrets=False)
-        return sorted(snapshot.secret_bindings)
-
-    def mark_secret_keys(self, keys: Collection[str]) -> None:
-        """Verify registry-derived secret markers for imported references."""
-        if not keys:
-            return
-        snapshot = self.repository.read(resolve_secrets=False)
-        invalid = sorted(set(keys) - set(snapshot.secret_bindings))
-        if invalid:
-            raise ValueError(f"Registry does not classify keys as secret references: {invalid}")
-        self.repository.reconcile_registry()
-
-    def clear_secret(self, key: str, secret_store: SecretStore) -> None:
-        """Remove a secret from both config_store and the secrets table.
-
-        Both deletions run in a single transaction so either both succeed
-        or both roll back.
-        """
-        _validate_storage_config_key(key)
-        self._bind_secret_store(secret_store)
-        snapshot = self.repository.read(resolve_secrets=False)
-        if key not in snapshot.overrides:
-            name = config_key_to_secret_name(key)
-            reference = f"$secret:{name}"
-            if not any(value == reference for value in snapshot.overrides.values()):
-                secret_store.delete(name)
-            return
-        self._apply_internal(
-            ConfigPatch(unset=frozenset({key})),
-            source="user",
-            secret_store=secret_store,
-            expected_revision=snapshot.revision,
-        )
 
 
 # =============================================================================

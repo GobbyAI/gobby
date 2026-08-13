@@ -7,11 +7,10 @@ import click
 from gobby.cli.runtime import require_cli_database
 from gobby.identity import hash_password, validate_password
 from gobby.storage.auth import (
-    LOCAL_API_TOKEN_HASH_KEY,
+    AuthStore,
     hash_token,
     rotate_local_api_token,
 )
-from gobby.storage.config_store import ConfigStore
 from gobby.storage.users import LocalUserManager
 from gobby.utils.local_token import local_token_path, read_local_api_token
 
@@ -46,16 +45,15 @@ def token(show: bool, rotate: bool) -> None:
     path = local_token_path()
     try:
         with nullcontext(require_cli_database()) as db:
-            config_store = ConfigStore(db)
+            auth_store = AuthStore(db)
             plaintext_token = read_local_api_token()
             if rotate:
-                plaintext_token = rotate_local_api_token(config_store)
+                plaintext_token = rotate_local_api_token(auth_store)
                 click.echo("Local API token rotated.")
                 click.echo("Clients on this machine will pick it up within ~5 seconds.")
                 click.echo(f"Recopy {path} to any remote client machines.")
 
-            stored_value = config_store.get(LOCAL_API_TOKEN_HASH_KEY)
-            stored_hash = stored_value if isinstance(stored_value, str) else None
+            stored_hash = auth_store.get_local_api_token_hash()
     except (RuntimeError, ValueError) as exc:
         raise click.ClickException(str(exc)) from exc
 

@@ -6,21 +6,17 @@ import pytest
 from click.testing import CliRunner
 
 from gobby.cli.auth import auth
-from gobby.storage.auth import (
-    LOCAL_API_TOKEN_HASH_KEY,
-    hash_token,
-    rotate_local_api_token,
-)
+from gobby.storage.auth import hash_token, rotate_local_api_token
 
 
 @pytest.fixture
 def mock_stores() -> Iterator[tuple[MagicMock, MagicMock]]:
     with (
         patch("gobby.cli.auth.require_cli_database", return_value=MagicMock()),
-        patch("gobby.cli.auth.ConfigStore") as mock_config,
+        patch("gobby.cli.auth.AuthStore") as mock_auth_store,
         patch("gobby.cli.auth.LocalUserManager") as mock_users,
     ):
-        config_inst = mock_config.return_value
+        config_inst = mock_auth_store.return_value
         users_inst = mock_users.return_value
 
         yield config_inst, users_inst
@@ -82,7 +78,7 @@ def test_auth_token_status_and_show(
     token_path.parent.mkdir(parents=True)
     token_path.write_text("local-token")
     monkeypatch.setenv("GOBBY_HOME", str(gobby_home))
-    config.get.return_value = hash_token("local-token")
+    config.get_local_api_token_hash.return_value = hash_token("local-token")
 
     result = CliRunner().invoke(auth, ["token", "--show"])
 
@@ -106,14 +102,14 @@ def test_auth_token_rotate(
     old_token = "old-token"
     token_path.write_text(old_token)
     monkeypatch.setenv("GOBBY_HOME", str(gobby_home))
-    stored = {LOCAL_API_TOKEN_HASH_KEY: hash_token(old_token)}
-    config.get.side_effect = stored.get
+    stored_hash = hash_token(old_token)
+    config.get_local_api_token_hash.side_effect = lambda: stored_hash
 
-    def set_config(key: str, value: str, source: str) -> None:
-        assert source == "system"
-        stored[key] = value
+    def set_token_hash(value: str) -> None:
+        nonlocal stored_hash
+        stored_hash = value
 
-    config.set.side_effect = set_config
+    config.set_local_api_token_hash.side_effect = set_token_hash
     with patch(
         "gobby.cli.auth.rotate_local_api_token",
         wraps=rotate_local_api_token,
@@ -124,8 +120,8 @@ def test_auth_token_rotate(
     mock_rotate.assert_called_once_with(config)
     new_token = token_path.read_text().strip()
     assert new_token != old_token
-    assert stored[LOCAL_API_TOKEN_HASH_KEY] == hash_token(new_token)
-    assert stored[LOCAL_API_TOKEN_HASH_KEY] != hash_token(old_token)
+    assert stored_hash == hash_token(new_token)
+    assert stored_hash != hash_token(old_token)
     assert "Local API token rotated." in result.output
     assert "within ~5 seconds" in result.output
     assert "Recopy" in result.output

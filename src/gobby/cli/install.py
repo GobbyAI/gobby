@@ -16,7 +16,7 @@ import click
 
 from gobby.config.bootstrap import BootstrapConfigError, load_bootstrap
 from gobby.config.persistence import validate_falkordb_password
-from gobby.storage.auth import ensure_local_api_token
+from gobby.storage.auth import AuthStore, ensure_local_api_token
 from gobby.storage.config_store import ConfigStore
 from gobby.storage.projects import ensure_personal_project_identity
 from gobby.storage.secrets import (
@@ -172,10 +172,10 @@ def _configure_secret_kek_posture(
     click.echo("Secret KEK posture: passphrase")
 
 
-def _provision_local_api_token(config_store: ConfigStore | None) -> None:
+def _provision_local_api_token(auth_store: AuthStore | None) -> None:
     """Provision the local token with or without a reachable hub database."""
-    if config_store is not None:
-        ensure_local_api_token(config_store)
+    if auth_store is not None:
+        ensure_local_api_token(auth_store)
         return
     if read_local_api_token() is not None:
         return
@@ -635,10 +635,12 @@ def install(
 
         secret_store: SecretStore | None = None
         config_store: ConfigStore | None = None
+        auth_store: AuthStore | None = None
         provider_hook_timeout_seconds = 120
         try:
             secret_store = SecretStore(db)
             config_store = ConfigStore(db)
+            auth_store = AuthStore(db)
             provider_hook_timeout_seconds = runtime.require_config().hooks.provider_timeout
         except (
             BootstrapConfigError,
@@ -666,7 +668,7 @@ def install(
                 secret_kek_posture,
                 no_interactive=no_interactive_flag,
             )
-            _provision_local_api_token(config_store)
+            _provision_local_api_token(auth_store)
 
         install_state = empty_install_state()
         if is_full_install:

@@ -93,12 +93,15 @@ def test_real_runtime_candidate_through_overlay_matches_daemon_startup(
 ) -> None:
     """The daemon startup path: stored overrides flow through the real
     runtime_candidate, and bootstrap-owned facts land only via the overlay."""
+    from gobby.storage.config_mutations import ConfigMutations, ConfigPatch
     from gobby.storage.config_repository import ConfigRepository
-    from gobby.storage.config_store import ConfigStore
 
     repository = ConfigRepository(temp_db)
     repository.reconcile_registry()
-    ConfigStore(temp_db).set("voice.enabled", True)
+    ConfigMutations(temp_db).patch(
+        expected_revision=repository.current_revision(),
+        patch=ConfigPatch(values={"voice.enabled": True}),
+    )
     stored = repository.read()
 
     candidate = repository.runtime_candidate(dict(stored.overrides), stored.secret_bindings)

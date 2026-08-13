@@ -109,7 +109,7 @@ def configure_task_close_validation(
     from gobby.prompts.sync import sync_bundled_prompts
 
     sync_bundled_prompts(postgres_db)
-    from gobby.storage.config_store import ConfigStore
+    from gobby.storage.config_mutations import ConfigMutations, ConfigPatch
 
     endpoint = {
         "protocol": "openai-compatible",
@@ -117,15 +117,19 @@ def configure_task_close_validation(
         "api_base": f"http://127.0.0.1:{validation_llm_server.server_port}/v1",
         "model": "e2e-validation",
     }
-    ConfigStore(postgres_db).set_many(
-        {
-            "gobby_tasks.validation.enabled": True,
-            "gobby_tasks.validation.candidates": ["endpoint:e2e/e2e-validation"],
-            "ai.generation.timeout_seconds": 15,
-            "ai.generation.candidate_timeout_seconds": 5,
-            "ai.generation.cli_candidate_timeout_seconds": 5,
-            "ai.generation.endpoints": {"e2e": endpoint},
-        },
+    mutations = ConfigMutations(postgres_db)
+    mutations.patch_internal(
+        expected_revision=mutations.repository.current_revision(),
+        patch=ConfigPatch(
+            values={
+                "gobby_tasks.validation.enabled": True,
+                "gobby_tasks.validation.candidates": ["endpoint:e2e/e2e-validation"],
+                "ai.generation.timeout_seconds": 15,
+                "ai.generation.candidate_timeout_seconds": 5,
+                "ai.generation.cli_candidate_timeout_seconds": 5,
+                "ai.generation.endpoints": {"e2e": endpoint},
+            }
+        ),
         source="e2e-fixture",
     )
     config_path, _http_port, _ws_port = e2e_config
@@ -348,16 +352,20 @@ def _postgres_url_for_schema(database_url: str, schema: str) -> str:
 
 def _seed_e2e_runtime_state(postgres_db: Any, project_dir: Path) -> None:
     """Seed PostgreSQL-owned runtime config and the synthetic E2E project."""
-    from gobby.storage.config_store import ConfigStore
+    from gobby.storage.config_mutations import ConfigMutations, ConfigPatch
 
-    ConfigStore(postgres_db).set_many(
-        {
-            "test_mode": True,
-            "memory.dream.enabled": False,
-            "gobby_tasks.expansion.enabled": False,
-            "gobby_tasks.validation.enabled": False,
-            "code_index.enabled": False,
-        },
+    mutations = ConfigMutations(postgres_db)
+    mutations.patch_internal(
+        expected_revision=mutations.repository.current_revision(),
+        patch=ConfigPatch(
+            values={
+                "test_mode": True,
+                "memory.dream.enabled": False,
+                "gobby_tasks.expansion.enabled": False,
+                "gobby_tasks.validation.enabled": False,
+                "code_index.enabled": False,
+            }
+        ),
         source="e2e-fixture",
     )
     postgres_db.execute(

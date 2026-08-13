@@ -385,7 +385,7 @@ def test_namespace_replacement_unsets_omitted_overrides(mutations: ConfigMutatio
 
 
 def test_restricted_keys_require_internal_mutation(mutations: ConfigMutations) -> None:
-    patch = ConfigPatch(values={"auth.password_hash": "hash"})
+    patch = ConfigPatch(values={"auth.api_token_hash": "hash"})
 
     with pytest.raises(ConfigValidationError, match="restricted"):
         mutations.patch(expected_revision=0, patch=patch)
@@ -655,9 +655,9 @@ def test_mcp_cleanup_preserves_secret_held_by_config(
         category="mcp_server",
         description=slot.description,
     )
-    ConfigStore(revision_db, secret_store=secret_store).set(
-        "telemetry.service_name",
-        f"config holds {reference}",
+    ConfigMutations(revision_db, secret_store=secret_store).patch(
+        expected_revision=0,
+        patch=ConfigPatch(values={"telemetry.service_name": f"config holds {reference}"}),
     )
 
     cleanup_replaced_mcp_secrets(
@@ -702,67 +702,22 @@ def test_namespace_replacement_preserves_managed_embedding_keys(
     assert snapshot.overrides["websocket.ping_interval"] == 22
 
 
-def test_facade_decision_snapshot_conflicts_are_detected(
-    revision_db: HubDatabase,
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    store = ConfigStore(revision_db)
-    store.set("ui.enabled", True)
-    stale = store.repository.read(resolve_secrets=False)
-    store.set("rules.enforcement_enabled", False)
-
-    monkeypatch.setattr(
-        store.repository,
-        "read",
-        lambda *, resolve_secrets=True: stale,
+def test_decision_snapshot_conflicts_are_detected(mutations: ConfigMutations) -> None:
+    mutations.patch(
+        expected_revision=0,
+        patch=ConfigPatch(values={"ui.enabled": True}),
+    )
+    stale = mutations.repository.read(resolve_secrets=False)
+    mutations.patch(
+        expected_revision=stale.revision,
+        patch=ConfigPatch(values={"rules.enforcement_enabled": False}),
     )
 
     with pytest.raises(ConfigConflictError):
-        store.delete("ui.enabled")
-
-
-def test_convenience_setter_retries_once_on_conflict(
-    revision_db: HubDatabase,
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    store = ConfigStore(revision_db)
-    store.set("ui.enabled", True)
-
-    real_current_revision = store.mutations.repository.current_revision
-    calls = {"count": 0}
-
-    def stale_once() -> int:
-        calls["count"] += 1
-        if calls["count"] == 1:
-            return 0
-        return real_current_revision()
-
-    monkeypatch.setattr(store.mutations.repository, "current_revision", stale_once)
-
-    store.set("rules.enforcement_enabled", False)
-
-    assert calls["count"] == 2
-    assert store.get("rules.enforcement_enabled") is False
-
-
-def test_ambient_convenience_setter_does_not_retry_same_snapshot(
-    revision_db: HubDatabase,
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    store = ConfigStore(revision_db)
-    store.set("ui.enabled", True)
-    calls = {"count": 0}
-
-    def stale_revision() -> int:
-        calls["count"] += 1
-        return 0
-
-    monkeypatch.setattr(store.mutations.repository, "current_revision", stale_revision)
-
-    with revision_db.transaction(), pytest.raises(ConfigConflictError):
-        store.set("rules.enforcement_enabled", False)
-
-    assert calls["count"] == 1
+        mutations.patch(
+            expected_revision=stale.revision,
+            patch=ConfigPatch(unset=frozenset({"ui.enabled"})),
+        )
 
 
 @pytest.mark.parametrize(
@@ -787,16 +742,20 @@ def test_config_mutations_reject_python_only_values(
 
 
 def test_ambient_read_is_coherent(revision_db: HubDatabase) -> None:
-    store = ConfigStore(revision_db)
+    repository = ConfigRepository(revision_db)
+    mutations = ConfigMutations(revision_db)
 
     with embedding_mutation_context(revision_db):
-        empty = store.repository.read(resolve_secrets=False)
+        empty = repository.read(resolve_secrets=False)
     assert empty.revision == 0
     assert dict(empty.overrides) == {}
 
-    store.set("ui.enabled", True)
+    mutations.patch(
+        expected_revision=empty.revision,
+        patch=ConfigPatch(values={"ui.enabled": True}),
+    )
     with embedding_mutation_context(revision_db):
-        populated = store.repository.read(resolve_secrets=False)
+        populated = repository.read(resolve_secrets=False)
     assert populated.revision == 1
     assert populated.overrides["ui.enabled"] is True
     assert populated.row_revisions == {"ui.enabled": 1}

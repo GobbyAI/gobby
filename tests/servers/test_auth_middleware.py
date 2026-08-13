@@ -19,8 +19,7 @@ from fastapi.testclient import TestClient
 
 from gobby.servers.auth_service import AuthService
 from gobby.servers.middleware.auth import AuthMiddleware
-from gobby.storage.auth import LOCAL_API_TOKEN_HASH_KEY, AuthStore, hash_token
-from gobby.storage.config_store import ConfigStore
+from gobby.storage.auth import AuthStore, hash_token
 from gobby.storage.hub.protocol import HubDatabase
 from gobby.storage.secrets import SecretStore
 from tests.fixtures.postgres import TEST_USER_ID
@@ -139,17 +138,17 @@ async def test_repeated_requests_reuse_cached_credentials_without_secret_store(
 ) -> None:
     old_token = "old-local-token"
     new_token = "new-local-token"
-    config_store = ConfigStore(hub_db)
-    config_store.set(LOCAL_API_TOKEN_HASH_KEY, hash_token(old_token), source="system")
+    auth_store = AuthStore(hub_db)
+    auth_store.set_local_api_token_hash(hash_token(old_token))
 
-    original_get = ConfigStore.get
+    original_get = AuthStore.get_local_api_token_hash
     credential_lookup_threads: list[int] = []
 
-    def tracked_get(store: ConfigStore, key: str) -> object | None:
+    def tracked_get(store: AuthStore) -> str | None:
         credential_lookup_threads.append(threading.get_ident())
-        return original_get(store, key)
+        return original_get(store)
 
-    monkeypatch.setattr(ConfigStore, "get", tracked_get)
+    monkeypatch.setattr(AuthStore, "get_local_api_token_hash", tracked_get)
     secret_store_init = MagicMock(side_effect=AssertionError("SecretStore constructed"))
     monkeypatch.setattr(SecretStore, "__init__", secret_store_init)
 
@@ -180,7 +179,7 @@ async def test_repeated_requests_reuse_cached_credentials_without_secret_store(
             headers={"Authorization": f"Bearer {old_token}"},
         )
 
-        config_store.set(LOCAL_API_TOKEN_HASH_KEY, hash_token(new_token), source="system")
+        auth_store.set_local_api_token_hash(hash_token(new_token))
         auth_service._last_refresh -= auth_service.MIN_REFRESH_INTERVAL
         after_change = await client.get(
             "/api/tasks",

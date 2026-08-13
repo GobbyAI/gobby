@@ -17,8 +17,7 @@ from gobby.config.runtime_models import ConfigSnapshot
 from gobby.hooks.factory import HookManagerFactory
 from gobby.servers.auth_service import AuthService
 from gobby.servers.http import HTTPServer
-from gobby.storage.auth import LOCAL_API_TOKEN_HASH_KEY, hash_token
-from gobby.storage.config_store import ConfigStore
+from gobby.storage.auth import AuthStore, hash_token
 from gobby.storage.hub.protocol import HubDatabase
 from gobby.storage.projects import LocalProjectManager
 from gobby.storage.sessions import SessionManager
@@ -201,7 +200,7 @@ def http_server(
     )
     token_file = tmp_path / "local_cli_token"
     token_file.write_text(TEST_LOCAL_TOKEN)
-    ConfigStore(session_storage.db).set(LOCAL_API_TOKEN_HASH_KEY, hash_token(TEST_LOCAL_TOKEN))
+    AuthStore(session_storage.db).set_local_api_token_hash(hash_token(TEST_LOCAL_TOKEN))
     server.auth_service = AuthService(lambda: session_storage.db, token_file=token_file)
     return server
 

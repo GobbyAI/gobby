@@ -178,24 +178,19 @@ async def test_rule_engine_instrumentation(tracer_provider):
     from gobby.workflows.engine.core import RuleEngine
 
     mock_db = MagicMock()
-    # Mock ConfigStore.get to avoid DB fetch
-    with patch("gobby.workflows.engine.core.ConfigStore") as mock_config_store_cls:
-        mock_config_store = mock_config_store_cls.return_value
-        mock_config_store.get.return_value = True  # enforcement_enabled
+    engine = RuleEngine(mock_db)
 
-        engine = RuleEngine(mock_db)
+    event = HookEvent(
+        event_type=HookEventType.BEFORE_TOOL,
+        session_id="sess-123",
+        source=SessionSource.CLAUDE,
+        timestamp=datetime.now(UTC),
+        data={"tool_name": "test-tool"},
+    )
 
-        event = HookEvent(
-            event_type=HookEventType.BEFORE_TOOL,
-            session_id="sess-123",
-            source=SessionSource.CLAUDE,
-            timestamp=datetime.now(UTC),
-            data={"tool_name": "test-tool"},
-        )
-
-        # Mock internal methods
-        with patch.object(engine, "_load_rules", return_value=[]):
-            await engine.evaluate(event, "sess-123", {})
+    # Mock internal methods
+    with patch.object(engine, "_load_rules", return_value=[]):
+        await engine.evaluate(event, "sess-123", {})
 
     spans = exporter.get_finished_spans()
     rule_span = next(s for s in spans if s.name == "rules.evaluate")

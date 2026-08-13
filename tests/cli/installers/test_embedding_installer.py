@@ -732,7 +732,7 @@ class TestPersistEmbeddingConfig:
         monkeypatch: pytest.MonkeyPatch,
     ) -> None:
         from gobby.cli.installers.embedding import _persist_embedding_config
-        from gobby.storage.config_store import ConfigStore
+        from gobby.storage.config_repository import ConfigRepository
         from gobby.storage.secrets import SecretStore
 
         monkeypatch.setenv("GOBBY_HOME", str(tmp_path))
@@ -754,14 +754,15 @@ class TestPersistEmbeddingConfig:
                 embedding_api_key="sk-xxx",
             )
 
-            store = ConfigStore(temp_db)
+            repository = ConfigRepository(temp_db)
             secret_store = SecretStore(temp_db)
             row = temp_db.fetchone(
                 "SELECT encrypted_value FROM secrets WHERE name = %s",
                 (EMBEDDING_API_KEY_SECRET_NAME,),
             )
 
-            assert store.get(AI_EMBEDDING_API_KEY_KEY) == "$secret:embeddings_api_key"
+            snapshot = repository.read(resolve_secrets=False)
+            assert snapshot.overrides[AI_EMBEDDING_API_KEY_KEY] == "$secret:embeddings_api_key"
             assert secret_store.get(EMBEDDING_API_KEY_SECRET_NAME) == "sk-xxx"
             assert row is not None
             assert row["encrypted_value"] != "sk-xxx"
@@ -774,7 +775,8 @@ class TestPersistEmbeddingConfig:
         monkeypatch: pytest.MonkeyPatch,
     ) -> None:
         from gobby.cli.installers.embedding import _persist_embedding_config
-        from gobby.storage.config_store import ConfigStore
+        from gobby.storage.config_mutations import ConfigMutations, ConfigPatch, SecretUpdate
+        from gobby.storage.config_repository import ConfigRepository
         from gobby.storage.secrets import SecretStore
 
         monkeypatch.setenv("GOBBY_HOME", str(tmp_path))
@@ -788,12 +790,11 @@ class TestPersistEmbeddingConfig:
                 return_value=False,
             ),
         ):
-            store = ConfigStore(temp_db)
             secret_store = SecretStore(temp_db)
-            store.set_secret(
-                AI_EMBEDDING_API_KEY_KEY,
-                "sk-stale",
-                secret_store,
+            mutations = ConfigMutations(temp_db, secret_store=secret_store)
+            mutations.patch_internal(
+                expected_revision=0,
+                patch=ConfigPatch(secrets={AI_EMBEDDING_API_KEY_KEY: SecretUpdate("sk-stale")}),
                 source="test",
             )
 
@@ -807,7 +808,8 @@ class TestPersistEmbeddingConfig:
                     provider="lmstudio",
                 )
 
-            assert store.get(AI_EMBEDDING_API_KEY_KEY) == "$secret:embeddings_api_key"
+            snapshot = ConfigRepository(temp_db).read(resolve_secrets=False)
+            assert snapshot.overrides[AI_EMBEDDING_API_KEY_KEY] == "$secret:embeddings_api_key"
             assert secret_store.get(EMBEDDING_API_KEY_SECRET_NAME) == "sk-stale"
 
     @patch("gobby.storage.secrets.SecretStore")
@@ -860,7 +862,7 @@ class TestPersistEmbeddingConfig:
     ) -> None:
         from gobby.cli.installers.embedding import _persist_embedding_config
         from gobby.storage.config_mutations import EmbeddingConfigMutationBlocked
-        from gobby.storage.config_store import ConfigStore
+        from gobby.storage.config_repository import ConfigRepository
 
         with (
             patch(
@@ -880,7 +882,7 @@ class TestPersistEmbeddingConfig:
                     provider="openai",
                 )
 
-        assert ConfigStore(temp_db).list_keys() == []
+        assert ConfigRepository(temp_db).read(resolve_secrets=False).overrides == {}
 
     def test_live_switch_refuses_installer_with_zero_writes(
         self,
@@ -889,6 +891,7 @@ class TestPersistEmbeddingConfig:
         from gobby.cli.installers.embedding import _persist_embedding_config
         from gobby.config.embedding_keys import EMBEDDING_SWITCH_JOURNAL_KEY
         from gobby.storage.config_mutations import EmbeddingConfigMutationBlocked
+        from gobby.storage.config_repository import ConfigRepository
         from gobby.storage.config_store import ConfigStore
 
         store = ConfigStore(temp_db)
@@ -913,7 +916,9 @@ class TestPersistEmbeddingConfig:
                 )
 
         collection_probe.assert_not_called()
-        assert store.get_all() == {}
+        assert ConfigRepository(temp_db).read(resolve_secrets=False).overrides == {
+            EMBEDDING_SWITCH_JOURNAL_KEY: {"run_id": "run-1"}
+        }
         assert store.get_internal_lifecycle(EMBEDDING_SWITCH_JOURNAL_KEY) is not None
 
 

@@ -18,6 +18,7 @@ from gobby.servers.routes.chat_attachments import (
     resolve_mime_type,
 )
 from gobby.storage.chat_attachments import bind_attachments, create_attachment
+from gobby.storage.config_mutations import ConfigMutations, ConfigPatch
 from gobby.storage.config_store import ConfigStore
 from gobby.storage.hub.protocol import HubDatabase
 from gobby.storage.projects import PERSONAL_PROJECT_ID, LocalProjectManager
@@ -28,7 +29,7 @@ pytestmark = pytest.mark.unit
 
 def test_store_limit_uses_fallback_on_database_driver_error() -> None:
     class FailingStore:
-        def get(self, key: str) -> object:
+        def read_snapshot(self) -> object:
             raise psycopg.OperationalError("database unavailable")
 
     assert _store_limit(FailingStore(), "chat.attachment_max_file_bytes", 123) == 123
@@ -88,11 +89,14 @@ def test_attachment_limits_returns_configured_max_file_bytes(
     client: TestClient,
     temp_db: HubDatabase,
 ) -> None:
-    ConfigStore(temp_db).set_many(
-        {
-            "chat.attachment_max_file_bytes": 4,
-            "chat.attachment_max_total_bytes_per_message": 4,
-        }
+    ConfigMutations(temp_db).patch(
+        expected_revision=0,
+        patch=ConfigPatch(
+            values={
+                "chat.attachment_max_file_bytes": 4,
+                "chat.attachment_max_total_bytes_per_message": 4,
+            }
+        ),
     )
 
     response = client.get("/api/chat/attachments/limits")
@@ -205,11 +209,14 @@ def test_upload_uses_config_store_limit_and_skips_metadata_on_oversize(
     client: TestClient,
     temp_db: HubDatabase,
 ) -> None:
-    ConfigStore(temp_db).set_many(
-        {
-            "chat.attachment_max_file_bytes": 4,
-            "chat.attachment_max_total_bytes_per_message": 4,
-        }
+    ConfigMutations(temp_db).patch(
+        expected_revision=0,
+        patch=ConfigPatch(
+            values={
+                "chat.attachment_max_file_bytes": 4,
+                "chat.attachment_max_total_bytes_per_message": 4,
+            }
+        ),
     )
 
     response = client.post(

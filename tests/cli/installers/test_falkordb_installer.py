@@ -15,9 +15,8 @@ from unittest.mock import patch
 import pytest
 import yaml
 
-from gobby.storage.config_mutations import ConfigMutations, ConfigPatch
+from gobby.storage.config_mutations import ConfigMutations, ConfigPatch, SecretUpdate
 from gobby.storage.config_repository import ConfigRepository
-from gobby.storage.config_store import ConfigStore
 from gobby.storage.hub.protocol import HubDatabase
 from gobby.storage.secrets import SecretStore
 
@@ -216,14 +215,16 @@ class TestInstallFalkorDB:
         hub_db: HubDatabase,
     ) -> None:
         module = _falkor_module()
-        store = ConfigStore(hub_db)
         secret_store = SecretStore(hub_db, gobby_home=tmp_path)
-        store.set("databases.falkordb.host", "127.0.0.1", source="test")
-        store.set("databases.falkordb.port", 16379, source="test")
-        store.set_secret(
-            "databases.falkordb.password",
-            "reused",
-            secret_store,
+        ConfigMutations(hub_db, secret_store=secret_store).patch_internal(
+            expected_revision=0,
+            patch=ConfigPatch(
+                values={
+                    "databases.falkordb.host": "127.0.0.1",
+                    "databases.falkordb.port": 16379,
+                },
+                secrets={"databases.falkordb.password": SecretUpdate("reused")},
+            ),
             source="test",
         )
 
@@ -409,12 +410,12 @@ class TestUninstallFalkorDB:
 
             result = module.uninstall_falkordb(gobby_home=tmp_path)
 
-            store = ConfigStore(hub_db)
             secret_store = SecretStore(hub_db, gobby_home=tmp_path)
+            overrides = ConfigRepository(hub_db).read(resolve_secrets=False).overrides
             assert result["success"] is True
-            assert store.get("databases.falkordb.host") is None
-            assert store.get("databases.falkordb.port") is None
-            assert store.get("databases.falkordb.password") is None
+            assert "databases.falkordb.host" not in overrides
+            assert "databases.falkordb.port" not in overrides
+            assert "databases.falkordb.password" not in overrides
             assert secret_store.get("falkordb_password") is None
 
         assert not (tmp_path / "bootstrap.yaml").exists()

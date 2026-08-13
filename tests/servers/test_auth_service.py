@@ -23,12 +23,7 @@ from gobby.app_context import ServiceContainer
 from gobby.identity import hash_password, verify_password_hash
 from gobby.servers.auth_service import AuthService
 from gobby.storage.agents import AgentRun, LocalAgentRunManager
-from gobby.storage.auth import (
-    LOCAL_API_TOKEN_HASH_KEY,
-    AuthStore,
-    hash_token,
-)
-from gobby.storage.config_store import ConfigStore
+from gobby.storage.auth import AuthStore, hash_token
 from gobby.storage.hub.protocol import HubDatabase
 from gobby.storage.users import LocalUserManager
 from gobby.utils.local_token import issue_agent_api_token, issue_tool_api_token
@@ -70,7 +65,7 @@ def _request(
 
 
 def _set_api_token(db: HubDatabase, token: str) -> None:
-    ConfigStore(db).set(LOCAL_API_TOKEN_HASH_KEY, hash_token(token), source="system")
+    AuthStore(db).set_local_api_token_hash(hash_token(token))
 
 
 @pytest.fixture

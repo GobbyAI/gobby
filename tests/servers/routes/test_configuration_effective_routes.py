@@ -14,8 +14,7 @@ from gobby.config.app import DaemonConfig
 from gobby.config.runtime import ConfigRuntime, ConfigSnapshot, RuntimeSecretBinding
 from gobby.servers.auth_service import AuthService
 from gobby.storage.agents import AgentRun, LocalAgentRunManager
-from gobby.storage.auth import LOCAL_API_TOKEN_HASH_KEY, AuthStore, hash_token
-from gobby.storage.config_store import ConfigStore
+from gobby.storage.auth import AuthStore, hash_token
 from gobby.storage.hub.protocol import HubDatabase
 from gobby.storage.machines import LocalMachineManager
 from gobby.storage.tasks import LocalTaskManager
@@ -118,10 +117,8 @@ def server(
     runtime_config: DaemonConfig,
     tmp_path: Path,
 ) -> Any:
-    ConfigStore(hub_db).set(
-        LOCAL_API_TOKEN_HASH_KEY,
+    AuthStore(hub_db).set_local_api_token_hash(
         hash_token(LOCAL_RUNTIME_TOKEN),
-        source="system",
     )
     http_server = create_http_server(
         config=runtime_config,

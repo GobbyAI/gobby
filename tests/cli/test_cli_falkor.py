@@ -8,7 +8,7 @@ from unittest.mock import MagicMock, patch
 import pytest
 
 from gobby.cli.installers.compose_env import ComposeEnvironmentError, ComposeRuntime
-from gobby.storage.config_store import ConfigStore
+from gobby.storage.config_mutations import ConfigMutations, ConfigPatch, SecretUpdate
 from gobby.storage.hub.protocol import HubDatabase
 from gobby.utils.status import format_status_message
 
@@ -22,11 +22,17 @@ class TestGetFalkorDBStatus:
     async def test_returns_status_dict(self, hub_db: HubDatabase) -> None:
         from gobby.cli.services import get_falkordb_status
 
-        store = ConfigStore(hub_db)
-        store.set("databases.falkordb.host", "127.0.0.1")
-        store.set("databases.falkordb.port", 16379)
-        # Installedness requires the password recorded as a secret reference.
-        store.set("databases.falkordb.password", "$secret:falkordb_password")
+        ConfigMutations(hub_db).patch_internal(
+            expected_revision=0,
+            patch=ConfigPatch(
+                values={
+                    "databases.falkordb.host": "127.0.0.1",
+                    "databases.falkordb.port": 16379,
+                },
+                secrets={"databases.falkordb.password": SecretUpdate("secret")},
+            ),
+            source="test",
+        )
         with patch("gobby.cli.services.is_falkordb_healthy", return_value=False):
             result = await get_falkordb_status(
                 db=hub_db,

@@ -19,8 +19,7 @@ from gobby.config.app import DaemonConfig
 from gobby.servers.auth_service import AuthService
 from gobby.servers.http import HTTPServer
 from gobby.servers.middleware.auth import AuthMiddleware
-from gobby.storage.auth import LOCAL_API_TOKEN_HASH_KEY, AuthStore, hash_token
-from gobby.storage.config_store import ConfigStore
+from gobby.storage.auth import AuthStore, hash_token
 from gobby.storage.hub.protocol import HubDatabase
 from gobby.storage.sessions import SessionManager
 from tests.fixtures.postgres import TEST_USER_ID
@@ -145,9 +144,6 @@ def test_public_prefix_matrix() -> None:
         "/api/health",
         "/api/admin/health",
         "/api/admin/startup-progress",
-        "/api/sessions/register",
-        "/api/sessions/find_current",
-        "/api/sessions/update_status",
         "/api/comms/webhooks/slack",
         "/api/github/webhooks/triage/project",
         "/assets/index.js",
@@ -159,6 +155,9 @@ def test_public_prefix_matrix() -> None:
         "/api/admin/health/details",
         "/api/admin/startup-progress/details",
         "/api/hooks/session-start",
+        "/api/sessions/register",
+        "/api/sessions/find_current",
+        "/api/sessions/update_status",
         "/api/sessions/current",
         "/api/sessions/session-id/transcript",
         "/api/sessions/session-id/changes",
@@ -232,8 +231,9 @@ def test_public_webhooks_signature_gated() -> None:
 
 def test_bearer_and_alias_accepted(temp_db: HubDatabase, tmp_path: Path) -> None:
     token = "local-cli-token"
-    ConfigStore(temp_db).set(LOCAL_API_TOKEN_HASH_KEY, hash_token(token), source="system")
-    session_token, _ = AuthStore(temp_db).create_session(TEST_USER_ID)
+    auth_store = AuthStore(temp_db)
+    auth_store.set_local_api_token_hash(hash_token(token))
+    session_token, _ = auth_store.create_session(TEST_USER_ID)
     server = cast(
         HTTPServer,
         SimpleNamespace(

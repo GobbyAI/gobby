@@ -236,7 +236,7 @@ class TestGobbyRunnerInit:
                 for patch_context, entered_mock in zip(patches, entered, strict=True)
             }
             secret_store = mocks["SecretStore"].return_value
-            config_store = mocks["ConfigStore"].return_value
+            auth_store = mocks["AuthStore"].return_value
             ensure_token = mocks["ensure_local_api_token"]
             ordering = MagicMock()
             ordering.attach_mock(secret_store.ensure_ready, "ensure_ready")
@@ -248,7 +248,7 @@ class TestGobbyRunnerInit:
             "ensure_ready",
             "ensure_local_api_token",
         ]
-        ensure_token.assert_called_once_with(config_store)
+        ensure_token.assert_called_once_with(auth_store)
 
     def test_memory_stack_uses_embedding_secret_when_runtime_config_has_no_key(self) -> None:
         from gobby.runner_init import services

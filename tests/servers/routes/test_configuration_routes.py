@@ -21,10 +21,7 @@ from gobby.prompts.sync import sync_bundled_prompts
 from gobby.servers.auth_service import AuthService
 from gobby.servers.routes.configuration_prompts import _normalize_variable_spec
 from gobby.servers.tool_approvals import DEFAULT_GLOBAL_APPROVAL_RULES
-from gobby.storage.auth import (
-    LOCAL_API_TOKEN_HASH_KEY,
-    hash_token,
-)
+from gobby.storage.auth import AuthStore, hash_token
 from gobby.storage.config_mutations import (
     ConfigMutations,
     ConfigPatch,
@@ -32,7 +29,6 @@ from gobby.storage.config_mutations import (
     config_key_to_secret_name,
 )
 from gobby.storage.config_repository import ConfigRepository
-from gobby.storage.config_store import ConfigStore
 from gobby.storage.hub.protocol import HubDatabase
 from gobby.storage.prompts import LocalPromptManager
 from gobby.storage.secrets import SecretStore
@@ -70,11 +66,7 @@ def task_manager(temp_db: Any) -> Any:
 @pytest.fixture
 def server(temp_db: Any, real_config: Any, task_manager: Any, tmp_path: Any) -> Any:
     """Create an HTTPServer with real config and database."""
-    ConfigStore(temp_db).set(
-        LOCAL_API_TOKEN_HASH_KEY,
-        hash_token(LOCAL_RUNTIME_TOKEN),
-        source="system",
-    )
+    AuthStore(temp_db).set_local_api_token_hash(hash_token(LOCAL_RUNTIME_TOKEN))
     http_server = create_http_server(
         config=real_config,
         database=temp_db,
@@ -468,10 +460,8 @@ class TestSecretsEndpoints:
     def test_secret_routes_accept_hub_database_protocol(
         self, non_local_hub_db: Any, real_config: Any, tmp_path: Any, mock_machine_id: Any
     ) -> None:
-        ConfigStore(non_local_hub_db).set(
-            LOCAL_API_TOKEN_HASH_KEY,
+        AuthStore(non_local_hub_db).set_local_api_token_hash(
             hash_token(LOCAL_RUNTIME_TOKEN),
-            source="system",
         )
         server = create_http_server(
             config=real_config,
@@ -722,11 +712,7 @@ class TestPromptsEndpoints:
             task_manager=task_manager,
             project_id=project_id,
         )
-        ConfigStore(temp_db).set(
-            LOCAL_API_TOKEN_HASH_KEY,
-            hash_token(LOCAL_RUNTIME_TOKEN),
-            source="system",
-        )
+        AuthStore(temp_db).set_local_api_token_hash(hash_token(LOCAL_RUNTIME_TOKEN))
         scoped_client = TestClient(
             server.app,
             headers={"Authorization": f"Bearer {LOCAL_RUNTIME_TOKEN}"},

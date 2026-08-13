@@ -8,7 +8,7 @@ from unittest.mock import AsyncMock, patch
 
 import pytest
 
-from gobby.storage.config_store import ConfigStore
+from gobby.storage.config_mutations import ConfigMutations, ConfigPatch, SecretUpdate
 from gobby.storage.hub.protocol import HubDatabase
 
 pytestmark = pytest.mark.unit
@@ -35,11 +35,17 @@ class _NonClosingDb:
 
 
 def _seed_falkordb_config(db: HubDatabase) -> None:
-    store = ConfigStore(db)
-    store.set("databases.falkordb.host", "localhost", source="test")
-    store.set("databases.falkordb.port", 6379, source="test")
-    # is_falkordb_installed requires a recorded password reference.
-    store.set("databases.falkordb.password", "$secret:falkordb_password")
+    ConfigMutations(db).patch_internal(
+        expected_revision=0,
+        patch=ConfigPatch(
+            values={
+                "databases.falkordb.host": "localhost",
+                "databases.falkordb.port": 6379,
+            },
+            secrets={"databases.falkordb.password": SecretUpdate("secret")},
+        ),
+        source="test",
+    )
 
 
 class _FakeRedisClient:

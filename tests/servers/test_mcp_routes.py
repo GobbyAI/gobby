@@ -57,8 +57,7 @@ from gobby.mcp_proxy.wait_tools import (
     MCP_WRAPPER_STALE_ERROR_CODE,
 )
 from gobby.servers.http import HTTPServer
-from gobby.storage.auth import LOCAL_API_TOKEN_HASH_KEY, hash_token
-from gobby.storage.config_store import ConfigStore
+from gobby.storage.auth import AuthStore, hash_token
 from gobby.storage.hub.protocol import HubDatabase
 from gobby.storage.projects import LocalProjectManager
 from gobby.storage.sessions import SessionManager
@@ -3977,11 +3976,7 @@ class TestHooksEndpoints:
 
         token = "test-token"
         (tmp_path / "local_cli_token").write_text(token, encoding="utf-8")
-        ConfigStore(session_storage.db).set(
-            LOCAL_API_TOKEN_HASH_KEY,
-            hash_token(token),
-            source="test",
-        )
+        AuthStore(session_storage.db).set_local_api_token_hash(hash_token(token))
         first = await drain_hook_inbox_barrier(
             server.app,
             inbox_dir,

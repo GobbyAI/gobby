@@ -21,7 +21,7 @@ from gobby.runner_init.helpers import (
     init_hub_database,
 )
 from gobby.shutdown_intent import ShutdownIntent
-from gobby.storage.auth import ensure_local_api_token
+from gobby.storage.auth import AuthStore, ensure_local_api_token
 from gobby.storage.concurrency import CoverageExecutor, resolve_database_concurrency
 from gobby.storage.concurrency_watchdog import DatabaseSaturationWatchdog
 from gobby.storage.executor import DatabaseExecutor
@@ -155,14 +155,12 @@ def init_storage_and_config(runner: GobbyRunner, config_path: Path | None, verbo
         "managed_credential_manager",
         runner.managed_credential_manager,
     )
-    from gobby.storage.config_store import ConfigStore
     from gobby.storage.hub.postgres import PostgresHubDatabase
     from gobby.storage.secrets import SecretStore
 
     runner.secret_store = SecretStore(runner.database)
-    auth_config_store = ConfigStore(runner.database, secret_store=runner.secret_store)
     runner.secret_store.ensure_ready()
-    ensure_local_api_token(auth_config_store)
+    ensure_local_api_token(AuthStore(runner.database))
     postgres_database = cast(PostgresHubDatabase, runner.database)
     from gobby.ai.embedding_switch import managed_embedding_projection
     from gobby.config.runtime import ConfigRuntime

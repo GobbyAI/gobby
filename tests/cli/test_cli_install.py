@@ -28,7 +28,7 @@ from gobby.cli.install import (
 )
 from gobby.cli.uninstall import uninstall
 from gobby.config.bootstrap import BootstrapConfig
-from gobby.storage.auth import LOCAL_API_TOKEN_HASH_KEY, hash_token
+from gobby.storage.auth import hash_token
 from gobby.storage.secrets import (
     POSTURE_KEY_FILE,
     POSTURE_SCRYPT_PASSPHRASE,
@@ -101,6 +101,9 @@ class TestSecretKekPostureInstall:
 def _mock_ext_services_and_prompts() -> Iterator[None]:
     """Prevent real Docker service installers and interactive API-key prompts."""
 
+    auth_store = MagicMock()
+    auth_store._read_local_api_token_hash.return_value = (None, False)
+
     def qdrant_success(_installer: object, results: dict[str, dict[str, object]]) -> None:
         results["qdrant"] = {"success": True}
 
@@ -129,6 +132,7 @@ def _mock_ext_services_and_prompts() -> Iterator[None]:
         patch("gobby.storage.hub.runtime.runtime_hub_database", return_value=MagicMock()),
         patch("gobby.cli.install.SecretStore"),
         patch("gobby.cli.install.ConfigStore"),
+        patch("gobby.cli.install.AuthStore", return_value=auth_store),
         patch(
             "gobby.cli.install.ensure_install_identity",
             return_value=MagicMock(email="owner@example.com"),
@@ -561,7 +565,8 @@ class TestInstallCommand:
         gobby_home = temp_dir / "gobby-home"
         monkeypatch.setenv("GOBBY_HOME", str(gobby_home))
         config_store = MagicMock()
-        config_store.get.return_value = None
+        auth_store = MagicMock()
+        auth_store._read_local_api_token_hash.return_value = (None, False)
         codex_result = {
             "success": True,
             "hooks_installed": [],
@@ -581,6 +586,7 @@ class TestInstallCommand:
             ),
             patch("gobby.cli.runtime.CliRuntime.require_config"),
             patch("gobby.cli.install.ConfigStore", return_value=config_store),
+            patch("gobby.cli.install.AuthStore", return_value=auth_store),
             patch("gobby.cli.install.install_codex", return_value=codex_result),
         ):
             with runner.isolated_filesystem(temp_dir=str(temp_dir)):
@@ -590,11 +596,7 @@ class TestInstallCommand:
         assert result.exit_code == 0
         assert token_path.exists()
         token = token_path.read_text().strip()
-        config_store.set.assert_called_once_with(
-            LOCAL_API_TOKEN_HASH_KEY,
-            hash_token(token),
-            source="system",
-        )
+        auth_store.set_local_api_token_hash.assert_called_once_with(hash_token(token))
         assert token_path.stat().st_mode & 0o777 == 0o600
 
     def test_install_db_unreachable_fails_before_token_provisioning(

@@ -15,10 +15,39 @@ from gobby.config.embedding_keys import (
     AI_EMBEDDING_DIM_KEY,
     AI_EMBEDDING_MODEL_KEY,
 )
+from gobby.storage.config_mutations import ConfigMutations, ConfigPatch, SecretUpdate
 from gobby.storage.hub.protocol import HubDatabase
+from gobby.storage.secrets import SecretStore
 from gobby.utils import deps
 from gobby.utils.dependency_requirements import DependencyReport, DependencyStatus
 from gobby.utils.status import format_status_message
+
+
+def _patch_config(
+    db: HubDatabase,
+    values: dict[str, object],
+    *,
+    secret_store: SecretStore | None = None,
+    secrets: dict[str, SecretUpdate] | None = None,
+) -> None:
+    mutations = ConfigMutations(db, secret_store=secret_store)
+    mutations.patch_internal(
+        expected_revision=mutations.repository.current_revision(),
+        patch=ConfigPatch(values=values, secrets=secrets or {}),
+        source="test",
+    )
+
+
+def _insert_raw_config(db: HubDatabase, values: dict[str, object]) -> None:
+    """Seed intentionally corrupt rows that the validated mutation API rejects."""
+    for key, value in values.items():
+        db.execute(
+            """
+            INSERT INTO config_store (key, value, source, is_secret, updated_at)
+            VALUES (%s, %s, 'test', FALSE, NOW())
+            """,
+            (key, json.dumps(value)),
+        )
 
 
 def test_run_cmd() -> None:
@@ -395,14 +424,12 @@ def test_lmstudio_info_unexpected_exception_propagates() -> None:
 
 @pytest.mark.unit
 def test_get_configured_embedding_provider_detects_ollama(temp_db: HubDatabase) -> None:
-    from gobby.storage.config_store import ConfigStore
-
-    store = ConfigStore(temp_db)
-    store.set_many(
+    _patch_config(
+        temp_db,
         {
             AI_EMBEDDING_API_BASE_KEY: "http://localhost:11434/v1",
             AI_EMBEDDING_DIM_KEY: 768,
-        }
+        },
     )
 
     assert deps.get_configured_embedding_provider(temp_db) == "ollama"
@@ -410,14 +437,12 @@ def test_get_configured_embedding_provider_detects_ollama(temp_db: HubDatabase) 
 
 @pytest.mark.unit
 def test_get_configured_embedding_provider_detects_lmstudio(temp_db: HubDatabase) -> None:
-    from gobby.storage.config_store import ConfigStore
-
-    store = ConfigStore(temp_db)
-    store.set_many(
+    _patch_config(
+        temp_db,
         {
             AI_EMBEDDING_API_BASE_KEY: "http://localhost:1234/v1",
             AI_EMBEDDING_DIM_KEY: 768,
-        }
+        },
     )
 
     assert deps.get_configured_embedding_provider(temp_db) == "lmstudio"
@@ -430,24 +455,17 @@ def test_get_configured_embedding_provider_detects_embedding_api_key(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    from gobby.storage.config_store import ConfigStore
-    from gobby.storage.secrets import SecretStore
-
-    store = ConfigStore(temp_db)
-    store.set_many(
+    monkeypatch.setenv("GOBBY_HOME", str(tmp_path))
+    secret_store = SecretStore(temp_db)
+    _patch_config(
+        temp_db,
         {
             AI_EMBEDDING_MODEL_KEY: "text-embedding-3-small",
             AI_EMBEDDING_API_BASE_KEY: None,
             AI_EMBEDDING_DIM_KEY: 1536,
-        }
-    )
-
-    monkeypatch.setenv("GOBBY_HOME", str(tmp_path))
-    store.set_secret(
-        AI_EMBEDDING_API_KEY_KEY,
-        "sk-test",
-        SecretStore(temp_db),
-        source="test",
+        },
+        secret_store=secret_store,
+        secrets={AI_EMBEDDING_API_KEY_KEY: SecretUpdate("sk-test")},
     )
     assert deps.get_configured_embedding_provider(temp_db) == "openai"
 
@@ -468,48 +486,35 @@ def test_get_configured_embedding_provider_detects_explicit_cloud_api_base(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    from gobby.storage.config_store import ConfigStore
-    from gobby.storage.secrets import SecretStore
-
-    store = ConfigStore(temp_db)
-    store.set_many(
+    monkeypatch.setenv("GOBBY_HOME", str(tmp_path))
+    secret_store = SecretStore(temp_db)
+    _patch_config(
+        temp_db,
         {
             AI_EMBEDDING_MODEL_KEY: "text-embedding-3-small",
             AI_EMBEDDING_API_BASE_KEY: api_base,
             AI_EMBEDDING_DIM_KEY: 1536,
-        }
-    )
-
-    monkeypatch.setenv("GOBBY_HOME", str(tmp_path))
-    store.set_secret(
-        AI_EMBEDDING_API_KEY_KEY,
-        "sk-test",
-        SecretStore(temp_db),
-        source="test",
+        },
+        secret_store=secret_store,
+        secrets={AI_EMBEDDING_API_KEY_KEY: SecretUpdate("sk-test")},
     )
     assert deps.get_configured_embedding_provider(temp_db) == "openai"
 
 
 @pytest.mark.unit
-def test_get_configured_embedding_provider_strips_whitespace_values(
+def test_get_configured_embedding_provider_strips_resolved_api_key(
     temp_db: HubDatabase,
 ) -> None:
-    from gobby.storage.config_store import ConfigStore
-
-    store = ConfigStore(temp_db)
-    store.set_many(
+    secret_store = SecretStore(temp_db)
+    _patch_config(
+        temp_db,
         {
-            AI_EMBEDDING_MODEL_KEY: " text-embedding-3-small ",
-            AI_EMBEDDING_API_BASE_KEY: "   ",
-            AI_EMBEDDING_DIM_KEY: " 1536 ",
-        }
-    )
-    temp_db.execute(
-        """
-        INSERT INTO config_store (key, value, source, is_secret, updated_at)
-        VALUES (%s, %s, 'test', TRUE, NOW())
-        """,
-        (AI_EMBEDDING_API_KEY_KEY, json.dumps(" sk-test ")),
+            AI_EMBEDDING_MODEL_KEY: "text-embedding-3-small",
+            AI_EMBEDDING_API_BASE_KEY: None,
+            AI_EMBEDDING_DIM_KEY: 1536,
+        },
+        secret_store=secret_store,
+        secrets={AI_EMBEDDING_API_KEY_KEY: SecretUpdate(" sk-test ")},
     )
 
     assert deps.get_configured_embedding_provider(temp_db) == "openai"
@@ -519,22 +524,16 @@ def test_get_configured_embedding_provider_strips_whitespace_values(
 def test_get_configured_embedding_provider_ignores_whitespace_only_api_key(
     temp_db: HubDatabase,
 ) -> None:
-    from gobby.storage.config_store import ConfigStore
-
-    store = ConfigStore(temp_db)
-    store.set_many(
+    secret_store = SecretStore(temp_db)
+    _patch_config(
+        temp_db,
         {
             AI_EMBEDDING_MODEL_KEY: "text-embedding-3-small",
-            AI_EMBEDDING_API_BASE_KEY: "",
+            AI_EMBEDDING_API_BASE_KEY: None,
             AI_EMBEDDING_DIM_KEY: 1536,
-        }
-    )
-    temp_db.execute(
-        """
-        INSERT INTO config_store (key, value, source, is_secret, updated_at)
-        VALUES (%s, %s, 'test', TRUE, NOW())
-        """,
-        (AI_EMBEDDING_API_KEY_KEY, json.dumps("   ")),
+        },
+        secret_store=secret_store,
+        secrets={AI_EMBEDDING_API_KEY_KEY: SecretUpdate("   ")},
     )
 
     assert deps.get_configured_embedding_provider(temp_db) is None
@@ -544,16 +543,14 @@ def test_get_configured_embedding_provider_ignores_whitespace_only_api_key(
 def test_get_configured_embedding_provider_returns_none_without_secret(
     temp_db: HubDatabase, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    from gobby.storage.config_store import ConfigStore
-
     monkeypatch.delenv("OPENAI_API_KEY", raising=False)
 
-    store = ConfigStore(temp_db)
-    store.set_many(
+    _patch_config(
+        temp_db,
         {
             AI_EMBEDDING_API_BASE_KEY: None,
             AI_EMBEDDING_DIM_KEY: 1536,
-        }
+        },
     )
 
     assert deps.get_configured_embedding_provider(temp_db) is None
@@ -561,14 +558,12 @@ def test_get_configured_embedding_provider_returns_none_without_secret(
 
 @pytest.mark.unit
 def test_get_configured_embedding_provider_detects_disabled_state(temp_db: HubDatabase) -> None:
-    from gobby.storage.config_store import ConfigStore
-
-    store = ConfigStore(temp_db)
-    store.set_many(
+    _insert_raw_config(
+        temp_db,
         {
             AI_EMBEDDING_API_BASE_KEY: None,
             AI_EMBEDDING_DIM_KEY: 0,
-        }
+        },
     )
 
     assert deps.get_configured_embedding_provider(temp_db) == "none"
@@ -578,14 +573,12 @@ def test_get_configured_embedding_provider_detects_disabled_state(temp_db: HubDa
 def test_get_configured_embedding_provider_disabled_state_overrides_stale_api_base(
     temp_db: HubDatabase,
 ) -> None:
-    from gobby.storage.config_store import ConfigStore
-
-    store = ConfigStore(temp_db)
-    store.set_many(
+    _insert_raw_config(
+        temp_db,
         {
             AI_EMBEDDING_API_BASE_KEY: "https://stale.example.test/v1",
             AI_EMBEDDING_DIM_KEY: 0,
-        }
+        },
     )
 
     assert deps.get_configured_embedding_provider(temp_db) == "none"
@@ -595,14 +588,12 @@ def test_get_configured_embedding_provider_disabled_state_overrides_stale_api_ba
 def test_get_configured_embedding_provider_ignores_invalid_dim_string(
     temp_db: HubDatabase,
 ) -> None:
-    from gobby.storage.config_store import ConfigStore
-
-    store = ConfigStore(temp_db)
-    store.set_many(
+    _insert_raw_config(
+        temp_db,
         {
             AI_EMBEDDING_API_BASE_KEY: None,
             AI_EMBEDDING_DIM_KEY: "invalid",
-        }
+        },
     )
 
     assert deps.get_configured_embedding_provider(temp_db) is None
@@ -622,7 +613,7 @@ def test_get_configured_embedding_provider_returns_none_for_storage_errors(
     error: Exception,
 ) -> None:
     with patch(
-        "gobby.storage.config_store.ConfigStore",
+        "gobby.storage.config_repository.ConfigRepository",
         side_effect=error,
     ):
         assert deps.get_configured_embedding_provider(MagicMock()) is None
@@ -632,7 +623,7 @@ def test_get_configured_embedding_provider_returns_none_for_storage_errors(
 def test_get_configured_embedding_provider_reraises_unexpected_errors() -> None:
     with (
         patch(
-            "gobby.storage.config_store.ConfigStore",
+            "gobby.storage.config_repository.ConfigRepository",
             side_effect=AssertionError("database invariant bug"),
         ),
         pytest.raises(AssertionError, match="database invariant bug"),
