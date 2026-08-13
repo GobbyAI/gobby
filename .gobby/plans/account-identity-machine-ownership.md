@@ -94,7 +94,7 @@ Targets:
 - `src/gobby/runner_lifecycle.py::run_daemon`
 - `src/gobby/hooks/hook_manager.py::HookManager._record_machine_ingress`
 - `src/gobby/storage/sessions/_crud.py::_SessionCRUDMixin.register`
-- `src/gobby/storage/users.py::LocalUserManager.resolve_for_session`
+- `src/gobby/storage/users.py::*` — scope-reason: machine ownership resolution joins through the canonical user capability
 - `tests/storage/test_machines.py::*` — scope-reason: replace nullable and overwrite semantics with complete ownership coverage
 - `tests/hooks/test_hook_manager.py::*` — scope-reason: verify existing-only machine refresh at untrusted hook ingress
 - `tests/storage/sessions/test_usage_and_bootstrap.py::*` — scope-reason: verify session rejection for unknown machines
