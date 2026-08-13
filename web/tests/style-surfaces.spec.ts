@@ -1084,11 +1084,7 @@ function baseApi(
 ): unknown | undefined {
   switch (pathname) {
     case "/api/auth/status":
-      return {
-        auth_required: false,
-        authenticated: true,
-        credentials_configured: true,
-      };
+      return { authenticated: true };
     case "/api/config/ui-settings":
       // Must mirror the localStorage seed — the remote payload merges over
       // local settings on mount, so a mismatch would undo per-cell settings.
@@ -2037,11 +2033,7 @@ function buildImplementations(): Record<string, Record<string, StateImpl>> {
       base: {
         api: (pathname) =>
           pathname === "/api/auth/status"
-            ? {
-                auth_required: true,
-                authenticated: false,
-                credentials_configured: true,
-              }
+            ? { authenticated: false }
             : undefined,
         checkpoint: (page) => page.getByRole("button", { name: "Sign in" }),
       },

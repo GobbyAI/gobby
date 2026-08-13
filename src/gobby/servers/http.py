@@ -26,7 +26,6 @@ from gobby.config.app import DaemonConfig
 from gobby.config.bootstrap import BootstrapConfig
 from gobby.config.runtime import ConfigSnapshot, RuntimeActiveBundle
 from gobby.config.runtime_models import UnavailableService
-from gobby.config.ui import is_loopback_bind_host
 from gobby.hooks.broadcaster import HookEventBroadcaster
 from gobby.mcp_proxy.registries import setup_internal_registries
 from gobby.mcp_proxy.semantic_search import (
@@ -96,23 +95,8 @@ class HTTPServer:
         self.test_mode = test_mode
         self.codex_client = codex_client
         self.bootstrap_config = bootstrap_config or BootstrapConfig()
-        effective_auth_mode = self.bootstrap_config.auth_mode
-        if effective_auth_mode not in ("required", "disabled"):
-            raise ValueError(f"Unsupported authentication mode: {effective_auth_mode}")
         self.startup_config = startup_config.model_copy(deep=True) if startup_config else None
-        if (
-            self.startup_config
-            and self.startup_config.ui.enabled
-            and effective_auth_mode != "required"
-            and not is_loopback_bind_host(self.bootstrap_config.bind_host)
-        ):
-            raise ValueError(
-                "ui.enabled requires bootstrap auth_mode='required' for a non-loopback bind_host"
-            )
-        self.auth_service = AuthService(
-            lambda: self.services.database,
-            mode=effective_auth_mode,
-        )
+        self.auth_service = AuthService(lambda: self.services.database)
 
         # WebSocket server reference (set by GobbyRunner after construction)
         self.websocket_server: WebSocketServer | None = None

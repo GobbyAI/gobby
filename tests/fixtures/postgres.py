@@ -58,6 +58,14 @@ def _test_schema_created_epoch(schema_name: str) -> int | None:
 # sessions.machine_id -> machines(id) FK. Tests asserting machines-table
 # contents must exclude this prefix.
 TEST_MACHINE_ID_PREFIX = "21000000-0000-4000-8000-"
+TEST_USER_ID = "20000000-0000-4000-8000-000000000001"
+TEST_USER_NAME = "Gobby Test User"
+TEST_USER_EMAIL = "test-user@gobby.local"
+TEST_USER_PASSWORD = "test-password"
+TEST_USER_PASSWORD_HASH = (
+    "$argon2id$v=19$m=65536,t=3,p=4$Z29iYnktdGVzdC1zYWx0IQ$"
+    "a0t+5elAO+H9L/acbECK+32i6gZTZeKfT221qJhLLjM"
+)
 _LOOPBACK_HOSTS = frozenset({"", "localhost", "127.0.0.1", "::1"})
 _TEST_DSN_REQUIRED = (
     "DATABASE_URL must point at an isolated PostgreSQL test database; start one with "
@@ -249,9 +257,8 @@ def _reset_schema(
       - All other application tables are emptied with DELETE, preserving their
         relfilenodes while deferred constraints allow dependency-safe ordering.
       - Sequences owned by reset tables are restarted to their fresh-schema values.
-      - Every table present in `canonical_seed` is re-INSERTed inside the
-        same transaction with all FK constraints deferred, so re-seed order
-        does not need to follow the dependency graph.
+      - Every table present in `canonical_seed` is re-INSERTed parent-first
+        inside the same transaction, supporting immediate foreign keys.
 
     After this call the schema is byte-for-byte equivalent to the state
     `PostgresHubDatabase.apply_migrations()` produces on a fresh schema —
@@ -300,8 +307,8 @@ def _reset_schema(
                 conn.execute(sql.SQL("DELETE FROM {}").format(sql.Identifier(table)))
             for sequence in sequences:
                 conn.execute(sql.SQL("ALTER SEQUENCE {} RESTART").format(sql.Identifier(sequence)))
-            for table in sorted(canonical_seed):
-                rows = canonical_seed[table]
+            for table in reversed(reset_tables):
+                rows = canonical_seed.get(table, [])
                 if not rows:
                     continue
                 placeholders = sql.SQL(", ").join(sql.Placeholder() for _ in range(len(rows[0])))
@@ -431,18 +438,31 @@ def postgres_canonical_seed(
     with psycopg.connect(url, autocommit=True) as conn:
         conn.execute(sql.SQL("SET search_path TO {}").format(sql.Identifier(postgres_schema)))
         conn.execute(
-            f"""
-            INSERT INTO machines (id)
-            SELECT FORMAT('{TEST_MACHINE_ID_PREFIX}%s', LPAD(n::TEXT, 12, '0'))::UUID
-            FROM GENERATE_SERIES(1, 50) AS n
-            ON CONFLICT (id) DO NOTHING
             """
+            INSERT INTO users (id, email, name, password_hash)
+            VALUES (%s, %s, %s, %s)
+            ON CONFLICT (id) DO NOTHING
+            """,
+            (TEST_USER_ID, TEST_USER_EMAIL, TEST_USER_NAME, TEST_USER_PASSWORD_HASH),
+        )
+        conn.execute(
+            f"""
+                INSERT INTO machines (id, owner_user_id)
+                SELECT ('{TEST_MACHINE_ID_PREFIX}' || LPAD(n::TEXT, 12, '0'))::UUID, %s
+                FROM GENERATE_SERIES(1, 50) AS n
+                ON CONFLICT (id) DO NOTHING
+                """,
+            (TEST_USER_ID,),
         )
         local_machine_id = get_machine_id()
         if local_machine_id is not None:
             conn.execute(
-                "INSERT INTO machines (id) VALUES (%s) ON CONFLICT (id) DO NOTHING",
-                (local_machine_id,),
+                """
+                INSERT INTO machines (id, owner_user_id)
+                VALUES (%s, %s)
+                ON CONFLICT (id) DO NOTHING
+                """,
+                (local_machine_id, TEST_USER_ID),
             )
         return _capture_canonical_seed(conn)
 

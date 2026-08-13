@@ -16,6 +16,11 @@ from gobby.utils.native_bin import (
 pytestmark = pytest.mark.unit
 
 
+@pytest.fixture(autouse=True)
+def _clear_native_bin_override(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.delenv("GOBBY_NATIVE_BIN_DIR", raising=False)
+
+
 def test_native_bin_name_adds_windows_suffix() -> None:
     with patch("gobby.utils.native_bin.sys.platform", "win32"):
         assert native_bin_name("ghook") == "ghook.exe"
@@ -41,6 +46,15 @@ def test_local_native_bin_path_prefers_gobby_home(temp_dir: Path) -> None:
 def test_native_bin_dir_uses_gobby_home(temp_dir: Path) -> None:
     with patch.object(Path, "home", return_value=temp_dir):
         assert native_bin_dir() == temp_dir / ".gobby" / "bin"
+
+
+def test_native_bin_dir_uses_configured_override(
+    temp_dir: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    staged_bin_dir = temp_dir / "staged"
+    monkeypatch.setenv("GOBBY_NATIVE_BIN_DIR", str(staged_bin_dir))
+
+    assert native_bin_dir() == staged_bin_dir
 
 
 def test_resolve_native_bin_prefers_local_binary(temp_dir: Path) -> None:

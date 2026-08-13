@@ -56,8 +56,8 @@ Both subsets are adoptable inputs. Their data must survive the daemon full-schem
 
 After successful adoption, `~/.gobby/bootstrap.yaml` is the CLI source of truth
 for the hub connection. It must provide `database_url` for the adopted Postgres
-instance and carry the selected `auth_mode`. `database_url` is the sole
-PostgreSQL selector. Missing `auth_mode` resolves to `required`.
+instance. `database_url` is the sole PostgreSQL selector. Stateful daemon HTTP
+and WebSocket surfaces always require authentication.
 
 The previous `~/.gobby/gcore.yaml` entry can remain for standalone installs, but new daemon-aware CLIs should resolve the hub through `bootstrap.yaml`.
 

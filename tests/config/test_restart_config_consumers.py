@@ -11,7 +11,7 @@ import pytest
 from gobby.app_context import ServiceContainer
 from gobby.config.app import DaemonConfig
 from gobby.config.bootstrap import BootstrapConfig
-from gobby.config.registry import CONFIG_REGISTRY, ActivationPolicy, UnknownConfigKeyError
+from gobby.config.registry import ActivationPolicy
 from gobby.config.runtime import ConfigRuntime, ConfigSnapshotRepository
 from gobby.runner import GobbyRunner
 from gobby.runner_init.servers import init_servers
@@ -112,7 +112,7 @@ async def test_restart_changes_remain_pending() -> None:
     server = HTTPServer(
         services=_services(cast(HubDatabase, MagicMock())),
         test_mode=initial.active.test_mode,
-        bootstrap_config=BootstrapConfig(auth_mode="disabled"),
+        bootstrap_config=BootstrapConfig(),
         startup_config=initial.active,
     )
     middleware_before = tuple(server.app.user_middleware)
@@ -171,24 +171,6 @@ async def test_restart_promotes_desired_to_active(monkeypatch: pytest.MonkeyPatc
     assert runner.startup_config.test_mode is active.test_mode
     assert runner.startup_config.test_mode is not desired.test_mode
     assert observed == [runner.startup_config]
-
-
-def test_auth_mode_is_bootstrap_owned() -> None:
-    with pytest.raises(UnknownConfigKeyError):
-        CONFIG_REGISTRY.resolve("auth_mode")
-
-    startup_config = DaemonConfig(auth_mode="required", ui={"enabled": False})
-    services = _services(cast(HubDatabase, MagicMock()))
-    server = HTTPServer(
-        services=services,
-        bootstrap_config=BootstrapConfig(auth_mode="disabled"),
-        startup_config=startup_config,
-    )
-
-    assert server.auth_service.enabled is False
-    constructor_source = inspect.getsource(HTTPServer.__init__)
-    assert "services.config" not in constructor_source.split("effective_auth_mode", 1)[0]
-    assert "auth_mode:" not in constructor_source
 
 
 def test_two_stage_pool_and_executor_sizing() -> None:

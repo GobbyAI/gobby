@@ -1,6 +1,6 @@
 """Tests for WebSocket subscriptions."""
 
-from unittest.mock import MagicMock
+from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 
@@ -41,7 +41,7 @@ def mock_config():
 
 @pytest.mark.asyncio
 async def test_subscribe_success(mock_config, mock_mcp_manager):
-    server = WebSocketServer(mock_config, mock_mcp_manager)
+    server = WebSocketServer(mock_config, mock_mcp_manager, AsyncMock(return_value="test-user"))
     ws = MockWebSocket()
 
     data = {"events": ["event1", "event2"]}
@@ -58,7 +58,7 @@ async def test_subscribe_success(mock_config, mock_mcp_manager):
 
 @pytest.mark.asyncio
 async def test_unsubscribe_success(mock_config, mock_mcp_manager):
-    server = WebSocketServer(mock_config, mock_mcp_manager)
+    server = WebSocketServer(mock_config, mock_mcp_manager, AsyncMock(return_value="test-user"))
     ws = MockWebSocket()
     ws.subscriptions = {"event1", "event2"}
 
@@ -75,7 +75,7 @@ async def test_unsubscribe_success(mock_config, mock_mcp_manager):
 
 @pytest.mark.asyncio
 async def test_unsubscribe_all(mock_config, mock_mcp_manager):
-    server = WebSocketServer(mock_config, mock_mcp_manager)
+    server = WebSocketServer(mock_config, mock_mcp_manager, AsyncMock(return_value="test-user"))
     ws = MockWebSocket()
     ws.subscriptions = {"event1", "event2"}
 
@@ -87,7 +87,7 @@ async def test_unsubscribe_all(mock_config, mock_mcp_manager):
 
 @pytest.mark.asyncio
 async def test_broadcast_filtering(mock_config, mock_mcp_manager):
-    server = WebSocketServer(mock_config, mock_mcp_manager)
+    server = WebSocketServer(mock_config, mock_mcp_manager, AsyncMock(return_value="test-user"))
 
     # Client 1: No subscription (should receive nothing after deprecation cleanup)
     ws1 = MockWebSocket("client1")
@@ -141,7 +141,7 @@ async def test_broadcast_filtering(mock_config, mock_mcp_manager):
 @pytest.mark.asyncio
 async def test_parametric_subscription_matches(mock_config, mock_mcp_manager):
     """Parametric subscription 'type:key=value' filters by message field."""
-    server = WebSocketServer(mock_config, mock_mcp_manager)
+    server = WebSocketServer(mock_config, mock_mcp_manager, AsyncMock(return_value="test-user"))
 
     ws1 = MockWebSocket("client1")
     ws1.subscriptions = {"session_message:session_id=abc123"}
@@ -162,7 +162,7 @@ async def test_parametric_subscription_matches(mock_config, mock_mcp_manager):
 @pytest.mark.asyncio
 async def test_parametric_subscription_no_match(mock_config, mock_mcp_manager):
     """Parametric subscription doesn't match if the value is different."""
-    server = WebSocketServer(mock_config, mock_mcp_manager)
+    server = WebSocketServer(mock_config, mock_mcp_manager, AsyncMock(return_value="test-user"))
 
     ws = MockWebSocket("client1")
     ws.subscriptions = {"session_message:session_id=abc123"}
@@ -178,7 +178,7 @@ async def test_parametric_subscription_no_match(mock_config, mock_mcp_manager):
 @pytest.mark.asyncio
 async def test_parametric_and_type_subscription_coexist(mock_config, mock_mcp_manager):
     """A client can have both type-level and parametric subscriptions."""
-    server = WebSocketServer(mock_config, mock_mcp_manager)
+    server = WebSocketServer(mock_config, mock_mcp_manager, AsyncMock(return_value="test-user"))
 
     # Client subscribed to all session_message AND parametric hook_event
     ws = MockWebSocket("client1")

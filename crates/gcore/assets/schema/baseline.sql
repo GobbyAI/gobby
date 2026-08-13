@@ -207,6 +207,8 @@ CREATE TABLE attention_states (
 );
 
 CREATE TABLE auth_sessions (
+    id uuid NOT NULL,
+    user_id uuid NOT NULL,
     token_hash text NOT NULL,
     created_at timestamp with time zone DEFAULT now() NOT NULL,
     expires_at timestamp with time zone NOT NULL,
@@ -665,7 +667,7 @@ CREATE TABLE destructive_batches (
     aborted_at timestamp with time zone,
     abort_disposition text,
     CONSTRAINT destructive_batches_backup_manifest_sha256_check CHECK (((backup_manifest_sha256 IS NULL) OR (backup_manifest_sha256 ~ '^[0-9a-f]{64}$'::text))),
-    CONSTRAINT destructive_batches_campaign_check CHECK ((campaign = ANY (ARRAY['schema-apply'::text, 'purge'::text, 'reconcile'::text, 'flatten'::text]))),
+    CONSTRAINT destructive_batches_campaign_check CHECK ((campaign = ANY (ARRAY['account-identity-cutover'::text, 'schema-apply'::text, 'purge'::text, 'reconcile'::text, 'flatten'::text]))),
     CONSTRAINT destructive_batches_check CHECK ((((status = 'verified'::text) AND (verified_at IS NOT NULL)) OR ((status <> 'verified'::text) AND (verified_at IS NULL)))),
     CONSTRAINT destructive_batches_check1 CHECK ((((status = 'aborted'::text) AND (aborted_at IS NOT NULL) AND (abort_disposition IS NOT NULL)) OR ((status <> 'aborted'::text) AND (aborted_at IS NULL) AND (abort_disposition IS NULL)))),
     CONSTRAINT destructive_batches_intent_check CHECK ((jsonb_typeof(intent) = 'object'::text)),
@@ -850,7 +852,7 @@ CREATE TABLE machines (
     os text,
     label text,
     tailscale_name text,
-    owner_user_id text,
+    owner_user_id uuid NOT NULL,
     first_seen timestamp with time zone DEFAULT now() NOT NULL,
     last_seen timestamp with time zone DEFAULT now() NOT NULL
 );
@@ -863,7 +865,7 @@ CREATE TABLE maintenance_epochs (
     scope_note text NOT NULL,
     released_at timestamp with time zone,
     released_by_command text,
-    CONSTRAINT maintenance_epochs_campaign_check CHECK ((campaign = ANY (ARRAY['schema-apply'::text, 'purge'::text, 'reconcile'::text, 'flatten'::text]))),
+    CONSTRAINT maintenance_epochs_campaign_check CHECK ((campaign = ANY (ARRAY['account-identity-cutover'::text, 'schema-apply'::text, 'purge'::text, 'reconcile'::text, 'flatten'::text]))),
     CONSTRAINT maintenance_epochs_check CHECK ((((released_at IS NULL) AND (released_by_command IS NULL)) OR ((released_at IS NOT NULL) AND (released_by_command IS NOT NULL))))
 );
 
@@ -2085,6 +2087,17 @@ CREATE TABLE tools (
     updated_at timestamp with time zone DEFAULT now() NOT NULL
 );
 
+CREATE TABLE users (
+    id uuid NOT NULL,
+    email text NOT NULL,
+    name text NOT NULL,
+    password_hash text NOT NULL,
+    created_at timestamp with time zone DEFAULT now() NOT NULL,
+    updated_at timestamp with time zone DEFAULT now() NOT NULL,
+    CONSTRAINT users_email_check CHECK ((btrim(email) <> ''::text)),
+    CONSTRAINT users_name_check CHECK ((btrim(name) <> ''::text))
+);
+
 CREATE TABLE unmodeled_observation_events (
     id uuid NOT NULL,
     session_id uuid,
@@ -2207,7 +2220,10 @@ ALTER TABLE ONLY attention_states
     ADD CONSTRAINT attention_states_pkey PRIMARY KEY (entry_id);
 
 ALTER TABLE ONLY auth_sessions
-    ADD CONSTRAINT auth_sessions_pkey PRIMARY KEY (token_hash);
+    ADD CONSTRAINT auth_sessions_pkey PRIMARY KEY (id);
+
+ALTER TABLE ONLY auth_sessions
+    ADD CONSTRAINT auth_sessions_token_hash_key UNIQUE (token_hash);
 
 ALTER TABLE ONLY bin_update_state
     ADD CONSTRAINT bin_update_state_pkey PRIMARY KEY (machine_id, tool_name);
@@ -2659,6 +2675,9 @@ ALTER TABLE ONLY tools
 ALTER TABLE ONLY tools
     ADD CONSTRAINT tools_pkey PRIMARY KEY (id);
 
+ALTER TABLE ONLY users
+    ADD CONSTRAINT users_pkey PRIMARY KEY (id);
+
 ALTER TABLE ONLY unmodeled_observation_events
     ADD CONSTRAINT unmodeled_observation_events_dedup_key UNIQUE NULLS NOT DISTINCT (session_id, source, kind, name, server_name, tool_type, source_ref, sample_hash);
 
@@ -2714,6 +2733,8 @@ CREATE INDEX idx_audit_session ON workflow_audit_log USING btree (session_id);
 CREATE INDEX idx_audit_timestamp ON workflow_audit_log USING btree ("timestamp");
 
 CREATE INDEX idx_auth_sessions_expires ON auth_sessions USING btree (expires_at);
+
+CREATE INDEX idx_auth_sessions_user_id ON auth_sessions USING btree (user_id);
 
 CREATE INDEX idx_build_history_events_project ON build_history_events USING btree (project_id, created_at DESC);
 
@@ -2899,7 +2920,7 @@ CREATE INDEX idx_loop_progress_session ON loop_progress USING btree (session_id,
 
 CREATE INDEX idx_machines_last_seen ON machines USING btree (last_seen);
 
-CREATE INDEX idx_machines_owner_user_id ON machines USING btree (owner_user_id) WHERE (owner_user_id IS NOT NULL);
+CREATE INDEX idx_machines_owner_user_id ON machines USING btree (owner_user_id);
 
 CREATE INDEX idx_mcp_servers_enabled ON mcp_servers USING btree (enabled);
 
@@ -3167,6 +3188,8 @@ CREATE INDEX idx_tools_name ON tools USING btree (name);
 
 CREATE INDEX idx_tools_server_id ON tools USING btree (mcp_server_id);
 
+CREATE UNIQUE INDEX users_email_lower_key ON users USING btree (lower(email));
+
 CREATE INDEX idx_unmodeled_observation_events_group_recompute ON unmodeled_observation_events USING btree (source, kind, name, server_name, tool_type, last_seen_at DESC, first_seen_at DESC);
 
 CREATE INDEX idx_unmodeled_observation_events_last_seen ON unmodeled_observation_events USING btree (last_seen_at);
@@ -3239,6 +3262,9 @@ ALTER TABLE ONLY agent_runs
 
 ALTER TABLE ONLY agent_runs
     ADD CONSTRAINT agent_runs_task_id_fkey FOREIGN KEY (task_id) REFERENCES tasks(id) ON DELETE SET NULL DEFERRABLE;
+
+ALTER TABLE ONLY auth_sessions
+    ADD CONSTRAINT auth_sessions_user_id_fkey FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE;
 
 ALTER TABLE ONLY bin_update_state
     ADD CONSTRAINT bin_update_state_machine_id_fkey FOREIGN KEY (machine_id) REFERENCES machines(id) ON DELETE CASCADE;
@@ -3575,6 +3601,9 @@ ALTER TABLE ONLY tool_results
 
 ALTER TABLE ONLY tools
     ADD CONSTRAINT tools_mcp_server_id_fkey FOREIGN KEY (mcp_server_id) REFERENCES mcp_servers(id) ON DELETE CASCADE DEFERRABLE;
+
+ALTER TABLE ONLY machines
+    ADD CONSTRAINT machines_owner_user_id_fkey FOREIGN KEY (owner_user_id) REFERENCES users(id) ON DELETE RESTRICT;
 
 ALTER TABLE ONLY workflow_audit_log
     ADD CONSTRAINT workflow_audit_log_session_id_fkey FOREIGN KEY (session_id) REFERENCES sessions(id) DEFERRABLE;
@@ -4021,6 +4050,8 @@ GRANT ALL ON SEQUENCE tool_schema_hashes_id_seq TO gobby_daemon_runtime;
 
 GRANT SELECT,INSERT,DELETE,UPDATE ON TABLE tools TO gobby_daemon_runtime;
 
+GRANT SELECT,INSERT,DELETE,UPDATE ON TABLE users TO gobby_daemon_runtime;
+
 GRANT SELECT,INSERT,DELETE,UPDATE ON TABLE unmodeled_observation_events TO gobby_daemon_runtime;
 
 GRANT SELECT,INSERT,DELETE,UPDATE ON TABLE unmodeled_observations TO gobby_daemon_runtime;
@@ -4154,6 +4185,7 @@ CREATE TABLE IF NOT EXISTS maintenance_epochs (
     campaign TEXT NOT NULL
         CHECK (
             campaign IN (
+                'account-identity-cutover',
                 'schema-apply',
                 'purge',
                 'reconcile',
@@ -4188,6 +4220,7 @@ CREATE TABLE IF NOT EXISTS destructive_batches (
     campaign TEXT NOT NULL
         CHECK (
             campaign IN (
+                'account-identity-cutover',
                 'schema-apply',
                 'purge',
                 'reconcile',

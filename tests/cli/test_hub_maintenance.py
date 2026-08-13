@@ -265,6 +265,33 @@ def test_interrupted_run_keeps_epoch_open_and_daemon_stopped(
     assert "restart" not in events
 
 
+def test_verification_failure_keeps_epoch_open_and_daemon_stopped(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    events: list[str] = []
+    epoch = _epoch()
+    batch = _batch(epoch)
+    _install_lifecycle_fakes(monkeypatch, epoch=epoch, batch=batch, events=events)
+
+    class FailingVerifier:
+        def apply(self, _epoch: MaintenanceEpoch, _batch: DestructiveBatch) -> None:
+            events.append("apply")
+
+        def verify(self, _epoch: MaintenanceEpoch, _batch: DestructiveBatch) -> None:
+            events.append("verify")
+            raise RuntimeError("injected verification failure")
+
+    monkeypatch.setattr(command, "_load_campaign_executor", lambda _campaign: FailingVerifier())
+
+    result = CliRunner().invoke(cli, ["hub-maintenance", "run", "purge"])
+
+    assert result.exit_code != 0
+    assert "injected verification failure" in result.output
+    assert events[-3:] == ["apply", "mark-applied", "verify"]
+    assert "release" not in events
+    assert "restart" not in events
+
+
 def test_status_reports_open_epoch_and_batch_as_json(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -373,3 +400,19 @@ def test_identity_cutover_campaign_is_retired() -> None:
     assert "'identity-cutover' is not one of" in result.output
     assert "identity-cutover" not in command.CAMPAIGNS
     assert "identity-cutover" not in command._CAMPAIGN_EXECUTORS
+
+
+def test_account_identity_cutover_executor_is_loaded_lazily(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from gobby.cli.account_identity_cutover import AccountIdentityCutoverExecutor
+
+    monkeypatch.delitem(
+        command._CAMPAIGN_EXECUTORS,
+        "account-identity-cutover",
+        raising=False,
+    )
+
+    executor = command._load_campaign_executor("account-identity-cutover")
+
+    assert isinstance(executor, AccountIdentityCutoverExecutor)

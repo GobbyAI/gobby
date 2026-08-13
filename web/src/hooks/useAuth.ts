@@ -3,24 +3,18 @@ import { useState, useEffect, useCallback } from "react";
 const BASE_URL = import.meta.env.VITE_API_BASE_URL || "";
 
 interface AuthState {
-  authRequired: boolean;
   authenticated: boolean;
-  credentialsConfigured: boolean;
   loading: boolean;
 }
 
 const FAIL_CLOSED_STATE: AuthState = {
-  authRequired: true,
   authenticated: false,
-  credentialsConfigured: true,
   loading: false,
 };
 
 export function useAuth() {
   const [state, setState] = useState<AuthState>({
-    authRequired: false,
-    authenticated: true, // optimistic default — no flash
-    credentialsConfigured: true,
+    authenticated: false,
     loading: true,
   });
 
@@ -35,9 +29,7 @@ export function useAuth() {
       }
       const data = await res.json();
       setState({
-        authRequired: data.auth_required ?? false,
-        authenticated: data.authenticated ?? true,
-        credentialsConfigured: data.credentials_configured ?? false,
+        authenticated: data.authenticated ?? false,
         loading: false,
       });
     } catch {
@@ -51,7 +43,7 @@ export function useAuth() {
 
   const login = useCallback(
     async (
-      username: string,
+      email: string,
       password: string,
       rememberMe: boolean,
     ): Promise<string | null> => {
@@ -60,7 +52,7 @@ export function useAuth() {
           method: "POST",
           headers: { "Content-Type": "application/json" },
           credentials: "include",
-          body: JSON.stringify({ username, password, remember_me: rememberMe }),
+          body: JSON.stringify({ email, password, remember_me: rememberMe }),
         });
         const data = await res.json();
         if (res.ok && data.ok) {

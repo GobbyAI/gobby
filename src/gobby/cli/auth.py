@@ -5,16 +5,14 @@ from contextlib import nullcontext
 import click
 
 from gobby.cli.runtime import require_cli_database
+from gobby.identity import hash_password
 from gobby.storage.auth import (
     LOCAL_API_TOKEN_HASH_KEY,
-    PASSWORD_HASH_KEY,
-    USERNAME_KEY,
-    hash_password,
     hash_token,
     rotate_local_api_token,
 )
 from gobby.storage.config_store import ConfigStore
-from gobby.storage.secrets import SecretStore
+from gobby.storage.users import LocalUserManager
 from gobby.utils.local_token import local_token_path, read_local_api_token
 
 
@@ -24,45 +22,18 @@ def auth() -> None:
 
 
 @auth.command("credentials")
-@click.option("--remove", is_flag=True, help="Remove auth credentials and disable web UI login.")
-def credentials(remove: bool) -> None:
-    """Set up or reset web UI authentication credentials."""
+def credentials() -> None:
+    """Reset the installed user's web UI password."""
     try:
         with nullcontext(require_cli_database()) as db:
-            config_store = ConfigStore(db)
-            secret_store = SecretStore(db)
-
-            existing_username = config_store.get(USERNAME_KEY)
-
-            if remove:
-                if not existing_username:
-                    click.echo("No auth configured. Nothing to remove.")
-                    return
-                config_store.delete(USERNAME_KEY)
-                config_store.delete(PASSWORD_HASH_KEY)
-                config_store.clear_secret("auth.password", secret_store)
-                click.echo(f"Auth removed for user '{existing_username}'.")
-                click.echo("Restart the daemon for changes to take effect.")
-                return
-
-            if existing_username:
-                click.echo(f"Auth configured for user '{existing_username}'. Resetting password.")
-                password = click.prompt("New password", hide_input=True, confirmation_prompt=True)
-                config_store.set(PASSWORD_HASH_KEY, hash_password(password), source="user")
-                config_store.clear_secret("auth.password", secret_store)
-                click.echo(f"Password updated for user '{existing_username}'.")
-            else:
-                click.echo("No auth configured. Setting up web UI authentication.")
-                username = click.prompt("Username")
-                password = click.prompt("Password", hide_input=True, confirmation_prompt=True)
-                config_store.set(USERNAME_KEY, username, source="user")
-                config_store.set(PASSWORD_HASH_KEY, hash_password(password), source="user")
-                config_store.clear_secret("auth.password", secret_store)
-                click.echo(f"Auth enabled for user '{username}'.")
+            users = LocalUserManager(db)
+            user = users.require_sole_user()
+            click.echo(f"Resetting web UI password for {user.email}.")
+            password = click.prompt("New password", hide_input=True, confirmation_prompt=True)
+            users.update_password(user.id, hash_password(password))
+            click.echo(f"Password updated for {user.email}.")
     except (RuntimeError, ValueError) as exc:
         raise click.ClickException(str(exc)) from exc
-
-    click.echo("Restart the daemon for changes to take effect.")
 
 
 @auth.command("token")

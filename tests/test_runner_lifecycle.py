@@ -3469,6 +3469,34 @@ class TestShutdownLoop:
         )
 
     @pytest.mark.asyncio
+    async def test_readiness_failure_rolls_back_runner_resources(self, mock_config) -> None:
+        """Startup failures before HTTP bind release constructor-owned resources."""
+        patches = create_base_patches(mock_config=mock_config)
+
+        with ExitStack() as stack:
+            [stack.enter_context(p) for p in patches]
+            runner = self._minimal_runner(mock_config)
+            readiness = stack.enter_context(
+                patch(
+                    "gobby.runner_service_readiness.require_managed_services_ready",
+                    new=AsyncMock(side_effect=RuntimeError("readiness failed")),
+                )
+            )
+            rollback = stack.enter_context(patch("gobby.runner_rollback.rollback_runner_resources"))
+            stack.enter_context(patch("gobby.runner_maintenance.setup_signal_handlers"))
+            stack.enter_context(patch("gobby.runner_maintenance.cleanup_pid_file"))
+
+            with pytest.raises(SystemExit) as exc_info:
+                await runner_lifecycle.run_daemon(
+                    runner,
+                    ownership_resolution=FailOpenPidOwnership("test"),
+                )
+
+            assert exc_info.value.code == 1
+            readiness.assert_awaited_once_with(runner)
+            rollback.assert_called_once_with(runner)
+
+    @pytest.mark.asyncio
     async def test_web_chat_runtime_starts_after_http_bind(self, mock_config) -> None:
         """Daemon-owned chat subprocesses start only after HTTP accepts connections."""
         patches = create_base_patches(mock_config=mock_config)
@@ -4007,7 +4035,9 @@ class TestAgentRestartRecoveryHelpers:
             completion_registry=registry,
         )
 
-        rehydrated = await runner_lifecycle._recover_agent_runs_after_restart(runner)
+        rehydrated = await runner_lifecycle._recover_agent_runs_after_restart(
+            cast(GobbyRunner, runner)
+        )
         waiter = asyncio.create_task(
             registry.wait("ac314d27-4314-5fe3-a0ab-01645086e137", timeout=1.0)
         )

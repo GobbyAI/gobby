@@ -248,13 +248,18 @@ class HookManager:
         if machine_id is None:
             return
         try:
-            LocalMachineManager(db).upsert_seen(
+            machine = LocalMachineManager(db).refresh_seen(
                 machine_id,
                 hostname=_hook_text_field(data, "hostname", "host_name", "host"),
                 os=_hook_text_field(data, "os", "platform", "operating_system"),
                 label=_hook_text_field(data, "machine_label", "machineLabel"),
                 tailscale_name=_hook_text_field(data, "tailscale_name", "tailscaleName"),
             )
+            if machine is None:
+                self.logger.debug(
+                    "Ignoring unknown machine id from hook ingress",
+                    extra={"machine_id": machine_id},
+                )
         except psycopg.Error as exc:
             self.logger.debug(
                 "Failed to refresh machine registry from hook ingress",

@@ -57,7 +57,6 @@ Install the exact Gobby version used by the hub. Before running the installer, c
 `~/.gobby/bootstrap.yaml` with remote mode and the hub PostgreSQL DSN:
 
 ```yaml
-auth_mode: "required"
 datastore_mode: "remote"
 database_url: "postgresql://gobby:<password>@<hub-dns-name>:60891/gobby"
 postgres_pool:
@@ -95,8 +94,8 @@ Any failed check aborts installation with endpoint-specific diagnostics.
 ## Tailnet-only web UI
 
 Gobby can publish its local web UI through Tailscale Serve while the daemon remains
-bound to `localhost`. Exposure does not change `auth_mode`; the same Gobby
-authentication policy applies through the HTTPS URL. The exposure choice is stored as
+bound to `localhost`. The same mandatory Gobby authentication policy applies through
+the HTTPS URL. The exposure choice is stored as
 `ui_expose: tailscale` in the machine-local `bootstrap.yaml` and is never copied into
 shared configuration.
 

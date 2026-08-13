@@ -11,7 +11,10 @@ from gobby.servers.http import HTTPServer
 from gobby.storage.attention import AttentionStateManager
 from gobby.storage.hub.protocol import HubDatabase
 
-pytestmark = pytest.mark.unit
+pytestmark = [
+    pytest.mark.unit,
+    pytest.mark.usefixtures("authenticated_http_requests", "isolated_http_runtime"),
+]
 
 
 def test_app_reaches_attention_endpoints(temp_db: HubDatabase) -> None:
@@ -21,9 +24,7 @@ def test_app_reaches_attention_endpoints(temp_db: HubDatabase) -> None:
         task_manager=MagicMock(),
         attention_manager=AttentionStateManager(temp_db, epoch="wiring-test"),
     )
-    server = HTTPServer(
-        services=services, test_mode=True, bootstrap_config=BootstrapConfig(auth_mode="disabled")
-    )
+    server = HTTPServer(services=services, test_mode=True, bootstrap_config=BootstrapConfig())
     paths = {route.path for route in server.app.routes}
     assert "/api/attention/roster" in paths
     assert "/api/attention/{entry_id}/seen" in paths

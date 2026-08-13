@@ -15,11 +15,9 @@ from typing import Any
 import click
 
 from gobby.config.bootstrap import BootstrapConfigError, load_bootstrap
-from gobby.config.bootstrap_io import update_bootstrap_yaml
 from gobby.config.persistence import validate_falkordb_password
 from gobby.storage.auth import ensure_local_api_token
 from gobby.storage.config_store import ConfigStore
-from gobby.storage.hub.protocol import HubDatabase
 from gobby.storage.projects import ensure_personal_project_identity
 from gobby.storage.secrets import (
     POSTURE_KEY_FILE,
@@ -73,6 +71,7 @@ from ._install_prompts import (
     _run_voice_install,
 )
 from ._install_state import empty_install_state, prepare_install_state, should_configure_section
+from .install_identity import ensure_install_identity
 from .install_setup import ensure_daemon_config, run_daemon_setup
 from .installers import (
     install_agy,
@@ -182,13 +181,6 @@ def _provision_local_api_token(config_store: ConfigStore | None) -> None:
         return
     token = secrets.token_urlsafe(32)
     write_private_file(local_token_path(), token.encode("utf-8"))
-
-
-def _set_bootstrap_auth_mode(path: Path, auth_mode: str) -> None:
-    def apply_auth_mode(bootstrap: dict[str, Any]) -> None:
-        bootstrap["auth_mode"] = auth_mode
-
-    update_bootstrap_yaml(path, apply_auth_mode)
 
 
 def _resolve_ide_settings_consent(
@@ -360,12 +352,6 @@ def _install_required_stack(
     help="KEK posture for daemon-local secret encryption.",
 )
 @click.option(
-    "--auth-mode",
-    type=click.Choice(["required", "disabled"]),
-    default=None,
-    help="Daemon API authentication mode to persist in bootstrap.yaml.",
-)
-@click.option(
     "--ide-settings/--no-ide-settings",
     "ide_settings_flag",
     default=None,
@@ -415,7 +401,6 @@ def install(
     embedding_model: str | None,
     embedding_dim: int | None,
     secret_kek_posture: str,
-    auth_mode: str | None,
     ide_settings_flag: bool | None,
     expose_ui_flag: bool | None,
     no_interactive_flag: bool,
@@ -528,7 +513,6 @@ def install(
             value is not None
             for value in (embedding_url, embedding_provider, embedding_model, embedding_dim)
         )
-        and auth_mode is None
         and ide_settings_flag is None
         and expose_ui_flag is not True
     )
@@ -591,9 +575,6 @@ def install(
     config_result = _ensure_daemon_config()
     if config_result["created"]:
         click.echo(f"Created daemon config: {config_result['path']}")
-    if auth_mode is not None:
-        _set_bootstrap_auth_mode(Path(config_result["path"]), auth_mode)
-        click.echo(f"Daemon API authentication mode: {auth_mode}")
     if provision_managed_services:
         _install_required_stack(
             results,
@@ -610,6 +591,17 @@ def install(
             no_interactive=no_interactive_flag,
         )
     run_daemon_setup(project_path, configure_ide_settings=configure_ide_settings)
+    runtime = get_cli_runtime()
+    try:
+        db = runtime.require_database()
+        installed_user = ensure_install_identity(
+            db,
+            no_interactive=no_interactive_flag,
+        )
+    except (OSError, RuntimeError, ValueError) as exc:
+        runtime.close()
+        raise click.ClickException(f"Failed to establish account identity: {exc}") from exc
+    click.echo(f"Account identity: {installed_user.email}")
     if initialize_project_after_setup:
         _initialize_project_after_setup(project_path)
     exposure_result: UiExposeResult | None = None
@@ -628,8 +620,10 @@ def install(
         click.echo(f"Web UI exposed at {exposure_result.url}")
     if config_only_flag:
         if not _echo_install_summary(results, True):
+            runtime.close()
             sys.exit(1)
         click.echo("Configuration and required infrastructure complete.")
+        runtime.close()
         return
 
     toggles = list(clis_to_install)
@@ -641,15 +635,11 @@ def install(
     click.echo(f"Components to configure: {', '.join(toggles)}")
     click.echo("")
 
-    db: HubDatabase | None = None
     secret_store: SecretStore | None = None
     config_store: ConfigStore | None = None
     provider_hook_timeout_seconds = 120
-    runtime = get_cli_runtime()
-
     try:
         try:
-            db = runtime.require_database()
             secret_store = SecretStore(db)
             config_store = ConfigStore(db)
             provider_hook_timeout_seconds = runtime.require_config().hooks.provider_timeout

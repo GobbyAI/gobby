@@ -13,7 +13,10 @@ from gobby.servers.http import HTTPServer
 from gobby.storage.hub.protocol import HubDatabase
 from gobby.storage.sessions import SessionManager
 
-pytestmark = pytest.mark.unit
+pytestmark = [
+    pytest.mark.unit,
+    pytest.mark.usefixtures("authenticated_http_requests", "isolated_http_runtime"),
+]
 
 _CREATED_AT = datetime(2026, 1, 1, tzinfo=UTC)
 _UPDATED_AT = datetime(2026, 1, 1, 0, 1, tzinfo=UTC)
@@ -58,7 +61,7 @@ def http_server(
         services=services,
         port=60887,
         test_mode=True,
-        bootstrap_config=BootstrapConfig(auth_mode="disabled"),
+        bootstrap_config=BootstrapConfig(),
     )
 
 
@@ -173,7 +176,7 @@ class TestPipelinesRunEndpoint:
             services=services,
             port=60887,
             test_mode=True,
-            bootstrap_config=BootstrapConfig(auth_mode="disabled"),
+            bootstrap_config=BootstrapConfig(),
         )
 
         with TestClient(server.app) as client:

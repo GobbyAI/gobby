@@ -16,15 +16,13 @@ from starlette.testclient import TestClient
 from gobby.config.app import DaemonConfig
 from gobby.config.runtime import ConfigRuntime
 from gobby.config.runtime_models import ConfigSnapshot
+from gobby.identity import hash_password
 from gobby.prompts.sync import sync_bundled_prompts
 from gobby.servers.auth_service import AuthService
 from gobby.servers.routes.configuration_prompts import _normalize_variable_spec
 from gobby.servers.tool_approvals import DEFAULT_GLOBAL_APPROVAL_RULES
 from gobby.storage.auth import (
     LOCAL_API_TOKEN_HASH_KEY,
-    PASSWORD_HASH_KEY,
-    USERNAME_KEY,
-    hash_password,
     hash_token,
 )
 from gobby.storage.config_mutations import (
@@ -39,6 +37,8 @@ from gobby.storage.hub.protocol import HubDatabase
 from gobby.storage.prompts import LocalPromptManager
 from gobby.storage.secrets import SecretStore
 from gobby.storage.tasks import LocalTaskManager
+from gobby.storage.users import LocalUserManager
+from tests.fixtures.postgres import TEST_USER_EMAIL, TEST_USER_ID
 from tests.servers.conftest import StubConfigRuntime, create_http_server
 
 pytestmark = pytest.mark.unit
@@ -96,7 +96,6 @@ def server(temp_db: Any, real_config: Any, task_manager: Any, tmp_path: Any) -> 
     )
     http_server.auth_service = AuthService(
         lambda: temp_db,
-        mode="disabled",
         token_file=tmp_path / "local_cli_token",
     )
     return http_server
@@ -202,9 +201,7 @@ class TestSecretsEndpoints:
     def test_mutations_require_local_token_when_web_login_is_unconfigured(
         self, server: Any, mock_machine_id: Any
     ) -> None:
-        assert server.auth_service.enabled is False
         assert server.startup_config.bind_host == "localhost"
-        assert server.auth_service.credentials_configured is False
         unauthenticated = TestClient(server.app)
 
         create_response = unauthenticated.post(
@@ -233,25 +230,19 @@ class TestSecretsEndpoints:
     def test_mutations_accept_configured_web_session(
         self, server: Any, temp_db: Any, tmp_path: Any, mock_machine_id: Any
     ) -> None:
-        ConfigStore(temp_db).set_many(
-            {
-                USERNAME_KEY: "admin",
-                PASSWORD_HASH_KEY: hash_password("correct horse battery staple"),
-            },
-            source="system",
+        LocalUserManager(temp_db).update_password(
+            TEST_USER_ID,
+            hash_password("correct horse battery staple"),
         )
         server.auth_service = AuthService(
             lambda: temp_db,
-            mode="required",
             token_file=tmp_path / "configured_auth_token",
         )
-        assert server.auth_service.enabled is True
-        assert server.auth_service.credentials_configured is True
         browser = TestClient(server.app)
 
         login_response = browser.post(
             "/api/auth/login",
-            json={"username": "admin", "password": "correct horse battery staple"},
+            json={"email": TEST_USER_EMAIL, "password": "correct horse battery staple"},
         )
         create_response = browser.post(
             "/api/config/secrets",
@@ -263,21 +254,18 @@ class TestSecretsEndpoints:
         assert create_response.status_code == 200
         assert delete_response.status_code == 200
 
-    def test_non_loopback_bind_refuses_unauthenticated_mutation(
+    def test_non_loopback_bind_requires_authentication(
         self, temp_db: Any, task_manager: Any, tmp_path: Any
     ) -> None:
         http_server = create_http_server(
-            config=DaemonConfig(bind_host="0.0.0.0", auth_mode="disabled"),
+            config=DaemonConfig(bind_host="0.0.0.0"),
             database=temp_db,
             task_manager=task_manager,
-            auth_mode="disabled",
         )
         http_server.auth_service = AuthService(
             lambda: temp_db,
-            mode="disabled",
             token_file=tmp_path / "non_loopback_token",
         )
-        assert http_server.auth_service.enabled is False
         assert http_server.startup_config is not None
         assert http_server.startup_config.bind_host == "0.0.0.0"
 
@@ -330,6 +318,7 @@ class TestSecretsEndpoints:
     def test_bound_secret_update_validates_new_plaintext_without_leaking_it(
         self,
         client: TestClient,
+        server: Any,
         temp_db: HubDatabase,
         mock_machine_id: Any,
     ) -> None:
@@ -350,6 +339,17 @@ class TestSecretsEndpoints:
                     )
                 }
             ),
+        )
+        snapshot = server.services.config_runtime.snapshot
+        server.services.config_runtime.current = ConfigSnapshot(
+            revision=repository.current_revision(),
+            desired=snapshot.desired,
+            active=snapshot.active,
+            row_revisions=snapshot.row_revisions,
+            pending_restart_keys=snapshot.pending_restart_keys,
+            failed_live_keys=snapshot.failed_live_keys,
+            desired_values=snapshot.desired_values,
+            active_values=snapshot.active_values,
         )
 
         response = client.post(
@@ -480,7 +480,6 @@ class TestSecretsEndpoints:
         )
         server.auth_service = AuthService(
             lambda: non_local_hub_db,
-            mode="disabled",
             token_file=tmp_path / "non_local_token",
         )
         c = TestClient(
@@ -563,7 +562,12 @@ class TestSecretsEndpoints:
             config=real_config,
             database="not-a-database",
         )
-        c = TestClient(server.app)
+        server.auth_service = MagicMock(spec=AuthService)
+        server.auth_service.verify_bearer.return_value = True
+        c = TestClient(
+            server.app,
+            headers={"Authorization": "Bearer test-token"},
+        )
         response = c.get("/api/config/secrets")
         assert response.status_code == 503
         assert "Database not available" in response.json()["detail"]
@@ -718,7 +722,15 @@ class TestPromptsEndpoints:
             task_manager=task_manager,
             project_id=project_id,
         )
-        scoped_client = TestClient(server.app)
+        ConfigStore(temp_db).set(
+            LOCAL_API_TOKEN_HASH_KEY,
+            hash_token(LOCAL_RUNTIME_TOKEN),
+            source="system",
+        )
+        scoped_client = TestClient(
+            server.app,
+            headers={"Authorization": f"Bearer {LOCAL_RUNTIME_TOKEN}"},
+        )
 
         response = scoped_client.put(
             "/api/config/prompts/test/project",

@@ -134,8 +134,8 @@ def _client(service: object) -> TestClient:
 def test_public_schema_and_values_contract() -> None:
     snapshot = _snapshot(
         7,
-        desired_values={"websocket.ping_interval": 17.0, "auth.password": "restricted"},
-        active_values={"websocket.ping_interval": 13.0, "auth.password": "restricted"},
+        desired_values={"websocket.ping_interval": 17.0, "auth.api_token_hash": "restricted"},
+        active_values={"websocket.ping_interval": 13.0, "auth.api_token_hash": "restricted"},
         pending_restart_keys=frozenset({"websocket.enabled"}),
     )
     service, _runtime, _mutations = _service(snapshot)
@@ -146,7 +146,7 @@ def test_public_schema_and_values_contract() -> None:
 
     assert schema_response.status_code == 200
     assert schema_response.json() == CONFIG_REGISTRY.json_schema(ConfigVisibility.PUBLIC)
-    assert "auth.password" not in schema_response.json()["properties"]
+    assert "auth.api_token_hash" not in schema_response.json()["properties"]
     assert values_response.status_code == 200
     assert values_response.json() == {
         "revision": 7,

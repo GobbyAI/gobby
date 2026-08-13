@@ -1,4 +1,4 @@
-"""Live-daemon end-to-end coverage for required and disabled authentication."""
+"""Live-daemon end-to-end coverage for mandatory authentication."""
 
 from __future__ import annotations
 
@@ -16,14 +16,15 @@ import websockets
 from websockets.asyncio.client import ClientConnection
 from websockets.exceptions import InvalidStatus
 
-from gobby.storage.auth import PASSWORD_HASH_KEY, USERNAME_KEY, hash_password
-from gobby.storage.config_store import ConfigStore
+from gobby.identity import hash_password
 from gobby.storage.hub.protocol import HubDatabase
+from gobby.storage.users import LocalUserManager
 from tests.e2e.conftest import DaemonInstance, daemon_token, prepare_daemon_env
+from tests.fixtures.postgres import TEST_USER_ID
 
 pytestmark = pytest.mark.e2e
 
-TEST_USERNAME = "auth-e2e-user"
+TEST_EMAIL = "auth-e2e-user@gobby.local"
 TEST_PASSWORD = "auth-e2e-password"
 _MCP_INITIALIZE = {
     "jsonrpc": "2.0",
@@ -39,14 +40,14 @@ _MCP_INITIALIZE = {
 
 @pytest.fixture
 def e2e_pre_daemon_setup(postgres_db: HubDatabase) -> None:
-    """Seed browser credentials before the isolated daemon starts."""
-    ConfigStore(postgres_db).set_many(
-        {
-            USERNAME_KEY: TEST_USERNAME,
-            PASSWORD_HASH_KEY: hash_password(TEST_PASSWORD),
-        },
-        source="test",
+    """Seed the canonical user before the isolated daemon starts."""
+    users = LocalUserManager(postgres_db)
+    users.update_profile(
+        TEST_USER_ID,
+        name="Auth E2E User",
+        email=TEST_EMAIL,
     )
+    users.update_password(TEST_USER_ID, hash_password(TEST_PASSWORD))
 
 
 def _hook_payload() -> dict[str, object]:
@@ -135,7 +136,7 @@ def _browser_session_cookie(instance: DaemonInstance) -> str:
         response = client.post(
             "/api/auth/login",
             json={
-                "username": TEST_USERNAME,
+                "email": TEST_EMAIL,
                 "password": TEST_PASSWORD,
                 "remember_me": False,
             },
@@ -319,21 +320,3 @@ async def test_ws_rotation(daemon_instance: DaemonInstance) -> None:
         f"ws://localhost:{daemon_instance.http_port}/ws",
         headers=[("Cookie", f"gobby_session={cookie}")],
     )
-
-
-@pytest.mark.parametrize("e2e_auth_mode", ["disabled"], indirect=True)
-@pytest.mark.asyncio
-async def test_auth_mode_disabled(
-    e2e_auth_mode: str,
-    daemon_instance: DaemonInstance,
-) -> None:
-    assert e2e_auth_mode == "disabled"
-    with httpx.Client(
-        base_url=daemon_instance.http_url,
-        timeout=15.0,
-        follow_redirects=True,
-    ) as client:
-        _assert_authenticated_http_matrix(client, daemon_instance)
-
-    await _assert_websocket_frames(daemon_instance.ws_url)
-    await _assert_websocket_frames(f"ws://localhost:{daemon_instance.http_port}/ws")

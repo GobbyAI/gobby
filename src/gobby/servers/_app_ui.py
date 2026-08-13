@@ -52,17 +52,15 @@ def _mount_ws_endpoint(app: FastAPI, server: "HTTPServer") -> None:
             await websocket.close(code=1013, reason="WebSocket server unavailable")
             return
 
-        if server.auth_service.enabled:
-            authenticated = await websocket_server.run_db(
-                server.auth_service.is_request_authenticated,
-                websocket,
-            )
-            if not authenticated:
-                await websocket.close(code=4401, reason="Authentication required")
-                return
+        authenticated = await websocket_server.run_db(
+            server.auth_service.is_request_authenticated,
+            websocket,
+        )
+        if not authenticated:
+            await websocket.close(code=4401, reason="Authentication required")
+            return
 
-        user_prefix = "local-web" if server.auth_service.enabled else "local"
-        adapter = ASGIWebSocketAdapter(websocket, user_id=f"{user_prefix}-{uuid4().hex[:8]}")
+        adapter = ASGIWebSocketAdapter(websocket, user_id=f"local-web-{uuid4().hex[:8]}")
         await adapter.accept()
         try:
             await websocket_server.handle_connection(adapter)

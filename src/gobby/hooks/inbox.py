@@ -15,7 +15,6 @@ from typing import Any
 import httpx
 
 from gobby.cli.utils import get_gobby_home
-from gobby.config.bootstrap import load_bootstrap
 from gobby.hooks.envelope_dedupe import (
     ENVELOPE_ID_HEADER,
     clear_stale_envelope_processing_marker,
@@ -208,11 +207,12 @@ async def _drain_hook_inbox_once_locked(
     pending_files = _iter_inbox_files(pending_dir)
     if not pending_files:
         return 0
-    if load_bootstrap().auth_mode == "required" and read_local_api_token() is None:
+    if read_local_api_token() is None:
         logger.warning(
             "Daemon API token missing; run 'gobby install' or 'gobby auth token --rotate' "
             "on the hub machine and copy ~/.gobby/local_cli_token here"
         )
+        return 0
 
     replayed = 0
     processed_dir = get_processed_envelope_dir(pending_dir)

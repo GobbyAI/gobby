@@ -299,6 +299,9 @@ async def run_daemon(
 
     except Exception as e:
         logger.exception("Fatal error: %s", e)
+        from gobby.runner_rollback import rollback_runner_resources
+
+        rollback_runner_resources(runner)
         cleanup_owned_pid_file()
         sys.exit(1)
     finally:

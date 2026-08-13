@@ -5,16 +5,15 @@ import { Button } from "../ui/Button";
 import { Input } from "../ui/Input";
 
 interface LoginPageProps {
-  credentialsConfigured: boolean;
   onLogin: (
-    username: string,
+    email: string,
     password: string,
     rememberMe: boolean,
   ) => Promise<string | null>;
 }
 
-export function LoginPage({ credentialsConfigured, onLogin }: LoginPageProps) {
-  const [username, setUsername] = useState("");
+export function LoginPage({ onLogin }: LoginPageProps) {
+  const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
   const [rememberMe, setRememberMe] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -25,32 +24,12 @@ export function LoginPage({ credentialsConfigured, onLogin }: LoginPageProps) {
       e.preventDefault();
       setError(null);
       setLoading(true);
-      const err = await onLogin(username, password, rememberMe);
+      const err = await onLogin(email, password, rememberMe);
       setLoading(false);
       if (err) setError(err);
     },
-    [username, password, rememberMe, onLogin],
+    [email, password, rememberMe, onLogin],
   );
-
-  if (!credentialsConfigured) {
-    return (
-      <div style={styles.container}>
-        <section style={styles.card}>
-          <div style={styles.logoRow}>
-            <GobbyLogo label="Gobby" size={36} />
-            <Heading level={1} style={styles.title}>
-              Gobby
-            </Heading>
-          </div>
-          <p style={styles.subtitle}>Web credentials are not configured.</p>
-          <p style={styles.setupText}>
-            Run <code style={styles.command}>gobby auth credentials</code> on
-            the daemon host, then reload this page.
-          </p>
-        </section>
-      </div>
-    );
-  }
 
   return (
     <div style={styles.container}>
@@ -66,14 +45,14 @@ export function LoginPage({ credentialsConfigured, onLogin }: LoginPageProps) {
         {error && <div style={styles.error}>{error}</div>}
 
         <div style={styles.label}>
-          <label htmlFor="login-username">Username</label>
+          <label htmlFor="login-email">Email</label>
           <Input
-            id="login-username"
-            type="text"
-            value={username}
-            onChange={(e) => setUsername(e.target.value)}
+            id="login-email"
+            type="email"
+            value={email}
+            onChange={(e) => setEmail(e.target.value)}
             autoFocus
-            autoComplete="username"
+            autoComplete="email"
             required
             style={styles.input}
           />
@@ -107,7 +86,7 @@ export function LoginPage({ credentialsConfigured, onLogin }: LoginPageProps) {
         <Button
           type="submit"
           variant="primary"
-          disabled={loading || !username || !password}
+          disabled={loading || !email || !password}
           style={styles.button}
         >
           {loading ? "Signing in..." : "Sign in"}
@@ -162,20 +141,6 @@ const styles: Record<string, React.CSSProperties> = {
     color: "var(--color-error)",
     fontSize: "var(--text-base)",
     textAlign: "center" as const,
-  },
-  setupText: {
-    margin: 0,
-    color: "var(--text-secondary)",
-    fontSize: "var(--text-base)",
-    lineHeight: 1.5,
-    textAlign: "center" as const,
-  },
-  command: {
-    padding: "0.15rem 0.35rem",
-    borderRadius: 4,
-    background: "var(--bg-primary)",
-    color: "var(--text-primary)",
-    fontFamily: "var(--font-mono)",
   },
   label: {
     display: "flex",

@@ -334,6 +334,37 @@ def _postgres_url_for_schema(database_url: str, schema: str) -> str:
     return f"{database_url}{separator}options=-csearch_path%3D{schema}"
 
 
+def _seed_e2e_runtime_state(postgres_db: Any, project_dir: Path) -> None:
+    """Seed PostgreSQL-owned runtime config and the synthetic E2E project."""
+    from gobby.storage.config_store import ConfigStore
+
+    ConfigStore(postgres_db).set_many(
+        {
+            "test_mode": True,
+            "memory.dream.enabled": False,
+            "gobby_tasks.expansion.enabled": False,
+            "gobby_tasks.validation.enabled": False,
+            "code_index.enabled": False,
+        },
+        source="e2e-fixture",
+    )
+    postgres_db.execute(
+        """
+        INSERT INTO projects (id, name, repo_path, created_at, updated_at)
+        VALUES (%s, %s, %s, NOW(), NOW())
+        ON CONFLICT (id) DO UPDATE
+        SET name = EXCLUDED.name,
+            repo_path = EXCLUDED.repo_path,
+            updated_at = EXCLUDED.updated_at
+        """,
+        (
+            "00000000-0000-0000-0000-000000000e2e",
+            "E2E Test Project",
+            str(project_dir),
+        ),
+    )
+
+
 def wait_for_port(port: int, timeout: float = 10.0) -> bool:
     """Wait for a port to become available for connection."""
     start = time.time()
@@ -347,21 +378,20 @@ def wait_for_port(port: int, timeout: float = 10.0) -> bool:
 
 
 def wait_for_daemon_health(port: int, timeout: float = 30.0) -> bool:
-    """Wait for daemon to respond to health check."""
+    """Wait for the daemon's public authentication status route."""
     start = time.time()
     while time.time() - start < timeout:
         try:
             response = httpx.get(
-                f"http://localhost:{port}/api/admin/startup-progress",
+                f"http://localhost:{port}/api/auth/status",
                 timeout=2.0,
             )
-            if response.status_code == 200 and response.json().get("done") is True:
+            if response.status_code == 200:
                 return True
         except (httpx.ConnectError, httpx.TimeoutException, httpx.ReadTimeout, httpx.ReadError):
             pass
-        # Sleep on every non-ready iteration. A 200 with done=false means the
-        # daemon is still starting; polling that without a delay spins at full
-        # CPU and steals cycles from the daemon we are waiting on.
+        # Sleep on every non-ready iteration so polling does not steal cycles
+        # from the daemon we are waiting on.
         time.sleep(0.5)
     return False
 
@@ -523,20 +553,11 @@ def e2e_project_dir() -> Generator[Path]:
 
 
 @pytest.fixture(scope="function")
-def e2e_auth_mode(request: pytest.FixtureRequest) -> str:
-    """Select daemon auth mode, with required remaining the suite default."""
-    mode = getattr(request, "param", "required")
-    assert mode in {"required", "disabled"}
-    return mode
-
-
-@pytest.fixture(scope="function")
 def e2e_config(
     e2e_project_dir: Path,
     postgres_database_url: str,
     postgres_schema: str,
     postgres_db: Any,
-    e2e_auth_mode: str,
 ) -> Generator[tuple[Path, int, int]]:
     """Create an isolated config file with unique ports."""
     _ = postgres_db  # Fixture side effect: migrated and reset isolated Postgres schema.
@@ -560,6 +581,10 @@ def e2e_config(
     log_dir.mkdir(parents=True, exist_ok=True)
 
     postgres_url = _postgres_url_for_schema(postgres_database_url, postgres_schema)
+
+    # Runtime configuration is PostgreSQL-owned. The legacy config.yaml below
+    # remains input coverage for bootstrap-path resolution only.
+    _seed_e2e_runtime_state(postgres_db, e2e_project_dir)
 
     config_content = f"""
 daemon_port: {http_port}
@@ -612,7 +637,6 @@ database_url: {postgres_url}
 daemon_port: {http_port}
 bind_host: localhost
 websocket_port: {ws_port}
-auth_mode: {e2e_auth_mode}
 """
     bootstrap_path.write_text(bootstrap_content)
     bootstrap_path.chmod(0o600)

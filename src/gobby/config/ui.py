@@ -7,10 +7,9 @@ from __future__ import annotations
 from ipaddress import IPv6Address, ip_address
 from typing import Literal
 
-from pydantic import BaseModel, ConfigDict, Field, field_validator
+from pydantic import BaseModel, Field, field_validator
 
 __all__ = [
-    "AuthConfig",
     "ToolApprovalConfig",
     "ToolApprovalPolicy",
     "UIConfig",
@@ -66,17 +65,6 @@ class ToolApprovalConfig(BaseModel):
     policies: list[ToolApprovalPolicy] = Field(
         default_factory=list,
         description="Per-tool approval policies (server/tool glob patterns)",
-    )
-
-
-class AuthConfig(BaseModel):
-    """Non-secret web authentication settings."""
-
-    model_config = ConfigDict(extra="ignore")
-
-    username: str = Field(
-        default="",
-        description="Username for web UI login.",
     )
 
 

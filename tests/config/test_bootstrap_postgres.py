@@ -324,7 +324,7 @@ def test_runtime_requires_database_url(temp_dir: Path) -> None:
     from gobby.config.bootstrap import BootstrapConfigError, load_bootstrap
 
     bootstrap_file = temp_dir / "bootstrap.yaml"
-    _write_bootstrap(bootstrap_file, "auth_mode: required\n")
+    _write_bootstrap(bootstrap_file, "")
 
     with pytest.raises(BootstrapConfigError, match="database_url"):
         load_bootstrap(str(bootstrap_file), resolve_database_url=True)
@@ -385,7 +385,7 @@ def test_bootstrap_rejects_insecure_file_permissions(temp_dir: Path) -> None:
     from gobby.config.bootstrap import BootstrapConfigError, load_bootstrap
 
     bootstrap_file = temp_dir / "bootstrap.yaml"
-    _write_bootstrap(bootstrap_file, "auth_mode: required\n", mode=0o644)
+    _write_bootstrap(bootstrap_file, "", mode=0o644)
 
     with pytest.raises(BootstrapConfigError, match="permissions.*0600"):
         load_bootstrap(str(bootstrap_file))

@@ -15,7 +15,10 @@ from gobby.servers.http import HTTPServer
 from gobby.storage.projects import LocalProjectManager
 from gobby.storage.sessions import SessionManager
 
-pytestmark = pytest.mark.unit
+pytestmark = [
+    pytest.mark.unit,
+    pytest.mark.usefixtures("authenticated_http_requests", "isolated_http_runtime"),
+]
 
 # Valid-format UUID that doesn't exist in the database.
 UNKNOWN_SESSION_ID = "99999999-9999-4999-8999-999999999999"
@@ -312,7 +315,7 @@ class TestSessionEndpoints:
             services=services,
             port=60887,
             test_mode=True,
-            bootstrap_config=BootstrapConfig(auth_mode="disabled"),
+            bootstrap_config=BootstrapConfig(),
         )
         client = TestClient(server.app)
         response = client.get("/api/sessions")
@@ -330,7 +333,7 @@ class TestSessionEndpoints:
             services=services,
             port=60887,
             test_mode=True,
-            bootstrap_config=BootstrapConfig(auth_mode="disabled"),
+            bootstrap_config=BootstrapConfig(),
         )
         client = TestClient(server.app)
         response = client.post(
@@ -708,7 +711,7 @@ class TestStopSignalEndpoints:
             services=services,
             port=60887,
             test_mode=True,
-            bootstrap_config=BootstrapConfig(auth_mode="disabled"),
+            bootstrap_config=BootstrapConfig(),
         )
         # Mock the hook_manager in app state
         server.app.state.hook_manager = FakeHookManager()
@@ -818,7 +821,7 @@ class TestStopSignalEndpoints:
             services=services,
             port=60887,
             test_mode=True,
-            bootstrap_config=BootstrapConfig(auth_mode="disabled"),
+            bootstrap_config=BootstrapConfig(),
         )
         # Set hook_manager without stop_registry
         with TestClient(server.app) as client:

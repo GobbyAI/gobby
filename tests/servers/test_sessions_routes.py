@@ -24,7 +24,10 @@ from gobby.storage.projects import LocalProjectManager
 from gobby.storage.sessions import SessionManager
 from tests.servers.conftest import create_http_server
 
-pytestmark = pytest.mark.unit
+pytestmark = [
+    pytest.mark.unit,
+    pytest.mark.usefixtures("authenticated_http_requests", "isolated_http_runtime"),
+]
 
 LOCAL_MACHINE_ID = "21000000-0000-4000-8000-000000000003"
 
@@ -88,7 +91,7 @@ def http_server(
         services=services,
         port=60887,
         test_mode=True,
-        bootstrap_config=BootstrapConfig(auth_mode="disabled"),
+        bootstrap_config=BootstrapConfig(),
     )
 
 

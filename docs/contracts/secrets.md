@@ -28,7 +28,9 @@ refresh within about five seconds. The old token stops authorizing HTTP and
 direct WebSocket connections; browser sessions remain independent and the
 browser WebSocket proxy reads the refreshed daemon token.
 
-Web UI passwords are stored as salted Argon2id hashes in `auth.password_hash`.
+Web UI passwords are stored as salted Argon2id hashes in the canonical
+`users.password_hash` column. Browser sessions store only token hashes and a
+required `user_id`; deleting a user cascades to those sessions.
 
 ## Envelope Model
 
@@ -56,5 +58,6 @@ or `gobby secrets rekey --posture passphrase`.
   `secret_key_material` row that wraps their DEK.
 - Communications webhook secrets are stored in `SecretStore`; channel rows
   carry `$secret:NAME` references.
-- Web UI credentials use `auth.password_hash`; `auth.password` is not a
-  supported storage key.
+- Canonical user credentials live only in `users`; `auth.username`,
+  `auth.password_hash`, and `auth.password` are not supported configuration
+  keys.

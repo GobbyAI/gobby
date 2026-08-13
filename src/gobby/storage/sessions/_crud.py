@@ -6,15 +6,13 @@ import json
 import uuid
 from typing import Any, ClassVar, Protocol
 
-import psycopg
-
 from gobby.storage.hub.protocol import (
     HubDatabase,
     SessionRecoveryByProject,
     SessionRegistration,
     SessionSeqMutation,
 )
-from gobby.storage.machines import LocalMachineManager
+from gobby.storage.machines import LocalMachineManager, MachineNotRegisteredError
 from gobby.storage.projects import PERSONAL_PROJECT_ID
 from gobby.storage.session_models import Session
 from gobby.storage.workspace_machine_scope import (
@@ -136,13 +134,10 @@ class _SessionCRUDMixin(_SessionIdentityCRUDMixin):
         now = utc_now()
         terminal_context_json = json.dumps(terminal_context) if terminal_context else None
         storage_project_id = project_id or PERSONAL_PROJECT_ID
-        try:
-            LocalMachineManager(self.db).upsert_seen(machine_id, seen_at=now)
-        except psycopg.Error as exc:
-            get_logger().warning(
-                "Failed to refresh machine registry during session registration",
-                extra={"machine_id": machine_id, "error": str(exc)},
-                exc_info=True,
+        machine = LocalMachineManager(self.db).refresh_seen(machine_id, seen_at=now)
+        if machine is None:
+            raise MachineNotRegisteredError(
+                f"Machine {machine_id} is not registered; run authenticated enrollment first"
             )
 
         if (

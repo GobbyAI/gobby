@@ -8,22 +8,21 @@ import threading
 import time
 from collections.abc import Callable
 from pathlib import Path
-from typing import Literal, NamedTuple
+from typing import NamedTuple
 
 from starlette.requests import HTTPConnection
 
+from gobby.identity import DUMMY_PASSWORD_HASH, verify_password_hash
 from gobby.storage.agents import ACTIVE_AGENT_RUN_STATUSES
 from gobby.storage.auth import (
     LOCAL_API_TOKEN_HASH_KEY,
-    PASSWORD_HASH_KEY,
-    USERNAME_KEY,
     AuthStore,
     hash_token,
-    verify_password_hash,
 )
 from gobby.storage.config_store import ConfigStore
 from gobby.storage.hub.protocol import HubDatabase
 from gobby.storage.session_resolution import resolve_session_reference
+from gobby.storage.users import LocalUserManager, User
 from gobby.utils.local_token import (
     AgentApiTokenClaims,
     local_token_path,
@@ -31,8 +30,6 @@ from gobby.utils.local_token import (
 )
 
 logger = logging.getLogger(__name__)
-
-AuthMode = Literal["required", "disabled"]
 
 _SESSION_COOKIE = "gobby_session"
 _LOCAL_TOKEN_HEADER = "X-Gobby-Local-Token"
@@ -177,25 +174,14 @@ class AuthService:
     def __init__(
         self,
         database_getter: Callable[[], HubDatabase],
-        mode: AuthMode,
         token_file: Path | None = None,
     ) -> None:
-        if mode not in ("required", "disabled"):
-            raise ValueError(f"Unsupported authentication mode: {mode}")
-
         self._database_getter = database_getter
-        self._mode = mode
         self._token_file = token_file or local_token_path()
         self._lock = threading.Lock()
         self._last_refresh = _NEVER_REFRESHED
         self._token_hash: str | None = None
-        self._web_username: str | None = None
-        self._web_password_hash: str | None = None
         self._local_token_plaintext: str | None = None
-
-    @property
-    def enabled(self) -> bool:
-        return self._mode == "required"
 
     def verify_bearer(self, token: str) -> bool:
         candidate_hash = hash_token(token)
@@ -311,24 +297,12 @@ class AuthService:
             return False
         return AuthStore(self._database_getter()).validate_session(token)
 
-    def verify_password(self, username: str, password: str) -> bool:
-        self.refresh()
-        with self._lock:
-            expected_username = self._web_username or ""
-            stored_hash = self._web_password_hash
-
-        username_matches = secrets.compare_digest(
-            username.encode("utf-8"),
-            expected_username.encode("utf-8"),
-        )
-        password_matches = verify_password_hash(password, stored_hash)
-        return username_matches and password_matches
-
-    @property
-    def credentials_configured(self) -> bool:
-        self.refresh()
-        with self._lock:
-            return bool(self._web_username and self._web_password_hash)
+    def verify_password(self, email: str, password: str) -> User | None:
+        user = LocalUserManager(self._database_getter()).get_by_email(email)
+        stored_hash = user.password_hash if user is not None else DUMMY_PASSWORD_HASH
+        if not verify_password_hash(password, stored_hash):
+            return None
+        return user
 
     def local_token(self) -> str | None:
         self.refresh()
@@ -343,13 +317,9 @@ class AuthService:
 
             config_store = ConfigStore(self._database_getter())
             token_hash = _optional_string(config_store.get(LOCAL_API_TOKEN_HASH_KEY))
-            web_username = _optional_string(config_store.get(USERNAME_KEY))
-            web_password_hash = _optional_string(config_store.get(PASSWORD_HASH_KEY))
             local_token_plaintext = _read_token_file(self._token_file)
 
             self._token_hash = token_hash
-            self._web_username = web_username
-            self._web_password_hash = web_password_hash
             self._local_token_plaintext = local_token_plaintext
             self._last_refresh = now
 

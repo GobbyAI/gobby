@@ -3,6 +3,7 @@ from __future__ import annotations
 import asyncio
 import json
 import logging
+from collections.abc import Iterator
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from typing import Any
@@ -31,6 +32,12 @@ from gobby.hooks.inbox import (
 )
 
 pytestmark = pytest.mark.unit
+
+
+@pytest.fixture(autouse=True)
+def _operator_token() -> Iterator[None]:
+    with patch("gobby.hooks.inbox.read_local_api_token", return_value="test-operator-token"):
+        yield
 
 
 def _valid_envelope() -> dict[str, Any]:
@@ -92,11 +99,7 @@ async def test_barrier_replays_fresh_envelope_end_to_end(tmp_path: Path) -> None
 
     response = MagicMock(status_code=200)
     post = AsyncMock(return_value=response)
-    with (
-        patch("gobby.hooks.inbox.load_bootstrap") as mock_load_bootstrap,
-        patch("gobby.hooks.inbox._post_envelope", new=post),
-    ):
-        mock_load_bootstrap.return_value.auth_mode = "disabled"
+    with patch("gobby.hooks.inbox._post_envelope", new=post):
         result = await drain_hook_inbox_barrier(FastAPI(), inbox_dir, timeout_seconds=5.0)
 
     assert result.replayed == 1
@@ -146,11 +149,7 @@ async def test_periodic_and_barrier_drains_serialize_envelope_posts(
 
     periodic_task: asyncio.Task[int] | None = None
     barrier_task: asyncio.Task[HookInboxBarrierResult] | None = None
-    with (
-        patch("gobby.hooks.inbox.load_bootstrap") as mock_load_bootstrap,
-        patch("gobby.hooks.inbox._post_envelope", new=post),
-    ):
-        mock_load_bootstrap.return_value.auth_mode = "disabled"
+    with patch("gobby.hooks.inbox._post_envelope", new=post):
         async with asyncio.TaskGroup() as task_group:
             if first_consumer == "periodic":
                 periodic_task = task_group.create_task(drain_hook_inbox_once(app, tmp_path))
@@ -197,11 +196,9 @@ async def test_replayed_envelope_without_id_is_quarantined_and_barrier_settles(
 
     response = MagicMock(status_code=200)
     with (
-        patch("gobby.hooks.inbox.load_bootstrap") as mock_load_bootstrap,
         patch("gobby.hooks.inbox._post_envelope", new=AsyncMock(return_value=response)),
         patch("gobby.hooks.inbox.envelope_id_from_inbox_path", return_value=None),
     ):
-        mock_load_bootstrap.return_value.auth_mode = "disabled"
         replayed = await drain_hook_inbox_once(
             FastAPI(),
             inbox_dir=inbox_dir,
@@ -270,11 +267,9 @@ async def test_missing_required_token_warns_once_per_drain(
     response = MagicMock(status_code=500)
     with (
         patch("gobby.hooks.inbox.read_local_api_token", return_value=None),
-        patch("gobby.hooks.inbox.load_bootstrap") as mock_load_bootstrap,
         patch("gobby.hooks.inbox._post_envelope", new=AsyncMock(return_value=response)),
         caplog.at_level(logging.WARNING, logger="gobby.hooks.inbox"),
     ):
-        mock_load_bootstrap.return_value.auth_mode = "required"
         await drain_hook_inbox_once(FastAPI(), inbox_dir=inbox_dir)
 
     token_warnings = [record for record in caplog.records if "local_cli_token" in record.message]
@@ -345,7 +340,6 @@ async def test_drain_hook_inbox_replays_full_envelope_with_promoted_headers(tmp_
     mock_client.__aexit__ = AsyncMock(return_value=False)
 
     with (
-        patch("gobby.hooks.inbox.read_local_api_token", return_value=None),
         patch("gobby.hooks.inbox.httpx.AsyncClient", return_value=mock_client),
     ):
         replayed = await drain_hook_inbox_once(FastAPI(), inbox_dir=inbox_dir)
@@ -362,6 +356,7 @@ async def test_drain_hook_inbox_replays_full_envelope_with_promoted_headers(tmp_
         headers={
             **envelope["headers"],
             ENVELOPE_ID_HEADER: "n-0000000000001-abcd",
+            "Authorization": "Bearer test-operator-token",
         },
     )
 

@@ -28,9 +28,7 @@ from gobby.cli.install import (
 )
 from gobby.cli.uninstall import uninstall
 from gobby.config.bootstrap import BootstrapConfig
-from gobby.storage.auth import LOCAL_API_TOKEN_HASH_KEY, ensure_local_api_token, hash_token
-from gobby.storage.config_store import ConfigStore
-from gobby.storage.hub.protocol import HubDatabase
+from gobby.storage.auth import LOCAL_API_TOKEN_HASH_KEY, hash_token
 from gobby.storage.secrets import (
     POSTURE_KEY_FILE,
     POSTURE_SCRYPT_PASSPHRASE,
@@ -41,40 +39,11 @@ from gobby.storage.secrets import (
 pytestmark = pytest.mark.unit
 
 
-def test_install_auth_mode_flag(tmp_path: Path) -> None:
-    codex_result = {
-        "success": True,
-        "hooks_installed": [],
-        "files_installed": [],
-        "workflows_installed": [],
-        "commands_installed": [],
-        "plugins_installed": [],
-        "config_updated": True,
-        "mcp_configured": True,
-    }
-
-    with (
-        patch("gobby.cli.install.get_install_dir", return_value=Path("/fake/install")),
-        patch(
-            "gobby.cli.install._ensure_daemon_config",
-            return_value={"created": False, "path": tmp_path / "bootstrap.yaml"},
-        ),
-        patch("gobby.cli.install.update_bootstrap_yaml") as update_bootstrap,
-        patch("gobby.cli.runtime.CliRuntime.require_config", side_effect=FileNotFoundError),
-        patch("gobby.cli.install.install_codex", return_value=codex_result),
-    ):
-        result = CliRunner().invoke(
-            cli,
-            ["install", "--codex", "--no-interactive", "--auth-mode", "disabled"],
-        )
+def test_install_has_no_auth_mode_flag() -> None:
+    result = CliRunner().invoke(cli, ["install", "--help"])
 
     assert result.exit_code == 0
-    update_bootstrap.assert_called_once()
-    path, updater = update_bootstrap.call_args.args
-    bootstrap: dict[str, str] = {}
-    updater(bootstrap)
-    assert path == tmp_path / "bootstrap.yaml"
-    assert bootstrap["auth_mode"] == "disabled"
+    assert "--auth-mode" not in result.output
 
 
 class _SecretKekStore:
@@ -160,6 +129,10 @@ def _mock_ext_services_and_prompts() -> Iterator[None]:
         patch("gobby.storage.hub.runtime.runtime_hub_database", return_value=MagicMock()),
         patch("gobby.cli.install.SecretStore"),
         patch("gobby.cli.install.ConfigStore"),
+        patch(
+            "gobby.cli.install.ensure_install_identity",
+            return_value=MagicMock(email="owner@example.com"),
+        ),
         patch(
             "gobby.cli._install_prompts._prompt_api_keys",
             return_value={"stored": 0, "already_configured": 0, "env_found": 0},
@@ -624,13 +597,11 @@ class TestInstallCommand:
         )
         assert token_path.stat().st_mode & 0o777 == 0o600
 
-    def test_install_db_unreachable_writes_file_only(
+    def test_install_db_unreachable_fails_before_token_provisioning(
         self,
         runner: CliRunner,
         temp_dir: Path,
-        temp_db: HubDatabase,
         monkeypatch: pytest.MonkeyPatch,
-        caplog: pytest.LogCaptureFixture,
     ) -> None:
         gobby_home = temp_dir / "gobby-home"
         monkeypatch.setenv("GOBBY_HOME", str(gobby_home))
@@ -661,21 +632,9 @@ class TestInstallCommand:
                 result = runner.invoke(cli, ["install", "--codex", "--no-interactive"])
 
         token_path = gobby_home / "local_cli_token"
-        assert result.exit_code == 0
-        original_token = token_path.read_text().strip()
-        config_store = ConfigStore(temp_db)
-        assert config_store.get(LOCAL_API_TOKEN_HASH_KEY) is None
-        warning = next(
-            record
-            for record in caplog.records
-            if record.message == "Failed to initialize install database/secret store"
-        )
-        assert vars(warning)["error_type"] == "FileNotFoundError"
-        assert vars(warning)["error"] == "bootstrap unavailable"
-
-        assert ensure_local_api_token(config_store) == original_token
-        assert token_path.read_text().strip() == original_token
-        assert config_store.get(LOCAL_API_TOKEN_HASH_KEY) == hash_token(original_token)
+        assert result.exit_code == 1
+        assert "Failed to establish account identity: bootstrap unavailable" in result.output
+        assert not token_path.exists()
 
 
 class TestUninstallCommand:

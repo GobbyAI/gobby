@@ -15,6 +15,7 @@ from gobby.storage.cron_models import CronJob, CronRun, CronRunChild
 from gobby.storage.hub.protocol import HubDatabase
 from gobby.storage.projects import LocalProjectManager
 from gobby.storage.sessions import SessionManager
+from tests.servers.conftest import authenticate_test_server
 
 pytestmark = pytest.mark.unit
 
@@ -95,11 +96,13 @@ def http_server(
         cron_storage=cron_storage,
         cron_scheduler=cron_scheduler,
     )
-    return HTTPServer(
-        services=services,
-        port=60888,
-        test_mode=True,
-        bootstrap_config=BootstrapConfig(auth_mode="disabled"),
+    return authenticate_test_server(
+        HTTPServer(
+            services=services,
+            port=60888,
+            test_mode=True,
+            bootstrap_config=BootstrapConfig(),
+        )
     )
 
 

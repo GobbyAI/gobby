@@ -25,7 +25,7 @@ Start it with `gobby start` and check it with `gobby status` or `gobby health`.
 | Command | Purpose | Source |
 | --- | --- | --- |
 | `agents` | Manage agent definitions and agent runs. | `src/gobby/cli/agents.py` |
-| `auth` | Manage web credentials and the local daemon API token. | `src/gobby/cli/auth.py` |
+| `auth` | Reset the installed account password and manage the local daemon API token. | `src/gobby/cli/auth.py` |
 | `build` | Start and control lifecycle automation for plans, epics, and tasks. | `src/gobby/cli/build.py` |
 | `clones` | Manage isolated clone workspaces. | `src/gobby/cli/clones.py` |
 | `comms` | Manage inter-session communication channels. | `src/gobby/cli/communications.py` |
@@ -177,7 +177,6 @@ gobby uninstall [OPTIONS]
 | `--embedding-model MODEL` | Override the embedding model. |
 | `--embedding-dim N` | Override the embedding dimension. |
 | `--secret-kek-posture [key-file|passphrase]` | Select daemon-local secret KEK storage. |
-| `--auth-mode [required|disabled]` | Persist daemon API authentication mode in `bootstrap.yaml`. |
 | `--container-restarts`, `--no-container-restarts` | Enable or disable `unless-stopped` restart policies for managed service containers (enabled by default). |
 | `--no-interactive` | Run without prompts. |
 | `-C`, `--path PATH` | Install against a specific path. |
@@ -189,6 +188,12 @@ applies `unless-stopped` to new and existing managed containers. Use
 `--no-container-restarts` when another supervisor owns their lifecycle.
 Re-running `gobby install --config-only` repairs the selected policy with
 `docker update` and refreshes the managed Compose file.
+
+On a fresh datastore, interactive installation prompts for the initial user's
+name, email, password, and confirmation. It creates that user and assigns the
+local machine before daemon startup. A fresh `--no-interactive` install refuses
+to invent credentials; run one interactive installation first. Reruns preserve
+the existing sole user and idempotently confirm local machine ownership.
 
 CLI-targeted flags and `--hooks` are maintenance operations. In particular,
 `gobby install --hooks` only ensures the personal marker and reinstalls
@@ -211,17 +216,17 @@ repository Git hooks; it skips daemon configuration and managed services.
 
 ### `gobby auth`
 
-Manage browser credentials and the install-scoped daemon API token.
+Reset the sole installed user's browser password and manage the install-scoped
+daemon API token.
 
 ```bash
-gobby auth credentials [--remove]
+gobby auth credentials
 gobby auth token [--show] [--rotate]
 ```
 
 | Command or option | Purpose |
 | --- | --- |
-| `credentials` | Create credentials or reset the configured user's password. |
-| `credentials --remove` | Remove browser credentials and disable Web UI login. |
+| `credentials` | Prompt for and set a new Argon2id password for the sole installed user's email. |
 | `token` | Show token path, file presence, stored hash prefix, and file/DB agreement. |
 | `token --show` | Print the plaintext token for deliberate client provisioning. |
 | `token --rotate` | Replace the token file and stored hash; recopy the file to other machines. |

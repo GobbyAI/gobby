@@ -22,10 +22,8 @@ import type { SecretInfo } from "../../../hooks/useConfiguration";
  * through context like the rules-enforcement toggle and saved immediately by
  * its own controls rather than the config draft.
  *
- * Web-UI auth credentials are deliberately absent: `auth.*` is not a
- * registered runtime config surface, so a draft editor here could never
- * persist anything. Password resets stay CLI-only until #19650 lands an auth
- * management surface.
+ * Account credentials are deliberately absent: canonical users live in the
+ * datastore rather than runtime config. Password resets use the CLI.
  */
 
 const OWNED_PATHS: readonly string[] = [

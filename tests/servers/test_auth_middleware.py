@@ -23,6 +23,7 @@ from gobby.storage.auth import LOCAL_API_TOKEN_HASH_KEY, AuthStore, hash_token
 from gobby.storage.config_store import ConfigStore
 from gobby.storage.hub.protocol import HubDatabase
 from gobby.storage.secrets import SecretStore
+from tests.fixtures.postgres import TEST_USER_ID
 
 if TYPE_CHECKING:
     from gobby.servers.http import HTTPServer
@@ -40,7 +41,6 @@ def auth_client() -> tuple[TestClient, MagicMock]:
     """App with AuthMiddleware and a catch-all route that returns 200."""
     app = FastAPI()
     auth_service = MagicMock()
-    auth_service.enabled = True
     auth_service.is_request_authenticated.return_value = False
     app.add_middleware(
         AuthMiddleware,
@@ -131,17 +131,6 @@ def test_protected_routes_require_auth_when_enabled(
     }
 
 
-def test_all_routes_pass_when_auth_disabled(
-    auth_client: tuple[TestClient, MagicMock],
-) -> None:
-    client, auth_service = auth_client
-    auth_service.enabled = False
-
-    response = client.get("/api/tasks")
-
-    assert response.status_code == 200
-
-
 @pytest.mark.asyncio
 async def test_repeated_requests_reuse_cached_credentials_without_secret_store(
     hub_db: HubDatabase,
@@ -166,7 +155,6 @@ async def test_repeated_requests_reuse_cached_credentials_without_secret_store(
 
     auth_service = AuthService(
         lambda: hub_db,
-        "required",
         token_file=tmp_path / "missing-token",
     )
     server = cast(
@@ -200,7 +188,7 @@ async def test_repeated_requests_reuse_cached_credentials_without_secret_store(
         )
 
     assert [first.status_code, second.status_code, after_change.status_code] == [200, 200, 200]
-    assert len(credential_lookup_threads) == 6
+    assert len(credential_lookup_threads) == 2
     assert all(thread_id != event_loop_thread for thread_id in credential_lookup_threads)
     secret_store_init.assert_not_called()
 
@@ -211,7 +199,7 @@ async def test_session_cookie_validation_runs_off_event_loop(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    session_token, _expires_at = AuthStore(hub_db).create_session()
+    session_token, _expires_at = AuthStore(hub_db).create_session(TEST_USER_ID)
     original_validate = AuthStore.validate_session
     validation_threads: list[int] = []
 
@@ -222,7 +210,6 @@ async def test_session_cookie_validation_runs_off_event_loop(
     monkeypatch.setattr(AuthStore, "validate_session", tracked_validate)
     auth_service = AuthService(
         lambda: hub_db,
-        "required",
         token_file=tmp_path / "missing-token",
     )
     server = cast(

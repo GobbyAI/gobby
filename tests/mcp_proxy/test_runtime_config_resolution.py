@@ -111,7 +111,7 @@ def _http_server(
         ),
         startup_config=startup_config,
         test_mode=True,
-        bootstrap_config=bootstrap_config or BootstrapConfig(auth_mode="disabled"),
+        bootstrap_config=bootstrap_config or BootstrapConfig(),
     )
 
 
@@ -119,7 +119,7 @@ def test_http_config_reuses_bootstrap_overlaid_projection_per_epoch() -> None:
     runtime = _MutableRuntime(_snapshot(1, 3))
     server = _http_server(
         runtime.snapshot.active,
-        bootstrap_config=BootstrapConfig(auth_mode="disabled", daemon_port=62000),
+        bootstrap_config=BootstrapConfig(daemon_port=62000),
     )
     server.services.config_runtime = runtime
 

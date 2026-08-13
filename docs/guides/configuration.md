@@ -78,7 +78,6 @@ daemon_port: 60887
 bind_host: "localhost"
 websocket_port: 60888
 ui_port: 60889
-auth_mode: required
 ```
 
 `database_url` is the sole PostgreSQL selector and the required connection
@@ -100,11 +99,19 @@ stays owner-readable only. Gobby-generated helper bootstraps also use
 Changing bootstrap settings affects startup wiring. Restart the daemon after
 editing this file.
 
-`auth_mode` accepts `required` or `disabled` and defaults to `required` when
-omitted. Required mode protects daemon HTTP, MCP, memory, and WebSocket surfaces
-with the install-scoped local token or a browser session. Persist an explicit
-choice with `gobby install --auth-mode required|disabled`. Use `disabled` only
-inside an explicitly trusted isolated environment.
+Authentication is mandatory. Protected HTTP, MCP, memory, hook, and WebSocket
+surfaces accept the install-scoped local token or a user-owned browser session;
+there is no bootstrap or runtime switch that disables authentication.
+
+Interactive first installation creates the canonical user, then assigns the
+local machine UUID to that user in the same database transaction. A fresh
+unattended install refuses account bootstrap and directs the operator to run an
+interactive install. Startup requires exactly one installed user until account
+selection exists.
+
+Machine ownership is established only by installation or authenticated
+enrollment. Hook and session ingress can refresh metadata for a known machine;
+an unknown machine UUID is rejected and never claimed implicitly.
 
 For multiple daemons sharing datastores across Tailscale, set each client to
 `datastore_mode: remote`, keep its `bind_host` local, and point `database_url` at

@@ -46,15 +46,17 @@ Open the web app:
 http://localhost:60887/#chat
 ```
 
-Create or reset browser credentials, then restart the daemon:
+The interactive installer creates the initial account. Reset its password when
+needed:
 
 ```bash
 uv run gobby auth credentials
 uv run gobby restart
 ```
 
-The login page exchanges those credentials for the HTTP-only `gobby_session`
-cookie. The same cookie authorizes API requests and the `/ws` browser proxy.
+The login page accepts the canonical account email and password and exchanges
+them for an HTTP-only `gobby_session` cookie owned by that user. The same cookie
+authorizes API requests and the `/ws` browser proxy.
 
 Check the backend directly when the UI appears disconnected:
 
@@ -68,10 +70,10 @@ curl -sS -H "Authorization: Bearer $TOKEN" \
 Use the Tailscale URL from `gobby status` when operating from another trusted
 device.
 
-Removing browser credentials uses `gobby auth credentials --remove`. Daemon API
-auth remains required and token-based clients continue to work. Setting
-bootstrap `auth_mode: disabled` opens daemon surfaces and is intended only for
-an explicitly trusted isolated environment.
+Authentication is required for every stateful browser HTTP and WebSocket
+surface. `gobby auth credentials` resets the sole installed user's password;
+it never removes the user or disables login. Token-based daemon clients remain
+an independent machine-local credential path.
 
 ## Navigation
 

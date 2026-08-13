@@ -1,0 +1,311 @@
+from __future__ import annotations
+
+import re
+import uuid
+from collections.abc import Iterator
+
+import psycopg
+import pytest
+from psycopg import sql
+from psycopg.rows import dict_row
+
+import gobby.storage.account_identity_cutover as cutover
+from gobby.identity import hash_password
+from gobby.storage.account_identity_cutover import (
+    ACCOUNT_IDENTITY_CAMPAIGN,
+    PREDECESSOR_BASELINE_CHECKSUM,
+    AccountIdentity,
+    AccountIdentityCutoverError,
+    account_identity_cutover_already_applied,
+    apply_account_identity_cutover,
+    preflight_account_identity_cutover,
+    verify_account_identity_cutover,
+)
+from gobby.storage.maintenance_epoch import (
+    CAMPAIGNS,
+    bind_maintenance_epoch,
+    create_destructive_batch,
+    open_maintenance_epoch,
+)
+from gobby.storage.schema_contract import apply_schema, expected_schema_identity, verify_schema
+from tests.fixtures.postgres import isolated_test_schema
+
+
+@pytest.fixture
+def predecessor_database(postgres_database_url: str) -> Iterator[str]:
+    with isolated_test_schema(postgres_database_url, "identity") as schema_name:
+        apply_schema(postgres_database_url, schema=schema_name)
+        scoped_url = postgres_database_url + f"?options=-csearch_path%3D{schema_name}"
+        with psycopg.connect(scoped_url, autocommit=True) as connection:
+            _restore_predecessor_shape(connection)
+            _seed_predecessor_data(connection)
+        yield scoped_url
+
+
+def _restore_predecessor_shape(connection: psycopg.Connection[object]) -> None:
+    connection.execute("DROP TABLE auth_sessions")
+    connection.execute(
+        """
+        CREATE TABLE auth_sessions (
+            token_hash text NOT NULL,
+            created_at timestamp with time zone DEFAULT now() NOT NULL,
+            expires_at timestamp with time zone NOT NULL,
+            remember_me boolean DEFAULT false NOT NULL
+        )
+        """
+    )
+    connection.execute(
+        """
+        ALTER TABLE ONLY auth_sessions
+        ADD CONSTRAINT auth_sessions_pkey PRIMARY KEY (token_hash)
+        """
+    )
+    connection.execute("CREATE INDEX idx_auth_sessions_expires ON auth_sessions (expires_at)")
+    connection.execute(
+        "GRANT SELECT, INSERT, DELETE, UPDATE ON TABLE auth_sessions TO gobby_daemon_runtime"
+    )
+    connection.execute("ALTER TABLE machines DROP CONSTRAINT machines_owner_user_id_fkey")
+    connection.execute("DROP INDEX idx_machines_owner_user_id")
+    connection.execute("ALTER TABLE machines ALTER COLUMN owner_user_id DROP NOT NULL")
+    connection.execute(
+        """
+        ALTER TABLE machines
+        ALTER COLUMN owner_user_id TYPE text USING owner_user_id::text
+        """
+    )
+    connection.execute(
+        """
+        CREATE INDEX idx_machines_owner_user_id ON machines (owner_user_id)
+        WHERE owner_user_id IS NOT NULL
+        """
+    )
+    connection.execute("DROP TABLE users")
+    _replace_campaign_constraint(connection, "maintenance_epochs")
+    _replace_campaign_constraint(connection, "destructive_batches")
+    connection.execute(
+        """
+        UPDATE schema_migrations
+        SET checksum = %s
+        WHERE version = 375 AND filename = 'baseline@375'
+        """,
+        (PREDECESSOR_BASELINE_CHECKSUM,),
+    )
+
+
+def _replace_campaign_constraint(connection: psycopg.Connection[object], table: str) -> None:
+    constraint = f"{table}_campaign_check"
+    connection.execute(
+        sql.SQL("ALTER TABLE {} DROP CONSTRAINT {}").format(
+            sql.Identifier(table), sql.Identifier(constraint)
+        )
+    )
+    connection.execute(
+        sql.SQL(
+            "ALTER TABLE {} ADD CONSTRAINT {} "
+            "CHECK (campaign IN ('schema-apply', 'purge', 'reconcile', 'flatten'))"
+        ).format(sql.Identifier(table), sql.Identifier(constraint))
+    )
+
+
+def _seed_predecessor_data(connection: psycopg.Connection[object]) -> None:
+    connection.execute(
+        "INSERT INTO machines(id, hostname) VALUES (%s, 'identity-test-machine')",
+        (uuid.uuid4(),),
+    )
+    connection.execute(
+        """
+        INSERT INTO auth_sessions(token_hash, expires_at, remember_me)
+        VALUES ('obsolete-session', NOW() + INTERVAL '1 hour', TRUE)
+        """
+    )
+    connection.execute(
+        """
+        INSERT INTO config_store(key, value)
+        VALUES ('identity.cutover.preserved', 'preserved')
+        """
+    )
+
+
+def _open_cutover(scoped_url: str) -> tuple[str, uuid.UUID, uuid.UUID]:
+    epoch = open_maintenance_epoch(
+        scoped_url,
+        campaign=ACCOUNT_IDENTITY_CAMPAIGN,
+        opened_by="hub-maintenance:account-identity-cutover",
+        scope_note="isolated migration test",
+    )
+    batch = create_destructive_batch(
+        scoped_url,
+        epoch.id,
+        campaign=ACCOUNT_IDENTITY_CAMPAIGN,
+        intent={"campaign": ACCOUNT_IDENTITY_CAMPAIGN},
+    )
+    return bind_maintenance_epoch(scoped_url, epoch.id), epoch.id, batch.id
+
+
+def _identity() -> AccountIdentity:
+    return AccountIdentity(
+        id=uuid.uuid4(),
+        name="Test Operator",
+        email="operator@example.com",
+        password_hash=hash_password("correct horse battery staple"),
+    )
+
+
+def _target_checksum() -> str:
+    checksum = expected_schema_identity()["baseline_checksum"]
+    assert isinstance(checksum, str)
+    return checksum
+
+
+def test_populated_predecessor_cutover_preserves_rows_and_forces_logout(
+    predecessor_database: str,
+) -> None:
+    bound_url, epoch_id, batch_id = _open_cutover(predecessor_database)
+    identity = _identity()
+    preflight = preflight_account_identity_cutover(bound_url)
+
+    evidence = apply_account_identity_cutover(
+        bound_url,
+        epoch_id=epoch_id,
+        batch_id=batch_id,
+        identity=identity,
+        preflight=preflight,
+        target_checksum=_target_checksum(),
+    )
+    verified = verify_account_identity_cutover(
+        bound_url,
+        batch_id=batch_id,
+        target_checksum=_target_checksum(),
+    )
+    verify_schema(bound_url)
+
+    assert verified == evidence
+    assert evidence.auth_sessions_before == 1
+    assert evidence.machines_before == 1
+    assert account_identity_cutover_already_applied(
+        bound_url,
+        batch_id=batch_id,
+        target_checksum=_target_checksum(),
+    )
+    with psycopg.connect(bound_url, row_factory=dict_row) as connection:
+        user = connection.execute("SELECT id, name, email FROM users").fetchone()
+        owner = connection.execute("SELECT owner_user_id FROM machines").fetchone()
+        sessions = connection.execute("SELECT COUNT(*) AS count FROM auth_sessions").fetchone()
+        preserved = connection.execute(
+            "SELECT value FROM config_store WHERE key = 'identity.cutover.preserved'"
+        ).fetchone()
+    assert user == {"id": identity.id, "name": identity.name, "email": identity.email}
+    assert owner == {"owner_user_id": identity.id}
+    assert sessions == {"count": 0}
+    assert preserved == {"value": "preserved"}
+
+
+def test_campaign_registry_and_admitted_constraints_have_exact_parity(
+    predecessor_database: str,
+) -> None:
+    bound_url, _epoch_id, _batch_id = _open_cutover(predecessor_database)
+
+    with psycopg.connect(bound_url, row_factory=dict_row) as connection:
+        rows = connection.execute(
+            """
+            SELECT conrelid::regclass::text AS table_name,
+                   pg_get_constraintdef(oid) AS definition
+            FROM pg_constraint
+            WHERE conname IN (
+                'maintenance_epochs_campaign_check',
+                'destructive_batches_campaign_check'
+            )
+              AND connamespace = (
+                  SELECT oid FROM pg_namespace WHERE nspname = current_schema()
+              )
+            ORDER BY table_name
+            """
+        ).fetchall()
+
+    expected = {
+        "account-identity-cutover",
+        "schema-apply",
+        "purge",
+        "reconcile",
+        "flatten",
+    }
+    assert set(CAMPAIGNS) == expected - {"flatten"}
+    assert {row["table_name"] for row in rows} == {
+        "destructive_batches",
+        "maintenance_epochs",
+    }
+    for row in rows:
+        assert set(re.findall(r"'([^']+)'::text", row["definition"])) == expected
+
+
+def test_transaction_failure_rolls_back_identity_mutation(
+    predecessor_database: str,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    bound_url, epoch_id, batch_id = _open_cutover(predecessor_database)
+    preflight = preflight_account_identity_cutover(bound_url)
+
+    def fail_after_machine_backfill(_connection: psycopg.Connection[object]) -> None:
+        raise RuntimeError("injected cutover failure")
+
+    monkeypatch.setattr(cutover, "_replace_auth_sessions", fail_after_machine_backfill)
+
+    with pytest.raises(RuntimeError, match="injected cutover failure"):
+        apply_account_identity_cutover(
+            bound_url,
+            epoch_id=epoch_id,
+            batch_id=batch_id,
+            identity=_identity(),
+            preflight=preflight,
+            target_checksum=_target_checksum(),
+        )
+
+    with psycopg.connect(bound_url, row_factory=dict_row) as connection:
+        receipt = connection.execute(
+            "SELECT checksum FROM schema_migrations WHERE version = 375"
+        ).fetchone()
+        users = connection.execute("SELECT to_regclass('users') AS relation").fetchone()
+        owner = connection.execute("SELECT owner_user_id FROM machines").fetchone()
+        sessions = connection.execute("SELECT token_hash FROM auth_sessions").fetchall()
+        epoch = connection.execute(
+            "SELECT released_at FROM maintenance_epochs WHERE id = %s", (epoch_id,)
+        ).fetchone()
+    assert receipt == {"checksum": PREDECESSOR_BASELINE_CHECKSUM}
+    assert users == {"relation": None}
+    assert owner == {"owner_user_id": None}
+    assert sessions == [{"token_hash": "obsolete-session"}]
+    assert epoch == {"released_at": None}
+
+
+def test_preflight_refuses_existing_machine_owners(predecessor_database: str) -> None:
+    bound_url, _epoch_id, _batch_id = _open_cutover(predecessor_database)
+    with psycopg.connect(bound_url) as connection:
+        connection.execute("UPDATE machines SET owner_user_id = 'unexpected-owner'")
+
+    with pytest.raises(AccountIdentityCutoverError, match="owner value"):
+        preflight_account_identity_cutover(bound_url)
+
+
+def test_preflight_refuses_existing_users_table(predecessor_database: str) -> None:
+    bound_url, _epoch_id, _batch_id = _open_cutover(predecessor_database)
+    with psycopg.connect(bound_url) as connection:
+        connection.execute("CREATE TABLE users (id uuid PRIMARY KEY)")
+
+    with pytest.raises(AccountIdentityCutoverError, match="contains users"):
+        preflight_account_identity_cutover(bound_url)
+
+
+def test_open_refuses_unexpected_predecessor_receipt(predecessor_database: str) -> None:
+    with psycopg.connect(predecessor_database) as connection:
+        connection.execute(
+            "UPDATE schema_migrations SET checksum = %s WHERE version = 375",
+            ("0" * 64,),
+        )
+
+    with pytest.raises(AccountIdentityCutoverError, match="receipt mismatch"):
+        open_maintenance_epoch(
+            predecessor_database,
+            campaign=ACCOUNT_IDENTITY_CAMPAIGN,
+            opened_by="test-account-identity-cutover",
+            scope_note="receipt refusal test",
+        )
