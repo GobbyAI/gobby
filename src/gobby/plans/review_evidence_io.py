@@ -220,6 +220,45 @@ def parse_checkpoints(plan_bytes: bytes) -> tuple[dict[str, object], ...]:
 def ensure_checkpoint(plan_path: Path, checkpoint: bytes) -> bool:
     """Persist a checkpoint once inside the coordinator-owned V1 section."""
     current = plan_path.read_bytes()
+    if _checkpoint_is_replayed(current, checkpoint):
+        return False
+    text = current.decode("utf-8")
+    start, end = _section_span(text, "V1")
+    addition = checkpoint.decode("utf-8")
+    updated_section = text[start:end].rstrip() + "\n\n" + addition
+    updated = text[:start] + updated_section + text[end:]
+    atomic_write_bytes(plan_path, updated.encode("utf-8"))
+    return True
+
+
+def append_round_entry(plan_path: Path, prose: str, checkpoint: bytes) -> bool:
+    """Atomically append one round entry (prose + checkpoint fence) to the V1 section.
+
+    The updated document is validated before any byte reaches the plan file, so
+    a validation failure leaves the plan untouched.
+    """
+    entry_prose = prose.strip()
+    if not entry_prose:
+        raise ReviewEvidenceError(
+            "invalid_round_entry",
+            "round entry prose cannot be empty",
+        )
+    current = plan_path.read_bytes()
+    if _checkpoint_is_replayed(current, checkpoint):
+        return False
+    text = current.decode("utf-8")
+    start, end = _section_span(text, "V1")
+    addition = f"{entry_prose}\n\n{checkpoint.decode('utf-8')}"
+    updated_section = text[start:end].rstrip() + "\n\n" + addition
+    tail = text[end:]
+    updated = (text[:start] + updated_section + ("\n" + tail if tail else "")).encode("utf-8")
+    _validate_round_entry_plan(plan_path, current, updated)
+    atomic_write_bytes(plan_path, updated)
+    return True
+
+
+def _checkpoint_is_replayed(current: bytes, checkpoint: bytes) -> bool:
+    """Return True when this exact checkpoint is already durable in the plan."""
     checkpoint_payload = parse_checkpoints(checkpoint)[0]
     evidence_id = checkpoint_payload["evidence_id"]
     for existing in parse_checkpoints(current):
@@ -230,14 +269,38 @@ def ensure_checkpoint(plan_path: Path, checkpoint: bytes) -> bool:
                 "checkpoint_reconciliation_error",
                 f"conflicting V1 checkpoint for evidence {evidence_id}",
             )
-        return False
-    text = current.decode("utf-8")
-    start, end = _section_span(text, "V1")
-    addition = checkpoint.decode("utf-8")
-    updated_section = text[start:end].rstrip() + "\n\n" + addition
-    updated = text[:start] + updated_section + text[end:]
-    atomic_write_bytes(plan_path, updated.encode("utf-8"))
-    return True
+        return True
+    return False
+
+
+def _validate_round_entry_plan(plan_path: Path, current: bytes, updated: bytes) -> None:
+    """Prove the appended entry changed only the V1 section and still parses."""
+    before = {
+        section.section_id: section.section_hash for section in build_section_manifest(current)
+    }
+    after = {
+        section.section_id: section.section_hash for section in build_section_manifest(updated)
+    }
+    unchanged_outside_v1 = set(before) == set(after) and all(
+        before[key] == after[key] for key in before if key != "V1"
+    )
+    if not unchanged_outside_v1:
+        raise ReviewEvidenceError(
+            "invalid_round_entry",
+            "round entry must modify only the V1 Plan Changelog section",
+        )
+    try:
+        with TemporaryDirectory(prefix="gobby-plan-review-") as temp_dir:
+            temp_path = Path(temp_dir) / plan_path.name
+            temp_path.write_bytes(updated)
+            parse_plan(temp_path, parse_mode="draft")
+    except ReviewEvidenceError:
+        raise
+    except (OSError, ValueError) as exc:
+        raise ReviewEvidenceError(
+            "invalid_round_entry",
+            f"plan does not parse after round entry: {exc}",
+        ) from exc
 
 
 def render_manifest_plan(

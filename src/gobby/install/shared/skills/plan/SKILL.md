@@ -241,8 +241,10 @@ then persists the complete result as the durable pre-finalization approval
 intent in the same durable write as the manifest checkpoint. Reviewed-section
 drift before this intent refuses the round with the row unfinalized, the plan
 untouched by the apply, and no lesson mint.
-2. Call `render_v1_round_checkpoint` from the durable intent and persist the
-returned canonical fence byte-for-byte in `## V1 Plan Changelog`.
+2. Call `append_plan_changelog_round` with the round prose. The daemon renders
+the canonical fence from the durable intent (byte-identical to
+`render_plan_changelog_round` output) and atomically inserts prose + fence at
+the end of `## V1 Plan Changelog`. Never hand-edit the changelog.
 3. Call `finalize_plan_review_evidence` with the durable result. Finalization is
 gated on the exact V1 fence and atomically stamps
 `lesson_mint_status=pending` with `finalized_at`.
@@ -344,11 +346,12 @@ Every adversarial round appends a `kind: verification` entry to
 - <finding id/severity/summary>
 - resolution_notes: <what changed or why no change was needed>
 
-<exact fenced JSON bytes returned by render_v1_round_checkpoint>
+<exact fenced JSON bytes rendered by append_plan_changelog_round>
 ```
 
-The prose fields are a projection of the checkpoint payload. Paste the rendered
-fence verbatim; never hand-build, reformat, or reorder its JSON.
+The prose fields are a projection of the checkpoint payload. Record adversary
+rounds with `append_plan_changelog_round` — the daemon renders the fence and
+inserts the entry atomically; never hand-build, reformat, or reorder its JSON.
 
 Every enhancement round (step 4.5) appends a `kind: enhancement` entry to the
 same changelog:

@@ -451,7 +451,8 @@ The adversary never writes the plan file. `apply_plan_review_manifest`
 re-derives entries from the evidence snapshot and routing decisions, rejects
 any differing payload, revalidates freshness, and performs the only manifest
 write. Rejection returns typed findings plus shadow-manifest diagnostics. The
-coordinator owns `## V1 Plan Changelog`, and the planner owns revisions.
+coordinator owns `## V1 Plan Changelog`, writing round entries only through
+`append_plan_changelog_round`, and the planner owns revisions.
 
 ## Escalation Policy
 

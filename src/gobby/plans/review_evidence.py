@@ -480,15 +480,38 @@ class PlanReviewEvidenceService:
             )
         return evidence
 
-    def render_v1_round_checkpoint(
+    def render_plan_changelog_round(
         self,
         evidence_id: str,
         round_result: Mapping[str, object] | None = None,
     ) -> bytes:
-        return self.checkpoints.render_v1_round_checkpoint(
+        return self.checkpoints.render_plan_changelog_round(
             evidence_id,
             round_result,
         )
+
+    def append_plan_changelog_round(
+        self,
+        evidence_id: str,
+        prose: str,
+        round_result: Mapping[str, object] | None = None,
+    ) -> dict[str, object]:
+        evidence = self.get_evidence(evidence_id)
+        plan_path = self._evidence_path(evidence)
+        mutation = PlanReviewEvidenceMutation(
+            project_id=evidence.project_id,
+            plan_path=evidence.plan_path,
+        )
+        # The immediate mutation transaction serializes this read-modify-write
+        # against concurrent plan writers (manifest apply, checkpoint drain).
+        with self.db.transaction_immediate(mutation) as transaction:
+            self.store.require(evidence_id, transaction=transaction, for_update=True)
+            return self.checkpoints.append_plan_changelog_round(
+                evidence_id,
+                prose,
+                round_result,
+                plan_path=plan_path,
+            )
 
     def finalize_plan_review_evidence(
         self,

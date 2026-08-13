@@ -653,8 +653,10 @@ Planner revision rounds run in fresh context. Read the current plan file,
 the cumulative `## V1 Plan Changelog`, and the latest taskless adversary
 findings supplied by the coordinator.
 
-Every adversary round entry embeds the pinned V1 checkpoint fence returned by
-`render_v1_round_checkpoint`. Paste those bytes verbatim. The canonical JSON
+Every adversary round entry embeds the pinned V1 checkpoint fence rendered by
+`append_plan_changelog_round`, the coordinator's atomic changelog write (its
+fence bytes match `render_plan_changelog_round` output).
+Preserve those bytes verbatim. The canonical JSON
 contains exactly `evidence_id`, `round_number`, `plan_hash`, `session_id`, and
 `round_result`; surrounding prose bullets are only a projection of that
 payload. Never reconstruct, normalize, or reformat the fence.
@@ -666,9 +668,9 @@ requires rejecting the premise or re-engineering a section, return a note to
 the coordinator naming the section id and the specific premise conflict
 instead of folding a redesign into a revision.
 
-After a revision, update `## V1 Plan Changelog` with resolution notes for the
-round, rerun plan validation, and hand the artifact back to the coordinator for
-the next taskless review round.
+After a revision, rerun plan validation and hand the artifact plus resolution
+notes for the round back to the coordinator, who records the round entry via
+`append_plan_changelog_round` before the next taskless review round.
 
 First drafts author narrative sections only. The `## M1 Task Manifest` is
 emitted by `plan-adversary-taskless` or the interactive coordinator on approval.

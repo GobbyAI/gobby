@@ -358,12 +358,12 @@ def register_review_evidence_tools(
         func=apply_plan_review_manifest,
     )
 
-    def render_v1_round_checkpoint(
+    def render_plan_changelog_round(
         evidence_id: str,
         round_result: Mapping[str, object] | None = None,
     ) -> dict[str, object]:
         try:
-            checkpoint = service.render_v1_round_checkpoint(evidence_id, round_result)
+            checkpoint = service.render_plan_changelog_round(evidence_id, round_result)
         except ReviewEvidenceError as exc:
             return exc.to_dict()
         return {
@@ -373,8 +373,8 @@ def register_review_evidence_tools(
         }
 
     registry.register(
-        name="render_v1_round_checkpoint",
-        description="Render the canonical interactive V1 reconciliation checkpoint.",
+        name="render_plan_changelog_round",
+        description="Render the canonical V1 changelog round checkpoint fence.",
         input_schema={
             "type": "object",
             "properties": {
@@ -383,7 +383,35 @@ def register_review_evidence_tools(
             },
             "required": ["evidence_id"],
         },
-        func=render_v1_round_checkpoint,
+        func=render_plan_changelog_round,
+    )
+
+    def append_plan_changelog_round(
+        evidence_id: str,
+        prose: str,
+        round_result: Mapping[str, object] | None = None,
+    ) -> dict[str, object]:
+        try:
+            result = service.append_plan_changelog_round(evidence_id, prose, round_result)
+        except (ReviewEvidenceError, OSError) as exc:
+            return _error_payload(exc, "append_plan_changelog_round_failed")
+        return {"ok": True, **result}
+
+    registry.register(
+        name="append_plan_changelog_round",
+        description=(
+            "Atomically append a V1 changelog round entry (prose + canonical fence) to the plan."
+        ),
+        input_schema={
+            "type": "object",
+            "properties": {
+                "evidence_id": {"type": "string"},
+                "prose": {"type": "string"},
+                "round_result": {"type": "object"},
+            },
+            "required": ["evidence_id", "prose"],
+        },
+        func=append_plan_changelog_round,
     )
 
     def finalize_plan_review_evidence(

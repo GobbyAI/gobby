@@ -408,7 +408,8 @@ async def test_plan_tool_schemas_and_happy_path(
         "derive_plan_handoff_manifest",
         "apply_plan_handoff_manifest",
         "apply_plan_review_manifest",
-        "render_v1_round_checkpoint",
+        "render_plan_changelog_round",
+        "append_plan_changelog_round",
         "finalize_plan_review_evidence",
         "checkpoint_plan_review_lesson_mint",
     } <= names
@@ -422,6 +423,9 @@ async def test_plan_tool_schemas_and_happy_path(
     coverage_properties = coverage_schema["inputSchema"]["properties"]
     assert "shadow_manifest_status" in coverage_properties
     assert "routing_decisions" not in coverage_properties
+    append_schema = registry.get_schema("append_plan_changelog_round")
+    assert append_schema is not None
+    assert set(append_schema["inputSchema"]["required"]) == {"evidence_id", "prose"}
     handoff_schema = registry.get_schema("apply_plan_handoff_manifest")
     assert handoff_schema is not None
     assert set(handoff_schema["inputSchema"]["required"]) == {

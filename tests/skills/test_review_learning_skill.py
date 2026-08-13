@@ -403,7 +403,8 @@ def test_interactive_approval_sequence(
 
     operation_order = [
         protocol.index("apply_plan_review_manifest"),
-        protocol.index("render_v1_round_checkpoint"),
+        protocol.index("append_plan_changelog_round"),
+        protocol.index("render_plan_changelog_round"),
         protocol.index("finalize_plan_review_evidence"),
         protocol.index("checkpoint_plan_review_lesson_mint"),
     ]
@@ -411,7 +412,8 @@ def test_interactive_approval_sequence(
     assert "durable pre-finalization approval intent" in normalized_protocol
     assert "pending_lesson_mint" in protocol
     assert "manifest_state=revoked" in protocol
-    assert "paste those bytes verbatim" in draft_contract.lower()
+    assert "append_plan_changelog_round" in draft_contract
+    assert "preserve those bytes verbatim" in draft_contract.lower()
     assert "never writes the plan file" in adversary_contract
     assert "manifest_entries" in taskless_agent
     assert "full typed entries" in taskless_agent
@@ -450,7 +452,7 @@ def test_interactive_approval_sequence(
             }
         ],
     }
-    rejected_checkpoint = service.render_v1_round_checkpoint(
+    rejected_checkpoint = service.render_plan_changelog_round(
         rejected.evidence_id,
         rejection,
     )
@@ -485,7 +487,7 @@ def test_interactive_approval_sequence(
     assert plan_path.read_bytes() == applied_bytes
 
     plan_path.write_bytes(applied_bytes.replace(b"A works.", b"A changed after apply."))
-    approval_checkpoint = service.render_v1_round_checkpoint(prepared.evidence_id)
+    approval_checkpoint = service.render_plan_changelog_round(prepared.evidence_id)
     assert ensure_checkpoint(plan_path, approval_checkpoint)
     finalized = service.finalize_plan_review_evidence(prepared.evidence_id, approval)
     assert finalized.lesson_mint_status == "pending"
@@ -626,7 +628,7 @@ def test_interactive_approval_sequence(
         plan_path=recovery_path,
         run_id=recovery_run,
     )
-    recovered_checkpoint = restarted.render_v1_round_checkpoint(recovery.evidence_id)
+    recovered_checkpoint = restarted.render_plan_changelog_round(recovery.evidence_id)
     assert ensure_checkpoint(recovery_path, recovered_checkpoint)
     restarted.finalize_plan_review_evidence(recovery.evidence_id, recovery_approval)
     with pytest.raises(ReviewEvidenceError) as pending_mint:

@@ -340,7 +340,10 @@ Sequence on clean review (no blocking findings):
 
 On rejection rounds the adversary MUST NOT edit the plan file — plan edits
 between rounds are the parent planner's responsibility. Findings are recorded in
-`## V1 Plan Changelog`.
+`## V1 Plan Changelog` by the coordinator via the `append_plan_changelog_round`
+gobby-plans tool, which renders the canonical round fence daemon-side and
+atomically inserts the round entry (prose + fence) at the end of the changelog;
+coordinators never hand-edit round fences.
 
 ### Enhancement And Over-Engineering Vocabulary
 

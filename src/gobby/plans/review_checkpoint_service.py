@@ -7,6 +7,7 @@ from pathlib import Path
 from typing import Protocol
 
 from gobby.plans.review_evidence_io import (
+    append_round_entry,
     atomic_write_bytes,
     ensure_checkpoint,
     parse_checkpoints,
@@ -44,7 +45,7 @@ class ReviewCheckpointService:
         self.db = db
         self.store = store
 
-    def render_v1_round_checkpoint(
+    def render_plan_changelog_round(
         self,
         evidence_id: str,
         round_result: Mapping[str, object] | None = None,
@@ -77,6 +78,23 @@ class ReviewCheckpointService:
             round_result=payload,
         )
 
+    def append_plan_changelog_round(
+        self,
+        evidence_id: str,
+        prose: str,
+        round_result: Mapping[str, object] | None = None,
+        *,
+        plan_path: Path,
+    ) -> dict[str, object]:
+        """Render the canonical round fence and atomically insert prose + fence."""
+        checkpoint = self.render_plan_changelog_round(evidence_id, round_result)
+        applied = append_round_entry(plan_path, prose, checkpoint)
+        return {
+            "evidence_id": evidence_id,
+            "applied": applied,
+            "checkpoint": checkpoint.decode("utf-8"),
+        }
+
     def require_durable_checkpoint(
         self,
         evidence: PlanReviewEvidence,
@@ -92,7 +110,7 @@ class ReviewCheckpointService:
             for checkpoint in parse_checkpoints(plan_bytes)
             if checkpoint["evidence_id"] == evidence.evidence_id
         ]
-        expected = self.render_v1_round_checkpoint(evidence.evidence_id, round_result)
+        expected = self.render_plan_changelog_round(evidence.evidence_id, round_result)
         if not matching or expected not in plan_bytes:
             raise ReviewEvidenceError(
                 "missing_v1_checkpoint",
@@ -228,7 +246,7 @@ class ReviewCheckpointService:
             )
         if evidence.manifest_state != "applied":
             return
-        checkpoint = self.render_v1_round_checkpoint(evidence.evidence_id)
+        checkpoint = self.render_plan_changelog_round(evidence.evidence_id)
         ensure_checkpoint(plan_path, checkpoint)
         self.finalize_evidence(
             transaction=transaction,

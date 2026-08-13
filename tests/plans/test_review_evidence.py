@@ -9,6 +9,7 @@ import pytest
 
 from gobby.plans.review_evidence import PlanReviewEvidenceService
 from gobby.plans.review_evidence_io import (
+    append_round_entry,
     atomic_write_bytes,
     build_section_manifest,
     ensure_checkpoint,
@@ -163,7 +164,7 @@ def test_prepare_finalized_interactive_round_returns_canonical_evidence(
     plan_path.write_bytes(
         plan_path.read_bytes()
         + b"\n"
-        + service.render_v1_round_checkpoint(prepared.evidence_id, round_result)
+        + service.render_plan_changelog_round(prepared.evidence_id, round_result)
     )
     service.finalize_plan_review_evidence(prepared.evidence_id, round_result)
 
@@ -203,7 +204,7 @@ def test_prepare_next_round_after_finalized_checkpoint_from_other_session(
     }
     ensure_checkpoint(
         plan_path,
-        service.render_v1_round_checkpoint(prepared.evidence_id, round_result),
+        service.render_plan_changelog_round(prepared.evidence_id, round_result),
     )
     service.finalize_plan_review_evidence(prepared.evidence_id, round_result)
 
@@ -341,7 +342,7 @@ def test_stale_write_guard_and_lifecycle(
 
     plan_path.write_bytes(original)
     with pytest.raises(ReviewEvidenceError) as replayed_coverage:
-        service.render_v1_round_checkpoint(
+        service.render_plan_changelog_round(
             prepared.evidence_id,
             {
                 "verdict": "needs_review",
@@ -361,7 +362,7 @@ def test_stale_write_guard_and_lifecycle(
             shadow_valid=False,
         ),
     }
-    checkpoint = service.render_v1_round_checkpoint(prepared.evidence_id, rejection)
+    checkpoint = service.render_plan_changelog_round(prepared.evidence_id, rejection)
     ensure_checkpoint(plan_path, checkpoint)
     next_round = service.prepare_plan_review_round(
         project_id=project_id,
@@ -873,7 +874,7 @@ def test_interactive_mint_status_lifecycle(
         plan_path=plan_path,
         run_id=run.id,
     )
-    checkpoint = service.render_v1_round_checkpoint(prepared.evidence_id)
+    checkpoint = service.render_plan_changelog_round(prepared.evidence_id)
 
     with pytest.raises(ReviewEvidenceError) as pending:
         service.prepare_plan_review_round(
@@ -913,3 +914,155 @@ def test_interactive_mint_status_lifecycle(
         round_number=2,
         session_id=session_id,
     )
+
+
+def _round_entry_plan(tmp_path: Path) -> Path:
+    plan_path = tmp_path / "round-entry.md"
+    plan_path.write_text(
+        "\n".join(
+            [
+                "# Round Entry",
+                "**Plan ID:** round-entry",
+                "",
+                "## P1 Phase",
+                "`kind: framing`",
+                "",
+                "### 1.1 Work",
+                "`kind: deliverable`",
+                "",
+                "Target: `src/example.py`",
+                "",
+                "**Acceptance:**",
+                "- 1.1.1 — Behavior exists. test: `tests/test_example.py`",
+                "",
+                "## V1 Plan Changelog",
+                "`kind: verification`",
+                "",
+                "No rounds yet.",
+                "",
+                "## Task Mapping",
+                "`kind: framing`",
+                "",
+                "Pending.",
+                "",
+            ]
+        ),
+        encoding="utf-8",
+    )
+    return plan_path
+
+
+def _round_checkpoint(evidence_id: str = "evidence-1", round_number: int = 1) -> bytes:
+    return render_checkpoint(
+        evidence_id=evidence_id,
+        round_number=round_number,
+        plan_hash="hash",
+        session_id="session",
+        round_result={
+            "verdict": "needs_review",
+            "findings": [],
+            "coverage_attestation": coverage_attestation(
+                evidence_id=evidence_id,
+                shadow_valid=False,
+            ),
+        },
+    )
+
+
+_ROUND_PROSE = "**Round 1** `kind: verification`\n\n- verdict: needs_review"
+
+
+def test_append_round_entry_inserts_before_next_section(tmp_path: Path) -> None:
+    plan_path = _round_entry_plan(tmp_path)
+    checkpoint = _round_checkpoint()
+
+    assert append_round_entry(plan_path, _ROUND_PROSE, checkpoint) is True
+
+    text = plan_path.read_text(encoding="utf-8")
+    prose_index = text.index(_ROUND_PROSE)
+    fence_index = text.index(checkpoint.decode("utf-8"))
+    assert text.index("No rounds yet.") < prose_index < fence_index < text.index("## Task Mapping")
+
+    replayed = plan_path.read_bytes()
+    assert append_round_entry(plan_path, _ROUND_PROSE, checkpoint) is False
+    assert plan_path.read_bytes() == replayed
+
+
+def test_append_round_entry_fails_atomically(tmp_path: Path) -> None:
+    plan_path = _round_entry_plan(tmp_path)
+    checkpoint = _round_checkpoint()
+    original = plan_path.read_bytes()
+
+    with pytest.raises(ReviewEvidenceError, match="only the V1"):
+        append_round_entry(plan_path, "## Injected Section\n\nprose", checkpoint)
+    assert plan_path.read_bytes() == original
+
+    with pytest.raises(ReviewEvidenceError, match="prose cannot be empty"):
+        append_round_entry(plan_path, "   ", checkpoint)
+    assert plan_path.read_bytes() == original
+
+
+def test_append_round_entry_rejects_conflicting_checkpoint(tmp_path: Path) -> None:
+    plan_path = _round_entry_plan(tmp_path)
+    assert append_round_entry(plan_path, _ROUND_PROSE, _round_checkpoint()) is True
+    snapshot = plan_path.read_bytes()
+
+    with pytest.raises(ReviewEvidenceError, match="conflicting V1 checkpoint"):
+        append_round_entry(
+            plan_path,
+            _ROUND_PROSE,
+            _round_checkpoint(round_number=2),
+        )
+    assert plan_path.read_bytes() == snapshot
+
+
+def test_append_plan_changelog_round_needs_review_end_to_end(
+    review_setup: tuple[PlanReviewEvidenceService, str, str, Path],
+) -> None:
+    service, project_id, session_id, plan_path = review_setup
+    prepared = service.prepare_plan_review_round(
+        project_id=project_id,
+        plan_path=plan_path,
+        round_number=2,
+        session_id=session_id,
+    )
+    run = LocalAgentRunManager(service.db).create(
+        parent_session_id=session_id,
+        provider="codex",
+        prompt="review",
+    )
+    service.bind_evidence_run(prepared.evidence_id, run.id)
+    round_result = {
+        "verdict": "needs_review",
+        "findings": [],
+        "coverage_attestation": coverage_attestation(
+            evidence_id=prepared.evidence_id,
+            shadow_valid=False,
+        ),
+    }
+
+    result = service.append_plan_changelog_round(
+        prepared.evidence_id,
+        _ROUND_PROSE,
+        round_result,
+    )
+
+    assert result["applied"] is True
+    rendered = service.render_plan_changelog_round(prepared.evidence_id, round_result)
+    assert result["checkpoint"] == rendered.decode("utf-8")
+    text = plan_path.read_text(encoding="utf-8")
+    prose_index = text.index(_ROUND_PROSE)
+    fence_index = text.index(rendered.decode("utf-8"))
+    assert text.index("## V1 Plan Changelog") < prose_index < fence_index
+    assert fence_index < text.index("## M1 Task Manifest")
+
+    service.finalize_plan_review_evidence(prepared.evidence_id, round_result)
+    assert service.get_evidence(prepared.evidence_id).finalized_at is not None
+
+    replay = service.append_plan_changelog_round(
+        prepared.evidence_id,
+        _ROUND_PROSE,
+        round_result,
+    )
+    assert replay["applied"] is False
+    assert plan_path.read_text(encoding="utf-8") == text
