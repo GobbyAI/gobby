@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+import logging
 import threading
 from contextlib import suppress
 from types import SimpleNamespace
@@ -293,6 +294,32 @@ def test_renew_with_backoff_fences_when_deadline_budget_exhausted() -> None:
 
     with pytest.raises(EmbeddingGenerationLeaseLost, match="fenced"):
         lease.assert_serving()
+
+
+def test_renew_with_backoff_logs_slow_success_at_debug(
+    monkeypatch: pytest.MonkeyPatch,
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    db = _StubHubDatabase()
+    state = EmbeddingGenerationState(cast(Any, db))
+    lease = _lease(state, lease_seconds=30.0)
+    lease.activate()
+    # Only the module-local clock is faked, so the elapsed measurement crosses
+    # the 1s slow threshold while the lease's own deadline math stays real.
+    clock = iter((0.0, 2.0))
+    monkeypatch.setattr(embedding_lease, "time", SimpleNamespace(monotonic=lambda: next(clock)))
+
+    with caplog.at_level(logging.DEBUG, logger=embedding_lease.__name__):
+        assert embedding_lease._renew_with_backoff(lease) is True
+
+    slow_records = [
+        record
+        for record in caplog.records
+        if record.getMessage().startswith("Embedding generation lease renewal completed slowly")
+    ]
+    assert len(slow_records) == 1
+    assert slow_records[0].levelno == logging.DEBUG
+    assert "elapsed_ms=2000.0" in slow_records[0].getMessage()
 
 
 @pytest.mark.asyncio

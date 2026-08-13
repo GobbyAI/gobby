@@ -104,7 +104,9 @@ def _renew_with_backoff(
             lease.renew()
             elapsed_ms = (time.monotonic() - started_at) * 1000.0
             if elapsed_ms >= 1000.0:
-                logger.warning(
+                # Diagnostic breadcrumb only: a slow success is never actionable,
+                # and the failure/fence paths below warn on their own.
+                logger.debug(
                     "Embedding generation lease renewal completed slowly "
                     "attempt=%d elapsed_ms=%.1f remaining_lease_seconds=%.3f",
                     attempt,
