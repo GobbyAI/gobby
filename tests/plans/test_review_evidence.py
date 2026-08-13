@@ -973,6 +973,24 @@ def _round_checkpoint(evidence_id: str = "evidence-1", round_number: int = 2) ->
 _ROUND_PROSE = "**Round 2** `kind: verification`\n\n- verdict: needs_review"
 
 
+def test_append_round_entry_allows_multibyte_text_before_v1(tmp_path: Path) -> None:
+    plan_path = _round_entry_plan(tmp_path)
+    plan_path.write_text(
+        plan_path.read_text(encoding="utf-8").replace(
+            "# Round Entry",
+            "# Round Entry 日本語 — café 🎯",
+            1,
+        ),
+        encoding="utf-8",
+    )
+    checkpoint = _round_checkpoint()
+
+    assert append_round_entry(plan_path, _ROUND_PROSE, checkpoint) is True
+    text = plan_path.read_text(encoding="utf-8")
+    assert "日本語 — café 🎯" in text
+    assert text.index(_ROUND_PROSE) < text.index(checkpoint.decode("utf-8"))
+
+
 def test_append_round_entry_inserts_before_next_section(tmp_path: Path) -> None:
     plan_path = _round_entry_plan(tmp_path)
     checkpoint = _round_checkpoint()
