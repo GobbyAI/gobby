@@ -16,8 +16,11 @@ import os
 import shutil
 import subprocess  # nosec B404 # fixed docker inspect argv, never shell=True
 import sys
+from collections.abc import Mapping
+from dataclasses import dataclass
 from datetime import UTC, datetime
 from pathlib import Path
+from urllib.parse import urlparse
 
 import click
 
@@ -77,6 +80,8 @@ from gobby.cli.installers.container_restart import (
 )
 from gobby.cli.installers.docker_guard import ensure_docker_allowed
 from gobby.cli.postgres_backup import (
+    POSTGRES_TEST_CONTAINER,
+    _managed_postgres_container,
     _process_output,
     _require_managed_docker_postgres,
     _resolve_database_url,
@@ -84,21 +89,33 @@ from gobby.cli.postgres_backup import (
 )
 from gobby.cli.runtime import get_cli_runtime
 from gobby.cli.utils_shutdown import stop_daemon
-from gobby.config.logging import resolved_logs_dir
+from gobby.config import expand_env_vars
+from gobby.config.logging import LoggingSettings, resolved_logs_dir
+from gobby.config.registry import CONFIG_REGISTRY, UnknownConfigKeyError
 from gobby.paths import get_gobby_home
+from gobby.storage.config_repository import UnknownStoredConfigKeyError, decode_config_value
+from gobby.storage.hub.protocol import HubDatabase
+from gobby.storage.hub.runtime import runtime_hub_database
 from gobby.storage.maintenance_epoch import (
     MAINTENANCE_EPOCH_ENV,
     require_orchestrator_epoch,
 )
+from gobby.storage.secrets import SecretStore
 from gobby.utils.durable_file import durable_replace, exclusive_file_lock
 from gobby.utils.version import get_version
 
-# `gobby-postgres-test-1` is deliberately absent: the test cluster is scratch
-# state and is never part of a hub backup.
 REQUIRED_CONTAINERS: tuple[str, ...] = (
     POSTGRES_CONTAINER,
     QDRANT_CONTAINER,
     FALKORDB_CONTAINER,
+)
+SCRATCH_QDRANT_CONTAINER = "gobby-qdrant-test-1"
+SCRATCH_FALKORDB_CONTAINER = "gobby-falkordb-test-1"
+SCRATCH_HUB_VOLUMES: tuple[str, ...] = (
+    "gobby_test_postgres_data",
+    "gobby_test_pgaudit_log",
+    "gobby_test_qdrant_data",
+    "gobby_test_falkordb_data",
 )
 
 MIN_FREE_BYTES = 5 * 1024**3
@@ -117,6 +134,38 @@ POSTGRES_ARCHIVE_METHOD = "pg-restore-list+sha256"
 QDRANT_ARCHIVE_METHOD = "snapshot-download+sha256"
 FALKORDB_ARCHIVE_METHOD = "bgsave-rdb-copy+sha256"
 VOLUMES_ARCHIVE_METHOD = "tar-archive+sha256"
+
+
+@dataclass(frozen=True)
+class HubBackupTarget:
+    """Managed containers and volumes selected by the bootstrap PostgreSQL DSN."""
+
+    containers: tuple[str, ...]
+    falkordb_container: str
+    volumes: tuple[str, ...]
+    qdrant_port: int | None = None
+
+
+def _hub_backup_target(database_url: str) -> HubBackupTarget:
+    postgres_container = _managed_postgres_container(database_url)
+    if postgres_container == POSTGRES_CONTAINER:
+        return HubBackupTarget(
+            containers=REQUIRED_CONTAINERS,
+            falkordb_container=FALKORDB_CONTAINER,
+            volumes=HUB_VOLUMES,
+        )
+    if postgres_container == POSTGRES_TEST_CONTAINER:
+        return HubBackupTarget(
+            containers=(
+                POSTGRES_TEST_CONTAINER,
+                SCRATCH_QDRANT_CONTAINER,
+                SCRATCH_FALKORDB_CONTAINER,
+            ),
+            falkordb_container=SCRATCH_FALKORDB_CONTAINER,
+            volumes=SCRATCH_HUB_VOLUMES,
+            qdrant_port=60990,
+        )
+    raise click.ClickException(f"Unsupported managed PostgreSQL container: {postgres_container}")
 
 
 @click.group("hub-backup", invoke_without_command=True)
@@ -162,13 +211,14 @@ def hub_backup(
     gobby_home = get_gobby_home()
     backup_root = _resolve_output_dir(output)
     require_absent_output_path(backup_root)
-    _preflight(backup_root)
-
     database_url = _resolve_database_url(gobby_home)
+    target = _hub_backup_target(database_url)
+    _preflight(backup_root, containers=target.containers)
     if epoch is not None:
         require_orchestrator_epoch(database_url, epoch)
     _require_managed_docker_postgres(database_url=database_url)
     qdrant_url, qdrant_api_key = _qdrant_settings(ctx, apply_migrations=epoch is None)
+    _require_safe_qdrant_target(target, qdrant_url)
 
     # An open epoch owns the daemon lifecycle, so `--epoch` leaves it stopped.
     restart_daemon = _daemon_is_running() and epoch is None
@@ -179,11 +229,12 @@ def hub_backup(
         manifest = _run_backup(
             backup_root=staging_root,
             gobby_home=gobby_home,
-            logs_dir=resolved_logs_dir(ctx.obj.config.logging),
+            logs_dir=_backup_logs_dir(ctx, predecessor=epoch is not None),
             database_url=database_url,
             qdrant_url=qdrant_url,
             qdrant_api_key=qdrant_api_key,
             epoch=epoch,
+            target=target,
         )
         verify_artifacts(staging_root, manifest.artifacts)
         write_manifest(manifest, staging_root / MANIFEST_NAME)
@@ -261,13 +312,13 @@ def restore_hub_backup(
 # ---------------------------------------------------------------------------
 
 
-def _preflight(backup_root: Path) -> None:
+def _preflight(backup_root: Path, *, containers: tuple[str, ...] = REQUIRED_CONTAINERS) -> None:
     """Refuse to start unless Docker, the hub containers, and disk space are there."""
     if shutil.which("docker") is None:
         raise click.ClickException(
             "Docker CLI is unavailable; hub-backup needs Docker to reach the hub datastores"
         )
-    for container in REQUIRED_CONTAINERS:
+    for container in containers:
         if not _container_running(container):
             raise click.ClickException(
                 f"Required container {container} is not running; "
@@ -278,6 +329,22 @@ def _preflight(backup_root: Path) -> None:
         raise click.ClickException(
             f"Insufficient free space for {backup_root}: {free} bytes available, "
             f"{MIN_FREE_BYTES} required"
+        )
+
+
+def _require_safe_qdrant_target(target: HubBackupTarget, qdrant_url: str | None) -> None:
+    """Keep protected scratch backups on the loopback-only scratch Qdrant port."""
+    if target.qdrant_port is None:
+        return
+    parsed = urlparse(qdrant_url or "")
+    host = (parsed.hostname or "").lower()
+    try:
+        port = parsed.port
+    except ValueError:
+        port = None
+    if host not in {"localhost", "127.0.0.1", "::1"} or port != target.qdrant_port:
+        raise click.ClickException(
+            f"Protected scratch hub backup requires Qdrant on loopback port {target.qdrant_port}"
         )
 
 
@@ -330,6 +397,7 @@ def _run_backup(
     qdrant_url: str | None,
     qdrant_api_key: str | None,
     epoch: str | None,
+    target: HubBackupTarget,
 ) -> HubBackupManifest:
     """Collect source facts, archive every store, verify each one, and describe it."""
     identity, starting_head = collect_postgres_identity(database_url)
@@ -343,9 +411,16 @@ def _run_backup(
     artifacts.extend(postgres_artifacts)
     qdrant_artifacts, qdrant_details = snapshot_qdrant(qdrant_url, qdrant_api_key, backup_root)
     artifacts.extend(qdrant_artifacts)
-    falkordb_artifacts, falkordb_details = dump_falkordb(backup_root)
+    falkordb_artifacts, falkordb_details = dump_falkordb(
+        backup_root,
+        container=target.falkordb_container,
+    )
     artifacts.extend(falkordb_artifacts)
-    volume_artifacts, volume_details = _archive_volumes(gobby_home, backup_root)
+    volume_artifacts, volume_details = _archive_volumes(
+        gobby_home,
+        backup_root,
+        volumes=target.volumes,
+    )
     artifacts.extend(volume_artifacts)
     artifacts.extend(archive_rule_allow_audit_logs(logs_dir, backup_root))
     identity_artifact = _archive_machine_identity(gobby_home, backup_root)
@@ -397,6 +472,8 @@ def _archive_machine_identity(gobby_home: Path, backup_root: Path) -> ArtifactRe
 def _archive_volumes(
     gobby_home: Path,
     backup_root: Path,
+    *,
+    volumes: tuple[str, ...] = HUB_VOLUMES,
 ) -> tuple[list[ArtifactRecord], dict[str, object]]:
     """Archive the hub volumes cold, and bring the services back either way."""
     if not _services_stop(gobby_home):
@@ -404,7 +481,7 @@ def _archive_volumes(
             "Could not stop the managed Docker services; refusing to archive live volumes"
         )
     try:
-        artifacts, details = tar_volumes(backup_root)
+        artifacts, details = tar_volumes(backup_root, volumes)
     finally:
         restart = (
             _start_epoch_services(gobby_home)
@@ -434,7 +511,7 @@ def _start_epoch_services(gobby_home: Path) -> ServiceStartResult:
         return postgres_result
 
     try:
-        runtime = resolve_compose_runtime(gobby_home)
+        runtime = _predecessor_service_runtime(gobby_home, postgres_runtime)
     except ComposeEnvironmentError as exc:
         return ServiceStartResult("failed", f"Could not resolve Docker service config: {exc}")
     if runtime.profiles != MANAGED_SERVICE_PROFILES:
@@ -443,6 +520,86 @@ def _start_epoch_services(gobby_home: Path) -> ServiceStartResult:
             "Docker service config must enable postgres, qdrant, and falkordb profiles",
         )
     return _run_epoch_compose_up(compose_file, services_dir, runtime)
+
+
+def _predecessor_service_runtime(
+    gobby_home: Path,
+    postgres_runtime: ComposeRuntime,
+) -> ComposeRuntime:
+    """Resolve only managed-service fields needed before retired auth rows are removed."""
+    with runtime_hub_database(
+        str(gobby_home / "bootstrap.yaml"),
+        apply_migrations=False,
+    ) as database:
+        rows = database.fetchall(
+            """
+            SELECT key, value
+            FROM config_store
+            WHERE key IN (
+                'databases.falkordb.host',
+                'databases.falkordb.password',
+                'databases.falkordb.port',
+                'databases.qdrant.port'
+            )
+            ORDER BY key
+            """
+        )
+        values = {
+            str(row["key"]): decode_config_value(str(row["key"]), str(row["value"])) for row in rows
+        }
+        qdrant_port = _required_service_port(values, "databases.qdrant.port")
+        if qdrant_port == 65535:
+            raise ComposeEnvironmentError("databases.qdrant.port must leave room for gRPC")
+        falkordb_port = _required_service_port(values, "databases.falkordb.port")
+        falkordb_host = values.get("databases.falkordb.host")
+        if not isinstance(falkordb_host, str) or not falkordb_host.strip():
+            raise ComposeEnvironmentError("databases.falkordb.host must be a non-empty string")
+
+        service_environment = {
+            "GOBBY_QDRANT_HTTP_PORT": str(qdrant_port),
+            "GOBBY_QDRANT_GRPC_PORT": str(qdrant_port + 1),
+            "GOBBY_FALKORDB_HOST": falkordb_host.strip(),
+            "GOBBY_FALKORDB_PORT": str(falkordb_port),
+        }
+        environment = service_environment | postgres_runtime.environment
+        password = environment.get("GOBBY_FALKORDB_PASSWORD")
+        if not password:
+            password_ref = values.get("databases.falkordb.password")
+            if not isinstance(password_ref, str) or not password_ref.startswith("$secret:"):
+                raise ComposeEnvironmentError(
+                    "databases.falkordb.password must be a SecretStore reference"
+                )
+            secret_name = password_ref.removeprefix("$secret:")
+            if not secret_name:
+                raise ComposeEnvironmentError(
+                    "databases.falkordb.password references an empty secret name"
+                )
+            password = SecretStore(database, gobby_home=gobby_home).get(secret_name)
+            if not password:
+                raise ComposeEnvironmentError("FalkorDB SecretStore entry is missing or empty")
+            environment["GOBBY_FALKORDB_PASSWORD"] = password
+
+    _required_environment_port(environment, "GOBBY_QDRANT_HTTP_PORT")
+    _required_environment_port(environment, "GOBBY_QDRANT_GRPC_PORT")
+    _required_environment_port(environment, "GOBBY_FALKORDB_PORT")
+    return ComposeRuntime(environment=environment, profiles=MANAGED_SERVICE_PROFILES)
+
+
+def _required_service_port(values: Mapping[str, object], key: str) -> int:
+    value = values.get(key)
+    if isinstance(value, bool):
+        raise ComposeEnvironmentError(f"{key} must be a valid TCP port")
+    try:
+        port = int(str(value))
+    except (TypeError, ValueError) as exc:
+        raise ComposeEnvironmentError(f"{key} must be a valid TCP port") from exc
+    if not 1 <= port <= 65535:
+        raise ComposeEnvironmentError(f"{key} must be between 1 and 65535")
+    return port
+
+
+def _required_environment_port(environment: dict[str, str], key: str) -> int:
+    return _required_service_port(environment, key)
 
 
 def _run_epoch_compose_up(
@@ -523,7 +680,7 @@ def _verify_stores(
         _expected_graph_inventory(falkordb_details),
     )
     volumes_state, volumes_proof = verify_volume_archives(
-        _volume_archives(backup_root),
+        _volume_archives(backup_root, volume_details),
         _expected_volume_inventories(volume_details),
     )
 
@@ -624,8 +781,12 @@ def _expected_volume_inventories(
     return result
 
 
-def _volume_archives(backup_root: Path) -> dict[str, Path]:
-    return {volume: backup_root / VOLUME_ARCHIVE_DIR / f"{volume}.tar.gz" for volume in HUB_VOLUMES}
+def _volume_archives(
+    backup_root: Path,
+    details: dict[str, object],
+) -> dict[str, Path]:
+    inventories = _expected_volume_inventories(details)
+    return {volume: backup_root / VOLUME_ARCHIVE_DIR / f"{volume}.tar.gz" for volume in inventories}
 
 
 # ---------------------------------------------------------------------------
@@ -674,8 +835,63 @@ def _qdrant_settings(
     *,
     apply_migrations: bool = True,
 ) -> tuple[str | None, str | None]:
-    qdrant = get_cli_runtime(ctx).require_config(apply_migrations=apply_migrations).databases.qdrant
+    runtime = get_cli_runtime(ctx)
+    if not apply_migrations:
+        return _predecessor_qdrant_settings(runtime.require_database(apply_migrations=False))
+    qdrant = runtime.require_config(apply_migrations=True).databases.qdrant
     return qdrant.url, qdrant.api_key
+
+
+def _predecessor_qdrant_settings(database: HubDatabase) -> tuple[str | None, str | None]:
+    """Read backup settings while the identity predecessor still has retired auth rows."""
+    all_keys = [
+        str(row["key"]) for row in database.fetchall("SELECT key FROM config_store ORDER BY key")
+    ]
+    deprecated = {"auth.password_hash", "auth.username"}
+    for key in all_keys:
+        if key in deprecated:
+            continue
+        try:
+            CONFIG_REGISTRY.resolve(key)
+        except UnknownConfigKeyError:
+            raise UnknownStoredConfigKeyError(key) from None
+
+    rows = database.fetchall(
+        """
+        SELECT key, value
+        FROM config_store
+        WHERE key IN ('databases.qdrant.api_key', 'databases.qdrant.url')
+        ORDER BY key
+        """
+    )
+    values = {
+        str(row["key"]): decode_config_value(str(row["key"]), str(row["value"])) for row in rows
+    }
+    url = values.get("databases.qdrant.url")
+    if url is not None and not isinstance(url, str):
+        raise click.ClickException("databases.qdrant.url must be a string")
+    api_key = values.get("databases.qdrant.api_key")
+    if api_key is not None and not isinstance(api_key, str):
+        raise click.ClickException("databases.qdrant.api_key must be a string")
+    if isinstance(api_key, str):
+        secret_store = SecretStore(database, gobby_home=get_gobby_home())
+        api_key = expand_env_vars(api_key, secret_resolver=secret_store.get)
+    return url, api_key
+
+
+def _backup_logs_dir(ctx: click.Context, *, predecessor: bool) -> Path:
+    """Resolve only the logging directory before predecessor config retirement."""
+    runtime = get_cli_runtime(ctx)
+    if not predecessor:
+        return resolved_logs_dir(runtime.require_config().logging)
+    database = runtime.require_database(apply_migrations=False)
+    row = database.fetchone("SELECT value FROM config_store WHERE key = 'logging.dir'")
+    if row is None:
+        return resolved_logs_dir(LoggingSettings())
+    value = decode_config_value("logging.dir", str(row["value"]))
+    if not isinstance(value, str):
+        raise click.ClickException("logging.dir must be a string")
+    return resolved_logs_dir(LoggingSettings(dir=value))
 
 
 def _emit_result(

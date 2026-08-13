@@ -222,6 +222,29 @@ def test_setup_file_logging_routes_each_record_to_one_primary_surface(
         assert not resolved_log_path(logging_config, retired_name).exists()
 
 
+def test_setup_file_logging_isolates_early_failure_under_gobby_home(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    operator_home = tmp_path / "operator-home"
+    isolated_home = tmp_path / "isolated-gobby"
+    operator_logs = operator_home / ".gobby" / "logs"
+    monkeypatch.setenv("HOME", str(operator_home))
+    monkeypatch.setenv("GOBBY_HOME", str(isolated_home))
+    monkeypatch.setenv("GOBBY_TEST_PROTECT", "1")
+    config = LoggingSettings()
+
+    setup_file_logging(config, verbose=True)
+    logging.getLogger("gobby.runner_lifecycle").error(
+        "Fatal error: Qdrant configuration is missing; run `gobby install`"
+    )
+
+    isolated_logs = isolated_home / "logs"
+    assert resolved_log_path(config, RUNTIME_LOG_FILENAME).parent == isolated_logs
+    assert "Fatal error" in (isolated_logs / DAEMON_LOG_FILENAME).read_text()
+    assert "Fatal error" in (isolated_logs / ERRORS_LOG_FILENAME).read_text()
+    assert not operator_logs.exists()
+
+
 def test_setup_file_logging_uses_root_handlers_and_shared_formatter_family(
     logging_config: LoggingSettings,
 ) -> None:

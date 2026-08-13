@@ -463,17 +463,6 @@
     },
     {
       "activation": "live",
-      "default": "",
-      "description": "Username for web UI login.",
-      "key": "auth.username",
-      "machineExport": false,
-      "namespace": "auth",
-      "secrecy": "none",
-      "type": "string",
-      "visibility": "public"
-    },
-    {
-      "activation": "live",
       "default": true,
       "description": "Enable GitHub-backed freshness checks for managed native binaries.",
       "key": "bin_freshness.enabled",

@@ -9,7 +9,11 @@ from pathlib import Path
 from typing import Any
 
 import click
+import psycopg
 import pytest
+import yaml
+
+from gobby.cli import postgres_bootstrap
 
 pytestmark = pytest.mark.unit
 
@@ -73,7 +77,7 @@ def test_create_docker_backup_writes_verified_dump_metadata_and_sha(
             raise AssertionError(f"unexpected command: {args}")
         return subprocess.CompletedProcess(args=args, returncode=0, stdout=b"", stderr=b"")
 
-    monkeypatch.setattr(backup.subprocess, "run", _run)
+    monkeypatch.setattr(subprocess, "run", _run)
 
     result = backup.create_postgres_backup(output_dir=tmp_path / "backup", gobby_home=tmp_path)
 
@@ -118,7 +122,7 @@ def test_create_docker_backup_uses_configured_pg_dump_timeout(
             raise AssertionError(f"unexpected command: {args}")
         return subprocess.CompletedProcess(args=args, returncode=0, stdout=b"", stderr=b"")
 
-    monkeypatch.setattr(backup.subprocess, "run", _run)
+    monkeypatch.setattr(subprocess, "run", _run)
 
     backup.create_postgres_backup(output_dir=tmp_path / "backup", gobby_home=tmp_path)
 
@@ -132,15 +136,15 @@ def test_postgres_backup_configured_only_swallows_bootstrap_read_errors(
     import gobby.cli.postgres_backup as backup
 
     monkeypatch.setattr(
-        backup._bootstrap,
+        postgres_bootstrap,
         "read_bootstrap_yaml",
-        lambda _path: (_ for _ in ()).throw(backup.yaml.YAMLError("bad yaml")),
+        lambda _path: (_ for _ in ()).throw(yaml.YAMLError("bad yaml")),
     )
 
     assert backup.postgres_backup_configured(gobby_home=tmp_path) is False
 
     monkeypatch.setattr(
-        backup._bootstrap,
+        postgres_bootstrap,
         "read_bootstrap_yaml",
         lambda _path: (_ for _ in ()).throw(ValueError("unexpected")),
     )
@@ -175,13 +179,19 @@ def test_restore_docker_backup_verifies_checksum_and_runs_restore_probes(
     )
     commands: list[list[str]] = []
     released_targets: list[str] = []
+    reset_targets: list[str] = []
 
     def _run(args: list[str], **kwargs: Any) -> subprocess.CompletedProcess[bytes]:
         commands.append(args)
         assert kwargs["stdin"].read() == b"PGDMP"
         return subprocess.CompletedProcess(args=args, returncode=0, stdout=b"", stderr=b"")
 
-    monkeypatch.setattr(backup.subprocess, "run", _run)
+    monkeypatch.setattr(subprocess, "run", _run)
+    monkeypatch.setattr(
+        backup,
+        "_reset_postgres_database",
+        lambda database_url: reset_targets.append(database_url),
+    )
     monkeypatch.setattr(
         backup,
         "release_restored_maintenance_epoch",
@@ -199,14 +209,94 @@ def test_restore_docker_backup_verifies_checksum_and_runs_restore_probes(
     assert result["verified"] is True
     assert result["dump_sha256"] == digest
     assert result["sha256_verified"] is True
+    assert reset_targets == [target_database_url]
     assert released_targets == [target_database_url]
     assert result["database_url"] == "postgresql://gobby:****@localhost:60891/gobby"
     assert commands[0][-2:] == ["pg_restore", "--list"]
     assert commands[1][3:6] == ["-e", "PGOPTIONS=-c event_triggers=off", "gobby-postgres"]
-    assert commands[1][6:10] == ["pg_restore", "--no-owner", "--no-privileges", "--clean"]
-    assert "--if-exists" in commands[1]
+    assert commands[1][6:9] == ["pg_restore", "--no-owner", "--no-privileges"]
+    assert "--clean" not in commands[1]
     assert result["probes"]["pg_search_present"] is True
     assert result["probes"]["pgcrypto_present"] is True
+
+
+def test_pg_restore_targets_protected_test_container(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    import gobby.cli.postgres_backup as backup
+
+    dump_path = tmp_path / backup.POSTGRES_DUMP_NAME
+    dump_path.write_bytes(b"PGDMP")
+    commands: list[list[str]] = []
+
+    def _run(args: list[str], **kwargs: Any) -> subprocess.CompletedProcess[bytes]:
+        commands.append(args)
+        assert kwargs["stdin"].read() == b"PGDMP"
+        return subprocess.CompletedProcess(args=args, returncode=0, stdout=b"", stderr=b"")
+
+    monkeypatch.setattr(subprocess, "run", _run)
+
+    backup._run_pg_restore(
+        database_url="postgresql://gobby_test:gobby_test@127.0.0.1:60892/gobby_test",
+        dump_path=dump_path,
+        clean=True,
+    )
+
+    assert commands[0][5] == "gobby-postgres-test-1"
+    assert commands[0][-4:] == ["-U", "gobby_test", "-d", "gobby_test"]
+
+
+def test_pg_restore_rejects_test_container_without_test_protection(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    import gobby.cli.postgres_backup as backup
+
+    dump_path = tmp_path / backup.POSTGRES_DUMP_NAME
+    dump_path.write_bytes(b"PGDMP")
+    monkeypatch.delenv("GOBBY_TEST_PROTECT", raising=False)
+
+    with pytest.raises(click.ClickException, match="GOBBY_TEST_PROTECT=1"):
+        backup._run_pg_restore(
+            database_url="postgresql://gobby_test:gobby_test@127.0.0.1:60892/gobby_test",
+            dump_path=dump_path,
+            clean=True,
+        )
+
+
+def test_clean_restore_recreates_exact_target_database(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    import gobby.cli.postgres_backup as backup
+
+    statements: list[str] = []
+    connection_args: list[tuple[str, dict[str, object]]] = []
+
+    class _AdminConnection:
+        def __enter__(self) -> _AdminConnection:
+            return self
+
+        def __exit__(self, *_args: object) -> None:
+            return None
+
+        def execute(self, query: object) -> None:
+            statements.append(repr(query))
+
+    def _connect(dsn: str, **kwargs: object) -> _AdminConnection:
+        connection_args.append((dsn, kwargs))
+        return _AdminConnection()
+
+    monkeypatch.setattr(psycopg, "connect", _connect)
+
+    backup._reset_postgres_database("postgresql://gobby_test:gobby_test@127.0.0.1:60892/gobby_test")
+
+    assert "dbname=postgres" in connection_args[0][0]
+    assert connection_args[0][1] == {"autocommit": True, "connect_timeout": 10}
+    assert "DROP DATABASE IF EXISTS" in statements[0]
+    assert "Identifier('gobby_test')" in statements[0]
+    assert "CREATE DATABASE" in statements[1]
+    assert statements[1].count("Identifier('gobby_test')") == 2
 
 
 def test_restore_rejects_unverified_dump_without_sidecar_before_pg_restore(
@@ -222,7 +312,7 @@ def test_restore_rejects_unverified_dump_without_sidecar_before_pg_restore(
     def _run(*_args: object, **_kwargs: object) -> subprocess.CompletedProcess[bytes]:
         raise AssertionError("pg_restore must not run for an unverified dump")
 
-    monkeypatch.setattr(backup.subprocess, "run", _run)
+    monkeypatch.setattr(subprocess, "run", _run)
 
     with pytest.raises(click.ClickException, match="missing trusted checksum sidecar"):
         backup.restore_postgres_backup(dump_path, gobby_home=tmp_path)
@@ -244,7 +334,7 @@ def test_restore_allows_explicit_unverified_dump_override(
         assert kwargs["stdin"].read() == b"PGDMP"
         return subprocess.CompletedProcess(args=args, returncode=0, stdout=b"", stderr=b"")
 
-    monkeypatch.setattr(backup.subprocess, "run", _run)
+    monkeypatch.setattr(subprocess, "run", _run)
 
     result = backup.restore_postgres_backup(
         dump_path,

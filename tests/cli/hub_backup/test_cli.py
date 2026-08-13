@@ -45,9 +45,11 @@ from gobby.cli.hub_backup._stores import (
 )
 from gobby.cli.hub_backup._verify import RoleExpectation
 from gobby.cli.installers.compose_env import ComposeRuntime
+from gobby.cli.installers.container_restart import FALKORDB_CONTAINER
 from gobby.cli.runtime import CliRuntime
 from gobby.config.app import DaemonConfig
 from gobby.config.logging import RULE_ALLOW_AUDIT_LOG_FILENAME
+from gobby.storage.config_repository import UnknownStoredConfigKeyError
 from gobby.storage.maintenance_epoch import MAINTENANCE_EPOCH_ENV
 
 pytestmark = pytest.mark.unit
@@ -81,12 +83,12 @@ SOURCE_ROLES: list[dict[str, object]] = [
 ]
 
 CONTRACT_ORDER = [
+    "resolve_database_url",
     "which:docker",
     "inspect:gobby-postgres",
     "inspect:services-qdrant-1",
     "inspect:services-falkordb-1",
     "disk_usage",
-    "resolve_database_url",
     "require_managed_docker_postgres",
     "daemon_is_running",
     "stop_daemon",
@@ -145,6 +147,7 @@ class _Harness:
     def __init__(self, tmp_path: Path) -> None:
         self.tmp_path = tmp_path
         self.gobby_home = tmp_path / "gobby-home"
+        self.database_url = DATABASE_URL
         self.calls: list[str] = []
         self.running: list[str] = list(hub_cli.REQUIRED_CONTAINERS)
         self.docker_path: str | None = "/usr/local/bin/docker"
@@ -170,6 +173,7 @@ class _Harness:
         self.point_counts_seen: dict[str, int] | None = None
         self.point_digests_seen: dict[str, str] | None = None
         self.rdb_path_seen: Path | None = None
+        self.falkordb_container_seen: str | None = None
         self.graph_inventory_seen: dict[str, dict[str, int]] | None = None
         self.archives_seen: dict[str, Path] | None = None
         self.volume_inventories_seen: dict[str, dict[str, object]] | None = None
@@ -209,7 +213,7 @@ class _Harness:
     def resolve_database_url(self, gobby_home: Path) -> str:
         self._step("resolve_database_url")
         self.gobby_home_seen = gobby_home
-        return DATABASE_URL
+        return self.database_url
 
     def require_managed_docker_postgres(self, *, database_url: str) -> None:
         self._step("require_managed_docker_postgres")
@@ -290,8 +294,14 @@ class _Harness:
         }
         return artifacts, details
 
-    def dump_falkordb(self, backup_root: Path) -> tuple[list[ArtifactRecord], dict[str, object]]:
+    def dump_falkordb(
+        self,
+        backup_root: Path,
+        *,
+        container: str = FALKORDB_CONTAINER,
+    ) -> tuple[list[ArtifactRecord], dict[str, object]]:
         self._step("dump_falkordb")
+        self.falkordb_container_seen = container
         artifacts = [_artifact("falkordb-rdb", FALKORDB_DUMP_RELPATH, backup_root)]
         return artifacts, {
             "graphs": list(FALKORDB_GRAPHS),
@@ -544,6 +554,101 @@ class TestOrchestration:
         assert harness.qdrant_snapshot_settings == (QDRANT_URL, QDRANT_API_KEY)
         assert harness.qdrant_verify_settings == (QDRANT_URL, QDRANT_API_KEY)
 
+    def test_epoch_qdrant_settings_read_only_required_predecessor_rows(
+        self,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        queries: list[str] = []
+
+        class _Database:
+            def fetchall(self, query: str) -> list[dict[str, str]]:
+                queries.append(query)
+                if query.strip() == "SELECT key FROM config_store ORDER BY key":
+                    return [
+                        {"key": "auth.password_hash"},
+                        {"key": "auth.username"},
+                        {"key": "databases.qdrant.url"},
+                    ]
+                return [
+                    {
+                        "key": "databases.qdrant.url",
+                        "value": '"http://127.0.0.1:60990"',
+                    }
+                ]
+
+        class _Runtime:
+            def __init__(self) -> None:
+                self.database_calls: list[bool] = []
+                self.config_calls = 0
+
+            def require_database(self, *, apply_migrations: bool = True) -> object:
+                self.database_calls.append(apply_migrations)
+                return _Database()
+
+            def require_config(self, *, apply_migrations: bool = True) -> object:
+                self.config_calls += 1
+                raise AssertionError("predecessor path must not load full config")
+
+        runtime = _Runtime()
+        monkeypatch.setattr(hub_cli, "get_cli_runtime", lambda _ctx: cast(Any, runtime))
+
+        settings = hub_cli._qdrant_settings(cast(Any, object()), apply_migrations=False)
+
+        assert settings == ("http://127.0.0.1:60990", None)
+        assert runtime.database_calls == [False]
+        assert runtime.config_calls == 0
+        assert len(queries) == 2
+        assert "databases.qdrant.api_key" in queries[1]
+
+    def test_epoch_qdrant_settings_reject_other_unknown_config_keys(self) -> None:
+        database = MagicMock()
+        database.fetchall.return_value = [{"key": "removed.setting"}]
+
+        with pytest.raises(UnknownStoredConfigKeyError, match="removed.setting"):
+            hub_cli._predecessor_qdrant_settings(database)
+
+    def test_protected_scratch_backup_routes_all_docker_state_to_scratch(
+        self,
+        harness: _Harness,
+        runtime: CliRuntime,
+        tmp_path: Path,
+    ) -> None:
+        harness.database_url = "postgresql://gobby_test:gobby_test@127.0.0.1:60892/gobby_test"
+        harness.running = [
+            "gobby-postgres-test-1",
+            "gobby-qdrant-test-1",
+            "gobby-falkordb-test-1",
+        ]
+        runtime.config.databases.qdrant.url = "http://127.0.0.1:60990"
+
+        _run_ok(runtime, tmp_path / "scratch-backup")
+
+        assert harness.falkordb_container_seen == "gobby-falkordb-test-1"
+        assert harness.volume_inventories_seen == dict.fromkeys(
+            hub_cli.SCRATCH_HUB_VOLUMES,
+            VOLUME_INVENTORY,
+        )
+        assert not set(harness.volume_inventories_seen) & set(HUB_VOLUMES)
+
+    def test_protected_scratch_backup_refuses_non_scratch_qdrant(
+        self,
+        harness: _Harness,
+        runtime: CliRuntime,
+        tmp_path: Path,
+    ) -> None:
+        harness.database_url = "postgresql://gobby_test:gobby_test@127.0.0.1:60892/gobby_test"
+        harness.running = [
+            "gobby-postgres-test-1",
+            "gobby-qdrant-test-1",
+            "gobby-falkordb-test-1",
+        ]
+
+        result = _invoke(runtime, "--output", str(tmp_path / "scratch-backup"))
+
+        assert result.exit_code != 0
+        assert "loopback port 60990" in result.output
+        assert "stop_daemon" not in harness.calls
+
     def test_verifiers_receive_driver_derived_expectations(
         self, harness: _Harness, runtime: CliRuntime, tmp_path: Path
     ) -> None:
@@ -758,6 +863,13 @@ class TestEpoch:
         monkeypatch: pytest.MonkeyPatch,
     ) -> None:
         monkeypatch.setenv("GOBBY_MAINTENANCE_EPOCH", "e1")
+        database = MagicMock()
+        database.fetchall.side_effect = [
+            [{"key": "databases.qdrant.url"}],
+            [{"key": "databases.qdrant.url", "value": f'"{QDRANT_URL}"'}],
+        ]
+        database.fetchone.return_value = {"value": f'"{runtime.config.logging.dir}"'}
+        monkeypatch.setattr(runtime, "require_database", MagicMock(return_value=database))
         backup_root = tmp_path / "backup"
         _run_ok(runtime, backup_root, "--epoch", "e1")
 
@@ -777,6 +889,12 @@ class TestEpoch:
         config = DaemonConfig()
         config.databases.qdrant.url = QDRANT_URL
         config.databases.qdrant.api_key = QDRANT_API_KEY
+        config.logging.dir = str(tmp_path / "isolated-logs")
+        database.fetchall.side_effect = [
+            [{"key": "databases.qdrant.url"}],
+            [{"key": "databases.qdrant.url", "value": f'"{QDRANT_URL}"'}],
+        ]
+        database.fetchone.return_value = {"value": f'"{config.logging.dir}"'}
 
         @contextmanager
         def open_database(
@@ -794,7 +912,7 @@ class TestEpoch:
                 pass
 
             def read(self, *, resolve_secrets: bool = True) -> Any:
-                return SimpleNamespace(values={}, secret_bindings={})
+                return SimpleNamespace(overrides={}, secret_bindings={})
 
             def runtime_candidate(
                 self, _overrides: dict[str, object], _secret_bindings: object
@@ -913,6 +1031,14 @@ class TestCleanup:
             return subprocess.CompletedProcess(args, 0, stdout="", stderr="")
 
         monkeypatch.setattr(hub_cli, "resolve_compose_runtime", resolve_runtime, raising=False)
+        monkeypatch.setattr(
+            hub_cli,
+            "_predecessor_service_runtime",
+            lambda _home, _postgres: ComposeRuntime(
+                environment={"PGOPTIONS": pgoptions},
+                profiles=("postgres", "qdrant", "falkordb"),
+            ),
+        )
         monkeypatch.setattr(subprocess, "run", run_compose)
 
         result = hub_cli._start_epoch_services(tmp_path)
@@ -925,6 +1051,49 @@ class TestCleanup:
             assert kwargs["input"] == hub_cli._EPOCH_COMPOSE_OVERRIDE
             assert kwargs["env"] == {"PGOPTIONS": pgoptions}
             assert "--wait" in command
+
+    def test_predecessor_service_runtime_reads_only_service_fields_and_honors_override(
+        self,
+        monkeypatch: pytest.MonkeyPatch,
+        tmp_path: Path,
+    ) -> None:
+        database = MagicMock()
+        database.fetchall.return_value = [
+            {"key": "databases.falkordb.host", "value": '"127.0.0.1"'},
+            {
+                "key": "databases.falkordb.password",
+                "value": '"$secret:falkordb_password"',
+            },
+            {"key": "databases.falkordb.port", "value": "60992"},
+            {"key": "databases.qdrant.port", "value": "60990"},
+        ]
+
+        @contextmanager
+        def open_database(
+            _config_file: str | None = None,
+            *,
+            apply_migrations: bool = True,
+        ) -> Iterator[MagicMock]:
+            assert apply_migrations is False
+            yield database
+
+        monkeypatch.setattr(hub_cli, "runtime_hub_database", open_database)
+        runtime = hub_cli._predecessor_service_runtime(
+            tmp_path,
+            ComposeRuntime(
+                environment={
+                    "PGOPTIONS": "-c gobby.maintenance_epoch=e1",
+                    "GOBBY_FALKORDB_PASSWORD": "scratch-override",
+                },
+                profiles=("postgres",),
+            ),
+        )
+
+        assert runtime.profiles == ("postgres", "qdrant", "falkordb")
+        assert runtime.environment["GOBBY_QDRANT_HTTP_PORT"] == "60990"
+        assert runtime.environment["GOBBY_QDRANT_GRPC_PORT"] == "60991"
+        assert runtime.environment["GOBBY_FALKORDB_PORT"] == "60992"
+        assert runtime.environment["GOBBY_FALKORDB_PASSWORD"] == "scratch-override"
 
     def test_refuses_to_archive_volumes_while_services_are_still_up(
         self, harness: _Harness, runtime: CliRuntime, tmp_path: Path
@@ -958,11 +1127,26 @@ class TestPreflight:
         assert result.exit_code != 0
         assert "services-falkordb-1" in result.output
         assert "stop_daemon" not in harness.calls
-        assert "resolve_database_url" not in harness.calls
+        assert harness.calls[0] == "resolve_database_url"
         assert not backup_root.exists()
 
     def test_the_postgres_test_container_is_not_required(self, harness: _Harness) -> None:
         assert "gobby-postgres-test-1" not in hub_cli.REQUIRED_CONTAINERS
+
+    def test_protected_scratch_dsn_selects_only_scratch_containers_and_volumes(self) -> None:
+        target = hub_cli._hub_backup_target(
+            "postgresql://gobby_test:gobby_test@127.0.0.1:60892/gobby_test"
+        )
+
+        assert target.containers == (
+            "gobby-postgres-test-1",
+            "gobby-qdrant-test-1",
+            "gobby-falkordb-test-1",
+        )
+        assert target.falkordb_container == "gobby-falkordb-test-1"
+        assert target.volumes == hub_cli.SCRATCH_HUB_VOLUMES
+        assert not set(target.containers) & set(hub_cli.REQUIRED_CONTAINERS)
+        assert not set(target.volumes) & set(HUB_VOLUMES)
 
     def test_missing_docker_cli_aborts(
         self, harness: _Harness, runtime: CliRuntime, tmp_path: Path
@@ -973,7 +1157,7 @@ class TestPreflight:
 
         assert result.exit_code != 0
         assert "Docker" in result.output
-        assert harness.calls == ["which:docker"]
+        assert harness.calls == ["resolve_database_url", "which:docker"]
 
     def test_insufficient_free_space_aborts(
         self, harness: _Harness, runtime: CliRuntime, tmp_path: Path

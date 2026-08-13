@@ -38,6 +38,7 @@ from gobby.cli.postgres_backup import (
     _docker_pg_dump_timeout_seconds,
     _dsn_db,
     _dsn_user,
+    _managed_postgres_container,
     _process_output,
     _raise_for_subprocess_error,
 )
@@ -89,6 +90,10 @@ _EPHEMERAL_ROLE_SQL = (
     "ORDER BY rolname"
 )
 _ROLE_CREATE_LINE_RE = re.compile(rb"^CREATE ROLE .+;$", re.MULTILINE)
+_ROLE_GRANTOR_RE = re.compile(
+    rb" GRANTED BY (?:\"(?:[^\"]|\"\")*\"|[A-Za-z_][A-Za-z0-9_$]*);$",
+    re.MULTILINE,
+)
 
 
 # ---------------------------------------------------------------------------
@@ -216,6 +221,7 @@ def restore_postgres_globals(database_url: str, globals_path: Path) -> None:
     """Replay verified stable cluster globals into the managed PostgreSQL container."""
     require_regular_file(globals_path, label="PostgreSQL globals")
     user = _dsn_user(database_url) or DEFAULT_POSTGRES_USER
+    container = _managed_postgres_container(database_url)
     with open_regular_binary(globals_path, label="PostgreSQL globals") as globals_file:
         replay = _idempotent_global_role_creates(globals_file.read())
         ensure_docker_allowed("hub backup PostgreSQL globals restore", runner=subprocess.run)
@@ -229,6 +235,7 @@ def restore_postgres_globals(database_url: str, globals_path: Path) -> None:
                 "-v",
                 "ON_ERROR_STOP=1",
                 interactive=True,
+                container=container,
             ),
             input=replay,
             capture_output=True,
@@ -240,11 +247,12 @@ def restore_postgres_globals(database_url: str, globals_path: Path) -> None:
 
 def _idempotent_global_role_creates(script: bytes) -> bytes:
     """Wrap generated role creation so stable roles can already exist on restore."""
-    if _ROLE_CREATE_LINE_RE.search(script) is None:
-        return script
+    replay = _ROLE_GRANTOR_RE.sub(b";", script)
+    if _ROLE_CREATE_LINE_RE.search(replay) is None:
+        return replay
     tag_index = 0
     tag = b"$gobby_role_0$"
-    while tag in script:
+    while tag in replay:
         tag_index += 1
         tag = f"$gobby_role_{tag_index}$".encode()
 
@@ -261,7 +269,7 @@ def _idempotent_global_role_creates(script: bytes) -> bytes:
             )
         )
 
-    return _ROLE_CREATE_LINE_RE.sub(wrap, script)
+    return _ROLE_CREATE_LINE_RE.sub(wrap, replay)
 
 
 def dump_postgres(
@@ -276,12 +284,21 @@ def dump_postgres(
     drain_ephemeral_principals(database_url)
     user = _dsn_user(database_url) or DEFAULT_POSTGRES_USER
     database = _dsn_db(database_url) or DEFAULT_POSTGRES_DB
+    container = _managed_postgres_container(database_url)
     postgres_version = _server_version(database_url)
     dump_timeout = _docker_pg_dump_timeout_seconds()
 
     dump_path = _prepare_artifact_path(backup_root, POSTGRES_DUMP_RELPATH)
     _capture_stdout(
-        _postgres_client_command("pg_dump", "-U", user, "-d", database, "-Fc"),
+        _postgres_client_command(
+            "pg_dump",
+            "-U",
+            user,
+            "-d",
+            database,
+            "-Fc",
+            container=container,
+        ),
         dump_path,
         action="Docker pg_dump",
         timeout=dump_timeout,
@@ -289,13 +306,19 @@ def dump_postgres(
 
     globals_path = _prepare_artifact_path(backup_root, GLOBALS_DUMP_RELPATH)
     _capture_stdout(
-        _postgres_client_command("pg_dumpall", "-U", user, "--globals-only"),
+        _postgres_client_command(
+            "pg_dumpall",
+            "-U",
+            user,
+            "--globals-only",
+            container=container,
+        ),
         globals_path,
         action="Docker pg_dumpall --globals-only",
         timeout=dump_timeout,
     )
 
-    _check_archive_readable(dump_path)
+    _check_archive_readable(dump_path, container=container)
 
     artifacts = [
         _artifact_record("postgres-dump", backup_root, POSTGRES_DUMP_RELPATH),
@@ -312,13 +335,14 @@ def _postgres_client_command(
     client: str,
     *args: str,
     interactive: bool = False,
+    container: str = POSTGRES_CONTAINER,
 ) -> list[str]:
     command = ["docker", "exec"]
     if os.environ.get(MAINTENANCE_EPOCH_ENV):
         command.extend(["-e", "PGOPTIONS"])
     if interactive:
         command.append("-i")
-    return [*command, POSTGRES_CONTAINER, client, *args]
+    return [*command, container, client, *args]
 
 
 def _server_version(database_url: str) -> str:
@@ -330,10 +354,14 @@ def _server_version(database_url: str) -> str:
     return str(row[0]) if row else "unknown"
 
 
-def _check_archive_readable(dump_path: Path) -> None:
+def _check_archive_readable(
+    dump_path: Path,
+    *,
+    container: str = POSTGRES_CONTAINER,
+) -> None:
     if not dump_path.is_file():
         raise click.ClickException(f"PostgreSQL dump was not created: {dump_path}")
-    command = ["docker", "exec", "-i", POSTGRES_CONTAINER, "pg_restore", "--list"]
+    command = ["docker", "exec", "-i", container, "pg_restore", "--list"]
     ensure_docker_allowed("hub backup PostgreSQL archive check", runner=subprocess.run)
     try:
         with dump_path.open("rb") as stdin:
@@ -433,36 +461,42 @@ def _download_qdrant_snapshot(
 # ---------------------------------------------------------------------------
 
 
-def dump_falkordb(backup_root: Path) -> tuple[list[ArtifactRecord], dict[str, object]]:
+def dump_falkordb(
+    backup_root: Path,
+    *,
+    container: str = FALKORDB_CONTAINER,
+) -> tuple[list[ArtifactRecord], dict[str, object]]:
     """Force a fresh RDB save and copy it out of the FalkorDB container."""
-    previous_save = _falkordb_lastsave()
-    _redis_cli(_REDIS_BGSAVE)
-    _await_falkordb_bgsave(previous_save)
+    previous_save = _falkordb_lastsave(container)
+    _redis_cli(container, _REDIS_BGSAVE)
+    _await_falkordb_bgsave(container, previous_save)
 
     graphs = sorted(
-        line.strip() for line in _redis_cli(_REDIS_GRAPH_LIST).splitlines() if line.strip()
+        line.strip()
+        for line in _redis_cli(container, _REDIS_GRAPH_LIST).splitlines()
+        if line.strip()
     )
-    graph_inventory = {graph: _falkordb_graph_counts(graph) for graph in graphs}
-    dbsize = _parse_int(_redis_cli(_REDIS_DBSIZE), what="FalkorDB DBSIZE")
+    graph_inventory = {graph: _falkordb_graph_counts(container, graph) for graph in graphs}
+    dbsize = _parse_int(_redis_cli(container, _REDIS_DBSIZE), what="FalkorDB DBSIZE")
 
     destination = _prepare_artifact_path(backup_root, FALKORDB_DUMP_RELPATH)
-    _copy_from_container(f"{FALKORDB_CONTAINER}:{_FALKORDB_RDB_PATH}", destination)
+    _copy_from_container(f"{container}:{_FALKORDB_RDB_PATH}", destination)
 
     artifacts = [_artifact_record("falkordb-rdb", backup_root, FALKORDB_DUMP_RELPATH)]
     return artifacts, {"graphs": graphs, "graph_inventory": graph_inventory, "dbsize": dbsize}
 
 
-def _falkordb_graph_counts(graph: str) -> dict[str, int]:
+def _falkordb_graph_counts(container: str, graph: str) -> dict[str, int]:
     graph_arg = shlex.quote(graph)
     node_query = shlex.quote("MATCH (n) RETURN count(n)")
     edge_query = shlex.quote("MATCH ()-[r]->() RETURN count(r)")
     nodes = _parse_graph_count(
-        _redis_cli(f"GRAPH.QUERY {graph_arg} {node_query} --compact"),
+        _redis_cli(container, f"GRAPH.QUERY {graph_arg} {node_query} --compact"),
         graph=graph,
         metric="nodes",
     )
     edges = _parse_graph_count(
-        _redis_cli(f"GRAPH.QUERY {graph_arg} {edge_query} --compact"),
+        _redis_cli(container, f"GRAPH.QUERY {graph_arg} {edge_query} --compact"),
         graph=graph,
         metric="edges",
     )
@@ -478,11 +512,11 @@ def _parse_graph_count(payload: str, *, graph: str, metric: str) -> int:
     raise click.ClickException(f"FalkorDB graph inventory returned no {metric} count for {graph}")
 
 
-def _await_falkordb_bgsave(previous_save: int) -> None:
+def _await_falkordb_bgsave(container: str, previous_save: int) -> None:
     deadline = time.monotonic() + FALKORDB_BGSAVE_TIMEOUT_SECONDS
     while True:
-        fields = _parse_redis_info(_redis_cli(_REDIS_INFO_PERSISTENCE))
-        current_save = _falkordb_lastsave()
+        fields = _parse_redis_info(_redis_cli(container, _REDIS_INFO_PERSISTENCE))
+        current_save = _falkordb_lastsave(container)
         if fields.get("rdb_bgsave_in_progress") == "0" and current_save > previous_save:
             status = fields.get("rdb_last_bgsave_status", "")
             if status != "ok":
@@ -497,11 +531,11 @@ def _await_falkordb_bgsave(previous_save: int) -> None:
         time.sleep(FALKORDB_BGSAVE_POLL_SECONDS)
 
 
-def _falkordb_lastsave() -> int:
-    return _parse_int(_redis_cli(_REDIS_LASTSAVE), what="FalkorDB LASTSAVE")
+def _falkordb_lastsave(container: str) -> int:
+    return _parse_int(_redis_cli(container, _REDIS_LASTSAVE), what="FalkorDB LASTSAVE")
 
 
-def _redis_cli(request: str) -> str:
+def _redis_cli(container: str, request: str) -> str:
     """Run a fixed redis-cli request inside the FalkorDB container.
 
     The password stays inside the container: `sh -c` expands the container's
@@ -510,7 +544,7 @@ def _redis_cli(request: str) -> str:
     command = [
         "docker",
         "exec",
-        FALKORDB_CONTAINER,
+        container,
         "sh",
         "-c",
         f'redis-cli -a "$GOBBY_FALKORDB_PASSWORD" --no-auth-warning --raw {request}',

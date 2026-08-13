@@ -14,6 +14,8 @@ from urllib.parse import unquote, urlparse
 import click
 import psycopg
 import yaml
+from psycopg import sql
+from psycopg.conninfo import make_conninfo
 
 from gobby import __version__
 from gobby.cli import postgres_bootstrap as _bootstrap
@@ -27,6 +29,7 @@ from gobby.cli.installers.postgres import (
 from gobby.cli.utils import _redact_dsn, get_gobby_home
 from gobby.config.bootstrap import BootstrapConfigError
 from gobby.storage.maintenance_epoch import release_restored_maintenance_epoch
+from gobby.utils.env import is_test_protect_enabled
 
 POSTGRES_DUMP_NAME = "gobby.dump"
 POSTGRES_METADATA_NAME = "metadata.json"
@@ -34,6 +37,7 @@ POSTGRES_SHA256SUMS_NAME = "SHA256SUMS"
 POSTGRES_BACKUP_ARCHIVE_PREFIX = "gobby/postgres"
 
 _POSTGRES_CONTAINER = "gobby-postgres"
+POSTGRES_TEST_CONTAINER = "gobby-postgres-test-1"
 _SUBPROCESS_TIMEOUT_SECONDS = 600
 _DOCKER_PG_DUMP_TIMEOUT_ENV = "GOBBY_POSTGRES_DUMP_TIMEOUT_SECONDS"
 _RESTORE_REPAIR_PGOPTIONS = "-c event_triggers=off"
@@ -121,8 +125,11 @@ def restore_postgres_backup(
             f"Place {POSTGRES_METADATA_NAME} or {POSTGRES_SHA256SUMS_NAME} beside the dump, "
             "or rerun with --allow-unverified to restore without SHA256 verification."
         )
-    _verify_dump_with_pg_restore(dump_path=dump_path)
-    _run_pg_restore(database_url=target_database_url, dump_path=dump_path, clean=clean)
+    target_container = _managed_postgres_container(target_database_url)
+    _verify_dump_with_pg_restore(dump_path=dump_path, container=target_container)
+    if clean:
+        _reset_postgres_database(target_database_url)
+    _run_pg_restore(database_url=target_database_url, dump_path=dump_path, clean=False)
     released_epoch = release_restored_maintenance_epoch(target_database_url)
     probes = _run_post_restore_probes(
         database_url=target_database_url,
@@ -186,10 +193,11 @@ def _collect_source_metadata(*, database_url: str) -> dict[str, Any]:
 def _run_pg_dump(*, database_url: str, dump_path: Path) -> None:
     user = _dsn_user(database_url) or DEFAULT_POSTGRES_USER
     database = _dsn_db(database_url) or DEFAULT_POSTGRES_DB
+    container = _managed_postgres_container(database_url)
     command = [
         "docker",
         "exec",
-        _POSTGRES_CONTAINER,
+        container,
         "pg_dump",
         "-U",
         user,
@@ -225,13 +233,14 @@ def _run_pg_restore(
 
     user = _dsn_user(database_url) or DEFAULT_POSTGRES_USER
     database = _dsn_db(database_url) or DEFAULT_POSTGRES_DB
+    container = _managed_postgres_container(database_url)
     command = [
         "docker",
         "exec",
         "-i",
         "-e",
         f"PGOPTIONS={_RESTORE_REPAIR_PGOPTIONS}",
-        _POSTGRES_CONTAINER,
+        container,
         "pg_restore",
         *options,
         "-U",
@@ -253,10 +262,39 @@ def _run_pg_restore(
     _raise_for_subprocess_error(result, "Docker pg_restore")
 
 
-def _verify_dump_with_pg_restore(*, dump_path: Path) -> None:
+def _reset_postgres_database(database_url: str) -> None:
+    database = _dsn_db(database_url)
+    owner = _dsn_user(database_url)
+    if not database or not owner or database == "postgres":
+        raise click.ClickException("PostgreSQL clean restore requires a named non-postgres target")
+    admin_url = make_conninfo(database_url, dbname="postgres")
+    try:
+        with psycopg.connect(
+            admin_url,
+            autocommit=True,
+            connect_timeout=10,
+        ) as connection:
+            connection.execute(
+                sql.SQL("DROP DATABASE IF EXISTS {} WITH (FORCE)").format(sql.Identifier(database))
+            )
+            connection.execute(
+                sql.SQL("CREATE DATABASE {} OWNER {}").format(
+                    sql.Identifier(database),
+                    sql.Identifier(owner),
+                )
+            )
+    except psycopg.Error as exc:
+        raise click.ClickException(f"Unable to reset PostgreSQL restore target: {exc}") from exc
+
+
+def _verify_dump_with_pg_restore(
+    *,
+    dump_path: Path,
+    container: str = _POSTGRES_CONTAINER,
+) -> None:
     if not dump_path.is_file():
         raise click.ClickException(f"PostgreSQL dump was not created: {dump_path}")
-    command = ["docker", "exec", "-i", _POSTGRES_CONTAINER, "pg_restore", "--list"]
+    command = ["docker", "exec", "-i", container, "pg_restore", "--list"]
     ensure_docker_allowed("PostgreSQL backup archive check", runner=subprocess.run)
     try:
         with dump_path.open("rb") as stdin:
@@ -313,7 +351,7 @@ def _resolve_database_url(gobby_home: Path) -> str:
     return database_url
 
 
-def _require_managed_docker_postgres(*, database_url: str) -> None:
+def _managed_postgres_container(database_url: str) -> str:
     parsed = urlparse(database_url)
     host = (parsed.hostname or "").lower()
     try:
@@ -322,20 +360,31 @@ def _require_managed_docker_postgres(*, database_url: str) -> None:
         port = None
     user = _dsn_user(database_url)
     database = _dsn_db(database_url)
+    local_host = host in {"localhost", "127.0.0.1", "::1"}
     if (
-        host not in {"localhost", "127.0.0.1", "::1"}
-        or port != 60891
-        or user != DEFAULT_POSTGRES_USER
-        or database != DEFAULT_POSTGRES_DB
+        local_host
+        and port == 60891
+        and user == DEFAULT_POSTGRES_USER
+        and database == DEFAULT_POSTGRES_DB
     ):
-        raise click.ClickException(
-            "PostgreSQL backup and restore require the Gobby-managed Docker database "
-            "(host=localhost/127.0.0.1/::1, "
-            f"port=60891, user={DEFAULT_POSTGRES_USER}, database={DEFAULT_POSTGRES_DB}); "
-            f"got host={host or '<missing>'}, "
-            f"port={port if port is not None else '<missing or invalid>'}, "
-            f"user={user or '<missing>'}, database={database or '<missing>'}."
-        )
+        return _POSTGRES_CONTAINER
+    if local_host and port == 60892 and user == "gobby_test" and database == "gobby_test":
+        if not is_test_protect_enabled():
+            raise click.ClickException(
+                "The managed gobby_test PostgreSQL target requires GOBBY_TEST_PROTECT=1"
+            )
+        return POSTGRES_TEST_CONTAINER
+    raise click.ClickException(
+        "PostgreSQL backup and restore require the Gobby-managed production database "
+        "or protected gobby_test database; "
+        f"got host={host or '<missing>'}, "
+        f"port={port if port is not None else '<missing or invalid>'}, "
+        f"user={user or '<missing>'}, database={database or '<missing>'}."
+    )
+
+
+def _require_managed_docker_postgres(*, database_url: str) -> None:
+    _managed_postgres_container(database_url)
 
 
 def _resolve_dump_path(source: Path) -> Path:

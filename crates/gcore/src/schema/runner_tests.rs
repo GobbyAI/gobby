@@ -346,6 +346,22 @@ fn obsolete_baseline_receipt_is_rejected_without_mutation() -> anyhow::Result<()
 }
 
 #[test]
+fn predecessor_checksum_matches_python_cutover_contract() {
+    const PYTHON_CUTOVER_SOURCE: &str =
+        include_str!("../../../../src/gobby/storage/account_identity_cutover.py");
+    let declaration = PYTHON_CUTOVER_SOURCE
+        .lines()
+        .find(|line| line.starts_with("PREDECESSOR_BASELINE_CHECKSUM = "))
+        .expect("Python cutover must declare its predecessor baseline checksum");
+    let python_checksum = declaration
+        .split_once('=')
+        .map(|(_, value)| value.trim().trim_matches('"'))
+        .expect("Python predecessor checksum declaration must contain '='");
+
+    assert_eq!(python_checksum, PREDECESSOR_BASELINE_CHECKSUM);
+}
+
+#[test]
 fn isolated_gcode_principal_reads_parent_and_writes_only_its_overlay() -> anyhow::Result<()> {
     let _serial = DATABASE_TEST_LOCK
         .lock()

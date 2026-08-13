@@ -1,8 +1,11 @@
 from __future__ import annotations
 
+import json
 import re
 import uuid
 from collections.abc import Iterator
+from types import TracebackType
+from typing import Any
 
 import psycopg
 import pytest
@@ -29,6 +32,34 @@ from gobby.storage.maintenance_epoch import (
 )
 from gobby.storage.schema_contract import apply_schema, expected_schema_identity, verify_schema
 from tests.fixtures.postgres import isolated_test_schema
+
+
+class _FailAfterOwnerUuidConversion:
+    def __init__(self, connection: psycopg.Connection[dict[str, Any]]) -> None:
+        self._connection = connection
+
+    def __enter__(self) -> _FailAfterOwnerUuidConversion:
+        self._connection.__enter__()
+        return self
+
+    def __exit__(
+        self,
+        exc_type: type[BaseException] | None,
+        exc_value: BaseException | None,
+        traceback: TracebackType | None,
+    ) -> None:
+        self._connection.__exit__(exc_type, exc_value, traceback)
+
+    def execute(
+        self,
+        query: str | sql.SQL | sql.Composed,
+        params: tuple[object, ...] | None = None,
+    ) -> psycopg.Cursor[dict[str, Any]]:
+        cursor = self._connection.execute(query, params)
+        statement = " ".join(str(query).split())
+        if "ALTER COLUMN owner_user_id TYPE uuid" in statement:
+            raise RuntimeError("injected failure after owner UUID conversion")
+        return cursor
 
 
 @pytest.fixture
@@ -121,7 +152,11 @@ def _seed_predecessor_data(connection: psycopg.Connection[object]) -> None:
     connection.execute(
         """
         INSERT INTO config_store(key, value)
-        VALUES ('identity.cutover.preserved', 'preserved')
+        VALUES
+            ('identity.cutover.preserved', 'preserved'),
+            ('auth.api_token_hash', 'preserved-api-token-hash'),
+            ('auth.password_hash', 'legacy-password-hash'),
+            ('auth.username', 'legacy-operator')
         """
     )
 
@@ -160,6 +195,22 @@ def _target_checksum() -> str:
 def test_populated_predecessor_cutover_preserves_rows_and_forces_logout(
     predecessor_database: str,
 ) -> None:
+    with psycopg.connect(predecessor_database, autocommit=True) as connection:
+        connection.execute(
+            """
+            INSERT INTO machines(id, hostname)
+            VALUES (%s, 'identity-test-machine-2'), (%s, 'identity-test-machine-3')
+            """,
+            (uuid.uuid4(), uuid.uuid4()),
+        )
+        connection.execute(
+            """
+            INSERT INTO auth_sessions(token_hash, expires_at, remember_me)
+            VALUES
+                ('obsolete-session-2', NOW() + INTERVAL '1 hour', FALSE),
+                ('obsolete-session-3', NOW() + INTERVAL '1 hour', TRUE)
+            """
+        )
     bound_url, epoch_id, batch_id = _open_cutover(predecessor_database)
     identity = _identity()
     preflight = preflight_account_identity_cutover(bound_url)
@@ -180,8 +231,16 @@ def test_populated_predecessor_cutover_preserves_rows_and_forces_logout(
     verify_schema(bound_url)
 
     assert verified == evidence
-    assert evidence.auth_sessions_before == 1
-    assert evidence.machines_before == 1
+    assert evidence.auth_sessions_before == 3
+    assert evidence.machines_before == 3
+    assert evidence.deprecated_auth_config_rows_before == {
+        "auth.password_hash": 1,
+        "auth.username": 1,
+    }
+    assert evidence.deprecated_auth_config_rows_after == {
+        "auth.password_hash": 0,
+        "auth.username": 0,
+    }
     assert account_identity_cutover_already_applied(
         bound_url,
         batch_id=batch_id,
@@ -189,15 +248,88 @@ def test_populated_predecessor_cutover_preserves_rows_and_forces_logout(
     )
     with psycopg.connect(bound_url, row_factory=dict_row) as connection:
         user = connection.execute("SELECT id, name, email FROM users").fetchone()
-        owner = connection.execute("SELECT owner_user_id FROM machines").fetchone()
+        owners = connection.execute("SELECT owner_user_id FROM machines").fetchall()
         sessions = connection.execute("SELECT COUNT(*) AS count FROM auth_sessions").fetchone()
         preserved = connection.execute(
-            "SELECT value FROM config_store WHERE key = 'identity.cutover.preserved'"
+            """
+            SELECT key, value
+            FROM config_store
+            WHERE key IN (
+                'identity.cutover.preserved',
+                'auth.api_token_hash',
+                'auth.password_hash',
+                'auth.username'
+            )
+            ORDER BY key
+            """
+        ).fetchall()
+        batch = connection.execute(
+            "SELECT intent FROM destructive_batches WHERE id = %s", (batch_id,)
         ).fetchone()
     assert user == {"id": identity.id, "name": identity.name, "email": identity.email}
-    assert owner == {"owner_user_id": identity.id}
+    assert owners == [{"owner_user_id": identity.id}] * 3
     assert sessions == {"count": 0}
-    assert preserved == {"value": "preserved"}
+    assert preserved == [
+        {"key": "auth.api_token_hash", "value": "preserved-api-token-hash"},
+        {"key": "identity.cutover.preserved", "value": "preserved"},
+    ]
+    assert batch is not None
+    serialized_intent = json.dumps(batch["intent"], sort_keys=True)
+    assert "legacy-operator" not in serialized_intent
+    assert "legacy-password-hash" not in serialized_intent
+
+
+def test_failure_after_credential_retirement_restores_legacy_rows(
+    predecessor_database: str,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    bound_url, epoch_id, batch_id = _open_cutover(predecessor_database)
+    preflight = preflight_account_identity_cutover(bound_url)
+
+    def fail_after_retirement(
+        connection: psycopg.Connection[object],
+        _evidence: cutover.AccountIdentityCutoverEvidence,
+    ) -> None:
+        remaining = connection.execute(
+            """
+            SELECT COUNT(*) AS count
+            FROM config_store
+            WHERE key IN ('auth.password_hash', 'auth.username')
+            """
+        ).fetchone()
+        assert remaining == {"count": 0}
+        raise RuntimeError("injected post-retirement failure")
+
+    monkeypatch.setattr(cutover, "_verify_data_invariants", fail_after_retirement)
+
+    with pytest.raises(RuntimeError, match="injected post-retirement failure"):
+        apply_account_identity_cutover(
+            bound_url,
+            epoch_id=epoch_id,
+            batch_id=batch_id,
+            identity=_identity(),
+            preflight=preflight,
+            target_checksum=_target_checksum(),
+        )
+
+    with psycopg.connect(bound_url, row_factory=dict_row) as connection:
+        legacy_rows = connection.execute(
+            """
+            SELECT key, value
+            FROM config_store
+            WHERE key IN ('auth.password_hash', 'auth.username')
+            ORDER BY key
+            """
+        ).fetchall()
+        batch = connection.execute(
+            "SELECT intent FROM destructive_batches WHERE id = %s", (batch_id,)
+        ).fetchone()
+
+    assert legacy_rows == [
+        {"key": "auth.password_hash", "value": "legacy-password-hash"},
+        {"key": "auth.username", "value": "legacy-operator"},
+    ]
+    assert batch == {"intent": {"campaign": ACCOUNT_IDENTITY_CAMPAIGN}}
 
 
 def test_campaign_registry_and_admitted_constraints_have_exact_parity(
@@ -274,6 +406,61 @@ def test_transaction_failure_rolls_back_identity_mutation(
     assert users == {"relation": None}
     assert owner == {"owner_user_id": None}
     assert sessions == [{"token_hash": "obsolete-session"}]
+    assert epoch == {"released_at": None}
+
+
+def test_uuid_column_conversion_failure_rolls_back_ddl_and_remains_fenced(
+    predecessor_database: str,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    bound_url, epoch_id, batch_id = _open_cutover(predecessor_database)
+    preflight = preflight_account_identity_cutover(bound_url)
+    original_connect = cutover._connect
+
+    def connect_with_uuid_conversion_fault(database_url: str) -> _FailAfterOwnerUuidConversion:
+        return _FailAfterOwnerUuidConversion(original_connect(database_url))
+
+    monkeypatch.setattr(cutover, "_connect", connect_with_uuid_conversion_fault)
+
+    with pytest.raises(RuntimeError, match="injected failure after owner UUID conversion"):
+        apply_account_identity_cutover(
+            bound_url,
+            epoch_id=epoch_id,
+            batch_id=batch_id,
+            identity=_identity(),
+            preflight=preflight,
+            target_checksum=_target_checksum(),
+        )
+
+    with psycopg.connect(bound_url, row_factory=dict_row) as connection:
+        receipt = connection.execute(
+            "SELECT checksum FROM schema_migrations WHERE version = 375"
+        ).fetchone()
+        users = connection.execute("SELECT to_regclass('users') AS relation").fetchone()
+        owner_column = connection.execute(
+            """
+            SELECT data_type, is_nullable
+            FROM information_schema.columns
+            WHERE table_schema = current_schema()
+              AND table_name = 'machines'
+              AND column_name = 'owner_user_id'
+            """
+        ).fetchone()
+        owners = connection.execute("SELECT owner_user_id FROM machines").fetchall()
+        sessions = connection.execute("SELECT token_hash FROM auth_sessions").fetchall()
+        owner_index = connection.execute(
+            "SELECT to_regclass('idx_machines_owner_user_id')::text AS name"
+        ).fetchone()
+        epoch = connection.execute(
+            "SELECT released_at FROM maintenance_epochs WHERE id = %s", (epoch_id,)
+        ).fetchone()
+
+    assert receipt == {"checksum": PREDECESSOR_BASELINE_CHECKSUM}
+    assert users == {"relation": None}
+    assert owner_column == {"data_type": "text", "is_nullable": "YES"}
+    assert owners == [{"owner_user_id": None}]
+    assert sessions == [{"token_hash": "obsolete-session"}]
+    assert owner_index == {"name": "idx_machines_owner_user_id"}
     assert epoch == {"released_at": None}
 
 

@@ -34,6 +34,7 @@ _TARGET_CAMPAIGNS = (
     "reconcile",
     "flatten",
 )
+_DEPRECATED_AUTH_CONFIG_KEYS = ("auth.password_hash", "auth.username")
 
 
 class AccountIdentityCutoverError(RuntimeError):
@@ -62,10 +63,14 @@ class AccountIdentityCutoverEvidence:
     non_auth_row_counts: dict[str, int]
     auth_sessions_before: int
     machines_before: int
+    deprecated_auth_config_rows_before: dict[str, int]
+    deprecated_auth_config_rows_after: dict[str, int]
 
     def to_json(self) -> dict[str, object]:
         return {
             "auth_sessions_before": self.auth_sessions_before,
+            "deprecated_auth_config_rows_after": self.deprecated_auth_config_rows_after,
+            "deprecated_auth_config_rows_before": self.deprecated_auth_config_rows_before,
             "email": self.email,
             "machines_before": self.machines_before,
             "name": self.name,
@@ -83,6 +88,7 @@ class AccountIdentityCutoverPreflight:
     non_auth_row_counts: dict[str, int]
     auth_sessions_before: int
     machines_before: int
+    deprecated_auth_config_rows_before: dict[str, int]
 
 
 def admit_account_identity_campaign(connection: psycopg.Connection[Any]) -> None:
@@ -180,6 +186,8 @@ def apply_account_identity_cutover(
         non_auth_row_counts=preflight.non_auth_row_counts,
         auth_sessions_before=preflight.auth_sessions_before,
         machines_before=preflight.machines_before,
+        deprecated_auth_config_rows_before=preflight.deprecated_auth_config_rows_before,
+        deprecated_auth_config_rows_after=dict.fromkeys(_DEPRECATED_AUTH_CONFIG_KEYS, 0),
     )
     with _connect(database_url) as connection:
         _lock_public_tables(connection)
@@ -200,6 +208,10 @@ def apply_account_identity_cutover(
         )
         _assign_machine_ownership(connection, identity.id)
         _replace_auth_sessions(connection)
+        _retire_deprecated_auth_config_rows(
+            connection,
+            expected=preflight.deprecated_auth_config_rows_before,
+        )
         batch_row = connection.execute(
             """
             UPDATE destructive_batches
@@ -344,6 +356,28 @@ def _replace_auth_sessions(connection: psycopg.Connection[Any]) -> None:
     )
 
 
+def _retire_deprecated_auth_config_rows(
+    connection: psycopg.Connection[Any],
+    *,
+    expected: dict[str, int],
+) -> None:
+    deleted = dict.fromkeys(_DEPRECATED_AUTH_CONFIG_KEYS, 0)
+    rows = connection.execute(
+        """
+        DELETE FROM config_store
+        WHERE key IN (%s, %s)
+        RETURNING key
+        """,
+        _DEPRECATED_AUTH_CONFIG_KEYS,
+    ).fetchall()
+    for row in rows:
+        deleted[str(row["key"])] += 1
+    if deleted != expected:
+        raise AccountIdentityCutoverError(
+            "Deprecated authentication config changed during credential retirement"
+        )
+
+
 def _require_predecessor_shape(connection: psycopg.Connection[Any]) -> None:
     users = connection.execute("SELECT to_regclass('users') AS table_name").fetchone()
     if users is None or users["table_name"] is not None:
@@ -392,6 +426,7 @@ def _collect_preflight(
             connection, "SELECT COUNT(*) AS count FROM auth_sessions"
         ),
         machines_before=counts.get("machines", 0),
+        deprecated_auth_config_rows_before=_collect_deprecated_auth_config_row_counts(connection),
     )
 
 
@@ -408,13 +443,42 @@ def _collect_non_auth_row_counts(connection: psycopg.Connection[Any]) -> dict[st
         ).fetchall()
         if str(row["tablename"]) not in _MUTABLE_COUNT_TABLES
     ]
-    return {
-        table: _scalar_count(
-            connection,
-            sql.SQL("SELECT COUNT(*) AS count FROM {}").format(sql.Identifier(table)),
-        )
-        for table in tables
-    }
+    counts: dict[str, int] = {}
+    for table in tables:
+        if table == "config_store":
+            counts[table] = _scalar_count(
+                connection,
+                """
+                SELECT COUNT(*) AS count
+                FROM config_store
+                WHERE key NOT IN (%s, %s)
+                """,
+                _DEPRECATED_AUTH_CONFIG_KEYS,
+            )
+        else:
+            counts[table] = _scalar_count(
+                connection,
+                sql.SQL("SELECT COUNT(*) AS count FROM {}").format(sql.Identifier(table)),
+            )
+    return counts
+
+
+def _collect_deprecated_auth_config_row_counts(
+    connection: psycopg.Connection[Any],
+) -> dict[str, int]:
+    counts = dict.fromkeys(_DEPRECATED_AUTH_CONFIG_KEYS, 0)
+    rows = connection.execute(
+        """
+        SELECT key, COUNT(*) AS count
+        FROM config_store
+        WHERE key IN (%s, %s)
+        GROUP BY key
+        """,
+        _DEPRECATED_AUTH_CONFIG_KEYS,
+    ).fetchall()
+    for row in rows:
+        counts[str(row["key"])] = int(row["count"])
+    return counts
 
 
 def _verify_data_invariants(
@@ -442,6 +506,17 @@ def _verify_data_invariants(
         raise AccountIdentityCutoverError("Machine ownership backfill verification failed")
     if _scalar_count(connection, "SELECT COUNT(*) AS count FROM auth_sessions"):
         raise AccountIdentityCutoverError("Authentication sessions were not invalidated")
+    expected_deprecated_rows = dict.fromkeys(_DEPRECATED_AUTH_CONFIG_KEYS, 0)
+    if evidence.deprecated_auth_config_rows_after != expected_deprecated_rows:
+        raise AccountIdentityCutoverError(
+            "Cutover evidence must record zero deprecated authentication config rows"
+        )
+    deprecated_rows = _collect_deprecated_auth_config_row_counts(connection)
+    if deprecated_rows != expected_deprecated_rows:
+        raise AccountIdentityCutoverError(
+            "Deprecated authentication config rows were not retired: "
+            f"expected {expected_deprecated_rows}, observed {deprecated_rows}"
+        )
     actual_counts = _collect_non_auth_row_counts(connection)
     if actual_counts != evidence.non_auth_row_counts:
         raise AccountIdentityCutoverError(
@@ -483,6 +558,14 @@ def _load_evidence(
             counts[table] = count
         auth_sessions_before = values["auth_sessions_before"]
         machines_before = values["machines_before"]
+        deprecated_rows_before = _parse_deprecated_auth_config_row_counts(
+            values["deprecated_auth_config_rows_before"],
+            field="deprecated_auth_config_rows_before",
+        )
+        deprecated_rows_after = _parse_deprecated_auth_config_row_counts(
+            values["deprecated_auth_config_rows_after"],
+            field="deprecated_auth_config_rows_after",
+        )
         if (
             isinstance(auth_sessions_before, bool)
             or not isinstance(auth_sessions_before, int)
@@ -499,9 +582,30 @@ def _load_evidence(
             non_auth_row_counts=counts,
             auth_sessions_before=auth_sessions_before,
             machines_before=machines_before,
+            deprecated_auth_config_rows_before=deprecated_rows_before,
+            deprecated_auth_config_rows_after=deprecated_rows_after,
         )
     except (KeyError, TypeError, ValueError) as exc:
         raise AccountIdentityCutoverError("Cutover batch identity evidence is invalid") from exc
+
+
+def _parse_deprecated_auth_config_row_counts(
+    raw: object,
+    *,
+    field: str,
+) -> dict[str, int]:
+    if not isinstance(raw, dict):
+        raise TypeError(f"{field} is not an object")
+    values = cast(dict[object, object], raw)
+    if set(values) != set(_DEPRECATED_AUTH_CONFIG_KEYS):
+        raise TypeError(f"{field} has unexpected keys")
+    counts: dict[str, int] = {}
+    for key in _DEPRECATED_AUTH_CONFIG_KEYS:
+        count = values[key]
+        if isinstance(count, bool) or not isinstance(count, int) or count not in (0, 1):
+            raise TypeError(f"{field} has an invalid count")
+        counts[key] = count
+    return counts
 
 
 def _lock_public_tables(connection: psycopg.Connection[Any]) -> None:

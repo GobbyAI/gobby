@@ -13,7 +13,8 @@ from gobby.config.logging import (
 from gobby.telemetry.config import TelemetrySettings
 
 
-def test_logging_settings_defaults_and_resolved_paths() -> None:
+def test_logging_settings_defaults_and_resolved_paths(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.delenv("GOBBY_HOME", raising=False)
     settings = LoggingSettings()
 
     assert settings.level == "info"
@@ -30,6 +31,18 @@ def test_logging_settings_defaults_and_resolved_paths() -> None:
     assert allow_audit_backup_count(settings) == 9
     assert resolved_logs_dir(settings) == Path("~/.gobby/logs").expanduser()
     assert resolved_log_path(settings, "ui.log") == Path("~/.gobby/logs/ui.log").expanduser()
+
+
+def test_default_logging_paths_follow_gobby_home(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    isolated_home = tmp_path / "isolated-gobby"
+    monkeypatch.setenv("GOBBY_HOME", str(isolated_home))
+
+    settings = LoggingSettings()
+
+    assert resolved_logs_dir(settings) == isolated_home / "logs"
+    assert resolved_log_path(settings, "ui.log") == isolated_home / "logs" / "ui.log"
 
 
 @pytest.mark.parametrize(
