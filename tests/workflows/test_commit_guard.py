@@ -424,6 +424,22 @@ async def test_dirty_edit_ownership_inspection_failure_allows(
 
 
 @pytest.mark.asyncio
+async def test_unexpected_dirty_edit_ownership_inspection_failure_propagates(
+    guard_harness: GuardHarness,
+) -> None:
+    (guard_harness.repo / "foreign.txt").write_text("foreign change\n", encoding="utf-8")
+
+    with (
+        patch(
+            "gobby.workflows.commit_guard._active_foreign_path_owners",
+            side_effect=RuntimeError("programming error"),
+        ),
+        pytest.raises(RuntimeError, match="programming error"),
+    ):
+        await guard_harness.handler._evaluate_rules(guard_harness.edit_event("foreign.txt"))
+
+
+@pytest.mark.asyncio
 async def test_unscoped_commit_blocks_foreign_staged_path_with_owner_diagnostic(
     guard_harness: GuardHarness,
 ) -> None:

@@ -218,17 +218,20 @@ def foreign_dirty_edit_conflict(
         if not candidate_paths:
             return ""
 
-        owners = _active_foreign_path_owners(
-            db,
-            session_id=session_id,
-            project_id=project_id,
-            checkout_root=project_path,
-        )
+        try:
+            owners = _active_foreign_path_owners(
+                db,
+                session_id=session_id,
+                project_id=project_id,
+                checkout_root=project_path,
+            )
+        except (psycopg.OperationalError, PoolTimeout) as exc:
+            raise DirtyEditOwnershipInspectionError("database ownership inspection failed") from exc
         conflicts = {owner for path in candidate_paths for owner in owners.get(path, ())}
         if not conflicts:
             return ""
         return _format_dirty_edit_reason(conflicts)
-    except Exception:
+    except DirtyEditOwnershipInspectionError:
         logger.warning(
             "Cross-session dirty edit ownership inspection failed",
             extra={"session_id": session_id, "project_id": project_id},
