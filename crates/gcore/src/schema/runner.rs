@@ -11,6 +11,9 @@ use super::gate::{SourceIdentity, VerifiedBackupManifest};
 use super::sql_splitter::split_sql_statements;
 use super::verify::{VerificationReport, qualified_name, validate_identifier, verify_schema};
 
+pub(crate) const PREDECESSOR_BASELINE_CHECKSUM: &str =
+    "855576453641152d2ef9199dc418fcc3dd2ad69e78eff924b05a7b3b122cf398";
+
 #[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
 pub struct ApplyReport {
     pub baseline_applied: bool,
@@ -152,6 +155,12 @@ impl<'a> SchemaRunner<'a> {
                         .to_owned(),
                 ));
             }
+            BaselineState::AccountIdentityPredecessor => {
+                return Err(SchemaError::Unsupported(
+                    "schema baseline requires account-identity-cutover; run 'gobby hub-maintenance run account-identity-cutover'"
+                        .to_owned(),
+                ));
+            }
         };
         let migrations_applied =
             apply_pending_migrations(self.client, &self.schema, self.migrations, backup.is_some())?;
@@ -169,6 +178,7 @@ enum BaselineState {
     GcoreCodeIndex,
     GwikiStandalone,
     AlreadyBaselined,
+    AccountIdentityPredecessor,
     CorruptPartial,
 }
 
@@ -303,6 +313,7 @@ fn recognized_baseline_receipt(
     let checksum = row.get::<_, Option<String>>(1);
     Ok(match checksum.as_deref() {
         Some(BASELINE_CHECKSUM) => Some(BaselineState::AlreadyBaselined),
+        Some(PREDECESSOR_BASELINE_CHECKSUM) => Some(BaselineState::AccountIdentityPredecessor),
         _ => None,
     })
 }

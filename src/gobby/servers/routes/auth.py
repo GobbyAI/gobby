@@ -5,6 +5,7 @@ Provides login/logout/status endpoints with cookie-based sessions.
 Authentication is backed by the canonical user table.
 """
 
+import hashlib
 import logging
 import math
 import threading
@@ -16,6 +17,7 @@ from typing import TYPE_CHECKING, Any
 from fastapi import APIRouter, Request
 from pydantic import BaseModel
 
+from gobby.config.ui import is_loopback_bind_host
 from gobby.servers.responses import JSONResponse
 from gobby.servers.routes._database import require_hub_database
 from gobby.storage.auth import AuthStore
@@ -30,6 +32,7 @@ _MAX_FAILED_LOGINS = 5
 _FAILED_LOGIN_WINDOW_SECONDS = 5 * 60
 _LOGIN_LOCKOUT_SECONDS = 60
 _MAX_TRACKED_CLIENTS = 1024
+_TAILSCALE_LOGIN_HEADER = "Tailscale-User-Login"
 
 
 @dataclass(frozen=True, slots=True)
@@ -92,6 +95,19 @@ def _get_auth_store(server: "HTTPServer") -> AuthStore:
     return AuthStore(require_hub_database(server.services.database))
 
 
+def _login_client_id(server: "HTTPServer", request: Request) -> str:
+    peer = request.client.host if request.client else "unknown"
+    tailscale_login = request.headers.get(_TAILSCALE_LOGIN_HEADER)
+    if (
+        server.bootstrap_config.ui_expose == "tailscale"
+        and is_loopback_bind_host(peer)
+        and tailscale_login
+    ):
+        digest = hashlib.sha256(tailscale_login.strip().casefold().encode()).hexdigest()
+        return f"tailscale:{digest}"
+    return f"peer:{peer}"
+
+
 def create_auth_router(server: "HTTPServer") -> APIRouter:
     """Create the authentication API router."""
     router = APIRouter(prefix="/api/auth", tags=["auth"])
@@ -100,7 +116,7 @@ def create_auth_router(server: "HTTPServer") -> APIRouter:
     @router.post("/login")
     async def login(req: LoginRequest, request: Request) -> JSONResponse:
         """Authenticate with email/password, set session cookie."""
-        client_id = request.client.host if request.client else "unknown"
+        client_id = _login_client_id(server, request)
         retry_after = login_rate_limiter.retry_after(client_id)
         if retry_after is not None:
             return JSONResponse(

@@ -9,6 +9,7 @@ from httpx2 import Response
 from starlette.testclient import TestClient
 
 from gobby.config.app import DaemonConfig
+from gobby.config.bootstrap import BootstrapConfig
 from gobby.identity import DUMMY_PASSWORD_HASH, hash_password, verify_password_hash
 from gobby.servers.http import HTTPServer
 from gobby.storage.auth import hash_token
@@ -109,19 +110,26 @@ class TestAuthLogin:
                 email="missing@example.com",
                 password="wrong",
             )
+            blank_email = _login(client, email=" ", password="wrong")
+            malformed_email = _login(client, email="invalid", password="wrong")
 
         assert wrong_password.status_code == 401
         assert unknown_email.status_code == 401
+        assert blank_email.status_code == 401
+        assert malformed_email.status_code == 401
         expected = {"ok": False, "error": "Invalid email or password"}
         assert wrong_password.json() == expected
         assert unknown_email.json() == expected
-        assert verify.call_count == 2
-        assert verify.call_args_list[1].args[1] == DUMMY_PASSWORD_HASH
+        assert blank_email.json() == expected
+        assert malformed_email.json() == expected
+        assert verify.call_count == 4
+        assert all(call.args[1] == DUMMY_PASSWORD_HASH for call in verify.call_args_list[1:])
 
-    def test_repeated_failed_logins_are_locked_out(self, temp_db) -> None:
+    @pytest.mark.parametrize("email", [TEST_USER_EMAIL, " ", "invalid"])
+    def test_repeated_failed_logins_are_locked_out(self, temp_db, email: str) -> None:
         _set_password(temp_db, "mypassword")
         client = TestClient(_server(temp_db).app)
-        credentials = {"email": TEST_USER_EMAIL, "password": "wrong"}
+        credentials = {"email": email, "password": "wrong"}
 
         for _ in range(5):
             assert client.post("/api/auth/login", json=credentials).status_code == 401
@@ -130,6 +138,58 @@ class TestAuthLogin:
 
         assert response.status_code == 429
         assert response.headers["Retry-After"] == "60"
+
+    def test_tailscale_proxy_tracks_login_failures_per_user(self, temp_db) -> None:
+        _set_password(temp_db, "mypassword")
+        server = _server(temp_db)
+        server.bootstrap_config = BootstrapConfig(ui_expose="tailscale")
+        client = TestClient(server.app, client=("127.0.0.1", 50000))
+        credentials = {"email": TEST_USER_EMAIL, "password": "wrong"}
+
+        for _ in range(5):
+            response = client.post(
+                "/api/auth/login",
+                json=credentials,
+                headers={"Tailscale-User-Login": "alice@example.com"},
+            )
+            assert response.status_code == 401
+
+        alice = client.post(
+            "/api/auth/login",
+            json=credentials,
+            headers={"Tailscale-User-Login": "alice@example.com"},
+        )
+        bob = client.post(
+            "/api/auth/login",
+            json=credentials,
+            headers={"Tailscale-User-Login": "bob@example.com"},
+        )
+
+        assert alice.status_code == 429
+        assert bob.status_code == 401
+
+    def test_tailscale_identity_header_requires_loopback_proxy(self, temp_db) -> None:
+        _set_password(temp_db, "mypassword")
+        server = _server(temp_db)
+        server.bootstrap_config = BootstrapConfig(ui_expose="tailscale")
+        client = TestClient(server.app, client=("203.0.113.10", 50000))
+        credentials = {"email": TEST_USER_EMAIL, "password": "wrong"}
+
+        for attempt in range(5):
+            response = client.post(
+                "/api/auth/login",
+                json=credentials,
+                headers={"Tailscale-User-Login": f"spoofed-{attempt}@example.com"},
+            )
+            assert response.status_code == 401
+
+        response = client.post(
+            "/api/auth/login",
+            json=credentials,
+            headers={"Tailscale-User-Login": "fresh-spoof@example.com"},
+        )
+
+        assert response.status_code == 429
 
     def test_successful_login_resets_failed_attempts(self, temp_db) -> None:
         _set_password(temp_db, "mypassword")

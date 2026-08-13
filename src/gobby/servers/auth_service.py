@@ -298,7 +298,10 @@ class AuthService:
         return AuthStore(self._database_getter()).validate_session(token)
 
     def verify_password(self, email: str, password: str) -> User | None:
-        user = LocalUserManager(self._database_getter()).get_by_email(email)
+        try:
+            user = LocalUserManager(self._database_getter()).get_by_email(email)
+        except ValueError:
+            user = None
         stored_hash = user.password_hash if user is not None else DUMMY_PASSWORD_HASH
         if not verify_password_hash(password, stored_hash):
             return None

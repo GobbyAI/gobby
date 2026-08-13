@@ -156,15 +156,20 @@ class LocalUserManager:
     def update_password(self, user_id: str, password_hash: str) -> User:
         normalized_id = str(uuid.UUID(user_id.strip()))
         normalized_hash = validate_password_hash(password_hash)
-        row = self.db.execute(
-            """
-            UPDATE users
-            SET password_hash = %s, updated_at = %s
-            WHERE id = %s
-            RETURNING *
-            """,
-            (normalized_hash, utc_now(), normalized_id),
-        ).fetchone()
+        with self.db.transaction() as transaction:
+            row = transaction.execute(
+                """
+                UPDATE users
+                SET password_hash = %s, updated_at = %s
+                WHERE id = %s
+                RETURNING *
+                """,
+                (normalized_hash, utc_now(), normalized_id),
+            ).fetchone()
+            if row is not None:
+                transaction.execute(
+                    "DELETE FROM auth_sessions WHERE user_id = %s", (normalized_id,)
+                )
         if row is None:
             raise KeyError(f"Unknown user: {normalized_id}")
         return User.from_row(row)

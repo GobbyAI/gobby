@@ -14,10 +14,7 @@ use super::error::SchemaError;
 use super::gate::{
     BackupGateContext, SourceIdentity, VerifiedBackupManifest, parse_backup_manifest,
 };
-use super::runner::SchemaRunner;
-
-const OBSOLETE_BASELINE_CHECKSUM: &str =
-    "855576453641152d2ef9199dc418fcc3dd2ad69e78eff924b05a7b3b122cf398";
+use super::runner::{PREDECESSOR_BASELINE_CHECKSUM, SchemaRunner};
 
 static RECOVERY_MIGRATION: EmbeddedMigration = EmbeddedMigration {
     version: 376,
@@ -320,7 +317,7 @@ fn obsolete_baseline_receipt_is_rejected_without_mutation() -> anyhow::Result<()
     )?;
     client.execute(
         "UPDATE schema_migrations SET checksum = $1 WHERE version = $2",
-        &[&OBSOLETE_BASELINE_CHECKSUM, &BASELINE_VERSION],
+        &[&PREDECESSOR_BASELINE_CHECKSUM, &BASELINE_VERSION],
     )?;
 
     let error = SchemaRunner::new(&mut client, "public")?
@@ -330,7 +327,7 @@ fn obsolete_baseline_receipt_is_rejected_without_mutation() -> anyhow::Result<()
     assert!(
         error
             .to_string()
-            .contains("unrecognized or pre-375 schema lineage")
+            .contains("run 'gobby hub-maintenance run account-identity-cutover'")
     );
     let row = client.query_one(
         "SELECT value, revision FROM config_store WHERE key = 'preserved.key'",
@@ -344,7 +341,7 @@ fn obsolete_baseline_receipt_is_rejected_without_mutation() -> anyhow::Result<()
             &[&BASELINE_VERSION],
         )?
         .get(0);
-    assert_eq!(checksum, OBSOLETE_BASELINE_CHECKSUM);
+    assert_eq!(checksum, PREDECESSOR_BASELINE_CHECKSUM);
     Ok(())
 }
 

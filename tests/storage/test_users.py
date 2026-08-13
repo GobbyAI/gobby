@@ -5,6 +5,7 @@ from __future__ import annotations
 import pytest
 
 from gobby.identity import hash_password, verify_password_hash
+from gobby.storage.auth import AuthStore
 from gobby.storage.hub.protocol import HubDatabase
 from gobby.storage.sessions import SessionManager
 from gobby.storage.users import DuplicateUserEmailError, LocalUserManager
@@ -78,15 +79,41 @@ def test_password_hash_uses_random_canonical_argon2id_salts() -> None:
     assert verify_password_hash(TEST_USER_PASSWORD, first) is True
 
 
-def test_update_password_replaces_hash(temp_db: HubDatabase) -> None:
+def test_update_password_replaces_hash_and_revokes_only_auth_sessions(
+    temp_db: HubDatabase,
+    session_manager: SessionManager,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
     manager = LocalUserManager(temp_db)
     before = manager.get(TEST_USER_ID)
     assert before is not None
+    auth_store = AuthStore(temp_db)
+    token, _expires_at = auth_store.create_session(TEST_USER_ID)
+    manager.create(
+        user_id=OTHER_USER_ID,
+        name="Other User",
+        email="other@example.com",
+        password_hash=hash_password("other-password"),
+    )
+    other_token, _other_expires_at = auth_store.create_session(OTHER_USER_ID)
+    monkeypatch.setattr(
+        "gobby.storage.workspace_machine_scope.require_machine_id",
+        lambda: SEEDED_MACHINE_ID,
+    )
+    tracked_session = session_manager.register(
+        external_id="password-reset-session",
+        machine_id=SEEDED_MACHINE_ID,
+        source="test",
+        project_id=None,
+    )
 
     after = manager.update_password(TEST_USER_ID, hash_password("replacement-password"))
 
     assert after.password_hash != before.password_hash
     assert verify_password_hash("replacement-password", after.password_hash) is True
+    assert auth_store.validate_session(token) is False
+    assert auth_store.validate_session(other_token) is True
+    assert session_manager.get(tracked_session.id) is not None
 
 
 def test_resolve_for_session_uses_machine_owner(
