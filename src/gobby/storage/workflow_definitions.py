@@ -1,6 +1,5 @@
 """Workflow definition storage manager for local database."""
 
-import hashlib
 import json
 import logging
 from collections.abc import Mapping
@@ -10,6 +9,9 @@ from threading import Lock
 from typing import Any, Literal
 from uuid import uuid4
 
+from gobby.storage.definitions._shared import (
+    compute_definition_hash as compute_definition_hash,
+)
 from gobby.storage.hub.protocol import HubDatabase
 from gobby.storage.sql_dialect import json_text_expr, older_than_now_expr
 from gobby.utils.datetime import normalize_datetime_model, utc_now
@@ -24,20 +26,6 @@ logger = logging.getLogger(__name__)
 DefinitionSource = Literal["installed", "template", "agent", "project", "custom"]
 _WORKFLOW_DEFINITIONS_REVISION = 0
 _WORKFLOW_DEFINITIONS_REVISION_LOCK = Lock()
-
-
-def compute_definition_hash(definition_json: str) -> str:
-    """Compute a SHA-256 hash of a canonical definition JSON string.
-
-    Used for cheap drift detection between installed definitions
-    and their on-disk template files.
-    """
-    canonical_json = json.dumps(
-        json.loads(definition_json),
-        sort_keys=True,
-        separators=(",", ":"),
-    )
-    return hashlib.sha256(canonical_json.encode()).hexdigest()
 
 
 def get_workflow_definitions_revision() -> int:
