@@ -113,7 +113,7 @@ plan.
 
 ### Storage compatibility layer
 
-Keep raw SQL. Do not add SQLAlchemy or Alembic in this migration.
+Keep raw SQL. Do not add Alembic in this migration.
 
 Introduce a temporary backend-neutral hub database layer with two purposes:
 

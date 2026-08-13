@@ -454,7 +454,7 @@ This is a CLI tool for managing Docker containers.
 ## Facts
 
 - Uses pytest with conftest.py fixtures
-- Database is PostgreSQL with SQLAlchemy ORM
+- Database is PostgreSQL with psycopg
 
 </project-memory>
 ```
