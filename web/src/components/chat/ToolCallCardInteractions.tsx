@@ -303,6 +303,12 @@ export function AskUserQuestionCard({
 
   const handleSubmit = (): void => {
     if (!onRespond || submitted) return;
+    const hasEmptyOther = questions.some((_question, questionIndex) => {
+      const selected = selectedOptions[questionIndex] || [];
+      if (!selected.includes("__other__")) return false;
+      return !(otherTexts[questionIndex] || "").trim();
+    });
+    if (hasEmptyOther) return;
     const answers: Record<string, string> = {};
     questions.forEach((question, questionIndex) => {
       const selected = selectedOptions[questionIndex] || [];

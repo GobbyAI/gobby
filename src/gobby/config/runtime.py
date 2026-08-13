@@ -352,7 +352,20 @@ class ConfigRuntime:
                     )
                     if activation_failure is not None:
                         await self._dispose(prepared, subscriber)
-                        raise activation_failure.error
+                        if subscriber.required:
+                            raise activation_failure.error
+                        handles.pop(subscriber.name, None)
+                        apply_failure = _apply_failure(
+                            subscriber,
+                            subscriber.keys,
+                            activation_failure.error,
+                            revision=snapshot.revision,
+                        )
+                        services[subscriber.name] = UnavailableService(apply_failure)
+                        failed = dict(snapshot.failed_live_keys)
+                        for key in subscriber.keys:
+                            failed[key] = apply_failure
+                        snapshot = _copy_snapshot(snapshot, failed_live_keys=failed)
                 self._subscribers.append(subscriber)
                 self._bundle = RuntimeActiveBundle(
                     snapshot,

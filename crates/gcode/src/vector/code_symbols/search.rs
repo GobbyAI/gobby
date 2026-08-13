@@ -266,14 +266,42 @@ mod tests {
 
     #[test]
     fn scoped_capture_degrade_disables_semantic_search() {
-        let mut ctx = test_context();
+        use std::net::TcpListener;
+        use std::sync::Arc;
+        use std::sync::atomic::{AtomicUsize, Ordering};
+        use std::thread;
 
-        ctx.set_runtime_config_capture_degraded_for_test(false);
-        assert!(!ctx.runtime_config_capture_degraded());
+        use crate::config::{EmbeddingConfig, QdrantConfig};
+
+        let hits = Arc::new(AtomicUsize::new(0));
+        let listener = TcpListener::bind("127.0.0.1:0").expect("bind test transport");
+        let addr = listener.local_addr().expect("listener addr");
+        let transport_hits = Arc::clone(&hits);
+        thread::spawn(move || {
+            for stream in listener.incoming() {
+                if stream.is_ok() {
+                    transport_hits.fetch_add(1, Ordering::SeqCst);
+                }
+            }
+        });
+        let url = format!("http://{addr}");
+        let mut ctx = test_context();
+        ctx.qdrant = Some(QdrantConfig {
+            url: Some(url.clone()),
+            api_key: None,
+        });
+        ctx.embedding = Some(EmbeddingConfig {
+            api_base: url,
+            model: "test-embed".to_string(),
+            api_key: Some("test".to_string()),
+            query_prefix: None,
+            timeout_seconds: 1,
+        });
 
         ctx.set_runtime_config_capture_degraded_for_test(true);
         assert!(ctx.runtime_config_capture_degraded());
         assert!(semantic_search(&ctx, "query", 10).is_empty());
+        assert_eq!(hits.load(Ordering::SeqCst), 0);
     }
 
     #[test]

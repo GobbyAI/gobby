@@ -40,6 +40,7 @@ from gobby.cli.tasks._utils import (
 )
 from gobby.cli.utils import resolve_project_ref
 from gobby.tasks.isolation import validate_task_isolation_artifacts
+from gobby.tasks.validation import NO_WORK_CLOSE_REASONS
 from gobby.utils.project_context import get_project_context
 
 
@@ -286,7 +287,10 @@ def update_task(
     "--reason",
     "-r",
     default="completed",
-    help="Reason for closing; canonical no-work reasons allow direct leaf disposition",
+    help=(
+        "Reason for closing; canonical no-work reasons allow direct leaf "
+        f"disposition: {', '.join(sorted(NO_WORK_CLOSE_REASONS))}"
+    ),
 )
 def close_task_cmd(task_ids: tuple[str, ...], reason: str) -> None:
     """Close one or more tasks.

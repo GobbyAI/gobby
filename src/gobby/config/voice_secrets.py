@@ -80,9 +80,7 @@ def restore_masked_structured_references(
                 continue
             identity = _structured_identity(key, index, item, identity_field)
             if identity in persisted_identities:
-                raise ValueError(
-                    f"{key} persisted items have duplicate {identity_field} {identity!r}"
-                )
+                continue
             persisted_identities.add(identity)
             for field in reference_fields:
                 field_value = item.get(field)

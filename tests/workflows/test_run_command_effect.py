@@ -523,7 +523,7 @@ class TestRunCommandDeadlines:
         assert record_fields["skill"] == "impeccable"
         assert record_fields["script"] == "hook.mjs"
 
-    async def test_unexpected_skill_resolution_error_propagates(self) -> None:
+    async def test_unexpected_skill_resolution_error_is_safe_status(self) -> None:
         mixin = EffectsMixin()
         failure = PermissionError("unexpected materializer defect")
         mixin.skill_script_materializer = cast(
@@ -531,15 +531,17 @@ class TestRunCommandDeadlines:
             _materializer(AsyncMock(side_effect=failure)),
         )
 
-        with pytest.raises(PermissionError, match="unexpected materializer defect"):
-            await mixin._prepare_run_command(
-                ["node"],
-                project_id=None,
-                skill="impeccable",
-                script="hook.mjs",
-                timeout=1.0,
-                background=False,
-            )
+        result = await mixin._prepare_run_command(
+            ["node"],
+            project_id=None,
+            skill="impeccable",
+            script="hook.mjs",
+            timeout=1.0,
+            background=False,
+        )
+
+        assert isinstance(result, RunCommandResult)
+        assert result.status == "skill_resolution_error"
 
 
 @pytest.mark.asyncio

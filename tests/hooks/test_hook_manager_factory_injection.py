@@ -85,6 +85,16 @@ def test_factory_config_resolution_prefers_active_runtime_snapshot() -> None:
     assert HookManagerFactory._resolve_config(startup, runtime) is active
 
 
+def test_factory_config_resolution_falls_back_to_supplied_config_on_snapshot_failure() -> None:
+    class BrokenRuntime:
+        @property
+        def snapshot(self) -> object:
+            raise RuntimeError("ConfigRuntime has not started")
+
+    startup = MagicMock()
+    assert HookManagerFactory._resolve_config(startup, cast(Any, BrokenRuntime())) is startup
+
+
 def test_hook_manager_shutdown_leaves_injected_database_open() -> None:
     """HookManager shutdown should leave daemon-owned storage handles open."""
     database = MagicMock()

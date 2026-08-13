@@ -37,47 +37,38 @@ def test_masked_structured_references_follow_registry_identity_when_reordered() 
     ]
 
 
-def test_masked_duplicate_provider_references_are_rejected_when_reordered() -> None:
+def test_masked_duplicate_persisted_provider_references_keep_first() -> None:
     persisted = [
         {"provider": "openai", "label": "first", "api_key": "$secret:FIRST"},
         {"provider": "openai", "label": "second", "api_key": "$secret:SECOND"},
     ]
     submitted = [
         {"provider": "openai", "label": "second", "api_key": MASKED_SECRET},
-        {"provider": "openai", "label": "first", "api_key": MASKED_SECRET},
+    ]
+
+    restored = restore_masked_structured_references(
+        "voice.providers",
+        submitted,
+        persisted,
+        ("api_key",),
+        "provider",
+    )
+
+    assert restored == [
+        {"provider": "openai", "label": "second", "api_key": "$secret:FIRST"},
+    ]
+
+
+def test_masked_duplicate_incoming_provider_references_are_rejected() -> None:
+    persisted = [{"provider": "openai", "api_key": "$secret:KEY_0"}]
+    submitted = [
+        {"provider": "openai", "api_key": MASKED_SECRET},
+        {"provider": "openai", "api_key": MASKED_SECRET},
     ]
 
     with pytest.raises(
         ValueError,
-        match="voice.providers persisted items have duplicate provider 'openai'",
-    ):
-        restore_masked_structured_references(
-            "voice.providers",
-            submitted,
-            persisted,
-            ("api_key",),
-            "provider",
-        )
-
-
-@pytest.mark.parametrize(
-    ("persisted_count", "incoming_count", "duplicate_side"),
-    [(2, 1, "persisted"), (1, 2, "incoming")],
-)
-def test_masked_duplicate_provider_count_mismatch_is_rejected(
-    persisted_count: int,
-    incoming_count: int,
-    duplicate_side: str,
-) -> None:
-    persisted = [
-        {"provider": "openai", "api_key": f"$secret:KEY_{index}"}
-        for index in range(persisted_count)
-    ]
-    submitted = [{"provider": "openai", "api_key": MASKED_SECRET} for _ in range(incoming_count)]
-
-    with pytest.raises(
-        ValueError,
-        match=rf"voice.providers {duplicate_side} items have duplicate provider 'openai'",
+        match="voice.providers incoming items have duplicate provider 'openai'",
     ):
         restore_masked_structured_references(
             "voice.providers",

@@ -505,7 +505,8 @@ class PlanReviewEvidenceService:
         # The immediate mutation transaction serializes this read-modify-write
         # against concurrent plan writers (manifest apply, checkpoint drain).
         with self.db.transaction_immediate(mutation) as transaction:
-            self.store.require(evidence_id, transaction=transaction, for_update=True)
+            locked = self.store.require(evidence_id, transaction=transaction, for_update=True)
+            self._verify_reviewed_bytes(locked, plan_path.read_bytes())
             return self.checkpoints.append_plan_changelog_round(
                 evidence_id,
                 prose,

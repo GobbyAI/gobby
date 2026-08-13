@@ -313,7 +313,11 @@ class HookManagerFactory:
     def _resolve_config(config: Any | None, config_runtime: ConfigRuntimeReader | None) -> Any:
         """Resolve hook configuration from one runtime snapshot or bootstrap inputs."""
         if config_runtime is not None:
-            return config_runtime.snapshot.active
+            try:
+                return config_runtime.snapshot.active
+            except Exception:
+                if config is not None:
+                    return config
         if config is not None:
             return config
         bootstrap = load_bootstrap(resolve_database_url=True)

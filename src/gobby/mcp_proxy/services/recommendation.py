@@ -50,7 +50,8 @@ class RecommendationService:
 
     def _get_llm_service(self) -> Any | None:
         if self._llm_service_resolver is not None:
-            return self._llm_service_resolver()
+            resolved = self._llm_service_resolver()
+            return self._llm_service if resolved is None else resolved
         return self._llm_service
 
     async def recommend_tools(

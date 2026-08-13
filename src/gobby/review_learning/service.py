@@ -112,7 +112,7 @@ class ReviewLearningService:
         memory_manager: ReviewLearningMemoryManager | None,
         task_manager: PromotionTaskManager,
         memory_manager_resolver: Callable[[], ReviewLearningMemoryManager | None] | None = None,
-    ):
+    ) -> None:
         self._seed_memory_manager = memory_manager
         self.task_manager = task_manager
         self._memory_manager_resolver = memory_manager_resolver

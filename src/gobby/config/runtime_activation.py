@@ -100,12 +100,12 @@ def project_activation(
     list[tuple[PreparedSubscriber, ConfigSubscriber]],
 ]:
     current = current_bundle.snapshot
-    active_values = dict(current._active_values)
-    active_overrides = dict(current._active_overrides)
-    active_bindings = dict(current._active_bindings)
+    active_values = dict(current._read_active_values())
+    active_overrides = dict(current._read_active_overrides())
+    active_bindings = dict(current._read_active_bindings())
     failed = dict(current.failed_live_keys)
     services = dict(current_bundle.services)
-    handles = dict(current_bundle._handles)
+    handles = dict(current_bundle._read_handles())
     old_handles: list[tuple[PreparedSubscriber, ConfigSubscriber]] = []
     subscribers = tuple(subscribers)
     if failure is None:

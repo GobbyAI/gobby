@@ -194,6 +194,7 @@ async def test_failed_activation_preserves_last_good_bundle() -> None:
     await runtime.close()
 
 
+@pytest.mark.asyncio
 async def test_failed_reprepare_activation_preserves_last_good_bundle() -> None:
     repository = FakeRepository([snapshot(0, alpha=0)])
     created: list[Client] = []
@@ -523,4 +524,32 @@ async def test_first_registration_failure_contract() -> None:
 
     assert runtime.capture().services["optional"] == 1
     assert attempts == 2
+    await runtime.close()
+
+
+@pytest.mark.asyncio
+async def test_optional_registration_activation_failure_records_unavailable() -> None:
+    repository = FakeRepository([snapshot(0, alpha=0)])
+    disposed: list[Client] = []
+
+    def build(change: ConfigChange) -> PreparedService:
+        client = Client(change.revision, [])
+
+        def activate() -> None:
+            raise RuntimeError("optional activation failed")
+
+        return PreparedService(client, lambda: disposed.append(client), activate)
+
+    runtime = ConfigRuntime(repository, registry=FakeRegistry())
+    await runtime.start()
+    registered = await runtime.register_subscriber(
+        subscriber("optional", {"alpha"}, build, required=False)
+    )
+    bundle = runtime.capture()
+    failure = registered.failed_live_keys["alpha"]
+    assert isinstance(bundle.services["optional"], UnavailableService)
+    assert "optional" not in bundle._handles
+    assert failure.subscriber == "optional"
+    assert failure.message == "optional activation failed"
+    assert len(disposed) == 1
     await runtime.close()

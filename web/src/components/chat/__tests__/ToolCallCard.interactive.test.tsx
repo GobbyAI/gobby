@@ -203,6 +203,42 @@ describe("ToolCallCard interactions", () => {
     ).not.toBeInTheDocument();
   });
 
+  it("does not submit when a selected Other answer is empty", () => {
+    const onRespond = vi.fn(() => true);
+    const questions = [
+      {
+        header: "Note",
+        question: "Anything else?",
+        multiSelect: false,
+        options: [{ label: "Nothing", description: "No extra note" }],
+      },
+    ];
+
+    renderWithProviders(
+      <ToolCallCards
+        toolCalls={[
+          makeCall({
+            id: "question-empty-other",
+            tool_name: "AskUserQuestion",
+            status: "calling",
+            arguments: { questions },
+          }),
+        ]}
+        onRespond={onRespond}
+      />,
+    );
+
+    fireEvent.click(screen.getByRole("button", { name: "Other" }));
+    fireEvent.click(screen.getByRole("button", { name: "Submit" }));
+    expect(onRespond).not.toHaveBeenCalled();
+
+    fireEvent.keyDown(screen.getByPlaceholderText("Type your answer..."), {
+      key: "Enter",
+    });
+    expect(onRespond).not.toHaveBeenCalled();
+    expect(screen.getByRole("button", { name: "Submit" })).toBeInTheDocument();
+  });
+
   it("renders array-valued answers from completed question results", () => {
     renderWithProviders(
       <ToolCallCards

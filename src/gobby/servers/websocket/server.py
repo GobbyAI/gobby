@@ -194,9 +194,6 @@ class WebSocketServer(
             return self._startup_daemon_config
         else:
             snapshot = runtime.capture().snapshot
-        cached = self._daemon_config_cache
-        if cached is not None and cached[0] is snapshot:
-            return cached[1]
         with self._daemon_config_cache_lock:
             cached = self._daemon_config_cache
             if cached is not None and cached[0] is snapshot:

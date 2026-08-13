@@ -131,6 +131,15 @@ class ConfigSnapshot:
     def active_overrides(self) -> Mapping[str, object]:
         return MappingProxyType(deepcopy(dict(self._active_overrides)))
 
+    def _read_active_values(self) -> Mapping[str, object]:
+        return self._active_values
+
+    def _read_active_overrides(self) -> Mapping[str, object]:
+        return self._active_overrides
+
+    def _read_active_bindings(self) -> Mapping[str, RuntimeSecretBinding]:
+        return self._active_bindings
+
     def desired_secret(self, key: str) -> str | None:
         binding = self._desired_bindings.get(key)
         return None if binding is None else binding.plaintext

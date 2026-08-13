@@ -442,8 +442,17 @@ def setup_internal_registries(
 
         secret_store = SecretStore(db)
 
+        last_resolved_config: DaemonConfig | None = None
+
         def active_daemon_config() -> DaemonConfig | None:
-            return config_resolver() or initial_config
+            nonlocal last_resolved_config
+            resolved = config_resolver()
+            if resolved is not None:
+                last_resolved_config = resolved
+                return resolved
+            if last_resolved_config is not None:
+                return last_resolved_config
+            return initial_config
 
         def build_hub_manager(active_config: DaemonConfig | None) -> HubManager:
             skills_config = active_config.skills if active_config is not None else SkillsConfig()

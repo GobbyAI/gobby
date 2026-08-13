@@ -179,16 +179,19 @@ class ServerManagementService:
                     "success": False,
                     "error": "Daemon database unavailable for import operations",
                 }
+            resolved_llm = (
+                self._llm_service_resolver()
+                if self._llm_service_resolver is not None
+                else self._llm_service
+            )
+            if resolved_llm is None:
+                resolved_llm = self._llm_service
             importer = MCPServerImporter(
                 config=config,
                 db=db,
                 current_project_id=current_project_id,
                 mcp_client_manager=self._mcp_manager,
-                llm_service=(
-                    self._llm_service_resolver()
-                    if self._llm_service_resolver is not None
-                    else self._llm_service
-                ),
+                llm_service=resolved_llm,
             )
 
             # Execute import based on source

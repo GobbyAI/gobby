@@ -19,6 +19,28 @@ def _compat_module() -> Any:
     return session_start
 
 
+def replace_session_message_processor(
+    handler: Any,
+    session_id: str,
+    processor: Any,
+    transcript_path: str,
+    *,
+    source: str,
+) -> None:
+    """Register a processor first, then drop only a different previous entry."""
+    processor.register_session(session_id, transcript_path, source=source)
+    previous = handler._session_message_processors.get(session_id)
+    if previous is not None and previous is not processor:
+        try:
+            previous.unregister_session(session_id)
+        except Exception as exc:
+            handler.logger.warning(
+                "Failed to unregister previous session message processor: %s",
+                exc,
+            )
+    handler._session_message_processors[session_id] = processor
+
+
 def derive_transcript_path(
     handler: Any,
     cli_source: str,
@@ -90,12 +112,13 @@ def ensure_qwen_transcript_tracking(
         )
     message_processor = handler._resolve_message_processor()
     if message_processor is not None:
-        message_processor.register_session(
+        replace_session_message_processor(
+            handler,
             platform_session_id,
+            message_processor,
             transcript_path,
             source="qwen",
         )
-        handler._session_message_processors[platform_session_id] = message_processor
     return transcript_path
 
 

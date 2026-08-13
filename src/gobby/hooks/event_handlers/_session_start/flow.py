@@ -30,6 +30,7 @@ from .terminal_runtime import (
     expire_stale_terminal_sessions_for_context,
     session_start_is_nested_cli_child,
 )
+from .transcripts import replace_session_message_processor
 
 SLOW_SESSION_START_THRESHOLD_MS = 1000
 
@@ -526,12 +527,13 @@ def handle_session_start(handler: Any, event: HookEvent) -> HookResponse:
     message_processor = handler._resolve_message_processor()
     if message_processor is not None and transcript_path and session_id:
         try:
-            message_processor.register_session(
+            replace_session_message_processor(
+                handler,
                 session_id,
+                message_processor,
                 transcript_path,
                 source=cli_source,
             )
-            handler._session_message_processors[session_id] = message_processor
         except Exception as e:
             handler.logger.warning("Failed to register session with message processor: %s", e)
 
@@ -755,12 +757,13 @@ def handle_pre_created_session(
     message_processor = handler._resolve_message_processor()
     if message_processor is not None and transcript_path:
         try:
-            message_processor.register_session(
+            replace_session_message_processor(
+                handler,
                 session_id,
+                message_processor,
                 transcript_path,
                 source=cli_source,
             )
-            handler._session_message_processors[session_id] = message_processor
         except Exception as e:
             handler.logger.warning("Failed to register with message processor: %s", e)
 

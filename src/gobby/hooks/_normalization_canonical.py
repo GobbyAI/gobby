@@ -488,7 +488,9 @@ def _merge_shell_segment_metadata(metadata: list[_ShellSegmentMetadata]) -> dict
     mutation_scope_unknown = False
     for item in active:
         resolvable = [path for path in item.paths if not _contains_unexpanded_shell_reference(path)]
-        if item.repo_mutation and not resolvable:
+        if item.repo_mutation and any(
+            _contains_unexpanded_shell_reference(path) for path in item.paths
+        ):
             mutation_scope_unknown = True
         for path in resolvable:
             if path not in paths:

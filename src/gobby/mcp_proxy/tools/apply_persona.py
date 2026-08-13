@@ -102,7 +102,7 @@ def build_persona_changes(
     if agent_body.blocked_mcp_tools:
         changes["_agent_blocked_mcp_tools"] = agent_body.blocked_mcp_tools
 
-    if agent_body.steps and is_spawned and _session_has_assigned_or_active_task(db, session_id):
+    if agent_body.steps and is_spawned:
         from gobby.workflows.definitions import WorkflowInstance
         from gobby.workflows.state_manager import WorkflowInstanceManager
 
@@ -110,35 +110,37 @@ def build_persona_changes(
         instance_mgr = WorkflowInstanceManager(db)
         lock = WorkflowInstanceMutation(session_id=session_id, workflow_name=step_wf_name)
         with db.transaction_immediate(lock):
-            existing_instance = instance_mgr.get_instance(session_id, step_wf_name)
-            if existing_instance is None:
-                step_instance = WorkflowInstance(
-                    id=str(uuid.uuid4()),
-                    session_id=session_id,
-                    workflow_name=step_wf_name,
-                    enabled=True,
-                    priority=10,
-                    current_step=agent_body.steps[0].name,
-                    variables=dict(agent_body.step_variables),
-                )
-                instance_mgr.save_instance(step_instance)
-                logger.info(
-                    "Created step workflow instance %s for session %s (agent=%s, step=%s)",
-                    step_wf_name,
-                    session_id,
-                    agent_body.name,
-                    agent_body.steps[0].name,
-                )
-            else:
-                logger.debug(
-                    "Preserved existing step workflow instance %s for session %s (agent=%s, step=%s)",
-                    step_wf_name,
-                    session_id,
-                    agent_body.name,
-                    existing_instance.current_step,
-                )
-        changes["_step_workflow_name"] = step_wf_name
-        changes["step_workflow_complete"] = False
+            if _session_has_assigned_or_active_task(db, session_id):
+                existing_instance = instance_mgr.get_instance(session_id, step_wf_name)
+                if existing_instance is None:
+                    step_instance = WorkflowInstance(
+                        id=str(uuid.uuid4()),
+                        session_id=session_id,
+                        workflow_name=step_wf_name,
+                        enabled=True,
+                        priority=10,
+                        current_step=agent_body.steps[0].name,
+                        variables=dict(agent_body.step_variables),
+                    )
+                    instance_mgr.save_instance(step_instance)
+                    logger.info(
+                        "Created step workflow instance %s for session %s (agent=%s, step=%s)",
+                        step_wf_name,
+                        session_id,
+                        agent_body.name,
+                        agent_body.steps[0].name,
+                    )
+                else:
+                    logger.debug(
+                        "Preserved existing step workflow instance %s for session %s "
+                        "(agent=%s, step=%s)",
+                        step_wf_name,
+                        session_id,
+                        agent_body.name,
+                        existing_instance.current_step,
+                    )
+                changes["_step_workflow_name"] = step_wf_name
+                changes["step_workflow_complete"] = False
 
     return changes, active_rules, active_skills
 

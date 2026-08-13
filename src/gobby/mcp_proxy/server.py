@@ -74,7 +74,8 @@ class GobbyDaemonTools:
 
         def resolve_llm_service() -> Any | None:
             if llm_service_resolver is not None:
-                return llm_service_resolver()
+                resolved = llm_service_resolver()
+                return llm_service if resolved is None else resolved
             return llm_service
 
         def resolve_recommend_config() -> Any | None:

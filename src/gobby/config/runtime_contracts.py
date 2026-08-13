@@ -112,6 +112,9 @@ class RuntimeActiveBundle:
     )
     managed: MappingProxyType[str, object] = field(default_factory=lambda: MappingProxyType({}))
 
+    def _read_handles(self) -> Mapping[str, PreparedSubscriber]:
+        return self._handles
+
 
 @dataclass(frozen=True, slots=True)
 class PreparedValue:
