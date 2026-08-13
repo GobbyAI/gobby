@@ -244,10 +244,9 @@ def test_audit_registration_claims_match_runtime_contract() -> None:
         for key in registered_rows
         if UNREGISTERED_RUNTIME_CLAIM.search(unique_audit_rows[key][0])
     }
-    assert "auth.username" in registered_rows
-    assert unique_audit_rows["auth.username"][0].startswith(
-        "DaemonConfig schema via /api/config/schema"
-    )
+    assert "auth.username" not in registered_keys
+    assert "auth.username" not in registered_rows
+    assert unique_audit_rows["auth.username"][0].startswith("Retired by account-identity-cutover")
     assert contradictory_rows == {}
 
 
