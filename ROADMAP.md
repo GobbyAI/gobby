@@ -44,7 +44,10 @@ Rust port.
 ## 0.6.0 - Rust Port Release
 
 0.6.0 is the Rust port release. It is an incremental strangler port, not a
-rewrite.
+rewrite. The destination shape is decided in
+`docs/architecture/evolution.md`: one daemon binary named `gobby` with
+standalone/hub/client modes — the sidecar below is the transition vehicle,
+not the end state.
 
 - Python remains the public daemon and behavioral reference until each boundary
   passes parity, observability, and rollback gates.

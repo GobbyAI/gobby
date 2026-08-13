@@ -8,7 +8,7 @@
 
 Build `gobby client` — a Rust terminal workspace derived from the Apache-2.0 herdr codebase — and a backend-neutral daemon `TerminalRuntime` contract with two implementations: the existing tmux stack and a new Herdr-derived native PTY host (`gterm`). Gobby's daemon and Postgres stay authoritative for projects, sessions, runs, tasks, worktrees, attention, and lifecycle; the host owns only live PTYs, terminal emulation state, scrollback, and recoverable runtime snapshots.
 
-Research findings that shaped this plan (herdr @ `4710416690af928d9a4d4cda8e4963cc7dcb3d6a8`, "the pin"): herdr has no Rust terminal emulator — its VT engine is vendored libghostty-vt (Ghostty's full Zig source tree, ~18 MB, built with `zig` at compile time via `-Demit-lib-vt`, a build mode of the full tree with no separable upstream artifact). Herdr is already a headless-server/thin-client system with a mature bincode frame protocol (two negotiated encodings, multi-client, detach/reattach, per-terminal attach) — this plan adopts and rebrands that protocol rather than designing a new one. Herdr's Ratatui workspace UI runs server-side; Gobby inverts that seam: `gclient` renders its own Gobby-native workspace fed by the daemon (roster, attention) and attaches per-terminal frame streams from the host. Roughly 30% of herdr's ~200k Rust LOC is imported; its agent detection, plugins, worktrees, integrations, updater, session persistence, JSON API, app orchestration, and Ratatui app UI are not.
+Research findings that shaped this plan (herdr @ the `v0.8.0` release tag, commit `346411fa`, 2026-08-03 — "the fork point"): herdr has no Rust terminal emulator — its VT engine is vendored libghostty-vt (Ghostty's full Zig source tree, ~18 MB, built with `zig` at compile time via `-Demit-lib-vt`, a build mode of the full tree with no separable upstream artifact). Herdr is already a headless-server/thin-client system with a mature bincode frame protocol (two negotiated encodings, multi-client, detach/reattach, per-terminal attach) — this plan adopts and rebrands that protocol rather than designing a new one. Herdr's Ratatui workspace UI runs server-side; Gobby inverts that seam: `gclient` renders a Gobby workspace fed by the daemon (roster, attention) and attaches per-terminal frame streams from the host, importing herdr's generic UI chrome (sidebar, tabs, navigator, status, keybind help, dialogs, scrollbar, widgets — ~13.5k LOC) rewired to Gobby data sources and restyled to the Gobby design system (3.3). This is a **one-time fork, owned outright after import** — no upstream tracking, no mechanical re-pin; individual post-fork upstream fixes may be cherry-picked deliberately with provenance recorded in `UPSTREAM.md` (1.2, 1.5). Roughly a third of herdr's ~200k Rust LOC is imported; its agent detection, plugins (deferred to D1), worktrees, integrations, updater, session persistence, JSON API, and app orchestration are not. Upstream lives at `herdrdev/herdr` after its GitHub org migration.
 
 The shipped web terminal (`.gobby/plans/activity-panel-live-terminal.md`) documents tmux-inherent defects this work eliminates for Gobby-managed terminals: cross-socket identity collisions, smallest-client sizing shrinking simultaneous viewers, duplicated VT query replies from multi-viewer relays, and the 200×50-default post-attach repaint handshake. The native backend is also the recorded path to Windows support (ConPTY) once macOS/Linux parity lands.
 
@@ -16,20 +16,23 @@ The shipped web terminal (`.gobby/plans/activity-panel-live-terminal.md`) docume
 
 `kind: framing`
 
-- **License gate (supersedes the sibling constraint).** `herdr-interface-backend-foundation.md` C1 states "herdr is AGPL-3.0. Ideas only — no code". That constraint is superseded: herdr relicensed to Apache-2.0 in commit `cd5ea1be` (2026-07-22), and this plan imports code from the pin `4710416` (post-relicense). Accepted, documented risk: the relicense is untagged (sits in `## Unreleased`), upstream has no NOTICE file and an unfilled copyright appendix, and the AGPL→Apache consent mechanism for ~8 outside contributors is not documented in-repo. Apache-2.0 §4 attribution and modification obligations are honored via deliverable 1.5.
+- **License gate (supersedes the sibling constraint).** `herdr-interface-backend-foundation.md` C1 states "herdr is AGPL-3.0. Ideas only — no code". That constraint is superseded: herdr relicensed to Apache-2.0 in commit `cd5ea1be` (2026-07-22), the relicense is recorded in the **released** `v0.8.0` changelog (2026-08-03), and this plan forks from that tagged release. Remaining accepted, documented risk: upstream ships no NOTICE file, and the AGPL→Apache consent mechanism for ~8 outside contributors is not documented in-repo. Apache-2.0 §4 attribution and modification obligations are honored via deliverable 1.5.
+- **Fork-once, own outright.** The import is a one-time fork at `v0.8.0`; there is no upstream tracking and no re-pin procedure. Post-fork upstream fixes are adopted only as deliberate per-commit cherry-picks recorded in `UPSTREAM.md` (1.2 names the initial set; 1.5 owns the log format). The registered reference clone lives at `~/.gobby/clones/herdr`.
+- **Topology: the terminal stack must survive the daemon's future.** The long-term architecture (see `docs/architecture/evolution.md`) is one Rust daemon binary, canonical user-facing name `gobby`, with `standalone` (default) / `hub` / `client` modes; migration order is absorb-subsystems → standalone parity → mode split with machine registration and API keys. Consequences pinned here: the Python surfaces this plan adds in P2–P4 are the *client-mode capability set* and are kept thin — the durable contract is the JSON-lines control protocol, the bincode frame protocol, and the backend-neutral WS messages, all of which survive the language migration byte-for-byte (the golden corpus is the enforcement); `gclient` couples to the daemon only through the public HTTP/WS API, never internals; the 2.5 WS message set doubles as the future hub↔client-daemon relay contract for hosted web viewing (D3 owns the relay privacy stance); `gterm` is permanently a separate supervised process — folding PTY ownership into the daemon would forfeit terminal durability across daemon restarts and active/standby lease handoffs, which is the property this plan exists to buy; and `gclient` is permanently a separate interactive process and a separate binary (the VT payload is host-only, so multi-call packaging would bloat every client install).
+- **`vt-engine` feature gate.** The Ghostty engine (vendored tree, `build.rs` Zig invocation, `src/ghostty/` FFI, and the pane emulation built on it) sits behind a `vt-engine` cargo feature of `gobby-terminal`, enabled by the `gterm` binary and disabled by default. `gobby-client` depends on the light modules only (wire protocol, input encoding, layout, theme) and builds without Zig; protocol-only tests do too.
 - **Full-tree vendor.** libghostty-vt is vendored as Ghostty's full source tree at herdr's recorded pin (`c5a21edfcbc2d5b46540ad91b7980aca31f5f1f3`), herdr-style — verbatim `vendor.json`/`patches/` workflow — because `-Demit-lib-vt` is a build mode of the full tree, and pruning would mean owning a curated fork of Ghostty's build graph. Mitigations: code-index and lint exclusions (1.4), nested-license inventory (1.5).
-- **Zig is a build-time dependency** (Zig 0.15) for CI and contributor builds of `gobby-terminal`. End users receive prebuilt release binaries; the installer's local-cargo fallback behavior for these crates is defined in 3.6.
-- **Naming.** `crates/gterminal` → package `gobby-terminal` → binary `gterm`; `crates/gclient` → package `gobby-client` → binary `gclient`; CLI command `gobby client`. This follows the existing `crates/gX` → `gobby-x` → `gX` convention and avoids the `~/.gobby/logs/gobby-client.log` filename already used by the daemon restart helper (`src/gobby/servers/routes/admin/_lifecycle.py:130`). Host logs to `~/.gobby/logs/gterm.log`; client logs to `~/.gobby/logs/gclient.log`.
-- **Transport.** Host endpoints are Unix domain sockets under `~/.gobby/` with mode 0600 (`gterm-control.sock`, `gterm-frames.sock`). No new TCP port: 60889/60890/60891 are already allocated (web-dev UI / future gobbyd / managed Postgres). Windows named-pipe support arrives with the later Windows milestone; the imported `ipc` layer already abstracts both.
-- **No attach-capability token system in this epic.** Local sockets are same-user 0600, and frame clients additionally present the existing install-scoped local CLI token (`~/.gobby/local_cli_token`, the same credential gcode/gwiki already use). Web viewers reach native terminals only through the daemon's WS proxy (4.3), where daemon auth already applies. Short-lived per-terminal capabilities are deferred until a remote/web-direct attach surface exists.
+- **Zig is a build-time dependency** (Zig 0.15) only for builds that enable `vt-engine` — the `gterm` host binary and its CI jobs. `gobby-client` and protocol-only test runs never invoke Zig. End users receive prebuilt release binaries; the installer's local-cargo fallback behavior for these crates is defined in 3.6.
+- **Naming.** `crates/gterminal` → package `gobby-terminal` → binary `gterm`; `crates/gclient` → package `gobby-client` → binary `gclient`; CLI command `gobby client`. This follows the existing `crates/gX` → `gobby-x` → `gX` convention and avoids the `~/.gobby/logs/gobby-client.log` and `gobby-client-error.log` filenames already used by the daemon restart helper (`src/gobby/servers/routes/admin/_lifecycle.py:130-131`). Host logs to `~/.gobby/logs/gterm.log`; client logs to `~/.gobby/logs/gclient.log`.
+- **Transport.** Host endpoints are Unix domain sockets under `~/.gobby/` with mode 0600 (`gterm-control.sock`, `gterm-frames.sock`). No new TCP port: 60889 and 60891 are already bound (web-dev UI / managed Postgres) and 60890 is roadmap-reserved for the Rust daemon (`ROADMAP.md`; nothing binds it yet). Windows named-pipe support arrives with the later Windows milestone; the imported `ipc` layer already abstracts both.
+- **No attach-capability token system in this epic.** Local sockets are same-user 0600, and frame clients additionally present the existing install-scoped local CLI token (`~/.gobby/local_cli_token`, the same credential gcode/gwiki already use). Web viewers reach native terminals only through the daemon's WS proxy (4.3), where daemon auth already applies. Short-lived per-terminal capabilities are deferred until a remote/web-direct attach surface exists (D2).
 - **The two host sockets do not share a credential, and the trust boundary is the local user account.** Frame clients present `~/.gobby/local_cli_token`; the control socket accepts only `~/.gobby/gterm-control.token`, a separate 0600 file the daemon mints on first host spawn and which no client is ever given (3.1). This is stated as what it is: a same-uid process that can read `~/.gobby/` can forge either credential, so nothing here defends against a hostile process running as the user — that is outside the boundary on both macOS and Linux, and no local mechanism moves it. What the split does buy is that possession of a *client's* credential is not possession of write authority: gclient must hold `local_cli_token` to talk to the daemon at all, and under a shared credential that same token would also unlock every mutating verb on the control socket. The frame protocol additionally has no write verb to reach (3.2), so the read-only guarantee does not rest on the credential alone.
 - **Daemon authority.** The host never talks to Postgres and holds no durable state beyond optional scrollback snapshots on disk. All lifecycle, attention, task, and session semantics stay in the Python daemon. Host crash → affected native terminals are marked `orphaned`, affected runs become `interrupted`, and Gobby's normal resume flow applies; live PTYs are never reconstructed.
 - **No silent backend switching.** An explicitly requested native launch fails clearly when the host is unavailable; it never falls back to tmux silently. tmux remains a first-class backend for externally launched/discovered sessions indefinitely.
 - **SRT sandbox semantics preserved.** Managed provider commands are wrapped by SRT once, after construction and before terminal creation, with `allowPty: true` and fail-closed preflight. The native spawn path (4.2) wraps identically before handing the command to the host. Only the daemon and `gclient` (both unsandboxed) dial host sockets; sandboxed agent processes never do.
 - **No backward compatibility.** 0.5.0 is unshipped: tmux-specific columns and WS message names are replaced, not aliased.
 - **Session lifecycle unions stay lifecycle-only** (per the sibling plan): attention and terminal state are orthogonal dimensions, never new `SessionStatus` values.
-- **Migration numbering.** The migration file number below (343) was free as of 2026-07-26 (highest committed: 342). Re-check the next free number at implementation time and renumber if concurrent work landed migrations.
-- **Rust conventions.** New crates join the workspace per `crates/CLAUDE.md`: scope all cargo commands with `-p`, never relax lints, register in `rust-ci.yml`. `gobby-terminal`/`gobby-client` pin `rust-version = "1.96"` and edition 2021 to minimize import churn (the rest of the workspace is edition 2024; mixed editions are supported). `tokio`, `ratatui`, `crossterm`, and `portable-pty` are firsts in this workspace — they are confined to these two crates; `ghook`'s tiny-binary/no-async policy is unaffected.
+- **Schema changes land in the gcore baseline, not numbered SQL files.** `src/gobby/storage/migrations/` is empty and retired: schema authority is Rust `gcore` (`crates/gcore/src/schema/assets.rs`, `BASELINE_VERSION = 375`, applied via `gdaemon schema apply`), pre-0.5.0 changes fold into `crates/gcore/assets/schema/baseline.sql`, and numbered `EmbeddedMigration`s resume only after the release boundary. A schema change here therefore edits `baseline.sql`, refreshes `BASELINE_CHECKSUM` in `assets.rs`, and updates `crates/gcore/assets/schema/catalog.manifest.json` plus the Python identity mirror `src/gobby/storage/schema_expected_identity.json` — the same shape as commit `4a5b8f9e3`. 2.1 follows this mechanism.
+- **Rust conventions.** New crates join the workspace per `crates/CLAUDE.md`: scope all cargo commands with `-p`, never relax lints, register in `rust-ci.yml`. The workspace `members` list is `["crates/gcode", "crates/gcore", "crates/gdaemon", "crates/ghook", "crates/gwiki"]` today; 1.2 and 3.3 append the two new crates. `gobby-terminal`/`gobby-client` keep herdr's edition 2021 to minimize import churn (herdr at v0.8.0 is edition 2021 with no MSRV pin) and pin `rust-version = "1.88"`, the workspace floor shared by all five existing crates (edition 2024; mixed editions are supported). `tokio`, `ratatui`, `crossterm`, and `portable-pty` are first *direct* dependencies in this workspace — tokio already appears transitively in `Cargo.lock` via gcore's `postgres` feature — and they are confined to these two crates; `ghook`'s tiny-binary/no-async policy is unaffected.
 - **Testing.** Focused runs only: `GOBBY_TEST_PROTECT=1 uv run pytest <paths>` for Python, `cargo nextest run -p <package>` for Rust. PTY-spawning Rust tests run in a serialized nextest group. Never the full pytest suite.
 
 ## P1: Import and Carve the Herdr Terminal Core
@@ -42,14 +45,23 @@ The shipped web terminal (`.gobby/plans/activity-panel-live-terminal.md`) docume
 
 `kind: deliverable`
 
-Targets: `crates/gterminal/vendor/libghostty-vt/`, `crates/gterminal/vendor/libghostty-vt.vendor.json`, `crates/gterminal/vendor/libghostty-vt.patches.md`, `crates/gterminal/vendor/patches/libghostty-vt/0001-default-grapheme-cluster-mode.patch`, `crates/gterminal/vendor/portable-pty/`, `crates/gterminal/vendor/portable-pty.patches.md`, `crates/gterminal/build.rs`, `Cargo.toml` (workspace `[patch.crates-io]`), `scripts/build_vendored_libghostty_vt.sh`
+Targets:
+- `crates/gterminal/vendor/libghostty-vt.vendor.json`
+- `crates/gterminal/vendor/libghostty-vt.vendor.json`
+- `crates/gterminal/vendor/libghostty-vt.patches.md`
+- `crates/gterminal/vendor/patches/libghostty-vt/0001-default-grapheme-cluster-mode.patch`
+- `crates/gterminal/vendor/portable-pty.patches.md`
+- `crates/gterminal/vendor/portable-pty.patches.md`
+- `crates/gterminal/build.rs`
+- `Cargo.toml` (workspace `[patch.crates-io]`)
+- `scripts/build_vendored_libghostty_vt.sh`
 
-Import herdr's vendor layer verbatim from the pin:
+Import herdr's vendor layer verbatim from the fork point (v0.8.0):
 
 - `vendor/libghostty-vt/` — Ghostty's full source tree at commit `c5a21edf` (herdr's `vendor.json` records `source_commit` and the dist archive; keep that file format unchanged).
 - `vendor/patches/libghostty-vt/0001-default-grapheme-cluster-mode.patch` — herdr's single 22-line patch making DEC mode 2027 (grapheme clustering) the default and reset-survivor, applied to the vendored tree, tracked in `libghostty-vt.patches.md` with its upstream-removal criteria.
 - `vendor/portable-pty/` — upstream 0.9.0 plus herdr's two Windows-only patches (hash-verified ConPTY loading; raw command tail), tracked in `portable-pty.patches.md`. Unix code is unmodified upstream. Wire the workspace `[patch.crates-io]` redirect for `portable-pty = { path = "crates/gterminal/vendor/portable-pty" }`.
-- `crates/gterminal/build.rs` — herdr's build script adapted for the new path: maps Rust target triples to Zig targets (8 supported triples), runs `zig build -Demit-lib-vt -Doptimize=ReleaseFast -Dsimd=true -Dtarget=…` in the vendored tree, links the static lib. Env knobs keep their `LIBGHOSTTY_VT_*` and `ZIG` names; `HERDR_BUILD_*` becomes `GTERM_BUILD_*`.
+- `crates/gterminal/build.rs` — herdr's build script adapted for the new path: maps Rust target triples to Zig targets (8 supported triples), runs `zig build -Demit-lib-vt -Doptimize=ReleaseFast -Dsimd=true -Dtarget=…` in the vendored tree, links the static lib. The entire Zig invocation runs only when the `vt-engine` feature is enabled (C1); with the feature off the build script is a no-op, which is what keeps `gobby-client` builds Zig-free. Env knobs keep their `LIBGHOSTTY_VT_*` and `ZIG` names; `HERDR_BUILD_*` becomes `GTERM_BUILD_*`.
 - `scripts/build_vendored_libghostty_vt.sh` — herdr's helper script, path-adapted.
 
 An unsupported target triple remains a hard, descriptive build error (matching herdr's `zig_target()` panic), and a missing `zig` binary fails the build with a message naming the required Zig version.
@@ -59,15 +71,37 @@ An unsupported target triple remains a hard, descriptive build error (matching h
 - 1.1.1 - The vendored VT tree at `c5a21edf` with the grapheme-cluster patch applied builds via `zig build -Demit-lib-vt` on macOS and Linux, driven by the crate build script. file: `crates/gterminal/build.rs`.
 - 1.1.2 - Patch provenance files record base commit, patch list, rationale, and removal criteria for both vendored trees. file: `crates/gterminal/vendor/libghostty-vt.patches.md`.
 - 1.1.3 - The workspace `[patch.crates-io]` entry serves the patched portable-pty to the workspace. file: `Cargo.toml`.
-- 1.1.4 - Missing Zig and unsupported targets produce descriptive build failures naming the requirement. test: `crates/gterminal/tests/build_env.rs::missing_zig_reports_requirement`.
+- 1.1.4 - Missing Zig and unsupported targets produce descriptive build failures naming the requirement when `vt-engine` is enabled. test: `crates/gterminal/tests/build_env.rs::missing_zig_reports_requirement`.
+- 1.1.5 - With `vt-engine` disabled (the default), the build script invokes no Zig and `cargo build -p gobby-terminal` succeeds on a machine without `zig` on PATH. file: `crates/gterminal/build.rs`.
 
 ### 1.2 Import the terminal keep-set as crates/gterminal [category: code] (depends: 1.1)
 
 `kind: deliverable`
 
-Targets: `crates/gterminal/Cargo.toml`, `crates/gterminal/src/ghostty/`, `crates/gterminal/src/pane/`, `crates/gterminal/src/pty/`, `crates/gterminal/src/input/`, `crates/gterminal/src/raw_input.rs`, `crates/gterminal/src/protocol/wire.rs`, `crates/gterminal/src/protocol/render_ansi.rs`, `crates/gterminal/src/ipc.rs`, `crates/gterminal/src/platform/`, `crates/gterminal/src/layout.rs`, `crates/gterminal/src/selection.rs`, `crates/gterminal/src/terminal_theme.rs`, `crates/gterminal/src/terminal_modes.rs`, `crates/gterminal/src/kitty_graphics.rs`, `crates/gterminal/src/render_prof.rs`, `crates/gterminal/src/runtime/`, `Cargo.toml` (workspace `members`)
+Targets:
+- `crates/gterminal/Cargo.toml`
+- `crates/gterminal/UPSTREAM.md`
+- `crates/gterminal/src/ghostty/bindings.rs`
+- `crates/gterminal/src/pane/terminal.rs`
+- `crates/gterminal/src/pty/actor/unix.rs`
+- `crates/gterminal/src/input/mod.rs`
+- `crates/gterminal/src/raw_input.rs`
+- `crates/gterminal/src/protocol/wire.rs`
+- `crates/gterminal/src/protocol/render_ansi.rs`
+- `crates/gterminal/src/ipc.rs`
+- `crates/gterminal/src/platform/mod.rs`
+- `crates/gterminal/src/layout.rs`
+- `crates/gterminal/src/selection.rs`
+- `crates/gterminal/src/terminal_theme.rs`
+- `crates/gterminal/src/terminal_modes.rs`
+- `crates/gterminal/src/kitty_graphics.rs`
+- `crates/gterminal/src/render_prof.rs`
+- `crates/gterminal/src/runtime/runtime.rs`
+- `Cargo.toml` (workspace `members`)
 
-Create `crates/gterminal` (package `gobby-terminal`, lib crate; the `gterm` binary arrives in 3.1) and import herdr's terminal keep-set (~41k LOC) from the pin, rebranded (`herdr` → `gterm` in module docs, env vars, socket names; wire protocol version constant restarts at `1` for the Gobby lineage):
+Create `crates/gterminal` (package `gobby-terminal`, lib crate; the `gterm` binary arrives in 3.1) and import herdr's terminal keep-set (~41k LOC) from the fork point, rebranded (`herdr` → `gterm` in module docs, env vars, socket names; wire protocol version constant restarts at `1` for the Gobby lineage). The `src/ghostty/` FFI and `src/pane/` emulation modules are gated behind the `vt-engine` feature (C1); wire protocol, input encoding, layout, selection, and theme modules compile feature-free.
+
+**Cherry-picks at import (fork-once, C1):** apply three named post-v0.8.0 upstream fixes as patches to the imported keep-set — `e9222d18` (restore keyboard reporting on detach), `d277d2f8` (preserve alt-prefixed control keys), `36074530` (compact large terminal redraws) — then review every remaining `v0.8.0..HEAD` commit touching keep-set paths in the reference clone and record an accept/reject decision per commit in `UPSTREAM.md` (1.5 owns the log format). Import from the fork point:
 
 - `src/ghostty/` — checked-in bindgen FFI (`bindings.rs`) + safe wrapper (`Terminal`, `RenderState`, `Dirty`, `KeyEncoder`, `MouseEncoder`, scrollback/viewport APIs).
 - `src/pane/` — `terminal.rs` (emulation adapter: `GhosttyPaneTerminal`, dirty-patch collection, cell conversion), `osc.rs`, `cursor.rs`, `input.rs`, `kitty_keyboard.rs`, `xtgettcap.rs`. **`agent_detection.rs` is not imported.**
@@ -79,7 +113,7 @@ Create `crates/gterminal` (package `gobby-terminal`, lib crate; the `gterm` bina
 - `src/layout.rs` — BSP split tree (`Node`, `TileLayout`, `PaneId`, `NavDirection`) for gclient's workspace.
 - `src/runtime/` — the ~725 lines of genuine terminal plumbing from herdr's `src/terminal/` (`runtime.rs`, `id.rs`, `runtime_registry.rs`, `title.rs`), renamed to avoid the misleading herdr layout. **herdr's `src/terminal/state.rs` and `metadata.rs` (6.6k lines of agent-state arbitration) are not imported.**
 
-Also not imported: `src/app/`, `src/ui/`, `src/api/`, `src/cli/`, `src/detect/`, `src/integration/`, `src/persist/`, `src/workspace/`, `src/remote/`, `src/server/` (the host in 3.1 is written fresh against the keep-set), `src/client/` (gclient's input capture reuses its ideas but the workspace UI is new), plugins/worktrees/updater/sound/session modules.
+Also not imported here: `src/app/`, `src/api/`, `src/cli/`, `src/detect/`, `src/integration/`, `src/persist/`, `src/workspace/`, `src/remote/`, `src/server/` (the host in 3.1 is written fresh against the keep-set), `src/client/` (gclient's input capture reuses its ideas), plugins (deferred, D1)/worktrees/updater/sound/session modules. Herdr's `src/ui/` chrome is imported by 3.3 into `crates/gclient`, not into this crate — it is client code, not terminal core.
 
 The root workspace `members` list is explicit (`["crates/gcode", "crates/gcore", "crates/ghook", "crates/gwiki"]`), not a glob, so a crate that is not added to it is invisible to `cargo -p`, workspace `nextest`, and release packaging. `crates/gterminal` is added to that list **in this deliverable**, together with the `Cargo.toml` that declares the package — the same edit that makes the crate exist makes it buildable. 1.1 touches the same file for the `[patch.crates-io]` redirect only; it cannot add a member for a crate whose manifest does not exist yet, which is why membership lands here rather than there.
 
@@ -91,16 +125,23 @@ In-module unit tests ride along with the imported code: the pane/terminal corpus
 - 1.2.2 - The imported pane/terminal, protocol, and input test corpora pass under nextest. test: `crates/gterminal/src/pane/terminal.rs::grapheme_cluster_mode_is_default_and_survives_full_reset`.
 - 1.2.3 - No module under `crates/gterminal/src/` references agent detection, plugins, integrations, updater, or herdr persistence concepts (enforced by a source-scan test). test: `crates/gterminal/tests/carve_guard.rs::no_agent_concepts_in_terminal_core`.
 - 1.2.4 - The wire protocol version constant is `1` and version negotiation rejects mismatched clients with a typed error. symbol: `protocol::wire::PROTOCOL_VERSION`. file: `crates/gterminal/src/protocol/wire.rs`.
+- 1.2.5 - The three named cherry-picks are applied and every remaining `v0.8.0..HEAD` keep-set commit has a recorded accept/reject entry; `UPSTREAM.md` carries the log. file: `crates/gterminal/UPSTREAM.md`.
+- 1.2.6 - `cargo build -p gobby-terminal` with default features (no `vt-engine`) and its protocol/input/layout test subset pass with no `zig` on PATH; the pane/ghostty corpus runs under `--features vt-engine`. file: `crates/gterminal/Cargo.toml`.
 
 ### 1.3 De-agent-ify PaneRuntime and the terminal runtime API [category: code] (depends: 1.2)
 
 `kind: deliverable`
 
-Targets: `crates/gterminal/src/pane.rs`, `crates/gterminal/src/runtime/runtime.rs`, `crates/gterminal/src/pane/terminal.rs`, `crates/gterminal/src/platform/`, `crates/gterminal/tests/frame_producer.rs`
+Targets:
+- `crates/gterminal/src/pane.rs`
+- `crates/gterminal/src/runtime/runtime.rs`
+- `crates/gterminal/src/pane/terminal.rs`
+- `crates/gterminal/src/platform/mod.rs`
+- `crates/gterminal/tests/frame_producer.rs`
 
 Herdr welds agent detection into its pane machinery; this deliverable removes it structurally rather than by dead-code deletion:
 
-- `PaneRuntime` (herdr `src/pane.rs`): remove the embedded ~300-line detection task (`spawn_basic_detection_task`, herdr lines 603-905) and the five detection fields (`detection_content_seq`, `full_lifecycle_authority_active`, `detect_reset_notify`, `pending_release`, `detect_handle`). Remove the `crate::detect` and `crate::integration` references (13 + 6 sites) and the two `foreground_job(shell_pid)` touchpoints in `crates/gterminal/src/pane/terminal.rs`.
+- `PaneRuntime` (herdr `pane.rs`): remove the embedded ~300-line detection task (`spawn_basic_detection_task`, herdr `pane.rs:623` ff. at the fork point) and the five detection fields (`detection_content_seq`, `full_lifecycle_authority_active`, `detect_reset_notify`, `pending_release`, `detect_handle`). Remove the `crate::detect` and `crate::integration` references (13 + 6 sites) and the two `foreground_job(shell_pid)` touchpoints in `crates/gterminal/src/pane/terminal.rs`.
 - The runtime API (herdr `src/terminal/runtime.rs`): drop agent-flavored methods (`begin_graceful_release(Agent)`, `reset_agent_detection`, `agent_osc_title`, `agent_osc_progress`, `detection_text`, `set_full_lifecycle_authority_active`). Generic OSC title/progress reporting stays as terminal metadata under neutral names (`osc_title()`, `osc_progress()`).
 - Rendering inversion: replace `render(&mut ratatui::Frame, area, show_cursor)` as the primary output API with a frame-producer surface — `frame_data(cols, rows) -> FrameData` and `dirty_patch() -> TerminalDirtyPatchOutcome` — so the host (3.1) streams frames without holding a Ratatui `Frame`. A `ratatui` helper widget remains for gclient's in-process use.
 - `src/platform/`: keep process-kill/job-object/signal operations; drop foreground-process probes that existed only for detection (herdr's macOS/Linux proc-table scanning), shrinking the platform layer accordingly.
@@ -117,37 +158,47 @@ Detection of prompts/idle/stalls remains entirely a daemon concern (the shipped 
 
 `kind: deliverable`
 
-Targets: `.github/workflows/rust-ci.yml`, `.config/nextest.toml`, `crates/CLAUDE.md`, `src/gobby/config/code_index.py`, `crates/gcode/src/index/indexer/util.rs`, `.gitattributes`
+Targets:
+- `.github/workflows/rust-ci.yml`
+- `.config/nextest.toml`
+- `crates/CLAUDE.md`
+- `src/gobby/config/code_index.py::*` — scope-reason: code-index exclusion and CI registration edits
+- `crates/gcode/src/index/indexer/util.rs::*` — scope-reason: code-index exclusion and CI registration edits
+- `.gitattributes`
 
-- `rust-ci.yml`: add `gobby-terminal` (and later `gobby-client`, in 3.6) to the per-package clippy/nextest matrix; install Zig 0.15 in jobs that build `gobby-terminal` (setup step pinned by version); keep the Windows cross-lint (`cargo clippy --target x86_64-pc-windows-msvc` with `LIBGHOSTTY_VT_SIMD=false`) as a compile-only gate.
-- `.config/nextest.toml`: new test-group `gterm-pty` (max 1 thread) for PTY-spawning tests, with per-package overrides mirroring the existing `ghook-process` group.
+- `rust-ci.yml` is a flat sequence of hand-written per-package steps in a single `check` job (no `strategy.matrix`): add `gobby-terminal` clippy/nextest steps mirroring the existing per-package pattern (`gobby-client` follows in 3.6). Zig 0.15 setup (pinned by version) is added only ahead of steps that build with `--features vt-engine`; the default-features step runs Zig-free (C1). Keep the Windows cross-lint (`cargo clippy --target x86_64-pc-windows-msvc --features vt-engine` with `LIBGHOSTTY_VT_SIMD=false`) as a compile-only gate. Adjacent fix landed with the same edit: `gobby-daemon` currently has no dedicated clippy/nextest step and is missing from both `paths:` trigger lists — add its step and the gdaemon release workflow to the triggers rather than leaving the gap beside the new entries.
+- `.config/nextest.toml`: new test-group `gterm-pty` (`max-threads = 1`) for PTY-spawning tests, with a per-package override — the same shape as the existing `serial-db` group (the 2-thread `ghook-process` group is the wrong template for serialized PTY tests).
 - `crates/CLAUDE.md`: extend the crate → binary map (`gobby-terminal` → `gterm`, `gobby-client` → `gclient`) and the rebuild-and-reinstall rule.
-- Code-index exclusions: the Python `CodeIndexConfig` default excludes **already** carry `vendor` (`src/gobby/config/code_index.py:116`), so the Python side is a verification, not a change — the deliverable asserts it and must not regress it. The code change is the Rust half: add `vendor` to gcode's `DEFAULT_EXCLUDES` (`crates/gcode/src/index/indexer/util.rs:9`), which lacks it today, so the 1,259-file vendored tree never enters the index from either implementation. `.gitattributes` is currently empty; this deliverable writes the first entry, marking `crates/gterminal/vendor/**` as `linguist-vendored`.
+- Code-index exclusions: the Python `CodeIndexConfig.exclude_patterns` field was deleted in #19400 (zero consumers; `tests/config/test_removed_config_fields.py:52` pins its rejection), so there is no Python half to verify. The code change is gcode's: add `vendor` to `DEFAULT_EXCLUDES` (`crates/gcode/src/index/indexer/util.rs:9`), which lacks it today, and fix that constant's stale doc comment claiming parity with the removed Python defaults. gwiki's own exclude list already carries `vendor`, so this edit ends the gcode/gwiki disagreement and the 1,259-file vendored tree never enters the index. `.gitattributes` currently holds three unrelated entries; this deliverable **appends** the `crates/gterminal/vendor/** linguist-vendored` line.
 
 **Acceptance:**
 
-- 1.4.1 - CI builds and tests `gobby-terminal` on the matrix with Zig installed, and the Windows cross-lint passes. file: `.github/workflows/rust-ci.yml`.
-- 1.4.2 - PTY tests run in the serialized `gterm-pty` nextest group. file: `.config/nextest.toml`.
-- 1.4.3 - The vendored tree is excluded from both index implementations — the pre-existing Python exclusion still present and asserted, the new Rust `DEFAULT_EXCLUDES` entry added — and `.gitattributes` marks `crates/gterminal/vendor/**` linguist-vendored. file: `.gitattributes`.
+- 1.4.1 - CI builds and tests `gobby-terminal` via flat per-package steps, with Zig set up only for `vt-engine` steps, a Zig-free default-features step, a dedicated `gobby-daemon` step, corrected `paths:` triggers, and a passing Windows cross-lint. file: `.github/workflows/rust-ci.yml`.
+- 1.4.2 - PTY tests run in the serialized `gterm-pty` nextest group (`max-threads = 1`, `serial-db` shape). file: `.config/nextest.toml`.
+- 1.4.3 - gcode's `DEFAULT_EXCLUDES` carries `vendor` with its doc comment corrected, gwiki's existing exclusion is unchanged, and `.gitattributes` gains the appended `crates/gterminal/vendor/**` linguist-vendored entry beside its three existing lines. file: `.gitattributes`.
 - 1.4.4 - `crates/CLAUDE.md` documents the two new crate/binary mappings. file: `crates/CLAUDE.md`.
 
 ### 1.5 Licensing and provenance artifacts [category: docs] (depends: 1.2)
 
 `kind: deliverable`
 
-Targets: `crates/gterminal/NOTICE.md`, `crates/gterminal/UPSTREAM.md`, `crates/gterminal/LICENSE`, `crates/gterminal/Cargo.toml`
+Targets:
+- `crates/gterminal/NOTICE.md`
+- `crates/gterminal/UPSTREAM.md`
+- `crates/gterminal/LICENSE`
+- `crates/gterminal/Cargo.toml`
 
 Follow the repo's vendoring precedent (`src/gobby/install/shared/skills/impeccable/NOTICE.md` — in-directory NOTICE with `## Upstream` and `## Modifications from upstream` sections):
 
 - `crates/gterminal/LICENSE`: Apache-2.0 text. The herdr-derived crates keep Apache-2.0 identity inside the FSL-1.1-ALv2 repo; each derived crate's `Cargo.toml` declares `license = "Apache-2.0"`.
-- `crates/gterminal/NOTICE.md`: attribution for herdr (Apache-2.0, upstream repo/commit pin, note that upstream ships no NOTICE and the relicense provenance caveat), libghostty-vt (MIT, © 2024 Mitchell Hashimoto and Ghostty contributors), portable-pty (MIT, © 2018 Wez Furlong), plus the nested-license inventory of the vendored Ghostty `pkg/` tree (afl++, sentry, breakpad, etc. — present in source, not compiled into lib-vt builds).
-- `crates/gterminal/UPSTREAM.md`: the copied-path manifest — every imported herdr module mapped to its upstream path at the pin, the not-imported list, the rebrand rules (env vars, socket names, protocol version), and the re-pin procedure (bump pin, re-diff keep-set, reapply vendor patches).
+- `crates/gterminal/NOTICE.md`: attribution for herdr (Apache-2.0, upstream `herdrdev/herdr` at the `v0.8.0` release tag whose changelog records the relicense; note that upstream ships no NOTICE file and the contributor-consent caveat), libghostty-vt (MIT, © 2024 Mitchell Hashimoto and Ghostty contributors), portable-pty (MIT, © 2018 Wez Furlong), plus the nested-license inventory of the vendored Ghostty `pkg/` tree (afl++, sentry, breakpad, etc. — present in source, not compiled into lib-vt builds).
+- `crates/gterminal/UPSTREAM.md`: the fork manifest — every imported herdr module mapped to its upstream path at the fork point, the not-imported list, the rebrand rules (env vars, socket names, protocol version), and the **cherry-pick log**: the three fixes applied at import plus one accept/reject line per remaining `v0.8.0..HEAD` keep-set commit (1.2). This is a fork record, not a tracking contract — there is no re-pin procedure (C1).
 `gclient`'s own NOTICE and manifest license declaration belong to 3.3, the deliverable that creates `crates/gclient/Cargo.toml`; this deliverable owns only artifacts that exist at its execution point, and pinning the client's licensing here would require depending on a later phase. For the same reason this deliverable depends on 1.2 rather than 1.1: it edits `crates/gterminal/Cargo.toml` to declare the license, and 1.2 is the deliverable that creates that manifest. 1.1 alone would let the license work run against a directory with no crate in it.
 
 **Acceptance:**
 
 - 1.5.1 - A NOTICE file exists for `gobby-terminal` with Upstream and Modifications sections and the vendored nested-license inventory. file: `crates/gterminal/NOTICE.md`.
-- 1.5.2 - `UPSTREAM.md` maps every imported module to its herdr path at pin `4710416` and records the re-pin procedure. file: `crates/gterminal/UPSTREAM.md`.
+- 1.5.2 - `UPSTREAM.md` maps every imported module to its herdr path at the `v0.8.0` fork point and carries the cherry-pick log with no re-pin procedure. file: `crates/gterminal/UPSTREAM.md`.
 - 1.5.3 - `gobby-terminal` declares `license = "Apache-2.0"` in its manifest. file: `crates/gterminal/Cargo.toml`.
 
 ## P2: Durable Terminal Resource and TerminalRuntime Contract
@@ -162,9 +213,40 @@ Follow the repo's vendoring precedent (`src/gobby/install/shared/skills/impeccab
 
 `kind: deliverable`
 
-Targets: `src/gobby/storage/migrations/343_terminals.sql`, `src/gobby/storage/terminals.py`, `src/gobby/storage/postgres_baseline_schema.sql`, `src/gobby/storage/agents/_models.py`, `src/gobby/storage/agents/_runtime.py`, `src/gobby/storage/agents/_cleanup.py`, `src/gobby/storage/agents/_lifecycle.py`, `src/gobby/storage/agents/_queries.py`, `src/gobby/storage/agents/_selectors.py`, `src/gobby/storage/agents/_termination.py`, `src/gobby/runner_init/orchestration.py`, `tests/agents/terminal_fixtures.py`, `tests/agents/test_lifecycle_monitor.py`, `tests/agents/test_lifecycle_monitor_watchdog_idle_recovery.py`, `tests/agents/test_lifecycle_monitor_extra.py`, `tests/agents/test_lifecycle_monitor_watchdog_diagnostics.py`, `tests/agents/tmux/test_pane_monitor.py`, `tests/agents/test_memory_watchdog.py`, `tests/agents/test_spawn_executor.py`, `tests/agents/test_resume_executor.py`, `tests/agents/test_capture.py`, `tests/agents/test_kill.py`, `tests/agents/test_agent_cleanup.py`, `tests/agents/test_attention_state.py`, `tests/agents/test_attention_metadata.py`, `tests/mcp_proxy/tools/spawn_agent/test_execution.py`, `tests/mcp_proxy/tools/spawn_agent/test_error_handling.py`, `tests/mcp_proxy/tools/test_agents.py`, `tests/hooks/test_session_coordinator.py`
+Targets:
+- `crates/gcore/assets/schema/baseline.sql`
+- `crates/gcore/src/schema/assets.rs::*` — scope-reason: tmux-column removal, baseline checksum/manifest re-arm, and fixture-helper conversion per the body inventory
+- `crates/gcore/assets/schema/catalog.manifest.json::*` — scope-reason: tmux-column removal, baseline checksum/manifest re-arm, and fixture-helper conversion per the body inventory
+- `src/gobby/storage/schema_expected_identity.json::*` — scope-reason: tmux-column removal, baseline checksum/manifest re-arm, and fixture-helper conversion per the body inventory
+- `src/gobby/storage/terminals.py`
+- `src/gobby/storage/agents/_models.py::*` — scope-reason: tmux-column removal, baseline checksum/manifest re-arm, and fixture-helper conversion per the body inventory
+- `src/gobby/storage/agents/_runtime.py::*` — scope-reason: tmux-column removal, baseline checksum/manifest re-arm, and fixture-helper conversion per the body inventory
+- `src/gobby/storage/agents/_cleanup.py::*` — scope-reason: tmux-column removal, baseline checksum/manifest re-arm, and fixture-helper conversion per the body inventory
+- `src/gobby/storage/agents/_lifecycle.py::*` — scope-reason: tmux-column removal, baseline checksum/manifest re-arm, and fixture-helper conversion per the body inventory
+- `src/gobby/storage/agents/_queries.py::*` — scope-reason: tmux-column removal, baseline checksum/manifest re-arm, and fixture-helper conversion per the body inventory
+- `src/gobby/storage/agents/_selectors.py::*` — scope-reason: tmux-column removal, baseline checksum/manifest re-arm, and fixture-helper conversion per the body inventory
+- `src/gobby/storage/agents/_termination.py::*` — scope-reason: tmux-column removal, baseline checksum/manifest re-arm, and fixture-helper conversion per the body inventory
+- `src/gobby/runner_init/orchestration.py::*` — scope-reason: tmux-column removal, baseline checksum/manifest re-arm, and fixture-helper conversion per the body inventory
+- `tests/agents/terminal_fixtures.py`
+- `tests/agents/test_lifecycle_monitor.py::*` — scope-reason: tmux-column removal, baseline checksum/manifest re-arm, and fixture-helper conversion per the body inventory
+- `tests/agents/test_lifecycle_monitor_watchdog_idle_recovery.py::*` — scope-reason: tmux-column removal, baseline checksum/manifest re-arm, and fixture-helper conversion per the body inventory
+- `tests/agents/test_lifecycle_monitor_extra.py::*` — scope-reason: tmux-column removal, baseline checksum/manifest re-arm, and fixture-helper conversion per the body inventory
+- `tests/agents/test_lifecycle_monitor_watchdog_diagnostics.py::*` — scope-reason: tmux-column removal, baseline checksum/manifest re-arm, and fixture-helper conversion per the body inventory
+- `tests/agents/tmux/test_pane_monitor.py::*` — scope-reason: tmux-column removal, baseline checksum/manifest re-arm, and fixture-helper conversion per the body inventory
+- `tests/agents/test_memory_watchdog.py::*` — scope-reason: tmux-column removal, baseline checksum/manifest re-arm, and fixture-helper conversion per the body inventory
+- `tests/agents/test_spawn_executor.py::*` — scope-reason: tmux-column removal, baseline checksum/manifest re-arm, and fixture-helper conversion per the body inventory
+- `tests/agents/test_resume_executor.py::*` — scope-reason: tmux-column removal, baseline checksum/manifest re-arm, and fixture-helper conversion per the body inventory
+- `tests/agents/test_capture.py::*` — scope-reason: tmux-column removal, baseline checksum/manifest re-arm, and fixture-helper conversion per the body inventory
+- `tests/agents/test_kill.py::*` — scope-reason: tmux-column removal, baseline checksum/manifest re-arm, and fixture-helper conversion per the body inventory
+- `tests/agents/test_agent_cleanup.py::*` — scope-reason: tmux-column removal, baseline checksum/manifest re-arm, and fixture-helper conversion per the body inventory
+- `tests/agents/test_attention_state.py::*` — scope-reason: tmux-column removal, baseline checksum/manifest re-arm, and fixture-helper conversion per the body inventory
+- `tests/agents/test_attention_metadata.py::*` — scope-reason: tmux-column removal, baseline checksum/manifest re-arm, and fixture-helper conversion per the body inventory
+- `tests/mcp_proxy/tools/spawn_agent/test_execution.py::*` — scope-reason: tmux-column removal, baseline checksum/manifest re-arm, and fixture-helper conversion per the body inventory
+- `tests/mcp_proxy/tools/spawn_agent/test_error_handling.py::*` — scope-reason: tmux-column removal, baseline checksum/manifest re-arm, and fixture-helper conversion per the body inventory
+- `tests/mcp_proxy/tools/test_agents.py::*` — scope-reason: tmux-column removal, baseline checksum/manifest re-arm, and fixture-helper conversion per the body inventory
+- `tests/hooks/test_session_coordinator.py::*` — scope-reason: tmux-column removal, baseline checksum/manifest re-arm, and fixture-helper conversion per the body inventory
 
-New table (number 343 pending the implementation-time check; see C1):
+New table, landed as a gcore baseline-schema edit per C1 — the DDL below goes into `crates/gcore/assets/schema/baseline.sql`, `BASELINE_CHECKSUM` in `crates/gcore/src/schema/assets.rs` is refreshed, and `catalog.manifest.json` plus the Python identity mirror `src/gobby/storage/schema_expected_identity.json` are updated in the same change:
 
 ```sql
 CREATE TABLE terminals (
@@ -248,7 +330,7 @@ Two concurrent discoverers of the same pane (SessionStart and the liveness monit
 
 **Pre-effect identity: `spawn_key` (gobby-owned spawns).** A row written before the backend effect cannot carry the locator of a resource that does not exist yet — the native `host_terminal_id` and the tmux window/pane ids are outputs of the spawn — so `locator` and `locator_key` are null while `pending` and are filled atomically by the `pending → live` CAS, guarded by the state-sensitive CHECK above. Nullability alone would still leave a hole: a tmux session created microseconds before the spawn call times out is a live resource that no row can name, so the stale-pending reaper could never find it. `spawn_key` closes that hole by being allocated by the caller *before* the effect and mandated as the backend's creation name. For tmux it is the session name the runtime must pass to `new-session`, deterministically derived as `gobby-<terminal_id>`; for native it is the `terminal_id` itself, which the host stores as opaque metadata from control `spawn` and echoes in `list` (3.1). The reaper therefore resolves any pending row to its possible effect by name on either backend — `has-session -t gobby-<terminal_id>` or a `list` scan — and kills what it finds. Runtimes may not choose their own names, and the UNIQUE index makes reuse of a `spawn_key` a database error rather than a silent collision.
 
-`agent_runs.tmux_session_name` is replaced by `agent_runs.terminal_id UUID REFERENCES terminals(id)` (baseline edit + migration; no alias — C1). `sessions.terminal_context` **stays** for its non-locator roles (PID-reuse-safe kill via `parent_pid`/`parent_create_time`, handoff identity, `term_program`/`tty`/`cwd`); its tmux-locator keys seed `external`-ownership terminal rows during discovery (2.5).
+`agent_runs.tmux_session_name` is replaced by `agent_runs.terminal_id UUID REFERENCES terminals(id)` (same baseline edit; no alias — C1). `sessions.terminal_context` **stays** for its non-locator roles (PID-reuse-safe kill via `parent_pid`/`parent_create_time`, handoff identity, `term_program`/`tty`/`cwd`); its tmux-locator keys seed `external`-ownership terminal rows during discovery (2.5).
 
 `src/gobby/storage/terminals.py`: `TerminalManager` with hub-transaction CRUD (psycopg `%s` placeholders), `create_pending(terminal_id, backend, ownership, spawn_key, rows, cols, ...)` called at spawn-begin with no locator, `promote_to_live(terminal_id, locator, locator_key, host_epoch)` which is the single CAS that fills the physical identity and flips `pending → live` in one statement, an idempotent `upsert_external(locator_key, ...)` for discovery, and reap queries (`list_stale_pending`, `list_orphaned_by_epoch`, `list_live_by_epoch`). Creating the row **before** the backend spawn closes today's orphan class (`docs/reviews/agents.md:162`: failed spawns leave tmux sessions no monitor reaps because no run row carries the name).
 
@@ -272,7 +354,7 @@ Rather than several hundred bespoke rewrites — which would also let two later 
 
 **Acceptance:**
 
-- 2.1.1 - Migration creates `terminals` with backend/ownership/state checks and indexes; an isolated migration/startup test applies it cleanly. file: `src/gobby/storage/migrations/343_terminals.sql`.
+- 2.1.1 - The gcore baseline creates `terminals` with backend/ownership/state checks and indexes, `BASELINE_CHECKSUM` and both manifests are updated in the same change, and an isolated `gdaemon schema apply`/startup test applies it cleanly. file: `crates/gcore/assets/schema/baseline.sql`.
 - 2.1.2 - `agent_runs` carries `terminal_id`; `tmux_session_name` is gone from schema, models, and runtime persistence. file: `src/gobby/storage/agents/_models.py`.
 - 2.1.3 - `TerminalManager` exposes CAS transitions; stale transitions (wrong expected state) affect zero rows and report failure. file: `src/gobby/storage/terminals.py`.
 - 2.1.4 - A terminal row created at spawn-begin whose spawn fails is discoverable via `list_stale_pending` for reaping, and its `spawn_key` resolves the possible backend effect by name on both backends. test: `tests/storage/test_terminals.py::test_failed_spawn_leaves_reapable_pending_row`.
@@ -291,7 +373,20 @@ Rather than several hundred bespoke rewrites — which would also let two later 
 
 `kind: deliverable`
 
-Targets: `src/gobby/terminals/__init__.py`, `src/gobby/terminals/runtime.py`, `src/gobby/terminals/dimensions.py`, `src/gobby/terminals/tmux_runtime.py`, `src/gobby/config/terminals.py`, `src/gobby/config/app.py`, `src/gobby/agents/spawners/base.py`, `src/gobby/agents/spawn_models.py`, `src/gobby/runner_init/orchestration.py`, `src/gobby/runner.py`, `src/gobby/app_context.py`, `src/gobby/runner_init/servers.py`, `src/gobby/servers/websocket/server.py`
+Targets:
+- `src/gobby/terminals/__init__.py`
+- `src/gobby/terminals/runtime.py`
+- `src/gobby/terminals/dimensions.py`
+- `src/gobby/terminals/tmux_runtime.py`
+- `src/gobby/config/terminals.py`
+- `src/gobby/config/app.py::*` — scope-reason: TerminalRuntime contract seam introduction per the body
+- `src/gobby/agents/spawners/base.py::*` — scope-reason: TerminalRuntime contract seam introduction per the body
+- `src/gobby/agents/spawn_models.py::*` — scope-reason: TerminalRuntime contract seam introduction per the body
+- `src/gobby/runner_init/orchestration.py::*` — scope-reason: TerminalRuntime contract seam introduction per the body
+- `src/gobby/runner.py::*` — scope-reason: TerminalRuntime contract seam introduction per the body
+- `src/gobby/app_context.py::*` — scope-reason: TerminalRuntime contract seam introduction per the body
+- `src/gobby/runner_init/servers.py::*` — scope-reason: TerminalRuntime contract seam introduction per the body
+- `src/gobby/servers/websocket/server.py::*` — scope-reason: TerminalRuntime contract seam introduction per the body
 
 `src/gobby/terminals/runtime.py` defines the contract, grown from the three existing seeds (`TerminalSpawnerBase` in `agents/spawners/base.py`, the `ManagedTmux` Protocol in `agents/capture.py:104`, and `_resolve_tmux_target` in `mcp_proxy/tools/sessions/_terminal_tmux.py:189`):
 
@@ -349,13 +444,26 @@ The set declared here is `TerminalManager` (2.1), the runtime registry, and the 
 
 `kind: deliverable`
 
-Targets: `src/gobby/agents/spawn_executor.py`, `src/gobby/agents/spawn.py`, `src/gobby/agents/spawn_executor_support.py`, `src/gobby/agents/resume_executor.py`, `src/gobby/mcp_proxy/tools/spawn_agent/_implementation.py`, `src/gobby/mcp_proxy/tools/spawn_agent/_runtime.py`, `src/gobby/mcp_proxy/tools/spawn_agent/_health.py`, `src/gobby/dispatch/spawn_actions.py`, `src/gobby/servers/routes/agent_spawn.py`, `src/gobby/agents/dry_run.py`, `src/gobby/agents/tmux/spawner.py`
+Targets:
+- `src/gobby/agents/spawn_executor.py::*` — scope-reason: spawn-path migration to TerminalRuntime and the SRT chokepoint hoist
+- `src/gobby/agents/spawn.py::*` — scope-reason: spawn-path migration to TerminalRuntime and the SRT chokepoint hoist
+- `src/gobby/agents/spawn_executor_support.py::*` — scope-reason: spawn-path migration to TerminalRuntime and the SRT chokepoint hoist
+- `src/gobby/agents/resume_executor.py::*` — scope-reason: spawn-path migration to TerminalRuntime and the SRT chokepoint hoist
+- `src/gobby/mcp_proxy/tools/spawn_agent/_implementation.py::*` — scope-reason: spawn-path migration to TerminalRuntime and the SRT chokepoint hoist
+- `src/gobby/mcp_proxy/tools/spawn_agent/_runtime.py::*` — scope-reason: spawn-path migration to TerminalRuntime and the SRT chokepoint hoist
+- `src/gobby/mcp_proxy/tools/spawn_agent/_health.py::*` — scope-reason: spawn-path migration to TerminalRuntime and the SRT chokepoint hoist
+- `src/gobby/dispatch/spawn_actions.py::*` — scope-reason: spawn-path migration to TerminalRuntime and the SRT chokepoint hoist
+- `src/gobby/servers/routes/agent_spawn.py::*` — scope-reason: spawn-path migration to TerminalRuntime and the SRT chokepoint hoist
+- `src/gobby/agents/dry_run.py::*` — scope-reason: spawn-path migration to TerminalRuntime and the SRT chokepoint hoist
+- `src/gobby/agents/tmux/spawner.py::*` — scope-reason: spawn-path migration to TerminalRuntime and the SRT chokepoint hoist
 
 Route every spawn entry (MCP `spawn_agent`, dispatch actions, HTTP spawn route, resume, dry-run) through the runtime registry instead of constructing `TmuxSpawner` directly: `execute_spawn` selects the runtime from the request's backend (default from config, 4.2 adds `native`), calls `create_pending` (2.1) before backend spawn, `runtime.spawn(...)`, then persists `terminal_id` via `update_runtime`. The five per-provider `_spawn_*_terminal` functions in `spawn_executor.py` keep their provider-specific command/env preparation but lose direct tmux calls; `_check_tmux_session_alive` becomes `runtime.is_live`; `_tmux_runtime_metadata` becomes terminal-handle persistence. `resume_executor.py` rebuilds the runtime from the stored terminal row instead of reconstructing `TmuxConfig` from resume metadata. Behavior is unchanged for the tmux backend (this is a pure seam refactor; the existing spawn integration tests pass).
 
 `execute_spawn` is the **sole** creator and transition owner of the pending row, per 2.1: it allocates the id, derives the `spawn_key`, writes the `pending` row with no locator, passes id and `spawn_key` inside `TerminalSpawnRequest`, and performs the single `promote_to_live` CAS from the locator the runtime returned. Every terminal outcome is spelled out so no path can duplicate or strand a row — backend spawn raising leaves the row `pending` for the stale-pending reaper (2.4) and CASes it to `exited` when the failure is definitive; a spawn timeout leaves it `pending` and reapable *by `spawn_key`*, which is the only way a session created just before the timeout can be found at all; cancellation between row creation and backend spawn CASes straight to `exited`; and a successful spawn whose CAS loses (row already moved) terminates the just-created backend terminal rather than leaving an unowned PTY.
 
 **The concrete backend must stop minting names, or `spawn_key` is decoration.** The caller-owned identity contract is only real if it reaches the process that actually creates the resource, and today it does not: `TmuxSpawner` derives its own session name from a timestamp and a random suffix (`src/gobby/agents/tmux/spawner.py:111-113`: `base = title or f"{prefix}-{int(time.time())}"`, `suffix = uuid.uuid4().hex[:8]`) and reports it back through `SpawnResult.tmux_session_name` (`:188`). Left in place, the reaper would resolve `gobby-<terminal_id>` while tmux held a name nobody recorded, which is precisely the orphan class this plan claims to close. So this deliverable edits the spawner: the name-generation block is deleted, `new-session` is invoked with the `spawn_key` carried in `TerminalSpawnRequest`, the sanitization that made arbitrary titles safe becomes a validation of the caller-supplied key (a key that would need rewriting is a caller bug, rejected typed, not silently mangled), and the tmux-specific result fields are replaced by the locator the runtime returns. `title` survives as display metadata written to the terminal row (2.1), decoupled from identity. No `TerminalRuntime` implementation may generate an identity after this deliverable, and the acceptance scans for it.
+
+**SRT wrapping hoists to one chokepoint at the runtime seam.** Today `SandboxLaunch.wrap()` is called from six sites — one per provider branch in `spawn_executor.py` (claude/qwen/grok/codex/droid) plus `resume_executor.py` — so "wrap once, after construction, before terminal creation" is per-branch discipline that every new provider and every new backend must re-remember. Since this deliverable already routes every spawn path through the runtime, the wrap moves with it: the shared step that hands a finished provider command to `runtime.spawn(...)` applies the SRT wrap exactly once, immediately before backend dispatch, and the provider branches keep only their command/env preparation. The `_preflight_srt` probe wrap in `srt_runtime.py` is a probe, not a spawn, and is unchanged. 4.2's native path then inherits the invariant structurally instead of reimplementing it.
 
 **A young pending row is in doubt, not dead.** Absence of a resource proves nothing while its spawn may still be running, so no reaper or reconciler may treat `pending` as `exited` on absence alone. Two conditions must both hold: the row is older than `spawn_in_doubt_seconds` (`TerminalConfig`, 2.2, defaulting to the existing spawn timeout plus a margin), *and* resolving its `spawn_key` against the backend finds nothing. A row younger than that deadline is left alone and revisited. Retry of a spawn reuses the same `terminal_id` and `spawn_key` rather than allocating new ones, so a retry cannot create a second physical terminal or a second row, and a reconciler that runs concurrently with a retry converges on the one row either way. This rule is what 3.1's reconnect reconciliation and 2.4's reaper both consume; neither redefines it.
 
@@ -368,12 +476,47 @@ Route every spawn entry (MCP `spawn_agent`, dispatch actions, HTTP spawn route, 
 - 2.3.5 - Exactly one terminal row exists per spawn attempt for every outcome — success, backend failure, timeout, cancellation, and lost CAS — with no orphaned backend terminal left behind in the lost-CAS case, and no `TerminalRuntime` implementation writes a row. test: `tests/agents/test_spawn_executor.py::test_one_terminal_row_per_attempt_all_outcomes`.
 - 2.3.6 - A tmux session created immediately before a spawn timeout is found and killed by `spawn_key` resolution; a pending row younger than `spawn_in_doubt_seconds` is left pending by both the reaper and the reconciler even when the backend reports nothing; and a retried spawn reuses the same `terminal_id` and `spawn_key`, producing one row and one physical terminal. test: `tests/agents/test_spawn_executor.py::test_in_doubt_pending_is_not_reaped_or_exited`.
 - 2.3.7 - `TmuxSpawner` creates the tmux session under exactly the `spawn_key` it was given, generates no timestamp or UUID of its own, rejects a malformed key typed instead of sanitizing it, and returns a locator rather than a session name; a source scan finds no identity generation in any `TerminalRuntime` implementation. test: `tests/agents/test_tmux.py::test_spawner_uses_caller_supplied_spawn_key`.
+- 2.3.8 - SRT wrapping happens at exactly one call site on the spawn path — the shared step ahead of `runtime.spawn` — with the five provider branches and resume free of `launch.wrap()` calls (source scan; the `_preflight_srt` probe is the only other wrap site), and a spawned provider command is wrapped exactly once with `allowPty` semantics unchanged. test: `tests/agents/test_spawn_executor.py::test_srt_wrap_single_chokepoint`.
 
 ### 2.4 Migrate monitors, cleanup, kill, and capture [category: refactor] (depends: 2.3)
 
 `kind: deliverable`
 
-Targets: `src/gobby/agents/agent_health.py`, `src/gobby/agents/lifecycle_monitor.py`, `src/gobby/agents/idle_check_handler.py`, `src/gobby/agents/terminal_prompt_monitor.py`, `src/gobby/agents/agent_cleanup.py`, `src/gobby/agents/kill.py`, `src/gobby/agents/capture.py`, `src/gobby/agents/memory_watchdog.py`, `src/gobby/agents/tmux/pane_monitor.py`, `src/gobby/mcp_proxy/tools/sessions/_terminal_tmux.py`, `tests/agents/test_capture_consumers.py`, `src/gobby/servers/routes/attention.py`, `src/gobby/runner_lifecycle_agents.py`, `src/gobby/events/wake.py`, `src/gobby/hooks/session_coordinator.py`, `src/gobby/mcp_proxy/tools/agent_cancellation.py`, `src/gobby/mcp_proxy/tools/agents_lifecycle_tools.py`, `src/gobby/mcp_proxy/tools/agents_query_tools.py`, `src/gobby/mcp_proxy/tools/agents_termination.py`, `src/gobby/servers/websocket/handlers/core.py`, `src/gobby/servers/websocket/tmux.py`, `src/gobby/agents/task_recovery.py`, `src/gobby/mcp_proxy/tools/sessions/_terminal.py`, `src/gobby/adapters/plan_keystrokes.py`, `src/gobby/servers/websocket/handlers/plan_approval.py`, `src/gobby/servers/websocket/handlers/session_config.py`, `src/gobby/servers/websocket/handlers/session_observe_proxy.py`, `src/gobby/sessions/compact_continuation.py`, `tests/adapters/test_plan_keystrokes.py`, `tests/servers/websocket/test_attached_plan_approval.py`, `tests/sessions/test_compact_continuation.py`, `tests/servers/websocket/test_set_agent.py`, `src/gobby/runner_init/orchestration.py`, `tests/test_runner_init.py`
+Targets:
+- `src/gobby/agents/agent_health.py::*` — scope-reason: runtime-contract consumer-migration sweep enumerated in the body
+- `src/gobby/agents/lifecycle_monitor.py::*` — scope-reason: runtime-contract consumer-migration sweep enumerated in the body
+- `src/gobby/agents/idle_check_handler.py::*` — scope-reason: runtime-contract consumer-migration sweep enumerated in the body
+- `src/gobby/agents/terminal_prompt_monitor.py::*` — scope-reason: runtime-contract consumer-migration sweep enumerated in the body
+- `src/gobby/agents/agent_cleanup.py::*` — scope-reason: runtime-contract consumer-migration sweep enumerated in the body
+- `src/gobby/agents/kill.py::*` — scope-reason: runtime-contract consumer-migration sweep enumerated in the body
+- `src/gobby/agents/capture.py::*` — scope-reason: runtime-contract consumer-migration sweep enumerated in the body
+- `src/gobby/agents/memory_watchdog.py::*` — scope-reason: runtime-contract consumer-migration sweep enumerated in the body
+- `src/gobby/agents/tmux/pane_monitor.py::*` — scope-reason: runtime-contract consumer-migration sweep enumerated in the body
+- `src/gobby/mcp_proxy/tools/sessions/_terminal_tmux.py::*` — scope-reason: runtime-contract consumer-migration sweep enumerated in the body
+- `tests/agents/test_capture_consumers.py::*` — scope-reason: runtime-contract consumer-migration sweep enumerated in the body
+- `src/gobby/servers/routes/attention.py::*` — scope-reason: runtime-contract consumer-migration sweep enumerated in the body
+- `src/gobby/runner_lifecycle_agents.py::*` — scope-reason: runtime-contract consumer-migration sweep enumerated in the body
+- `src/gobby/events/wake.py::*` — scope-reason: runtime-contract consumer-migration sweep enumerated in the body
+- `src/gobby/hooks/session_coordinator.py::*` — scope-reason: runtime-contract consumer-migration sweep enumerated in the body
+- `src/gobby/mcp_proxy/tools/agent_cancellation.py::*` — scope-reason: runtime-contract consumer-migration sweep enumerated in the body
+- `src/gobby/mcp_proxy/tools/agents_lifecycle_tools.py::*` — scope-reason: runtime-contract consumer-migration sweep enumerated in the body
+- `src/gobby/mcp_proxy/tools/agents_query_tools.py::*` — scope-reason: runtime-contract consumer-migration sweep enumerated in the body
+- `src/gobby/mcp_proxy/tools/agents_termination.py::*` — scope-reason: runtime-contract consumer-migration sweep enumerated in the body
+- `src/gobby/servers/websocket/handlers/core.py::*` — scope-reason: runtime-contract consumer-migration sweep enumerated in the body
+- `src/gobby/servers/websocket/tmux.py::*` — scope-reason: runtime-contract consumer-migration sweep enumerated in the body
+- `src/gobby/agents/task_recovery.py::*` — scope-reason: runtime-contract consumer-migration sweep enumerated in the body
+- `src/gobby/mcp_proxy/tools/sessions/_terminal.py::*` — scope-reason: runtime-contract consumer-migration sweep enumerated in the body
+- `src/gobby/adapters/plan_keystrokes.py::*` — scope-reason: runtime-contract consumer-migration sweep enumerated in the body
+- `src/gobby/servers/websocket/handlers/plan_approval.py::*` — scope-reason: runtime-contract consumer-migration sweep enumerated in the body
+- `src/gobby/servers/websocket/handlers/session_config.py::*` — scope-reason: runtime-contract consumer-migration sweep enumerated in the body
+- `src/gobby/servers/websocket/handlers/session_observe_proxy.py::*` — scope-reason: runtime-contract consumer-migration sweep enumerated in the body
+- `src/gobby/sessions/compact_continuation.py::*` — scope-reason: runtime-contract consumer-migration sweep enumerated in the body
+- `tests/adapters/test_plan_keystrokes.py::*` — scope-reason: runtime-contract consumer-migration sweep enumerated in the body
+- `tests/servers/websocket/test_attached_plan_approval.py::*` — scope-reason: runtime-contract consumer-migration sweep enumerated in the body
+- `tests/sessions/test_compact_continuation.py::*` — scope-reason: runtime-contract consumer-migration sweep enumerated in the body
+- `tests/servers/websocket/test_set_agent.py::*` — scope-reason: runtime-contract consumer-migration sweep enumerated in the body
+- `src/gobby/runner_init/orchestration.py::*` — scope-reason: runtime-contract consumer-migration sweep enumerated in the body
+- `tests/test_runner_init.py::*` — scope-reason: runtime-contract consumer-migration sweep enumerated in the body
 
 Replace the "has a terminal ≡ `tmux_session_name IS NOT NULL`" idiom with terminal-row resolution, and every capture/inject/kill call with the runtime contract:
 
@@ -417,7 +560,32 @@ Replace the "has a terminal ≡ `tmux_session_name IS NOT NULL`" idiom with term
 
 `kind: deliverable`
 
-Targets: `src/gobby/servers/websocket/tmux.py`, `src/gobby/servers/websocket/handlers/core.py`, `src/gobby/servers/websocket/server.py`, `src/gobby/servers/websocket/broadcast.py`, `src/gobby/servers/routes/terminals.py`, `src/gobby/servers/_app_routes.py`, `src/gobby/servers/routes/attention.py`, `src/gobby/sessions/liveness_monitor.py`, `src/gobby/hooks/event_handlers/_session_start/flow.py`, `src/gobby/agents/tmux/pty_bridge.py`, `src/gobby/agents/tmux/__init__.py`, `src/gobby/agents/kill.py`, `src/gobby/runner_broadcasting.py`, `src/gobby/terminals/leases.py`, `tests/servers/test_tmux_mixin.py`, `tests/servers/websocket/test_broadcast.py`, `tests/servers/test_websocket_server_disconnects.py`, `tests/test_runner_lifecycle.py`, `tests/agents/test_kill.py`, `tests/agents/test_capture_consumers.py`, `web/src/hooks/useTmuxSessions.ts`, `web/src/hooks/__tests__/useTmuxSessions.test.ts`, `web/tests/terminal-colors.spec.ts`, `web/src/components/activity/terminal/terminalSessions.ts`, `web/src/components/activity/terminal/TerminalTab.tsx`
+Targets:
+- `src/gobby/servers/websocket/tmux.py::*` — scope-reason: backend-neutral terminal message rename and REST surface per the body
+- `src/gobby/servers/websocket/handlers/core.py::*` — scope-reason: backend-neutral terminal message rename and REST surface per the body
+- `src/gobby/servers/websocket/server.py::*` — scope-reason: backend-neutral terminal message rename and REST surface per the body
+- `src/gobby/servers/websocket/broadcast.py::*` — scope-reason: backend-neutral terminal message rename and REST surface per the body
+- `src/gobby/servers/routes/terminals.py`
+- `src/gobby/servers/_app_routes.py::*` — scope-reason: backend-neutral terminal message rename and REST surface per the body
+- `src/gobby/servers/routes/attention.py::*` — scope-reason: backend-neutral terminal message rename and REST surface per the body
+- `src/gobby/sessions/liveness_monitor.py::*` — scope-reason: backend-neutral terminal message rename and REST surface per the body
+- `src/gobby/hooks/event_handlers/_session_start/flow.py::*` — scope-reason: backend-neutral terminal message rename and REST surface per the body
+- `src/gobby/agents/tmux/pty_bridge.py::*` — scope-reason: backend-neutral terminal message rename and REST surface per the body
+- `src/gobby/agents/tmux/__init__.py::*` — scope-reason: backend-neutral terminal message rename and REST surface per the body
+- `src/gobby/agents/kill.py::*` — scope-reason: backend-neutral terminal message rename and REST surface per the body
+- `src/gobby/runner_broadcasting.py::*` — scope-reason: backend-neutral terminal message rename and REST surface per the body
+- `src/gobby/terminals/leases.py`
+- `tests/servers/test_tmux_mixin.py::*` — scope-reason: backend-neutral terminal message rename and REST surface per the body
+- `tests/servers/websocket/test_broadcast.py::*` — scope-reason: backend-neutral terminal message rename and REST surface per the body
+- `tests/servers/test_websocket_server_disconnects.py::*` — scope-reason: backend-neutral terminal message rename and REST surface per the body
+- `tests/test_runner_lifecycle.py::*` — scope-reason: backend-neutral terminal message rename and REST surface per the body
+- `tests/agents/test_kill.py::*` — scope-reason: backend-neutral terminal message rename and REST surface per the body
+- `tests/agents/test_capture_consumers.py::*` — scope-reason: backend-neutral terminal message rename and REST surface per the body
+- `web/src/hooks/useTmuxSessions.ts::*` — scope-reason: backend-neutral terminal message rename and REST surface per the body
+- `web/src/hooks/__tests__/useTmuxSessions.test.ts::*` — scope-reason: backend-neutral terminal message rename and REST surface per the body
+- `web/tests/terminal-colors.spec.ts::*` — scope-reason: backend-neutral terminal message rename and REST surface per the body
+- `web/src/components/activity/terminal/terminalSessions.ts::*` — scope-reason: backend-neutral terminal message rename and REST surface per the body
+- `web/src/components/activity/terminal/TerminalTab.tsx::*` — scope-reason: backend-neutral terminal message rename and REST surface per the body
 
 - **WS protocol rename (breaking, no aliases — C1).** `tmux_attach`/`tmux_detach`/`tmux_resize`/`tmux_list_sessions`/`tmux_create_session`/`tmux_kill_session`/`tmux_session_event` become `terminal_attach`/`terminal_detach`/`terminal_resize`/`terminal_list`/`terminal_create`/`terminal_kill`/`terminal_event`, keyed by durable `terminal_id` instead of `{session_name, socket}`. The `terminal_input`/`terminal_output` field misnamed `run_id` (actually the streaming id) becomes `terminal_id`. The list payload rows carry `{terminal_id, backend, ownership, state, title, session_id, agent_run_id, dims}` — eliminating the socket-qualified name joins that produced the cross-socket identity collisions documented in the shipped web-terminal plan (see O1). **The rename covers results and server-initiated events, not only requests**: `tmux_attach_result` and `tmux_create_result` (`src/gobby/servers/websocket/tmux.py:364`, `:435`) become `terminal_attach_result` and `terminal_create_result`, and the frontend's exhaustive switch (`useTmuxSessions.ts:183` `case 'tmux_attach_result'`) plus its wire fixtures are renamed with them. A request-only rename would pass a dispatch-table scan while leaving legacy result names live on the wire, so the acceptance below scans emitted types and the frontend union as well as the dispatch table.
 - **The rename's real blast radius is the test doubles, and it is larger than the production surface.** `gcode grep` for the legacy message names across `src`, `tests`, and `web` returns matches in fourteen files, and the majority are fixtures rather than production code: `web/src/hooks/__tests__/useTmuxSessions.test.ts` (35 sites), `tests/servers/test_tmux_mixin.py` (26 — the backend WS mixin suite, which both emits and asserts the legacy names), `web/tests/terminal-colors.spec.ts` (11 — the Playwright end-to-end fake that speaks the WebSocket protocol to the browser and would keep the old names alive in the only test that exercises the real renderer), `tests/servers/websocket/test_broadcast.py` (4), `tests/servers/test_websocket_server_disconnects.py` (2), `tests/agents/test_kill.py` (2), `tests/test_runner_lifecycle.py` (1), and `tests/agents/test_capture_consumers.py` (1); production sites are `src/gobby/servers/websocket/tmux.py` (12), `web/src/hooks/useTmuxSessions.ts` (12), `src/gobby/servers/websocket/server.py` (6), `src/gobby/servers/websocket/broadcast.py` (4), `src/gobby/runner_broadcasting.py` (2), and `src/gobby/agents/kill.py` (1). Under a no-compatibility flip (C1), a fake that still speaks the old protocol is not a stale comment — it is a test asserting a contract the server no longer honors, and the Playwright fake in particular would pass while the real UI broke. Every one of those files is migrated in this deliverable, and the acceptance is a zero-match sweep for the legacy request, result, and event names plus the `run_id` correlation key, run over `src`, `tests`, and `web` together.
@@ -463,7 +631,20 @@ Targets: `src/gobby/servers/websocket/tmux.py`, `src/gobby/servers/websocket/han
 
 `kind: deliverable`
 
-Targets: `crates/gterminal/src/bin/gterm.rs`, `crates/gterminal/src/host/`, `crates/gterminal/src/host/control.rs`, `src/gobby/terminals/host_manager.py`, `src/gobby/config/terminal_host.py`, `src/gobby/config/app.py`, `src/gobby/runner.py`, `src/gobby/app_context.py`, `src/gobby/runner_init/servers.py`, `src/gobby/runner_init/orchestration.py`, `src/gobby/runner_lifecycle_subsystems.py`, `src/gobby/runner_lifecycle_shutdown.py`, `src/gobby/servers/routes/admin/_health.py`
+Targets:
+- `crates/gterminal/src/bin/gterm.rs`
+- `crates/gterminal/src/host/mod.rs`
+- `crates/gterminal/src/host/control.rs`
+- `src/gobby/terminals/host_manager.py`
+- `src/gobby/config/terminal_host.py`
+- `src/gobby/config/app.py::*` — scope-reason: host supervision, shutdown preservation, and health wiring per the body
+- `src/gobby/runner.py::*` — scope-reason: host supervision, shutdown preservation, and health wiring per the body
+- `src/gobby/app_context.py::*` — scope-reason: host supervision, shutdown preservation, and health wiring per the body
+- `src/gobby/runner_init/servers.py::*` — scope-reason: host supervision, shutdown preservation, and health wiring per the body
+- `src/gobby/runner_init/orchestration.py::*` — scope-reason: host supervision, shutdown preservation, and health wiring per the body
+- `src/gobby/runner_lifecycle_subsystems.py::*` — scope-reason: host supervision, shutdown preservation, and health wiring per the body
+- `src/gobby/runner_lifecycle_shutdown.py::*` — scope-reason: host supervision, shutdown preservation, and health wiring per the body
+- `src/gobby/servers/routes/admin/_health.py::*` — scope-reason: host supervision, shutdown preservation, and health wiring per the body
 
 `gterm host` is the first long-running Rust child in the repo; the daemon owns its lifecycle:
 
@@ -497,7 +678,12 @@ Targets: `crates/gterminal/src/bin/gterm.rs`, `crates/gterminal/src/host/`, `cra
 
 `kind: deliverable`
 
-Targets: `crates/gterminal/src/host/control.rs`, `crates/gterminal/src/host/frames.rs`, `crates/gterminal/src/protocol/wire.rs`, `crates/gterminal/tests/fixtures/wire_golden/`, `docs/contracts/gterm-protocols.md`
+Targets:
+- `crates/gterminal/src/host/control.rs`
+- `crates/gterminal/src/host/frames.rs`
+- `crates/gterminal/src/protocol/wire.rs`
+- `crates/gterminal/tests/wire_golden.rs`
+- `docs/contracts/gterm-protocols.md`
 
 - **Frame protocol (bincode, imported and narrowed to read-only).** The rebranded herdr wire protocol at version 1: `Hello{version, encoding, local_token, cols, rows}` → `Welcome{host_epoch}`; `AttachTerminal{host_terminal_id}`; `SetViewport{rows, cols}`; `Detach`; server → `Frame(FrameData)` | `Terminal(TerminalFrame)` | `Graphics` | `TerminalExited`. Per-terminal attach only (herdr's whole-app frame mode is not exposed). The `local_token` in `Hello` is verified against `~/.gobby/local_cli_token` (same-user defense in depth; C1).
 
@@ -542,16 +728,32 @@ Because `write` is a control verb, the only client that can ever see this outcom
 
 `kind: deliverable`
 
-Targets: `crates/gclient/Cargo.toml`, `crates/gclient/src/main.rs`, `crates/gclient/src/app/`, `crates/gclient/src/daemon/`, `crates/gclient/src/views/`, `crates/gclient/src/persist.rs`, `crates/gclient/src/input.rs`, `crates/gclient/NOTICE.md`, `crates/gclient/LICENSE`, `Cargo.toml` (workspace `members`), `src/gobby/install/version_pins.py`
+Targets:
+- `crates/gclient/Cargo.toml`
+- `crates/gclient/src/main.rs`
+- `crates/gclient/src/app/mod.rs`
+- `crates/gclient/src/daemon/mod.rs`
+- `crates/gclient/src/ui/mod.rs`
+- `crates/gclient/src/theme.rs`
+- `crates/gclient/src/frame_source.rs`
+- `crates/gclient/src/views/mod.rs`
+- `crates/gclient/src/persist.rs`
+- `crates/gclient/src/input.rs`
+- `crates/gclient/NOTICE.md`
+- `crates/gclient/LICENSE`
+- `Cargo.toml` (workspace `members`)
+- `src/gobby/install/version_pins.py`
 
-New crate `crates/gclient` (package `gobby-client`, binary `gclient`) — a Gobby-native Ratatui workspace, written fresh (herdr's app/ui are not imported), reusing from `gobby-terminal`: `layout` (BSP splits), `protocol` (frame client), input capture/encoding, and from `gobby-core`: `bootstrap`/`daemon_url`/`local_token` for daemon discovery and auth.
+New crate `crates/gclient` (package `gobby-client`, binary `gclient`, built without `vt-engine` — no Zig, C1) — a Gobby terminal workspace that **imports herdr's generic UI chrome and makes it Gobby's**: `src/ui/` from the fork point (sidebar, tabs, navigator, status bar, keybind help with live filtering, dialogs, scrollbar, widgets, ~13.5k LOC) lands as `crates/gclient/src/ui/`, rebranded and de-agent-ified the same way 1.3 carves the core — herdr's agent-detection-fed indicators, plugin menu entries, worktree/session-persistence surfaces, onboarding, release-notes, and mobile modules are dropped; data sources are rewired from herdr's app state to the Gobby daemon (roster, attention, tasks). Reused from `gobby-terminal`: `layout` (BSP splits), `protocol` (frame client), input capture/encoding; from `gobby-core`: `bootstrap`/`daemon_url`/`local_token` for daemon discovery and auth. The app shell (`src/app/`) and daemon data plane are written fresh; herdr's `src/app/` orchestration is not imported.
+
+- **Design system, not herdr's skin.** `crates/gclient/src/theme.rs` defines the Gobby terminal token map derived from `.impeccable.md` and `web/src/styles/tokens.css`: brand accent hue 125, state palette (info 250 blue / warning 75 amber / destructive 350 magenta-pink / success as lightness-differentiated brand hue) mapped to 24-bit RGB with an ANSI-256/16 degradation table that orders state by lightness first (deutan-safe — hue is never the only signal, per the hard color constraints), dark default with light as a first-class peer, and voice rules applied to every label, dialog, and error (no emoji in errors, no exclamation marks). Herdr's `terminal_theme.rs` mechanism carries the tokens; the values are Gobby's. Implementation of this deliverable reads `.impeccable.md` and loads the `impeccable` skill before styling work, per the repo design contract. The imported settings surface is scoped to **client-local preferences only** (theme, keybinds, layout defaults under `~/.gobby/client/`); daemon configuration is not editable from gclient in this epic.
 
 - **Daemon data plane** (`src/daemon/`): REST via `reqwest` (rustls) — `GET /api/terminals`, `GET /api/attention/roster`, `POST /api/attention/{entry}/respond|seen`, spawn/terminate via the existing agent HTTP surface; WS events via `tokio-tungstenite` on `/ws` with `Authorization: Bearer` — implementing the subscribe-first reconciliation handshake exactly as the sibling plan pinned it (subscribe, buffer attention events, fetch roster, discard `seq <=` cursor within epoch, apply the rest, refetch on epoch change).
 - **Workspace UI** (`src/app/`, `src/views/`): project selection; agent roster sidebar with lifecycle + attention indicators (blocked reason/kind, seen stamping); BSP tabs/splits/panes hosting terminal views; a respond affordance that answers structured attention prompts (options/text/key) via the daemon API — never by raw keystroke injection.
-- **Terminal views**: attach to the host frame socket per terminal for **frames only** — that channel is read-only and has no input verb (3.2), so a terminal view is a renderer, not a writer. Taking control and writing are both daemon round trips over the same REST/WS data plane this crate already uses for roster, spawn, and respond: the focused pane asks the daemon's lease surface for control, and captured keystrokes are sent to the daemon, which writes them to the terminal through the owning runtime. There is no token to hold and no attachment to upgrade; the host is never asked for permission because it grants none. Unfocused panes render without requesting control, and the pane releases the lease on focus change. When another surface takes the lease, the pane renders a visible read-only indicator from the daemon's `terminal_lease_lost` event rather than silently swallowing keystrokes, and offers an explicit take-back; if the daemon is unreachable the pane keeps rendering frames from the host and shows read-only, which is the honest state rather than a degradation. Input capture (crossterm raw mode, bracketed paste, kitty enhancement flags where available) forwards to the daemon for the focused terminal; detach on pane close leaves PTYs running.
+- **Terminal views**: attach per terminal for **frames only** through `crates/gclient/src/frame_source.rs`, a small frame-source trait whose only implementation in this epic is the local Unix-socket frame client; a daemon-WS remote source is deferred to D2 (the multi-machine story), and nothing outside the trait may assume a socket path. The frame channel is read-only and has no input verb (3.2), so a terminal view is a renderer, not a writer. Taking control and writing are both daemon round trips over the same REST/WS data plane this crate already uses for roster, spawn, and respond: the focused pane asks the daemon's lease surface for control, and captured keystrokes are sent to the daemon, which writes them to the terminal through the owning runtime. There is no token to hold and no attachment to upgrade; the host is never asked for permission because it grants none. Unfocused panes render without requesting control, and the pane releases the lease on focus change. When another surface takes the lease, the pane renders a visible read-only indicator from the daemon's `terminal_lease_lost` event rather than silently swallowing keystrokes, and offers an explicit take-back; if the daemon is unreachable the pane keeps rendering frames from the host and shows read-only, which is the honest state rather than a degradation. Input capture (crossterm raw mode, bracketed paste, kitty enhancement flags where available) forwards to the daemon for the focused terminal; detach on pane close leaves PTYs running.
 - **Persistence** (`src/persist.rs`): local JSON workspace snapshot per project at `~/.gobby/client/<project_id>/workspace.json` (atomic tmp+rename), referencing durable `terminal_id`s; restore re-attaches to live terminals and drops rows for dead ones.
 - Crash hygiene: a panic hook restores the terminal (raw-mode exit, keyboard-enhancement pop) per herdr's pattern.
-- **Licensing artifacts for this crate** (moved here from 1.5, which cannot own files under a directory a later phase creates): `crates/gclient/LICENSE` (Apache-2.0 text) and `crates/gclient/NOTICE.md` in the same shape 1.5 establishes for `gobby-terminal` — attribution for the herdr-derived portions this crate actually contains (BSP layout reuse, input-capture patterns, workspace-snapshot shapes) — plus `license = "Apache-2.0"` in `crates/gclient/Cargo.toml`.
+- **Licensing artifacts for this crate** (moved here from 1.5, which cannot own files under a directory a later phase creates): `crates/gclient/LICENSE` (Apache-2.0 text) and `crates/gclient/NOTICE.md` in the same shape 1.5 establishes for `gobby-terminal` — attribution for the herdr-derived portions this crate actually contains (the imported `src/ui/` chrome, BSP layout reuse, input-capture patterns, workspace-snapshot shapes), and the UI module map joins `UPSTREAM.md`'s fork manifest — plus `license = "Apache-2.0"` in `crates/gclient/Cargo.toml`.
 
 `crates/gclient` is added to the root workspace `members` list in this deliverable, for the same reason 1.2 adds `crates/gterminal`: the list is explicit, and a non-member package cannot be built with `cargo -p`, tested by workspace `nextest`, or packaged by the release workflow. The `MANAGED_BIN_VERSION_PINS` entry for `gclient` also lands here rather than in 3.6, because 3.5's launcher probes that version floor and would otherwise depend on a later leaf for its own configuration key; 3.6 keeps release-asset publication, Homebrew, and the installer fan-out.
 
@@ -565,13 +767,26 @@ The P3 goal is the whole client loop, so spawn and terminate are proven as clien
 - 3.3.4 - Workspace snapshots persist and restore by durable terminal id, dropping dead terminals gracefully. test: `crates/gclient/tests/persist.rs::restore_drops_dead_terminals`.
 - 3.3.5 - One event-loop-level pass drives the full client loop against scripted endpoints: select a project, spawn through the daemon agent API (no backend field — backend selection arrives in 4.2), reconcile the returned terminal into a new pane, attach to a scripted frame server and render its first frame, terminate through the daemon API, and observe the pane removed on the lifecycle event while a second pane stays attached and streaming. No real tmux embed is involved; that path is 3.4's. test: `crates/gclient/tests/client_loop.rs::select_spawn_attach_terminate_loop`.
 - 3.3.6 - `gobby-client` ships a LICENSE and a NOTICE with Upstream and Modifications sections covering its herdr-derived portions, and declares `license = "Apache-2.0"`. file: `crates/gclient/NOTICE.md`.
-- 3.3.7 - `crates/gclient` is a root workspace member so `cargo build -p gobby-client` and workspace `nextest` resolve it, and `MANAGED_BIN_VERSION_PINS` carries a `gclient` floor that a version probe can read. file: `Cargo.toml`.
+- 3.3.7 - `crates/gclient` is a root workspace member so `cargo build -p gobby-client` and workspace `nextest` resolve it without `zig` on PATH, and `MANAGED_BIN_VERSION_PINS` carries a `gclient` floor that a version probe can read. file: `Cargo.toml`.
+- 3.3.8 - The imported UI chrome is carved like the core: no module under `crates/gclient/src/ui/` references herdr agent detection, plugins, worktrees, integrations, persistence, onboarding, release notes, or mobile concepts (carve-guard source scan), and the sidebar/navigator/status render from Gobby roster and attention data. test: `crates/gclient/tests/ui_carve_guard.rs::no_herdr_concepts_in_imported_chrome`.
+- 3.3.9 - The theme module carries the Gobby token map: state colors match the `.impeccable.md` palette (info 250 / warning 75 / destructive 350 / success by lightness), every state indicator carries an icon or position cue so state survives a monochrome rendering, the ANSI-256/16 degradation orders state by lightness, and both dark and light themes render. test: `crates/gclient/tests/theme.rs::tokens_match_design_contract_and_survive_monochrome`.
+- 3.3.10 - Terminal views resolve their frame stream only through the frame-source trait, whose sole implementation is the local Unix-socket client; a source scan finds no direct socket dial outside it. file: `crates/gclient/src/frame_source.rs`.
 
 ### 3.4 tmux panes observed through the host [category: code] (depends: 3.3, 2.5)
 
 `kind: deliverable`
 
-Targets: `crates/gterminal/src/host/embed.rs`, `crates/gterminal/src/host/frames.rs`, `crates/gterminal/src/protocol/wire.rs`, `crates/gterminal/tests/fixtures/wire_golden/`, `docs/contracts/gterm-protocols.md`, `crates/gclient/src/tmux_identity.rs`, `crates/gclient/src/views/`, `src/gobby/servers/routes/terminals.py`, `src/gobby/terminals/tmux_runtime.py`, `src/gobby/config/terminal_host.py`
+Targets:
+- `crates/gterminal/src/host/embed.rs`
+- `crates/gterminal/src/host/frames.rs`
+- `crates/gterminal/src/protocol/wire.rs`
+- `crates/gterminal/tests/wire_golden.rs`
+- `docs/contracts/gterm-protocols.md`
+- `crates/gclient/src/tmux_identity.rs`
+- `crates/gclient/src/views/mod.rs`
+- `src/gobby/servers/routes/terminals.py`
+- `src/gobby/terminals/tmux_runtime.py`
+- `src/gobby/config/terminal_host.py`
 
 tmux-backed terminals (Gobby-spawned runs still on tmux, and externally discovered sessions) render in gclient through the same host path — one rendering pipeline for every backend (decided over a second daemon-WS rendering path in the client):
 
@@ -636,7 +851,9 @@ tmux-backed terminals (Gobby-spawned runs still on tmux, and externally discover
 
 `kind: deliverable`
 
-Targets: `src/gobby/cli/client.py`, `src/gobby/cli/__init__.py`
+Targets:
+- `src/gobby/cli/client.py`
+- `src/gobby/cli/__init__.py::*` — scope-reason: launcher command registration
 
 `gobby client [--project PROJECT]` — a thin launcher modeled on `cli/ui.py` and the gateway version-handshake pattern: resolve the binary via `resolve_native_bin("gclient")` (`src/gobby/utils/native_bin.py`), probe `--version` against the `MANAGED_BIN_VERSION_PINS` floor that 3.3 registers (which is why the floor lives with the crate rather than in 3.6 — a launcher that gates on a key created later could not meet its own stale-version requirement), verify daemon reachability (`DaemonClient.check_health`), then `os.execvp` the binary in the foreground (a TUI owns the terminal; no detached spawn, no PID file). Clear failure messages for: binary missing (points at `gobby install`), version below floor, daemon down. Registered in `src/gobby/cli/__init__.py` (import + `cli.add_command`).
 
@@ -652,18 +869,28 @@ The health check also reads the gterm host block the daemon reports (3.1) and, w
 
 `kind: deliverable`
 
-Targets: `src/gobby/install/version_pins.py`, `src/gobby/install/distribution.py`, `src/gobby/cli/install_setup.py`, `src/gobby/cli/install_setup_gterm.py`, `src/gobby/cli/install_setup_gclient.py`, `.github/workflows/release-gterminal.yml`, `.github/workflows/release-gclient.yml`, `.github/workflows/rust-ci.yml`, `src/gobby/utils/deps.py`, `docs/guides/gterminal-development-guide.md`
+Targets:
+- `src/gobby/install/version_pins.py`
+- `src/gobby/install/distribution.py::*` — scope-reason: managed-binary packaging registration
+- `src/gobby/cli/install_setup.py::*` — scope-reason: managed-binary packaging registration
+- `src/gobby/cli/install_setup_gterm.py`
+- `src/gobby/cli/install_setup_gclient.py`
+- `.github/workflows/release-gterminal.yml`
+- `.github/workflows/release-gclient.yml`
+- `.github/workflows/rust-ci.yml`
+- `src/gobby/utils/deps.py::*` — scope-reason: managed-binary packaging registration
+- `docs/guides/gterminal-development-guide.md`
 
-Register both binaries as managed bins end-to-end:
+Register both binaries as managed bins end-to-end. They ship as **two separate binaries** — decided, not open: the VT payload is `vt-engine`/host-only, so a multi-call binary would carry the Ghostty engine into every client install for no benefit, and the two-processes separation is a C1 topology constraint.
 
-- `MANAGED_BIN_VERSION_PINS` entry `gterm`, completing the pair whose `gclient` half 3.3 registered for the launcher (the entry alone derives the freshness contract: tag prefixes `gterm-v`/`gclient-v`, stamps, sidecars); `HOMEBREW_HELPERS` + `HOMEBREW_HELPER_FORMULAE` additions; `install_setup_gterm.py`/`install_setup_gclient.py` following the gcode fallback chain with one deviation — **the local workspace-build fallback for these two crates requires `zig` on PATH and uses a 600s timeout** (first libghostty-vt build far exceeds the 180s default); without zig, the local-build step is skipped with a clear reason and the chain proceeds to GitHub assets (fail-closed to Gobby-hosted assets per release policy); fan-out blocks in `_run_managed_native_binary_installs()`.
-- `release-gterminal.yml`/`release-gclient.yml` per the gcode shape: tag↔crate-version gate, 5-target build matrix **with pinned Zig setup**, `tar.gz`/`zip` assets + `.sha256` sidecars, `cargo publish`. `rust-ci.yml` gains `gobby-client` in the matrix (gobby-terminal added in 1.4).
+- `MANAGED_BIN_VERSION_PINS` entry `gterm`, completing the pair whose `gclient` half 3.3 registered for the launcher (the entry alone derives the freshness contract: tag prefixes `gterm-v`/`gclient-v`, stamps, sidecars); `HOMEBREW_HELPERS` + `HOMEBREW_HELPER_FORMULAE` additions; `install_setup_gterm.py`/`install_setup_gclient.py` following the gcode fallback chain with one deviation for `gterm` only — **its local workspace-build fallback builds `--features vt-engine`, requires `zig` on PATH, and uses a 600s timeout** (first libghostty-vt build far exceeds the 180s default); without zig, the gterm local-build step is skipped with a clear reason and the chain proceeds to GitHub assets (fail-closed to Gobby-hosted assets per release policy). `gclient`'s local build is ordinary Zig-free cargo. Fan-out blocks in `_run_managed_native_binary_installs()`.
+- `release-gterminal.yml`/`release-gclient.yml` per the gcode shape: tag↔crate-version gate, 5-target builds, `tar.gz`/`zip` assets + `.sha256` sidecars, `cargo publish`. Pinned Zig setup appears **only in `release-gterminal.yml`** (the gclient build never compiles the engine). `rust-ci.yml` gains `gobby-client` steps (gobby-terminal added in 1.4).
 - `src/gobby/utils/deps.py` diagnostics rows for both binaries; `docs/guides/gterminal-development-guide.md` covering both crates (build with zig, protocol contracts, reinstall rule).
 
 **Acceptance:**
 
-- 3.6.1 - Both binaries are pinned, installable through the full fallback chain, and version-stamped; the no-zig local-build skip reason is explicit. file: `src/gobby/cli/install_setup_gterm.py`.
-- 3.6.2 - Release workflows gate tag↔version, build all 5 targets with Zig, and publish sha256-verified assets. file: `.github/workflows/release-gclient.yml`.
+- 3.6.1 - Both binaries are pinned, installable through the full fallback chain, and version-stamped; gterm's no-zig local-build skip reason is explicit, and gclient's local build succeeds without zig. file: `src/gobby/cli/install_setup_gterm.py`.
+- 3.6.2 - Release workflows gate tag↔version, build all 5 targets (Zig pinned in the gterminal workflow only), and publish sha256-verified assets. file: `.github/workflows/release-gclient.yml`.
 - 3.6.3 - Homebrew helper lists and deps diagnostics include both binaries. file: `src/gobby/install/distribution.py`.
 - 3.6.4 - The development guide documents build, protocols, and the rebuild-and-reinstall rule. file: `docs/guides/gterminal-development-guide.md`.
 
@@ -677,7 +904,15 @@ Register both binaries as managed bins end-to-end:
 
 `kind: deliverable`
 
-Targets: `src/gobby/terminals/native_runtime.py`, `src/gobby/terminals/host_client.py`, `src/gobby/terminals/frame_client.py`, `src/gobby/terminals/__init__.py`, `src/gobby/runner.py`, `src/gobby/app_context.py`, `src/gobby/runner_init/servers.py`, `src/gobby/runner_init/orchestration.py`
+Targets:
+- `src/gobby/terminals/native_runtime.py`
+- `src/gobby/terminals/host_client.py`
+- `src/gobby/terminals/frame_client.py`
+- `src/gobby/terminals/__init__.py`
+- `src/gobby/runner.py::*` — scope-reason: native runtime and frame-client composition wiring per the body
+- `src/gobby/app_context.py::*` — scope-reason: native runtime and frame-client composition wiring per the body
+- `src/gobby/runner_init/servers.py::*` — scope-reason: native runtime and frame-client composition wiring per the body
+- `src/gobby/runner_init/orchestration.py::*` — scope-reason: native runtime and frame-client composition wiring per the body
 
 `src/gobby/terminals/host_client.py`: an asyncio JSON-lines client for `gterm-control.sock` (request correlation, timeouts, typed errors `HostUnavailableError`/`HostEpochChangedError`/`HostCommandError`, reconnect with epoch verification). `src/gobby/terminals/native_runtime.py`: `NativeTerminalRuntime` implementing the full 2.2 contract over it — `spawn` takes the caller-allocated `terminal_id` from the request, issues control `spawn` with it, and **returns** the `host_epoch` + `host_terminal_id` locator for the caller to CAS (`execute_spawn` owns row creation and every transition, per 2.1 and 2.3; the runtime writes no rows); `snapshot`/`snapshot_full` map to control `snapshot` (text/ansi); `write_text`/`write_key` map to control `write` preserving the injection semantics (literal + submit-Enter, named keys without Enter) and the `stage: none|partial` failure classification for the attention respond contract; `terminate` maps to `kill` with grace; `is_live` cross-checks control `list` against the stored epoch; `attach_locator` returns the frame-socket locator. Registered in the runtime registry beside tmux — this deliverable is where the registry first resolves both backends, since 2.2 registers tmux alone. An explicitly requested native spawn with the host down raises `HostUnavailableError` — no tmux fallback (C1).
 
@@ -705,11 +940,23 @@ The control client is the first Python consumer of a wire format defined in Rust
 
 `kind: deliverable`
 
-Targets: `src/gobby/agents/spawn_executor.py`, `src/gobby/config/terminals.py`, `src/gobby/mcp_proxy/tools/spawn_agent/_implementation.py`, `src/gobby/mcp_proxy/tools/spawn_agent/_factory.py`, `src/gobby/servers/routes/agent_spawn.py`, `src/gobby/dispatch/actions.py`, `src/gobby/dispatch/_rule_actions.py`, `src/gobby/dispatch/_planning_enhancement.py`, `src/gobby/dispatch/spawn.py`, `src/gobby/scheduler/executor.py`, `src/gobby/runner_broadcasting.py`, `src/gobby/mcp_proxy/tools/agents_query_tools.py`
+Targets:
+- `src/gobby/agents/spawn_executor.py::*` — scope-reason: terminal_backend ingress and native-parity edits enumerated in the body
+- `src/gobby/config/terminals.py`
+- `src/gobby/mcp_proxy/tools/spawn_agent/_implementation.py::*` — scope-reason: terminal_backend ingress and native-parity edits enumerated in the body
+- `src/gobby/mcp_proxy/tools/spawn_agent/_factory.py::*` — scope-reason: terminal_backend ingress and native-parity edits enumerated in the body
+- `src/gobby/servers/routes/agent_spawn.py::*` — scope-reason: terminal_backend ingress and native-parity edits enumerated in the body
+- `src/gobby/dispatch/actions.py::*` — scope-reason: terminal_backend ingress and native-parity edits enumerated in the body
+- `src/gobby/dispatch/_rule_actions.py::*` — scope-reason: terminal_backend ingress and native-parity edits enumerated in the body
+- `src/gobby/dispatch/_planning_enhancement.py::*` — scope-reason: terminal_backend ingress and native-parity edits enumerated in the body
+- `src/gobby/dispatch/spawn.py::*` — scope-reason: terminal_backend ingress and native-parity edits enumerated in the body
+- `src/gobby/scheduler/executor.py::*` — scope-reason: terminal_backend ingress and native-parity edits enumerated in the body
+- `src/gobby/runner_broadcasting.py::*` — scope-reason: terminal_backend ingress and native-parity edits enumerated in the body
+- `src/gobby/mcp_proxy/tools/agents_query_tools.py::*` — scope-reason: terminal_backend ingress and native-parity edits enumerated in the body
 
 - **Backend selection.** `spawn_agent` accepts `terminal_backend: "tmux"|"native"` (default from `TerminalConfig.default_backend`, 2.2, which stays `"tmux"` until 5.3), and selection is recorded on the terminal row. A cross-surface request field has to be added at every ingress that constructs a spawn, not only where spawns execute, so this deliverable owns all three schema owners: the MCP tool signature and schema factory (`mcp_proxy/tools/spawn_agent/_factory.py:303`, where `spawn_agent`'s parameters and docstring define the tool schema), the HTTP request model (`AgentSpawnRequest`, `servers/routes/agent_spawn.py:45`, including its batch form), and the dispatch action (`SpawnAgentAction`, `dispatch/actions.py:10`, plus **both** of its constructors, `src/gobby/dispatch/_rule_actions.py:202` and `src/gobby/dispatch/_planning_enhancement.py:91`). Each surface validates the value against the two allowed backends and rejects anything else typed, rather than defaulting silently. The planning-enhancement constructor is called out explicitly because it is the one that is easy to miss — it builds a `SpawnAgentAction` from a different code path than the rule actions, so a sweep that covers only rule constructors would let enhanced planning spawns silently lose the requested backend.
 - **A field on the action is not a field that arrives.** Adding `terminal_backend` to `SpawnAgentAction` accomplishes nothing unless the code between the action and the effect forwards it, and in this codebase that code enumerates fields by hand: `src/gobby/dispatch/spawn.py` destructures the action attribute by attribute into its `spawn_agent_impl(...)` call (`:322`, passing `agent_lookup_name=action.agent_slug`, `task_id=action.task_id`, `model=action.model_override`, `reasoning_effort=action.reasoning_effort` at `:326`-`:341`), so an unlisted field is dropped silently with no type error anywhere — the dispatcher would accept a native-backend spawn request and produce a tmux terminal. `dispatch/spawn.py` therefore validates and forwards the field, and the acceptance drives the full dispatcher path rather than only constructing the action. The other two `spawn_agent_impl` callers are inventoried at the same time: `src/gobby/servers/routes/agent_spawn.py:339` is already a schema owner above and forwards it there, and `src/gobby/scheduler/executor.py:328` forwards the configured default explicitly rather than relying on a parameter default, so scheduled spawns cannot silently diverge from the daemon's configured backend once 5.3 flips it.
-- **SRT.** The provider command is SRT-wrapped exactly as today — once, after construction, before terminal creation — and the wrapped argv/env goes to control `spawn`. SRT preflight failure aborts the launch with no unsandboxed fallback (existing semantics). No sandbox policy changes are needed: sandboxed processes never dial host sockets (C1), and the PTY is provided by the host exactly as tmux provides one today.
+- **SRT.** The provider command passes through the single 2.3 chokepoint at the runtime seam — wrapped exactly once, after construction, immediately before `runtime.spawn` — so the native path adds no wrap site of its own; the wrapped argv/env goes to control `spawn`. SRT preflight failure aborts the launch with no unsandboxed fallback (existing semantics). No sandbox policy changes are needed: sandboxed processes never dial host sockets (C1), and the PTY is provided by the host exactly as tmux provides one today.
 - **Hooks and detection.** CLI hook registration is environment-driven and backend-agnostic (unchanged). Idle/prompt/stall detection, attention episodes, and auto-answer paths operate on native runs through the 2.4 runtime calls (`snapshot` text feeding the detection registry, `write_*` for injections) — the same detectors, manifests, and episode CAS.
 - **Output streaming.** Continuous output is a frame-protocol concern, not a control-protocol one (2.2, 3.2): `subscribe_events` carries lifecycle only. `runner_broadcasting.py` streams a native run's output by opening a daemon-side frame attachment with the `TerminalAnsi` encoding through the **shared frame client created in 4.1**, and relaying it into the existing `terminal_output` broadcast that the FIFO reader feeds for tmux. Its tmux half — the five `tmux_session_name` readers and the `terminal_id` broadcast keying — is migrated in 2.5 alongside the rename, which is why this deliverable **depends on 2.5**: it edits the same file and builds against the post-rename broadcast API, so running the two concurrently would either conflict in `src/gobby/runner_broadcasting.py` or compile this leaf's native source against a broadcast signature 2.5 is about to replace. With the edge in place this deliverable adds only the native source behind an unchanged broadcast call; 4.3 attaches the same client for the browser proxy and neither leaf writes its own decoder. Ordering, cancellation, and reconnect semantics are therefore the frame protocol's, already defined and tested in 3.2: bounded queues, keyframe resync after a delta drop, typed close on lag, and state relearned from `list` plus a keyframe on reconnect. `wait_for_output` (`agents_query_tools.py`) polls `runtime.snapshot` for native runs instead of tmux capture.
 - **Lifecycle finalization survives missed events.** Exit events from `subscribe_events` drive the same run-completion path pane-death synthesis drives for tmux (session_end hook synthesis), and capture-before-kill uses `snapshot_full`. A live delivery alone is not enough — an exit landing while the daemon is restarting or the control client is reconnecting would otherwise be lost permanently — so finalization has three converging sources: the subscription is opened **before** the terminal is spawned and its per-terminal `seq` numbers make a gap detectable; every reconnect and daemon start reconciles against control `list`, finalizing any `live` row the host no longer knows (3.1's matrix); and the host-health interval runs the same reconciliation periodically, so a missed exit is finalized within one interval at worst. Duplicate exit deliveries are idempotent because finalization is a CAS off the terminal row.
@@ -729,7 +976,14 @@ Targets: `src/gobby/agents/spawn_executor.py`, `src/gobby/config/terminals.py`, 
 
 `kind: deliverable`
 
-Targets: `src/gobby/servers/websocket/tmux.py`, `src/gobby/terminals/host_client.py`, `src/gobby/terminals/frame_client.py`, `src/gobby/agents/tmux/pty_bridge.py`, `src/gobby/agents/tmux/__init__.py`, `tests/agents/test_tmux.py`, `web/src/components/activity/terminal/TerminalView.tsx`
+Targets:
+- `src/gobby/servers/websocket/tmux.py::*` — scope-reason: web-proxy migration to the shared frame client and PTY-bridge retirement
+- `src/gobby/terminals/host_client.py`
+- `src/gobby/terminals/frame_client.py`
+- `src/gobby/agents/tmux/pty_bridge.py::*` — scope-reason: web-proxy migration to the shared frame client and PTY-bridge retirement
+- `src/gobby/agents/tmux/__init__.py::*` — scope-reason: web-proxy migration to the shared frame client and PTY-bridge retirement
+- `tests/agents/test_tmux.py::*` — scope-reason: web-proxy migration to the shared frame client and PTY-bridge retirement
+- `web/src/components/activity/terminal/TerminalView.tsx::*` — scope-reason: web-proxy migration to the shared frame client and PTY-bridge retirement
 
 The web terminal views terminals through the daemon as proxy (no browser→host connection): `terminal_attach` makes the daemon open a frame-protocol attach to the host through the shared frame client (4.1) negotiating the `TerminalAnsi` encoding, and relays frames as the existing `terminal_output` events; `terminal_input`/`terminal_resize` are checked against the daemon's lease record and then dispatched **through the `TerminalRuntime` for that row's backend** — never on the frame attachment, which has no write verb (3.2). The dispatch is per-backend because the two backends have different write paths and the host has none for tmux: a `native` terminal's input and resize go to the host on the control channel, while a `tmux` terminal's go to `TmuxTerminalRuntime`'s daemon-side `send-keys -t <pane_id> -H` and `resize-pane`, exactly as 3.4 requires — the host observes tmux panes and never writes to them. Both paths return the 2.2 `WriteOutcome`, so an indeterminate browser keystroke is reported to the tab rather than assumed delivered. The wterm/ghostty renderer consumes the ANSI stream unchanged (same VT family end-to-end). Per-connection cleanup detaches the daemon's host attachment exactly as PTY bridges are cleaned up today.
 
@@ -760,7 +1014,9 @@ Two policies bind this surface specifically, because it is the second surface th
 
 `kind: deliverable`
 
-Targets: `tests/terminals/test_runtime_contract.py`, `tests/terminals/conftest.py`
+Targets:
+- `tests/terminals/test_runtime_contract.py`
+- `tests/terminals/conftest.py`
 
 One parametrized suite runs the same assertions against `TmuxTerminalRuntime` and `NativeTerminalRuntime` (native cases skip with a clear reason when the `gterm` binary is absent; CI builds it): spawn → prompt-ready; literal/submit/named-key input; ANSI + wide-Unicode + emoji-grapheme rendering via snapshot; resize propagation (`$COLUMNS` probe); snapshot/snapshot_full fidelity; clean exit vs terminate-with-grace; detach/reattach continuity; daemon-restart continuity (terminal survives, row reconciled); multi-viewer isolation; attention respond CAS including `stage: partial` classification. Because output streaming is deliberately outside the runtime contract (2.2), the suite asserts it as **observable event parity** instead of a shared method: the same program output produces an equivalent `terminal_output` event sequence on both backends, one through the tmux FIFO reader and one through the daemon frame observer (4.2). Includes the tmux-defect regressions as **native-only guarantees**: authoritative single size under multiple observers and single protocol-reply ownership (from 3.4.3, asserted here at the contract level).
 
@@ -773,7 +1029,8 @@ One parametrized suite runs the same assertions against `TmuxTerminalRuntime` an
 
 `kind: deliverable`
 
-Targets: `tests/e2e/test_external_terminal_attach.py`
+Targets:
+- `tests/e2e/test_external_terminal_attach.py`
 
 Against an isolated test daemon (`GOBBY_TEST_PROTECT=1`, temp state/ports/sockets): launch a scripted CLI session in an external tmux server (default socket) the way a user would — **with its own client attached at a deliberately different geometry, in a session that has multiple windows and multiple panes**, since a single-pane session with no live client cannot exercise either failure this deliverable must rule out; verify SessionStart seeding creates the `external` terminal row (2.5.4 path); list it via `GET /api/terminals`; attach through the host's capture-poll observer (3.4) driving frames to a scripted frame client; respond to a detected attention prompt on the interactive session via the respond API; detach; verify the external session is untouched — still alive, the owner's window geometry byte-identical to before the attach, the owner's current window and active pane unchanged, the pane's full property set (including `#{pane_pipe}`, which is never set) identical to a never-viewed control pane, no additional tmux client ever created, and no injected artifacts beyond the answered prompt; expire it and verify liveness CAS transitions the row. The scenario also resizes the owner's client mid-attach, since an owner resize while a differently sized viewer is connected is the case a client-based design silently loses, and renames the session mid-attach, since a rename is the case an identity built on names silently loses.
 
@@ -787,7 +1044,12 @@ Against an isolated test daemon (`GOBBY_TEST_PROTECT=1`, temp state/ports/socket
 
 `kind: deliverable`
 
-Targets: `src/gobby/config/terminals.py`, `src/gobby/install/shared/config/config.yaml`, `docs/evidence/native-backend-flip.md`, `tests/terminals/test_backend_selection.py`, `docs/guides/gterminal-development-guide.md`
+Targets:
+- `src/gobby/config/terminals.py`
+- `src/gobby/install/shared/config/config.yaml::*` — scope-reason: default-backend flip and gate check
+- `docs/evidence/native-backend-flip.md`
+- `tests/terminals/test_backend_selection.py`
+- `docs/guides/gterminal-development-guide.md`
 
 Flip `TerminalConfig.default_backend` (2.2) to `"native"` for Gobby-managed launches once the flip gate holds: the 5.1 contract suite and 5.2 e2e green on macOS and Linux CI for two consecutive weekly runs with zero open critical (`priority <= 1`) terminal-labeled bugs. tmux remains the automatic backend for externally discovered sessions (ownership `external`) and stays selectable per spawn. The flip is one config-default change plus documentation of the rollback (set default back to `"tmux"`; running native terminals finish in place — symmetric to the forward migration). The rollback note is added to the guide 3.6 creates, which is one of the two reasons this leaf depends on 3.6.
 
@@ -808,13 +1070,59 @@ The check is a focused test rather than a CI-API client, and it enforces the gat
 
 `kind: deliverable`
 
-Target: `tests/e2e/test_terminal_client_stack.py`
+Target:
+- `tests/e2e/test_terminal_client_stack.py`
 
 One isolated-daemon run (`GOBBY_TEST_PROTECT=1`, temporary state, ports, and sockets — never the user's daemon or host) exercising the full stack: spawn one tmux-backend and one native-backend agent run through the same spawn surface; verify terminal rows, roster/`/api/terminals` contents, and attention episodes for both; drive a scripted gclient frame session attaching to both terminals (native direct, tmux via the capture-poll observer), asserting that the frame channel carries frames only, that keystrokes routed through the daemon reach the right terminal, and that detach/reattach works; answer one attention prompt per backend through the respond API; view the native terminal through the web proxy path simultaneously with the gclient observer and exercise the cross-surface lease policy in both directions — both surfaces start read-only, gclient takes control through the daemon and receives input, the web tab explicitly takes over and the gclient pane renders `terminal_lease_lost` read-only, then gclient takes it back — asserting after each transition that input reaches exactly the lease holder's terminal and no keystroke is silently dropped, and that with the daemon's own API stopped both surfaces go read-only while frames keep flowing; attach additionally to a third terminal — an external tmux session that already has its own client at a different size — from the browser tab and the gclient pane at once, asserting they share one observer, that its geometry and active-pane selection are unchanged throughout including across an owner resize, that its pane properties match a never-viewed control pane, and that no extra tmux client is ever created; retry a write on a live connection and assert it executes exactly once, then force a control-client *reconnect* mid-write and assert the write is reported indeterminate and not re-sent while a `kill` and a `resize` in the same situation are safely retried; disconnect the control client while a spawn is in flight and assert the young pending row is not exited and the spawn completes `live`; restart the daemon and verify both terminals reconcile with the host adopted at its original epoch and streams resume, including one native run whose exit lands *during* the restart window and is finalized exactly once by reconciliation; kill the host and verify orphan/interrupt/resume semantics for the native run while the tmux run is unaffected; finish both runs and verify capture-before-kill artifacts and lifecycle finalization. Rust-side: `cargo nextest run -p gobby-terminal -p gobby-client` green with the `gterm-pty` group serialized.
 
 **Acceptance:**
 
 - E1.1 - The isolated-daemon end-to-end run covering both backends, both clients (gclient frames + web proxy) sharing one observer per physical terminal with every write crossing the daemon, cross-surface lease takeover in both directions, read-only degradation when the daemon's API is stopped while frames continue, an externally owned session whose geometry, active-pane selection, and pane properties survive being viewed and resized, exactly-once write retry within a connection and indeterminate-not-retried write across a reconnect, an in-flight spawn surviving a reconnect, attention respond, daemon restart with host adoption and exit-during-restart reconciliation, and host-crash recovery passes; all referenced Rust and Python focused suites are green. test: `tests/e2e/test_terminal_client_stack.py::test_terminal_client_stack_end_to_end`.
+
+## D1: Plugin system for gclient and the Gobby CLI/daemon API
+
+`kind: deferred`
+
+Herdr's plugin system (manifest-driven `herdr-plugin.toml` packages: external argv processes in any language declaring actions, event hooks, and panes, with the entire CLI/socket API as the plugin surface) is deliberately not imported in this epic. The Gobby version is its own plan: it hosts on the public Gobby CLI + daemon API (never Python internals), lands client-side in Rust so it survives the daemon migration (C1 topology), and borrows herdr's manifest schema, `plugin_command.rs`, `plugin_paths.rs`, `persist/plugin_registry.rs`, `cli/plugin.rs`, and the actions/event-hooks/panes model from the fork clone.
+
+```yaml
+deferral:
+  task_ref: "#20201"
+  reason: "The plugin host needs gclient and the public daemon API surface from this epic to exist first, and its API design deserves its own elicitation and plan."
+  owner: "josh"
+  original_acceptance_items:
+    - D1.1
+```
+
+## D2: Remote gclient attach — daemon-WS frame source and attach capabilities
+
+`kind: deferred`
+
+The multi-machine story (hub daemon on one machine, client daemons + gterm hosts on others, gclient roaming over Tailscale) needs a second frame-source implementation that consumes frames through a daemon WS proxy, plus the short-lived per-terminal attach-capability tokens C1 defers. 3.3's frame-source trait is the seam this lands behind; the shipped web terminal already covers remote *viewing* through the daemon WS proxy in the meantime.
+
+```yaml
+deferral:
+  task_ref: "#20202"
+  reason: "No remote/web-direct attach surface exists in this epic; local Unix sockets with same-user trust cover every milestone-1 flow, and the remote source arrives with the hub/client mode split."
+  owner: "josh"
+  original_acceptance_items:
+    - D2.1
+```
+
+## D3: Hosted terminal-relay privacy stance
+
+`kind: deferred`
+
+In the hosted topology (gobby.ai-run hub), remote web viewing relays terminal bytes browser → hub → client daemon → host. Terminal bytes can contain secrets, so the hosted milestone must ship an explicit privacy stance — opt-in relay, end-to-end encryption between browser and client daemon, or hosted-mode viewing restrictions — enforced by the relay design rather than stated in prose.
+
+```yaml
+deferral:
+  task_ref: "#20203"
+  reason: "The relay this governs is a hosted-milestone surface; this epic's web viewing is same-trust-domain (local daemon proxy) where the question does not arise."
+  owner: "josh"
+  original_acceptance_items:
+    - D3.1
+```
 
 ## V1 Plan Changelog
 
