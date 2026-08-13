@@ -3203,7 +3203,9 @@ class TestMessageProcessorPreparedService:
         assert processor.websocket_server is runner.websocket_server
         processor.set_hook_manager.assert_called_once_with(hook_manager)
         processor.start.assert_awaited_once()
-        hook_manager._session_coordinator.reregister_active_sessions.assert_called_once_with()
+        hook_manager._session_coordinator.reregister_active_sessions.assert_called_once_with(
+            message_processor=processor
+        )
 
         await asyncio.to_thread(prepared.dispose)
         assert runner.message_processor is None

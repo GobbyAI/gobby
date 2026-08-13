@@ -475,7 +475,9 @@ def _build_message_processor(
                 runner.message_processor = None
             raise
         if hook_manager is not None:
-            hook_manager._session_coordinator.reregister_active_sessions()
+            hook_manager._session_coordinator.reregister_active_sessions(
+                message_processor=processor
+            )
 
     def dispose() -> None:
         if runner.message_processor is processor:

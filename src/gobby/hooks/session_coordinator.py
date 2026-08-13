@@ -248,7 +248,12 @@ class SessionCoordinator:
 
     # ==================== LIFECYCLE OPERATIONS ====================
 
-    def reregister_active_sessions(self, limit: int = 1000) -> int:
+    def reregister_active_sessions(
+        self,
+        limit: int = 1000,
+        *,
+        message_processor: Any | None = None,
+    ) -> int:
         """
         Re-register active and paused sessions with the message processor.
 
@@ -261,11 +266,14 @@ class SessionCoordinator:
             limit: Maximum number of sessions to re-register per status
                    (default 1000). Sessions beyond this limit will not
                    be re-registered.
+            message_processor: Processor being activated before the runtime
+                service bundle is published. Defaults to the live resolver.
 
         Returns:
             Number of sessions successfully re-registered
         """
-        message_processor = self._message_processor_resolver()
+        if message_processor is None:
+            message_processor = self._message_processor_resolver()
         if message_processor is None or not self._session_manager:
             return 0
 
