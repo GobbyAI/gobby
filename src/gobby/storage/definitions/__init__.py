@@ -5,6 +5,11 @@ from gobby.storage.definitions._shared import (
     DefinitionNotFoundError,
     compute_definition_hash,
 )
+from gobby.storage.definitions.agents import (
+    AgentDefinitionManager,
+    AgentDefinitionRow,
+    AgentStepWorkflowRow,
+)
 from gobby.storage.definitions.notifications import DefinitionRevisionListener
 from gobby.storage.definitions.pipelines import (
     PipelineDefinitionManager,
@@ -30,6 +35,9 @@ from gobby.storage.definitions.variables import (
 __all__ = [
     "DEFINITION_DOMAINS",
     "NOTIFY_CHANNEL",
+    "AgentDefinitionManager",
+    "AgentDefinitionRow",
+    "AgentStepWorkflowRow",
     "DefinitionDomain",
     "DefinitionNameConflictError",
     "DefinitionNotFoundError",

@@ -85,6 +85,38 @@ CREATE TABLE IF NOT EXISTS pipeline_definitions (
 CREATE UNIQUE INDEX IF NOT EXISTS uq_pipeline_defs_live_name
     ON pipeline_definitions USING btree (name, project_id) NULLS NOT DISTINCT
     WHERE (deleted_at IS NULL);
+
+CREATE TABLE IF NOT EXISTS agent_definitions (
+    id uuid PRIMARY KEY,
+    project_id uuid,
+    name text NOT NULL,
+    description text,
+    enabled boolean DEFAULT true NOT NULL,
+    enabled_pinned boolean DEFAULT false NOT NULL,
+    definition_json jsonb NOT NULL,
+    source text DEFAULT 'installed'::text NOT NULL,
+    tags jsonb,
+    deleted_at timestamptz,
+    created_at timestamptz DEFAULT now() NOT NULL,
+    updated_at timestamptz DEFAULT now() NOT NULL,
+    CONSTRAINT agent_definitions_source_check CHECK (
+        (source = ANY (ARRAY['installed'::text, 'custom'::text, 'project'::text]))
+    )
+);
+CREATE UNIQUE INDEX IF NOT EXISTS uq_agent_defs_live_name
+    ON agent_definitions USING btree (name, project_id) NULLS NOT DISTINCT
+    WHERE (deleted_at IS NULL);
+
+CREATE TABLE IF NOT EXISTS agent_step_workflows (
+    id uuid PRIMARY KEY,
+    agent_definition_id uuid NOT NULL UNIQUE
+        REFERENCES agent_definitions(id) ON DELETE CASCADE,
+    steps_json jsonb NOT NULL,
+    variables_json jsonb DEFAULT '{}'::jsonb NOT NULL,
+    exit_condition text,
+    created_at timestamptz DEFAULT now() NOT NULL,
+    updated_at timestamptz DEFAULT now() NOT NULL
+);
 """
 
 

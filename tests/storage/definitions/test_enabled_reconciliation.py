@@ -1,4 +1,4 @@
-"""Parameterized enabled_pinned reconciliation for the three 1.2 managers."""
+"""Parameterized enabled_pinned reconciliation for typed definition managers."""
 
 from __future__ import annotations
 
@@ -8,6 +8,7 @@ from typing import Any, Protocol
 import pytest
 
 from gobby.storage.definitions import (
+    AgentDefinitionManager,
     PipelineDefinitionManager,
     RuleDefinitionManager,
     SessionVariableDefaultManager,
@@ -43,10 +44,20 @@ def _pipeline_factory(db: PostgresHubDatabase) -> tuple[DefinitionManager, str]:
     return manager, row.id
 
 
+def _agent_factory(db: PostgresHubDatabase) -> tuple[DefinitionManager, str]:
+    manager = AgentDefinitionManager(db)
+    row = manager.create(name="agent", definition_json={"name": "agent"}, enabled=True)
+    return manager, row.id
+
+
+_FACTORIES = [_rule_factory, _variable_factory, _pipeline_factory, _agent_factory]
+_FACTORY_IDS = ["rules", "variables", "pipelines", "agents"]
+
+
 @pytest.mark.parametrize(
     "factory",
-    [_rule_factory, _variable_factory, _pipeline_factory],
-    ids=["rules", "variables", "pipelines"],
+    _FACTORIES,
+    ids=_FACTORY_IDS,
 )
 def test_user_update_and_toggle_stamp_enabled_pinned(
     definition_db: PostgresHubDatabase,
@@ -64,8 +75,8 @@ def test_user_update_and_toggle_stamp_enabled_pinned(
 
 @pytest.mark.parametrize(
     "factory",
-    [_rule_factory, _variable_factory, _pipeline_factory],
-    ids=["rules", "variables", "pipelines"],
+    _FACTORIES,
+    ids=_FACTORY_IDS,
 )
 def test_sync_adopts_template_enabled_while_unpinned(
     definition_db: PostgresHubDatabase,
@@ -79,8 +90,8 @@ def test_sync_adopts_template_enabled_while_unpinned(
 
 @pytest.mark.parametrize(
     "factory",
-    [_rule_factory, _variable_factory, _pipeline_factory],
-    ids=["rules", "variables", "pipelines"],
+    _FACTORIES,
+    ids=_FACTORY_IDS,
 )
 def test_sync_preserves_pinned_enabled_even_when_equal_to_template(
     definition_db: PostgresHubDatabase,
