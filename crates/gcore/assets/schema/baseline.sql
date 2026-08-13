@@ -6379,3 +6379,243 @@ BEGIN
     END LOOP;
 END
 $gcode_rls$;
+
+CREATE TABLE IF NOT EXISTS deployment_runtime (
+    deployment_token TEXT PRIMARY KEY,
+    fencing_epoch BIGINT NOT NULL DEFAULT 0,
+    grant_signing_secret TEXT NOT NULL,
+    epoch_updated_at TIMESTAMPTZ
+);
+
+GRANT SELECT,INSERT,UPDATE ON TABLE deployment_runtime TO gobby_daemon_runtime;
+REVOKE ALL ON TABLE deployment_runtime FROM PUBLIC;
+
+ALTER TABLE gobby_agent_auth.principal_bindings DROP CONSTRAINT IF EXISTS principal_bindings_owner_kind_check;
+ALTER TABLE gobby_agent_auth.principal_bindings ADD CONSTRAINT principal_bindings_owner_kind_check CHECK (owner_kind IN ('agent_run', 'tool_chat', 'interactive'));
+ALTER TABLE gobby_agent_auth.principal_bindings ADD COLUMN IF NOT EXISTS deployment_token TEXT;
+
+CREATE UNIQUE INDEX IF NOT EXISTS uq_interactive_principal_active
+ON gobby_agent_auth.principal_bindings(deployment_token, issuing_machine_id, project_id)
+WHERE owner_kind = 'interactive' AND revoked_at IS NULL AND deployment_token IS NOT NULL;
+
+CREATE TABLE IF NOT EXISTS gobby_agent_auth.interactive_credential_material (
+    deployment_token TEXT NOT NULL,
+    machine_id UUID NOT NULL,
+    project_id UUID NOT NULL,
+    credential_generation INTEGER NOT NULL CHECK (credential_generation > 0),
+    ciphertext TEXT NOT NULL,
+    aad_identity TEXT NOT NULL,
+    created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    PRIMARY KEY (deployment_token, machine_id, project_id, credential_generation)
+);
+
+CREATE OR REPLACE FUNCTION gobby_agent_auth.issue_or_reuse_interactive_principal(
+    requested_deployment_token TEXT,
+    requested_machine_id UUID,
+    requested_project_id UUID,
+    requested_session_id UUID,
+    requested_expires_at TIMESTAMPTZ,
+    requested_password TEXT
+)
+RETURNS TABLE(role_name NAME, credential_generation INTEGER, reused BOOLEAN)
+LANGUAGE plpgsql
+SECURITY DEFINER
+SET search_path = gobby_agent_auth, pg_temp
+SET createrole_self_grant = ''
+AS $function$
+DECLARE
+    existing_binding principal_bindings%ROWTYPE;
+    derived_role_name NAME;
+    next_generation INTEGER;
+    binding_id UUID;
+    token_slug TEXT;
+BEGIN
+    PERFORM pg_advisory_xact_lock(
+        hashtextextended(
+            requested_deployment_token || requested_machine_id::TEXT || requested_project_id::TEXT,
+            0
+        )
+    );
+    IF requested_deployment_token IS NULL OR requested_deployment_token = '' THEN
+        RAISE EXCEPTION 'interactive principal requires a deployment token'
+            USING ERRCODE = '22023';
+    END IF;
+    IF requested_expires_at <= clock_timestamp() THEN
+        RAISE EXCEPTION 'managed principal expiry must be in the future'
+            USING ERRCODE = '22023';
+    END IF;
+    IF requested_password IS NULL OR requested_password = '' THEN
+        RAISE EXCEPTION 'managed principal password must not be empty'
+            USING ERRCODE = '22023';
+    END IF;
+    IF NOT EXISTS (SELECT 1 FROM public.machines WHERE id = requested_machine_id) THEN
+        RAISE EXCEPTION 'managed principal issuing machine does not exist'
+            USING ERRCODE = '23503';
+    END IF;
+    IF NOT EXISTS (SELECT 1 FROM public.projects WHERE id = requested_project_id) THEN
+        RAISE EXCEPTION 'interactive principal project does not exist'
+            USING ERRCODE = '23503';
+    END IF;
+    IF NOT EXISTS (SELECT 1 FROM public.sessions WHERE id = requested_session_id) THEN
+        RAISE EXCEPTION 'managed principal session does not exist'
+            USING ERRCODE = '23503';
+    END IF;
+
+    SELECT *
+      INTO existing_binding
+      FROM principal_bindings
+     WHERE owner_kind = 'interactive'
+       AND deployment_token = requested_deployment_token
+       AND issuing_machine_id = requested_machine_id
+       AND project_id = requested_project_id
+       AND revoked_at IS NULL
+       AND expires_at > clock_timestamp()
+     ORDER BY credential_generation DESC
+     LIMIT 1;
+    IF FOUND THEN
+        RETURN QUERY SELECT existing_binding.role_name, existing_binding.credential_generation, TRUE;
+        RETURN;
+    END IF;
+
+    SELECT COALESCE(MAX(credential_generation), 0) + 1
+      INTO next_generation
+      FROM principal_bindings
+     WHERE owner_kind = 'interactive'
+       AND deployment_token = requested_deployment_token
+       AND issuing_machine_id = requested_machine_id
+       AND project_id = requested_project_id;
+    token_slug := regexp_replace(requested_deployment_token, '[^a-zA-Z0-9]', '', 'g');
+    derived_role_name := (
+        'gobby_ix_'
+        || substr(token_slug, 1, 8)
+        || '_'
+        || replace(requested_machine_id::TEXT, '-', '')
+        || '_'
+        || replace(requested_project_id::TEXT, '-', '')
+        || '_'
+        || next_generation::TEXT
+    )::NAME;
+    EXECUTE format(
+        'CREATE ROLE %I LOGIN PASSWORD %L VALID UNTIL %L INHERIT '
+        'NOSUPERUSER NOCREATEROLE NOCREATEDB NOREPLICATION NOBYPASSRLS',
+        derived_role_name,
+        requested_password,
+        requested_expires_at
+    );
+    EXECUTE format(
+        'GRANT %I TO %I WITH ADMIN FALSE, INHERIT TRUE, SET FALSE',
+        'gobby_gcode_capability',
+        derived_role_name
+    );
+
+    INSERT INTO principal_bindings (
+        role_name,
+        owner_kind,
+        managed_execution_id,
+        session_id,
+        project_id,
+        issuing_machine_id,
+        deployment_token,
+        expires_at,
+        credential_generation
+    ) VALUES (
+        derived_role_name,
+        'interactive',
+        gen_random_uuid(),
+        requested_session_id,
+        requested_project_id,
+        requested_machine_id,
+        requested_deployment_token,
+        requested_expires_at,
+        next_generation
+    ) RETURNING id INTO binding_id;
+
+    INSERT INTO principal_audit_events (
+        binding_id,
+        event_type,
+        managed_execution_id,
+        role_name,
+        credential_generation,
+        project_id
+    ) VALUES (
+        binding_id,
+        'issue',
+        (SELECT managed_execution_id FROM principal_bindings WHERE id = binding_id),
+        derived_role_name,
+        next_generation,
+        requested_project_id
+    );
+    RETURN QUERY SELECT derived_role_name, next_generation, FALSE;
+END
+$function$;
+
+CREATE OR REPLACE FUNCTION gobby_agent_auth.replace_interactive_credential_material(
+    requested_deployment_token TEXT,
+    requested_machine_id UUID,
+    requested_project_id UUID,
+    requested_generation INTEGER,
+    requested_ciphertext TEXT,
+    requested_aad_identity TEXT
+)
+RETURNS VOID
+LANGUAGE plpgsql
+SECURITY DEFINER
+SET search_path = gobby_agent_auth, pg_temp
+AS $function$
+BEGIN
+    IF requested_ciphertext IS NULL OR requested_ciphertext = '' THEN
+        RAISE EXCEPTION 'interactive credential material must be ciphertext'
+            USING ERRCODE = '22023';
+    END IF;
+    IF requested_aad_identity IS NULL OR requested_aad_identity = '' THEN
+        RAISE EXCEPTION 'interactive credential material requires AAD identity'
+            USING ERRCODE = '22023';
+    END IF;
+    DELETE FROM interactive_credential_material
+     WHERE deployment_token = requested_deployment_token
+       AND machine_id = requested_machine_id
+       AND project_id = requested_project_id
+       AND credential_generation <> requested_generation;
+    INSERT INTO interactive_credential_material (
+        deployment_token,
+        machine_id,
+        project_id,
+        credential_generation,
+        ciphertext,
+        aad_identity
+    ) VALUES (
+        requested_deployment_token,
+        requested_machine_id,
+        requested_project_id,
+        requested_generation,
+        requested_ciphertext,
+        requested_aad_identity
+    )
+    ON CONFLICT (deployment_token, machine_id, project_id, credential_generation)
+    DO UPDATE SET
+        ciphertext = EXCLUDED.ciphertext,
+        aad_identity = EXCLUDED.aad_identity,
+        created_at = NOW();
+END
+$function$;
+
+ALTER TABLE gobby_agent_auth.interactive_credential_material OWNER TO gobby_agent_issuer;
+REVOKE ALL ON TABLE gobby_agent_auth.interactive_credential_material FROM PUBLIC;
+ALTER FUNCTION gobby_agent_auth.issue_or_reuse_interactive_principal(
+    TEXT, UUID, UUID, UUID, TIMESTAMPTZ, TEXT
+) OWNER TO gobby_agent_issuer;
+ALTER FUNCTION gobby_agent_auth.replace_interactive_credential_material(
+    TEXT, UUID, UUID, INTEGER, TEXT, TEXT
+) OWNER TO gobby_agent_issuer;
+REVOKE ALL ON FUNCTION gobby_agent_auth.issue_or_reuse_interactive_principal(
+    TEXT, UUID, UUID, UUID, TIMESTAMPTZ, TEXT
+) FROM PUBLIC;
+REVOKE ALL ON FUNCTION gobby_agent_auth.replace_interactive_credential_material(
+    TEXT, UUID, UUID, INTEGER, TEXT, TEXT
+) FROM PUBLIC;
+GRANT EXECUTE ON FUNCTION gobby_agent_auth.issue_or_reuse_interactive_principal(
+    TEXT, UUID, UUID, UUID, TIMESTAMPTZ, TEXT
+) TO gobby_daemon_runtime;
+GRANT EXECUTE ON FUNCTION gobby_agent_auth.replace_interactive_credential_material(
+    TEXT, UUID, UUID, INTEGER, TEXT, TEXT
+) TO gobby_daemon_runtime;

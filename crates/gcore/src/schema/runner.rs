@@ -11,8 +11,10 @@ use super::gate::{SourceIdentity, VerifiedBackupManifest};
 use super::sql_splitter::split_sql_statements;
 use super::verify::{VerificationReport, qualified_name, validate_identifier, verify_schema};
 
-pub(crate) const PREDECESSOR_BASELINE_CHECKSUM: &str =
+pub(crate) const ACCOUNT_IDENTITY_PREDECESSOR_CHECKSUM: &str =
     "855576453641152d2ef9199dc418fcc3dd2ad69e78eff924b05a7b3b122cf398";
+pub(crate) const PREDECESSOR_BASELINE_CHECKSUM: &str =
+    "b2e08b119ba08d342cb2729a96ff4a0e42380a1335a5661c89c45fa3f75832b3";
 
 #[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
 pub struct ApplyReport {
@@ -143,7 +145,8 @@ impl<'a> SchemaRunner<'a> {
             BaselineState::Fresh
             | BaselineState::FreshWithInstallInfra
             | BaselineState::GcoreCodeIndex
-            | BaselineState::GwikiStandalone => {
+            | BaselineState::GwikiStandalone
+            | BaselineState::PredecessorBaseline => {
                 require_pg_search(self.client)?;
                 verify_adopted_columns(self.client, &self.schema, state)?;
                 apply_baseline(self.client, &self.schema, state)?;
@@ -179,6 +182,7 @@ enum BaselineState {
     GwikiStandalone,
     AlreadyBaselined,
     AccountIdentityPredecessor,
+    PredecessorBaseline,
     CorruptPartial,
 }
 
@@ -313,7 +317,10 @@ fn recognized_baseline_receipt(
     let checksum = row.get::<_, Option<String>>(1);
     Ok(match checksum.as_deref() {
         Some(BASELINE_CHECKSUM) => Some(BaselineState::AlreadyBaselined),
-        Some(PREDECESSOR_BASELINE_CHECKSUM) => Some(BaselineState::AccountIdentityPredecessor),
+        Some(PREDECESSOR_BASELINE_CHECKSUM) => Some(BaselineState::PredecessorBaseline),
+        Some(ACCOUNT_IDENTITY_PREDECESSOR_CHECKSUM) => {
+            Some(BaselineState::AccountIdentityPredecessor)
+        }
         _ => None,
     })
 }
@@ -373,16 +380,24 @@ fn apply_baseline(
             transaction.batch_execute(&statement)?;
         }
     }
-    transaction.execute(
-        &format!(
-            "INSERT INTO {receipt_table}(version, filename, checksum, applied_at) VALUES ($1, $2, $3, NOW())"
-        ),
-        &[
-            &BASELINE_VERSION,
-            &format!("baseline@{BASELINE_VERSION}"),
-            &BASELINE_CHECKSUM,
-        ],
-    )?;
+    let filename = format!("baseline@{BASELINE_VERSION}");
+    if state == BaselineState::PredecessorBaseline {
+        transaction.execute(
+            &format!(
+                "UPDATE {receipt_table} SET filename = $1, checksum = $2, applied_at = NOW() \
+                 WHERE version = $3"
+            ),
+            &[&filename, &BASELINE_CHECKSUM, &BASELINE_VERSION],
+        )?;
+    } else {
+        transaction.execute(
+            &format!(
+                "INSERT INTO {receipt_table}(version, filename, checksum, applied_at) \
+                 VALUES ($1, $2, $3, NOW())"
+            ),
+            &[&BASELINE_VERSION, &filename, &BASELINE_CHECKSUM],
+        )?;
+    }
     transaction.commit()?;
     Ok(())
 }
@@ -402,6 +417,10 @@ pub(super) fn render_sql_for_schema<'a>(sql: &'a str, schema: &str) -> Cow<'a, s
 }
 
 fn baseline_statement_for_state(statement: &str, state: BaselineState) -> Option<String> {
+    if state == BaselineState::PredecessorBaseline {
+        return super::baseline_refresh::baseline_refresh_statement(statement)
+            .then(|| statement.to_owned());
+    }
     if !matches!(
         state,
         BaselineState::GcoreCodeIndex | BaselineState::GwikiStandalone

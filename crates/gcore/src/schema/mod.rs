@@ -4,6 +4,7 @@
 //! verification. Consumer crates retain ownership of CRUD and domain behavior.
 
 mod assets;
+mod baseline_refresh;
 mod error;
 mod external;
 mod gate;

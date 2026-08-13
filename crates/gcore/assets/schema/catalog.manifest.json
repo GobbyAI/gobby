@@ -1369,6 +1369,22 @@
       "definition": "timestamp with time zone|timestamptz|NO||NEVER"
     },
     {
+      "name": "deployment_runtime.deployment_token",
+      "definition": "text|text|NO||NEVER"
+    },
+    {
+      "name": "deployment_runtime.epoch_updated_at",
+      "definition": "timestamp with time zone|timestamptz|YES||NEVER"
+    },
+    {
+      "name": "deployment_runtime.fencing_epoch",
+      "definition": "bigint|int8|NO|0|NEVER"
+    },
+    {
+      "name": "deployment_runtime.grant_signing_secret",
+      "definition": "text|text|NO||NEVER"
+    },
+    {
       "name": "destructive_batches.abort_disposition",
       "definition": "text|text|YES||NEVER"
     },
@@ -5851,6 +5867,10 @@
       "definition": "PRIMARY KEY (id)"
     },
     {
+      "name": "deployment_runtime.deployment_runtime_pkey",
+      "definition": "PRIMARY KEY (deployment_token)"
+    },
+    {
       "name": "destructive_batches.destructive_batches_backup_manifest_sha256_check",
       "definition": "CHECK (backup_manifest_sha256 IS NULL OR backup_manifest_sha256 ~ '^[0-9a-f]{64}$'::text)"
     },
@@ -7221,6 +7241,10 @@
     {
       "name": "cron_runs_pkey",
       "definition": "CREATE UNIQUE INDEX cron_runs_pkey ON $schema.cron_runs USING btree (id)"
+    },
+    {
+      "name": "deployment_runtime_pkey",
+      "definition": "CREATE UNIQUE INDEX deployment_runtime_pkey ON $schema.deployment_runtime USING btree (deployment_token)"
     },
     {
       "name": "destructive_batches_epoch_lookup",

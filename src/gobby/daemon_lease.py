@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import secrets
 import threading
 import time
 import uuid
@@ -10,7 +11,10 @@ from typing import Any
 
 import psycopg
 
-_LEASE_NAMESPACE = "gobby-single-active-daemon-v1"
+from gobby.deployment import deployment_advisory_key
+from gobby.deployment import deployment_token as derive_deployment_token
+
+_LEASE_PURPOSE = "single-active-daemon"
 _APPLICATION_PREFIX = "gobby-lease-v1:"
 _RECOVERY_TIMEOUT_SECONDS = 5.0
 
@@ -50,6 +54,11 @@ class RecoveredLeaseOwner:
     heartbeat_age_seconds: float
 
 
+def _advisory_lock_parts(key: int) -> tuple[int, int]:
+    unsigned = key & 0xFFFFFFFFFFFFFFFF
+    return (unsigned >> 32) & 0xFFFFFFFF, unsigned & 0xFFFFFFFF
+
+
 class ActiveDaemonLease:
     """Own a PostgreSQL session advisory lock for the active runtime lifetime."""
 
@@ -58,6 +67,7 @@ class ActiveDaemonLease:
         database_url: str,
         *,
         machine_id: str,
+        deployment_token: str | None = None,
         connect_timeout_seconds: int = 5,
     ) -> None:
         if not database_url:
@@ -69,10 +79,13 @@ class ActiveDaemonLease:
         instance = uuid.uuid4().hex[:8]
         self.database_url = database_url
         self.machine_id = machine_id
+        self.deployment_token = deployment_token or derive_deployment_token()
         self.application_name = f"{_APPLICATION_PREFIX}{machine_id}:{instance}"
         self.connect_timeout_seconds = connect_timeout_seconds
         self._connection: psycopg.Connection[Any] | None = None
-        self._keys: tuple[int, int] | None = None
+        self._key: int | None = None
+        self._fencing_epoch: int | None = None
+        self._grant_signing_secret: str | None = None
         self._mutex = threading.RLock()
 
     @property
@@ -80,6 +93,18 @@ class ActiveDaemonLease:
         """Return whether this object currently owns an open lease session."""
         with self._mutex:
             return self._connection is not None
+
+    @property
+    def fencing_epoch(self) -> int | None:
+        """Return the epoch cached at the last successful acquisition."""
+        with self._mutex:
+            return self._fencing_epoch
+
+    @property
+    def grant_signing_secret(self) -> str | None:
+        """Return the signing secret rotated at the last successful acquisition."""
+        with self._mutex:
+            return self._grant_signing_secret
 
     def try_acquire(self) -> bool:
         """Attempt the lease once, retaining the dedicated connection on success."""
@@ -90,17 +115,36 @@ class ActiveDaemonLease:
 
             connection = self._connect(self.application_name)
             try:
-                keys = self._resolve_keys(connection)
-                row = connection.execute(
-                    "SELECT pg_try_advisory_lock(%s, %s)",
-                    keys,
-                ).fetchone()
+                key = deployment_advisory_key(_LEASE_PURPOSE, token=self.deployment_token)
+                row = connection.execute("SELECT pg_try_advisory_lock(%s)", (key,)).fetchone()
                 acquired = bool(row and row[0])
                 if not acquired:
                     connection.close()
                     return False
+                secret = secrets.token_urlsafe(32)
+                with connection.transaction():
+                    bumped = connection.execute(
+                        """
+                        INSERT INTO deployment_runtime (
+                            deployment_token,
+                            fencing_epoch,
+                            grant_signing_secret,
+                            epoch_updated_at
+                        ) VALUES (%s, 1, %s, clock_timestamp())
+                        ON CONFLICT (deployment_token) DO UPDATE
+                           SET fencing_epoch = deployment_runtime.fencing_epoch + 1,
+                               grant_signing_secret = EXCLUDED.grant_signing_secret,
+                               epoch_updated_at = clock_timestamp()
+                        RETURNING fencing_epoch, grant_signing_secret
+                        """,
+                        (self.deployment_token, secret),
+                    ).fetchone()
+                if bumped is None:
+                    raise DaemonLeaseError("deployment_runtime did not return an epoch")
                 self._connection = connection
-                self._keys = keys
+                self._key = key
+                self._fencing_epoch = int(bumped[0])
+                self._grant_signing_secret = str(bumped[1])
                 return True
             except BaseException:
                 connection.close()
@@ -118,18 +162,42 @@ class ActiveDaemonLease:
                 self._forget_connection(connection)
                 raise LeaseConnectionLostError("active-daemon lease connection was lost") from exc
 
+    def is_live(self) -> bool:
+        """Return whether the lease session is alive and the cached epoch is current."""
+        with self._mutex:
+            try:
+                self.heartbeat()
+            except LeaseConnectionLostError:
+                return False
+            owned_epoch = self._fencing_epoch
+            token = self.deployment_token
+        if owned_epoch is None:
+            return False
+        with self._connect(self._probe_application_name()) as connection:
+            row = connection.execute(
+                """
+                SELECT fencing_epoch
+                  FROM deployment_runtime
+                 WHERE deployment_token = %s
+                """,
+                (token,),
+            ).fetchone()
+        return row is not None and int(row[0]) == owned_epoch
+
     def release(self) -> None:
         """Release the lease and close its dedicated PostgreSQL session."""
         with self._mutex:
             connection = self._connection
-            keys = self._keys
+            key = self._key
             self._connection = None
-            self._keys = None
+            self._key = None
+            self._fencing_epoch = None
+            self._grant_signing_secret = None
             if connection is None:
                 return
             try:
-                if keys is not None and not connection.closed:
-                    connection.execute("SELECT pg_advisory_unlock(%s, %s)", keys).fetchone()
+                if key is not None and not connection.closed:
+                    connection.execute("SELECT pg_advisory_unlock(%s)", (key,)).fetchone()
             except (psycopg.Error, OSError):
                 pass
             finally:
@@ -138,8 +206,8 @@ class ActiveDaemonLease:
     def status(self) -> DaemonLeaseStatus:
         """Inspect the exact singleton lease without mutating ownership."""
         with self._connect(self._probe_application_name()) as connection:
-            keys = self._resolve_keys(connection)
-            owner = self._read_owner(connection, keys)
+            key = deployment_advisory_key(_LEASE_PURPOSE, token=self.deployment_token)
+            owner = self._read_owner(connection, key)
         if owner is None:
             return DaemonLeaseStatus(held=False)
         owner_pid, application_name, heartbeat_age = owner
@@ -155,8 +223,8 @@ class ActiveDaemonLease:
         if stale_after_seconds < 0:
             raise ValueError("stale_after_seconds cannot be negative")
         with self._connect(self._probe_application_name()) as connection:
-            keys = self._resolve_keys(connection)
-            owner = self._read_owner(connection, keys)
+            key = deployment_advisory_key(_LEASE_PURPOSE, token=self.deployment_token)
+            owner = self._read_owner(connection, key)
             if owner is None:
                 raise DaemonLeaseError("active-daemon lease has no owner")
             owner_pid, application_name, heartbeat_age = owner
@@ -169,8 +237,7 @@ class ActiveDaemonLease:
                     "active-daemon lease owner is still fresh "
                     f"({heartbeat_age:.3f}s < {stale_after_seconds:.3f}s)"
                 )
-            class_id = keys[0] & 0xFFFFFFFF
-            object_id = keys[1] & 0xFFFFFFFF
+            class_id, object_id = _advisory_lock_parts(key)
             terminated = connection.execute(
                 """
                 SELECT pg_terminate_backend(activity.pid)
@@ -185,7 +252,7 @@ class ActiveDaemonLease:
                         WHERE locks.pid = activity.pid
                           AND locks.locktype = 'advisory'
                           AND locks.granted
-                          AND locks.objsubid = 2
+                          AND locks.objsubid = 1
                           AND locks.classid = %s
                           AND locks.objid = %s
                    )
@@ -204,7 +271,7 @@ class ActiveDaemonLease:
                 )
             deadline = time.monotonic() + _RECOVERY_TIMEOUT_SECONDS
             while time.monotonic() < deadline:
-                if self._read_owner(connection, keys) is None:
+                if self._read_owner(connection, key) is None:
                     return RecoveredLeaseOwner(
                         owner_pid=owner_pid,
                         owner_application_name=application_name,
@@ -225,21 +292,8 @@ class ActiveDaemonLease:
         return f"gobby-lease-probe-v1:{self.machine_id[:8]}:{uuid.uuid4().hex[:8]}"
 
     @staticmethod
-    def _resolve_keys(connection: psycopg.Connection[Any]) -> tuple[int, int]:
-        row = connection.execute(
-            "SELECT hashtext(%s), hashtext(current_database())",
-            (_LEASE_NAMESPACE,),
-        ).fetchone()
-        if row is None:
-            raise DaemonLeaseError("PostgreSQL did not return active-daemon lease keys")
-        return int(row[0]), int(row[1])
-
-    @staticmethod
-    def _read_owner(
-        connection: psycopg.Connection[Any], keys: tuple[int, int]
-    ) -> tuple[int, str, float] | None:
-        class_id = keys[0] & 0xFFFFFFFF
-        object_id = keys[1] & 0xFFFFFFFF
+    def _read_owner(connection: psycopg.Connection[Any], key: int) -> tuple[int, str, float] | None:
+        class_id, object_id = _advisory_lock_parts(key)
         row = connection.execute(
             """
             SELECT activity.pid,
@@ -249,7 +303,7 @@ class ActiveDaemonLease:
               JOIN pg_stat_activity AS activity ON activity.pid = locks.pid
              WHERE locks.locktype = 'advisory'
                AND locks.granted
-               AND locks.objsubid = 2
+               AND locks.objsubid = 1
                AND locks.classid = %s
                AND locks.objid = %s
             """,
@@ -261,7 +315,9 @@ class ActiveDaemonLease:
 
     def _forget_connection(self, connection: psycopg.Connection[Any]) -> None:
         self._connection = None
-        self._keys = None
+        self._key = None
+        self._fencing_epoch = None
+        self._grant_signing_secret = None
         try:
             connection.close()
         except (psycopg.Error, OSError):

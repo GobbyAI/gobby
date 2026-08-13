@@ -50,7 +50,7 @@ fn version_json_reports_exact_schema_identity_contract() -> anyhow::Result<()> {
     assert_eq!(identity["latest_version"], 375);
     assert_eq!(
         identity["baseline_checksum"],
-        "b2e08b119ba08d342cb2729a96ff4a0e42380a1335a5661c89c45fa3f75832b3"
+        "b8f24b35612378cd4f4844f2cf57dcd16736717ad54851eba8d69e2292e366b5"
     );
     assert_eq!(identity["latest_checksum"], identity["baseline_checksum"]);
     assert_eq!(identity["runner_protocol"], 1);

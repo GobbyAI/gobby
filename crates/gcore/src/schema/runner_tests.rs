@@ -14,7 +14,9 @@ use super::error::SchemaError;
 use super::gate::{
     BackupGateContext, SourceIdentity, VerifiedBackupManifest, parse_backup_manifest,
 };
-use super::runner::{PREDECESSOR_BASELINE_CHECKSUM, SchemaRunner};
+use super::runner::{
+    ACCOUNT_IDENTITY_PREDECESSOR_CHECKSUM, PREDECESSOR_BASELINE_CHECKSUM, SchemaRunner,
+};
 
 static RECOVERY_MIGRATION: EmbeddedMigration = EmbeddedMigration {
     version: 376,
@@ -317,7 +319,7 @@ fn obsolete_baseline_receipt_is_rejected_without_mutation() -> anyhow::Result<()
     )?;
     client.execute(
         "UPDATE schema_migrations SET checksum = $1 WHERE version = $2",
-        &[&PREDECESSOR_BASELINE_CHECKSUM, &BASELINE_VERSION],
+        &[&ACCOUNT_IDENTITY_PREDECESSOR_CHECKSUM, &BASELINE_VERSION],
     )?;
 
     let error = SchemaRunner::new(&mut client, "public")?
@@ -341,7 +343,7 @@ fn obsolete_baseline_receipt_is_rejected_without_mutation() -> anyhow::Result<()
             &[&BASELINE_VERSION],
         )?
         .get(0);
-    assert_eq!(checksum, PREDECESSOR_BASELINE_CHECKSUM);
+    assert_eq!(checksum, ACCOUNT_IDENTITY_PREDECESSOR_CHECKSUM);
     Ok(())
 }
 
@@ -358,7 +360,71 @@ fn predecessor_checksum_matches_python_cutover_contract() {
         .map(|(_, value)| value.trim().trim_matches('"'))
         .expect("Python predecessor checksum declaration must contain '='");
 
-    assert_eq!(python_checksum, PREDECESSOR_BASELINE_CHECKSUM);
+    assert_eq!(python_checksum, ACCOUNT_IDENTITY_PREDECESSOR_CHECKSUM);
+}
+
+#[test]
+fn receipt_chain_advances_from_19645_baseline() -> anyhow::Result<()> {
+    let _serial = DATABASE_TEST_LOCK
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner);
+    let Some((_database, mut client)) = test_database()? else {
+        return Ok(());
+    };
+
+    let fresh = SchemaRunner::new(&mut client, "public")?.apply()?;
+    assert!(fresh.baseline_applied);
+    let current: String = client
+        .query_one(
+            "SELECT checksum FROM schema_migrations WHERE version = $1",
+            &[&BASELINE_VERSION],
+        )?
+        .get(0);
+    assert_eq!(current, BASELINE_CHECKSUM);
+
+    let already = SchemaRunner::new(&mut client, "public")?.apply()?;
+    assert!(!already.baseline_applied);
+
+    client.execute(
+        "UPDATE schema_migrations SET checksum = $1 WHERE version = $2",
+        &[&ACCOUNT_IDENTITY_PREDECESSOR_CHECKSUM, &BASELINE_VERSION],
+    )?;
+    let pre_19645 = SchemaRunner::new(&mut client, "public")?
+        .apply()
+        .expect_err("pre-#19645 hubs must name the cutover path");
+    assert!(
+        pre_19645
+            .to_string()
+            .contains("run 'gobby hub-maintenance run account-identity-cutover'")
+    );
+
+    client.execute(
+        "UPDATE schema_migrations SET checksum = $1 WHERE version = $2",
+        &[&PREDECESSOR_BASELINE_CHECKSUM, &BASELINE_VERSION],
+    )?;
+    let upgraded = SchemaRunner::new(&mut client, "public")?.apply()?;
+    assert!(upgraded.baseline_applied);
+    let after_upgrade: String = client
+        .query_one(
+            "SELECT checksum FROM schema_migrations WHERE version = $1",
+            &[&BASELINE_VERSION],
+        )?
+        .get(0);
+    assert_eq!(after_upgrade, BASELINE_CHECKSUM);
+
+    client.execute(
+        "UPDATE schema_migrations SET checksum = 'unrecognized' WHERE version = $1",
+        &[&BASELINE_VERSION],
+    )?;
+    let mismatch = SchemaRunner::new(&mut client, "public")?
+        .apply()
+        .expect_err("arbitrary receipt checksums must remain corrupt");
+    assert!(
+        mismatch
+            .to_string()
+            .contains("recreate from a verified backup")
+    );
+    Ok(())
 }
 
 #[test]

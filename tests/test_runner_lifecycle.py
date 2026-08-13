@@ -2152,6 +2152,7 @@ class TestRunGobbyFunction:
             patch(
                 "gobby.utils.machine_id.require_machine_id", return_value="machine-id"
             ) as mock_require_machine_id,
+            patch("gobby.deployment.deployment_token", return_value="deadbeefdeadbeef"),
         ):
             mock_runner = AsyncMock()
             mock_runner.run = AsyncMock()
@@ -2173,7 +2174,11 @@ class TestRunGobbyFunction:
                 "/tmp/config.yaml", resolve_database_url=True
             )
             mock_require_machine_id.assert_called_once_with()
-            mock_lease_cls.assert_called_once_with("postgresql://test", machine_id="machine-id")
+            mock_lease_cls.assert_called_once_with(
+                "postgresql://test",
+                machine_id="machine-id",
+                deployment_token="deadbeefdeadbeef",
+            )
             mock_verify_schema.assert_called_once_with("postgresql://test")
             assert lease.try_acquire.call_count == 1
             assert mock_monitor_lease.await_count == 1

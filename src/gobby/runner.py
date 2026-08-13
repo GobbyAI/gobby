@@ -308,6 +308,7 @@ async def run_gobby(
         monitor_active_lease,
         serve_standby_until_promotion,
     )
+    from gobby.deployment import deployment_token
     from gobby.runner_pid_file import (
         FailOpenPidOwnership,
         claim_pid_file,
@@ -341,7 +342,11 @@ async def run_gobby(
     if database_url is None:
         raise RuntimeError("bootstrap database_url is required for active-daemon ownership")
 
-    lease = ActiveDaemonLease(database_url, machine_id=require_machine_id())
+    lease = ActiveDaemonLease(
+        database_url,
+        machine_id=require_machine_id(),
+        deployment_token=deployment_token(),
+    )
     try:
         await asyncio.to_thread(verify_schema, database_url)
         if not await asyncio.to_thread(lease.try_acquire):

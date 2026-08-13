@@ -12,7 +12,7 @@ fn embedded_assets_publish_a_complete_schema_identity() {
     assert_eq!(BASELINE_VERSION, 375);
     assert_eq!(
         BASELINE_CHECKSUM,
-        "b2e08b119ba08d342cb2729a96ff4a0e42380a1335a5661c89c45fa3f75832b3"
+        "b8f24b35612378cd4f4844f2cf57dcd16736717ad54851eba8d69e2292e366b5"
     );
     assert_eq!(identity.runner_protocol_version, RUNNER_PROTOCOL_VERSION);
     assert_eq!(identity.baseline.version, BASELINE_VERSION);
@@ -21,11 +21,11 @@ fn embedded_assets_publish_a_complete_schema_identity() {
     assert_eq!(identity.latest_asset.filename, "baseline@375");
     assert_eq!(
         identity.latest_asset.checksum,
-        "b2e08b119ba08d342cb2729a96ff4a0e42380a1335a5661c89c45fa3f75832b3"
+        "b8f24b35612378cd4f4844f2cf57dcd16736717ad54851eba8d69e2292e366b5"
     );
     assert_eq!(
         identity.root_hash,
-        "7c448dafbe6a03b4b47b3c24c947c2f0d7f90c23ad8c03aeaf1af2865081b334"
+        "e3822300240521644b24541a385e1e61f562547d97156eb53776f961dcc05691"
     );
 
     let _public_runner_type = std::any::type_name::<SchemaRunner<'static>>();
