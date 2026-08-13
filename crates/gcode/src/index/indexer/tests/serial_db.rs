@@ -228,6 +228,7 @@ fn indexing_adopts_existing_content_version_without_reparse() {
         qdrant: None,
         embedding: None,
         code_vectors: CodeVectorSettings::default(),
+        runtime_config_capture_degraded: false,
         indexing: gobby_core::config::IndexingConfig::default(),
         daemon_url: None,
         index_scope: ProjectIndexScope::Single,
@@ -335,6 +336,7 @@ fn full_indexing_reparses_previously_adopted_content() {
         qdrant: None,
         embedding: None,
         code_vectors: CodeVectorSettings::default(),
+        runtime_config_capture_degraded: false,
         indexing: gobby_core::config::IndexingConfig::default(),
         daemon_url: None,
         index_scope: ProjectIndexScope::Single,
@@ -476,6 +478,7 @@ fn overlay_indexing_adopts_existing_content_version_without_reparse() {
         qdrant: None,
         embedding: None,
         code_vectors: CodeVectorSettings::default(),
+        runtime_config_capture_degraded: false,
         indexing: gobby_core::config::IndexingConfig::default(),
         daemon_url: None,
         index_scope: ProjectIndexScope::Overlay {

@@ -134,6 +134,16 @@ def test_parent_adversary_retains_evidence_and_verdict_ownership() -> None:
         assert "adjacent-variant" in instructions
 
 
+def test_taskless_review_status_allows_protocol_failure_without_verdict() -> None:
+    status = _review(_agent("plan-adversary-taskless"))["status_message"]
+    normalized = " ".join(status.split())
+
+    assert "When validate_plan_review_coverage succeeds" in normalized
+    assert "omit verdict" in normalized
+    assert "protocol_failure" in normalized
+    assert "exact tool error and draft findings" in normalized
+
+
 def test_adversaries_remove_gobby_worker_state_and_spawn_hooks() -> None:
     forbidden_tools = {
         "gobby-agents:can_spawn_agent",

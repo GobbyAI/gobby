@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import logging
 from collections.abc import Callable, Mapping
 from datetime import UTC, datetime
 from typing import TYPE_CHECKING, Any
@@ -14,6 +15,8 @@ from gobby.mcp_proxy.tools.internal import InternalToolRegistry
 from gobby.memory.recall import MemoryRecallRunner
 from gobby.utils.project_context import get_project_context
 from gobby.utils.session_context import get_current_session_id
+
+logger = logging.getLogger(__name__)
 
 if TYPE_CHECKING:
     from gobby.memory.manager import MemoryManager
@@ -116,8 +119,9 @@ def register_memory_recall_tool(
             }
         try:
             queue = _current_queue()
-        except RuntimeError as exc:
-            return _retrieval_error(recall_request_id, f"Memory retrieval failed: {exc}")
+        except RuntimeError:
+            logger.exception("Failed to resolve the memory recall delivery queue")
+            return _retrieval_error(recall_request_id, "Memory retrieval failed.")
         if queue is None:
             return _retrieval_error(recall_request_id, "Memory services are unavailable.")
         try:

@@ -11,6 +11,9 @@ from typing import TYPE_CHECKING, Any
 from gobby.mcp_proxy.tools.sessions._terminal_transcripts import _read_transcript_tail_lines
 
 if TYPE_CHECKING:
+    from gobby.config.app import DaemonConfig
+    from gobby.config.sessions import SessionSummaryConfig
+    from gobby.config.tasks import CompactHandoffConfig
     from gobby.storage.hub.protocol import HubDatabase
     from gobby.storage.sessions import SessionManager
 
@@ -31,11 +34,11 @@ def _has_summary_refresh_source(session: Any) -> bool:
 
 
 def _capture_handoff_configs(
-    config_resolver: Callable[[], Any | None] | None,
+    config_resolver: Callable[[], DaemonConfig | None] | None,
     *,
-    session_summary_config: Any | None,
-    compact_handoff_config: Any | None,
-) -> tuple[Any | None, Any | None]:
+    session_summary_config: SessionSummaryConfig | None,
+    compact_handoff_config: CompactHandoffConfig | None,
+) -> tuple[SessionSummaryConfig | None, CompactHandoffConfig | None]:
     """Capture one active configuration revision for a compact operation."""
     if config_resolver is None:
         return session_summary_config, compact_handoff_config
@@ -45,7 +48,9 @@ def _capture_handoff_configs(
     return active.session_summary, active.compact_handoff
 
 
-def _compact_handoff_refresh_timeout_seconds(compact_handoff: Any | None = None) -> float:
+def _compact_handoff_refresh_timeout_seconds(
+    compact_handoff: CompactHandoffConfig | None = None,
+) -> float:
     value = getattr(
         compact_handoff,
         "refresh_timeout_seconds",
@@ -209,8 +214,8 @@ async def _run_compact_handoff_background_refresh(
     session_manager: SessionManager,
     db: HubDatabase,
     llm_service: Any | None,
-    session_summary_config: Any | None,
-    compact_handoff_config: Any | None = None,
+    session_summary_config: SessionSummaryConfig | None,
+    compact_handoff_config: CompactHandoffConfig | None = None,
 ) -> None:
     from gobby.sessions.summarize import generate_session_summaries
 
@@ -259,8 +264,8 @@ def _schedule_compact_handoff_background_refresh(
     session_manager: SessionManager,
     db: HubDatabase,
     llm_service: Any | None,
-    session_summary_config: Any | None,
-    compact_handoff_config: Any | None = None,
+    session_summary_config: SessionSummaryConfig | None,
+    compact_handoff_config: CompactHandoffConfig | None = None,
 ) -> bool:
     coro = _run_compact_handoff_background_refresh(
         session_id,
@@ -289,7 +294,7 @@ async def _refresh_compact_handoff_context(
     session_manager: SessionManager,
     db: HubDatabase,
     llm_service: Any | None,
-    session_summary_config: Any | None,
+    session_summary_config: SessionSummaryConfig | None,
 ) -> dict[str, Any]:
     """Prepare summary_markdown quickly before compact_self sends /compact."""
     from gobby.mcp_proxy.tools.sessions._summary_metadata import (

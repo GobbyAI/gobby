@@ -233,7 +233,10 @@ steps:
     mcp_error_policy: stay
     description: "Review the plan artifact and return structured findings"
     status_message: |
-      Review artifact_path. Return verdict approved or needs_review to the parent.
+      Review artifact_path. When validate_plan_review_coverage succeeds, return
+      verdict approved or needs_review to the parent. When validation fails,
+      omit verdict and return the canonical protocol_failure with the exact tool
+      error and draft findings.
       Send that exact JSON with send_message, then call end_agent_run.
     allowed_tools: "all"
     blocked_mcp_tools:

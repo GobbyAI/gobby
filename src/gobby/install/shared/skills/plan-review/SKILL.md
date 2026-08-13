@@ -401,9 +401,12 @@ result with no `verdict`, a `protocol_failure` field naming the failed tool
 call and its exact error, and your draft findings, so the coordinator can
 expire the attempt honestly while salvaging the analysis.
 
-Every terminal result is one JSON object with `verdict: approved` or
-`verdict: needs_review`, plus `findings` and `coverage_attestation`. Approved
-results also include the exact `manifest_entries` and `routing_decisions`.
+When `validate_plan_review_coverage` succeeds, the terminal result is one JSON
+object with `verdict: approved` or `verdict: needs_review`, plus `findings` and
+`coverage_attestation`. Approved results also include the exact
+`manifest_entries` and `routing_decisions`. A protocol-failure terminal result
+omits `verdict` and retains its `protocol_failure` field, exact tool error, and
+draft findings.
 
 ---
 

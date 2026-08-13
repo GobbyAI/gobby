@@ -10,6 +10,8 @@ from gobby.config.voice_secrets import (
     validate_structured_references,
 )
 
+pytestmark = pytest.mark.unit
+
 
 def test_masked_structured_references_follow_registry_identity_when_reordered() -> None:
     persisted = [
@@ -35,34 +37,37 @@ def test_masked_structured_references_follow_registry_identity_when_reordered() 
     ]
 
 
-def test_masked_duplicate_provider_references_follow_occurrence_order() -> None:
+def test_masked_duplicate_provider_references_are_rejected_when_reordered() -> None:
     persisted = [
-        {"provider": "openai", "api_key": "$secret:FIRST"},
-        {"provider": "openai", "api_key": "$secret:SECOND"},
+        {"provider": "openai", "label": "first", "api_key": "$secret:FIRST"},
+        {"provider": "openai", "label": "second", "api_key": "$secret:SECOND"},
     ]
     submitted = [
-        {"provider": "openai", "api_key": MASKED_SECRET},
-        {"provider": "openai", "api_key": MASKED_SECRET},
+        {"provider": "openai", "label": "second", "api_key": MASKED_SECRET},
+        {"provider": "openai", "label": "first", "api_key": MASKED_SECRET},
     ]
 
-    restored = restore_masked_structured_references(
-        "voice.providers",
-        submitted,
-        persisted,
-        ("api_key",),
-        "provider",
-    )
-
-    assert restored == persisted
+    with pytest.raises(
+        ValueError,
+        match="voice.providers persisted items have duplicate provider 'openai'",
+    ):
+        restore_masked_structured_references(
+            "voice.providers",
+            submitted,
+            persisted,
+            ("api_key",),
+            "provider",
+        )
 
 
 @pytest.mark.parametrize(
-    ("persisted_count", "incoming_count"),
-    [(2, 1), (1, 2)],
+    ("persisted_count", "incoming_count", "duplicate_side"),
+    [(2, 1, "persisted"), (1, 2, "incoming")],
 )
 def test_masked_duplicate_provider_count_mismatch_is_rejected(
     persisted_count: int,
     incoming_count: int,
+    duplicate_side: str,
 ) -> None:
     persisted = [
         {"provider": "openai", "api_key": f"$secret:KEY_{index}"}
@@ -72,10 +77,7 @@ def test_masked_duplicate_provider_count_mismatch_is_rejected(
 
     with pytest.raises(
         ValueError,
-        match=(
-            rf"has {incoming_count} incoming and {persisted_count} persisted occurrences "
-            "for provider 'openai'"
-        ),
+        match=rf"voice.providers {duplicate_side} items have duplicate provider 'openai'",
     ):
         restore_masked_structured_references(
             "voice.providers",

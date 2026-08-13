@@ -943,6 +943,7 @@ class TestDeleteCloneAdoption:
             "error": f"Clone path belongs to another project: {clone_path}",
         }
         mock_clone_storage.delete.assert_not_called()
+        mock_git_manager.delete_clone.assert_not_called()
 
     @pytest.mark.asyncio
     @pytest.mark.parametrize("outside_root", [True, False])

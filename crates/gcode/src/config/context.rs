@@ -52,15 +52,11 @@ pub const FALKORDB_PASSWORD_CONFIG_KEY: &str = "databases.falkordb.password";
 #[derive(Debug, Clone, PartialEq, Eq, Default)]
 pub struct CodeVectorSettings {
     pub vector_dim: Option<usize>,
-    runtime_config_capture_degraded: bool,
 }
 
 impl CodeVectorSettings {
     pub(crate) fn with_vector_dim(vector_dim: Option<usize>) -> Self {
-        Self {
-            vector_dim,
-            runtime_config_capture_degraded: false,
-        }
+        Self { vector_dim }
     }
 }
 
@@ -204,6 +200,8 @@ pub struct Context {
     pub embedding: Option<EmbeddingConfig>,
     /// Code-symbol vector projection settings owned by gcode.
     pub code_vectors: CodeVectorSettings,
+    /// Whether runtime configuration capture fell back to degraded mode.
+    pub(crate) runtime_config_capture_degraded: bool,
     /// Shared indexing behavior.
     pub indexing: IndexingSettings,
     /// Gobby daemon base URL (e.g. http://localhost:60887)
@@ -218,6 +216,7 @@ type ResolvedServices = (
     Option<EmbeddingConfig>,
     IndexingSettings,
     CodeVectorSettings,
+    bool,
     Option<i64>,
 );
 
@@ -244,19 +243,19 @@ fn resolve_services(
         None
     };
     let indexing = resolve_indexing_settings_from_source(&mut source)?;
-    let mut code_vectors = if services.code_vectors {
+    let code_vectors = if services.code_vectors {
         resolve_code_vector_settings_from_source(&mut source)?
     } else {
         CodeVectorSettings::default()
     };
-    code_vectors.runtime_config_capture_degraded =
-        capture_status == HubConfigCaptureStatus::Degraded;
+    let runtime_config_capture_degraded = capture_status == HubConfigCaptureStatus::Degraded;
     Ok((
         falkordb,
         qdrant,
         embedding,
         indexing,
         code_vectors,
+        runtime_config_capture_degraded,
         revision,
     ))
 }
@@ -301,12 +300,12 @@ pub struct ProjectIdentity {
 
 impl Context {
     pub(crate) fn runtime_config_capture_degraded(&self) -> bool {
-        self.code_vectors.runtime_config_capture_degraded
+        self.runtime_config_capture_degraded
     }
 
     #[cfg(test)]
     pub(crate) fn set_runtime_config_capture_degraded_for_test(&mut self, degraded: bool) {
-        self.code_vectors.runtime_config_capture_degraded = degraded;
+        self.runtime_config_capture_degraded = degraded;
     }
 
     /// Resolve context from CLI args and filesystem state.
@@ -342,8 +341,15 @@ impl Context {
         let layers = read_config_layers()?;
         let mut conn = db::connect_readonly(&database_url)?;
         validate_parent_code_index(&mut conn, &index_scope)?;
-        let (falkordb, qdrant, embedding, indexing, code_vectors, _config_revision) =
-            resolve_services(&mut conn, &layers, services)?;
+        let (
+            falkordb,
+            qdrant,
+            embedding,
+            indexing,
+            code_vectors,
+            runtime_config_capture_degraded,
+            _config_revision,
+        ) = resolve_services(&mut conn, &layers, services)?;
 
         let daemon_url = Some(gobby_core::daemon_url::daemon_url());
 
@@ -356,6 +362,7 @@ impl Context {
             qdrant,
             embedding,
             code_vectors,
+            runtime_config_capture_degraded,
             indexing,
             daemon_url,
             index_scope,
@@ -373,8 +380,15 @@ impl Context {
 
         let layers = read_config_layers()?;
         let mut conn = db::connect_readonly(&database_url)?;
-        let (falkordb, qdrant, embedding, indexing, code_vectors, _config_revision) =
-            resolve_services(&mut conn, &layers, services)?;
+        let (
+            falkordb,
+            qdrant,
+            embedding,
+            indexing,
+            code_vectors,
+            runtime_config_capture_degraded,
+            _config_revision,
+        ) = resolve_services(&mut conn, &layers, services)?;
 
         let daemon_url = Some(gobby_core::daemon_url::daemon_url());
 
@@ -387,6 +401,7 @@ impl Context {
             qdrant,
             embedding,
             code_vectors,
+            runtime_config_capture_degraded,
             indexing,
             daemon_url,
             index_scope: ProjectIndexScope::Single,

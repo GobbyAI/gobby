@@ -8,12 +8,15 @@ from collections.abc import Awaitable, Callable, Iterable, Mapping
 from concurrent.futures import Future as ThreadFuture
 from concurrent.futures import ThreadPoolExecutor
 from contextlib import suppress
-from dataclasses import dataclass, replace
 from types import MappingProxyType
 from typing import TypeVar, cast
 
 from gobby.config.app import DaemonConfig
 from gobby.config.registry import CONFIG_REGISTRY, ActivationPolicy
+from gobby.config.runtime_activation import SubscriberFailure as _PreparationFailure
+from gobby.config.runtime_activation import apply_failure as _apply_failure
+from gobby.config.runtime_activation import copy_snapshot as _copy_snapshot
+from gobby.config.runtime_activation import project_activation as _project_activation
 from gobby.config.runtime_contracts import (
     ConfigNotificationSource,
     ConfigRuntimeError,
@@ -69,12 +72,6 @@ __all__ = [
 logger = logging.getLogger(__name__)
 
 _T = TypeVar("_T")
-
-
-@dataclass(frozen=True, slots=True)
-class _PreparationFailure:
-    subscriber: ConfigSubscriber
-    error: BaseException
 
 
 class ConfigRuntime:
@@ -185,11 +182,10 @@ class ConfigRuntime:
             if stored.revision < 0:
                 raise ConfigRuntimeError("Stored configuration revision must be non-negative")
             snapshot, services, handles, managed = await self._initialize(stored, desired)
-            try:
-                await self._activate_many(handles, self._subscribers)
-            except BaseException:
+            activation_failure = await self._activate_many(handles, self._subscribers)
+            if activation_failure is not None:
                 await self._dispose_many(handles, self._subscribers)
-                raise
+                raise activation_failure.error
             self._bundle = RuntimeActiveBundle(
                 snapshot,
                 MappingProxyType(services),
@@ -270,15 +266,21 @@ class ConfigRuntime:
                     await self._reconcile_locked(force=False)
                     continue
                 prepared_map = {name: prepared} if prepared is not None else {}
-                snapshot, services, handles, old_handles = self._activate(
+                activation_failure = None
+                if failure is None and prepared is not None:
+                    activation_failure = await self._activate_many(prepared_map, (subscriber,))
+                    failure = activation_failure
+                snapshot, services, handles, old_handles = _project_activation(
                     bundle,
                     stored,
                     desired,
                     desired_bindings,
                     subscriber.keys,
-                    subscriber.keys,
                     prepared_map,
                     failure,
+                    subscribers=(subscriber,),
+                    repository=self._repository,
+                    registry=self._registry,
                 )
                 self._bundle = RuntimeActiveBundle(
                     snapshot,
@@ -287,8 +289,8 @@ class ConfigRuntime:
                     managed if failure is None else bundle.managed,
                 )
                 await self._dispose_replaced(old_handles)
-                if prepared is not None:
-                    await self._activate_many(prepared_map, (subscriber,))
+                if activation_failure is not None:
+                    raise activation_failure.error
                 return snapshot
 
     async def reconcile_local_commit(self, revision: int) -> ConfigSnapshot:
@@ -329,16 +331,28 @@ class ConfigRuntime:
                 if failure is not None:
                     if subscriber.required:
                         raise RuntimeError(str(failure.error)) from failure.error
-                    apply_failure = self._apply_failure(subscriber, subscriber.keys, failure.error)
+                    apply_failure = _apply_failure(
+                        subscriber,
+                        subscriber.keys,
+                        failure.error,
+                        revision=snapshot.revision,
+                    )
                     services[subscriber.name] = UnavailableService(apply_failure)
                     failed = dict(snapshot.failed_live_keys)
                     for key in subscriber.keys:
                         failed[key] = apply_failure
-                    snapshot = self._copy_snapshot(snapshot, failed_live_keys=failed)
+                    snapshot = _copy_snapshot(snapshot, failed_live_keys=failed)
                 else:
                     assert prepared is not None
                     services[subscriber.name] = prepared.value
                     handles[subscriber.name] = prepared
+                    activation_failure = await self._activate_many(
+                        {subscriber.name: prepared},
+                        (subscriber,),
+                    )
+                    if activation_failure is not None:
+                        await self._dispose(prepared, subscriber)
+                        raise activation_failure.error
                 self._subscribers.append(subscriber)
                 self._bundle = RuntimeActiveBundle(
                     snapshot,
@@ -346,12 +360,6 @@ class ConfigRuntime:
                     MappingProxyType(handles),
                     bundle.managed,
                 )
-                if failure is None:
-                    assert prepared is not None
-                    await self._activate_many(
-                        {subscriber.name: prepared},
-                        (subscriber,),
-                    )
                 return snapshot
 
     async def _initialize(
@@ -400,8 +408,11 @@ class ConfigRuntime:
                 services[subscriber.name] = prepared.value
                 handles[subscriber.name] = prepared
                 continue
-            apply_failure = self._apply_failure(
-                subscriber, subscriber.keys, failure.error, revision=stored.revision
+            apply_failure = _apply_failure(
+                subscriber,
+                subscriber.keys,
+                failure.error,
+                revision=stored.revision,
             )
             if subscriber.required:
                 await self._dispose_many(handles, self._subscribers)
@@ -409,7 +420,7 @@ class ConfigRuntime:
             services[subscriber.name] = UnavailableService(apply_failure)
             for key in subscriber.keys:
                 failures[key] = apply_failure
-        return self._copy_snapshot(base, failed_live_keys=failures), services, handles, managed
+        return _copy_snapshot(base, failed_live_keys=failures), services, handles, managed
 
     _CONFIRMING_READS = 3
     _CONFIRM_BACKOFF = 0.05
@@ -465,15 +476,21 @@ class ConfigRuntime:
                 await self._dispose_prepared_map(prepared)
                 force = False
                 continue
-            snapshot, services, handles, old_handles = self._activate(
+            activation_failure = None
+            if failure is None:
+                activation_failure = await self._activate_many(prepared, self._subscribers)
+                failure = activation_failure
+            snapshot, services, handles, old_handles = _project_activation(
                 current_bundle,
                 stored,
                 desired,
                 desired_bindings,
-                changed_keys,
                 changed_live,
                 prepared,
                 failure,
+                subscribers=self._subscribers,
+                repository=self._repository,
+                registry=self._registry,
             )
             self._bundle = RuntimeActiveBundle(
                 snapshot,
@@ -482,105 +499,13 @@ class ConfigRuntime:
                 managed if failure is None else current_bundle.managed,
             )
             await self._dispose_replaced(old_handles)
-            if failure is None:
-                await self._activate_many(prepared, self._subscribers)
+            if activation_failure is not None:
+                raise activation_failure.error
             if self._revision_publisher is not None:
                 await self._revision_publisher(snapshot.revision)
             force = False
             if self._max_requested_revision <= snapshot.revision:
                 return snapshot
-
-    def _activate(
-        self,
-        current_bundle: RuntimeActiveBundle,
-        stored: StoredConfigSnapshot,
-        desired: DaemonConfig,
-        desired_bindings: MappingProxyType[str, RuntimeSecretBinding],
-        changed_keys: frozenset[str],
-        changed_live: frozenset[str],
-        prepared: dict[str, PreparedSubscriber],
-        failure: _PreparationFailure | None,
-    ) -> tuple[
-        ConfigSnapshot,
-        dict[str, object],
-        dict[str, PreparedSubscriber],
-        list[tuple[PreparedSubscriber, ConfigSubscriber]],
-    ]:
-        current = current_bundle.snapshot
-        active_values = dict(current._active_values)
-        active_overrides = dict(current._active_overrides)
-        active_bindings = dict(current._active_bindings)
-        failed = dict(current.failed_live_keys)
-        services = dict(current_bundle.services)
-        handles = dict(current_bundle._handles)
-        old_handles: list[tuple[PreparedSubscriber, ConfigSubscriber]] = []
-        if failure is None:
-            replaced_subscribers: set[str] = set()
-            for subscriber in self._subscribers:
-                replacement = prepared.get(subscriber.name)
-                if replacement is None:
-                    continue
-                previous = handles.pop(subscriber.name, None)
-                if previous is not None:
-                    old_handles.append((previous, subscriber))
-                handles[subscriber.name] = replacement
-                services[subscriber.name] = replacement.value
-                replaced_subscribers.add(subscriber.name)
-            activated_keys = set(changed_live)
-            activated_keys.update(
-                key
-                for key, apply_failure in failed.items()
-                if apply_failure.subscriber in replaced_subscribers
-            )
-            for key in activated_keys:
-                if key in stored.values:
-                    active_values[key] = stored.values[key]
-                else:
-                    active_values.pop(key, None)
-                if key in stored.overrides:
-                    active_overrides[key] = stored.overrides[key]
-                else:
-                    active_overrides.pop(key, None)
-                if key in desired_bindings:
-                    active_bindings[key] = desired_bindings[key]
-                else:
-                    active_bindings.pop(key, None)
-                failed.pop(key, None)
-        else:
-            apply_failure = self._apply_failure(
-                failure.subscriber,
-                changed_live,
-                failure.error,
-                revision=stored.revision,
-            )
-            for key in changed_live:
-                failed[key] = apply_failure
-            for subscriber in self._subscribers:
-                replacement = prepared.get(subscriber.name)
-                if replacement is not None:
-                    old_handles.append((replacement, subscriber))
-        active = self._repository.runtime_candidate(active_overrides, active_bindings)
-        pending = self._pending_restart_keys(
-            stored.values,
-            active_values,
-            desired_bindings,
-            active_bindings,
-        )
-        snapshot = ConfigSnapshot(
-            revision=stored.revision,
-            desired=desired,
-            active=active,
-            row_revisions=stored.row_revisions,
-            pending_restart_keys=pending,
-            failed_live_keys=failed,
-            desired_values=stored.values,
-            active_values=active_values,
-            desired_overrides=stored.overrides,
-            active_overrides=active_overrides,
-            desired_bindings=desired_bindings,
-            active_bindings=active_bindings,
-        )
-        return snapshot, services, handles, old_handles
 
     async def _prepare_matching(
         self,
@@ -752,64 +677,6 @@ class ConfigRuntime:
             return MappingProxyType({})
         return MappingProxyType(dict(self._managed_resolver(stored)))
 
-    def _pending_restart_keys(
-        self,
-        desired_values: Mapping[str, object],
-        active_values: Mapping[str, object],
-        desired_bindings: Mapping[str, RuntimeSecretBinding],
-        active_bindings: Mapping[str, RuntimeSecretBinding],
-    ) -> frozenset[str]:
-        pending: set[str] = set()
-        keys = (
-            set(desired_values) | set(active_values) | set(desired_bindings) | set(active_bindings)
-        )
-        for key in keys:
-            if self._registry.resolve(key).activation is not ActivationPolicy.RESTART_REQUIRED:
-                continue
-            desired_fp = desired_bindings.get(key)
-            active_fp = active_bindings.get(key)
-            if desired_values.get(key) != active_values.get(key) or (
-                None if desired_fp is None else desired_fp.fingerprint
-            ) != (None if active_fp is None else active_fp.fingerprint):
-                pending.add(key)
-        return frozenset(pending)
-
-    def _apply_failure(
-        self,
-        subscriber: ConfigSubscriber,
-        keys: frozenset[str],
-        error: BaseException,
-        *,
-        revision: int | None = None,
-    ) -> ApplyFailure:
-        return ApplyFailure(
-            revision=self.capture().snapshot.revision if revision is None else revision,
-            subscriber=subscriber.name,
-            keys=keys,
-            message=str(error),
-        )
-
-    @staticmethod
-    def _copy_snapshot(
-        snapshot: ConfigSnapshot,
-        *,
-        failed_live_keys: Mapping[str, ApplyFailure],
-    ) -> ConfigSnapshot:
-        return ConfigSnapshot(
-            revision=snapshot.revision,
-            desired=snapshot._desired,
-            active=snapshot._active,
-            row_revisions=snapshot.row_revisions,
-            pending_restart_keys=snapshot.pending_restart_keys,
-            failed_live_keys=failed_live_keys,
-            desired_values=snapshot._desired_values,
-            active_values=snapshot._active_values,
-            desired_overrides=snapshot._desired_overrides,
-            active_overrides=snapshot._active_overrides,
-            desired_bindings=snapshot._desired_bindings,
-            active_bindings=snapshot._active_bindings,
-        )
-
     async def _dispose_prepared_map(
         self,
         prepared: Mapping[str, PreparedSubscriber],
@@ -839,7 +706,7 @@ class ConfigRuntime:
         self,
         handles: Mapping[str, PreparedSubscriber],
         subscribers: Iterable[ConfigSubscriber],
-    ) -> None:
+    ) -> _PreparationFailure | None:
         by_name = {subscriber.name: subscriber for subscriber in subscribers}
         for name, resource in handles.items():
             activate = getattr(resource, "activate", None)
@@ -854,16 +721,11 @@ class ConfigRuntime:
                     ),
                     timeout=subscriber.prepare_timeout,
                 )
-            except BaseException as exc:
-                bundle = self._bundle
-                if bundle is None or isinstance(exc, asyncio.CancelledError):
-                    raise
-                failure = self._apply_failure(subscriber, subscriber.keys, exc)
-                failed = dict(bundle.snapshot.failed_live_keys)
-                failed.update(dict.fromkeys(subscriber.keys, failure))
-                snapshot = self._copy_snapshot(bundle.snapshot, failed_live_keys=failed)
-                self._bundle = replace(bundle, snapshot=snapshot)
+            except asyncio.CancelledError:
                 raise
+            except BaseException as exc:
+                return _PreparationFailure(subscriber, exc)
+        return None
 
     async def _dispose(
         self,

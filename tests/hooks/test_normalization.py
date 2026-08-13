@@ -1962,6 +1962,20 @@ class TestUnexpandedShellReferencePaths:
 
         normalize_tool_fields(data)
 
+        assert data["canonical_tool_kind"] == "execute"
+        assert "canonical_file_path" not in data
+        assert "canonical_file_paths" not in data
+
+    def test_special_parameter_git_add_has_unknown_mutation_scope(self) -> None:
+        data: dict[str, Any] = {
+            "tool_name": "Bash",
+            "tool_input": {"command": "git add $@"},
+        }
+
+        normalize_tool_fields(data)
+
+        assert data["canonical_tool_kind"] == "execute"
+        assert data["canonical_repo_mutation"] is True
         assert "canonical_file_path" not in data
         assert "canonical_file_paths" not in data
 
@@ -1997,6 +2011,13 @@ class TestUnexpandedShellReferencePaths:
             ("${SP}/out.json", True),
             ("$(mktemp -d)/out.json", True),
             ("$1/out.json", True),
+            ("$@", True),
+            ("$*", True),
+            ("$?", True),
+            ("$#", True),
+            ("$$", True),
+            ("$!", True),
+            ("$-", True),
             ("out$.json", False),
             ("price$.md", False),
             ("plain/out.json", False),

@@ -487,20 +487,16 @@ def setup_internal_registries(
 
         def resolve_hub_manager() -> HubManager:
             nonlocal hub_cache
-            active_config = active_daemon_config()
-            if hub_cache[0] is active_config:
-                return hub_cache[1]
             with hub_cache_lock:
+                active_config = active_daemon_config()
                 if hub_cache[0] is not active_config:
                     hub_cache = (active_config, build_hub_manager(active_config))
                 return hub_cache[1]
 
         def resolve_skill_search() -> SkillSearch:
             nonlocal search_cache
-            active_config = active_daemon_config()
-            if search_cache[0] is active_config:
-                return search_cache[1]
             with search_cache_lock:
+                active_config = active_daemon_config()
                 if search_cache[0] is not active_config:
                     search_cache = (active_config, build_skill_search(active_config))
                 return search_cache[1]

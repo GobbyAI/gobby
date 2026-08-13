@@ -1,3 +1,4 @@
+from types import SimpleNamespace
 from typing import Any
 from unittest.mock import AsyncMock, MagicMock, patch
 from uuid import uuid4
@@ -5,7 +6,9 @@ from uuid import uuid4
 import pytest
 
 from gobby.config.features import ToolResultOffloadConfig
+from gobby.mcp_proxy import registries as registries_module
 from gobby.mcp_proxy.registries import setup_internal_registries
+from gobby.mcp_proxy.tools.skills import create_skills_registry
 from gobby.storage.worktrees import LocalWorktreeManager
 
 pytestmark = pytest.mark.unit
@@ -438,6 +441,51 @@ def test_setup_with_active_database(hub_db: Any) -> None:
     # Core registries should always be present
     assert "gobby-workflows" in registry_names
     assert "gobby-hub" in registry_names
+
+
+def test_skills_cache_resolvers_capture_config_while_holding_cache_lock() -> None:
+    class RecordingLock:
+        def __init__(self) -> None:
+            self.held = False
+
+        def __enter__(self) -> "RecordingLock":
+            assert self.held is False
+            self.held = True
+            return self
+
+        def __exit__(self, *args: object) -> None:
+            self.held = False
+
+    locks: list[RecordingLock] = []
+
+    def lock_factory() -> RecordingLock:
+        lock = RecordingLock()
+        locks.append(lock)
+        return lock
+
+    observed_lock_states: list[tuple[bool, ...]] = []
+    config = MagicMock()
+    config.get_gobby_tasks_config.return_value.enabled = False
+
+    def resolve_config() -> Any:
+        observed_lock_states.append(tuple(lock.held for lock in locks))
+        return config
+
+    with (
+        patch.object(registries_module, "threading", SimpleNamespace(Lock=lock_factory)),
+        patch(
+            "gobby.mcp_proxy.tools.skills.create_skills_registry",
+            wraps=create_skills_registry,
+        ) as create_registry,
+    ):
+        setup_internal_registries(config_resolver=resolve_config, db=MagicMock())
+
+    assert len(locks) == 2
+    kwargs = create_registry.call_args.kwargs
+    kwargs["hub_manager_resolver"]()
+    kwargs["search_resolver"]()
+
+    assert observed_lock_states[-2:] == [(True, False), (False, True)]
 
 
 def test_setup_skills_registry_not_created_without_config() -> None:

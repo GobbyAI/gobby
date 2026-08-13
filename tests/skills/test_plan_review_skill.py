@@ -50,6 +50,16 @@ def test_plan_review_finding_and_verdict_vocabulary() -> None:
     assert "non-blocking nits never trigger escalation" in body.lower()
 
 
+def test_plan_review_protocol_failure_omits_verdict() -> None:
+    body = _normalized(SKILL_PATH)
+
+    assert "When `validate_plan_review_coverage` succeeds" in body
+    assert "A protocol-failure terminal result" in body
+    assert "omits `verdict`" in body
+    assert "exact tool error" in body
+    assert "draft findings" in body
+
+
 def test_plan_review_resolves_symbol_targets_before_blast_radius() -> None:
     body = _normalized(SKILL_PATH)
 

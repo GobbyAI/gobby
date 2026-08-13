@@ -139,6 +139,7 @@ fn test_context() -> Context {
         qdrant: None,
         embedding: None,
         code_vectors: crate::config::CodeVectorSettings::default(),
+        runtime_config_capture_degraded: false,
         indexing: gobby_core::config::IndexingConfig::default(),
         daemon_url: None,
         index_scope: crate::config::ProjectIndexScope::Single,

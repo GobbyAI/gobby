@@ -450,7 +450,7 @@ export function AgentProviderSettings({
           value={form.timeout}
           onChange={(event) => {
             const timeout = Number(event.target.value);
-            set("timeout", Number.isFinite(timeout) ? timeout : 0);
+            set("timeout", Number.isFinite(timeout) && timeout >= 0 ? timeout : 0);
           }}
         />
       </MetaRow>

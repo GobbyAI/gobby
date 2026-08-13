@@ -73,6 +73,9 @@ from gobby.storage.session_activity import reconcile_compact_session_activity
 from gobby.terminal_context import parse_terminal_context_value, terminal_context_has_tmux_target
 
 if TYPE_CHECKING:
+    from gobby.config.app import DaemonConfig
+    from gobby.config.sessions import SessionSummaryConfig
+    from gobby.config.tasks import CompactHandoffConfig
     from gobby.mcp_proxy.tools.internal import InternalToolRegistry
     from gobby.servers.websocket.chat.session_registry import WebChatSessionRegistry
     from gobby.storage.hub.protocol import HubDatabase
@@ -341,9 +344,9 @@ def register_terminal_tools(
     session_manager: SessionManager,
     db: HubDatabase,
     llm_service_resolver: Callable[[], Any | None] | None = None,
-    session_summary_config: Any | None = None,
-    compact_handoff_config: Any | None = None,
-    config_resolver: Callable[[], Any | None] | None = None,
+    session_summary_config: SessionSummaryConfig | None = None,
+    compact_handoff_config: CompactHandoffConfig | None = None,
+    config_resolver: Callable[[], DaemonConfig | None] | None = None,
     web_chat_session_registry: WebChatSessionRegistry | None = None,
 ) -> None:
     """Register send_keys and capture_output tools."""

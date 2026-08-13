@@ -789,6 +789,7 @@ fn overlay_visibility_context(ids: &OverlayFixtureIds) -> Context {
         qdrant: None,
         embedding: None,
         code_vectors: CodeVectorSettings::default(),
+        runtime_config_capture_degraded: false,
         indexing: gobby_core::config::IndexingConfig::default(),
         daemon_url: None,
         index_scope: ProjectIndexScope::Overlay {
@@ -810,6 +811,7 @@ fn single_project_context(database_url: &str, project_id: &str) -> Context {
         qdrant: None,
         embedding: None,
         code_vectors: CodeVectorSettings::default(),
+        runtime_config_capture_degraded: false,
         indexing: gobby_core::config::IndexingConfig::default(),
         daemon_url: None,
         index_scope: ProjectIndexScope::Single,

@@ -1,4 +1,4 @@
-import { render, screen, waitFor } from "@testing-library/react";
+import { fireEvent, render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
@@ -108,6 +108,28 @@ describe("agent definition editors", () => {
       reasoning_effort: "auto",
       reasoning_required: false,
     });
+  });
+
+  it("clamps invalid timeout values while preserving non-negative values", () => {
+    const onChange = vi.fn();
+    render(
+      <AgentEditForm
+        isOpen
+        form={panelForm}
+        onChange={onChange}
+        onSave={vi.fn()}
+        onCancel={vi.fn()}
+        isEditing
+        providerCatalog={[]}
+      />,
+    );
+    const timeoutInput = screen.getByLabelText("Timeout in seconds");
+
+    fireEvent.change(timeoutInput, { target: { value: "-4" } });
+    expect(onChange).toHaveBeenLastCalledWith({ ...panelForm, timeout: 0 });
+
+    fireEvent.change(timeoutInput, { target: { value: "12" } });
+    expect(onChange).toHaveBeenLastCalledWith({ ...panelForm, timeout: 12 });
   });
 
   it("renders agent details without edit controls in read-only mode", () => {

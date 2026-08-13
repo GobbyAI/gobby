@@ -61,6 +61,7 @@ fn test_context(qdrant: Option<QdrantConfig>) -> Context {
         qdrant,
         embedding: None,
         code_vectors: CodeVectorSettings::default(),
+        runtime_config_capture_degraded: false,
         indexing: gobby_core::config::IndexingConfig::default(),
         daemon_url: None,
         index_scope: crate::config::ProjectIndexScope::Single,

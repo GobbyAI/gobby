@@ -272,7 +272,9 @@ async def test_request_is_scoped_to_ambient_session(temp_db: HubDatabase) -> Non
 
 
 @pytest.mark.asyncio
-async def test_queue_resolver_runtime_error_uses_retrieval_error_contract() -> None:
+async def test_queue_resolver_runtime_error_uses_retrieval_error_contract(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
     registry = InternalToolRegistry("test-memory-recall-resolver-error")
 
     def unavailable_manager() -> MemoryManager | None:
@@ -289,8 +291,10 @@ async def test_queue_resolver_runtime_error_uses_retrieval_error_contract() -> N
     assert result == {
         "success": False,
         "recall_request_id": "request-runtime-error",
-        "error": "Memory retrieval failed: runtime is rebuilding",
+        "error": "Memory retrieval failed.",
     }
+    assert "runtime is rebuilding" in caplog.text
+    assert any(record.exc_info is not None for record in caplog.records)
 
 
 def test_main_memory_registry_includes_inline_and_overflow_tools(

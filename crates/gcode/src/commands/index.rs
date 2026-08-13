@@ -361,6 +361,7 @@ fn clone_context(
         qdrant: ctx.qdrant.clone(),
         embedding: ctx.embedding.clone(),
         code_vectors: ctx.code_vectors.clone(),
+        runtime_config_capture_degraded: ctx.runtime_config_capture_degraded(),
         indexing: ctx.indexing.clone(),
         daemon_url: ctx.daemon_url.clone(),
         index_scope,

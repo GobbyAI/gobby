@@ -334,6 +334,7 @@ mod tests {
             qdrant: None,
             embedding: None,
             code_vectors: Default::default(),
+            runtime_config_capture_degraded: false,
             indexing: Default::default(),
             daemon_url: None,
             index_scope: ProjectIndexScope::Single,

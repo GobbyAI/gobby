@@ -92,8 +92,8 @@ _ECHO_UNSAFE_CHARS = frozenset({"$", "`"})
 _CURL_SHORT_OPTIONS_WITH_VALUES = frozenset("AbcCdDeEFHKmoPQrTtuwxXYz")
 
 # `$` opening a variable (`$VAR`, `${VAR}`), command substitution (`$(cmd)`),
-# or positional parameter (`$1`) — anything the shell would expand at runtime.
-_UNEXPANDED_SHELL_REFERENCE = re.compile(r"\$[\w{(]")
+# positional parameter (`$1`), or special parameter — anything expanded at runtime.
+_UNEXPANDED_SHELL_REFERENCE = re.compile(r"\$[\w{(@*?#$!-]")
 
 
 @dataclass(frozen=True, slots=True)
@@ -680,6 +680,15 @@ def _classify_shell_segment_without_redirection(
         if any(flag in apply_args for flag in {"--check", "--stat", "--numstat"}):
             return _ShellSegmentMetadata("execute")
         return _ShellSegmentMetadata("write", repo_mutation=True)
+
+    if cmd == "git" and parts[git_subcommand_index : git_subcommand_index + 1] == ["add"]:
+        positional = _shell_positional_args_after(parts, git_subcommand_index + 1)
+        paths = [candidate for candidate in positional if _looks_path_target(candidate)]
+        return _ShellSegmentMetadata(
+            "execute",
+            paths=tuple(_rebase_shell_paths(paths, cwd)),
+            repo_mutation=True,
+        )
 
     if cmd == "patch":
         if "--dry-run" in parts[1:]:

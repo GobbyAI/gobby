@@ -155,7 +155,7 @@ async def test_failed_prepare_keeps_last_good_services() -> None:
 
 
 @pytest.mark.asyncio
-async def test_failed_activation_is_recorded_on_published_epoch() -> None:
+async def test_failed_activation_preserves_last_good_bundle() -> None:
     repository = FakeRepository([snapshot(0, alpha=0), snapshot(1, alpha=1)])
     disposed: list[int] = []
 
@@ -174,16 +174,62 @@ async def test_failed_activation_is_recorded_on_published_epoch() -> None:
         subscribers=[subscriber("client", {"alpha"}, build)],
     )
     await runtime.start()
+    previous_bundle = runtime.capture()
+    previous_service = previous_bundle.services["client"]
+    previous_handle = previous_bundle._handles["client"]
     repository.index = 1
 
     with pytest.raises(RuntimeError, match="broken activation"):
         await runtime.reconcile_revision(1)
 
-    failure = runtime.snapshot.failed_live_keys["alpha"]
-    assert runtime.snapshot.revision == 1
+    bundle = runtime.capture()
+    failure = bundle.snapshot.failed_live_keys["alpha"]
+    assert bundle.snapshot.revision == 1
     assert failure.subscriber == "client"
     assert failure.message == "broken activation"
-    assert disposed == [0]
+    assert bundle.snapshot.active_values["alpha"] == 0
+    assert bundle.services["client"] is previous_service
+    assert bundle._handles["client"] is previous_handle
+    assert disposed == [1]
+    await runtime.close()
+
+
+async def test_failed_reprepare_activation_preserves_last_good_bundle() -> None:
+    repository = FakeRepository([snapshot(0, alpha=0)])
+    created: list[Client] = []
+    disposed: list[Client] = []
+    broken = False
+
+    def build(change: ConfigChange) -> PreparedService:
+        client = Client(change.revision, [])
+        created.append(client)
+
+        def activate() -> None:
+            if broken:
+                raise RuntimeError("broken reprepare activation")
+
+        return PreparedService(client, lambda: disposed.append(client), activate)
+
+    runtime = ConfigRuntime(
+        repository,
+        registry=FakeRegistry(),
+        subscribers=[subscriber("client", {"alpha"}, build)],
+    )
+    await runtime.start()
+    previous_bundle = runtime.capture()
+
+    broken = True
+    with pytest.raises(RuntimeError, match="broken reprepare activation"):
+        await runtime.reprepare_subscriber("client")
+
+    bundle = runtime.capture()
+    failure = bundle.snapshot.failed_live_keys["alpha"]
+    assert failure.subscriber == "client"
+    assert failure.message == "broken reprepare activation"
+    assert bundle.snapshot.active_values["alpha"] == 0
+    assert bundle.services["client"] is previous_bundle.services["client"]
+    assert bundle._handles["client"] is previous_bundle._handles["client"]
+    assert disposed == [created[1]]
     await runtime.close()
 
 
@@ -261,7 +307,7 @@ async def test_successful_swap_drains_old_client() -> None:
 
     assert cast(Client, runtime.capture().services["client"]).revision == 1
     assert disposed == [0]
-    assert lifecycle == [("dispose", 0), ("activate", 1)]
+    assert lifecycle == [("activate", 1), ("dispose", 0)]
     await runtime.close()
 
 
