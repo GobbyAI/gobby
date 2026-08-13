@@ -24,6 +24,7 @@ from gobby.storage.maintenance_epoch import MAINTENANCE_EPOCH_ENV
 pytestmark = pytest.mark.unit
 
 DATABASE_URL = "postgresql://gobby:secret@localhost:60891/gobby"
+TEST_DATABASE_URL = "postgresql://gobby_test:gobby_test@127.0.0.1:60892/gobby_test"
 SYSTEM_IDENTIFIER = "7412345678901234567"
 DATABASE_OID = 16401
 
@@ -335,6 +336,22 @@ def test_dump_postgres_captures_cluster_globals_only(
     ]
 
 
+def test_dump_postgres_routes_every_client_to_protected_test_container(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    _patch_psycopg(monkeypatch, _FakeConnection())
+    commands: list[list[str]] = []
+    monkeypatch.setattr(subprocess, "run", _postgres_runner(commands))
+    monkeypatch.setenv("GOBBY_TEST_PROTECT", "1")
+
+    stores.dump_postgres(TEST_DATABASE_URL, tmp_path)
+
+    assert len(commands) == 3
+    assert all("gobby-postgres-test-1" in command for command in commands)
+    assert all("gobby-postgres" not in command for command in commands)
+
+
 def test_dump_postgres_aborts_while_ephemeral_login_remains(
     monkeypatch: pytest.MonkeyPatch,
     tmp_path: Path,
@@ -349,12 +366,16 @@ def test_dump_postgres_aborts_while_ephemeral_login_remains(
         stores.dump_postgres(DATABASE_URL, tmp_path)
 
 
-def test_restore_postgres_globals_tolerates_existing_stable_roles(
+def test_restore_postgres_globals_targets_protected_test_container(
     monkeypatch: pytest.MonkeyPatch,
     tmp_path: Path,
 ) -> None:
     globals_path = tmp_path / "globals.sql"
-    globals_path.write_bytes(b"CREATE ROLE gobby;\nALTER ROLE gobby WITH LOGIN;\n")
+    globals_path.write_bytes(
+        b"CREATE ROLE gobby;\n"
+        b"ALTER ROLE gobby WITH LOGIN;\n"
+        b"GRANT gobby_runtime TO gobby GRANTED BY gobby;\n"
+    )
     calls: list[tuple[list[str], bytes]] = []
 
     def run(args: list[str], **kwargs: Any) -> subprocess.CompletedProcess[bytes]:
@@ -363,16 +384,16 @@ def test_restore_postgres_globals_tolerates_existing_stable_roles(
 
     monkeypatch.setattr(subprocess, "run", run)
 
-    stores.restore_postgres_globals(DATABASE_URL, globals_path)
+    stores.restore_postgres_globals(TEST_DATABASE_URL, globals_path)
 
     assert calls[0][0] == [
         "docker",
         "exec",
         "-i",
-        "gobby-postgres",
+        "gobby-postgres-test-1",
         "psql",
         "-U",
-        "gobby",
+        "gobby_test",
         "-d",
         "postgres",
         "-v",
@@ -382,6 +403,8 @@ def test_restore_postgres_globals_tolerates_existing_stable_roles(
     assert b"EXCEPTION WHEN duplicate_object THEN" in replay
     assert b"CREATE ROLE gobby;" in replay
     assert b"ALTER ROLE gobby WITH LOGIN;" in replay
+    assert b"GRANT gobby_runtime TO gobby;" in replay
+    assert b"GRANTED BY" not in replay
 
 
 def test_dump_postgres_forwards_maintenance_pgoptions_into_container(
@@ -722,6 +745,23 @@ def test_dump_falkordb_authenticates_with_in_container_password_env(
     assert bgsave[:5] == ["docker", "exec", "services-falkordb-1", "sh", "-c"]
     assert bgsave[5] == ('redis-cli -a "$GOBBY_FALKORDB_PASSWORD" --no-auth-warning --raw BGSAVE')
     assert all("secret" not in " ".join(command) for command in runner.commands)
+
+
+def test_dump_falkordb_routes_every_command_to_selected_container(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    runner = _FalkorRunner(lastsave=[100, 200], persistence=[_BGSAVE_DONE])
+    monkeypatch.setattr(subprocess, "run", runner)
+    _patch_sleep(monkeypatch)
+
+    stores.dump_falkordb(tmp_path, container="gobby-falkordb-test-1")
+
+    assert all(
+        command[2].startswith("gobby-falkordb-test-1")
+        for command in runner.commands
+        if command[:2] in (["docker", "exec"], ["docker", "cp"])
+    )
 
 
 def test_dump_falkordb_rejects_failed_bgsave_status(
