@@ -16,7 +16,7 @@ from gobby.storage.machines import (
     MachineOwnershipConflictError,
 )
 from gobby.storage.sessions import SessionManager
-from gobby.storage.users import LocalUserManager
+from gobby.storage.users import LocalUserManager, UserIdentityStateError
 from gobby.storage.workspace_machine_scope import MachineOwnershipMismatchError
 from gobby.utils.machine_id import require_machine_id
 from tests.fixtures.postgres import TEST_MACHINE_ID_PREFIX, TEST_USER_ID
@@ -192,3 +192,15 @@ def test_fresh_boot_registers_identity(temp_db: HubDatabase) -> None:
     machine = LocalMachineManager(temp_db).get(MACHINE_A)
     assert machine is not None
     assert machine.owner_user_id == TEST_USER_ID
+
+
+def test_fresh_boot_refuses_to_register_machine_without_canonical_user(
+    temp_db: HubDatabase,
+) -> None:
+    temp_db.execute("DELETE FROM machines")
+    temp_db.execute("DELETE FROM users")
+
+    with pytest.raises(UserIdentityStateError, match="exactly one installed user, found 0"):
+        ensure_machine_identity(temp_db, MACHINE_A)
+
+    assert LocalMachineManager(temp_db).get(MACHINE_A) is None
