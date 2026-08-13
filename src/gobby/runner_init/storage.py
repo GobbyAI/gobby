@@ -187,6 +187,13 @@ def init_storage_and_config(runner: GobbyRunner, config_path: Path | None, verbo
         ),
         managed_resolver=lambda snapshot: managed_embedding_projection(snapshot),
     )
+    from gobby.storage.definitions.notifications import DefinitionRevisionListener
+    from gobby.storage.definitions.revisions import fetch_persistent_revisions
+
+    runner.definition_revision_listener = DefinitionRevisionListener(
+        postgres_database.open_runtime_async_connection,
+        fetch_revisions=lambda: fetch_persistent_revisions(runner.database),
+    )
     from gobby.storage.model_metadata import ModelMetadataStore
 
     try:

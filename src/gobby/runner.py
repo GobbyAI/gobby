@@ -55,6 +55,7 @@ if TYPE_CHECKING:
     from gobby.storage.concurrency import CoverageExecutor, DatabaseConcurrencyResolution
     from gobby.storage.concurrency_watchdog import DatabaseSaturationWatchdog
     from gobby.storage.cron import CronJobStorage
+    from gobby.storage.definitions.notifications import DefinitionRevisionListener
     from gobby.storage.executor import DatabaseExecutor
     from gobby.storage.hub.protocol import HubDatabase
     from gobby.storage.managed_credentials import ManagedCredentialManager
@@ -152,6 +153,7 @@ class GobbyRunner:
     database_watchdog: DatabaseSaturationWatchdog
     secret_store: SecretStore
     config_runtime: ConfigRuntime
+    definition_revision_listener: DefinitionRevisionListener
     session_manager: SessionManager
     task_manager: LocalTaskManager
     session_task_manager: SessionTaskManager

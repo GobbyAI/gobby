@@ -788,6 +788,12 @@ async def _run_async_shutdown_cleanup(
     config_runtime = getattr(runner, "config_runtime", None)
     if config_runtime is not None:
         await _best_effort(config_runtime.close, "Config runtime shutdown")
+    definition_revision_listener = getattr(runner, "definition_revision_listener", None)
+    if definition_revision_listener is not None:
+        await _best_effort(
+            definition_revision_listener.close,
+            "Definition revision listener shutdown",
+        )
     preserved_agent_pids = await runner_lifecycle_processes._preserved_agent_terminal_pids(runner)
     if preserved_agent_pids is None:
         logger.warning(
