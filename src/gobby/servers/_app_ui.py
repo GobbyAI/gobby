@@ -49,6 +49,7 @@ def _mount_ws_endpoint(app: FastAPI, server: "HTTPServer") -> None:
         del path
         websocket_server = server.services.websocket_server or server.websocket_server
         if websocket_server is None:
+            await websocket.accept()
             await websocket.close(code=1013, reason="WebSocket server unavailable")
             return
 
@@ -57,6 +58,7 @@ def _mount_ws_endpoint(app: FastAPI, server: "HTTPServer") -> None:
             websocket,
         )
         if not authenticated:
+            await websocket.accept()
             await websocket.close(code=4401, reason="Authentication required")
             return
 

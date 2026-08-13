@@ -180,13 +180,38 @@ def test_unauthenticated_handshake_is_rejected_before_handler() -> None:
     client = _client(websocket_server)
 
     with pytest.raises(WebSocketDisconnect) as exc_info:
-        with client.websocket_connect("/ws"):
-            pass
+        with client.websocket_connect("/ws") as websocket:
+            websocket.receive_text()
 
     assert exc_info.value.code == 4401
     assert exc_info.value.reason == "Authentication required"
     assert websocket_server.handler_calls == 0
     assert websocket_server.clients == {}
+
+
+async def test_unauthenticated_handshake_accepts_before_close() -> None:
+    websocket_server = _WebSocketServer()
+    app = FastAPI()
+    server = SimpleNamespace(
+        auth_service=_AuthService(),
+        services=SimpleNamespace(websocket_server=websocket_server),
+        websocket_server=websocket_server,
+    )
+    _mount_ws_endpoint(app, cast(HTTPServer, server))
+    route = next(
+        route for route in app.routes if isinstance(route, WebSocketRoute) and route.path == "/ws"
+    )
+
+    events: list[str] = []
+    websocket = MagicMock(spec=WebSocket)
+    websocket.accept = AsyncMock(side_effect=lambda: events.append("accept"))
+    websocket.close = AsyncMock(side_effect=lambda **_kwargs: events.append("close"))
+
+    await route.endpoint(websocket)
+
+    assert events == ["accept", "close"]
+    websocket.close.assert_awaited_once_with(code=4401, reason="Authentication required")
+    assert websocket_server.handler_calls == 0
 
 
 def test_authenticated_text_binary_bursts_close_reason_and_registry_cleanup() -> None:
@@ -247,8 +272,8 @@ def test_missing_websocket_server_returns_retry_later_close() -> None:
     client = _client(None)
 
     with pytest.raises(WebSocketDisconnect) as exc_info:
-        with client.websocket_connect("/ws"):
-            pass
+        with client.websocket_connect("/ws") as websocket:
+            websocket.receive_text()
 
     assert exc_info.value.code == 1013
     assert exc_info.value.reason == "WebSocket server unavailable"
@@ -262,8 +287,8 @@ def test_authentication_is_always_checked() -> None:
     )
 
     with pytest.raises(WebSocketDisconnect) as exc_info:
-        with client.websocket_connect("/ws"):
-            pass
+        with client.websocket_connect("/ws") as websocket:
+            websocket.receive_text()
 
     assert exc_info.value.code == 4401
     assert websocket_server.handler_calls == 0
