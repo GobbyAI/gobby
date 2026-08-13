@@ -71,7 +71,7 @@ sections:
       "4.2.4": {expected_leaves: [{title: Retire receipt refresh and regenerate release identity, owner_agent: backend-developer}]}
   "4.3":
     acceptance_items:
-      "4.3.1": {expected_leaves: [{title: Bind rehearsal, live gate, and rollback evidence, owner_agent: backend-developer}]}
-      "4.3.2": {expected_leaves: [{title: Bind rehearsal, live gate, and rollback evidence, owner_agent: backend-developer}]}
-      "4.3.3": {expected_leaves: [{title: Bind rehearsal, live gate, and rollback evidence, owner_agent: backend-developer}]}
-      "4.3.4": {expected_leaves: [{title: Bind rehearsal, live gate, and rollback evidence, owner_agent: backend-developer}]}
+      "4.3.1": {expected_leaves: [{title: "Bind rehearsal, live gate, and rollback evidence", owner_agent: backend-developer}]}
+      "4.3.2": {expected_leaves: [{title: "Bind rehearsal, live gate, and rollback evidence", owner_agent: backend-developer}]}
+      "4.3.3": {expected_leaves: [{title: "Bind rehearsal, live gate, and rollback evidence", owner_agent: backend-developer}]}
+      "4.3.4": {expected_leaves: [{title: "Bind rehearsal, live gate, and rollback evidence", owner_agent: backend-developer}]}
