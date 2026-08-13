@@ -23,6 +23,7 @@ from gobby.config.logging import (
     RULE_ALLOW_AUDIT_LOG_FILENAME,
     LoggingSettings,
     allow_audit_backup_count,
+    resolved_logs_dir,
 )
 
 LogSurface = Literal["daemon", "hooks", "mcp", "automation", "allow_audit"]
@@ -67,7 +68,7 @@ class _HandlerConfig:
 
 _default_logging_settings = LoggingSettings()
 _active_handler_config = _HandlerConfig(
-    logs_dir=Path(_default_logging_settings.dir),
+    logs_dir=resolved_logs_dir(_default_logging_settings),
     max_bytes=_default_logging_settings.max_size_mb * 1024 * 1024,
     backup_count=_default_logging_settings.backup_count,
     allow_audit_max_bytes=_default_logging_settings.allow_audit_max_size_mb * 1024 * 1024,
@@ -292,7 +293,7 @@ class JsonOTelFormatter(logging.Formatter):
 
 def _handler_config(settings: LoggingSettings) -> _HandlerConfig:
     return _HandlerConfig(
-        logs_dir=Path(settings.dir).expanduser(),
+        logs_dir=resolved_logs_dir(settings),
         max_bytes=settings.max_size_mb * 1024 * 1024,
         backup_count=settings.backup_count,
         allow_audit_max_bytes=settings.allow_audit_max_size_mb * 1024 * 1024,

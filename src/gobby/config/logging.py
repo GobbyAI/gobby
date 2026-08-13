@@ -7,6 +7,8 @@ from typing import Literal
 
 from pydantic import BaseModel, Field, field_validator
 
+from gobby.paths import get_gobby_home
+
 AUTOMATION_LOG_FILENAME = "automation.log"
 DAEMON_LOG_FILENAME = "daemon.log"
 ERRORS_LOG_FILENAME = "errors.log"
@@ -15,6 +17,8 @@ HOOKS_LOG_FILENAME = "hooks.log"
 MCP_LOG_FILENAME = "mcp.log"
 RULE_ALLOW_AUDIT_LOG_FILENAME = "rule-allow-audit.jsonl"
 UI_LOG_FILENAME = "ui.log"
+
+_DEFAULT_LOG_DIR = "~/.gobby/logs"
 
 ALLOW_AUDIT_EVENTS_PER_DAY = 368_000
 ALLOW_AUDIT_SIZING_BYTES_PER_LINE = 512
@@ -32,7 +36,7 @@ class LoggingSettings(BaseModel):
         description="Log format",
     )
     dir: str = Field(
-        default="~/.gobby/logs",
+        default=_DEFAULT_LOG_DIR,
         description="Directory containing Gobby log files",
     )
     max_size_mb: int = Field(
@@ -110,6 +114,8 @@ def allow_audit_backup_count(config: LoggingSettings) -> int:
 
 def resolved_logs_dir(config: LoggingSettings) -> Path:
     """Return the expanded logs directory."""
+    if config.dir == _DEFAULT_LOG_DIR:
+        return get_gobby_home() / "logs"
     return Path(config.dir).expanduser()
 
 
