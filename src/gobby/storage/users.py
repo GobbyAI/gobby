@@ -78,7 +78,9 @@ class LocalUserManager:
         password_hash: str,
         user_id: str | None = None,
     ) -> User:
-        normalized_id = str(uuid.UUID(user_id)) if user_id is not None else str(uuid.uuid4())
+        normalized_id = (
+            str(uuid.UUID(user_id.strip())) if user_id is not None else str(uuid.uuid4())
+        )
         normalized_name = normalize_user_name(name)
         normalized_email = normalize_user_email(email)
         normalized_hash = validate_password_hash(password_hash)

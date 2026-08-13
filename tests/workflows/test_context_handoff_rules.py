@@ -243,7 +243,9 @@ class TestInjectCompactHandoff:
         assert "compact" in body.when
 
     @pytest.mark.asyncio
-    async def test_durable_tool_call_evidence_reasserted_after_compaction(self, db) -> None:
+    async def test_durable_tool_call_evidence_reasserted_after_compaction(
+        self, db: HubDatabase
+    ) -> None:
         """Satisfy -> compact -> stop regression seam for stop-gate goal evaluators.
 
         A tool-invocation goal satisfied before compaction leaves its only
@@ -279,7 +281,7 @@ class TestInjectCompactHandoff:
         assert "`gobby-tasks`: claim_task, close_task" in satisfied.context
 
     @pytest.mark.asyncio
-    async def test_unmet_tool_invocation_goal_gains_no_evidence(self, db) -> None:
+    async def test_unmet_tool_invocation_goal_gains_no_evidence(self, db: HubDatabase) -> None:
         """A tool never durably recorded must not appear as evidence."""
         _sync_bundled(db)
         engine = RuleEngine(db)

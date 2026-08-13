@@ -44,7 +44,7 @@ class TestLocalMachineManager:
         with pytest.raises(ValueError, match="missing owner_user_id"):
             Machine.from_row({**row, "owner_user_id": None})
 
-    def test_upsert_seen_inserts_and_refreshes_last_seen(self, temp_db) -> None:
+    def test_upsert_seen_inserts_and_refreshes_last_seen(self, temp_db: HubDatabase) -> None:
         manager = LocalMachineManager(temp_db)
 
         first = manager.upsert_seen(
@@ -71,7 +71,7 @@ class TestLocalMachineManager:
         assert refreshed.first_seen == first.first_seen
         assert str(refreshed.last_seen).startswith("2026-01-02")
 
-    def test_refresh_seen_does_not_create_unknown_machine(self, temp_db) -> None:
+    def test_refresh_seen_does_not_create_unknown_machine(self, temp_db: HubDatabase) -> None:
         manager = LocalMachineManager(temp_db)
         before = _count_machines(temp_db)
 
@@ -79,7 +79,7 @@ class TestLocalMachineManager:
 
         assert _count_machines(temp_db) == before
 
-    def test_manager_canonicalizes_uuid_and_rejects_non_uuid(self, temp_db) -> None:
+    def test_manager_canonicalizes_uuid_and_rejects_non_uuid(self, temp_db: HubDatabase) -> None:
         manager = LocalMachineManager(temp_db)
         manager.upsert_seen(MACHINE_A, TEST_USER_ID)
 
@@ -89,7 +89,7 @@ class TestLocalMachineManager:
         with pytest.raises(ValueError, match="badly formed hexadecimal UUID"):
             manager.upsert_seen("unknown-machine", TEST_USER_ID)
 
-    def test_upsert_seen_throttles_last_seen_refresh(self, temp_db) -> None:
+    def test_upsert_seen_throttles_last_seen_refresh(self, temp_db: HubDatabase) -> None:
         manager = LocalMachineManager(temp_db)
         first = manager.upsert_seen(MACHINE_A, TEST_USER_ID, seen_at="2026-01-01T00:00:00+00:00")
         throttled = manager.refresh_seen(MACHINE_A, seen_at="2026-01-01T00:01:00+00:00")
@@ -98,7 +98,7 @@ class TestLocalMachineManager:
         assert throttled is not None
         assert throttled.last_seen == first.last_seen
 
-    def test_upsert_seen_rejects_conflicting_owner_without_mutation(self, temp_db) -> None:
+    def test_upsert_seen_rejects_conflicting_owner_without_mutation(self, temp_db: HubDatabase) -> None:
         users = LocalUserManager(temp_db)
         users.create(
             user_id=OTHER_USER_ID,
@@ -117,12 +117,20 @@ class TestLocalMachineManager:
 
     def test_list_for_user_returns_owned_machines(self, temp_db: HubDatabase) -> None:
         manager = LocalMachineManager(temp_db)
+        users = LocalUserManager(temp_db)
+        users.create(
+            user_id=OTHER_USER_ID,
+            name="Other User",
+            email="other-list-owner@example.com",
+            password_hash=hash_password("password"),
+        )
         manager.upsert_seen(MACHINE_A, TEST_USER_ID)
-        manager.upsert_seen(MACHINE_B, TEST_USER_ID)
+        manager.upsert_seen(MACHINE_B, OTHER_USER_ID)
 
         machine_ids = {machine.id for machine in manager.list_for_user(TEST_USER_ID)}
 
-        assert {MACHINE_A, MACHINE_B}.issubset(machine_ids)
+        assert MACHINE_A in machine_ids
+        assert MACHINE_B not in machine_ids
 
 
 def test_session_registration_refreshes_registered_machine(

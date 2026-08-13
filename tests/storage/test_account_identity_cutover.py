@@ -464,6 +464,30 @@ def test_uuid_column_conversion_failure_rolls_back_ddl_and_remains_fenced(
     assert epoch == {"released_at": None}
 
 
+def test_preflight_refuses_missing_daemon_runtime_role(monkeypatch: pytest.MonkeyPatch) -> None:
+    class _MissingRoleConnection:
+        def execute(self, query: object, _params: object = None) -> Any:
+            if "pg_roles" in str(query):
+                return type("Result", (), {"fetchone": staticmethod(lambda: None)})()
+            raise AssertionError(f"unexpected query before role check: {query}")
+
+        def __enter__(self) -> _MissingRoleConnection:
+            return self
+
+        def __exit__(
+            self,
+            _exc_type: type[BaseException] | None,
+            _exc: BaseException | None,
+            _tb: TracebackType | None,
+        ) -> None:
+            return None
+
+    monkeypatch.setattr(cutover, "_connect", lambda _url: _MissingRoleConnection())
+
+    with pytest.raises(AccountIdentityCutoverError, match="gobby_daemon_runtime"):
+        preflight_account_identity_cutover("postgresql://unused")
+
+
 def test_preflight_refuses_existing_machine_owners(predecessor_database: str) -> None:
     bound_url, _epoch_id, _batch_id = _open_cutover(predecessor_database)
     with psycopg.connect(bound_url) as connection:

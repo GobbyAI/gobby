@@ -3,6 +3,7 @@
 from unittest.mock import MagicMock
 
 import pytest
+from starlette.testclient import TestClient
 
 from gobby.app_context import ServiceContainer
 from gobby.config.app import DaemonConfig
@@ -76,5 +77,13 @@ def test_http_server_allows_remote_ui_with_mandatory_auth() -> None:
         startup_config=DaemonConfig(ui={"enabled": True}),
         bootstrap_config=BootstrapConfig(bind_host="0.0.0.0"),
     )
+    denial = {
+        "error": (
+            "Authentication required. CLI clients need ~/.gobby/local_cli_token "
+            "(run 'gobby install' or 'gobby auth token --rotate'). Browsers: log in."
+        )
+    }
 
-    assert server.auth_service is not None
+    unauthenticated = TestClient(server.app).get("/api/tasks")
+    assert unauthenticated.status_code == 401
+    assert unauthenticated.json() == denial

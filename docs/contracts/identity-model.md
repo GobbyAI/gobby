@@ -52,7 +52,7 @@ the session. The derivation is:
 
 ## Future Fleets
 
-Fleet daemons and nodes should register as machines first, then associate ownership
-through `owner_user_id` when multi-user authorization exists. A node can host many
-sessions; a user can own many machines; a shared stack can serve many users without
-changing the session schema.
+Fleet daemons and nodes register as machines only with a required `owner_user_id`.
+There is no pending or ownerless machine row. A node can host many sessions; a
+user can own many machines; a shared stack can serve many users without changing
+the session schema.

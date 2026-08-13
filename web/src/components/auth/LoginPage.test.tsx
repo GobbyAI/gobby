@@ -11,7 +11,7 @@ describe("LoginPage", () => {
     expect(screen.getByLabelText("Password").style.outline).toBe("");
   });
 
-  it("submits email credentials", async () => {
+  it("submits email credentials", async (): Promise<void> => {
     const onLogin = vi.fn().mockResolvedValue(null);
     render(<LoginPage onLogin={onLogin} />);
 

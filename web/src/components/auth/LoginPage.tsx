@@ -12,7 +12,7 @@ interface LoginPageProps {
   ) => Promise<string | null>;
 }
 
-export function LoginPage({ onLogin }: LoginPageProps) {
+export function LoginPage({ onLogin }: LoginPageProps): JSX.Element {
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
   const [rememberMe, setRememberMe] = useState(false);

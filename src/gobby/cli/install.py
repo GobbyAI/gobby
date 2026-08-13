@@ -593,52 +593,49 @@ def install(
     run_daemon_setup(project_path, configure_ide_settings=configure_ide_settings)
     runtime = get_cli_runtime()
     try:
-        db = runtime.require_database()
-        installed_user = ensure_install_identity(
-            db,
-            no_interactive=no_interactive_flag,
-        )
-    except (OSError, RuntimeError, ValueError) as exc:
-        runtime.close()
-        raise click.ClickException(f"Failed to establish account identity: {exc}") from exc
-    click.echo(f"Account identity: {installed_user.email}")
-    if initialize_project_after_setup:
-        _initialize_project_after_setup(project_path)
-    exposure_result: UiExposeResult | None = None
-    try:
-        exposure_result = apply_installer_ui_exposure(
-            expose_ui,
-            bootstrap.daemon_port,
-        )
-    except UiExposeError as exc:
-        click.echo(
-            f"Warning: failed to expose the web UI: {exc}. "
-            "Install continues; run 'gobby ui expose' to retry.",
-            err=True,
-        )
-    if exposure_result is not None:
-        click.echo(f"Web UI exposed at {exposure_result.url}")
-    if config_only_flag:
-        if not _echo_install_summary(results, True):
-            runtime.close()
-            sys.exit(1)
-        click.echo("Configuration and required infrastructure complete.")
-        runtime.close()
-        return
+        try:
+            db = runtime.require_database()
+            installed_user = ensure_install_identity(
+                db,
+                no_interactive=no_interactive_flag,
+            )
+        except (OSError, RuntimeError, ValueError) as exc:
+            raise click.ClickException(f"Failed to establish account identity: {exc}") from exc
+        click.echo(f"Account identity: {installed_user.email}")
+        if initialize_project_after_setup:
+            _initialize_project_after_setup(project_path)
+        exposure_result: UiExposeResult | None = None
+        try:
+            exposure_result = apply_installer_ui_exposure(
+                expose_ui,
+                bootstrap.daemon_port,
+            )
+        except UiExposeError as exc:
+            click.echo(
+                f"Warning: failed to expose the web UI: {exc}. "
+                "Install continues; run 'gobby ui expose' to retry.",
+                err=True,
+            )
+        if exposure_result is not None:
+            click.echo(f"Web UI exposed at {exposure_result.url}")
+        if config_only_flag:
+            if not _echo_install_summary(results, True):
+                sys.exit(1)
+            click.echo("Configuration and required infrastructure complete.")
+            return
 
-    toggles = list(clis_to_install)
-    if provision_managed_services:
-        toggles.extend(["postgres", "qdrant", "falkordb"])
-    if install_hooks:
-        toggles.append("git-hooks")
+        toggles = list(clis_to_install)
+        if provision_managed_services:
+            toggles.extend(["postgres", "qdrant", "falkordb"])
+        if install_hooks:
+            toggles.append("git-hooks")
 
-    click.echo(f"Components to configure: {', '.join(toggles)}")
-    click.echo("")
+        click.echo(f"Components to configure: {', '.join(toggles)}")
+        click.echo("")
 
-    secret_store: SecretStore | None = None
-    config_store: ConfigStore | None = None
-    provider_hook_timeout_seconds = 120
-    try:
+        secret_store: SecretStore | None = None
+        config_store: ConfigStore | None = None
+        provider_hook_timeout_seconds = 120
         try:
             secret_store = SecretStore(db)
             config_store = ConfigStore(db)

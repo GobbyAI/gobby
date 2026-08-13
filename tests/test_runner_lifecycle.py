@@ -3471,7 +3471,9 @@ class TestShutdownLoop:
         )
 
     @pytest.mark.asyncio
-    async def test_readiness_failure_rolls_back_runner_resources(self, mock_config) -> None:
+    async def test_readiness_failure_rolls_back_runner_resources(
+        self, mock_config: MagicMock
+    ) -> None:
         """Startup failures before HTTP bind release constructor-owned resources."""
         patches = create_base_patches(mock_config=mock_config)
 

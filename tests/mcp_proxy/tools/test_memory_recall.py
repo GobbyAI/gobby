@@ -293,8 +293,14 @@ async def test_queue_resolver_runtime_error_uses_retrieval_error_contract(
         "recall_request_id": "request-runtime-error",
         "error": "Memory retrieval failed.",
     }
-    assert "runtime is rebuilding" in caplog.text
-    assert any(record.exc_info is not None for record in caplog.records)
+    rebuild = next(
+        record
+        for record in caplog.records
+        if record.exc_info is not None
+        and record.exc_info[0] is RuntimeError
+        and "runtime is rebuilding" in str(record.exc_info[1])
+    )
+    assert rebuild.exc_info is not None
 
 
 def test_main_memory_registry_includes_inline_and_overflow_tools(

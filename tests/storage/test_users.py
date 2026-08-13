@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import pytest
 
-from gobby.identity import hash_password, verify_password_hash
+from gobby.identity import hash_password, validate_password_hash, verify_password_hash
 from gobby.storage.auth import AuthStore
 from gobby.storage.hub.protocol import HubDatabase
 from gobby.storage.sessions import SessionManager
@@ -32,11 +32,22 @@ def test_create_lookup_list_and_profile_updates(temp_db: HubDatabase) -> None:
     )
 
     assert created.id == OTHER_USER_ID
+    padded = manager.create(
+        user_id=" 20000000-0000-4000-8000-000000000003 ",
+        name="Padded User",
+        email="padded-id@example.com",
+        password_hash=hash_password("initial-password"),
+    )
+    assert padded.id == "20000000-0000-4000-8000-000000000003"
     assert created.name == "Other User"
     assert created.email == "Other@Example.COM"
     assert manager.get(OTHER_USER_ID) == created
     assert manager.get_by_email(" other@example.com ") == created
-    assert {user.id for user in manager.list()} == {TEST_USER_ID, OTHER_USER_ID}
+    assert {user.id for user in manager.list()} == {
+        TEST_USER_ID,
+        OTHER_USER_ID,
+        padded.id,
+    }
 
     updated = manager.update_profile(
         OTHER_USER_ID,
@@ -77,6 +88,14 @@ def test_password_hash_uses_random_canonical_argon2id_salts() -> None:
     assert second.startswith("$argon2id$v=19$m=65536,t=3,p=4$")
     assert first != second
     assert verify_password_hash(TEST_USER_PASSWORD, first) is True
+    assert validate_password_hash(first) == first
+    with pytest.raises(ValueError, match="canonical Argon2id"):
+        validate_password_hash("$argon2id$v=19$not-a-canonical-hash")
+    with pytest.raises(ValueError, match="canonical Argon2id"):
+        validate_password_hash(
+            "$argon2id$v=19$m=1,t=1,p=1$Z29iYnktZHVtbXktc2FsdA$"
+            "DrxHcX6/u8pE5u8V9MMmai5FtT2HpjRCeG1EG5zvw+U"
+        )
 
 
 def test_update_password_replaces_hash_and_revokes_only_auth_sessions(

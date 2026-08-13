@@ -110,12 +110,23 @@ Required SQL evidence:
 
 ```sql
 SELECT version, filename, checksum FROM schema_migrations ORDER BY version;
-SELECT id, name, email, created_at, updated_at FROM users ORDER BY id;
+SELECT id,
+       '[redacted]' AS name,
+       '[redacted]' AS email,
+       created_at,
+       updated_at
+FROM users
+ORDER BY id;
 SELECT owner_user_id, count(*) FROM machines GROUP BY owner_user_id;
 SELECT count(*) AS auth_sessions FROM auth_sessions;
 SELECT count(*) FILTER (WHERE owner_user_id IS NULL) AS unowned_machines
 FROM machines;
 ```
+
+Do not copy `users.name` or `users.email` into the evidence bundle. The redacted
+query proves sole-user identity without creating a second plaintext copy of
+account PII. Restrict the bundle, keep it encrypted at rest, and delete it after
+the soak period.
 
 Capture exact counts for every table before and after. Differences are allowed
 only for `users`, `auth_sessions`, `maintenance_epochs`, and

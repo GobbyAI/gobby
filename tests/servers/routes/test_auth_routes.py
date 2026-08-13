@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from typing import cast
 from unittest.mock import patch
 
 import pytest
@@ -16,6 +17,7 @@ from gobby.storage.auth import hash_token
 from gobby.storage.hub.protocol import HubDatabase
 from gobby.storage.tasks import LocalTaskManager
 from gobby.storage.users import LocalUserManager
+from tests.conftest import NonLocalHubDatabase
 from tests.fixtures.postgres import TEST_USER_EMAIL, TEST_USER_ID
 from tests.servers.conftest import create_http_server
 
@@ -48,13 +50,13 @@ def _login(client: TestClient, *, email: str = TEST_USER_EMAIL, password: str) -
 
 
 class TestAuthStatus:
-    def test_status_reports_unauthenticated_request(self, temp_db) -> None:
+    def test_status_reports_unauthenticated_request(self, temp_db: HubDatabase) -> None:
         response = TestClient(_server(temp_db).app).get("/api/auth/status")
 
         assert response.status_code == 200
         assert response.json() == {"authenticated": False}
 
-    def test_status_accepts_user_owned_session(self, temp_db) -> None:
+    def test_status_accepts_user_owned_session(self, temp_db: HubDatabase) -> None:
         _set_password(temp_db)
         client = TestClient(_server(temp_db).app)
         assert _login(client, password="correctpassword").status_code == 200
@@ -65,7 +67,7 @@ class TestAuthStatus:
 
 
 class TestAuthLogin:
-    def test_login_is_case_insensitive_and_creates_user_owned_session(self, temp_db) -> None:
+    def test_login_is_case_insensitive_and_creates_user_owned_session(self, temp_db: HubDatabase) -> None:
         _set_password(temp_db, "mypassword")
         client = TestClient(_server(temp_db).app)
 
@@ -85,17 +87,20 @@ class TestAuthLogin:
         assert row is not None
         assert row["user_id"] == TEST_USER_ID
 
-    def test_login_works_with_hub_database_protocol(self, non_local_hub_db) -> None:
-        _set_password(non_local_hub_db, "mypassword")
+    def test_login_works_with_hub_database_protocol(
+        self, non_local_hub_db: NonLocalHubDatabase
+    ) -> None:
+        db = cast(HubDatabase, non_local_hub_db)
+        _set_password(db, "mypassword")
 
-        response = _login(TestClient(_server(non_local_hub_db).app), password="mypassword")
+        response = _login(TestClient(_server(db).app), password="mypassword")
 
         assert response.status_code == 200
         assert "gobby_session" in response.cookies
 
     def test_wrong_password_and_unknown_email_share_response_and_argon2_work(
         self,
-        temp_db,
+        temp_db: HubDatabase,
     ) -> None:
         _set_password(temp_db, "mypassword")
         client = TestClient(_server(temp_db).app)
@@ -126,7 +131,9 @@ class TestAuthLogin:
         assert all(call.args[1] == DUMMY_PASSWORD_HASH for call in verify.call_args_list[1:])
 
     @pytest.mark.parametrize("email", [TEST_USER_EMAIL, " ", "invalid"])
-    def test_repeated_failed_logins_are_locked_out(self, temp_db, email: str) -> None:
+    def test_repeated_failed_logins_are_locked_out(
+        self, temp_db: HubDatabase, email: str
+    ) -> None:
         _set_password(temp_db, "mypassword")
         client = TestClient(_server(temp_db).app)
         credentials = {"email": email, "password": "wrong"}
@@ -139,7 +146,7 @@ class TestAuthLogin:
         assert response.status_code == 429
         assert response.headers["Retry-After"] == "60"
 
-    def test_tailscale_proxy_tracks_login_failures_per_user(self, temp_db) -> None:
+    def test_tailscale_proxy_tracks_login_failures_per_user(self, temp_db: HubDatabase) -> None:
         _set_password(temp_db, "mypassword")
         server = _server(temp_db)
         server.bootstrap_config = BootstrapConfig(ui_expose="tailscale")
@@ -168,7 +175,7 @@ class TestAuthLogin:
         assert alice.status_code == 429
         assert bob.status_code == 401
 
-    def test_tailscale_identity_header_requires_loopback_proxy(self, temp_db) -> None:
+    def test_tailscale_identity_header_requires_loopback_proxy(self, temp_db: HubDatabase) -> None:
         _set_password(temp_db, "mypassword")
         server = _server(temp_db)
         server.bootstrap_config = BootstrapConfig(ui_expose="tailscale")
@@ -191,7 +198,7 @@ class TestAuthLogin:
 
         assert response.status_code == 429
 
-    def test_successful_login_resets_failed_attempts(self, temp_db) -> None:
+    def test_successful_login_resets_failed_attempts(self, temp_db: HubDatabase) -> None:
         _set_password(temp_db, "mypassword")
         client = TestClient(_server(temp_db).app)
         wrong = {"email": TEST_USER_EMAIL, "password": "wrong"}
@@ -205,7 +212,7 @@ class TestAuthLogin:
 
 
 class TestAuthLogout:
-    def test_logout_clears_session(self, temp_db) -> None:
+    def test_logout_clears_session(self, temp_db: HubDatabase) -> None:
         _set_password(temp_db, "mypassword")
         server = _server(temp_db)
         client = TestClient(server.app)

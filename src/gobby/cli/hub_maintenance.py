@@ -17,6 +17,7 @@ from gobby.cli.hub_backup.cli import _start_daemon
 from gobby.cli.postgres_backup import _resolve_database_url as _resolve_backup_database_url
 from gobby.cli.utils_shutdown import stop_daemon
 from gobby.paths import get_gobby_home
+from gobby.storage.account_identity_cutover import ACCOUNT_IDENTITY_CAMPAIGN
 from gobby.storage.maintenance_epoch import (
     CAMPAIGNS,
     Campaign,
@@ -317,7 +318,7 @@ def _child_cli_failure_detail(result: subprocess.CompletedProcess[str]) -> str:
 
 def _load_campaign_executor(campaign: Campaign) -> CampaignExecutor:
     executor = _CAMPAIGN_EXECUTORS.get(campaign)
-    if executor is None and campaign == "account-identity-cutover":
+    if executor is None and campaign == ACCOUNT_IDENTITY_CAMPAIGN:
         from gobby.cli.account_identity_cutover import (
             install_account_identity_cutover_executor,
         )

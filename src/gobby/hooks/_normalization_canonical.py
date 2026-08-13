@@ -409,6 +409,31 @@ def _shell_positional_args_after(parts: list[str], start: int) -> list[str]:
     return positional
 
 
+def _git_add_positional_args_after(parts: list[str], start: int) -> list[str]:
+    positional: list[str] = []
+    skip_next = False
+    after_options = False
+    option_args = {"--chmod", "--pathspec-from-file"}
+    for part in parts[start:]:
+        if skip_next:
+            skip_next = False
+            continue
+        if part in _SHELL_CONTROL_TOKENS or not part:
+            continue
+        if not after_options and part == "--":
+            after_options = True
+            continue
+        if not after_options and part in option_args:
+            skip_next = True
+            continue
+        if not after_options and part.startswith("--") and "=" in part:
+            continue
+        if not after_options and part.startswith("-") and part != "-":
+            continue
+        positional.append(part)
+    return positional
+
+
 def _search_command_paths(cmd: str, parts: list[str]) -> list[str]:
     if cmd in {"rg", "grep"}:
         positional = _shell_positional_args_after(parts, 1)
@@ -684,7 +709,7 @@ def _classify_shell_segment_without_redirection(
         return _ShellSegmentMetadata("write", repo_mutation=True)
 
     if cmd == "git" and parts[git_subcommand_index : git_subcommand_index + 1] == ["add"]:
-        positional = _shell_positional_args_after(parts, git_subcommand_index + 1)
+        positional = _git_add_positional_args_after(parts, git_subcommand_index + 1)
         paths = [candidate for candidate in positional if _looks_path_target(candidate)]
         return _ShellSegmentMetadata(
             "execute",

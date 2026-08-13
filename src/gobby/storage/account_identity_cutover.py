@@ -154,6 +154,14 @@ def preflight_account_identity_cutover(
 ) -> AccountIdentityCutoverPreflight:
     """Validate predecessor state and capture counts before prompting."""
     with _connect(database_url) as connection:
+        role_row = connection.execute(
+            "SELECT 1 FROM pg_roles WHERE rolname = %s",
+            ("gobby_daemon_runtime",),
+        ).fetchone()
+        if role_row is None:
+            raise AccountIdentityCutoverError(
+                "Refusing cutover: PostgreSQL role gobby_daemon_runtime does not exist"
+            )
         _require_receipt(connection, PREDECESSOR_BASELINE_CHECKSUM)
         _require_predecessor_shape(connection)
         owner_count = _scalar_count(

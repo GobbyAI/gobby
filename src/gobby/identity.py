@@ -57,7 +57,16 @@ def validate_password(password: str) -> str:
 def validate_password_hash(password_hash: str) -> str:
     """Require the canonical Argon2id encoded hash representation."""
     normalized = password_hash.strip()
-    if not normalized.startswith("$argon2id$v=19$"):
+    parts = normalized.split("$")
+    expected_prefix = ["", "argon2id", f"v={ARGON2_VERSION}", _ARGON2_PARAMETERS]
+    if len(parts) != 6 or parts[:4] != expected_prefix:
+        raise ValueError("Password hash must use the canonical Argon2id encoding")
+    try:
+        salt = _decode_argon2_component(parts[4])
+        digest = _decode_argon2_component(parts[5])
+    except (ValueError, binascii.Error) as exc:
+        raise ValueError("Password hash must use the canonical Argon2id encoding") from exc
+    if len(salt) < 8 or len(digest) != _ARGON2_HASH_LEN:
         raise ValueError("Password hash must use the canonical Argon2id encoding")
     return normalized
 

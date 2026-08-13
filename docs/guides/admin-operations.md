@@ -64,8 +64,9 @@ sole installed user's Argon2id password with:
 uv run gobby auth credentials
 ```
 
-Existing browser sessions remain valid after a password reset. The browser
-session cookie is `gobby_session`.
+Password reset revokes every `auth_sessions` row for that user, so existing
+`gobby_session` cookies stop working. The caller must sign in again. The
+browser session cookie is `gobby_session`.
 
 HTTP auth routes:
 

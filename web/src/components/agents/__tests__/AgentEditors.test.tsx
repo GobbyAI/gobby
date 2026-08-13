@@ -110,7 +110,7 @@ describe("agent definition editors", () => {
     });
   });
 
-  it("clamps invalid timeout values while preserving non-negative values", () => {
+  it("clamps invalid timeout values while preserving non-negative values", (): void => {
     const onChange = vi.fn();
     render(
       <AgentEditForm

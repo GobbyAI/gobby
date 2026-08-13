@@ -210,7 +210,11 @@ async def _drain_hook_inbox_once_locked(
     if read_local_api_token() is None:
         logger.warning(
             "Daemon API token missing; run 'gobby install' or 'gobby auth token --rotate' "
-            "on the hub machine and copy ~/.gobby/local_cli_token here"
+            "on the hub machine and copy ~/.gobby/local_cli_token here",
+            extra={
+                "inbox_path": str(pending_dir),
+                "pending_envelopes": len(pending_files),
+            },
         )
         return 0
 

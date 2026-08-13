@@ -244,6 +244,49 @@ def _delete_order(conn: psycopg.Connection[Any], tables: set[str]) -> list[str]:
     return ordered
 
 
+def _insert_order(conn: psycopg.Connection[Any], tables: set[str]) -> list[str]:
+    """Order tables parent-first for every non-deferrable foreign key."""
+    remaining_parents: dict[str, set[str]] = {table: set() for table in tables}
+    children_by_parent: dict[str, set[str]] = {table: set() for table in tables}
+    foreign_keys = conn.execute(
+        """
+        SELECT child.relname, parent.relname
+        FROM pg_constraint AS fk
+        JOIN pg_class AS child ON child.oid = fk.conrelid
+        JOIN pg_namespace AS child_schema ON child_schema.oid = child.relnamespace
+        JOIN pg_class AS parent ON parent.oid = fk.confrelid
+        JOIN pg_namespace AS parent_schema ON parent_schema.oid = parent.relnamespace
+        WHERE fk.contype = 'f'
+          AND NOT fk.condeferrable
+          AND child_schema.nspname = current_schema()
+          AND parent_schema.nspname = current_schema()
+        """
+    ).fetchall()
+    for child, parent in foreign_keys:
+        if child == parent or child not in tables or parent not in tables:
+            continue
+        remaining_parents[child].add(parent)
+        children_by_parent[parent].add(child)
+
+    ready = {table for table, parents in remaining_parents.items() if not parents}
+    ordered: list[str] = []
+    while ready:
+        table = min(ready)
+        ready.remove(table)
+        ordered.append(table)
+        for child in children_by_parent[table]:
+            remaining_parents[child].remove(table)
+            if not remaining_parents[child]:
+                ready.add(child)
+
+    if len(ordered) != len(tables):
+        blocked = sorted(tables - set(ordered))
+        raise RuntimeError(
+            f"Cannot restore canonical seed with cyclic non-deferrable foreign keys: {blocked}"
+        )
+    return ordered
+
+
 def _reset_schema(
     url: str,
     schema: str,
@@ -307,7 +350,7 @@ def _reset_schema(
                 conn.execute(sql.SQL("DELETE FROM {}").format(sql.Identifier(table)))
             for sequence in sequences:
                 conn.execute(sql.SQL("ALTER SEQUENCE {} RESTART").format(sql.Identifier(sequence)))
-            for table in reversed(reset_tables):
+            for table in _insert_order(conn, set(reset_tables)):
                 rows = canonical_seed.get(table, [])
                 if not rows:
                     continue

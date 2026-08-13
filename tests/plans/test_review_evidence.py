@@ -9,6 +9,7 @@ import pytest
 
 from gobby.plans.review_evidence import PlanReviewEvidenceService
 from gobby.plans.review_evidence_io import (
+    _validate_round_entry_plan,
     append_round_entry,
     atomic_write_bytes,
     build_section_manifest,
@@ -952,7 +953,7 @@ def _round_entry_plan(tmp_path: Path) -> Path:
     return plan_path
 
 
-def _round_checkpoint(evidence_id: str = "evidence-1", round_number: int = 1) -> bytes:
+def _round_checkpoint(evidence_id: str = "evidence-1", round_number: int = 2) -> bytes:
     return render_checkpoint(
         evidence_id=evidence_id,
         round_number=round_number,
@@ -969,7 +970,7 @@ def _round_checkpoint(evidence_id: str = "evidence-1", round_number: int = 1) ->
     )
 
 
-_ROUND_PROSE = "**Round 1** `kind: verification`\n\n- verdict: needs_review"
+_ROUND_PROSE = "**Round 2** `kind: verification`\n\n- verdict: needs_review"
 
 
 def test_append_round_entry_inserts_before_next_section(tmp_path: Path) -> None:
@@ -988,14 +989,31 @@ def test_append_round_entry_inserts_before_next_section(tmp_path: Path) -> None:
     assert plan_path.read_bytes() == replayed
 
 
+def test_append_round_entry_allows_headings_inside_v1(tmp_path: Path) -> None:
+    plan_path = _round_entry_plan(tmp_path)
+    prose = "## Injected Section\n`kind: framing`\n\nprose"
+    checkpoint = _round_checkpoint()
+
+    assert append_round_entry(plan_path, prose, checkpoint) is True
+
+    text = plan_path.read_text(encoding="utf-8")
+    assert text.index("## V1 Plan Changelog") < text.index("## Injected Section")
+    assert text.index("## Injected Section") < text.index("## Task Mapping")
+
+
+def test_validate_round_entry_plan_rejects_changes_outside_v1(tmp_path: Path) -> None:
+    plan_path = _round_entry_plan(tmp_path)
+    current = plan_path.read_bytes()
+    updated = current.replace(b"## Task Mapping", b"## Task Mapping Changed", 1)
+
+    with pytest.raises(ReviewEvidenceError, match="only the V1"):
+        _validate_round_entry_plan(plan_path, current, updated)
+
+
 def test_append_round_entry_fails_atomically(tmp_path: Path) -> None:
     plan_path = _round_entry_plan(tmp_path)
     checkpoint = _round_checkpoint()
     original = plan_path.read_bytes()
-
-    with pytest.raises(ReviewEvidenceError, match="only the V1"):
-        append_round_entry(plan_path, "## Injected Section\n\nprose", checkpoint)
-    assert plan_path.read_bytes() == original
 
     with pytest.raises(ReviewEvidenceError, match="prose cannot be empty"):
         append_round_entry(plan_path, "   ", checkpoint)
@@ -1011,7 +1029,7 @@ def test_append_round_entry_rejects_conflicting_checkpoint(tmp_path: Path) -> No
         append_round_entry(
             plan_path,
             _ROUND_PROSE,
-            _round_checkpoint(round_number=2),
+            _round_checkpoint(round_number=3),
         )
     assert plan_path.read_bytes() == snapshot
 

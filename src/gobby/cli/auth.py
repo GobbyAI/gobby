@@ -5,7 +5,7 @@ from contextlib import nullcontext
 import click
 
 from gobby.cli.runtime import require_cli_database
-from gobby.identity import hash_password
+from gobby.identity import hash_password, validate_password
 from gobby.storage.auth import (
     LOCAL_API_TOKEN_HASH_KEY,
     hash_token,
@@ -29,7 +29,9 @@ def credentials() -> None:
             users = LocalUserManager(db)
             user = users.require_sole_user()
             click.echo(f"Resetting web UI password for {user.email}.")
-            password = click.prompt("New password", hide_input=True, confirmation_prompt=True)
+            password = validate_password(
+                str(click.prompt("New password", hide_input=True, confirmation_prompt=True))
+            )
             users.update_password(user.id, hash_password(password))
             click.echo(f"Password updated for {user.email}.")
     except (RuntimeError, ValueError) as exc:

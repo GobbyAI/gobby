@@ -109,6 +109,25 @@ def configure_task_close_validation(
     from gobby.prompts.sync import sync_bundled_prompts
 
     sync_bundled_prompts(postgres_db)
+    from gobby.storage.config_store import ConfigStore
+
+    endpoint = {
+        "protocol": "openai-compatible",
+        "wire_api": "chat-completions",
+        "api_base": f"http://127.0.0.1:{validation_llm_server.server_port}/v1",
+        "model": "e2e-validation",
+    }
+    ConfigStore(postgres_db).set_many(
+        {
+            "gobby_tasks.validation.enabled": True,
+            "gobby_tasks.validation.candidates": ["endpoint:e2e/e2e-validation"],
+            "ai.generation.timeout_seconds": 15,
+            "ai.generation.candidate_timeout_seconds": 5,
+            "ai.generation.cli_candidate_timeout_seconds": 5,
+            "ai.generation.endpoints": {"e2e": endpoint},
+        },
+        source="e2e-fixture",
+    )
     config_path, _http_port, _ws_port = e2e_config
     config = cast(dict[str, Any], yaml.safe_load(config_path.read_text()))
     validation = config["gobby_tasks"]["validation"]
@@ -119,14 +138,7 @@ def configure_task_close_validation(
             "timeout_seconds": 15,
             "candidate_timeout_seconds": 5,
             "cli_candidate_timeout_seconds": 5,
-            "endpoints": {
-                "e2e": {
-                    "protocol": "openai-compatible",
-                    "wire_api": "chat-completions",
-                    "api_base": f"http://127.0.0.1:{validation_llm_server.server_port}/v1",
-                    "model": "e2e-validation",
-                }
-            },
+            "endpoints": {"e2e": endpoint},
         }
     }
     config_path.write_text(yaml.safe_dump(config, sort_keys=False))

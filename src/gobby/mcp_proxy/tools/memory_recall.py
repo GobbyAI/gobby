@@ -120,7 +120,13 @@ def register_memory_recall_tool(
         try:
             queue = _current_queue()
         except RuntimeError:
-            logger.exception("Failed to resolve the memory recall delivery queue")
+            logger.exception(
+                "Failed to resolve the memory recall delivery queue",
+                extra={
+                    "recall_request_id": recall_request_id,
+                    "session_id": session_id,
+                },
+            )
             return _retrieval_error(recall_request_id, "Memory retrieval failed.")
         if queue is None:
             return _retrieval_error(recall_request_id, "Memory services are unavailable.")

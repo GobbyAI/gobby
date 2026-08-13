@@ -13,6 +13,8 @@ import gobby.cli.account_identity_cutover as command
 from gobby.storage.account_identity_cutover import AccountIdentityCutoverError
 from gobby.storage.maintenance_epoch import DestructiveBatch, MaintenanceEpoch
 
+pytestmark = pytest.mark.unit
+
 
 def _epoch() -> MaintenanceEpoch:
     now = datetime(2026, 8, 12, tzinfo=UTC)
