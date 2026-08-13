@@ -1,6 +1,6 @@
 project_id: d45545c5-ded5-4335-b115-0245752edacf
 plan_id: split-workflow-definition-storage
-plan_hash: "ad3553dd6f61f7f5cb94c6113d3c5862eff1eca9097cdcdb535e437ea8b1f190"
+plan_hash: "00b2839f45b87d2ee3a3ebbb8e7bd505e22ac9d0fdb5aae38bf3da78ab7bcda0"
 root_task_ref: "18879"
 
 sections:
@@ -77,6 +77,7 @@ sections:
       "2.3.12": {expected_leaves: [{title: Agent sync, write surfaces, and agent copy migration, owner_agent: backend-developer}]}
       "2.3.13": {expected_leaves: [{title: Agent sync, write surfaces, and agent copy migration, owner_agent: backend-developer}]}
       "2.3.14": {expected_leaves: [{title: Agent sync, write surfaces, and agent copy migration, owner_agent: backend-developer}]}
+      "2.3.15": {expected_leaves: [{title: Agent sync, write surfaces, and agent copy migration, owner_agent: backend-developer}]}
   "2.4":
     acceptance_items:
       "2.4.1": {expected_leaves: [{title: Agent read-consumer rewiring, owner_agent: backend-developer}]}
@@ -135,6 +136,9 @@ sections:
       "3.2.25": {expected_leaves: [{title: Data-plane cutover and instance copy migration, owner_agent: backend-developer}]}
       "3.2.26": {expected_leaves: [{title: Data-plane cutover and instance copy migration, owner_agent: backend-developer}]}
       "3.2.27": {expected_leaves: [{title: Data-plane cutover and instance copy migration, owner_agent: backend-developer}]}
+      "3.2.28": {expected_leaves: [{title: Data-plane cutover and instance copy migration, owner_agent: backend-developer}]}
+      "3.2.29": {expected_leaves: [{title: Data-plane cutover and instance copy migration, owner_agent: backend-developer}]}
+      "3.2.30": {expected_leaves: [{title: Data-plane cutover and instance copy migration, owner_agent: backend-developer}]}
   "3.3":
     acceptance_items:
       "3.3.1": {expected_leaves: [{title: Recovery, cleanup, and auxiliary surfaces, owner_agent: backend-developer}]}
@@ -153,6 +157,7 @@ sections:
       "3.3.11": {expected_leaves: [{title: Recovery, cleanup, and auxiliary surfaces, owner_agent: backend-developer}]}
       "3.3.15": {expected_leaves: [{title: Recovery, cleanup, and auxiliary surfaces, owner_agent: backend-developer}]}
       "3.3.16": {expected_leaves: [{title: Recovery, cleanup, and auxiliary surfaces, owner_agent: backend-developer}]}
+      "3.3.17": {expected_leaves: [{title: Recovery, cleanup, and auxiliary surfaces, owner_agent: backend-developer}]}
   "3.4":
     acceptance_items:
       "3.4.1": {expected_leaves: [{title: Snapshot behavior regression suite, owner_agent: backend-developer}]}
@@ -176,6 +181,7 @@ sections:
       "4.1.13": {expected_leaves: [{title: Rules cutover and copy migration, owner_agent: backend-developer}]}
       "4.1.14": {expected_leaves: [{title: Rules cutover and copy migration, owner_agent: backend-developer}]}
       "4.1.15": {expected_leaves: [{title: Rules cutover and copy migration, owner_agent: backend-developer}]}
+      "4.1.16": {expected_leaves: [{title: Rules cutover and copy migration, owner_agent: backend-developer}]}
   "4.2":
     acceptance_items:
       "4.2.1": {expected_leaves: [{title: Variables cutover and copy migration, owner_agent: backend-developer}]}
@@ -192,6 +198,7 @@ sections:
       "4.2.11": {expected_leaves: [{title: Variables cutover and copy migration, owner_agent: backend-developer}]}
       "4.2.12": {expected_leaves: [{title: Variables cutover and copy migration, owner_agent: backend-developer}]}
       "4.2.13": {expected_leaves: [{title: Variables cutover and copy migration, owner_agent: backend-developer}]}
+      "4.2.14": {expected_leaves: [{title: Variables cutover and copy migration, owner_agent: backend-developer}]}
   "4.3":
     acceptance_items:
       "4.3.1": {expected_leaves: [{title: Pipelines cutover and copy migration, owner_agent: backend-developer}]}
@@ -212,6 +219,7 @@ sections:
       "4.3.16": {expected_leaves: [{title: Pipelines cutover and copy migration, owner_agent: backend-developer}]}
       "4.3.17": {expected_leaves: [{title: Pipelines cutover and copy migration, owner_agent: backend-developer}]}
       "4.3.18": {expected_leaves: [{title: Pipelines cutover and copy migration, owner_agent: backend-developer}]}
+      "4.3.19": {expected_leaves: [{title: Pipelines cutover and copy migration, owner_agent: backend-developer}]}
   "5.1":
     acceptance_items:
       "5.1.1": {expected_leaves: [{title: HTTP surface rebuild, owner_agent: backend-developer}]}
@@ -223,6 +231,7 @@ sections:
       "5.1.7": {expected_leaves: [{title: HTTP surface rebuild, owner_agent: backend-developer}]}
       "5.1.8": {expected_leaves: [{title: HTTP surface rebuild, owner_agent: backend-developer}]}
       "5.1.9": {expected_leaves: [{title: HTTP surface rebuild, owner_agent: backend-developer}]}
+      "5.1.10": {expected_leaves: [{title: HTTP surface rebuild, owner_agent: backend-developer}]}
   "5.2":
     acceptance_items:
       "5.2.1": {expected_leaves: [{title: MCP surface prune and re-scope, owner_agent: backend-developer}]}
@@ -255,6 +264,8 @@ sections:
       "6.2.6": {expected_leaves: [{title: Web UI migration, owner_agent: frontend-developer}]}
       "6.2.7": {expected_leaves: [{title: Web UI migration, owner_agent: frontend-developer}]}
       "6.2.8": {expected_leaves: [{title: Web UI migration, owner_agent: frontend-developer}]}
+      "6.2.9": {expected_leaves: [{title: Web UI migration, owner_agent: frontend-developer}]}
+      "6.2.10": {expected_leaves: [{title: Web UI migration, owner_agent: frontend-developer}]}
   "7.1":
     acceptance_items:
       "7.1.1": {expected_leaves: [{title: Drop migration and legacy module deletion, owner_agent: backend-developer}]}

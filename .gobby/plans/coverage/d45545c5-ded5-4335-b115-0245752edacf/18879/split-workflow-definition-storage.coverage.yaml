@@ -1,11 +1,11 @@
 header:
   plan_id: split-workflow-definition-storage
-  plan_hash: ad3553dd6f61f7f5cb94c6113d3c5862eff1eca9097cdcdb535e437ea8b1f190
+  plan_hash: 00b2839f45b87d2ee3a3ebbb8e7bd505e22ac9d0fdb5aae38bf3da78ab7bcda0
   root_task_ref: '18879'
   project_id: d45545c5-ded5-4335-b115-0245752edacf
-  generated_at: '2026-08-13T00:07:16Z'
+  generated_at: '2026-08-13T00:56:49Z'
   task_tree_source: db
-  task_tree_source_hash: 5e4ecb484f180fc11d8d3ba2b6c780aa0192f519d1e3fb092f0d0fdd7d267581
+  task_tree_source_hash: e57b53ea947d929a9768d56f8a6b05ab2e77c14fa0278bb50433f75fbcc7f3dc
   evidence_summary: []
   evidence: []
 rows:
@@ -351,6 +351,12 @@ rows:
   status: missing
   leaves: []
   deferral_target: null
+- section_id: '2.3'
+  item_id: 2.3.15
+  plan_node_hash: eca93fcbd2fa927f0ba34f266fc668e4a85d6c17b11f0ce899b5530acf4af59c
+  status: missing
+  leaves: []
+  deferral_target: null
 - section_id: '2.4'
   item_id: 2.4.1
   plan_node_hash: cd477b02a6d640d4cd40e911a67064167cf87b935472b0942cdf62350092ba56
@@ -659,7 +665,25 @@ rows:
   deferral_target: null
 - section_id: '3.2'
   item_id: 3.2.27
-  plan_node_hash: 2e3fd93a85c8cd42197fe7e1ca6cd270b6f18347181f79b6904a0dcf5c5970b1
+  plan_node_hash: 2b3e6e97f36e7abff03df8ed79fc73ad49df15f55bfbae7dcf88aa4122dd8900
+  status: missing
+  leaves: []
+  deferral_target: null
+- section_id: '3.2'
+  item_id: 3.2.28
+  plan_node_hash: 3b7a52d238e0ef07a62bff08995813cc76d27d45e0d71cb5a742775c30f032cc
+  status: missing
+  leaves: []
+  deferral_target: null
+- section_id: '3.2'
+  item_id: 3.2.29
+  plan_node_hash: ee4faf1c0335440c4191f7c4338a0d11492094f49aae1e89d8e112a6c3a10ae9
+  status: missing
+  leaves: []
+  deferral_target: null
+- section_id: '3.2'
+  item_id: 3.2.30
+  plan_node_hash: 85358df318eff28210245c94be5a4e5c2228ad219c8f9fb7118d48fb6ad06112
   status: missing
   leaves: []
   deferral_target: null
@@ -756,6 +780,12 @@ rows:
 - section_id: '3.3'
   item_id: 3.3.16
   plan_node_hash: dec9795bccecfce79c0e82061ba47325c4ad13f1c6c9652128fce67327183541
+  status: missing
+  leaves: []
+  deferral_target: null
+- section_id: '3.3'
+  item_id: 3.3.17
+  plan_node_hash: 24f0757620a447b8fd5b79989320e4f26c2931d23efb04ffc3d08022f493092f
   status: missing
   leaves: []
   deferral_target: null
@@ -873,6 +903,12 @@ rows:
   status: missing
   leaves: []
   deferral_target: null
+- section_id: '4.1'
+  item_id: 4.1.16
+  plan_node_hash: becc0616dc6e095fea358e98f3d170b9cfa07b7f13cc83f93de8ea22bc6bbb0d
+  status: missing
+  leaves: []
+  deferral_target: null
 - section_id: '4.2'
   item_id: 4.2.1
   plan_node_hash: 88b7e4bd388cddf07563d9c7cfd28d88cfeaeb418902e7140c07f9e84f742d63
@@ -954,6 +990,12 @@ rows:
 - section_id: '4.2'
   item_id: 4.2.13
   plan_node_hash: efc26ee643414c506d9f3733289a48decbde3755981475a06bcf52b6e6d6fab4
+  status: missing
+  leaves: []
+  deferral_target: null
+- section_id: '4.2'
+  item_id: 4.2.14
+  plan_node_hash: 220a67729e2ade4213f6e2b595914b624fb1cdb8f315dff2943b2d5e9a103d6d
   status: missing
   leaves: []
   deferral_target: null
@@ -1065,6 +1107,12 @@ rows:
   status: missing
   leaves: []
   deferral_target: null
+- section_id: '4.3'
+  item_id: 4.3.19
+  plan_node_hash: 26778b5569455a784219381b273f2bd623838ec58ed71ea188a23a072fe39e4c
+  status: missing
+  leaves: []
+  deferral_target: null
 - section_id: '5.1'
   item_id: 5.1.1
   plan_node_hash: 25e194b5f6dd37988e48ba821e4f5bfdf2185834683688e3848fb614bb330276
@@ -1116,6 +1164,12 @@ rows:
 - section_id: '5.1'
   item_id: 5.1.9
   plan_node_hash: 8a139cfad393cf4eb849ce55d0f4b8996b1677e9bba2c8cf53627c07e99a2907
+  status: missing
+  leaves: []
+  deferral_target: null
+- section_id: '5.1'
+  item_id: 5.1.10
+  plan_node_hash: 7d6b064a35a7624abc9c0f8664e302951b8d9fb9f86594b247fc30dd02b1975d
   status: missing
   leaves: []
   deferral_target: null
@@ -1272,6 +1326,18 @@ rows:
 - section_id: '6.2'
   item_id: 6.2.8
   plan_node_hash: fa2cb5bb753887db4bfc66fd94d8bb1d5246b816a3911cb8e8f79a775f0055d0
+  status: missing
+  leaves: []
+  deferral_target: null
+- section_id: '6.2'
+  item_id: 6.2.9
+  plan_node_hash: 79c89e16366d14f595b2f4266744dbc0fadcbfee6a9c53a251b268545a28ba78
+  status: missing
+  leaves: []
+  deferral_target: null
+- section_id: '6.2'
+  item_id: 6.2.10
+  plan_node_hash: 884b07ca0e923c55687644a0541eabeebbb061eed0e1236398dc93c359b11ebc
   status: missing
   leaves: []
   deferral_target: null

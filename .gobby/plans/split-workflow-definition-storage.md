@@ -259,15 +259,31 @@ Decisions made with the operator (2026-07-26, mechanism updated 2026-08-12):
   asymmetry governs the guard's join — live rows match on the live natural key,
   soft-deleted rows match on the preserved `id`, because deleted natural keys
   are not unique and two retired rows can share a name.
-- Each copy migration ends with an **equivalence guard**: join every legacy
+- **Every copy migration's transaction opens with `LOCK TABLE <legacy
+  source> IN ACCESS EXCLUSIVE MODE`** (adversary round 4 APR4-008). The
+  runner's advisory lock (`pg_advisory_lock(hashtext('postgres_migrations_apply'),
+  hashtext(current_schema()))`, `runner.rs:105-113`) serializes migration
+  runners only; runtime writers hold disjoint one-arg per-row advisory keys or
+  plain transactions (`postgres_pool.py:328-332`, `postgres.py:239-248`), and
+  daemon startup applies migrations **before** the predecessor gate severs the
+  old daemon's backends (`runner_init/helpers.py:94-135` vs
+  `runner_lifecycle.py:166-169`), so a still-live predecessor can write the
+  legacy table mid-copy. Under READ COMMITTED each statement takes a fresh
+  snapshot, so an unfenced copy, equivalence guard, and ledger hash can each
+  see different data — including a ledger hash recording a write the typed
+  copy never saw, which would let 7.1's backstop pass over real drift. The
+  table lock waits out in-flight writers and freezes the source for the
+  migration's whole transaction, so copy, guard, and checkpoint read one
+  snapshot. join every legacy
   source row to its typed target by that rule and compare **both identity and
   payload** — `target.id = source.id`, then the payload after the migration's
   documented normalization and shape transformation — RAISEing with the
   offending source ids and names on mismatch. `ON CONFLICT DO NOTHING` plus a
   count check silently passes when a pre-existing typed row holds a divergent
   payload — the routine outcome of re-migrating a partially staged dev database
-  — and the P7 drop backstop compares `(name, project_id)` only, so it cannot
-  catch that divergence either. Identity is checked because it is a promise
+  — and the P7 drop backstop never consults typed rows at all (7.1 verifies
+  only that each legacy row still matches its `legacy_copy_ledger` checkpoint),
+  so it cannot catch that divergence either. Identity is checked because it is a promise
   this plan makes and targetless `ON CONFLICT DO NOTHING` is exactly what hides
   its violation: a pre-existing live typed row with the same natural key and an
   identical normalized payload but a **different UUID** suppresses the insert
@@ -275,8 +291,12 @@ Decisions made with the operator (2026-07-26, mechanism updated 2026-08-12):
   while `id` silently changed. Since `agent_step_workflows.agent_definition_id`
   and `agent_step_instances.agent_step_workflow_id` are FKs onto these
   preserved ids, that is a lineage redirect that survives all the way to P7
-  reporting equivalence. The same `target.id = source.id` condition is part of
-  the P7 drop backstop. Each domain's focused migration test covers six cases:
+  reporting equivalence. These identity and payload checks live **only inside
+  the domain copy migrations** (adversary round 4 APR4-001): P7's drop
+  backstop is a separate, purely directional predicate — every non-generated
+  legacy row must hold a `legacy_copy_ledger` entry keyed by its preserved
+  `id` whose recorded copy-time hash matches the row's current normalized
+  payload, with no typed-row lookup (7.1). Each domain's focused migration test covers six cases:
   first run, rerun over live rows, rerun over soft-deleted rows, two
   soft-deleted rows sharing a natural key, a divergent payload conflict (loud
   failure), and a live same-key/same-payload/**different-UUID** row (loud
@@ -1067,7 +1087,12 @@ Targets:
   signature `name ~ '-steps$' AND source = 'agent'`, and 7.1's drop preflight
   RAISEs on any `workflow_type='workflow'` row that does not match it
   (adversary round 2 APR2-005), so exclusion here cannot silently strand an
-  unsupported standalone workflow row. The migration also writes one `legacy_copy_ledger` row per copied
+  unsupported standalone workflow row. The migration transaction opens with
+`LOCK TABLE workflow_definitions IN ACCESS EXCLUSIVE MODE` per the
+Constraints copy-fence rule (adversary round 4 APR4-008), so the copy, the
+equivalence guard, and the ledger hashes read one frozen snapshot with no
+concurrent agent-row write torn between them.
+The migration also writes one `legacy_copy_ledger` row per copied
   source row — preserved legacy id, domain `'agents'`, MD5 of the normalized
   source payload — with `ON CONFLICT (legacy_id) DO NOTHING`, the copy-time
   checkpoint 7.1's directional drop backstop verifies against (adversary
@@ -1110,6 +1135,7 @@ stragglers.
 - 2.3.12 - The pinned schema root hashes and the release-pinned expected identity match the rebuilt gdaemon after the migration entry lands. file: `crates/gcore/tests/schema_contract.rs`. file: `src/gobby/storage/schema_expected_identity.json`.
 - 2.3.13 - The copy migration strips and extracts both the flat pre-2.2 shape and the nested 2.2 shape equivalently: a row synced by the 2.2 cutover then migrated yields a stripped parent and a correct child, and mixed-shape populations migrate without child loss or child data retained in a parent body. test: `tests/storage/test_agent_copy_migration.py::test_nested_and_flat_source_shapes`.
 - 2.3.14 - The copy migration writes one legacy_copy_ledger row per copied agent source row with the normalized payload hash, and reruns keep the copy-time hash. test: `tests/storage/test_agent_copy_migration.py`.
+- 2.3.15 - The copy migration holds ACCESS EXCLUSIVE on workflow_definitions: a concurrent second-connection agent-row write blocks until the migration commits, and its post-commit landing is the post-copy drift the 7.1 backstop refuses. test: `tests/storage/test_agent_copy_migration.py::test_copy_lock_fences_concurrent_writes`.
 
 ### 2.4 Agent read-consumer rewiring [category: code] (depends: 2.3)
 `kind: deliverable`
@@ -1365,6 +1391,7 @@ Targets:
 - `tests/mcp_proxy/tools/spawn_agent/test_execution.py::*` — scope-reason: moved preparation boundary
 - `tests/mcp_proxy/tools/test_apply_persona.py::*` — scope-reason: typed-instance retarget
 - `tests/mcp_proxy/tools/spawn_agent/test_factory.py::*` — scope-reason: deleted-symbol retarget
+- `tests/dispatch/test_dispatcher.py::*` — scope-reason: dispatcher spawn assertion retargeted off the deleted _step_workflow_name seed (adversary round 4 APR4-005)
 
 One atomic cutover — writers and readers share the data plane:
 
@@ -1597,6 +1624,27 @@ inside `resume_agent_run`.
   lines earlier (`:840-871`) already does exactly this for its own failure and
   is the pattern to follow. Audit `agents_spawn_tools.py:105` for the same
   swallow.
+- **Caller-variable reserved-key rejection (adversary round 4 APR4-007)**:
+  the public `apply_persona` tool forwards an arbitrary `variables` dict
+  (`agents_spawn_tools.py:90-111`) and `apply_persona_impl` overlays it
+  **after** the authoritative persona delta (`apply_persona.py:289-296`), so
+  a caller key wins every collision — a submitted `_agent_type` commits agent
+  B's session identity beside agent A's requested snapshot even once the
+  cross-row transaction lands, and `SessionVariableManager.merge_variables`
+  (`state_manager.py:307-324`) applies updates with no validation. Before
+  opening the transition transaction, reject any caller key that collides
+  with the just-built persona delta or the task overlay (`set(variables) &
+  (set(changes) | set(extra_vars))`) or that satisfies
+  `is_reserved_workflow_variable` — the same guard the public `set_variable`
+  tool already applies (`_variables.py:118-122`); the runtime-reserved set
+  covers `_step_workflow_name` and the completion/step-state keys, and the
+  delta collision covers `_agent_type` and the other persona-owned fields
+  without hand-maintaining a second list. Rejection is a structured tool
+  error that leaves session variables and the typed instance unchanged.
+  Adversarial cases at both seams — the MCP tool wrapper and
+  `apply_persona_impl` — prove `_agent_type`, `_step_workflow_name`, and
+  `step_workflow_complete` smuggling is rejected with both rows untouched,
+  and that non-reserved caller variables still merge.
 - **Enforcement critical sections**: apply the 3.1 primitives to the
   production paths this task owns. Every enforcement read whose value feeds a
   later write runs inside the same `AgentStepInstanceMutation(session_id)` as
@@ -1651,21 +1699,34 @@ inside `resume_agent_run`.
     sessions and are excluded by the live-status filter, not by this
     predicate.)
   - **Active-identity resolution before ordering (adversary round 3
-    APR3-009, fixer-induced by APR2-014)**: a timestamp total order across
+    APR3-009, fixer-induced by APR2-014; disagreement semantics corrected by
+    adversary round 4 APR4-006)**: a timestamp total order across
     ALL suffix-matching rows can deterministically pick the wrong agent,
     because `build_persona_changes` preserves an existing instance without
     touching `updated_at` (`apply_persona.py:132-139`) — an A→B→A persona
-    sequence leaves B's row newest while A is active. The session's persona
-    state is the authoritative identity: resolve the active agent from the
-    session's `_agent_type` and `_step_workflow_name` session variables,
-    reconcile the two against each other and against the candidate rows'
-    derived `agent_name`s, and RAISE with the session id and both values on
-    contradiction (persona state names an agent with no qualifying row while
-    other qualifying rows exist, or the two variables disagree). Restrict
-    candidates to the resolved identity's rows first; a live session with
-    qualifying rows but **no** persona state also RAISEs — after the split
+    sequence leaves B's row newest while A is active. The session's
+    `_agent_type` variable is the **sole authoritative identity**:
+    the public persona path (`build_session_persona_changes`,
+    `apply_persona.py:146-165`) writes `_agent_type` alone and deliberately
+    never touches `_step_workflow_name` (only the spawn-time writers set it),
+    so after a legitimate A→B switch the session holds `_agent_type = B`
+    beside a stale `A-steps` value. That state is normal, not corruption:
+    a conflicting `_step_workflow_name` is stale metadata to ignore, never a
+    reason to RAISE. Restrict candidates to rows whose derived `agent_name`
+    equals `_agent_type`. When no candidate matches the active identity —
+    the switched-to agent never had a legacy row — migrate nothing for the
+    session: the stale rows belong to the previous persona and are dropped
+    with the legacy table in P7, and 3.3's recovery (the plan's canonical
+    missing-instance path) rebuilds a fresh snapshot on next activation
+    exactly when the active agent is stepful, with its structured
+    reconstructed-continuity warning. RAISE with the session id and the
+    variable values only for genuinely unresolved identity: a live session
+    with qualifying rows and **no** `_agent_type` at all — after the split
     there is no way to know which snapshot is authoritative, and guessing is
-    the silent wrong-agent migration this repair exists to prevent.
+    the silent wrong-agent migration this repair exists to prevent. (A
+    `_step_workflow_name` present without `_agent_type` identifies no active
+    agent, so it stays in this loud branch rather than serving as an
+    identity fallback.)
   - **Total order within the resolved identity**: among the matching rows,
     latest `updated_at` wins **regardless of `enabled`**, with `id` ascending
     as the final tie-break so equal timestamps cannot copy an arbitrary row.
@@ -1730,6 +1791,19 @@ inside `resume_agent_run`.
     the payload check passes, the row migrates, readers return no step, and
     enforcement silently stops. Equality of a copied `current_step` value
     proves nothing about membership on either branch.
+  - **Write fence (adversary round 4 APR4-008)**: the migration transaction
+    opens with `LOCK TABLE workflow_instances IN ACCESS EXCLUSIVE MODE` (the
+    Constraints copy-fence rule) and, before committing, installs an
+    idempotent BEFORE INSERT/UPDATE/DELETE trigger on `workflow_instances`
+    that RAISEs unconditionally. Unlike the definition domains, instance
+    rows have no `legacy_copy_ledger` backstop — a post-copy legacy write is
+    runtime state the typed table never saw, silently destroyed at 7.1 —
+    and the writers that survive version skew (a predecessor daemon not yet
+    severed, or a missed consumer) must fail loudly instead. The trigger
+    drops with the table in 7.1. Two-connection fault tests: a write
+    in flight when the migration starts blocks at the table lock and then
+    fails on the trigger; a write attempted after commit fails on the
+    trigger; both leave the typed rows untouched.
 
 **Acceptance:**
 
@@ -1767,7 +1841,10 @@ inside `resume_agent_run`.
 - 3.2.24 - Fault injection at every pre-launch boundary — after each acquisition inside preparation (child session, initial variables, run row and prompt file, credential), after the instance save, and between save and launch — leaves no session, variable, run, or instance rows, no prompt file, and no live credentials, and running the cleanup owner twice is safe. test: `tests/workflows/test_step_snapshot_semantics.py::test_prelaunch_faults_leave_no_rows`. test: `tests/agents/test_spawn.py`.
 - 3.2.25 - Candidate selection is deterministic within the resolved active identity: equal-timestamp duplicates resolve by the id tie-break, child lineage resolves project-first with global fallback, a non-qualifying instance row on a live session fails loudly, and a live session with no qualifying row and no persona state migrates nothing. test: `tests/storage/test_instance_copy_migration.py::test_candidate_resolution_determinism`.
 - 3.2.26 - The enforcement, transition, audit, error-code, coordinator, step-context, and completion-gate suites construct the typed instance manager with no WorkflowInstanceManager import or patch remaining. test: `tests/workflows/test_step_enforcement.py`. test: `tests/workflows/test_step_runtime_transitions.py`. test: `tests/workflows/test_step_enforcement_audit.py`. test: `tests/workflows/test_step_error_codes.py`. test: `tests/hooks/test_session_coordinator.py`. test: `tests/workflows/test_step_context.py`. test: `tests/workflows/test_agent_workflow_completion.py`.
-- 3.2.27 - The instance copy resolves the active identity from session persona state: an A→B→A persona history with a stale-newer B row migrates A's snapshot and agent_name, contradictory or missing persona state over qualifying rows fails loudly, and ordering applies only within the resolved identity's rows. test: `tests/storage/test_instance_copy_migration.py::test_active_identity_resolution`.
+- 3.2.27 - The instance copy resolves the active identity from _agent_type alone: an A→B→A persona history with a stale-newer B row migrates A's snapshot and agent_name; an A→B switch with a stale A-steps _step_workflow_name and no B row migrates nothing for stepful and step-less B alike, without RAISEing; qualifying rows with no _agent_type fail loudly; and ordering applies only within the resolved identity's rows. test: `tests/storage/test_instance_copy_migration.py::test_active_identity_resolution`.
+- 3.2.28 - The dispatcher spawn test asserts _step_workflow_name is absent from initial variables while still pinning the selected agent and task identity. test: `tests/dispatch/test_dispatcher.py::test_spawn_action_uses_services_and_records_agent_run`.
+- 3.2.29 - apply_persona rejects caller variables colliding with the persona delta, the task overlay, or the runtime-reserved set before the transition transaction opens, leaving session variables and the typed instance unchanged, at both the tool wrapper and impl seams, while non-reserved variables still merge. test: `tests/mcp_proxy/tools/test_apply_persona.py`. test: `tests/workflows/test_step_snapshot_semantics.py`.
+- 3.2.30 - The instance copy holds ACCESS EXCLUSIVE on workflow_instances and installs the legacy write-rejection trigger: a concurrent second-connection write blocks at the lock and then fails on the trigger, a post-commit write fails on the trigger, and typed rows are untouched in both cases. test: `tests/storage/test_instance_copy_migration.py::test_legacy_write_fence`.
 
 ### 3.3 Recovery, cleanup, and auxiliary surfaces [category: code] (depends: 3.2)
 `kind: deliverable`
@@ -1811,6 +1888,8 @@ Targets:
 - `tests/scheduler/test_cron_scheduler.py::*` — scope-reason: instance seeding onto the typed manager (adversary round 3 APR3-015)
 - `tests/servers/routes/mcp_endpoints/test_execution_session_end_cleanup.py::*` — scope-reason: server-cleanup instance constructors onto the typed manager (adversary round 3 APR3-015)
 - `tests/workflows/test_definitions.py::*` — scope-reason: WorkflowInstance model cases deleted with the model (adversary round 3 APR3-015)
+- `src/gobby/mcp_proxy/tools/agents_termination.py::*` — scope-reason: workflow_instances_deleted result key renamed off the legacy model (adversary round 4 APR4-003)
+- `tests/mcp_proxy/tools/test_agents.py::*` — scope-reason: termination-result case gains the renamed-key assertion (adversary round 4 APR4-003)
 
 - `session_activation.py`: `_activation_agent_name` (:531-547) drops both
   `-steps`-suffix branches; `_missing_step_workflow` (:594-621) →
@@ -1836,7 +1915,16 @@ Targets:
   deletes it. `terminal_cleanup.py:180` logs the cleared-state
   summary under a `workflow_instances=` key (moved from `agent_cleanup.py`
   since the original draft); rename it to `agent_step_instances=`, since
-  7.2's audit matches the token and nothing else owns this occurrence.
+  7.2's audit matches the token and nothing else owns this occurrence. The
+  same rename class has one more externally returned occurrence (adversary
+  round 4 APR4-003): the MCP termination wrapper
+  `agents_termination.py:34` returns the cleanup count under a
+  `workflow_instances_deleted` result key — rename it to
+  `agent_step_instances_deleted`. No test asserts the old key today (the
+  fakes set the `workflow_instance_rows` attribute only), so the rename
+  gains its seam here: the termination-result case in
+  `tests/mcp_proxy/tools/test_agents.py:735-755` additionally asserts the
+  renamed key carries the fake's count.
 - **Cleanup-side test-seam disposition (adversary round 2 APR2-009)**, same
   commit as the class deletion: `tests/workflows/test_instance_manager.py`
   (the legacy manager's CRUD suite) is deleted — its behaviors are superseded
@@ -1938,6 +2026,7 @@ Targets:
 - 3.3.11 - The spawn initial-variables suite queries the typed instance instead of importing the deleted WorkflowInstanceManager, dropping its `<agent>-steps` name arguments. test: `tests/mcp_proxy/tools/spawn_agent/test_initial_variables.py`.
 - 3.3.15 - Daemon-stop terminal cleanup retains the typed instance and a resumed run on the same session sees the same step and variables; every other terminal reason deletes the instance. file: `src/gobby/agents/runtime_cleanup.py`. test: `tests/workflows/test_agent_workflow_runtime_cleanup.py`.
 - 3.3.16 - Every legacy instance-manager test seam is deleted or rewritten onto the typed manager and no test imports or patches WorkflowInstanceManager. test: `tests/workflows/test_instance_manager.py`. test: `tests/workflows/test_session_end_cleanup.py`. test: `tests/workflows/test_session_variable_manager.py`.
+- 3.3.17 - The termination tool result reports the cleanup count as agent_step_instances_deleted, the old key is gone, and the termination-result case asserts the renamed key. file: `src/gobby/mcp_proxy/tools/agents_termination.py`. test: `tests/mcp_proxy/tools/test_agents.py`.
 
 ### 3.4 Snapshot behavior regression suite [category: test] (depends: 3.3)
 `kind: deliverable`
@@ -2089,6 +2178,10 @@ Targets:
   (priority, sources, tags intact; source normalized); targetless `ON CONFLICT
   DO NOTHING` per the Constraints conflict-target rule; count validation and
   the Constraints equivalence guard, including `target.id = source.id`.
+  The migration transaction opens with `LOCK TABLE workflow_definitions IN
+  ACCESS EXCLUSIVE MODE` per the Constraints copy-fence rule (adversary
+  round 4 APR4-008), so the copy, the guard, and the ledger hashes read one
+  frozen snapshot with no concurrent rule-row write torn between them.
   The migration also writes one `legacy_copy_ledger` row per copied source
   row (preserved legacy id, domain `'rules'`, normalized payload hash, `ON
   CONFLICT (legacy_id) DO NOTHING`) for 7.1's directional drop backstop
@@ -2134,6 +2227,7 @@ Targets:
 - 4.1.13 - The pinned schema root hashes and the release-pinned expected identity match the rebuilt gdaemon after the migration entry lands. file: `crates/gcore/tests/schema_contract.rs`. file: `src/gobby/storage/schema_expected_identity.json`.
 - 4.1.14 - The rule copy migration writes one legacy_copy_ledger row per copied source row and reruns keep the copy-time hash. test: `tests/storage/test_rule_copy_migration.py`.
 - 4.1.15 - The rule-engine suite seeds rules through the typed manager and observes its own fixtures after the cutover. test: `tests/workflows/test_rule_engine.py`.
+- 4.1.16 - The rule copy migration holds ACCESS EXCLUSIVE on workflow_definitions: a concurrent second-connection rule-row write blocks until the migration commits, and its post-commit landing is the post-copy drift the 7.1 backstop refuses. test: `tests/storage/test_rule_copy_migration.py::test_copy_lock_fences_concurrent_writes`.
 
 ### 4.2 Variables cutover and copy migration [category: code] (depends: 4.1)
 `kind: deliverable`
@@ -2202,6 +2296,10 @@ Targets:
   reader-visible again); dup-check, targetless `ON CONFLICT DO NOTHING` per the
   Constraints conflict-target rule, count validation, and the Constraints
   equivalence guard including `target.id = source.id`.
+  The migration transaction opens with `LOCK TABLE workflow_definitions IN
+  ACCESS EXCLUSIVE MODE` per the Constraints copy-fence rule (adversary
+  round 4 APR4-008), so the copy, the guard, and the ledger hashes read one
+  frozen snapshot with no concurrent variable-row write torn between them.
   The migration also writes one `legacy_copy_ledger` row per copied source
   row (preserved legacy id, domain `'variables'`, normalized payload hash,
   `ON CONFLICT (legacy_id) DO NOTHING`) for 7.1's directional drop backstop
@@ -2230,6 +2328,7 @@ Targets:
 - 4.2.11 - The pinned schema root hashes and the release-pinned expected identity match the rebuilt gdaemon after the migration entry lands. file: `crates/gcore/tests/schema_contract.rs`. file: `src/gobby/storage/schema_expected_identity.json`.
 - 4.2.12 - Alternating sessions across project A, project B, and no-project see exactly their own overrides plus globals on all four application paths, with no cross-project cache leakage. test: `tests/workflows/test_session_defaults.py::test_project_scoped_defaults_isolation`.
 - 4.2.13 - The variable copy migration writes one legacy_copy_ledger row per copied source row and reruns keep the copy-time hash. test: `tests/storage/test_variable_copy_migration.py`.
+- 4.2.14 - The variable copy migration holds ACCESS EXCLUSIVE on workflow_definitions: a concurrent second-connection variable-row write blocks until the migration commits, and its post-commit landing is the post-copy drift the 7.1 backstop refuses. test: `tests/storage/test_variable_copy_migration.py::test_copy_lock_fences_concurrent_writes`.
 
 ### 4.3 Pipelines cutover and copy migration [category: code] (depends: 4.2)
 `kind: deliverable`
@@ -2382,6 +2481,10 @@ Targets:
   canvas_json); dup-check; targetless `ON CONFLICT DO NOTHING` per the
   Constraints conflict-target rule; count validation; the Constraints
   equivalence guard including `target.id = source.id`.
+  The migration transaction opens with `LOCK TABLE workflow_definitions IN
+  ACCESS EXCLUSIVE MODE` per the Constraints copy-fence rule (adversary
+  round 4 APR4-008), so the copy, the guard, and the ledger hashes read one
+  frozen snapshot with no concurrent pipeline-row write torn between them.
   The migration also writes one `legacy_copy_ledger` row per copied source
   row (preserved legacy id, domain `'pipelines'`, normalized payload hash,
   `ON CONFLICT (legacy_id) DO NOTHING`) for 7.1's directional drop backstop
@@ -2414,6 +2517,7 @@ Targets:
 - 4.3.16 - The pinned schema root hashes and the release-pinned expected identity match the rebuilt gdaemon after the migration entry lands. file: `crates/gcore/tests/schema_contract.rs`. file: `src/gobby/storage/schema_expected_identity.json`.
 - 4.3.17 - Pipeline MCP create/update/delete/export operate on PipelineDefinitionManager with auto-export preserved, and _pipelines.py imports neither the generic definitions module nor the legacy manager. file: `src/gobby/mcp_proxy/tools/workflows/_pipelines.py`. test: `tests/mcp_proxy/tools/workflows/test_pipeline_crud.py`.
 - 4.3.18 - The pipeline copy migration writes one legacy_copy_ledger row per copied source row and reruns keep the copy-time hash. test: `tests/storage/test_pipeline_copy_migration.py`.
+- 4.3.19 - The pipeline copy migration holds ACCESS EXCLUSIVE on workflow_definitions: a concurrent second-connection pipeline-row write blocks until the migration commits, and its post-commit landing is the post-copy drift the 7.1 backstop refuses. test: `tests/storage/test_pipeline_copy_migration.py::test_copy_lock_fences_concurrent_writes`.
 
 ## P5: HTTP and MCP Surfaces
 `kind: framing`
@@ -2445,6 +2549,8 @@ Targets:
 - `tests/servers/test_auth_middleware.py::*` — scope-reason: agent-token route authorization cases
 - `tests/servers/routes/test_workflows.py::*` — scope-reason: suite deleted in this task
 - `tests/servers/test_workflow_routes.py::*` — scope-reason: second generic-routes suite deleted in this task
+- `src/gobby/workflows/workflow_templates.py::*` — scope-reason: module orphaned by the router deletion, deleted here (adversary round 4 APR4-004)
+- `tests/workflows/test_workflow_templates.py::*` — scope-reason: deleted module's suite, deleted in the same commit (adversary round 4 APR4-004)
 
 - DELETE the 16-route generic router and its registration. By this commit the
   router is exhausted: every kind is already rejected by the staged E3 shrinks
@@ -2503,6 +2609,18 @@ Targets:
   exercises the same deleted routes through the legacy manager and is deleted
   in the same commit; its CRUD coverage already exists per-domain in the
   domain route suites.
+- **Orphaned template module deleted with its router (adversary round 4
+  APR4-004)**: the generic router's `GET /templates` handler
+  (`workflows.py:102-108`, function-local import) is the sole production
+  consumer of `src/gobby/workflows/workflow_templates.py` — four hardcoded
+  `workflow_type`-keyed template dicts for the old "New" button. The domain
+  routers serve their own template surfaces (pipeline `GET /templates` and
+  restore-from-template through the re-keyed `template_hashes.py` loaders),
+  so the module and its ten-test suite
+  `tests/workflows/test_workflow_templates.py` are deleted in this commit;
+  leaving them orphans an unimportable-only module whose five
+  `workflow_type` occurrences fail 7.2's production-token audit with no
+  owner.
 - `template_hashes.py`: key by `kind` instead of `workflow_type` (same five
   loaders); consumers are the domain list routes and restore-from-template
   handlers.
@@ -2518,6 +2636,7 @@ Targets:
 - 5.1.7 - No /api/workflows reference remains in the project-context middleware. file: `src/gobby/servers/middleware/project_context.py`.
 - 5.1.8 - Both generic workflows route suites are deleted in this commit and the variables get/set coverage survives under the sessions API. test: `tests/servers/routes/test_workflows.py`. test: `tests/servers/test_workflow_routes.py`. test: `tests/servers/routes/test_session_variables.py`.
 - 5.1.9 - An agent token authorizes the relocated session-variable routes for its own session only, the old workflow-variable grants are gone, and the authenticated DaemonProxy round trip passes at the integration seam. file: `src/gobby/servers/auth_service.py`. test: `tests/servers/test_auth_service.py`. test: `tests/mcp_proxy/test_mcp_proxy_stdio.py`.
+- 5.1.10 - workflow_templates.py and its suite are deleted with the generic router and nothing in the tree imports either. file: `src/gobby/workflows/workflow_templates.py`. test: `tests/workflows/test_workflow_templates.py`.
 
 ### 5.2 MCP surface prune and re-scope [category: code] (depends: P3, P4)
 `kind: deliverable`
@@ -2723,12 +2842,17 @@ Targets:
 - `web/src/components/settings/workflowVariables.ts::*` — scope-reason: display helper retyped off the definition_json payload (adversary round 3 APR3-018)
 - `web/src/components/settings/VariableDefaultsEditor.tsx` (new name)
 - `web/src/components/settings/sections/AutomationWorkflowsSection.tsx::*` — scope-reason: section reference updates
-- `web/src/components/activity/agents/AgentsTabData.ts::*` — scope-reason: pipeline picker endpoint and data.definitions fix
+- `web/src/components/activity/agents/AgentsTabData.ts::*` — scope-reason: pipeline picker endpoint and data.definitions fix; AgentDefInfo/AgentDraft/agentToDraft onto nested step_workflow (adversary round 4 APR4-002)
+- `web/src/components/agents/AgentEditForm.types.ts::*` — scope-reason: AgentItemForPanel definition types onto nested step_workflow (adversary round 4 APR4-002)
+- `web/src/components/agents/AgentReadOnlyDetails.tsx::*` — scope-reason: read-only step rendering onto nested step_workflow (adversary round 4 APR4-002)
+- `web/src/components/activity/agents/AgentsTabActions.ts::*` — scope-reason: create/update/duplicate request bodies write nested step_workflow (adversary round 4 APR4-002)
 - `web/src/components/activity/pipelines/__tests__/PipelinesDefs.test.tsx::*` — scope-reason: domain-endpoint retarget of the pipeline-defs suite
 - `web/src/components/activity/pipelines/__tests__/PipelineEditor.test.tsx::*` — scope-reason: PipelineDefDetail type retarget
 - `web/src/components/settings/__tests__/WorkflowVariablesEditor.test.tsx::*` — scope-reason: renamed with its component onto useVariableDefs
 - `web/src/components/settings/sections/__tests__/AutomationWorkflowsSection.test.tsx::*` — scope-reason: section-reference retarget
 - `web/src/components/activity/__tests__/AgentsTab.test.tsx::*` — scope-reason: pipeline-picker endpoint and data.definitions assertions
+- `web/src/components/agents/__tests__/AgentEditors.test.tsx::*` — scope-reason: read-only panel fixture gains the nested step fields (adversary round 4 APR4-002)
+- `web/src/components/activity/__tests__/AgentsTabActions.test.ts::*` — scope-reason: adapter fixtures and body assertions onto nested step_workflow (adversary round 4 APR4-002)
 - `web/src/hooks/__tests__/useFilteredRefetches.test.ts::*` — scope-reason: refetch-filter suite onto the new hooks
 - `web/src/hooks/__tests__/useSelectionFetchRaces.test.ts::*` — scope-reason: selection-race suite onto the new hooks
 - `web/tests/style-surfaces.spec.ts::*` — scope-reason: network-capture fake taught the domain routes (adversary round 3 APR3-018)
@@ -2753,10 +2877,32 @@ Targets:
 - `AgentsTabData.ts::loadPipelineList` → `/api/pipelines/definitions` and fix
   the latent bug: read `data.definitions` (it reads `data.workflows`, which is
   always undefined, so the agent editor's pipeline picker is empty today).
+- **Agent step-shape closure (adversary round 4 APR4-002)**: the final
+  `/api/agents/definitions` payload nests step data under
+  `step_workflow.{steps, variables, exit_condition}` (2.2), but the web
+  layer still models all three as top-level definition fields —
+  `AgentItemForPanel.definition` (`AgentEditForm.types.ts:53-55`),
+  `AgentDefInfo.definition` (`AgentsTabData.ts:46-48`), and the read-only
+  step list (`AgentReadOnlyDetails.tsx:303-312`) — and today's draft
+  pipeline silently loses data even pre-migration: `AgentDraft` carries only
+  flat `steps`, `agentToDraft` (`AgentsTabData.ts:266`) drops
+  `step_variables`/`exit_condition`, and `buildAgentDefinitionBody`
+  (`AgentsTabActions.ts:89`) writes only top-level `steps`. Retype both
+  definition interfaces around the nested `step_workflow` object, carry all
+  three fields through `AgentDraft`/`agentToDraft`/`createAgentDraft`, write
+  the nested shape in `buildAgentDefinitionBody` (the
+  `buildDuplicateAgentBody` spread follows the definition shape unchanged),
+  and render the read-only step list from `step_workflow.steps`. The
+  internal `AgentStepsEditor` `WorkflowStep[]` prop shape is UI-local and
+  keeps its flat form. The Playwright `AGENT_DEFINITION` fixture
+  (`style-surfaces.spec.ts:280-282`) moves to the nested shape with the
+  other capture-fake edits. A hydrate→draft→save-body regression asserts
+  steps, step variables, and exit condition survive the round trip.
 - Retarget tests: `PipelinesDefs.test.tsx`, `PipelineEditor.test.tsx`,
   `WorkflowVariablesEditor.test.tsx`, `AgentsTab.test.tsx`,
   `useFilteredRefetches.test.ts`, `useSelectionFetchRaces.test.ts`,
-  `AutomationWorkflowsSection.test.tsx`.
+  `AutomationWorkflowsSection.test.tsx`, `AgentEditors.test.tsx`,
+  `AgentsTabActions.test.ts`.
 
 **Acceptance:**
 
@@ -2768,6 +2914,8 @@ Targets:
 - 6.2.6 - The retargeted settings and agents-tab suites pass. test: `web/src/components/settings/__tests__/WorkflowVariablesEditor.test.tsx`. test: `web/src/components/settings/sections/__tests__/AutomationWorkflowsSection.test.tsx`. test: `web/src/components/activity/__tests__/AgentsTab.test.tsx`.
 - 6.2.7 - The refetch and selection-race hook suites pass against the new hooks. test: `web/src/hooks/__tests__/useFilteredRefetches.test.ts`. test: `web/src/hooks/__tests__/useSelectionFetchRaces.test.ts`.
 - 6.2.8 - The variable display helper reads default_value, and the style-surface capture fake serves the domain routes with no generic /api/workflows branch, so the migrated editors render populated in visual coverage. file: `web/src/components/settings/workflowVariables.ts`. test: `web/tests/style-surfaces.spec.ts`.
+- 6.2.9 - The web definition types and adapters model step data only under the nested step_workflow object, and the read-only panel renders steps from it. file: `web/src/components/agents/AgentEditForm.types.ts`. file: `web/src/components/activity/agents/AgentsTabData.ts`. file: `web/src/components/agents/AgentReadOnlyDetails.tsx`. file: `web/src/components/activity/agents/AgentsTabActions.ts`.
+- 6.2.10 - A hydrated agent definition round-trips to a draft and back to a save body with steps, step variables, and exit condition intact, asserted in the retargeted adapter and editor suites. test: `web/src/components/activity/__tests__/AgentsTabActions.test.ts`. test: `web/src/components/agents/__tests__/AgentEditors.test.tsx`.
 
 ## P7: Legacy Removal, Audit, Documentation
 `kind: framing`
@@ -2833,7 +2981,17 @@ Targets:
 - Drop migration (a `-- gobby:destructive` `EmbeddedMigration` per 1.5:
   receipt-stamped without executing on fresh lineages, refused on a plain
   restart of an existing hub, and applied once per hub via `gdaemon schema
-  apply --destructive` against a verified backup manifest): **backstop
+  apply --destructive` against a verified backup manifest): the destructive
+  path runs only inside an open **maintenance epoch** (adversary round 4
+  APR4-008, narrowed — the write fence already exists in code):
+  `gobby schema apply --destructive` refuses without one
+  (`cli/schema.py:114-146`), and `gobby hub-maintenance run schema-apply`
+  stops the daemon first (`hub_maintenance.py:185-196`), terminates every
+  `gobby%` backend and polls to proven quiescence
+  (`maintenance_epoch.py:174-271`), and blocks reconnects via the baseline's
+  login event trigger (`baseline.sql:4240-4317`). The backstop preflight and
+  the DROPs therefore execute over a hub with no live gobby writer — no
+  additional table locking is needed for the check-to-drop gap. **Backstop
   first**, and the backstop is **directional** (adversary round 3 APR3-011,
   replacing the earlier symmetric payload-equivalence design): between each
   domain's copy migration and this drop, the typed tables are the sole
@@ -2866,7 +3024,9 @@ Targets:
   silently drop it. Then
   `DROP TABLE workflow_instances`, `DROP TABLE workflow_definitions`,
   `DROP TABLE legacy_copy_ledger` — the ledger exists only to prove this
-  drop safe and leaves with the tables it guards.
+  drop safe and leaves with the tables it guards. The 3.2 instance
+  write-fence trigger goes with its table; its trigger function is dropped
+  explicitly here (`DROP FUNCTION IF EXISTS`).
 - Remove all three tables' DDL from the baseline (CREATE TABLE, constraints,
   indexes, FK, grants — both legacy tables and `legacy_copy_ledger`) and
   their catalog-manifest rows in the same commit,
@@ -2945,7 +3105,12 @@ docstring in `src/gobby/storage/skills/_metadata.py:250` → 7.1; the
 the `WorkflowDefinitionRow` import and annotations in
 `src/gobby/workflows/engine/evaluation.py:12,96,207,229` → 4.1; the same import
 and the `is_internal_rule` annotation in
-`src/gobby/workflows/reserved_variables.py:6,39` → 4.1; and the `workflow_type`
+`src/gobby/workflows/reserved_variables.py:6,39` → 4.1; the
+`workflow_instances_deleted` result key in
+`src/gobby/mcp_proxy/tools/agents_termination.py:34` → 3.3 (adversary round 4
+APR4-003); the five `workflow_type` occurrences in
+`src/gobby/workflows/workflow_templates.py:19,55,94,113,152` → 5.1, which
+deletes the module (adversary round 4 APR4-004); and the `workflow_type`
 column and `idx_wf_defs_type` index in
 `crates/gcore/assets/schema/baseline.sql:2140-2158,3182` → 7.1.
 
@@ -3193,6 +3358,53 @@ pass; the P7 audit test is the standing regression gate.
 
 ```json plan-review-round
 {"evidence_id":"b11eb9aa-e9ed-42d9-ab8e-1f97330cca7d","plan_hash":"ccfda402f8b2bf479bc92c484f459c9fc4a1a59fdd650d1ad26fa5fb9a26f1e1","round_number":3,"round_result":{"coverage_attestation":{"adjacent_variant_complete":true,"attestation_digest":"19308048690d00eb4ac857bcb281598b02c31c9a7b8bacbfe107e9ef62065af6","cross_lane_interaction_complete":true,"disposition_counts":{"dismissed":6,"emitted_findings":19,"total":25},"evidence_id":"b11eb9aa-e9ed-42d9-ab8e-1f97330cca7d","lanes":[{"candidate_count":10,"lane_id":"requirements_traceability","status":"completed"},{"candidate_count":8,"lane_id":"repository_blast_radius","status":"completed"},{"candidate_count":7,"lane_id":"runtime_invariants","status":"completed"}],"shadow_manifest_status":{"entry_count":23,"manifest_digest":"f70d5c2f556f44e0ec0f99677662079afccefa3792a2be635920e4e349f7640a","status":"valid"},"source_digest":"7c5ae3db9b911dfb59a71629a0767876ba1959b7f7576b2471606ae9c05ff870","version":1},"findings":[{"category":"unhandled-edge","check_key":"soft-delete-child-payload-preservation","description":"Section 1.3 says parent delete/hard-delete removes the child, while §§ 2.3 and 7.1 rely on agent_step_workflows surviving soft deletion. Removing the child on ordinary delete destroys the only restorable step-workflow payload.","finding_id":"APR3-001","fix":"State that AgentDefinitionManager.delete preserves the child and only hides the parent. Delete the child only through set_step_workflow(None), upsert-without-steps, hard_delete, or purge; add delete→restore tests for payload and revision behavior.","location":"Phase 1 / § 1.3, with §§ 2.3 and 7.1","prevention":"For every parent-child soft-delete model, test delete→restore and classify child behavior separately for soft-delete, explicit child removal, hard-delete, and purge.","principle":"Soft deletion must preserve every payload needed for a lossless restore.","root_cause":"The child-lifecycle text conflates ordinary soft-delete with hard-delete even though the parent JSON no longer carries step-workflow data.","section_id":"1.3","severity":"blocking"},{"category":"traceability","causal_finding_id":"APR2-004","causal_section_ids":["Epic Review Notes","2.2","2.3","E1"],"check_key":"bundled-agent-count-parity-after-repair","description":"The repaired inventory is 25 bundled files total—21 stepful and four step-less—yet acceptance 2.3.5 still requires 25 stepful bundled agents plus four step-less agents, an unsatisfiable 29-file set.","finding_id":"APR3-002","fix":"Change 2.3.5 to 21 stepful and four step-less bundled agents. Keep 29 agent rows and 25 child rows only in the hub-migration acceptance and E1, explicitly labeled hub-derived.","introduced_in_round":2,"location":"Phase 2 / §§ 2.2-2.3","prevention":"After repairing an inventory, sweep every numeric acceptance and end-to-end count and label each as filesystem-derived or database-derived.","principle":"Filesystem conversion counts and persisted-hub migration counts must remain distinct in every acceptance criterion.","root_cause":"The APR2-004 inventory repair updated the plan narrative and YAML set but left acceptance 2.3.5 on the old 25-stepful bundled count.","section_id":"2.3","severity":"blocking"},{"category":"bad-sequencing","check_key":"staged-import-test-target-ownership","description":"Agent, rule, and variable cutovers each change sync_imported_definition and cite tests/workflows/test_imports.py, but none targets that test before § 4.3. Their phase-local rejection acceptances therefore lack an owned implementation seam.","finding_id":"APR3-003","fix":"Add tests/workflows/test_imports.py to Targets in §§ 2.3, 4.1, and 4.2, with exact agent/rule/variable rejection fixtures in each phase before § 4.3 retargets the suite to final typed dispatch.","location":"Phases 2 and 4 / §§ 2.3, 4.1, 4.2","prevention":"For every staged mutation of one shared module, assign the shared tests to each stage that changes their expected behavior.","principle":"A serialized behavior change must own its changed regression seam in the same deliverable.","root_cause":"The plan stages import rejection across three cutovers but leaves the shared import suite targeted only by the later final-dispatch rewrite.","section_id":"2.3","severity":"blocking"},{"category":"weak-testability","check_key":"typed-cutover-behavior-suite-closure","description":"tests/workflows/test_rule_engine.py and test_session_defaults.py seed LocalWorkflowDefinitionManager. Once rules/defaults read typed tables, these suites stop exercising their own fixtures or fail, yet neither has exact 4.1/4.2 ownership.","finding_id":"APR3-004","fix":"Target and retarget test_rule_engine.py in § 4.1. Split test_session_defaults.py ownership across §§ 4.1 and 4.2, naming the manager fixture replacements and focused validation commands.","location":"Phase 4 / §§ 4.1-4.2","prevention":"Before deleting a storage seam, enumerate test constructors and fixture seeders and assign each file to the first cutover that stops reading its fixtures.","principle":"A storage cutover must retarget every behavior suite that seeds the replaced store before the reader changes.","root_cause":"The plan defers a grep-derived test inventory to implementation while omitting known rule-engine and default-loading suites from exact Targets.","section_id":"4.1","severity":"blocking"},{"category":"bad-sequencing","check_key":"pipeline-mcp-deletion-closure","description":"The current pipeline MCP module imports create/update/delete/export helpers and LocalWorkflowDefinitionManager from modules § 5.2 deletes. The plan neither replaces pipeline CRUD in § 4.3 nor targets the pipeline callers in § 5.2.","finding_id":"APR3-005","fix":"In § 4.3, replace pipeline MCP CRUD with PipelineDefinitionManager operations and add focused CRUD acceptance. In § 5.2, target _pipelines.py, pass kind='pipeline' to auto-export/delete, and assert no generic-definition or legacy-manager import remains.","location":"Phases 4-5 / §§ 4.3 and 5.2","prevention":"For every deleted module, sweep imports, helper calls, and auto-export/delete callers and assign each surviving consumer to a preceding deliverable.","principle":"A surviving module must shed every import from a module before that dependency is deleted.","root_cause":"The pipeline MCP task owns only loader rewiring, while its CRUD and auto-export paths still depend on the generic definitions module and legacy manager removed in § 5.2.","section_id":"4.3","severity":"blocking"},{"category":"bad-sequencing","check_key":"cli-package-deletion-closure","description":"src/gobby/cli/pipelines.py still imports get_project_path/get_workflow_loader from cli.workflows.common, and multiple CLI suites import or patch cli.workflows at collection time. The planned deletion leaves a broken production import and red tests.","finding_id":"APR3-006","fix":"Retarget tests/cli/test_pipelines.py with PipelineLoader in § 4.3. In § 6.1 target pipelines.py and explicitly delete, split, or retarget test_cli_workflows.py, test_workflows.py, test_workflows_coverage.py, and test_pipelines_coverage.py into surviving domain suites.","location":"Phases 4 and 6 / §§ 4.3 and 6.1","prevention":"Before deleting a command package, sweep production imports plus test imports, patches, runners, and coverage suites and give each an explicit delete or retarget disposition.","principle":"Deleting a CLI package requires rewiring surviving production imports and disposing every module-scope test import and patch path in the same commit.","root_cause":"The CLI restructure inventories the package files but omits src/gobby/cli/pipelines.py and the existing workflow/pipeline test suites that import or patch the deleted package.","section_id":"6.1","severity":"blocking"},{"category":"bad-sequencing","causal_finding_id":"APR2-002","causal_section_ids":["2.1","2.2","2.3"],"check_key":"nested-legacy-agent-copy-normalization","description":"After § 2.2, bundled sync and MCP writes serialize nested step_workflow into legacy agent rows. The § 2.3 copy migration strips and extracts only top-level steps, step_variables, and exit_condition, so newly written nested rows lose children or retain child data in the parent.","finding_id":"APR3-007","fix":"Normalize both flat and nested source shapes in the copy migration: strip either representation from the parent, extract the child from nested step_workflow when present and otherwise from flat fields, add type guards and per-shape equivalence checks, and test a § 2.2 sync followed by migration plus mixed-shape rows.","introduced_in_round":2,"location":"Phase 2 / §§ 2.1-2.3","prevention":"For each staged shape change, serialize data through every live writer in the preceding commit and use those bytes as migration fixtures.","principle":"A migration following a serialized shape cutover must accept every source shape the preceding working commit can persist.","root_cause":"APR2-002 made the model/YAML cutover atomic but § 2.3 still assumes only the pre-repair flat legacy JSON shape.","section_id":"2.3","severity":"blocking"},{"category":"unhandled-edge","check_key":"instance-lock-real-adapter-reentry","description":"Persona and enforcement are planned to hold AgentStepInstanceMutation around reads and call manager mutators inside it. Current ambient nesting reacquires that equal-priority target through acquire_additional_lock, so the real adapter can raise LockAcquisitionOrderError.","finding_id":"APR3-008","fix":"Give AgentStepInstanceManager mutators an optional Transaction parameter and require outer persona/enforcement sections to pass their held immediate transaction, avoiding reacquisition. Add real-adapter tests for nested save/replace/merge/delete and keep the instance-before-session-variable lock order.","location":"Phase 3 / §§ 3.1-3.2","prevention":"Exercise nested manager calls through the real PostgresHubDatabase adapter and inspect equal-target/equal-priority lock behavior before declaring re-entry.","principle":"A caller-held critical section must not reacquire the same non-reentrant lock through an inner manager call.","root_cause":"The plan declares the renamed descriptor re-entrant, but current nested transaction_immediate routes through equal-priority additional-lock acquisition, which raises.","section_id":"3.1","severity":"blocking"},{"category":"unhandled-edge","causal_finding_id":"APR2-014","causal_section_ids":["3.2"],"check_key":"instance-copy-active-identity-resolution","description":"Legacy storage permits multiple per-session rows. A reachable A→B→A persona sequence can leave stale B newer than active A, so latest updated_at deterministically migrates the wrong snapshot and agent_name.","finding_id":"APR3-009","fix":"Resolve active agent identity from the active run/session persona state, reconcile it with _agent_type and _step_workflow_name, fail on contradictions, and apply timestamp/id ordering only to rows for that identity. Add A→B→A, stale-newer-row, equal-timestamp, and suffix-matching non-generated fixtures.","introduced_in_round":2,"location":"Phase 3 / §§ 3.2-3.4","prevention":"For migration lookups with historical duplicates, resolve authoritative identity first, reconcile redundant signals, and order only within the matching identity set.","principle":"Deterministic ordering is valid only after candidates are restricted to the authoritative runtime identity.","root_cause":"APR2-014 added a total order across all suffix-matching rows but did not resolve which agent is active for the session.","section_id":"3.2","severity":"blocking"},{"category":"unhandled-edge","check_key":"project-scoped-defaults-cache-isolation","description":"SessionVariableManager currently has only session_id and one unkeyed defaults cache. Routing it through load_variable_defaults(db, project_id=None) can omit project overrides or leak project A defaults into project B while the other three application paths disagree.","finding_id":"APR3-010","fix":"Require each defaults path to resolve session.project_id, define project-first/global fallback deduplication in get_defaults_map, key the TTL cache by project_id plus variables revision, and add alternating project-A/project-B/global-fallback tests across all four application paths.","location":"Phases 1 and 4 / §§ 1.2 and 4.2","prevention":"For every scoped cache, enumerate key dimensions and alternate two scopes plus global fallback in one regression.","principle":"A cache for project-scoped fallback data must include project scope in both lookup and key.","root_cause":"The plan retains one SessionVariableManager TTL cache and adds revision invalidation without specifying project resolution or per-project cache entries.","section_id":"4.2","severity":"blocking"},{"category":"bad-sequencing","check_key":"drop-backstop-directional-drift-proof","description":"After each cutover, valid edits, sync refreshes, restores, or hard-deletes change only typed rows. P7's current payload-equivalence backstop treats those safe changes exactly like a dangerous legacy-only write and can permanently block the destructive migration.","finding_id":"APR3-011","fix":"Add a copy-time per-row ledger containing legacy id, domain, and normalized source hash plus an explicit typed-deletion outcome. At P7 compare legacy rows to that checkpoint, allow recorded typed evolution, and test typed-only update/sync/delete separately from legacy-only update and post-copy legacy insertion.","location":"Phases 2, 4, and 7 / §§ 2.3, 4.1-4.3, 7.1","prevention":"For staged copies, record a copy-time source checkpoint and test source-only and target-only mutations independently before defining the final drop guard.","principle":"A destructive backstop must distinguish source-side drift from legitimate target-side evolution after cutover.","root_cause":"The plan compares current legacy and typed payloads symmetrically even though typed tables become the sole writable authority months or phases before the drop.","section_id":"7.1","severity":"blocking"},{"category":"unhandled-edge","causal_finding_id":"APR2-013","causal_section_ids":["3.2","3.4"],"check_key":"preparation-partial-result-compensation","description":"prepare_terminal_spawn creates the child session, initial variables, run metadata, and managed credential before returning PreparedSpawn. On an exception inside that sequence the caller has no partial result, so the claimed single cleanup owner cannot identify what to remove or revoke.","finding_id":"APR3-012","fix":"Move the cleanup owner inside prepare_terminal_spawn or raise a structured partial PreparedSpawn carrying every acquired row and credential handle. Specify idempotent compensation in a finally/exception path and fault-inject after child creation, variable merge, run persistence, and credential issuance.","introduced_in_round":2,"location":"Phase 3 / §§ 3.2 and 3.4","prevention":"Fault-inject after each internal acquisition and require the exception/return contract to expose a complete compensation handle.","principle":"A cleanup owner can compensate an internal failure only if the failing operation exposes every acquisition made before raising.","root_cause":"APR2-013 added prose for cleanup inside prepare_terminal_spawn without defining how the caller obtains child, run, and credential identities when preparation raises before returning.","section_id":"3.2","severity":"blocking"},{"category":"traceability","check_key":"baseline-refresh-owner-target","description":"crates/gcore/src/schema/runner.rs only delegates to baseline_refresh_statement. The exact allowlist that must accept seven new-table statements lives in crates/gcore/src/baseline_refresh.rs, which § 1.1 does not target.","finding_id":"APR3-013","fix":"Add crates/gcore/src/baseline_refresh.rs::* and its focused module tests to § 1.1 Targets, and specify the exact seven-table added-statement inventory there.","location":"Phase 1 / § 1.1","prevention":"Resolve each planned symbol to its current qualified file immediately before review and target the implementation owner plus its tests.","principle":"Every changed production owner must appear as an exact Target; naming a delegating caller does not cover the implementation module.","root_cause":"The refreshed plan still locates baseline_refresh_statement in runner.rs, while the current implementation moved the allowlist to baseline_refresh.rs.","section_id":"1.1","severity":"blocking"},{"category":"bad-sequencing","check_key":"listener-async-start-and-init-rollback","description":"init_storage_and_config is used by direct synchronous GobbyRunner construction, so start() cannot assume an event loop. If later initialization fails after listener creation/start, runner_rollback has no branch to cancel its tasks or close its pool-exempt connection.","finding_id":"APR3-014","fix":"Construct the listener during storage setup, start it from the existing async runtime startup phase, add it to runner state, construction rollback, and graceful shutdown, and target runner.py, runner_rollback.py, and the runner init/shutdown tests.","location":"Phase 1 / § 1.4","prevention":"For every runner-owned service, trace construction, async start, later-init failure rollback, normal shutdown, and direct-constructor tests.","principle":"A background service must start only under a running async runtime and must be owned by both construction rollback and graceful shutdown.","root_cause":"The plan starts the new listener from synchronous storage construction and targets only the graceful-shutdown tail.","section_id":"1.4","severity":"blocking"},{"category":"weak-testability","causal_finding_id":"APR2-009","causal_section_ids":["3.2","3.3"],"check_key":"instance-deletion-adjacent-test-seam-closure","description":"tests/workflows/test_step_runtime_transitions.py, test_step_enforcement_audit.py, tests/agents/test_runtime_cleanup.py, and adjacent suites still import or instantiate WorkflowInstance/WorkflowInstanceManager. They fail collection or retain obsolete fixtures when § 3.3 deletes the classes.","finding_id":"APR3-015","fix":"Extend §§ 3.2-3.3 with exact Targets and rewrite/delete dispositions for every remaining WorkflowInstance and WorkflowInstanceManager hit across transition, enforcement-audit/error-code, lifecycle-monitor, merge, cleanup, coordinator, observability, server cleanup, and E2E fixtures.","introduced_in_round":2,"location":"Phase 3 / §§ 3.2-3.3","prevention":"Repeat the full class-wide symbol and string-patch sweep after applying a deletion repair and list every remaining test hit in Targets.","principle":"A class deletion repair is complete only after every constructor, annotation, fixture, patch, and adjacent behavior suite has an exact disposition.","root_cause":"APR2-009 repaired named primary suites but missed additional transition, audit, cleanup, lifecycle, observability, and E2E consumers.","section_id":"3.3","severity":"blocking"},{"category":"missing-requirement","check_key":"relocated-route-agent-auth-capability","description":"DaemonProxy moves session-variable calls to /api/sessions/{id}/variables/*, but the agent-token capability matrix still grants only the deleted /api/workflows/variables paths. The exact client can become unauthorized despite both route and client tests passing.","finding_id":"APR3-016","fix":"Target auth_service.py, auth middleware/capability tests, and tests/mcp_proxy/test_mcp_proxy_stdio.py. Replace old grants with parameterized session-variable routes while retaining session identity binding, and retarget both DaemonProxy suites.","location":"Phase 5 / § 5.1","prevention":"For every route move, trace router registration, client literal, auth/capability matching, middleware identity binding, and all client test suites.","principle":"A relocated endpoint used by an authenticated internal client must be added to that client's capability matrix in the same change.","root_cause":"The HTTP relocation inventories router and stdio client paths but omits authorization policy and its separate regression seams.","section_id":"5.1","severity":"blocking"},{"category":"traceability","check_key":"removed-mcp-tool-consumer-closure","description":"list_workflows and get_workflow_status remain required by MCP inventory tests, E2E calls, production dispatch prompts, and agent instructions outside current Targets. The final tree can therefore retain calls to tools § 5.2 removes or renames.","finding_id":"APR3-017","fix":"Add registry/E2E consumers to § 5.2 and retarget them to the final tool set. Add dispatch/prompts.py, bundled agent instruction sources, and their tests to § 5.2 or § 7.3 and update them atomically.","location":"Phases 5 and 7 / §§ 5.2 and 7.3","prevention":"For every removed tool name, sweep production strings, prompt assets, bundled YAML, MCP inventories, E2E calls, and assertion fixtures.","principle":"Tool deletion and rename must update registries, executable consumers, prompts, bundled agent instructions, and their tests atomically.","root_cause":"The disposition table focuses on the workflows registry suites and the documentation sweep omits live prompt/E2E consumers.","section_id":"5.2","severity":"blocking"},{"category":"traceability","check_key":"typed-variable-ui-helper-and-capture-fixture","description":"web/src/components/settings/workflowVariables.ts still reads definition_json while the new variable API exposes default_value directly. web/tests/style-surfaces.spec.ts only fakes /api/workflows, so the migrated editors can receive no data in visual coverage.","finding_id":"APR3-018","fix":"Add both files to § 6.2 Targets, retype the helper around default_value, teach the capture fake /api/pipelines/definitions and /api/variables response shapes, and remove its generic-workflow branch.","location":"Phase 6 / § 6.2","prevention":"Trace response data from network fake through hooks, adapters, and components for every endpoint migration.","principle":"A frontend API-shape migration must include extracted data adapters and integration fakes, not only hooks and components.","root_cause":"The UI target inventory misses the helper that decodes the old definition_json shape and the capture harness that serves only the old generic route.","section_id":"6.2","severity":"blocking"},{"category":"traceability","check_key":"active-cli-guide-command-parity","description":"docs/guides/cli-commands.md still presents the entire gobby workflows group that § 6.1 deletes. The scoped audit can pass while users are still directed to nonexistent commands.","finding_id":"APR3-019","fix":"Add docs/guides/cli-commands.md to § 7.3 Targets, replace the workflows command table with agents, pipelines, variables, and sync replacements, and include active guides in the documentation search assertion.","location":"Phase 7 / § 7.3","prevention":"Search the full active docs tree for every removed command, route, table, and discriminator and target every current-behavior hit.","principle":"Active user documentation must be included in the same inventory as the command surface it describes.","root_cause":"The documentation sweep's explicit guide list omits cli-commands.md, and the legacy audit does not scan active docs.","section_id":"7.3","severity":"blocking"}],"reviewer_session":"32bf2f1b-08ca-410d-baa2-e0eb8b9fd979","round":3,"round_number":3,"verdict":"needs_review"},"session_id":"24384cfe-8cb0-4aaa-bfaa-5b86560252aa"}
+```
+
+
+**Round 4** `kind: verification`
+
+- reviewer_run: fea2887d-e7ff-4a43-a64e-49e9b91687ad
+- reviewer_session: 6e9db1b7-a15c-4621-b571-cc5c171df1d7
+- verdict: needs_review
+- findings:
+- APR4-001 / blocking / Constraints still bound target.id = source.id into the P7 backstop (fixer-induced, APR3-011)
+- APR4-002 / blocking / web agent types, adapters, and read-only view still model top-level step fields
+- APR4-003 / blocking / agents_termination.py result key workflow_instances_deleted unowned
+- APR4-004 / blocking / workflow_templates.py orphaned by the 5.1 router deletion, undispositioned
+- APR4-005 / blocking / dispatcher spawn test asserts the deleted _step_workflow_name seed
+- APR4-006 / blocking / persona-switch disagreement state misclassified as corruption (fixer-induced, APR3-009)
+- APR4-007 / blocking / caller variables overwrite the persona delta with no reserved-key validation
+- APR4-008 / blocking / copy/drop sequence left legacy writers unfenced
+- resolution_notes: All eight findings accepted after repository verification
+  (unattended, operator-delegated) and repaired in this revision with
+  class-wide sweeps. Two were narrowed against verified code: APR4-006's
+  no-matching-row case resolves through the existing 3.3 recovery path (the
+  plan's canonical missing-instance handler) instead of a migration-time
+  snapshot rebuild, with _agent_type made the sole authoritative identity
+  and the disagreement RAISE dropped; APR4-008's P7 half is contradicted by
+  the coded maintenance-epoch fence (cli/schema.py:114-146 refuses
+  destructive apply without an open epoch; hub_maintenance.py:185-196 stops
+  the daemon; maintenance_epoch.py:174-271 terminates gobby% backends to
+  proven quiescence; baseline.sql:4240-4317 blocks reconnects), which 7.1
+  now pins instead of adding table locks — the copy-side gap is real
+  (runner.rs:105-113 serializes runners only; migrations apply before the
+  predecessor gate severs old backends) and every copy migration now opens
+  with LOCK TABLE ... ACCESS EXCLUSIVE, with a write-rejection trigger on
+  workflow_instances because instance rows have no ledger backstop.
+  Class-widened repairs: APR4-002 additionally targets the production
+  adapter AgentsTabActions.ts, whose buildAgentDefinitionBody writes
+  top-level steps, and the Playwright AGENT_DEFINITION fixture, and records
+  that the current draft pipeline already drops step_variables and
+  exit_condition; APR4-003's rename gains its first test seam, since no
+  existing test asserts the old key; APR4-007 rejects collisions against
+  the just-built persona delta plus is_reserved_workflow_variable — the
+  guard set_variable already uses — rather than a hand-maintained list.
+  The superseded (name, project_id) backstop sentence in Constraints,
+  predating even the round-3 design, was corrected in the same APR4-001
+  sweep.
+
+```json plan-review-round
+{"evidence_id":"239757c3-df39-4a00-a56e-caaa4e2f3b22","plan_hash":"ad3553dd6f61f7f5cb94c6113d3c5862eff1eca9097cdcdb535e437ea8b1f190","round_number":4,"round_result":{"coverage_attestation":{"adjacent_variant_complete":true,"attestation_digest":"5ec8ee4dac76f30646f0a755b7f782c5c0d24b08843f4c54fb1fa46cd7dbc788","cross_lane_interaction_complete":true,"disposition_counts":{"dismissed":2,"emitted_findings":8,"total":10},"evidence_id":"239757c3-df39-4a00-a56e-caaa4e2f3b22","lanes":[{"candidate_count":1,"lane_id":"requirements_traceability","status":"completed"},{"candidate_count":6,"lane_id":"repository_blast_radius","status":"completed"},{"candidate_count":3,"lane_id":"runtime_invariants","status":"completed"}],"shadow_manifest_status":{"entry_count":23,"manifest_digest":"3fcea5628c8ed7d26f7ded567f47ba475b6019a129daba156c54b2ede44a7392","status":"valid"},"source_digest":"25206f5963a12794520364fd7adbcaed165640c2eb5bd9beb38e9aab53029c61","version":1},"findings":[{"category":"traceability","causal_finding_id":"APR3-011","causal_section_ids":["1.1","2.3","4.1","4.2","4.3","7.1","E1"],"check_key":"p7-directional-guard-contract-parity","description":"Constraints still state that `target.id = source.id` is part of the P7 drop backstop, while §7.1 says typed state is never consulted and validates only each legacy row against `legacy_copy_ledger`. Implementers can follow either mutually exclusive contract, reintroducing the typed-evolution blockage APR3-011 repaired.","finding_id":"APR4-001","fix":"Rewrite the Constraints equivalence paragraph so target identity and payload checks apply only inside the domain copy migrations. Define P7 separately as a legacy-only `(legacy_id, domain, normalized source_hash)` checkpoint check, with no typed-row lookup, and keep §7.1's directional tests.","introduced_in_round":3,"location":"Constraints and Phase 7 / § 7.1","prevention":"After replacing a cross-phase invariant, sweep governing framing, every producer, every consumer, acceptance cases, and changelog text for the superseded predicate.","principle":"Governing constraints and a destructive deliverable must prescribe one unambiguous safety predicate.","root_cause":"APR3-011 replaced the symmetric P7 guard with a directional ledger check across §§1.1, 2.3, 4.1-4.3, 7.1, and E1, while the governing Constraints retained the superseded requirement that P7 compare typed target identity, including `target.id = source.id`.","section_id":"7.1","severity":"blocking"},{"category":"traceability","check_key":"agent-nested-step-workflow-web-consumer-closure","description":"`AgentsTabData`, `AgentEditForm.types.ts`, and `AgentReadOnlyDetails.tsx` still model or read top-level step fields. The final API moves them under `step_workflow`, and none of these files is targeted for that cutover, so hydrated agent details and edit drafts can silently lose the step workflow.","finding_id":"APR4-002","fix":"Add `AgentEditForm.types.ts`, `AgentReadOnlyDetails.tsx`, `AgentsTabData.ts`, `AgentEditors.test.tsx`, and `AgentsTabActions.test.ts` to §6.2. Type and decode `step_workflow.{steps,variables,exit_condition}` end to end, and add a hydrated-details-to-draft regression that preserves all three fields.","location":"Phases 2 and 6 / §§ 2.2, 2.3, and 6.2","prevention":"For every response-shape move, trace the payload from fetch through shared types, normalization, drafts, read-only views, editors, and their fixtures.","principle":"An API shape cutover must migrate every typed consumer, adapter, display, draft path, and fixture in the same change.","root_cause":"The plan retargets the main agent editor but omits shared web types and read-only/detail adapters that still model `steps` and `step_variables` as top-level fields.","section_id":"6.2","severity":"blocking"},{"category":"traceability","check_key":"runtime-cleanup-result-key-owner-closure","description":"`src/gobby/mcp_proxy/tools/agents_termination.py` still emits `workflow_instances_deleted`. The file is absent from all Targets, and that production token is absent from §7.2's owner inventory even though the final audit rejects every `workflow_instances` occurrence.","finding_id":"APR4-003","fix":"Target `agents_termination.py` in §3.3, rename the result key to `agent_step_instances_deleted`, retarget result-shape tests and fakes, and add this occurrence to §7.2's checked owner inventory.","location":"Phases 3 and 7 / §§ 3.3 and 7.2","prevention":"For every storage/model rename, sweep result dictionaries, serialized payloads, logs, metrics, fakes, and assertions in addition to class and table references.","principle":"A renamed runtime model must update externally returned field names and their tests alongside internal storage owners.","root_cause":"The cleanup cutover targets the manager and terminal log field but misses the MCP termination wrapper that exposes the legacy model name in its result.","section_id":"3.3","severity":"blocking"},{"category":"traceability","check_key":"generic-workflow-template-module-deletion-closure","description":"`workflow_templates.py` is used by the generic `/api/workflows/templates` handler that §5.1 deletes. The orphan module and `test_workflow_templates.py` remain untargeted, and the module's public `workflow_type` payloads make §7.2's production-token audit fail.","finding_id":"APR4-004","fix":"Add `src/gobby/workflows/workflow_templates.py` and `tests/workflows/test_workflow_templates.py` to §5.1 and delete them with the generic template route. Record their `workflow_type` occurrences in §7.2's preexisting owner inventory.","location":"Phases 5 and 7 / §§ 5.1 and 7.2","prevention":"For every deleted router, walk each handler import and call edge, then assign delete, retarget, or retained-consumer evidence to every reached module and test.","principle":"Deleting a route surface must disposition its private implementation modules and dedicated tests.","root_cause":"The generic route deletion removes the sole production consumer of `workflow_templates.py` without assigning that module or its test suite to any deliverable.","section_id":"5.1","severity":"blocking"},{"category":"weak-testability","check_key":"removed-step-workflow-variable-test-closure","description":"`tests/dispatch/test_dispatcher.py::test_spawn_action_uses_services_and_records_agent_run` asserts that initial variables contain `_step_workflow_name == 'backend-developer-steps'`. Section 3.2 removes that seed, yet no deliverable targets this test, leaving a deterministic focused-suite failure.","finding_id":"APR4-005","fix":"Add `tests/dispatch/test_dispatcher.py` to §3.2. Retarget the assertion to require `_step_workflow_name` absence while preserving the selected agent identity; keep durable typed-instance creation covered at the real spawn boundary.","location":"Phase 3 / § 3.2","prevention":"Before deleting a variable writer, run a class-wide production-and-test token sweep and target every positive assertion, absence assertion, fixture seed, and patch path.","principle":"Removing a runtime variable requires an exact disposition for every positive assertion and fixture that encodes its former writer contract.","root_cause":"The `_step_workflow_name` writer sweep covers spawn/persona tests but misses a dispatcher service test that still requires the deleted initial-variable seed.","section_id":"3.2","severity":"blocking"},{"category":"unhandled-edge","causal_finding_id":"APR3-009","causal_section_ids":["3.2"],"check_key":"instance-copy-persona-signal-authority","description":"`apply_persona_impl` uses `build_session_persona_changes`, which writes `_agent_type` and deliberately leaves `_step_workflow_name` untouched. A valid pre-cutover A→B switch can therefore hold `_agent_type=B` beside stale `A-steps`; §3.2 now classifies that reachable state as corruption and aborts the instance migration.","finding_id":"APR4-006","fix":"Make `_agent_type` authoritative when present on this legacy path. Treat conflicting `_step_workflow_name` as stale metadata, resolve B's typed child and rebuild B's snapshot when no matching legacy row exists, migrate no row for a step-less B, and add A→B stepful and step-less fixtures while retaining loud failure for genuinely unresolved identity.","introduced_in_round":3,"location":"Phase 3 / § 3.2","prevention":"For every migration that reconciles redundant identity signals, inventory every live writer and enumerate precedence for each reachable partial-update state.","principle":"Migration identity resolution must distinguish an authoritative current signal from stale redundant metadata for every reachable writer state.","root_cause":"APR3-009 made `_agent_type` and `_step_workflow_name` disagreement fatal without accounting for the public persona path, which intentionally updates `_agent_type` alone.","section_id":"3.2","severity":"blocking"},{"category":"unhandled-edge","check_key":"persona-custom-variable-reserved-key-integrity","description":"The public persona tool accepts an arbitrary variables dictionary, and `apply_persona_impl` applies it after setting `_agent_type`. A caller can submit another `_agent_type`, committing agent B's session identity beside agent A's requested snapshot even after §3.2 adds cross-row atomicity.","finding_id":"APR4-007","fix":"Define and reject collisions with the reserved persona/runtime field set before opening the transition transaction, including `_agent_type`, `_step_workflow_name`, and completion/step-state fields. Add adversarial tool and implementation tests proving rejection leaves both session variables and the typed instance unchanged.","location":"Phase 3 / § 3.2","prevention":"At every custom-variable merge boundary, define a reserved field set and test adversarial collisions against identity, lifecycle, completion, and snapshot metadata.","principle":"Caller-supplied extension data must never overwrite authoritative fields of the state transition that consumes it.","root_cause":"`apply_persona_impl` overlays public `variables` after building the authoritative persona delta, with no reserved-key validation.","section_id":"3.2","severity":"blocking"},{"category":"bad-sequencing","check_key":"staged-legacy-runtime-write-fence","description":"A pre-cutover daemon can update `workflow_instances` during or after the P3 copy because its writes do not participate in the schema advisory lock. At P7, another write can also commit after the preflight SELECT and before DROP obtains its table lock, so valid runtime state can be omitted from `agent_step_instances` and then destroyed.","finding_id":"APR4-008","fix":"At P3, acquire an `ACCESS EXCLUSIVE` lock before copying `workflow_instances`, wait out existing writers, and install a persistent database rejection barrier for later legacy runtime writes before releasing the lock. At P7, lock all legacy tables before running any backstop query and hold those locks through DROP. Add a two-connection stale-writer fault test for during-copy, post-copy, and check-to-drop attempts.","location":"Phases 3 and 7 / §§ 3.2 and 7.1","prevention":"For every online copy/drop sequence, test a stale writer before copy, during copy, after copy, during preflight, and immediately before drop under a second connection.","principle":"A staged copy followed by destructive drop must fence source writers before the copy snapshot and hold the fence through final verification and drop.","root_cause":"The schema advisory lock serializes migration runners only; legacy runtime writes use independent per-session transactions, and §7.1 does not acquire table locks until each DROP executes.","section_id":"3.2","severity":"blocking"}],"reviewer_session":"6e9db1b7-a15c-4621-b571-cc5c171df1d7","round":4,"round_number":4,"verdict":"needs_review"},"session_id":"24384cfe-8cb0-4aaa-bfaa-5b86560252aa"}
 ```
 
 
