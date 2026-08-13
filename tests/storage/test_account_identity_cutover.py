@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 import re
 import uuid
 from collections.abc import Iterator
@@ -121,7 +122,11 @@ def _seed_predecessor_data(connection: psycopg.Connection[object]) -> None:
     connection.execute(
         """
         INSERT INTO config_store(key, value)
-        VALUES ('identity.cutover.preserved', 'preserved')
+        VALUES
+            ('identity.cutover.preserved', 'preserved'),
+            ('auth.api_token_hash', 'preserved-api-token-hash'),
+            ('auth.password_hash', 'legacy-password-hash'),
+            ('auth.username', 'legacy-operator')
         """
     )
 
@@ -182,6 +187,14 @@ def test_populated_predecessor_cutover_preserves_rows_and_forces_logout(
     assert verified == evidence
     assert evidence.auth_sessions_before == 1
     assert evidence.machines_before == 1
+    assert evidence.deprecated_auth_config_rows_before == {
+        "auth.password_hash": 1,
+        "auth.username": 1,
+    }
+    assert evidence.deprecated_auth_config_rows_after == {
+        "auth.password_hash": 0,
+        "auth.username": 0,
+    }
     assert account_identity_cutover_already_applied(
         bound_url,
         batch_id=batch_id,
@@ -192,12 +205,85 @@ def test_populated_predecessor_cutover_preserves_rows_and_forces_logout(
         owner = connection.execute("SELECT owner_user_id FROM machines").fetchone()
         sessions = connection.execute("SELECT COUNT(*) AS count FROM auth_sessions").fetchone()
         preserved = connection.execute(
-            "SELECT value FROM config_store WHERE key = 'identity.cutover.preserved'"
+            """
+            SELECT key, value
+            FROM config_store
+            WHERE key IN (
+                'identity.cutover.preserved',
+                'auth.api_token_hash',
+                'auth.password_hash',
+                'auth.username'
+            )
+            ORDER BY key
+            """
+        ).fetchall()
+        batch = connection.execute(
+            "SELECT intent FROM destructive_batches WHERE id = %s", (batch_id,)
         ).fetchone()
     assert user == {"id": identity.id, "name": identity.name, "email": identity.email}
     assert owner == {"owner_user_id": identity.id}
     assert sessions == {"count": 0}
-    assert preserved == {"value": "preserved"}
+    assert preserved == [
+        {"key": "auth.api_token_hash", "value": "preserved-api-token-hash"},
+        {"key": "identity.cutover.preserved", "value": "preserved"},
+    ]
+    assert batch is not None
+    serialized_intent = json.dumps(batch["intent"], sort_keys=True)
+    assert "legacy-operator" not in serialized_intent
+    assert "legacy-password-hash" not in serialized_intent
+
+
+def test_failure_after_credential_retirement_restores_legacy_rows(
+    predecessor_database: str,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    bound_url, epoch_id, batch_id = _open_cutover(predecessor_database)
+    preflight = preflight_account_identity_cutover(bound_url)
+
+    def fail_after_retirement(
+        connection: psycopg.Connection[object],
+        _evidence: cutover.AccountIdentityCutoverEvidence,
+    ) -> None:
+        remaining = connection.execute(
+            """
+            SELECT COUNT(*) AS count
+            FROM config_store
+            WHERE key IN ('auth.password_hash', 'auth.username')
+            """
+        ).fetchone()
+        assert remaining == {"count": 0}
+        raise RuntimeError("injected post-retirement failure")
+
+    monkeypatch.setattr(cutover, "_verify_data_invariants", fail_after_retirement)
+
+    with pytest.raises(RuntimeError, match="injected post-retirement failure"):
+        apply_account_identity_cutover(
+            bound_url,
+            epoch_id=epoch_id,
+            batch_id=batch_id,
+            identity=_identity(),
+            preflight=preflight,
+            target_checksum=_target_checksum(),
+        )
+
+    with psycopg.connect(bound_url, row_factory=dict_row) as connection:
+        legacy_rows = connection.execute(
+            """
+            SELECT key, value
+            FROM config_store
+            WHERE key IN ('auth.password_hash', 'auth.username')
+            ORDER BY key
+            """
+        ).fetchall()
+        batch = connection.execute(
+            "SELECT intent FROM destructive_batches WHERE id = %s", (batch_id,)
+        ).fetchone()
+
+    assert legacy_rows == [
+        {"key": "auth.password_hash", "value": "legacy-password-hash"},
+        {"key": "auth.username", "value": "legacy-operator"},
+    ]
+    assert batch == {"intent": {"campaign": ACCOUNT_IDENTITY_CAMPAIGN}}
 
 
 def test_campaign_registry_and_admitted_constraints_have_exact_parity(
