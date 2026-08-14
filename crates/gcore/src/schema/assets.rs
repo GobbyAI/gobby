@@ -16,12 +16,20 @@ pub(crate) struct EmbeddedMigration {
     pub sql: &'static str,
 }
 
-pub(crate) const MIGRATIONS: &[EmbeddedMigration] = &[EmbeddedMigration {
-    version: 376,
-    filename: "376_copy_agent_definitions.sql",
-    checksum: "758b35ad7bc1e2dc4451110b3e392e68c03237ae951ce004fe97b96b618fcc21",
-    sql: include_str!("../../assets/schema/migrations/376_copy_agent_definitions.sql"),
-}];
+pub(crate) const MIGRATIONS: &[EmbeddedMigration] = &[
+    EmbeddedMigration {
+        version: 376,
+        filename: "376_copy_agent_definitions.sql",
+        checksum: "758b35ad7bc1e2dc4451110b3e392e68c03237ae951ce004fe97b96b618fcc21",
+        sql: include_str!("../../assets/schema/migrations/376_copy_agent_definitions.sql"),
+    },
+    EmbeddedMigration {
+        version: 377,
+        filename: "377_copy_agent_step_instances.sql",
+        checksum: "43b6c25263c1e510f28c540d9cc24e62ffcad67a3a8dddde3645bdb6a5e92821",
+        sql: include_str!("../../assets/schema/migrations/377_copy_agent_step_instances.sql"),
+    },
+];
 const _: &str = include_str!("../../assets/schema/migrations/.gitkeep");
 
 pub(crate) fn root_hash() -> String {

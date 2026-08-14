@@ -13,7 +13,9 @@ from gobby.hooks.events import HookEvent, HookEventType, SessionSource
 from gobby.storage.workflow_definitions import LocalWorkflowDefinitionManager
 from gobby.workflows.definitions import WorkflowDefinition, WorkflowInstance
 from gobby.workflows.engine.core import RuleEngine
-from gobby.workflows.state_manager import WorkflowInstanceManager
+from gobby.workflows.agent_models import AgentStepWorkflowBody
+from gobby.workflows.definitions import WorkflowStep
+from gobby.workflows.step_instances import AgentStepInstance, AgentStepInstanceManager
 
 if TYPE_CHECKING:
     from gobby.storage.hub.protocol import HubDatabase
@@ -40,8 +42,8 @@ def engine(db: "HubDatabase") -> RuleEngine:
 
 
 @pytest.fixture
-def instance_mgr(db: "HubDatabase") -> WorkflowInstanceManager:
-    return WorkflowInstanceManager(db)
+def instance_mgr(db: "HubDatabase") -> AgentStepInstanceManager:
+    return AgentStepInstanceManager(db)
 
 
 def _make_event(
@@ -77,7 +79,7 @@ def _create_session(db: "HubDatabase") -> None:
 def _setup_workflow(
     db: "HubDatabase",
     manager: LocalWorkflowDefinitionManager,
-    instance_mgr: WorkflowInstanceManager,
+    instance_mgr: AgentStepInstanceManager,
 ) -> None:
     _create_session(db)
     workflow_data = {
@@ -110,16 +112,15 @@ def _setup_workflow(
         name=definition.name,
         definition_json=json.dumps(workflow_data),
         workflow_type="workflow",
-        priority=100,
         enabled=True,
     )
-    instance_mgr.save_instance(
-        WorkflowInstance(
+    instance_mgr.save(
+        AgentStepInstance(
             id=str(uuid.uuid4()),
             session_id=SESSION_ID,
-            workflow_name=definition.name,
+            agent_name=definition.name,
+            snapshot=AgentStepWorkflowBody(steps=[WorkflowStep(name="claim")]),
             enabled=True,
-            priority=100,
             current_step="claim",
             step_entered_at=datetime.now(UTC),
             variables=dict(definition.variables),
@@ -152,7 +153,7 @@ async def test_step_success_writes_audit_rows(
     db: "HubDatabase",
     manager: LocalWorkflowDefinitionManager,
     engine: RuleEngine,
-    instance_mgr: WorkflowInstanceManager,
+    instance_mgr: AgentStepInstanceManager,
 ) -> None:
     _setup_workflow(db, manager, instance_mgr)
     event = _make_event(
@@ -198,7 +199,7 @@ async def test_step_transition_writes_run_outside_event_loop_thread(
     db: "HubDatabase",
     manager: LocalWorkflowDefinitionManager,
     engine: RuleEngine,
-    instance_mgr: WorkflowInstanceManager,
+    instance_mgr: AgentStepInstanceManager,
 ) -> None:
     _setup_workflow(db, manager, instance_mgr)
     event = _make_event(
@@ -245,7 +246,7 @@ async def test_step_mcp_block_writes_audit_row(
     db: "HubDatabase",
     manager: LocalWorkflowDefinitionManager,
     engine: RuleEngine,
-    instance_mgr: WorkflowInstanceManager,
+    instance_mgr: AgentStepInstanceManager,
 ) -> None:
     _setup_workflow(db, manager, instance_mgr)
     event = _make_event(

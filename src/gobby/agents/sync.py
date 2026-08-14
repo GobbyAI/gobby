@@ -13,7 +13,6 @@ from typing import Any
 
 import yaml
 
-from gobby.agents.step_workflow import register_agent_step_workflow
 from gobby.storage.definitions import AgentDefinitionManager, AgentDefinitionRow
 from gobby.storage.definitions.agents import _parent_body
 from gobby.storage.hub.protocol import HubDatabase
@@ -89,12 +88,6 @@ def get_bundled_agents_path() -> Path:
     from gobby.paths import get_install_dir
 
     return get_install_dir() / "shared" / "workflows" / "agents"
-
-
-def _refresh_step_workflow(body: AgentDefinitionBody, db: HubDatabase) -> None:
-    """Refresh the generated step workflow row for agents with inline steps."""
-    if body.step_workflow:
-        register_agent_step_workflow(body, db)
 
 
 def sync_bundled_agents(db: HubDatabase) -> dict[str, Any]:
@@ -188,7 +181,6 @@ def sync_bundled_agents(db: HubDatabase) -> dict[str, Any]:
                             description=body.description,
                             restore=True,
                         )
-                        _refresh_step_workflow(body, db)
                         result["updated"] += 1
                         continue
                     result["skipped"] += 1
@@ -215,7 +207,6 @@ def sync_bundled_agents(db: HubDatabase) -> dict[str, Any]:
                         tags=update_fields.get("tags", existing.tags),
                         description=update_fields.get("description", existing.description),
                     )
-                    _refresh_step_workflow(body, db)
                     result["updated"] += 1
                     logger.debug(
                         "Updated bundled agent definition %s (%s)",
@@ -226,8 +217,7 @@ def sync_bundled_agents(db: HubDatabase) -> dict[str, Any]:
 
                 if step_workflow is not None:
                     manager.set_step_workflow(existing.id, step_workflow)
-                _refresh_step_workflow(body, db)
-                result["skipped"] += 1
+                    result["skipped"] += 1
                 continue
 
             manager.upsert_with_steps(
@@ -239,7 +229,6 @@ def sync_bundled_agents(db: HubDatabase) -> dict[str, Any]:
                 tags=["gobby"],
                 description=body.description,
             )
-            _refresh_step_workflow(body, db)
             logger.debug("Synced bundled agent definition: %s", name)
             result["synced"] += 1
 

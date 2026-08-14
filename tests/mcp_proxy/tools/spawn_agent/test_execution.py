@@ -15,6 +15,7 @@ from gobby.agents.session import ChildSessionManager
 from gobby.storage.agents import LocalAgentRunManager
 from gobby.storage.sessions import SessionManager
 from gobby.storage.tasks import LocalTaskManager
+from tests.agents.prepared_spawn import prepared_spawn
 
 pytestmark = pytest.mark.unit
 

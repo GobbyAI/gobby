@@ -43,6 +43,7 @@ __all__ = [
     "TmuxSpawner",
     # Helpers
     "PreparedSpawn",
+    "cleanup_unlaunched_spawn",
     "prepare_terminal_resume",
     "prepare_terminal_spawn",
     "build_cli_command",
@@ -83,6 +84,81 @@ class PreparedSpawn:
 
     managed_credential: ManagedCredential | None = None
     """Run-scoped database credential issued before provider launch."""
+
+    prompt_file: str | None = None
+    """On-disk prompt file created during preparation, if any."""
+
+
+def cleanup_unlaunched_spawn(
+    session_manager: ChildSessionManager,
+    *,
+    session_id: str | None = None,
+    agent_run_id: str | None = None,
+    prompt_file: str | None = None,
+    managed_credential: ManagedCredential | None = None,
+) -> None:
+    """Idempotently tear down pre-launch spawn acquisitions.
+
+    Deletes the child session, its variables, the agent-run row, the on-disk
+    prompt file, and any typed step instance, and revokes a never-launched
+    credential. Repeated calls are safe. Cleanup failures are logged with the
+    surviving identifiers rather than hiding the original error.
+    """
+    from pathlib import Path
+
+    survivors: list[str] = []
+    database = session_manager._storage.db
+
+    if managed_credential is not None:
+        credential_manager = vars(database).get("managed_credential_manager")
+        if credential_manager is not None:
+            try:
+                credential_manager.revoke(
+                    managed_credential.managed_execution_id,
+                    generation=managed_credential.credential_generation,
+                    reason="prelaunch_cleanup",
+                )
+            except Exception as exc:
+                survivors.append(f"credential:{managed_credential.managed_execution_id}:{exc}")
+
+    if session_id is not None:
+        try:
+            from gobby.workflows.step_instances import AgentStepInstanceManager
+
+            AgentStepInstanceManager(database).delete_for_session(session_id)
+        except Exception as exc:
+            survivors.append(f"instance:{session_id}:{exc}")
+
+    if agent_run_id is not None:
+        try:
+            database.execute("DELETE FROM agent_runs WHERE id = %s", (agent_run_id,))
+        except Exception as exc:
+            survivors.append(f"agent_run:{agent_run_id}:{exc}")
+
+    if session_id is not None:
+        try:
+            database.execute(
+                "DELETE FROM session_variables WHERE session_id = %s",
+                (session_id,),
+            )
+        except Exception as exc:
+            survivors.append(f"session_variables:{session_id}:{exc}")
+        try:
+            session_manager._storage.delete(session_id)
+        except Exception as exc:
+            survivors.append(f"session:{session_id}:{exc}")
+
+    if prompt_file:
+        try:
+            Path(prompt_file).unlink(missing_ok=True)
+        except Exception as exc:
+            survivors.append(f"prompt_file:{prompt_file}:{exc}")
+
+    if survivors:
+        logger.error(
+            "Pre-launch spawn cleanup left surviving state: %s",
+            "; ".join(survivors),
+        )
 
 
 def prepare_terminal_spawn(
@@ -154,7 +230,6 @@ def prepare_terminal_spawn(
     Raises:
         ValueError: If max agent depth exceeded
     """
-    # Create child session config
     config = ChildSessionConfig(
         parent_session_id=parent_session_id,
         project_id=project_id,
@@ -167,61 +242,71 @@ def prepare_terminal_spawn(
         sandbox_enabled=sandbox_enabled,
     )
 
-    # Create the child session
-    child_session = session_manager.create_child_session(config)
+    child_session_id: str | None = None
+    resolved_run_id = agent_run_id or str(uuid.uuid4())
+    prompt_file: str | None = None
+    prepared: PreparedSpawn | None = None
+    try:
+        child_session = session_manager.create_child_session(config)
+        child_session_id = child_session.id
 
-    # Write initial variables to session_variables table (canonical store)
-    if initial_variables:
-        from gobby.workflows.state_manager import SessionVariableManager
+        if initial_variables:
+            from gobby.workflows.state_manager import SessionVariableManager
 
-        SessionVariableManager(session_manager._storage.db).merge_variables(
-            child_session.id, initial_variables
-        )
+            SessionVariableManager(session_manager._storage.db).merge_variables(
+                child_session.id, initial_variables
+            )
 
-    # Use provided agent_run_id or generate one.
-    if agent_run_id is None:
-        agent_run_id = str(uuid.uuid4())
+        def bind_fresh_run(run_id: str) -> None:
+            session_manager.update_terminal_pickup_metadata(
+                session_id=child_session.id,
+                agent_run_id=run_id,
+                workflow_name=workflow_name,
+            )
 
-    def bind_fresh_run(run_id: str) -> None:
-        session_manager.update_terminal_pickup_metadata(
+        prepared = _prepare_run_for_session(
+            session_manager=session_manager,
             session_id=child_session.id,
-            agent_run_id=run_id,
+            session_depth=child_session.agent_depth,
+            session_seq_num=getattr(child_session, "seq_num", None),
+            parent_session_id=parent_session_id,
+            project_id=project_id,
+            provider=source,
             workflow_name=workflow_name,
+            agent_name=agent_name,
+            git_branch=git_branch,
+            prompt=prompt,
+            model=model,
+            is_local=is_local,
+            max_agent_depth=max_agent_depth,
+            agent_run_id=resolved_run_id,
+            task_id=task_id,
+            claimed_session_id=claimed_session_id,
+            timeout_seconds=timeout_seconds,
+            sandbox_enabled=sandbox_enabled,
+            requested_reasoning_effort=requested_reasoning_effort,
+            effective_reasoning_effort=effective_reasoning_effort,
+            reasoning_required=reasoning_required,
+            reasoning_status=reasoning_status,
+            reasoning_message=reasoning_message,
+            resume_metadata_json=resume_metadata_json,
+            bind_run=bind_fresh_run,
         )
-
-    prepared = _prepare_run_for_session(
-        session_manager=session_manager,
-        session_id=child_session.id,
-        session_depth=child_session.agent_depth,
-        session_seq_num=getattr(child_session, "seq_num", None),
-        parent_session_id=parent_session_id,
-        project_id=project_id,
-        provider=source,
-        workflow_name=workflow_name,
-        agent_name=agent_name,
-        git_branch=git_branch,
-        prompt=prompt,
-        model=model,
-        is_local=is_local,
-        max_agent_depth=max_agent_depth,
-        agent_run_id=agent_run_id,
-        task_id=task_id,
-        claimed_session_id=claimed_session_id,
-        timeout_seconds=timeout_seconds,
-        sandbox_enabled=sandbox_enabled,
-        requested_reasoning_effort=requested_reasoning_effort,
-        effective_reasoning_effort=effective_reasoning_effort,
-        reasoning_required=reasoning_required,
-        reasoning_status=reasoning_status,
-        reasoning_message=reasoning_message,
-        resume_metadata_json=resume_metadata_json,
-        bind_run=bind_fresh_run,
-    )
-    return _issue_prelaunch_credential(
-        session_manager,
-        prepared,
-        timeout_seconds=timeout_seconds,
-    )
+        prompt_file = prepared.prompt_file
+        return _issue_prelaunch_credential(
+            session_manager,
+            prepared,
+            timeout_seconds=timeout_seconds,
+        )
+    except Exception:
+        cleanup_unlaunched_spawn(
+            session_manager,
+            session_id=child_session_id or (prepared.session_id if prepared else None),
+            agent_run_id=prepared.agent_run_id if prepared else resolved_run_id,
+            prompt_file=prompt_file or (prepared.prompt_file if prepared else None),
+            managed_credential=prepared.managed_credential if prepared else None,
+        )
+        raise
 
 
 def prepare_terminal_resume(
@@ -443,4 +528,5 @@ def _prepare_run_for_session(
         agent_depth=session_depth,
         env_vars=env_vars,
         seq_num=session_seq_num,
+        prompt_file=prompt_file,
     )

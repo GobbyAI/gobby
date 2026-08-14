@@ -18,7 +18,7 @@ from gobby.workflows.engine.enforcement_checks import EnforcementCheckMixin
 from gobby.workflows.engine.enforcement_completion import EnforcementCompletionMixin
 from gobby.workflows.engine.enforcement_handlers import EnforcementHandlerMixin
 from gobby.workflows.reserved_variables import RESERVED_WORKFLOW_VARIABLES
-from gobby.workflows.state_manager import WorkflowInstanceManager
+from gobby.workflows.step_instances import AgentStepInstanceManager
 
 __all__ = [
     "EnforcementMixin",
@@ -37,7 +37,7 @@ class EnforcementMixin(
     """Mixin providing tool enforcement methods for RuleEngine."""
 
     db: HubDatabase
-    instance_manager: WorkflowInstanceManager
+    instance_manager: AgentStepInstanceManager
     definition_manager: LocalWorkflowDefinitionManager
     workflow_audit: WorkflowAuditManager
 

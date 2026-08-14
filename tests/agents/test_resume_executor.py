@@ -14,6 +14,7 @@ from gobby.agents import resume_executor
 from gobby.agents.srt_runtime import SandboxLaunch
 from gobby.config.app import DaemonConfig
 from gobby.storage.agents import AgentRun
+from tests.agents.prepared_spawn import prepared_spawn
 
 pytestmark = pytest.mark.unit
 

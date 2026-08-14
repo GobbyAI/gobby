@@ -2,18 +2,12 @@
 
 from __future__ import annotations
 
-import json
 import logging
 from collections.abc import Iterator
 from dataclasses import dataclass
-from typing import Any
-
-import pydantic
 
 from gobby.storage.hub.protocol import HubDatabase
-from gobby.storage.workflow_definitions import LocalWorkflowDefinitionManager
-from gobby.workflows.definitions import WorkflowDefinition
-from gobby.workflows.state_manager import WorkflowInstanceManager
+from gobby.workflows.step_instances import AgentStepInstance, AgentStepInstanceManager
 
 logger = logging.getLogger(__name__)
 
@@ -27,6 +21,7 @@ class StepWorkflowContext:
     description: str | None
     status_message: str | None
     exit_condition: str | None
+    agent_name: str | None = None
 
 
 @dataclass(frozen=True)
@@ -37,6 +32,7 @@ class IncompleteStepWorkflow:
     current_step: str
     exit_condition: str | None
     eval_error: Exception | None = None
+    agent_name: str | None = None
 
 
 def get_active_step_workflow_context(
@@ -55,76 +51,33 @@ def _get_active_step_workflow_context(
 ) -> StepWorkflowContext | None:
     """Read step workflow state, ignoring malformed workflow definitions."""
 
-    for instance, definition in _iter_active_step_workflows(db, session_id):
-        step = definition.get_step(instance.current_step)
+    for instance in _iter_active_step_instances(db, session_id):
+        if not instance.current_step:
+            continue
+        step = instance.snapshot.get_step(instance.current_step)
         if step is None:
             continue
 
         return StepWorkflowContext(
-            workflow_name=instance.workflow_name,
+            workflow_name=instance.agent_name,
             current_step=instance.current_step,
             description=step.description,
             status_message=step.status_message,
-            exit_condition=definition.exit_condition,
+            exit_condition=instance.snapshot.exit_condition,
+            agent_name=instance.agent_name,
         )
 
     return None
 
 
-def _definition_log_extra(instance: Any, definition_row: Any, session_id: str) -> dict[str, Any]:
-    """Build structured context for malformed step workflow definition logs."""
-    row_context = (
-        definition_row.to_dict()
-        if hasattr(definition_row, "to_dict")
-        else {
-            "id": getattr(definition_row, "id", None),
-            "name": getattr(definition_row, "name", instance.workflow_name),
-            "workflow_type": getattr(definition_row, "workflow_type", None),
-        }
-    )
-    return {
-        "session_id": session_id,
-        "workflow_instance_id": getattr(instance, "id", None),
-        "workflow_name": instance.workflow_name,
-        "current_step": instance.current_step,
-        "workflow_definition_id": getattr(definition_row, "id", None),
-        "workflow_definition_json": getattr(definition_row, "definition_json", None),
-        "workflow_definition_row": row_context,
-    }
-
-
-def _iter_active_step_workflows(
+def _iter_active_step_instances(
     db: HubDatabase,
     session_id: str,
-) -> Iterator[tuple[Any, WorkflowDefinition]]:
-    instance_manager = WorkflowInstanceManager(db)
-    definition_manager = LocalWorkflowDefinitionManager(db)
-
-    for instance in instance_manager.get_active_instances(session_id):
-        if not instance.current_step:
-            continue
-        row = definition_manager.get_by_name(instance.workflow_name)
-        if row is None or row.workflow_type == "pipeline":
-            continue
-        try:
-            definition = WorkflowDefinition(**json.loads(row.definition_json))
-        except json.JSONDecodeError as exc:
-            logger.warning(
-                "Skipping malformed step workflow definition %s: invalid JSON: %s",
-                instance.workflow_name,
-                exc,
-                extra=_definition_log_extra(instance, row, session_id),
-            )
-            continue
-        except (TypeError, pydantic.ValidationError) as exc:
-            logger.warning(
-                "Skipping malformed step workflow definition %s: validation failed: %s",
-                instance.workflow_name,
-                exc,
-                extra=_definition_log_extra(instance, row, session_id),
-            )
-            continue
-        yield instance, definition
+) -> Iterator[AgentStepInstance]:
+    instance = AgentStepInstanceManager(db).get_for_session(session_id)
+    if instance is None or not instance.enabled:
+        return
+    yield instance
 
 
 def first_incomplete_step_workflow(
@@ -143,18 +96,19 @@ def first_incomplete_step_workflow(
 
     session_variables = SessionVariableManager(db).get_variables(session_id)
 
-    for instance, definition in _iter_active_step_workflows(db, session_id):
+    for instance in _iter_active_step_instances(db, session_id):
         variables = {**session_variables, **instance.variables}
         if variables.get("step_workflow_complete") is True:
             continue
-        if not definition.steps:
+        if not instance.snapshot.steps:
             continue
 
-        if not definition.exit_condition:
+        if not instance.snapshot.exit_condition:
             return IncompleteStepWorkflow(
-                workflow_name=instance.workflow_name,
-                current_step=instance.current_step,
-                exit_condition=definition.exit_condition,
+                workflow_name=instance.agent_name,
+                current_step=instance.current_step or "",
+                exit_condition=instance.snapshot.exit_condition,
+                agent_name=instance.agent_name,
             )
 
         ctx = {
@@ -166,20 +120,22 @@ def first_incomplete_step_workflow(
             exit_met = SafeExpressionEvaluator(
                 context=ctx,
                 allowed_funcs=build_condition_helpers(context=ctx),
-            ).evaluate(definition.exit_condition)
+            ).evaluate(instance.snapshot.exit_condition)
         except Exception as exc:
             return IncompleteStepWorkflow(
-                workflow_name=instance.workflow_name,
-                current_step=instance.current_step,
-                exit_condition=definition.exit_condition,
+                workflow_name=instance.agent_name,
+                current_step=instance.current_step or "",
+                exit_condition=instance.snapshot.exit_condition,
                 eval_error=exc,
+                agent_name=instance.agent_name,
             )
 
         if not exit_met:
             return IncompleteStepWorkflow(
-                workflow_name=instance.workflow_name,
-                current_step=instance.current_step,
-                exit_condition=definition.exit_condition,
+                workflow_name=instance.agent_name,
+                current_step=instance.current_step or "",
+                exit_condition=instance.snapshot.exit_condition,
+                agent_name=instance.agent_name,
             )
 
     return None

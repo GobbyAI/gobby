@@ -14,7 +14,9 @@ from gobby.storage.hub.protocol import HubDatabase
 from gobby.storage.workflow_definitions import LocalWorkflowDefinitionManager
 from gobby.workflows.definitions import WorkflowDefinition, WorkflowInstance
 from gobby.workflows.engine.core import RuleEngine
-from gobby.workflows.state_manager import WorkflowInstanceManager
+from gobby.workflows.agent_models import AgentStepWorkflowBody
+from gobby.workflows.definitions import WorkflowStep
+from gobby.workflows.step_instances import AgentStepInstance, AgentStepInstanceManager
 
 pytestmark = pytest.mark.unit
 
@@ -41,8 +43,8 @@ def engine(db: HubDatabase) -> RuleEngine:
 
 
 @pytest.fixture
-def instance_mgr(db: HubDatabase) -> WorkflowInstanceManager:
-    return WorkflowInstanceManager(db)
+def instance_mgr(db: HubDatabase) -> AgentStepInstanceManager:
+    return AgentStepInstanceManager(db)
 
 
 def _create_session(db: HubDatabase, session_id: str = SESSION_ID) -> None:
@@ -66,7 +68,7 @@ def _create_session(db: HubDatabase, session_id: str = SESSION_ID) -> None:
 def _setup_workflow(
     db: HubDatabase,
     manager: LocalWorkflowDefinitionManager,
-    instance_mgr: WorkflowInstanceManager,
+    instance_mgr: AgentStepInstanceManager,
     workflow_data: dict[str, Any],
     *,
     current_step: str,
@@ -78,16 +80,15 @@ def _setup_workflow(
         name=definition.name,
         definition_json=json.dumps(workflow_data),
         workflow_type="workflow",
-        priority=100,
         enabled=True,
     )
-    instance_mgr.save_instance(
-        WorkflowInstance(
+    instance_mgr.save(
+        AgentStepInstance(
             id=str(uuid.uuid4()),
             session_id=session_id,
-            workflow_name=definition.name,
+            agent_name=definition.name,
+            snapshot=AgentStepWorkflowBody(steps=[WorkflowStep(name=current_step)]),
             enabled=True,
-            priority=100,
             current_step=current_step,
             step_entered_at=datetime.now(UTC),
             variables=dict(definition.variables),
@@ -118,7 +119,7 @@ async def test_on_mcp_error_when_branches_on_error_code(
     db: HubDatabase,
     manager: LocalWorkflowDefinitionManager,
     engine: RuleEngine,
-    instance_mgr: WorkflowInstanceManager,
+    instance_mgr: AgentStepInstanceManager,
 ) -> None:
     workflow = {
         "name": "task-error-code-workflow",
@@ -159,7 +160,7 @@ async def test_on_mcp_error_when_branches_on_error_code(
         variables={},
     )
 
-    instance = instance_mgr.get_instance(SESSION_ID, "task-error-code-workflow")
+    instance = instance_mgr.get_for_session(SESSION_ID, "task-error-code-workflow")
     assert instance is not None
     assert instance.variables.get("task_claimed") is True
     assert instance.current_step == "done"

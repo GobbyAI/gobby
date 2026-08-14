@@ -13,9 +13,11 @@ import pytest
 from gobby.hooks.events import HookEvent, HookEventType, SessionSource
 from gobby.storage.hub.protocol import HubDatabase
 from gobby.storage.workflow_definitions import LocalWorkflowDefinitionManager
-from gobby.workflows.definitions import WorkflowInstance
+from gobby.workflows.step_instances import AgentStepInstance
 from gobby.workflows.engine.core import RuleEngine
-from gobby.workflows.state_manager import WorkflowInstanceManager
+from gobby.workflows.agent_models import AgentStepWorkflowBody
+from gobby.workflows.definitions import WorkflowStep
+from gobby.workflows.step_instances import AgentStepInstance, AgentStepInstanceManager
 
 pytestmark = pytest.mark.unit
 
@@ -125,7 +127,7 @@ def _setup_workflow(
     current_step: str = "claim",
     variables: dict[str, Any] | None = None,
     workflow: dict[str, Any] | None = None,
-) -> WorkflowInstanceManager:
+) -> AgentStepInstanceManager:
     _create_session(db)
     workflow = workflow or _developer_workflow()
     definition_manager = LocalWorkflowDefinitionManager(db)
@@ -133,17 +135,16 @@ def _setup_workflow(
         name=workflow["name"],
         definition_json=json.dumps(workflow),
         workflow_type="workflow",
-        priority=100,
         enabled=True,
     )
-    instance_manager = WorkflowInstanceManager(db)
-    instance_manager.save_instance(
-        WorkflowInstance(
+    instance_manager = AgentStepInstanceManager(db)
+    instance_manager.save(
+        AgentStepInstance(
             id=str(uuid.uuid4()),
             session_id=SESSION_ID,
-            workflow_name=str(workflow["name"]),
+            agent_name=str(workflow["name"]),
+            snapshot=AgentStepWorkflowBody(steps=[WorkflowStep(name=current_step)]),
             enabled=True,
-            priority=100,
             current_step=current_step,
             step_entered_at=datetime.now(UTC),
             variables=variables if variables is not None else dict(workflow["variables"]),
@@ -242,7 +243,7 @@ async def test_successful_claim_advances_through_empty_skill_gate(db: HubDatabas
         variables=variables,
     )
 
-    instance = instance_manager.get_instance(SESSION_ID, "developer-steps")
+    instance = instance_manager.get_for_session(SESSION_ID, "developer-steps")
     assert instance is not None
     assert instance.current_step == "implement"
     assert response.context is not None
@@ -272,7 +273,7 @@ async def test_required_additional_skills_gate_exact_loaded_skill_names(
         session_id=SESSION_ID,
         variables=variables,
     )
-    instance = instance_manager.get_instance(SESSION_ID, "developer-steps")
+    instance = instance_manager.get_for_session(SESSION_ID, "developer-steps")
     assert instance is not None
     assert instance.current_step == "load_additional_skills"
     assert instance.variables["additional_skills_loaded"] is False
@@ -283,7 +284,7 @@ async def test_required_additional_skills_gate_exact_loaded_skill_names(
         session_id=SESSION_ID,
         variables=variables,
     )
-    instance = instance_manager.get_instance(SESSION_ID, "developer-steps")
+    instance = instance_manager.get_for_session(SESSION_ID, "developer-steps")
     assert instance is not None
     assert instance.current_step == "implement"
     assert instance.variables["additional_skills_loaded"] is True
@@ -396,7 +397,7 @@ async def test_missing_session_scoped_transition_variable_waits_without_error(
         variables=variables,
     )
 
-    instance = instance_manager.get_instance(SESSION_ID, "set-variable-steps")
+    instance = instance_manager.get_for_session(SESSION_ID, "set-variable-steps")
     assert instance is not None
     assert instance.current_step == "plan"
     assert response.decision == "allow"
@@ -418,7 +419,7 @@ async def test_native_set_variable_advances_session_scoped_transition(
         variables=variables,
     )
 
-    instance = instance_manager.get_instance(SESSION_ID, "set-variable-steps")
+    instance = instance_manager.get_for_session(SESSION_ID, "set-variable-steps")
     assert instance is not None
     assert instance.current_step == "execute"
     assert variables["merge_plan"] == {"steps": ["leaf"]}
@@ -447,7 +448,7 @@ async def test_native_set_variable_does_not_shadow_workflow_local_variable(
         variables=variables,
     )
 
-    instance = instance_manager.get_instance(SESSION_ID, "set-variable-steps")
+    instance = instance_manager.get_for_session(SESSION_ID, "set-variable-steps")
     assert instance is not None
     assert instance.current_step == "plan"
     assert instance.variables["merge_plan"] is False

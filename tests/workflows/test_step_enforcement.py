@@ -18,7 +18,9 @@ from gobby.storage.agents import LocalAgentRunManager
 from gobby.storage.workflow_definitions import LocalWorkflowDefinitionManager
 from gobby.workflows.definitions import WorkflowDefinition
 from gobby.workflows.engine.core import RuleEngine
-from gobby.workflows.state_manager import WorkflowInstanceManager
+from gobby.workflows.agent_models import AgentStepWorkflowBody
+from gobby.workflows.definitions import WorkflowStep
+from gobby.workflows.step_instances import AgentStepInstance, AgentStepInstanceManager
 
 if TYPE_CHECKING:
     from gobby.storage.hub.protocol import HubDatabase
@@ -45,8 +47,8 @@ def engine(db: "HubDatabase") -> RuleEngine:
 
 
 @pytest.fixture
-def instance_mgr(db: "HubDatabase") -> WorkflowInstanceManager:
-    return WorkflowInstanceManager(db)
+def instance_mgr(db: "HubDatabase") -> AgentStepInstanceManager:
+    return AgentStepInstanceManager(db)
 
 
 AGENT_BLOCKED_TOOLS = [
@@ -163,7 +165,7 @@ def _create_session(db: "HubDatabase", session_id: str = SESSION_ID) -> None:
 def _setup_step_workflow(
     db: "HubDatabase",
     manager: LocalWorkflowDefinitionManager,
-    instance_mgr: WorkflowInstanceManager,
+    instance_mgr: AgentStepInstanceManager,
     session_id: str = SESSION_ID,
     current_step: str = "claim",
     workflow_data: dict[str, Any] | None = None,
@@ -178,23 +180,22 @@ def _setup_step_workflow(
         name=defn.name,
         definition_json=json.dumps(data),
         workflow_type="workflow",
-        priority=100,
         enabled=True,
     )
 
-    from gobby.workflows.definitions import WorkflowInstance
+    from gobby.workflows.step_instances import AgentStepInstance
 
-    instance = WorkflowInstance(
+    instance = AgentStepInstance(
         id=str(uuid.uuid4()),
         session_id=session_id,
-        workflow_name=defn.name,
+        agent_name=defn.name,
+        snapshot=AgentStepWorkflowBody(steps=[WorkflowStep(name=current_step)]),
         enabled=True,
-        priority=100,
         current_step=current_step,
         step_entered_at=datetime.now(UTC),
         variables=dict(defn.variables),
     )
-    instance_mgr.save_instance(instance)
+    instance_mgr.save(instance)
 
 
 def _running_rule_engine(
@@ -217,7 +218,7 @@ def _running_rule_engine(
 async def test_third_denial_terminates_run(
     db: "HubDatabase",
     manager: LocalWorkflowDefinitionManager,
-    instance_mgr: WorkflowInstanceManager,
+    instance_mgr: AgentStepInstanceManager,
 ) -> None:
     """A repeated step denial terminalizes its run without advancing the guarded step."""
     _setup_step_workflow(db, manager, instance_mgr, current_step="claim")
@@ -241,7 +242,7 @@ async def test_third_denial_terminates_run(
     assert blocked_run.status == "error"
     assert blocked_run.error is not None
     assert "blocked after 3 identical enforcement denials" in blocked_run.error
-    instance = instance_mgr.get_instance(SESSION_ID, "developer-workflow")
+    instance = instance_mgr.get_for_session(SESSION_ID, "developer-workflow")
     assert instance is not None
     assert instance.current_step == "claim"
 
@@ -250,7 +251,7 @@ async def test_third_denial_terminates_run(
 async def test_unrelated_allowed_calls_do_not_reset_denial_counter(
     db: "HubDatabase",
     manager: LocalWorkflowDefinitionManager,
-    instance_mgr: WorkflowInstanceManager,
+    instance_mgr: AgentStepInstanceManager,
 ) -> None:
     """Allowed polling between identical denials cannot prevent terminalization."""
     _setup_step_workflow(db, manager, instance_mgr, current_step="claim")
@@ -282,7 +283,7 @@ async def test_unrelated_allowed_calls_do_not_reset_denial_counter(
 async def test_allowed_target_resets_only_its_denial_counter(
     db: "HubDatabase",
     manager: LocalWorkflowDefinitionManager,
-    instance_mgr: WorkflowInstanceManager,
+    instance_mgr: AgentStepInstanceManager,
 ) -> None:
     """A target that becomes allowed clears its own counter and preserves other targets."""
     _setup_step_workflow(db, manager, instance_mgr, current_step="claim")
@@ -312,7 +313,7 @@ async def test_allowed_target_resets_only_its_denial_counter(
     )
 
     assert allowed.decision == "allow"
-    instance = instance_mgr.get_instance(SESSION_ID, "developer-workflow")
+    instance = instance_mgr.get_for_session(SESSION_ID, "developer-workflow")
     assert instance is not None
     state = instance.variables["_enforcement_denial_counts"]
     assert isinstance(state, dict)
@@ -327,7 +328,7 @@ async def test_allowed_target_resets_only_its_denial_counter(
 async def test_denial_counter_key_and_resets(
     db: "HubDatabase",
     manager: LocalWorkflowDefinitionManager,
-    instance_mgr: WorkflowInstanceManager,
+    instance_mgr: AgentStepInstanceManager,
 ) -> None:
     """Denials use the full key and a new step revision starts a fresh ledger."""
     _setup_step_workflow(db, manager, instance_mgr, current_step="claim")
@@ -341,7 +342,7 @@ async def test_denial_counter_key_and_resets(
         )
         assert response.decision == "block"
 
-    instance = instance_mgr.get_instance(SESSION_ID, "developer-workflow")
+    instance = instance_mgr.get_for_session(SESSION_ID, "developer-workflow")
     assert instance is not None
     assert instance.step_entered_at is not None
     state = instance.variables["_enforcement_denial_counts"]
@@ -361,12 +362,12 @@ async def test_denial_counter_key_and_resets(
         session_id=SESSION_ID,
         variables={},
     )
-    instance = instance_mgr.get_instance(SESSION_ID, "developer-workflow")
+    instance = instance_mgr.get_for_session(SESSION_ID, "developer-workflow")
     assert instance is not None
     prior_revision = instance.step_entered_at
     instance.current_step = "implement"
     instance.step_entered_at = datetime.now(UTC)
-    instance_mgr.save_instance(instance)
+    instance_mgr.save(instance)
 
     transitioned_denial = await rule_engine.evaluate(
         _make_event(
@@ -383,7 +384,7 @@ async def test_denial_counter_key_and_resets(
         variables={},
     )
     assert transitioned_denial.decision == "block"
-    instance = instance_mgr.get_instance(SESSION_ID, "developer-workflow")
+    instance = instance_mgr.get_for_session(SESSION_ID, "developer-workflow")
     assert instance is not None
     assert instance.step_entered_at != prior_revision
     assert instance.step_entered_at is not None
@@ -422,7 +423,7 @@ async def test_agent_denials_carry_guidance_and_count(
     variables: dict[str, Any],
     db: "HubDatabase",
     manager: LocalWorkflowDefinitionManager,
-    instance_mgr: WorkflowInstanceManager,
+    instance_mgr: AgentStepInstanceManager,
 ) -> None:
     """Agent-level native and MCP blocks use the same guided terminal counter."""
     _setup_step_workflow(db, manager, instance_mgr, current_step="implement")
@@ -471,7 +472,7 @@ async def test_reserved_variable_denial_is_variable_specific(
     db: "HubDatabase",
     manager: LocalWorkflowDefinitionManager,
     engine: RuleEngine,
-    instance_mgr: WorkflowInstanceManager,
+    instance_mgr: AgentStepInstanceManager,
 ) -> None:
     """Native and MCP set_variable routes tell the agent to abandon only one variable."""
     _setup_step_workflow(db, manager, instance_mgr, current_step="implement")
@@ -563,7 +564,7 @@ class TestStepToolBlocking:
         db: "HubDatabase",
         manager: LocalWorkflowDefinitionManager,
         engine: RuleEngine,
-        instance_mgr: WorkflowInstanceManager,
+        instance_mgr: AgentStepInstanceManager,
     ) -> None:
         """Tool in allowed_tools list should pass."""
         _setup_step_workflow(db, manager, instance_mgr, current_step="claim")
@@ -579,7 +580,7 @@ class TestStepToolBlocking:
         db: "HubDatabase",
         manager: LocalWorkflowDefinitionManager,
         engine: RuleEngine,
-        instance_mgr: WorkflowInstanceManager,
+        instance_mgr: AgentStepInstanceManager,
     ) -> None:
         """Tool NOT in allowed_tools list should be blocked."""
         _setup_step_workflow(db, manager, instance_mgr, current_step="claim")
@@ -607,7 +608,7 @@ class TestStepToolBlocking:
         db: "HubDatabase",
         manager: LocalWorkflowDefinitionManager,
         engine: RuleEngine,
-        instance_mgr: WorkflowInstanceManager,
+        instance_mgr: AgentStepInstanceManager,
     ) -> None:
         """Blocked load-skill mistakes should give the direct bootstrap call."""
         workflow = {
@@ -669,7 +670,7 @@ class TestStepToolBlocking:
         db: "HubDatabase",
         manager: LocalWorkflowDefinitionManager,
         engine: RuleEngine,
-        instance_mgr: WorkflowInstanceManager,
+        instance_mgr: AgentStepInstanceManager,
     ) -> None:
         """When allowed_tools is 'all', any native tool should pass."""
         _setup_step_workflow(db, manager, instance_mgr, current_step="implement")
@@ -685,7 +686,7 @@ class TestStepToolBlocking:
         db: "HubDatabase",
         manager: LocalWorkflowDefinitionManager,
         engine: RuleEngine,
-        instance_mgr: WorkflowInstanceManager,
+        instance_mgr: AgentStepInstanceManager,
     ) -> None:
         """Tool in blocked_tools list should be blocked even with allowed_tools='all'."""
         workflow = {
@@ -715,7 +716,7 @@ class TestStepToolBlocking:
         db: "HubDatabase",
         manager: LocalWorkflowDefinitionManager,
         engine: RuleEngine,
-        instance_mgr: WorkflowInstanceManager,
+        instance_mgr: AgentStepInstanceManager,
     ) -> None:
         """Discovery tools should pass regardless of step restrictions."""
         _setup_step_workflow(db, manager, instance_mgr, current_step="claim")
@@ -756,7 +757,7 @@ class TestStepMCPToolBlocking:
         db: "HubDatabase",
         manager: LocalWorkflowDefinitionManager,
         engine: RuleEngine,
-        instance_mgr: WorkflowInstanceManager,
+        instance_mgr: AgentStepInstanceManager,
     ) -> None:
         """MCP tool in allowed_mcp_tools should pass."""
         _setup_step_workflow(db, manager, instance_mgr, current_step="claim")
@@ -780,7 +781,7 @@ class TestStepMCPToolBlocking:
         db: "HubDatabase",
         manager: LocalWorkflowDefinitionManager,
         engine: RuleEngine,
-        instance_mgr: WorkflowInstanceManager,
+        instance_mgr: AgentStepInstanceManager,
     ) -> None:
         """MCP tool NOT in allowed_mcp_tools should be blocked."""
         _setup_step_workflow(db, manager, instance_mgr, current_step="claim")
@@ -821,7 +822,7 @@ class TestStepMCPToolBlocking:
         db: "HubDatabase",
         manager: LocalWorkflowDefinitionManager,
         engine: RuleEngine,
-        instance_mgr: WorkflowInstanceManager,
+        instance_mgr: AgentStepInstanceManager,
         allowed_mcp_tools: list[str] | str,
         blocked_mcp_tools: list[str],
         expected_decision: str,
@@ -867,7 +868,7 @@ class TestStepMCPToolBlocking:
         db: "HubDatabase",
         manager: LocalWorkflowDefinitionManager,
         engine: RuleEngine,
-        instance_mgr: WorkflowInstanceManager,
+        instance_mgr: AgentStepInstanceManager,
     ) -> None:
         """A wrong proxy call during load_skill should name the get_skill recovery call."""
         workflow = {
@@ -923,7 +924,7 @@ class TestStepMCPToolBlocking:
         db: "HubDatabase",
         manager: LocalWorkflowDefinitionManager,
         engine: RuleEngine,
-        instance_mgr: WorkflowInstanceManager,
+        instance_mgr: AgentStepInstanceManager,
     ) -> None:
         """MCP tool in blocked_mcp_tools should be blocked."""
         _setup_step_workflow(db, manager, instance_mgr, current_step="implement")
@@ -947,7 +948,7 @@ class TestStepMCPToolBlocking:
         db: "HubDatabase",
         manager: LocalWorkflowDefinitionManager,
         engine: RuleEngine,
-        instance_mgr: WorkflowInstanceManager,
+        instance_mgr: AgentStepInstanceManager,
     ) -> None:
         """MCP discovery tools should pass even when allowed_mcp_tools is restrictive."""
         _setup_step_workflow(db, manager, instance_mgr, current_step="claim")
@@ -971,7 +972,7 @@ class TestStepMCPToolBlocking:
         db: "HubDatabase",
         manager: LocalWorkflowDefinitionManager,
         engine: RuleEngine,
-        instance_mgr: WorkflowInstanceManager,
+        instance_mgr: AgentStepInstanceManager,
     ) -> None:
         """Wildcard pattern 'server:*' should match all tools on that server."""
         workflow = {
@@ -1011,7 +1012,7 @@ class TestStepTransitions:
         db: "HubDatabase",
         manager: LocalWorkflowDefinitionManager,
         engine: RuleEngine,
-        instance_mgr: WorkflowInstanceManager,
+        instance_mgr: AgentStepInstanceManager,
     ) -> None:
         """on_mcp_success handler should set workflow instance variable."""
         _setup_step_workflow(db, manager, instance_mgr, current_step="claim")
@@ -1030,7 +1031,7 @@ class TestStepTransitions:
         await engine.evaluate(event, session_id=SESSION_ID, variables=variables)
 
         # Check the instance was updated
-        instance = instance_mgr.get_instance(SESSION_ID, "developer-workflow")
+        instance = instance_mgr.get_for_session(SESSION_ID, "developer-workflow")
         assert instance is not None
         assert instance.variables.get("task_claimed") is True
 
@@ -1040,7 +1041,7 @@ class TestStepTransitions:
         db: "HubDatabase",
         manager: LocalWorkflowDefinitionManager,
         engine: RuleEngine,
-        instance_mgr: WorkflowInstanceManager,
+        instance_mgr: AgentStepInstanceManager,
     ) -> None:
         """Transition should fire when its condition becomes true via on_mcp_success."""
         _setup_step_workflow(db, manager, instance_mgr, current_step="claim")
@@ -1058,7 +1059,7 @@ class TestStepTransitions:
 
         response = await engine.evaluate(event, session_id=SESSION_ID, variables=variables)
 
-        instance = instance_mgr.get_instance(SESSION_ID, "developer-workflow")
+        instance = instance_mgr.get_for_session(SESSION_ID, "developer-workflow")
         assert instance is not None
         assert instance.current_step == "implement"
         # Transition notification should be in the response context
@@ -1072,7 +1073,7 @@ class TestStepTransitions:
         db: "HubDatabase",
         manager: LocalWorkflowDefinitionManager,
         engine: RuleEngine,
-        instance_mgr: WorkflowInstanceManager,
+        instance_mgr: AgentStepInstanceManager,
     ) -> None:
         """Failed tool calls should not trigger on_mcp_success or transitions."""
         _setup_step_workflow(db, manager, instance_mgr, current_step="claim")
@@ -1092,7 +1093,7 @@ class TestStepTransitions:
 
         await engine.evaluate(event, session_id=SESSION_ID, variables=variables)
 
-        instance = instance_mgr.get_instance(SESSION_ID, "developer-workflow")
+        instance = instance_mgr.get_for_session(SESSION_ID, "developer-workflow")
         assert instance is not None
         assert instance.current_step == "claim"  # No transition
 
@@ -1102,7 +1103,7 @@ class TestStepTransitions:
         db: "HubDatabase",
         manager: LocalWorkflowDefinitionManager,
         engine: RuleEngine,
-        instance_mgr: WorkflowInstanceManager,
+        instance_mgr: AgentStepInstanceManager,
     ) -> None:
         """submit_for_review in implement step should transition to terminate."""
         _setup_step_workflow(db, manager, instance_mgr, current_step="implement")
@@ -1120,7 +1121,7 @@ class TestStepTransitions:
 
         response = await engine.evaluate(event, session_id=SESSION_ID, variables=variables)
 
-        instance = instance_mgr.get_instance(SESSION_ID, "developer-workflow")
+        instance = instance_mgr.get_for_session(SESSION_ID, "developer-workflow")
         assert instance is not None
         assert instance.current_step == "terminate"
         assert instance.variables.get("review_submitted") is True
@@ -1135,7 +1136,7 @@ class TestStepTransitions:
         db: "HubDatabase",
         manager: LocalWorkflowDefinitionManager,
         engine: RuleEngine,
-        instance_mgr: WorkflowInstanceManager,
+        instance_mgr: AgentStepInstanceManager,
     ) -> None:
         """Codex's alternate call_tool alias should fire on_mcp_success handlers."""
         _setup_step_workflow(db, manager, instance_mgr, current_step="implement")
@@ -1153,7 +1154,7 @@ class TestStepTransitions:
 
         response = await engine.evaluate(event, session_id=SESSION_ID, variables=variables)
 
-        instance = instance_mgr.get_instance(SESSION_ID, "developer-workflow")
+        instance = instance_mgr.get_for_session(SESSION_ID, "developer-workflow")
         assert instance is not None
         assert instance.current_step == "terminate"
         assert instance.variables.get("review_submitted") is True
@@ -1167,7 +1168,7 @@ class TestStepTransitions:
         db: "HubDatabase",
         manager: LocalWorkflowDefinitionManager,
         engine: RuleEngine,
-        instance_mgr: WorkflowInstanceManager,
+        instance_mgr: AgentStepInstanceManager,
     ) -> None:
         """MCP tools not in on_mcp_success should not trigger transitions."""
         _setup_step_workflow(db, manager, instance_mgr, current_step="implement")
@@ -1185,7 +1186,7 @@ class TestStepTransitions:
 
         await engine.evaluate(event, session_id=SESSION_ID, variables=variables)
 
-        instance = instance_mgr.get_instance(SESSION_ID, "developer-workflow")
+        instance = instance_mgr.get_for_session(SESSION_ID, "developer-workflow")
         assert instance is not None
         assert instance.current_step == "implement"  # No change
 
@@ -1195,7 +1196,7 @@ class TestStepTransitions:
         db: "HubDatabase",
         manager: LocalWorkflowDefinitionManager,
         engine: RuleEngine,
-        instance_mgr: WorkflowInstanceManager,
+        instance_mgr: AgentStepInstanceManager,
     ) -> None:
         """When no transition fires, response context should not contain transition info."""
         _setup_step_workflow(db, manager, instance_mgr, current_step="implement")
@@ -1221,7 +1222,7 @@ class TestStepTransitions:
         db: "HubDatabase",
         manager: LocalWorkflowDefinitionManager,
         engine: RuleEngine,
-        instance_mgr: WorkflowInstanceManager,
+        instance_mgr: AgentStepInstanceManager,
     ) -> None:
         """Transition notification should include the new step's status_message."""
         workflow_with_status = {
@@ -1280,7 +1281,7 @@ class TestStepTransitions:
         db: "HubDatabase",
         manager: LocalWorkflowDefinitionManager,
         engine: RuleEngine,
-        instance_mgr: WorkflowInstanceManager,
+        instance_mgr: AgentStepInstanceManager,
     ) -> None:
         """Handler-level when clauses should gate on_mcp_success variable updates."""
         workflow = {
@@ -1322,7 +1323,7 @@ class TestStepTransitions:
 
         await engine.evaluate(event, session_id=SESSION_ID, variables=variables)
 
-        instance = instance_mgr.get_instance(SESSION_ID, "skill-gate-workflow")
+        instance = instance_mgr.get_for_session(SESSION_ID, "skill-gate-workflow")
         assert instance is not None
         assert instance.variables.get("skill_loaded") is False
 
@@ -1340,7 +1341,7 @@ class TestStepTransitions:
 
         await engine.evaluate(matching_event, session_id=SESSION_ID, variables=variables)
 
-        instance = instance_mgr.get_instance(SESSION_ID, "skill-gate-workflow")
+        instance = instance_mgr.get_for_session(SESSION_ID, "skill-gate-workflow")
         assert instance is not None
         assert instance.variables.get("skill_loaded") is True
 
@@ -1350,7 +1351,7 @@ class TestStepTransitions:
         db: "HubDatabase",
         manager: LocalWorkflowDefinitionManager,
         engine: RuleEngine,
-        instance_mgr: WorkflowInstanceManager,
+        instance_mgr: AgentStepInstanceManager,
     ) -> None:
         """Session-scoped variables must NOT drive workflow transitions.
 
@@ -1366,7 +1367,7 @@ class TestStepTransitions:
         """
         _setup_step_workflow(db, manager, instance_mgr, current_step="claim")
         # Confirm the instance starts with task_claimed=False.
-        instance = instance_mgr.get_instance(SESSION_ID, "developer-workflow")
+        instance = instance_mgr.get_for_session(SESSION_ID, "developer-workflow")
         assert instance is not None
         assert instance.variables.get("task_claimed") is False
 
@@ -1390,7 +1391,7 @@ class TestStepTransitions:
 
         await engine.evaluate(event, session_id=SESSION_ID, variables=variables)
 
-        instance = instance_mgr.get_instance(SESSION_ID, "developer-workflow")
+        instance = instance_mgr.get_for_session(SESSION_ID, "developer-workflow")
         assert instance is not None
         # Must stay in claim: instance.variables wins over session vars.
         assert instance.current_step == "claim"
@@ -1402,7 +1403,7 @@ class TestStepTransitions:
         db: "HubDatabase",
         manager: LocalWorkflowDefinitionManager,
         engine: RuleEngine,
-        instance_mgr: WorkflowInstanceManager,
+        instance_mgr: AgentStepInstanceManager,
     ) -> None:
         """Workflow-local handler state must transition even when session var is False.
 
@@ -1428,7 +1429,7 @@ class TestStepTransitions:
 
         await engine.evaluate(event, session_id=SESSION_ID, variables=variables)
 
-        instance = instance_mgr.get_instance(SESSION_ID, "developer-workflow")
+        instance = instance_mgr.get_for_session(SESSION_ID, "developer-workflow")
         assert instance is not None
         assert instance.current_step == "implement"
         assert instance.variables.get("task_claimed") is True
@@ -1439,7 +1440,7 @@ class TestStepTransitions:
         db: "HubDatabase",
         manager: LocalWorkflowDefinitionManager,
         engine: RuleEngine,
-        instance_mgr: WorkflowInstanceManager,
+        instance_mgr: AgentStepInstanceManager,
     ) -> None:
         """Session-only variables (not present in instance.variables) must stay readable.
 
@@ -1491,7 +1492,7 @@ class TestStepTransitions:
 
         await engine.evaluate(event, session_id=SESSION_ID, variables=variables)
 
-        instance = instance_mgr.get_instance(SESSION_ID, "session-var-gated")
+        instance = instance_mgr.get_for_session(SESSION_ID, "session-var-gated")
         assert instance is not None
         assert instance.current_step == "done"
 
@@ -1501,7 +1502,7 @@ class TestStepTransitions:
         db: "HubDatabase",
         manager: LocalWorkflowDefinitionManager,
         engine: RuleEngine,
-        instance_mgr: WorkflowInstanceManager,
+        instance_mgr: AgentStepInstanceManager,
     ) -> None:
         workflow = {
             "name": "merged-exit-vars",
@@ -1555,7 +1556,7 @@ class TestStepTransitions:
         db: "HubDatabase",
         manager: LocalWorkflowDefinitionManager,
         engine: RuleEngine,
-        instance_mgr: WorkflowInstanceManager,
+        instance_mgr: AgentStepInstanceManager,
     ) -> None:
         """Operator tool send_keys must bypass step MCP allow-lists.
 
@@ -1592,7 +1593,7 @@ class TestStepTransitions:
         db: "HubDatabase",
         manager: LocalWorkflowDefinitionManager,
         engine: RuleEngine,
-        instance_mgr: WorkflowInstanceManager,
+        instance_mgr: AgentStepInstanceManager,
     ) -> None:
         """Operator tool capture_output must bypass step MCP allow-lists."""
         _setup_step_workflow(db, manager, instance_mgr, current_step="terminate")
@@ -1665,7 +1666,7 @@ class TestToolOutputRouting:
         db: "HubDatabase",
         manager: LocalWorkflowDefinitionManager,
         engine: RuleEngine,
-        instance_mgr: WorkflowInstanceManager,
+        instance_mgr: AgentStepInstanceManager,
     ) -> None:
         """Tool output with success:false should NOT fire on_mcp_success handlers."""
         _setup_step_workflow(
@@ -1686,7 +1687,7 @@ class TestToolOutputRouting:
 
         await engine.evaluate(event, session_id=SESSION_ID, variables=variables)
 
-        instance = instance_mgr.get_instance(SESSION_ID, "merge-workflow")
+        instance = instance_mgr.get_for_session(SESSION_ID, "merge-workflow")
         assert instance is not None
         # merge_complete should NOT be set (on_mcp_success was skipped)
         assert instance.variables.get("merge_complete") is False
@@ -1697,7 +1698,7 @@ class TestToolOutputRouting:
         db: "HubDatabase",
         manager: LocalWorkflowDefinitionManager,
         engine: RuleEngine,
-        instance_mgr: WorkflowInstanceManager,
+        instance_mgr: AgentStepInstanceManager,
     ) -> None:
         """Tool output with success:false should fire on_mcp_error handlers."""
         _setup_step_workflow(
@@ -1718,7 +1719,7 @@ class TestToolOutputRouting:
 
         await engine.evaluate(event, session_id=SESSION_ID, variables=variables)
 
-        instance = instance_mgr.get_instance(SESSION_ID, "merge-workflow")
+        instance = instance_mgr.get_for_session(SESSION_ID, "merge-workflow")
         assert instance is not None
         assert instance.variables.get("has_conflicts") is True
         # Transition to resolve_conflicts should fire
@@ -1730,7 +1731,7 @@ class TestToolOutputRouting:
         db: "HubDatabase",
         manager: LocalWorkflowDefinitionManager,
         engine: RuleEngine,
-        instance_mgr: WorkflowInstanceManager,
+        instance_mgr: AgentStepInstanceManager,
     ) -> None:
         """Tool output with success:true should fire on_mcp_success (no regression)."""
         _setup_step_workflow(
@@ -1751,7 +1752,7 @@ class TestToolOutputRouting:
 
         await engine.evaluate(event, session_id=SESSION_ID, variables=variables)
 
-        instance = instance_mgr.get_instance(SESSION_ID, "merge-workflow")
+        instance = instance_mgr.get_for_session(SESSION_ID, "merge-workflow")
         assert instance is not None
         assert instance.variables.get("merge_complete") is True
         assert instance.variables.get("has_conflicts") is False
@@ -1763,7 +1764,7 @@ class TestToolOutputRouting:
         db: "HubDatabase",
         manager: LocalWorkflowDefinitionManager,
         engine: RuleEngine,
-        instance_mgr: WorkflowInstanceManager,
+        instance_mgr: AgentStepInstanceManager,
     ) -> None:
         """Proxy-wrapped response {success:true, result:{success:false}} should route to on_mcp_error."""
         _setup_step_workflow(
@@ -1789,7 +1790,7 @@ class TestToolOutputRouting:
 
         await engine.evaluate(event, session_id=SESSION_ID, variables=variables)
 
-        instance = instance_mgr.get_instance(SESSION_ID, "merge-workflow")
+        instance = instance_mgr.get_for_session(SESSION_ID, "merge-workflow")
         assert instance is not None
         assert instance.variables.get("has_conflicts") is True
         assert instance.current_step == "resolve_conflicts"
@@ -1800,7 +1801,7 @@ class TestToolOutputRouting:
         db: "HubDatabase",
         manager: LocalWorkflowDefinitionManager,
         engine: RuleEngine,
-        instance_mgr: WorkflowInstanceManager,
+        instance_mgr: AgentStepInstanceManager,
     ) -> None:
         """When tool_output is absent, should default to on_mcp_success (backward compat)."""
         _setup_step_workflow(
@@ -1820,7 +1821,7 @@ class TestToolOutputRouting:
 
         await engine.evaluate(event, session_id=SESSION_ID, variables=variables)
 
-        instance = instance_mgr.get_instance(SESSION_ID, "merge-workflow")
+        instance = instance_mgr.get_for_session(SESSION_ID, "merge-workflow")
         assert instance is not None
         # Without tool_output, should fall through to on_mcp_success
         assert instance.variables.get("merge_complete") is True
@@ -1832,7 +1833,7 @@ class TestToolOutputRouting:
         db: "HubDatabase",
         manager: LocalWorkflowDefinitionManager,
         engine: RuleEngine,
-        instance_mgr: WorkflowInstanceManager,
+        instance_mgr: AgentStepInstanceManager,
     ) -> None:
         """JSON string tool_output should be parsed and routed correctly."""
         _setup_step_workflow(
@@ -1853,7 +1854,7 @@ class TestToolOutputRouting:
 
         await engine.evaluate(event, session_id=SESSION_ID, variables=variables)
 
-        instance = instance_mgr.get_instance(SESSION_ID, "merge-workflow")
+        instance = instance_mgr.get_for_session(SESSION_ID, "merge-workflow")
         assert instance is not None
         assert instance.variables.get("has_conflicts") is True
         assert instance.current_step == "resolve_conflicts"
@@ -1864,7 +1865,7 @@ class TestToolOutputRouting:
         db: "HubDatabase",
         manager: LocalWorkflowDefinitionManager,
         engine: RuleEngine,
-        instance_mgr: WorkflowInstanceManager,
+        instance_mgr: AgentStepInstanceManager,
     ) -> None:
         """Handler-level when clauses should gate on_mcp_error variable updates."""
         workflow = {
@@ -1913,7 +1914,7 @@ class TestToolOutputRouting:
 
         await engine.evaluate(event, session_id=SESSION_ID, variables=variables)
 
-        instance = instance_mgr.get_instance(SESSION_ID, "merge-when-workflow")
+        instance = instance_mgr.get_for_session(SESSION_ID, "merge-when-workflow")
         assert instance is not None
         assert instance.variables.get("has_conflicts") is False
 
@@ -1936,7 +1937,7 @@ class TestToolOutputRouting:
 
         await engine.evaluate(matching_event, session_id=SESSION_ID, variables=variables)
 
-        instance = instance_mgr.get_instance(SESSION_ID, "merge-when-workflow")
+        instance = instance_mgr.get_for_session(SESSION_ID, "merge-when-workflow")
         assert instance is not None
         assert instance.variables.get("has_conflicts") is True
 
@@ -1951,7 +1952,7 @@ class TestStepEnforcementAfterTransition:
         db: "HubDatabase",
         manager: LocalWorkflowDefinitionManager,
         engine: RuleEngine,
-        instance_mgr: WorkflowInstanceManager,
+        instance_mgr: AgentStepInstanceManager,
     ) -> None:
         """After transitioning to terminate, only kill_agent should be allowed."""
         _setup_step_workflow(db, manager, instance_mgr, current_step="terminate")
@@ -1975,7 +1976,7 @@ class TestStepEnforcementAfterTransition:
         db: "HubDatabase",
         manager: LocalWorkflowDefinitionManager,
         engine: RuleEngine,
-        instance_mgr: WorkflowInstanceManager,
+        instance_mgr: AgentStepInstanceManager,
     ) -> None:
         """kill_agent should be allowed in the terminate step."""
         _setup_step_workflow(db, manager, instance_mgr, current_step="terminate")
@@ -1999,7 +2000,7 @@ class TestStepEnforcementAfterTransition:
         db: "HubDatabase",
         manager: LocalWorkflowDefinitionManager,
         engine: RuleEngine,
-        instance_mgr: WorkflowInstanceManager,
+        instance_mgr: AgentStepInstanceManager,
     ) -> None:
         """set_variable should be allowed even in steps with restricted allowed_tools.
 
@@ -2021,7 +2022,7 @@ class TestStepEnforcementAfterTransition:
         db: "HubDatabase",
         manager: LocalWorkflowDefinitionManager,
         engine: RuleEngine,
-        instance_mgr: WorkflowInstanceManager,
+        instance_mgr: AgentStepInstanceManager,
     ) -> None:
         """get_variable should be allowed even in steps with restricted allowed_tools."""
         _setup_step_workflow(db, manager, instance_mgr, current_step="terminate")
@@ -2039,7 +2040,7 @@ class TestStepEnforcementAfterTransition:
         db: "HubDatabase",
         manager: LocalWorkflowDefinitionManager,
         engine: RuleEngine,
-        instance_mgr: WorkflowInstanceManager,
+        instance_mgr: AgentStepInstanceManager,
     ) -> None:
         """ToolSearch (Claude Code deferred tool loader) should always be allowed."""
         _setup_step_workflow(db, manager, instance_mgr, current_step="claim")
@@ -2062,7 +2063,7 @@ class TestStepBeforeMcpHandlers:
         db: "HubDatabase",
         manager: LocalWorkflowDefinitionManager,
         engine: RuleEngine,
-        instance_mgr: WorkflowInstanceManager,
+        instance_mgr: AgentStepInstanceManager,
     ) -> None:
         workflow = {
             "name": "merge-retry-test",
@@ -2120,7 +2121,7 @@ class TestStepBeforeMcpHandlers:
         for expected_count in (1, 2, 3):
             response = await engine.evaluate(event, session_id=SESSION_ID, variables=variables)
             assert response.decision == "allow"
-            instance = instance_mgr.get_instance(SESSION_ID, "merge-retry-test")
+            instance = instance_mgr.get_for_session(SESSION_ID, "merge-retry-test")
             assert instance is not None
             assert instance.variables["merge_resolve_attempts"].count("mc-one") == expected_count
 
@@ -2145,7 +2146,7 @@ class TestStepBeforeMcpHandlers:
         assert response.decision == "block"
         assert response.reason is not None
         assert "retry cap reached" in response.reason
-        instance = instance_mgr.get_instance(SESSION_ID, "merge-retry-test")
+        instance = instance_mgr.get_for_session(SESSION_ID, "merge-retry-test")
         assert instance is not None
         assert instance.variables["merge_resolve_attempts"].count("mc-one") == 3
         assert instance.variables["merge_resolve_attempts"].count("mc-two") == 1
@@ -2156,7 +2157,7 @@ class TestStepBeforeMcpHandlers:
         db: "HubDatabase",
         manager: LocalWorkflowDefinitionManager,
         engine: RuleEngine,
-        instance_mgr: WorkflowInstanceManager,
+        instance_mgr: AgentStepInstanceManager,
     ) -> None:
         workflow = {
             "name": "merge-retry-test",
@@ -2243,7 +2244,7 @@ class TestStepBeforeMcpHandlers:
             session_id=SESSION_ID,
             variables=variables,
         )
-        instance = instance_mgr.get_instance(SESSION_ID, "merge-retry-test")
+        instance = instance_mgr.get_for_session(SESSION_ID, "merge-retry-test")
         assert instance is not None
         assert instance.variables["merge_resolve_attempts"].count("mc-one") == 0
 
@@ -2263,7 +2264,7 @@ class TestStepBeforeMcpHandlers:
                 session_id=SESSION_ID,
                 variables=variables,
             )
-            instance = instance_mgr.get_instance(SESSION_ID, "merge-retry-test")
+            instance = instance_mgr.get_for_session(SESSION_ID, "merge-retry-test")
             assert instance is not None
             assert instance.variables["merge_resolve_attempts"].count("mc-one") == expected_count
 
@@ -2272,7 +2273,7 @@ class TestStepBeforeMcpHandlers:
         assert response.decision == "block"
         assert response.reason is not None
         assert "retry cap reached" in response.reason
-        instance = instance_mgr.get_instance(SESSION_ID, "merge-retry-test")
+        instance = instance_mgr.get_for_session(SESSION_ID, "merge-retry-test")
         assert instance is not None
         assert instance.variables["merge_resolve_attempts"].count("mc-one") == 3
 
@@ -2282,7 +2283,7 @@ class TestStepBeforeMcpHandlers:
         db: "HubDatabase",
         manager: LocalWorkflowDefinitionManager,
         engine: RuleEngine,
-        instance_mgr: WorkflowInstanceManager,
+        instance_mgr: AgentStepInstanceManager,
     ) -> None:
         workflow = {
             "name": "merge-retry-test",
@@ -2353,7 +2354,7 @@ class TestStepBeforeMcpHandlers:
             )
             assert duplicate_response.decision == "allow"
 
-            instance = instance_mgr.get_instance(SESSION_ID, "merge-retry-test")
+            instance = instance_mgr.get_for_session(SESSION_ID, "merge-retry-test")
             assert instance is not None
             assert instance.variables["merge_resolve_attempts"].count("mc-one") == expected_count
 
@@ -2422,7 +2423,7 @@ def _end_agent_run_event() -> HookEvent:
 async def test_end_agent_run_allowed_when_bound_task_terminal(
     db: "HubDatabase",
     manager: LocalWorkflowDefinitionManager,
-    instance_mgr: WorkflowInstanceManager,
+    instance_mgr: AgentStepInstanceManager,
 ) -> None:
     """A run bound to a closed task may end itself despite a step block (#19554)."""
     _setup_step_workflow(
@@ -2445,7 +2446,7 @@ async def test_end_agent_run_allowed_when_bound_task_terminal(
 async def test_end_agent_run_still_blocked_when_bound_task_open(
     db: "HubDatabase",
     manager: LocalWorkflowDefinitionManager,
-    instance_mgr: WorkflowInstanceManager,
+    instance_mgr: AgentStepInstanceManager,
 ) -> None:
     """The terminal-task valve must not weaken enforcement for open tasks."""
     _setup_step_workflow(
@@ -2470,7 +2471,7 @@ async def test_end_agent_run_still_blocked_when_bound_task_open(
 async def test_end_agent_run_blocked_when_run_has_no_bound_task(
     db: "HubDatabase",
     manager: LocalWorkflowDefinitionManager,
-    instance_mgr: WorkflowInstanceManager,
+    instance_mgr: AgentStepInstanceManager,
 ) -> None:
     """A run without a bound task gets no valve; the step block stands."""
     _setup_step_workflow(

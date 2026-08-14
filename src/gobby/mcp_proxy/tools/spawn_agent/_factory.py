@@ -253,22 +253,6 @@ def _load_agent_body(
     return resolve_agent(name, db, cli_source=cli_source, project_id=project_id)
 
 
-def _register_agent_step_workflow(
-    agent_body: AgentDefinitionBody,
-    db: HubDatabase,
-) -> str:
-    """Register a synthetic WorkflowDefinition from agent's inline steps.
-
-    Creates or updates a workflow definition in the DB that the step enforcement
-    engine can look up via WorkflowInstance.workflow_name.
-
-    Returns the workflow name.
-    """
-    from gobby.agents.step_workflow import register_agent_step_workflow
-
-    return register_agent_step_workflow(agent_body, db)
-
-
 def create_spawn_agent_registry(
     runner: AgentRunner,
     task_manager: LocalTaskManager | None = None,
@@ -425,12 +409,6 @@ def create_spawn_agent_registry(
                 initial_variables["_agent_rules"] = agent_body.workflows.rules
             if agent_body.workflows.variables:
                 initial_variables.update(agent_body.workflows.variables)
-
-        # Auto-register inline step workflow when the spawn has task-shaped work.
-        has_assigned_task = bool(task_id or initial_variables.get("assigned_task_id"))
-        if agent_body and agent_body.step_workflow and db and has_assigned_task:
-            step_wf_name = _register_agent_step_workflow(agent_body, db)
-            initial_variables["_step_workflow_name"] = step_wf_name
 
         # Inject _assigned_pipeline if the workflow is a PipelineDefinition
         if effective_workflow:

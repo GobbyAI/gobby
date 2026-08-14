@@ -858,12 +858,18 @@ fn migrations_directory_exists_and_copy_agent_entry_is_registered() {
         migrations_dir.is_dir(),
         "crates/gcore/assets/schema/migrations must exist so later leaves can register include_str entries"
     );
-    assert_eq!(MIGRATIONS.len(), 1);
+    assert_eq!(MIGRATIONS.len(), 2);
     assert_eq!(MIGRATIONS[0].version, 376);
     assert_eq!(MIGRATIONS[0].filename, "376_copy_agent_definitions.sql");
+    assert_eq!(MIGRATIONS[1].version, 377);
+    assert_eq!(MIGRATIONS[1].filename, "377_copy_agent_step_instances.sql");
     assert_eq!(
         super::assets::sha256_hex(MIGRATIONS[0].sql.as_bytes()),
         MIGRATIONS[0].checksum
+    );
+    assert_eq!(
+        super::assets::sha256_hex(MIGRATIONS[1].sql.as_bytes()),
+        MIGRATIONS[1].checksum
     );
     assert!(
         DESTRUCTIVE_MIGRATION.version > BASELINE_VERSION

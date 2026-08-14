@@ -15,11 +15,15 @@ from __future__ import annotations
 
 import json
 import logging
-import uuid
 from typing import Any
 
-from gobby.storage.hub.protocol import AgentStepInstanceMutation, HubDatabase
+from gobby.storage.hub.protocol import (
+    AgentStepInstanceMutation,
+    HubDatabase,
+    SessionVariableMutation,
+)
 from gobby.workflows.definitions import AgentDefinitionBody
+from gobby.workflows.reserved_variables import is_reserved_workflow_variable
 
 logger = logging.getLogger(__name__)
 
@@ -103,45 +107,8 @@ def build_persona_changes(
         changes["_agent_blocked_mcp_tools"] = agent_body.blocked_mcp_tools
 
     if agent_body.step_workflow and is_spawned:
-        from gobby.workflows.definitions import WorkflowInstance
-        from gobby.workflows.state_manager import WorkflowInstanceManager
-
-        nested = agent_body.step_workflow
-        step_wf_name = f"{agent_body.name}-steps"
-        instance_mgr = WorkflowInstanceManager(db)
-        lock = AgentStepInstanceMutation(session_id=session_id)
-        with db.transaction_immediate(lock):
-            if _session_has_assigned_or_active_task(db, session_id):
-                existing_instance = instance_mgr.get_instance(session_id, step_wf_name)
-                if existing_instance is None:
-                    step_instance = WorkflowInstance(
-                        id=str(uuid.uuid4()),
-                        session_id=session_id,
-                        workflow_name=step_wf_name,
-                        enabled=True,
-                        priority=10,
-                        current_step=nested.steps[0].name,
-                        variables=dict(nested.variables),
-                    )
-                    instance_mgr.save_instance(step_instance)
-                    logger.info(
-                        "Created step workflow instance %s for session %s (agent=%s, step=%s)",
-                        step_wf_name,
-                        session_id,
-                        agent_body.name,
-                        nested.steps[0].name,
-                    )
-                else:
-                    logger.debug(
-                        "Preserved existing step workflow instance %s for session %s "
-                        "(agent=%s, step=%s)",
-                        step_wf_name,
-                        session_id,
-                        agent_body.name,
-                        existing_instance.current_step,
-                    )
-                changes["_step_workflow_name"] = step_wf_name
-                changes["step_workflow_complete"] = False
+        if _session_has_assigned_or_active_task(db, session_id):
+            changes["step_workflow_complete"] = False
 
     return changes, active_rules, active_skills
 
@@ -194,6 +161,53 @@ def build_session_persona_context(
     active_skills = resolve_skills_for_agent(agent_body, all_skills)
 
     return ("\n\n".join(parts) if parts else None), active_skills
+
+
+def colliding_persona_variable_error(
+    caller: dict[str, Any] | None,
+    *,
+    changes: dict[str, Any],
+    extra_vars: dict[str, Any],
+) -> str | None:
+    """Reject caller keys that collide with persona/task overlays or reserved names."""
+    if not caller:
+        return None
+    reserved = sorted(key for key in caller if is_reserved_workflow_variable(key))
+    colliding = sorted(set(caller) & (set(changes) | set(extra_vars)))
+    blocked = sorted(set(reserved) | set(colliding))
+    if not blocked:
+        return None
+    return "Caller variables collide with reserved or persona-owned keys: " + ", ".join(blocked)
+
+
+def _apply_persona_instance_transition(
+    db: HubDatabase,
+    session_id: str,
+    agent_body: AgentDefinitionBody,
+    step_workflow_id: str | None,
+) -> None:
+    """Create, preserve, replace, or delete the typed instance for a persona target."""
+    from gobby.workflows.step_instances import (
+        AgentStepInstanceManager,
+        build_step_instance,
+    )
+
+    manager = AgentStepInstanceManager(db)
+    existing = manager.get_for_session(session_id)
+    stepful = agent_body.step_workflow is not None
+    same_agent = existing is not None and existing.agent_name == agent_body.name
+    if stepful and same_agent and existing is not None:
+        return
+    if stepful:
+        manager.replace_for_session(
+            build_step_instance(
+                agent_body,
+                session_id=session_id,
+                step_workflow_id=step_workflow_id,
+            )
+        )
+        return
+    manager.delete_for_session(session_id)
 
 
 def _resolve_session_identity(
@@ -251,19 +265,20 @@ async def apply_persona_impl(
 
     project_id, resolved_cli_source = _resolve_session_identity(db, session_id, cli_source)
 
-    from gobby.workflows.agent_resolver import resolve_agent
+    from gobby.workflows.agent_resolver import resolve_agent_with_row
 
-    agent_body = resolve_agent(
+    resolved = resolve_agent_with_row(
         agent,
         db,
         cli_source=resolved_cli_source,
         project_id=project_id,
     )
-    if agent_body is None:
+    if resolved is None:
         return {
             "success": False,
             "error": f"Agent definition '{agent}' not found",
         }
+    agent_body, agent_row = resolved
 
     if not agent_body.supports_surface("persona"):
         return {
@@ -290,13 +305,29 @@ async def apply_persona_impl(
             logger.warning("Failed to resolve task_id %s: %s", task_id, e)
 
     changes, active_skills = build_session_persona_changes(agent_body, db)
+    collision = colliding_persona_variable_error(
+        variables,
+        changes=changes,
+        extra_vars=extra_vars,
+    )
+    if collision:
+        return {"success": False, "error": collision}
+
     changes.update(extra_vars)
     if variables:
         changes.update(variables)
 
     from gobby.workflows.state_manager import SessionVariableManager
 
-    SessionVariableManager(db).merge_variables(session_id, changes)
+    with db.transaction_immediate(AgentStepInstanceMutation(session_id=session_id)) as txn:
+        txn.acquire_additional_lock(SessionVariableMutation(session_id=session_id))
+        _apply_persona_instance_transition(
+            db,
+            session_id,
+            agent_body,
+            agent_row.step_workflow_id,
+        )
+        SessionVariableManager(db).merge_variables(session_id, changes)
 
     return {
         "success": True,

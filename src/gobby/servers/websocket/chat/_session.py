@@ -778,16 +778,30 @@ class ChatSessionMixin:
             try:
                 from gobby.mcp_proxy.tools.apply_persona import apply_persona_impl
 
-                await apply_persona_impl(
+                persona_result = await apply_persona_impl(
                     agent=agent_name,
                     db=session_manager.db,
                     session_id=session.db_session_id,
                     cli_source=provider_name,
                 )
-            except Exception as e:
-                logger.warning(
-                    "Failed to apply persona '%s' to session %s: %s", agent_name, session_key, e
+                if isinstance(persona_result, dict) and persona_result.get("success") is False:
+                    raise RuntimeError(
+                        persona_result.get("error") or f"Failed to apply persona '{agent_name}'"
+                    )
+            except Exception:
+                logger.exception(
+                    "Failed to apply persona '%s' to session %s",
+                    agent_name,
+                    session_key,
                 )
+                try:
+                    await session.stop()
+                except Exception:
+                    logger.exception(
+                        "Failed to stop web-chat runtime after persona failure for session %s",
+                        session_key,
+                    )
+                raise
 
         registry = getattr(self, "web_chat_session_registry", None)
         if registry is not None:

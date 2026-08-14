@@ -172,9 +172,9 @@ class TestBuildPersonaChanges:
         assert "_step_workflow_name" not in changes
         assert "step_workflow_complete" not in changes
 
-        from gobby.workflows.state_manager import WorkflowInstanceManager
+        from gobby.workflows.step_instances import AgentStepInstanceManager
 
-        instance = WorkflowInstanceManager(db).get_instance(session_id, "stepper-steps")
+        instance = AgentStepInstanceManager(db).get_for_session(session_id)
         assert instance is None
 
     @pytest.mark.parametrize(
@@ -189,7 +189,8 @@ class TestBuildPersonaChanges:
     ) -> None:
         from gobby.mcp_proxy.tools.apply_persona import build_persona_changes
         from gobby.workflows.definitions import WorkflowStep
-        from gobby.workflows.state_manager import SessionVariableManager, WorkflowInstanceManager
+        from gobby.workflows.state_manager import SessionVariableManager
+        from gobby.workflows.step_instances import AgentStepInstanceManager
 
         db.execute(
             "INSERT INTO projects (id, name, repo_path) VALUES (%s, %s, %s)",
@@ -225,7 +226,7 @@ class TestBuildPersonaChanges:
 
         assert "_step_workflow_name" not in changes
         assert "step_workflow_complete" not in changes
-        instance = WorkflowInstanceManager(db).get_instance(session_id, "stepper-steps")
+        instance = AgentStepInstanceManager(db).get_for_session(session_id)
         assert instance is None
 
     @pytest.mark.parametrize("task_key", ["assigned_task_id", "active_task_id"])
@@ -236,7 +237,8 @@ class TestBuildPersonaChanges:
     ) -> None:
         from gobby.mcp_proxy.tools.apply_persona import build_persona_changes
         from gobby.workflows.definitions import WorkflowStep
-        from gobby.workflows.state_manager import SessionVariableManager, WorkflowInstanceManager
+        from gobby.workflows.state_manager import SessionVariableManager
+        from gobby.workflows.step_instances import AgentStepInstanceManager
 
         db.execute(
             "INSERT INTO projects (id, name, repo_path) VALUES (%s, %s, %s)",
@@ -273,9 +275,8 @@ class TestBuildPersonaChanges:
             is_spawned=True,
         )
 
-        assert changes["_step_workflow_name"] == "stepper-steps"
         assert changes["step_workflow_complete"] is False
-        instance = WorkflowInstanceManager(db).get_instance(session_id, "stepper-steps")
+        instance = AgentStepInstanceManager(db).get_for_session(session_id)
         assert instance is not None
         assert instance.workflow_name == "stepper-steps"
         assert instance.current_step == "plan"
@@ -283,7 +284,8 @@ class TestBuildPersonaChanges:
     def test_spawned_session_preserves_existing_step_workflow(self, db: HubDatabase) -> None:
         from gobby.mcp_proxy.tools.apply_persona import build_persona_changes
         from gobby.workflows.definitions import WorkflowInstance, WorkflowStep
-        from gobby.workflows.state_manager import SessionVariableManager, WorkflowInstanceManager
+        from gobby.workflows.state_manager import SessionVariableManager
+        from gobby.workflows.step_instances import AgentStepInstanceManager
 
         db.execute(
             "INSERT INTO projects (id, name, repo_path) VALUES (%s, %s, %s)",
@@ -335,7 +337,6 @@ class TestBuildPersonaChanges:
             is_spawned=True,
         )
 
-        assert changes["_step_workflow_name"] == "stepper-steps"
         instance = instance_mgr.get_instance(session_id, "stepper-steps")
         assert instance is not None
         assert instance.id == "ffffffff-ffff-4fff-8fff-ffffffff4001"

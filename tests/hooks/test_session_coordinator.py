@@ -66,8 +66,9 @@ def _create_session_row(db: HubDatabase, session_id: str) -> None:
 
 def _install_step_workflow(db: HubDatabase, session_id: str, current_step: str) -> None:
     from gobby.storage.workflow_definitions import LocalWorkflowDefinitionManager
-    from gobby.workflows.definitions import WorkflowInstance
-    from gobby.workflows.state_manager import WorkflowInstanceManager
+    from gobby.workflows.agent_models import AgentStepWorkflowBody
+    from gobby.workflows.definitions import WorkflowStep
+    from gobby.workflows.step_instances import AgentStepInstance, AgentStepInstanceManager
 
     definition = {
         "name": "merge-worker",
@@ -85,12 +86,13 @@ def _install_step_workflow(db: HubDatabase, session_id: str, current_step: str) 
         workflow_type="workflow",
         enabled=True,
     )
-    WorkflowInstanceManager(db).save_instance(
-        WorkflowInstance(
+    AgentStepInstanceManager(db).save(
+        AgentStepInstance(
             # workflow_instances.id is a native uuid column.
             id=str(uuid.uuid5(uuid.NAMESPACE_URL, f"inst-{session_id}")),
             session_id=session_id,
-            workflow_name="merge-worker",
+            agent_name="merge-worker",
+            snapshot=AgentStepWorkflowBody(steps=[WorkflowStep(name=current_step)]),
             current_step=current_step,
             variables={},
         )
@@ -849,6 +851,7 @@ class TestAgentRunCompletion:
             prompt="resolve merge conflicts",
             workflow_name="merge-worker",
             agent_name="merge-worker",
+            snapshot=AgentStepWorkflowBody(steps=[WorkflowStep(name=current_step)]),
             child_session_id=CHILD_SESSION_ID,
         )
         run_manager.start(run.id)
@@ -890,6 +893,7 @@ class TestAgentRunCompletion:
             prompt="resolve merge conflicts",
             workflow_name="merge-worker",
             agent_name="merge-worker",
+            snapshot=AgentStepWorkflowBody(steps=[WorkflowStep(name=current_step)]),
             child_session_id=CHILD_SESSION_ID,
         )
         run_manager.start(run.id)

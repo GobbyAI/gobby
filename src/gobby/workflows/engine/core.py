@@ -68,7 +68,7 @@ from gobby.workflows.engine.event_utils import (
 )
 from gobby.workflows.engine.templating import TemplatingMixin
 from gobby.workflows.selectors import rule_matches_agent
-from gobby.workflows.state_manager import WorkflowInstanceManager
+from gobby.workflows.step_instances import AgentStepInstanceManager
 
 logger = logging.getLogger(__name__)
 
@@ -128,7 +128,7 @@ class RuleEngine(EvaluationMixin, EffectsMixin, TemplatingMixin, EnforcementMixi
         self.db = db
         self.definition_manager = LocalWorkflowDefinitionManager(db)
         self.agent_manager = AgentDefinitionManager(db)
-        self.instance_manager = WorkflowInstanceManager(db)
+        self.instance_manager = AgentStepInstanceManager(db)
         self.workflow_audit = WorkflowAuditManager(db)
         self._skill_manager = skill_manager
         self._event_store = metrics_event_store
