@@ -16,7 +16,7 @@ fn pinned_context() -> AiContext {
         limiter: AiLimiter::new(1),
         tool_loop_limits: ToolLoopLimits::default(),
         project_id: None,
-        grant: None,
+        grant: Some(fixture_grant_state()),
     }
 }
 

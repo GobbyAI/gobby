@@ -13,6 +13,14 @@ from typing import NamedTuple
 from starlette.requests import HTTPConnection
 
 from gobby.identity import DUMMY_PASSWORD_HASH, verify_password_hash
+from gobby.servers.grant_auth import (
+    GRANT_HEADER,
+    AuthDecision,
+    identity_headers_match,
+    match_grant_route,
+    present_or_reject,
+)
+from gobby.servers.lease_fence import EffectFence, LeaseNotHeld
 from gobby.storage.agents import ACTIVE_AGENT_RUN_STATUSES
 from gobby.storage.auth import (
     AuthStore,
@@ -49,11 +57,10 @@ class _AgentRoute(NamedTuple):
 
 # The single enumerated method+route capability matrix for run-scoped agent
 # tokens. "*" matches exactly one path segment; every other segment matches
-# exactly. bind_identity marks context-bearing routes (the daemon derives
-# caller/session context from them) whose identity headers are mandatory;
-# context-free routes verify identity headers only when present, because the
-# Rust binaries other than ghook send none. Operator mutation and
-# configuration routes stay excluded.
+# exactly. bind_identity marks context-bearing routes whose identity is
+# mandatory. AI and broker rows also require a presented runtime grant;
+# identity is taken from that grant principal, not from caller headers.
+# Operator mutation and configuration routes stay excluded.
 _AGENT_CAPABILITY_MATRIX: tuple[_AgentRoute, ...] = (
     # MCP proxy discovery and execution.
     _AgentRoute("GET", "/api/mcp/servers", True),
@@ -71,18 +78,21 @@ _AGENT_CAPABILITY_MATRIX: tuple[_AgentRoute, ...] = (
     # Hook execution (ghook).
     _AgentRoute("POST", _HOOKS_EXECUTE_PATH, True),
     # Dormant wiki code status and code-index graph lifecycle.
-    _AgentRoute("GET", "/api/wiki/code/status", False),
+    _AgentRoute("GET", "/api/wiki/code/status", True),
     _AgentRoute("POST", "/api/code-index/graph/clear", True),
     _AgentRoute("POST", "/api/code-index/graph/rebuild", True),
     _AgentRoute("POST", "/api/code-index/invalidate", True),
-    # AI compute and read-only capability probes (gcore-backed binaries).
-    _AgentRoute("POST", "/api/embeddings", False),
-    _AgentRoute("GET", "/api/embeddings/status", False),
-    _AgentRoute("GET", "/api/embeddings/doctor", False),
-    _AgentRoute("GET", "/api/llm/status", False),
+    # AI compute and capability probes (gcore-backed binaries).
+    _AgentRoute("POST", "/api/embeddings", True),
+    _AgentRoute("GET", "/api/embeddings/status", True),
+    _AgentRoute("GET", "/api/embeddings/doctor", True),
+    _AgentRoute("GET", "/api/llm/status", True),
+    _AgentRoute("POST", "/api/llm/generate", True),
     _AgentRoute("POST", "/api/llm/chat/completions", True),
-    _AgentRoute("GET", "/api/llm/vision/status", False),
-    _AgentRoute("GET", "/api/voice/status", False),
+    _AgentRoute("GET", "/api/llm/vision/status", True),
+    _AgentRoute("POST", "/api/llm/vision/extract", True),
+    _AgentRoute("GET", "/api/voice/status", True),
+    _AgentRoute("POST", "/api/voice/transcribe", True),
     _AgentRoute("GET", "/api/providers/models", False),
     _AgentRoute("POST", "/api/runtime/handshake", True),
     _AgentRoute("GET", "/api/runtime/config", True),
@@ -170,6 +180,12 @@ class AuthService:
         self,
         database_getter: Callable[[], HubDatabase],
         token_file: Path | None = None,
+        *,
+        grant_service: object | None = None,
+        lease_live: Callable[[], bool] | None = None,
+        local_machine_id: str | None = None,
+        effect_fence: EffectFence | None = None,
+        clock: Callable[[], int] | None = None,
     ) -> None:
         self._database_getter = database_getter
         self._token_file = token_file or local_token_path()
@@ -177,6 +193,26 @@ class AuthService:
         self._last_refresh = _NEVER_REFRESHED
         self._token_hash: str | None = None
         self._local_token_plaintext: str | None = None
+        self._grant_service = grant_service
+        self._lease_live = lease_live
+        self._local_machine_id = local_machine_id
+        self._effect_fence = effect_fence
+        self._clock = clock
+
+    def bind_runtime(
+        self,
+        *,
+        grant_service: object | None,
+        lease_live: Callable[[], bool] | None,
+        local_machine_id: str | None,
+        effect_fence: EffectFence | None,
+        clock: Callable[[], int] | None,
+    ) -> None:
+        self._grant_service = grant_service
+        self._lease_live = lease_live
+        self._local_machine_id = local_machine_id
+        self._effect_fence = effect_fence
+        self._clock = clock
 
     def verify_bearer(self, token: str) -> bool:
         candidate_hash = hash_token(token)
@@ -192,6 +228,48 @@ class AuthService:
         return "local-cli" if self.verify_bearer(token) else None
 
     def is_request_authenticated(self, request: HTTPConnection) -> bool:
+        return self.authenticate(request).allowed
+
+    def authenticate(self, request: HTTPConnection) -> AuthDecision:
+        grant_route = match_grant_route(
+            str(request.scope.get("method", "GET")),
+            request.url.path,
+        )
+        if grant_route is None:
+            return AuthDecision(allowed=self._legacy_authenticated(request))
+
+        if not self._credential_accepted(request):
+            return AuthDecision(allowed=False, code="missing_auth", status_code=401)
+
+        raw_grant = request.headers.get(GRANT_HEADER)
+        if raw_grant is None or not raw_grant.strip():
+            return AuthDecision(allowed=False, code="missing_grant", status_code=401)
+        if self._grant_service is None:
+            return AuthDecision(allowed=False, code="missing_grant", status_code=401)
+
+        presented = present_or_reject(
+            self._grant_service,
+            raw_grant,
+            now=self._clock() if self._clock is not None else None,
+            required=grant_route.required,
+        )
+        if isinstance(presented, AuthDecision):
+            return presented
+        if self._local_machine_id is not None and presented.principal.kind == "interactive":
+            if presented.principal.machine_id != self._local_machine_id:
+                return AuthDecision(allowed=False, code="forged_identity", status_code=401)
+        if not identity_headers_match(request, presented.principal):
+            return AuthDecision(allowed=False, code="forged_identity", status_code=401)
+        if grant_route.effectful and not self._effectful_allowed():
+            return AuthDecision(allowed=False, code="lease_not_held", status_code=409)
+        return AuthDecision(
+            allowed=True,
+            principal=presented.principal,
+            grant=presented,
+            status_code=200,
+        )
+
+    def _legacy_authenticated(self, request: HTTPConnection) -> bool:
         authorization = request.headers.get("Authorization")
         if authorization is not None:
             parts = authorization.split(maxsplit=1)
@@ -209,6 +287,45 @@ class AuthService:
             return self.validate_session(session_token)
 
         return False
+
+    def _credential_accepted(self, request: HTTPConnection) -> bool:
+        authorization = request.headers.get("Authorization")
+        if authorization is not None:
+            parts = authorization.split(maxsplit=1)
+            if parts and parts[0].casefold() == "bearer" and len(parts) == 2:
+                if self.verify_bearer(parts[1]):
+                    return True
+                return self._agent_credential_accepted(request, parts[1])
+        local_token = request.headers.get(_LOCAL_TOKEN_HEADER)
+        if local_token is not None:
+            return self.verify_bearer(local_token)
+        session_token = request.cookies.get(_SESSION_COOKIE)
+        if session_token is not None:
+            return self.validate_session(session_token)
+        return False
+
+    def _agent_credential_accepted(self, request: HTTPConnection, token: str) -> bool:
+        operator_token = self.local_token()
+        if operator_token is None:
+            return False
+        claims = verify_agent_api_token(token, operator_token)
+        if claims is None:
+            return False
+        if _agent_capability_allows(request) is None:
+            return False
+        return self._managed_capability_is_live(claims)
+
+    def _effectful_allowed(self) -> bool:
+        if self._lease_live is not None and not self._lease_live():
+            return False
+        fence = self._effect_fence
+        if fence is None:
+            return True
+        try:
+            with fence.admit():
+                return True
+        except LeaseNotHeld:
+            return False
 
     def verified_agent_claims(self, request: HTTPConnection) -> AgentApiTokenClaims | None:
         """Return identity claims only for a valid run-scoped agent request."""

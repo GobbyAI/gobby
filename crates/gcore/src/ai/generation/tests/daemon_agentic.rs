@@ -16,7 +16,7 @@ fn daemon_agentic_context(project_id: Option<&str>) -> AiContext {
         limiter: AiLimiter::new(1),
         tool_loop_limits: ToolLoopLimits::default(),
         project_id: project_id.map(str::to_string),
-        grant: None,
+        grant: Some(fixture_grant_state()),
     }
 }
 
@@ -156,15 +156,16 @@ fn daemon_agentic_chat_posts_once_and_parses_narrative_and_investigation() {
             && line.contains("Bearer agentic-token")
     }));
     assert!(raw.lines().any(|line| {
-        line.eq_ignore_ascii_case("X-Gobby-Managed-Execution-Id: tool-execution-7")
+        line.split_once(':')
+            .is_some_and(|(name, _)| name.eq_ignore_ascii_case("X-Gobby-Runtime-Grant"))
     }));
     assert!(
         raw.lines()
-            .any(|line| line.eq_ignore_ascii_case("X-Gobby-Caller-Project-Id: project-7"))
+            .any(|line| line.eq_ignore_ascii_case("X-Gobby-Caller-Project-Id: project-interactive"))
     );
     assert!(
         raw.lines()
-            .any(|line| line.eq_ignore_ascii_case("X-Gobby-Session-Id: session-7"))
+            .any(|line| line.eq_ignore_ascii_case("X-Gobby-Machine-Id: machine-interactive"))
     );
     let body = request_body_json(&raw);
     assert_eq!(body["caller"], "test.agentic");

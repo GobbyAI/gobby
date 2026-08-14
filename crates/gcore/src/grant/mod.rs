@@ -22,8 +22,9 @@ pub use cache::{
     write_binding, write_coherent_pair, write_grant_file,
 };
 pub use handshake::{
-    CapabilityClaims, GRANT_HEADER, MANAGED_BOOTSTRAP_ENV, daemon_reachable, encode_grant_header,
-    parse_capability_token, reject_remote_endpoint,
+    AGENT_RUN_HEADER, CALLER_PROJECT_HEADER, CapabilityClaims, GRANT_HEADER, MACHINE_HEADER,
+    MANAGED_BOOTSTRAP_ENV, MANAGED_EXECUTION_HEADER, SESSION_HEADER, TARGET_PROJECT_HEADER,
+    daemon_reachable, encode_grant_header, parse_capability_token, reject_remote_endpoint,
 };
 
 use bundle::validate_for_construction as validate_grant;
@@ -90,8 +91,13 @@ impl GrantError {
         }
     }
 
-    fn is_stale_epoch(&self) -> bool {
+    pub fn is_stale_epoch(&self) -> bool {
         matches!(self, Self::Malformed(message) if message == "stale_epoch")
+    }
+
+    fn is_retryable_presentation(&self) -> bool {
+        self.is_stale_epoch()
+            || matches!(self, Self::Malformed(message) if message == "invalid_signature")
     }
 }
 
@@ -178,6 +184,26 @@ pub fn acquire_with(request: &AcquireRequest<'_>) -> Result<AcquiredGrant, Grant
         return acquire_managed(&ctx, &path);
     }
     acquire_interactive(&ctx)
+}
+
+/// Present ``present`` with the current grant. A stale-epoch or rotated-signature
+/// rejection triggers exactly one locked re-handshake, cache replace, and retry.
+pub fn present_with_single_retry<T, F>(
+    request: &AcquireRequest<'_>,
+    mut present: F,
+) -> Result<T, GrantError>
+where
+    F: FnMut(&GrantBundle) -> Result<T, GrantError>,
+{
+    let acquired = acquire_with(request)?;
+    match present(&acquired.bundle) {
+        Ok(value) => Ok(value),
+        Err(error) if error.is_retryable_presentation() => {
+            let refreshed = force_rehandshake(request)?;
+            present(&refreshed.bundle)
+        }
+        Err(error) => Err(error),
+    }
 }
 
 pub fn inspect_cached_grant(project_root: impl AsRef<Path>) -> CachedGrantInspection {
@@ -375,6 +401,28 @@ fn acquire_interactive(ctx: &AcquireCtx) -> Result<AcquiredGrant, GrantError> {
         return handshake_interactive(ctx, None, false);
     }
     Err(GrantError::DaemonRequired)
+}
+
+fn force_rehandshake(request: &AcquireRequest<'_>) -> Result<AcquiredGrant, GrantError> {
+    let ctx = AcquireCtx::from_request(request)?;
+    handshake::reject_remote_endpoint(&ctx.daemon_url)?;
+    if !ctx.reachable() {
+        return Err(GrantError::DaemonRequired);
+    }
+    if let Some(path) = managed_bootstrap_path() {
+        let destination = path.to_path_buf();
+        let lock_path = grant_lock_path(&destination);
+        let _lock = lock_with_deadline(&lock_path, ctx.stale_lock_after, ctx.deadline)?;
+        let existing = load_grant_file(&destination).ok();
+        return handshake_managed(&ctx, existing.as_ref(), destination);
+    }
+    let token = load_binding(&ctx.home, &ctx.daemon_url)
+        .map(|binding| binding.deployment_token)
+        .unwrap_or_else(|| derived_deployment_token(&ctx.home));
+    let destination = interactive_cache_path(&ctx.home, &token, &ctx.project_id);
+    let lock_path = grant_lock_path(&destination);
+    let _lock = lock_with_deadline(&lock_path, ctx.stale_lock_after, ctx.deadline)?;
+    handshake_interactive(&ctx, Some(&token), false)
 }
 
 fn finish_loaded(

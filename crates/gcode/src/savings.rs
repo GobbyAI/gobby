@@ -16,7 +16,12 @@ pub fn savings_pct(original_chars: usize, actual_chars: usize) -> f64 {
 ///
 /// Best-effort: all errors are silently ignored. The daemon being down
 /// should never break gcode functionality.
-pub fn report_savings(base_url: &str, original_chars: usize, actual_chars: usize) {
+pub fn report_savings(
+    base_url: &str,
+    original_chars: usize,
+    actual_chars: usize,
+    grant: Option<&gobby_core::grant::GrantBundle>,
+) {
     let url = format!("{}/api/admin/savings/record", base_url);
     let payload = serde_json::json!({
         "category": "code_index",
@@ -24,9 +29,34 @@ pub fn report_savings(base_url: &str, original_chars: usize, actual_chars: usize
         "actual_chars": actual_chars,
         "metadata": { "strategy": "outline" }
     });
-    let _ = ureq::post(&url)
-        .timeout(std::time::Duration::from_secs(1))
-        .send_json(payload);
+    let mut request = ureq::post(&url).timeout(std::time::Duration::from_secs(1));
+    if let Some(grant) = grant
+        && let Ok(header) = gobby_core::grant::encode_grant_header(grant)
+    {
+        request = request.set(gobby_core::grant::GRANT_HEADER, &header);
+        request = request.set(
+            gobby_core::grant::MACHINE_HEADER,
+            &grant.principal.machine_id,
+        );
+        request = request.set(
+            gobby_core::grant::CALLER_PROJECT_HEADER,
+            &grant.principal.project_id,
+        );
+        request = request.set(
+            gobby_core::grant::TARGET_PROJECT_HEADER,
+            &grant.principal.project_id,
+        );
+        if let Some(session_id) = &grant.principal.session_id {
+            request = request.set(gobby_core::grant::SESSION_HEADER, session_id);
+        }
+        if let Ok(token) = gobby_core::local_token::read_local_cli_token() {
+            request = request.set(
+                gobby_core::local_token::AUTHORIZATION_HEADER,
+                &gobby_core::local_token::authorization_bearer(&token),
+            );
+        }
+    }
+    let _ = request.send_json(payload);
 }
 
 #[cfg(test)]

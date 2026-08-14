@@ -215,6 +215,7 @@ fn attach_grant(context: &mut AiContext, ctx: &Context) {
         context.grant = Some(gobby_core::ai_context::GrantAiState {
             capabilities: grant.capabilities.clone(),
             daemon_reachable: grant.daemon_reachable,
+            bundle: grant.bundle.clone(),
         });
     }
 }

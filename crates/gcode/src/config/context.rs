@@ -224,6 +224,7 @@ pub struct GrantAiRuntime {
     pub capabilities: gobby_core::grant::GrantCapabilities,
     pub daemon_reachable: bool,
     pub unexpired: bool,
+    pub bundle: gobby_core::grant::GrantBundle,
 }
 
 type ResolvedServices = (
@@ -371,6 +372,7 @@ impl Context {
             capabilities: acquired.bundle.capabilities.clone(),
             daemon_reachable: acquired.daemon_reachable,
             unexpired: acquired.permits_datastore(),
+            bundle: acquired.bundle.clone(),
         });
 
         Ok(Self {

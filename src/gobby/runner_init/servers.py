@@ -198,6 +198,7 @@ def init_servers(runner: GobbyRunner) -> None:
         codex_client=codex_client,
         bootstrap_config=runner.bootstrap_config,
     )
+    _bind_runtime_grants(runner.http_server, runner)
     http_server_ref = weakref.ref(runner.http_server)
     runner.http_server.set_runner_getter(weakref.ref(runner))
 
@@ -327,3 +328,25 @@ def init_servers(runner: GobbyRunner) -> None:
             runner.communications_manager,
             lambda: runner.main_loop,
         )
+
+
+def _bind_runtime_grants(server: HTTPServer, runner: GobbyRunner) -> None:
+    import time
+
+    from gobby.servers.grant_auth import LiveLeaseGrantService
+    from gobby.servers.lease_fence import EffectFence
+
+    lease = getattr(runner, "daemon_lease", None)
+    runtime = getattr(runner, "config_runtime", None)
+    if lease is None or runtime is None:
+        return
+    presenter = LiveLeaseGrantService(runtime, lease, clock=lambda: int(time.time()))
+    fence = EffectFence()
+    server.grant_service = presenter
+    server.auth_service.bind_runtime(
+        grant_service=presenter,
+        lease_live=lease.owns_live_lease,
+        local_machine_id=lease.machine_id,
+        effect_fence=fence,
+        clock=lambda: int(time.time()),
+    )

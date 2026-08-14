@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import json
 import time
-from collections.abc import Iterator, Mapping, Sequence
+from collections.abc import Callable, Iterator, Mapping, Sequence
 from pathlib import Path
 from types import SimpleNamespace
 from typing import TYPE_CHECKING, Any, cast
@@ -199,9 +199,7 @@ def test_agent_bearer_is_bound_to_run_identity_and_routes(
     assert service.is_request_authenticated(
         _request(headers, method="POST", path="/api/mcp/tools/call")
     )
-    assert service.is_request_authenticated(
-        _request(headers, method="GET", path="/api/wiki/code/status")
-    )
+    assert service.is_request_authenticated(_request(headers, method="GET", path="/api/mcp/status"))
     assert not service.is_request_authenticated(
         _request(headers, method="POST", path="/api/wiki/code/refresh")
     )
@@ -401,9 +399,6 @@ def test_agent_capability_matrix(
     assert service.is_request_authenticated(
         _request(bearer_only, method="GET", path="/api/comms/channels")
     )
-    assert service.is_request_authenticated(
-        _request(bearer_only, method="GET", path="/api/embeddings/status")
-    )
     # ... but a present-and-wrong identity header still rejects.
     assert not service.is_request_authenticated(
         _request(
@@ -421,16 +416,7 @@ def test_agent_capability_matrix(
         _request(identity, method="POST", path="/api/workflows/variables/set")
     )
     assert service.is_request_authenticated(
-        _request(identity, method="POST", path="/api/code-index/graph/rebuild")
-    )
-    assert service.is_request_authenticated(
-        _request(identity, method="POST", path="/api/code-index/invalidate")
-    )
-    assert service.is_request_authenticated(
         _request(identity, method="POST", path="/api/runtime/handshake")
-    )
-    assert service.is_request_authenticated(
-        _request(identity, method="POST", path="/api/llm/chat/completions")
     )
     assert not service.is_request_authenticated(
         _request(bearer_only, method="POST", path="/api/runtime/handshake")
@@ -488,9 +474,6 @@ def test_tool_capability_is_bound_to_live_managed_execution(
 
     assert service.is_request_authenticated(
         _request(identity, method="POST", path="/api/runtime/handshake")
-    )
-    assert service.is_request_authenticated(
-        _request(identity, method="POST", path="/api/llm/chat/completions")
     )
     assert not service.is_request_authenticated(
         _request(
@@ -662,3 +645,265 @@ async def test_agent_listing_redaction() -> None:
 
 def test_dead_run_server_removed() -> None:
     assert not hasattr(http_module, "run_server")
+
+
+_GRANT_NOW = 1_700_000_000
+_GRANT_HEADER = "X-Gobby-Runtime-Grant"
+_MACHINE_HEADER = "X-Gobby-Machine-Id"
+
+_MODALITY_ROUTES: tuple[tuple[str, str], ...] = (
+    ("POST", "/api/embeddings"),
+    ("POST", "/api/llm/generate"),
+    ("POST", "/api/llm/chat/completions"),
+    ("POST", "/api/llm/vision/extract"),
+    ("POST", "/api/voice/transcribe"),
+    ("GET", "/api/embeddings/doctor"),
+)
+
+_AI_BROKER_ROUTES: tuple[tuple[str, str], ...] = (
+    *_MODALITY_ROUTES,
+    ("GET", "/api/wiki/code/status"),
+    ("POST", "/api/code-index/graph/clear"),
+    ("POST", "/api/code-index/graph/rebuild"),
+    ("POST", "/api/admin/savings/record"),
+)
+
+
+def _grant_service() -> Any:
+    from gobby.runtime_grants import DeploymentGrantContext, GrantService
+    from tests.runtime_grants.support import (
+        DEPLOYMENT_TOKEN,
+        FENCING_EPOCH,
+        GOLDEN_SECRET,
+        StaticRuntime,
+        revision_snapshot,
+    )
+
+    snapshot = revision_snapshot(
+        41,
+        host="falkor-a.test",
+        password="falkor-secret-a",
+        qdrant_url="http://qdrant-a.test:6333",
+        api_key="qdrant-secret-a",
+    )
+    return GrantService(
+        runtime=StaticRuntime(snapshot),
+        context=DeploymentGrantContext(
+            token=DEPLOYMENT_TOKEN,
+            fencing_epoch=FENCING_EPOCH,
+            signing_secret=GOLDEN_SECRET,
+        ),
+    )
+
+
+def _signed_presentation_grant(*, session_id: str = "cli-session") -> Any:
+    from gobby.runtime_grants import sign_grant
+    from gobby.runtime_grants.schema import GrantBundle, GrantPrincipal, PostgresDirect
+    from tests.runtime_grants.support import GOLDEN_SECRET
+
+    service = _grant_service()
+    issued = service.issue(
+        principal=GrantPrincipal(
+            kind="interactive",
+            machine_id="machine-1",
+            project_id="project-1",
+            execution_id=None,
+            session_id=session_id,
+        ),
+        postgres=PostgresDirect(
+            mode="direct",
+            dsn="postgresql://role:secret@127.0.0.1:5432/gobby",
+            role_name="gobby_interactive_1",
+            credential_generation=3,
+            valid_until=_GRANT_NOW + 3_600,
+        ),
+        now=_GRANT_NOW,
+        ttl_seconds=3_600,
+    )
+    payload = issued.model_dump()
+    payload["capabilities"]["vision_extract"] = {"mode": "daemon"}
+    payload["capabilities"]["audio_transcribe"] = {"mode": "daemon"}
+    payload["payload_checksum"] = ""
+    payload["signature"] = ""
+    return sign_grant(GrantBundle.model_validate(payload), GOLDEN_SECRET)
+
+
+def _grant_auth_service(
+    temp_db: HubDatabase,
+    tmp_path: Path,
+    *,
+    lease_live: bool = True,
+) -> tuple[AuthService, dict[str, str]]:
+    from gobby.runtime_grants import encode_grant_header
+    from gobby.servers.lease_fence import EffectFence
+
+    token_file = tmp_path / "local_cli_token"
+    token_file.write_text("operator-token")
+    _set_api_token(temp_db, "operator-token")
+    grant = _signed_presentation_grant()
+    service = AuthService(
+        lambda: temp_db,
+        token_file=token_file,
+        grant_service=_grant_service(),
+        lease_live=lambda: lease_live,
+        local_machine_id="machine-1",
+        effect_fence=EffectFence(),
+        clock=lambda: _GRANT_NOW + 10,
+    )
+    headers = {
+        "Authorization": "Bearer operator-token",
+        _GRANT_HEADER: encode_grant_header(grant),
+        "X-Gobby-Caller-Project-Id": grant.principal.project_id,
+        "X-Gobby-Project-Id": grant.principal.project_id,
+        "X-Gobby-Session-Id": grant.principal.session_id or "",
+        _MACHINE_HEADER: grant.principal.machine_id,
+    }
+    return service, headers
+
+
+def test_ai_routes_require_identity(temp_db: HubDatabase, tmp_path: Path) -> None:
+    service, headers = _grant_auth_service(temp_db, tmp_path)
+    operator_only = {"Authorization": "Bearer operator-token"}
+
+    for method, path in _AI_BROKER_ROUTES:
+        anonymous = service.authenticate(_request({}, method=method, path=path))
+        assert anonymous.allowed is False
+        assert anonymous.status_code == 401
+        assert anonymous.code in {"missing_grant", "missing_auth"}
+
+        bearer_only = service.authenticate(_request(operator_only, method=method, path=path))
+        assert bearer_only.allowed is False
+        assert bearer_only.status_code == 401
+        assert bearer_only.code == "missing_grant"
+
+        presented = service.authenticate(_request(headers, method=method, path=path))
+        assert presented.allowed is True
+        assert presented.principal is not None
+        assert presented.principal.project_id == "project-1"
+        assert presented.principal.machine_id == "machine-1"
+
+
+def test_modality_grant_presentation_matrix(temp_db: HubDatabase, tmp_path: Path) -> None:
+    service, headers = _grant_auth_service(temp_db, tmp_path)
+
+    for method, path in _MODALITY_ROUTES:
+        allowed = service.authenticate(_request(headers, method=method, path=path))
+        assert allowed.allowed is True, path
+
+        forged = service.authenticate(
+            _request(
+                headers
+                | {"X-Gobby-Project-Id": "forged-project", _MACHINE_HEADER: "forged-machine"},
+                method=method,
+                path=path,
+            )
+        )
+        assert forged.allowed is False, path
+        assert forged.code == "forged_identity"
+        assert forged.status_code == 401
+
+
+def test_effectful_requires_live_lease(temp_db: HubDatabase, tmp_path: Path) -> None:
+    live, headers = _grant_auth_service(temp_db, tmp_path, lease_live=True)
+    dead_dir = tmp_path / "dead"
+    dead_dir.mkdir()
+    dead, _ = _grant_auth_service(temp_db, dead_dir, lease_live=False)
+    effectful = (
+        ("POST", "/api/embeddings"),
+        ("POST", "/api/llm/generate"),
+        ("POST", "/api/code-index/graph/rebuild"),
+        ("POST", "/api/admin/savings/record"),
+    )
+    readonly = ("GET", "/api/embeddings/doctor")
+
+    for method, path in effectful:
+        assert live.authenticate(_request(headers, method=method, path=path)).allowed is True
+        lost = dead.authenticate(_request(headers, method=method, path=path))
+        assert lost.allowed is False
+        assert lost.code == "lease_not_held"
+
+    doctor = dead.authenticate(_request(headers, method=readonly[0], path=readonly[1]))
+    assert doctor.allowed is True
+
+
+def test_in_transaction_epoch_fencing(temp_db: HubDatabase) -> None:
+    from gobby.servers.lease_fence import (
+        EffectFence,
+        LeaseNotHeld,
+        StaleEpochFence,
+        fenced_hub_write,
+    )
+
+    token = "cafebabedeadbeef"
+    temp_db.execute(
+        """
+        CREATE TABLE IF NOT EXISTS deployment_runtime (
+            deployment_token TEXT PRIMARY KEY,
+            fencing_epoch BIGINT NOT NULL DEFAULT 0,
+            grant_signing_secret TEXT NOT NULL,
+            epoch_updated_at TIMESTAMPTZ
+        )
+        """
+    )
+    temp_db.execute(
+        """
+        INSERT INTO deployment_runtime (deployment_token, fencing_epoch, grant_signing_secret)
+        VALUES (%s, 1, 'secret')
+        ON CONFLICT (deployment_token) DO UPDATE
+           SET fencing_epoch = 1, grant_signing_secret = EXCLUDED.grant_signing_secret
+        """,
+        (token,),
+    )
+    temp_db.execute(
+        """
+        CREATE TABLE IF NOT EXISTS lease_fence_probe (
+            id TEXT PRIMARY KEY,
+            value TEXT NOT NULL
+        )
+        """
+    )
+
+    def write_probe(value: str) -> Callable[[Any], None]:
+        def _write(txn: Any) -> None:
+            txn.execute(
+                """
+                INSERT INTO lease_fence_probe (id, value) VALUES (%s, %s)
+                ON CONFLICT (id) DO UPDATE SET value = EXCLUDED.value
+                """,
+                ("probe", value),
+            )
+
+        return _write
+
+    fenced_hub_write(
+        temp_db,
+        deployment_token=token,
+        owned_epoch=1,
+        writer=write_probe("owned"),
+    )
+    row = temp_db.fetchone("SELECT value FROM lease_fence_probe WHERE id = %s", ("probe",))
+    assert row is not None
+    assert row["value"] == "owned"
+
+    temp_db.execute(
+        "UPDATE deployment_runtime SET fencing_epoch = 2 WHERE deployment_token = %s",
+        (token,),
+    )
+    with pytest.raises(StaleEpochFence):
+        fenced_hub_write(
+            temp_db,
+            deployment_token=token,
+            owned_epoch=1,
+            writer=write_probe("stale"),
+        )
+    row = temp_db.fetchone("SELECT value FROM lease_fence_probe WHERE id = %s", ("probe",))
+    assert row is not None
+    assert row["value"] == "owned"
+
+    fence = EffectFence()
+    with fence.admit():
+        assert fence.in_flight == 1
+    fence.drain(timeout=0.2)
+    with pytest.raises(LeaseNotHeld):
+        with fence.admit():
+            pass

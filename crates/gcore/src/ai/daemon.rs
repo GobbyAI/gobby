@@ -16,4 +16,7 @@ pub use types::{DaemonEmbeddingResult, DaemonTranscriptionOptions};
 
 // Shared daemon HTTP/auth primitives reused by the generation-layer
 // `daemon_agentic_chat` (tool loop) without duplicating token/url resolution.
-pub(crate) use transport::{daemon_client, daemon_url, read_local_cli_token, with_local_token};
+pub use transport::grant_presentation_headers;
+pub(crate) use transport::{
+    daemon_client, daemon_url, read_local_cli_token, with_grant_presentation,
+};

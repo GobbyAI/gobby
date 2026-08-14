@@ -1044,3 +1044,85 @@ fn managed_refresh_uses_envelope_not_operator_on_wire() {
     assert!(handshake.contains(&format!("Bearer {token}")));
     assert!(!handshake.contains(&format!("Bearer {TOKEN}")));
 }
+
+#[test]
+#[serial_test::serial]
+fn stale_epoch_single_retry() {
+    let harness = Harness::new();
+    let mut cached = fixture_grant(PrincipalKind::Interactive);
+    cached.deployment.token = deployment_token(&harness.home);
+    cached.deployment.fencing_epoch = 1;
+    cached = cached.with_checksum();
+
+    let mut fresh = cached.clone();
+    fresh.deployment.fencing_epoch = 2;
+    fresh = fresh.with_checksum();
+    let scripted = spawn_scripted(vec![
+        Step::Challenge {
+            valid: true,
+            token: TOKEN.into(),
+        },
+        Step::Handshake {
+            grant: Box::new(fresh.clone()),
+        },
+        Step::Config {
+            revision: fresh.config_revision,
+        },
+    ]);
+    write_binding_for(&harness, &scripted.url, &cached.deployment.token);
+    write_cache(&harness, &cached, None);
+    let mut request = harness.request(Some(scripted.url.clone()));
+    let attempts = std::sync::atomic::AtomicUsize::new(0);
+    let result = present_with_single_retry(&request, |grant| {
+        let n = attempts.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+        if n == 0 {
+            assert_eq!(grant.deployment.fencing_epoch, 1);
+            Err(GrantError::Malformed("stale_epoch".to_string()))
+        } else {
+            assert_eq!(grant.deployment.fencing_epoch, 2);
+            Ok(grant.deployment.fencing_epoch)
+        }
+    });
+    assert_eq!(result.expect("retry"), 2);
+    assert_eq!(attempts.load(std::sync::atomic::Ordering::SeqCst), 2);
+    let requests = join(scripted);
+    assert_eq!(
+        requests
+            .iter()
+            .filter(|request| request.contains("POST /api/runtime/handshake HTTP"))
+            .count(),
+        1
+    );
+
+    let exhausted = spawn_scripted(vec![
+        Step::Challenge {
+            valid: true,
+            token: TOKEN.into(),
+        },
+        Step::Handshake {
+            grant: Box::new(fresh.clone()),
+        },
+        Step::Config {
+            revision: fresh.config_revision,
+        },
+    ]);
+    request.daemon_url = Some(exhausted.url.clone());
+    write_binding_for(&harness, &exhausted.url, &cached.deployment.token);
+    write_cache(&harness, &cached, None);
+    let attempts = std::sync::atomic::AtomicUsize::new(0);
+    let error = present_with_single_retry(&request, |_grant| -> Result<(), GrantError> {
+        attempts.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+        Err(GrantError::Malformed("stale_epoch".to_string()))
+    })
+    .expect_err("exhausted");
+    assert!(error.is_stale_epoch() || matches!(error, GrantError::Malformed(_)));
+    assert_eq!(attempts.load(std::sync::atomic::Ordering::SeqCst), 2);
+    let requests = join(exhausted);
+    assert_eq!(
+        requests
+            .iter()
+            .filter(|request| request.contains("POST /api/runtime/handshake HTTP"))
+            .count(),
+        1
+    );
+}

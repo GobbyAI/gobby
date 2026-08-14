@@ -38,6 +38,7 @@ pub struct AiContext {
 pub struct GrantAiState {
     pub capabilities: crate::grant::GrantCapabilities,
     pub daemon_reachable: bool,
+    pub bundle: crate::grant::GrantBundle,
 }
 
 impl AiContext {
@@ -536,13 +537,11 @@ mod tests {
     #[test]
     fn strict_tool_loop_context_rejects_invalid_configured_limits() {
         let mut direct_source =
-            TestSource::with_values([("ai.generation.tool_loop.max_tool_calls", "0")])
-                .with_resolved([("0", "0")]);
+            TestSource::with_values([("ai.generation.tool_loop.max_tool_calls", "0")]);
         ToolLoopLimits::resolve(&mut direct_source)
             .expect_err("the test source must expose the invalid limit");
         let mut context_source =
-            TestSource::with_values([("ai.generation.tool_loop.max_tool_calls", "0")])
-                .with_resolved([("0", "0")]);
+            TestSource::with_values([("ai.generation.tool_loop.max_tool_calls", "0")]);
 
         let error = AiContext::try_resolve_with_options(
             None,

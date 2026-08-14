@@ -106,7 +106,12 @@ pub fn run(
 
     if symbol_bytes > 0 && source.len() > symbol_bytes {
         let url = gobby_core::daemon_url::daemon_url();
-        savings::report_savings(&url, source.len(), symbol_bytes);
+        savings::report_savings(
+            &url,
+            source.len(),
+            symbol_bytes,
+            ctx.grant_ai.as_ref().map(|grant| &grant.bundle),
+        );
     }
 
     if let Some(diagnostic) = fallback_diagnostic(selected.symbol, &lookup, ctx.quiet) {

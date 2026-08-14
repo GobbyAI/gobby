@@ -184,6 +184,20 @@ class ActiveDaemonLease:
             ).fetchone()
         return row is not None and int(row[0]) == owned_epoch
 
+    def owns_live_lease(self) -> bool:
+        """In-memory ownership: the lease connection is alive and the cached epoch is set.
+
+        The advisory lock dies with the session, so this check is authoritative
+        without a per-request ``deployment_runtime`` roundtrip. In-transaction
+        epoch fencing still validates the owned epoch at commit.
+        """
+        with self._mutex:
+            try:
+                self.heartbeat()
+            except LeaseConnectionLostError:
+                return False
+            return self._fencing_epoch is not None
+
     def release(self) -> None:
         """Release the lease and close its dedicated PostgreSQL session."""
         with self._mutex:

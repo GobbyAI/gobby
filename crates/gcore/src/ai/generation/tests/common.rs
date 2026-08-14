@@ -23,7 +23,7 @@ pub(super) use super::super::{
     ToolCall, ToolChoice, ToolError, ToolExecutor, ToolLoopLimits, ToolSchema,
     generate_one_shot_pinned, profile_for_tier, resolve_direct_generation_target, run_tool_loop,
 };
-pub(super) use crate::ai_context::{AiBindings, AiContext, AiLimiter};
+pub(super) use crate::ai_context::{AiBindings, AiContext, AiLimiter, GrantAiState};
 pub(super) use crate::ai_types::{AiError, TokenUsage};
 pub(super) use crate::config::{
     AiRouting, AiTuning, CapabilityBinding, ConfigSource, FeatureCandidate, TEST_ENV_LOCK, ai_keys,
@@ -83,5 +83,20 @@ impl ToolExecutor for EchoExecutor {
     fn execute(&self, call: &ToolCall) -> Result<String, ToolError> {
         self.calls.lock().expect("calls lock").push(call.clone());
         Ok(self.result.clone())
+    }
+}
+
+pub(super) fn fixture_grant_state() -> GrantAiState {
+    let path = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+        .join("../../tests/runtime_grants/golden/direct_datastores.json");
+    let raw = fs::read(path).expect("golden grant");
+    let mut grant: crate::grant::GrantBundle =
+        serde_json::from_slice(raw.trim_ascii()).expect("parse golden grant");
+    grant.capabilities.vision_extract = crate::grant::AiCapability::Daemon {};
+    grant.capabilities.audio_transcribe = crate::grant::AiCapability::Daemon {};
+    GrantAiState {
+        capabilities: grant.capabilities.clone(),
+        daemon_reachable: true,
+        bundle: grant,
     }
 }

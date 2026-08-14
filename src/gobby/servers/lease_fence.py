@@ -1,0 +1,119 @@
+"""Live-lease admission and in-transaction epoch fencing for effectful writes."""
+
+from __future__ import annotations
+
+import threading
+import time
+from collections.abc import Callable
+from typing import TYPE_CHECKING
+
+if TYPE_CHECKING:
+    from gobby.storage.hub.protocol import HubDatabase, Transaction
+
+
+class LeaseNotHeld(RuntimeError):
+    """Effectful work was refused because this process does not own the live lease."""
+
+    code = "lease_not_held"
+
+    def __init__(self, message: str = "active-daemon lease is not live") -> None:
+        super().__init__(message)
+        self.message = message
+
+
+class StaleEpochFence(RuntimeError):
+    """A hub write was refused because the owned fencing epoch is no longer current."""
+
+    code = "stale_epoch"
+
+    def __init__(self, message: str = "owned fencing epoch is stale") -> None:
+        super().__init__(message)
+        self.message = message
+
+
+class EffectFence:
+    """In-process drain gate for predecessor work during takeover."""
+
+    def __init__(self) -> None:
+        self._lock = threading.Lock()
+        self._idle = threading.Condition(self._lock)
+        self._in_flight = 0
+        self._serving = True
+
+    @property
+    def in_flight(self) -> int:
+        with self._lock:
+            return self._in_flight
+
+    def admit(self) -> _Admission:
+        return _Admission(self)
+
+    def drain(self, timeout: float) -> None:
+        deadline = time.monotonic() + timeout
+        with self._lock:
+            self._serving = False
+            while self._in_flight:
+                remaining = deadline - time.monotonic()
+                if remaining <= 0:
+                    raise TimeoutError("timed out draining predecessor in-flight work")
+                self._idle.wait(timeout=remaining)
+
+    def resume(self) -> None:
+        with self._lock:
+            self._serving = True
+
+
+class _Admission:
+    def __init__(self, fence: EffectFence) -> None:
+        self._fence = fence
+
+    def __enter__(self) -> EffectFence:
+        with self._fence._lock:
+            if not self._fence._serving:
+                raise LeaseNotHeld("predecessor in-flight work has been drained")
+            self._fence._in_flight += 1
+        return self._fence
+
+    def __exit__(self, *_exc: object) -> None:
+        with self._fence._lock:
+            self._fence._in_flight -= 1
+            if self._fence._in_flight == 0:
+                self._fence._idle.notify_all()
+
+
+def owns_live_lease(lease: object | None) -> bool:
+    """In-memory ownership check: lease session alive and cached epoch present."""
+    if lease is None:
+        return False
+    checker = getattr(lease, "owns_live_lease", None)
+    if callable(checker):
+        return bool(checker())
+    acquired = getattr(lease, "acquired", False)
+    epoch = getattr(lease, "fencing_epoch", None)
+    return bool(acquired) and epoch is not None
+
+
+def fenced_hub_write(
+    db: HubDatabase,
+    *,
+    deployment_token: str,
+    owned_epoch: int,
+    writer: Callable[[Transaction], None],
+) -> None:
+    """Validate the owned epoch inside the same transaction as ``writer``."""
+    with db.transaction() as txn:
+        row = txn.execute(
+            """
+            SELECT fencing_epoch
+              FROM deployment_runtime
+             WHERE deployment_token = %s
+             FOR UPDATE
+            """,
+            (deployment_token,),
+        ).fetchone()
+        current = None if row is None else int(row["fencing_epoch"])
+        if current != owned_epoch:
+            raise StaleEpochFence(
+                f"owned fencing epoch {owned_epoch} does not match deployment_runtime"
+            )
+        writer(txn)

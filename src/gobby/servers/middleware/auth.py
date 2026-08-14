@@ -80,19 +80,21 @@ class AuthMiddleware(BaseHTTPMiddleware):
             return await call_next(request)
 
         auth_service = self.server.auth_service
-        if await self.server.run_db(auth_service.is_request_authenticated, request):
+        decision = await self.server.run_db(auth_service.authenticate, request)
+        if getattr(decision, "allowed", None) is True:
             return await call_next(request)
 
         if path.startswith(_PROTECTED_PREFIXES):
-            return JSONResponse(
-                status_code=401,
-                content={
-                    "error": (
-                        "Authentication required. CLI clients need ~/.gobby/local_cli_token "
-                        "(run 'gobby install' or 'gobby auth token --rotate'). Browsers: log in."
-                    )
-                },
+            code = getattr(decision, "code", None)
+            status = int(getattr(decision, "status_code", 401) or 401)
+            message = getattr(decision, "message", None) or (
+                "Authentication required. CLI clients need ~/.gobby/local_cli_token "
+                "(run 'gobby install' or 'gobby auth token --rotate'). Browsers: log in."
             )
+            content: dict[str, object] = {"error": message}
+            if code:
+                content["code"] = code
+            return JSONResponse(status_code=status, content=content)
 
         # Browser route: serve the SPA shell so React can render login.
         return await call_next(request)

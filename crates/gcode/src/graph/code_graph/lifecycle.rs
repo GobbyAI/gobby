@@ -259,6 +259,7 @@ pub(crate) fn extract_summary_text(payload: &Value) -> Option<String> {
 pub fn run_lifecycle_action(
     request: &GraphLifecycleRequest,
     action: GraphLifecycleAction,
+    grant: Option<&gobby_core::grant::GrantBundle>,
 ) -> anyhow::Result<GraphLifecycleOutput> {
     let daemon_url = require_daemon_url(request.daemon_url.as_deref(), action)?;
     let url = build_lifecycle_url(daemon_url, action, &request.project_id)?;
@@ -268,17 +269,37 @@ pub fn run_lifecycle_action(
         .build()
         .context("failed to build HTTP client")?;
 
-    let response = client
+    let mut request_builder = client
         .post(url.clone())
         .header("Accept", "application/json")
-        .header(AUTHORIZATION_HEADER, authorization_bearer(&token))
-        .send()
-        .with_context(|| {
-            format!(
-                "Failed to reach Gobby daemon at {daemon_url} for `{}`",
-                action.cli_command()
+        .header(AUTHORIZATION_HEADER, authorization_bearer(&token));
+    if let Some(grant) = grant {
+        let header = gobby_core::grant::encode_grant_header(grant)
+            .map_err(|error| anyhow::anyhow!("grant header encode failed: {error}"))?;
+        request_builder = request_builder
+            .header(gobby_core::grant::GRANT_HEADER, header)
+            .header(
+                gobby_core::grant::MACHINE_HEADER,
+                grant.principal.machine_id.as_str(),
             )
-        })?;
+            .header(
+                gobby_core::grant::CALLER_PROJECT_HEADER,
+                grant.principal.project_id.as_str(),
+            )
+            .header(
+                gobby_core::grant::TARGET_PROJECT_HEADER,
+                grant.principal.project_id.as_str(),
+            );
+        if let Some(session_id) = &grant.principal.session_id {
+            request_builder = request_builder.header(gobby_core::grant::SESSION_HEADER, session_id);
+        }
+    }
+    let response = request_builder.send().with_context(|| {
+        format!(
+            "Failed to reach Gobby daemon at {daemon_url} for `{}`",
+            action.cli_command()
+        )
+    })?;
 
     let status = response.status();
     let body = response.text().unwrap_or_default();

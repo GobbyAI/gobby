@@ -22,6 +22,15 @@ fn embeddings_post_preserves_batch_and_local_token() {
         AUTHORIZATION_HEADER,
         "Bearer embed-token"
     ));
+    assert!(request.lines().any(|line| {
+        line.split_once(':')
+            .is_some_and(|(name, _)| name.eq_ignore_ascii_case("X-Gobby-Runtime-Grant"))
+    }));
+    assert!(has_header(
+        &request,
+        "X-Gobby-Caller-Project-Id",
+        "project-interactive"
+    ));
     assert_eq!(body["input"], serde_json::json!(["same", "same"]));
     assert_eq!(body["is_query"], true);
     assert_eq!(body["project_id"], "project-123");

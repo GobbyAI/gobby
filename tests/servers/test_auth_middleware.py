@@ -18,6 +18,7 @@ from fastapi import FastAPI
 from fastapi.testclient import TestClient
 
 from gobby.servers.auth_service import AuthService
+from gobby.servers.grant_auth import AuthDecision
 from gobby.servers.middleware.auth import AuthMiddleware
 from gobby.storage.auth import AuthStore, hash_token
 from gobby.storage.hub.protocol import HubDatabase
@@ -40,7 +41,7 @@ def auth_client() -> tuple[TestClient, MagicMock]:
     """App with AuthMiddleware and a catch-all route that returns 200."""
     app = FastAPI()
     auth_service = MagicMock()
-    auth_service.is_request_authenticated.return_value = False
+    auth_service.authenticate.return_value = AuthDecision(allowed=False)
     app.add_middleware(
         AuthMiddleware,
         server=cast(
@@ -109,7 +110,7 @@ def test_public_routes_bypass_required_auth(
     response = client.get(path)
 
     assert response.status_code == 200, path
-    auth_service.is_request_authenticated.assert_not_called()
+    auth_service.authenticate.assert_not_called()
 
 
 @pytest.mark.parametrize("path", PROTECTED_PATHS)
@@ -244,7 +245,7 @@ async def test_concurrent_protected_requests_do_not_block_event_loop() -> None:
     auth_service = MagicMock(enabled=True)
     event_loop = asyncio.get_running_loop()
 
-    def blocking_authentication(_request: object) -> bool:
+    def blocking_authentication(_request: object) -> AuthDecision:
         nonlocal started_count
         auth_threads.append(threading.get_ident())
         with started_lock:
@@ -253,9 +254,9 @@ async def test_concurrent_protected_requests_do_not_block_event_loop() -> None:
                 event_loop.call_soon_threadsafe(workers_started.set)
         if not release_auth.wait(timeout=1):
             raise AssertionError("event loop did not progress while authentication was blocked")
-        return True
+        return AuthDecision(allowed=True, status_code=200)
 
-    auth_service.is_request_authenticated.side_effect = blocking_authentication
+    auth_service.authenticate.side_effect = blocking_authentication
     server = cast(
         "HTTPServer",
         SimpleNamespace(auth_service=auth_service, run_db=_run_db),

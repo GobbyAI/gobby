@@ -35,7 +35,12 @@ pub fn outline(ctx: &Context, file: &str, format: Format, verbose: bool) -> anyh
             .sum();
         if outline_bytes > 0 && file_bytes > outline_bytes {
             let url = gobby_core::daemon_url::daemon_url();
-            savings::report_savings(&url, file_bytes, outline_bytes);
+            savings::report_savings(
+                &url,
+                file_bytes,
+                outline_bytes,
+                ctx.grant_ai.as_ref().map(|grant| &grant.bundle),
+            );
         }
     }
 
@@ -166,7 +171,12 @@ pub fn symbol(ctx: &Context, id: &str, format: Format) -> anyhow::Result<()> {
                 // Report savings: symbol bytes vs full file bytes
                 if symbol_bytes > 0 && file_bytes > symbol_bytes {
                     let url = gobby_core::daemon_url::daemon_url();
-                    savings::report_savings(&url, file_bytes, symbol_bytes);
+                    savings::report_savings(
+                        &url,
+                        file_bytes,
+                        symbol_bytes,
+                        ctx.grant_ai.as_ref().map(|grant| &grant.bundle),
+                    );
                 }
 
                 match format {
@@ -216,7 +226,12 @@ pub fn symbols(ctx: &Context, ids: &[String], format: Format) -> anyhow::Result<
     }
     if total_symbol_bytes > 0 && total_file_bytes > total_symbol_bytes {
         let url = gobby_core::daemon_url::daemon_url();
-        savings::report_savings(&url, total_file_bytes, total_symbol_bytes);
+        savings::report_savings(
+            &url,
+            total_file_bytes,
+            total_symbol_bytes,
+            ctx.grant_ai.as_ref().map(|grant| &grant.bundle),
+        );
     }
 
     match format {

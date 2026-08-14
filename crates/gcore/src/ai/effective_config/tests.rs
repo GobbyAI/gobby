@@ -165,15 +165,13 @@ fn fetch_carries_bearer_and_parses_effective_config_envelope() {
     )
     .expect("spawn daemon");
 
-    let (mut daemon, routing) =
-        daemon_mode_layers_at(&base_url, home.path()).expect("fetch effective config");
+    let mut daemon = daemon_mode_layers_at(&base_url, home.path()).expect("fetch effective config");
 
     assert_eq!(
         daemon.config_value("ai.embeddings.model").as_deref(),
         Some("nomic-embed-text")
     );
     assert_eq!(daemon.revision(), 7);
-    assert!(routing.is_none());
     let request = join_request(request);
     assert!(request.starts_with(&format!("GET {EFFECTIVE_CONFIG_PATH} HTTP/1.1")));
     assert!(has_header(
@@ -337,10 +335,9 @@ fn malformed_local_yaml_after_fetch_keeps_daemon_mode_without_routing() {
         spawn_json_response(r#"{"revision":7,"config":{"ai.embeddings.model":"served-model"}}"#)
             .expect("spawn daemon");
 
-    let (mut daemon, routing) =
+    let mut daemon =
         daemon_mode_layers_at(&base_url, home.path()).expect("malformed local yaml is soft");
 
-    assert!(routing.is_none());
     assert_eq!(
         daemon.config_value("ai.embeddings.model").as_deref(),
         Some("served-model")
@@ -350,16 +347,15 @@ fn malformed_local_yaml_after_fetch_keeps_daemon_mode_without_routing() {
 
 #[test]
 fn daemon_dsn_trims_available_value_and_propagates_failed_state() {
-    let available = EffectiveConfigState::Available((
-        served([("databases.postgres.dsn", "  postgresql://daemon/gobby  ")]),
-        None,
-    ));
+    let available = EffectiveConfigState::Available(served([(
+        "databases.postgres.dsn",
+        "  postgresql://daemon/gobby  ",
+    )]));
     assert_eq!(
         daemon_dsn_from_state(&available).expect("available dsn"),
         Some("postgresql://daemon/gobby".to_string())
     );
-    let blank =
-        EffectiveConfigState::Available((served([("databases.postgres.dsn", "   ")]), None));
+    let blank = EffectiveConfigState::Available(served([("databases.postgres.dsn", "   ")]));
     assert_eq!(daemon_dsn_from_state(&blank).expect("blank dsn"), None);
 
     let failed = EffectiveConfigState::Failed(EffectiveConfigError::Protocol {
@@ -383,10 +379,7 @@ fn primary_factory_is_lazy_in_daemon_mode_and_once_in_standalone_mode() {
 
     let daemon_calls = Cell::new(0);
     let mut daemon_source = ai_source_with_primary_from_layers(
-        Ok(Some((
-            served([("ai.embeddings.model", "daemon-model")]),
-            None,
-        ))),
+        Ok(Some(served([("ai.embeddings.model", "daemon-model")]))),
         home.path(),
         || {
             daemon_calls.set(daemon_calls.get() + 1);
@@ -424,7 +417,7 @@ fn daemon_source_resolves_served_binding_and_embedding_settings_end_to_end() {
         ("ai.embeddings.query_prefix", "search:"),
     ]);
     let mut source: AiConfigSource<DaemonOrPrimary<NoPrimaryAiConfigSource>> =
-        AiConfigSource::with_primary(DaemonOrPrimary::Daemon(daemon), None);
+        AiConfigSource::with_primary(DaemonOrPrimary::Daemon(daemon));
 
     let binding = resolve_capability_binding(&mut source, AiCapability::Embed);
     assert_eq!(binding.provider.as_deref(), Some("openai"));
@@ -441,18 +434,23 @@ fn daemon_source_resolves_served_binding_and_embedding_settings_end_to_end() {
 }
 
 #[test]
-fn explicit_standalone_skips_daemon_fetch() {
+fn daemon_mode_layers_surface_fetch_errors() {
     let calls = Cell::new(0);
-    let layers = daemon_mode_layers_for(RuntimeMode::Standalone, || {
+    let error = daemon_mode_layers_for(|| {
         calls.set(calls.get() + 1);
         Err(EffectiveConfigError::Transport {
             kind: EffectiveConfigTransportKind::Other,
         })
     })
-    .expect("standalone layers");
+    .expect_err("fetch errors stay typed");
 
-    assert!(layers.is_none());
-    assert_eq!(calls.get(), 0);
+    assert!(matches!(
+        error,
+        EffectiveConfigError::Transport {
+            kind: EffectiveConfigTransportKind::Other
+        }
+    ));
+    assert_eq!(calls.get(), 1);
 }
 
 #[test]
@@ -466,12 +464,6 @@ fn cached_state_is_cloneable() {
     ));
 
     let map = BTreeMap::from([("ai.embeddings.model".to_string(), "served".to_string())]);
-    let state = EffectiveConfigState::Available((
-        DaemonServedConfig::new(7, map),
-        Some(Default::default()),
-    ));
-    assert!(matches!(
-        state.clone(),
-        EffectiveConfigState::Available((_, Some(_)))
-    ));
+    let state = EffectiveConfigState::Available(DaemonServedConfig::new(7, map));
+    assert!(matches!(state.clone(), EffectiveConfigState::Available(_)));
 }

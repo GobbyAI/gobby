@@ -9,7 +9,12 @@ use std::time::Instant;
 
 use serde_json::{Map, Value, json};
 
-use crate::ai::daemon::{daemon_client, daemon_url, read_local_cli_token, with_local_token};
+use super::profile::DirectGenerationTarget;
+use super::tool_loop::{
+    ChatCompletion, ChatCompletionRequest, ChatMessage, ChatRole, ToolCall, ToolLoopLimits,
+    ToolSchema,
+};
+use crate::ai::daemon::{daemon_client, daemon_url, read_local_cli_token, with_grant_presentation};
 use crate::ai::{
     chat_completion_model, chat_completion_usage, parse_json_response, reqwest_error,
     retry_with_backoff_until,
@@ -17,13 +22,6 @@ use crate::ai::{
 use crate::ai_context::AiContext;
 use crate::ai_types::{AiError, TokenUsage};
 use crate::config::{AiCapability, FeatureCandidate};
-use crate::local_token::AGENT_API_TOKEN_ENV;
-
-use super::profile::DirectGenerationTarget;
-use super::tool_loop::{
-    ChatCompletion, ChatCompletionRequest, ChatMessage, ChatRole, ToolCall, ToolLoopLimits,
-    ToolSchema,
-};
 
 /// Daemon tool-passthrough chat-completion path (#17393).
 const DAEMON_CHAT_COMPLETIONS_PATH: &str = "/api/llm/chat/completions";
@@ -96,6 +94,14 @@ pub fn daemon_agentic_chat(
     reasoning_effort: Option<&str>,
 ) -> Result<DaemonAgenticResult, AiError> {
     context.require_granted(AiCapability::ToolChat)?;
+    let grant = if let Some(state) = &context.grant {
+        state.bundle.clone()
+    } else {
+        return Err(AiError::not_configured(
+            Some(AiCapability::ToolChat.as_str().to_string()),
+            "daemon agentic chat requires a presented runtime grant",
+        ));
+    };
     let caller = caller.trim();
     if caller.is_empty() {
         return Err(AiError::not_configured(
@@ -136,10 +142,11 @@ pub fn daemon_agentic_chat(
     let value = retry_with_backoff_until(
         deadline,
         |remaining| {
-            let http = with_managed_identity_headers(with_local_token(
+            let http = with_grant_presentation(
                 client.post(&url).timeout(remaining).json(&body),
                 &token,
-            ))?;
+                &grant,
+            )?;
             parse_json_response(http.send().map_err(reqwest_error)?)
         },
         std::thread::sleep,
@@ -213,51 +220,6 @@ pub(crate) fn build_daemon_agentic_body(
     );
     insert_trimmed(&mut body, "reasoning_effort", reasoning_effort);
     Value::Object(body)
-}
-
-fn with_managed_identity_headers(
-    request: reqwest::blocking::RequestBuilder,
-) -> Result<reqwest::blocking::RequestBuilder, AiError> {
-    fn env_value(name: &str) -> Option<String> {
-        std::env::var(name)
-            .ok()
-            .map(|value| value.trim().to_string())
-            .filter(|value| !value.is_empty())
-    }
-
-    if env_value(AGENT_API_TOKEN_ENV).is_none() {
-        return Ok(request);
-    }
-    let (owner_header, execution_id) = match (
-        env_value("GOBBY_AGENT_RUN_ID"),
-        env_value("GOBBY_MANAGED_EXECUTION_ID"),
-    ) {
-        (Some(execution_id), None) => ("X-Gobby-Agent-Run-Id", execution_id),
-        (None, Some(execution_id)) => ("X-Gobby-Managed-Execution-Id", execution_id),
-        _ => {
-            return Err(AiError::not_configured(
-                Some(AiCapability::ToolChat.as_str().to_string()),
-                "managed daemon capability owner is incomplete or ambiguous",
-            ));
-        }
-    };
-    let project_id = env_value("GOBBY_PROJECT_ID").ok_or_else(|| {
-        AiError::not_configured(
-            Some(AiCapability::ToolChat.as_str().to_string()),
-            "managed daemon capability project identity is missing",
-        )
-    })?;
-    let session_id = env_value("GOBBY_SESSION_ID").ok_or_else(|| {
-        AiError::not_configured(
-            Some(AiCapability::ToolChat.as_str().to_string()),
-            "managed daemon capability session identity is missing",
-        )
-    })?;
-
-    Ok(request
-        .header(owner_header, execution_id)
-        .header("X-Gobby-Caller-Project-Id", project_id)
-        .header("X-Gobby-Session-Id", session_id))
 }
 
 /// Serialize a [`ToolPolicy`] into the daemon's `{cli, tools, allow_mutation}`

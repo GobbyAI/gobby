@@ -83,7 +83,10 @@ pub fn run(ctx: &Context) -> anyhow::Result<()> {
     let mut conn = db::connect_readonly(&ctx.database_url)?;
     let layers = config::read_config_layers()?;
     let resolution = config::resolve_embedding_config_details(&mut conn, &layers)?;
-    let peer = fetch_daemon_peer(ctx.daemon_url.as_deref());
+    let peer = fetch_daemon_peer(
+        ctx.daemon_url.as_deref(),
+        ctx.grant_ai.as_ref().map(|grant| &grant.bundle),
+    );
     let (payload, exit_code) =
         build_doctor_report(resolution, ctx.code_vectors.vector_dim, probe_dim, peer);
 
@@ -265,7 +268,10 @@ fn push_drift(
     });
 }
 
-fn fetch_daemon_peer(daemon_url: Option<&str>) -> PeerDoctorOutcome {
+fn fetch_daemon_peer(
+    daemon_url: Option<&str>,
+    grant: Option<&gobby_core::grant::GrantBundle>,
+) -> PeerDoctorOutcome {
     let Some(daemon_url) = daemon_url else {
         return PeerDoctorOutcome::Absent;
     };
@@ -285,7 +291,7 @@ fn fetch_daemon_peer(daemon_url: Option<&str>) -> PeerDoctorOutcome {
             return PeerDoctorOutcome::TransportError(format!("read local CLI token: {error}"));
         }
     };
-    let response = match daemon_doctor_request(&client, &url, &token).send() {
+    let response = match daemon_doctor_request(&client, &url, &token, grant).send() {
         Ok(response) => response,
         Err(error) => {
             return PeerDoctorOutcome::TransportError(format!("send peer doctor request: {error}"));
@@ -312,10 +318,33 @@ fn daemon_doctor_request(
     client: &reqwest::blocking::Client,
     url: &str,
     token: &str,
+    grant: Option<&gobby_core::grant::GrantBundle>,
 ) -> reqwest::blocking::RequestBuilder {
-    client
+    let mut request = client
         .get(url)
-        .header(AUTHORIZATION_HEADER, authorization_bearer(token))
+        .header(AUTHORIZATION_HEADER, authorization_bearer(token));
+    if let Some(grant) = grant
+        && let Ok(header) = gobby_core::grant::encode_grant_header(grant)
+    {
+        request = request
+            .header(gobby_core::grant::GRANT_HEADER, header)
+            .header(
+                gobby_core::grant::MACHINE_HEADER,
+                grant.principal.machine_id.as_str(),
+            )
+            .header(
+                gobby_core::grant::CALLER_PROJECT_HEADER,
+                grant.principal.project_id.as_str(),
+            )
+            .header(
+                gobby_core::grant::TARGET_PROJECT_HEADER,
+                grant.principal.project_id.as_str(),
+            );
+        if let Some(session_id) = &grant.principal.session_id {
+            request = request.header(gobby_core::grant::SESSION_HEADER, session_id);
+        }
+    }
+    request
 }
 
 #[cfg(test)]
@@ -492,6 +521,7 @@ mod tests {
             &reqwest::blocking::Client::new(),
             "http://127.0.0.1:60887/api/embeddings/doctor",
             "local-test-token",
+            None,
         )
         .build()
         .expect("doctor request builds");

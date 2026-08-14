@@ -1,5 +1,5 @@
 use super::*;
-use crate::ai_context::{AiBindings, AiContext, AiLimiter};
+use crate::ai_context::{AiBindings, AiContext, AiLimiter, GrantAiState};
 use crate::config::{AiRouting, AiTuning, CapabilityBinding, TEST_ENV_LOCK};
 use crate::test_http::{RequestHandle, spawn_json_response};
 use std::ffi::OsString;
@@ -56,8 +56,20 @@ fn write_daemon_files(home: &Path, port: u16, token: &str) {
     fs::write(gobby_home.join("local_cli_token"), format!("{token}\n")).unwrap();
 }
 
+fn fixture_grant() -> crate::grant::GrantBundle {
+    let path = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+        .join("../../tests/runtime_grants/golden/direct_datastores.json");
+    let raw = fs::read(path).expect("golden grant");
+    let mut grant: crate::grant::GrantBundle =
+        serde_json::from_slice(raw.trim_ascii()).expect("parse golden grant");
+    grant.capabilities.vision_extract = crate::grant::AiCapability::Daemon {};
+    grant.capabilities.audio_transcribe = crate::grant::AiCapability::Daemon {};
+    grant
+}
+
 fn test_context(project_id: Option<&str>) -> AiContext {
     let binding = binding();
+    let grant = fixture_grant();
     AiContext {
         bindings: AiBindings {
             embed: binding.clone(),
@@ -73,7 +85,11 @@ fn test_context(project_id: Option<&str>) -> AiContext {
         limiter: AiLimiter::new(1),
         tool_loop_limits: crate::ai::generation::ToolLoopLimits::default(),
         project_id: project_id.map(str::to_string),
-        grant: None,
+        grant: Some(GrantAiState {
+            capabilities: grant.capabilities.clone(),
+            daemon_reachable: true,
+            bundle: grant,
+        }),
     }
 }
 

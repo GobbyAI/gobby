@@ -62,7 +62,7 @@ fn lifecycle_post_includes_bearer() {
                 daemon_url: Some(format!("http://{address}")),
                 timeouts: GraphLifecycleTimeouts::default(),
             };
-            run_lifecycle_action(&request, GraphLifecycleAction::Clear)
+            run_lifecycle_action(&request, GraphLifecycleAction::Clear, None)
                 .expect("run lifecycle action");
             let raw_request = handle.join().expect("join lifecycle listener");
             assert!(raw_request.lines().any(|line| {

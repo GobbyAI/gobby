@@ -9,8 +9,9 @@ use super::request::{
     multipart_form_with_file, text_request_body,
 };
 use super::response::{parse_daemon_embeddings, parse_daemon_transcription};
-use super::transport::{daemon_client, daemon_url, read_local_cli_token, with_local_token};
+use super::transport::{daemon_client, daemon_url, read_local_cli_token, with_grant_presentation};
 use super::types::{DaemonEmbeddingResult, DaemonTranscriptionOptions};
+use crate::grant::GrantBundle;
 
 const VOICE_TRANSCRIBE_PATH: &str = "/api/voice/transcribe";
 const VISION_EXTRACT_PATH: &str = "/api/llm/vision/extract";
@@ -48,6 +49,21 @@ impl GenerationBudget {
 }
 const EMBEDDINGS_PATH: &str = "/api/embeddings";
 
+fn presented_grant(cfg: &AiContext) -> Result<GrantBundle, AiError> {
+    if let Some(state) = &cfg.grant {
+        return Ok(state.bundle.clone());
+    }
+    let root = std::env::current_dir()
+        .ok()
+        .and_then(|cwd| crate::project::find_project_root(&cwd))
+        .ok_or_else(|| {
+            AiError::not_configured(None, "daemon AI requests require a presented runtime grant")
+        })?;
+    crate::grant::acquire(root)
+        .map(|acquired| acquired.bundle)
+        .map_err(|error| AiError::not_configured(None, error.to_string()))
+}
+
 pub fn transcribe_via_daemon(
     cfg: &AiContext,
     bytes: Vec<u8>,
@@ -57,6 +73,7 @@ pub fn transcribe_via_daemon(
 ) -> Result<TranscriptionResult, AiError> {
     let capability = audio_capability(options.capability)?;
     cfg.require_granted(capability)?;
+    let grant = presented_grant(cfg)?;
     let binding = cfg.binding(capability);
     let client = daemon_client()?;
     let token = read_local_cli_token()?;
@@ -88,13 +105,14 @@ pub fn transcribe_via_daemon(
             let form = add_optional_text(form, "target_lang", target_lang.as_deref());
             let form = add_optional_text(form, "prompt", prompt.as_deref());
             let form = add_optional_text(form, "project_id", project_id.as_deref());
-            let request = with_local_token(
+            let request = with_grant_presentation(
                 client
                     .post(&url)
                     .timeout(super::super::timeout_for(capability))
                     .multipart(form),
                 &token,
-            );
+                &grant,
+            )?;
             super::super::parse_json_response(request.send().map_err(super::super::reqwest_error)?)
         },
         std::thread::sleep,
@@ -111,6 +129,7 @@ pub fn describe_image_via_daemon(
 ) -> Result<VisionResult, AiError> {
     let capability = AiCapability::VisionExtract;
     cfg.require_granted(capability)?;
+    let grant = presented_grant(cfg)?;
     let binding = cfg.binding(capability);
     let client = daemon_client()?;
     let token = read_local_cli_token()?;
@@ -129,13 +148,14 @@ pub fn describe_image_via_daemon(
             let form = add_optional_text(form, "provider", provider.as_deref());
             let form = add_optional_text(form, "model", model.as_deref());
             let form = add_optional_text(form, "project_id", project_id.as_deref());
-            let request = with_local_token(
+            let request = with_grant_presentation(
                 client
                     .post(&url)
                     .timeout(super::super::timeout_for(capability))
                     .multipart(form),
                 &token,
-            );
+                &grant,
+            )?;
             super::super::parse_json_response(request.send().map_err(super::super::reqwest_error)?)
         },
         std::thread::sleep,
@@ -209,6 +229,7 @@ fn generate_text_via_daemon(
 ) -> Result<TextResult, AiError> {
     let capability = AiCapability::TextGenerate;
     cfg.require_granted(capability)?;
+    let grant = presented_grant(cfg)?;
     let client = daemon_client()?;
     let token = read_local_cli_token()?;
     let url = daemon_url(TEXT_GENERATE_PATH);
@@ -247,13 +268,14 @@ fn generate_text_via_daemon(
 
     let value = super::super::retry_with_backoff(
         || {
-            let request = with_local_token(
+            let request = with_grant_presentation(
                 client
                     .post(&url)
                     .timeout(super::super::timeout_for(capability))
                     .json(&body),
                 &token,
-            );
+                &grant,
+            )?;
             super::super::parse_json_response(request.send().map_err(super::super::reqwest_error)?)
         },
         std::thread::sleep,
@@ -269,6 +291,7 @@ pub fn embed_via_daemon(
 ) -> Result<DaemonEmbeddingResult, AiError> {
     let capability = AiCapability::Embed;
     cfg.require_granted(capability)?;
+    let grant = presented_grant(cfg)?;
     let binding = cfg.binding(capability);
     let client = daemon_client()?;
     let token = read_local_cli_token()?;
@@ -284,13 +307,14 @@ pub fn embed_via_daemon(
 
     let value = super::super::retry_with_backoff(
         || {
-            let request = with_local_token(
+            let request = with_grant_presentation(
                 client
                     .post(&url)
                     .timeout(super::super::timeout_for(capability))
                     .json(&body),
                 &token,
-            );
+                &grant,
+            )?;
             super::super::parse_json_response(request.send().map_err(super::super::reqwest_error)?)
         },
         std::thread::sleep,

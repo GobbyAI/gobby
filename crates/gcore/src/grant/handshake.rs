@@ -12,6 +12,12 @@ use super::cache::normalize_endpoint;
 use super::{GrantError, hex_encode, hmac_sha256, sha256};
 
 pub const GRANT_HEADER: &str = "X-Gobby-Runtime-Grant";
+pub const MACHINE_HEADER: &str = "X-Gobby-Machine-Id";
+pub const CALLER_PROJECT_HEADER: &str = "X-Gobby-Caller-Project-Id";
+pub const TARGET_PROJECT_HEADER: &str = "X-Gobby-Project-Id";
+pub const SESSION_HEADER: &str = "X-Gobby-Session-Id";
+pub const AGENT_RUN_HEADER: &str = "X-Gobby-Agent-Run-Id";
+pub const MANAGED_EXECUTION_HEADER: &str = "X-Gobby-Managed-Execution-Id";
 pub const CHALLENGE_PATH: &str = "/api/runtime/handshake/challenge";
 pub const HANDSHAKE_PATH: &str = "/api/runtime/handshake";
 pub const MANAGED_BOOTSTRAP_ENV: &str = "GOBBY_MANAGED_EXECUTION_BOOTSTRAP";
