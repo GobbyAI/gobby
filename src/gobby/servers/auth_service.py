@@ -84,7 +84,8 @@ _AGENT_CAPABILITY_MATRIX: tuple[_AgentRoute, ...] = (
     _AgentRoute("GET", "/api/llm/vision/status", False),
     _AgentRoute("GET", "/api/voice/status", False),
     _AgentRoute("GET", "/api/providers/models", False),
-    _AgentRoute("GET", "/api/config/service-capabilities", True),
+    _AgentRoute("POST", "/api/runtime/handshake", True),
+    _AgentRoute("GET", "/api/runtime/config", True),
     # Read-only `gobby` CLI listings backed by DaemonClient.
     _AgentRoute("GET", "/api/comms/channels", False),
     _AgentRoute("GET", "/api/webhooks", False),

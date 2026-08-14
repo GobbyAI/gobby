@@ -168,16 +168,15 @@ class TestEnsureIsolationCodeIndex:
         assert result.runtime_home is not None
         assert result.env["PATH"].split(":")[0] == str(wrapper.parent)
         assert result.env["GOBBY_CODE_INDEX_RUNTIME_HOME"] == result.runtime_home
-        assert result.env["GOBBY_MANAGED_EXECUTION_BOOTSTRAP"] == str(credential.bootstrap_path)
+        grant_path = Path(result.env["GOBBY_MANAGED_EXECUTION_BOOTSTRAP"])
+        assert grant_path.is_file()
+        assert result.env["GOBBY_MANAGED_EXECUTION_BOOTSTRAP"] == str(grant_path)
         assert wrapper.read_text() == (
             f"#!/bin/sh\nexport GOBBY_HOME={result.runtime_home}\n"
-            f"export GOBBY_MANAGED_EXECUTION_BOOTSTRAP={credential.bootstrap_path}\n"
+            f"export GOBBY_MANAGED_EXECUTION_BOOTSTRAP={grant_path}\n"
             'exec /tmp/gcode "$@"\n'
         )
-        bootstrap = Path(result.runtime_home) / "bootstrap.yaml"
-        assert bootstrap.read_text() == (
-            f"database_url: postgresql://{credential.role_name}:secret@localhost/gobby\n"
-        )
+        assert not (Path(result.runtime_home) / "bootstrap.yaml").exists()
         runtime_token = Path(result.runtime_home) / "local_cli_token"
         assert not runtime_token.exists()
         assert not runtime_token.is_symlink()
@@ -190,6 +189,56 @@ class TestEnsureIsolationCodeIndex:
             text=True,
         )
         assert status.stdout == ""
+
+    @pytest.mark.asyncio
+    async def test_grant_file_isolation(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        proc = self._proc()
+        runtime_root = tmp_path / "runtime"
+        workspace = tmp_path / "workspace"
+        source_home = tmp_path / "home"
+        credential = self._credential(tmp_path)
+        monkeypatch.setenv("GOBBY_HOME", str(source_home))
+        workspace.mkdir()
+        source_home.mkdir()
+        subprocess.run(["git", "init"], cwd=workspace, check=True, capture_output=True)
+
+        with (
+            patch("gobby.agents.code_index.resolve_native_bin", return_value="/tmp/gcode"),
+            patch(
+                "gobby.agents.code_index.asyncio.create_subprocess_exec",
+                new=AsyncMock(return_value=proc),
+            ),
+        ):
+            result = await ensure_isolation_code_index(
+                str(workspace),
+                credential=credential,
+                runtime_root=runtime_root,
+            )
+
+        grant_path = Path(result.env["GOBBY_MANAGED_EXECUTION_BOOTSTRAP"])
+        assert grant_path.is_file()
+        assert grant_path.stat().st_mode & 0o777 == 0o600
+        payload = json.loads(grant_path.read_text(encoding="utf-8"))
+        assert payload["principal"]["kind"] in {"agent_run", "tool_chat"}
+        assert payload["principal"]["execution_id"] == str(credential.managed_execution_id)
+        assert not (Path(result.runtime_home or "") / "bootstrap.yaml").exists()
+        assert "database_url" not in result.env
+        assert "GOBBY_AGENT_API_TOKEN" not in result.env
+
+        from gobby.agents.code_index import _prepare_gcode_runtime
+
+        cleanup = _prepare_gcode_runtime(
+            workspace=workspace,
+            gcode_bin=Path("/tmp/gcode"),
+            credential=None,
+            runtime_root=runtime_root,
+        )
+        assert cleanup.env == {}
+        if grant_path.exists():
+            grant_path.unlink()
+        assert not grant_path.exists()
 
     @pytest.mark.asyncio
     async def test_runtime_home_excludes_kek_and_links_non_secret_assets(

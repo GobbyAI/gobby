@@ -12,6 +12,7 @@ import tempfile
 from pathlib import Path
 
 from gobby.utils.local_token import GOBBY_AGENT_API_TOKEN_ENV, issue_agent_api_token
+from gobby.utils.machine_id import get_machine_id
 
 # ============================================================================
 # Terminal Mode Environment Variables
@@ -147,6 +148,7 @@ def get_terminal_env_vars(
             agent_run_id=agent_run_id,
             session_id=session_id,
             project_id=project_id,
+            machine_id=get_machine_id(),
             timeout_seconds=timeout_seconds,
         )
 

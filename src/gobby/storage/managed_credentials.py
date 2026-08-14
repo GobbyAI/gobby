@@ -17,6 +17,7 @@ from uuid import UUID, uuid4
 from psycopg.conninfo import conninfo_to_dict, make_conninfo
 
 from gobby.storage.hub.protocol import HubDatabase, Row
+from gobby.storage.interactive_sql import ensure_interactive_sql
 
 AUTH_SCHEMA = "gobby_agent_auth"
 MANAGED_EXECUTION_BOOTSTRAP_ENV = "GOBBY_MANAGED_EXECUTION_BOOTSTRAP"
@@ -27,7 +28,7 @@ DAEMON_LEASE_DURATION = timedelta(minutes=2)
 REVOCATION_DRAIN_TIMEOUT_SECONDS = 5.0
 REVOCATION_POLL_SECONDS = 0.05
 
-OwnerKind = Literal["agent_run", "tool_chat"]
+OwnerKind = Literal["agent_run", "tool_chat", "interactive"]
 
 
 class CredentialIssuanceError(RuntimeError):
@@ -86,6 +87,22 @@ class ManagedToolCredential:
     project_path: str
 
 
+@dataclass(frozen=True)
+class InteractiveCredential:
+    """Issued or reused interactive (machine, project) principal."""
+
+    role_name: str
+    credential_generation: int
+    issued_at: datetime
+    expires_at: datetime
+    dsn: str
+    reused: bool
+    deployment_token: str
+    machine_id: UUID
+    project_id: UUID
+    managed_execution_id: UUID
+
+
 def _row_value(row: Row, key: str) -> Any:
     return row[key]
 
@@ -105,6 +122,7 @@ class ManagedCredentialManager:
         self._machine_id = machine_id
         self._runtime_root = runtime_root
         self._owns_database = owns_database
+        self._interactive_grant_expiry: dict[tuple[str, UUID, int], datetime] = {}
 
     def close(self) -> None:
         if self._owns_database and hasattr(self._database, "close"):
@@ -280,6 +298,258 @@ class ManagedCredentialManager:
             project_id=project_id,
             project_path=str(authoritative_path),
         )
+
+    def issue_interactive(
+        self,
+        *,
+        deployment_token: str,
+        project_id: UUID,
+        session_id: UUID,
+        expires_at: datetime,
+        secret_store: Any,
+    ) -> InteractiveCredential:
+        issued_at = datetime.now(UTC)
+        normalized_expiry = self._validate_expiry(issued_at, expires_at)
+        ensure_interactive_sql(self._database.conninfo)
+        self.heartbeat()
+        password = secrets.token_urlsafe(32)
+        try:
+            row = self._database.fetchone(
+                f"""SELECT * FROM {AUTH_SCHEMA}.issue_or_reuse_interactive_principal(
+                    %s, %s, %s, %s, %s, %s
+                )""",
+                (
+                    deployment_token,
+                    self._machine_id,
+                    project_id,
+                    session_id,
+                    normalized_expiry,
+                    password,
+                ),
+            )
+            if row is None:
+                raise CredentialIssuanceError("interactive issuance returned no result")
+            role_name = str(_row_value(row, "role_name"))
+            generation = int(_row_value(row, "credential_generation"))
+            reused = bool(_row_value(row, "reused"))
+            execution_id = UUID(str(_row_value(row, "managed_execution_id")))
+            if reused:
+                password = self._load_interactive_password(
+                    secret_store,
+                    deployment_token=deployment_token,
+                    project_id=project_id,
+                    generation=generation,
+                )
+            else:
+                self._store_interactive_password(
+                    secret_store,
+                    deployment_token=deployment_token,
+                    project_id=project_id,
+                    generation=generation,
+                    password=password,
+                )
+            return InteractiveCredential(
+                role_name=role_name,
+                credential_generation=generation,
+                issued_at=issued_at,
+                expires_at=normalized_expiry,
+                dsn=self._interactive_dsn(role_name, password),
+                reused=reused,
+                deployment_token=deployment_token,
+                machine_id=self._machine_id,
+                project_id=project_id,
+                managed_execution_id=execution_id,
+            )
+        except Exception as error:
+            if isinstance(error, CredentialIssuanceError):
+                raise
+            raise CredentialIssuanceError("interactive credential issuance failed") from error
+
+    def rotate_interactive(
+        self,
+        *,
+        deployment_token: str,
+        project_id: UUID,
+        session_id: UUID,
+        expires_at: datetime,
+        secret_store: Any,
+    ) -> InteractiveCredential:
+        issued_at = datetime.now(UTC)
+        normalized_expiry = self._validate_expiry(issued_at, expires_at)
+        ensure_interactive_sql(self._database.conninfo)
+        self.heartbeat()
+        password = secrets.token_urlsafe(32)
+        drain_until = self._interactive_drain_until(deployment_token, project_id)
+        row = self._database.fetchone(
+            f"""SELECT * FROM {AUTH_SCHEMA}.rotate_interactive_principal(
+                %s, %s, %s, %s, %s, %s, %s
+            )""",
+            (
+                deployment_token,
+                self._machine_id,
+                project_id,
+                session_id,
+                normalized_expiry,
+                password,
+                drain_until,
+            ),
+        )
+        if row is None:
+            raise CredentialIssuanceError("interactive rotation returned no result")
+        role_name = str(_row_value(row, "role_name"))
+        generation = int(_row_value(row, "credential_generation"))
+        execution_id = UUID(str(_row_value(row, "managed_execution_id")))
+        self._store_interactive_password(
+            secret_store,
+            deployment_token=deployment_token,
+            project_id=project_id,
+            generation=generation,
+            password=password,
+        )
+        return InteractiveCredential(
+            role_name=role_name,
+            credential_generation=generation,
+            issued_at=issued_at,
+            expires_at=normalized_expiry,
+            dsn=self._interactive_dsn(role_name, password),
+            reused=False,
+            deployment_token=deployment_token,
+            machine_id=self._machine_id,
+            project_id=project_id,
+            managed_execution_id=execution_id,
+        )
+
+    def revoke_interactive(
+        self,
+        *,
+        deployment_token: str,
+        project_id: UUID,
+        reason: str,
+        generation: int | None = None,
+    ) -> RevocationOutcome:
+        ensure_interactive_sql(self._database.conninfo)
+        row = self._database.fetchone(
+            f"""SELECT * FROM {AUTH_SCHEMA}.lookup_interactive_principal(
+                %s::text, %s::uuid, %s::uuid, %s::integer
+            )""",
+            (deployment_token, self._machine_id, project_id, generation),
+        )
+        if row is None:
+            return RevocationOutcome(completed=True, revoked_count=0)
+        execution_id = UUID(str(_row_value(row, "managed_execution_id")))
+        return self.revoke(execution_id, generation=generation, reason=reason)
+
+    def remember_interactive_grant_expiry(
+        self,
+        *,
+        deployment_token: str,
+        project_id: UUID,
+        generation: int,
+        expires_at: datetime,
+    ) -> None:
+        key = (deployment_token, project_id, generation)
+        current = self._interactive_grant_expiry.get(key)
+        if current is None or expires_at > current:
+            self._interactive_grant_expiry[key] = expires_at
+
+    def interactive_generation_revoked(
+        self,
+        *,
+        deployment_token: str,
+        project_id: UUID,
+        generation: int,
+    ) -> bool:
+        ensure_interactive_sql(self._database.conninfo)
+        row = self._database.fetchone(
+            f"""SELECT * FROM {AUTH_SCHEMA}.lookup_interactive_principal(
+                %s::text, %s::uuid, %s::uuid, %s::integer
+            )""",
+            (deployment_token, self._machine_id, project_id, generation),
+        )
+        if row is None:
+            return True
+        revoked_at = _row_value(row, "revoked_at")
+        return revoked_at is not None
+
+    def _interactive_drain_until(self, deployment_token: str, project_id: UUID) -> datetime:
+        matching = [
+            expiry
+            for (
+                token,
+                stored_project,
+                _generation,
+            ), expiry in self._interactive_grant_expiry.items()
+            if token == deployment_token and stored_project == project_id
+        ]
+        if matching:
+            return max(matching)
+        return datetime.now(UTC) + timedelta(minutes=5)
+
+    def _interactive_aad(
+        self,
+        *,
+        deployment_token: str,
+        project_id: UUID,
+        generation: int,
+    ) -> str:
+        return f"{deployment_token}:{self._machine_id}:{project_id}:{generation}"
+
+    def _store_interactive_password(
+        self,
+        secret_store: Any,
+        *,
+        deployment_token: str,
+        project_id: UUID,
+        generation: int,
+        password: str,
+    ) -> None:
+        aad = self._interactive_aad(
+            deployment_token=deployment_token,
+            project_id=project_id,
+            generation=generation,
+        )
+        ciphertext = secret_store.seal(password.encode("utf-8"), aad=aad.encode("utf-8"))
+        self._database.fetchone(
+            f"""SELECT {AUTH_SCHEMA}.replace_interactive_credential_material(
+                %s, %s, %s, %s, %s, %s
+            )""",
+            (
+                deployment_token,
+                self._machine_id,
+                project_id,
+                generation,
+                ciphertext,
+                aad,
+            ),
+        )
+
+    def _load_interactive_password(
+        self,
+        secret_store: Any,
+        *,
+        deployment_token: str,
+        project_id: UUID,
+        generation: int,
+    ) -> str:
+        row = self._database.fetchone(
+            f"""SELECT * FROM {AUTH_SCHEMA}.load_interactive_credential_material(
+                %s, %s, %s, %s
+            )""",
+            (deployment_token, self._machine_id, project_id, generation),
+        )
+        if row is None:
+            raise CredentialIssuanceError("interactive credential material is missing")
+        ciphertext = str(_row_value(row, "ciphertext"))
+        aad = str(_row_value(row, "aad_identity"))
+        plaintext = secret_store.open_sealed(ciphertext, aad=aad.encode("utf-8"))
+        if not isinstance(plaintext, bytes):
+            raise CredentialIssuanceError("interactive credential material is malformed")
+        return plaintext.decode("utf-8")
+
+    def _interactive_dsn(self, role_name: str, password: str) -> str:
+        parsed = conninfo_to_dict(self._database.conninfo)
+        parsed.update(user=role_name, password=password)
+        return make_conninfo("", **parsed)
 
     def rotate_due(self) -> list[ManagedCredential]:
         self.heartbeat()

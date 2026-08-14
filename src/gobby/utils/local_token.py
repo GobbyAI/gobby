@@ -11,6 +11,7 @@ from dataclasses import dataclass
 from pathlib import Path
 
 from gobby.paths import get_gobby_home
+from gobby.utils.machine_id import get_machine_id
 
 # This is a filename, not a credential value.
 LOCAL_API_TOKEN_FILENAME = "local_cli_token"  # nosec B105
@@ -31,6 +32,7 @@ class AgentApiTokenClaims:
 
     session_id: str
     project_id: str
+    machine_id: str
     iat: int
     exp: int
     agent_run_id: str | None = None
@@ -58,6 +60,7 @@ def issue_agent_api_token(
     session_id: str,
     project_id: str,
     timeout_seconds: float | None = None,
+    machine_id: str | None = None,
 ) -> str:
     """Mint a signed daemon capability bound to one managed agent identity.
 
@@ -74,6 +77,7 @@ def issue_agent_api_token(
         owner_id=agent_run_id,
         session_id=session_id,
         project_id=project_id,
+        machine_id=machine_id,
         ttl_seconds=ttl_seconds,
     )
 
@@ -85,6 +89,7 @@ def issue_tool_api_token(
     session_id: str,
     project_id: str,
     timeout_seconds: float,
+    machine_id: str | None = None,
 ) -> str:
     """Mint a daemon capability bounded to one managed tool request."""
     return _issue_managed_api_token(
@@ -93,6 +98,7 @@ def issue_tool_api_token(
         owner_id=managed_execution_id,
         session_id=session_id,
         project_id=project_id,
+        machine_id=machine_id,
         ttl_seconds=max(1, math.ceil(timeout_seconds)),
     )
 
@@ -105,13 +111,18 @@ def _issue_managed_api_token(
     session_id: str,
     project_id: str,
     ttl_seconds: int,
+    machine_id: str | None = None,
 ) -> str:
+    resolved_machine = machine_id or get_machine_id()
+    if not resolved_machine:
+        raise ValueError("capability tokens require a machine_id")
     iat = int(time.time())
     exp = iat + ttl_seconds
     payload = json.dumps(
         {
             "exp": exp,
             "iat": iat,
+            "machine_id": resolved_machine,
             owner_claim: owner_id,
             "project_id": project_id,
             "session_id": session_id,
@@ -152,12 +163,13 @@ def verify_agent_api_token(
     managed_execution_id = raw.get("managed_execution_id")
     session_id = raw.get("session_id")
     project_id = raw.get("project_id")
+    machine_id = raw.get("machine_id")
     owner_claims = [raw[name] for name in ("agent_run_id", "managed_execution_id") if name in raw]
     if len(owner_claims) != 1:
         return None
     if not isinstance(owner_claims[0], str) or not owner_claims[0]:
         return None
-    if not all(isinstance(value, str) and value for value in (session_id, project_id)):
+    if not all(isinstance(value, str) and value for value in (session_id, project_id, machine_id)):
         return None
     iat = raw.get("iat")
     exp = raw.get("exp")
@@ -165,6 +177,7 @@ def verify_agent_api_token(
         return None
     assert isinstance(session_id, str)
     assert isinstance(project_id, str)
+    assert isinstance(machine_id, str)
     assert isinstance(iat, int)
     assert isinstance(exp, int)
     if time.time() >= exp:
@@ -174,6 +187,7 @@ def verify_agent_api_token(
         managed_execution_id=managed_execution_id,
         session_id=session_id,
         project_id=project_id,
+        machine_id=machine_id,
         iat=iat,
         exp=exp,
     )

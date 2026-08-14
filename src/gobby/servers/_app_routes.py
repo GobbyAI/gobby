@@ -43,6 +43,8 @@ def register_routes(app: FastAPI, server: "HTTPServer") -> None:
         create_projects_router,
         create_providers_router,
         create_rules_router,
+        create_runtime_config_router,
+        create_runtime_handshake_router,
         create_sessions_router,
         create_skills_router,
         create_source_control_router,
@@ -86,6 +88,8 @@ def register_routes(app: FastAPI, server: "HTTPServer") -> None:
     app.include_router(create_embeddings_router(server))
     app.include_router(create_voice_router(server))
     app.include_router(create_configuration_router(server))
+    app.include_router(create_runtime_handshake_router(server))
+    app.include_router(create_runtime_config_router(server))
     app.include_router(create_workflows_router(server))
     app.include_router(create_rules_router(server))
     app.include_router(create_source_control_router(server))

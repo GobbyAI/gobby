@@ -386,13 +386,13 @@ def test_agent_capability_matrix(
         _request(identity, method="POST", path="/api/code-index/invalidate")
     )
     assert service.is_request_authenticated(
-        _request(identity, method="GET", path="/api/config/service-capabilities")
+        _request(identity, method="POST", path="/api/runtime/handshake")
     )
     assert service.is_request_authenticated(
         _request(identity, method="POST", path="/api/llm/chat/completions")
     )
     assert not service.is_request_authenticated(
-        _request(bearer_only, method="GET", path="/api/config/service-capabilities")
+        _request(bearer_only, method="POST", path="/api/runtime/handshake")
     )
 
     # Out-of-matrix routes stay rejected, whatever the headers.
@@ -446,7 +446,7 @@ def test_tool_capability_is_bound_to_live_managed_execution(
     }
 
     assert service.is_request_authenticated(
-        _request(identity, method="GET", path="/api/config/service-capabilities")
+        _request(identity, method="POST", path="/api/runtime/handshake")
     )
     assert service.is_request_authenticated(
         _request(identity, method="POST", path="/api/llm/chat/completions")
@@ -454,14 +454,14 @@ def test_tool_capability_is_bound_to_live_managed_execution(
     assert not service.is_request_authenticated(
         _request(
             identity | {"X-Gobby-Managed-Execution-Id": "other-execution"},
-            method="GET",
-            path="/api/config/service-capabilities",
+            method="POST",
+            path="/api/runtime/handshake",
         )
     )
 
     live[0] = False
     assert not service.is_request_authenticated(
-        _request(identity, method="GET", path="/api/config/service-capabilities")
+        _request(identity, method="POST", path="/api/runtime/handshake")
     )
 
 

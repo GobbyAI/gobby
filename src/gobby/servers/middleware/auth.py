@@ -35,6 +35,7 @@ _PUBLIC_PATHS = frozenset(
         "/api/health",
         "/api/admin/health",
         "/api/admin/startup-progress",
+        "/api/runtime/handshake/challenge",
         "/favicon.ico",
         "/logo.png",
     }

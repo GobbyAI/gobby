@@ -16,6 +16,7 @@ from gobby.storage.managed_credentials import (
     ManagedCredentialManager,
 )
 from gobby.utils.local_token import issue_tool_api_token, read_local_api_token
+from gobby.utils.machine_id import get_machine_id
 
 _MAX_TOOL_ROLE_LIFETIME_SECONDS = 3540.0
 
@@ -75,6 +76,7 @@ def build_managed_tool_chat_lease_factory(
                 managed_execution_id=str(execution_id),
                 session_id=str(request.session_id),
                 project_id=str(tool_credential.project_id),
+                machine_id=get_machine_id(),
                 timeout_seconds=lifetime_seconds,
             )
             scoped_request = replace(

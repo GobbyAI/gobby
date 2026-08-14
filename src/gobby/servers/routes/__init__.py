@@ -33,6 +33,8 @@ from gobby.servers.routes.profiles import create_profiles_router
 from gobby.servers.routes.projects import create_projects_router
 from gobby.servers.routes.providers import create_providers_router
 from gobby.servers.routes.rules import create_rules_router
+from gobby.servers.routes.runtime_config import create_runtime_config_router
+from gobby.servers.routes.runtime_handshake import create_runtime_handshake_router
 from gobby.servers.routes.sessions import create_sessions_router
 from gobby.servers.routes.skills import create_skills_router
 from gobby.servers.routes.source_control import create_source_control_router
@@ -71,6 +73,8 @@ __all__ = [
     "create_profiles_router",
     "create_providers_router",
     "create_rules_router",
+    "create_runtime_config_router",
+    "create_runtime_handshake_router",
     "create_sessions_router",
     "create_skills_router",
     "create_source_control_router",

@@ -610,3 +610,22 @@ class SecretStore:
     def resolve_dict(self, d: dict[str, str]) -> dict[str, str]:
         """Resolve $secret:NAME references in all values of a dict."""
         return {k: self.resolve(v) for k, v in d.items()}
+
+    def seal(self, plaintext: bytes, *, aad: bytes) -> str:
+        """Encrypt ``plaintext`` under the daemon envelope with AAD binding."""
+        from cryptography.hazmat.primitives.ciphers.aead import AESGCM
+
+        key = base64.urlsafe_b64decode(self._get_dek())
+        nonce = os.urandom(12)
+        token = nonce + AESGCM(key).encrypt(nonce, plaintext, aad)
+        return base64.b64encode(token).decode("ascii")
+
+    def open_sealed(self, token: str, *, aad: bytes) -> bytes:
+        """Decrypt a token produced by ``seal``, verifying the AAD binding."""
+        from cryptography.hazmat.primitives.ciphers.aead import AESGCM
+
+        raw = base64.b64decode(token)
+        if len(raw) < 13:
+            raise InvalidToken("sealed credential material is truncated")
+        key = base64.urlsafe_b64decode(self._get_dek())
+        return AESGCM(key).decrypt(raw[:12], raw[12:], aad)

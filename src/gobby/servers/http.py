@@ -97,6 +97,8 @@ class HTTPServer:
         self.bootstrap_config = bootstrap_config or BootstrapConfig()
         self.startup_config = startup_config.model_copy(deep=True) if startup_config else None
         self.auth_service = AuthService(lambda: self.services.database)
+        self.grant_service: Any = None
+        self.handshake_service: Any = None
 
         # WebSocket server reference (set by GobbyRunner after construction)
         self.websocket_server: WebSocketServer | None = None

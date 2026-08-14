@@ -21,10 +21,24 @@ from typing import TYPE_CHECKING
 
 from psycopg.conninfo import conninfo_to_dict
 
-from gobby.config.bootstrap_io import read_bootstrap_yaml, write_bootstrap_yaml
+from gobby.config.bootstrap_io import read_bootstrap_yaml
 from gobby.paths import get_gobby_home
+from gobby.runtime_grants.launch import materialize_managed_launch
+from gobby.runtime_grants.schema import (
+    AIDaemonCapability,
+    AIUnavailableCapability,
+    GrantBundle,
+    GrantCapabilities,
+    GrantDeployment,
+    GrantPrincipal,
+    PostgresDirect,
+    SchemaIdentity,
+    UnavailableCapability,
+)
+from gobby.runtime_grants.signing import sign_grant
 from gobby.storage.managed_credentials import MANAGED_EXECUTION_BOOTSTRAP_ENV
-from gobby.utils.local_token import GOBBY_AGENT_API_TOKEN_ENV
+from gobby.storage.schema_contract import expected_schema_identity
+from gobby.utils.local_token import GOBBY_AGENT_API_TOKEN_ENV, read_local_api_token
 from gobby.utils.native_bin import resolve_native_bin
 
 if TYPE_CHECKING:
@@ -281,11 +295,15 @@ async def ensure_isolation_code_index(
     if gcode_bin is None:
         raise RuntimeError("gcode_not_installed")
 
+    identity = dict(identity_env or {})
     result = _prepare_gcode_runtime(
         workspace=workspace,
         gcode_bin=Path(gcode_bin),
         credential=credential,
         runtime_root=runtime_root,
+        machine_id=identity.get("GOBBY_MACHINE_ID"),
+        project_id=identity.get("GOBBY_PROJECT_ID"),
+        session_id=identity.get("GOBBY_SESSION_ID"),
     )
     gcode_command = result.wrapper_path or gcode_bin
     merged_probe_env = dict(identity_env or {})
@@ -336,11 +354,12 @@ def _prepare_gcode_runtime(
     gcode_bin: Path,
     credential: ManagedCredential | None,
     runtime_root: Path | None,
+    machine_id: str | None = None,
+    project_id: str | None = None,
+    session_id: str | None = None,
 ) -> CodeIndexPreflightResult:
     if credential is None:
         return CodeIndexPreflightResult(env={})
-
-    database_url = _scoped_database_url(credential)
 
     source_home = get_gobby_home()
     runtime_home = _runtime_home_for_workspace(
@@ -350,10 +369,22 @@ def _prepare_gcode_runtime(
     _chmod_private(runtime_home.parent)
     runtime_home.mkdir(parents=True, exist_ok=True)
     _chmod_private(runtime_home)
-    write_bootstrap_yaml(
-        runtime_home / "bootstrap.yaml",
-        {"database_url": database_url},
+    grant = _signed_grant_from_credential(
+        credential,
+        machine_id=machine_id,
+        project_id=project_id,
+        session_id=session_id,
     )
+    launch = materialize_managed_launch(
+        grant,
+        dest_dir=runtime_home,
+        operator_token=read_local_api_token() or "isolation-envelope-token",
+        deadline_seconds=max(
+            1.0,
+            (credential.expires_at - credential.issued_at).total_seconds(),
+        ),
+    )
+    # Spawn already installs GOBBY_AGENT_API_TOKEN; do not overwrite it.
     _link_runtime_assets(source_home, runtime_home)
     # Runs last so it is the final word on #19289: no writer above it can leave
     # a credential behind. Sweeping the whole root also reaps pre-#19289 residue.
@@ -363,7 +394,7 @@ def _prepare_gcode_runtime(
     wrapper_path.parent.mkdir(parents=True, exist_ok=True)
     _exclude_generated_wrapper_from_git(workspace)
     wrapper_path.write_text(
-        _gcode_wrapper_script(runtime_home, gcode_bin, credential.bootstrap_path),
+        _gcode_wrapper_script(runtime_home, gcode_bin, launch.grant_path),
         encoding="utf-8",
     )
     wrapper_path.chmod(0o755)
@@ -372,11 +403,54 @@ def _prepare_gcode_runtime(
         env={
             "PATH": _prepend_path(wrapper_path.parent),
             _RUNTIME_HOME_ENV: str(runtime_home),
-            MANAGED_EXECUTION_BOOTSTRAP_ENV: str(credential.bootstrap_path),
+            MANAGED_EXECUTION_BOOTSTRAP_ENV: launch.env[MANAGED_EXECUTION_BOOTSTRAP_ENV],
         },
         wrapper_path=str(wrapper_path),
         runtime_home=str(runtime_home),
     )
+
+
+def _signed_grant_from_credential(
+    credential: ManagedCredential,
+    *,
+    machine_id: str | None,
+    project_id: str | None,
+    session_id: str | None,
+) -> GrantBundle:
+    from uuid import uuid4
+
+    postgres = PostgresDirect(
+        dsn=_scoped_database_url(credential),
+        role_name=credential.role_name,
+        credential_generation=credential.credential_generation,
+        valid_until=int(credential.expires_at.timestamp()),
+    )
+    unsigned = GrantBundle(
+        config_revision=0,
+        deployment=GrantDeployment(token="0000000000000000", fencing_epoch=0),
+        schema_identity=SchemaIdentity.model_validate(expected_schema_identity()),
+        principal=GrantPrincipal(
+            kind="agent_run",
+            machine_id=machine_id or "00000000-0000-4000-8000-000000000000",
+            project_id=project_id or str(credential.managed_execution_id),
+            execution_id=str(credential.managed_execution_id),
+            session_id=session_id or str(uuid4()),
+        ),
+        capabilities=GrantCapabilities(
+            postgres=postgres,
+            falkordb=UnavailableCapability(),
+            qdrant=UnavailableCapability(),
+            embed=AIUnavailableCapability(),
+            text_generate=AIDaemonCapability(),
+            tool_chat=AIDaemonCapability(),
+            vision_extract=AIUnavailableCapability(),
+            audio_transcribe=AIUnavailableCapability(),
+            broker_operations=(),
+        ),
+        issued_at=int(credential.issued_at.timestamp()),
+        expires_at=int(credential.expires_at.timestamp()),
+    )
+    return sign_grant(unsigned, "isolation-managed-grant")
 
 
 def _scoped_database_url(credential: ManagedCredential) -> str:

@@ -5,7 +5,7 @@ from __future__ import annotations
 import asyncio
 import json
 import re
-from collections.abc import Sequence
+from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
 from datetime import UTC, datetime
 from pathlib import Path, PurePath, PureWindowsPath
@@ -14,6 +14,7 @@ from typing import Any
 
 from gobby.install.bin_freshness_models import is_at_least_version
 from gobby.install.version_pins import MANAGED_BIN_VERSION_PINS
+from gobby.runtime_grants.launch import ManagedLaunch, merge_child_env
 from gobby.runtime_output import (
     forward_subprocess_stderr,
     is_daemon_effective_config_transport_error,
@@ -228,11 +229,15 @@ class GcodeGateway:
         binary: str | None = None,
         timeout_seconds: float = 30.0,
         rebuild_timeout_seconds: float = 120.0,
+        managed_launch: ManagedLaunch | None = None,
     ) -> None:
         self._binary = binary
         self._timeout_seconds = timeout_seconds
         self._rebuild_timeout_seconds = rebuild_timeout_seconds
         self._checked_version: str | None = None
+        self._child_env: Mapping[str, str] | None = (
+            merge_child_env(managed_launch.env) if managed_launch is not None else None
+        )
 
     @property
     def checked_version(self) -> str | None:
@@ -585,6 +590,7 @@ class GcodeGateway:
                 *command,
                 stdout=asyncio.subprocess.PIPE,
                 stderr=asyncio.subprocess.PIPE,
+                env=self._child_env,
             )
             stdout, stderr = await asyncio.wait_for(
                 proc.communicate(),
@@ -640,6 +646,7 @@ class GcodeGateway:
                 *command,
                 stdout=asyncio.subprocess.PIPE,
                 stderr=asyncio.subprocess.PIPE,
+                env=self._child_env,
             )
             stdout, stderr = await asyncio.wait_for(
                 proc.communicate(),

@@ -15,6 +15,12 @@ from psycopg.conninfo import conninfo_to_dict, make_conninfo
 from psycopg.rows import dict_row
 
 from gobby.storage.schema_contract import apply_schema
+from tests.fixtures.postgres import (
+    TEST_USER_EMAIL,
+    TEST_USER_ID,
+    TEST_USER_NAME,
+    TEST_USER_PASSWORD_HASH,
+)
 
 pytestmark = pytest.mark.integration
 
@@ -105,8 +111,17 @@ def _seed(conn: psycopg.Connection[Any], fixture: AuthorizationFixture) -> None:
         ),
     )
     conn.execute(
-        "INSERT INTO public.machines (id, hostname) VALUES (%s, 'agent-auth-test')",
-        (fixture.machine_id,),
+        """
+        INSERT INTO public.users (id, email, name, password_hash)
+        VALUES (%s, %s, %s, %s)
+        ON CONFLICT (id) DO NOTHING
+        """,
+        (TEST_USER_ID, TEST_USER_EMAIL, TEST_USER_NAME, TEST_USER_PASSWORD_HASH),
+    )
+    conn.execute(
+        "INSERT INTO public.machines (id, hostname, owner_user_id) "
+        "VALUES (%s, 'agent-auth-test', %s)",
+        (fixture.machine_id, TEST_USER_ID),
     )
     conn.execute(
         """

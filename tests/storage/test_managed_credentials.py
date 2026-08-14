@@ -27,6 +27,7 @@ from gobby.storage.managed_credentials import (
     ManagedCredentialManager,
     ManagedToolCredential,
 )
+from tests.fixtures.postgres import TEST_USER_ID
 from tests.storage.test_postgres_agent_authorization import (
     AUTH_SCHEMA,
     RUNTIME_ROLE,
@@ -440,8 +441,9 @@ def test_other_daemon_waits_for_expired_lease_then_recovers_terminal_and_orphan_
     owner = _manager(fixture, tmp_path / "owner")
     with psycopg.connect(fixture.database_url, autocommit=True) as admin:
         admin.execute(
-            "INSERT INTO public.machines (id, hostname) VALUES (%s, 'other-daemon-test')",
-            (other_machine_id,),
+            "INSERT INTO public.machines (id, hostname, owner_user_id) "
+            "VALUES (%s, 'other-daemon-test', %s)",
+            (other_machine_id, TEST_USER_ID),
         )
     other_database = PostgresHubDatabase(fixture.database_url, runtime_role=RUNTIME_ROLE)
     other_database.open()
@@ -496,3 +498,243 @@ def test_other_daemon_waits_for_expired_lease_then_recovers_terminal_and_orphan_
         other.close()
         with psycopg.connect(fixture.database_url, autocommit=True) as admin:
             admin.execute("DELETE FROM public.machines WHERE id = %s", (other_machine_id,))
+
+
+def _secret_store(fixture: AuthorizationFixture, tmp_path: Path) -> Any:
+    from gobby.storage.secrets import SecretStore
+
+    database = PostgresHubDatabase(fixture.database_url, runtime_role=RUNTIME_ROLE)
+    database.open()
+    return SecretStore(database)
+
+
+def test_interactive_binding_uniqueness(
+    authorization_fixture: AuthorizationFixture,
+    tmp_path: Path,
+) -> None:
+    fixture = authorization_fixture
+    manager = _manager(fixture, tmp_path / "managed")
+    store = _secret_store(fixture, tmp_path)
+    token_a = "aaaaaaaaaaaaaaaa"
+    token_b = "bbbbbbbbbbbbbbbb"
+    try:
+        first = manager.issue_interactive(
+            deployment_token=token_a,
+            project_id=fixture.project_id,
+            session_id=fixture.session_id,
+            expires_at=datetime.now(UTC) + timedelta(hours=1),
+            secret_store=store,
+        )
+        reused = manager.issue_interactive(
+            deployment_token=token_a,
+            project_id=fixture.project_id,
+            session_id=fixture.session_id,
+            expires_at=datetime.now(UTC) + timedelta(hours=1),
+            secret_store=store,
+        )
+        other_project = manager.issue_interactive(
+            deployment_token=token_a,
+            project_id=fixture.other_project_id,
+            session_id=fixture.session_id,
+            expires_at=datetime.now(UTC) + timedelta(hours=1),
+            secret_store=store,
+        )
+        other_deploy = manager.issue_interactive(
+            deployment_token=token_b,
+            project_id=fixture.project_id,
+            session_id=fixture.session_id,
+            expires_at=datetime.now(UTC) + timedelta(hours=1),
+            secret_store=store,
+        )
+        assert first.reused is False
+        assert reused.reused is True
+        assert reused.role_name == first.role_name
+        assert reused.dsn == first.dsn
+        assert other_project.role_name != first.role_name
+        assert other_deploy.role_name != first.role_name
+        with psycopg.connect(first.dsn) as conn:
+            assert conn.execute("SELECT 1").fetchone() == (1,)
+    finally:
+        manager.revoke_interactive(
+            deployment_token=token_a,
+            project_id=fixture.project_id,
+            reason="test-cleanup",
+        )
+        manager.revoke_interactive(
+            deployment_token=token_a,
+            project_id=fixture.other_project_id,
+            reason="test-cleanup",
+        )
+        manager.revoke_interactive(
+            deployment_token=token_b,
+            project_id=fixture.project_id,
+            reason="test-cleanup",
+        )
+        manager.close()
+        store.db.close()
+
+
+def test_interactive_reuse_after_restart(
+    authorization_fixture: AuthorizationFixture,
+    tmp_path: Path,
+) -> None:
+    fixture = authorization_fixture
+    store = _secret_store(fixture, tmp_path)
+    first_manager = _manager(fixture, tmp_path / "managed-a")
+    token = "cccccccccccccccc"
+    try:
+        first = first_manager.issue_interactive(
+            deployment_token=token,
+            project_id=fixture.project_id,
+            session_id=fixture.session_id,
+            expires_at=datetime.now(UTC) + timedelta(hours=1),
+            secret_store=store,
+        )
+        first_manager.close()
+        restarted = _manager(fixture, tmp_path / "managed-b")
+        try:
+            reused = restarted.issue_interactive(
+                deployment_token=token,
+                project_id=fixture.project_id,
+                session_id=fixture.session_id,
+                expires_at=datetime.now(UTC) + timedelta(hours=1),
+                secret_store=store,
+            )
+            assert reused.reused is True
+            assert reused.dsn == first.dsn
+            assert reused.credential_generation == first.credential_generation
+            rotated = restarted.rotate_interactive(
+                deployment_token=token,
+                project_id=fixture.project_id,
+                session_id=fixture.session_id,
+                expires_at=datetime.now(UTC) + timedelta(hours=1),
+                secret_store=store,
+            )
+            assert rotated.credential_generation == first.credential_generation + 1
+            assert rotated.dsn != first.dsn
+        finally:
+            restarted.revoke_interactive(
+                deployment_token=token,
+                project_id=fixture.project_id,
+                reason="test-cleanup",
+            )
+            restarted.close()
+    finally:
+        store.db.close()
+
+
+def test_rotation_drains_predecessor_generations(
+    authorization_fixture: AuthorizationFixture,
+    tmp_path: Path,
+) -> None:
+    fixture = authorization_fixture
+    manager = _manager(fixture, tmp_path / "managed")
+    store = _secret_store(fixture, tmp_path)
+    token = "dddddddddddddddd"
+    try:
+        first = manager.issue_interactive(
+            deployment_token=token,
+            project_id=fixture.project_id,
+            session_id=fixture.session_id,
+            expires_at=datetime.now(UTC) + timedelta(hours=1),
+            secret_store=store,
+        )
+        manager.remember_interactive_grant_expiry(
+            deployment_token=token,
+            project_id=fixture.project_id,
+            generation=first.credential_generation,
+            expires_at=datetime.now(UTC) + timedelta(minutes=20),
+        )
+        rotated = manager.rotate_interactive(
+            deployment_token=token,
+            project_id=fixture.project_id,
+            session_id=fixture.session_id,
+            expires_at=datetime.now(UTC) + timedelta(hours=1),
+            secret_store=store,
+        )
+        with psycopg.connect(first.dsn) as conn:
+            assert conn.execute("SELECT 1").fetchone() == (1,)
+        with psycopg.connect(rotated.dsn) as conn:
+            assert conn.execute("SELECT 1").fetchone() == (1,)
+        manager.revoke_interactive(
+            deployment_token=token,
+            project_id=fixture.project_id,
+            generation=first.credential_generation,
+            reason="explicit-revoke",
+        )
+        with pytest.raises(psycopg.OperationalError):
+            psycopg.connect(first.dsn)
+        assert manager.interactive_generation_revoked(
+            deployment_token=token,
+            project_id=fixture.project_id,
+            generation=first.credential_generation,
+        )
+    finally:
+        manager.revoke_interactive(
+            deployment_token=token,
+            project_id=fixture.project_id,
+            reason="test-cleanup",
+        )
+        manager.close()
+        store.db.close()
+
+
+def test_credential_material_ciphertext_at_rest(
+    authorization_fixture: AuthorizationFixture,
+    tmp_path: Path,
+) -> None:
+    fixture = authorization_fixture
+    manager = _manager(fixture, tmp_path / "managed")
+    store = _secret_store(fixture, tmp_path)
+    token = "eeeeeeeeeeeeeeee"
+    try:
+        issued = manager.issue_interactive(
+            deployment_token=token,
+            project_id=fixture.project_id,
+            session_id=fixture.session_id,
+            expires_at=datetime.now(UTC) + timedelta(hours=1),
+            secret_store=store,
+        )
+        password = conninfo_to_dict(issued.dsn).get("password")
+        assert isinstance(password, str) and password
+        with psycopg.connect(fixture.database_url, autocommit=True) as admin:
+            rows = admin.execute(
+                f"SELECT ciphertext, aad_identity, credential_generation "
+                f"FROM {AUTH_SCHEMA}.interactive_credential_material "
+                "WHERE deployment_token = %s AND machine_id = %s AND project_id = %s",
+                (token, fixture.machine_id, fixture.project_id),
+            ).fetchall()
+        assert len(rows) == 1
+        ciphertext, aad_identity, generation = rows[0]
+        assert generation == issued.credential_generation
+        assert password not in str(ciphertext)
+        assert issued.dsn not in str(ciphertext)
+        assert str(fixture.machine_id) in str(aad_identity)
+        assert str(fixture.project_id) in str(aad_identity)
+        assert token in str(aad_identity)
+        manager.rotate_interactive(
+            deployment_token=token,
+            project_id=fixture.project_id,
+            session_id=fixture.session_id,
+            expires_at=datetime.now(UTC) + timedelta(hours=1),
+            secret_store=store,
+        )
+        with psycopg.connect(fixture.database_url, autocommit=True) as admin:
+            generations = {
+                row[0]
+                for row in admin.execute(
+                    f"SELECT credential_generation "
+                    f"FROM {AUTH_SCHEMA}.interactive_credential_material "
+                    "WHERE deployment_token = %s AND machine_id = %s AND project_id = %s",
+                    (token, fixture.machine_id, fixture.project_id),
+                ).fetchall()
+            }
+        assert generations == {issued.credential_generation + 1}
+    finally:
+        manager.revoke_interactive(
+            deployment_token=token,
+            project_id=fixture.project_id,
+            reason="test-cleanup",
+        )
+        manager.close()
+        store.db.close()

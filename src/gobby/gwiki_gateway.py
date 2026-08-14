@@ -3,13 +3,14 @@ from __future__ import annotations
 import asyncio
 import json
 import time
-from collections.abc import Sequence
+from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 from weakref import WeakKeyDictionary
 
+from gobby.runtime_grants.launch import ManagedLaunch, merge_child_env
 from gobby.runtime_output import (
     forward_subprocess_stderr,
     is_daemon_effective_config_transport_error,
@@ -196,12 +197,16 @@ class GwikiGateway:
         project_root: str | Path | None = None,
         topic: str | None = None,
         timeout_seconds: float = INTERACTIVE_GWIKI_TIMEOUT_SECONDS,
+        managed_launch: ManagedLaunch | None = None,
     ) -> None:
         self._binary = binary
         self._binary_lock = asyncio.Lock()
         self._project_root = str(project_root) if project_root is not None else None
         self._topic = topic
         self._timeout_seconds = timeout_seconds
+        self._child_env: Mapping[str, str] | None = (
+            merge_child_env(managed_launch.env) if managed_launch is not None else None
+        )
 
     async def status(self) -> dict[str, Any]:
         return await self._run_json("status", ["status"])
@@ -556,6 +561,7 @@ class GwikiGateway:
                 stdin=asyncio.subprocess.PIPE if stdin_data is not None else None,
                 stdout=asyncio.subprocess.PIPE,
                 stderr=asyncio.subprocess.PIPE,
+                env=self._child_env,
             )
             stdout_pipe = getattr(proc, "stdout", None)
             stderr_pipe = getattr(proc, "stderr", None)
@@ -643,6 +649,7 @@ class GwikiGateway:
                 *command,
                 stdout=asyncio.subprocess.PIPE,
                 stderr=asyncio.subprocess.PIPE,
+                env=self._child_env,
             )
             stdout, stderr = await asyncio.wait_for(
                 proc.communicate(),
