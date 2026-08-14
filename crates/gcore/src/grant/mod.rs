@@ -685,6 +685,14 @@ fn handshake_interactive(
     with_presentation_retry(|| handshake_interactive_once(ctx, expected.as_deref(), verify_derived))
 }
 
+fn interactive_session_id(ctx: &AcquireCtx) -> String {
+    ctx.session_id
+        .as_deref()
+        .filter(|value| uuid::Uuid::parse_str(value).is_ok())
+        .map(ToOwned::to_owned)
+        .unwrap_or_else(|| uuid::Uuid::new_v4().to_string())
+}
+
 fn handshake_interactive_once(
     ctx: &AcquireCtx,
     expected_deployment: Option<&str>,
@@ -696,12 +704,13 @@ fn handshake_interactive_once(
     } else {
         expected_deployment.map(ToOwned::to_owned)
     };
+    let session_id = interactive_session_id(ctx);
     let grant = challenge_and_handshake(
         &ctx.daemon_url,
         &token,
         &ctx.machine_id,
         &ctx.project_id,
-        ctx.session_id.as_deref().or(Some("cli")),
+        Some(&session_id),
         None,
         ctx.deadline,
     )?;
@@ -863,12 +872,13 @@ fn fetch_settings_coherent(
         )?
     } else {
         let token = interactive_bearer(&ctx.home)?;
+        let session_id = interactive_session_id(ctx);
         challenge_and_handshake(
             &ctx.daemon_url,
             &token,
             &ctx.machine_id,
             &ctx.project_id,
-            ctx.session_id.as_deref().or(Some("cli")),
+            Some(&session_id),
             None,
             ctx.deadline,
         )?

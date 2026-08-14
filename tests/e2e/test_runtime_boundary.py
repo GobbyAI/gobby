@@ -5,27 +5,38 @@ from __future__ import annotations
 import hashlib
 import json
 import os
+import socket
 import subprocess
+import sys
+import threading
 import time
 import uuid
 from collections.abc import Iterator
 from dataclasses import dataclass
+from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from typing import Any, cast
+from uuid import UUID
 
 import httpx
+import psycopg
 import pytest
+from psycopg import sql
 
+from gobby.deployment import deployment_token
 from gobby.runtime_grants.handshake import encode_grant_header
 from gobby.runtime_grants.launch import write_grant_file
-from gobby.runtime_grants.schema import GrantBundle
+from gobby.runtime_grants.schema import FalkorDirect, GrantBundle, PostgresDirect, QdrantDirect
 from gobby.runtime_grants.signing import payload_checksum
+from gobby.storage.managed_credentials import ManagedCredentialManager
+from gobby.storage.secrets import SecretStore
 from gobby.wiki.codewiki_dormant import CODEWIKI_DISABLED_REASON
 from tests.e2e.conftest import (
     DaemonInstance,
     authenticated_daemon_client,
     daemon_auth_headers,
     daemon_health_unavailable,
+    find_free_port,
     wait_for_daemon_health,
 )
 
@@ -77,6 +88,35 @@ def _repair_shared_auth_functions(postgres_db: Any) -> None:
     )
     postgres_db.execute("GRANT SELECT ON public.machines TO gobby_agent_issuer")
     postgres_db.execute("GRANT SELECT ON machines TO gobby_agent_issuer")
+
+
+def _compose_falkor_password() -> str | None:
+    env_password = os.environ.get("GOBBY_FALKORDB_PASSWORD")
+    if env_password:
+        return env_password
+    try:
+        inspect = subprocess.run(
+            [
+                "docker",
+                "inspect",
+                "-f",
+                "{{range .Config.Env}}{{println .}}{{end}}",
+                "services-falkordb-1",
+            ],
+            check=False,
+            capture_output=True,
+            text=True,
+            timeout=5,
+        )
+    except (OSError, subprocess.TimeoutExpired):
+        return None
+    if inspect.returncode != 0:
+        return None
+    for line in inspect.stdout.splitlines():
+        if line.startswith("GOBBY_FALKORDB_PASSWORD="):
+            value = line.split("=", 1)[1]
+            return value or None
+    return None
 
 
 def _seed_identity_rows(postgres_db: Any, machine_id: str, user_id: str) -> None:
@@ -261,6 +301,260 @@ def persist_interactive_grant(home: Path, daemon_url: str, grant: GrantBundle) -
     )
     binding.chmod(0o600)
     return path
+
+
+def _load_cached_grant(path: Path) -> GrantBundle:
+    payload = json.loads(path.read_text())
+    if isinstance(payload, dict) and isinstance(payload.get("grant"), dict):
+        payload = payload["grant"]
+    return GrantBundle.model_validate(payload)
+
+
+def _age_past_half_ttl(grant: GrantBundle, *, now: int | None = None) -> GrantBundle:
+    clock = now if now is not None else int(time.time())
+    return _rechecksum(
+        grant.model_copy(update={"issued_at": clock - 1000, "expires_at": clock + 100})
+    )
+
+
+def _credential_manager(postgres_db: Any, home: Path) -> ManagedCredentialManager:
+    return ManagedCredentialManager(
+        database=postgres_db,
+        machine_id=UUID(E2E_MACHINE_ID),
+        runtime_root=home / "managed-e2e",
+    )
+
+
+def _rotate_interactive(postgres_db: Any, home: Path, grant: GrantBundle) -> int:
+    session_id = grant.principal.session_id or grant.principal.project_id
+    manager = _credential_manager(postgres_db, home)
+    store = SecretStore(postgres_db, gobby_home=home)
+    manager.remember_interactive_grant_expiry(
+        deployment_token=grant.deployment.token,
+        project_id=UUID(grant.principal.project_id),
+        generation=_postgres_generation(grant),
+        expires_at=datetime.fromtimestamp(grant.expires_at, UTC),
+    )
+    rotated = manager.rotate_interactive(
+        deployment_token=grant.deployment.token,
+        project_id=UUID(grant.principal.project_id),
+        session_id=UUID(session_id),
+        expires_at=datetime.now(UTC) + timedelta(hours=1),
+        secret_store=store,
+    )
+    assert rotated.credential_generation > _postgres_generation(grant)
+    return rotated.credential_generation
+
+
+def _revoke_interactive(postgres_db: Any, home: Path, grant: GrantBundle) -> None:
+    manager = _credential_manager(postgres_db, home)
+    outcome = manager.revoke_interactive(
+        deployment_token=grant.deployment.token,
+        project_id=UUID(grant.principal.project_id),
+        generation=_postgres_generation(grant),
+        reason="e2e-explicit-revoke",
+    )
+    assert outcome.completed is True
+
+
+def _install_direct_datastores(boundary: BoundaryHarness) -> GrantBundle:
+    password = _compose_falkor_password()
+    assert password is not None, "FalkorDB password is required for direct-capability restore"
+    with authenticated_daemon_client(boundary.daemon) as client:
+        current = client.get("/api/config/values")
+        assert current.status_code == 200, current.text
+        patched = client.patch(
+            "/api/config/values",
+            json={
+                "expected_revision": current.json()["revision"],
+                "values": {
+                    "databases": {
+                        "falkordb": {
+                            "host": "127.0.0.1",
+                            "port": int(os.environ.get("GOBBY_TEST_FALKOR_PORT", "16379")),
+                            "password": password,
+                        },
+                        "qdrant": {
+                            "url": os.environ.get("GOBBY_TEST_QDRANT_URL", "http://127.0.0.1:6333"),
+                            "api_key": "e2e",
+                        },
+                    }
+                },
+            },
+        )
+    assert patched.status_code == 200, patched.text
+    if boundary.daemon.is_alive():
+        boundary.daemon.stop()
+    boundary.daemon.restart()
+    grant = _handshake_grant(boundary.daemon, boundary.project_dir)
+    persist_interactive_grant(boundary.home, boundary.daemon.http_url, grant)
+    return grant
+
+
+def _present_embeddings(daemon: DaemonInstance, home: Path, grant: GrantBundle) -> httpx.Response:
+    with authenticated_daemon_client(daemon) as client:
+        return client.post(
+            "/api/embeddings",
+            headers={
+                **daemon_auth_headers(home),
+                "X-Gobby-Runtime-Grant": encode_grant_header(grant),
+                "X-Gobby-Machine-Id": grant.principal.machine_id,
+                "X-Gobby-Project-Id": grant.principal.project_id,
+                "X-Gobby-Session-Id": grant.principal.session_id or "",
+            },
+            json={"texts": ["hi"]},
+        )
+
+
+def _assert_direct_postgres(grant: GrantBundle) -> None:
+    postgres = grant.capabilities.postgres
+    assert isinstance(postgres, PostgresDirect)
+    with psycopg.connect(postgres.dsn, connect_timeout=5) as connection:
+        assert connection.execute("SELECT 1").fetchone() == (1,)
+
+
+def _assert_direct_falkor(grant: GrantBundle) -> None:
+    falkor = grant.capabilities.falkordb
+    assert isinstance(falkor, FalkorDirect)
+    with socket.create_connection((falkor.host, falkor.port), timeout=5) as conn:
+        conn.sendall(f"AUTH {falkor.password}\r\nPING\r\n".encode())
+        reply = conn.recv(256)
+    assert b"+PONG" in reply, reply
+
+
+def _assert_direct_qdrant(grant: GrantBundle) -> None:
+    qdrant = grant.capabilities.qdrant
+    assert isinstance(qdrant, QdrantDirect)
+    response = httpx.get(
+        qdrant.url.rstrip("/") + "/readyz",
+        headers={"api-key": qdrant.api_key},
+        timeout=5.0,
+    )
+    assert response.status_code == 200, response.text
+
+
+def _dump_schema(database_url: str, schema: str, dest: Path) -> None:
+    completed = subprocess.run(
+        [
+            "pg_dump",
+            "--dbname",
+            database_url,
+            "-n",
+            schema,
+            "--data-only",
+            "--column-inserts",
+            "--no-owner",
+            "--no-acl",
+            "-f",
+            str(dest),
+        ],
+        check=False,
+        capture_output=True,
+        text=True,
+    )
+    assert completed.returncode == 0, completed.stderr or completed.stdout
+    assert dest.stat().st_size > 0
+
+
+def _restore_schema(database_url: str, schema: str, dump: Path, postgres_db: Any) -> None:
+    if not schema.replace("_", "").isalnum():
+        raise RuntimeError(f"refusing to restore unexpected schema {schema!r}")
+    tables = postgres_db.fetchall(
+        "SELECT tablename FROM pg_tables WHERE schemaname = %s",
+        (schema,),
+    )
+    names = [str(row["tablename"] if isinstance(row, dict) else row[0]) for row in tables]
+    if names:
+        with psycopg.connect(database_url, autocommit=True) as connection:
+            connection.execute(sql.SQL("SET search_path TO {}").format(sql.Identifier(schema)))
+            connection.execute(
+                sql.SQL("TRUNCATE {} CASCADE").format(
+                    sql.SQL(", ").join(sql.Identifier(schema, name) for name in names)
+                )
+            )
+    completed = subprocess.run(
+        [
+            "psql",
+            database_url,
+            "-v",
+            "ON_ERROR_STOP=1",
+            "-c",
+            f"SET search_path TO {schema}",
+            "-f",
+            str(dump),
+        ],
+        check=False,
+        capture_output=True,
+        text=True,
+    )
+    assert completed.returncode == 0, completed.stderr or completed.stdout
+
+
+def _spawn_same_deployment_standby(
+    boundary: BoundaryHarness,
+    *,
+    database_url: str,
+) -> DaemonInstance:
+    http_port = find_free_port()
+    ws_port = find_free_port()
+    work = boundary.project_dir / f".standby-{http_port}"
+    logs = work / "logs"
+    logs.mkdir(parents=True)
+    bootstrap = work / "bootstrap.yaml"
+    bootstrap.write_text(
+        "\n".join(
+            (
+                "hub_backend: postgres",
+                f"database_url: {database_url}",
+                f"daemon_port: {http_port}",
+                "bind_host: localhost",
+                f"websocket_port: {ws_port}",
+                "",
+            )
+        )
+    )
+    bootstrap.chmod(0o600)
+    env = dict(boundary.daemon.env)
+    env["GOBBY_HOME"] = str(boundary.home)
+    env["HOME"] = str(boundary.home)
+    env.pop("GOBBY_CONFIG", None)
+    script = (
+        "import asyncio, sys\n"
+        "from pathlib import Path\n"
+        "from gobby.runner import run_gobby\n"
+        "from gobby.runner_pid_file import FailOpenPidOwnership\n"
+        "asyncio.run(run_gobby(\n"
+        "    Path(sys.argv[1]),\n"
+        "    ownership_resolution=FailOpenPidOwnership('e2e-same-deployment-standby'),\n"
+        "))\n"
+    )
+    log_file = logs / "daemon.log"
+    error_log_file = logs / "daemon_error.log"
+    command = [sys.executable, "-c", script, str(bootstrap)]
+    with log_file.open("wb") as log_handle, error_log_file.open("wb") as error_handle:
+        process = subprocess.Popen(
+            command,
+            stdout=log_handle,
+            stderr=error_handle,
+            stdin=subprocess.DEVNULL,
+            cwd=boundary.project_dir,
+            env=env,
+            start_new_session=True,
+        )
+    return DaemonInstance(
+        process=process,
+        pid=process.pid,
+        http_port=http_port,
+        ws_port=ws_port,
+        project_dir=boundary.project_dir,
+        gobby_dir=boundary.project_dir / ".gobby",
+        log_file=log_file,
+        error_log_file=error_log_file,
+        db_path=work / "hub-postgres.db",
+        config_path=bootstrap,
+        command=command,
+        env=env,
+    )
 
 
 @dataclass
@@ -449,22 +743,45 @@ def test_modality_identity_binding(boundary: BoundaryHarness) -> None:
             assert (forged.json().get("code") or forged.json().get("error")) == "forged_identity"
 
 
-def test_concurrent_renewal_race(boundary: BoundaryHarness) -> None:
-    from concurrent.futures import ThreadPoolExecutor
+def test_concurrent_renewal_race(boundary: BoundaryHarness, postgres_db: Any) -> None:
+    _ = postgres_db
+    predecessor_generation = _postgres_generation(boundary.grant)
+    expired = _rechecksum(boundary.grant.model_copy(update={"expires_at": int(time.time()) - 5}))
+    write_grant_file(boundary.grant_path, expired)
 
-    def renew() -> GrantBundle:
-        return _handshake_grant(boundary.daemon, boundary.project_dir)
+    processes = [
+        subprocess.Popen(
+            [
+                str(_native_bin("gcode")),
+                "--format",
+                "json",
+                "--allow-stale",
+                "search",
+                "fixture",
+            ],
+            cwd=boundary.project_dir,
+            env=boundary.command_env(),
+            text=True,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+        )
+        for _ in range(2)
+    ]
+    results = [process.communicate(timeout=60) for process in processes]
+    failures = [
+        (process.returncode, stdout, stderr)
+        for process, (stdout, stderr) in zip(processes, results, strict=True)
+        if process.returncode != 0
+    ]
+    assert len(failures) < 2, failures
+    follow_up = boundary.run("gcode", "--allow-stale", "search", "fixture")
+    assert follow_up.returncode == 0, follow_up.stderr or follow_up.stdout
 
-    with ThreadPoolExecutor(max_workers=2) as pool:
-        first, second = pool.map(lambda _: renew(), range(2))
-    generations = {
-        _postgres_generation(first),
-        _postgres_generation(second),
-    }
-    assert max(generations) >= min(generations)
-    write_grant_file(
-        boundary.grant_path, first if first.expires_at >= second.expires_at else second
-    )
+    cached = _load_cached_grant(boundary.grant_path)
+    cached_generation = _postgres_generation(cached)
+    assert cached.expires_at > expired.expires_at
+    assert cached.issued_at >= boundary.grant.issued_at
+    assert cached_generation >= predecessor_generation
     search = boundary.run("gcode", "--allow-stale", "search", "fixture")
     assert search.returncode == 0, search.stderr or search.stdout
 
@@ -531,129 +848,290 @@ def test_dormant_codewiki_unchanged(boundary: BoundaryHarness) -> None:
     assert refresh.json() == DORMANT_REFRESH
 
 
-def test_restore_replay_rejected(boundary: BoundaryHarness, postgres_db: Any) -> None:
-    archived = boundary.grant
-    snapshot = postgres_db.fetchone(
-        """
-        SELECT deployment_token, fencing_epoch, grant_signing_secret
-        FROM deployment_runtime
-        """
+def test_restore_replay_rejected(
+    boundary: BoundaryHarness,
+    postgres_db: Any,
+    postgres_database_url: str,
+    postgres_schema: str,
+    tmp_path: Path,
+) -> None:
+    archived = _install_direct_datastores(boundary)
+    boundary.grant = archived
+    boundary.grant_path = persist_interactive_grant(
+        boundary.home, boundary.daemon.http_url, archived
     )
-    assert snapshot is not None
-    token = snapshot["deployment_token"]
-    epoch = snapshot["fencing_epoch"]
-    secret = snapshot["grant_signing_secret"]
+    assert isinstance(archived.capabilities.postgres, PostgresDirect)
+    assert isinstance(archived.capabilities.falkordb, FalkorDirect)
+    assert isinstance(archived.capabilities.qdrant, QdrantDirect)
+    dump = tmp_path / "hub-schema.sql"
+    _dump_schema(postgres_database_url, postgres_schema, dump)
     if boundary.daemon.is_alive():
         boundary.daemon.stop()
+    _restore_schema(postgres_database_url, postgres_schema, dump, postgres_db)
+    _repair_shared_auth_functions(postgres_db)
     boundary.daemon.restart()
     assert wait_for_daemon_health(boundary.daemon.http_port)
-    postgres_db.execute(
-        """
-        UPDATE deployment_runtime
-        SET fencing_epoch = %s, grant_signing_secret = %s
-        WHERE deployment_token = %s
-        """,
-        (epoch, secret, token),
-    )
-    if boundary.daemon.is_alive():
-        boundary.daemon.stop()
-    boundary.daemon.restart()
-    assert wait_for_daemon_health(boundary.daemon.http_port)
-    with authenticated_daemon_client(boundary.daemon) as client:
-        presented = client.post(
-            "/api/embeddings",
-            headers={
-                **daemon_auth_headers(boundary.home),
-                "X-Gobby-Runtime-Grant": encode_grant_header(archived),
-                "X-Gobby-Machine-Id": archived.principal.machine_id,
-                "X-Gobby-Project-Id": archived.principal.project_id,
-                "X-Gobby-Session-Id": archived.principal.session_id or "",
-            },
-            json={"texts": ["hi"]},
-        )
+    presented = _present_embeddings(boundary.daemon, boundary.home, archived)
     assert presented.status_code in {401, 403, 409}, presented.text
+    presented_code = presented.json().get("code") or presented.json().get("error")
+    assert presented_code in {"invalid_signature", "stale_epoch"}, presented.text
+    _assert_direct_postgres(archived)
+    _assert_direct_falkor(archived)
+    _assert_direct_qdrant(archived)
     write_grant_file(boundary.grant_path, archived)
     boundary.daemon.stop()
-    offline = boundary.run("gcode", "--allow-stale", "status")
+    offline = boundary.run("gcode", "--allow-stale", "search", "fixture")
     assert offline.returncode == 0, offline.stderr or offline.stdout
+    expired = _rechecksum(archived.model_copy(update={"expires_at": int(time.time()) - 5}))
+    write_grant_file(boundary.grant_path, expired)
+    expired_offline = boundary.run("gcode", "--allow-stale", "search", "fixture")
+    _assert_typed_failure(expired_offline, "expired", "daemon_required")
 
 
 def test_takeover_fencing(
     boundary: BoundaryHarness,
-    e2e_project_dir: Path,
     postgres_database_url: str,
     postgres_schema: str,
     postgres_db: Any,
 ) -> None:
-    import shutil
+    from tests.e2e.conftest import _postgres_url_for_schema, terminate_process_tree
 
-    from tests.e2e.conftest import _postgres_url_for_schema, find_free_port
-    from tests.e2e.test_single_active_daemon import _spawn_daemon, _write_daemon_home
-
-    # Same-home overlap cannot run: the pid file is per GOBBY_HOME. A second
-    # home is a second deployment (independent lease). Same-deployment steal is
-    # covered by tests/test_daemon_lease.py.
-    standby_home = e2e_project_dir / ".gobby-standby"
-    standby_home.mkdir()
-    http_port = find_free_port()
-    ws_port = find_free_port()
-    config = _write_daemon_home(
-        standby_home,
-        database_url=_postgres_url_for_schema(postgres_database_url, postgres_schema),
-        http_port=http_port,
-        ws_port=ws_port,
-        machine_id=STANDBY_MACHINE_ID,
+    token = deployment_token(boundary.home)
+    assert token == boundary.grant.deployment.token
+    with authenticated_daemon_client(boundary.daemon) as client:
+        current = client.get("/api/config/values")
+        assert current.status_code == 200, current.text
+        patched = client.patch(
+            "/api/config/values",
+            json={
+                "expected_revision": current.json()["revision"],
+                "values": {
+                    "databases": {
+                        "qdrant": {
+                            "url": os.environ.get("GOBBY_TEST_QDRANT_URL", "http://127.0.0.1:6333"),
+                            "api_key": "e2e",
+                        }
+                    }
+                },
+            },
+        )
+    assert patched.status_code == 200, patched.text
+    qdrant_grant = _handshake_grant(boundary.daemon, boundary.project_dir)
+    if qdrant_grant.capabilities.qdrant.mode == "unavailable":
+        if boundary.daemon.is_alive():
+            boundary.daemon.stop()
+        boundary.daemon.restart()
+        qdrant_grant = _handshake_grant(boundary.daemon, boundary.project_dir)
+    persist_interactive_grant(boundary.home, boundary.daemon.http_url, qdrant_grant)
+    boundary.grant = qdrant_grant
+    boundary.grant_path = persist_interactive_grant(
+        boundary.home, boundary.daemon.http_url, qdrant_grant
     )
-    for name in (".secret_kek", "local_cli_token"):
-        src = boundary.home / name
-        if src.is_file():
-            shutil.copy2(src, standby_home / name)
-    standby = _spawn_daemon(e2e_project_dir, config, http_port, ws_port)
+    assert qdrant_grant.capabilities.qdrant.mode != "unavailable", qdrant_grant.capabilities.qdrant
+    postgres_db.execute(
+        """
+        INSERT INTO code_indexed_projects (id) VALUES (%s)
+        ON CONFLICT (id) DO NOTHING
+        """,
+        (E2E_PROJECT_ID,),
+    )
+    postgres_db.execute(
+        """
+        INSERT INTO code_indexed_project_states (
+            machine_id, project_id, root_path
+        ) VALUES (%s, %s, %s)
+        ON CONFLICT (machine_id, project_id) DO UPDATE
+           SET root_path = EXCLUDED.root_path
+        """,
+        (E2E_MACHINE_ID, E2E_PROJECT_ID, str(boundary.project_dir)),
+    )
+    postgres_db.execute(
+        """
+        INSERT INTO code_index_prune_dirty_projects (
+            machine_id, project_id, root_path, reason
+        ) VALUES (%s, %s, %s, %s)
+        ON CONFLICT (machine_id, project_id) DO UPDATE
+           SET reason = EXCLUDED.reason
+        """,
+        (E2E_MACHINE_ID, E2E_PROJECT_ID, str(boundary.project_dir), "e2e-takeover"),
+    )
+    scoped_url = _postgres_url_for_schema(postgres_database_url, postgres_schema)
+    standby = _spawn_same_deployment_standby(boundary, database_url=scoped_url)
     try:
-        if not wait_for_daemon_health(http_port):
+        deadline = time.monotonic() + 30.0
+        while time.monotonic() < deadline:
+            if standby.process.poll() is not None:
+                pytest.fail(
+                    "same-deployment standby exited\n"
+                    f"--- log ---\n{standby.read_logs()}\n"
+                    f"--- error ---\n{standby.read_error_logs()}"
+                )
+            try:
+                health = httpx.get(f"{standby.http_url}/api/admin/health", timeout=1.0)
+            except httpx.HTTPError:
+                time.sleep(0.1)
+                continue
+            if health.status_code == 200 and health.json().get("lease_mode") == "standby":
+                break
+        else:
             pytest.fail(
-                "standby daemon did not become healthy\n"
-                f"alive={standby.is_alive()} exit={standby.process.poll()}\n"
+                "same-deployment standby did not report lease_mode=standby\n"
                 f"--- log ---\n{standby.read_logs()}\n"
                 f"--- error ---\n{standby.read_error_logs()}"
             )
-        with httpx.Client(
-            base_url=f"http://127.0.0.1:{boundary.daemon.http_port}", timeout=5.0
-        ) as old:
-            refused = old.post(
-                "/api/code-index/graph/rebuild",
-                headers=boundary.grant_headers(),
-                params={"project_id": E2E_PROJECT_ID},
+
+        admitted: dict[str, int | None] = {"status": None}
+        barrier = threading.Event()
+
+        def _in_flight_prune() -> None:
+            barrier.wait(timeout=10)
+            with httpx.Client(base_url=boundary.daemon.http_url, timeout=20.0) as client:
+                response = client.post(
+                    "/api/code-index/invalidate",
+                    headers=boundary.grant_headers(),
+                    json={"project_id": E2E_PROJECT_ID},
+                )
+            admitted["status"] = response.status_code
+
+        worker = threading.Thread(target=_in_flight_prune, daemon=True)
+        worker.start()
+        with psycopg.connect(postgres_db.conninfo, autocommit=False) as lock_conn:
+            lock_conn.execute(
+                """
+                SELECT fencing_epoch
+                  FROM deployment_runtime
+                 WHERE deployment_token = %s
+                 FOR UPDATE
+                """,
+                (token,),
             )
-        assert refused.status_code in {401, 403, 404, 409, 503}, refused.text
-        with authenticated_daemon_client(standby) as owner:
-            served = owner.get("/api/auth/status")
-        assert served.status_code == 200
+            barrier.set()
+            waiting = False
+            wait_deadline = time.monotonic() + 10.0
+            while time.monotonic() < wait_deadline:
+                if admitted["status"] is not None:
+                    break
+                row = lock_conn.execute(
+                    """
+                    SELECT COUNT(*) AS waiting
+                      FROM pg_stat_activity
+                     WHERE pid <> pg_backend_pid()
+                       AND wait_event_type = 'Lock'
+                    """
+                ).fetchone()
+                if row is None:
+                    time.sleep(0.05)
+                    continue
+                waiting_count = row["waiting"] if isinstance(row, dict) else row[0]
+                if int(waiting_count) > 0:
+                    waiting = True
+                    break
+                time.sleep(0.05)
+            assert waiting or admitted["status"] is None, (
+                "in-flight handler finished before the epoch fence "
+                f"status={admitted['status']} qdrant={boundary.grant.capabilities.qdrant.mode}"
+            )
+            lock_conn.execute(
+                """
+                UPDATE deployment_runtime
+                   SET fencing_epoch = fencing_epoch + 1,
+                       grant_signing_secret = %s,
+                       epoch_updated_at = clock_timestamp()
+                 WHERE deployment_token = %s
+                """,
+                ("e2e-takeover-rotated-secret", token),
+            )
+            lock_conn.commit()
+        worker.join(timeout=20)
+        assert worker.is_alive() is False
+        remaining = postgres_db.fetchone(
+            """
+            SELECT root_path FROM code_indexed_project_states
+             WHERE machine_id = %s AND project_id = %s
+            """,
+            (E2E_MACHINE_ID, E2E_PROJECT_ID),
+        )
+        assert remaining is not None
+        assert remaining["root_path"] == str(boundary.project_dir)
+        assert admitted["status"] in {409, 500}, admitted
+
+        headers = daemon_auth_headers(boundary.home)
+        recover = httpx.post(
+            f"{standby.http_url}/api/admin/lease/recover",
+            headers=headers,
+            params={"stale_after_seconds": 0},
+            timeout=20.0,
+        )
+        assert recover.status_code == 200, recover.text
+        assert wait_for_daemon_health(standby.http_port, timeout=30.0), (
+            f"promoted owner failed to serve\n--- log ---\n{standby.read_logs()}\n"
+            f"--- error ---\n{standby.read_error_logs()}"
+        )
+        with httpx.Client(base_url=boundary.daemon.http_url, timeout=5.0) as displaced:
+            refused = displaced.post(
+                "/api/code-index/invalidate",
+                headers=boundary.grant_headers(),
+                json={"project_id": E2E_PROJECT_ID},
+            )
+        assert refused.status_code == 409, refused.text
+        with httpx.Client(base_url=standby.http_url, timeout=5.0) as owner:
+            served = owner.get("/api/auth/status", headers=headers)
+        assert served.status_code == 200, served.text
     finally:
-        standby.stop()
+        if standby.is_alive():
+            terminate_process_tree(standby.pid)
 
 
-def test_rotation_drain_and_revocation(boundary: BoundaryHarness) -> None:
+def test_rotation_drain_and_revocation(boundary: BoundaryHarness, postgres_db: Any) -> None:
     first = boundary.grant
-    rotated = _handshake_grant(boundary.daemon, boundary.project_dir)
-    assert _postgres_generation(rotated) >= _postgres_generation(first)
+    postgres = first.capabilities.postgres
+    assert isinstance(postgres, PostgresDirect)
+    rotated_generation = _rotate_interactive(postgres_db, boundary.home, first)
     write_grant_file(boundary.grant_path, first)
     boundary.daemon.stop()
-    drained = boundary.run("gcode", "--allow-stale", "status")
+    _assert_direct_postgres(first)
+    drained = boundary.run("gcode", "--allow-stale", "search", "fixture")
     assert drained.returncode == 0, drained.stderr or drained.stdout
+
     boundary.daemon.restart()
     assert wait_for_daemon_health(boundary.daemon.http_port)
-    with authenticated_daemon_client(boundary.daemon) as client:
-        revoked = client.post(
-            "/api/embeddings",
-            headers={
-                **daemon_auth_headers(boundary.home),
-                "X-Gobby-Runtime-Grant": encode_grant_header(first),
-                "X-Gobby-Machine-Id": first.principal.machine_id,
-                "X-Gobby-Project-Id": first.principal.project_id,
-                "X-Gobby-Session-Id": first.principal.session_id or "",
-            },
-            json={"texts": ["hi"]},
+    live = _handshake_grant(boundary.daemon, boundary.project_dir)
+    assert _postgres_generation(live) == rotated_generation
+    _revoke_interactive(postgres_db, boundary.home, live)
+    revoked = _present_embeddings(boundary.daemon, boundary.home, live)
+    revoked_code = revoked.json().get("code") or revoked.json().get("error")
+    assert revoked_code == "revoked", revoked.text
+
+    successor = _handshake_grant(boundary.daemon, boundary.project_dir)
+    write_grant_file(boundary.grant_path, successor)
+    successor_postgres = successor.capabilities.postgres
+    assert isinstance(successor_postgres, PostgresDirect)
+    boundary.daemon.stop()
+    with psycopg.connect(postgres_db.conninfo, autocommit=True) as admin:
+        admin.execute(
+            "SELECT pg_terminate_backend(pid) FROM pg_stat_activity WHERE usename = %s",
+            (successor_postgres.role_name,),
         )
-    code = revoked.json().get("code") or revoked.json().get("error")
-    assert code in {"revoked", "stale_epoch", "invalid_signature", "expired"}
+        admin.execute(
+            sql.SQL("ALTER ROLE {} NOLOGIN").format(sql.Identifier(successor_postgres.role_name))
+        )
+    invalidated = boundary.run("gcode", "--allow-stale", "search", "fixture")
+    assert invalidated.returncode != 0, invalidated.stdout or invalidated.stderr
+    payload = _json_payload(invalidated)
+    code = payload.get("code") or payload.get("error")
+    assert code != "revoked"
+    combined = f"{invalidated.stdout}\n{invalidated.stderr}\n{code}".lower()
+    assert any(
+        needle in combined
+        for needle in (
+            "authoriz",
+            "password",
+            "authentication",
+            "permission",
+            "login",
+            "log in",
+            "not permitted",
+            "failed to connect",
+            "fatal",
+        )
+    ), (code, invalidated.stdout, invalidated.stderr)
