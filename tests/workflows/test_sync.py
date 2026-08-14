@@ -13,8 +13,8 @@ import pytest
 import yaml
 
 from gobby.storage.definitions.pipelines import PipelineDefinitionManager
-from gobby.storage.hub.protocol import HubDatabase
 from gobby.storage.definitions.rules import RuleDefinitionManager
+from gobby.storage.hub.protocol import HubDatabase
 from gobby.workflows.definitions import PipelineDefinition
 from gobby.workflows.pipeline.renderer import StepRenderer
 
@@ -214,7 +214,7 @@ rules:
         assert target_row is not None
         sibling_row = manager.get_by_name("sibling-rule")
         assert sibling_row is not None
-        sibling_definition = json.loads(sibling_row.definition_json)
+        sibling_definition = sibling_row.definition_json
         assert sibling_definition["effects"][0]["reason"] == "old sibling"
 
     def test_skips_deprecated_directory(self, db: HubDatabase, tmp_path: Path) -> None:

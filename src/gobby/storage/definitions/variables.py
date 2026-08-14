@@ -30,13 +30,27 @@ from gobby.storage.definitions._shared import (
     soft_delete_definition,
     touch_revision,
 )
-from gobby.storage.hub.protocol import HubDatabase
+from gobby.storage.hub.protocol import HubDatabase, Transaction
 from gobby.utils.datetime import normalize_datetime_model, utc_now
 
 _TABLE = "session_variable_defaults"
 _WHAT = "Session variable default"
 _UPDATE_FIELDS = frozenset({"name", "description", "enabled", "default_value", "tags"})
 _SYNC_FIELDS = _UPDATE_FIELDS
+
+
+def _lock_live_row(txn: Transaction, definition_id: str) -> SessionVariableDefaultRow:
+    row = txn.execute(
+        """
+        SELECT * FROM session_variable_defaults
+        WHERE id = %s AND deleted_at IS NULL
+        FOR UPDATE
+        """,
+        (definition_id,),
+    ).fetchone()
+    if row is None:
+        raise DefinitionNotFoundError(f"{_WHAT} {definition_id} not found")
+    return SessionVariableDefaultRow.from_row(row)
 
 
 def _decode_default_value(value: Any) -> Any:
@@ -171,11 +185,7 @@ class SessionVariableDefaultManager:
         )
 
     def update_from_sync(self, definition_id: str, **fields: Any) -> SessionVariableDefaultRow:
-        current = self.get(definition_id)
-        values = prepare_sync_values(current.__dict__, fields, allowed=_SYNC_FIELDS)
-        if not values:
-            return current
-        return self._write_update(definition_id, values, allowed=_SYNC_FIELDS)
+        return self._write_update(definition_id, fields, allowed=_SYNC_FIELDS, from_sync=True)
 
     def _write_update(
         self,
@@ -183,24 +193,30 @@ class SessionVariableDefaultManager:
         fields: Mapping[str, Any],
         *,
         allowed: frozenset[str],
+        from_sync: bool = False,
     ) -> SessionVariableDefaultRow:
         unknown = set(fields) - allowed
         if unknown:
             raise ValueError(f"Unknown definition field(s): {', '.join(sorted(unknown))}")
-        values: dict[str, Any] = {}
-        for key, value in fields.items():
-            if key == "tags":
-                values[key] = encode_json_list(value)
-            elif key == "default_value":
-                values[key] = None if value is None else Jsonb(value)
-            else:
-                values[key] = value
-        if not values:
-            return self.get(definition_id)
-        values["updated_at"] = utc_now()
         with self.db.transaction() as txn:
+            current = _lock_live_row(txn, definition_id)
+            incoming: Mapping[str, Any] = fields
+            if from_sync:
+                incoming = prepare_sync_values(current.__dict__, fields, allowed=allowed)
+                if not incoming:
+                    return current
+            values: dict[str, Any] = {}
+            for key, value in incoming.items():
+                if key == "tags":
+                    values[key] = encode_json_list(value)
+                elif key == "default_value":
+                    values[key] = None if value is None else Jsonb(value)
+                else:
+                    values[key] = value
+            if not values:
+                return current
+            values["updated_at"] = utc_now()
             if "name" in values:
-                current = self.get(definition_id)
                 assert_live_name_free(
                     txn,
                     _TABLE,

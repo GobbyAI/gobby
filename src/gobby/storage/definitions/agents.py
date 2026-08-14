@@ -52,6 +52,16 @@ LEFT JOIN agent_step_workflows w ON w.agent_definition_id = a.id
 """
 
 
+def _lock_live_row(txn: Transaction, definition_id: str) -> AgentDefinitionRow:
+    row = txn.execute(
+        _SELECT_HYDRATED + " WHERE a.id = %s AND a.deleted_at IS NULL FOR UPDATE OF a",
+        (definition_id,),
+    ).fetchone()
+    if row is None:
+        raise DefinitionNotFoundError(f"{_WHAT} {definition_id} not found")
+    return AgentDefinitionRow.from_row(row)
+
+
 def _decode_json_array(value: Any) -> list[Any]:
     if value is None:
         return []
@@ -95,13 +105,13 @@ def _child_columns(
 def _find_live(txn: Transaction, name: str, project_id: str | None) -> Mapping[str, Any] | None:
     if project_id is None:
         return txn.execute(
-            "SELECT id FROM agent_definitions "
-            "WHERE name = %s AND project_id IS NULL AND deleted_at IS NULL",
+            "SELECT id, enabled_pinned FROM agent_definitions "
+            "WHERE name = %s AND project_id IS NULL AND deleted_at IS NULL FOR UPDATE",
             (name,),
         ).fetchone()
     return txn.execute(
-        "SELECT id FROM agent_definitions "
-        "WHERE name = %s AND project_id = %s AND deleted_at IS NULL",
+        "SELECT id, enabled_pinned FROM agent_definitions "
+        "WHERE name = %s AND project_id = %s AND deleted_at IS NULL FOR UPDATE",
         (name, project_id),
     ).fetchone()
 
@@ -343,11 +353,7 @@ class AgentDefinitionManager:
         )
 
     def update_from_sync(self, definition_id: str, **fields: Any) -> AgentDefinitionRow:
-        current = self.get(definition_id)
-        values = prepare_sync_values(current.__dict__, fields, allowed=_SYNC_FIELDS)
-        if not values:
-            return current
-        return self._write_update(definition_id, values, allowed=_SYNC_FIELDS)
+        return self._write_update(definition_id, fields, allowed=_SYNC_FIELDS, from_sync=True)
 
     def _write_update(
         self,
@@ -355,24 +361,30 @@ class AgentDefinitionManager:
         fields: Mapping[str, Any],
         *,
         allowed: frozenset[str],
+        from_sync: bool = False,
     ) -> AgentDefinitionRow:
         unknown = set(fields) - allowed
         if unknown:
             raise ValueError(f"Unknown definition field(s): {', '.join(sorted(unknown))}")
-        values: dict[str, Any] = {}
-        for key, value in fields.items():
-            if key == "tags":
-                values[key] = encode_json_list(value)
-            elif key == "definition_json":
-                values[key] = encode_json_value(_parent_body(value))
-            else:
-                values[key] = value
-        if not values:
-            return self.get(definition_id)
-        values["updated_at"] = utc_now()
         with self.db.transaction() as txn:
+            current = _lock_live_row(txn, definition_id)
+            incoming: Mapping[str, Any] = fields
+            if from_sync:
+                incoming = prepare_sync_values(current.__dict__, fields, allowed=allowed)
+                if not incoming:
+                    return current
+            values: dict[str, Any] = {}
+            for key, value in incoming.items():
+                if key == "tags":
+                    values[key] = encode_json_list(value)
+                elif key == "definition_json":
+                    values[key] = encode_json_value(_parent_body(value))
+                else:
+                    values[key] = value
+            if not values:
+                return current
+            values["updated_at"] = utc_now()
             if "name" in values:
-                current = self.get(definition_id)
                 assert_live_name_free(
                     txn,
                     _TABLE,
@@ -657,12 +669,8 @@ class AgentDefinitionManager:
                 )
             else:
                 definition_id = str(existing["id"])
-                pinned_row = txn.execute(
-                    "SELECT enabled_pinned FROM agent_definitions WHERE id = %s",
-                    (definition_id,),
-                ).fetchone()
                 values = prepare_sync_values(
-                    {"enabled_pinned": bool(pinned_row["enabled_pinned"]) if pinned_row else False},
+                    {"enabled_pinned": bool(existing["enabled_pinned"])},
                     {
                         "description": description,
                         "enabled": bool(enabled),

@@ -29,7 +29,7 @@ from gobby.storage.definitions._shared import (
     soft_delete_definition,
     touch_revision,
 )
-from gobby.storage.hub.protocol import HubDatabase
+from gobby.storage.hub.protocol import HubDatabase, Transaction
 from gobby.utils.datetime import normalize_datetime_model, utc_now
 
 _TABLE = "rule_definitions"
@@ -46,6 +46,20 @@ _UPDATE_FIELDS = frozenset(
     }
 )
 _SYNC_FIELDS = _UPDATE_FIELDS
+
+
+def _lock_live_row(txn: Transaction, definition_id: str) -> RuleDefinitionRow:
+    row = txn.execute(
+        """
+        SELECT * FROM rule_definitions
+        WHERE id = %s AND deleted_at IS NULL
+        FOR UPDATE
+        """,
+        (definition_id,),
+    ).fetchone()
+    if row is None:
+        raise DefinitionNotFoundError(f"{_WHAT} {definition_id} not found")
+    return RuleDefinitionRow.from_row(row)
 
 
 @normalize_datetime_model(required=("created_at", "updated_at"), optional=("deleted_at",))
@@ -181,11 +195,7 @@ class RuleDefinitionManager:
         )
 
     def update_from_sync(self, definition_id: str, **fields: Any) -> RuleDefinitionRow:
-        current = self.get(definition_id)
-        values = prepare_sync_values(current.__dict__, fields, allowed=_SYNC_FIELDS)
-        if not values:
-            return current
-        return self._write_update(definition_id, values, allowed=_SYNC_FIELDS)
+        return self._write_update(definition_id, fields, allowed=_SYNC_FIELDS, from_sync=True)
 
     def _write_update(
         self,
@@ -193,24 +203,30 @@ class RuleDefinitionManager:
         fields: Mapping[str, Any],
         *,
         allowed: frozenset[str],
+        from_sync: bool = False,
     ) -> RuleDefinitionRow:
         unknown = set(fields) - allowed
         if unknown:
             raise ValueError(f"Unknown definition field(s): {', '.join(sorted(unknown))}")
-        values: dict[str, Any] = {}
-        for key, value in fields.items():
-            if key in {"sources", "tags"}:
-                values[key] = encode_json_list(value)
-            elif key == "definition_json":
-                values[key] = encode_json_value(value)
-            else:
-                values[key] = value
-        if not values:
-            return self.get(definition_id)
-        values["updated_at"] = utc_now()
         with self.db.transaction() as txn:
+            current = _lock_live_row(txn, definition_id)
+            incoming: Mapping[str, Any] = fields
+            if from_sync:
+                incoming = prepare_sync_values(current.__dict__, fields, allowed=allowed)
+                if not incoming:
+                    return current
+            values: dict[str, Any] = {}
+            for key, value in incoming.items():
+                if key in {"sources", "tags"}:
+                    values[key] = encode_json_list(value)
+                elif key == "definition_json":
+                    values[key] = encode_json_value(value)
+                else:
+                    values[key] = value
+            if not values:
+                return current
+            values["updated_at"] = utc_now()
             if "name" in values:
-                current = self.get(definition_id)
                 assert_live_name_free(
                     txn,
                     _TABLE,

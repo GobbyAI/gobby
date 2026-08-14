@@ -217,7 +217,7 @@ def sync_bundled_agents(db: HubDatabase) -> dict[str, Any]:
 
                 if step_workflow is not None:
                     manager.set_step_workflow(existing.id, step_workflow)
-                    result["skipped"] += 1
+                result["skipped"] += 1
                 continue
 
             manager.upsert_with_steps(

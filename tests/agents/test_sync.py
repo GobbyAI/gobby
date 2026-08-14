@@ -12,7 +12,6 @@ from gobby.agents.sync import get_bundled_agents_path, sync_bundled_agents
 from gobby.storage.definitions import AgentDefinitionManager
 from gobby.storage.hub.postgres import PostgresHubDatabase
 from gobby.storage.hub.protocol import HubDatabase
-from gobby.storage.definitions.agents import AgentDefinitionManager
 from gobby.workflows.definitions import AgentDefinitionBody
 
 
@@ -147,7 +146,7 @@ class TestSyncBundledAgents:
         tmp_path: Path,
         definition_db: PostgresHubDatabase,
     ) -> None:
-        """Agent sync should refresh stale `<agent>-steps` rows even when the agent row skips."""
+        """Agent sync should refresh a stale child workflow even when the parent row skips."""
         db = definition_db
 
         agents_dir = tmp_path / "agents"
@@ -170,7 +169,7 @@ class TestSyncBundledAgents:
 
         body = AgentDefinitionBody.model_validate(yaml.safe_load(agent_yaml))
         mgr = _mgr(db)
-        mgr.create(
+        created = mgr.create(
             name="merge-helper",
             definition_json=body.model_dump_json(),
             description=body.description,
@@ -178,37 +177,26 @@ class TestSyncBundledAgents:
             enabled=body.enabled,
             tags=["gobby"],
         )
-        legacy = AgentDefinitionManager(db)
-        legacy.create(
-            name="merge-helper-steps",
-            definition_json=json.dumps(
-                {
-                    "name": "merge-helper-steps",
-                    "type": "step",
-                    "version": "2.0",
-                    "enabled": False,
-                    "steps": [
-                        {
-                            "name": "merge",
-                            "allowed_tools": ["mcp__gobby__call_tool"],
-                            "allowed_mcp_tools": ["gobby-worktrees:merge_worktree"],
-                        }
-                    ],
-                    "variables": {},
-                    "exit_condition": None,
-                }
-            ),
-            source="agent",
-            enabled=False,
+        mgr.set_step_workflow(
+            created.id,
+            {
+                "steps": [
+                    {
+                        "name": "merge",
+                        "allowed_tools": ["mcp__gobby__call_tool"],
+                        "allowed_mcp_tools": ["gobby-worktrees:merge_worktree"],
+                    }
+                ],
+                "variables": {},
+                "exit_condition": None,
+            },
         )
 
         with patch("gobby.agents.sync.get_bundled_agents_path", return_value=agents_dir):
             result = sync_bundled_agents(db)
 
         assert result["skipped"] == 1
-        step_row = legacy.get_by_name("merge-helper-steps")
-        assert step_row is not None
-        step_body = json.loads(step_row.definition_json)
+        step_body = mgr.get(created.id).definition_json["step_workflow"]
         allowed = step_body["steps"][0]["allowed_mcp_tools"]
         assert allowed == [
             "gobby-worktrees:get_worktree",
