@@ -10,7 +10,7 @@ static TMP_SEQ: AtomicU64 = AtomicU64::new(1);
 
 use serde::{Deserialize, Serialize};
 
-use super::bundle::GrantBundle;
+use super::bundle::{GrantBundle, parse_grant_json, verify_payload_checksum};
 use super::{GrantError, hex_encode, sha256};
 
 const GRANTS_DIR: &str = "grants";
@@ -27,6 +27,20 @@ pub struct TrustedBinding {
 pub struct CachedSettings {
     pub config_revision: i64,
     pub settings: std::collections::BTreeMap<String, String>,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+struct CacheEnvelope {
+    grant: GrantBundle,
+    settings: CachedSettings,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum CachePair {
+    Coherent(GrantBundle, CachedSettings),
+    GrantOnly(GrantBundle),
+    Incoherent(GrantBundle),
 }
 
 pub fn interactive_cache_path(home: &Path, deployment_token: &str, project_id: &str) -> PathBuf {
@@ -70,14 +84,8 @@ pub fn write_binding(home: &Path, binding: &TrustedBinding) -> Result<(), GrantE
 }
 
 pub fn load_grant_file(path: &Path) -> Result<GrantBundle, GrantError> {
-    let raw = fs::read(path).map_err(|error| {
-        if error.kind() == std::io::ErrorKind::NotFound {
-            GrantError::Malformed(format!("grant file missing: {}", path.display()))
-        } else {
-            GrantError::Io(error.to_string())
-        }
-    })?;
-    super::bundle::parse_grant_json(&raw)
+    let raw = read_cache_bytes(path)?;
+    parse_cache_bytes(&raw).map(|(grant, _)| grant)
 }
 
 pub fn load_settings_file(path: &Path) -> Result<CachedSettings, GrantError> {
@@ -87,11 +95,9 @@ pub fn load_settings_file(path: &Path) -> Result<CachedSettings, GrantError> {
 
 pub fn write_grant_file(path: &Path, grant: &GrantBundle) -> Result<(), GrantError> {
     let bytes = grant.model_dump_canonical()?;
-    write_bytes_atomic(path, &bytes)
-}
-
-pub fn write_settings_file(path: &Path, settings: &CachedSettings) -> Result<(), GrantError> {
-    write_json_atomic(path, &serde_json::to_vec(settings).map_err(json_err)?)
+    write_bytes_atomic(path, &bytes)?;
+    let _ = fs::remove_file(settings_cache_path(path));
+    Ok(())
 }
 
 pub fn write_coherent_pair(
@@ -102,26 +108,81 @@ pub fn write_coherent_pair(
     if settings.config_revision != grant.config_revision {
         return Err(GrantError::ConfigRevisionMismatch);
     }
-    write_grant_file(grant_path, grant)?;
-    write_settings_file(&settings_cache_path(grant_path), settings)
+    let envelope = CacheEnvelope {
+        grant: grant.clone(),
+        settings: settings.clone(),
+    };
+    write_json_atomic(
+        grant_path,
+        &serde_json::to_vec(&envelope).map_err(json_err)?,
+    )?;
+    let _ = fs::remove_file(settings_cache_path(grant_path));
+    Ok(())
 }
 
-pub fn load_coherent_pair(
+pub fn persist_cache(
     grant_path: &Path,
-) -> Result<Option<(GrantBundle, CachedSettings)>, GrantError> {
+    grant: &GrantBundle,
+    settings: Option<&CachedSettings>,
+) -> Result<(), GrantError> {
+    match settings {
+        Some(settings) => write_coherent_pair(grant_path, grant, settings),
+        None => write_grant_file(grant_path, grant),
+    }
+}
+
+pub fn matching_settings(path: &Path, grant: &GrantBundle) -> Option<CachedSettings> {
+    match inspect_cache_pair(path) {
+        Ok(Some(CachePair::Coherent(cached, settings)))
+            if cached.config_revision == grant.config_revision =>
+        {
+            Some(settings)
+        }
+        _ => None,
+    }
+}
+
+pub fn inspect_cache_pair(grant_path: &Path) -> Result<Option<CachePair>, GrantError> {
     if !grant_path.exists() {
         return Ok(None);
     }
-    let grant = load_grant_file(grant_path)?;
+    let raw = read_cache_bytes(grant_path)?;
+    let (grant, envelope_settings) = parse_cache_bytes(&raw)?;
+    if let Some(settings) = envelope_settings {
+        if settings.config_revision == grant.config_revision {
+            return Ok(Some(CachePair::Coherent(grant, settings)));
+        }
+        return Ok(Some(CachePair::Incoherent(grant)));
+    }
     let settings_path = settings_cache_path(grant_path);
     if !settings_path.exists() {
-        return Ok(None);
+        return Ok(Some(CachePair::GrantOnly(grant)));
     }
     let settings = load_settings_file(&settings_path)?;
-    if settings.config_revision != grant.config_revision {
-        return Ok(None);
+    if settings.config_revision == grant.config_revision {
+        Ok(Some(CachePair::Coherent(grant, settings)))
+    } else {
+        Ok(Some(CachePair::Incoherent(grant)))
     }
-    Ok(Some((grant, settings)))
+}
+
+fn read_cache_bytes(path: &Path) -> Result<Vec<u8>, GrantError> {
+    fs::read(path).map_err(|error| {
+        if error.kind() == std::io::ErrorKind::NotFound {
+            GrantError::Malformed(format!("grant file missing: {}", path.display()))
+        } else {
+            GrantError::Io(error.to_string())
+        }
+    })
+}
+
+fn parse_cache_bytes(raw: &[u8]) -> Result<(GrantBundle, Option<CachedSettings>), GrantError> {
+    let trimmed = raw.trim_ascii();
+    if let Ok(envelope) = serde_json::from_slice::<CacheEnvelope>(trimmed) {
+        verify_payload_checksum(&envelope.grant)?;
+        return Ok((envelope.grant, Some(envelope.settings)));
+    }
+    Ok((parse_grant_json(raw)?, None))
 }
 
 pub fn newer_generation(existing: Option<&GrantBundle>, incoming: &GrantBundle) -> bool {

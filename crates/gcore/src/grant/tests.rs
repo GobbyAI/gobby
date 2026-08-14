@@ -1,7 +1,7 @@
 use std::fs;
 use std::io::{Read, Write};
 use std::net::TcpListener;
-use std::path::{Path, PathBuf};
+use std::path::PathBuf;
 
 use std::thread;
 use std::time::{Duration, Instant};
@@ -131,15 +131,17 @@ fn fixture_grant(kind: PrincipalKind) -> GrantBundle {
 
 fn write_cache(harness: &Harness, grant: &GrantBundle, settings: Option<&CachedSettings>) {
     let path = interactive_cache_path(&harness.home, &grant.deployment.token, PROJECT);
-    write_grant_file(&path, grant).expect("write cache");
-    if let Some(settings) = settings {
-        write_settings_file_for(&path, settings);
-    }
+    super::cache::persist_cache(&path, grant, settings).expect("write cache");
 }
 
-fn write_settings_file_for(grant_path: &Path, settings: &CachedSettings) {
-    super::cache::write_settings_file(&settings_cache_path(grant_path), settings)
-        .expect("settings");
+fn write_torn_two_file_cache(harness: &Harness, grant: &GrantBundle, settings: &CachedSettings) {
+    let path = interactive_cache_path(&harness.home, &grant.deployment.token, PROJECT);
+    write_grant_file(&path, grant).expect("write grant");
+    fs::write(
+        settings_cache_path(&path),
+        serde_json::to_vec(settings).expect("settings json"),
+    )
+    .expect("tear");
 }
 
 fn write_binding_for(harness: &Harness, url: &str, token: &str) {
@@ -1125,4 +1127,139 @@ fn stale_epoch_single_retry() {
             .count(),
         1
     );
+}
+
+#[test]
+fn write_coherent_pair_is_single_envelope() {
+    let harness = Harness::new();
+    let grant = fixture_grant(PrincipalKind::Interactive);
+    let settings = CachedSettings {
+        config_revision: grant.config_revision,
+        settings: Default::default(),
+    };
+    let path = interactive_cache_path(&harness.home, &grant.deployment.token, PROJECT);
+    write_coherent_pair(&path, &grant, &settings).expect("envelope");
+    assert!(!settings_cache_path(&path).exists());
+    let loaded = load_grant_file(&path).expect("unwrap grant");
+    assert_eq!(loaded.config_revision, grant.config_revision);
+    match super::cache::inspect_cache_pair(&path).expect("pair") {
+        Some(super::cache::CachePair::Coherent(loaded_grant, loaded_settings)) => {
+            assert_eq!(loaded_grant.config_revision, grant.config_revision);
+            assert_eq!(loaded_settings.config_revision, grant.config_revision);
+        }
+        other => panic!("expected coherent envelope, got {other:?}"),
+    }
+}
+
+#[test]
+fn write_coherent_pair_rejects_revision_mismatch() {
+    let harness = Harness::new();
+    let grant = fixture_grant(PrincipalKind::Interactive);
+    let settings = CachedSettings {
+        config_revision: grant.config_revision + 1,
+        settings: Default::default(),
+    };
+    let path = interactive_cache_path(&harness.home, &grant.deployment.token, PROJECT);
+    let error = write_coherent_pair(&path, &grant, &settings).expect_err("mismatch");
+    assert_eq!(error, GrantError::ConfigRevisionMismatch);
+    assert!(!path.exists());
+}
+
+#[test]
+fn torn_two_file_cache_is_not_served_offline() {
+    let harness = Harness::new();
+    let mut grant = fixture_grant(PrincipalKind::Interactive);
+    grant.config_revision = 2;
+    grant = grant.with_checksum();
+    write_binding_for(&harness, "http://127.0.0.1:1", &grant.deployment.token);
+    write_torn_two_file_cache(
+        &harness,
+        &grant,
+        &CachedSettings {
+            config_revision: 1,
+            settings: [("ai.embeddings.model".into(), "stale".into())]
+                .into_iter()
+                .collect(),
+        },
+    );
+    let acquired =
+        acquire_with(&harness.request(Some("http://127.0.0.1:1".into()))).expect("grant only");
+    assert_eq!(acquired.bundle.config_revision, 2);
+    assert_eq!(acquired.settings, None);
+}
+
+#[test]
+fn torn_two_file_cache_rehandshakes_when_reachable() {
+    let harness = Harness::new();
+    let mut grant = fixture_grant(PrincipalKind::Interactive);
+    grant.deployment.token = deployment_token(&harness.home);
+    grant.config_revision = 2;
+    grant = grant.with_checksum();
+    write_torn_two_file_cache(
+        &harness,
+        &grant,
+        &CachedSettings {
+            config_revision: 1,
+            settings: Default::default(),
+        },
+    );
+    let scripted = spawn_scripted(vec![
+        Step::Challenge {
+            valid: true,
+            token: TOKEN.into(),
+        },
+        Step::Handshake {
+            grant: Box::new(grant.clone()),
+        },
+        Step::Config { revision: 2 },
+    ]);
+    write_binding_for(&harness, &scripted.url, &grant.deployment.token);
+    let acquired = acquire_with(&harness.request(Some(scripted.url.clone()))).expect("rehandshake");
+    let _ = join(scripted);
+    assert_eq!(acquired.source, GrantSource::Handshake);
+    assert_eq!(
+        acquired
+            .settings
+            .as_ref()
+            .map(|settings| settings.config_revision),
+        Some(2)
+    );
+    let path = interactive_cache_path(&harness.home, &grant.deployment.token, PROJECT);
+    assert!(!settings_cache_path(&path).exists());
+    match super::cache::inspect_cache_pair(&path).expect("pair") {
+        Some(super::cache::CachePair::Coherent(loaded_grant, loaded_settings)) => {
+            assert_eq!(loaded_grant.config_revision, 2);
+            assert_eq!(loaded_settings.config_revision, 2);
+        }
+        other => panic!("expected coherent envelope, got {other:?}"),
+    }
+}
+
+#[test]
+fn handshake_persist_does_not_leave_settings_sibling() {
+    let harness = Harness::new();
+    let mut grant = fixture_grant(PrincipalKind::Interactive);
+    grant.deployment.token = deployment_token(&harness.home);
+    grant = grant.with_checksum();
+    let scripted = spawn_scripted(vec![
+        Step::Challenge {
+            valid: true,
+            token: TOKEN.into(),
+        },
+        Step::Handshake {
+            grant: Box::new(grant.clone()),
+        },
+        Step::Config {
+            revision: grant.config_revision,
+        },
+    ]);
+    let acquired = acquire_with(&harness.request(Some(scripted.url.clone()))).expect("handshake");
+    let _ = join(scripted);
+    assert_eq!(acquired.source, GrantSource::Handshake);
+    let path = interactive_cache_path(&harness.home, &grant.deployment.token, PROJECT);
+    assert!(!settings_cache_path(&path).exists());
+    assert!(matches!(
+        super::cache::inspect_cache_pair(&path).expect("pair"),
+        Some(super::cache::CachePair::Coherent(_, _))
+    ));
 }

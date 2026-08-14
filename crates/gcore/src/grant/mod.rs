@@ -31,8 +31,8 @@ pub use handshake::{
 
 use bundle::validate_for_construction as validate_grant;
 use cache::{
-    load_coherent_pair, load_settings_file, lock_with_deadline, newer_generation,
-    write_settings_file,
+    CachePair, inspect_cache_pair, lock_with_deadline, matching_settings, newer_generation,
+    persist_cache,
 };
 use handshake::{
     challenge_and_handshake, deployment_token as derived_deployment_token,
@@ -355,45 +355,74 @@ fn acquire_managed(ctx: &AcquireCtx, path: &Path) -> Result<AcquiredGrant, Grant
     )?;
     validate_managed_identity(&grant)?;
     let destination = path.to_path_buf();
-    finish_loaded(ctx, grant, GrantSource::ManagedFile, destination, true)
+    match inspect_cache_pair(path)? {
+        Some(CachePair::Coherent(grant, settings)) => finish_loaded_with_settings(
+            ctx,
+            grant,
+            settings,
+            GrantSource::ManagedFile,
+            destination,
+            true,
+        ),
+        Some(CachePair::Incoherent(grant)) if ctx.reachable() => {
+            handshake_managed(ctx, Some(&grant), destination)
+        }
+        _ => finish_loaded(ctx, grant, GrantSource::ManagedFile, destination, true),
+    }
 }
 
 fn acquire_interactive(ctx: &AcquireCtx) -> Result<AcquiredGrant, GrantError> {
     let binding = load_binding(&ctx.home, &ctx.daemon_url);
     if let Some(binding) = binding {
         let path = interactive_cache_path(&ctx.home, &binding.deployment_token, &ctx.project_id);
-        if let Some((grant, settings)) = load_coherent_pair(&path)? {
-            validate_grant(
-                &grant,
-                &ctx.project_id,
-                &ctx.machine_id,
-                Some(&binding.deployment_token),
-                false,
-            )?;
-            return finish_loaded_with_settings(
-                ctx,
-                grant,
-                settings,
-                GrantSource::Cache,
-                path,
-                false,
-            );
+        match inspect_cache_pair(&path)? {
+            Some(CachePair::Coherent(grant, settings)) => {
+                validate_grant(
+                    &grant,
+                    &ctx.project_id,
+                    &ctx.machine_id,
+                    Some(&binding.deployment_token),
+                    false,
+                )?;
+                return finish_loaded_with_settings(
+                    ctx,
+                    grant,
+                    settings,
+                    GrantSource::Cache,
+                    path,
+                    false,
+                );
+            }
+            Some(CachePair::Incoherent(grant)) => {
+                validate_grant(
+                    &grant,
+                    &ctx.project_id,
+                    &ctx.machine_id,
+                    Some(&binding.deployment_token),
+                    false,
+                )?;
+                if ctx.reachable() {
+                    return handshake_interactive(ctx, Some(&binding.deployment_token), false);
+                }
+                return finish_loaded(ctx, grant, GrantSource::Cache, path, false);
+            }
+            Some(CachePair::GrantOnly(grant)) => {
+                validate_grant(
+                    &grant,
+                    &ctx.project_id,
+                    &ctx.machine_id,
+                    Some(&binding.deployment_token),
+                    false,
+                )?;
+                return finish_loaded(ctx, grant, GrantSource::Cache, path, false);
+            }
+            None => {
+                if ctx.reachable() {
+                    return handshake_interactive(ctx, Some(&binding.deployment_token), false);
+                }
+                return Err(GrantError::DaemonRequired);
+            }
         }
-        if path.exists() {
-            let grant = load_grant_file(&path)?;
-            validate_grant(
-                &grant,
-                &ctx.project_id,
-                &ctx.machine_id,
-                Some(&binding.deployment_token),
-                false,
-            )?;
-            return finish_loaded(ctx, grant, GrantSource::Cache, path, false);
-        }
-        if ctx.reachable() {
-            return handshake_interactive(ctx, Some(&binding.deployment_token), false);
-        }
-        return Err(GrantError::DaemonRequired);
     }
 
     if is_default_local_endpoint(&ctx.daemon_url).unwrap_or(false) && ctx.reachable() {
@@ -454,7 +483,7 @@ fn finish_loaded(
         }
     }
     let reachable = ctx.reachable();
-    let settings = load_settings_file(&settings_cache_path(&destination)).ok();
+    let settings = matching_settings(&destination, &grant);
     Ok(AcquiredGrant {
         bundle: grant,
         source,
@@ -518,10 +547,11 @@ fn refresh_or_fail(
             Err(GrantError::DaemonRequired)
         } else {
             let grant = existing.cloned().ok_or(GrantError::DaemonRequired)?;
+            let settings = matching_settings(&destination, &grant);
             Ok(AcquiredGrant {
                 bundle: grant,
                 source,
-                settings: load_settings_file(&settings_cache_path(&destination)).ok(),
+                settings,
                 daemon_reachable: false,
                 now: ctx.now,
             })
@@ -535,10 +565,11 @@ fn refresh_or_fail(
             Some(lock) => lock,
             None => {
                 let grant = existing.cloned().ok_or(GrantError::DaemonRequired)?;
+                let settings = matching_settings(&destination, &grant);
                 return Ok(AcquiredGrant {
                     bundle: grant,
                     source,
-                    settings: load_settings_file(&settings_cache_path(&destination)).ok(),
+                    settings,
                     daemon_reachable: true,
                     now: ctx.now,
                 });
@@ -549,10 +580,11 @@ fn refresh_or_fail(
         && !current.is_expired(ctx.now)
         && !current.past_half_ttl(ctx.now)
     {
+        let settings = matching_settings(&destination, &current);
         return Ok(AcquiredGrant {
             bundle: current,
             source,
-            settings: load_settings_file(&settings_cache_path(&destination)).ok(),
+            settings,
             daemon_reachable: true,
             now: ctx.now,
         });
@@ -670,10 +702,7 @@ fn handshake_managed(
     }
     let (grant, settings) =
         fetch_settings_coherent(ctx, grant, Some(&envelope), existing.cloned(), true)?;
-    write_grant_file(&destination, &grant)?;
-    if let Some(settings) = &settings {
-        write_settings_file(&settings_cache_path(&destination), settings)?;
-    }
+    persist_cache(&destination, &grant, settings.as_ref())?;
     Ok(AcquiredGrant {
         bundle: grant,
         source: GrantSource::ManagedFile,
@@ -692,10 +721,11 @@ fn persist_interactive(
     if let Ok(existing) = load_grant_file(&path)
         && !newer_generation(Some(&existing), &grant)
     {
+        let settings = matching_settings(&path, &existing);
         return Ok(AcquiredGrant {
             bundle: existing,
             source: GrantSource::Cache,
-            settings: load_settings_file(&settings_cache_path(&path)).ok(),
+            settings,
             daemon_reachable: true,
             now: ctx.now,
         });
@@ -707,10 +737,7 @@ fn persist_interactive(
         Err(GrantError::ConfigRevisionMismatch) => return Err(GrantError::ConfigRevisionMismatch),
         Err(error) => return Err(error),
     };
-    write_grant_file(&path, &grant)?;
-    if let Some(settings) = &settings {
-        write_settings_file(&settings_cache_path(&path), settings)?;
-    }
+    persist_cache(&path, &grant, settings.as_ref())?;
     write_binding(
         &ctx.home,
         &TrustedBinding {
