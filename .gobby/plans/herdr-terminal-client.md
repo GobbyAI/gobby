@@ -1102,6 +1102,7 @@ Targets:
 - `crates/gterminal/tests/fixtures/wire_golden/hello.bin`
 - `crates/gterminal/tests/fixtures/wire_golden/welcome.bin`
 - `crates/gterminal/tests/fixtures/wire_golden/attach_terminal.bin`
+- `crates/gterminal/tests/fixtures/wire_golden/attach_terminal_reserved.bin`
 - `crates/gterminal/tests/fixtures/wire_golden/set_viewport.bin`
 - `crates/gterminal/tests/fixtures/wire_golden/set_scroll_offset.bin`
 - `crates/gterminal/tests/fixtures/wire_golden/scroll_offset_applied.bin`
@@ -1135,7 +1136,7 @@ Targets:
 - `src/gobby/terminals/dimensions.py`
 - `tests/config/test_terminal_host_config.py`
 
-- **Frame protocol (bincode, imported and narrowed to read-only).** The rebranded herdr wire protocol at version 1: `Hello{version, encoding, local_token, cols, rows}` → `Welcome{host_epoch}`; `AttachTerminal{host_terminal_id}`; `SetViewport{rows, cols}`; `SetScrollOffset{rows_from_live_edge}`; `Detach`; server → `Frame(FrameData)` | `Terminal(TerminalFrame)` | `Graphics` | `AttachHistory` | `ScrollOffsetApplied{applied_rows, max_rows}` | `TerminalExited`. Per-terminal attach only (herdr's whole-app frame mode is not exposed). The `local_token` in `Hello` is verified against `~/.gobby/local_cli_token` (same-user defense in depth; C1). `AttachHistory{text, truncated, dropped_bytes, total_bytes}` is a standalone first-attach scrollback frame (3.4), bounded independently by `MAX_FRAME_SIZE`, and is never packed into a keyframe.
+- **Frame protocol (bincode, imported and narrowed to read-only).** The rebranded herdr wire protocol at version 1: `Hello{version, encoding, local_token, cols, rows}` → `Welcome{host_epoch}`; `AttachTerminal{host_terminal_id, reservation_id?}`; `SetViewport{rows, cols}`; `SetScrollOffset{rows_from_live_edge}`; `Detach`; server → `Frame(FrameData)` | `Terminal(TerminalFrame)` | `Graphics` | `AttachHistory` | `ScrollOffsetApplied{applied_rows, max_rows}` | `TerminalExited`. Per-terminal attach only (herdr's whole-app frame mode is not exposed). The `local_token` in `Hello` is verified against `~/.gobby/local_cli_token` (same-user defense in depth; C1). `reservation_id` is optional on `AttachTerminal`: required only for a native internal observer bind or rebind of the prepared or entitled reservation, and absent for every user attach (direct `gclient`, browser proxy) and every tmux attach. A missing, mismatched, or stale `reservation_id` on an internal bind is a typed refusal with no ownership transfer. `AttachHistory{text, truncated, dropped_bytes, total_bytes}` is a standalone first-attach scrollback frame (3.4), bounded independently by `MAX_FRAME_SIZE`, and is never packed into a keyframe.
 
   The narrowing is the point: herdr's `Input`, `InputEvents`, `Resize`, and the `mode`/`takeover` fields of `AttachTerminal` are **not** imported. This channel has no verb that mutates a terminal. `SetViewport` is the one thing that looks like a write and is not — it changes only the grid size this attachment's frames are rendered into, so observers each read at their own size for the focused encoding, and it can never reach `TIOCSWINSZ` (that path exists only on the control channel). `SetScrollOffset` is the matching read-only scroll verb: `rows_from_live_edge` is a non-negative integer, `0` is the live edge, and the host clamps to the current scrollback max and answers `ScrollOffsetApplied` before the next keyframe from that offset. It never reaches PTY input, mouse-report, or `TIOCSWINSZ`. Two attachments of one native terminal hold independent offsets. This is what eliminates tmux's smallest-client shrinking: a viewer's geometry and scroll position are rendering parameters, not properties of the terminal.
 
@@ -1166,7 +1167,7 @@ Because `write` is a control verb, the only host client that can ever see this o
 - **Resident native scrollback is bounded independently of the snapshot response.** Ghostty's default ring is not a host-memory contract. `TerminalHostConfig` owns `native_scrollback_max_lines` (default **10000**, floor **500**, ceiling **50000**) and `native_scrollback_max_bytes` (default **8 MiB**, floor **256 KiB**, ceiling **32 MiB**). The host evicts from the **oldest** end when either ceiling is crossed, and the same `{truncated, dropped_bytes, total_bytes}` accounting snapshot already carries is updated for the evicted prefix. `SetScrollOffset` clamps to the *retained* history after eviction, never to a discarded offset. The worst admitted live-native count is `max_attachments_total - 4` (the four host-health/`list`/lifecycle slots), so resident emulator memory is in the peak formula above. A sustained-output test must plateau at those ceilings rather than grow for the life of the process.
 
 **Snapshots are byte-bounded.** `snapshot` with `mode: "ansi"` returns retained scrollback, and the JSON-lines transport must reject oversized lines to stay memory-safe — a legitimate long history would otherwise either trip the guard (losing capture-before-kill exactly when it matters, at process death) or force an unbounded allocation. The response is therefore capped independently of the resident ring: `max_bytes` defaults to **256 KiB** (below the 2 MiB control-line max) and `max_lines` to **500**, both clamped before allocation; the host truncates from the **oldest** end so the most recent output always survives, and the response carries `{truncated: bool, dropped_bytes, total_bytes}` so the caller records a faithful artifact rather than a silently short one. Deliberately not chosen: a paginated cursor protocol. Capture-before-kill and detector input both want the tail, one bounded response satisfies both, and a cursor would add multi-round-trip state to a path that runs during process teardown.
-- **Golden wire corpus.** Three processes in two languages share these two boundaries — the Rust host, the Rust client, and the Python daemon (which speaks JSON control *and*, for the web proxy in 4.3, consumes bincode frames). Rust-internal round-trip tests cannot catch cross-language byte drift, so `crates/gterminal/tests/fixtures/wire_golden/` holds the committed corpus. This deliverable **creates every file listed in Targets**: frame `hello`, `welcome`, `attach_terminal`, `set_viewport`, `set_scroll_offset`, `scroll_offset_applied`, `detach`, `frame`, `terminal_ansi`, `graphics`, `attach_history`, `terminal_exited`, `error_frame`; control `hello`, `ping` (includes `host_pid`), `list`, `host_shutdown`, `spawn`, `spawn_prepared`, `spawn_commit`, `kill`, `resize`, `snapshot`, `write`, `write_paste_on`, `write_paste_off`, `subscribe_events`, `reserve_observer`, `release_observer`. `Graphics` and `AttachHistory` are live server frame variants and are pinned here; a corpus that only covers `Frame`/`Terminal`/`TerminalExited` would leave declared shapes unfrozen. 3.4 regenerates only the pane-identity / mode-flag / refusal shapes named there against these same files; 4.1 and 4.3 consume those owned bytes and do not add a second corpus. Rust asserts its encoder reproduces the fixtures byte-for-byte and its decoder accepts them; the Python side asserts the same in 4.1 and 4.3. The corpus is fixtures plus focused tests — deliberately not a schema-generation subsystem or an IDL. Changing any wire shape means regenerating the corpus in the same change, which is what makes the version-1 freeze enforceable.
+- **Golden wire corpus.** Three processes in two languages share these two boundaries — the Rust host, the Rust client, and the Python daemon (which speaks JSON control *and*, for the web proxy in 4.3, consumes bincode frames). Rust-internal round-trip tests cannot catch cross-language byte drift, so `crates/gterminal/tests/fixtures/wire_golden/` holds the committed corpus. This deliverable **creates every file listed in Targets**: frame `hello`, `welcome`, `attach_terminal` (unreserved / `reservation_id` absent), `attach_terminal_reserved` (native internal / `reservation_id` present), `set_viewport`, `set_scroll_offset`, `scroll_offset_applied`, `detach`, `frame`, `terminal_ansi`, `graphics`, `attach_history`, `terminal_exited`, `error_frame`; control `hello`, `ping` (includes `host_pid`), `list`, `host_shutdown`, `spawn`, `spawn_prepared`, `spawn_commit`, `kill`, `resize`, `snapshot`, `write`, `write_paste_on`, `write_paste_off`, `subscribe_events`, `reserve_observer`, `release_observer`. `Graphics` and `AttachHistory` are live server frame variants and are pinned here; a corpus that only covers `Frame`/`Terminal`/`TerminalExited` would leave declared shapes unfrozen. 3.4 regenerates only the pane-identity / mode-flag / refusal shapes named there against these same files; 4.1 and 4.3 consume those owned bytes and do not add a second corpus. Rust asserts its encoder reproduces the fixtures byte-for-byte and its decoder accepts them; the Python side asserts the same in 4.1 and 4.3. The corpus is fixtures plus focused tests — deliberately not a schema-generation subsystem or an IDL. Changing any wire shape means regenerating the corpus in the same change, which is what makes the version-1 freeze enforceable.
 - Both protocols and their versioning/compat rules are documented in `docs/contracts/gterm-protocols.md` (the contract-drift precedent from `docs/contracts/gcode-cli.md`), including the read-only frame channel and daemon-only write rule, the backpressure contract, and the corpus regeneration procedure.
 
 **Acceptance:**
@@ -1175,7 +1176,7 @@ Because `write` is a control verb, the only host client that can ever see this o
 - 3.2.2 - On top of the 3.1 authenticated connection, the control protocol serves spawn/`spawn_prepared`/`spawn_commit`/kill/resize/snapshot/write/`reserve_observer`/`release_observer`/subscribe_events over JSON lines with correlation ids; `host_shutdown` remains the 3.1 verb on the same socket. test: `crates/gterminal/tests/control_protocol.rs::control_surface_round_trip`.
 - 3.2.3 - A `Hello` with a wrong protocol version or invalid local token is rejected with a typed error before any terminal access. test: `crates/gterminal/tests/frame_protocol.rs::hello_rejects_bad_version_and_token`.
 - 3.2.4 - Both protocols are documented with versioning rules, the read-only frame channel and daemon-only write rule, the backpressure contract, and the corpus regeneration procedure. file: `docs/contracts/gterm-protocols.md`.
-- 3.2.5 - The committed golden corpus round-trips in Rust byte-for-byte for every listed frame and control message, including `Graphics`, `AttachHistory`, `SetScrollOffset`, `ScrollOffsetApplied`, `ping.host_pid`, and `host_shutdown`, and decoding survives partial-read reassembly across arbitrary chunk boundaries while oversized and version-mismatched inputs are rejected with typed errors. test: `crates/gterminal/tests/wire_golden.rs::golden_corpus_bytes_and_fragmented_reads`.
+- 3.2.5 - The committed golden corpus round-trips in Rust byte-for-byte for every listed frame and control message, including `Graphics`, `AttachHistory`, `SetScrollOffset`, `ScrollOffsetApplied`, `ping.host_pid`, `host_shutdown`, unreserved `attach_terminal.bin` (`reservation_id` absent), and reserved `attach_terminal_reserved.bin` (`reservation_id` present), and decoding survives partial-read reassembly across arbitrary chunk boundaries while oversized and version-mismatched inputs are rejected with typed errors. test: `crates/gterminal/tests/wire_golden.rs::golden_corpus_bytes_and_fragmented_reads`.
 - 3.2.6 - A stalled observer that stops reading does not slow or block the lease holder or a second healthy observer; the stalled attachment is resynchronized with a full keyframe after delta drop, and is closed with a typed lag error once it stays over bound past the timeout. test: `crates/gterminal/tests/frame_protocol.rs::slow_observer_resyncs_or_lags_out`.
 - 3.2.7 - The frame protocol cannot mutate a terminal: its message enum contains no input, no PTY resize, no mode, and no takeover field; a `SetViewport` changes only that attachment's render size and issues no `TIOCSWINSZ`; a `SetScrollOffset` changes only that attachment's rows-from-live-edge and issues no PTY input, mouse-report, or `TIOCSWINSZ`; and a decoder fed a hand-built legacy `Input` or `Resize` frame rejects it as unknown rather than acting on it. test: `crates/gterminal/tests/frame_protocol.rs::frame_channel_is_read_only`.
 - 3.2.8 - A permanently non-reading attachment cannot grow host memory without bound: its control queue overflow or exceeded delivery deadline closes the attachment with a typed error, host memory for it is released, and the writer plus healthy observers are unaffected; a reconnecting client recovers state from `list` plus a keyframe with no replay buffer involved. test: `crates/gterminal/tests/frame_protocol.rs::control_overflow_closes_attachment_bounded`.
@@ -1197,7 +1198,7 @@ Because `write` is a control verb, the only host client that can ever see this o
 - 3.2.33 - Every `TerminalHostConfig` multiplicand in the peak-memory or list-envelope proof has a documented default, floor, and ceiling: `max_attachments_per_terminal` 1..8, `max_attachments_total` 4..128, `max_attached_terminals` 1..64, `tmux_attach_history_lines` 1..2000, `tmux_attach_history_max_bytes` 1 KiB..256 KiB, plus the existing native-scrollback ranges. Below-minimum and above-maximum values are typed startup refusals in Python and in the host; admitted-maximum values rerun 3.2.15 / 3.2.26 / 3.2.30 memory, frame, and list-envelope proofs. The host-side suite is `crates/gterminal/tests/control_protocol.rs::host_config_ranges_reject_and_admit_maximum`. test: `tests/config/test_terminal_host_config.py::test_host_config_ranges_reject_and_admit_maximum`.
 - 3.2.32 - `control_host_shutdown.json` is in the byte-exact corpus; the Python control client (4.1) decodes the same bytes. test: `crates/gterminal/tests/wire_golden.rs::golden_corpus_covers_host_shutdown`.
 - 3.2.21 - After measuring `FrameData` and `TerminalAnsi`, `wire_types.rs` constants re-exported from `wire.rs` and `src/gobby/terminals/dimensions.py` carry the same min/max rows, cols, and cells; this leaf's Rust sources stay below 1,000 lines. test: `crates/gterminal/tests/wire_golden.rs::python_dimensions_match_wire_constants`.
-- 3.2.22 - Observer reservations follow reserved(control) → reserved(prepared entry at `spawn_prepared`) → bound → entitled on frame loss for prepared and committed entries: a same-connection `reserve_observer` replay with the same `reserve_key` returns the same `reservation_id`; `spawn` names `reservation_id` and `reserve_key` and `spawn_prepared` transfers that exact reservation to the prepared registry entry; a distinct-key second reservation for the same `terminal_id` is not transferred; a stale generation is refused typed; concurrent replay of the named reservation returns the same identity without a second slot; `AttachTerminal` then transfers ownership to the frame connection; control disconnect releases only reservations with no prepared entry (including an unused distinct-key reservation) and does not drop the prepared-owned one; a prepared-owned `reserved` slot survives control loss and is attached on reconnect rather than re-reserved; a prepared/uncommitted bound observer becomes `entitled` on frame loss and is rebound before commit; a committed live native bound observer becomes `entitled` on frame loss; only prepared `kill`, exit, deadline expiry, or explicit `release_observer` drops that entitlement; stale disconnect and stale release callbacks are generation-guarded. test: `crates/gterminal/tests/control_protocol.rs::reserve_observer_state_machine`.
+- 3.2.22 - Observer reservations follow reserved(control) → reserved(prepared entry at `spawn_prepared`) → bound → entitled on frame loss for prepared and committed entries: a same-connection `reserve_observer` replay with the same `reserve_key` returns the same `reservation_id`; `spawn` names `reservation_id` and `reserve_key` and `spawn_prepared` transfers that exact reservation to the prepared registry entry; a distinct-key second reservation for the same `terminal_id` is not transferred; a stale generation is refused typed; concurrent replay of the named reservation returns the same identity without a second slot; `AttachTerminal` carrying that exact `reservation_id` transfers ownership to the frame connection; a missing, mismatched, or stale `reservation_id` is a typed refusal with no transfer; an attach that omits `reservation_id` is a user attach and cannot consume the prepared slot; control disconnect releases only reservations with no prepared entry (including an unused distinct-key reservation) and does not drop the prepared-owned one; a prepared-owned `reserved` slot survives control loss and is attached on reconnect rather than re-reserved; a prepared/uncommitted bound observer becomes `entitled` on frame loss and is rebound before commit; a committed live native bound observer becomes `entitled` on frame loss; only prepared `kill`, exit, deadline expiry, or explicit `release_observer` drops that entitlement; stale disconnect and stale release callbacks are generation-guarded. test: `crates/gterminal/tests/control_protocol.rs::reserve_observer_state_machine`.
 - 3.2.23 - Live-control cleanup does not require disconnect: `release_observer` keyed by `reservation_id` and `reserve_key` is idempotent for repeated and stale-generation calls; `kill` of a prepared `host_terminal_id` closes the barrier, reaps the group, and removes the prepared entry while the control connection stays up. test: `crates/gterminal/tests/control_protocol.rs::release_observer_and_prepared_kill_without_disconnect`.
 - 3.2.24 - A 1 MiB raw write/paste of worst-case JSON-escaping UTF-8 is delivered (or refused typed at the 1 MiB raw cap) without tripping the 2 MiB line close; the encoded JSON line is preflighted; oversized spawn `argv`/`env`/`cwd` is `request_too_large`; golden write fixtures pin `encoding: "utf8-b64"`. test: `crates/gterminal/tests/control_protocol.rs::encoded_control_line_stays_inside_max`.
 - 3.2.27 - Authenticated `ping` carries `host_pid` as a JSON number equal to the serving process; the golden `control_ping.json` freezes that field; a ping missing `host_pid` is a typed Rust decode error. The Python decoder and its missing-field refusal are 4.1.14. test: `crates/gterminal/tests/control_protocol.rs::ping_carries_host_pid`.
@@ -1294,7 +1295,7 @@ The P3 goal is the whole client loop, so spawn and terminate are proven as clien
 - 3.3.13 - Scrollback/copy is attachment-local: two observers sit at independent offsets, wide-grapheme selection copies the logical line (herdr #2735), live output continues with a new-output indicator, no PTY resize, input, or tmux mutation occurs, and a later-joining pane seeds copy-mode from the `AttachHistory` frame it received rather than requiring `created: true`. test: `crates/gclient/tests/copy_paste.rs::scrollback_copy_is_lease_independent`.
 - 3.3.20 - Native copy-mode uses `SetScrollOffset`: a later joiner, two independent offsets, live output while scrolled, reconnect, and jump-to-bottom (`0`) each render from host scrollback without PTY input, mouse-report, or `TIOCSWINSZ`; tmux copy-mode still uses `AttachHistory` and distinguishes a soft-wrapped wide-grapheme line from a hard newline. test: `crates/gclient/tests/copy_paste.rs::native_set_scroll_offset_and_tmux_wrap_history`.
 - 3.3.14 - Paste-to-PTY uses herdr 0.8.0 `paste_payload` via `terminal_paste`/`write_paste`: with the lease and bracketed paste on, a multiline clipboard arrives as one `\x1b[200~…\x1b[201~` unit and does not submit each line; without the lease the paste is refused and the PTY is unchanged; oversize is refused typed; `terminal_write_outcome` correlates the paste's `client_write_seq`; modal/copy-search paste stays local. test: `crates/gclient/tests/copy_paste.rs::paste_is_lease_gated_and_bracketed`.
-- 3.3.15 - Direct frame attach supplies `expected_host_epoch` from `AttachLocator.frame_host_epoch` (native row or adopted host for tmux), compares it to `Welcome.host_epoch` before any `AttachTerminal`, and on mismatch closes with `HostEpochChanged` without sending attach; a replacement-plus-id-reuse fixture never attaches the stale locator on either backend. test: `crates/gclient/tests/workspace.rs::frame_attach_refuses_epoch_mismatch_before_attach`.
+- 3.3.15 - Direct frame attach supplies `expected_host_epoch` from `AttachLocator.frame_host_epoch` (native row or adopted host for tmux), compares it to `Welcome.host_epoch` before any `AttachTerminal`, and on mismatch closes with `HostEpochChanged` without sending attach; a replacement-plus-id-reuse fixture never attaches the stale locator on either backend. Direct gclient `AttachTerminal` omits `reservation_id` (user attach) and encodes the unreserved golden. test: `crates/gclient/tests/workspace.rs::frame_attach_refuses_epoch_mismatch_before_attach`.
 - 3.3.16 - Every hand-maintained file under `crates/gclient/src/` is below 1,000 lines after the UI splits. test: `crates/gclient/tests/source_size.rs::no_src_file_at_or_above_1000_lines`.
 - 3.3.17 - A direct frame EOF, typed lag close, or epoch loss while the daemon WebSocket stays connected sends `terminal_detach{terminal_id, attachment_id}` before any reattach: the old attachment is finalized, its `attachment_id` is stale, the lease is released, and control cannot be reacquired until a fresh frame attach succeeds. test: `crates/gclient/tests/workspace.rs::direct_frame_eof_detaches_before_reattach`.
 - 3.3.18 - gclient decodes `message_seq`, `lease_generation`, and `client_write_seq` as JSON numbers in `[0, terminal_ws_safe_integer_max]` (`2^53-1`): `2^53-2` and `2^53-1` remain distinct; a fixture or emit of `2^53` is refused `safe_integer_overflow`; the crate never emits strings or floats for these fields. test: `crates/gclient/tests/ws_golden.rs::seq_and_lease_generation_are_safe_integers`.
@@ -1316,6 +1317,7 @@ Targets:
 - `crates/gterminal/tests/wire_golden.rs`
 - `crates/gterminal/tests/fixtures/wire_golden/hello.bin`
 - `crates/gterminal/tests/fixtures/wire_golden/attach_terminal.bin`
+- `crates/gterminal/tests/fixtures/wire_golden/attach_terminal_reserved.bin`
 - `crates/gterminal/tests/fixtures/wire_golden/attach_terminal_created.bin`
 - `crates/gterminal/tests/fixtures/wire_golden/terminal_ansi.bin`
 - `crates/gterminal/tests/fixtures/wire_golden/error_self_view.bin`
@@ -1379,8 +1381,8 @@ tmux-backed terminals (Gobby-spawned runs still on tmux, and externally discover
 - **Input for a tmux pane never touches the host.** Writes are daemon-only (3.2), and for a tmux-backed terminal the daemon already owns an exact write path: `TmuxTerminalRuntime` issues `send-keys -t <pane_id> -H`, which delivers arbitrary bytes — control sequences included — to precisely that pane, encoded against the pane flags it queries at write dispatch (2.2.19), not against a poll cache. So this deliverable adds no write path of any kind: the host observes, the daemon writes, and gclient's keystrokes travel the same daemon route the browser's already do. That also means the observer needs no notion of a writer, a holder, or a lease, and pane death has no lease-side cleanup to perform here.
 
 - **Identity is the pane, the wire says so, and every poll checks it.** Attach targets carry the 2.1 physical identity — socket path, tmux server pid, server start time, and `pane_id` — never a session or window name, so a rename or a `break-pane` between attaches resolves the same terminal. The generation is not merely carried, it is verified: `#{pid}` and `#{start_time}` ride in every poll batch (they cost nothing to add to a format string that is already being expanded), and a mismatch against the attach target's stored generation is treated as confirmed absence. That closes the case where a tmux server died while the daemon was down and a replacement claimed the same socket path and handed out the same `pane_id` — without the check, the very first poll would bind a stored terminal to a stranger's pane and stream it to a viewer as if it were the original. The host re-reads `#{pane_title}` (and, on the daemon side, session and window names) as refreshable metadata from the poll, updating the row without touching identity.
-- **The observer is created inside `Attach`, not before it.** A separate `embed` verb returning a `host_terminal_id` for a later frame attach cannot be made safe: initialize the refcount at creation and a caller that dies before attaching leaks the observer forever; initialize it at attach and a zero-ref teardown can reap it before the caller ever uses the id it was handed. So there is no separate verb. `AttachTerminal{terminal_id, locator}` on the frame socket performs create-or-join **inside the same critical section that registers the attachment**, under a per-`locator_key` creation lock: the registry entry and its first attachment commit together, or neither does. The response reports `created` so callers can distinguish first attach from join. Attachments are refcounted and polling stops **immediately when the last one detaches** — deliberately no linger window, because a linger timer plus reattach is exactly what would need cancellable linger generations to stay correct, and restarting a poll loop costs one tmux invocation. If the frame handshake fails partway, the same critical section rolls the creation back. Observers are viewers, not owners: daemon lifecycle authority over the underlying tmux session is untouched (`TmuxTerminalRuntime` remains the control plane for capture/inject/kill), and host shutdown or crash leaves the pane in exactly the state it was in, because nothing was ever mutated.
-- **This leaf changes wire shapes, so it owns the corpus with them.** `Hello` gains the optional client tmux-identity block, `AttachTerminal` gains the pane-identity / locator block, its response gains `created`, the pane's mode-flag state joins the frame payload, and the recursive-view refusal, the capacity refusal, and the copy-mode and stale-observation states are new typed shapes — all of which are frame-protocol shapes that three processes decode. Adding them without regenerating `crates/gterminal/tests/fixtures/wire_golden/` would leave the corpus asserting a protocol the host no longer speaks, and the Python frame client (4.1) pins itself against that same corpus, so stale fixtures would let Rust and Python drift silently in exactly the way the corpus exists to prevent. So `wire.rs` / `wire_types.rs` / `wire_codec.rs`, `hello.bin`, the other named corpus files, and `docs/contracts/gterm-protocols.md` are updated in this deliverable, byte-exactly and in the same change, per the version-1 freeze rule 3.2 sets. The sole gclient handshake encoder is `crates/gclient/src/frame_source.rs` (3.3.10): this leaf updates that trait implementation for optional client tmux identity and locator-aware attach. This is also why the deliverable depends on 3.3 rather than only 3.2: the client-side invoker and handshake encoder live in gclient, and a leaf that edits them cannot run before the crate exists. Type/codec edits re-run `crates/gterminal/tests/source_size.rs`. Handshake and view edits (`crates/gclient/src/frame_source.rs`, `crates/gclient/src/tmux_identity.rs`, `crates/gclient/src/views/mod.rs`) re-run `crates/gclient/tests/source_size.rs`; further gclient splits land in this leaf if any of those touched sources would reach 1,000 lines.
+- **The observer is created inside `Attach`, not before it.** A separate `embed` verb returning a `host_terminal_id` for a later frame attach cannot be made safe: initialize the refcount at creation and a caller that dies before attaching leaks the observer forever; initialize it at attach and a zero-ref teardown can reap it before the caller ever uses the id it was handed. So there is no separate verb. `AttachTerminal{terminal_id, locator, reservation_id?}` on the frame socket performs create-or-join **inside the same critical section that registers the attachment**, under a per-`locator_key` creation lock: the registry entry and its first attachment commit together, or neither does. `reservation_id` stays absent for every tmux attach and every user attach; it is required only when a native internal observer binds or rebinds the prepared or entitled reservation. A tmux or user attach that presents a `reservation_id` is a typed refusal. A native internal attach whose `reservation_id` is missing, mismatched, or stale is a typed refusal with no ownership transfer. The response reports `created` so callers can distinguish first attach from join. Attachments are refcounted and polling stops **immediately when the last one detaches** — deliberately no linger window, because a linger timer plus reattach is exactly what would need cancellable linger generations to stay correct, and restarting a poll loop costs one tmux invocation. If the frame handshake fails partway, the same critical section rolls the creation back. Observers are viewers, not owners: daemon lifecycle authority over the underlying tmux session is untouched (`TmuxTerminalRuntime` remains the control plane for capture/inject/kill), and host shutdown or crash leaves the pane in exactly the state it was in, because nothing was ever mutated.
+- **This leaf changes wire shapes, so it owns the corpus with them.** `Hello` gains the optional client tmux-identity block, `AttachTerminal` gains the pane-identity / locator block and keeps optional `reservation_id` (absent on every tmux and user attach; present only for a native internal observer), its response gains `created`, the pane's mode-flag state joins the frame payload, and the recursive-view refusal, the capacity refusal, and the copy-mode and stale-observation states are new typed shapes — all of which are frame-protocol shapes that three processes decode. The reserved and unreserved attach fixtures are regenerated together so the locator-aware shape cannot drift from the 3.2 reservation field. Adding them without regenerating `crates/gterminal/tests/fixtures/wire_golden/` would leave the corpus asserting a protocol the host no longer speaks, and the Python frame client (4.1) pins itself against that same corpus, so stale fixtures would let Rust and Python drift silently in exactly the way the corpus exists to prevent. So `wire.rs` / `wire_types.rs` / `wire_codec.rs`, `hello.bin`, the other named corpus files, and `docs/contracts/gterm-protocols.md` are updated in this deliverable, byte-exactly and in the same change, per the version-1 freeze rule 3.2 sets. The sole gclient handshake encoder is `crates/gclient/src/frame_source.rs` (3.3.10): this leaf updates that trait implementation for optional client tmux identity and locator-aware attach, and the gclient encoder always omits `reservation_id`. This is also why the deliverable depends on 3.3 rather than only 3.2: the client-side invoker and handshake encoder live in gclient, and a leaf that edits them cannot run before the crate exists. Type/codec edits re-run `crates/gterminal/tests/source_size.rs`. Handshake and view edits (`crates/gclient/src/frame_source.rs`, `crates/gclient/src/tmux_identity.rs`, `crates/gclient/src/views/mod.rs`) re-run `crates/gclient/tests/source_size.rs`; further gclient splits land in this leaf if any of those touched sources would reach 1,000 lines.
 - **Recursive-view guard, from the client's identity.** Rendering a pane inside itself is a feedback loop — the poll observes the pane's screen, gclient draws it back into that pane, and the next poll observes the drawing — so it must be refused. It cannot be detected from the host's environment: `gterm` is spawned by the daemon and inherits the *daemon's* `$TMUX`, which says nothing about where the client is running, and the common case (daemon outside tmux, gclient inside the target session) is invisible that way. gclient therefore reports its own identity: it parses `$TMUX` for the socket path and server pid, reads `tmux display-message -p '#{pane_id}'` plus the server start time, and sends that block in `Hello` as authenticated attach metadata (`crates/gclient/src/tmux_identity.rs`). The host compares the client-supplied identity against the target `locator_key` before creating or joining an observer and refuses typed on a match. A client running outside tmux sends no block and is never refused.
 
 **Acceptance:**
@@ -1397,7 +1399,7 @@ tmux-backed terminals (Gobby-spawned runs still on tmux, and externally discover
 - 3.4.11 - Mode state with no cell change still produces a frame: hiding and re-showing the cursor with DECTCEM, entering and leaving application-cursor-keys and application-keypad mode, enabling and disabling bracketed paste, each mouse-reporting mode transition including the UTF-8 variant, and a DECSCUSR shape change, a blink-state change, and an OSC 12 cursor-colour change all emit a frame carrying the new state while the captured cells stay byte-identical; and a pane entering tmux copy mode is surfaced as copy-mode rather than rendered as application output. Input-byte encoding for those flags is 2.2.19 — this host test does not write to tmux. test: `crates/gterminal/tests/embed.rs::mode_transitions_are_observed`.
 - 3.4.12 - Failed polls are classified, not assumed fatal: `#{pane_dead}`, a missing pane, a missing server, and a generation mismatch each emit `TerminalExited` exactly once; a fork failure, an exec timeout, a permission error, a descriptor exhaustion, and an unparseable response against a **live** pane each retry on backoff with the attachment held open, the last good frame retained, and a stale indicator raised, and recovery resumes normal polling with no `TerminalExited` ever emitted; persistent transient failure past the ceiling sets `observation_state: orphaned_observation` on `list` rather than emitting `TerminalExited`; and an unreachable daemon changes none of it. test: `crates/gterminal/tests/embed.rs::transient_poll_failure_never_kills_a_live_pane`.
 - 3.4.13 - The poll loop is bounded and owned: `tmux_poll_interval_ms` and `tmux_poll_backoff_ceiling_ms` come from this leaf's `TerminalHostConfig` keys with the documented defaults and a rejected below-floor value; `tmux_attach_history_lines`, `tmux_attach_history_max_bytes`, and `max_attached_terminals` are the 3.2 constants this loop consumes. Below-minimum and above-maximum values of those 3.2 keys refuse startup before any poll; admitted-maximum values rerun the shared memory, history-cache, and list-envelope proofs against real tmux observers. Fifty discovered-but-unattached tmux terminals spawn zero tmux processes, twenty attached panes with three viewers each spawn twenty poll loops and a measured process rate within tolerance of `20 / interval`, an attach beyond `max_attached_terminals` distinct panes is refused with the typed capacity error while every existing attachment keeps streaming, a detach frees capacity for a subsequent attach, and host memory returns to its pre-attach level after all attachments detach. test: `crates/gterminal/tests/embed.rs::poll_rate_and_memory_are_bounded_by_attachments`.
-- 3.4.10 - The changed frame shapes are pinned: this leaf regenerates exactly the 3.2 corpus files named in Targets — `hello.bin` with optional client tmux identity, `AttachTerminal` with pane identity, its `created` response, the pane mode-flag block in the frame payload, the standalone `AttachHistory` frame, and the recursive-view, copy-mode, stale-observation, and capacity-refusal shapes; `frame_source.rs` encodes the new `Hello` and locator-aware attach; Rust reproduces the fixtures byte-for-byte, and `docs/contracts/gterm-protocols.md` documents the shapes and the regeneration in the same change. test: `crates/gterminal/tests/wire_golden.rs::golden_corpus_covers_pane_attach`.
+- 3.4.10 - The changed frame shapes are pinned: this leaf regenerates exactly the 3.2 corpus files named in Targets — `hello.bin` with optional client tmux identity, unreserved `attach_terminal.bin` (`reservation_id` absent, user/tmux), reserved `attach_terminal_reserved.bin` (`reservation_id` present, native internal), `AttachTerminal` with pane identity, its `created` response, the pane mode-flag block in the frame payload, the standalone `AttachHistory` frame, and the recursive-view, copy-mode, stale-observation, and capacity-refusal shapes; `frame_source.rs` encodes the new `Hello` and locator-aware attach and always omits `reservation_id` (gclient is a user attach); Rust reproduces the fixtures byte-for-byte, and `docs/contracts/gterm-protocols.md` documents the shapes and the regeneration in the same change. test: `crates/gterminal/tests/wire_golden.rs::golden_corpus_covers_pane_attach`.
 - 3.4.14 - Poll framing survives adversarial titles and screens: `GTERM_TITLE_LEN` is `#{n:pane_title}` (tmux 3.7b byte-length modifier, not `#{p:}` padding); the parser consumes exactly that many UTF-8 bytes of title; a title containing spaces, tabs, newlines, ESC, or a fake numeric-header line does not change parsed pid, start_time, geometry, flags, or liveness; a capture that begins with a header-like line is still treated as screen bytes; title metadata still updates. test: `crates/gterminal/tests/embed.rs::poll_framing_survives_adversarial_title_and_capture`.
 - 3.4.15 - First attach of an observer generation captures one bounded history window (`capture-pane -p -e -J -S -<N>`) with the documented line and UTF-8 byte caps applied after join, plus truncation metadata; the host caches that `AttachHistory` on the observer and emits it to the creator, a concurrent loser, and a later joiner before each attachment's first keyframe; a same-generation observer does not recapture; detach-to-zero then a new attach captures a new generation; the cache counts in host memory and is freed when the observer is reaped; gclient copy-mode seeds from the frame it received; later polls stay visible-screen only; a max-size history plus a `MAX_CELLS` keyframe are two frames, each below `MAX_FRAME_SIZE`. test: `crates/gterminal/tests/embed.rs::attach_history_is_bounded_and_one_shot`.
 - 3.4.19 - A tmux pane whose history contains one soft-wrapped wide-grapheme line and one hard-newline-delimited line produces an `AttachHistory` in which those two cases remain distinct after the UTF-8 cap; the same fixture is delivered through direct gclient and the browser-proxy hop. test: `crates/gterminal/tests/embed.rs::attach_history_preserves_soft_wraps`.
@@ -1497,7 +1499,7 @@ Targets:
 
 `src/gobby/terminals/host_client.py`: an asyncio JSON-lines client for `gterm-control.sock` (request correlation, timeouts, typed errors `HostUnavailableError`/`HostEpochChangedError`/`HostCommandError`, reconnect with epoch verification, and `host_shutdown(grace_ms)` that treats a lost response plus verified host death as success). `src/gobby/terminals/native_runtime.py`: `NativeTerminalRuntime` implementing the full 2.2 contract over it — `prepare_spawn` takes the caller-allocated `terminal_id`, `spawn_key`, `reservation_id`, and `reserve_key` from the request, issues control `spawn` with those four identity fields, and returns `PreparedSpawn` (including attachable `host_terminal_id` and `{pgid, start_time}`) so `execute_spawn` can `record_process` on the pending row and native launches can bind the 4.2 observer; `commit_spawn` is refused until those acknowledgements are set and only then sends `spawn_commit`; it **returns** the `host_epoch` + `host_terminal_id` locator for the caller to CAS (`execute_spawn` owns row creation, `record_process`, and every transition, per 2.1 and 2.3; the runtime writes no rows); `snapshot`/`snapshot_full` map to control `snapshot` (text/ansi); `write_text`/`write_key`/`write_paste` map to control `write` preserving the injection semantics (literal + submit-Enter, named keys without Enter, herdr 0.8.0 `paste_payload` for `kind: "paste"`) and the `stage: none|partial` failure classification for the attention respond contract; `terminate` maps to `kill` with grace; `is_live` cross-checks control `list` against the stored epoch; `attach_locator` returns the frame-socket locator. Registered in the runtime registry beside tmux — this deliverable is where the registry first resolves both backends, since 2.2 registers tmux alone. An explicitly requested native spawn with the host down raises `HostUnavailableError` — no tmux fallback (C1).
 
-Two protocol obligations from 3.2 land in this client, and the first one has to match the host's actual guarantee rather than a stronger one. Non-idempotent requests (`write`, `kill`, `resize`, `spawn`) carry the per-connection monotonic `operation_seq` the host's ledger is keyed on, plus the request fingerprint, so a retry *on the same connection* returns the recorded outcome instead of executing twice, and `operation_gap`/`operation_expired` refusals surface as typed errors the caller must handle rather than silent retries. Across a reconnect the sequence space is new and the ledger is gone, so this client obeys the per-verb boundary rule 3.2 pins: `spawn` is left to reconciliation, `kill` and `resize` may be retried because they are idempotent against their target's state, and a `write` whose response was lost is reported **indeterminate** and never blind-retried. This runtime is one of the two producers of the outcome type 2.2 defines: it returns `IndeterminateWrite` beside `Delivered` and typed failure, so no caller can accidentally read it as either one, and every consumer applies the single abstain-and-re-observe rule 2.4 states. The tmux runtime is the other producer; this control client is the native producer and both write into the shared unresolved-action map. An earlier draft of this deliverable promised a stable `operation_id` reused across reconnects; that promise is withdrawn, because a per-connection ledger cannot honor it and only a durable cross-restart operation log could. And every reconnect re-runs the 3.1 adoption reconciliation over control `list` — verifying the epoch, converging `pending` rows, finalizing rows the host no longer has, and reporting host-only terminals — because a reconnect is indistinguishable from a restart from the row's point of view. A prepared `list` row carries `pgid`, `start_time`, `spawn_key`, and `observer_bind`. Reconnect claims the owner only when `terminal_id` **and** `spawn_key` equal the durable row, idempotently persists process, then from `list.observer_bind`: `bound` is reused, `entitled` is rebound, `reserved` (including a prepared-owned slot that survived control loss after `spawn_prepared`) is attached, and only a true `none` re-reserves then attaches; then calls `commit_spawn`. `commit_spawn` without those acknowledgements is refused typed. The control client also base64-encodes write/paste payloads (`encoding: "utf8-b64"`) and preflights the complete JSON line before sending.
+Two protocol obligations from 3.2 land in this client, and the first one has to match the host's actual guarantee rather than a stronger one. Non-idempotent requests (`write`, `kill`, `resize`, `spawn`) carry the per-connection monotonic `operation_seq` the host's ledger is keyed on, plus the request fingerprint, so a retry *on the same connection* returns the recorded outcome instead of executing twice, and `operation_gap`/`operation_expired` refusals surface as typed errors the caller must handle rather than silent retries. Across a reconnect the sequence space is new and the ledger is gone, so this client obeys the per-verb boundary rule 3.2 pins: `spawn` is left to reconciliation, `kill` and `resize` may be retried because they are idempotent against their target's state, and a `write` whose response was lost is reported **indeterminate** and never blind-retried. This runtime is one of the two producers of the outcome type 2.2 defines: it returns `IndeterminateWrite` beside `Delivered` and typed failure, so no caller can accidentally read it as either one, and every consumer applies the single abstain-and-re-observe rule 2.4 states. The tmux runtime is the other producer; this control client is the native producer and both write into the shared unresolved-action map. An earlier draft of this deliverable promised a stable `operation_id` reused across reconnects; that promise is withdrawn, because a per-connection ledger cannot honor it and only a durable cross-restart operation log could. And every reconnect re-runs the 3.1 adoption reconciliation over control `list` — verifying the epoch, converging `pending` rows, finalizing rows the host no longer has, and reporting host-only terminals — because a reconnect is indistinguishable from a restart from the row's point of view. A prepared `list` row carries `pgid`, `start_time`, `spawn_key`, and `observer_bind`. Reconnect claims the owner only when `terminal_id` **and** `spawn_key` equal the durable row, idempotently persists process, then from `list.observer_bind`: `bound` is reused, `entitled` is rebound, and `reserved` (including a prepared-owned slot that survived control loss after `spawn_prepared`) is attached by presenting that exact `reservation_id` on `AttachTerminal`. `none` on a still-listed prepared row is a typed invariant failure: no second reserve and no `commit_spawn`. `none` is reachable only when reserve never succeeded or the prepared entry was killed or expired, in which case there is no claimable prepared row. Then the runtime calls `commit_spawn` only after persist and a proven bind. `commit_spawn` without those acknowledgements is refused typed. The control client also base64-encodes write/paste payloads (`encoding: "utf8-b64"`) and preflights the complete JSON line before sending.
 
 `snapshot`/`snapshot_full` return the 2.2 `SnapshotResult`, not a string: the host's `{truncated, dropped_bytes, total_bytes}` fields map straight through so a truncated capture is recorded as truncated all the way into persistence (2.4). Dropping them here would make the host's byte-bounding honest and the daemon's record of it silent, which is the worse of the two failures.
 
@@ -1505,7 +1507,7 @@ The control client is the first Python consumer of a wire format defined in Rust
 
 **Construction-failure rollback closes these clients after drain.** The ordered terminal-resource coroutine in 3.1.19/3.1.20/3.1.21 stops reconnect and health producers, drains a newly spawned gterm through still-open authenticated `host_shutdown` (preserving an adopted host), then closes `host_client` / `frame_client` and awaits those tasks. `GobbyRunner.create` and both `run_daemon` failure branches await that core before PID cleanup or process exit. Independent `settle()` of the clients is forbidden: it can drop the drain channel and leave a newly spawned host alive. A later init failure after the clients exist cannot leave a live control or frame connection. Closing the clients does not drain an adopted gterm; that preservation rule is 3.1.19. Replacement of an incompatible host and an explicit full stop use the same `host_shutdown` method.
 
-**The Python frame client is created here, not by its second consumer.** Two later deliverables need to read bincode frames from Python — 4.2 relays a native run's output into the existing `terminal_output` broadcast, and 4.3 proxies frames to the browser — so the adapter belongs to their common predecessor rather than to whichever happens to be written first. `src/gobby/terminals/frame_client.py` is that adapter: an asyncio bincode frame client for `gterm-frames.sock` implementing `Hello`/`Welcome`, `AttachTerminal`, `SetViewport`, `SetScrollOffset`, `Detach`, and decoding of `Frame`, `Terminal(TerminalAnsi)`, `Graphics`, `AttachHistory`, `ScrollOffsetApplied`, and `TerminalExited`, under the same bounded-queue contract every frame client obeys (3.2). `AttachHistory` is forwarded as its own typed event and is never merged into a keyframe. Its caller supplies `AttachLocator.frame_host_epoch` (native: the row; tmux: the adopted host); after `Welcome{host_epoch}` the client compares the returned epoch before sending `AttachTerminal`, and a mismatch closes the connection with typed `HostEpochChangedError` so a locator from a replaced host never attaches by recycled host-terminal id. It is a reader: writes go on the control client, even though both clients live in the same process, so the daemon's own code cannot accidentally establish the client write path 3.2 removed. It is pinned against the golden corpus in the same way the control client is — byte-exact encoding, fragmented-read reassembly, oversized and version-mismatched rejection — so 4.2 and 4.3 consume one verified decoder and cannot drift from each other or from Rust.
+**The Python frame client is created here, not by its second consumer.** Two later deliverables need to read bincode frames from Python — 4.2 relays a native run's output into the existing `terminal_output` broadcast, and 4.3 proxies frames to the browser — so the adapter belongs to their common predecessor rather than to whichever happens to be written first. `src/gobby/terminals/frame_client.py` is that adapter: an asyncio bincode frame client for `gterm-frames.sock` implementing `Hello`/`Welcome`, `AttachTerminal`, `SetViewport`, `SetScrollOffset`, `Detach`, and decoding of `Frame`, `Terminal(TerminalAnsi)`, `Graphics`, `AttachHistory`, `ScrollOffsetApplied`, and `TerminalExited`, under the same bounded-queue contract every frame client obeys (3.2). Native internal observer attaches encode the prepared or entitled `reservation_id`; user and tmux attaches omit it. The corpus pins both `attach_terminal.bin` (absent) and `attach_terminal_reserved.bin` (present). `AttachHistory` is forwarded as its own typed event and is never merged into a keyframe. Its caller supplies `AttachLocator.frame_host_epoch` (native: the row; tmux: the adopted host); after `Welcome{host_epoch}` the client compares the returned epoch before sending `AttachTerminal`, and a mismatch closes the connection with typed `HostEpochChangedError` so a locator from a replaced host never attaches by recycled host-terminal id. It is a reader: writes go on the control client, even though both clients live in the same process, so the daemon's own code cannot accidentally establish the client write path 3.2 removed. It is pinned against the golden corpus in the same way the control client is — byte-exact encoding, fragmented-read reassembly, oversized and version-mismatched rejection — so 4.2 and 4.3 consume one verified decoder and cannot drift from each other or from Rust.
 
 **Acceptance:**
 
@@ -1517,8 +1519,8 @@ The control client is the first Python consumer of a wire format defined in Rust
 - 4.1.6 - A write retried on the same connection with the same `operation_seq` executes exactly once (the target PTY receives the payload and Enter one time) and an expired sequence surfaces typed; a write whose response is lost to a *dropped* connection returns `IndeterminateWrite` — a distinct result from both success and typed failure, which no caller can collapse to a boolean — and is not re-sent, while a `kill` and a `resize` in the same situation are safely retried on the new connection. test: `tests/terminals/test_native_runtime.py::test_write_retry_is_exactly_once`.
 - 4.1.9 - `snapshot` and `snapshot_full` return `SnapshotResult` with the host's truncation metadata preserved in UTF-8 bytes: an oversized capture reports `truncated` with non-zero `dropped_bytes` and the true `total_bytes`, a normal capture reports no truncation, `total_bytes` equals `len(text.encode("utf-8"))` for wide-Unicode content, and the runtime never returns a bare string. test: `tests/terminals/test_native_runtime.py::test_snapshot_metadata_survives_the_adapter`.
 - 4.1.7 - Control-client reconnect re-runs adoption reconciliation: epoch verified, `pending` rows converged only on `terminal_id` **and** `spawn_key` equality, rows absent from the host list finalized (honoring the in-doubt deadline), host-only terminals reported. test: `tests/terminals/test_native_runtime.py::test_reconnect_reconciles_rows`.
-- 4.1.8 - The shared Python frame client compares `Welcome.host_epoch` with `AttachLocator.frame_host_epoch` before `AttachTerminal` (native row or adopted host for tmux), refuses a mismatch typed without attaching, and on a match attaches, sets a viewport, sets a scroll offset, and detaches; it decodes every frame type in the 3.2 golden corpus — including `Graphics`, `AttachHistory`, and `ScrollOffsetApplied` — byte-exactly including fragmented reads, rejects oversized and version-mismatched frames typed, exposes no write method at all, and honors the bounded-queue contract; both later consumers resolve this one instance through the composition roots. test: `tests/terminals/test_frame_client.py::test_frame_client_matches_golden_corpus`.
-- 4.1.10 - Host death after `setpgid` and before `spawn_prepared`, after `spawn_prepared` and before `record_process`, after persist and before observer bind, after bind and before `spawn_commit`, and after commit and before the spawn result, each leaves no surviving child and, when persist has run, a pending row whose `process` pair is enough for `killpg`. Control-connection drop in each of those same intervals leaves the child blocked and the prepared entry claimable until `commit_deadline_ms`; after a successful `spawn_prepared`, `list.observer_bind` stays `reserved` and reconnect attaches that same reservation rather than allocating a second slot. Reconnect claims the owner, persists `{pgid, start_time}` from `list` if needed, binds or reuses the internal observer, then `commit_spawn`. A `commit_spawn` attempted before persist or bind is refused. Deadline expiry after the same drop reaps the unexecuted child, drops the prepared-owned reservation, and leaves the row unpromoted. test: `tests/terminals/test_native_runtime.py::test_spawn_prepare_commit_survives_host_death`.
+- 4.1.8 - The shared Python frame client compares `Welcome.host_epoch` with `AttachLocator.frame_host_epoch` before `AttachTerminal` (native row or adopted host for tmux), refuses a mismatch typed without attaching, and on a match attaches, sets a viewport, sets a scroll offset, and detaches; it decodes every frame type in the 3.2 golden corpus — including `Graphics`, `AttachHistory`, `ScrollOffsetApplied`, unreserved `attach_terminal.bin`, and reserved `attach_terminal_reserved.bin` — byte-exactly including fragmented reads; native internal encode includes the exact `reservation_id` and user/tmux encode omits it; rejects oversized and version-mismatched frames typed, exposes no write method at all, and honors the bounded-queue contract; both later consumers resolve this one instance through the composition roots. test: `tests/terminals/test_frame_client.py::test_frame_client_matches_golden_corpus`.
+- 4.1.10 - Host death after `setpgid` and before `spawn_prepared`, after `spawn_prepared` and before `record_process`, after persist and before observer bind, after bind and before `spawn_commit`, and after commit and before the spawn result, each leaves no surviving child and, when persist has run, a pending row whose `process` pair is enough for `killpg`. Control-connection drop in each of those same intervals leaves the child blocked and the prepared entry claimable until `commit_deadline_ms`; after a successful `spawn_prepared`, `list.observer_bind` stays `reserved` and reconnect attaches that same reservation by presenting its exact `reservation_id` on `AttachTerminal` rather than allocating a second slot. A still-listed prepared row with `observer_bind: none` is refused typed with no second reserve and no `commit_spawn`. Reconnect claims the owner, persists `{pgid, start_time}` from `list` if needed, binds or reuses the internal observer, then `commit_spawn`. A `commit_spawn` attempted before persist or bind is refused. Deadline expiry after the same drop reaps the unexecuted child, drops the prepared-owned reservation, and leaves the row unpromoted. test: `tests/terminals/test_native_runtime.py::test_spawn_prepare_commit_survives_host_death`.
 - 4.1.13 - The control client encodes write/paste as `utf8-b64`, preflights the encoded JSON line, and surfaces `request_too_large` for oversized spawn metadata without closing the socket. test: `tests/terminals/test_native_runtime.py::test_control_client_preflights_encoded_line`.
 - 4.1.14 - `host_client.py` decodes `control_ping.json` with `host_pid` frozen and rejects a ping missing `host_pid` as a typed decode error; this clause runs `tests/terminals/test_wire_golden.py` through `src/gobby/terminals/host_client.py`, not the 3.2 Rust host test. test: `tests/terminals/test_wire_golden.py::test_control_ping_requires_host_pid`.
 - 4.1.15 - Construction-failure rollback closes native control and frame clients acquired during init; after a later init failure those sockets are gone and no reconnect task remains. test: `tests/test_runner_rollback.py::test_native_clients_close_on_construction_rollback`.
@@ -1555,7 +1557,7 @@ Targets:
 - `tests/e2e/test_build_dispatcher_autonomy.py::*` — scope-reason: direct spawn_agent_impl fakes must forward terminal_backend
 - `tests/mcp_proxy/tools/spawn_agent/test_error_handling.py::*` — scope-reason: direct spawn_agent_impl calls must accept terminal_backend
 - `tests/mcp_proxy/tools/test_spawn_agent_impl_provider.py::*` — scope-reason: direct spawn_agent_impl calls must accept terminal_backend
-- `tests/mcp_proxy/tools/test_spawn_agent_speed.py::*` — scope-reason: direct spawn_agent_impl calls must accept terminal_backend
+- `tests/mcp_proxy/tools/test_spawn_agent_speed.py::*` — scope-reason: SpawnRequest constructor and spawn_agent_impl calls must populate and accept terminal_backend
 - `tests/storage/test_stage_review_findings.py::*` — scope-reason: direct spawn_agent_impl fakes must forward terminal_backend
 - `tests/tasks/test_plan_gate.py::*` — scope-reason: direct spawn_agent_impl calls must accept terminal_backend
 - `src/gobby/servers/routes/agent_spawn.py::*` — scope-reason: terminal_backend ingress and native-parity edits enumerated in the body
@@ -1572,7 +1574,7 @@ Targets:
 - **`SpawnRequest` is the next typed boundary, not a comment.** `spawn_agent_impl` does not call `execute_spawn` with kwargs. It constructs `src/gobby/agents/spawn_models.py::SpawnRequest` and passes that object. That model has no `terminal_backend` today. Adding the field only on `spawn_agent_impl` and only reading it inside `execute_spawn` from a side channel would drop the resolved value. This leaf therefore adds `terminal_backend: Literal["tmux", "native"]` to `SpawnRequest`, populates it at backend resolution in `spawn_agent_impl` (explicit request or `TerminalConfig.default_backend`), and `execute_spawn` reads **only** that field. A source scan of `SpawnRequest(` constructions must populate it. The exact resolved value — including a scheduled default and an explicit `"native"` — is asserted across that boundary.
 - **SRT.** The provider command passes through the single 2.3 chokepoint at the runtime seam — wrapped exactly once, after construction, immediately before `runtime.prepare_spawn` — so the native path adds no wrap site of its own; the wrapped argv/env goes to control `spawn`. SRT preflight failure aborts the launch with no unsandboxed fallback (existing semantics). No sandbox policy changes are needed: sandboxed processes never dial host sockets (C1), and the PTY is provided by the host exactly as tmux provides one today.
 - **Hooks and detection.** CLI hook registration is environment-driven and backend-agnostic (unchanged). Idle/prompt/stall detection, attention episodes, and auto-answer paths operate on native runs through the 2.4 runtime calls (`snapshot` text feeding the detection registry, `write_*` for injections) — the same detectors, manifests, and episode CAS.
-- **Output streaming.** Continuous output is a frame-protocol concern, not a control-protocol one (2.2, 3.2): `subscribe_events` carries lifecycle only. Native observer reservation, prepared bind/rebind, commit, and failure cleanup live in the shared row-owning primitive `execute_spawn` (2.3) — the same helper `terminal_create` calls. That primitive calls control `reserve_observer` (3.2) **before** `runtime.prepare_spawn` (capacity hold keyed by `terminal_id`/`reserve_key`), copies `{reservation_id, reserve_key}` onto `TerminalSpawnRequest` so control `spawn` names that exact reservation, then — after `prepare_spawn` returns an attachable `host_terminal_id` and `record_process` has persisted — opens a daemon-side frame attachment with the `TerminalAnsi` encoding through the **shared frame client created in 4.1** that presents the returned `reservation_id` on `AttachTerminal`, confirms the bind, and only then calls `commit_spawn`. `runner_broadcasting.py` does not reserve, prepare, or commit; it only relays `terminal_output` from the observer the primitive already bound. A native spawn that cannot reserve that slot is refused typed before `runtime.prepare_spawn`, including a `terminal_create` whose backend is native or whose default has flipped (5.3). A failed persist, failed bind, or caller cancellation on a still-live control connection aborts without disconnecting: before `spawn_prepared`, `release_observer` the still-unbound reservation; after `spawn_prepared`, `kill` the prepared `host_terminal_id` (closes the barrier, reaps the group, and drops the prepared-owned reservation). Control disconnect after `spawn_prepared` does not free that slot. Reconnect of a prepared entry consults `list.observer_bind`: `bound` is reused, `entitled` is rebound atomically before commit, `reserved` (including a prepared-owned slot that survived control loss) is attached, `none` re-reserves then attaches; commit is refused until that bind is proven. After a successful `spawn_prepared`, `none` does not occur unless the prepared entry was killed or expired. A prepared frame-loss entitlement occupies a slot, so a further spawn is refused before fork once `max_attachments_total - 4` prepared-or-committed entitlements are held. The observer is therefore subscribed before the child can emit or exit. Relay into the existing `terminal_output` broadcast is unchanged from the FIFO path. Its tmux half — the five `tmux_session_name` readers and the `terminal_id` broadcast keying — is migrated in 2.5 alongside the rename, which is why this deliverable **depends on 2.5**: it edits the same file and builds against the post-rename broadcast API, so running the two concurrently would either conflict in `src/gobby/runner_broadcasting.py` or compile this leaf's native source against a broadcast signature 2.5 is about to replace. With the edge in place this deliverable adds only the native source behind an unchanged broadcast call; 4.3 attaches the same client for the browser proxy and neither leaf writes its own decoder. Ordering, cancellation, and reconnect semantics are therefore the frame protocol's, already defined and tested in 3.2: bounded queues, keyframe resync after a delta drop, typed close on lag, and state relearned from `list` plus a keyframe on reconnect. `wait_for_output` (`agents_query_tools.py`) polls `runtime.snapshot` for native runs instead of tmux capture.
+- **Output streaming.** Continuous output is a frame-protocol concern, not a control-protocol one (2.2, 3.2): `subscribe_events` carries lifecycle only. Native observer reservation, prepared bind/rebind, commit, and failure cleanup live in the shared row-owning primitive `execute_spawn` (2.3) — the same helper `terminal_create` calls. That primitive calls control `reserve_observer` (3.2) **before** `runtime.prepare_spawn` (capacity hold keyed by `terminal_id`/`reserve_key`), copies `{reservation_id, reserve_key}` onto `TerminalSpawnRequest` so control `spawn` names that exact reservation, then — after `prepare_spawn` returns an attachable `host_terminal_id` and `record_process` has persisted — opens a daemon-side frame attachment with the `TerminalAnsi` encoding through the **shared frame client created in 4.1** that presents the returned `reservation_id` on `AttachTerminal`, confirms the bind, and only then calls `commit_spawn`. `runner_broadcasting.py` does not reserve, prepare, or commit; it only relays `terminal_output` from the observer the primitive already bound. A native spawn that cannot reserve that slot is refused typed before `runtime.prepare_spawn`, including a `terminal_create` whose backend is native or whose default has flipped (5.3). A failed persist, failed bind, or caller cancellation on a still-live control connection aborts without disconnecting: before `spawn_prepared`, `release_observer` the still-unbound reservation; after `spawn_prepared`, `kill` the prepared `host_terminal_id` (closes the barrier, reaps the group, and drops the prepared-owned reservation). Control disconnect after `spawn_prepared` does not free that slot. Reconnect of a prepared entry consults `list.observer_bind`: `bound` is reused, `entitled` is rebound atomically before commit, and `reserved` (including a prepared-owned slot that survived control loss) is attached. `none` on a still-listed prepared row is a typed invariant failure: no second reserve and no commit. After a successful `spawn_prepared`, `none` is unreachable while the prepared entry is live; it appears only after kill or expiry, when no claimable prepared entry remains. Commit is refused until persist and a proven bind. A prepared frame-loss entitlement occupies a slot, so a further spawn is refused before fork once `max_attachments_total - 4` prepared-or-committed entitlements are held. The observer is therefore subscribed before the child can emit or exit. Relay into the existing `terminal_output` broadcast is unchanged from the FIFO path. Its tmux half — the five `tmux_session_name` readers and the `terminal_id` broadcast keying — is migrated in 2.5 alongside the rename, which is why this deliverable **depends on 2.5**: it edits the same file and builds against the post-rename broadcast API, so running the two concurrently would either conflict in `src/gobby/runner_broadcasting.py` or compile this leaf's native source against a broadcast signature 2.5 is about to replace. With the edge in place this deliverable adds only the native source behind an unchanged broadcast call; 4.3 attaches the same client for the browser proxy and neither leaf writes its own decoder. Ordering, cancellation, and reconnect semantics are therefore the frame protocol's, already defined and tested in 3.2: bounded queues, keyframe resync after a delta drop, typed close on lag, and state relearned from `list` plus a keyframe on reconnect. `wait_for_output` (`agents_query_tools.py`) polls `runtime.snapshot` for native runs instead of tmux capture.
 - **Lifecycle finalization survives missed events.** Exit events from `subscribe_events` drive the same run-completion path pane-death synthesis drives for tmux (session_end hook synthesis), and capture-before-kill uses `snapshot_full`. A live delivery alone is not enough — an exit landing while the daemon is restarting or the control client is reconnecting would otherwise be lost permanently — so finalization has three converging sources: the subscription is opened **before** the terminal is spawned and its per-terminal `seq` numbers make a gap detectable; every reconnect and daemon start reconciles against control `list`, finalizing any `live` row the host no longer knows (3.1's matrix); and the host-health interval runs the same reconciliation periodically, so a missed exit is finalized within one interval at worst. Duplicate exit deliveries are idempotent because finalization is a CAS off the terminal row.
 
 **Acceptance:**
@@ -1583,11 +1585,11 @@ Targets:
 - 4.2.4 - Backend selection is explicit per spawn, recorded on the terminal row, and defaults to tmux. file: `src/gobby/agents/spawn_executor.py`.
 - 4.2.5 - `terminal_backend` is accepted, validated, and carried through every ingress surface — the MCP tool schema, the HTTP `AgentSpawnRequest` (single and batch), and the dispatch `SpawnAgentAction` through **both** its rule-action and planning-enhancement constructors — with a valid value preserved end to end and an invalid value rejected typed at each. test: `tests/agents/test_backend_ingress.py::test_backend_field_at_every_spawn_ingress`.
 - 4.2.7 - The field survives forwarding, not just construction: a rule-action and a planning-enhancement spawn each driven through `dispatch/spawn.py` reach `spawn_agent_impl` with the requested backend and produce a terminal row on that backend; a scheduled spawn forwards the configured default explicitly; and a source scan finds no `spawn_agent_impl` call site that omits the field, including the 2.3 split `_execution.py` and every direct-call or fake suite named in Targets. test: `tests/dispatch/test_spawn_forwarding.py::test_terminal_backend_reaches_the_effect`.
-- 4.2.12 - `SpawnRequest.terminal_backend` is the only value `execute_spawn` reads for backend selection: an explicit `"native"` and a scheduled default each appear unchanged on the constructed `SpawnRequest` and on the resulting terminal row; every `SpawnRequest(` construction named by a source scan populates the field, including the direct constructors and helper expansions in `tests/agents/test_spawn_executor.py`, `tests/agents/test_spawn_executor_droid.py`, `tests/agents/test_srt_spawn.py`, and `tests/agents/test_verified_review_regressions.py`. test: `tests/agents/test_backend_ingress.py::test_spawn_request_carries_resolved_backend`.
+- 4.2.12 - `SpawnRequest.terminal_backend` is the only value `execute_spawn` reads for backend selection: an explicit `"native"` and a scheduled default each appear unchanged on the constructed `SpawnRequest` and on the resulting terminal row; every `SpawnRequest(` construction named by a source scan populates the field, including the production constructor in `src/gobby/mcp_proxy/tools/spawn_agent/_implementation.py` and the direct constructors and helper expansions in `tests/agents/test_spawn_executor.py`, `tests/agents/test_spawn_executor_droid.py`, `tests/agents/test_srt_spawn.py`, `tests/agents/test_verified_review_regressions.py`, and `tests/mcp_proxy/tools/test_spawn_agent_speed.py`. test: `tests/agents/test_backend_ingress.py::test_spawn_request_carries_resolved_backend`.
 - 4.2.8 - Truncation metadata reaches storage on the native path, not just the boundary: a capture-before-kill of a scrollback of wide Unicode large enough to exceed the host's byte cap persists `truncated` true with `dropped_bytes` and `total_bytes` counted in UTF-8 bytes, the stored text decodes cleanly because the cut landed on a code-point boundary, and the same capture under the cap persists complete with zero drop. test: `tests/agents/test_native_spawn.py::test_oversized_unicode_capture_metadata_reaches_storage`.
 - 4.2.6 - A native run's exit is finalized exactly once in each of four cases: live event delivery; exit occurring while the daemon is down (reconciled at next start); exit occurring while the control client is disconnected (reconciled on reconnect); and an event dropped with no reconnect (reconciled by the periodic sweep). Duplicate exit deliveries do not double-finalize. test: `tests/agents/test_native_spawn.py::test_exit_finalization_survives_downtime_and_duplicates`.
-- 4.2.9 - The internal observer is bound before commit: a child that writes its first bytes and exits as soon as `spawn_commit` releases it is fully present in `terminal_output` and finalized once; a failed `AttachTerminal` after persist sends no commit, `kill`s the prepared entry and `release_observer`s on the still-open control connection, and leaves the row unpromoted. test: `tests/agents/test_native_spawn.py::test_observer_bound_before_spawn_commit`.
-- 4.2.10 - Reconnect after loss before persist, after persist before bind, and after bind before commit each re-establishes persist and observer bind from `list` before `commit_spawn`; a still-bound reservation is reused, an `entitled` prepared slot is rebound, a prepared-owned `reserved` slot that survived control loss after `spawn_prepared` is attached without a second reserve, and only a true `none` bind re-reserves. test: `tests/agents/test_native_spawn.py::test_prepared_reconnect_rebinds_before_commit`.
+- 4.2.9 - The internal observer is bound before commit: a child that writes its first bytes and exits as soon as `spawn_commit` releases it is fully present in `terminal_output` and finalized once; the successful bind presents the exact prepared `reservation_id` on `AttachTerminal`; a missing, mismatched, or stale `reservation_id` is the failed-`AttachTerminal` path; a failed `AttachTerminal` after persist sends no commit, `kill`s the prepared entry (which drops the prepared-owned reservation), treats any subsequent `release_observer` of that exact identity as the existing idempotent no-op, and leaves the row unpromoted. test: `tests/agents/test_native_spawn.py::test_observer_bound_before_spawn_commit`.
+- 4.2.10 - Reconnect after loss before persist, after persist before bind, and after bind before commit each re-establishes persist and observer bind from `list` before `commit_spawn` on the `reserved`, `bound`, and `entitled` paths; a still-bound reservation is reused, an `entitled` prepared slot is rebound, and a prepared-owned `reserved` slot that survived control loss after `spawn_prepared` is attached without a second reserve. Each reserved or entitled attach presents that same `reservation_id` on `AttachTerminal`. `none` on a still-listed prepared row is a typed invariant failure with no second reserve and no commit. test: `tests/agents/test_native_spawn.py::test_prepared_reconnect_rebinds_before_commit`.
 - 4.2.13 - Repeated prepared frame-loss under user saturation keeps each prepared entitlement; the same ceiling holds for repeated distinct connections that reserve, receive `spawn_prepared`, and disconnect before bind: a further native spawn is refused typed before `prepare_spawn` once `max_attachments_total - 4` entitlements are held; the four lifecycle slots remain usable; deadline expiry or prepared `kill` frees one slot that a later spawn can reserve. test: `tests/agents/test_native_spawn.py::test_prepared_frame_loss_saturates_then_expires`.
 - 4.2.14 - Native observer reserve/bind/commit/failure cleanup is inside `execute_spawn`, not `runner_broadcasting`: a source scan finds no `reserve_observer` at a spawn ingress other than that primitive; a native-default `terminal_create` saturates at `max_attachments_total - 4` and is refused typed before fork; prepared `kill` or `commit_deadline_ms` expiry frees one slot that a later `terminal_create` can reserve. test: `tests/servers/test_terminal_ws_create.py::test_native_create_saturates_then_expires`.
 - 4.2.11 - After a daemon restart that drops the internal observer frame on a committed live native terminal at full user-attachment saturation, the daemon rebinds the host `entitled` slot and `terminal_output` resumes; no user attachment is preempted. test: `tests/agents/test_native_spawn.py::test_committed_observer_rebinds_under_user_saturation`.
@@ -1611,7 +1613,7 @@ Targets:
 - `tests/servers/test_native_web_proxy.py`
 - `tests/servers/test_web_tmux_through_host.py`
 
-The web terminal views terminals through the daemon as proxy (no browser→host connection): `terminal_attach` makes the daemon open a frame-protocol attach to the host through the shared frame client (4.1) negotiating the `TerminalAnsi` encoding, and relays frames as the existing `terminal_output` events — an `AttachHistory` frame is forwarded as `terminal_attach_history{terminal_id, attachment_id, text, truncated, dropped_bytes, total_bytes}` before that attachment's first `terminal_output` keyframe and is never merged into it; `terminal_attach` from the browser uses `frame_delivery: "proxy"` and is observe-only; `terminal_input`/`terminal_paste`/`terminal_resize` are checked against the daemon's lease record and then dispatched **through the `TerminalRuntime` for that row's backend** — never on the frame attachment, which has no write verb (3.2). `terminal_set_viewport` is not lease-gated and is forwarded only as that tab's host-frame `SetViewport`. `terminal_set_scroll_offset` is the same attachment-local, not-lease-gated forward of `SetScrollOffset` for native panes; tmux observers keep scrolling the `AttachHistory` they already hold. The dispatch is per-backend because the two backends have different write paths and the host has none for tmux: a `native` terminal's input and resize go to the host on the control channel, while a `tmux` terminal's go to `TmuxTerminalRuntime`'s daemon-side `send-keys -t <pane_id> -H` and `resize-pane`, exactly as 3.4 requires — the host observes tmux panes and never writes to them. Both paths return the 2.2 `WriteOutcome`. The proxy emits 2.5 `terminal_write_outcome` with the request's `client_write_seq`: `delivered` keeps the holder writable, `refused` is typed, and `indeterminate` (lost tmux `send-keys` or lost native control response) puts that attachment in uncertain read-only without resending. Write outcomes do not consume lifecycle-reserve capacity. The wterm/ghostty renderer consumes the ANSI stream unchanged (same VT family end-to-end). Per-connection cleanup detaches the daemon's host attachment by calling the 2.5 attachment finalizer — including host-frame EOF, typed lag close, relay overflow, and host loss, not only daemon-WS close.
+The web terminal views terminals through the daemon as proxy (no browser→host connection): `terminal_attach` makes the daemon open a frame-protocol attach to the host through the shared frame client (4.1) negotiating the `TerminalAnsi` encoding. That proxy user attach omits `reservation_id` and cannot consume an internal observer slot. The daemon then relays frames as the existing `terminal_output` events — an `AttachHistory` frame is forwarded as `terminal_attach_history{terminal_id, attachment_id, text, truncated, dropped_bytes, total_bytes}` before that attachment's first `terminal_output` keyframe and is never merged into it; `terminal_attach` from the browser uses `frame_delivery: "proxy"` and is observe-only; `terminal_input`/`terminal_paste`/`terminal_resize` are checked against the daemon's lease record and then dispatched **through the `TerminalRuntime` for that row's backend** — never on the frame attachment, which has no write verb (3.2). `terminal_set_viewport` is not lease-gated and is forwarded only as that tab's host-frame `SetViewport`. `terminal_set_scroll_offset` is the same attachment-local, not-lease-gated forward of `SetScrollOffset` for native panes; tmux observers keep scrolling the `AttachHistory` they already hold. The dispatch is per-backend because the two backends have different write paths and the host has none for tmux: a `native` terminal's input and resize go to the host on the control channel, while a `tmux` terminal's go to `TmuxTerminalRuntime`'s daemon-side `send-keys -t <pane_id> -H` and `resize-pane`, exactly as 3.4 requires — the host observes tmux panes and never writes to them. Both paths return the 2.2 `WriteOutcome`. The proxy emits 2.5 `terminal_write_outcome` with the request's `client_write_seq`: `delivered` keeps the holder writable, `refused` is typed, and `indeterminate` (lost tmux `send-keys` or lost native control response) puts that attachment in uncertain read-only without resending. Write outcomes do not consume lifecycle-reserve capacity. The wterm/ghostty renderer consumes the ANSI stream unchanged (same VT family end-to-end). Per-connection cleanup detaches the daemon's host attachment by calling the 2.5 attachment finalizer — including host-frame EOF, typed lag close, relay overflow, and host loss, not only daemon-WS close.
 
 **The tmux bridge is retired for this surface, so one terminal has one transport.** 2.5 already made the daemon lease the single authority, which stopped a web tab and a gclient pane from both believing they had control. What it could not fix yet is the *transport*: `TmuxPTYBridge` runs its own `tmux` client per browser connection, which is exactly the shape 3.4 proved unsafe — a second client participates in window sizing and can move the owner's selection. With 3.4's capture-poll observer available, the browser's tmux attachments route through the same host path as gclient's: `TmuxPTYBridge` is deleted along with its export, and `src/gobby/servers/websocket/tmux.py` resolves every attach — tmux and native alike — to a host attachment. The result is one observer per physical pane shared by every viewer, one lease record, and one external-geometry policy, with a browser resize on an `external` terminal refused by the daemon and never reaching tmux, identically to gclient. This is the leaf where the cross-surface single-authority claim becomes true for tmux, which is why it depends on 3.4.
 
@@ -2151,4 +2153,2178 @@ Accepted all five findings (F140–F144). F140: prepared frame-loss keeps a zero
 
 ```json plan-review-round
 {"evidence_id":"846356c5-ecb4-4a00-850d-fba286d8b376","plan_hash":"f7ef8112c8ea1363155eba1e317aef1560f9d62527afb3499080484eb2d38a1f","round_number":23,"round_result":{"coverage_attestation":{"adjacent_variant_complete":true,"attestation_digest":"beea116e2c9faf006bfee866fb905114d1a70306d33ef1dffab8fc0c2ebf5094","cross_lane_interaction_complete":true,"disposition_counts":{"dismissed":1,"emitted_findings":3,"total":4},"evidence_id":"846356c5-ecb4-4a00-850d-fba286d8b376","lanes":[{"candidate_count":1,"lane_id":"requirements_traceability","status":"completed"},{"candidate_count":2,"lane_id":"repository_blast_radius","status":"completed"},{"candidate_count":1,"lane_id":"runtime_invariants","status":"completed"}],"shadow_manifest_status":{"entry_count":23,"manifest_digest":"1b4f140cabc765c2ad69155d11dadea2768fbeb7a8f943e51d076db676ec594a","status":"valid"},"source_digest":"b6797a091042181b3faae184df89ce2dbf9d40b99207822c67748c061a4a4fc4","version":1},"evidence_id":"846356c5-ecb4-4a00-850d-fba286d8b376","findings":[{"category":"traceability","causal_finding_id":"F120","causal_section_ids":["4.2"],"check_key":"spawn-request-constructor-target-closure","description":"Section 4.2 requires every SpawnRequest construction to populate terminal_backend, but its Targets omit tests/agents/test_spawn_executor.py, tests/agents/test_spawn_executor_droid.py, tests/agents/test_srt_spawn.py, and tests/agents/test_verified_review_regressions.py, all of which construct SpawnRequest directly or through helpers. The leaf cannot satisfy its own exhaustive-constructor contract without undeclared edits or broken tests.","finding_id":"F152","fix":"Add those four test files to section 4.2 Targets with constructor-migration scope reasons, and extend 4.2.12 so their direct constructors and helper expansions explicitly pass and assert the resolved or default terminal_backend.","introduced_in_round":16,"location":"P4 / section 4.2","prevention":"After adding a required model field, enumerate every direct constructor and helper expansion with gcode and add every changed file to the same deliverable's Targets.","principle":"A required model-field migration must own every direct constructor and constructor helper that must supply the new field.","root_cause":"The F120 repair added SpawnRequest.terminal_backend and a source-scan acceptance clause but targeted the model and selected ingress tests while leaving four existing direct-constructor suites outside section 4.2.","section_id":"4.2","severity":"blocking"},{"category":"traceability","check_key":"facade-import-export-target-closure","description":"Section 2.4 targets session_observe_proxy.py and tests that patch get_tmux_manager_for_context through the session_observe facade, yet it omits session_observe.py itself. Migrating the proxy to the TerminalRuntime seam otherwise leaves a stale tmux-specific facade export or requires an undeclared production edit.","finding_id":"F153","fix":"Add src/gobby/servers/websocket/handlers/session_observe.py::* to section 2.4 Targets, remove or replace its get_tmux_manager_for_context import/export with the declared terminal-runtime seam, and keep the existing session-control and voice-warmup test migrations aligned with that facade.","location":"P2 / section 2.4","prevention":"For every migrated implementation, trace import and re-export facades plus tests that monkeypatch through them, and target each changed production and test file in the same leaf.","principle":"A seam migration must target the facade that imports or re-exports the old dependency when production code and tests resolve through that facade.","root_cause":"The F58 target-closure repair added proxy consumers and facade-patching tests but left src/gobby/servers/websocket/handlers/session_observe.py, which still imports and exposes get_tmux_manager_for_context, outside section 2.4.","section_id":"2.4","severity":"blocking"},{"category":"unhandled-edge","causal_finding_id":"F149","causal_section_ids":["2.3","3.2","4.2","E1"],"check_key":"reservation-spawn-identity-correlation","description":"Two valid reservations for one terminal_id can coexist with different reserve_key values, but spawn_prepared has no reservation_id or reserve_key in its request with which to select the required generation. Choosing by terminal_id can charge or strand the wrong reservation, and later disconnect cleanup can release the reservation the caller intended to bind.","finding_id":"F154","fix":"Add reservation_id and reserve_key to the native spawn request and fingerprint; before forking, validate them against the current terminal_id and stored reservation generation, then atomically transfer that exact reservation on spawn_prepared. Return the canonical reservation identity on replay, update control_spawn.json and the Python client/decoder, and extend 3.2.22 and 4.2 with distinct-key, stale-generation, concurrent-replay, and disconnect-cleanup tests.","introduced_in_round":22,"location":"P2-P4 / sections 2.3, 3.2, 4.1, and 4.2","prevention":"For every reserve-to-prepare transfer, cross-product same-key replay, distinct-key retry, concurrent connections, stale generations, disconnect cleanup, and the exact wire fields used to select the transferred owner.","principle":"An ownership transfer for bounded capacity must carry the exact reservation identity and generation on the wire.","root_cause":"The F149 repair requires spawn_prepared to transfer ownership keyed by terminal_id, spawn_key, reserve_key, and generation, while the declared spawn request still carries only terminal_id and spawn_key and reserve_observer does not forbid a second live distinct-key reservation for that terminal.","section_id":"3.2","severity":"blocking"}],"plan_hash":"f7ef8112c8ea1363155eba1e317aef1560f9d62527afb3499080484eb2d38a1f","reviewer_run":"68ccf46d-8151-43db-8080-b8fb6a06b436","reviewer_session":"71730437-cc72-4a3a-a8f4-54d95f25a466","round":23,"round_number":23,"verdict":"needs_review"},"session_id":"f4469e9b-2b63-4149-ad3f-1718ca640d75"}
+```
+
+- reviewer_run: c60e6c75-604f-45c2-a1a6-1e0dd9e9ebca
+- reviewer_session: 1bf2b4b5-eb94-434a-9fb7-d460b77323f4
+- verdict: needs_review
+- findings:
+- F155 / blocking / prepared-reconnect-observer-bind-reachability
+- F156 / blocking / spawn-request-constructor-target-closure
+- resolution_notes: Accepted both. F155 residual of F149: remove the unreachable true-none re-reserve branch from 4.1/4.2 prose and 4.2.10; reserved/bound/entitled reconnect stay; none on a still-listed prepared row is a typed invariant failure with no second reserve or commit; 4.2.9 kill drops the prepared-owned reservation and a later release_observer is the existing exact-identity no-op. F156 residual of F152: the speed-test file was already a 4.2 Target; name its SpawnRequest constructor plus the production _implementation.py constructor in 4.2.12 and update the speed-test scope-reason.
+
+```json plan-review-round
+{"evidence_id":"d007bdb9-7b45-4ae8-b397-7b8be3e58728","plan_hash":"844b14f866d6f1822a762fe4082ed22775974302a20e158b3b92dd26c54ca18c","round_number":24,"round_result":{"coverage_attestation":{"adjacent_variant_complete":true,"attestation_digest":"25815432f09229373bf2b75bd8c7e1ddf3b0b7a94193d4b1bae7ade9e559a67e","cross_lane_interaction_complete":true,"disposition_counts":{"dismissed":0,"emitted_findings":2,"total":2},"evidence_id":"d007bdb9-7b45-4ae8-b397-7b8be3e58728","lanes":[{"candidate_count":1,"lane_id":"requirements_traceability","status":"completed"},{"candidate_count":1,"lane_id":"repository_blast_radius","status":"completed"},{"candidate_count":0,"lane_id":"runtime_invariants","status":"completed"}],"shadow_manifest_status":{"entry_count":23,"manifest_digest":"b5f38ce2f29917ff8d9253f52c7f1ec2b8cfb88038ce8cd679af8e03e8e08a2b","status":"valid"},"source_digest":"f01ac494eac4b6a1a64f7924144ec43b92c92a8077805e4a6916707cd9036732","version":1},"evidence_id":"d007bdb9-7b45-4ae8-b397-7b8be3e58728","findings":[{"category":"unhandled-edge","causal_finding_id":"F149","causal_section_ids":["2.3","3.2","4.2","E1"],"check_key":"prepared-reconnect-observer-bind-reachability","description":"Section 3.2 now guarantees that successful spawn_prepared transfers the exact reservation to the live prepared entry, whose observer_bind remains reserved, bound, or entitled; none occurs only after kill or expiry, when no claimable prepared entry remains. Section 4.2.10 still requires reconnect to re-reserve a true-none bind, so its test can pass only with a synthetic host state that violates the protocol and the implementation could mint a second reservation instead of refusing the invariant breach.","finding_id":"F155","fix":"Remove the true-none re-reserve branch from section 4.2 prose and acceptance 4.2.10. Treat none for an alleged live prepared row as a typed invariant failure with no second reserve or commit, and test reserved, bound, and entitled reconnect paths plus none rejection. The 4.2.9 post-kill release may be removed or explicitly asserted as the existing exact-identity idempotent no-op.","introduced_in_round":22,"location":"P3-P4 / sections 3.2 and 4.2, acceptance 4.2.10","prevention":"Cross-product every producer state transition with reconnect consumer branches and reject any branch that has no reachable producer state.","principle":"Every recovery branch must correspond to a state the producer can emit while the recovered resource still exists.","root_cause":"The F149 ownership repair made observer_bind:none unreachable for a live prepared entry, while section 4.2.10 retained the pre-repair re-reserve branch.","section_id":"4.2","severity":"blocking"},{"category":"traceability","check_key":"spawn-request-constructor-target-closure","description":"Section 4.2 makes terminal_backend required on every SpawnRequest construction and acceptance 4.2.12 claims source-scan completeness, yet tests/mcp_proxy/tools/test_spawn_agent_speed.py::test_execute_spawn_attaches_speed_result directly constructs SpawnRequest without terminal_backend and the file is absent from Targets. The leaf therefore either breaks that suite or edits an undeclared file.","finding_id":"F156","fix":"Add tests/mcp_proxy/tools/test_spawn_agent_speed.py to section 4.2 Targets with constructor-migration scope, populate terminal_backend in test_execute_spawn_attaches_speed_result, and name that suite in acceptance 4.2.12.","location":"P4 / section 4.2, acceptance 4.2.12","prevention":"Rerun the complete gcode SpawnRequest constructor sweep after every repair and reconcile every hit against section Targets and the constructor-migration acceptance item.","principle":"A required model-field migration must own every direct constructor and constructor helper that must supply the field.","root_cause":"The F152 repair enumerated four constructor suites but stopped before the additional direct SpawnRequest construction in tests/mcp_proxy/tools/test_spawn_agent_speed.py.","section_id":"4.2","severity":"blocking"}],"reviewer_run":"c60e6c75-604f-45c2-a1a6-1e0dd9e9ebca","reviewer_session":"1bf2b4b5-eb94-434a-9fb7-d460b77323f4","round":24,"round_number":24,"verdict":"needs_review"},"session_id":"f4469e9b-2b63-4149-ad3f-1718ca640d75"}
+```
+
+Accepted F157 (residual of F149). AttachTerminal gains optional reservation_id: required only for a native internal observer bind or rebind, absent for every user and tmux attach. 3.2 and 3.4 pin reserved and unreserved golden fixtures; 4.1 decodes and encodes both; 3.2.22, 4.1.10, 4.2.9, and 4.2.10 assert transfer of the exact prepared reservation. Direct gclient and the browser proxy omit reservation_id. Operator cap 25 reached; no further review rounds unless requested.
+
+```json plan-review-round
+{"evidence_id":"a62e0750-3caf-4e9c-aea5-2b1258942599","plan_hash":"250254f306f080b365b43b9718b6590f0483a0fac0c21d809a180b0f48b55baf","round_number":25,"round_result":{"coverage_attestation":{"adjacent_variant_complete":true,"attestation_digest":"fe34eb47560384ebaf7743af1724c5179457956bea1a3bdb7fd6ce2f9514516a","cross_lane_interaction_complete":true,"disposition_counts":{"dismissed":1,"emitted_findings":1,"total":2},"evidence_id":"a62e0750-3caf-4e9c-aea5-2b1258942599","lanes":[{"candidate_count":0,"lane_id":"requirements_traceability","status":"completed"},{"candidate_count":0,"lane_id":"repository_blast_radius","status":"completed"},{"candidate_count":2,"lane_id":"runtime_invariants","status":"completed"}],"shadow_manifest_status":{"entry_count":23,"manifest_digest":"25901151f4593c0a8dfe7ea80c17902a0e565aa7d9d89351bb5e91d5e673285c","status":"valid"},"source_digest":"2f292b20d43be27ea7ae9a1f0c8a7f634a70898b0e6b2f043762e6f1c821b744","version":1},"evidence_id":"a62e0750-3caf-4e9c-aea5-2b1258942599","findings":[{"category":"unhandled-edge","causal_finding_id":"F149","causal_section_ids":["2.3","3.2","4.2","E1"],"check_key":"attach-reservation-wire-shape","description":"Section 3.2 declares AttachTerminal{host_terminal_id}, and section 3.4 later changes it to AttachTerminal{terminal_id, locator}; neither shape carries reservation_id. The 3.2 reservation state machine and §4.2 execute_spawn path nevertheless require AttachTerminal to present that identity before commit. The single attach_terminal.bin fixture therefore cannot prove compatible reserved-internal and unreserved user/tmux attachment encodings across the Rust host, Rust client, and Python frame client.","finding_id":"F157","fix":"Define reservation_id as an optional field on the locator-aware AttachTerminal shape, required only for a native internal observer and absent for user and tmux attaches. Add separate reserved and unreserved golden fixtures to §§3.2 and 3.4, update §4.1 Python corpus checks for both variants, and make §§3.2.22, 4.2.9, and 4.2.10 assert transfer of the exact prepared reservation.","introduced_in_round":22,"location":"P3–P4 / §§ 3.2, 3.4, 4.1, and 4.2","prevention":"For every ownership field added to a state transition, sweep the normative wire type, every encoder and decoder, reserved and unreserved golden fixtures, and each consuming acceptance test.","principle":"Every ownership identity transferred over a wire must be declared in the normative wire type and pinned in the cross-language corpus.","root_cause":"The F149 repair made prepared observer ownership transfer through AttachTerminal, but it changed the state-machine consumer without adding reservation_id to the normative AttachTerminal shape or corpus variants.","section_id":"3.2","severity":"blocking"}],"plan_hash":"250254f306f080b365b43b9718b6590f0483a0fac0c21d809a180b0f48b55baf","reviewer_run":"d39f0fc0-db3e-4040-a6f5-0d892663091b","reviewer_session":"d8530dfb-4f00-4739-a4e4-a2c79145f7cf","round":25,"round_number":25,"verdict":"needs_review"},"session_id":"f4469e9b-2b63-4149-ad3f-1718ca640d75"}
+```
+
+## M1 Task Manifest
+`kind: manifest`
+
+```yaml
+- title: Vendor libghostty-vt and portable-pty with the patch workflow
+  category: code
+  task_type: feature
+  depends_on: []
+  validation_criteria: '1.1.1: The vendored VT tree at `c5a21edf` with the grapheme-cluster
+    patch applied builds via `zig build -Demit-lib-vt` on macOS and Linux, invoked
+    from `scripts/build_vendored_libghostty_vt.sh` (not `cargo -p`). file: `scripts/build_vendored_libghostty_vt.sh`.
+
+    1.1.2: Patch provenance files record base commit, patch list, rationale, and removal
+    criteria for both vendored trees. file: `crates/gterminal/vendor/libghostty-vt.patches.md`.
+
+    1.1.3: The workspace `[patch.crates-io]` entry serves the patched portable-pty
+    to the workspace. file: `Cargo.toml`.
+
+    1.1.4: `build.rs` names the required Zig version in the missing-binary path, rejects
+    unsupported target triples with a descriptive error, and invokes Zig only when
+    the `vt-engine` feature is enabled (source-level; cargo execution is 1.2.8). file:
+    `crates/gterminal/build.rs`.
+
+    1.1.5: The helper script documents the same Zig version and triple map as `build.rs`
+    and fails descriptively when `zig` is missing. file: `scripts/build_vendored_libghostty_vt.sh`.'
+  labels:
+  - covers:herdr-terminal-client:1.1:1.1.1
+  - covers:herdr-terminal-client:1.1:1.1.2
+  - covers:herdr-terminal-client:1.1:1.1.3
+  - covers:herdr-terminal-client:1.1:1.1.4
+  - covers:herdr-terminal-client:1.1:1.1.5
+  tdd: true
+  source_section: '1.1'
+  implementation_domain: backend
+- title: Import the terminal keep-set as crates/gterminal
+  category: code
+  task_type: feature
+  depends_on:
+  - '1.1'
+  validation_criteria: '1.2.1: `cargo build -p gobby-terminal` and `cargo clippy -p
+    gobby-terminal --all-targets -- -D warnings` pass on macOS and Linux, which requires
+    `crates/gterminal` to be present in the root workspace `members` list. file: `crates/gterminal/Cargo.toml`.
+
+    1.2.2: The imported pane/terminal, protocol, and input test corpora pass under
+    nextest. test: `crates/gterminal/src/pane/terminal.rs::grapheme_cluster_mode_is_default_and_survives_full_reset`.
+
+    1.2.3: No module under `crates/gterminal/src/` references agent detection, plugins,
+    integrations, updater, or herdr persistence concepts (enforced by a source-scan
+    test). test: `crates/gterminal/tests/carve_guard.rs::no_agent_concepts_in_terminal_core`.
+
+    1.2.4: The wire protocol version constant is `1` and version negotiation rejects
+    mismatched clients with a typed error. symbol: `protocol::wire::PROTOCOL_VERSION`.
+    file: `crates/gterminal/src/protocol/wire.rs`.
+
+    1.2.5: The three named cherry-picks are applied and every remaining `v0.8.0..HEAD`
+    keep-set commit has a recorded accept/reject entry; `UPSTREAM.md` carries the
+    log. file: `crates/gterminal/UPSTREAM.md`.
+
+    1.2.6: `cargo build -p gobby-terminal` with default features (no `vt-engine`)
+    and its protocol/input/layout test subset pass with no `zig` on PATH; the pane/ghostty
+    corpus runs under `--features vt-engine`. file: `crates/gterminal/Cargo.toml`.
+
+    1.2.7: Every hand-maintained `.rs` under `crates/gterminal/src/` is below 1,000
+    lines after the in-leaf splits; the public types still live on the original module
+    paths. test: `crates/gterminal/tests/source_size.rs::no_src_file_at_or_above_1000_lines`.
+
+    1.2.8: Missing Zig and unsupported targets produce descriptive cargo build failures
+    naming the requirement when `vt-engine` is enabled; with `vt-engine` disabled
+    the build script invokes no Zig. test: `crates/gterminal/tests/build_env.rs::missing_zig_reports_requirement`.'
+  labels:
+  - covers:herdr-terminal-client:1.2:1.2.1
+  - covers:herdr-terminal-client:1.2:1.2.2
+  - covers:herdr-terminal-client:1.2:1.2.3
+  - covers:herdr-terminal-client:1.2:1.2.4
+  - covers:herdr-terminal-client:1.2:1.2.5
+  - covers:herdr-terminal-client:1.2:1.2.6
+  - covers:herdr-terminal-client:1.2:1.2.7
+  - covers:herdr-terminal-client:1.2:1.2.8
+  tdd: true
+  source_section: '1.2'
+  implementation_domain: backend
+- title: De-agent-ify PaneRuntime and the terminal runtime API
+  category: code
+  task_type: feature
+  depends_on:
+  - '1.2'
+  validation_criteria: "1.3.1: `PaneRuntime` has no detection fields, tasks, or `detect`/`integration`\
+    \ references; the carve-guard test covers these symbols. file: `crates/gterminal/src/pane.rs`.\n\
+    1.3.2: The runtime API exposes only terminal-neutral operations (spawn, write,\
+    \ resize, scroll, encode-key/mouse, snapshot, frame production, kill) with OSC\
+    \ title/progress under neutral names. file: `crates/gterminal/src/runtime/runtime.rs`.\n\
+    1.3.3: A terminal can be driven end-to-end (spawn shell \u2192 write \u2192 produce\
+    \ `FrameData` \u2192 resize \u2192 kill) without any Ratatui `Frame` in the call\
+    \ path. test: `crates/gterminal/tests/frame_producer.rs::end_to_end_without_ratatui_frame`.\n\
+    1.3.4: Edits in this leaf do not push any `crates/gterminal/src/**/*.rs` file\
+    \ to or above 1,000 lines; further splits land here if they would. test: `crates/gterminal/tests/source_size.rs::no_src_file_at_or_above_1000_lines`."
+  labels:
+  - covers:herdr-terminal-client:1.3:1.3.1
+  - covers:herdr-terminal-client:1.3:1.3.2
+  - covers:herdr-terminal-client:1.3:1.3.3
+  - covers:herdr-terminal-client:1.3:1.3.4
+  tdd: true
+  source_section: '1.3'
+  implementation_domain: backend
+- title: Register gterminal in CI, nextest, and index exclusions
+  category: config
+  task_type: feature
+  depends_on:
+  - '1.2'
+  validation_criteria: '1.4.1: CI builds and tests `gobby-terminal` via flat per-package
+    steps, with Zig set up only for `vt-engine` steps, a Zig-free default-features
+    step, a dedicated `gobby-daemon` step, corrected `paths:` triggers, and a passing
+    Windows cross-lint. file: `.github/workflows/rust-ci.yml`.
+
+    1.4.2: PTY tests run in the serialized `gterm-pty` nextest group (`max-threads
+    = 1`, `serial-db` shape). file: `.config/nextest.toml`.
+
+    1.4.3: gcode''s `DEFAULT_EXCLUDES` carries `vendor` with its doc comment corrected,
+    gwiki''s existing exclusion is unchanged, and `.gitattributes` gains the appended
+    `crates/gterminal/vendor/**` linguist-vendored entry beside its three existing
+    lines. Full discovery and explicit-file routing both skip files below a `vendor/`
+    directory while a neighboring source file remains indexable. file: `.gitattributes`.
+    test: `crates/gcode/src/index/indexer/tests/explicit_routing.rs`.
+
+    1.4.4: `crates/CLAUDE.md` documents the two new crate/binary mappings. file: `crates/CLAUDE.md`.'
+  labels:
+  - covers:herdr-terminal-client:1.4:1.4.1
+  - covers:herdr-terminal-client:1.4:1.4.2
+  - covers:herdr-terminal-client:1.4:1.4.3
+  - covers:herdr-terminal-client:1.4:1.4.4
+  tdd: false
+  source_section: '1.4'
+  assigned_agent: backend-developer
+- title: Licensing and provenance artifacts
+  category: docs
+  task_type: feature
+  depends_on:
+  - '1.2'
+  validation_criteria: '1.5.1: A NOTICE file exists for `gobby-terminal` with Upstream
+    and Modifications sections and the vendored nested-license inventory. file: `crates/gterminal/NOTICE.md`.
+
+    1.5.2: `UPSTREAM.md` maps every imported module to its herdr path at the `v0.8.0`
+    fork point and carries the cherry-pick log with no re-pin procedure. file: `crates/gterminal/UPSTREAM.md`.
+
+    1.5.3: `gobby-terminal` declares `license = "Apache-2.0"` in its manifest. file:
+    `crates/gterminal/Cargo.toml`.'
+  labels:
+  - covers:herdr-terminal-client:1.5:1.5.1
+  - covers:herdr-terminal-client:1.5:1.5.2
+  - covers:herdr-terminal-client:1.5:1.5.3
+  tdd: false
+  source_section: '1.5'
+  assigned_agent: tech-writer
+- title: terminals table and storage manager
+  category: code
+  task_type: feature
+  depends_on: []
+  validation_criteria: "2.1.1: The gcore baseline creates `terminals` with backend/ownership/state\
+    \ checks and indexes, `BASELINE_CHECKSUM` and both manifests are updated in the\
+    \ same change, and an isolated `gdaemon schema apply`/startup test applies it\
+    \ cleanly. file: `crates/gcore/assets/schema/baseline.sql`.\n2.1.2: `agent_runs`\
+    \ carries `terminal_id`; `tmux_session_name` is gone from schema, models, and\
+    \ runtime persistence. file: `src/gobby/storage/agents/_models.py`.\n2.1.3: `TerminalManager`\
+    \ exposes CAS transitions; stale transitions (wrong expected state) affect zero\
+    \ rows and report failure. file: `src/gobby/storage/terminals.py`.\n2.1.4: A terminal\
+    \ row created at spawn-begin whose spawn fails is discoverable via `list_stale_pending`\
+    \ for reaping, and its `spawn_key` resolves the possible backend effect by name\
+    \ on both backends. test: `tests/storage/test_terminals.py::test_failed_spawn_leaves_reapable_pending_row`.\n\
+    2.1.5: Concurrent and replayed upserts of one physical locator produce exactly\
+    \ one active row; a reused pane id under a different `server_pid` produces a distinct\
+    \ row; a reused pane id under the *same* pid but a different `server_start_time`\
+    \ also produces a distinct row (pid-reuse case); and a row that has left `pending|live`\
+    \ does not block rediscovery of the same locator. test: `tests/storage/test_terminals.py::test_locator_key_uniqueness_replay_and_server_generation`.\n\
+    2.1.9: Identity survives every owner-driven metadata mutation: after `rename-session`,\
+    \ `rename-window`, `move-pane`, and `break-pane` on a discovered pane, and when\
+    \ the pane is visible through a grouped-session alias, rediscovery resolves the\
+    \ *same* row and `terminal_id` while `session_name`, `window_id`, and `title`\
+    \ are refreshed to their new values; no mutation creates a second row. test: `tests/storage/test_terminals.py::test_pane_identity_survives_rename_move_break_and_grouping`.\n\
+    2.1.10: An `exited` row is insertable and reachable with a null locator (pre-effect\
+    \ failure and cancellation), `live` and `orphaned` are rejected with a null locator,\
+    \ and a row that reached `live` retains its locator through `exited` \u2014 no\
+    \ code path clears `locator` or `locator_key` once set. test: `tests/storage/test_terminals.py::test_exit_without_effect_and_locator_is_never_cleared`.\n\
+    2.1.11: `upsert_external` inserts a discovered pane with a null `spawn_key`, a\
+    \ `gobby`-owned row without a `spawn_key` is rejected by the CHECK, an `external`\
+    \ row carrying one is rejected, and any number of external rows coexist while\
+    \ gobby spawn keys stay unique. test: `tests/storage/test_terminals.py::test_spawn_key_domain_matches_ownership`.\n\
+    2.1.12: Restricted to this deliverable's ownership slice, the `gcode grep -w tmux_session_name\
+    \ src tests web crates` sweep returns zero matches in `src/gobby/storage/agents/`,\
+    \ `src/gobby/runner_init/orchestration.py`, and every fixture-bearing test module\
+    \ named above \u2014 including the 86-site lifecycle-monitor suite, the watchdog\
+    \ and pane-monitor suites, the four spawn-agent MCP test modules, the session-coordinator\
+    \ suite, and all seventeen enumerated tail modules \u2014 each resolving through\
+    \ terminal rows or the shared fixture helper with its original assertions intact.\
+    \ Matches outside the slice are expected here and are gated by 2.5. test: `tests/terminals/test_no_direct_tmux_consumers.py::test_storage_slice_inventory_is_fully_assigned`.\n\
+    2.1.13: The generation is single-read and revalidated: a tmux locator is constructed\
+    \ only from one `display-message` expansion carrying `#{socket_path}`, `#{pid}`,\
+    \ `#{start_time}`, and the pane id together, no code path reads a process start\
+    \ time from `ps` or `/proc` to build a `locator_key`, a locator whose stored pid\
+    \ and start time no longer match the live server is refused and `mark_exited`s\
+    \ the row instead of binding, and rediscovery of that physical pane then creates\
+    \ a new row. `mark_orphaned` is not called for a tmux generation mismatch. test:\
+    \ `tests/storage/test_terminals.py::test_generation_is_single_read_and_revalidated_before_bind`.\n\
+    2.1.14: Illegal rows and illegal edges are both rejected: a one-sided locator\
+    \ (either field null while the other is set), an `external` row in `pending`,\
+    \ a `tmux` row carrying `host_epoch`, and a `native` row reaching `live` without\
+    \ one are all constraint errors; the edge test is generated from the allowlist\
+    \ complement rather than sampled \u2014 the full four-state ordered cross-product\
+    \ (sixteen pairs, self-pairs included) is parameterized, exactly the five allowlisted\
+    \ edges (`pending \u2192 live`, `pending \u2192 exited`, `live \u2192 exited`,\
+    \ `live \u2192 orphaned`, `orphaned \u2192 exited`) succeed, and the other eleven\
+    \ each raise and leave the stored state byte-identical. test: `tests/storage/test_terminals.py::test_row_and_edge_constraints_reject_illegal_variants`.\n\
+    2.1.6: Every removed `tmux_session_name` reader in the storage package resolves\
+    \ through `terminals` instead: the four `_lifecycle.py` clear paths, the `_cleanup.py`\
+    \ never-started and stale-run classifications, and the `_queries.py`/`_selectors.py`/`_termination.py`\
+    \ filters and projections. test: `tests/storage/test_agents_terminal_migration.py::test_storage_readers_use_terminal_rows`.\n\
+    2.1.7: A `pending` row is insertable with a null locator and a non-null `spawn_key`;\
+    \ the CHECK constraint rejects any insert or transition to `live`/`orphaned` that\
+    \ leaves the locator or `locator_key` null; `promote_to_live` fills locator, `locator_key`,\
+    \ and state in one CAS; and a duplicate non-null `spawn_key` is a database error.\
+    \ test: `tests/storage/test_terminals.py::test_pending_nullable_locator_and_atomic_promotion`.\n\
+    2.1.8: The shared terminal fixture helper is the only factory constructing terminal\
+    \ rows in the agent suites, and every converted suite keeps its original behavioral\
+    \ assertions (never-started vs started, cleanup clears the terminal, reused-pid\
+    \ liveness). test: `tests/agents/test_lifecycle_monitor.py::test_terminal_fixture_migration_preserves_assertions`.\n\
+    2.1.15: Every row carries `machine_id NOT NULL` referencing `machines(id)`, set\
+    \ from `require_machine_id()` at `create_pending` and `upsert_external`; a row\
+    \ without one is a constraint error. test: `tests/storage/test_terminals.py::test_machine_id_is_required_and_local`.\n\
+    2.1.16: Native `locator` is `{host_terminal_id}` only \u2014 no `host_socket`\
+    \ key \u2014 and `attach_locator` computes the Unix path from local host config\
+    \ and refuses an epoch mismatch. test: `tests/storage/test_terminals.py::test_native_locator_has_no_host_socket`.\n\
+    2.1.20: `AttachLocator` carries request-time `frame_host_epoch`: a native row\
+    \ supplies its stored `host_epoch`; a tmux row supplies the currently adopted\
+    \ host epoch and still stores `host_epoch` null; both frame clients refuse `Welcome.host_epoch`\
+    \ mismatch before `AttachTerminal`. test: `tests/storage/test_terminals.py::test_attach_locator_frame_host_epoch_by_backend`.\n\
+    2.1.21: `automatic_write_quarantined_at` and `automatic_write_quarantine_action_key`\
+    \ persist as a pair: default both null; a set pair survives a `TerminalManager`\
+    \ reload; one-sided writes are a constraint error; clearing both to null is the\
+    \ only storage-level lift. test: `tests/storage/test_terminals.py::test_automatic_write_quarantine_round_trips`.\n\
+    2.1.22: Every row carries `project_id NOT NULL` referencing `projects(id)`, set\
+    \ at `create_pending` and `upsert_external`; a row without one is a constraint\
+    \ error; listing by project still isolates after `session_id` and `agent_run_id`\
+    \ are cleared. test: `tests/storage/test_terminals.py::test_project_id_is_required_and_survives_session_clear`.\n\
+    2.1.23: Project ownership of an active external locator is immutable: same-project\
+    \ concurrent and sequential `upsert_external` converge on one row without changing\
+    \ `project_id`; a different project's concurrent or sequential discovery is typed\
+    \ `project_ownership_conflict`, mutates zero rows, and exposes none of the occupying\
+    \ row; after the occupying row exits, a different project may insert a new row\
+    \ for that locator. test: `tests/storage/test_terminals.py::test_external_locator_project_ownership_is_immutable`.\n\
+    2.1.24: `unresolved_writes` persist rejects an `action_key` over 256 UTF-8 bytes,\
+    \ a 33rd distinct key, and a serialization over 64 KiB; a legal 32-entry map at\
+    \ the byte ceiling round-trips. test: `tests/storage/test_terminals.py::test_unresolved_writes_are_bounded`.\n\
+    2.1.25: Isolated schema apply grants `gobby_daemon_runtime` `SELECT`, `INSERT`,\
+    \ `UPDATE`, and `DELETE` on `terminals`; the scoped gcode denial in 2.1.17 is\
+    \ unchanged. test: `crates/gcore/src/schema/runner_tests.rs::fresh_baseline_grants_terminals_to_daemon_runtime`.\n\
+    2.1.26: `title` rejects a persist over `title_max_bytes` (1024 UTF-8); a 1024-byte\
+    \ title round-trips; writers truncate OSC/tmux titles on a code-point boundary\
+    \ before insert or refresh. test: `tests/storage/test_terminals.py::test_title_is_byte_bounded`.\n\
+    2.1.17: `terminals` is listed in `explicitly_denied_relations` in `crates/gcode/security/managed_postgres_privileges.json`;\
+    \ the privilege-manifest suite asserts the scoped gcode role cannot `SELECT` it.\
+    \ test: `tests/code_index/test_gcode_privilege_manifest.py::test_terminals_is_denied_to_scoped_gcode`.\n\
+    2.1.18: `create_pending` writes `attempt_generation = 1` and `attempt_started_at`;\
+    \ a native `record_process` may store `{pgid, start_time}` on a still-`pending`\
+    \ row (process is not identity); `promote_to_live` retains that pair; a tmux row\
+    \ with `process` set is a constraint error. test: `tests/storage/test_terminals.py::test_attempt_generation_and_native_process_metadata`.\n\
+    2.1.19: `attempt_started_at` is the only clock `list_stale_pending` and the reconciler\
+    \ use for the in-doubt deadline; an unrelated `updated_at` mutation does not refresh\
+    \ attempt age; incrementing `attempt_generation` refreshes `attempt_started_at`\
+    \ in the same statement. test: `tests/storage/test_terminals.py::test_attempt_started_at_is_attempt_specific`."
+  labels:
+  - covers:herdr-terminal-client:2.1:2.1.1
+  - covers:herdr-terminal-client:2.1:2.1.2
+  - covers:herdr-terminal-client:2.1:2.1.3
+  - covers:herdr-terminal-client:2.1:2.1.4
+  - covers:herdr-terminal-client:2.1:2.1.5
+  - covers:herdr-terminal-client:2.1:2.1.9
+  - covers:herdr-terminal-client:2.1:2.1.10
+  - covers:herdr-terminal-client:2.1:2.1.11
+  - covers:herdr-terminal-client:2.1:2.1.12
+  - covers:herdr-terminal-client:2.1:2.1.13
+  - covers:herdr-terminal-client:2.1:2.1.14
+  - covers:herdr-terminal-client:2.1:2.1.6
+  - covers:herdr-terminal-client:2.1:2.1.7
+  - covers:herdr-terminal-client:2.1:2.1.8
+  - covers:herdr-terminal-client:2.1:2.1.15
+  - covers:herdr-terminal-client:2.1:2.1.16
+  - covers:herdr-terminal-client:2.1:2.1.20
+  - covers:herdr-terminal-client:2.1:2.1.21
+  - covers:herdr-terminal-client:2.1:2.1.22
+  - covers:herdr-terminal-client:2.1:2.1.23
+  - covers:herdr-terminal-client:2.1:2.1.24
+  - covers:herdr-terminal-client:2.1:2.1.25
+  - covers:herdr-terminal-client:2.1:2.1.26
+  - covers:herdr-terminal-client:2.1:2.1.17
+  - covers:herdr-terminal-client:2.1:2.1.18
+  - covers:herdr-terminal-client:2.1:2.1.19
+  tdd: true
+  source_section: '2.1'
+  implementation_domain: backend
+- title: TerminalRuntime protocol and TmuxTerminalRuntime
+  category: code
+  task_type: feature
+  depends_on:
+  - '2.1'
+  validation_criteria: "2.2.1: The `TerminalRuntime` protocol and models exist with\
+    \ the staged surface above: `prepare_spawn` / `commit_spawn`, `PreparedSpawn`,\
+    \ and no one-shot `spawn` method. symbol: `TerminalRuntime`. file: `src/gobby/terminals/runtime.py`.\n\
+    2.2.17: `commit_spawn` is refused typed unless the caller has acknowledged persist\
+    \ on that `PreparedSpawn`; a tmux prepare/commit pair still yields one session.\
+    \ Native observer-bind-before-commit is 4.1.10 / 4.2.9. test: `tests/terminals/test_tmux_runtime.py::test_prepare_commit_requires_caller_ack`.\n\
+    2.2.2: `TmuxTerminalRuntime` implements the full contract by delegation; injection\
+    \ byte sequences and error stages are unchanged. file: `src/gobby/terminals/tmux_runtime.py`.\n\
+    2.2.3: The existing tmux spawner/session-manager/injection suites pass against\
+    \ the wrapped runtime with their assertions intact, using the 2.1 fixture helper\
+    \ for any terminal setup they need. test: `tests/agents/test_tmux.py::test_session_manager_injection_unchanged`.\n\
+    2.2.4: The runtime registry is constructed once at the runner composition root,\
+    \ resolves `backend=\"tmux\"`, and raises a typed unregistered-backend error for\
+    \ `\"native\"` at this point in the plan. test: `tests/terminals/test_runtime_registry.py::test_registry_composition_and_tmux_resolution`.\n\
+    2.2.5: Dimension validation rejects zero, negative, above-maximum, and cell-product-overflow\
+    \ values at every Python ingress this leaf owns (`prepare_spawn`, `resize`, and\
+    \ `dimensions.py` validators) with a typed error, before any row write, allocation,\
+    \ or backend call, against this module's own constants. Matching the 3.2 wire\
+    \ constants is that later leaf. test: `tests/terminals/test_dimensions.py::test_bounds_rejected_before_side_effects`.\n\
+    2.2.6: No `TerminalRuntime` method streams continuous output, and a source-scan\
+    \ test keeps streaming out of the contract surface. file: `src/gobby/terminals/runtime.py`.\n\
+    2.2.7: `TerminalManager`, the runtime registry, and `TerminalConfig` are declared\
+    \ as typed attributes on `GobbyRunner`, carried on `ServiceContainer`, propagated\
+    \ from the single construction site, **and** attached to `WebSocketServer` via\
+    \ `configure_terminals` at that site, and those four carriers hold the *identical*\
+    \ instances. The eight positional `WebSocketServer(...)` test fixtures still construct\
+    \ successfully unchanged. Later leaves (2.3 spawn, 2.4 attention, 2.5 HTTP/WS,\
+    \ 3.1 health) consume these carriers; they do not have to exist for this leaf\
+    \ to close. test: `tests/terminals/test_composition_roots.py::test_single_instance_reaches_every_consumer`.\n\
+    2.2.8: `snapshot` and `snapshot_full` return `SnapshotResult` with byte-accurate\
+    \ counters and an honest unknown: a normal capture reports `truncated` false,\
+    \ `dropped_bytes` zero, and `total_bytes` equal to `len(text.encode(\"utf-8\"\
+    ))` for wide-Unicode content as well as ASCII; a tmux capture at `history-limit`\
+    \ reports `truncated` true with `dropped_bytes` and `total_bytes` both `None`\
+    \ rather than zero; a truncated `text` always decodes because the cut lands on\
+    \ a code-point boundary; and no runtime method returns a bare `str` for snapshot\
+    \ content. symbol: `SnapshotResult`. test: `tests/terminals/test_tmux_runtime.py::test_snapshot_counters_are_utf8_bytes_with_unknown_history_loss`.\n\
+    2.2.10: The write surface is a typed outcome on both backends: `write_text`/`write_key`/`write_paste`\
+    \ return `Delivered` or `IndeterminateWrite` and never `None`, a `send-keys` whose\
+    \ response is withheld while its effect has already reached the pane returns `IndeterminateWrite`\
+    \ (not success and not a raised failure), and a genuine tmux failure still raises\
+    \ typed with its injection `stage` intact. The coordinator is what inserts the\
+    \ request's `action_key`/`origin` into `unresolved_writes` without replacing other\
+    \ keys. symbol: `WriteOutcome`. test: `tests/terminals/test_tmux_runtime.py::test_write_returns_indeterminate_when_effect_precedes_lost_response`.\n\
+    2.2.12: Concurrent writes to one terminal serialize through the coordinator on\
+    \ tmux: an attention respond racing a lease-holder `write_text` produces two intact\
+    \ payloads in lock order with no interleaved bytes; the attention write succeeds\
+    \ without holding the client lease; recapture and fingerprint/episode CAS run\
+    \ **after** the coordinator lock is held and **before** backend dispatch. Native\
+    \ serialization is 4.1.11. test: `tests/terminals/test_write_coordinator.py::test_attention_and_lease_writes_serialize`.\n\
+    2.2.13: The coordinator is the sole latch: two `WriteRequest`s with identical\
+    \ payloads but different `action_key`s produce two independent `unresolved_writes`\
+    \ entries; a runtime `write_*` call from a test double that bypasses the coordinator\
+    \ does not persist a latch; attention recapture racing a lease-holder write after\
+    \ capture and after CAS but before dispatch still serializes under one lock on\
+    \ tmux. test: `tests/terminals/test_write_coordinator.py::test_coordinator_owns_lock_identity_and_latch`.\n\
+    2.2.14: `run_sequence` holds the per-terminal lock across every step and required\
+    \ delay: a lease-holder `write_text` issued during an `Escape`/delay/text/delay/`Enter`\
+    \ wake cannot interleave bytes or have its input submitted by the sequence `Enter`;\
+    \ an indeterminate middle step records the single sequence `action_key` and sends\
+    \ no remainder. test: `tests/terminals/test_write_coordinator.py::test_sequence_holds_lock_across_steps`.\n\
+    2.2.15: Sequence cancellation settles once: cancel before the first backend effect\
+    \ leaves the PTY unchanged and records no latch; cancel during a backend await\
+    \ or inter-step delay after the first dispatch latches the sequence `action_key`\
+    \ as indeterminate, sends no remaining step, releases the lock, and does not automatically\
+    \ retry. Both tmux and native paths are covered. test: `tests/terminals/test_write_coordinator.py::test_sequence_cancellation_settles_once`.\n\
+    2.2.16: A lease-gated write or resize that passes the handler check, waits behind\
+    \ another coordinated action, then loses the lease to takeover or disconnect is\
+    \ refused typed at dispatch and issues no backend effect; attention writes in\
+    \ the same window still proceed. test: `tests/terminals/test_write_coordinator.py::test_lease_revalidated_immediately_before_effect`.\n\
+    2.2.11: `write_paste` uses herdr 0.8.0 `paste_payload`: a pane with bracketed\
+    \ paste on receives one `\\x1b[200~\u2026\\x1b[201~` unit whose inner newlines\
+    \ do not submit; a pane with the mode off receives raw text; a payload over 1\
+    \ MiB UTF-8 is refused typed without a write. test: `tests/terminals/test_tmux_runtime.py::test_write_paste_follows_live_bracketed_mode_and_size_cap`.\n\
+    2.2.18: Before dispatching a write that would insert a new `action_key`, the coordinator\
+    \ reserves durable latch capacity: a 256-byte+1 key, a 33rd distinct key, and\
+    \ a serialization that would exceed 64 KiB each return typed `unresolved_write_capacity`\
+    \ with no PTY mutation and no latch write; an already-latched key and an operator\
+    \ resolution of an existing key still proceed; a restart that restored 32 keys\
+    \ still refuses a 33rd automatic action. test: `tests/terminals/test_write_coordinator.py::test_unresolved_write_capacity_is_reserved_before_dispatch`.\n\
+    2.2.19: `TmuxTerminalRuntime.write_key` encodes against flags queried at dispatch:\
+    \ Up is `ESC O A` when `#{cursor_keys_flag}` is on and `ESC [ A` when it is off;\
+    \ the matching application-keypad vs normal keypad pair is asserted for the keypad\
+    \ named keys; a flag flip between two writes is visible on the second write; the\
+    \ runtime does not read 3.4 poll-cached flags. test: `tests/terminals/test_tmux_runtime.py::test_write_key_encodes_against_live_pane_flags`.\n\
+    2.2.20: The coordinator write-ahead-latches `action_key` under the per-terminal\
+    \ lock before backend dispatch: a hard kill after the marker and before `write_*`\
+    \ starts leaves the key set and the PTY unchanged; a hard kill after PTY bytes\
+    \ land and before the runtime result leaves the key set; a durable `Delivered`\
+    \ or no-effect typed failure clears it; `run_sequence` write-ahead-latches once\
+    \ before the first step so a kill between `Escape` and `Enter` sends no remaining\
+    \ `Enter`. test: `tests/terminals/test_write_coordinator.py::test_write_ahead_latch_survives_hard_kill`.\n\
+    2.2.9: `TerminalConfig` supplies `default_backend` and `spawn_in_doubt_seconds`\
+    \ from `DaemonConfig`, and no P2 consumer imports a host-owned config module.\
+    \ `TerminalHostConfig` reading that deadline is 3.1.3. test: `tests/config/test_terminals.py::test_shared_terminal_config_precedes_host_config`."
+  labels:
+  - covers:herdr-terminal-client:2.2:2.2.1
+  - covers:herdr-terminal-client:2.2:2.2.17
+  - covers:herdr-terminal-client:2.2:2.2.2
+  - covers:herdr-terminal-client:2.2:2.2.3
+  - covers:herdr-terminal-client:2.2:2.2.4
+  - covers:herdr-terminal-client:2.2:2.2.5
+  - covers:herdr-terminal-client:2.2:2.2.6
+  - covers:herdr-terminal-client:2.2:2.2.7
+  - covers:herdr-terminal-client:2.2:2.2.8
+  - covers:herdr-terminal-client:2.2:2.2.10
+  - covers:herdr-terminal-client:2.2:2.2.12
+  - covers:herdr-terminal-client:2.2:2.2.13
+  - covers:herdr-terminal-client:2.2:2.2.14
+  - covers:herdr-terminal-client:2.2:2.2.15
+  - covers:herdr-terminal-client:2.2:2.2.16
+  - covers:herdr-terminal-client:2.2:2.2.11
+  - covers:herdr-terminal-client:2.2:2.2.18
+  - covers:herdr-terminal-client:2.2:2.2.19
+  - covers:herdr-terminal-client:2.2:2.2.20
+  - covers:herdr-terminal-client:2.2:2.2.9
+  tdd: true
+  source_section: '2.2'
+  implementation_domain: backend
+- title: Migrate the spawn and resume paths to TerminalRuntime
+  category: refactor
+  task_type: feature
+  depends_on:
+  - '2.2'
+  validation_criteria: "2.3.1: No module outside `src/gobby/terminals/` and `src/gobby/agents/tmux/`\
+    \ constructs `TmuxSpawner` or `TmuxSessionManager` for spawn purposes (source-scan\
+    \ test). test: `tests/terminals/test_no_direct_tmux_spawn.py::test_spawn_paths_use_runtime`.\n\
+    2.3.2: All five spawn entries create the pending terminal row before backend spawn\
+    \ and persist `terminal_id` on success. file: `src/gobby/agents/spawn_executor.py`.\n\
+    2.3.3: Resume rebuilds runtimes from stored terminal rows and daemon-stop metadata\
+    \ names exactly `terminal_id` plus `spawn_key` rather than a tmux session name\
+    \ or planned title. file: `src/gobby/agents/resume_executor.py`.\n2.3.4: The existing\
+    \ spawn/resume integration suites pass on the tmux backend with their observable\
+    \ assertions intact after migration to the 2.1 fixture helper. test: `tests/agents/test_spawn_executor.py`.\n\
+    2.3.5: Exactly one terminal row exists per spawn attempt for every outcome \u2014\
+    \ success, backend failure, timeout, cancellation, and lost CAS \u2014 with no\
+    \ orphaned backend terminal left behind in the lost-CAS case, and no `TerminalRuntime`\
+    \ implementation writes a row. test: `tests/agents/test_spawn_executor.py::test_one_terminal_row_per_attempt_all_outcomes`.\n\
+    2.3.6: A tmux session created immediately before a spawn timeout is found and\
+    \ killed by `spawn_key` resolution; a pending row younger than `spawn_in_doubt_seconds`\
+    \ is left pending by both the reaper and the reconciler even when the backend\
+    \ reports nothing; and a retried spawn reuses the same `terminal_id` and `spawn_key`,\
+    \ producing one row and one physical terminal. test: `tests/agents/test_spawn_executor.py::test_in_doubt_pending_is_not_reaped_or_exited`.\n\
+    2.3.7: `TmuxSpawner` creates the tmux session under exactly the `spawn_key` it\
+    \ was given, generates no timestamp or UUID of its own, rejects a malformed key\
+    \ typed instead of sanitizing it, and returns a locator rather than a session\
+    \ name; a source scan finds no identity generation in any `TerminalRuntime` implementation.\
+    \ test: `tests/agents/test_tmux.py::test_spawner_uses_caller_supplied_spawn_key`.\n\
+    2.3.8: SRT wrapping happens at exactly one call site on the spawn path \u2014\
+    \ the shared step ahead of `runtime.prepare_spawn` \u2014 with the five provider\
+    \ branches and resume free of `launch.wrap()` calls (source scan; the `_preflight_srt`\
+    \ probe is the only other wrap site), and a spawned provider command is wrapped\
+    \ exactly once with `allowPty` semantics unchanged. test: `tests/agents/test_spawn_executor.py::test_srt_wrap_single_chokepoint`.\n\
+    2.3.9: `_implementation.py` and `_execution.py` are each below 1,000 lines after\
+    \ the prerequisite split and after this leaf's wiring. file: `src/gobby/mcp_proxy/tools/spawn_agent/_execution.py`.\n\
+    2.3.12: `spawn_executor.py` and `spawn_executor_providers.py` are each below 1,000\
+    \ lines after the provider extract and after this leaf's wiring. file: `src/gobby/agents/spawn_executor_providers.py`.\n\
+    2.3.10: When reconciliation promotes a pending row after the backend effect is\
+    \ visible and before `runtime.commit_spawn` returns, the caller's lost `promote_to_live`\
+    \ CAS reloads and treats same `backend`/`locator_key`/`host_epoch` as success;\
+    \ a conflicting live identity is the only case that terminates the just-created\
+    \ terminal. test: `tests/agents/test_spawn_executor.py::test_lost_cas_converges_when_reconciler_already_promoted`.\n\
+    2.3.15: Daemon-stop resume metadata no longer stores a tmux session name or planned\
+    \ title: `daemon_resume_keys.py` defines exactly `terminal_id` plus `spawn_key`,\
+    \ `resume_executor.py` writes both fields, `runner_lifecycle_agents.py` reads\
+    \ both fields, and the existing resume executor tests assert a native-capable\
+    \ restart without a tmux locator. test: `tests/agents/test_resume_executor.py::test_daemon_stop_resume_uses_terminal_id_and_spawn_key`.\n\
+    2.3.11: Pre-dispatch cancel CASes `pending \u2192 exited` with no backend effect;\
+    \ post-dispatch cancel (after request bytes, after effect creation, while awaiting\
+    \ response, during promotion) never exits a row that still has an unresolved effect\
+    \ \u2014 the row stays pending until promote or reap by `spawn_key`/`list`. test:\
+    \ `tests/agents/test_spawn_executor.py::test_cancel_windows_pre_and_post_dispatch`.\n\
+    2.3.13: A retry past `spawn_in_doubt_seconds` increments `attempt_generation`\
+    \ and refreshes `attempt_started_at` before dispatch; a reaper that observed the\
+    \ previous generation loses its exit CAS; a reaper that wins first causes the\
+    \ increment CAS to fail and the retry not to dispatch; reload of an `exited`/`orphaned`\
+    \ row is a failed spawn with no new backend effect. test: `tests/agents/test_spawn_executor.py::test_retry_generation_fences_the_reaper`.\n\
+    2.3.14: Unrelated `updated_at` mutations do not make a live retry stale; a daemon\
+    \ restart inside the refreshed `attempt_started_at` window leaves the row pending;\
+    \ stale selection names the observed generation and `attempt_started_at`. test:\
+    \ `tests/agents/test_spawn_executor.py::test_attempt_started_at_survives_unrelated_updates_and_restart`."
+  labels:
+  - covers:herdr-terminal-client:2.3:2.3.1
+  - covers:herdr-terminal-client:2.3:2.3.2
+  - covers:herdr-terminal-client:2.3:2.3.3
+  - covers:herdr-terminal-client:2.3:2.3.4
+  - covers:herdr-terminal-client:2.3:2.3.5
+  - covers:herdr-terminal-client:2.3:2.3.6
+  - covers:herdr-terminal-client:2.3:2.3.7
+  - covers:herdr-terminal-client:2.3:2.3.8
+  - covers:herdr-terminal-client:2.3:2.3.9
+  - covers:herdr-terminal-client:2.3:2.3.12
+  - covers:herdr-terminal-client:2.3:2.3.10
+  - covers:herdr-terminal-client:2.3:2.3.15
+  - covers:herdr-terminal-client:2.3:2.3.11
+  - covers:herdr-terminal-client:2.3:2.3.13
+  - covers:herdr-terminal-client:2.3:2.3.14
+  tdd: false
+  source_section: '2.3'
+  assigned_agent: backend-developer
+- title: Migrate monitors, cleanup, kill, and capture
+  category: code
+  task_type: feature
+  depends_on:
+  - '2.3'
+  validation_criteria: "2.4.1: No monitor, cleanup, kill, or capture module reads\
+    \ `tmux_session_name` or calls tmux capture/send directly; all resolve through\
+    \ `TerminalRuntime` (source-scan test). test: `tests/terminals/test_no_direct_tmux_consumers.py::test_monitors_use_runtime`.\n\
+    2.4.2: Attention respond routes through the write coordinator with unchanged `stage:\
+    \ none|partial` failure semantics, is authorized without the client lease, holds\
+    \ the coordinator lock through recapture, fingerprint/episode CAS, and backend\
+    \ write, and serializes with a concurrent lease-holder write on the same terminal\
+    \ on both backends. file: `src/gobby/servers/routes/attention.py`.\n2.4.3: The\
+    \ existing lifecycle/idle/cleanup/kill/capture suites pass on the tmux backend\
+    \ with their observable assertions intact after migration to the 2.1 fixture helper.\
+    \ test: `tests/agents/test_agent_cleanup.py`.\n2.4.4: Restart reconciliation and\
+    \ stale-pending reaping operate on terminal rows, including reaping a pending\
+    \ row whose backend spawn failed, and both honor the 2.3 in-doubt deadline. test:\
+    \ `tests/agents/test_lifecycle_reconciliation.py::test_pending_terminal_reaped_after_failed_spawn`.\n\
+    2.4.5: Every module this deliverable owns is clean of the field and of direct\
+    \ tmux calls \u2014 wake delivery, session coordination, the four MCP agent tool\
+    \ modules, attention routing, task recovery, terminal_cleanup, lifecycle_reconciliation,\
+    \ watchdog/recovery, the sessions terminal facade, both websocket modules, the\
+    \ five write-path consumers named above, and the `spawn_executor_support` prompt-injection\
+    \ sends \u2014 with each migrated site keeping its observable behavior, including\
+    \ the wake and sessions-terminal test doubles named in Targets. Matches remaining\
+    \ in `runner_broadcasting.py` (2.5) and `runner_lifecycle_processes.py` (3.1)\
+    \ are expected here; the repo-wide gate is 2.5.13. test: `tests/terminals/test_no_direct_tmux_consumers.py::test_owned_consumers_are_backend_neutral`.\n\
+    2.4.6: MCP `send_keys` and `capture_output` resolve a terminal row and succeed\
+    \ against a native terminal with unchanged tool contracts, `test_terminal.py`\
+    \ and `test_compact_self.py` assert that resolution rather than a raw tmux manager,\
+    \ and task recovery leaves a live native run's task alone while still recovering\
+    \ a genuinely never-started run. test: `tests/mcp_proxy/test_sessions_terminal_tools.py::test_send_and_capture_are_backend_neutral`.\n\
+    2.4.7: A capture-before-kill whose snapshot was truncated persists `truncated`,\
+    \ `dropped_bytes`, and `total_bytes` with the text, and a reader of the stored\
+    \ artifact can tell a complete capture from a truncated one; an untruncated capture\
+    \ stores the same fields with zero drop, and a tmux capture at `history-limit`\
+    \ persists the unknown counters as unknown rather than as zero. test: `tests/agents/test_capture.py::test_truncation_metadata_is_persisted`.\n\
+    2.4.8: All five call-sweep consumers resolve a terminal row and write through\
+    \ the runtime, and each succeeds against a native terminal: plan-keystroke dispatch,\
+    \ plan approval, persona configuration, observed-session message delivery, and\
+    \ the post-compaction continuation prompt. A `gcode grep -F 'send_keys' src` sweep\
+    \ returns no `TmuxSessionManager` call site outside `src/gobby/agents/tmux/` and\
+    \ the external-session path. test: `tests/terminals/test_no_direct_tmux_consumers.py::test_write_path_consumers_are_backend_neutral`.\n\
+    2.4.10: Indeterminate writes suppress their own logical actions on later ticks\
+    \ and nothing else: two different actions can become unresolved without either\
+    \ overwriting the other in `unresolved_writes`; each matching periodic evaluation\
+    \ is suppressed and reported as suppressed instead of sending bytes; a third action\
+    \ and any operator-initiated write proceed; positive observation or operator resolution\
+    \ clears only its matching key, terminal exit clears the map, and a daemon restart\
+    \ preserves every unresolved key. test: `tests/terminals/test_write_outcomes.py::test_unresolved_write_latch_suppresses_only_the_same_action`.\n\
+    2.4.11: Wake delivery is backend-neutral and honest about indeterminacy: `_send_tmux_session_wake`'s\
+    \ `Escape`/text/`Enter` sequence resolves a terminal row and runs through `WriteCoordinator.run_sequence`,\
+    \ `tests/events/test_wake.py` no longer patches a tmux pane sender for Gobby-owned\
+    \ rows, an `IndeterminateWrite` at any step sends no remaining step, records no\
+    \ delivery, and does not fall through to another delivery method, and `WakeDispatcher`\
+    \ reports the wake as indeterminate rather than delivered or failed. test: `tests/test_runner_init.py::test_wake_send_aborts_on_indeterminate_write_without_recording_delivery`.\n\
+    2.4.9: An indeterminate write abstains rather than advancing, at every consumer:\
+    \ a multi-step keystroke sequence whose second send returns `IndeterminateWrite`\
+    \ sends no further step and reports indeterminate; the attention route leaves\
+    \ the entry open and re-captures instead of clearing it; idle reprompt and prompt\
+    \ auto-answer leave their retry counters unchanged and re-evaluate from a fresh\
+    \ snapshot on the next tick; and no consumer re-sends the same bytes. test: `tests/terminals/test_write_outcomes.py::test_indeterminate_write_abstains_at_every_consumer`.\n\
+    2.4.12: `NativePlanActionService` resolves a terminal row and writes through the\
+    \ runtime; its focused suite passes on tmux and native. test: `tests/communications/test_native_plan_actions.py::test_plan_actions_use_runtime`.\n\
+    2.4.13: The remaining direct tmux test seams named in Targets migrate with their\
+    \ production callers: compact-self readiness, attention respond, session control,\
+    \ voice warmup, liveness monitor, and attention-state each resolve a terminal\
+    \ row and drive runtime/coordinator fakes, retaining an explicit external-tmux\
+    \ case only where row resolution selects tmux. Session-control and voice-warmup\
+    \ patches of `session_observe.get_tmux_manager_for_context` follow the replaced\
+    \ facade in `session_observe.py`, not a leftover tmux export. test: `tests/terminals/test_no_direct_tmux_consumers.py::test_remaining_runtime_test_seams_are_owned`.\n\
+    2.4.14: `HookManagerFactory` and `HookManager` construct `SessionCoordinator`\
+    \ **and** `EventHandlers` with the same composition-root `TerminalManager`, runtime\
+    \ registry, write coordinator, and `TerminalEffectBridge` the runner holds; a\
+    \ coordination send and a SessionStart `upsert_external` use those instances;\
+    \ no second manager or registry is constructed. test: `tests/hooks/test_session_coordinator.py::test_coordinator_receives_composition_root_terminal_services`.\n\
+    2.4.21: A reconstructed coordinator after restart still refuses a new automatic\
+    \ `action_key` once `unresolved_writes` holds 32 keys or would exceed 64 KiB;\
+    \ one-over-limit saturation returns `unresolved_write_capacity` with no PTY mutation;\
+    \ operator resolution of an existing key and terminal exit still clear. test:\
+    \ `tests/terminals/test_write_outcomes.py::test_unresolved_write_capacity_survives_restart`.\n\
+    2.4.22: Hard process death at each write-ahead boundary survives restart: kill\
+    \ after the marker and before dispatch, after PTY effect and before the runtime\
+    \ result, and after `IndeterminateWrite` exposure each restore the same `action_key`\
+    \ and suppress that automatic action with no second PTY mutation; a kill after\
+    \ a durable `Delivered` leaves the key absent so a later different automatic action\
+    \ may proceed; a `run_sequence` kill between `Escape` and `Enter` restores the\
+    \ sequence key and sends no remaining `Enter` after restart. test: `tests/terminals/test_write_outcomes.py::test_write_ahead_hard_kill_suppresses_retry_across_restart`.\n\
+    2.4.15: The registered MCP `send_keys`, `compact_self`, and `capture_output` closures\
+    \ receive the same composition-root `TerminalManager`, runtime registry, and `WriteCoordinator`\
+    \ the runner holds: `_factory.py`, `registries.py`, and `servers/http.py` forward\
+    \ those instances in the daemon HTTP process, and an identity test fails if any\
+    \ of those hops constructs a second set. Stdio is excluded from this identity\
+    \ chain. test: `tests/mcp_proxy/test_registries.py::test_terminal_tools_receive_composition_root_services`.\n\
+    2.4.16: Stdio is proxy-only: `create_stdio_mcp_server` constructs no `TerminalManager`,\
+    \ runtime registry, or `WriteCoordinator`; `session_manager` is `None`; the `setup_internal_registries`\
+    \ return is discarded; registered stdio tools reach the daemon HTTP MCP surface\
+    \ through `DaemonProxy`. test: `tests/mcp_proxy/test_stdio_proxy.py::test_stdio_constructs_no_terminal_service_set`.\n\
+    2.4.17: One injected `TerminalEffectBridge` (`src/gobby/terminals/sync_bridge.py`)\
+    \ is the only sync-to-async write seam. It may be called only from a non-loop\
+    \ hook thread; calling it on the runner loop thread is typed `loop_misuse` and\
+    \ dispatches nothing. The bridge submits the coordinator future onto the runner\
+    \ loop and waits a bounded `hook_write_timeout_seconds`. Cancel or timeout **before**\
+    \ the atomic dispatch marker: no PTY bytes, no latch, lock released, caller sees\
+    \ cancelled/failed. Timeout or cancel **after** that marker: the hook waiter returns\
+    \ `IndeterminateWrite` immediately with the unresolved-action latch set; the runner-owned\
+    \ shielded Task retains the per-terminal lock through backend settlement; a late\
+    \ completion or late failure is observed only by that Task, is not delivered to\
+    \ the waiter, and is never retried. Automatic retry remains suppressed by the\
+    \ latch even if the late result is `Delivered`. test: `tests/terminals/test_sync_bridge.py::test_timeout_cancel_late_completion_and_loop_misuse`.\n\
+    2.4.18: A timeout racing the dispatch marker is exclusively pre-dispatch (no bytes,\
+    \ no latch) or exclusively post-dispatch (latch plus runner-owned settlement),\
+    \ never both. A never-settling backend leaves the hook waiter with `IndeterminateWrite`\
+    \ and keeps the lock on the runner Task until `hook_write_shutdown_timeout_seconds`.\
+    \ Runner-loop shutdown drains or quarantines every in-flight post-dispatch Task,\
+    \ records `IndeterminateWrite` at that deadline, persists `automatic_write_quarantined_at`\
+    \ and `automatic_write_quarantine_action_key` before releasing the lock, and rejects\
+    \ new automatic writes on the quarantined terminal. After a daemon restart that\
+    \ reconstructs the coordinator from two unresolved keys, only a positive observation\
+    \ of the stored quarantine key or an operator write lifts the pair; observing\
+    \ the other key leaves it set. An indistinguishable delivered-and-consumed versus\
+    \ never-delivered snapshot leaves both columns set. A late-effect race before\
+    \ valid resolution keeps a different automatic action refused; after an effect-specific\
+    \ positive observation of the stored key or an operator write, a later automatic\
+    \ action is admitted. test: `tests/terminals/test_sync_bridge.py::test_shutdown_drain_and_timeout_dispatch_race`.\n\
+    2.4.20: `_run_graceful_shutdown_sequence` calls the extracted drain helper before\
+    \ closing terminal services and storage: an in-flight post-dispatch Task is drained\
+    \ or quarantined at `hook_write_shutdown_timeout_seconds`, the timestamp is durable\
+    \ across that close, and a reconstructed coordinator after restart still refuses\
+    \ a different automatic `action_key` until effect-specific observation or an operator\
+    \ write. `runner_lifecycle_shutdown.py` and `runner_lifecycle_terminal_effects.py`\
+    \ each finish below 1,000 lines. test: `tests/test_runner_shutdown.py::test_shutdown_drains_terminal_effects_before_storage_close`.\n\
+    2.4.19: Codex post-spawn prompt delivery in `spawn_executor_support.py` uses `WriteCoordinator.run_sequence`\
+    \ rather than `tmux.send_keys`: the focused suite no longer patches a tmux sender\
+    \ for that path; an `IndeterminateWrite` on the prompt step sends no Enter and\
+    \ records no delivery. test: `tests/agents/test_spawn_executor.py::test_codex_prompt_aborts_on_indeterminate_without_enter`."
+  labels:
+  - covers:herdr-terminal-client:2.4:2.4.1
+  - covers:herdr-terminal-client:2.4:2.4.2
+  - covers:herdr-terminal-client:2.4:2.4.3
+  - covers:herdr-terminal-client:2.4:2.4.4
+  - covers:herdr-terminal-client:2.4:2.4.5
+  - covers:herdr-terminal-client:2.4:2.4.6
+  - covers:herdr-terminal-client:2.4:2.4.7
+  - covers:herdr-terminal-client:2.4:2.4.8
+  - covers:herdr-terminal-client:2.4:2.4.10
+  - covers:herdr-terminal-client:2.4:2.4.11
+  - covers:herdr-terminal-client:2.4:2.4.9
+  - covers:herdr-terminal-client:2.4:2.4.12
+  - covers:herdr-terminal-client:2.4:2.4.13
+  - covers:herdr-terminal-client:2.4:2.4.14
+  - covers:herdr-terminal-client:2.4:2.4.21
+  - covers:herdr-terminal-client:2.4:2.4.22
+  - covers:herdr-terminal-client:2.4:2.4.15
+  - covers:herdr-terminal-client:2.4:2.4.16
+  - covers:herdr-terminal-client:2.4:2.4.17
+  - covers:herdr-terminal-client:2.4:2.4.18
+  - covers:herdr-terminal-client:2.4:2.4.20
+  - covers:herdr-terminal-client:2.4:2.4.19
+  tdd: true
+  source_section: '2.4'
+  implementation_domain: backend
+- title: Backend-neutral WS messages, terminal REST surface, and web joins
+  category: code
+  task_type: feature
+  depends_on:
+  - '2.4'
+  validation_criteria: "2.5.1: No `tmux_*` name survives in any direction: the WS\
+    \ dispatch table serves only the backend-neutral request set keyed by `terminal_id`\
+    \ (source-scan of `server.py:288-322`), every emitted result and server-initiated\
+    \ event type is backend-neutral (source-scan of the emitting sites in `websocket/tmux.py`\
+    \ and `broadcast.py`), and a zero-match sweep over `src`, `tests`, and `web` finds\
+    \ no legacy request, result, or event name and no `run_id` terminal correlation\
+    \ key \u2014 covering the backend WS mixin suite, the broadcast and disconnect\
+    \ suites, the runner-lifecycle and kill suites, the frontend hook fixtures, and\
+    \ the Playwright WebSocket fake. test: `tests/servers/test_terminal_ws_rename.py::test_no_legacy_names_in_requests_results_or_events`.\n\
+    2.5.2: `GET /api/terminals` and `GET /api/terminals/{id}` return rows with attach\
+    \ locators through the real app; the list filter is the durable `project_id` column\
+    \ and still isolates after `session_id` or `agent_run_id` is cleared. The collection\
+    \ defaults to `pending|live`, honors cursor/`limit` (default 100, max 500, 1 MiB\
+    \ encoded), and requires an explicit `states` query for retained history. test:\
+    \ `tests/servers/test_terminals_routes.py::test_terminal_rest_surface`.\n2.5.34:\
+    \ Both inventory surfaces page: a project with more than 100 `pending|live` rows\
+    \ plus retained `exited` rows returns the default page without the exited set;\
+    \ an explicit history query pages with a stable cursor; inserting or exiting a\
+    \ row between pages neither duplicates nor skips a surviving cursor key; a page\
+    \ at `terminal_list_max_encoded_bytes` stays inside the budget. test: `tests/servers/test_terminals_routes.py::test_terminal_inventory_is_paginated`.\n\
+    2.5.35: `useTmuxSessions.ts` follows `terminal_list` continuation: more than 100\
+    \ `pending|live` rows across multiple pages accumulate in `(created_at, id)` order\
+    \ with ID deduplication; an intervening insert or exit between pages neither duplicates\
+    \ nor skips a surviving key; a stale refresh or reconnect page fenced by request/connection\
+    \ generation is ignored. test: `web/src/hooks/__tests__/useTmuxSessions.test.ts::test_terminal_list_follows_pages`.\n\
+    2.5.36: `terminal_input` and `terminal_paste` carry `client_write_seq` and receive\
+    \ `terminal_write_outcome` with the same identity: the golden fixtures pin request\
+    \ and `delivered` / `indeterminate` / `refused` / `write_seq_conflict` / `write_seq_expired`\
+    \ / `write_seq_capacity` responses; the browser reducer enters uncertain read-only\
+    \ on `indeterminate` and does not resend; a matching-fingerprint duplicate seq\
+    \ returns the recorded outcome; a missing seq or `2^53` is refused with no PTY\
+    \ mutation; `useTmuxSessions.ts` compares the seq as an exact integer. gclient\
+    \ is 3.3.22; the real-hop lost-response cases are 4.3.15. test: `tests/servers/test_terminal_ws_golden.py::test_write_outcome_is_correlated`.\n\
+    2.5.37: The per-attachment write-seq ledger is total: a new seq above the high-water\
+    \ admits and may skip; two simultaneous same-seq same-fingerprint requests join\
+    \ one in-flight admission and mutate the PTY once; reusing a seq for a different\
+    \ kind or different payload is `write_seq_conflict` with no PTY mutation; an absent\
+    \ seq at or below the high-water, including an evicted completed record, is `write_seq_expired`;\
+    \ a 65th distinct in-flight seq is `write_seq_capacity`; the browser reducer in\
+    \ `useTmuxSessions.ts` clears that exact seq's in-flight mark, stays writable\
+    \ on those refusals (not lease-related), and does not resend input or paste. Server-wire\
+    \ goldens remain `test_write_seq_ledger_is_total`; reducer-state closure is this\
+    \ TypeScript case. The real-hop cases are 4.3.16. test: `web/src/hooks/__tests__/useTmuxSessions.test.ts::test_write_seq_refusals_clear_inflight_and_do_not_resend`.\n\
+    2.5.3: The attention roster carries the backend-neutral terminal block. test:\
+    \ `tests/servers/test_attention_roster.py::test_roster_terminal_block`.\n2.5.4:\
+    \ External CLI sessions seed `external` terminal rows at SessionStart and expire\
+    \ via liveness CAS. test: `tests/sessions/test_external_terminal_seeding.py::test_session_start_seeds_external_terminal`.\n\
+    2.5.5: The web terminal tab lists, attaches, streams, resizes, and detaches via\
+    \ the new messages; the socket-provenance join code is deleted. file: `web/src/hooks/useTmuxSessions.ts`.\n\
+    2.5.6: Concurrent SessionStart and liveness discovery of the same external pane\
+    \ produce one row, a replayed SessionStart changes nothing, a recycled pane id\
+    \ under a new tmux server pid produces a distinct row, and a recycled pane id\
+    \ under the *same* pid with a different `server_start_time` also produces a distinct\
+    \ row from both producers; a renamed session on an unchanged pane refreshes metadata\
+    \ on the same row. test: `tests/sessions/test_external_terminal_seeding.py::test_concurrent_and_replayed_discovery_is_idempotent`.\n\
+    2.5.31: Cross-project discovery cannot take or leak an active locator: concurrent\
+    \ A/B SessionStart and liveness against one live pane leave A's row and `project_id`\
+    \ unchanged and give B typed `project_ownership_conflict` with no occupying fields;\
+    \ after A exits, B's rediscovery inserts a new row. test: `tests/sessions/test_external_terminal_seeding.py::test_cross_project_discovery_is_conflict_until_exit`.\n\
+    2.5.32: SessionStart and SessionLivenessMonitor call `upsert_external` on the\
+    \ identical composition-root `TerminalManager`: factory/`EventHandlers` and `_app_lifecycle.py`\
+    \ forward that instance; object-identity assertions fail if either producer constructs\
+    \ another manager. test: `tests/sessions/test_external_terminal_seeding.py::test_discovery_producers_share_composition_root_manager`.\n\
+    2.5.33: `terminal_set_scroll_offset` is allowed for every live attachment and\
+    \ changes only that attachment's native host scroll: two observers sit at independent\
+    \ offsets; `0` jumps to the live edge; the daemon emits `terminal_scroll_offset_applied`\
+    \ with clamped `applied_rows`/`max_rows`; no PTY input, mouse-report, or `TIOCSWINSZ`\
+    \ occurs. Tmux observers do not send the host verb. test: `tests/servers/test_terminal_ws_viewport.py::test_two_observers_independent_scroll_offsets`.\n\
+    2.5.7: The lease messages behave per contract: every attach is observe-only (`terminal_attach`\
+    \ and `terminal_attach_result` have no `mode`), take-control is the sole grant\
+    \ path on a free terminal, a held terminal refuses with typed `held` unless `takeover`\
+    \ is set, the displaced attachment receives `terminal_lease_lost`, `terminal_release_control`\
+    \ returns the holder to observe without detaching, and input, paste, or resize\
+    \ from a non-holder is refused with a typed reason. test: `tests/servers/test_terminal_ws_lease.py::test_lease_request_result_and_lost_events`.\n\
+    2.5.8: Out-of-bounds dimensions on `terminal_resize`, `terminal_set_viewport`,\
+    \ and `terminal_create` are refused with a typed error before any row write or\
+    \ backend call. `terminal_attach` and GET `/api/terminals` do not carry rows/cols\
+    \ and are not this test. test: `tests/servers/test_terminals_routes.py::test_dimension_bounds_rejected`.\n\
+    2.5.9: `terminal_attach` returns `terminal_attach_result` carrying the minted\
+    \ `attachment_id` and `frame_delivery` and no `mode`, a failed attach returns\
+    \ a typed error result for the same `terminal_id`, and a client can construct\
+    \ and complete a `terminal_take_control` exchange using only fields the daemon\
+    \ sent it. test: `tests/servers/test_terminal_ws_lease.py::test_attach_result_supplies_attachment_identity`.\n\
+    2.5.10: The tmux PTY bridge acquires the same daemon lease as any other attachment\
+    \ and refuses input and resize when it does not hold it; attaching to an `external`\
+    \ tmux terminal changes no session option (`status` and `mouse` are byte-identical\
+    \ before and after), while a `gobby`-owned session keeps today's option behavior.\
+    \ test: `tests/servers/test_tmux_bridge_authority.py::test_bridge_shares_lease_and_leaves_external_options_alone`.\n\
+    2.5.11: A web `terminal_create` produces exactly one terminal row through the\
+    \ shared spawn primitive for every outcome (success, backend failure, timeout,\
+    \ cancellation, lost CAS, native reserve refusal before fork), with ownership,\
+    \ backend, project, and session recorded, visible in `GET /api/terminals`, reapable\
+    \ when its spawn fails, and no orphaned backend terminal in the lost-CAS or reserve-refusal\
+    \ case. Native saturation is 4.2.14. test: `tests/servers/test_terminal_ws_create.py::test_web_create_uses_row_owning_primitive`.\n\
+    2.5.12: The lease record is the only grant point and the host holds no authority\
+    \ state: exactly one holder exists per `terminal_id` across every acquisition\
+    \ path (WS take-control and the PTY bridge today, plus gclient's daemon-side take-control\
+    \ once P3 lands), a takeover moves the holder in one place and the displaced attachment\
+    \ is refused on its next write, and no lease token, TTL, or expiry exists anywhere\
+    \ in the codebase (source scan). test: `tests/terminals/test_lease_authority.py::test_single_grant_point_across_all_paths`.\n\
+    2.5.13: The whole-repo field gate closes here, at the last leaf of the P2 chain:\
+    \ `gcode grep -w tmux_session_name src tests web crates` returns matches only\
+    \ inside `src/gobby/agents/tmux/`, the `sessions.terminal_context` identity seam,\
+    \ and `runner_lifecycle_processes.py`'s restart-preservation reader deferred to\
+    \ 3.1, and a substring sweep finds no `daemon_stop_resume_tmux_session_name` or\
+    \ `daemon_stop_resume_planned_tmux_title` anywhere \u2014 every other site in\
+    \ the repository, across all files the live inventory command returns, resolves\
+    \ through terminal rows. This leaf owns and updates `test_repo_wide_field_sweep_is_empty`\
+    \ to that final allowed remainder; 2.4's earlier sweep of the same file keeps\
+    \ the wider mid-P2 remainder so 2.4 can close independently. test: `tests/terminals/test_no_direct_tmux_consumers.py::test_repo_wide_field_sweep_is_empty`.\n\
+    2.5.14: `terminal_set_viewport` is allowed for every live attachment and changes\
+    \ only that attachment's render size: two observers of one native terminal and\
+    \ one external tmux terminal can sit at different viewports while native PTY dimensions\
+    \ and the external owner's geometry stay unchanged, and `terminal_resize` from\
+    \ a non-holder is still refused. test: `tests/servers/test_terminal_ws_viewport.py::test_two_observers_independent_viewports`.\n\
+    2.5.15: `terminal_attach` with `frame_delivery: \"direct\"` mints an `attachment_id`\
+    \ and joins the lease record without opening a daemon host-frame attach; `proxy`\
+    \ still opens one. After a daemon-WS drop, a `direct` client that re-attaches\
+    \ receives a new `attachment_id`, the old id is refused, and the pane is observe-only\
+    \ until take-control succeeds again. test: `tests/servers/test_terminal_ws_lease.py::test_direct_delivery_registers_without_frame_relay`.\n\
+    2.5.16: `terminal_paste` from the lease holder reaches `write_paste`; from a non-holder\
+    \ it is refused typed; a payload over 1 MiB UTF-8 is refused typed without disconnecting.\
+    \ test: `tests/servers/test_terminal_ws_lease.py::test_paste_is_lease_gated_and_size_capped`.\n\
+    2.5.17: Python emitters/decoders reproduce `tests/servers/fixtures/terminal_ws_golden/`\
+    \ byte-for-byte for attach/result (no `mode`), detach, resize, viewport, set_scroll_offset/scroll_offset_applied,\
+    \ list/create/kill, input/output, write_outcome including conflict/expired/capacity,\
+    \ attach_history, fragment/fragment_last, paste, take-control/release-control/result/lease-lost,\
+    \ attachment_finalized, lifecycle events, and typed errors; the TypeScript hook\
+    \ fixtures consume the same files. test: `tests/servers/test_terminal_ws_golden.py::test_python_matches_terminal_ws_golden_corpus`.\n\
+    2.5.24: `terminal_attach_history{terminal_id, attachment_id, text, truncated,\
+    \ dropped_bytes, total_bytes}` is a first-class WS event: Python emits it from\
+    \ a host `AttachHistory` frame, the TypeScript reducer applies it before the first\
+    \ keyframe for that `attachment_id`, and a maximum-size history plus the first\
+    \ keyframe are two messages. test: `tests/servers/test_terminal_ws_golden.py::test_attach_history_precedes_first_output`.\n\
+    2.5.25: `terminal_ws_fragment` is in the golden corpus and the TypeScript union:\
+    \ `fragment.json` is a non-last slice and `fragment_last.json` is a last slice\
+    \ of the same `event`/`message_seq`; both carry `attachment_id`, contiguous `fragment_index`,\
+    \ `encoding: \"utf8-b64\"`, and a payload that is a byte slice of the complete\
+    \ original JSON; a fully wrapped fragment fixture is strictly below 2 MiB. test:\
+    \ `tests/servers/test_terminal_ws_golden.py::test_fragment_envelope_is_pinned`.\n\
+    2.5.18: Disconnect of a `direct` or `proxy` connection releases every attachment_id\
+    \ and any lease it held; a subsequent attach from a new connection does not see\
+    \ `held` from the dead holder; a second cleanup is a no-op; a takeover racing\
+    \ disconnect leaves exactly one holder. test: `tests/servers/test_terminal_ws_lease.py::test_disconnect_releases_direct_and_proxy_leases`.\n\
+    2.5.19: `terminal_release_control` drops the lease and leaves the attachment observing:\
+    \ a subsequent `terminal_input` is refused typed; a second release is `reason:\
+    \ \"released\"`; a stale attachment id is `stale_attachment`; a release racing\
+    \ takeover leaves exactly one holder; disconnect after release is a no-op. test:\
+    \ `tests/servers/test_terminal_ws_lease.py::test_release_control_is_idempotent_and_races_takeover`.\n\
+    2.5.20: Lease mutations and lease-gated writes share one linearization point:\
+    \ a take-control or a disconnect that **removes the current holder** and wins\
+    \ the coordinator lock while an already-validated `terminal_input`/`terminal_paste`/`terminal_resize`\
+    \ is queued increments `lease_generation`, refuses that queued effect typed, captures\
+    \ `terminal_lease_lost` under the lock, and sends it only after releasing the\
+    \ lock. An observe-only disconnect on the same terminal does not increment and\
+    \ does not refuse the holder's queued write. test: `tests/servers/test_terminal_ws_lease.py::test_lease_write_linearizes_with_takeover`.\n\
+    2.5.21: `terminal_attach_result`, `terminal_control_result`, and `terminal_lease_lost`\
+    \ carry `lease_generation`; the browser reducer owned by this leaf rejects only\
+    \ a generation **below** the highest already applied for that `attachment_id`.\
+    \ A delayed grant delivered after a later takeover is ignored and the reducer\
+    \ converges on the higher generation. An equal-generation `held` refusal and an\
+    \ equal-generation already-released `terminal_control_result` are applied and\
+    \ resolve the in-flight request. A finalized-id tombstone still drops later messages\
+    \ for that id. gclient's matching ignore rule is 3.3.2. test: `tests/servers/test_terminal_ws_lease.py::test_stale_lease_generation_is_ignored`.\n\
+    2.5.26: `message_seq`, `lease_generation`, and `client_write_seq` are JSON numbers\
+    \ in `[0, terminal_ws_safe_integer_max]` (`2^53-1`): Python and TypeScript emitters\
+    \ owned by this leaf refuse `2^53` and never emit strings or floats for these\
+    \ fields; `2^53-2` and `2^53-1` remain distinct in `useTmuxSessions.ts`. gclient\
+    \ decode, comparison, and emit-refusal are 3.3.18. test: `tests/servers/test_terminal_ws_golden.py::test_seq_and_lease_generation_are_safe_integers`.\n\
+    2.5.22: Before `upsert_external`, SessionStart and liveness resolve a matching\
+    \ gobby-owned pending `terminal_id`/`spawn_key` for that locator; a prepare-to-promote\
+    \ race produces one managed row and never an external duplicate. test: `tests/sessions/test_external_terminal_seeding.py::test_discovery_does_not_steal_unpromoted_managed_pane`.\n\
+    2.5.23: The generic attachment finalizer runs on daemon-WS close, `terminal_detach`,\
+    \ proxy host-frame EOF, proxy typed lag close, connection-wide relay overflow\
+    \ or send timeout (all attachments on that socket), and host loss: if this attachment\
+    \ holds the lease, the lease is released under the coordinator lock and `lease_generation`\
+    \ increments; otherwise the current generation is retained. Control cannot be\
+    \ reacquired on the finalized id until a fresh frame attach succeeds. A `direct`\
+    \ attachment whose frame stream dies while the daemon WS stays up is finalized\
+    \ only when the client sends `terminal_detach` (3.3.17); the daemon does not observe\
+    \ that host-frame EOF itself. test: `tests/servers/test_terminal_ws_lease.py::test_frame_and_lag_paths_finalize_the_lease`.\n\
+    2.5.27: After the finalizer removes an attachment from daemon state, a still-open\
+    \ WebSocket emits `terminal_attachment_finalized{terminal_id, attachment_id, reason,\
+    \ lease_generation}` on reserved lifecycle capacity (including observe-only attachments\
+    \ that never held the lease); the socket is not closed for that single attachment\
+    \ when the reserved send succeeds. The browser reducer marks the id non-live by\
+    \ exact `attachment_id` (no greater-generation requirement) and releases reassembly\
+    \ before later messages. A reserved-send failure is connection-wide close. gclient's\
+    \ matching reducer is 3.3.19. test: `tests/servers/test_terminal_ws_golden.py::test_attachment_finalized_is_pinned`.\n\
+    2.5.28: Observer finalization does not steal the holder's generation: attachment\
+    \ A holds N; observe-only B finalizes; A still writes with `expected_lease_generation=N`.\
+    \ B is stale after finalization and cannot take control. test: `tests/servers/test_terminal_ws_lease.py::test_observer_finalization_keeps_holder_writable`.\n\
+    2.5.29: Takeover then old-disconnect keeps the new holder writable: attachment\
+    \ A holds N; a **fresh** attachment B2 takes over (generation N+1); A's later\
+    \ disconnect finalizer retains N+1 and leaves B2 writable. test: `tests/servers/test_terminal_ws_lease.py::test_takeover_then_old_disconnect_keeps_new_holder_writable`.\n\
+    2.5.30: Equal-generation non-authority-changing results resolve: a `held` refusal\
+    \ and a duplicate `released` result at the current generation are applied by the\
+    \ browser reducer; a delayed lower grant is still ignored; a finalized attachment_id\
+    \ remains a tombstone. test: `tests/servers/test_terminal_ws_lease.py::test_equal_generation_held_and_release_results_are_applied`."
+  labels:
+  - covers:herdr-terminal-client:2.5:2.5.1
+  - covers:herdr-terminal-client:2.5:2.5.2
+  - covers:herdr-terminal-client:2.5:2.5.34
+  - covers:herdr-terminal-client:2.5:2.5.35
+  - covers:herdr-terminal-client:2.5:2.5.36
+  - covers:herdr-terminal-client:2.5:2.5.37
+  - covers:herdr-terminal-client:2.5:2.5.3
+  - covers:herdr-terminal-client:2.5:2.5.4
+  - covers:herdr-terminal-client:2.5:2.5.5
+  - covers:herdr-terminal-client:2.5:2.5.6
+  - covers:herdr-terminal-client:2.5:2.5.31
+  - covers:herdr-terminal-client:2.5:2.5.32
+  - covers:herdr-terminal-client:2.5:2.5.33
+  - covers:herdr-terminal-client:2.5:2.5.7
+  - covers:herdr-terminal-client:2.5:2.5.8
+  - covers:herdr-terminal-client:2.5:2.5.9
+  - covers:herdr-terminal-client:2.5:2.5.10
+  - covers:herdr-terminal-client:2.5:2.5.11
+  - covers:herdr-terminal-client:2.5:2.5.12
+  - covers:herdr-terminal-client:2.5:2.5.13
+  - covers:herdr-terminal-client:2.5:2.5.14
+  - covers:herdr-terminal-client:2.5:2.5.15
+  - covers:herdr-terminal-client:2.5:2.5.16
+  - covers:herdr-terminal-client:2.5:2.5.17
+  - covers:herdr-terminal-client:2.5:2.5.24
+  - covers:herdr-terminal-client:2.5:2.5.25
+  - covers:herdr-terminal-client:2.5:2.5.18
+  - covers:herdr-terminal-client:2.5:2.5.19
+  - covers:herdr-terminal-client:2.5:2.5.20
+  - covers:herdr-terminal-client:2.5:2.5.21
+  - covers:herdr-terminal-client:2.5:2.5.26
+  - covers:herdr-terminal-client:2.5:2.5.22
+  - covers:herdr-terminal-client:2.5:2.5.23
+  - covers:herdr-terminal-client:2.5:2.5.27
+  - covers:herdr-terminal-client:2.5:2.5.28
+  - covers:herdr-terminal-client:2.5:2.5.29
+  - covers:herdr-terminal-client:2.5:2.5.30
+  tdd: true
+  source_section: '2.5'
+  implementation_domain: fullstack
+- title: gterm host process and daemon supervision
+  category: code
+  task_type: feature
+  depends_on:
+  - '1.1'
+  - '1.2'
+  - '1.3'
+  - '1.4'
+  - '1.5'
+  - '2.2'
+  - '2.4'
+  validation_criteria: "3.1.1: `gterm host` starts, binds both sockets at 0600, reaps\
+    \ a stale socket file, and after a valid `hello` answers `ping` with `host_epoch`,\
+    \ version, and `host_pid` (the serving process) and `list` with an empty inventory,\
+    \ and accepts `host_shutdown`. test: `crates/gterminal/tests/host_lifecycle.rs::host_starts_and_serves_ping_and_list`.\n\
+    3.1.2: The host manager spawns, health-checks, and restarts the host; an epoch\
+    \ change orphans old-epoch terminals and interrupts their runs via CAS. test:\
+    \ `tests/terminals/test_host_manager.py::test_crash_orphans_and_interrupts`.\n\
+    3.1.3: `TerminalHostConfig` is wired into `DaemonConfig` with the documented host-specific\
+    \ defaults and defines no shared key; the in-doubt deadline it enforces is read\
+    \ from `TerminalConfig` (2.2). file: `src/gobby/config/terminal_host.py`.\n3.1.4:\
+    \ Daemon startup with the host unavailable degrades native availability without\
+    \ failing startup. test: `tests/terminals/test_host_manager.py::test_degraded_startup_without_host`.\n\
+    3.1.5: Daemon restart adopts the running host: `host_epoch`, the PTY child PID,\
+    \ and the `terminals` row are unchanged across the restart, and no terminal is\
+    \ orphaned. Resumed frame-stream verification after adoption is 5.1.2. test: `tests/terminals/test_host_manager.py::test_restart_adopts_host_preserving_epoch_pid_and_row`.\n\
+    3.1.6: Adoption refuses and replaces on PID-identity mismatch, dead PID, or incompatible\
+    \ protocol version, draining the stale host before orphaning its terminals; an\
+    \ explicit full stop drains the host while a planned restart does not. test: `tests/terminals/test_host_manager.py::test_adoption_rejects_mismatch_and_stop_drains`.\n\
+    3.1.17: Adoption compares `ping.host_pid` to `~/.gobby/gterm.pid` and to a live\
+    \ `gterm` process: a stale pidfile, an unrelated live gterm PID, a socket served\
+    \ by another process, and a recycled PID each refuse adoption and replace; a matching\
+    \ live pidfile plus matching `host_pid` adopts. test: `tests/terminals/test_host_manager.py::test_adoption_requires_ping_host_pid_proof`.\n\
+    3.1.18: Unknown-host cleanup is race-closed: host `list` is read first; each listed\
+    \ identity is looked up with a fresh `READ COMMITTED` query; the same lookup runs\
+    \ again immediately before `kill` after grace. A `create_pending` that commits\
+    \ between the first lookup and grace, and a `prepare_spawn` that appears on `list`\
+    \ after the first lookup, each skip cleanup because a `pending` or `live` row\
+    \ is present. Inverting the list/inventory order is not a permitted implementation.\
+    \ test: `tests/terminals/test_host_manager.py::test_unknown_host_rechecks_before_kill`.\n\
+    3.1.19: Construction-failure rollback stops the host supervisor: after a later\
+    \ init failure, a newly spawned gterm is drained and gone; an adopted gterm is\
+    \ still running with the same epoch; `rollback_runner_resources` is the call site.\
+    \ test: `tests/test_runner_rollback.py::test_host_supervisor_rollback_drains_spawned_preserves_adopted`.\n\
+    3.1.20: One later-init-failure rollback with supervisor and native clients fully\
+    \ acquired is ordered: spawned gterm is drained through a still-open control path\
+    \ then clients close; adopted gterm stays up with the same epoch and clients still\
+    \ close; reconnect/health producers are stopped first; independent settle of clients-before-drain\
+    \ is a failing contrast. test: `tests/test_runner_rollback.py::test_terminal_rollback_orders_drain_before_client_close`.\n\
+    3.1.21: Every running-loop caller awaits the ordered rollback core before propagating\
+    \ failure or terminating the process: `GobbyRunner.create` and both `run_daemon`\
+    \ failure branches wait for drain, client close, and task settlement against a\
+    \ blocked-drain sentinel; `__init__` uses the no-loop wrapper that drives the\
+    \ same core with `asyncio.run`; PID cleanup and `SystemExit` / `sys.exit` occur\
+    \ only after settlement. test: `tests/test_runner_rollback.py::test_terminal_rollback_awaited_before_exit`.\n\
+    3.1.22: Authenticated `host_shutdown{grace_ms}` is accepted typed, is idempotent\
+    \ while draining, rejects new spawn/attach as `host_draining`, reaps prepared\
+    \ and committed groups, closes sockets, and exits; a lost response plus verified\
+    \ host death is success; an unauthenticated call is refused like any other verb.\
+    \ test: `crates/gterminal/tests/host_lifecycle.rs::host_shutdown_drains_and_is_idempotent`.\n\
+    3.1.7: The daemon health surface reports host enabled/running state, epoch, protocol\
+    \ version, restart count/backoff, live and orphaned terminal counts, and last\
+    \ error, including in the degraded-host case. test: `tests/servers/test_admin_health.py::test_health_reports_gterm_host_state`.\n\
+    3.1.8: A `preserve_agents` shutdown keeps the host PID and its PTY children out\
+    \ of the reaped set so the next daemon adopts the same host; a full stop sends\
+    \ `host_shutdown` first and leaves no surviving PTY; and the migrated tmux branch\
+    \ selects live terminals from rows rather than the removed field. test: `tests/terminals/test_host_shutdown_preservation.py::test_restart_preserves_host_stop_drains_it`.\n\
+    3.1.9: Every adoption-matrix cell is exercised, including a daemon crash after\
+    \ host spawn but before the pending-to-live CAS (row converges to `live`, PTY\
+    \ retained), a live row missing from the host list at the same epoch (finalized\
+    \ as exited), an old-epoch row (orphaned with its run interrupted), and a host\
+    \ terminal unknown after a successful database inventory read (killed after grace,\
+    \ logged); an injected database inventory failure leaves that same terminal alive,\
+    \ records the failure, and retries. test: `tests/terminals/test_host_manager.py::test_adoption_reconciliation_matrix`.\n\
+    3.1.10: A control request other than `hello` on a fresh connection is refused\
+    \ `unauthenticated` and the connection closed; a bad token and an unsupported\
+    \ protocol version are each refused typed before any terminal state is read; a\
+    \ `hello` presenting the frame channel's `local_cli_token` as its control credential\
+    \ is refused with the same typed error; and a valid `hello` with the control token\
+    \ admits `ping`, `list`, and `host_shutdown`. test: `crates/gterminal/tests/control_protocol.rs::hello_required_before_any_verb`.\n\
+    3.1.12: The control token is minted, scoped, and rotated as specified: the daemon\
+    \ writes `~/.gobby/gterm-control.token` 0600 before the first host spawn, the\
+    \ host authenticates with it across a daemon restart that adopts the same host,\
+    \ replacing a host rather than adopting it rotates the file, and no client-facing\
+    \ surface (`gclient`, any WS payload) ever emits its value. test: `tests/terminals/test_host_manager.py::test_control_token_is_minted_scoped_and_rotated`.\n\
+    3.1.11: A reconnect that lists before an in-flight spawn becomes visible leaves\
+    \ the young pending row alone; the spawn then completes, wins its CAS, and the\
+    \ terminal ends `live` with no kill issued. Past the in-doubt deadline the same\
+    \ shape reaps by `spawn_key` and the observed `attempt_generation` and exits the\
+    \ row; a generation that moved under the reconciler is a lost CAS. test: `tests/terminals/test_host_manager.py::test_reconcile_does_not_exit_inflight_spawn`.\n\
+    3.1.13: After a host crash, native rows are `orphaned` and runs `interrupted`\
+    \ as settled, **and** a SIGHUP-ignoring process leader plus its grandchild in\
+    \ the recorded `pgid` are gone after SIGTERM then SIGKILL within `shutdown_grace_seconds`\
+    \ + 1s even when the test waits until `gterm` has exited and the children have\
+    \ been reparented; a recycled pid with a different start time is not signalled;\
+    \ no PTY is reconstructed. test: `tests/terminals/test_host_manager.py::test_host_crash_reaps_sighup_ignoring_tree`.\n\
+    3.1.14: Against a fake control client, `host_manager` on `spawn_prepared` calls\
+    \ `record_process` on the still-`pending` row before any `spawn_commit`; a `record_process`\
+    \ failure sends no commit; a control drop after `spawn_prepared` does not CAS\
+    \ the row to `live`. Native observer bind-before-commit is 4.2.9. Wire verbs are\
+    \ 3.2; process-tree death windows are 4.1.10. test: `tests/terminals/test_host_manager.py::test_prepare_commit_persists_before_commit`.\n\
+    3.1.15: Adoption treats a prepared-only host entry as not-yet-live: it does not\
+    \ promote `pending \u2192 live`. After control loss the prepared entry stays claimable\
+    \ until `commit_deadline_ms`; a new authenticated control connection claims the\
+    \ owner and persists `{pgid, start_time}` before any commit. Observer bind-before-replay\
+    \ is 4.2.9. Host-side expiry follows the pending-miss rule. test: `tests/terminals/test_host_manager.py::test_reconcile_does_not_promote_uncommitted_prepare`.\n\
+    3.1.16: `crates/gterminal/Cargo.toml` declares `[[bin]] name = \"gterm\"` with\
+    \ `required-features = [\"vt-engine\"]`. `cargo build -p gobby-terminal` with\
+    \ default features does not compile `src/bin/gterm.rs`; `cargo build -p gobby-terminal\
+    \ --features vt-engine --bin gterm` does. file: `crates/gterminal/Cargo.toml`."
+  labels:
+  - covers:herdr-terminal-client:3.1:3.1.1
+  - covers:herdr-terminal-client:3.1:3.1.2
+  - covers:herdr-terminal-client:3.1:3.1.3
+  - covers:herdr-terminal-client:3.1:3.1.4
+  - covers:herdr-terminal-client:3.1:3.1.5
+  - covers:herdr-terminal-client:3.1:3.1.6
+  - covers:herdr-terminal-client:3.1:3.1.17
+  - covers:herdr-terminal-client:3.1:3.1.18
+  - covers:herdr-terminal-client:3.1:3.1.19
+  - covers:herdr-terminal-client:3.1:3.1.20
+  - covers:herdr-terminal-client:3.1:3.1.21
+  - covers:herdr-terminal-client:3.1:3.1.22
+  - covers:herdr-terminal-client:3.1:3.1.7
+  - covers:herdr-terminal-client:3.1:3.1.8
+  - covers:herdr-terminal-client:3.1:3.1.9
+  - covers:herdr-terminal-client:3.1:3.1.10
+  - covers:herdr-terminal-client:3.1:3.1.12
+  - covers:herdr-terminal-client:3.1:3.1.11
+  - covers:herdr-terminal-client:3.1:3.1.13
+  - covers:herdr-terminal-client:3.1:3.1.14
+  - covers:herdr-terminal-client:3.1:3.1.15
+  - covers:herdr-terminal-client:3.1:3.1.16
+  tdd: true
+  source_section: '3.1'
+  implementation_domain: backend
+- title: Gobby frame and control protocols on the host
+  category: code
+  task_type: feature
+  depends_on:
+  - '3.1'
+  validation_criteria: "3.2.1: Frame protocol round-trips: attach, detach, `SetViewport`,\
+    \ `SetScrollOffset`/`ScrollOffsetApplied`, per-observer sizing and independent\
+    \ scroll offsets at two attachments off one terminal, and both encodings. test:\
+    \ `crates/gterminal/tests/frame_protocol.rs::attach_viewport_and_observer_sizing`.\n\
+    3.2.2: On top of the 3.1 authenticated connection, the control protocol serves\
+    \ spawn/`spawn_prepared`/`spawn_commit`/kill/resize/snapshot/write/`reserve_observer`/`release_observer`/subscribe_events\
+    \ over JSON lines with correlation ids; `host_shutdown` remains the 3.1 verb on\
+    \ the same socket. test: `crates/gterminal/tests/control_protocol.rs::control_surface_round_trip`.\n\
+    3.2.3: A `Hello` with a wrong protocol version or invalid local token is rejected\
+    \ with a typed error before any terminal access. test: `crates/gterminal/tests/frame_protocol.rs::hello_rejects_bad_version_and_token`.\n\
+    3.2.4: Both protocols are documented with versioning rules, the read-only frame\
+    \ channel and daemon-only write rule, the backpressure contract, and the corpus\
+    \ regeneration procedure. file: `docs/contracts/gterm-protocols.md`.\n3.2.5: The\
+    \ committed golden corpus round-trips in Rust byte-for-byte for every listed frame\
+    \ and control message, including `Graphics`, `AttachHistory`, `SetScrollOffset`,\
+    \ `ScrollOffsetApplied`, `ping.host_pid`, `host_shutdown`, unreserved `attach_terminal.bin`\
+    \ (`reservation_id` absent), and reserved `attach_terminal_reserved.bin` (`reservation_id`\
+    \ present), and decoding survives partial-read reassembly across arbitrary chunk\
+    \ boundaries while oversized and version-mismatched inputs are rejected with typed\
+    \ errors. test: `crates/gterminal/tests/wire_golden.rs::golden_corpus_bytes_and_fragmented_reads`.\n\
+    3.2.6: A stalled observer that stops reading does not slow or block the lease\
+    \ holder or a second healthy observer; the stalled attachment is resynchronized\
+    \ with a full keyframe after delta drop, and is closed with a typed lag error\
+    \ once it stays over bound past the timeout. test: `crates/gterminal/tests/frame_protocol.rs::slow_observer_resyncs_or_lags_out`.\n\
+    3.2.7: The frame protocol cannot mutate a terminal: its message enum contains\
+    \ no input, no PTY resize, no mode, and no takeover field; a `SetViewport` changes\
+    \ only that attachment's render size and issues no `TIOCSWINSZ`; a `SetScrollOffset`\
+    \ changes only that attachment's rows-from-live-edge and issues no PTY input,\
+    \ mouse-report, or `TIOCSWINSZ`; and a decoder fed a hand-built legacy `Input`\
+    \ or `Resize` frame rejects it as unknown rather than acting on it. test: `crates/gterminal/tests/frame_protocol.rs::frame_channel_is_read_only`.\n\
+    3.2.8: A permanently non-reading attachment cannot grow host memory without bound:\
+    \ its control queue overflow or exceeded delivery deadline closes the attachment\
+    \ with a typed error, host memory for it is released, and the writer plus healthy\
+    \ observers are unaffected; a reconnecting client recovers state from `list` plus\
+    \ a keyframe with no replay buffer involved. test: `crates/gterminal/tests/frame_protocol.rs::control_overflow_closes_attachment_bounded`.\n\
+    3.2.9: Dimension bounds are enforced at `Hello`, `SetViewport`, and control `spawn`/`resize`\
+    \ before any allocation or `TIOCSWINSZ`, rejecting zero, negative, above-maximum,\
+    \ and cell-product-overflow values with typed errors. `AttachTerminal` is not\
+    \ a dimension ingress. test: `crates/gterminal/tests/frame_protocol.rs::dimension_bounds_rejected_before_allocation`.\n\
+    3.2.10: The serialized `operation_seq` ledger decides every case without guessing:\
+    \ exactly the next sequence executes; a gap is refused `operation_gap` without\
+    \ advancing the watermark and succeeds after its missing predecessor; two concurrently\
+    \ dispatched requests cannot both execute against one watermark; a retained sequence\
+    \ returns the recorded outcome without re-executing and is refused typed when\
+    \ its fingerprint differs; an evicted sequence is refused `operation_expired`;\
+    \ and a `kill` outcome remains resolvable after its terminal has exited. test:\
+    \ `crates/gterminal/tests/control_protocol.rs::operation_seq_ledger_is_total`.\n\
+    3.2.13: Across a reconnect the boundary behaves as specified per verb: a `spawn`\
+    \ interrupted before its response converges through reconciliation with no second\
+    \ terminal; a `kill` and a `resize` retried on the new connection are no-ops on\
+    \ an already-satisfied target; and a `write` interrupted before its response is\
+    \ reported indeterminate rather than retried \u2014 a source scan finds no automatic\
+    \ cross-connection write retry, and the client surfaces the state to its caller.\
+    \ test: `crates/gterminal/tests/control_protocol.rs::reconnect_boundary_semantics_per_verb`.\n\
+    3.2.14: Writes are reachable only from the daemon's socket: a frame-socket connection\
+    \ has no verb that reaches a PTY, a control-socket connection is the sole writer\
+    \ path, no lease token or expiry exists in `wire.rs` or the control schema (source\
+    \ scan), and killing the daemon's control connection leaves every frame client\
+    \ still receiving frames and unable to write. test: `crates/gterminal/tests/control_protocol.rs::only_the_control_socket_can_write`.\n\
+    3.2.11: `list` returns title, dimensions, `last_seq`, `commit_state` (`prepared`\
+    \ or `committed`), `pgid`/`start_time`, `spawn_key`, generation-fenced `observer_bind`,\
+    \ and observation health per terminal, and a client that misses exactly one title\
+    \ event with no following event still converges to the correct title from `list`\
+    \ alone. Commit replay, adoption, retry settlement, and destructive cleanup require\
+    \ `terminal_id` and `spawn_key` equality. test: `crates/gterminal/tests/control_protocol.rs::list_recovers_every_lifecycle_field`.\n\
+    3.2.12: An ANSI snapshot of a scrollback larger than `max_bytes` (256 KiB default)\
+    \ returns a response inside the 2 MiB control-line limit, preserves the newest\
+    \ output, drops from the oldest end, and reports `truncated`, `dropped_bytes`,\
+    \ and `total_bytes`; a wide-Unicode history that expands past the cap behaves\
+    \ identically rather than tripping the oversized-line guard. test: `crates/gterminal/tests/control_protocol.rs::snapshot_is_byte_bounded_and_reports_truncation`.\n\
+    3.2.15: Resource bounds are the numbers above: a 2 MiB+1 frame is rejected before\
+    \ allocation; a delta queue hitting 64 entries or 2 MiB drops and resyncs; a control\
+    \ queue hitting 16 entries, 64 KiB, or 2s delivery deadline closes the attachment;\
+    \ a 5s lag timeout closes it; a permanently blocked socket may miss the typed\
+    \ error and still sees EOF; eight viewers of one pane plus saturation across `max_attachments_total`\
+    \ stay within `max_attachments_total \xD7 (2 MiB + 64 KiB) + max_attached_terminals\
+    \ \xD7 tmux_attach_history_max_bytes + (max_attachments_total - 4) \xD7 native_scrollback_max_bytes`;\
+    \ a ninth viewer of one pane is refused typed. test: `crates/gterminal/tests/frame_protocol.rs::resource_bounds_are_numeric_and_eof_on_blocked_peer`.\n\
+    3.2.16: A grid at `MAX_CELLS` filled with maximally expensive cells encodes a\
+    \ keyframe strictly below 2 MiB as `FrameData` **and** as `TerminalAnsi` (including\
+    \ alternating-attribute Unicode); `spawn`/`Hello`/`SetViewport` reject a product\
+    \ above `MAX_CELLS` before allocation; delta overflow of that same grid still\
+    \ recovers with a keyframe the peer accepts in the negotiated encoding. test:\
+    \ `crates/gterminal/tests/frame_protocol.rs::worst_case_keyframe_fits_max_frame_size`.\n\
+    3.2.26: `AttachHistory` is a separate frame: a maximum-size history payload (256\
+    \ KiB UTF-8 plus truncation metadata) is emitted and accepted before a subsequent\
+    \ `MAX_CELLS` keyframe; packing that history into the keyframe is rejected; each\
+    \ frame independently stays strictly below `MAX_FRAME_SIZE`. test: `crates/gterminal/tests/frame_protocol.rs::attach_history_then_max_keyframe_fits`.\n\
+    3.2.17: `subscribe_events` stays inside 256 entries / 256 KiB: title and resize\
+    \ coalesce, an exit is never dropped, overflow closes the subscriber typed, and\
+    \ a reconnect converges from `list` + `last_seq` with host memory released. test:\
+    \ `crates/gterminal/tests/control_protocol.rs::subscribe_events_is_bounded_and_recovers_from_list`.\n\
+    3.2.18: The host registry is unique across connections: a replay of the same `terminal_id`/`spawn_key`/fingerprint\
+    \ (argv/env/cwd/dims plus `reservation_id`/`reserve_key`) returns the existing\
+    \ terminal and the canonical reservation identity; a conflicting fingerprint is\
+    \ `spawn_conflict`; an old-connection spawn completing after a new-connection\
+    \ retry still yields one PTY. test: `crates/gterminal/tests/control_protocol.rs::spawn_identity_is_unique_across_connections`.\n\
+    3.2.19: Internal observers scale with live native terminals: five concurrent native\
+    \ streams under user-attachment saturation each have a daemon output observer\
+    \ bound to a control `reserve_observer` reservation; a sixth native spawn that\
+    \ cannot reserve a slot is refused typed **without preempting** an existing direct\
+    \ gclient or proxy/browser attachment; a frame attach without a reservation cannot\
+    \ consume an internal slot; peak memory stays `max_attachments_total \xD7 (2 MiB\
+    \ + 64 KiB) + max_attached_terminals \xD7 tmux_attach_history_max_bytes + (max_attachments_total\
+    \ - 4) \xD7 native_scrollback_max_bytes`. test: `crates/gterminal/tests/frame_protocol.rs::internal_observers_scale_with_live_native_terminals`.\n\
+    3.2.20: Control disconnect after `spawn_prepared` and before `spawn_commit` keeps\
+    \ the prepared entry and blocked child claimable until `commit_deadline_ms`; `list.observer_bind`\
+    \ stays `reserved` (the prepared entry owns the reservation; the dropped control\
+    \ connection does not free the slot); a new authenticated control connection claims\
+    \ the owner, `list` exposes `pgid`/`start_time` and that `reserved` bind, and\
+    \ a matching `spawn_commit` replay commits once only after persist and attach\
+    \ of that same reservation. Deadline expiry reaps the unexecuted child, removes\
+    \ the prepared entry, drops the prepared-owned reservation, and reports the identity\
+    \ as absent (not committed) on `list`. test: `crates/gterminal/tests/control_protocol.rs::prepare_expires_or_replays_after_control_loss`.\n\
+    3.2.25: After the internal observer frame disconnects on a committed live native\
+    \ terminal, `list` reports `observer_bind: entitled` with no queue allocated;\
+    \ the reconnecting daemon rebinds that entitlement before a new user attach is\
+    \ admitted; restart under full user saturation still resumes `terminal_output`.\
+    \ test: `crates/gterminal/tests/control_protocol.rs::committed_observer_entitlement_rebinds_under_saturation`.\n\
+    3.2.31: Repeated distinct native spawns that reserve, prepare, bind, then lose\
+    \ the frame keep a zero-queue entitlement per prepared entry; the same ceiling\
+    \ holds for the earlier cut \u2014 repeated distinct control connections that\
+    \ `reserve_observer`, receive `spawn_prepared`, and disconnect **before** `AttachTerminal`\
+    \ keep a prepared-owned `reserved` slot each. A further spawn is refused typed\
+    \ before fork once exactly `max_attachments_total - 4` prepared-or-committed entitlements\
+    \ are held; `ping`, `list`, and `host_shutdown` still succeed on those four reserved\
+    \ lifecycle slots; `list` cardinality includes every prepared row; deadline expiry\
+    \ or prepared `kill` frees one slot that a later spawn can reserve; a rebind of\
+    \ the same `terminal_id`/`spawn_key`/generation commits without consuming a second\
+    \ slot. test: `crates/gterminal/tests/control_protocol.rs::prepared_frame_loss_retains_entitlement_and_saturates`.\n\
+    3.2.33: Every `TerminalHostConfig` multiplicand in the peak-memory or list-envelope\
+    \ proof has a documented default, floor, and ceiling: `max_attachments_per_terminal`\
+    \ 1..8, `max_attachments_total` 4..128, `max_attached_terminals` 1..64, `tmux_attach_history_lines`\
+    \ 1..2000, `tmux_attach_history_max_bytes` 1 KiB..256 KiB, plus the existing native-scrollback\
+    \ ranges. Below-minimum and above-maximum values are typed startup refusals in\
+    \ Python and in the host; admitted-maximum values rerun 3.2.15 / 3.2.26 / 3.2.30\
+    \ memory, frame, and list-envelope proofs. The host-side suite is `crates/gterminal/tests/control_protocol.rs::host_config_ranges_reject_and_admit_maximum`.\
+    \ test: `tests/config/test_terminal_host_config.py::test_host_config_ranges_reject_and_admit_maximum`.\n\
+    3.2.32: `control_host_shutdown.json` is in the byte-exact corpus; the Python control\
+    \ client (4.1) decodes the same bytes. test: `crates/gterminal/tests/wire_golden.rs::golden_corpus_covers_host_shutdown`.\n\
+    3.2.21: After measuring `FrameData` and `TerminalAnsi`, `wire_types.rs` constants\
+    \ re-exported from `wire.rs` and `src/gobby/terminals/dimensions.py` carry the\
+    \ same min/max rows, cols, and cells; this leaf's Rust sources stay below 1,000\
+    \ lines. test: `crates/gterminal/tests/wire_golden.rs::python_dimensions_match_wire_constants`.\n\
+    3.2.22: Observer reservations follow reserved(control) \u2192 reserved(prepared\
+    \ entry at `spawn_prepared`) \u2192 bound \u2192 entitled on frame loss for prepared\
+    \ and committed entries: a same-connection `reserve_observer` replay with the\
+    \ same `reserve_key` returns the same `reservation_id`; `spawn` names `reservation_id`\
+    \ and `reserve_key` and `spawn_prepared` transfers that exact reservation to the\
+    \ prepared registry entry; a distinct-key second reservation for the same `terminal_id`\
+    \ is not transferred; a stale generation is refused typed; concurrent replay of\
+    \ the named reservation returns the same identity without a second slot; `AttachTerminal`\
+    \ carrying that exact `reservation_id` transfers ownership to the frame connection;\
+    \ a missing, mismatched, or stale `reservation_id` is a typed refusal with no\
+    \ transfer; an attach that omits `reservation_id` is a user attach and cannot\
+    \ consume the prepared slot; control disconnect releases only reservations with\
+    \ no prepared entry (including an unused distinct-key reservation) and does not\
+    \ drop the prepared-owned one; a prepared-owned `reserved` slot survives control\
+    \ loss and is attached on reconnect rather than re-reserved; a prepared/uncommitted\
+    \ bound observer becomes `entitled` on frame loss and is rebound before commit;\
+    \ a committed live native bound observer becomes `entitled` on frame loss; only\
+    \ prepared `kill`, exit, deadline expiry, or explicit `release_observer` drops\
+    \ that entitlement; stale disconnect and stale release callbacks are generation-guarded.\
+    \ test: `crates/gterminal/tests/control_protocol.rs::reserve_observer_state_machine`.\n\
+    3.2.23: Live-control cleanup does not require disconnect: `release_observer` keyed\
+    \ by `reservation_id` and `reserve_key` is idempotent for repeated and stale-generation\
+    \ calls; `kill` of a prepared `host_terminal_id` closes the barrier, reaps the\
+    \ group, and removes the prepared entry while the control connection stays up.\
+    \ test: `crates/gterminal/tests/control_protocol.rs::release_observer_and_prepared_kill_without_disconnect`.\n\
+    3.2.24: A 1 MiB raw write/paste of worst-case JSON-escaping UTF-8 is delivered\
+    \ (or refused typed at the 1 MiB raw cap) without tripping the 2 MiB line close;\
+    \ the encoded JSON line is preflighted; oversized spawn `argv`/`env`/`cwd` is\
+    \ `request_too_large`; golden write fixtures pin `encoding: \"utf8-b64\"`. test:\
+    \ `crates/gterminal/tests/control_protocol.rs::encoded_control_line_stays_inside_max`.\n\
+    3.2.27: Authenticated `ping` carries `host_pid` as a JSON number equal to the\
+    \ serving process; the golden `control_ping.json` freezes that field; a ping missing\
+    \ `host_pid` is a typed Rust decode error. The Python decoder and its missing-field\
+    \ refusal are 4.1.14. test: `crates/gterminal/tests/control_protocol.rs::ping_carries_host_pid`.\n\
+    3.2.28: `SetScrollOffset` is attachment-local: two native attachments hold independent\
+    \ offsets; a later joiner starts at the live edge until it sets its own; live\
+    \ output while scrolled away does not snap the offset; jump-to-bottom is `rows_from_live_edge:\
+    \ 0`; reconnect restores from a fresh attach at the live edge; applied/max travel\
+    \ on `ScrollOffsetApplied` and are pinned in the golden corpus; an offset past\
+    \ retained scrollback after oldest-first eviction clamps to the new max. test:\
+    \ `crates/gterminal/tests/frame_protocol.rs::set_scroll_offset_is_attachment_local`.\n\
+    3.2.29: Native scrollback plateaus: sustained output past `native_scrollback_max_lines`\
+    \ and past `native_scrollback_max_bytes` evicts oldest rows, updates `{truncated,\
+    \ dropped_bytes, total_bytes}`, keeps host memory at or below the peak formula,\
+    \ and leaves `SetScrollOffset` unable to address evicted history. test: `crates/gterminal/tests/control_protocol.rs::native_scrollback_plateaus_at_configured_ceilings`.\n\
+    3.2.30: Host `list` stays inside the 2 MiB control-line cap at `max_attachments_total\
+    \ + max_attached_terminals` rows with escaping-heavy 1024-byte titles **and**\
+    \ the longest `observation_reason` code (`geometry_exceeds_max_cells`) on every\
+    \ row; a longer OSC or tmux title is truncated to `title_max_bytes` on a code-point\
+    \ boundary and still appears; a free-form reason string is not a legal encoding;\
+    \ the complete encoded envelope is strictly below 2 MiB. test: `crates/gterminal/tests/control_protocol.rs::list_envelope_fits_under_line_cap`.\n\
+    3.2.34: Control `spawn` carries `reservation_id` and `reserve_key` in `control_spawn.json`\
+    \ and in the request fingerprint: a spawn missing either field, naming a reservation\
+    \ for a different `terminal_id`, or naming a stale generation is refused typed\
+    \ before fork; two live distinct-key reservations for one `terminal_id` plus a\
+    \ spawn that names only the second transfers that second reservation and leaves\
+    \ the first connection-owned; disconnect then releases only the unnamed one; a\
+    \ matching replay returns the canonical reservation identity without a second\
+    \ PTY. test: `crates/gterminal/tests/control_protocol.rs::spawn_selects_named_reservation`."
+  labels:
+  - covers:herdr-terminal-client:3.2:3.2.1
+  - covers:herdr-terminal-client:3.2:3.2.2
+  - covers:herdr-terminal-client:3.2:3.2.3
+  - covers:herdr-terminal-client:3.2:3.2.4
+  - covers:herdr-terminal-client:3.2:3.2.5
+  - covers:herdr-terminal-client:3.2:3.2.6
+  - covers:herdr-terminal-client:3.2:3.2.7
+  - covers:herdr-terminal-client:3.2:3.2.8
+  - covers:herdr-terminal-client:3.2:3.2.9
+  - covers:herdr-terminal-client:3.2:3.2.10
+  - covers:herdr-terminal-client:3.2:3.2.13
+  - covers:herdr-terminal-client:3.2:3.2.14
+  - covers:herdr-terminal-client:3.2:3.2.11
+  - covers:herdr-terminal-client:3.2:3.2.12
+  - covers:herdr-terminal-client:3.2:3.2.15
+  - covers:herdr-terminal-client:3.2:3.2.16
+  - covers:herdr-terminal-client:3.2:3.2.26
+  - covers:herdr-terminal-client:3.2:3.2.17
+  - covers:herdr-terminal-client:3.2:3.2.18
+  - covers:herdr-terminal-client:3.2:3.2.19
+  - covers:herdr-terminal-client:3.2:3.2.20
+  - covers:herdr-terminal-client:3.2:3.2.25
+  - covers:herdr-terminal-client:3.2:3.2.31
+  - covers:herdr-terminal-client:3.2:3.2.33
+  - covers:herdr-terminal-client:3.2:3.2.32
+  - covers:herdr-terminal-client:3.2:3.2.21
+  - covers:herdr-terminal-client:3.2:3.2.22
+  - covers:herdr-terminal-client:3.2:3.2.23
+  - covers:herdr-terminal-client:3.2:3.2.24
+  - covers:herdr-terminal-client:3.2:3.2.27
+  - covers:herdr-terminal-client:3.2:3.2.28
+  - covers:herdr-terminal-client:3.2:3.2.29
+  - covers:herdr-terminal-client:3.2:3.2.30
+  - covers:herdr-terminal-client:3.2:3.2.34
+  tdd: true
+  source_section: '3.2'
+  implementation_domain: backend
+- title: gclient Ratatui workspace
+  category: code
+  task_type: feature
+  depends_on:
+  - '3.2'
+  - '2.5'
+  - '1.5'
+  validation_criteria: "3.3.1: `gclient` renders roster + attention from live daemon\
+    \ data with the subscribe-first handshake (no lost or reordered attention transitions\
+    \ across the roster fetch). test: `crates/gclient/tests/reconciliation.rs::subscribe_first_no_regression`.\n\
+    3.3.2: Split/tab/pane management drives per-terminal attach with focus-follows-control:\
+    \ every pane attaches read-only, the focused pane takes control through the daemon's\
+    \ lease surface and routes its keystrokes to the daemon, focus change sends `terminal_release_control`\
+    \ and keeps the pane attached, a `terminal_lease_lost` event renders a read-only\
+    \ state with a take-back affordance, a delayed `terminal_control_result` with\
+    \ a lower `lease_generation` is ignored, an equal-generation `held` or already-released\
+    \ `terminal_control_result` is applied, and an unreachable daemon leaves panes\
+    \ rendering frames while read-only. A source scan finds no host-directed write\
+    \ in the crate. test: `crates/gclient/tests/workspace.rs::focus_moves_control_through_the_daemon`.\n\
+    3.3.3: An actionable attention prompt is answerable from the client through the\
+    \ daemon respond API, including stale-episode (409) surfacing. test: `crates/gclient/tests/attention_flow.rs::respond_via_daemon_api`.\n\
+    3.3.4: Workspace snapshots persist and restore by durable terminal id, dropping\
+    \ dead terminals gracefully. test: `crates/gclient/tests/persist.rs::restore_drops_dead_terminals`.\n\
+    3.3.5: One event-loop-level pass drives the full client loop against scripted\
+    \ endpoints: select a project, spawn through the daemon agent API (no backend\
+    \ field \u2014 backend selection arrives in 4.2), reconcile the returned terminal\
+    \ into a new pane, attach to a scripted frame server and render its first frame,\
+    \ terminate through the daemon API, and observe the pane removed on the lifecycle\
+    \ event while a second pane stays attached and streaming. No real tmux embed is\
+    \ involved; that path is 3.4's. test: `crates/gclient/tests/client_loop.rs::select_spawn_attach_terminate_loop`.\n\
+    3.3.6: `gobby-client` ships a LICENSE and a NOTICE with Upstream and Modifications\
+    \ sections covering its herdr-derived portions, declares `license = \"Apache-2.0\"\
+    `, and records its UI-module accept/reject map in `crates/gclient/UPSTREAM.md`.\
+    \ file: `crates/gclient/NOTICE.md`.\n3.3.7: `crates/gclient` is a root workspace\
+    \ member so `cargo build -p gobby-client` and workspace `nextest` resolve it without\
+    \ `zig` on PATH, and `MANAGED_BIN_VERSION_PINS` carries a `gclient` floor the\
+    \ installer uses. file: `Cargo.toml`.\n3.3.8: The imported UI chrome is carved\
+    \ like the core: no module under `crates/gclient/src/ui/` references herdr agent\
+    \ detection, plugins, worktrees, integrations, persistence, onboarding, release\
+    \ notes, or mobile concepts (carve-guard source scan), and the sidebar/navigator/status\
+    \ render from Gobby roster and attention data. test: `crates/gclient/tests/ui_carve_guard.rs::no_herdr_concepts_in_imported_chrome`.\n\
+    3.3.9: The theme module carries the Gobby token map: state colors match the `.impeccable.md`\
+    \ palette (info 250 / warning 75 / destructive 350 / success by lightness), every\
+    \ state indicator carries an icon or position cue so state survives a monochrome\
+    \ rendering, the ANSI-256/16 degradation orders state by lightness, and both dark\
+    \ and light themes render. test: `crates/gclient/tests/theme.rs::tokens_match_design_contract_and_survive_monochrome`.\n\
+    3.3.10: Terminal views resolve their frame stream only through the frame-source\
+    \ trait, whose sole implementation is the local Unix-socket client; a source scan\
+    \ finds no direct socket dial outside it. file: `crates/gclient/src/frame_source.rs`.\n\
+    3.3.11: `gclient` attaches with `frame_delivery: \"direct\"`, decodes every 2.5\
+    \ terminal-WS golden fixture byte-for-byte, and after a scripted daemon-WS drop\
+    \ re-registers each live pane with a fresh `attachment_id` while rendering observe-only\
+    \ until take-control succeeds. test: `crates/gclient/tests/ws_golden.rs::direct_attach_and_reconnect_reregisters`.\n\
+    3.3.12: The RAII guard restores termios and terminal modes on normal quit, an\
+    \ injected post-raw-mode startup failure, panic, and handled SIGINT/SIGTERM; a\
+    \ second drop is a no-op. test: `crates/gclient/tests/teardown.rs::guard_restores_on_quit_failure_panic_and_signal`.\n\
+    3.3.13: Scrollback/copy is attachment-local: two observers sit at independent\
+    \ offsets, wide-grapheme selection copies the logical line (herdr #2735), live\
+    \ output continues with a new-output indicator, no PTY resize, input, or tmux\
+    \ mutation occurs, and a later-joining pane seeds copy-mode from the `AttachHistory`\
+    \ frame it received rather than requiring `created: true`. test: `crates/gclient/tests/copy_paste.rs::scrollback_copy_is_lease_independent`.\n\
+    3.3.20: Native copy-mode uses `SetScrollOffset`: a later joiner, two independent\
+    \ offsets, live output while scrolled, reconnect, and jump-to-bottom (`0`) each\
+    \ render from host scrollback without PTY input, mouse-report, or `TIOCSWINSZ`;\
+    \ tmux copy-mode still uses `AttachHistory` and distinguishes a soft-wrapped wide-grapheme\
+    \ line from a hard newline. test: `crates/gclient/tests/copy_paste.rs::native_set_scroll_offset_and_tmux_wrap_history`.\n\
+    3.3.14: Paste-to-PTY uses herdr 0.8.0 `paste_payload` via `terminal_paste`/`write_paste`:\
+    \ with the lease and bracketed paste on, a multiline clipboard arrives as one\
+    \ `\\x1b[200~\u2026\\x1b[201~` unit and does not submit each line; without the\
+    \ lease the paste is refused and the PTY is unchanged; oversize is refused typed;\
+    \ `terminal_write_outcome` correlates the paste's `client_write_seq`; modal/copy-search\
+    \ paste stays local. test: `crates/gclient/tests/copy_paste.rs::paste_is_lease_gated_and_bracketed`.\n\
+    3.3.15: Direct frame attach supplies `expected_host_epoch` from `AttachLocator.frame_host_epoch`\
+    \ (native row or adopted host for tmux), compares it to `Welcome.host_epoch` before\
+    \ any `AttachTerminal`, and on mismatch closes with `HostEpochChanged` without\
+    \ sending attach; a replacement-plus-id-reuse fixture never attaches the stale\
+    \ locator on either backend. Direct gclient `AttachTerminal` omits `reservation_id`\
+    \ (user attach) and encodes the unreserved golden. test: `crates/gclient/tests/workspace.rs::frame_attach_refuses_epoch_mismatch_before_attach`.\n\
+    3.3.16: Every hand-maintained file under `crates/gclient/src/` is below 1,000\
+    \ lines after the UI splits. test: `crates/gclient/tests/source_size.rs::no_src_file_at_or_above_1000_lines`.\n\
+    3.3.17: A direct frame EOF, typed lag close, or epoch loss while the daemon WebSocket\
+    \ stays connected sends `terminal_detach{terminal_id, attachment_id}` before any\
+    \ reattach: the old attachment is finalized, its `attachment_id` is stale, the\
+    \ lease is released, and control cannot be reacquired until a fresh frame attach\
+    \ succeeds. test: `crates/gclient/tests/workspace.rs::direct_frame_eof_detaches_before_reattach`.\n\
+    3.3.18: gclient decodes `message_seq`, `lease_generation`, and `client_write_seq`\
+    \ as JSON numbers in `[0, terminal_ws_safe_integer_max]` (`2^53-1`): `2^53-2`\
+    \ and `2^53-1` remain distinct; a fixture or emit of `2^53` is refused `safe_integer_overflow`;\
+    \ the crate never emits strings or floats for these fields. test: `crates/gclient/tests/ws_golden.rs::seq_and_lease_generation_are_safe_integers`.\n\
+    3.3.19: On a still-open daemon WebSocket, `terminal_attachment_finalized` for\
+    \ a live attachment that is mid-fragment marks that `attachment_id` non-live,\
+    \ releases its reassembly accounting, and a subsequent stale fragment for the\
+    \ same id creates no state. The event is applied by exact `attachment_id` even\
+    \ when `lease_generation` did not advance. test: `crates/gclient/tests/ws_golden.rs::finalized_mid_fragment_drops_stale_slice`.\n\
+    3.3.21: The workspace roster requests `GET /api/terminals` with the default `pending|live`\
+    \ filter and follows cursors until exhausted; an unpaged dump is not used; retained\
+    \ history is a separate explicit query. test: `crates/gclient/tests/workspace.rs::roster_follows_paginated_pending_live`.\n\
+    3.3.22: gclient decodes `client_write_seq` and `terminal_write_outcome` from the\
+    \ 2.5 goldens: `2^53-2` and `2^53-1` remain distinct and `2^53` is refused; `delivered`\
+    \ leaves the holder writable; `indeterminate` enters uncertain read-only and does\
+    \ not resend input or paste; a refused lease write stays observe-only; `write_seq_conflict`,\
+    \ `write_seq_expired`, and `write_seq_capacity` clear the in-flight mark without\
+    \ resending and without a second PTY mutation. test: `crates/gclient/tests/ws_golden.rs::write_outcome_enters_uncertain_readonly`."
+  labels:
+  - covers:herdr-terminal-client:3.3:3.3.1
+  - covers:herdr-terminal-client:3.3:3.3.2
+  - covers:herdr-terminal-client:3.3:3.3.3
+  - covers:herdr-terminal-client:3.3:3.3.4
+  - covers:herdr-terminal-client:3.3:3.3.5
+  - covers:herdr-terminal-client:3.3:3.3.6
+  - covers:herdr-terminal-client:3.3:3.3.7
+  - covers:herdr-terminal-client:3.3:3.3.8
+  - covers:herdr-terminal-client:3.3:3.3.9
+  - covers:herdr-terminal-client:3.3:3.3.10
+  - covers:herdr-terminal-client:3.3:3.3.11
+  - covers:herdr-terminal-client:3.3:3.3.12
+  - covers:herdr-terminal-client:3.3:3.3.13
+  - covers:herdr-terminal-client:3.3:3.3.20
+  - covers:herdr-terminal-client:3.3:3.3.14
+  - covers:herdr-terminal-client:3.3:3.3.15
+  - covers:herdr-terminal-client:3.3:3.3.16
+  - covers:herdr-terminal-client:3.3:3.3.17
+  - covers:herdr-terminal-client:3.3:3.3.18
+  - covers:herdr-terminal-client:3.3:3.3.19
+  - covers:herdr-terminal-client:3.3:3.3.21
+  - covers:herdr-terminal-client:3.3:3.3.22
+  tdd: true
+  source_section: '3.3'
+  implementation_domain: backend
+- title: tmux panes observed through the host
+  category: code
+  task_type: feature
+  depends_on:
+  - '3.3'
+  - '2.5'
+  validation_criteria: "3.4.1: A tmux-backend terminal attaches in `gclient` via the\
+    \ host's capture poll, renders the pane, and tracks it across successive polls\
+    \ as content changes; input to that pane is issued by the daemon/`TmuxTerminalRuntime`\
+    \ with `send-keys -H` (the host never writes). A gclient-side invoker in `crates/gclient/src/views/`\
+    \ exercises the same path the workspace uses. test: `crates/gterminal/tests/embed.rs::tmux_capture_poll_round_trip`.\n\
+    3.4.2: Polling stops immediately when the last attachment detaches, the underlying\
+    \ tmux session and its own client survive, and repeated attach/detach cycles accumulate\
+    \ no state. Across an entire attach/observe/detach cycle the pane's full option\
+    \ and property set is byte-identical to a control pane that was never viewed \u2014\
+    \ including `#{pane_pipe}`, which no code path ever sets. test: `crates/gterminal/tests/embed.rs::observation_is_zero_footprint`.\n\
+    3.4.3: Multiple observers of one tmux terminal do not shrink its size and produce\
+    \ no duplicate VT query replies, because no observer is a tmux client and no observer\
+    \ writes to the pane (regression from `activity-panel-live-terminal.md`). test:\
+    \ `crates/gterminal/tests/embed.rs::multi_observer_no_shrink_no_duplicate_replies`.\n\
+    3.4.4: Recursive self-view is refused typed from the client-supplied tmux identity,\
+    \ covering daemon-outside-tmux with gclient inside the target pane, daemon in\
+    \ a different session, a non-target pane of the same session (allowed), and a\
+    \ client outside tmux (allowed). test: `crates/gterminal/tests/embed.rs::self_view_refused_from_client_identity`.\n\
+    3.4.5: Attaching to a pane-granular locator in a multi-window, multi-pane session\
+    \ renders and routes input to the recorded `pane_id`, and the owner's active pane,\
+    \ current window, and window geometry are byte-identical before, during, and after\
+    \ \u2014 including with two simultaneous viewers targeting different panes of\
+    \ the same window. Renaming the session, renaming the window, and `break-pane`-ing\
+    \ the target between two attaches all resolve the same terminal. test: `crates/gterminal/tests/embed.rs::poll_never_mutates_and_identity_survives_layout_changes`.\n\
+    3.4.6: Geometry can never be stale relative to content: every emitted frame carries\
+    \ the dimensions read in the same batched poll as its screen, an owner resize\
+    \ emits the resize event before the first frame at the new size, and owner grow,\
+    \ owner shrink, and a resize racing the first attach all leave the owner authoritative.\
+    \ A `SetViewport` from a viewer changes only that attachment's render size and\
+    \ forwards nothing to tmux. test: `crates/gterminal/tests/embed.rs::geometry_is_atomic_with_content`.\n\
+    3.4.7: Concurrent first attaches to one `locator_key` create exactly one observer\
+    \ (`created: true` for one caller, `false` for the rest); a caller that dies mid-handshake\
+    \ leaves no observer and no polling; a last-detach racing a new attach never reaps\
+    \ an observer with a live attachment; and a failed frame handshake rolls the creation\
+    \ back. test: `crates/gterminal/tests/embed.rs::attach_creates_and_reaps_atomically`.\n\
+    3.4.8: Pane death ends everything cleanly: a killed pane, a pane whose program\
+    \ exits under `remain-on-exit`, and a killed tmux server each produce `TerminalExited`,\
+    \ terminate every attachment, and remove the registry entry, with no attachment\
+    \ surviving the pane and no poll loop left running; the daemon releases its lease\
+    \ record on seeing the exit. test: `crates/gterminal/tests/embed.rs::pane_death_releases_attachments`.\n\
+    3.4.9: Observation is single-mechanism, and its guarantee is sampling fidelity\
+    \ rather than stream fidelity: every emitted frame reconstructs the full observation\
+    \ it was diffed from, including trailing blank cells whose background or style\
+    \ is non-default (`capture-pane -N`, 3.4.21), so a viewer that applies all frames\
+    \ in order holds exactly the screen the most recent poll returned; content already\
+    \ on screen before the first attach appears in the first frame; observed staleness\
+    \ never exceeds one poll interval plus backoff; a source scan finds no `pipe-pane`\
+    \ invocation anywhere in the crate; and the negative case is asserted rather than\
+    \ avoided \u2014 a redraw written and overwritten entirely between two polls is\
+    \ **absent** from the frame stream and this is the documented, tested behavior,\
+    \ not a bug. No acceptance in this section claims per-occurrence delivery or no-drop\
+    \ semantics, because the mechanism cannot provide them. test: `crates/gterminal/tests/embed.rs::sampled_observations_are_faithful_and_bounded`.\n\
+    3.4.11: Mode state with no cell change still produces a frame: hiding and re-showing\
+    \ the cursor with DECTCEM, entering and leaving application-cursor-keys and application-keypad\
+    \ mode, enabling and disabling bracketed paste, each mouse-reporting mode transition\
+    \ including the UTF-8 variant, and a DECSCUSR shape change, a blink-state change,\
+    \ and an OSC 12 cursor-colour change all emit a frame carrying the new state while\
+    \ the captured cells stay byte-identical; and a pane entering tmux copy mode is\
+    \ surfaced as copy-mode rather than rendered as application output. Input-byte\
+    \ encoding for those flags is 2.2.19 \u2014 this host test does not write to tmux.\
+    \ test: `crates/gterminal/tests/embed.rs::mode_transitions_are_observed`.\n3.4.12:\
+    \ Failed polls are classified, not assumed fatal: `#{pane_dead}`, a missing pane,\
+    \ a missing server, and a generation mismatch each emit `TerminalExited` exactly\
+    \ once; a fork failure, an exec timeout, a permission error, a descriptor exhaustion,\
+    \ and an unparseable response against a **live** pane each retry on backoff with\
+    \ the attachment held open, the last good frame retained, and a stale indicator\
+    \ raised, and recovery resumes normal polling with no `TerminalExited` ever emitted;\
+    \ persistent transient failure past the ceiling sets `observation_state: orphaned_observation`\
+    \ on `list` rather than emitting `TerminalExited`; and an unreachable daemon changes\
+    \ none of it. test: `crates/gterminal/tests/embed.rs::transient_poll_failure_never_kills_a_live_pane`.\n\
+    3.4.13: The poll loop is bounded and owned: `tmux_poll_interval_ms` and `tmux_poll_backoff_ceiling_ms`\
+    \ come from this leaf's `TerminalHostConfig` keys with the documented defaults\
+    \ and a rejected below-floor value; `tmux_attach_history_lines`, `tmux_attach_history_max_bytes`,\
+    \ and `max_attached_terminals` are the 3.2 constants this loop consumes. Below-minimum\
+    \ and above-maximum values of those 3.2 keys refuse startup before any poll; admitted-maximum\
+    \ values rerun the shared memory, history-cache, and list-envelope proofs against\
+    \ real tmux observers. Fifty discovered-but-unattached tmux terminals spawn zero\
+    \ tmux processes, twenty attached panes with three viewers each spawn twenty poll\
+    \ loops and a measured process rate within tolerance of `20 / interval`, an attach\
+    \ beyond `max_attached_terminals` distinct panes is refused with the typed capacity\
+    \ error while every existing attachment keeps streaming, a detach frees capacity\
+    \ for a subsequent attach, and host memory returns to its pre-attach level after\
+    \ all attachments detach. test: `crates/gterminal/tests/embed.rs::poll_rate_and_memory_are_bounded_by_attachments`.\n\
+    3.4.10: The changed frame shapes are pinned: this leaf regenerates exactly the\
+    \ 3.2 corpus files named in Targets \u2014 `hello.bin` with optional client tmux\
+    \ identity, unreserved `attach_terminal.bin` (`reservation_id` absent, user/tmux),\
+    \ reserved `attach_terminal_reserved.bin` (`reservation_id` present, native internal),\
+    \ `AttachTerminal` with pane identity, its `created` response, the pane mode-flag\
+    \ block in the frame payload, the standalone `AttachHistory` frame, and the recursive-view,\
+    \ copy-mode, stale-observation, and capacity-refusal shapes; `frame_source.rs`\
+    \ encodes the new `Hello` and locator-aware attach and always omits `reservation_id`\
+    \ (gclient is a user attach); Rust reproduces the fixtures byte-for-byte, and\
+    \ `docs/contracts/gterm-protocols.md` documents the shapes and the regeneration\
+    \ in the same change. test: `crates/gterminal/tests/wire_golden.rs::golden_corpus_covers_pane_attach`.\n\
+    3.4.14: Poll framing survives adversarial titles and screens: `GTERM_TITLE_LEN`\
+    \ is `#{n:pane_title}` (tmux 3.7b byte-length modifier, not `#{p:}` padding);\
+    \ the parser consumes exactly that many UTF-8 bytes of title; a title containing\
+    \ spaces, tabs, newlines, ESC, or a fake numeric-header line does not change parsed\
+    \ pid, start_time, geometry, flags, or liveness; a capture that begins with a\
+    \ header-like line is still treated as screen bytes; title metadata still updates.\
+    \ test: `crates/gterminal/tests/embed.rs::poll_framing_survives_adversarial_title_and_capture`.\n\
+    3.4.15: First attach of an observer generation captures one bounded history window\
+    \ (`capture-pane -p -e -J -S -<N>`) with the documented line and UTF-8 byte caps\
+    \ applied after join, plus truncation metadata; the host caches that `AttachHistory`\
+    \ on the observer and emits it to the creator, a concurrent loser, and a later\
+    \ joiner before each attachment's first keyframe; a same-generation observer does\
+    \ not recapture; detach-to-zero then a new attach captures a new generation; the\
+    \ cache counts in host memory and is freed when the observer is reaped; gclient\
+    \ copy-mode seeds from the frame it received; later polls stay visible-screen\
+    \ only; a max-size history plus a `MAX_CELLS` keyframe are two frames, each below\
+    \ `MAX_FRAME_SIZE`. test: `crates/gterminal/tests/embed.rs::attach_history_is_bounded_and_one_shot`.\n\
+    3.4.19: A tmux pane whose history contains one soft-wrapped wide-grapheme line\
+    \ and one hard-newline-delimited line produces an `AttachHistory` in which those\
+    \ two cases remain distinct after the UTF-8 cap; the same fixture is delivered\
+    \ through direct gclient and the browser-proxy hop. test: `crates/gterminal/tests/embed.rs::attach_history_preserves_soft_wraps`.\n\
+    3.4.18: Saturating `max_attached_terminals` distinct tmux observers, each holding\
+    \ a `tmux_attach_history_max_bytes` cache, stays within the 3.2 peak formula including\
+    \ native-scrollback headroom; detaching those observers releases the caches. test:\
+    \ `crates/gterminal/tests/embed.rs::attach_history_cache_saturates_and_releases`.\n\
+    3.4.20: Polled tmux geometry is a bounds ingress: attach to a pane already above\
+    \ `MAX_CELLS`, and an owner resize that crosses `max_rows`, `max_cols`, or the\
+    \ cell product, each cap stdout before buffering, allocate no grid, raise `observation_state:\
+    \ stale` / `geometry_exceeds_max_cells`, keep the last in-bounds frame, and resume\
+    \ live frames when geometry returns inside bounds. test: `crates/gterminal/tests/embed.rs::external_geometry_over_max_cells_is_recoverable`.\n\
+    3.4.21: Visible-screen polling uses `capture-pane -p -e -N`: a fixture whose right-edge\
+    \ cells are blanks with a non-default background or style appears in the initial\
+    \ keyframe and in a later changed frame at full pane width; omitting `-N` is a\
+    \ failing contrast, not the implementation. AttachHistory remains `-p -e -J -S\
+    \ -<N>`. test: `crates/gterminal/tests/embed.rs::live_capture_preserves_trailing_styled_blanks`.\n\
+    3.4.16: Observation health survives daemon downtime: a ceiling crossing while\
+    \ the daemon is down appears on reconnect `list` as `orphaned_observation` with\
+    \ reason and generation; `host_manager` records that health and leaves durable\
+    \ `terminals.state` `live` for `stale` and `orphaned_observation`; a later successful\
+    \ poll returns `observation_state: live` on the same `terminal_id` with ownership,\
+    \ run linkage, attachments, and lease intact; confirmed absence (including tmux\
+    \ generation mismatch) is the only observation path that emits `TerminalExited`\
+    \ and CASes the row to `exited`; `mark_orphaned` is not called for observation\
+    \ health. test: `tests/terminals/test_host_manager.py::test_observation_state_reconverges_after_daemon_downtime`.\n\
+    3.4.17: This leaf's handshake and view edits leave every hand-maintained file\
+    \ under `crates/gclient/src/` below 1,000 lines; if `crates/gclient/src/frame_source.rs`,\
+    \ `crates/gclient/src/tmux_identity.rs`, or `crates/gclient/src/views/mod.rs`\
+    \ would reach the ceiling, the split lands here. test: `crates/gclient/tests/source_size.rs::no_src_file_at_or_above_1000_lines`.\n\
+    3.4.22: Every classified poll outcome maps to the 3.2 `observation_reason` vocabulary\
+    \ (or `null` when live); a fixture that would previously copy unparseable-response\
+    \ or command-error text onto `list` emits `poll_unparseable` (or the matching\
+    \ code) with no raw detail on the wire. test: `crates/gterminal/tests/embed.rs::observation_reason_is_a_closed_enum`."
+  labels:
+  - covers:herdr-terminal-client:3.4:3.4.1
+  - covers:herdr-terminal-client:3.4:3.4.2
+  - covers:herdr-terminal-client:3.4:3.4.3
+  - covers:herdr-terminal-client:3.4:3.4.4
+  - covers:herdr-terminal-client:3.4:3.4.5
+  - covers:herdr-terminal-client:3.4:3.4.6
+  - covers:herdr-terminal-client:3.4:3.4.7
+  - covers:herdr-terminal-client:3.4:3.4.8
+  - covers:herdr-terminal-client:3.4:3.4.9
+  - covers:herdr-terminal-client:3.4:3.4.11
+  - covers:herdr-terminal-client:3.4:3.4.12
+  - covers:herdr-terminal-client:3.4:3.4.13
+  - covers:herdr-terminal-client:3.4:3.4.10
+  - covers:herdr-terminal-client:3.4:3.4.14
+  - covers:herdr-terminal-client:3.4:3.4.15
+  - covers:herdr-terminal-client:3.4:3.4.19
+  - covers:herdr-terminal-client:3.4:3.4.18
+  - covers:herdr-terminal-client:3.4:3.4.20
+  - covers:herdr-terminal-client:3.4:3.4.21
+  - covers:herdr-terminal-client:3.4:3.4.16
+  - covers:herdr-terminal-client:3.4:3.4.17
+  - covers:herdr-terminal-client:3.4:3.4.22
+  tdd: true
+  source_section: '3.4'
+  implementation_domain: backend
+- title: gclient starts independently
+  category: code
+  task_type: feature
+  depends_on:
+  - '3.3'
+  validation_criteria: '3.5.1: `gclient` and `gclient --project` start the TUI without
+    going through the Python `gobby` CLI; `--project` selects the workspace. file:
+    `crates/gclient/src/startup.rs`.
+
+    3.5.2: An unreachable daemon produces a distinct actionable error before any terminal-mode
+    mutation. test: `crates/gclient/tests/startup.rs::test_unreachable_daemon_before_raw_mode`.
+
+    3.5.3: When the host is required and degraded, `gclient` reports the daemon-provided
+    host state (running/adopted, epoch, restart count, last error) and refuses instead
+    of entering a dead backend. test: `crates/gclient/tests/startup.rs::test_reports_degraded_host_state`.'
+  labels:
+  - covers:herdr-terminal-client:3.5:3.5.1
+  - covers:herdr-terminal-client:3.5:3.5.2
+  - covers:herdr-terminal-client:3.5:3.5.3
+  tdd: true
+  source_section: '3.5'
+  implementation_domain: backend
+- title: Package and release gterm and gclient
+  category: config
+  task_type: feature
+  depends_on:
+  - '3.1'
+  - '3.3'
+  validation_criteria: "3.6.1: Both binaries are pinned, installable through the full\
+    \ fallback chain, and version-stamped; gterm's no-zig local-build skip reason\
+    \ is explicit, and gclient's local build succeeds without zig. file: `src/gobby/cli/install_setup_gterm.py`.\n\
+    3.6.2: Release workflows gate tag\u2194version, build exactly the four Stage-0\
+    \ triples (`aarch64-apple-darwin`, `x86_64-apple-darwin`, `x86_64-unknown-linux-gnu`,\
+    \ `aarch64-unknown-linux-gnu`; Zig pinned in the gterminal workflow only), publish\
+    \ sha256-verified assets for those four, and emit no Windows `gterm`/`gclient`\
+    \ release or installer asset. file: `.github/workflows/release-gclient.yml`.\n\
+    3.6.3: Homebrew helper lists and deps diagnostics include both binaries, and `tests/install/test_distribution.py`\
+    \ updates its missing/stale/valid/formula/order cases to the new exhaustive set.\
+    \ file: `src/gobby/install/distribution.py`.\n3.6.4: The development guide documents\
+    \ build, protocols, and the rebuild-and-reinstall rule. file: `docs/guides/gterminal-development-guide.md`.\n\
+    3.6.5: CI packages both crates, the packaged file lists include the declared vendor/provenance/license\
+    \ inputs, unpacked `gobby-terminal` builds with `vt-engine` and pinned Zig, unpacked\
+    \ `gobby-client` builds without Zig, and `cargo publish --dry-run` runs only in\
+    \ those workflows. file: `.github/workflows/release-gterminal.yml`.\n3.6.6: `release-gclient.yml`\
+    \ reads the exact `gobby-terminal` dependency version and fails before package/publish\
+    \ when that version is unpublished on crates.io; a successful gterm publication\
+    \ of *V* is documented as a prerequisite of the `gclient-v*` tag that depends\
+    \ on *V*. file: `.github/workflows/release-gclient.yml`.\n3.6.7: `MANAGED_BIN_VERSION_PINS`\
+    \ for `gdaemon`, `gterm`, and `gclient` each equal the corresponding crate `package.version`;\
+    \ a mismatch fails. test: `tests/install/test_version_pins.py::test_managed_bin_pins_match_crate_versions`."
+  labels:
+  - covers:herdr-terminal-client:3.6:3.6.1
+  - covers:herdr-terminal-client:3.6:3.6.2
+  - covers:herdr-terminal-client:3.6:3.6.3
+  - covers:herdr-terminal-client:3.6:3.6.4
+  - covers:herdr-terminal-client:3.6:3.6.5
+  - covers:herdr-terminal-client:3.6:3.6.6
+  - covers:herdr-terminal-client:3.6:3.6.7
+  tdd: false
+  source_section: '3.6'
+  assigned_agent: backend-developer
+- title: NativeTerminalRuntime over the host control API
+  category: code
+  task_type: feature
+  depends_on:
+  - '2.2'
+  - '3.2'
+  - '3.4'
+  validation_criteria: "4.1.1: `NativeTerminalRuntime` implements the full contract\
+    \ over the control client with epoch-checked liveness. file: `src/gobby/terminals/native_runtime.py`.\n\
+    4.1.2: Injection semantics parity: text+submit, literal text, named keys, and\
+    \ `write_paste` (bracketed wrap when the host reports `MODE_BRACKETED_PASTE`)\
+    \ produce the same observable terminal input as the tmux implementation, with\
+    \ `stage` classification on partial failure. test: `tests/terminals/test_native_runtime.py::test_injection_parity_and_stage`.\n\
+    4.1.3: Native spawn with the host unavailable fails typed and loud; nothing falls\
+    \ back to tmux. test: `tests/terminals/test_native_runtime.py::test_no_silent_fallback`.\n\
+    4.1.4: The Python control client decodes every control response in the 3.2 golden\
+    \ corpus and encodes requests matching its bytes, including `host_shutdown`, line-fragmented\
+    \ reads, oversized-line rejection, and a protocol-version mismatch surfaced as\
+    \ a typed error. test: `tests/terminals/test_wire_golden.py::test_control_client_matches_golden_corpus`.\n\
+    4.1.5: With the native runtime registered, the registry resolves both `tmux` and\
+    \ `native` from a terminal row's backend, and still raises typed on an unknown\
+    \ backend value. test: `tests/terminals/test_runtime_registry.py::test_registry_resolves_both_backends`.\n\
+    4.1.6: A write retried on the same connection with the same `operation_seq` executes\
+    \ exactly once (the target PTY receives the payload and Enter one time) and an\
+    \ expired sequence surfaces typed; a write whose response is lost to a *dropped*\
+    \ connection returns `IndeterminateWrite` \u2014 a distinct result from both success\
+    \ and typed failure, which no caller can collapse to a boolean \u2014 and is not\
+    \ re-sent, while a `kill` and a `resize` in the same situation are safely retried\
+    \ on the new connection. test: `tests/terminals/test_native_runtime.py::test_write_retry_is_exactly_once`.\n\
+    4.1.9: `snapshot` and `snapshot_full` return `SnapshotResult` with the host's\
+    \ truncation metadata preserved in UTF-8 bytes: an oversized capture reports `truncated`\
+    \ with non-zero `dropped_bytes` and the true `total_bytes`, a normal capture reports\
+    \ no truncation, `total_bytes` equals `len(text.encode(\"utf-8\"))` for wide-Unicode\
+    \ content, and the runtime never returns a bare string. test: `tests/terminals/test_native_runtime.py::test_snapshot_metadata_survives_the_adapter`.\n\
+    4.1.7: Control-client reconnect re-runs adoption reconciliation: epoch verified,\
+    \ `pending` rows converged only on `terminal_id` **and** `spawn_key` equality,\
+    \ rows absent from the host list finalized (honoring the in-doubt deadline), host-only\
+    \ terminals reported. test: `tests/terminals/test_native_runtime.py::test_reconnect_reconciles_rows`.\n\
+    4.1.8: The shared Python frame client compares `Welcome.host_epoch` with `AttachLocator.frame_host_epoch`\
+    \ before `AttachTerminal` (native row or adopted host for tmux), refuses a mismatch\
+    \ typed without attaching, and on a match attaches, sets a viewport, sets a scroll\
+    \ offset, and detaches; it decodes every frame type in the 3.2 golden corpus \u2014\
+    \ including `Graphics`, `AttachHistory`, `ScrollOffsetApplied`, unreserved `attach_terminal.bin`,\
+    \ and reserved `attach_terminal_reserved.bin` \u2014 byte-exactly including fragmented\
+    \ reads; native internal encode includes the exact `reservation_id` and user/tmux\
+    \ encode omits it; rejects oversized and version-mismatched frames typed, exposes\
+    \ no write method at all, and honors the bounded-queue contract; both later consumers\
+    \ resolve this one instance through the composition roots. test: `tests/terminals/test_frame_client.py::test_frame_client_matches_golden_corpus`.\n\
+    4.1.10: Host death after `setpgid` and before `spawn_prepared`, after `spawn_prepared`\
+    \ and before `record_process`, after persist and before observer bind, after bind\
+    \ and before `spawn_commit`, and after commit and before the spawn result, each\
+    \ leaves no surviving child and, when persist has run, a pending row whose `process`\
+    \ pair is enough for `killpg`. Control-connection drop in each of those same intervals\
+    \ leaves the child blocked and the prepared entry claimable until `commit_deadline_ms`;\
+    \ after a successful `spawn_prepared`, `list.observer_bind` stays `reserved` and\
+    \ reconnect attaches that same reservation by presenting its exact `reservation_id`\
+    \ on `AttachTerminal` rather than allocating a second slot. A still-listed prepared\
+    \ row with `observer_bind: none` is refused typed with no second reserve and no\
+    \ `commit_spawn`. Reconnect claims the owner, persists `{pgid, start_time}` from\
+    \ `list` if needed, binds or reuses the internal observer, then `commit_spawn`.\
+    \ A `commit_spawn` attempted before persist or bind is refused. Deadline expiry\
+    \ after the same drop reaps the unexecuted child, drops the prepared-owned reservation,\
+    \ and leaves the row unpromoted. test: `tests/terminals/test_native_runtime.py::test_spawn_prepare_commit_survives_host_death`.\n\
+    4.1.13: The control client encodes write/paste as `utf8-b64`, preflights the encoded\
+    \ JSON line, and surfaces `request_too_large` for oversized spawn metadata without\
+    \ closing the socket. test: `tests/terminals/test_native_runtime.py::test_control_client_preflights_encoded_line`.\n\
+    4.1.14: `host_client.py` decodes `control_ping.json` with `host_pid` frozen and\
+    \ rejects a ping missing `host_pid` as a typed decode error; this clause runs\
+    \ `tests/terminals/test_wire_golden.py` through `src/gobby/terminals/host_client.py`,\
+    \ not the 3.2 Rust host test. test: `tests/terminals/test_wire_golden.py::test_control_ping_requires_host_pid`.\n\
+    4.1.15: Construction-failure rollback closes native control and frame clients\
+    \ acquired during init; after a later init failure those sockets are gone and\
+    \ no reconnect task remains. test: `tests/test_runner_rollback.py::test_native_clients_close_on_construction_rollback`.\n\
+    4.1.16: The same later-init-failure fixture as 3.1.20 proves client close happens\
+    \ after drain on the spawned branch and still happens on the adopted branch; reconnect/health\
+    \ producers are stopped first. test: `tests/test_runner_rollback.py::test_terminal_rollback_orders_drain_before_client_close`.\n\
+    4.1.17: `host_client.host_shutdown` encodes the 3.2 `control_host_shutdown.json`\
+    \ bytes, treats a lost response plus verified host death as success, and is the\
+    \ drain used by incompatible-host replacement, full stop, and construction rollback.\
+    \ test: `tests/terminals/test_wire_golden.py::test_control_host_shutdown_round_trip`.\n\
+    4.1.18: The same blocked-drain sentinel as 3.1.21 proves `GobbyRunner.create`\
+    \ and both `run_daemon` failure branches await drain and client close before PID\
+    \ cleanup or exit. test: `tests/test_runner_rollback.py::test_terminal_rollback_awaited_before_exit`.\n\
+    4.1.11: On native, an attention respond racing a lease-holder `write_text` serializes\
+    \ under the coordinator lock with no interleaved bytes, matching 2.2.12. test:\
+    \ `tests/terminals/test_native_runtime.py::test_attention_and_lease_writes_serialize_native`.\n\
+    4.1.12: A native `run_sequence` holds the lock across `Escape`/delay/text/delay/`Enter`;\
+    \ a concurrent lease-holder write cannot interleave or be submitted by the sequence\
+    \ `Enter`. test: `tests/terminals/test_native_runtime.py::test_sequence_holds_lock_across_steps_native`.\n\
+    4.1.19: The Python control client encodes `reservation_id` and `reserve_key` on\
+    \ every native `spawn` to match the 3.2 spawn golden, decodes the canonical reservation\
+    \ identity on `spawn_prepared`, and surfaces a missing, mismatched, or stale-generation\
+    \ reservation as a typed host error with no retry that would mint a second reservation.\
+    \ test: `tests/terminals/test_wire_golden.py::test_control_spawn_carries_reservation_identity`."
+  labels:
+  - covers:herdr-terminal-client:4.1:4.1.1
+  - covers:herdr-terminal-client:4.1:4.1.2
+  - covers:herdr-terminal-client:4.1:4.1.3
+  - covers:herdr-terminal-client:4.1:4.1.4
+  - covers:herdr-terminal-client:4.1:4.1.5
+  - covers:herdr-terminal-client:4.1:4.1.6
+  - covers:herdr-terminal-client:4.1:4.1.9
+  - covers:herdr-terminal-client:4.1:4.1.7
+  - covers:herdr-terminal-client:4.1:4.1.8
+  - covers:herdr-terminal-client:4.1:4.1.10
+  - covers:herdr-terminal-client:4.1:4.1.13
+  - covers:herdr-terminal-client:4.1:4.1.14
+  - covers:herdr-terminal-client:4.1:4.1.15
+  - covers:herdr-terminal-client:4.1:4.1.16
+  - covers:herdr-terminal-client:4.1:4.1.17
+  - covers:herdr-terminal-client:4.1:4.1.18
+  - covers:herdr-terminal-client:4.1:4.1.11
+  - covers:herdr-terminal-client:4.1:4.1.12
+  - covers:herdr-terminal-client:4.1:4.1.19
+  tdd: true
+  source_section: '4.1'
+  implementation_domain: backend
+- title: Opt-in native agent launches with SRT and attention parity
+  category: code
+  task_type: feature
+  depends_on:
+  - '4.1'
+  - '2.3'
+  - '2.4'
+  - '2.5'
+  validation_criteria: "4.2.1: A native launch runs a real provider CLI in a host\
+    \ PTY with SRT wrapping applied before terminal creation and no policy widening.\
+    \ test: `tests/agents/test_native_spawn.py::test_srt_wrapped_native_launch`.\n\
+    4.2.2: Attention end-to-end on a native run: prompt detected from host snapshots,\
+    \ episode opened, respond injected via control write with CAS semantics, episode\
+    \ cleared. test: `tests/agents/test_native_spawn.py::test_attention_episode_native`.\n\
+    4.2.3: `terminal_output` streaming (via the daemon frame observer reserved per\
+    \ 3.2.19), `wait_for_output`, capture-before-kill, and exit finalization all work\
+    \ on native runs, including five concurrent native streams under user-attachment\
+    \ saturation, and the emitted `terminal_output` event sequence is observably equivalent\
+    \ to the tmux FIFO path for the same program output. test: `tests/agents/test_native_spawn.py::test_streaming_wait_capture_exit`.\n\
+    4.2.4: Backend selection is explicit per spawn, recorded on the terminal row,\
+    \ and defaults to tmux. file: `src/gobby/agents/spawn_executor.py`.\n4.2.5: `terminal_backend`\
+    \ is accepted, validated, and carried through every ingress surface \u2014 the\
+    \ MCP tool schema, the HTTP `AgentSpawnRequest` (single and batch), and the dispatch\
+    \ `SpawnAgentAction` through **both** its rule-action and planning-enhancement\
+    \ constructors \u2014 with a valid value preserved end to end and an invalid value\
+    \ rejected typed at each. test: `tests/agents/test_backend_ingress.py::test_backend_field_at_every_spawn_ingress`.\n\
+    4.2.7: The field survives forwarding, not just construction: a rule-action and\
+    \ a planning-enhancement spawn each driven through `dispatch/spawn.py` reach `spawn_agent_impl`\
+    \ with the requested backend and produce a terminal row on that backend; a scheduled\
+    \ spawn forwards the configured default explicitly; and a source scan finds no\
+    \ `spawn_agent_impl` call site that omits the field, including the 2.3 split `_execution.py`\
+    \ and every direct-call or fake suite named in Targets. test: `tests/dispatch/test_spawn_forwarding.py::test_terminal_backend_reaches_the_effect`.\n\
+    4.2.12: `SpawnRequest.terminal_backend` is the only value `execute_spawn` reads\
+    \ for backend selection: an explicit `\"native\"` and a scheduled default each\
+    \ appear unchanged on the constructed `SpawnRequest` and on the resulting terminal\
+    \ row; every `SpawnRequest(` construction named by a source scan populates the\
+    \ field, including the production constructor in `src/gobby/mcp_proxy/tools/spawn_agent/_implementation.py`\
+    \ and the direct constructors and helper expansions in `tests/agents/test_spawn_executor.py`,\
+    \ `tests/agents/test_spawn_executor_droid.py`, `tests/agents/test_srt_spawn.py`,\
+    \ `tests/agents/test_verified_review_regressions.py`, and `tests/mcp_proxy/tools/test_spawn_agent_speed.py`.\
+    \ test: `tests/agents/test_backend_ingress.py::test_spawn_request_carries_resolved_backend`.\n\
+    4.2.8: Truncation metadata reaches storage on the native path, not just the boundary:\
+    \ a capture-before-kill of a scrollback of wide Unicode large enough to exceed\
+    \ the host's byte cap persists `truncated` true with `dropped_bytes` and `total_bytes`\
+    \ counted in UTF-8 bytes, the stored text decodes cleanly because the cut landed\
+    \ on a code-point boundary, and the same capture under the cap persists complete\
+    \ with zero drop. test: `tests/agents/test_native_spawn.py::test_oversized_unicode_capture_metadata_reaches_storage`.\n\
+    4.2.6: A native run's exit is finalized exactly once in each of four cases: live\
+    \ event delivery; exit occurring while the daemon is down (reconciled at next\
+    \ start); exit occurring while the control client is disconnected (reconciled\
+    \ on reconnect); and an event dropped with no reconnect (reconciled by the periodic\
+    \ sweep). Duplicate exit deliveries do not double-finalize. test: `tests/agents/test_native_spawn.py::test_exit_finalization_survives_downtime_and_duplicates`.\n\
+    4.2.9: The internal observer is bound before commit: a child that writes its first\
+    \ bytes and exits as soon as `spawn_commit` releases it is fully present in `terminal_output`\
+    \ and finalized once; the successful bind presents the exact prepared `reservation_id`\
+    \ on `AttachTerminal`; a missing, mismatched, or stale `reservation_id` is the\
+    \ failed-`AttachTerminal` path; a failed `AttachTerminal` after persist sends\
+    \ no commit, `kill`s the prepared entry (which drops the prepared-owned reservation),\
+    \ treats any subsequent `release_observer` of that exact identity as the existing\
+    \ idempotent no-op, and leaves the row unpromoted. test: `tests/agents/test_native_spawn.py::test_observer_bound_before_spawn_commit`.\n\
+    4.2.10: Reconnect after loss before persist, after persist before bind, and after\
+    \ bind before commit each re-establishes persist and observer bind from `list`\
+    \ before `commit_spawn` on the `reserved`, `bound`, and `entitled` paths; a still-bound\
+    \ reservation is reused, an `entitled` prepared slot is rebound, and a prepared-owned\
+    \ `reserved` slot that survived control loss after `spawn_prepared` is attached\
+    \ without a second reserve. Each reserved or entitled attach presents that same\
+    \ `reservation_id` on `AttachTerminal`. `none` on a still-listed prepared row\
+    \ is a typed invariant failure with no second reserve and no commit. test: `tests/agents/test_native_spawn.py::test_prepared_reconnect_rebinds_before_commit`.\n\
+    4.2.13: Repeated prepared frame-loss under user saturation keeps each prepared\
+    \ entitlement; the same ceiling holds for repeated distinct connections that reserve,\
+    \ receive `spawn_prepared`, and disconnect before bind: a further native spawn\
+    \ is refused typed before `prepare_spawn` once `max_attachments_total - 4` entitlements\
+    \ are held; the four lifecycle slots remain usable; deadline expiry or prepared\
+    \ `kill` frees one slot that a later spawn can reserve. test: `tests/agents/test_native_spawn.py::test_prepared_frame_loss_saturates_then_expires`.\n\
+    4.2.14: Native observer reserve/bind/commit/failure cleanup is inside `execute_spawn`,\
+    \ not `runner_broadcasting`: a source scan finds no `reserve_observer` at a spawn\
+    \ ingress other than that primitive; a native-default `terminal_create` saturates\
+    \ at `max_attachments_total - 4` and is refused typed before fork; prepared `kill`\
+    \ or `commit_deadline_ms` expiry frees one slot that a later `terminal_create`\
+    \ can reserve. test: `tests/servers/test_terminal_ws_create.py::test_native_create_saturates_then_expires`.\n\
+    4.2.11: After a daemon restart that drops the internal observer frame on a committed\
+    \ live native terminal at full user-attachment saturation, the daemon rebinds\
+    \ the host `entitled` slot and `terminal_output` resumes; no user attachment is\
+    \ preempted. test: `tests/agents/test_native_spawn.py::test_committed_observer_rebinds_under_user_saturation`.\n\
+    4.2.15: `execute_spawn` forwards the reserved `{reservation_id, reserve_key}`\
+    \ on native `prepare_spawn`: a distinct-key second reservation for the same `terminal_id`\
+    \ is not the one transferred; a stale-generation or missing identity is refused\
+    \ typed before fork; a matching replay returns the canonical reservation without\
+    \ a second PTY; control disconnect after a named `spawn_prepared` still leaves\
+    \ `observer_bind: reserved` and releases only an unused distinct-key reservation.\
+    \ test: `tests/agents/test_native_spawn.py::test_spawn_carries_reservation_identity`."
+  labels:
+  - covers:herdr-terminal-client:4.2:4.2.1
+  - covers:herdr-terminal-client:4.2:4.2.2
+  - covers:herdr-terminal-client:4.2:4.2.3
+  - covers:herdr-terminal-client:4.2:4.2.4
+  - covers:herdr-terminal-client:4.2:4.2.5
+  - covers:herdr-terminal-client:4.2:4.2.7
+  - covers:herdr-terminal-client:4.2:4.2.12
+  - covers:herdr-terminal-client:4.2:4.2.8
+  - covers:herdr-terminal-client:4.2:4.2.6
+  - covers:herdr-terminal-client:4.2:4.2.9
+  - covers:herdr-terminal-client:4.2:4.2.10
+  - covers:herdr-terminal-client:4.2:4.2.13
+  - covers:herdr-terminal-client:4.2:4.2.14
+  - covers:herdr-terminal-client:4.2:4.2.11
+  - covers:herdr-terminal-client:4.2:4.2.15
+  tdd: true
+  source_section: '4.2'
+  implementation_domain: backend
+- title: Web terminal parity through the host for both backends
+  category: code
+  task_type: feature
+  depends_on:
+  - '4.1'
+  - '2.5'
+  - '3.4'
+  validation_criteria: "4.3.1: The web terminal attaches (`frame_delivery: \"proxy\"\
+    `), streams, types into, pastes into, resizes, set-viewports, and detaches from\
+    \ a native terminal via the daemon proxy with no frontend renderer changes beyond\
+    \ backend-neutral plumbing. test: `tests/servers/test_native_web_proxy.py::test_web_attach_native_terminal`.\n\
+    4.3.2: WS connection close, host-frame EOF, typed lag close, relay overflow, and\
+    \ host loss each call the 2.5 attachment finalizer: the daemon's host frame attachment\
+    \ and its lease record entry are released, and control requires a fresh attach.\
+    \ test: `tests/servers/test_native_web_proxy.py::test_disconnect_releases_lease`.\n\
+    4.3.3: A web attach starts read-only, takes control only via `terminal_take_control`\
+    \ (answered by `terminal_control_result` carrying `lease_generation`), renders\
+    \ read-only on `terminal_lease_lost` when a gclient takeover displaces it, ignores\
+    \ a delayed grant with a lower generation, and refuses input from a non-holding\
+    \ attachment with a typed reason; and the write is dispatched by backend \u2014\
+    \ a native terminal's input reaches the host on the control channel, a tmux terminal's\
+    \ reaches the pane through `TmuxTerminalRuntime` with no host write involved,\
+    \ and in neither case does the frame attachment carry input. test: `tests/servers/test_native_web_proxy.py::test_web_read_only_until_explicit_takeover`.\n\
+    4.3.4: The daemon relays through the shared 4.1 frame client with no second decoder\
+    \ in the repo; a stalled browser connection resynchronizes via keyframe while\
+    \ writable, then frame-queue overflow or send timeout closes **that** WebSocket\
+    \ and finalizes every attachment on it; the host, a lease holder on a different\
+    \ connection, and a second browser tab stay up; daemon memory for the stalled\
+    \ connection is released. test: `tests/servers/test_native_web_proxy.py::test_shared_decoder_and_slow_browser`.\n\
+    4.3.5: `TmuxPTYBridge` has zero references anywhere in `src` or `tests` \u2014\
+    \ class, export, construction sites, `tests/agents/test_tmux.py`, and `tests/agents/test_tmux_integration.py`\
+    \ all migrated or deleted \u2014 a browser attach to a tmux terminal creates no\
+    \ additional tmux client and mutates nothing on the pane, and with a browser tab\
+    \ and a gclient pane viewing the same external pane simultaneously the owner's\
+    \ window geometry and active pane are unchanged, both surfaces share one observer,\
+    \ takeover works in both directions through the daemon lease record, and a browser\
+    \ resize on the `external` terminal is refused by the daemon and issues no tmux\
+    \ command. test: `tests/servers/test_web_tmux_through_host.py::test_browser_and_gclient_share_one_observer`.\n\
+    4.3.6: Two browser observers of one terminal can `terminal_set_viewport` independently\
+    \ while a lease-holder `terminal_resize` is the only path that changes native\
+    \ PTY size or is refused on an `external` tmux pane; a browser `terminal_paste`\
+    \ without the lease is refused and does not reach `write_paste`. test: `tests/servers/test_native_web_proxy.py::test_viewport_independent_of_resize_and_paste_is_leased`.\n\
+    4.3.7: The proxy forwards `AttachHistory` as `terminal_attach_history` before\
+    \ that attachment's first `terminal_output` keyframe (creator, concurrent loser,\
+    \ later joiner); a maximum-size history plus a `MAX_CELLS` `TerminalAnsi` keyframe\
+    \ are two logical events; each event's complete JSON is preflighted; a message\
+    \ \u2265 2 MiB is emitted as `terminal_ws_fragment` slices whose fully wrapped\
+    \ JSON stays strictly below 2 MiB; a maximum alternating-attribute Unicode grid\
+    \ survives `TerminalAnsi` and this hop. test: `tests/servers/test_native_web_proxy.py::test_attach_history_then_max_keyframe_is_fragmented_under_cap`.\n\
+    4.3.8: Fragment reassembly is owned by `useTmuxSessions.ts`: back-to-back messages\
+    \ on one attachment increment `message_seq` and apply in order; two attachments\
+    \ may interleave slices without mixing payloads; a complete fragmented `terminal_attach_history`\
+    \ applies before that attachment's first keyframe; an index gap, a second `message_seq`\
+    \ while one is incomplete, a timeout, a decoded payload of `terminal_ws_fragment_max_reassembly_bytes\
+    \ + 1` (16 MiB + 1), lag close, and disconnect each drop the buffer and apply\
+    \ nothing. test: `web/src/hooks/__tests__/useTmuxSessions.test.ts::test_fragment_reassembly_and_cleanup`.\n\
+    4.3.9: An end-to-end near-2-MiB escape-dense `TerminalAnsi` host frame (worst-case\
+    \ JSON expansion approaching 12 MiB) is fragmented by the producer, reassembled\
+    \ by `useTmuxSessions.ts` under the shared 16 MiB ceiling, and applied as one\
+    \ event; a reconstructed payload one byte over that ceiling is refused `fragment_too_large`\
+    \ and applies nothing. test: `tests/servers/test_native_web_proxy.py::test_escape_dense_near_2mib_frame_reassembles_and_one_byte_over_is_rejected`.\n\
+    4.3.10: Per-WebSocket decoded-reassembly bytes across all live attachments stay\
+    \ \u2264 `terminal_ws_fragment_max_socket_reassembly_bytes` (64 MiB): the reducer\
+    \ reserves the incoming slice before append and refuses overflow `fragment_socket_budget`\
+    \ without applying an event; a fragment whose `attachment_id` is not live starts\
+    \ no buffer; accounting is released on completion, sequence error, timeout, lag,\
+    \ detach, `terminal_attachment_finalized`, finalizer, and disconnect. A multi-attachment\
+    \ saturation that would exceed 64 MiB and a fragment after finalizer each apply\
+    \ nothing. Adjacent `message_seq` values `2^53-2` and `2^53-1` remain distinct;\
+    \ a producer value of `2^53` is refused before emit. test: `web/src/hooks/__tests__/useTmuxSessions.test.ts::test_socket_reassembly_budget_and_stale_fragments`.\n\
+    4.3.11: An observe-only proxy attachment finalized mid-fragment by an attachment-local\
+    \ cause (`proxy_frame_eof` / `host_loss`) emits `terminal_attachment_finalized`\
+    \ on the still-open WebSocket via reserved lifecycle capacity; the reducer marks\
+    \ the id non-live by exact `attachment_id`, releases that attachment's reassembly\
+    \ bytes, and a subsequent stale fragment for the same id creates no state. Frame-queue\
+    \ overflow and reserved-send failure are connection-wide (4.3.12, 4.3.14), not\
+    \ this clause. test: `web/src/hooks/__tests__/useTmuxSessions.test.ts::test_observe_only_finalized_drops_stale_fragments`.\n\
+    4.3.12: Reserved lifecycle capacity is 16 entries / 64 KiB / 2s: a saturated frame/relay\
+    \ queue still delivers `terminal_attachment_finalized` on the reserve and the\
+    \ reducer marks that id non-live; reserve overflow, a 17th reserved entry, or\
+    \ a wedged reserved send closes the whole WebSocket so every attachment and reassembly\
+    \ is torn down. test: `tests/servers/test_native_web_proxy.py::test_lifecycle_reserved_send_and_wedged_control_closes_socket`.\n\
+    4.3.14: Connection-wide frame overflow: two attachments on one WebSocket, the\
+    \ enqueue that fills the shared frame queue closes the socket and finalizes both\
+    \ ids; a maximum-cardinality host-loss burst that exceeds the lifecycle reserve\
+    \ also closes the socket rather than leaking reserved buffers. test: `tests/servers/test_native_web_proxy.py::test_frame_queue_overflow_closes_socket_for_all_attachments`.\n\
+    4.3.13: The proxy forwards native `SetScrollOffset` / `ScrollOffsetApplied` as\
+    \ `terminal_set_scroll_offset` / `terminal_scroll_offset_applied` per attachment,\
+    \ and a tmux `AttachHistory` that contains one soft-wrapped wide-grapheme line\
+    \ plus one hard newline still distinguishes those cases after browser-proxy delivery.\
+    \ test: `tests/servers/test_native_web_proxy.py::test_scroll_offset_and_wrapped_attach_history`.\n\
+    4.3.15: A lease-holder `terminal_input` and `terminal_paste` on both backends\
+    \ report `terminal_write_outcome` through the real daemon-to-browser hop: a delivered\
+    \ keystroke stays writable; a withheld tmux `send-keys` reply and a dropped native\
+    \ control write each emit `outcome: \"indeterminate\"` with the same `client_write_seq`;\
+    \ the reducer enters uncertain read-only and does not resend; a subsequent slice\
+    \ or keystroke is not treated as delivered. test: `tests/servers/test_native_web_proxy.py::test_write_outcome_indeterminate_tmux_and_native`.\n\
+    4.3.16: The 2.5.37 write-seq ledger holds through the real tmux and native hop:\
+    \ eviction of a completed seq then replay is `write_seq_expired`; two simultaneous\
+    \ same-seq same-fingerprint writes join one admission; a 65th distinct in-flight\
+    \ seq is `write_seq_capacity`; reusing one seq for a different kind or payload\
+    \ is `write_seq_conflict`; both reducers stay put and do not resend. Browser reducer-state\
+    \ closure is the 2.5.37 `useTmuxSessions.test.ts` case; this clause is the real\
+    \ daemon-to-browser hop. test: `tests/servers/test_native_web_proxy.py::test_write_seq_ledger_tmux_and_native`."
+  labels:
+  - covers:herdr-terminal-client:4.3:4.3.1
+  - covers:herdr-terminal-client:4.3:4.3.2
+  - covers:herdr-terminal-client:4.3:4.3.3
+  - covers:herdr-terminal-client:4.3:4.3.4
+  - covers:herdr-terminal-client:4.3:4.3.5
+  - covers:herdr-terminal-client:4.3:4.3.6
+  - covers:herdr-terminal-client:4.3:4.3.7
+  - covers:herdr-terminal-client:4.3:4.3.8
+  - covers:herdr-terminal-client:4.3:4.3.9
+  - covers:herdr-terminal-client:4.3:4.3.10
+  - covers:herdr-terminal-client:4.3:4.3.11
+  - covers:herdr-terminal-client:4.3:4.3.12
+  - covers:herdr-terminal-client:4.3:4.3.14
+  - covers:herdr-terminal-client:4.3:4.3.13
+  - covers:herdr-terminal-client:4.3:4.3.15
+  - covers:herdr-terminal-client:4.3:4.3.16
+  tdd: true
+  source_section: '4.3'
+  implementation_domain: fullstack
+- title: Cross-backend runtime contract suite
+  category: test
+  task_type: feature
+  depends_on:
+  - '4.2'
+  - '4.3'
+  - '3.6'
+  - '5.2'
+  validation_criteria: '5.1.1: The parametrized suite passes for both backends in
+    CI, with the native leg exercising a real built `gterm`. test: `tests/terminals/test_runtime_contract.py::test_contract_matrix`.
+
+    5.1.2: Daemon-restart continuity holds for both backends: terminals survive, rows
+    reconcile, streams resume, and the native leg proves the host was adopted rather
+    than replaced (same `host_epoch`, no terminal orphaned). test: `tests/terminals/test_runtime_contract.py::test_daemon_restart_continuity`.
+
+    5.1.3: `.github/workflows/terminal-parity-weekly.yml` is scheduled weekly, runs
+    on `macos-latest` and `ubuntu-latest`, builds `gterm`, and invokes the 5.1, 5.2,
+    4.3, and 3.6 focused producers **and** the 3.6 installer fallback-chain package-install
+    smoke on each platform, emitting the slot/run/commit/platform/package-install
+    fields 5.3.4 records. file: `.github/workflows/terminal-parity-weekly.yml`.'
+  labels:
+  - covers:herdr-terminal-client:5.1:5.1.1
+  - covers:herdr-terminal-client:5.1:5.1.2
+  - covers:herdr-terminal-client:5.1:5.1.3
+  tdd: false
+  source_section: '5.1'
+  assigned_agent: backend-developer
+- title: External-session discovery and attach end-to-end
+  category: test
+  task_type: feature
+  depends_on:
+  - '3.4'
+  - '2.5'
+  - '2.4'
+  validation_criteria: "5.2.1: The full external flow \u2014 discover, list, observe-attach,\
+    \ attention respond, detach, expire \u2014 passes against the isolated daemon\
+    \ without relaunching the external CLI. test: `tests/e2e/test_external_terminal_attach.py::test_external_discovery_attach_respond`.\n\
+    5.2.2: With an owner client attached at a different size to a multi-window, multi-pane\
+    \ session: frames render the discovered pane, input reaches that pane, the owner's\
+    \ window dimensions and current window/active-pane selection are unchanged across\
+    \ attach and detach, the pane's property set matches a never-viewed control pane,\
+    \ an owner resize during the attach leaves the owner authoritative and propagates\
+    \ to the viewer, a session rename during the attach keeps the same terminal row\
+    \ and `terminal_id`, and a viewer `SetViewport` changes only the viewer's render\
+    \ size while issuing no tmux command. test: `tests/e2e/test_external_terminal_attach.py::test_external_owner_geometry_and_selection_preserved`.\n\
+    5.2.3: Non-interference extends to modes and to failure: hiding the cursor and\
+    \ toggling application-cursor mode in the owner's program are both observed by\
+    \ the viewer with no cell change, the owner entering tmux copy mode is surfaced\
+    \ as copy-mode rather than rendered as program output, and a tmux invocation forced\
+    \ to fail transiently against the still-live pane leaves the row `live` and the\
+    \ attachment open with a stale indicator rather than emitting an exit. test: `tests/e2e/test_external_terminal_attach.py::test_modes_and_transient_failures_on_a_live_external_pane`."
+  labels:
+  - covers:herdr-terminal-client:5.2:5.2.1
+  - covers:herdr-terminal-client:5.2:5.2.2
+  - covers:herdr-terminal-client:5.2:5.2.3
+  tdd: false
+  source_section: '5.2'
+  assigned_agent: backend-developer
+- title: Native default flip
+  category: config
+  task_type: feature
+  depends_on:
+  - '5.1'
+  - '5.2'
+  - '4.3'
+  - '3.6'
+  validation_criteria: "5.3.1: The shipped default backend is `native` for gobby-owned\
+    \ launches, with the gate evidence linked in the change and rollback documented.\
+    \ file: `src/gobby/install/shared/config/config.yaml`.\n5.3.2: Explicit per-spawn\
+    \ backend selection and external-session tmux handling are unchanged by the flip.\
+    \ A default-native `terminal_create` still goes through the 4.2.14 shared primitive\
+    \ and is refused before fork at `max_attachments_total - 4`. test: `tests/terminals/test_backend_selection.py::test_flip_preserves_explicit_and_external`.\n\
+    5.3.3: With the default `native`, the gate check rejects each of: runs one day\
+    \ apart, runs in non-adjacent weekly slots (including a skipped week across a\
+    \ year boundary), a macOS-only slot paired with a Linux-only slot, adjacent slots\
+    \ where either slot is missing a platform, a 4.3 / 3.6 / package-install line\
+    \ missing from either slot, a bug count timestamped before the later run, a bug\
+    \ count just outside the 24-hour inclusive UTC freshness window, and a same-year\
+    \ numeric `W(n)`/`W(n+1)` pair that is not actually consecutive Mondays \u2014\
+    \ and accepts a fully conforming artifact in which each slot has both platforms\
+    \ and that slot's focused evidence, plus positive ISO `52\u219201` and `53\u2192\
+    01` fixtures and an exact-boundary 24-hour freshness fixture. test: `tests/terminals/test_backend_selection.py::test_flip_gate_rejects_every_nonconforming_artifact`.\n\
+    5.3.4: The evidence artifact records workflow, weekly slot id, run URL, commit\
+    \ sha, UTC timestamp, platforms, and the per-slot package-install result per qualifying\
+    \ run, the 4.3 and 3.6 focused-result lines, and the dated open-bug count with\
+    \ its query and query timestamp. file: `docs/evidence/native-backend-flip.md`."
+  labels:
+  - covers:herdr-terminal-client:5.3:5.3.1
+  - covers:herdr-terminal-client:5.3:5.3.2
+  - covers:herdr-terminal-client:5.3:5.3.3
+  - covers:herdr-terminal-client:5.3:5.3.4
+  tdd: true
+  source_section: '5.3'
+  assigned_agent: backend-developer
+- title: End-to-End Verification
+  category: test
+  task_type: feature
+  depends_on:
+  - '1.1'
+  - '1.2'
+  - '1.3'
+  - '1.4'
+  - '1.5'
+  - '2.1'
+  - '2.2'
+  - '2.3'
+  - '2.4'
+  - '2.5'
+  - '3.1'
+  - '3.2'
+  - '3.3'
+  - '3.4'
+  - '3.5'
+  - '3.6'
+  - '4.1'
+  - '4.2'
+  - '4.3'
+  - '5.1'
+  - '5.2'
+  - '5.3'
+  validation_criteria: 'E1.1: The isolated-daemon end-to-end run covering both backends,
+    both clients (gclient frames + web proxy) sharing one observer per physical terminal
+    with every write crossing the daemon, cross-surface lease takeover in both directions,
+    transport-split outages (daemon-down: gclient direct frames continue read-only
+    and the browser proxy finalizes; write-handler fault with relay up: both surfaces
+    read-only and both still receive frames), an externally owned session whose geometry,
+    active-pane selection, and pane properties survive being viewed and resized, exactly-once
+    write retry within a connection including matching-fingerprint `client_write_seq`
+    replay and `write_seq_conflict` on payload reuse, indeterminate-not-retried write
+    across a reconnect, a native-default `terminal_create` refused before fork at
+    `max_attachments_total - 4`, a prepared-uncommitted spawn remaining claimable
+    across control drop until deadline with `observer_bind: reserved` still charged,
+    persist, attach of that same reservation, and `commit_spawn` on reconnect, a prepared
+    spawn reaped on deadline expiry, and a committed in-flight spawn surviving a reconnect,
+    attention respond, daemon restart with host adoption and exit-during-restart reconciliation,
+    and host-crash recovery passes; all referenced Rust and Python focused suites
+    are green. test: `tests/e2e/test_terminal_client_stack.py::test_terminal_client_stack_end_to_end`.'
+  labels:
+  - covers:herdr-terminal-client:E1:E1.1
+  tdd: false
+  source_section: E1
+  assigned_agent: backend-developer
 ```
