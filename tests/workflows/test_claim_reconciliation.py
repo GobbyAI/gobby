@@ -71,13 +71,13 @@ def claim_context(temp_db: HubDatabase, tmp_path: Path) -> ClaimContext:
 
     sync_bundled_rules(temp_db, get_bundled_rules_path())
     temp_db.execute(
-        "UPDATE workflow_definitions SET source = 'installed' WHERE source = 'template'"
+        "UPDATE rule_definitions SET source = 'installed' WHERE source = 'template'"
     )
     temp_db.execute(
         """
-        UPDATE workflow_definitions
+        UPDATE rule_definitions
         SET enabled = CASE WHEN name = 'require-task-before-edit' THEN TRUE ELSE FALSE END
-        WHERE workflow_type = 'rule'
+        
         """
     )
 

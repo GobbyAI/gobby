@@ -12,7 +12,7 @@ from gobby.adapters.claude_code import _ACTION_FIRST_PREFIXES, is_action_first_r
 from gobby.hooks.events import HookEvent, HookEventType, SessionSource
 from gobby.skills.formatting import skill_fetch_directive
 from gobby.storage.hub.protocol import HubDatabase
-from gobby.storage.workflow_definitions import LocalWorkflowDefinitionManager
+from gobby.storage.definitions.rules import RuleDefinitionManager
 from gobby.workflows.definitions import (
     RuleDefinitionBody,
     RuleEffect,
@@ -47,8 +47,8 @@ def db(temp_db: HubDatabase) -> HubDatabase:
 
 
 @pytest.fixture
-def manager(db: HubDatabase) -> LocalWorkflowDefinitionManager:
-    return LocalWorkflowDefinitionManager(db)
+def manager(db: HubDatabase) -> RuleDefinitionManager:
+    return RuleDefinitionManager(db)
 
 
 def _make_event(
@@ -66,7 +66,7 @@ def _make_event(
 
 
 def _insert_rule(
-    manager: LocalWorkflowDefinitionManager,
+    manager: RuleDefinitionManager,
     name: str,
     body: RuleDefinitionBody,
     priority: int = 100,
@@ -75,7 +75,6 @@ def _insert_rule(
     row = manager.create(
         name=name,
         definition_json=body.model_dump_json(),
-        workflow_type="rule",
         priority=priority,
         enabled=enabled,
     )
@@ -88,7 +87,7 @@ def _sync_bundled_rules(db: HubDatabase) -> None:
 
 
 def _load_bundled_rule(
-    manager: LocalWorkflowDefinitionManager,
+    manager: RuleDefinitionManager,
     rule_name: str,
 ) -> str:
     """Load one bundled rule by name, exercising the production YAML `when:` clause.
@@ -174,7 +173,7 @@ class TestMCPRewriteNesting:
 
     @pytest.mark.asyncio
     async def test_rewrite_nests_inside_arguments(
-        self, db: HubDatabase, manager: LocalWorkflowDefinitionManager
+        self, db: HubDatabase, manager: RuleDefinitionManager
     ) -> None:
         _insert_rule(
             manager,
@@ -216,7 +215,7 @@ class TestMCPRewriteNesting:
 
     @pytest.mark.asyncio
     async def test_rewrite_native_tool_stays_flat(
-        self, db: HubDatabase, manager: LocalWorkflowDefinitionManager
+        self, db: HubDatabase, manager: RuleDefinitionManager
     ) -> None:
         """For native tools (not call_tool), updates should remain top-level."""
         _insert_rule(
@@ -251,7 +250,7 @@ class TestMCPRewriteNesting:
 
     @pytest.mark.asyncio
     async def test_rewrite_mcp_string_arguments(
-        self, db: HubDatabase, manager: LocalWorkflowDefinitionManager
+        self, db: HubDatabase, manager: RuleDefinitionManager
     ) -> None:
         """When arguments is a JSON string, it should be parsed before merging."""
         _insert_rule(
@@ -355,7 +354,7 @@ REQUIRE_UV_REASON = (
 )
 
 
-def _insert_require_uv_block_rule(manager: LocalWorkflowDefinitionManager) -> None:
+def _insert_require_uv_block_rule(manager: RuleDefinitionManager) -> None:
     _insert_rule(
         manager,
         "require-uv",
@@ -379,7 +378,7 @@ class TestRequireUvBlockRule:
 
     @pytest.mark.asyncio
     async def test_allows_bare_python(
-        self, db: HubDatabase, manager: LocalWorkflowDefinitionManager
+        self, db: HubDatabase, manager: RuleDefinitionManager
     ) -> None:
         _insert_require_uv_block_rule(manager)
 
@@ -402,7 +401,7 @@ class TestRequireUvBlockRule:
 
     @pytest.mark.asyncio
     async def test_allows_bare_python_via_normalized_exec_command(
-        self, db: HubDatabase, manager: LocalWorkflowDefinitionManager
+        self, db: HubDatabase, manager: RuleDefinitionManager
     ) -> None:
         _insert_require_uv_block_rule(manager)
 
@@ -431,7 +430,7 @@ class TestRequireUvBlockRule:
         ],
     )
     async def test_passthrough_uv_command(
-        self, db: HubDatabase, manager: LocalWorkflowDefinitionManager, command: str
+        self, db: HubDatabase, manager: RuleDefinitionManager, command: str
     ) -> None:
         """Commands already using uv should not block or rewrite."""
         _insert_require_uv_block_rule(manager)
@@ -453,7 +452,7 @@ class TestRequireUvBlockRule:
 
     @pytest.mark.asyncio
     async def test_compound_command_blocks(
-        self, db: HubDatabase, manager: LocalWorkflowDefinitionManager
+        self, db: HubDatabase, manager: RuleDefinitionManager
     ) -> None:
         """Compound commands should block instead of rewriting python/pip parts."""
         _insert_require_uv_block_rule(manager)
@@ -476,7 +475,7 @@ class TestRequireUvBlockRule:
 
     @pytest.mark.asyncio
     async def test_normalized_exec_command_blocks_python_module_pip(
-        self, db: HubDatabase, manager: LocalWorkflowDefinitionManager
+        self, db: HubDatabase, manager: RuleDefinitionManager
     ) -> None:
         _insert_require_uv_block_rule(manager)
 
@@ -499,7 +498,7 @@ class TestRequireUvBlockRule:
 
     @pytest.mark.asyncio
     async def test_require_uv_false_bypasses_package_management_block(
-        self, db: HubDatabase, manager: LocalWorkflowDefinitionManager
+        self, db: HubDatabase, manager: RuleDefinitionManager
     ) -> None:
         _insert_require_uv_block_rule(manager)
 
@@ -521,7 +520,7 @@ class TestRequireUvBlockRule:
 
     @pytest.mark.asyncio
     async def test_non_python_command_no_block(
-        self, db: HubDatabase, manager: LocalWorkflowDefinitionManager
+        self, db: HubDatabase, manager: RuleDefinitionManager
     ) -> None:
         """Non-python Bash commands should not block or rewrite."""
         _insert_require_uv_block_rule(manager)
@@ -547,7 +546,7 @@ class TestPermissionResponseEffects:
 
     @pytest.mark.asyncio
     async def test_permission_response_keeps_empty_payloads(
-        self, db: HubDatabase, manager: LocalWorkflowDefinitionManager
+        self, db: HubDatabase, manager: RuleDefinitionManager
     ) -> None:
         _insert_rule(
             manager,
@@ -579,7 +578,7 @@ class TestPermissionResponseEffects:
 
     @pytest.mark.asyncio
     async def test_set_retry_preserves_explicit_false(
-        self, db: HubDatabase, manager: LocalWorkflowDefinitionManager
+        self, db: HubDatabase, manager: RuleDefinitionManager
     ) -> None:
         _insert_rule(
             manager,

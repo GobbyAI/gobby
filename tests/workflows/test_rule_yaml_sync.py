@@ -1,7 +1,7 @@
-"""Tests for new rule YAML sync to workflow_definitions table.
+"""Tests for new rule YAML sync to rule_definitions table.
 
 Tests syncing rule YAML files (with `rules:` key and event/effect format)
-into workflow_definitions rows with workflow_type='rule'.
+into rule_definitions rows with workflow_type='rule'.
 """
 
 from __future__ import annotations
@@ -45,7 +45,7 @@ class TestSingleRuleYaml:
     def test_single_rule_synced(
         self, db: HubDatabase, manager: RuleDefinitionManager, rules_dir: Path
     ) -> None:
-        """A YAML file with one rule should create one workflow_definitions row."""
+        """A YAML file with one rule should create one rule_definitions row."""
         (rules_dir / "simple.yaml").write_text(
             """
 rules:
@@ -193,7 +193,7 @@ rules:
     def test_file_level_sources_inherited(
         self, db: HubDatabase, manager: RuleDefinitionManager, rules_dir: Path
     ) -> None:
-        """File-level sources should be set on the workflow_definitions row."""
+        """File-level sources should be set on the rule_definitions row."""
         (rules_dir / "sourced.yaml").write_text(
             """
 sources: [claude, codex]
@@ -219,7 +219,7 @@ rules:
     def test_file_level_tags_inherited(
         self, db: HubDatabase, manager: RuleDefinitionManager, rules_dir: Path
     ) -> None:
-        """File-level tags should be set on the workflow_definitions row."""
+        """File-level tags should be set on the rule_definitions row."""
         (rules_dir / "tagged.yaml").write_text(
             """
 tags: [enforcement, python]

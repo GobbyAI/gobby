@@ -8,7 +8,7 @@ import pytest
 
 from gobby.hooks.events import HookEvent, HookEventType, SessionSource
 from gobby.storage.hub.protocol import HubDatabase
-from gobby.storage.workflow_definitions import LocalWorkflowDefinitionManager
+from gobby.storage.definitions.rules import RuleDefinitionManager
 from gobby.workflows.definitions import RuleDefinitionBody, RuleEffect
 from gobby.workflows.engine.core import RuleEngine
 from gobby.workflows.sync_rules import get_bundled_rules_path, sync_bundled_rules
@@ -21,18 +21,18 @@ def db(temp_db: HubDatabase) -> HubDatabase:
     database = temp_db
     sync_bundled_rules(database, get_bundled_rules_path())
     database.execute(
-        "UPDATE workflow_definitions SET source = 'installed' WHERE source = 'template'"
+        "UPDATE rule_definitions SET source = 'installed' WHERE source = 'template'"
     )
     return database
 
 
 @pytest.fixture
 def effect(db: HubDatabase) -> RuleEffect:
-    manager = LocalWorkflowDefinitionManager(db)
+    manager = RuleDefinitionManager(db)
     row = manager.get_by_name("block-gobby-tasks-cli")
     assert row is not None
 
-    body = RuleDefinitionBody.model_validate_json(row.definition_json)
+    body = RuleDefinitionBody.model_validate(row.definition_json)
     assert body.event.value == "before_tool"
     assert body.resolved_effects[0].type == "block"
     return body.resolved_effects[0]

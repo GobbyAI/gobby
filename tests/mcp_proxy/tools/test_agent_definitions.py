@@ -188,7 +188,7 @@ class TestCreateAgentDefinition:
         assert "max_turns" not in result["agent"]
         assert row is not None
         persisted = (
-            json.loads(row.definition_json)
+            row.definition_json
             if isinstance(row.definition_json, str)
             else row.definition_json
         )

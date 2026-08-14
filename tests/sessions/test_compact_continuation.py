@@ -35,7 +35,7 @@ from gobby.sessions.compact_continuation import (
     schedule_compact_self_continuation,
 )
 from gobby.storage.hub.protocol import HubDatabase
-from gobby.storage.workflow_definitions import WorkflowDefinitionRow
+from gobby.storage.definitions.rules import RuleDefinitionRow
 from gobby.workflows.definitions import RuleEffect
 from gobby.workflows.engine.effects import EffectsMixin
 from gobby.workflows.state_manager import SessionVariableManager
@@ -724,7 +724,7 @@ async def test_load_skill_effect_flows_to_persisted_resume_prompt(
 
     block_reason = await effects._apply_effect(
         RuleEffect(type="load_skill", skill="plan"),
-        cast(WorkflowDefinitionRow, SimpleNamespace()),
+        cast(RuleDefinitionRow, SimpleNamespace()),
         variables,
         {},
         {},

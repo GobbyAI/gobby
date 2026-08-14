@@ -118,7 +118,7 @@ CREATE TABLE IF NOT EXISTS agent_step_workflows (
     updated_at timestamptz DEFAULT now() NOT NULL
 );
 
-CREATE TABLE IF NOT EXISTS workflow_definitions (
+CREATE TABLE IF NOT EXISTS rule_definitions (
     id uuid PRIMARY KEY,
     project_id uuid,
     name text NOT NULL,
@@ -137,7 +137,7 @@ CREATE TABLE IF NOT EXISTS workflow_definitions (
     created_at timestamptz DEFAULT now() NOT NULL,
     updated_at timestamptz DEFAULT now() NOT NULL
 );
-ALTER TABLE workflow_definitions
+ALTER TABLE rule_definitions
     ADD CONSTRAINT idx_wf_defs_name_project UNIQUE NULLS NOT DISTINCT (name, project_id, source);
 """
 

@@ -18,7 +18,7 @@ from gobby.hooks.events import HookEvent, HookEventType, HookResponse, SessionSo
 from gobby.hooks.normalization import normalize_tool_fields
 from gobby.skills.formatting import skill_fetch_directive
 from gobby.storage.hub.protocol import HubDatabase
-from gobby.storage.workflow_definitions import LocalWorkflowDefinitionManager
+from gobby.storage.definitions.rules import RuleDefinitionManager
 from gobby.workflows.definitions import RuleDefinitionBody
 from gobby.workflows.engine.core import RuleEngine
 from gobby.workflows.git_utils import DirtyFiles
@@ -41,8 +41,8 @@ def db(temp_db: HubDatabase) -> HubDatabase:
 
 
 @pytest.fixture
-def manager(db: HubDatabase) -> LocalWorkflowDefinitionManager:
-    return LocalWorkflowDefinitionManager(db)
+def manager(db: HubDatabase) -> RuleDefinitionManager:
+    return RuleDefinitionManager(db)
 
 
 def _sync_bundled(db):
@@ -51,7 +51,7 @@ def _sync_bundled(db):
 
     result = sync_bundled_rules(db, get_bundled_rules_path())
     # Mark templates as installed so get_by_name() finds them
-    db.execute("UPDATE workflow_definitions SET source = 'installed' WHERE source = 'template'")
+    db.execute("UPDATE rule_definitions SET source = 'installed' WHERE source = 'template'")
     return result
 
 
@@ -152,10 +152,10 @@ class TestTaskEnforcementSync:
     """Test that task-enforcement.yaml syncs correctly."""
 
     def test_bundled_file_syncs_all_rules(self, db, manager) -> None:
-        """All task-enforcement rules should sync to workflow_definitions."""
+        """All task-enforcement rules should sync to rule_definitions."""
         _sync_bundled(db)
 
-        rules = manager.list_all(workflow_type="rule")
+        rules = manager.list_all()
         rule_names = {r.name for r in rules}
 
         assert TASK_ENFORCEMENT_RULES.issubset(rule_names), (
@@ -168,20 +168,20 @@ class TestTaskEnforcementSync:
         """All rules should have group='task-enforcement'."""
         _sync_bundled(db)
 
-        rules = manager.list_all(workflow_type="rule")
+        rules = manager.list_all()
         for row in rules:
             if row.name in TASK_ENFORCEMENT_RULES:
-                body = json.loads(row.definition_json)
+                body = row.definition_json
                 assert body.get("group") == "task-enforcement", f"{row.name} missing group"
 
     def test_all_rules_are_valid_pydantic(self, db, manager) -> None:
         """All synced rules should be valid RuleDefinitionBody instances."""
         _sync_bundled(db)
 
-        rules = manager.list_all(workflow_type="rule")
+        rules = manager.list_all()
         for row in rules:
             if row.name in TASK_ENFORCEMENT_RULES:
-                body = RuleDefinitionBody.model_validate_json(row.definition_json)
+                body = RuleDefinitionBody.model_validate(row.definition_json)
                 effect_types = {e.type for e in body.resolved_effects}
                 assert effect_types <= {
                     "block",
@@ -283,7 +283,7 @@ class TestBlockNativeTaskToolsUnclaimed:
         row = manager.get_by_name("block-native-task-tools-unclaimed")
         assert row is not None
 
-        body = RuleDefinitionBody.model_validate_json(row.definition_json)
+        body = RuleDefinitionBody.model_validate(row.definition_json)
         assert body.event.value == "before_tool"
         assert body.effects[0].type == "block"
 
@@ -295,7 +295,7 @@ class TestBlockNativeTaskToolsUnclaimed:
         _sync_bundled(db)
 
         row = manager.get_by_name("block-native-task-tools-unclaimed")
-        body = RuleDefinitionBody.model_validate_json(row.definition_json)
+        body = RuleDefinitionBody.model_validate(row.definition_json)
 
         assert body.when is not None
         assert "is_subagent" in body.when
@@ -312,7 +312,7 @@ class TestBlockNativeTodoWrite:
         row = manager.get_by_name("block-native-todo-write")
         assert row is not None
 
-        body = RuleDefinitionBody.model_validate_json(row.definition_json)
+        body = RuleDefinitionBody.model_validate(row.definition_json)
         assert body.event.value == "before_tool"
         assert body.effects[0].type == "block"
         assert set(body.effects[0].tools) == {"TodoWrite"}
@@ -322,7 +322,7 @@ class TestBlockNativeTodoWrite:
         _sync_bundled(db)
 
         row = manager.get_by_name("block-native-todo-write")
-        body = RuleDefinitionBody.model_validate_json(row.definition_json)
+        body = RuleDefinitionBody.model_validate(row.definition_json)
 
         assert body.when is not None
         assert "is_subagent" in body.when
@@ -339,7 +339,7 @@ class TestRequireTaskBeforeEdit:
         row = manager.get_by_name("require-task-before-edit")
         assert row is not None
 
-        body = RuleDefinitionBody.model_validate_json(row.definition_json)
+        body = RuleDefinitionBody.model_validate(row.definition_json)
         assert body.event.value == "before_tool"
         assert body.effects[0].type == "block"
         assert body.effects[0].tools in (None, [])
@@ -349,7 +349,7 @@ class TestRequireTaskBeforeEdit:
         _sync_bundled(db)
 
         row = manager.get_by_name("require-task-before-edit")
-        body = RuleDefinitionBody.model_validate_json(row.definition_json)
+        body = RuleDefinitionBody.model_validate(row.definition_json)
 
         assert body.when is not None
         assert "task_claimed" in body.when
@@ -611,7 +611,7 @@ class TestRequireClaimedTaskRequiredSkills:
 
         row = manager.get_by_name("require-claimed-task-required-skills")
         assert row is not None
-        body = RuleDefinitionBody.model_validate_json(row.definition_json)
+        body = RuleDefinitionBody.model_validate(row.definition_json)
 
         assert body.event.value == "before_tool"
         assert body.effects[0].type == "block"
@@ -942,7 +942,7 @@ class TestRequireCleanTreeBeforeStatus:
         row = manager.get_by_name("require-clean-tree-before-status")
         assert row is not None
 
-        body = RuleDefinitionBody.model_validate_json(row.definition_json)
+        body = RuleDefinitionBody.model_validate(row.definition_json)
         assert body.event.value == "before_tool"
         assert body.effects[0].type == "block"
         assert "gobby-tasks:close_task" in body.effects[0].mcp_tools
@@ -953,7 +953,7 @@ class TestRequireCleanTreeBeforeStatus:
         _sync_bundled(db)
 
         row = manager.get_by_name("require-clean-tree-before-status")
-        body = RuleDefinitionBody.model_validate_json(row.definition_json)
+        body = RuleDefinitionBody.model_validate(row.definition_json)
 
         assert body.when is not None
         assert "has_target_task_dirty_files" in body.when
@@ -1038,7 +1038,7 @@ class TestRequireCleanTreeBeforeStatus:
         _sync_bundled(db)
 
         row = manager.get_by_name("require-clean-tree-before-status")
-        body = RuleDefinitionBody.model_validate_json(row.definition_json)
+        body = RuleDefinitionBody.model_validate(row.definition_json)
 
         reason = body.effects[0].reason or ""
         assert "uncommitted" in reason.lower()
@@ -1063,7 +1063,7 @@ class TestRequireCommitBeforeStatus:
         row = manager.get_by_name("require-commit-before-status")
         assert row is not None
 
-        body = RuleDefinitionBody.model_validate_json(row.definition_json)
+        body = RuleDefinitionBody.model_validate(row.definition_json)
         assert body.event.value == "before_tool"
         assert body.effects[0].type == "block"
         assert "gobby-tasks:close_task" in body.effects[0].mcp_tools
@@ -1074,7 +1074,7 @@ class TestRequireCommitBeforeStatus:
         _sync_bundled(db)
 
         row = manager.get_by_name("require-commit-before-status")
-        body = RuleDefinitionBody.model_validate_json(row.definition_json)
+        body = RuleDefinitionBody.model_validate(row.definition_json)
 
         assert body.when is not None
         assert "task_has_commits" in body.when
@@ -1105,7 +1105,7 @@ class TestRequireCommitBeforeStatus:
         _sync_bundled(db)
 
         row = manager.get_by_name("require-commit-before-status")
-        body = RuleDefinitionBody.model_validate_json(row.definition_json)
+        body = RuleDefinitionBody.model_validate(row.definition_json)
 
         assert "target_task_has_edits" in body.when
         assert "session_edited_files" not in body.when
@@ -1116,7 +1116,7 @@ class TestRequireCommitBeforeStatus:
         _sync_bundled(db)
 
         row = manager.get_by_name("require-commit-before-status")
-        body = RuleDefinitionBody.model_validate_json(row.definition_json)
+        body = RuleDefinitionBody.model_validate(row.definition_json)
 
         reason = body.effects[0].reason or ""
         assert "no commit linked" in reason.lower()
@@ -1209,7 +1209,7 @@ class TestBlockAskDuringStopCompliance:
         row = manager.get_by_name("block-ask-during-stop-compliance")
         assert row is not None
 
-        body = RuleDefinitionBody.model_validate_json(row.definition_json)
+        body = RuleDefinitionBody.model_validate(row.definition_json)
         assert body.event.value == "before_tool"
         assert body.effects[0].type == "block"
         assert "AskUserQuestion" in body.effects[0].tools
@@ -1219,7 +1219,7 @@ class TestBlockAskDuringStopCompliance:
         _sync_bundled(db)
 
         row = manager.get_by_name("block-ask-during-stop-compliance")
-        body = RuleDefinitionBody.model_validate_json(row.definition_json)
+        body = RuleDefinitionBody.model_validate(row.definition_json)
 
         assert body.when is not None
         assert "stop_attempts" in body.when
@@ -1236,7 +1236,7 @@ class TestTrackTaskClaim:
         row = manager.get_by_name("track-task-claim")
         assert row is not None
 
-        body = RuleDefinitionBody.model_validate_json(row.definition_json)
+        body = RuleDefinitionBody.model_validate(row.definition_json)
         assert body.event.value == "after_tool"
         assert body.effects[0].type == "observe"
 
@@ -1245,7 +1245,7 @@ class TestTrackTaskClaim:
         _sync_bundled(db)
 
         row = manager.get_by_name("track-task-claim")
-        body = RuleDefinitionBody.model_validate_json(row.definition_json)
+        body = RuleDefinitionBody.model_validate(row.definition_json)
 
         assert body.when is not None
         assert "claim_task" in body.when
@@ -1262,7 +1262,7 @@ class TestBlockReopenTask:
         row = manager.get_by_name("block-reopen-task")
         assert row is not None
 
-        body = RuleDefinitionBody.model_validate_json(row.definition_json)
+        body = RuleDefinitionBody.model_validate(row.definition_json)
         assert body.event.value == "before_tool"
         assert body.effects[0].type == "block"
         assert "reopen_task" in (body.when or "")
@@ -1272,7 +1272,7 @@ class TestBlockReopenTask:
         _sync_bundled(db)
 
         row = manager.get_by_name("block-reopen-task")
-        body = RuleDefinitionBody.model_validate_json(row.definition_json)
+        body = RuleDefinitionBody.model_validate(row.definition_json)
 
         assert body.when is not None
         assert "claimed_tasks" in body.when
@@ -1283,7 +1283,7 @@ class TestBlockReopenTask:
         _sync_bundled(db)
 
         row = manager.get_by_name("block-reopen-task")
-        body = RuleDefinitionBody.model_validate_json(row.definition_json)
+        body = RuleDefinitionBody.model_validate(row.definition_json)
 
         reason = body.effects[0].reason or ""
         assert "de_escalate_task" in reason
@@ -1346,7 +1346,7 @@ class TestRequireTaskCreationSkillOnSchema:
         row = manager.get_by_name("require-task-creation-skill-on-schema")
         assert row is not None
 
-        body = RuleDefinitionBody.model_validate_json(row.definition_json)
+        body = RuleDefinitionBody.model_validate(row.definition_json)
         assert body.event.value == "before_tool"
         assert "get_tool_schema" in (body.when or "")
         assert "create_task" in (body.when or "")
@@ -1366,7 +1366,7 @@ class TestRequireTaskTransitionsSkillOnLifecycle:
         row = manager.get_by_name("require-task-transitions-skill-on-lifecycle")
         assert row is not None
 
-        body = RuleDefinitionBody.model_validate_json(row.definition_json)
+        body = RuleDefinitionBody.model_validate(row.definition_json)
         assert body.event.value == "before_tool"
         assert "get_tool_schema" in (body.when or "")
         assert "reopen_task" in (body.when or "")
@@ -1382,7 +1382,7 @@ class TestRequireTaskTransitionsSkillOnLifecycle:
         row = manager.get_by_name("require-task-transitions-skill-on-lifecycle")
         assert row is not None
 
-        body = RuleDefinitionBody.model_validate_json(row.definition_json)
+        body = RuleDefinitionBody.model_validate(row.definition_json)
         block_effects = [effect for effect in body.effects if effect.type == "block"]
         set_effects = [effect for effect in body.effects if effect.type == "set_variable"]
 
@@ -1399,7 +1399,7 @@ class TestTaskLifecycleSkillGates:
         row = manager.get_by_name("require-task-creation-skill-loaded")
         assert row is not None
 
-        body = RuleDefinitionBody.model_validate_json(row.definition_json)
+        body = RuleDefinitionBody.model_validate(row.definition_json)
         assert body.event.value == "before_tool"
         assert "skill_loaded('tasks')" in (body.when or "")
         assert body.effects[0].reason == _skill_fetch_template("tasks")
@@ -1409,7 +1409,7 @@ class TestTaskLifecycleSkillGates:
         row = manager.get_by_name("require-task-transitions-skill-loaded")
         assert row is not None
 
-        body = RuleDefinitionBody.model_validate_json(row.definition_json)
+        body = RuleDefinitionBody.model_validate(row.definition_json)
         assert body.event.value == "before_tool"
         assert "reopen_task" in (body.when or "")
         assert "skill_loaded('tasks')" in (body.when or "")
@@ -1552,7 +1552,7 @@ class TestTaskLifecycleSkillGates:
     async def test_transition_gate_exempts_pipeline_sessions(
         self,
         db: HubDatabase,
-        manager: LocalWorkflowDefinitionManager,
+        manager: RuleDefinitionManager,
     ) -> None:
         """Deterministic pipeline executors cannot load skills; transition gate must not fire."""
         _sync_bundled(db)
@@ -1605,7 +1605,7 @@ class TestWriteRouteParity:
     @staticmethod
     def _task_gate_decision(
         db: HubDatabase,
-        manager: LocalWorkflowDefinitionManager,
+        manager: RuleDefinitionManager,
         tool_name: str,
         tool_input: dict[str, str],
     ) -> tuple[bool, dict[str, object]]:
@@ -1615,7 +1615,7 @@ class TestWriteRouteParity:
         _sync_bundled(db)
         row = manager.get_by_name("require-task-before-edit")
         assert row is not None
-        body = RuleDefinitionBody.model_validate_json(row.definition_json)
+        body = RuleDefinitionBody.model_validate(row.definition_json)
         assert body.when is not None
 
         data: dict[str, object] = {
@@ -1670,7 +1670,7 @@ class TestWriteRouteParity:
     def test_patch_and_inline_interpreter_routes_gate_consistently(
         self,
         db: HubDatabase,
-        manager: LocalWorkflowDefinitionManager,
+        manager: RuleDefinitionManager,
         command: str,
         requires_task: bool,
     ) -> None:
@@ -1699,7 +1699,7 @@ class TestWriteRouteParity:
     def test_write_and_bash_redirect_gate_the_same_target_consistently(
         self,
         db: HubDatabase,
-        manager: LocalWorkflowDefinitionManager,
+        manager: RuleDefinitionManager,
         relative_path: str,
         requires_task: bool,
     ) -> None:
@@ -1779,7 +1779,7 @@ class TestWriteRouteParity:
     def test_shell_command_task_gate_classification_table(
         self,
         db: HubDatabase,
-        manager: LocalWorkflowDefinitionManager,
+        manager: RuleDefinitionManager,
         command: str,
         expected_kind: str,
         repo_mutation: bool,

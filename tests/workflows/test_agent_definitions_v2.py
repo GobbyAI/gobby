@@ -4,19 +4,19 @@ Covers:
 - AgentDefinitionBody model (current expanded field set including surfaces)
 - AgentWorkflows model (pipeline, rules, variables)
 - agent_scope field on RuleDefinitionBody (list[str] | None)
-- Serialization to/from workflow_definitions as workflow_type='agent'
+- Serialization to/from rule_definitions as workflow_type='agent'
 """
 
 from __future__ import annotations
 
-import json
 from typing import Any
 
 import pytest
 from pydantic import ValidationError
 
+from gobby.storage.definitions.agents import AgentDefinitionManager
+from gobby.storage.definitions.rules import RuleDefinitionManager
 from gobby.storage.hub.protocol import HubDatabase
-from gobby.storage.workflow_definitions import LocalWorkflowDefinitionManager
 from gobby.workflows.definitions import RuleDefinitionBody, RuleEffect, RuleTriggerEvent
 
 pytestmark = pytest.mark.unit
@@ -29,8 +29,13 @@ def db(temp_db: HubDatabase) -> HubDatabase:
 
 
 @pytest.fixture
-def manager(db: HubDatabase) -> LocalWorkflowDefinitionManager:
-    return LocalWorkflowDefinitionManager(db)
+def manager(db: HubDatabase) -> AgentDefinitionManager:
+    return AgentDefinitionManager(db)
+
+
+@pytest.fixture
+def rule_manager(db: HubDatabase) -> RuleDefinitionManager:
+    return RuleDefinitionManager(db)
 
 
 # ═══════════════════════════════════════════════════════════════════════
@@ -326,12 +331,12 @@ class TestAgentScopeOnRuleDefinitionBody:
 
 
 # ═══════════════════════════════════════════════════════════════════════
-# Storage: workflow_definitions with workflow_type='agent'
+# Storage: rule_definitions with workflow_type='agent'
 # ═══════════════════════════════════════════════════════════════════════
 
 
 class TestAgentDefinitionStorage:
-    """Agent definitions stored in workflow_definitions as workflow_type='agent'."""
+    """Agent definitions stored in rule_definitions as workflow_type='agent'."""
 
     def _make_agent_json(self, **overrides: Any) -> str:
         from gobby.workflows.definitions import AgentDefinitionBody
@@ -341,7 +346,7 @@ class TestAgentDefinitionStorage:
         body = AgentDefinitionBody(**defaults)
         return body.model_dump_json()
 
-    def test_create_agent_definition(self, manager: LocalWorkflowDefinitionManager) -> None:
+    def test_create_agent_definition(self, manager: AgentDefinitionManager) -> None:
         """Create an agent definition stored as workflow_type='agent'."""
         row = manager.create(
             name="test-developer-agent",
@@ -350,12 +355,11 @@ class TestAgentDefinitionStorage:
                 description="Writes code",
                 instructions="Write clean code.",
             ),
-            workflow_type="agent",
         )
         assert row.name == "test-developer-agent"
         assert row.workflow_type == "agent"
 
-    def test_round_trip_through_storage(self, manager: LocalWorkflowDefinitionManager) -> None:
+    def test_round_trip_through_storage(self, manager: AgentDefinitionManager) -> None:
         """Store and retrieve agent definition, deserialize definition_json."""
         from gobby.workflows.definitions import AgentDefinitionBody, AgentWorkflows
 
@@ -375,12 +379,11 @@ class TestAgentDefinitionStorage:
         row = manager.create(
             name=original.name,
             definition_json=original.model_dump_json(),
-            workflow_type="agent",
             description=original.description,
         )
 
         fetched = manager.get(row.id)
-        restored = AgentDefinitionBody.model_validate_json(fetched.definition_json)
+        restored = AgentDefinitionBody.model_validate(fetched.definition_json)
 
         assert restored.name == original.name
         assert restored.description == original.description
@@ -393,38 +396,36 @@ class TestAgentDefinitionStorage:
         assert restored.workflows.rules == original.workflows.rules
         assert restored.enabled == original.enabled
 
-    def test_list_agents_only(self, manager: LocalWorkflowDefinitionManager) -> None:
-        """list_all(workflow_type='agent') returns only agent definitions."""
+    def test_list_agents_only(
+        self, manager: AgentDefinitionManager, rule_manager: RuleDefinitionManager
+    ) -> None:
+        """Agent list_all does not include rule definitions."""
         manager.create(
             name="test-agent-list",
             definition_json=self._make_agent_json(name="test-agent-list"),
-            workflow_type="agent",
         )
-        manager.create(
+        rule_manager.create(
             name="test-rule-list",
-            definition_json=json.dumps({"event": "before_tool", "effect": {"type": "block"}}),
-            workflow_type="rule",
+            definition_json={"event": "before_tool", "effect": {"type": "block"}},
         )
 
-        agents = manager.list_all(workflow_type="agent")
-        assert len(agents) == 1
-        assert agents[0].name == "test-agent-list"
+        agents = manager.list_all()
+        assert {agent.name for agent in agents} == {"test-agent-list"}
         assert agents[0].workflow_type == "agent"
 
-    def test_soft_delete_agent(self, manager: LocalWorkflowDefinitionManager) -> None:
+    def test_soft_delete_agent(self, manager: AgentDefinitionManager) -> None:
         """Soft-deleted agents are excluded from default queries."""
         row = manager.create(
             name="to-delete",
             definition_json=self._make_agent_json(name="to-delete"),
-            workflow_type="agent",
         )
         manager.delete(row.id)
 
-        agents = manager.list_all(workflow_type="agent")
+        agents = manager.list_all()
         names = [a.name for a in agents]
         assert "to-delete" not in names
 
-    def test_get_agent_by_name(self, manager: LocalWorkflowDefinitionManager) -> None:
+    def test_get_agent_by_name(self, manager: AgentDefinitionManager) -> None:
         """Retrieve agent definition by name via get_by_name."""
         manager.create(
             name="test-coordinator-agent",
@@ -432,7 +433,6 @@ class TestAgentDefinitionStorage:
                 name="test-coordinator-agent",
                 description="Orchestrates work",
             ),
-            workflow_type="agent",
         )
 
         row = manager.get_by_name("test-coordinator-agent")
@@ -441,7 +441,7 @@ class TestAgentDefinitionStorage:
 
         from gobby.workflows.definitions import AgentDefinitionBody
 
-        body = AgentDefinitionBody.model_validate_json(row.definition_json)
+        body = AgentDefinitionBody.model_validate(row.definition_json)
         assert body.name == "test-coordinator-agent"
         assert body.description == "Orchestrates work"
 
@@ -454,7 +454,7 @@ class TestAgentDefinitionStorage:
 class TestAgentScopeStorage:
     """agent_scope on rules survives storage round-trip."""
 
-    def test_rule_with_agent_scope_storage(self, manager: LocalWorkflowDefinitionManager) -> None:
+    def test_rule_with_agent_scope_storage(self, rule_manager: RuleDefinitionManager) -> None:
         """Rule with agent_scope stores and retrieves correctly."""
         body = RuleDefinitionBody(
             event=RuleTriggerEvent.BEFORE_TOOL,
@@ -463,33 +463,29 @@ class TestAgentScopeStorage:
             group="qa-agent",
         )
 
-        row = manager.create(
+        row = rule_manager.create(
             name="no-code-writing",
-            definition_json=body.model_dump_json(),
-            workflow_type="rule",
+            definition_json=body.model_dump(),
         )
 
-        fetched = manager.get(row.id)
-        restored = RuleDefinitionBody.model_validate_json(fetched.definition_json)
+        fetched = rule_manager.get(row.id)
+        restored = RuleDefinitionBody.model_validate(fetched.definition_json)
         assert restored.agent_scope == ["qa"]
         assert restored.group == "qa-agent"
         assert restored.effects[0].type == "block"
 
-    def test_rule_without_agent_scope_storage(
-        self, manager: LocalWorkflowDefinitionManager
-    ) -> None:
+    def test_rule_without_agent_scope_storage(self, rule_manager: RuleDefinitionManager) -> None:
         """Rule without agent_scope (global) stores and retrieves correctly."""
         body = RuleDefinitionBody(
             event=RuleTriggerEvent.BEFORE_TOOL,
             effects=[RuleEffect(type="block", reason="Global rule")],
         )
 
-        row = manager.create(
+        row = rule_manager.create(
             name="global-rule",
-            definition_json=body.model_dump_json(),
-            workflow_type="rule",
+            definition_json=body.model_dump(),
         )
 
-        fetched = manager.get(row.id)
-        restored = RuleDefinitionBody.model_validate_json(fetched.definition_json)
+        fetched = rule_manager.get(row.id)
+        restored = RuleDefinitionBody.model_validate(fetched.definition_json)
         assert restored.agent_scope is None

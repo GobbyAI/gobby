@@ -15,6 +15,15 @@ BEGIN
 
     EXECUTE 'LOCK TABLE workflow_definitions IN ACCESS EXCLUSIVE MODE';
 
+    -- Final baseline no longer creates the ledger; predecessor hops still need
+    -- it so later copies can checkpoint before 381 drops the legacy tables.
+    CREATE TABLE IF NOT EXISTS legacy_copy_ledger (
+        legacy_id uuid PRIMARY KEY,
+        domain text NOT NULL,
+        source_hash text NOT NULL,
+        copied_at timestamptz DEFAULT now() NOT NULL
+    );
+
     SELECT string_agg(format('%s', name), ', ' ORDER BY name)
     INTO dup_names
     FROM (

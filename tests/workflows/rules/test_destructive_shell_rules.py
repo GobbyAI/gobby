@@ -15,7 +15,7 @@ import re
 import pytest
 
 from gobby.storage.hub.protocol import HubDatabase
-from gobby.storage.workflow_definitions import LocalWorkflowDefinitionManager
+from gobby.storage.definitions.rules import RuleDefinitionManager
 from gobby.workflows.definitions import RuleDefinitionBody
 from gobby.workflows.sync_rules import get_bundled_rules_path, sync_bundled_rules
 
@@ -29,8 +29,8 @@ def db(temp_db: HubDatabase) -> HubDatabase:
 
 
 @pytest.fixture
-def manager(db: HubDatabase) -> LocalWorkflowDefinitionManager:
-    return LocalWorkflowDefinitionManager(db)
+def manager(db: HubDatabase) -> RuleDefinitionManager:
+    return RuleDefinitionManager(db)
 
 
 def _sync_bundled(db: HubDatabase) -> None:
@@ -42,7 +42,7 @@ def _get_rule(manager, name) -> RuleDefinitionBody:
     """Get a bundled rule by name and parse its body."""
     row = manager.get_by_name(name)
     assert row is not None, f"Rule {name!r} not found after sync"
-    return RuleDefinitionBody.model_validate_json(row.definition_json)
+    return RuleDefinitionBody.model_validate(row.definition_json)
 
 
 def _effect_matches(effect, command: str) -> bool:
@@ -88,7 +88,7 @@ class TestDestructiveShellSync:
 
     def test_all_rules_synced(self, db, manager) -> None:
         _sync_bundled(db)
-        rules = manager.list_all(workflow_type="rule")
+        rules = manager.list_all()
         rule_names = {r.name for r in rules}
         assert ALL_NEW_RULES.issubset(rule_names), f"Missing: {ALL_NEW_RULES - rule_names}"
 
@@ -420,7 +420,7 @@ class TestNoGitStashInteractive:
     def test_reason_redirects_to_p2p_coordination(
         self,
         db: HubDatabase,
-        manager: LocalWorkflowDefinitionManager,
+        manager: RuleDefinitionManager,
         rule_name: str,
     ) -> None:
         body = _get_rule(manager, rule_name)

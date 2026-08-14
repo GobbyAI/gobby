@@ -2,8 +2,6 @@
 
 from __future__ import annotations
 
-import json
-import uuid
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any, cast
@@ -12,11 +10,11 @@ import pytest
 import yaml
 
 from gobby.hooks.events import HookEvent, HookEventType, SessionSource
+from gobby.storage.definitions.agents import AgentDefinitionManager
 from gobby.storage.hub.protocol import HubDatabase
-from gobby.storage.workflow_definitions import LocalWorkflowDefinitionManager
+from gobby.workflows.agent_models import AgentDefinitionBody
 from gobby.workflows.engine.core import RuleEngine
-from gobby.workflows.step_instances import AgentStepInstanceManager
-from tests.workflows.step_instance_fixtures import make_step_instance
+from gobby.workflows.step_instances import AgentStepInstanceManager, build_step_instance
 
 pytestmark = pytest.mark.unit
 
@@ -115,18 +113,14 @@ def _create_contract_schema(db: HubDatabase) -> None:
         )
         """,
         """
-        CREATE TABLE workflow_definitions (
+        CREATE TABLE agent_definitions (
             id TEXT PRIMARY KEY,
             project_id TEXT,
             name TEXT NOT NULL,
             description TEXT,
-            workflow_type TEXT NOT NULL DEFAULT 'workflow',
-            version TEXT DEFAULT '1.0',
             enabled INTEGER DEFAULT 1,
-            priority INTEGER DEFAULT 100,
-            sources TEXT,
+            enabled_pinned INTEGER DEFAULT 0,
             definition_json TEXT NOT NULL,
-            canvas_json TEXT,
             source TEXT DEFAULT 'installed',
             tags TEXT,
             deleted_at TEXT,
@@ -135,21 +129,32 @@ def _create_contract_schema(db: HubDatabase) -> None:
         )
         """,
         """
-        CREATE TABLE workflow_instances (
+        CREATE TABLE agent_step_workflows (
+            id TEXT PRIMARY KEY,
+            agent_definition_id TEXT NOT NULL UNIQUE,
+            steps_json TEXT NOT NULL,
+            variables_json TEXT DEFAULT '{}',
+            exit_condition TEXT,
+            created_at TEXT,
+            updated_at TEXT
+        )
+        """,
+        """
+        CREATE TABLE agent_step_instances (
             id TEXT PRIMARY KEY,
             session_id TEXT NOT NULL,
-            workflow_name TEXT NOT NULL,
+            agent_step_workflow_id TEXT,
+            agent_name TEXT NOT NULL,
             enabled INTEGER NOT NULL DEFAULT 1,
-            priority INTEGER NOT NULL DEFAULT 100,
             current_step TEXT,
             step_entered_at TEXT,
             step_action_count INTEGER DEFAULT 0,
             total_action_count INTEGER DEFAULT 0,
             variables TEXT DEFAULT '{}',
             context_injected INTEGER DEFAULT 0,
+            snapshot_json TEXT NOT NULL,
             created_at TEXT,
-            updated_at TEXT,
-            UNIQUE(session_id, workflow_name)
+            updated_at TEXT
         )
         """,
         """
@@ -230,37 +235,21 @@ def _install_workflow(
 ) -> AgentStepInstanceManager:
     agent = _agent()
     _create_session(db, session_id=session_id)
-    definition = {
-        "name": agent["name"],
-        "version": agent["version"],
-        "enabled": True,
-        "variables": agent["step_workflow"]["variables"],
-        "steps": agent["step_workflow"]["steps"],
-        "exit_condition": agent["step_workflow"].get("exit_condition"),
-    }
-    definition_manager = LocalWorkflowDefinitionManager(db)
-    existing = definition_manager.get_by_name(agent["name"])
-    if existing is None:
-        definition_manager.create(
-            name=agent["name"],
-            definition_json=json.dumps(definition),
-            workflow_type="workflow",
-            priority=100,
-            enabled=True,
+    body = AgentDefinitionBody.model_validate(agent)
+    definition_manager = AgentDefinitionManager(db)
+    row = definition_manager.get_by_name(body.name)
+    if row is None:
+        step_workflow = (
+            body.step_workflow.model_dump(mode="json") if body.step_workflow is not None else None
         )
-    else:
-        definition_manager.update(
-            existing.id,
-            definition_json=json.dumps(definition),
-            workflow_type="workflow",
-            priority=100,
-            enabled=True,
-        )
+        parent = body.model_dump(mode="json", exclude={"step_workflow"})
+        row = definition_manager.upsert_with_steps(body.name, parent, step_workflow)
     manager = AgentStepInstanceManager(db)
     manager.save(
-        make_step_instance(
-            session_id,
-            agent_name=agent["name"].removesuffix("-steps"),
+        build_step_instance(
+            body,
+            session_id=session_id,
+            step_workflow_id=row.step_workflow_id,
             current_step=current_step,
             variables=dict(agent["step_workflow"]["variables"]),
         )
@@ -659,9 +648,7 @@ async def test_merge_orchestrator_survey_plan_execute_report_path(db: HubDatabas
         session_id="aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaa3003",
         variables={},
     )
-    json_instance = manager.get_for_session(
-        "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaa3003"
-    )
+    json_instance = manager.get_for_session("aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaa3003")
     assert json_instance is not None
     assert json_instance.current_step == "execute"
 

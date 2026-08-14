@@ -65,7 +65,7 @@ def _create_session_row(db: HubDatabase, session_id: str) -> None:
 
 
 def _install_step_workflow(db: HubDatabase, session_id: str, current_step: str) -> None:
-    from gobby.storage.workflow_definitions import LocalWorkflowDefinitionManager
+    from gobby.storage.definitions.rules import RuleDefinitionManager
     from gobby.workflows.agent_models import AgentStepWorkflowBody
     from gobby.workflows.definitions import WorkflowStep
     from gobby.workflows.step_instances import AgentStepInstance, AgentStepInstanceManager
@@ -80,10 +80,9 @@ def _install_step_workflow(db: HubDatabase, session_id: str, current_step: str) 
         ],
         "exit_condition": "current_step == 'terminate'",
     }
-    LocalWorkflowDefinitionManager(db).create(
+    RuleDefinitionManager(db).create(
         name="merge-worker",
         definition_json=json.dumps(definition),
-        workflow_type="workflow",
         enabled=True,
     )
     AgentStepInstanceManager(db).save(

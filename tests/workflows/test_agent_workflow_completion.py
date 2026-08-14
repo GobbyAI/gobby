@@ -21,7 +21,7 @@ from gobby.storage.hub.protocol import HubDatabase
 from gobby.storage.pipeline_subscribers import CompletionSubscriberManager
 from gobby.storage.sessions import SessionManager
 from gobby.storage.tasks import LocalTaskManager, TaskDispatchMutexManager
-from gobby.storage.workflow_definitions import LocalWorkflowDefinitionManager
+from gobby.storage.definitions.agents import AgentDefinitionManager
 from gobby.workflows.agent_models import AgentStepWorkflowBody
 from gobby.workflows.definitions import AgentDefinitionBody
 from gobby.workflows.engine.core import RuleEngine
@@ -83,7 +83,7 @@ def _register_agent_workflow(
     review_error_handlers: list[dict[str, object]] | None = None,
 ) -> AgentStepInstanceManager:
     _create_session(db, session_id)
-    manager = LocalWorkflowDefinitionManager(db)
+    manager = AgentDefinitionManager(db)
     instance_manager = AgentStepInstanceManager(db)
 
     workflow_data = {
@@ -125,7 +125,6 @@ def _register_agent_workflow(
     manager.create(
         name=workflow_name,
         definition_json=json.dumps(workflow_data),
-        workflow_type="workflow",
         priority=100,
         enabled=True,
     )
@@ -156,7 +155,7 @@ def _register_qa_reviewer_workflow(
     session_id: str = AGENT_SESSION_ID,
 ) -> AgentStepInstanceManager:
     _create_session(db, session_id)
-    manager = LocalWorkflowDefinitionManager(db)
+    manager = AgentDefinitionManager(db)
     instance_manager = AgentStepInstanceManager(db)
     agent_path = (
         Path(__file__).resolve().parents[2]
@@ -176,7 +175,6 @@ def _register_qa_reviewer_workflow(
     manager.create(
         name=workflow_name,
         definition_json=json.dumps(workflow_data),
-        workflow_type="workflow",
         priority=100,
         enabled=True,
     )
@@ -338,7 +336,7 @@ class TestAgentWorkflowCompletion:
             variables=variables,
         )
 
-        instance = instance_manager.get_for_session(AGENT_SESSION_ID, "epic-reviewer")
+        instance = instance_manager.get_for_session(AGENT_SESSION_ID)
         assert instance is None
         assert variables["review_complete"] is True
         assert variables["step_workflow_complete"] is True
@@ -412,7 +410,7 @@ class TestAgentWorkflowCompletion:
             variables=variables,
         )
 
-        instance = instance_manager.get_for_session(AGENT_SESSION_ID, "plan-adversary-steps")
+        instance = instance_manager.get_for_session(AGENT_SESSION_ID)
         assert instance is not None
         assert instance.current_step == "review"
         assert instance.variables["review_complete"] is False
@@ -434,7 +432,7 @@ class TestAgentWorkflowCompletion:
             variables=variables,
         )
 
-        instance = instance_manager.get_for_session(AGENT_SESSION_ID, "plan-adversary-steps")
+        instance = instance_manager.get_for_session(AGENT_SESSION_ID)
         assert instance is None
         assert variables["review_complete"] is True
         assert variables["step_workflow_complete"] is True
@@ -490,7 +488,7 @@ class TestAgentWorkflowCompletion:
 
         response = await engine.evaluate(event, session_id=AGENT_SESSION_ID, variables=variables)
 
-        instance = instance_manager.get_for_session(AGENT_SESSION_ID, "plan-adversary-steps")
+        instance = instance_manager.get_for_session(AGENT_SESSION_ID)
         assert instance is None
         assert variables["review_complete"] is True
         assert variables["step_workflow_complete"] is True
@@ -528,7 +526,7 @@ class TestAgentWorkflowCompletion:
             variables=variables,
         )
 
-        instance = instance_manager.get_for_session(AGENT_SESSION_ID, "expansion-qa-steps")
+        instance = instance_manager.get_for_session(AGENT_SESSION_ID)
         assert instance is not None
         assert instance.current_step == "qa_check"
         assert instance.variables["coverage_result_saved"] is True
@@ -544,7 +542,7 @@ class TestAgentWorkflowCompletion:
             variables=variables,
         )
 
-        instance = instance_manager.get_for_session(AGENT_SESSION_ID, "expansion-qa-steps")
+        instance = instance_manager.get_for_session(AGENT_SESSION_ID)
         assert instance is not None
         assert instance.current_step == "qa_check"
         assert instance.variables["qa_result_saved"] is True
@@ -562,7 +560,7 @@ class TestAgentWorkflowCompletion:
             variables=variables,
         )
 
-        assert instance_manager.get_for_session(AGENT_SESSION_ID, "expansion-qa-steps") is None
+        assert instance_manager.get_for_session(AGENT_SESSION_ID) is None
         assert variables["review_complete"] is True
         assert variables["step_workflow_complete"] is True
         assert "qa_check -> terminate" in (verdict_response.context or "")
@@ -608,7 +606,7 @@ class TestAgentWorkflowCompletion:
             variables=variables,
         )
 
-        instance = instance_manager.get_for_session(AGENT_SESSION_ID, "qa-reviewer-steps")
+        instance = instance_manager.get_for_session(AGENT_SESSION_ID)
         assert instance is not None
         assert instance.current_step == "terminate"
         assert instance.variables["review_complete"] is True
@@ -861,7 +859,7 @@ class TestAgentWorkflowCompletion:
             variables=variables,
         )
 
-        instance = instance_manager.get_for_session(AGENT_SESSION_ID, "merge-orchestrator-test")
+        instance = instance_manager.get_for_session(AGENT_SESSION_ID)
         assert instance is not None
         assert instance.current_step == "review"
         assert instance.variables["review_complete"] is False
@@ -877,6 +875,6 @@ class TestAgentWorkflowCompletion:
             variables=variables,
         )
 
-        instance = instance_manager.get_for_session(AGENT_SESSION_ID, "merge-orchestrator-test")
+        instance = instance_manager.get_for_session(AGENT_SESSION_ID)
         assert instance is None
         assert variables["review_complete"] is True

@@ -10,7 +10,7 @@ import pytest
 
 from gobby.hooks.events import HookEvent, HookEventType, HookResponse, SessionSource
 from gobby.storage.hub.protocol import HubDatabase
-from gobby.storage.workflow_definitions import LocalWorkflowDefinitionManager
+from gobby.storage.definitions.rules import RuleDefinitionManager
 from gobby.workflows.definitions import RuleDefinitionBody, RuleEffect, RuleTriggerEvent
 from gobby.workflows.engine.core import RuleEngine
 from gobby.workflows.hooks import WorkflowHookHandler
@@ -230,7 +230,7 @@ async def test_loaded_skill_observer_persists_before_next_same_session_event(
         {"baseline_dirty_files": [], "session_edited_files": []},
     )
 
-    manager = LocalWorkflowDefinitionManager(db)
+    manager = RuleDefinitionManager(db)
     manager.create(
         name="block-until-code-index-loaded",
         definition_json=RuleDefinitionBody(
@@ -243,7 +243,6 @@ async def test_loaded_skill_observer_persists_before_next_same_session_event(
                 )
             ],
         ).model_dump_json(),
-        workflow_type="rule",
         priority=10,
         enabled=True,
         sources=None,

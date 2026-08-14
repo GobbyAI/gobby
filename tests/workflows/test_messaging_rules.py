@@ -15,7 +15,7 @@ import pytest
 
 from gobby.hooks.events import HookEvent, HookEventType, SessionSource
 from gobby.storage.hub.protocol import HubDatabase
-from gobby.storage.workflow_definitions import LocalWorkflowDefinitionManager
+from gobby.storage.definitions.rules import RuleDefinitionManager
 from gobby.workflows.definitions import RuleDefinitionBody, RuleEffect, RuleTriggerEvent
 from gobby.workflows.enforcement.blocking import is_message_delivery_tool
 from gobby.workflows.engine.core import RuleEngine
@@ -35,8 +35,8 @@ def db(temp_db: HubDatabase) -> HubDatabase:
 
 
 @pytest.fixture
-def manager(db: HubDatabase) -> LocalWorkflowDefinitionManager:
-    return LocalWorkflowDefinitionManager(db)
+def manager(db: HubDatabase) -> RuleDefinitionManager:
+    return RuleDefinitionManager(db)
 
 
 def _make_event(
@@ -59,7 +59,7 @@ def _make_event(
 
 
 def _insert_rule(
-    manager: LocalWorkflowDefinitionManager,
+    manager: RuleDefinitionManager,
     name: str,
     body: RuleDefinitionBody,
     priority: int = 100,
@@ -67,7 +67,6 @@ def _insert_rule(
     row = manager.create(
         name=name,
         definition_json=body.model_dump_json(),
-        workflow_type="rule",
         priority=priority,
         enabled=True,
     )
@@ -79,7 +78,7 @@ def _sync_bundled(db: HubDatabase) -> None:
     from gobby.workflows.sync_rules import get_bundled_rules_path, sync_bundled_rules
 
     sync_bundled_rules(db, get_bundled_rules_path())
-    db.execute("UPDATE workflow_definitions SET source = 'installed' WHERE source = 'template'")
+    db.execute("UPDATE rule_definitions SET source = 'installed' WHERE source = 'template'")
 
 
 # ═══════════════════════════════════════════════════════════════════════
@@ -91,7 +90,7 @@ class TestRetiredDeliveryRule:
     """Authoritative bundled sync retires the removed delivery consumer."""
 
     def test_sync_soft_deletes_installed_delivery_rule(
-        self, db: HubDatabase, manager: LocalWorkflowDefinitionManager
+        self, db: HubDatabase, manager: RuleDefinitionManager
     ) -> None:
         body = RuleDefinitionBody(
             event=RuleTriggerEvent.TURN_START,
@@ -100,7 +99,6 @@ class TestRetiredDeliveryRule:
         manager.create(
             name="deliver-pending-messages",
             definition_json=body.model_dump_json(),
-            workflow_type="rule",
             enabled=True,
             priority=10,
             source="installed",
@@ -237,7 +235,7 @@ class TestNotifyUnreadMail:
 
     @pytest.mark.asyncio
     async def test_injects_context_when_messages_pending(
-        self, db: HubDatabase, manager: LocalWorkflowDefinitionManager
+        self, db: HubDatabase, manager: RuleDefinitionManager
     ) -> None:
         target_session = str(uuid.uuid4())
         _insert_undelivered_message(db, target_session)
@@ -257,7 +255,7 @@ class TestNotifyUnreadMail:
 
     @pytest.mark.asyncio
     async def test_no_context_while_retrieving_messages(
-        self, db: HubDatabase, manager: LocalWorkflowDefinitionManager
+        self, db: HubDatabase, manager: RuleDefinitionManager
     ) -> None:
         """No nudge when the agent is already reading its mail."""
         target_session = str(uuid.uuid4())
@@ -281,7 +279,7 @@ class TestNotifyUnreadMail:
 
     @pytest.mark.asyncio
     async def test_no_context_when_no_messages(
-        self, db: HubDatabase, manager: LocalWorkflowDefinitionManager
+        self, db: HubDatabase, manager: RuleDefinitionManager
     ) -> None:
         target_session = str(uuid.uuid4())
         _create_session(db, target_session)
@@ -301,7 +299,7 @@ class TestNotifyUnreadMail:
 
     @pytest.mark.asyncio
     async def test_no_context_when_messages_already_delivered(
-        self, db: HubDatabase, manager: LocalWorkflowDefinitionManager
+        self, db: HubDatabase, manager: RuleDefinitionManager
     ) -> None:
         target_session = str(uuid.uuid4())
         _insert_delivered_message(db, target_session)
@@ -321,7 +319,7 @@ class TestNotifyUnreadMail:
 
     @pytest.mark.asyncio
     async def test_skipped_for_root_sessions(
-        self, db: HubDatabase, manager: LocalWorkflowDefinitionManager
+        self, db: HubDatabase, manager: RuleDefinitionManager
     ) -> None:
         """Root sessions (no _agent_type) should not get nudge from agent_scope: ['*']."""
         target_session = str(uuid.uuid4())
@@ -343,7 +341,7 @@ class TestNotifyUnreadMail:
 
     @pytest.mark.asyncio
     async def test_no_context_when_platform_session_id_absent(
-        self, db: HubDatabase, manager: LocalWorkflowDefinitionManager
+        self, db: HubDatabase, manager: RuleDefinitionManager
     ) -> None:
         """Non-platform sessions (no _platform_session_id) get no nudge."""
         target_session = str(uuid.uuid4())
@@ -364,7 +362,7 @@ class TestNotifyUnreadMail:
 
     @pytest.mark.asyncio
     async def test_context_renders_message_count(
-        self, db: HubDatabase, manager: LocalWorkflowDefinitionManager
+        self, db: HubDatabase, manager: RuleDefinitionManager
     ) -> None:
         """Injected context should include the count from pending_message_count."""
         target_session = str(uuid.uuid4())
@@ -395,7 +393,7 @@ class TestJinja2HelperRendering:
 
     @pytest.mark.asyncio
     async def test_pending_message_count_renders_in_block_reason(
-        self, db: HubDatabase, manager: LocalWorkflowDefinitionManager
+        self, db: HubDatabase, manager: RuleDefinitionManager
     ) -> None:
         """pending_message_count is callable from block reason templates."""
         target_session = str(uuid.uuid4())
@@ -430,7 +428,7 @@ class TestJinja2HelperRendering:
 
     @pytest.mark.asyncio
     async def test_helpers_available_in_inject_context(
-        self, db: HubDatabase, manager: LocalWorkflowDefinitionManager
+        self, db: HubDatabase, manager: RuleDefinitionManager
     ) -> None:
         """Helper functions are accessible in inject_context templates."""
         target_session = str(uuid.uuid4())

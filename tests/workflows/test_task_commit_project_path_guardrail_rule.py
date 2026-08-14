@@ -5,7 +5,7 @@ from __future__ import annotations
 import pytest
 
 from gobby.storage.hub.protocol import HubDatabase
-from gobby.storage.workflow_definitions import LocalWorkflowDefinitionManager
+from gobby.storage.definitions.rules import RuleDefinitionManager
 from gobby.workflows.definitions import RuleDefinitionBody
 from gobby.workflows.sync_rules import get_bundled_rules_path, sync_bundled_rules
 
@@ -19,9 +19,9 @@ def test_task_commit_project_path_guardrail_rule_syncs_and_validates(
     assert result["errors"] == []
 
     temp_db.execute(
-        "UPDATE workflow_definitions SET source = 'installed' WHERE source = 'template'"
+        "UPDATE rule_definitions SET source = 'installed' WHERE source = 'template'"
     )
-    row = LocalWorkflowDefinitionManager(temp_db).get_by_name(
+    row = RuleDefinitionManager(temp_db).get_by_name(
         "task-commit-project-path-allowlist-before-git"
     )
 
@@ -33,7 +33,7 @@ def test_task_commit_project_path_guardrail_rule_syncs_and_validates(
     ).read_text(encoding="utf-8")
     assert "priority: 30" in rule_yaml
 
-    body = RuleDefinitionBody.model_validate_json(row.definition_json)
+    body = RuleDefinitionBody.model_validate(row.definition_json)
     assert body.event.value == "before_tool"
     assert body.group == "task-enforcement"
     assert body.when is not None

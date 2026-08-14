@@ -12,7 +12,7 @@ pytestmark = pytest.mark.unit
 
 
 def test_deprecated_rules_not_synced(temp_db: HubDatabase, tmp_path: Path) -> None:
-    from gobby.storage.workflow_definitions import LocalWorkflowDefinitionManager
+    from gobby.storage.definitions.rules import RuleDefinitionManager
     from gobby.workflows.sync_rules import sync_bundled_rules
 
     rules_dir = tmp_path / "rules"
@@ -43,18 +43,18 @@ rules:
     )
 
     sync_bundled_rules(temp_db, rules_path=rules_dir)
-    manager = LocalWorkflowDefinitionManager(temp_db)
+    manager = RuleDefinitionManager(temp_db)
 
     assert manager.get_by_name("active-build-rule") is not None
     assert manager.get_by_name("old-build-rule") is None
 
 
 def test_bundled_build_deprecated_rules_not_synced(temp_db: HubDatabase) -> None:
-    from gobby.storage.workflow_definitions import LocalWorkflowDefinitionManager
+    from gobby.storage.definitions.rules import RuleDefinitionManager
     from gobby.workflows.sync_rules import sync_bundled_rules
 
     sync_bundled_rules(temp_db)
-    manager = LocalWorkflowDefinitionManager(temp_db)
+    manager = RuleDefinitionManager(temp_db)
 
     assert manager.get_by_name("build-agent-block-full-pytest") is not None
     assert manager.get_by_name("legacy-build-agent-block-full-pytest") is None

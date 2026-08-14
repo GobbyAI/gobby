@@ -40,7 +40,7 @@ from gobby.storage.definitions import AgentDefinitionManager
 from gobby.storage.hub.protocol import HubDatabase
 from gobby.storage.projects import LocalProjectManager
 from gobby.storage.sessions import TERMINAL_SESSION_STATUSES, SessionManager
-from gobby.storage.workflow_definitions import LocalWorkflowDefinitionManager
+from gobby.storage.definitions.rules import RuleDefinitionManager
 from gobby.workflows.definitions import (
     RuleDefinitionBody,
     RuleEffect,
@@ -157,10 +157,9 @@ def _create_worker_agent(db: HubDatabase) -> None:
         },
         source="custom",
     )
-    manager = LocalWorkflowDefinitionManager(db)
+    manager = RuleDefinitionManager(db)
     manager.create(
         name="worker",
-        workflow_type="agent",
         source="custom",
         definition_json=json.dumps(
             {
@@ -178,7 +177,6 @@ def _create_worker_agent(db: HubDatabase) -> None:
     )
     manager.create(
         name="worker-steps",
-        workflow_type="workflow",
         source="agent",
         enabled=False,
         definition_json=json.dumps(
@@ -373,9 +371,8 @@ def test_spawned_agent_activation_failure_retries_without_default_markers(
     failure_mode: str,
 ) -> None:
     _create_worker_agent(db)
-    LocalWorkflowDefinitionManager(db).create(
+    RuleDefinitionManager(db).create(
         name="worker-only-rule",
-        workflow_type="rule",
         source="custom",
         tags=["worker"],
         definition_json=json.dumps(
@@ -440,10 +437,9 @@ def test_reconciliation_refreshes_stale_active_rule_names(
     after bundled/custom workflow changes.
     """
     session_id = _register_session(session_manager, project_id, tmp_path)
-    manager = LocalWorkflowDefinitionManager(db)
+    manager = RuleDefinitionManager(db)
     manager.create(
         name="default",
-        workflow_type="agent",
         source="custom",
         definition_json=json.dumps(
             {
@@ -454,7 +450,6 @@ def test_reconciliation_refreshes_stale_active_rule_names(
     )
     manager.create(
         name="new-default-rule",
-        workflow_type="rule",
         source="custom",
         tags=["default"],
         definition_json=json.dumps(
@@ -501,10 +496,9 @@ def test_reconciliation_caches_active_rule_names_for_same_agent_and_project(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     session_id = _register_session(session_manager, project_id, tmp_path)
-    manager = LocalWorkflowDefinitionManager(db)
+    manager = RuleDefinitionManager(db)
     manager.create(
         name="default",
-        workflow_type="agent",
         source="custom",
         definition_json=json.dumps(
             {
@@ -515,7 +509,6 @@ def test_reconciliation_caches_active_rule_names_for_same_agent_and_project(
     )
     manager.create(
         name="cached-rule",
-        workflow_type="rule",
         source="custom",
         tags=["default"],
         definition_json=json.dumps(
@@ -544,14 +537,14 @@ def test_reconciliation_caches_active_rule_names_for_same_agent_and_project(
     )
 
     list_all_calls = 0
-    original_list_all = LocalWorkflowDefinitionManager.list_all
+    original_list_all = RuleDefinitionManager.list_all
 
     def counted_list_all(self: Any, *args: Any, **kwargs: Any) -> Any:
         nonlocal list_all_calls
         list_all_calls += 1
         return original_list_all(self, *args, **kwargs)
 
-    monkeypatch.setattr(LocalWorkflowDefinitionManager, "list_all", counted_list_all)
+    monkeypatch.setattr(RuleDefinitionManager, "list_all", counted_list_all)
 
     event = _event(HookEventType.BEFORE_AGENT, session_id, tmp_path)
     reconcile_session_activation(event, handlers)
@@ -569,10 +562,9 @@ def test_reconciliation_invalidates_active_rule_cache_after_definition_mutation(
     tmp_path: Path,
 ) -> None:
     session_id = _register_session(session_manager, project_id, tmp_path)
-    manager = LocalWorkflowDefinitionManager(db)
+    manager = RuleDefinitionManager(db)
     manager.create(
         name="default",
-        workflow_type="agent",
         source="custom",
         definition_json=json.dumps(
             {
@@ -583,7 +575,6 @@ def test_reconciliation_invalidates_active_rule_cache_after_definition_mutation(
     )
     manager.create(
         name="cached-rule",
-        workflow_type="rule",
         source="custom",
         tags=["default"],
         definition_json=json.dumps(
@@ -617,7 +608,6 @@ def test_reconciliation_invalidates_active_rule_cache_after_definition_mutation(
 
     manager.create(
         name="new-rule",
-        workflow_type="rule",
         source="custom",
         tags=["default"],
         definition_json=json.dumps(
@@ -637,10 +627,9 @@ def test_active_rule_names_cache_evicts_oldest_entries(
     db: HubDatabase,
     project_id: str,
 ) -> None:
-    manager = LocalWorkflowDefinitionManager(db)
+    manager = RuleDefinitionManager(db)
     manager.create(
         name="new-agent",
-        workflow_type="agent",
         source="custom",
         definition_json=json.dumps(
             {
@@ -667,10 +656,9 @@ def test_active_rule_names_cache_purges_expired_entries(
     db: HubDatabase,
     project_id: str,
 ) -> None:
-    manager = LocalWorkflowDefinitionManager(db)
+    manager = RuleDefinitionManager(db)
     manager.create(
         name="new-agent",
-        workflow_type="agent",
         source="custom",
         definition_json=json.dumps(
             {
@@ -969,14 +957,13 @@ async def test_spawned_flag_survives_lagging_terminal_pickup_refresh(
     project_id: str,
     tmp_path: Path,
 ) -> None:
-    LocalWorkflowDefinitionManager(db).create(
+    RuleDefinitionManager(db).create(
         name="autonomous-only",
         definition_json=RuleDefinitionBody(
             event=RuleTriggerEvent.BEFORE_TOOL,
             audience="autonomous",
             effects=[RuleEffect(type="block", tools=["Bash"], reason="autonomous only")],
         ).model_dump_json(),
-        workflow_type="rule",
         enabled=True,
         priority=10,
     )

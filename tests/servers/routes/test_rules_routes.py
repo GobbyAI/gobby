@@ -25,7 +25,7 @@ from gobby.config.runtime import ConfigRuntime
 from gobby.config.runtime_models import ConfigSnapshot
 from gobby.storage.definitions.rules import RuleDefinitionManager
 from gobby.storage.hub.protocol import HubDatabase
-from gobby.storage.workflow_definitions import LocalWorkflowDefinitionManager
+from gobby.storage.definitions.rules import RuleDefinitionManager
 from tests.servers.conftest import StubConfigRuntime, create_http_server
 
 pytestmark = pytest.mark.unit
@@ -133,10 +133,9 @@ class TestListRules:
         self, client: TestClient, def_manager: RuleDefinitionManager
     ) -> None:
         _seed_rule(def_manager, name="my-rule")
-        LocalWorkflowDefinitionManager(def_manager.db).create(
+        RuleDefinitionManager(def_manager.db).create(
             name="my-workflow",
             definition_json=json.dumps({"name": "my-workflow"}),
-            workflow_type="workflow",
         )
 
         resp = client.get("/api/rules")
@@ -333,10 +332,9 @@ class TestUpdateRule:
         self, client: TestClient, def_manager: RuleDefinitionManager
     ) -> None:
         _seed_rule(def_manager, name="my-rule")
-        LocalWorkflowDefinitionManager(def_manager.db).create(
+        RuleDefinitionManager(def_manager.db).create(
             name="workflow-name",
             definition_json=json.dumps({"steps": []}),
-            workflow_type="workflow",
             source="template",
         )
 

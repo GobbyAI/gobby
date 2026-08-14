@@ -19,7 +19,10 @@ use super::runner::{
     ACCOUNT_IDENTITY_PREDECESSOR_CHECKSUM, PREDECESSOR_BASELINE_CHECKSUM, SchemaRunner,
 };
 use super::sql_splitter::split_sql_statements;
-use crate::baseline_refresh::{REFRESH_STATEMENT_PREFIXES, baseline_refresh_statement};
+use crate::baseline_refresh::{
+    REFRESH_STATEMENT_PREFIXES, REMOVED_STATEMENT_PREFIXES, baseline_refresh_statement,
+    baseline_removed_statement,
+};
 
 static RECOVERY_MIGRATION: EmbeddedMigration = EmbeddedMigration {
     version: 376,
@@ -230,12 +233,6 @@ fn assert_gcode_rls_policies(client: &mut Client) -> anyhow::Result<()> {
     Ok(())
 }
 
-fn current_schema_head() -> i32 {
-    MIGRATIONS
-        .last()
-        .map_or(BASELINE_VERSION, |migration| migration.version)
-}
-
 fn source_identity(client: &mut Client) -> anyhow::Result<SourceIdentity> {
     let row = client.query_one(
         "SELECT (pg_control_system()).system_identifier::text, current_database(), oid \
@@ -410,9 +407,16 @@ fn baseline_refresh_accepts_exactly_the_predecessor_statement_difference() {
     let predecessor =
         split_sql_statements(PREDECESSOR_BASELINE_SQL).expect("predecessor baseline splits");
     let predecessor_set = predecessor.iter().cloned().collect::<BTreeSet<_>>();
+    let current_set = current.iter().cloned().collect::<BTreeSet<_>>();
     let added = current
-        .into_iter()
-        .filter(|statement| !predecessor_set.contains(statement))
+        .iter()
+        .filter(|statement| !predecessor_set.contains(*statement))
+        .cloned()
+        .collect::<Vec<_>>();
+    let removed = predecessor
+        .iter()
+        .filter(|statement| !current_set.contains(*statement))
+        .cloned()
         .collect::<Vec<_>>();
 
     let unexpected = added
@@ -437,6 +441,44 @@ fn baseline_refresh_accepts_exactly_the_predecessor_statement_difference() {
     assert!(
         matched.iter().all(|count| *count == 1),
         "each refresh prefix must match exactly one added statement: {matched:?}"
+    );
+
+    let unexpected_removed = removed
+        .iter()
+        .filter(|statement| !baseline_removed_statement(statement))
+        .cloned()
+        .collect::<Vec<_>>();
+    assert!(
+        unexpected_removed.is_empty(),
+        "refresh removal allowlist missed predecessor statements: {unexpected_removed:?}"
+    );
+
+    let removed_matched = REMOVED_STATEMENT_PREFIXES
+        .iter()
+        .map(|prefix| {
+            removed
+                .iter()
+                .filter(|statement| statement.trim_start().starts_with(prefix))
+                .count()
+        })
+        .collect::<Vec<_>>();
+    assert!(
+        removed_matched.iter().all(|count| *count <= 1),
+        "each removed prefix must match at most one predecessor statement: {removed_matched:?}"
+    );
+    assert!(
+        removed_matched.iter().any(|count| *count == 1),
+        "removed-statement allowlist must name the dropped predecessor DDL"
+    );
+
+    let lingering = current
+        .iter()
+        .filter(|statement| baseline_removed_statement(statement))
+        .cloned()
+        .collect::<Vec<_>>();
+    assert!(
+        lingering.is_empty(),
+        "current baseline still contains removed legacy statements: {lingering:?}"
     );
 }
 
@@ -715,7 +757,7 @@ fn lock_and_recovery_tests_repair_an_invalid_concurrent_index() -> anyhow::Resul
     let Some((_database, mut client)) = test_database()? else {
         return Ok(());
     };
-    install_baseline(&mut client)?;
+    SchemaRunner::with_migrations_for_test(&mut client, "public", &[])?.apply()?;
     client.batch_execute(
         "CREATE TABLE recovery_values(id integer); INSERT INTO recovery_values VALUES (1), (1)",
     )?;
@@ -795,7 +837,7 @@ fn gate_tests_destructive_apply_requires_a_verified_v2_backup() -> anyhow::Resul
     let Some((_database, mut client)) = test_database()? else {
         return Ok(());
     };
-    install_baseline(&mut client)?;
+    SchemaRunner::with_migrations_for_test(&mut client, "public", &[])?.apply()?;
     let error =
         SchemaRunner::with_migrations_for_test(&mut client, "public", DESTRUCTIVE_MIGRATIONS)?
             .apply()
@@ -804,7 +846,13 @@ fn gate_tests_destructive_apply_requires_a_verified_v2_backup() -> anyhow::Resul
 
     let fixture = include_str!("../../tests/fixtures/hub_backup_manifest/v2_roundtrip.json");
     let mut manifest = parse_backup_manifest(fixture)?;
-    manifest.backup_starting_head = current_schema_head();
+    let database_head: i32 = client
+        .query_one(
+            "SELECT COALESCE(MAX(version), 0)::int FROM schema_migrations",
+            &[],
+        )?
+        .get(0);
+    manifest.backup_starting_head = database_head;
     let root = env::temp_dir().join(format!("gcore-backup-gate-{}", Uuid::new_v4()));
     let _scratch_path = ScratchPath(root.clone());
     fs::create_dir_all(root.join("postgres"))?;
@@ -816,7 +864,7 @@ fn gate_tests_destructive_apply_requires_a_verified_v2_backup() -> anyhow::Resul
     let mut context = BackupGateContext::new(
         &root,
         &fixture_identity,
-        current_schema_head(),
+        database_head,
         created_at + Duration::hours(1),
     );
     context.max_age = Duration::hours(2);
@@ -833,7 +881,7 @@ fn gate_tests_destructive_apply_requires_a_verified_v2_backup() -> anyhow::Resul
     let mut context = BackupGateContext::new(
         &root,
         &identity,
-        current_schema_head(),
+        database_head,
         created_at + Duration::hours(1),
     );
     context.max_age = Duration::hours(2);
@@ -858,19 +906,25 @@ fn migrations_directory_exists_and_copy_agent_entry_is_registered() {
         migrations_dir.is_dir(),
         "crates/gcore/assets/schema/migrations must exist so later leaves can register include_str entries"
     );
-    assert_eq!(MIGRATIONS.len(), 2);
+    assert_eq!(MIGRATIONS.len(), 6);
     assert_eq!(MIGRATIONS[0].version, 376);
     assert_eq!(MIGRATIONS[0].filename, "376_copy_agent_definitions.sql");
     assert_eq!(MIGRATIONS[1].version, 377);
     assert_eq!(MIGRATIONS[1].filename, "377_copy_agent_step_instances.sql");
+    assert_eq!(MIGRATIONS[4].version, 380);
+    assert_eq!(MIGRATIONS[4].filename, "380_copy_pipeline_definitions.sql");
+    assert_eq!(MIGRATIONS[5].version, 381);
     assert_eq!(
-        super::assets::sha256_hex(MIGRATIONS[0].sql.as_bytes()),
-        MIGRATIONS[0].checksum
+        MIGRATIONS[5].filename,
+        "381_drop_legacy_workflow_tables.sql"
     );
-    assert_eq!(
-        super::assets::sha256_hex(MIGRATIONS[1].sql.as_bytes()),
-        MIGRATIONS[1].checksum
-    );
+    assert!(MIGRATIONS[5].sql.contains("-- gobby:destructive"));
+    for migration in MIGRATIONS {
+        assert_eq!(
+            super::assets::sha256_hex(migration.sql.as_bytes()),
+            migration.checksum
+        );
+    }
     assert!(
         DESTRUCTIVE_MIGRATION.version > BASELINE_VERSION
             && GUARDED_MIGRATION.version > BASELINE_VERSION,
@@ -932,7 +986,7 @@ fn existing_lineage_still_refuses_unauthorized_destructive_migration() -> anyhow
     let Some((_database, mut client)) = test_database()? else {
         return Ok(());
     };
-    install_baseline(&mut client)?;
+    SchemaRunner::with_migrations_for_test(&mut client, "public", &[])?.apply()?;
 
     let error =
         SchemaRunner::with_migrations_for_test(&mut client, "public", DESTRUCTIVE_MIGRATIONS)?
@@ -1006,6 +1060,121 @@ fn guarded_nondestructive_migration_applies_on_fresh_and_predecessor() -> anyhow
     .apply()?;
     assert!(!predecessor_replay.baseline_applied);
     assert_eq!(predecessor_replay.migrations_applied, 0);
+    Ok(())
+}
+
+#[test]
+fn copy_migrations_receipt_noop_on_fresh_final_baseline() -> anyhow::Result<()> {
+    let _serial = DATABASE_TEST_LOCK
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner);
+    let Some((_database, mut client)) = test_database()? else {
+        return Ok(());
+    };
+
+    let first = SchemaRunner::new(&mut client, "public")?.apply()?;
+    assert!(first.baseline_applied);
+    assert_eq!(first.migrations_applied, MIGRATIONS.len());
+    let defs: bool = client
+        .query_one(
+            "SELECT to_regclass('workflow_definitions') IS NOT NULL",
+            &[],
+        )?
+        .get(0);
+    let inst: bool = client
+        .query_one("SELECT to_regclass('workflow_instances') IS NOT NULL", &[])?
+        .get(0);
+    let ledger: bool = client
+        .query_one("SELECT to_regclass('legacy_copy_ledger') IS NOT NULL", &[])?
+        .get(0);
+    assert!(!defs && !inst && !ledger);
+    let agents: i64 = client
+        .query_one("SELECT COUNT(*) FROM agent_definitions", &[])?
+        .get(0);
+    let rules: i64 = client
+        .query_one("SELECT COUNT(*) FROM rule_definitions", &[])?
+        .get(0);
+    let variables: i64 = client
+        .query_one("SELECT COUNT(*) FROM session_variable_defaults", &[])?
+        .get(0);
+    let pipelines: i64 = client
+        .query_one("SELECT COUNT(*) FROM pipeline_definitions", &[])?
+        .get(0);
+    assert_eq!((agents, rules, variables, pipelines), (0, 0, 0, 0));
+    for migration in MIGRATIONS {
+        assert_eq!(migration_receipt_count(&mut client, migration)?, 1);
+    }
+
+    let replay = SchemaRunner::new(&mut client, "public")?.apply()?;
+    assert!(!replay.baseline_applied);
+    assert_eq!(replay.migrations_applied, 0);
+    Ok(())
+}
+
+#[test]
+fn drop_migration_refused_on_predecessor_until_verified_backup() -> anyhow::Result<()> {
+    let _serial = DATABASE_TEST_LOCK
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner);
+    let Some((_database, mut client)) = test_database()? else {
+        return Ok(());
+    };
+    install_predecessor(&mut client)?;
+
+    let error = SchemaRunner::new(&mut client, "public")?
+        .apply()
+        .expect_err("existing predecessor lineage must refuse the destructive drop");
+    assert!(error.to_string().contains("verified hub backup"));
+    let defs_before: bool = client
+        .query_one(
+            "SELECT to_regclass('workflow_definitions') IS NOT NULL",
+            &[],
+        )?
+        .get(0);
+    assert!(defs_before);
+
+    let fixture = include_str!("../../tests/fixtures/hub_backup_manifest/v2_roundtrip.json");
+    let mut manifest = parse_backup_manifest(fixture)?;
+    let database_head: i32 = client
+        .query_one(
+            "SELECT COALESCE(MAX(version), 0)::int FROM schema_migrations",
+            &[],
+        )?
+        .get(0);
+    manifest.backup_starting_head = database_head;
+    let root = env::temp_dir().join(format!("gcore-drop-gate-{}", Uuid::new_v4()));
+    let _scratch_path = ScratchPath(root.clone());
+    fs::create_dir_all(root.join("postgres"))?;
+    fs::write(root.join("postgres/fixture.dump"), [])?;
+    manifest.artifacts[0].sha256 =
+        "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855".to_owned();
+    let identity = source_identity(&mut client)?;
+    manifest.source_identity = identity.clone();
+    let created_at = OffsetDateTime::parse(&manifest.created_at, &Rfc3339)?;
+    let mut context = BackupGateContext::new(
+        &root,
+        &identity,
+        database_head,
+        created_at + Duration::hours(1),
+    );
+    context.max_age = Duration::hours(2);
+    let verified = VerifiedBackupManifest::verify(manifest, &context)?;
+
+    let report = SchemaRunner::new(&mut client, "public")?.apply_with_backup(&verified)?;
+    assert_eq!(report.migrations_applied, 1);
+    let defs_after: bool = client
+        .query_one(
+            "SELECT to_regclass('workflow_definitions') IS NOT NULL",
+            &[],
+        )?
+        .get(0);
+    let inst_after: bool = client
+        .query_one("SELECT to_regclass('workflow_instances') IS NOT NULL", &[])?
+        .get(0);
+    let ledger_after: bool = client
+        .query_one("SELECT to_regclass('legacy_copy_ledger') IS NOT NULL", &[])?
+        .get(0);
+    assert!(!defs_after && !inst_after && !ledger_after);
     Ok(())
 }
 

@@ -14,7 +14,6 @@ DOMAIN_TABLES: tuple[str, ...] = (
     "agent_step_instances",
     "agent_step_workflows",
     "definition_revisions",
-    "legacy_copy_ledger",
     "pipeline_definitions",
     "rule_definitions",
     "session_variable_defaults",
@@ -52,12 +51,13 @@ def _table_names(column_names: set[str]) -> set[str]:
     return {name.split(".", 1)[0] for name in column_names}
 
 
-def test_baseline_keeps_legacy_tables_and_declares_domain_tables() -> None:
+def test_baseline_drops_legacy_tables_and_keeps_domain_tables() -> None:
     baseline = _BASELINE.read_text(encoding="utf-8")
     for table in DOMAIN_TABLES:
         assert f"CREATE TABLE IF NOT EXISTS {table} (" in baseline
-    for table in LEGACY_TABLES:
-        assert f"CREATE TABLE {table} (" in baseline
+    for table in (*LEGACY_TABLES, "legacy_copy_ledger"):
+        assert f"CREATE TABLE {table} (" not in baseline
+        assert f"CREATE TABLE IF NOT EXISTS {table} (" not in baseline
     for table in DEFINITION_TABLES:
         assert (
             f"ON {table} USING btree (name, project_id) NULLS NOT DISTINCT "
@@ -71,7 +71,7 @@ def test_catalog_pins_domain_tables_reconciliation_and_live_name_indexes() -> No
     indexes = [entry["definition"] for entry in _catalog_entries("indexes")]
 
     assert tables.issuperset(DOMAIN_TABLES)
-    assert tables.issuperset(LEGACY_TABLES)
+    assert tables.isdisjoint({*LEGACY_TABLES, "legacy_copy_ledger"})
 
     for table in DEFINITION_TABLES:
         assert f"{table}.enabled" in column_names

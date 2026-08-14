@@ -12,7 +12,6 @@ from gobby.agents.run_completion import complete_and_notify_agent_run
 from gobby.agents.runtime_cleanup import cleanup_agent_runtime_state
 from gobby.storage.hub.protocol import HubDatabase
 from gobby.storage.workflow_audit import WorkflowAuditManager
-from gobby.storage.workflow_definitions import LocalWorkflowDefinitionManager
 from gobby.workflows.engine.enforcement_audit import EnforcementAuditMixin
 from gobby.workflows.engine.enforcement_checks import EnforcementCheckMixin
 from gobby.workflows.engine.enforcement_completion import EnforcementCompletionMixin
@@ -38,7 +37,6 @@ class EnforcementMixin(
 
     db: HubDatabase
     instance_manager: AgentStepInstanceManager
-    definition_manager: LocalWorkflowDefinitionManager
     workflow_audit: WorkflowAuditManager
 
     if TYPE_CHECKING:

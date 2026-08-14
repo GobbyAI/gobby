@@ -3,7 +3,7 @@ use sha2::{Digest, Sha256};
 pub const RUNNER_PROTOCOL_VERSION: u32 = 1;
 pub const BASELINE_VERSION: i32 = 375;
 pub const BASELINE_CHECKSUM: &str =
-    "0998a0fd112194440f7f88b42b806486dc63c604ad63c8fc48ddaac16d5bb180";
+    "5d598c3609d0bdbcfd10f1c363c60bd38d5625100c3e8719b3ff42d189047117";
 pub const BASELINE_SQL: &str = include_str!("../../assets/schema/baseline.sql");
 pub const SEED_MANIFEST_JSON: &str = include_str!("../../assets/schema/seed.manifest.json");
 pub const CATALOG_MANIFEST_JSON: &str = include_str!("../../assets/schema/catalog.manifest.json");
@@ -20,7 +20,7 @@ pub(crate) const MIGRATIONS: &[EmbeddedMigration] = &[
     EmbeddedMigration {
         version: 376,
         filename: "376_copy_agent_definitions.sql",
-        checksum: "758b35ad7bc1e2dc4451110b3e392e68c03237ae951ce004fe97b96b618fcc21",
+        checksum: "d736ad1aa1f182a7569fcb7aae129cdf2cdaf89b46e898212a3269251295d4f1",
         sql: include_str!("../../assets/schema/migrations/376_copy_agent_definitions.sql"),
     },
     EmbeddedMigration {
@@ -32,20 +32,26 @@ pub(crate) const MIGRATIONS: &[EmbeddedMigration] = &[
     EmbeddedMigration {
         version: 378,
         filename: "378_copy_rule_definitions.sql",
-        checksum: "22c9e75b20c1000f364fc004fe5648ecf165922943d4c852cdf26ccbb6cdf3e8",
+        checksum: "5fe2bcea79afa5876fc12fb1087a764bbe3bb262c23f5abbc3b1b9b83b1ed4e7",
         sql: include_str!("../../assets/schema/migrations/378_copy_rule_definitions.sql"),
     },
     EmbeddedMigration {
         version: 379,
         filename: "379_copy_session_variable_defaults.sql",
-        checksum: "5ddc85363a92ff8469eb179c5807255ef1739b68741fdebdd23749e364159e38",
+        checksum: "ea1ffe7eec95b90901b2818fe734e4128433c8f7e4b05060fee5ac3acbda4896",
         sql: include_str!("../../assets/schema/migrations/379_copy_session_variable_defaults.sql"),
     },
     EmbeddedMigration {
         version: 380,
         filename: "380_copy_pipeline_definitions.sql",
-        checksum: "7943bdd5896422ce29ce19674a9b51590c519a7543148ecbe443ee81cfc231d0",
+        checksum: "6c4c0b827117c7667b2b1b5b540f56aca81c04304d274bd4d34983947ca9e86c",
         sql: include_str!("../../assets/schema/migrations/380_copy_pipeline_definitions.sql"),
+    },
+    EmbeddedMigration {
+        version: 381,
+        filename: "381_drop_legacy_workflow_tables.sql",
+        checksum: "029f44aeeaf260d617e981ec77a558f21e2f8cb1af2e49e1d14adbc3458cc2e8",
+        sql: include_str!("../../assets/schema/migrations/381_drop_legacy_workflow_tables.sql"),
     },
 ];
 const _: &str = include_str!("../../assets/schema/migrations/.gitkeep");

@@ -623,7 +623,7 @@ class TestSessionMoreCoverage:
             patch.object(handler, "_resolve_agent_name", return_value="test-agent"),
             patch("gobby.workflows.agent_resolver.resolve_agent") as mock_resolve,
             patch(
-                "gobby.storage.workflow_definitions.LocalWorkflowDefinitionManager.list_all",
+                "gobby.storage.definitions.rules.RuleDefinitionManager.list_all",
                 return_value=[],
             ),
             patch(

@@ -34,7 +34,6 @@ from gobby.storage.pipeline_subscribers import (
     PipelineSubscriberStorageError,
 )
 from gobby.storage.workflow_audit import WorkflowAuditManager
-from gobby.storage.workflow_definitions import LocalWorkflowDefinitionManager
 from gobby.telemetry.tracing import create_span
 from gobby.workflows.definitions import (
     AgentDefinitionBody,
@@ -124,7 +123,6 @@ class RuleEngine(EvaluationMixin, EffectsMixin, TemplatingMixin, EnforcementMixi
         skill_script_materializer: SkillScriptMaterializer | None = None,
     ):
         self.db = db
-        self.definition_manager = LocalWorkflowDefinitionManager(db)
         self.rule_manager = RuleDefinitionManager(db)
         self.agent_manager = AgentDefinitionManager(db)
         self.instance_manager = AgentStepInstanceManager(db)
@@ -162,7 +160,7 @@ class RuleEngine(EvaluationMixin, EffectsMixin, TemplatingMixin, EnforcementMixi
         skills: set[str] = set()
         for row in rows:
             try:
-                body = RuleDefinitionBody.model_validate_json(row.definition_json)
+                body = RuleDefinitionBody.model_validate(row.definition_json)
             except Exception:
                 logger.warning(
                     "Workflow skill prewarm skipped invalid rule %s for project %s",

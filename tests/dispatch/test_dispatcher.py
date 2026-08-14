@@ -4439,13 +4439,12 @@ def test_build_context_project_disabled_agent_override_wins(
     """Build context project disabled agent override wins."""
     from gobby.agents.sync import sync_bundled_agents
     from gobby.dispatch import dispatcher
-    from gobby.storage.workflow_definitions import LocalWorkflowDefinitionManager
+    from gobby.storage.definitions.agents import AgentDefinitionManager
     from gobby.workflows.definitions import AgentDefinitionBody
 
     sync_bundled_agents(temp_db)
-    LocalWorkflowDefinitionManager(temp_db).create(
+    AgentDefinitionManager(temp_db).create(
         name="merge-orchestrator",
-        workflow_type="agent",
         project_id=sample_project["id"],
         source="project",
         enabled=False,

@@ -1,6 +1,6 @@
 """Tests for rule MCP tools.
 
-Verifies that rule tools wrap LocalWorkflowDefinitionManager with
+Verifies that rule tools wrap RuleDefinitionManager with
 workflow_type='rule' filtering:
 - list_rules: returns only rules, supports event/group/enabled filters
 - get_rule: returns full rule definition by name
@@ -17,7 +17,7 @@ import pytest
 
 from gobby.storage.definitions.rules import RuleDefinitionManager
 from gobby.storage.hub.protocol import HubDatabase
-from gobby.storage.workflow_definitions import LocalWorkflowDefinitionManager
+from gobby.storage.definitions.rules import RuleDefinitionManager
 
 pytestmark = pytest.mark.unit
 
@@ -60,10 +60,9 @@ def _create_test_rule(
 
 def _create_test_workflow(db: HubDatabase, name: str = "test-wf") -> str:
     """Create a non-rule workflow to verify filtering."""
-    row = LocalWorkflowDefinitionManager(db).create(
+    row = RuleDefinitionManager(db).create(
         name=name,
         definition_json=json.dumps({"name": name}),
-        workflow_type="workflow",
     )
     return row.id
 

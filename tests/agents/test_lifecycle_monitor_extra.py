@@ -948,7 +948,7 @@ class TestPeriodicAgentTerminalEnter:
         session_manager: SessionManager,
         sample_project: dict[str, object],
     ) -> None:
-        from gobby.storage.workflow_definitions import LocalWorkflowDefinitionManager
+        from gobby.storage.definitions.agents import AgentDefinitionManager
 
         child = session_manager.register(
             external_id="child-step-workflow",
@@ -956,7 +956,7 @@ class TestPeriodicAgentTerminalEnter:
             source="codex",
             project_id=str(sample_project["id"]),
         )
-        LocalWorkflowDefinitionManager(temp_db).create(
+        AgentDefinitionManager(temp_db).create(
             name="planner-steps",
             definition_json=json.dumps(
                 {
@@ -967,7 +967,6 @@ class TestPeriodicAgentTerminalEnter:
                     "exit_condition": "current_step == 'terminate'",
                 }
             ),
-            workflow_type="workflow",
             enabled=True,
         )
         AgentStepInstanceManager(temp_db).save(

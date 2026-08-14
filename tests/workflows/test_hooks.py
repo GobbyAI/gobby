@@ -680,10 +680,10 @@ class TestVariablePersistence:
         }
         db.execute(
             """
-            INSERT INTO workflow_definitions (
-                id, name, workflow_type, definition_json, enabled, source
+            INSERT INTO rule_definitions (
+                id, name, definition_json, enabled, source
             )
-            VALUES (%s, %s, 'rule', %s, %s, 'test')
+            VALUES (%s, %s, %s, %s, 'custom')
             """,
             (str(uuid4()), name, json.dumps(definition), True),
         )
@@ -765,10 +765,10 @@ class TestVariablePersistence:
         }
         db.execute(
             """
-            INSERT INTO workflow_definitions (
-                id, name, workflow_type, definition_json, enabled, source
+            INSERT INTO rule_definitions (
+                id, name, definition_json, enabled, source
             )
-            VALUES (%s, %s, 'rule', %s, %s, 'test')
+            VALUES (%s, %s, %s, %s, 'custom')
             """,
             (str(uuid4()), "test-flag-gate", json.dumps(definition), True),
         )
@@ -946,7 +946,7 @@ class TestVariablePersistence:
         from gobby.workflows.sync_rules import get_bundled_rules_path, sync_bundled_rules
 
         sync_bundled_rules(db, get_bundled_rules_path())
-        db.execute("UPDATE workflow_definitions SET source = 'installed' WHERE source = 'template'")
+        db.execute("UPDATE rule_definitions SET source = 'installed' WHERE source = 'template'")
 
         rule_engine = RuleEngine(db=db)
         handler = WorkflowHookHandler(rule_engine=rule_engine)
@@ -1105,9 +1105,9 @@ class TestBaselineDirtyFilesSubtraction:
             ],
         }
         db.execute(
-            "INSERT INTO workflow_definitions "
-            "(id, name, workflow_type, definition_json, enabled, source) "
-            "VALUES (%s, %s, 'rule', %s, %s, 'test')",
+            "INSERT INTO rule_definitions "
+            "(id, name, definition_json, enabled, source) "
+            "VALUES (%s, %s, %s, %s, 'custom')",
             (str(uuid4()), "test-dirty-block", json.dumps(definition), True),
         )
 

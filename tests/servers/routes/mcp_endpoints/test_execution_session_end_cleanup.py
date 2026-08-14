@@ -23,7 +23,7 @@ from gobby.servers.routes.mcp.endpoints.request_context import _set_context_for_
 from gobby.servers.routes.mcp.hooks import create_hooks_router
 from gobby.storage.hub.protocol import HubDatabase
 from gobby.storage.sessions import SessionManager
-from gobby.storage.workflow_definitions import LocalWorkflowDefinitionManager
+from gobby.storage.definitions.rules import RuleDefinitionManager
 from gobby.utils.session_context import reset_seeded_contexts
 from gobby.workflows.engine.core import RuleEngine
 from gobby.workflows.hooks import WorkflowHookHandler
@@ -157,10 +157,9 @@ async def test_session_end_cleanup_unblocks_session_targeted_read_only_calls(
         external_id=f"ext-{child_session_id}",
     )
 
-    LocalWorkflowDefinitionManager(db).create(
+    RuleDefinitionManager(db).create(
         name="plan-adversary-steps",
         definition_json=json.dumps(_PLAN_ADVERSARY_TERMINATE_WORKFLOW),
-        workflow_type="workflow",
         priority=100,
         enabled=True,
     )
@@ -259,10 +258,9 @@ async def test_inbox_replays_codex_session_end_once_with_real_cleanup(
     external_id = f"ext-{session_id}"
     _insert_session(db, session_id=session_id, external_id=external_id)
 
-    LocalWorkflowDefinitionManager(db).create(
+    RuleDefinitionManager(db).create(
         name="plan-adversary-steps",
         definition_json=json.dumps(_PLAN_ADVERSARY_TERMINATE_WORKFLOW),
-        workflow_type="workflow",
         priority=100,
         enabled=True,
     )

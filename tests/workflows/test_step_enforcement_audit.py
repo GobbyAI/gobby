@@ -10,7 +10,7 @@ from unittest.mock import patch
 import pytest
 
 from gobby.hooks.events import HookEvent, HookEventType, SessionSource
-from gobby.storage.workflow_definitions import LocalWorkflowDefinitionManager
+from gobby.storage.definitions.agents import AgentDefinitionManager
 from gobby.workflows.definitions import WorkflowDefinition
 from gobby.workflows.engine.core import RuleEngine
 from gobby.workflows.agent_models import AgentStepWorkflowBody
@@ -32,8 +32,8 @@ def db(hub_db: "HubDatabase") -> "HubDatabase":
 
 
 @pytest.fixture
-def manager(db: "HubDatabase") -> LocalWorkflowDefinitionManager:
-    return LocalWorkflowDefinitionManager(db)
+def manager(db: "HubDatabase") -> AgentDefinitionManager:
+    return AgentDefinitionManager(db)
 
 
 @pytest.fixture
@@ -78,7 +78,7 @@ def _create_session(db: "HubDatabase") -> None:
 
 def _setup_workflow(
     db: "HubDatabase",
-    manager: LocalWorkflowDefinitionManager,
+    manager: AgentDefinitionManager,
     instance_mgr: AgentStepInstanceManager,
 ) -> None:
     _create_session(db)
@@ -111,7 +111,6 @@ def _setup_workflow(
     manager.create(
         name=definition.name,
         definition_json=json.dumps(workflow_data),
-        workflow_type="workflow",
         enabled=True,
     )
     instance_mgr.save(
@@ -151,7 +150,7 @@ def _audit_rows(db: "HubDatabase") -> list[dict[str, Any]]:
 @pytest.mark.asyncio
 async def test_step_success_writes_audit_rows(
     db: "HubDatabase",
-    manager: LocalWorkflowDefinitionManager,
+    manager: AgentDefinitionManager,
     engine: RuleEngine,
     instance_mgr: AgentStepInstanceManager,
 ) -> None:
@@ -197,7 +196,7 @@ async def test_step_success_writes_audit_rows(
 @pytest.mark.asyncio
 async def test_step_transition_writes_run_outside_event_loop_thread(
     db: "HubDatabase",
-    manager: LocalWorkflowDefinitionManager,
+    manager: AgentDefinitionManager,
     engine: RuleEngine,
     instance_mgr: AgentStepInstanceManager,
 ) -> None:
@@ -244,7 +243,7 @@ async def test_step_transition_writes_run_outside_event_loop_thread(
 @pytest.mark.asyncio
 async def test_step_mcp_block_writes_audit_row(
     db: "HubDatabase",
-    manager: LocalWorkflowDefinitionManager,
+    manager: AgentDefinitionManager,
     engine: RuleEngine,
     instance_mgr: AgentStepInstanceManager,
 ) -> None:

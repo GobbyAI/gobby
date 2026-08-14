@@ -13,6 +13,13 @@ BEGIN
 
     EXECUTE 'LOCK TABLE workflow_definitions IN ACCESS EXCLUSIVE MODE';
 
+    CREATE TABLE IF NOT EXISTS legacy_copy_ledger (
+        legacy_id uuid PRIMARY KEY,
+        domain text NOT NULL,
+        source_hash text NOT NULL,
+        copied_at timestamptz DEFAULT now() NOT NULL
+    );
+
     SELECT string_agg(format('%s', name), ', ' ORDER BY name)
     INTO dup_names
     FROM (

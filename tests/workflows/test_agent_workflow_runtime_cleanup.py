@@ -21,7 +21,7 @@ from gobby.storage.agents import LocalAgentRunManager
 from gobby.storage.sessions import SessionManager
 from gobby.storage.tasks import LocalTaskManager, TaskDispatchMutexManager
 from gobby.storage.tasks._updates import update_task
-from gobby.storage.workflow_definitions import LocalWorkflowDefinitionManager
+from gobby.storage.definitions.agents import AgentDefinitionManager
 from gobby.utils.session_context import session_context_for_test
 from gobby.agents.runtime_cleanup import cleanup_agent_runtime_state
 from gobby.workflows.engine.core import RuleEngine
@@ -249,10 +249,9 @@ async def test_submit_for_review_handoff_terminates_worker_and_unblocks_reviewer
         ],
         "exit_condition": "current_step == 'terminate'",
     }
-    LocalWorkflowDefinitionManager(temp_db).create(
+    AgentDefinitionManager(temp_db).create(
         name=workflow_name,
         definition_json=json.dumps(workflow_data),
-        workflow_type="workflow",
         enabled=True,
     )
     from gobby.workflows.agent_models import AgentDefinitionBody, AgentStepWorkflowBody

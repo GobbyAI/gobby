@@ -4,13 +4,13 @@ import json
 
 import pytest
 
-from gobby.storage.workflow_definitions import LocalWorkflowDefinitionManager
+from gobby.storage.definitions.rules import RuleDefinitionManager
 from gobby.workflows.template_writer import read_template
 
 
 @pytest.fixture()
 def manager(temp_db):
-    return LocalWorkflowDefinitionManager(temp_db)
+    return RuleDefinitionManager(temp_db)
 
 
 def _create_rule_row(manager, name, *, tags=None, project_id=None):
@@ -22,7 +22,6 @@ def _create_rule_row(manager, name, *, tags=None, project_id=None):
     return manager.create(
         name=name,
         definition_json=json.dumps(definition),
-        workflow_type="rule",
         source="installed",
         tags=tags,
         project_id=project_id,
@@ -36,7 +35,7 @@ class TestAutoExportProjectRule:
         from gobby.workflows.template_writer import write_rule_template
 
         row = _create_rule_row(manager, "my-custom-rule")
-        definition = json.loads(row.definition_json)
+        definition = row.definition_json
 
         path = write_rule_template(
             name=row.name,
@@ -65,7 +64,7 @@ class TestAutoExportProjectRule:
         from gobby.workflows.template_writer import write_rule_template
 
         row = _create_rule_row(manager, "global-rule")
-        definition = json.loads(row.definition_json)
+        definition = row.definition_json
 
         path = write_rule_template(
             name=row.name,

@@ -21,7 +21,7 @@ from gobby.skills.materialization import (
     SkillScriptMaterializer,
 )
 from gobby.storage.hub.protocol import HubDatabase
-from gobby.storage.workflow_definitions import LocalWorkflowDefinitionManager
+from gobby.storage.definitions.rules import RuleDefinitionManager
 from gobby.workflows.definitions import RuleDefinitionBody
 from gobby.workflows.engine.core import RuleEngine
 from gobby.workflows.engine.run_command import RunCommandResult
@@ -64,7 +64,7 @@ def _event(source: SessionSource, event_type: HookEventType) -> HookEvent:
 
 
 def test_impeccable_templates_sync_enabled(impeccable_db: HubDatabase) -> None:
-    manager = LocalWorkflowDefinitionManager(impeccable_db)
+    manager = RuleDefinitionManager(impeccable_db)
 
     edit = manager.get_by_name("impeccable-edit-pass")
     deep = manager.get_by_name("impeccable-deep-pass")

@@ -18,7 +18,7 @@ from gobby.storage.projects import LocalProjectManager, Project
 from gobby.storage.session_models import Session
 from gobby.storage.sessions import SessionManager
 from gobby.storage.tasks import LocalTaskManager, Task
-from gobby.storage.workflow_definitions import LocalWorkflowDefinitionManager
+from gobby.storage.definitions.rules import RuleDefinitionManager
 from gobby.utils.session_context import session_context_for_test
 from gobby.workflows.commit_guard import DirtyEditOwnershipInspectionError, _format_ref
 from gobby.workflows.definitions import RuleDefinitionBody
@@ -235,10 +235,10 @@ def guard_harness(temp_db: HubDatabase, repo: Path) -> GuardHarness:
     result = sync_bundled_rules(temp_db, get_bundled_rules_path())
     assert result["errors"] == []
     temp_db.execute(
-        "UPDATE workflow_definitions SET source = 'installed' WHERE source = 'template'"
+        "UPDATE rule_definitions SET source = 'installed' WHERE source = 'template'"
     )
     temp_db.execute(
-        "UPDATE workflow_definitions SET enabled = (name IN (%s, %s)) WHERE workflow_type = 'rule'",
+        "UPDATE rule_definitions SET enabled = (name IN (%s, %s)) ",
         (RULE_NAME, DIRTY_EDIT_RULE_NAME),
     )
 
@@ -571,7 +571,7 @@ async def test_owner_path_release_breaks_commit_and_close_cycle(
     guard_harness: GuardHarness,
 ) -> None:
     guard_harness.db.execute(
-        "UPDATE workflow_definitions SET enabled = (name IN (%s, %s)) WHERE workflow_type = 'rule'",
+        "UPDATE rule_definitions SET enabled = (name IN (%s, %s)) ",
         (RULE_NAME, "require-clean-tree-before-status"),
     )
     (guard_harness.repo / "foreign.txt").write_text("current session change\n", encoding="utf-8")
@@ -674,13 +674,13 @@ def test_commit_guard_rule_syncs_and_validates(temp_db: HubDatabase) -> None:
     result = sync_bundled_rules(temp_db, get_bundled_rules_path())
     assert result["errors"] == []
     temp_db.execute(
-        "UPDATE workflow_definitions SET source = 'installed' WHERE source = 'template'"
+        "UPDATE rule_definitions SET source = 'installed' WHERE source = 'template'"
     )
 
-    row = LocalWorkflowDefinitionManager(temp_db).get_by_name(RULE_NAME)
+    row = RuleDefinitionManager(temp_db).get_by_name(RULE_NAME)
 
     assert row is not None
-    body = RuleDefinitionBody.model_validate_json(row.definition_json)
+    body = RuleDefinitionBody.model_validate(row.definition_json)
     assert body.event.value == "before_tool"
     assert body.group == "task-enforcement"
     assert body.when == "foreign_staged_commit_conflict"

@@ -17,9 +17,7 @@ from typing import Any
 
 import yaml
 
-from gobby.storage.workflow_definitions import (
-    compute_definition_hash,
-)
+from gobby.storage.definitions._shared import compute_definition_hash
 
 logger = logging.getLogger(__name__)
 

@@ -16,10 +16,7 @@ from gobby.hooks.events import HookEvent, HookEventType, SessionSource
 from gobby.servers.chat_session import ChatSession
 from gobby.servers.websocket.chat import ChatMixin
 from gobby.storage.hub.protocol import HubDatabase
-from gobby.storage.workflow_definitions import (
-    LocalWorkflowDefinitionManager,
-    WorkflowDefinitionRow,
-)
+from gobby.storage.definitions.rules import RuleDefinitionManager, RuleDefinitionRow
 from gobby.workflows.engine.core import RuleEngine
 from gobby.workflows.step_instances import AgentStepInstanceManager
 from tests.workflows.step_instance_fixtures import make_step_instance
@@ -38,8 +35,8 @@ def db(hub_db: HubDatabase) -> HubDatabase:
 
 
 @pytest.fixture
-def manager(db: HubDatabase) -> LocalWorkflowDefinitionManager:
-    return LocalWorkflowDefinitionManager(db)
+def manager(db: HubDatabase) -> RuleDefinitionManager:
+    return RuleDefinitionManager(db)
 
 
 @pytest.fixture
@@ -93,7 +90,7 @@ def _insert_block_rule(
     name: str,
     event: str,
     reason: str = "",
-) -> WorkflowDefinitionRow:
+) -> RuleDefinitionRow:
     definition: dict[str, Any] = {
         "event": event,
         "effects": [
@@ -103,17 +100,16 @@ def _insert_block_rule(
             }
         ],
     }
-    return LocalWorkflowDefinitionManager(db).create(
+    return RuleDefinitionManager(db).create(
         name=name,
         definition_json=json.dumps(definition),
-        workflow_type="rule",
         priority=10,
     )
 
 
 def _setup_step_workflow(
     db: HubDatabase,
-    manager: LocalWorkflowDefinitionManager,
+    manager: RuleDefinitionManager,
     instance_mgr: AgentStepInstanceManager,
     *,
     session_id: str = SESSION_ID,
@@ -133,7 +129,6 @@ def _setup_step_workflow(
     manager.create(
         name=definition["name"],
         definition_json=json.dumps(definition),
-        workflow_type="workflow",
         priority=100,
         enabled=True,
     )
@@ -246,7 +241,7 @@ async def test_rule_block_reason_and_log_are_structured(
 @pytest.mark.asyncio
 async def test_step_enforcement_block_logs_structured_reason(
     db: HubDatabase,
-    manager: LocalWorkflowDefinitionManager,
+    manager: RuleDefinitionManager,
     engine: RuleEngine,
     instance_mgr: AgentStepInstanceManager,
     caplog: pytest.LogCaptureFixture,

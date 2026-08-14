@@ -13,7 +13,7 @@ import yaml
 
 from gobby.hooks.events import HookEvent, HookEventType, SessionSource
 from gobby.storage.hub.protocol import HubDatabase
-from gobby.storage.workflow_definitions import LocalWorkflowDefinitionManager
+from gobby.storage.definitions.agents import AgentDefinitionManager
 from gobby.workflows.definitions import WorkflowDefinition
 from gobby.workflows.engine.core import RuleEngine
 from gobby.workflows.step_instances import AgentStepInstanceManager
@@ -90,11 +90,10 @@ def _install_merge_worker_workflow(
         "exit_condition": agent["step_workflow"].get("exit_condition"),
     }
     definition = WorkflowDefinition(**workflow_data)
-    manager = LocalWorkflowDefinitionManager(db)
+    manager = AgentDefinitionManager(db)
     manager.create(
         name=definition.name,
         definition_json=json.dumps(workflow_data),
-        workflow_type="workflow",
         priority=100,
         enabled=True,
     )

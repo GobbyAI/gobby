@@ -38,11 +38,11 @@ def test_build_rules_autonomous_only() -> None:
 
 
 def test_build_rules_sync_with_audience(temp_db: HubDatabase) -> None:
-    from gobby.storage.workflow_definitions import LocalWorkflowDefinitionManager
+    from gobby.storage.definitions.rules import RuleDefinitionManager
     from gobby.workflows.sync_rules import sync_bundled_rules
 
     sync_bundled_rules(temp_db)
-    manager = LocalWorkflowDefinitionManager(temp_db)
+    manager = RuleDefinitionManager(temp_db)
 
     row = manager.get_by_name("build-agent-block-full-pytest")
     assert row is not None
@@ -54,9 +54,9 @@ def test_build_rules_sync_with_audience(temp_db: HubDatabase) -> None:
 async def test_autonomous_audience_rules_skip_interactive_sessions(
     temp_db: HubDatabase,
 ) -> None:
-    from gobby.storage.workflow_definitions import LocalWorkflowDefinitionManager
+    from gobby.storage.definitions.rules import RuleDefinitionManager
 
-    manager = LocalWorkflowDefinitionManager(temp_db)
+    manager = RuleDefinitionManager(temp_db)
     manager.create(
         name="autonomous-only",
         definition_json=RuleDefinitionBody(
@@ -64,7 +64,6 @@ async def test_autonomous_audience_rules_skip_interactive_sessions(
             audience="autonomous",
             effects=[RuleEffect(type="block", tools=["Bash"], reason="autonomous only")],
         ).model_dump_json(),
-        workflow_type="rule",
         enabled=True,
         priority=10,
     )

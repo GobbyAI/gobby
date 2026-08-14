@@ -1244,20 +1244,37 @@ class TestPurgeSoftDeletedDefinitions:
 
     @pytest.mark.asyncio
     async def test_success(self, manager: SessionLifecycleManager) -> None:
-        """Purge runs without error."""
-        with patch("gobby.storage.workflow_definitions.LocalWorkflowDefinitionManager") as MockWFM:
+        """Purge fans out over the four typed parent managers."""
+        paths = (
+            "gobby.storage.definitions.rules.RuleDefinitionManager",
+            "gobby.storage.definitions.agents.AgentDefinitionManager",
+            "gobby.storage.definitions.variables.SessionVariableDefaultManager",
+            "gobby.storage.definitions.pipelines.PipelineDefinitionManager",
+        )
+        with (
+            patch(paths[0]) as mock_rules,
+            patch(paths[1]) as mock_agents,
+            patch(paths[2]) as mock_variables,
+            patch(paths[3]) as mock_pipelines,
+        ):
             await manager._purge_soft_deleted_definitions()
-            MockWFM.return_value.purge_deleted.assert_called_once_with(older_than_days=30)
-        assert MockWFM.return_value.purge_deleted.call_count == 1
+        for mock in (mock_rules, mock_agents, mock_variables, mock_pipelines):
+            mock.return_value.purge_deleted.assert_called_once_with(older_than_days=30)
 
     @pytest.mark.asyncio
     async def test_exception_handled(self, manager: SessionLifecycleManager) -> None:
         """Purge errors are caught and logged."""
-        with patch("gobby.storage.workflow_definitions.LocalWorkflowDefinitionManager") as MockWFM:
-            MockWFM.return_value.purge_deleted.side_effect = Exception("DB error")
-            # Should not raise
-            await manager._purge_soft_deleted_definitions()
-        assert MockWFM.return_value.purge_deleted.call_count == 1
+        with patch(
+            "gobby.storage.definitions.rules.RuleDefinitionManager"
+        ) as mock_rules:
+            mock_rules.return_value.purge_deleted.side_effect = Exception("DB error")
+            with (
+                patch("gobby.storage.definitions.agents.AgentDefinitionManager"),
+                patch("gobby.storage.definitions.variables.SessionVariableDefaultManager"),
+                patch("gobby.storage.definitions.pipelines.PipelineDefinitionManager"),
+            ):
+                await manager._purge_soft_deleted_definitions()
+        assert mock_rules.return_value.purge_deleted.call_count == 1
 
 
 class TestPurgeDreamHiddenMemories:

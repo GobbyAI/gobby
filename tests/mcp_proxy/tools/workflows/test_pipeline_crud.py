@@ -87,5 +87,5 @@ def test_pipelines_module_has_no_generic_imports() -> None:
 
     source = Path("src/gobby/mcp_proxy/tools/workflows/_pipelines.py").read_text(encoding="utf-8")
     assert "from gobby.mcp_proxy.tools.workflows._definitions" not in source
-    assert "LocalWorkflowDefinitionManager" not in source
+    assert "RuleDefinitionManager" not in source
     assert "create_workflow_definition" not in source

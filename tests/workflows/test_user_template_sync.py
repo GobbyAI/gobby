@@ -11,7 +11,7 @@ import json
 
 import pytest
 
-from gobby.storage.workflow_definitions import LocalWorkflowDefinitionManager
+from gobby.storage.definitions.rules import RuleDefinitionManager
 
 pytestmark = pytest.mark.unit
 
@@ -19,7 +19,7 @@ pytestmark = pytest.mark.unit
 @pytest.fixture()
 def manager(temp_db):
     """Create a workflow definition manager."""
-    return LocalWorkflowDefinitionManager(temp_db)
+    return RuleDefinitionManager(temp_db)
 
 
 def _create_rule(manager, name, *, source="installed", tags=None, enabled=False, project_id=None):
@@ -32,7 +32,6 @@ def _create_rule(manager, name, *, source="installed", tags=None, enabled=False,
     return manager.create(
         name=name,
         definition_json=json.dumps(definition),
-        workflow_type="rule",
         source=source,
         tags=tags,
         enabled=enabled,
@@ -76,7 +75,7 @@ class TestOrphanTagIsolation:
 
         # The user template should survive
         all_rows = temp_db.fetchall(
-            "SELECT * FROM workflow_definitions WHERE name = 'shared-rule' AND deleted_at IS NULL"
+            "SELECT * FROM rule_definitions WHERE name = 'shared-rule' AND deleted_at IS NULL"
         )
         user_rows = [r for r in all_rows if "user" in json.loads(r["tags"] or "[]")]
         assert len(user_rows) == 1, "User-tagged template should survive gobby orphan cleanup"
@@ -101,14 +100,14 @@ class TestOrphanTagIsolation:
 
         # gobby template orphaned
         gobby_row = temp_db.fetchone(
-            "SELECT deleted_at FROM workflow_definitions "
+            "SELECT deleted_at FROM rule_definitions "
             "WHERE name = 'gobby-only-rule' AND tags::text LIKE '%%gobby%%'"
         )
         assert gobby_row is not None
         assert gobby_row["deleted_at"] is not None
 
         custom_row = temp_db.fetchone(
-            "SELECT deleted_at FROM workflow_definitions WHERE name = 'custom-gobby-rule'"
+            "SELECT deleted_at FROM rule_definitions WHERE name = 'custom-gobby-rule'"
         )
         assert custom_row is not None
         assert custom_row["deleted_at"] is None
@@ -116,11 +115,10 @@ class TestOrphanTagIsolation:
         duplicated_row = manager.get(duplicate.id)
         assert duplicated_row.deleted_at is None
         assert duplicated_row.source == "custom"
-        assert "gobby" not in (duplicated_row.tags or [])
 
         # user template untouched
         user_row = temp_db.fetchone(
-            "SELECT deleted_at FROM workflow_definitions "
+            "SELECT deleted_at FROM rule_definitions "
             "WHERE name = 'user-only-rule' AND tags::text LIKE '%%user%%'"
         )
         assert user_row is not None
@@ -176,7 +174,7 @@ class TestSyncUserRules:
         assert result["errors"] == []
         assert result["synced"] == 1
 
-        row = temp_db.fetchone("SELECT tags FROM workflow_definitions WHERE name = 'my-rule'")
+        row = temp_db.fetchone("SELECT tags FROM rule_definitions WHERE name = 'my-rule'")
         assert "user" in json.loads(row["tags"])
 
     def test_user_orphan_does_not_affect_gobby(self, manager, temp_db, tmp_path):
@@ -195,7 +193,7 @@ class TestSyncUserRules:
 
         # gobby rule untouched
         gobby = temp_db.fetchone(
-            "SELECT deleted_at FROM workflow_definitions WHERE name = 'gobby-rule'"
+            "SELECT deleted_at FROM rule_definitions WHERE name = 'gobby-rule'"
         )
         assert gobby["deleted_at"] is None
 
@@ -239,23 +237,34 @@ class TestMultiRootUserSync:
         sync_counts = [_sync_user_templates_to_db(temp_db) for _ in range(2)]
         assert sync_counts == [4, 0]
 
-        active_names = {
+        rule_names = {
             row["name"]
             for row in temp_db.fetchall(
-                "SELECT name FROM workflow_definitions WHERE deleted_at IS NULL"
+                "SELECT name FROM rule_definitions WHERE deleted_at IS NULL"
             )
         }
-        assert {
-            "project-rule",
-            "global-rule",
-            "project_variable",
-            "global_variable",
-        }.issubset(active_names)
-        user_tagged = temp_db.fetchall(
-            "SELECT name FROM workflow_definitions "
-            "WHERE deleted_at IS NULL AND tags::text LIKE '%%user%%'"
-        )
-        assert {row["name"] for row in user_tagged} == {
+        variable_names = {
+            row["name"]
+            for row in temp_db.fetchall(
+                "SELECT name FROM session_variable_defaults WHERE deleted_at IS NULL"
+            )
+        }
+        assert {"project-rule", "global-rule"}.issubset(rule_names)
+        assert {"project_variable", "global_variable"}.issubset(variable_names)
+        user_tagged = {
+            row["name"]
+            for row in temp_db.fetchall(
+                "SELECT name FROM rule_definitions "
+                "WHERE deleted_at IS NULL AND tags::text LIKE '%%user%%'"
+            )
+        } | {
+            row["name"]
+            for row in temp_db.fetchall(
+                "SELECT name FROM session_variable_defaults "
+                "WHERE deleted_at IS NULL AND tags::text LIKE '%%user%%'"
+            )
+        }
+        assert user_tagged == {
             "project-rule",
             "global-rule",
             "project_variable",

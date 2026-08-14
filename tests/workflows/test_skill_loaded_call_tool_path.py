@@ -32,7 +32,7 @@ def db(temp_db: HubDatabase) -> Iterator[HubDatabase]:
     database = temp_db
     sync_bundled_rules(database, get_bundled_rules_path())
     database.execute(
-        "UPDATE workflow_definitions SET source = 'installed' WHERE source = 'template'"
+        "UPDATE rule_definitions SET source = 'installed' WHERE source = 'template'"
     )
     yield database
 

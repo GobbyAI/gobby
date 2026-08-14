@@ -12,7 +12,7 @@ from gobby.agents.sync import get_bundled_agents_path, sync_bundled_agents
 from gobby.storage.definitions import AgentDefinitionManager
 from gobby.storage.hub.postgres import PostgresHubDatabase
 from gobby.storage.hub.protocol import HubDatabase
-from gobby.storage.workflow_definitions import LocalWorkflowDefinitionManager
+from gobby.storage.definitions.agents import AgentDefinitionManager
 from gobby.workflows.definitions import AgentDefinitionBody
 
 
@@ -178,7 +178,7 @@ class TestSyncBundledAgents:
             enabled=body.enabled,
             tags=["gobby"],
         )
-        legacy = LocalWorkflowDefinitionManager(db)
+        legacy = AgentDefinitionManager(db)
         legacy.create(
             name="merge-helper-steps",
             definition_json=json.dumps(
@@ -198,7 +198,6 @@ class TestSyncBundledAgents:
                     "exit_condition": None,
                 }
             ),
-            workflow_type="workflow",
             source="agent",
             enabled=False,
         )
@@ -680,7 +679,7 @@ class TestSyncBundledAgents:
         assert result["synced"] + result["skipped"] + result["updated"] >= 1
         assert result["errors"] == []
 
-        # Verify agents are in workflow_definitions
+        # Verify agents are in rule_definitions
         mgr = _mgr(db)
         rows = mgr.list_all()
         assert len(rows) > 0

@@ -16,7 +16,7 @@ from gobby.storage.projects import LocalProjectManager
 from gobby.storage.sessions import SessionManager
 from gobby.storage.skills import LocalSkillManager
 from gobby.storage.tasks import LocalTaskManager
-from gobby.storage.workflow_definitions import LocalWorkflowDefinitionManager
+from gobby.storage.definitions.agents import AgentDefinitionManager
 from gobby.workflows.definitions import (
     AgentDefinitionBody,
     AgentStepWorkflowBody,
@@ -203,10 +203,9 @@ async def test_spawn_and_explain_share_unknown_skill_failure(
     )
     task = task_manager.update_task(task.id, allow_automation=True, isolation="none")
     agent_body = _agent()
-    LocalWorkflowDefinitionManager(temp_db).create(
+    AgentDefinitionManager(temp_db).create(
         name=agent_body.name,
         definition_json=agent_body.model_dump_json(),
-        workflow_type="agent",
         project_id=project.id,
     )
     _skill(temp_db, "required-skill")

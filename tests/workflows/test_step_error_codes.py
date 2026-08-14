@@ -11,7 +11,7 @@ import pytest
 
 from gobby.hooks.events import HookEvent, HookEventType, SessionSource
 from gobby.storage.hub.protocol import HubDatabase
-from gobby.storage.workflow_definitions import LocalWorkflowDefinitionManager
+from gobby.storage.definitions.agents import AgentDefinitionManager
 from gobby.workflows.definitions import WorkflowDefinition
 from gobby.workflows.engine.core import RuleEngine
 from gobby.workflows.agent_models import AgentStepWorkflowBody
@@ -33,8 +33,8 @@ def db(temp_db: HubDatabase) -> HubDatabase:
 
 
 @pytest.fixture
-def manager(db: HubDatabase) -> LocalWorkflowDefinitionManager:
-    return LocalWorkflowDefinitionManager(db)
+def manager(db: HubDatabase) -> AgentDefinitionManager:
+    return AgentDefinitionManager(db)
 
 
 @pytest.fixture
@@ -67,7 +67,7 @@ def _create_session(db: HubDatabase, session_id: str = SESSION_ID) -> None:
 
 def _setup_workflow(
     db: HubDatabase,
-    manager: LocalWorkflowDefinitionManager,
+    manager: AgentDefinitionManager,
     instance_mgr: AgentStepInstanceManager,
     workflow_data: dict[str, Any],
     *,
@@ -79,7 +79,6 @@ def _setup_workflow(
     manager.create(
         name=definition.name,
         definition_json=json.dumps(workflow_data),
-        workflow_type="workflow",
         enabled=True,
     )
     instance_mgr.save(
@@ -117,7 +116,7 @@ def _after_call_tool_event(tool_output: dict[str, Any]) -> HookEvent:
 @pytest.mark.asyncio
 async def test_on_mcp_error_when_branches_on_error_code(
     db: HubDatabase,
-    manager: LocalWorkflowDefinitionManager,
+    manager: AgentDefinitionManager,
     engine: RuleEngine,
     instance_mgr: AgentStepInstanceManager,
 ) -> None:
@@ -160,7 +159,7 @@ async def test_on_mcp_error_when_branches_on_error_code(
         variables={},
     )
 
-    instance = instance_mgr.get_for_session(SESSION_ID, "task-error-code-workflow")
+    instance = instance_mgr.get_for_session(SESSION_ID)
     assert instance is not None
     assert instance.variables.get("task_claimed") is True
     assert instance.current_step == "done"

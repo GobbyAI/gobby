@@ -49,11 +49,11 @@ def clean_dirty_files(monkeypatch) -> None:
 @pytest.fixture
 def handler(db: HubDatabase) -> WorkflowHookHandler:
     sync_bundled_rules(db, get_bundled_rules_path())
-    db.execute("UPDATE workflow_definitions SET source = 'installed' WHERE source = 'template'")
-    db.execute("UPDATE workflow_definitions SET enabled = FALSE WHERE workflow_type = 'rule'")
+    db.execute("UPDATE rule_definitions SET source = 'installed' WHERE source = 'template'")
+    db.execute("UPDATE rule_definitions SET enabled = FALSE ")
     for name in PROGRESSIVE_DISCOVERY_RULES:
         db.execute(
-            "UPDATE workflow_definitions SET enabled = TRUE WHERE name = %s",
+            "UPDATE rule_definitions SET enabled = TRUE WHERE name = %s",
             (name,),
         )
 

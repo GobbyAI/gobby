@@ -11,7 +11,7 @@ from starlette.testclient import TestClient
 from gobby.config.app import DaemonConfig
 from gobby.storage.definitions.variables import SessionVariableDefaultManager
 from gobby.storage.hub.protocol import HubDatabase
-from gobby.storage.workflow_definitions import compute_definition_hash
+from gobby.storage.definitions._shared import compute_definition_hash
 from gobby.workflows.template_hashes import TemplateHashCache
 from tests.servers.conftest import create_http_server
 

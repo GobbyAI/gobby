@@ -11,7 +11,7 @@ import pytest
 
 from gobby.hooks.events import HookEvent, HookEventType, SessionSource
 from gobby.storage.hub.protocol import HubDatabase
-from gobby.storage.workflow_definitions import LocalWorkflowDefinitionManager
+from gobby.storage.definitions.rules import RuleDefinitionManager
 from gobby.workflows.condition_helpers import is_validation_command
 from gobby.workflows.definitions import RuleDefinitionBody
 from gobby.workflows.engine.core import RuleEngine
@@ -41,9 +41,9 @@ def db(temp_db: HubDatabase) -> Iterator[HubDatabase]:
 
 
 @pytest.fixture
-def manager(db: HubDatabase) -> LocalWorkflowDefinitionManager:
+def manager(db: HubDatabase) -> RuleDefinitionManager:
     """Return workflow definition storage for the fixture database."""
-    return LocalWorkflowDefinitionManager(db)
+    return RuleDefinitionManager(db)
 
 
 def _event(
@@ -108,10 +108,10 @@ def _verdict_event(server: str, tool: str) -> HookEvent:
     )
 
 
-def _rule(manager: LocalWorkflowDefinitionManager, name: str) -> RuleDefinitionBody:
+def _rule(manager: RuleDefinitionManager, name: str) -> RuleDefinitionBody:
     row = manager.get_by_name(name)
     assert row is not None
-    return RuleDefinitionBody.model_validate_json(row.definition_json)
+    return RuleDefinitionBody.model_validate(row.definition_json)
 
 
 @pytest.mark.parametrize(
@@ -160,10 +160,10 @@ def test_validation_command_detection_rejects_non_validation_commands(command: s
 
 
 def test_bundled_reviewer_terminal_verdict_rules_sync(
-    manager: LocalWorkflowDefinitionManager,
+    manager: RuleDefinitionManager,
 ) -> None:
     """Bundled reviewer terminal-verdict rules sync with the expected contract."""
-    rule_names = {row.name for row in manager.list_all(workflow_type="rule")}
+    rule_names = {row.name for row in manager.list_all()}
 
     assert RULE_NAMES <= rule_names
     for name in RULE_NAMES:

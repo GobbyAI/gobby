@@ -14,7 +14,7 @@ import yaml
 
 from gobby.storage.definitions.pipelines import PipelineDefinitionManager
 from gobby.storage.hub.protocol import HubDatabase
-from gobby.storage.workflow_definitions import LocalWorkflowDefinitionManager
+from gobby.storage.definitions.rules import RuleDefinitionManager
 from gobby.workflows.definitions import PipelineDefinition
 from gobby.workflows.pipeline.renderer import StepRenderer
 
@@ -29,8 +29,8 @@ def db(temp_db: HubDatabase) -> HubDatabase:
 
 
 @pytest.fixture
-def manager(db: HubDatabase) -> LocalWorkflowDefinitionManager:
-    return LocalWorkflowDefinitionManager(db)
+def manager(db: HubDatabase) -> RuleDefinitionManager:
+    return RuleDefinitionManager(db)
 
 
 @pytest.fixture
@@ -106,7 +106,7 @@ class TestSyncBundledRules:
         assert result["skipped"] == 1
 
     def test_sync_rule_file_imports_yml_file(
-        self, db: HubDatabase, manager: LocalWorkflowDefinitionManager, tmp_path: Path
+        self, db: HubDatabase, manager: RuleDefinitionManager, tmp_path: Path
     ) -> None:
         from gobby.workflows.sync_rules import sync_rule_file
 
@@ -129,10 +129,10 @@ rules:
         assert row is not None
         assert row.enabled is True
         assert row.tags == ["user"]
-        assert json.loads(row.definition_json)["event"] == "turn_start"
+        assert row.definition_json["event"] == "turn_start"
 
     def test_imported_rule_survives_bundled_orphan_cleanup(
-        self, db: HubDatabase, manager: LocalWorkflowDefinitionManager, tmp_path: Path
+        self, db: HubDatabase, manager: RuleDefinitionManager, tmp_path: Path
     ) -> None:
         from gobby.workflows.sync_rules import sync_bundled_rules, sync_rule_file
 
@@ -168,7 +168,7 @@ rules:
         assert bundled.tags == ["gobby"]
 
     def test_sync_rule_file_does_not_update_sibling_rule(
-        self, db: HubDatabase, manager: LocalWorkflowDefinitionManager, tmp_path: Path
+        self, db: HubDatabase, manager: RuleDefinitionManager, tmp_path: Path
     ) -> None:
         from gobby.workflows.sync_rules import sync_rule_file
 
@@ -180,7 +180,6 @@ rules:
                     "effects": [{"type": "block", "reason": "old sibling"}],
                 }
             ),
-            workflow_type="rule",
             source="installed",
             tags=["gobby"],
         )
@@ -260,11 +259,10 @@ rules:
         from gobby.workflows.sync_rules import sync_bundled_rules
 
         # Create a gobby-tagged installed rule
-        manager = LocalWorkflowDefinitionManager(db)
+        manager = RuleDefinitionManager(db)
         manager.create(
             name="collision-rule",
             definition_json='{"event": "before_tool", "effects": [{"type": "log", "message": "v1"}]}',
-            workflow_type="rule",
             source="installed",
             tags=["gobby"],
         )
@@ -300,7 +298,7 @@ rules:
         assert result["success"] is False
 
     def test_parse_error_does_not_orphan_existing_rule(
-        self, db: HubDatabase, manager: LocalWorkflowDefinitionManager, tmp_path: Path
+        self, db: HubDatabase, manager: RuleDefinitionManager, tmp_path: Path
     ) -> None:
         from gobby.workflows.sync_rules import sync_bundled_rules
 
@@ -322,7 +320,7 @@ rules:
         assert manager.get_by_name("retained-rule") is not None
 
     def test_empty_directory_does_not_orphan_existing_rule(
-        self, db: HubDatabase, manager: LocalWorkflowDefinitionManager, tmp_path: Path
+        self, db: HubDatabase, manager: RuleDefinitionManager, tmp_path: Path
     ) -> None:
         from gobby.workflows.sync_rules import sync_bundled_rules
 
@@ -342,7 +340,7 @@ rules:
         assert manager.get_by_name("retained-rule") is not None
 
     def test_restores_soft_deleted_rule(
-        self, db: HubDatabase, manager: LocalWorkflowDefinitionManager, tmp_path: Path
+        self, db: HubDatabase, manager: RuleDefinitionManager, tmp_path: Path
     ) -> None:
         from gobby.workflows.sync_rules import sync_bundled_rules
 

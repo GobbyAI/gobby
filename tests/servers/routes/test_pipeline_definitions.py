@@ -14,7 +14,7 @@ from gobby.config.app import DaemonConfig
 from gobby.storage.definitions.pipelines import PipelineDefinitionManager
 from gobby.storage.hub.protocol import HubDatabase
 from gobby.storage.projects import LocalProjectManager
-from gobby.storage.workflow_definitions import compute_definition_hash
+from gobby.storage.definitions._shared import compute_definition_hash
 from gobby.workflows.template_hashes import TemplateHashCache
 from tests.servers.conftest import create_http_server
 

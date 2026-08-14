@@ -881,13 +881,6 @@ CREATE TABLE inter_session_messages (
     delivered_at timestamp with time zone
 );
 
-CREATE TABLE IF NOT EXISTS legacy_copy_ledger (
-    legacy_id uuid PRIMARY KEY,
-    domain text NOT NULL,
-    source_hash text NOT NULL,
-    copied_at timestamp with time zone DEFAULT now() NOT NULL
-);
-
 CREATE TABLE loop_progress (
     id integer NOT NULL,
     session_id uuid NOT NULL,
@@ -2275,42 +2268,6 @@ ALTER TABLE workflow_audit_log ALTER COLUMN id ADD GENERATED ALWAYS AS IDENTITY 
     CACHE 1
 );
 
-CREATE TABLE workflow_definitions (
-    id uuid NOT NULL,
-    project_id uuid,
-    name text NOT NULL,
-    description text,
-    workflow_type text DEFAULT 'workflow'::text NOT NULL,
-    version text DEFAULT '1.0'::text,
-    enabled boolean DEFAULT true,
-    enabled_user_modified boolean DEFAULT false NOT NULL,
-    priority integer DEFAULT 100,
-    sources jsonb,
-    definition_json jsonb NOT NULL,
-    canvas_json jsonb,
-    source text DEFAULT 'installed'::text,
-    tags jsonb,
-    deleted_at timestamp with time zone,
-    created_at timestamp with time zone DEFAULT now() NOT NULL,
-    updated_at timestamp with time zone DEFAULT now() NOT NULL
-);
-
-CREATE TABLE workflow_instances (
-    id uuid NOT NULL,
-    session_id uuid NOT NULL,
-    workflow_name text NOT NULL,
-    enabled boolean DEFAULT true NOT NULL,
-    priority integer DEFAULT 100 NOT NULL,
-    current_step text,
-    step_entered_at timestamp with time zone,
-    step_action_count integer DEFAULT 0,
-    total_action_count integer DEFAULT 0,
-    variables jsonb DEFAULT '{}'::jsonb,
-    context_injected boolean DEFAULT false,
-    created_at timestamp with time zone DEFAULT now() NOT NULL,
-    updated_at timestamp with time zone DEFAULT now() NOT NULL
-);
-
 CREATE TABLE worktrees (
     id uuid NOT NULL,
     project_id uuid NOT NULL,
@@ -2512,9 +2469,6 @@ ALTER TABLE ONLY prompts
 
 ALTER TABLE ONLY skills
     ADD CONSTRAINT idx_skills_name_project_source UNIQUE NULLS NOT DISTINCT (name, project_id, source);
-
-ALTER TABLE ONLY workflow_definitions
-    ADD CONSTRAINT idx_wf_defs_name_project UNIQUE NULLS NOT DISTINCT (name, project_id, source);
 
 ALTER TABLE ONLY integration_workspace_mutex
     ADD CONSTRAINT integration_workspace_mutex_pkey PRIMARY KEY (integration_key);
@@ -2812,15 +2766,6 @@ ALTER TABLE ONLY unmodeled_observations
 
 ALTER TABLE ONLY workflow_audit_log
     ADD CONSTRAINT workflow_audit_log_pkey PRIMARY KEY (id);
-
-ALTER TABLE ONLY workflow_definitions
-    ADD CONSTRAINT workflow_definitions_pkey PRIMARY KEY (id);
-
-ALTER TABLE ONLY workflow_instances
-    ADD CONSTRAINT workflow_instances_pkey PRIMARY KEY (id);
-
-ALTER TABLE ONLY workflow_instances
-    ADD CONSTRAINT workflow_instances_session_id_workflow_name_key UNIQUE (session_id, workflow_name);
 
 ALTER TABLE ONLY worktrees
     ADD CONSTRAINT worktrees_pkey PRIMARY KEY (id);
@@ -3321,18 +3266,6 @@ CREATE INDEX idx_unmodeled_observations_worklist ON unmodeled_observations USING
 
 CREATE INDEX idx_validation_history_task ON task_validation_history USING btree (task_id);
 
-CREATE INDEX idx_wf_defs_enabled ON workflow_definitions USING btree (enabled);
-
-CREATE INDEX idx_wf_defs_name ON workflow_definitions USING btree (name);
-
-CREATE INDEX idx_wf_defs_project ON workflow_definitions USING btree (project_id);
-
-CREATE INDEX idx_wf_defs_type ON workflow_definitions USING btree (workflow_type);
-
-CREATE INDEX idx_workflow_instances_enabled ON workflow_instances USING btree (session_id, enabled);
-
-CREATE INDEX idx_workflow_instances_session ON workflow_instances USING btree (session_id);
-
 CREATE UNIQUE INDEX idx_worktrees_branch ON worktrees USING btree (project_id, branch_name, machine_id);
 
 CREATE UNIQUE INDEX idx_worktrees_path ON worktrees USING btree (machine_id, worktree_path);
@@ -3746,12 +3679,6 @@ ALTER TABLE ONLY rule_definitions
 ALTER TABLE ONLY session_variable_defaults
     ADD CONSTRAINT session_variable_defaults_project_id_fkey FOREIGN KEY (project_id) REFERENCES projects(id) ON DELETE CASCADE DEFERRABLE INITIALLY IMMEDIATE;
 
-ALTER TABLE ONLY workflow_definitions
-    ADD CONSTRAINT workflow_definitions_project_id_fkey FOREIGN KEY (project_id) REFERENCES projects(id) ON DELETE CASCADE DEFERRABLE;
-
-ALTER TABLE ONLY workflow_instances
-    ADD CONSTRAINT workflow_instances_session_id_fkey FOREIGN KEY (session_id) REFERENCES sessions(id) ON DELETE CASCADE DEFERRABLE;
-
 ALTER TABLE ONLY worktrees
 ADD CONSTRAINT worktrees_agent_session_id_machine_id_fkey FOREIGN KEY (agent_session_id, machine_id) REFERENCES sessions(id, machine_id) ON DELETE SET NULL (agent_session_id) DEFERRABLE INITIALLY IMMEDIATE;
 
@@ -3994,8 +3921,6 @@ GRANT SELECT,INSERT,DELETE,UPDATE ON TABLE integration_workspace_mutex TO gobby_
 
 GRANT SELECT,INSERT,DELETE,UPDATE ON TABLE inter_session_messages TO gobby_daemon_runtime;
 
-GRANT SELECT,INSERT,DELETE,UPDATE ON TABLE legacy_copy_ledger TO gobby_daemon_runtime;
-
 GRANT SELECT,INSERT,DELETE,UPDATE ON TABLE loop_progress TO gobby_daemon_runtime;
 
 GRANT ALL ON SEQUENCE loop_progress_id_seq TO gobby_daemon_runtime;
@@ -4213,10 +4138,6 @@ GRANT SELECT,INSERT,DELETE,UPDATE ON TABLE unmodeled_observations TO gobby_daemo
 GRANT SELECT,INSERT,DELETE,UPDATE ON TABLE workflow_audit_log TO gobby_daemon_runtime;
 
 GRANT ALL ON SEQUENCE workflow_audit_log_id_seq TO gobby_daemon_runtime;
-
-GRANT SELECT,INSERT,DELETE,UPDATE ON TABLE workflow_definitions TO gobby_daemon_runtime;
-
-GRANT SELECT,INSERT,DELETE,UPDATE ON TABLE workflow_instances TO gobby_daemon_runtime;
 
 GRANT SELECT,INSERT,DELETE,UPDATE ON TABLE worktrees TO gobby_daemon_runtime;
 
