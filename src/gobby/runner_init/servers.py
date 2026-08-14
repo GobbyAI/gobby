@@ -340,7 +340,7 @@ def _bind_runtime_grants(server: HTTPServer, runner: GobbyRunner) -> None:
     from gobby.runtime_grants.schema import GrantPrincipal, PostgresDirect
     from gobby.runtime_grants.service import DeploymentGrantContext, GrantService
     from gobby.servers.grant_auth import LiveLeaseGrantService
-    from gobby.servers.lease_fence import EffectFence
+    from gobby.servers.lease_fence import EffectFence, bind_fenced_writer
 
     lease = getattr(runner, "daemon_lease", None)
     runtime = getattr(runner, "config_runtime", None)
@@ -348,6 +348,10 @@ def _bind_runtime_grants(server: HTTPServer, runner: GobbyRunner) -> None:
         return
     presenter = LiveLeaseGrantService(runtime, lease, clock=lambda: int(time.time()))
     fence = EffectFence()
+    server.effect_fence = fence
+    database = getattr(runner, "database", None)
+    if database is not None:
+        bind_fenced_writer(database, lease)
     server.grant_service = presenter
     server.auth_service.bind_runtime(
         grant_service=presenter,
@@ -359,7 +363,6 @@ def _bind_runtime_grants(server: HTTPServer, runner: GobbyRunner) -> None:
 
     credentials = getattr(runner, "managed_credential_manager", None)
     secrets = getattr(runner, "secret_store", None)
-    database = getattr(runner, "database", None)
     if credentials is None or secrets is None or database is None:
         return
 

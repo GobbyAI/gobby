@@ -19,6 +19,7 @@ from fastapi.testclient import TestClient
 
 from gobby.servers.auth_service import AuthService
 from gobby.servers.grant_auth import AuthDecision
+from gobby.servers.lease_fence import EffectFence
 from gobby.servers.middleware.auth import AuthMiddleware
 from gobby.storage.auth import AuthStore, hash_token
 from gobby.storage.hub.protocol import HubDatabase
@@ -284,3 +285,57 @@ async def test_concurrent_protected_requests_do_not_block_event_loop() -> None:
     assert [response.status_code for response in http_responses] == [200, 200, 200]
     assert len(auth_threads) == request_count
     assert all(thread_id != event_loop_thread for thread_id in auth_threads)
+
+
+@pytest.mark.asyncio
+async def test_effectful_handler_holds_admission_across_call_next() -> None:
+    fence = EffectFence()
+    in_flight_during_handler: list[int] = []
+    auth_service = MagicMock()
+    auth_service.authenticate.return_value = AuthDecision(allowed=True, status_code=200)
+    auth_service.effect_fence = fence
+    server = cast(
+        "HTTPServer",
+        SimpleNamespace(auth_service=auth_service, run_db=_run_db),
+    )
+    app = FastAPI()
+    app.add_middleware(AuthMiddleware, server=server)
+
+    @app.post("/api/embeddings")
+    async def protected() -> dict[str, bool]:
+        in_flight_during_handler.append(fence.in_flight)
+        return {"ok": True}
+
+    transport = httpx.ASGITransport(app=app)
+    async with httpx.AsyncClient(transport=transport, base_url="http://test") as client:
+        response = await client.post("/api/embeddings")
+
+    assert response.status_code == 200
+    assert in_flight_during_handler == [1]
+    assert fence.in_flight == 0
+
+
+@pytest.mark.asyncio
+async def test_drained_fence_rejects_effectful_handler() -> None:
+    fence = EffectFence()
+    fence.drain(timeout=0.1)
+    auth_service = MagicMock()
+    auth_service.authenticate.return_value = AuthDecision(allowed=True, status_code=200)
+    auth_service.effect_fence = fence
+    server = cast(
+        "HTTPServer",
+        SimpleNamespace(auth_service=auth_service, run_db=_run_db),
+    )
+    app = FastAPI()
+    app.add_middleware(AuthMiddleware, server=server)
+
+    @app.post("/api/embeddings")
+    async def protected() -> dict[str, bool]:
+        raise AssertionError("handler must not run after drain")
+
+    transport = httpx.ASGITransport(app=app)
+    async with httpx.AsyncClient(transport=transport, base_url="http://test") as client:
+        response = await client.post("/api/embeddings")
+
+    assert response.status_code == 409
+    assert response.json()["code"] == "lease_not_held"

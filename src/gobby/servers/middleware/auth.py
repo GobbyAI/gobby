@@ -13,6 +13,8 @@ from starlette.requests import Request
 from starlette.responses import Response
 
 from gobby.config.ui import is_loopback_bind_host
+from gobby.servers.grant_auth import admission_required
+from gobby.servers.lease_fence import LeaseNotHeld
 from gobby.servers.responses import JSONResponse
 
 if TYPE_CHECKING:
@@ -82,7 +84,7 @@ class AuthMiddleware(BaseHTTPMiddleware):
         auth_service = self.server.auth_service
         decision = await self.server.run_db(auth_service.authenticate, request)
         if getattr(decision, "allowed", None) is True:
-            return await call_next(request)
+            return await self._call_next_admitted(request, call_next)
 
         if path.startswith(_PROTECTED_PREFIXES):
             code = getattr(decision, "code", None)
@@ -98,3 +100,25 @@ class AuthMiddleware(BaseHTTPMiddleware):
 
         # Browser route: serve the SPA shell so React can render login.
         return await call_next(request)
+
+    async def _call_next_admitted(
+        self,
+        request: Request,
+        call_next: RequestResponseEndpoint,
+    ) -> Response:
+        if not admission_required(request.method, request.url.path):
+            return await call_next(request)
+        fence = getattr(self.server.auth_service, "effect_fence", None)
+        if fence is None:
+            return await call_next(request)
+        try:
+            with fence.admit():
+                return await call_next(request)
+        except LeaseNotHeld as exc:
+            return JSONResponse(
+                status_code=409,
+                content={
+                    "error": exc.message,
+                    "code": exc.code,
+                },
+            )

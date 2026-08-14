@@ -9,6 +9,7 @@ import logging
 from fastapi import FastAPI, HTTPException, Request
 from starlette.requests import ClientDisconnect
 
+from gobby.servers.lease_fence import LeaseNotHeld, StaleEpochFence
 from gobby.servers.responses import JSONResponse
 from gobby.storage.hub.postgres_pool import is_pool_unavailable
 from gobby.utils.logging import ThrottledLogger
@@ -60,6 +61,20 @@ def register_exception_handlers(app: FastAPI) -> None:
     Args:
         app: FastAPI application instance
     """
+
+    @app.exception_handler(LeaseNotHeld)
+    async def lease_not_held_handler(_request: Request, exc: LeaseNotHeld) -> JSONResponse:
+        return JSONResponse(
+            status_code=409,
+            content={"error": exc.message, "code": exc.code},
+        )
+
+    @app.exception_handler(StaleEpochFence)
+    async def stale_epoch_handler(_request: Request, exc: StaleEpochFence) -> JSONResponse:
+        return JSONResponse(
+            status_code=409,
+            content={"error": exc.message, "code": exc.code},
+        )
 
     @app.exception_handler(Exception)
     async def global_exception_handler(

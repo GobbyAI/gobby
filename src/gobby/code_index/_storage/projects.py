@@ -5,7 +5,8 @@ from __future__ import annotations
 from typing import cast
 
 from gobby.code_index.models import IndexedProject
-from gobby.storage.hub.protocol import HubDatabase
+from gobby.servers.lease_fence import run_hub_mutation
+from gobby.storage.hub.protocol import HubDatabase, Transaction
 from gobby.utils.machine_id import require_machine_id
 
 
@@ -73,21 +74,24 @@ class CodeIndexProjectStorageMixin:
 
     def delete_project_index(self, project_id: str) -> dict[str, int]:
         """Delete this machine's project selector while retaining shared content."""
-        with self.db.transaction() as conn:
-            counts = {
-                "symbols": 0,
-                "files": 0,
-                "imports": 0,
-                "calls": 0,
-                "content_chunks": 0,
-            }
+        counts = {
+            "symbols": 0,
+            "files": 0,
+            "imports": 0,
+            "calls": 0,
+            "content_chunks": 0,
+        }
+
+        def _write(conn: Transaction) -> None:
             cursor = conn.execute(
                 """DELETE FROM code_indexed_project_states
                    WHERE machine_id = %s AND project_id = %s""",
                 (require_machine_id(), project_id),
             )
             counts["projects"] = cursor.rowcount
-            return counts
+
+        run_hub_mutation(self.db, _write)
+        return counts
 
     def count_symbols(self, project_id: str) -> int:
         """Count total symbols for a project."""

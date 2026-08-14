@@ -137,6 +137,12 @@ _GRANT_ROUTES: tuple[GrantRoute, ...] = (
     GrantRoute("POST", "/api/admin/savings/record", True, None),
 )
 
+_OPERATOR_EFFECTFUL_ROUTES = frozenset(
+    {
+        ("POST", "/api/code-index/prune"),
+    }
+)
+
 
 def match_grant_route(method: str, path: str) -> GrantRoute | None:
     segments = path.strip("/").split("/")
@@ -154,6 +160,15 @@ def match_grant_route(method: str, path: str) -> GrantRoute | None:
         ):
             return entry
     return None
+
+
+def admission_required(method: str, path: str) -> bool:
+    """Whether this request must hold the lease fence across handler execution."""
+    route = match_grant_route(method, path)
+    if route is not None:
+        return route.effectful
+    normalized = path.rstrip("/") or "/"
+    return (method.upper(), normalized) in _OPERATOR_EFFECTFUL_ROUTES
 
 
 def present_or_reject(

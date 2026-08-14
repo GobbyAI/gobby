@@ -5,7 +5,8 @@ from __future__ import annotations
 from typing import Any
 
 from gobby.code_index.models import CodeIndexPruneDirtyProject
-from gobby.storage.hub.protocol import HubDatabase
+from gobby.servers.lease_fence import run_hub_mutation
+from gobby.storage.hub.protocol import HubDatabase, Transaction
 from gobby.utils.machine_id import require_machine_id
 
 
@@ -17,7 +18,8 @@ class CodeIndexPruneStorageMixin:
     def mark_prune_dirty(self, project_id: str, root_path: str, reason: str) -> None:
         """Mark a project root as needing gcode prune reconciliation."""
         machine_id = require_machine_id()
-        with self.db.transaction() as conn:
+
+        def _write(conn: Transaction) -> None:
             conn.execute(
                 """INSERT INTO code_index_prune_dirty_projects (
                     machine_id, project_id, root_path, reason
@@ -30,10 +32,13 @@ class CodeIndexPruneStorageMixin:
                 (machine_id, project_id, root_path, reason),
             )
 
+        run_hub_mutation(self.db, _write)
+
     def record_prune_failure(self, project_id: str, error: str) -> None:
         """Persist a failed prune attempt for later cron retry."""
         machine_id = require_machine_id()
-        with self.db.transaction() as conn:
+
+        def _write(conn: Transaction) -> None:
             conn.execute(
                 """UPDATE code_index_prune_dirty_projects
                    SET attempts = attempts + 1,
@@ -44,17 +49,25 @@ class CodeIndexPruneStorageMixin:
                 (error, machine_id, project_id),
             )
 
+        run_hub_mutation(self.db, _write)
+
     def clear_prune_dirty(self, project_id: str) -> bool:
         """Clear a dirty prune marker after prune succeeds."""
         machine_id = require_machine_id()
-        with self.db.transaction() as conn:
+        cleared = False
+
+        def _write(conn: Transaction) -> None:
+            nonlocal cleared
             cursor = conn.execute(
                 """DELETE FROM code_index_prune_dirty_projects
                    WHERE machine_id = %s AND project_id = %s""",
                 (machine_id, project_id),
             )
             rowcount = cursor.rowcount
-            return isinstance(rowcount, int) and rowcount > 0
+            cleared = isinstance(rowcount, int) and rowcount > 0
+
+        run_hub_mutation(self.db, _write)
+        return cleared
 
     def list_prune_dirty_projects(
         self,

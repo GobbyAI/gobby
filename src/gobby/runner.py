@@ -347,6 +347,7 @@ async def run_gobby(
         machine_id=require_machine_id(),
         deployment_token=deployment_token(),
     )
+    runner: GobbyRunner | None = None
     try:
         await asyncio.to_thread(verify_schema, database_url)
         if not await asyncio.to_thread(lease.try_acquire):
@@ -367,25 +368,36 @@ async def run_gobby(
                 return
 
         runner = await GobbyRunner.create(config_path=config_path, verbose=verbose)
-        runner.daemon_lease = lease
+        active = runner
+        active.daemon_lease = lease
         from gobby.runner_init.servers import _bind_runtime_grants
+        from gobby.servers.lease_fence import drain_effect_fence
 
-        _bind_runtime_grants(runner.http_server, runner)
+        _bind_runtime_grants(active.http_server, active)
+
+        def _on_lease_loss() -> None:
+            drain_effect_fence(getattr(active.http_server, "effect_fence", None))
+            active.request_shutdown()
+
         lease_monitor_stop = asyncio.Event()
         async with asyncio.TaskGroup() as tasks:
             tasks.create_task(
                 monitor_active_lease(
                     lease,
                     stop=lease_monitor_stop,
-                    on_loss=runner.request_shutdown,
+                    on_loss=_on_lease_loss,
                 ),
                 name="active-daemon-lease-monitor",
             )
             try:
-                await runner.run(ownership_resolution=ownership_resolution)
+                await active.run(ownership_resolution=ownership_resolution)
             finally:
                 lease_monitor_stop.set()
     finally:
+        if runner is not None:
+            from gobby.servers.lease_fence import drain_effect_fence
+
+            drain_effect_fence(getattr(runner.http_server, "effect_fence", None))
         lease.release()
         ownership_resolution.release()
 

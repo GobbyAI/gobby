@@ -2,13 +2,22 @@
 
 from __future__ import annotations
 
+import logging
 import threading
 import time
 from collections.abc import Callable
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, cast
+from weakref import WeakKeyDictionary
 
 if TYPE_CHECKING:
     from gobby.storage.hub.protocol import HubDatabase, Transaction
+
+logger = logging.getLogger(__name__)
+
+LEASE_LOSS_DRAIN_TIMEOUT_SECONDS = 30.0
+_bound_writers: WeakKeyDictionary[object, Callable[[Callable[[Transaction], None]], None]] = (
+    WeakKeyDictionary()
+)
 
 
 class LeaseNotHeld(RuntimeError):
@@ -44,6 +53,11 @@ class EffectFence:
     def in_flight(self) -> int:
         with self._lock:
             return self._in_flight
+
+    @property
+    def serving(self) -> bool:
+        with self._lock:
+            return self._serving
 
     def admit(self) -> _Admission:
         return _Admission(self)
@@ -117,3 +131,45 @@ def fenced_hub_write(
                 f"owned fencing epoch {owned_epoch} does not match deployment_runtime"
             )
         writer(txn)
+
+
+def bind_fenced_writer(db: object, lease: object) -> None:
+    """Register a production fenced writer that reads the live lease epoch."""
+
+    def run_fenced_write(writer: Callable[[Transaction], None]) -> None:
+        epoch = getattr(lease, "fencing_epoch", None)
+        token = getattr(lease, "deployment_token", None)
+        if epoch is None or not token:
+            raise StaleEpochFence("active-daemon lease has no fencing epoch")
+        fenced_hub_write(
+            cast("HubDatabase", db),
+            deployment_token=str(token),
+            owned_epoch=int(epoch),
+            writer=writer,
+        )
+
+    _bound_writers[db] = run_fenced_write
+
+
+def run_hub_mutation(db: HubDatabase, writer: Callable[[Transaction], None]) -> None:
+    """Run ``writer`` inside a fenced hub transaction when a writer is bound."""
+    fenced = _bound_writers.get(db)
+    if fenced is not None:
+        fenced(writer)
+        return
+    with db.transaction() as txn:
+        writer(txn)
+
+
+def drain_effect_fence(
+    fence: EffectFence | None,
+    *,
+    timeout: float = LEASE_LOSS_DRAIN_TIMEOUT_SECONDS,
+) -> None:
+    """Stop new admissions and wait for in-flight handlers after lease loss."""
+    if fence is None:
+        return
+    try:
+        fence.drain(timeout=timeout)
+    except TimeoutError:
+        logger.error("timed out draining predecessor in-flight work after lease loss")

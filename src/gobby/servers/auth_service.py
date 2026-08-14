@@ -16,12 +16,13 @@ from gobby.identity import DUMMY_PASSWORD_HASH, verify_password_hash
 from gobby.servers.grant_auth import (
     GRANT_HEADER,
     AuthDecision,
+    admission_required,
     bearer_matches_grant,
     identity_headers_match,
     match_grant_route,
     present_or_reject,
 )
-from gobby.servers.lease_fence import EffectFence, LeaseNotHeld
+from gobby.servers.lease_fence import EffectFence
 from gobby.storage.agents import ACTIVE_AGENT_RUN_STATUSES
 from gobby.storage.auth import (
     AuthStore,
@@ -237,7 +238,17 @@ class AuthService:
             request.url.path,
         )
         if grant_route is None:
-            return AuthDecision(allowed=self._legacy_authenticated(request))
+            if not self._legacy_authenticated(request):
+                return AuthDecision(allowed=False)
+            if (
+                admission_required(
+                    str(request.scope.get("method", "GET")),
+                    request.url.path,
+                )
+                and not self._effectful_allowed()
+            ):
+                return AuthDecision(allowed=False, code="lease_not_held", status_code=409)
+            return AuthDecision(allowed=True)
 
         bearer = self._accepted_bearer(request)
         if bearer is False:
@@ -330,17 +341,17 @@ class AuthService:
     def _agent_credential_accepted(self, request: HTTPConnection, token: str) -> bool:
         return self._verified_agent_claims_for_token(request, token) is not None
 
+    @property
+    def effect_fence(self) -> EffectFence | None:
+        return self._effect_fence
+
     def _effectful_allowed(self) -> bool:
         if self._lease_live is not None and not self._lease_live():
             return False
         fence = self._effect_fence
         if fence is None:
             return True
-        try:
-            with fence.admit():
-                return True
-        except LeaseNotHeld:
-            return False
+        return fence.serving
 
     def verified_agent_claims(self, request: HTTPConnection) -> AgentApiTokenClaims | None:
         """Return identity claims only for a valid run-scoped agent request."""

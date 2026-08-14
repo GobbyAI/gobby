@@ -21,6 +21,7 @@ from gobby.code_index.models import (
 )
 from gobby.code_index.storage import CodeIndexStorage
 from gobby.code_index.summary_safety import SUMMARY_MAX_CHARS
+from gobby.servers.lease_fence import StaleEpochFence, bind_fenced_writer
 from gobby.storage.hub.protocol import HubDatabase
 from tests.code_index.conftest import FILE_CONTENT_HASH, MISSING_ID, PROJECT_ID, PROJECT_ID_2
 
@@ -720,6 +721,37 @@ def test_prune_dirty_projects_round_trip(code_storage: CodeIndexStorage) -> None
     assert code_storage.clear_prune_dirty(PROJECT_ID) is True
     assert code_storage.clear_prune_dirty(PROJECT_ID) is False
     assert [row.project_id for row in code_storage.list_prune_dirty_projects()] == [PROJECT_ID_2]
+
+
+def test_prune_mutations_enforce_epoch_inside_transaction(
+    code_storage: CodeIndexStorage,
+) -> None:
+    token = "cafebabedeadbeef"
+    code_storage.db.execute(
+        """
+        INSERT INTO deployment_runtime (deployment_token, fencing_epoch, grant_signing_secret)
+        VALUES (%s, 1, 'secret')
+        ON CONFLICT (deployment_token) DO UPDATE
+           SET fencing_epoch = 1, grant_signing_secret = EXCLUDED.grant_signing_secret
+        """,
+        (token,),
+    )
+    bind_fenced_writer(
+        code_storage.db,
+        SimpleNamespace(deployment_token=token, fencing_epoch=1),
+    )
+    code_storage.mark_prune_dirty(PROJECT_ID, "/repo/one", "operator_global_prune")
+    assert [row.project_id for row in code_storage.list_prune_dirty_projects()] == [PROJECT_ID]
+
+    code_storage.db.execute(
+        "UPDATE deployment_runtime SET fencing_epoch = 2 WHERE deployment_token = %s",
+        (token,),
+    )
+    with pytest.raises(StaleEpochFence):
+        code_storage.mark_prune_dirty(PROJECT_ID_2, "/repo/two", "stale")
+    with pytest.raises(StaleEpochFence):
+        code_storage.delete_project_index(PROJECT_ID)
+    assert [row.project_id for row in code_storage.list_prune_dirty_projects()] == [PROJECT_ID]
 
 
 def test_prune_dirty_projects_are_isolated_by_machine(code_storage: CodeIndexStorage) -> None:

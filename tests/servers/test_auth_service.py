@@ -833,6 +833,31 @@ def test_effectful_requires_live_lease(temp_db: HubDatabase, tmp_path: Path) -> 
     assert doctor.allowed is True
 
 
+def test_authenticate_does_not_hold_admission(temp_db: HubDatabase, tmp_path: Path) -> None:
+    service, headers = _grant_auth_service(temp_db, tmp_path, lease_live=True)
+    fence = service.effect_fence
+    assert fence is not None
+    decision = service.authenticate(_request(headers, method="POST", path="/api/embeddings"))
+    assert decision.allowed is True
+    assert fence.in_flight == 0
+
+
+def test_operator_prune_requires_live_lease(temp_db: HubDatabase, tmp_path: Path) -> None:
+    live, _headers = _grant_auth_service(temp_db, tmp_path, lease_live=True)
+    dead_dir = tmp_path / "prune-dead"
+    dead_dir.mkdir()
+    dead, _ = _grant_auth_service(temp_db, dead_dir, lease_live=False)
+    operator = {"Authorization": "Bearer operator-token"}
+    assert (
+        live.authenticate(_request(operator, method="POST", path="/api/code-index/prune")).allowed
+        is True
+    )
+    lost = dead.authenticate(_request(operator, method="POST", path="/api/code-index/prune"))
+    assert lost.allowed is False
+    assert lost.code == "lease_not_held"
+    assert lost.status_code == 409
+
+
 def test_in_transaction_epoch_fencing(temp_db: HubDatabase) -> None:
     from gobby.servers.lease_fence import (
         EffectFence,

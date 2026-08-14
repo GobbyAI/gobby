@@ -100,6 +100,7 @@ class HTTPServer:
         self.grant_service: Any = None
         self.handshake_service: Any = None
         self.handshake_factory: Any = None
+        self.effect_fence: Any = None
 
         # WebSocket server reference (set by GobbyRunner after construction)
         self.websocket_server: WebSocketServer | None = None
