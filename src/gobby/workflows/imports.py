@@ -25,6 +25,7 @@ from gobby.workflows.definitions import (
 logger = logging.getLogger(__name__)
 
 _KIND_TABLES = ("agent", "rule", "variable", "pipeline")
+_KIND_SUBDIRS = ("rules", "agents", "pipelines", "variables")
 
 
 def _lookup_existing_kind(db: Any, name: str, project_id: str | None) -> str | None:
@@ -190,7 +191,7 @@ def sync_imported_workflows(
     for root, scope_id in roots:
         if not root.is_dir():
             continue
-        for path in sorted((*root.glob("*.yaml"), *root.glob("*.yml"))):
+        for path in _iter_kind_yaml(root):
             try:
                 sync_imported_workflow_file(db, path, scope_id)
                 synced += 1
@@ -200,3 +201,14 @@ def sync_imported_workflows(
                 errors.append(message)
 
     return {"synced": synced, "errors": errors}
+
+
+def _iter_kind_yaml(root: Path) -> list[Path]:
+    """Yield YAML files under per-kind workflow subdirectories."""
+    paths: list[Path] = []
+    for kind in _KIND_SUBDIRS:
+        kind_dir = root / kind
+        if not kind_dir.is_dir():
+            continue
+        paths.extend(sorted((*kind_dir.glob("*.yaml"), *kind_dir.glob("*.yml"))))
+    return paths

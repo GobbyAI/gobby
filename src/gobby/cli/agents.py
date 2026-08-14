@@ -20,6 +20,7 @@ from typing import Any, cast
 import click
 import httpx
 
+from gobby.cli.agents_steps import check_agent, list_agent_steps
 from gobby.cli.runtime import require_cli_database
 from gobby.cli.utils import resolve_session_id
 from gobby.cli.utils_config import get_daemon_client, get_daemon_url
@@ -637,134 +638,6 @@ def kill_agent(run_ref: str, force: bool, stop: bool, yes: bool) -> None:
         raise click.ClickException(f"Failed: {result.get('error')}")
 
 
-@agents.command("check")
-@click.argument("agent_name", default="default")
-@click.option("--workflow", "-w", help="Workflow name to evaluate")
-@click.option("--task", "-t", "task_id", help="Task ID for branch naming")
-@click.option("--session", "-s", "session_id", help="Parent session ID for depth/mode checks")
-@click.option("--isolation", "-i", help="Isolation mode override (none, worktree, clone)")
-@click.option("--provider", "-p", help="Provider override")
-@click.option("--json", "json_format", is_flag=True, help="Output as JSON")
-def check_agent(
-    agent_name: str,
-    workflow: str | None,
-    task_id: str | None,
-    session_id: str | None,
-    isolation: str | None,
-    provider: str | None,
-    json_format: bool,
-) -> None:
-    """Dry-run evaluation of spawn_agent — checks without executing.
-
-    Validates agent definition, workflow resolution, isolation config,
-    and runtime environment to identify issues before spawning.
-
-    \b
-    Examples:
-        gobby agents check meeseeks-qwen
-        gobby agents check meeseeks-qwen --workflow worker
-        gobby agents check meeseeks-qwen --workflow worker --session #1071
-        gobby agents check meeseeks-qwen --json
-    """
-    arguments: dict[str, Any] = {"agent": agent_name}
-    if workflow:
-        arguments["workflow"] = workflow
-    if task_id:
-        arguments["task_id"] = task_id
-    if session_id:
-        arguments["parent_session_id"] = session_id
-    if isolation:
-        arguments["isolation"] = isolation
-    if provider:
-        arguments["provider"] = provider
-
-    client = get_daemon_client()
-    try:
-        result = client.call_mcp_tool(
-            server_name="gobby-agents",
-            tool_name="evaluate_spawn",
-            arguments=arguments,
-            timeout=15.0,
-        )
-    except (httpx.ConnectError, httpx.TimeoutException) as e:
-        raise click.ClickException(
-            f"{e}\nIs the Gobby daemon running? Start with: gobby start"
-        ) from e
-    except httpx.HTTPStatusError as e:
-        raise click.ClickException(f"HTTP Error {e.response.status_code}: {e.response.text}") from e
-    except httpx.HTTPError as e:
-        raise click.ClickException(str(e)) from e
-    except Exception as e:
-        raise click.ClickException(f"{e}\nStart with: gobby start") from e
-
-    if json_format:
-        click.echo(json_dumps(result, indent=2, default=str))
-        if not result.get("can_spawn", False):
-            raise SystemExit(1)
-        return
-
-    # Formatted output
-    can_spawn = result.get("can_spawn", False)
-    items = result.get("items", [])
-
-    if can_spawn:
-        click.secho("CAN SPAWN", fg="green", bold=True)
-    else:
-        click.secho("CANNOT SPAWN", fg="red", bold=True)
-
-    click.echo()
-
-    # Agent info
-    if result.get("agent_found"):
-        click.echo(f"  Agent: {result.get('agent_name')}")
-        click.echo(f"  Provider: {result.get('effective_provider')}")
-        click.echo(f"  Isolation: {result.get('effective_isolation')}")
-        if result.get("effective_workflow"):
-            click.echo(f"  Workflow: {result.get('effective_workflow')}")
-        if result.get("branch_name"):
-            click.echo(f"  Branch: {result.get('branch_name')}")
-        click.echo()
-
-    # Items by layer
-    layers_seen: set[str] = set()
-    for item in items:
-        layer = item.get("layer", "unknown")
-        level = item.get("level", "info")
-        code = item.get("code", "")
-        message = item.get("message", "")
-
-        if layer not in layers_seen:
-            layers_seen.add(layer)
-            click.secho(f"  [{layer}]", bold=True)
-
-        if level == "error":
-            click.secho(f"    ERROR {code}: {message}", fg="red")
-        elif level == "warning":
-            click.secho(f"    WARN  {code}: {message}", fg="yellow")
-        else:
-            click.echo(f"    info  {code}: {message}")
-
-    # Workflow evaluation summary
-    wf_eval = result.get("workflow_evaluation")
-    if wf_eval and wf_eval.get("step_trace"):
-        click.echo()
-        click.secho("  [workflow step trace]", bold=True)
-        for step in wf_eval["step_trace"]:
-            click.echo(f"    {step['name']}", nl=False)
-            if step.get("description"):
-                click.echo(f" — {step['description']}", nl=False)
-            click.echo()
-            if step.get("transitions"):
-                for t in step["transitions"]:
-                    click.echo(f"      -> {t['to']} when: {t['when']}")
-
-        if wf_eval.get("lifecycle_path"):
-            click.echo(f"\n  Path: {' -> '.join(wf_eval['lifecycle_path'])}")
-
-    if json_format and not can_spawn:
-        raise SystemExit(1)
-
-
 @agents.command("stats")
 @click.option("--session", "-s", "session_id", help="Filter by parent session ID")
 def agent_stats(session_id: str | None) -> None:
@@ -863,3 +736,7 @@ def cleanup_agents(timeout: int, dry_run: bool) -> None:
             raise click.ClickException(f"Agent cleanup failed: {exc}") from exc
 
         click.echo(f"Cleaned up {len(run_ids)} stale agent runs.")
+
+
+agents.add_command(list_agent_steps)
+agents.add_command(check_agent)

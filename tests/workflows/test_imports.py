@@ -42,9 +42,9 @@ async def test_sync_imported_workflows_loads_project_and_global_files_without_re
         repo_path=str(project_path),
     )
     global_dir = tmp_path / "global-workflows"
-    _write_pipeline(global_dir / "global-import.yaml", "global-import")
+    _write_pipeline(global_dir / "pipelines" / "global-import.yaml", "global-import")
     _write_pipeline(
-        project_path / ".gobby" / "workflows" / "project-import.yml",
+        project_path / ".gobby" / "workflows" / "pipelines" / "project-import.yml",
         "project-import",
     )
     monkeypatch.setattr(

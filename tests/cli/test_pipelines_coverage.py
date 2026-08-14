@@ -49,7 +49,7 @@ class TestHelpers:
         with pytest.raises(click.BadParameter, match="key=value"):
             parse_input("noequals")
 
-    @patch("gobby.cli.workflows.common.Path")
+    @patch("gobby.cli.pipelines.Path")
     def test_get_project_path_found(self, mock_path_cls: MagicMock) -> None:
         cwd = MagicMock()
         gobby_dir = MagicMock()
@@ -59,7 +59,7 @@ class TestHelpers:
         assert get_project_path() == cwd
         assert gobby_dir.exists.call_count == 1
 
-    @patch("gobby.cli.workflows.common.Path")
+    @patch("gobby.cli.pipelines.Path")
     def test_get_project_path_not_found(self, mock_path_cls: MagicMock) -> None:
         cwd = MagicMock()
         gobby_dir = MagicMock()
