@@ -48,7 +48,6 @@
  *
  * Recorded in `REPRESENTATIVE_MAPPINGS` below with equivalence rationales,
  * and asserted against the live tree so they cannot silently rot.
- * Wiki Ask mode is excluded entirely (typed deferral 4.11 → #19672).
  */
 
 import * as fs from "node:fs";

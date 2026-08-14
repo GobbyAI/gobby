@@ -14,6 +14,7 @@ from __future__ import annotations
 
 import json
 from datetime import UTC, datetime
+from pathlib import Path
 from typing import Any
 
 import pytest
@@ -45,6 +46,18 @@ CONTEXT_HANDOFF_RULES = {
     "auto-compact-after-task-close",
 }
 SESSION_ID = "11111111-1111-4111-8111-111111111111"
+_BUNDLED_RULES = (
+    Path(__file__).resolve().parents[2] / "src/gobby/install/shared/workflows/rules"
+)
+
+
+def test_bundled_session_rules_do_not_advertise_wiki_ask() -> None:
+    offenders: list[str] = []
+    for path in sorted(_BUNDLED_RULES.rglob("*.yaml")):
+        text = path.read_text()
+        if "wiki_ask" in text:
+            offenders.append(path.relative_to(_BUNDLED_RULES).as_posix())
+    assert offenders == []
 
 
 @pytest.fixture
