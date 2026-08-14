@@ -216,7 +216,7 @@ class EmbeddingsConfig(BaseModel):
         default=None,
         description=(
             "Explicit API key for the embedding endpoint. "
-            "Installers store this as an encrypted $secret: reference in config_store."
+            "Installers store this as an encrypted secret-store reference in config_store."
         ),
     )
     query_prefix: str | None = Field(

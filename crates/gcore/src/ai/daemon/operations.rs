@@ -84,7 +84,7 @@ fn present_via_daemon<T>(
     let Some(root) = project_root_for_grant() else {
         return send(&grant);
     };
-    let request = AcquireRequest::new(&root);
+    let request = AcquireRequest::from_process(&root);
     let mut last_ai = None;
     match crate::grant::present_bundle_with_single_retry(&request, &grant, |bundle| {
         match send(bundle) {

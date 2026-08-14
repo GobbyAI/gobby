@@ -160,8 +160,9 @@ pub struct AcquireRequest<'a> {
     pub session_id: Option<String>,
     pub deadline: Option<Duration>,
     pub stale_lock_after: Option<Duration>,
-    pub managed_bootstrap: Option<&'a Path>,
-    pub managed_envelope: Option<&'a str>,
+    pub managed_bootstrap: Option<PathBuf>,
+    pub managed_envelope: Option<String>,
+    pub expected_execution_id: Option<String>,
 }
 
 impl<'a> AcquireRequest<'a> {
@@ -176,7 +177,28 @@ impl<'a> AcquireRequest<'a> {
             stale_lock_after: None,
             managed_bootstrap: None,
             managed_envelope: None,
+            expected_execution_id: None,
         }
+    }
+
+    /// Snapshot process environment into an explicit request.
+    ///
+    /// `acquire_with` never reads the environment; production `acquire` and
+    /// daemon presentation retries go through here so tests can isolate.
+    pub fn from_process(project_root: &'a Path) -> Self {
+        let mut request = Self::new(project_root);
+        request.daemon_url = Some(crate::daemon_url::daemon_url());
+        request.managed_bootstrap = std::env::var_os(MANAGED_BOOTSTRAP_ENV).map(PathBuf::from);
+        request.managed_envelope = std::env::var(crate::local_token::AGENT_API_TOKEN_ENV).ok();
+        request.expected_execution_id = std::env::var("GOBBY_AGENT_RUN_ID")
+            .ok()
+            .filter(|value| !value.trim().is_empty())
+            .or_else(|| {
+                std::env::var("GOBBY_MANAGED_EXECUTION_ID")
+                    .ok()
+                    .filter(|value| !value.trim().is_empty())
+            });
+        request
     }
 }
 
@@ -192,10 +214,11 @@ struct AcquireCtx {
     stale_lock_after: Duration,
     managed_bootstrap: Option<PathBuf>,
     managed_envelope: Option<String>,
+    expected_execution_id: Option<String>,
 }
 
 pub fn acquire(project_root: impl AsRef<Path>) -> Result<AcquiredGrant, GrantError> {
-    acquire_with(&AcquireRequest::new(project_root.as_ref()))
+    acquire_with(&AcquireRequest::from_process(project_root.as_ref()))
 }
 
 pub fn acquire_with(request: &AcquireRequest<'_>) -> Result<AcquiredGrant, GrantError> {
@@ -347,16 +370,20 @@ impl AcquireCtx {
             home,
             project_id,
             machine_id,
-            daemon_url: request
-                .daemon_url
-                .clone()
-                .unwrap_or_else(crate::daemon_url::daemon_url),
+            daemon_url: match request.daemon_url.clone() {
+                Some(url) => url,
+                None => match request.home {
+                    Some(home) => crate::daemon_url::daemon_url_at(&home.join("bootstrap.yaml")),
+                    None => crate::daemon_url::daemon_url(),
+                },
+            },
             now: request.now.unwrap_or_else(unix_now),
             session_id: request.session_id.clone(),
             deadline: Instant::now() + request.deadline.unwrap_or(DEFAULT_DEADLINE),
             stale_lock_after: request.stale_lock_after.unwrap_or(DEFAULT_STALE_LOCK),
-            managed_bootstrap: request.managed_bootstrap.map(Path::to_path_buf),
-            managed_envelope: request.managed_envelope.map(str::to_string),
+            managed_bootstrap: request.managed_bootstrap.clone(),
+            managed_envelope: request.managed_envelope.clone(),
+            expected_execution_id: request.expected_execution_id.clone(),
         })
     }
 
@@ -387,7 +414,7 @@ fn acquire_managed(ctx: &AcquireCtx, path: &Path) -> Result<AcquiredGrant, Grant
         Some(&grant.deployment.token),
         true,
     )?;
-    validate_managed_identity(&grant)?;
+    validate_managed_identity(&grant, ctx.expected_execution_id.as_deref())?;
     let destination = path.to_path_buf();
     match inspect_cache_pair(path)? {
         Some(CachePair::Coherent(grant, settings)) => finish_loaded_with_settings(
@@ -692,11 +719,7 @@ fn managed_envelope(
     ctx: &AcquireCtx,
     existing: Option<&GrantBundle>,
 ) -> Result<(String, CapabilityClaims), GrantError> {
-    let owned = match ctx.managed_envelope.as_deref() {
-        Some(envelope) => envelope.to_string(),
-        None => std::env::var(crate::local_token::AGENT_API_TOKEN_ENV)
-            .map_err(|_| GrantError::Expired)?,
-    };
+    let owned = ctx.managed_envelope.clone().ok_or(GrantError::Expired)?;
     let envelope = owned.trim();
     if envelope.is_empty() {
         return Err(GrantError::Expired);
@@ -852,9 +875,7 @@ fn fetch_settings_coherent(
     };
     let timeout = ctx.remaining()?;
     let retried_bearer = if managed {
-        ctx.managed_envelope
-            .clone()
-            .or_else(|| std::env::var(crate::local_token::AGENT_API_TOKEN_ENV).ok())
+        ctx.managed_envelope.clone()
     } else {
         interactive_bearer(&ctx.home).ok()
     };
@@ -872,26 +893,19 @@ fn fetch_settings_coherent(
 }
 
 fn interactive_bearer(home: &Path) -> Result<String, GrantError> {
-    crate::local_token::read_local_cli_token_for(home)
+    crate::local_token::read_local_cli_token_at(home)
         .map_err(|error| GrantError::Malformed(error.to_string()))
 }
 
 fn managed_bootstrap_path(ctx: &AcquireCtx) -> Option<PathBuf> {
-    ctx.managed_bootstrap
-        .clone()
-        .or_else(|| std::env::var_os(MANAGED_BOOTSTRAP_ENV).map(PathBuf::from))
+    ctx.managed_bootstrap.clone()
 }
 
-fn validate_managed_identity(grant: &GrantBundle) -> Result<(), GrantError> {
-    let env_exec = std::env::var("GOBBY_AGENT_RUN_ID")
-        .ok()
-        .filter(|value| !value.trim().is_empty())
-        .or_else(|| {
-            std::env::var("GOBBY_MANAGED_EXECUTION_ID")
-                .ok()
-                .filter(|value| !value.trim().is_empty())
-        });
-    if let Some(expected) = env_exec
+fn validate_managed_identity(
+    grant: &GrantBundle,
+    expected: Option<&str>,
+) -> Result<(), GrantError> {
+    if let Some(expected) = expected.filter(|value| !value.trim().is_empty())
         && grant.principal.execution_id.as_deref() != Some(expected.trim())
     {
         return Err(GrantError::Malformed(

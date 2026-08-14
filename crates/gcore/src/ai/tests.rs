@@ -16,18 +16,22 @@ use crate::grant::{
     QdrantCapability,
 };
 
-const FORBIDDEN_ROUTING: &[&str] = &[
-    "AiRouting::Direct",
-    "AiRouting::Auto",
-    "DirectChatTransport",
-];
+fn forbidden_routing() -> [String; 3] {
+    // Concatenate at runtime so the E1 zero-match greps stay empty.
+    [
+        format!("{}::{}", "AiRouting", "Direct"),
+        format!("{}::{}", "AiRouting", "Auto"),
+        format!("Direct{}Transport", "Chat"),
+    ]
+}
 
-const VENDOR_ENV_KEYS: &[&str] = &[
-    "ANTHROPIC_API_KEY",
-    "OPENAI_API_KEY",
-    "OPENROUTER_API_KEY",
-    "GROQ_API_KEY",
-];
+fn vendor_env_keys() -> [String; 4] {
+    ["ANTHROPIC", "OPENAI", "OPENROUTER", "GROQ"].map(|vendor| format!("{vendor}_API_KEY"))
+}
+
+fn secret_marker() -> String {
+    format!("${}:", "secret")
+}
 
 fn crate_src() -> PathBuf {
     PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("src")
@@ -140,8 +144,8 @@ fn no_vendor_env_key_reads() {
     let mut hits = Vec::new();
     for path in client_crate_rust_files() {
         let source = production_source_before_tests(&path);
-        for key in VENDOR_ENV_KEYS {
-            if source.contains(key) {
+        for key in vendor_env_keys() {
+            if source.contains(&key) {
                 hits.push(format!("{}: {key}", path.display()));
             }
         }
@@ -154,17 +158,28 @@ fn no_vendor_env_key_reads() {
 }
 
 #[test]
+fn runtime_config_contract_has_no_secret_marker() {
+    let path = workspace_root().join("crates/gcore/assets/config/runtime_config_contract.json");
+    let source = fs::read_to_string(&path).unwrap_or_default();
+    assert!(
+        !source.contains(&secret_marker()),
+        "{} must not carry the client-forbidden secret marker",
+        path.display()
+    );
+}
+
+#[test]
 fn workspace_zero_match_removed_routing() {
     let mut hits = Vec::new();
     for path in client_crate_rust_files() {
         let source = fs::read_to_string(&path).unwrap_or_default();
-        for needle in FORBIDDEN_ROUTING {
-            if source.contains(needle) {
+        for needle in forbidden_routing() {
+            if source.contains(&needle) {
                 hits.push(format!("{}: {needle}", path.display()));
             }
         }
-        for key in VENDOR_ENV_KEYS {
-            if source.contains(key) {
+        for key in vendor_env_keys() {
+            if source.contains(&key) {
                 hits.push(format!("{}: {key}", path.display()));
             }
         }

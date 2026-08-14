@@ -55,6 +55,66 @@ impl Harness {
             stale_lock_after: Some(Duration::from_millis(200)),
             managed_bootstrap: None,
             managed_envelope: None,
+            expected_execution_id: None,
+        }
+    }
+}
+
+#[test]
+fn acquire_with_ignores_process_environment() {
+    let harness = Harness::new();
+    let grant = fixture_grant(PrincipalKind::Interactive);
+    write_binding_for(&harness, "http://127.0.0.1:1", &grant.deployment.token);
+    write_cache(&harness, &grant, None);
+
+    let poison_dir = tempfile::tempdir().expect("poison home");
+    let poison_grant = fixture_grant(PrincipalKind::AgentRun);
+    let poison_path = poison_dir.path().join("poison.json");
+    write_grant_file(&poison_path, &poison_grant).expect("poison grant");
+
+    let _lock = crate::config::TEST_ENV_LOCK
+        .lock()
+        .unwrap_or_else(|poisoned| poisoned.into_inner());
+    let saved: [(&str, Option<std::ffi::OsString>); 5] = [
+        "GOBBY_MANAGED_EXECUTION_BOOTSTRAP",
+        "GOBBY_AGENT_RUN_ID",
+        "GOBBY_MANAGED_EXECUTION_ID",
+        crate::local_token::AGENT_API_TOKEN_ENV,
+        "GOBBY_DAEMON_URL",
+    ]
+    .map(|name| (name, std::env::var_os(name)));
+    // SAFETY: env mutation is serialized through TEST_ENV_LOCK and restored
+    // before the lock is released.
+    unsafe {
+        std::env::set_var("GOBBY_MANAGED_EXECUTION_BOOTSTRAP", &poison_path);
+        std::env::set_var("GOBBY_AGENT_RUN_ID", "not-this-test");
+        std::env::set_var("GOBBY_MANAGED_EXECUTION_ID", "not-this-test");
+        std::env::set_var(crate::local_token::AGENT_API_TOKEN_ENV, "poison-token");
+        std::env::set_var("GOBBY_DAEMON_URL", "http://127.0.0.1:9");
+    }
+
+    let acquired = acquire_with(&harness.request(Some("http://127.0.0.1:1".into())))
+        .expect("isolated acquire_with");
+    assert_eq!(acquired.source, GrantSource::Cache);
+    assert_eq!(acquired.bundle.principal.kind, PrincipalKind::Interactive);
+
+    let process = AcquireRequest::from_process(&harness.project_root);
+    assert_eq!(
+        process.managed_bootstrap.as_deref(),
+        Some(poison_path.as_path())
+    );
+    assert_eq!(
+        process.expected_execution_id.as_deref(),
+        Some("not-this-test")
+    );
+    assert_eq!(process.daemon_url.as_deref(), Some("http://127.0.0.1:9"));
+
+    for (name, value) in saved {
+        unsafe {
+            match value {
+                Some(value) => std::env::set_var(name, value),
+                None => std::env::remove_var(name),
+            }
         }
     }
 }
@@ -299,7 +359,7 @@ fn api_contract_gate() {
     let path = harness.home.join("managed.json");
     write_grant_file(&path, &grant).expect("write");
     let mut request = harness.request(None);
-    request.managed_bootstrap = Some(&path);
+    request.managed_bootstrap = Some(path.clone());
     let error = acquire_with(&request).expect_err("contract");
     assert_eq!(error, GrantError::ApiContractMismatch);
     assert_eq!(error.cli_code(), "api_contract_mismatch");
@@ -346,7 +406,7 @@ fn schema_mismatch_refuses_construction() {
     let path = harness.home.join("managed.json");
     write_grant_file(&path, &grant).expect("write");
     let mut request = harness.request(None);
-    request.managed_bootstrap = Some(&path);
+    request.managed_bootstrap = Some(path.clone());
     let error = acquire_with(&request).expect_err("schema");
     assert_eq!(error, GrantError::SchemaMismatch);
 }
@@ -470,7 +530,7 @@ fn managed_grant_never_overwrites_interactive_cache() {
     let managed_path = harness.home.join("agent-grant.json");
     write_grant_file(&managed_path, &managed).expect("managed");
     let mut request = harness.request(Some("http://127.0.0.1:1".into()));
-    request.managed_bootstrap = Some(&managed_path);
+    request.managed_bootstrap = Some(managed_path.clone());
     let acquired = acquire_with(&request).expect("managed");
     assert_eq!(acquired.source, GrantSource::ManagedFile);
     assert_eq!(acquired.bundle.principal.kind, PrincipalKind::AgentRun);
@@ -546,7 +606,7 @@ fn acquire_resolves_managed_then_cache_then_handshake() {
     let managed_path = harness.home.join("tool.json");
     write_grant_file(&managed_path, &managed).expect("managed");
     let mut request = harness.request(Some("http://127.0.0.1:1".into()));
-    request.managed_bootstrap = Some(&managed_path);
+    request.managed_bootstrap = Some(managed_path.clone());
     let acquired = acquire_with(&request).expect("managed");
     assert_eq!(acquired.source, GrantSource::ManagedFile);
 }
@@ -828,17 +888,17 @@ fn managed_refresh_envelope_auth() {
     write_grant_file(&managed_path, &managed).unwrap();
 
     let mut request = harness.request(Some("http://127.0.0.1:9".into()));
-    request.managed_bootstrap = Some(&managed_path);
+    request.managed_bootstrap = Some(managed_path.clone());
     let error = acquire_with(&request).expect_err("no envelope");
     assert_eq!(error, GrantError::Expired);
 
     let expired = envelope_token(NOW - 10, PROJECT);
-    request.managed_envelope = Some(&expired);
+    request.managed_envelope = Some(expired.clone());
     let error = acquire_with(&request).expect_err("expired envelope");
     assert_eq!(error, GrantError::Expired);
 
     let mismatch = envelope_token(NOW + 60, "other-project");
-    request.managed_envelope = Some(&mismatch);
+    request.managed_envelope = Some(mismatch.clone());
     let error = acquire_with(&request).expect_err("mismatch");
     assert!(matches!(error, GrantError::Malformed(_)));
 }
@@ -1036,8 +1096,8 @@ fn refresh_destination_by_source_managed_writes_managed_file() {
     let token = envelope_token(NOW + 60, PROJECT);
     let scripted = spawn_managed_challenge(&token, renewed.clone());
     let mut request = harness.request(Some(scripted.url.clone()));
-    request.managed_bootstrap = Some(&managed_path);
-    request.managed_envelope = Some(&token);
+    request.managed_bootstrap = Some(managed_path.clone());
+    request.managed_envelope = Some(token.clone());
     let acquired = acquire_with(&request).expect("refresh");
     let requests = join(scripted);
     assert!(
@@ -1074,8 +1134,8 @@ fn managed_refresh_uses_envelope_not_operator_on_wire() {
     let token = envelope_token(NOW + 60, PROJECT);
     let scripted = spawn_managed_challenge(&token, renewed);
     let mut request = harness.request(Some(scripted.url.clone()));
-    request.managed_bootstrap = Some(&managed_path);
-    request.managed_envelope = Some(&token);
+    request.managed_bootstrap = Some(managed_path.clone());
+    request.managed_envelope = Some(token.clone());
     acquire_with(&request).expect("refresh");
     let requests = join(scripted);
     let handshake = requests

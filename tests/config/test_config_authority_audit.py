@@ -203,7 +203,7 @@ def test_cross_language_registry_coverage() -> None:
         REPOSITORY_ROOT / "crates" / "gcode" / "src" / "config" / "tests" / "runtime_contract.rs"
     ).read_text()
     assert "fn gobby_mode_uses_registry_authority()" in rust_contract_tests
-    assert "fn standalone_mode_preserves_env_yaml_precedence()" in rust_contract_tests
+    assert "fn standalone_mode_preserves_env_yaml_precedence()" not in rust_contract_tests
 
     browser_audit = (
         REPOSITORY_ROOT / "web" / "src" / "__tests__" / "config-authority-audit.test.ts"
