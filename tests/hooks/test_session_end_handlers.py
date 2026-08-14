@@ -129,11 +129,11 @@ class TestSessionEndHandling:
             metadata={"_platform_session_id": "sess-123"},
         )
 
-        with patch("gobby.workflows.state_manager.WorkflowInstanceManager") as manager_cls:
+        with patch("gobby.workflows.step_instances.AgentStepInstanceManager") as manager_cls:
             handlers.handle_session_end(event)
 
         mock_dependencies["session_coordinator"].complete_agent_run.assert_called_once()
-        manager_cls.return_value.delete_instances_for_session.assert_called_once_with("sess-123")
+        manager_cls.return_value.delete_for_session.assert_called_once_with("sess-123")
         assert mock_dependencies["session_coordinator"].complete_agent_run.call_count == 1
         assert mock_dependencies["session_coordinator"].complete_agent_run.call_args is not None
 
@@ -303,7 +303,7 @@ class TestSessionEndHandling:
             metadata={"_platform_session_id": "sess-123"},
         )
 
-        with patch("gobby.workflows.state_manager.WorkflowInstanceManager") as manager_cls:
+        with patch("gobby.workflows.step_instances.AgentStepInstanceManager") as manager_cls:
             response = handlers.handle_session_end(event)
 
         assert response.decision == "allow"
@@ -311,7 +311,7 @@ class TestSessionEndHandling:
             "sess-123", "handoff_ready"
         )
         mock_dependencies["session_coordinator"].complete_agent_run.assert_not_called()
-        manager_cls.return_value.delete_instances_for_session.assert_not_called()
+        manager_cls.return_value.delete_for_session.assert_not_called()
 
     def test_session_end_expires_stale_handoff_ready_without_handoff_reason(
         self, mock_dependencies: dict
@@ -377,7 +377,7 @@ class TestSessionEndHandling:
             metadata={"_platform_session_id": "sess-123"},
         )
 
-        with patch("gobby.workflows.state_manager.WorkflowInstanceManager") as manager_cls:
+        with patch("gobby.workflows.step_instances.AgentStepInstanceManager") as manager_cls:
             response = handlers.handle_session_end(event)
 
         assert response.decision == "allow"
@@ -386,7 +386,7 @@ class TestSessionEndHandling:
         )
         mock_dependencies["session_storage"].update_status.assert_not_called()
         mock_dependencies["session_coordinator"].complete_agent_run.assert_not_called()
-        manager_cls.return_value.delete_instances_for_session.assert_not_called()
+        manager_cls.return_value.delete_for_session.assert_not_called()
 
     def test_session_end_idle_reason_expires_terminal_session(
         self, mock_dependencies: dict
@@ -441,7 +441,7 @@ class TestSessionEndHandling:
                 "gobby.hooks.event_handlers._session_end.is_configured_tmux_socket",
                 return_value=False,
             ),
-            patch("gobby.workflows.state_manager.WorkflowInstanceManager") as manager_cls,
+            patch("gobby.workflows.step_instances.AgentStepInstanceManager") as manager_cls,
         ):
             response = handlers.handle_session_end(event)
 
@@ -450,7 +450,7 @@ class TestSessionEndHandling:
             "sess-123", "paused"
         )
         mock_dependencies["session_coordinator"].complete_agent_run.assert_not_called()
-        manager_cls.return_value.delete_instances_for_session.assert_not_called()
+        manager_cls.return_value.delete_for_session.assert_not_called()
 
     def test_session_end_handoff_ready_error_handled(
         self,

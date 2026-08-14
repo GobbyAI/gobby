@@ -23,9 +23,10 @@ from gobby.storage.tasks import LocalTaskManager, TaskDispatchMutexManager
 from gobby.storage.tasks._updates import update_task
 from gobby.storage.workflow_definitions import LocalWorkflowDefinitionManager
 from gobby.utils.session_context import session_context_for_test
-from gobby.workflows.definitions import WorkflowInstance
+from gobby.agents.runtime_cleanup import cleanup_agent_runtime_state
 from gobby.workflows.engine.core import RuleEngine
-from gobby.workflows.state_manager import WorkflowInstanceManager
+from gobby.workflows.step_instances import AgentStepInstanceManager
+from tests.workflows.step_instance_fixtures import make_step_instance
 from tests.storage.tasks._stage_test_helpers import initialize_manifest, spec, stage_row
 
 pytestmark = pytest.mark.unit
@@ -78,14 +79,12 @@ async def test_agent_workflow_completion_clears_mutex_and_workflow_instance(
         run_id="419ed564-7887-5557-8707-10fbb841bcbb",
         ttl_seconds=300,
     )
-    instance_manager = WorkflowInstanceManager(temp_db)
-    instance_manager.save_instance(
-        WorkflowInstance(
-            id=WF_INSTANCE_ID,
-            session_id=CHILD_SESSION_ID,
-            workflow_name="tech-writer-steps",
+    instance_manager = AgentStepInstanceManager(temp_db)
+    instance_manager.save(
+        make_step_instance(
+            CHILD_SESSION_ID,
+            agent_name="tech-writer",
             current_step="terminate",
-            step_entered_at=datetime.now(UTC),
         )
     )
 
@@ -104,7 +103,7 @@ async def test_agent_workflow_completion_clears_mutex_and_workflow_instance(
 
     complete.assert_awaited_once()
     assert mutex.get_mutex(task.id) is None
-    assert instance_manager.get_active_instances(CHILD_SESSION_ID) == []
+    assert instance_manager.get_for_session(CHILD_SESSION_ID) is None
 
 
 @pytest.mark.asyncio
@@ -128,14 +127,12 @@ async def test_workflow_terminate_on_parked_daemon_stop_run_retains_state_and_sk
             sample_project["id"],
         ),
     )
-    instance_manager = WorkflowInstanceManager(temp_db)
-    instance_manager.save_instance(
-        WorkflowInstance(
-            id=WF_INSTANCE_ID,
-            session_id=CHILD_SESSION_ID,
-            workflow_name="tech-writer-steps",
+    instance_manager = AgentStepInstanceManager(temp_db)
+    instance_manager.save(
+        make_step_instance(
+            CHILD_SESSION_ID,
+            agent_name="tech-writer",
             current_step="terminate",
-            step_entered_at=datetime.now(UTC),
         )
     )
 
@@ -162,8 +159,9 @@ async def test_workflow_terminate_on_parked_daemon_stop_run_retains_state_and_sk
 
     runner.agent_lifecycle_monitor.terminalize_successful_run.assert_not_awaited()
     complete.assert_not_awaited()
-    active = instance_manager.get_active_instances(CHILD_SESSION_ID)
-    assert [instance.id for instance in active] == [WF_INSTANCE_ID]
+    active = instance_manager.get_for_session(CHILD_SESSION_ID)
+    assert active is not None
+    assert active.current_step == "terminate"
 
 
 @pytest.mark.asyncio
@@ -257,14 +255,26 @@ async def test_submit_for_review_handoff_terminates_worker_and_unblocks_reviewer
         workflow_type="workflow",
         enabled=True,
     )
-    instance_manager = WorkflowInstanceManager(temp_db)
-    instance_manager.save_instance(
-        WorkflowInstance(
-            id=WF_SUBMIT_INSTANCE_ID,
+    from gobby.workflows.agent_models import AgentDefinitionBody, AgentStepWorkflowBody
+    from gobby.workflows.step_instances import build_step_instance
+
+    instance_manager = AgentStepInstanceManager(temp_db)
+    instance_manager.save(
+        build_step_instance(
+            AgentDefinitionBody(
+                name="worker-submit",
+                surfaces=["spawn"],
+                step_workflow=AgentStepWorkflowBody.model_validate(
+                    {
+                        "variables": {"review_submitted": False},
+                        "exit_condition": "current_step == 'terminate'",
+                        "steps": workflow_data["steps"],
+                    }
+                ),
+            ),
             session_id=child.id,
-            workflow_name=workflow_name,
+            step_workflow_id=None,
             current_step="implement",
-            step_entered_at=datetime.now(UTC),
             variables={"review_submitted": False},
         )
     )
@@ -316,7 +326,7 @@ async def test_submit_for_review_handoff_terminates_worker_and_unblocks_reviewer
     assert task_manager.get_task(task.id).claimed_by_session_id is None
     assert stage_row(temp_db, task.id, "development")["state"] == "needs_review"
     assert mutex.get_mutex(task.id) is None
-    assert instance_manager.get_active_instances(child.id) == []
+    assert instance_manager.get_for_session(child.id) is None
 
     sync_bundled_agents(temp_db)
     spawned: list[object] = []
@@ -331,3 +341,53 @@ async def test_submit_for_review_handoff_terminates_worker_and_unblocks_reviewer
     assert result.executed == 1
     assert spawned[0].agent_slug == "qa-reviewer"
     assert mutex.get_mutex(task.id).run_id == "175b4656-fe55-571c-b57a-44c83644b57e"
+
+
+def test_daemon_stop_retains_typed_instance_other_reasons_delete(
+    temp_db: HubDatabase,
+    sample_project: dict[str, Any],
+) -> None:
+    temp_db.execute(
+        """
+        INSERT INTO sessions (
+            id, external_id, machine_id, source, project_id, status, created_at, updated_at
+        ) VALUES (%s, %s, %s, %s, %s, 'active', CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
+        """,
+        (
+            CHILD_SESSION_ID,
+            "ext-child-session",
+            "21000000-0000-4000-8000-000000000001",
+            "codex",
+            sample_project["id"],
+        ),
+    )
+    instance_manager = AgentStepInstanceManager(temp_db)
+    instance_manager.save(
+        make_step_instance(
+            CHILD_SESSION_ID,
+            agent_name="tech-writer",
+            current_step="implement",
+            variables={"ticket": "keep"},
+        )
+    )
+
+    retained = cleanup_agent_runtime_state(
+        temp_db,
+        run_id=None,
+        child_session_id=CHILD_SESSION_ID,
+        terminal_reason="daemon_stop",
+    )
+    kept = instance_manager.get_for_session(CHILD_SESSION_ID)
+    assert retained.workflow_instance_rows == 0
+    assert kept is not None
+    assert kept.current_step == "implement"
+    assert kept.variables["ticket"] == "keep"
+
+    deleted = cleanup_agent_runtime_state(
+        temp_db,
+        run_id=None,
+        child_session_id=CHILD_SESSION_ID,
+        terminal_reason="user_cancelled",
+    )
+    assert deleted.workflow_instance_rows == 1
+    assert instance_manager.get_for_session(CHILD_SESSION_ID) is None

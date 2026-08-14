@@ -8,7 +8,6 @@ if TYPE_CHECKING:
 RESERVED_WORKFLOW_VARIABLES = frozenset(
     {
         "_block_reasons_shown",
-        "_step_workflow_name",
         "consecutive_tool_blocks",
         "listed_servers",
         "max_consecutive_blocked_tool_attempts",

@@ -31,7 +31,7 @@ async def _cleanup_terminal_artifacts(
             terminal_reason=result.get("terminal_reason"),
         )
         result["dispatch_mutex_released"] = cleanup.dispatch_mutex_rows
-        result["workflow_instances_deleted"] = cleanup.workflow_instance_rows
+        result["agent_step_instances_deleted"] = cleanup.workflow_instance_rows
         if cleanup.errors:
             result["runtime_cleanup_errors"] = list(cleanup.errors)
 

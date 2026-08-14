@@ -27,15 +27,16 @@ from gobby.hooks.session_activation import (
     MARKER_VERSION,
     SESSION_ACTIVATION_CONTRACT_HASH,
     SESSION_ACTIVATION_CONTRACT_VERSION,
+    _agent_has_step_workflow,
     _agent_run_from_row,
     _AgentRunRecovery,
-    _ensure_step_workflow_from_definition,
-    _missing_step_workflow,
-    _workflow_definition_exists,
+    _ensure_step_instance,
+    _missing_step_state,
     clear_active_rule_names_cache,
     reconcile_session_activation,
 )
 from gobby.storage.agents import LocalAgentRunManager
+from gobby.storage.definitions import AgentDefinitionManager
 from gobby.storage.hub.protocol import HubDatabase
 from gobby.storage.projects import LocalProjectManager
 from gobby.storage.sessions import TERMINAL_SESSION_STATUSES, SessionManager
@@ -44,11 +45,12 @@ from gobby.workflows.definitions import (
     RuleDefinitionBody,
     RuleEffect,
     RuleTriggerEvent,
-    WorkflowInstance,
 )
 from gobby.workflows.engine.core import RuleEngine
 from gobby.workflows.git_utils import DirtyFiles
-from gobby.workflows.state_manager import SessionVariableManager, WorkflowInstanceManager
+from gobby.workflows.state_manager import SessionVariableManager
+from gobby.workflows.step_instances import AgentStepInstanceManager
+from tests.workflows.step_instance_fixtures import make_step_instance
 
 pytestmark = pytest.mark.unit
 
@@ -89,17 +91,19 @@ def handlers(session_manager: SessionManager) -> EventHandlers:
     return EventHandlers(session_manager=session_manager)  # type: ignore[arg-type]
 
 
-def test_workflow_definition_exists_uses_project_scope(db: HubDatabase) -> None:
-    with patch("gobby.storage.workflow_definitions.LocalWorkflowDefinitionManager") as manager_cls:
-        manager_cls.return_value.get_by_name.return_value = object()
-
-        exists = _workflow_definition_exists(db, "reviewer", "project-id")
+def test_agent_has_step_workflow_uses_typed_resolver(db: HubDatabase) -> None:
+    session = SimpleNamespace(project_id="project-id")
+    agent = SimpleNamespace(step_workflow=object())
+    with patch("gobby.workflows.agent_resolver.resolve_agent", return_value=agent) as resolve:
+        exists = _agent_has_step_workflow(
+            db,
+            {"_agent_type": "reviewer"},
+            session,
+            None,
+        )
 
     assert exists is True
-    manager_cls.return_value.get_by_name.assert_called_once_with(
-        "reviewer-steps",
-        project_id="project-id",
-    )
+    resolve.assert_called_once_with("reviewer", db, project_id="project-id")
 
 
 def _event(event_type: HookEventType, session_id: str, tmp_path: Path) -> HookEvent:
@@ -138,6 +142,21 @@ def _variables(db: HubDatabase, session_id: str) -> dict[str, Any]:
 
 
 def _create_worker_agent(db: HubDatabase) -> None:
+    AgentDefinitionManager(db).upsert_with_steps(
+        "worker",
+        {
+            "name": "worker",
+            "role": "Worker",
+            "blocked_tools": ["Bash"],
+            "blocked_mcp_tools": ["gobby-tasks.close_task"],
+            "workflows": {"rule_selectors": {"include": ["tag:worker"], "exclude": []}},
+        },
+        {
+            "variables": {"ticket": "14475"},
+            "steps": [{"name": "claim"}, {"name": "implement"}],
+        },
+        source="custom",
+    )
     manager = LocalWorkflowDefinitionManager(db)
     manager.create(
         name="worker",
@@ -150,8 +169,10 @@ def _create_worker_agent(db: HubDatabase) -> None:
                 "blocked_tools": ["Bash"],
                 "blocked_mcp_tools": ["gobby-tasks.close_task"],
                 "workflows": {"rule_selectors": {"include": ["tag:worker"], "exclude": []}},
-                "steps": [{"name": "claim"}, {"name": "implement"}],
-                "step_variables": {"ticket": "14475"},
+                "step_workflow": {
+                    "variables": {"ticket": "14475"},
+                    "steps": [{"name": "claim"}, {"name": "implement"}],
+                },
             }
         ),
     )
@@ -697,14 +718,14 @@ def test_parent_shaped_taskless_session_does_not_restore_step_workflow(
     assert session.parent_session_id == parent_id
     assert session.agent_run_id is None
     assert session.agent_depth == 0
-    variables = {"_step_workflow_name": "worker-steps"}
+    variables = {"_agent_type": "worker"}
 
-    missing = _missing_step_workflow(db, session_id, variables, session, None)
-    created = _ensure_step_workflow_from_definition(db, session_id, variables, session)
+    missing = _missing_step_state(db, session_id, variables, session, None)
+    created = _ensure_step_instance(db, session_id, variables, session)
 
     assert missing == []
     assert created is False
-    assert WorkflowInstanceManager(db).get_instance(session_id, "worker-steps") is None
+    assert AgentStepInstanceManager(db).get_for_session(session_id) is None
 
 
 def test_parent_shaped_taskless_session_ignores_agent_run_step_fallback(
@@ -736,10 +757,10 @@ def test_parent_shaped_taskless_session_ignores_agent_run_step_fallback(
         prompt=None,
     )
 
-    missing = _missing_step_workflow(db, session_id, {}, session, agent_run)
+    missing = _missing_step_state(db, session_id, {}, session, agent_run)
 
     assert missing == []
-    assert WorkflowInstanceManager(db).get_instance(session_id, "worker-steps") is None
+    assert AgentStepInstanceManager(db).get_for_session(session_id) is None
 
 
 def test_interactive_persona_step_workflow_remains_repairable(
@@ -760,12 +781,11 @@ def test_interactive_persona_step_workflow_remains_repairable(
     assert session.parent_session_id is None
     variables = {
         "_agent_type": "worker",
-        "_step_workflow_name": "worker-steps",
     }
 
-    created = _ensure_step_workflow_from_definition(db, session_id, variables, session)
+    created = _ensure_step_instance(db, session_id, variables, session)
 
-    instance = WorkflowInstanceManager(db).get_instance(session_id, "worker-steps")
+    instance = AgentStepInstanceManager(db).get_for_session(session_id)
     assert created is True
     assert instance is not None
     assert instance.current_step == "claim"
@@ -788,12 +808,47 @@ def test_spawned_step_agent_restores_workflow_variable_and_instance(
     )
 
     variables = _variables(db, child_id)
-    instance = WorkflowInstanceManager(db).get_instance(child_id, "worker-steps")
-    assert "worker-steps" in result.missing
-    assert variables["_step_workflow_name"] == "worker-steps"
+    instance = AgentStepInstanceManager(db).get_for_session(child_id)
+    assert result.reason == "repaired"
+    assert "_step_workflow_name" not in variables
     assert variables["step_workflow_complete"] is False
     assert instance is not None
+    assert instance.agent_name == "worker"
     assert instance.current_step == "claim"
+
+
+def test_completion_seed_after_step_instance_recovery(
+    db: HubDatabase,
+    session_manager: SessionManager,
+    handlers: EventHandlers,
+    project_id: str,
+    tmp_path: Path,
+) -> None:
+    from gobby.workflows.step_instances import AgentStepInstanceManager
+
+    _create_worker_agent(db)
+    _, child_id = _create_parent_and_child(db, session_manager, project_id, tmp_path)
+    SessionVariableManager(db).merge_variables(
+        child_id,
+        {
+            "_agent_type": "worker",
+            "assigned_task_id": "#14475",
+            "is_spawned_agent": True,
+        },
+    )
+
+    reconcile_session_activation(
+        _event(HookEventType.BEFORE_AGENT, child_id, tmp_path),
+        handlers,
+    )
+
+    variables = _variables(db, child_id)
+    instance = AgentStepInstanceManager(db).get_for_session(child_id)
+    assert instance is not None
+    assert instance.agent_name == "worker"
+    assert instance.current_step == "claim"
+    assert variables["step_workflow_complete"] is False
+    assert "_step_workflow_name" not in variables
 
 
 @pytest.mark.parametrize("step_name", [None, "worker-steps"])
@@ -826,8 +881,8 @@ def test_taskless_spawn_does_not_restore_step_workflow_from_agent_run(
     )
 
     variables = _variables(db, child_id)
-    instance = WorkflowInstanceManager(db).get_instance(child_id, "worker-steps")
-    assert "worker-steps" not in result.missing
+    instance = AgentStepInstanceManager(db).get_for_session(child_id)
+    assert "step_workflow_instance" not in result.missing
     assert variables["is_spawned_agent"] is True
     assert instance is None
 
@@ -841,14 +896,10 @@ def test_existing_step_workflow_current_step_is_preserved(
 ) -> None:
     _create_worker_agent(db)
     _, child_id = _create_parent_and_child(db, session_manager, project_id, tmp_path)
-    WorkflowInstanceManager(db).save_instance(
-        WorkflowInstance(
-            # workflow_instances.id is a native uuid column.
-            id="acacacac-0000-4000-8000-000000000001",
-            session_id=child_id,
-            workflow_name="worker-steps",
-            enabled=True,
-            priority=10,
+    AgentStepInstanceManager(db).save(
+        make_step_instance(
+            child_id,
+            agent_name="worker",
             current_step="implement",
             variables={"ticket": "14475"},
         )
@@ -857,14 +908,13 @@ def test_existing_step_workflow_current_step_is_preserved(
         child_id,
         {
             "_agent_type": "worker",
-            "_step_workflow_name": "worker-steps",
             "is_spawned_agent": True,
         },
     )
 
     reconcile_session_activation(_event(HookEventType.BEFORE_AGENT, child_id, tmp_path), handlers)
 
-    instance = WorkflowInstanceManager(db).get_instance(child_id, "worker-steps")
+    instance = AgentStepInstanceManager(db).get_for_session(child_id)
     assert instance is not None
     assert instance.current_step == "implement"
 

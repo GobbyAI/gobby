@@ -21,7 +21,8 @@ from gobby.storage.workflow_definitions import (
     WorkflowDefinitionRow,
 )
 from gobby.workflows.engine.core import RuleEngine
-from gobby.workflows.state_manager import WorkflowInstanceManager
+from gobby.workflows.step_instances import AgentStepInstanceManager
+from tests.workflows.step_instance_fixtures import make_step_instance
 
 pytestmark = pytest.mark.unit
 
@@ -47,8 +48,8 @@ def engine(db: HubDatabase) -> RuleEngine:
 
 
 @pytest.fixture
-def instance_mgr(db: HubDatabase) -> WorkflowInstanceManager:
-    return WorkflowInstanceManager(db)
+def instance_mgr(db: HubDatabase) -> AgentStepInstanceManager:
+    return AgentStepInstanceManager(db)
 
 
 def _make_event(
@@ -113,7 +114,7 @@ def _insert_block_rule(
 def _setup_step_workflow(
     db: HubDatabase,
     manager: LocalWorkflowDefinitionManager,
-    instance_mgr: WorkflowInstanceManager,
+    instance_mgr: AgentStepInstanceManager,
     *,
     session_id: str = SESSION_ID,
 ) -> None:
@@ -137,19 +138,23 @@ def _setup_step_workflow(
         enabled=True,
     )
 
-    from gobby.workflows.definitions import WorkflowInstance
+    from gobby.workflows.agent_models import AgentDefinitionBody, AgentStepWorkflowBody
+    from gobby.workflows.step_instances import build_step_instance
 
-    instance = WorkflowInstance(
-        id=INSTANCE_ID,
-        session_id=session_id,
-        workflow_name="step-observability",
-        enabled=True,
-        priority=100,
-        current_step="implement",
-        step_entered_at=datetime.now(UTC),
-        variables={},
+    instance_mgr.save(
+        build_step_instance(
+            AgentDefinitionBody(
+                name="step-observability",
+                surfaces=["spawn"],
+                step_workflow=AgentStepWorkflowBody.model_validate(
+                    {"steps": [{"name": "implement", "allowed_tools": ["Read"]}]}
+                ),
+            ),
+            session_id=session_id,
+            step_workflow_id=None,
+            current_step="implement",
+        )
     )
-    instance_mgr.save_instance(instance)
 
 
 def _assert_block_records(
@@ -243,7 +248,7 @@ async def test_step_enforcement_block_logs_structured_reason(
     db: HubDatabase,
     manager: LocalWorkflowDefinitionManager,
     engine: RuleEngine,
-    instance_mgr: WorkflowInstanceManager,
+    instance_mgr: AgentStepInstanceManager,
     caplog: pytest.LogCaptureFixture,
 ) -> None:
     _setup_step_workflow(db, manager, instance_mgr)

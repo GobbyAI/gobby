@@ -12,7 +12,7 @@ import pytest
 from gobby.hooks.events import HookEvent, HookEventType, SessionSource
 from gobby.storage.hub.protocol import HubDatabase
 from gobby.storage.workflow_definitions import LocalWorkflowDefinitionManager
-from gobby.workflows.definitions import WorkflowDefinition, WorkflowInstance
+from gobby.workflows.definitions import WorkflowDefinition
 from gobby.workflows.engine.core import RuleEngine
 from gobby.workflows.agent_models import AgentStepWorkflowBody
 from gobby.workflows.definitions import WorkflowStep

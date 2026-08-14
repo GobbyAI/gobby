@@ -217,9 +217,7 @@ def _register_expansion_qa_workflow(
             agent_body,
             session_id=session_id,
             step_workflow_id=None,
-            variables=dict(
-                agent_body.step_workflow.variables if agent_body.step_workflow else {}
-            ),
+            variables=dict(agent_body.step_workflow.variables if agent_body.step_workflow else {}),
             current_step="coverage_check",
         )
     )
@@ -741,7 +739,7 @@ class TestAgentWorkflowCompletion:
         assert parent_lookup.status == "active"
         assert child_lookup.status == "expired"
         assert mutex.get_mutex(task.id) is None
-        assert AgentStepInstanceManager(db).get_for_session(child.id) == []
+        assert AgentStepInstanceManager(db).get_for_session(child.id) is None
 
     @pytest.mark.asyncio
     @pytest.mark.integration

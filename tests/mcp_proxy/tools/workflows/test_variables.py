@@ -1,8 +1,7 @@
 """Tests for variable MCP tools.
 
 Covers:
-- Scoped runtime variables (workflow-scoped and session-scoped)
-- Variable definition CRUD (create, update, delete, export, list, get)
+- Scoped runtime variables (session/step) and definition CRUD
 """
 
 from __future__ import annotations
@@ -18,13 +17,14 @@ import pytest
 
 from gobby.sessions.compact_markers import SKILL_LIST_VARIABLE_NAMES
 from gobby.storage.workflow_definitions import WorkflowDefinitionRow
-from gobby.workflows.definitions import WorkflowInstance
+from gobby.workflows.step_instances import AgentStepInstance
+from tests.workflows.step_instance_fixtures import make_step_instance
 
 pytestmark = pytest.mark.unit
 
 
 def _make_mocks(
-    instance: WorkflowInstance | None = None,
+    instance: AgentStepInstance | None = None,
     session_variables: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     """Create mock dependencies for variable functions."""
@@ -32,8 +32,8 @@ def _make_mocks(
     session_manager.resolve_session_reference.return_value = "uuid-session-1"
 
     instance_manager = MagicMock()
-    instance_manager.get_instance.return_value = instance
-    instance_manager.merge_instance_variables.return_value = instance is not None
+    instance_manager.get_for_session.return_value = instance
+    instance_manager.merge_variables.return_value = instance
 
     session_var_manager = MagicMock()
     session_var_manager.get_variables.return_value = session_variables or {}
@@ -49,18 +49,14 @@ def _make_mocks(
 
 
 class TestSetVariableScoped:
-    """Tests for set_variable with workflow scoping."""
+    """Tests for set_variable with session/step scoping."""
 
-    def test_set_variable_with_workflow_writes_to_instance(self) -> None:
-        """set_variable(workflow='dev') writes to workflow_instances.variables."""
+    def test_set_variable_with_step_scope_writes_to_instance(self) -> None:
         from gobby.mcp_proxy.tools.workflows._variables import set_variable
 
-        instance = WorkflowInstance(
-            id="inst-1",
-            session_id="uuid-session-1",
-            workflow_name="dev",
-            enabled=True,
-            priority=10,
+        instance = make_step_instance(
+            "uuid-session-1",
+            agent_name="dev",
             current_step="work",
             variables={"existing": "val"},
         )
@@ -72,19 +68,18 @@ class TestSetVariableScoped:
             name="my_flag",
             value=True,
             session_id="#1",
-            workflow="dev",
+            scope="step",
             instance_manager=mocks["instance_manager"],
         )
 
         assert result["success"] is True
         assert result["value"] is True
-        mocks["instance_manager"].merge_instance_variables.assert_called_once_with(
+        assert result["scope"] == "step"
+        mocks["instance_manager"].merge_variables.assert_called_once_with(
             "uuid-session-1",
-            "dev",
             {"my_flag": True},
         )
-        mocks["instance_manager"].get_instance.assert_not_called()
-        mocks["instance_manager"].save_instance.assert_not_called()
+        mocks["instance_manager"].save.assert_not_called()
 
     def test_set_variable_without_workflow_writes_to_session_variables(self) -> None:
         """set_variable() without workflow writes to session_variables."""
@@ -143,7 +138,7 @@ class TestSetVariableScoped:
             "error": f"Variable '{name}' requires a JSON array of non-empty skill names.",
         }
         mocks["session_var_manager"].set_variable.assert_not_called()
-        mocks["instance_manager"].merge_instance_variables.assert_not_called()
+        mocks["instance_manager"].merge_variables.assert_not_called()
 
     @pytest.mark.parametrize("name", sorted(SKILL_LIST_VARIABLE_NAMES))
     def test_set_variable_accepts_empty_skill_lists(self, name: str) -> None:
@@ -206,16 +201,15 @@ class TestSetVariableScoped:
             name="open_tool_errors",
             value=[],
             session_id="#1",
-            workflow="dev",
+            scope="step",
             instance_manager=mocks["instance_manager"],
         )
 
         assert result["success"] is False
         assert "managed by the workflow runtime" in result["error"]
-        mocks["instance_manager"].merge_instance_variables.assert_not_called()
+        mocks["instance_manager"].merge_variables.assert_not_called()
 
-    def test_set_variable_with_workflow_not_found(self) -> None:
-        """set_variable(workflow='unknown') errors if no instance found."""
+    def test_set_variable_with_step_scope_not_found(self) -> None:
         from gobby.mcp_proxy.tools.workflows._variables import set_variable
 
         mocks = _make_mocks(instance=None)
@@ -226,35 +220,29 @@ class TestSetVariableScoped:
             name="flag",
             value=True,
             session_id="#1",
-            workflow="unknown",
+            scope="step",
             instance_manager=mocks["instance_manager"],
         )
 
         assert result["success"] is False
-        assert "unknown" in result["error"]
-        mocks["instance_manager"].merge_instance_variables.assert_called_once_with(
+        assert "agent-step instance" in result["error"]
+        mocks["instance_manager"].merge_variables.assert_called_once_with(
             "uuid-session-1",
-            "unknown",
             {"flag": True},
         )
-        mocks["instance_manager"].get_instance.assert_not_called()
 
 
 class TestGetVariableScoped:
-    """Tests for get_variable with workflow scoping."""
+    """Tests for get_variable with session/step scoping."""
 
-    def test_get_variable_with_workflow_reads_from_instance(self) -> None:
-        """get_variable(workflow='dev') reads from workflow_instances.variables."""
+    def test_get_variable_with_step_scope_reads_from_instance(self) -> None:
         from gobby.mcp_proxy.tools.workflows._variables import get_variable
 
-        instance = WorkflowInstance(
-            id="inst-1",
-            session_id="uuid-session-1",
-            workflow_name="dev",
-            enabled=True,
-            priority=10,
+        instance = make_step_instance(
+            "uuid-session-1",
+            agent_name="dev",
             current_step="work",
-            variables={"my_flag": True, "counter": 5},
+            variables={"my_flag": True},
         )
         mocks = _make_mocks(instance=instance)
 
@@ -263,14 +251,14 @@ class TestGetVariableScoped:
             mocks["db"],
             name="my_flag",
             session_id="#1",
-            workflow="dev",
+            scope="step",
             instance_manager=mocks["instance_manager"],
         )
 
         assert result["success"] is True
         assert result["value"] is True
         assert result["exists"] is True
-        mocks["instance_manager"].get_instance.assert_called_once_with("uuid-session-1", "dev")
+        mocks["instance_manager"].get_for_session.assert_called_once_with("uuid-session-1")
 
     def test_get_variable_without_workflow_reads_from_session_variables(self) -> None:
         """get_variable() without workflow reads from session_variables."""
@@ -291,16 +279,12 @@ class TestGetVariableScoped:
         assert result["exists"] is True
         mocks["session_var_manager"].get_variables.assert_called_once_with("uuid-session-1")
 
-    def test_get_all_variables_with_workflow(self) -> None:
-        """get_variable(workflow='dev') without name returns all workflow variables."""
+    def test_get_all_variables_with_step_scope(self) -> None:
         from gobby.mcp_proxy.tools.workflows._variables import get_variable
 
-        instance = WorkflowInstance(
-            id="inst-1",
-            session_id="uuid-session-1",
-            workflow_name="dev",
-            enabled=True,
-            priority=10,
+        instance = make_step_instance(
+            "uuid-session-1",
+            agent_name="dev",
             current_step="work",
             variables={"a": 1, "b": 2},
         )
@@ -311,7 +295,7 @@ class TestGetVariableScoped:
             mocks["db"],
             name=None,
             session_id="#1",
-            workflow="dev",
+            scope="step",
             instance_manager=mocks["instance_manager"],
         )
 

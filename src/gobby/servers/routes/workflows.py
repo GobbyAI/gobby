@@ -428,14 +428,14 @@ def create_workflows_router(server: "HTTPServer") -> APIRouter:
         name: str
         value: Any = None
         session_id: str
-        workflow: str | None = None
+        scope: Literal["session", "step"] = "session"
 
     class GetVariableRequest(BaseModel):
         """Request body for getting session variable(s)."""
 
         name: str | None = None
         session_id: str
-        workflow: str | None = None
+        scope: Literal["session", "step"] = "session"
 
     @router.post("/variables/set")
     async def set_variable(request: SetVariableRequest) -> dict[str, Any]:
@@ -444,10 +444,12 @@ def create_workflows_router(server: "HTTPServer") -> APIRouter:
             raise HTTPException(status_code=503, detail="Session manager not available")
         try:
             from gobby.mcp_proxy.tools.workflows._variables import set_variable as _set_var
-            from gobby.workflows.state_manager import WorkflowInstanceManager
+            from gobby.workflows.step_instances import AgentStepInstanceManager
 
             instance_manager = (
-                WorkflowInstanceManager(server.session_manager.db) if request.workflow else None
+                AgentStepInstanceManager(server.session_manager.db)
+                if request.scope == "step"
+                else None
             )
 
             return _set_var(
@@ -456,7 +458,7 @@ def create_workflows_router(server: "HTTPServer") -> APIRouter:
                 name=request.name,
                 value=request.value,
                 session_id=request.session_id,
-                workflow=request.workflow,
+                scope=request.scope,
                 instance_manager=instance_manager,
             )
         except Exception as e:
@@ -470,10 +472,12 @@ def create_workflows_router(server: "HTTPServer") -> APIRouter:
             raise HTTPException(status_code=503, detail="Session manager not available")
         try:
             from gobby.mcp_proxy.tools.workflows._variables import get_variable as _get_var
-            from gobby.workflows.state_manager import WorkflowInstanceManager
+            from gobby.workflows.step_instances import AgentStepInstanceManager
 
             instance_manager = (
-                WorkflowInstanceManager(server.session_manager.db) if request.workflow else None
+                AgentStepInstanceManager(server.session_manager.db)
+                if request.scope == "step"
+                else None
             )
 
             return _get_var(
@@ -481,7 +485,7 @@ def create_workflows_router(server: "HTTPServer") -> APIRouter:
                 server.session_manager.db,
                 name=request.name,
                 session_id=request.session_id,
-                workflow=request.workflow,
+                scope=request.scope,
                 instance_manager=instance_manager,
             )
         except Exception as e:

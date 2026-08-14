@@ -301,26 +301,27 @@ def test_variables_persist_across_workflow_changes(db: Any) -> None:
     Session variables live in their own table, independent of workflow instances.
     Creating/removing workflow instances should not affect session variables.
     """
-    from gobby.workflows.definitions import WorkflowInstance
-    from gobby.workflows.state_manager import SessionVariableManager, WorkflowInstanceManager
+    from gobby.workflows.state_manager import SessionVariableManager
+    from gobby.workflows.step_instances import AgentStepInstanceManager
+    from tests.workflows.step_instance_fixtures import make_step_instance
 
     _ensure_session(db, S1)
     sv_mgr = SessionVariableManager(db)
-    wi_mgr = WorkflowInstanceManager(db)
+    wi_mgr = AgentStepInstanceManager(db)
 
     # Set session variables
     sv_mgr.set_variable(S1, "task_claimed", True)
     sv_mgr.set_variable(S1, "unlocked_tools", ["Read", "Write"])
 
     # Create and then delete a workflow instance
-    wi_mgr.save_instance(
-        WorkflowInstance(
-            id=str(uuid.uuid4()),
-            session_id=S1,
-            workflow_name="auto-task",
+    wi_mgr.save(
+        make_step_instance(
+            S1,
+            agent_name="auto-task",
+            current_step="claim",
         )
     )
-    wi_mgr.delete_instances_for_session(S1)
+    wi_mgr.delete_for_session(S1)
 
     # Session variables should be unaffected
     result = sv_mgr.get_variables(S1)

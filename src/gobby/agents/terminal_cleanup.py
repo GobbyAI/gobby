@@ -177,7 +177,7 @@ class TerminalResourceCleaner:
         )
         if cleanup.dispatch_mutex_rows or cleanup.workflow_instance_rows:
             logger.debug(
-                "Cleaned runtime state for agent %s: dispatch_mutex=%s workflow_instances=%s",
+                "Cleaned runtime state for agent %s: dispatch_mutex=%s agent_step_instances=%s",
                 run.id,
                 cleanup.dispatch_mutex_rows,
                 cleanup.workflow_instance_rows,

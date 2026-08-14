@@ -14,9 +14,10 @@ import yaml
 from gobby.hooks.events import HookEvent, HookEventType, SessionSource
 from gobby.storage.hub.protocol import HubDatabase
 from gobby.storage.workflow_definitions import LocalWorkflowDefinitionManager
-from gobby.workflows.definitions import WorkflowDefinition, WorkflowInstance
+from gobby.workflows.definitions import WorkflowDefinition
 from gobby.workflows.engine.core import RuleEngine
-from gobby.workflows.state_manager import WorkflowInstanceManager
+from gobby.workflows.step_instances import AgentStepInstanceManager
+from tests.workflows.step_instance_fixtures import make_step_instance
 
 pytestmark = pytest.mark.unit
 
@@ -44,7 +45,9 @@ def _allowed_mcp_tools(agent: dict[str, Any]) -> set[str]:
 
 
 def _step(agent: dict[str, Any], name: str) -> dict[str, Any]:
-    matches = [step for step in agent.get("step_workflow", {}).get("steps", []) if step.get("name") == name]
+    matches = [
+        step for step in agent.get("step_workflow", {}).get("steps", []) if step.get("name") == name
+    ]
     assert len(matches) == 1
     return cast(dict[str, Any], matches[0])
 
@@ -76,7 +79,7 @@ def _install_merge_worker_workflow(
     *,
     session_id: str = "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaa3002",
     current_step: str = "merge",
-) -> WorkflowInstanceManager:
+) -> AgentStepInstanceManager:
     agent = _agent("merge-worker")
     workflow_data = {
         "name": agent["name"],
@@ -97,16 +100,12 @@ def _install_merge_worker_workflow(
     )
 
     _create_session(db, session_id)
-    instance_manager = WorkflowInstanceManager(db)
-    instance_manager.save_instance(
-        WorkflowInstance(
-            id=str(uuid.uuid5(uuid.NAMESPACE_URL, f"inst-{session_id}-{definition.name}")),
-            session_id=session_id,
-            workflow_name=definition.name,
-            enabled=True,
-            priority=100,
+    instance_manager = AgentStepInstanceManager(db)
+    instance_manager.save(
+        make_step_instance(
+            session_id,
+            agent_name=definition.name.removesuffix("-steps"),
             current_step=current_step,
-            step_entered_at=datetime.now(UTC),
             variables=dict(definition.variables),
         )
     )
@@ -300,7 +299,7 @@ async def test_merge_worker_allows_verify_before_recording_result(temp_db: HubDa
     )
 
     assert response.decision == "allow"
-    instance = instance_manager.get_instance("aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaa3002", "merge-worker")
+    instance = instance_manager.get_for_session("aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaa3002")
     assert instance is not None
     assert instance.current_step == "merge"
 
@@ -351,7 +350,7 @@ async def test_merge_worker_failure_result_transitions_to_terminate(temp_db: Hub
         variables=variables,
     )
 
-    instance = instance_manager.get_instance("aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaa3002", "merge-worker")
+    instance = instance_manager.get_for_session("aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaa3002")
     assert instance is not None
     assert instance.current_step == "merge"
     assert instance.variables["merge_worker_ready_to_terminate"] is False
@@ -369,7 +368,7 @@ async def test_merge_worker_failure_result_transitions_to_terminate(temp_db: Hub
         variables=variables,
     )
 
-    instance = instance_manager.get_instance("aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaa3002", "merge-worker")
+    instance = instance_manager.get_for_session("aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaa3002")
     assert instance is not None
     assert instance.current_step == "terminate"
     assert instance.variables["merge_result_recorded"] is True
@@ -400,7 +399,7 @@ async def test_merge_worker_tool_failure_without_durable_result_stays_in_merge(
         variables=variables,
     )
 
-    instance = instance_manager.get_instance("aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaa3002", "merge-worker")
+    instance = instance_manager.get_for_session("aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaa3002")
     assert instance is not None
     assert instance.current_step == "merge"
     assert instance.variables["merge_result_recorded"] is False
@@ -425,7 +424,7 @@ async def test_merge_worker_success_waits_for_issue_close_then_cleanup(
         session_id="aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaa3002",
         variables=variables,
     )
-    instance = instance_manager.get_instance("aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaa3002", "merge-worker")
+    instance = instance_manager.get_for_session("aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaa3002")
     assert instance is not None
     assert instance.current_step == "merge"
     assert instance.variables["merge_result_recorded"] is True
@@ -440,7 +439,7 @@ async def test_merge_worker_success_waits_for_issue_close_then_cleanup(
         variables=variables,
     )
 
-    instance = instance_manager.get_instance("aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaa3002", "merge-worker")
+    instance = instance_manager.get_for_session("aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaa3002")
     assert instance is not None
     assert instance.current_step == "cleanup"
 
@@ -454,7 +453,7 @@ async def test_merge_worker_success_waits_for_issue_close_then_cleanup(
         variables=variables,
     )
 
-    instance = instance_manager.get_instance("aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaa3002", "merge-worker")
+    instance = instance_manager.get_for_session("aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaa3002")
     assert instance is not None
     assert instance.current_step == "terminate"
 
@@ -486,7 +485,7 @@ async def test_merge_worker_issue_close_error_after_durable_result_enters_cleanu
         variables=variables,
     )
 
-    instance = instance_manager.get_instance("aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaa3002", "merge-worker")
+    instance = instance_manager.get_for_session("aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaa3002")
     assert instance is not None
     assert instance.current_step == "cleanup"
     assert instance.variables["merge_result_recorded"] is True
@@ -536,8 +535,8 @@ async def test_merge_worker_three_cleanup_failures_transition_to_terminate(
             session_id="aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaa3002",
             variables=variables,
         )
-        instance = instance_manager.get_instance(
-            "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaa3002", "merge-worker"
+        instance = instance_manager.get_for_session(
+            "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaa3002"
         )
         assert instance is not None
         assert instance.current_step == "cleanup"
@@ -553,7 +552,7 @@ async def test_merge_worker_three_cleanup_failures_transition_to_terminate(
         variables=variables,
     )
 
-    instance = instance_manager.get_instance("aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaa3002", "merge-worker")
+    instance = instance_manager.get_for_session("aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaa3002")
     assert instance is not None
     assert instance.current_step == "terminate"
     assert instance.variables["worktree_cleanup_failures"] == 3

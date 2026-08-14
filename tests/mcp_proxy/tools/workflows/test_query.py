@@ -10,13 +10,14 @@ from unittest.mock import MagicMock, patch
 import pytest
 
 from gobby.storage.workflow_definitions import WorkflowDefinitionRow
-from gobby.workflows.definitions import WorkflowInstance
+from gobby.workflows.step_instances import AgentStepInstance
+from tests.workflows.step_instance_fixtures import make_step_instance
 
 pytestmark = pytest.mark.unit
 
 
 def _make_mocks(
-    instances: list[WorkflowInstance] | None = None,
+    instance: AgentStepInstance | None = None,
     session_variables: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     """Create mock dependencies for query functions."""
@@ -24,7 +25,7 @@ def _make_mocks(
     session_manager.resolve_session_reference.return_value = "uuid-session-1"
 
     instance_manager = MagicMock()
-    instance_manager.get_active_instances.return_value = instances or []
+    instance_manager.get_for_session.return_value = instance
 
     session_var_manager = MagicMock()
     session_var_manager.get_variables.return_value = session_variables or {}
@@ -36,39 +37,22 @@ def _make_mocks(
     }
 
 
-class TestGetWorkflowStatusMultiWorkflow:
-    """Tests for get_workflow_status with multi-workflow support."""
+class TestGetStepStatus:
+    """Tests for get_step_status against the typed instance."""
 
-    def test_returns_all_active_instances(self) -> None:
-        """get_workflow_status returns all active workflow instances."""
-        from gobby.mcp_proxy.tools.workflows._query import get_workflow_status
+    def test_returns_snapshot_status(self) -> None:
+        from gobby.mcp_proxy.tools.workflows._query import get_step_status
 
-        instances = [
-            WorkflowInstance(
-                id="inst-1",
-                session_id="uuid-session-1",
-                workflow_name="auto-task",
-                enabled=True,
-                priority=10,
-                current_step="work",
-                variables={"session_task": "task-uuid"},
-            ),
-            WorkflowInstance(
-                id="inst-2",
-                session_id="uuid-session-1",
-                workflow_name="plan-execute",
-                enabled=True,
-                priority=20,
-                current_step="plan",
-                variables={"plan_ready": False},
-            ),
-        ]
-        mocks = _make_mocks(
-            instances=instances,
-            session_variables={"counter": 5},
+        instance = make_step_instance(
+            "uuid-session-1",
+            agent_name="auto-task",
+            current_step="work",
+            variables={"session_task": "task-uuid"},
+            steps=["work", "done"],
         )
+        mocks = _make_mocks(instance=instance, session_variables={"counter": 5})
 
-        result = get_workflow_status(
+        result = get_step_status(
             mocks["session_manager"],
             session_id="#1",
             instance_manager=mocks["instance_manager"],
@@ -76,33 +60,27 @@ class TestGetWorkflowStatusMultiWorkflow:
         )
 
         assert result["success"] is True
-        assert len(result["workflows"]) == 2
-        assert result["workflows"][0]["workflow_name"] == "auto-task"
-        assert result["workflows"][0]["current_step"] == "work"
-        assert result["workflows"][0]["variables"] == {"session_task": "task-uuid"}
-        assert result["workflows"][1]["workflow_name"] == "plan-execute"
+        assert result["has_workflow"] is True
+        assert result["agent_name"] == "auto-task"
+        assert result["current_step"] == "work"
+        assert result["steps"] == ["work", "done"]
+        assert result["variables"] == {"session_task": "task-uuid"}
+        assert result["session_variables"] == {"counter": 5}
 
     def test_shows_session_variables_separately(self) -> None:
-        """get_workflow_status shows session variables in a separate field."""
-        from gobby.mcp_proxy.tools.workflows._query import get_workflow_status
+        from gobby.mcp_proxy.tools.workflows._query import get_step_status
 
-        instances = [
-            WorkflowInstance(
-                id="inst-1",
-                session_id="uuid-session-1",
-                workflow_name="auto-task",
-                enabled=True,
-                priority=10,
-                current_step="work",
-                variables={},
-            ),
-        ]
+        instance = make_step_instance(
+            "uuid-session-1",
+            agent_name="auto-task",
+            current_step="work",
+        )
         mocks = _make_mocks(
-            instances=instances,
+            instance=instance,
             session_variables={"shared_flag": True, "counter": 42},
         )
 
-        result = get_workflow_status(
+        result = get_step_status(
             mocks["session_manager"],
             session_id="#1",
             instance_manager=mocks["instance_manager"],
@@ -113,12 +91,11 @@ class TestGetWorkflowStatusMultiWorkflow:
         assert result["session_variables"] == {"shared_flag": True, "counter": 42}
 
     def test_no_instance_manager_returns_no_workflows(self) -> None:
-        """get_workflow_status without instance_manager returns has_workflow=False."""
-        from gobby.mcp_proxy.tools.workflows._query import get_workflow_status
+        from gobby.mcp_proxy.tools.workflows._query import get_step_status
 
         mocks = _make_mocks()
 
-        result = get_workflow_status(
+        result = get_step_status(
             mocks["session_manager"],
             session_id="#1",
         )
@@ -126,24 +103,12 @@ class TestGetWorkflowStatusMultiWorkflow:
         assert result["success"] is True
         assert result["has_workflow"] is False
 
-    def test_each_instance_shows_priority_and_enabled(self) -> None:
-        """Each workflow instance includes priority and enabled fields."""
-        from gobby.mcp_proxy.tools.workflows._query import get_workflow_status
+    def test_empty_instance_returns_no_workflows(self) -> None:
+        from gobby.mcp_proxy.tools.workflows._query import get_step_status
 
-        instances = [
-            WorkflowInstance(
-                id="inst-1",
-                session_id="uuid-session-1",
-                workflow_name="dev",
-                enabled=True,
-                priority=5,
-                current_step="code",
-                variables={},
-            ),
-        ]
-        mocks = _make_mocks(instances=instances)
+        mocks = _make_mocks(instance=None)
 
-        result = get_workflow_status(
+        result = get_step_status(
             mocks["session_manager"],
             session_id="#1",
             instance_manager=mocks["instance_manager"],
@@ -151,25 +116,7 @@ class TestGetWorkflowStatusMultiWorkflow:
         )
 
         assert result["success"] is True
-        wf = result["workflows"][0]
-        assert wf["enabled"] is True
-        assert wf["priority"] == 5
-
-    def test_empty_instances_returns_no_workflows(self) -> None:
-        """get_workflow_status with no active instances returns empty list."""
-        from gobby.mcp_proxy.tools.workflows._query import get_workflow_status
-
-        mocks = _make_mocks(instances=[])
-
-        result = get_workflow_status(
-            mocks["session_manager"],
-            session_id="#1",
-            instance_manager=mocks["instance_manager"],
-            session_var_manager=mocks["session_var_manager"],
-        )
-
-        assert result["success"] is True
-        assert result["workflows"] == []
+        assert result["has_workflow"] is False
 
 
 def _make_db_row(

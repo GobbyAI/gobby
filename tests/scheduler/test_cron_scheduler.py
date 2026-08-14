@@ -1293,7 +1293,8 @@ async def test_run_now_executes_in_empty_session_context(
     from gobby.storage.sessions import SessionManager
     from gobby.utils.project_context import get_project_context
     from gobby.utils.session_context import get_current_session_id, session_context_for_test
-    from gobby.workflows.state_manager import SessionVariableManager, WorkflowInstanceManager
+    from gobby.workflows.state_manager import SessionVariableManager
+    from gobby.workflows.step_instances import AgentStepInstanceManager
 
     executor = CronExecutor(storage=cron_storage)
     scheduler = CronScheduler(
@@ -1342,9 +1343,7 @@ async def test_run_now_executes_in_empty_session_context(
     assert seen == {"session_id": None, "project_id": sample_project["id"]}
     caller_vars = SessionVariableManager(temp_db).get_variables(caller.id)
     assert "_agent_type" not in caller_vars
-    assert (
-        WorkflowInstanceManager(temp_db).get_instance(caller.id, "backend-developer-steps") is None
-    )
+    assert AgentStepInstanceManager(temp_db).get_for_session(caller.id) is None
 
 
 @pytest.mark.asyncio

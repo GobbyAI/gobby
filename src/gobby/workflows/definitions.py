@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 from collections.abc import Mapping
-from datetime import UTC, datetime
 from enum import Enum
 from pathlib import PurePosixPath, PureWindowsPath
 from typing import TYPE_CHECKING, Any, Literal
@@ -638,60 +637,6 @@ def validate_workflow_definition_data(
         AgentDefinitionBody.model_validate(body, extra="forbid")
 
     return effective_type
-
-
-# --- Workflow State Models (Runtime) ---
-
-
-class WorkflowInstance(BaseModel):
-    """Represents a single workflow instance bound to a session.
-
-    Supports multiple concurrent workflows per session. Each instance
-    has its own scoped variables and step state, keyed by
-    UNIQUE(session_id, workflow_name).
-    """
-
-    id: str
-    session_id: str
-    workflow_name: str
-    enabled: bool = True
-    priority: int = 100
-    current_step: str | None = None
-    step_entered_at: datetime | None = None
-    step_action_count: int = 0
-    total_action_count: int = 0
-    variables: dict[str, Any] = Field(default_factory=dict)
-    context_injected: bool = False
-    created_at: datetime = Field(default_factory=lambda: datetime.now(UTC))
-    updated_at: datetime = Field(default_factory=lambda: datetime.now(UTC))
-
-    def to_dict(self) -> dict[str, Any]:
-        """Serialize to a dictionary with ISO-formatted datetimes."""
-        return {
-            "id": self.id,
-            "session_id": self.session_id,
-            "workflow_name": self.workflow_name,
-            "enabled": self.enabled,
-            "priority": self.priority,
-            "current_step": self.current_step,
-            "step_entered_at": self.step_entered_at.isoformat() if self.step_entered_at else None,
-            "step_action_count": self.step_action_count,
-            "total_action_count": self.total_action_count,
-            "variables": self.variables,
-            "context_injected": self.context_injected,
-            "created_at": self.created_at.isoformat(),
-            "updated_at": self.updated_at.isoformat(),
-        }
-
-    @classmethod
-    def from_dict(cls, data: dict[str, Any]) -> WorkflowInstance:
-        """Deserialize from a dictionary, parsing ISO datetime strings."""
-        parsed = dict(data)
-        for field in ("step_entered_at", "created_at", "updated_at"):
-            val = parsed.get(field)
-            if isinstance(val, str):
-                parsed[field] = datetime.fromisoformat(val)
-        return cls(**parsed)
 
 
 _AGENT_MODEL_EXPORTS = frozenset(

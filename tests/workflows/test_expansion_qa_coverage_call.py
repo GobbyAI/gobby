@@ -44,7 +44,9 @@ async def test_workflow_calls_evaluate_with_full_scope(
 
 def test_expansion_qa_yaml_wires_coverage_gate() -> None:
     agent = yaml.safe_load(AGENT_PATH.read_text(encoding="utf-8"))
-    step = next(step for step in agent["step_workflow"]["steps"] if step["name"] == "coverage_check")
+    step = next(
+        step for step in agent["step_workflow"]["steps"] if step["name"] == "coverage_check"
+    )
     instructions = agent["instructions"]
 
     assert "run_expansion_qa_coverage" in instructions

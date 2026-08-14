@@ -34,8 +34,8 @@ from gobby.mcp_proxy.tools.workflows._definitions import (
 from gobby.mcp_proxy.tools.workflows._import import import_workflow, reload_cache
 from gobby.mcp_proxy.tools.workflows._pipelines import register_pipeline_tools
 from gobby.mcp_proxy.tools.workflows._query import (
+    get_step_status,
     get_workflow,
-    get_workflow_status,
     list_workflows,
 )
 from gobby.mcp_proxy.tools.workflows._rules import (
@@ -60,10 +60,8 @@ from gobby.storage.sessions import SessionManager
 from gobby.storage.workflow_definitions import LocalWorkflowDefinitionManager
 from gobby.utils.project_context import get_project_context, get_workflow_project_path
 from gobby.workflows.loader import WorkflowLoader
-from gobby.workflows.state_manager import (
-    SessionVariableManager,
-    WorkflowInstanceManager,
-)
+from gobby.workflows.state_manager import SessionVariableManager
+from gobby.workflows.step_instances import AgentStepInstanceManager
 
 __all__ = [
     "create_workflows_registry",
@@ -143,7 +141,7 @@ def create_workflows_registry(
         _session_manager = None
 
     # Create multi-workflow managers
-    _instance_manager = WorkflowInstanceManager(_db) if _db is not None else None
+    _instance_manager = AgentStepInstanceManager(_db) if _db is not None else None
     _session_var_manager = SessionVariableManager(_db) if _db is not None else None
     _def_manager = LocalWorkflowDefinitionManager(_db) if _db is not None else None
     _agent_manager = AgentDefinitionManager(_db) if _db is not None else None
@@ -196,7 +194,7 @@ def create_workflows_registry(
         from gobby.utils.session_context import get_current_session_id
 
         effective_session_id = session_id or get_current_session_id()
-        return get_workflow_status(
+        return get_step_status(
             _session_manager,
             effective_session_id,
             instance_manager=_instance_manager,

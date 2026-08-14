@@ -25,10 +25,10 @@ from gobby.storage.hub.protocol import HubDatabase
 from gobby.storage.sessions import SessionManager
 from gobby.storage.workflow_definitions import LocalWorkflowDefinitionManager
 from gobby.utils.session_context import reset_seeded_contexts
-from gobby.workflows.definitions import WorkflowInstance
 from gobby.workflows.engine.core import RuleEngine
 from gobby.workflows.hooks import WorkflowHookHandler
-from gobby.workflows.state_manager import WorkflowInstanceManager
+from gobby.workflows.step_instances import AgentStepInstanceManager
+from tests.workflows.step_instance_fixtures import make_step_instance
 
 if TYPE_CHECKING:
     from gobby.hooks.hook_manager import HookManager
@@ -101,6 +101,7 @@ class _SessionEndHandler(SessionEndMixin):
         self._session_coordinator = None
         self._session_end_auto_link_worker = None
         self._message_processor_resolver = lambda: None
+        self._session_message_processors: dict[str, object] = {}
         self._task_manager = None
         self._worktree_manager = None
         self._skill_manager = None
@@ -163,17 +164,25 @@ async def test_session_end_cleanup_unblocks_session_targeted_read_only_calls(
         priority=100,
         enabled=True,
     )
-    instance_manager = WorkflowInstanceManager(db)
-    instance_manager.save_instance(
-        WorkflowInstance(
-            # workflow_instances.id is a native uuid column.
-            id=str(uuid.uuid4()),
+    instance_manager = AgentStepInstanceManager(db)
+    from gobby.workflows.agent_models import AgentDefinitionBody, AgentStepWorkflowBody
+    from gobby.workflows.step_instances import build_step_instance
+
+    instance_manager.save(
+        build_step_instance(
+            AgentDefinitionBody(
+                name="plan-adversary",
+                surfaces=["spawn"],
+                step_workflow=AgentStepWorkflowBody.model_validate(
+                    {
+                        "exit_condition": _PLAN_ADVERSARY_TERMINATE_WORKFLOW["exit_condition"],
+                        "steps": _PLAN_ADVERSARY_TERMINATE_WORKFLOW["steps"],
+                    }
+                ),
+            ),
             session_id=child_session_id,
-            workflow_name="plan-adversary-steps",
-            enabled=True,
-            priority=100,
+            step_workflow_id=None,
             current_step="terminate",
-            step_entered_at=datetime.now(UTC),
         )
     )
 
@@ -225,7 +234,7 @@ async def test_session_end_cleanup_unblocks_session_targeted_read_only_calls(
         with patch("gobby.agents.tmux.get_tmux_pane_monitor", return_value=None):
             response = handler.handle_session_end(_make_session_end_event(child_session_id))
         assert response.decision == "allow"
-        assert instance_manager.get_active_instances(child_session_id) == []
+        assert instance_manager.get_for_session(child_session_id) is None
 
         _, _, _, allowed, _ = await tool_proxy._apply_before_tool_enforcement(
             server_name="gobby-sessions",
@@ -258,16 +267,12 @@ async def test_inbox_replays_codex_session_end_once_with_real_cleanup(
         enabled=True,
     )
     workflow_handler = WorkflowHookHandler(rule_engine=RuleEngine(db=db), enabled=True)
-    instance_manager = WorkflowInstanceManager(db)
-    instance_manager.save_instance(
-        WorkflowInstance(
-            id=str(uuid.uuid4()),
-            session_id=session_id,
-            workflow_name="plan-adversary-steps",
-            enabled=True,
-            priority=100,
+    instance_manager = AgentStepInstanceManager(db)
+    instance_manager.save(
+        make_step_instance(
+            session_id,
+            agent_name="plan-adversary",
             current_step="terminate",
-            step_entered_at=datetime.now(UTC),
         )
     )
     session_manager = SessionManager(db)
@@ -319,4 +324,4 @@ async def test_inbox_replays_codex_session_end_once_with_real_cleanup(
     stored_session = session_manager.get(session_id)
     assert stored_session is not None
     assert stored_session.status == "expired"
-    assert instance_manager.get_active_instances(session_id) == []
+    assert instance_manager.get_for_session(session_id) is None

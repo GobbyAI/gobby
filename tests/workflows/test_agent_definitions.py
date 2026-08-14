@@ -395,7 +395,9 @@ def test_tech_writer_loads_methodology_skill_after_claim() -> None:
 
     assert claim["transitions"] == [{"to": "load_skills", "when": "vars.task_claimed"}]
     assert "gobby-skills:get_skill" in _allowed_mcp_tools(load_skill)
-    assert {"tech-writer", "tasks"}.issubset(set(agent["step_workflow"]["variables"]["required_skills"]))
+    assert {"tech-writer", "tasks"}.issubset(
+        set(agent["step_workflow"]["variables"]["required_skills"])
+    )
     assert 'get_skill(name="tech-writer")' in load_skill["status_message"]
     assert "submit_for_review" in implement["status_message"]
 

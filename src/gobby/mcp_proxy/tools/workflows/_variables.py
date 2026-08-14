@@ -11,7 +11,7 @@ from __future__ import annotations
 import json
 import logging
 from pathlib import Path
-from typing import Any
+from typing import Any, Literal
 
 from gobby.mcp_proxy.tools.workflows._resolution import (
     resolve_session_id,
@@ -26,10 +26,8 @@ from gobby.storage.workflow_definitions import (
 )
 from gobby.workflows.definitions import VariableDefinitionBody
 from gobby.workflows.reserved_variables import is_reserved_workflow_variable
-from gobby.workflows.state_manager import (
-    SessionVariableManager,
-    WorkflowInstanceManager,
-)
+from gobby.workflows.state_manager import SessionVariableManager
+from gobby.workflows.step_instances import AgentStepInstanceManager
 
 logger = logging.getLogger(__name__)
 
@@ -75,29 +73,16 @@ def set_variable(
     name: str,
     value: str | int | float | bool | list[Any] | dict[str, Any] | None,
     session_id: str,
-    workflow: str | None = None,
-    instance_manager: WorkflowInstanceManager | None = None,
+    scope: Literal["session", "step"] = "session",
+    instance_manager: AgentStepInstanceManager | None = None,
     session_var_manager: SessionVariableManager | None = None,
 ) -> dict[str, Any]:
     """
-    Set a variable scoped to a workflow instance or session.
+    Set a variable scoped to the session or the session's agent-step instance.
 
-    When `workflow` is provided, writes to that workflow instance's variables.
-    When `workflow` is not provided, writes to session-scoped shared variables
-    (via SessionVariableManager).
-
-    Args:
-        session_manager: SessionManager instance
-        db: Hub database adapter
-        name: Variable name (e.g., "session_epic", "is_worktree")
-        value: JSON-compatible variable value
-        session_id: Session reference (accepts #N, N, UUID, or prefix). Required to prevent cross-session variable bleed.
-        workflow: Optional workflow name to scope the variable to
-        instance_manager: Optional WorkflowInstanceManager for workflow-scoped writes
-        session_var_manager: Optional SessionVariableManager for session-scoped writes
-
-    Returns:
-        Success status and updated variables
+    When `scope` is ``step``, writes to the single typed instance via
+    ``merge_variables``. When `scope` is ``session``, writes to session-scoped
+    shared variables (via SessionVariableManager).
     """
 
     # Resolve session_id to UUID (accepts #N, N, UUID, or prefix)
@@ -137,20 +122,15 @@ def set_variable(
                 "error": f"Failed to resolve session_task value '{value}': {e}",
             }
 
-    # Workflow-scoped: write to workflow_instances.variables
-    if workflow:
-        if not instance_manager:
-            return {"success": False, "error": "Workflow-scoped variables require instance_manager"}
-        if not instance_manager.merge_instance_variables(
-            resolved_session_id,
-            workflow,
-            {name: value},
-        ):
+    if scope == "step":
+        if instance_manager is None:
+            instance_manager = AgentStepInstanceManager(db)
+        if instance_manager.merge_variables(resolved_session_id, {name: value}) is None:
             return {
                 "success": False,
-                "error": f"No workflow instance '{workflow}' found for session",
+                "error": "No agent-step instance found for session",
             }
-        return {"success": True, "value": value, "scope": "workflow", "workflow": workflow}
+        return {"success": True, "value": value, "scope": "step"}
 
     # Session-scoped: write to session_variables table
     if not session_var_manager:
@@ -167,27 +147,15 @@ def get_variable(
     db: HubDatabase,
     name: str | None = None,
     session_id: str = "",
-    workflow: str | None = None,
-    instance_manager: WorkflowInstanceManager | None = None,
+    scope: Literal["session", "step"] = "session",
+    instance_manager: AgentStepInstanceManager | None = None,
     session_var_manager: SessionVariableManager | None = None,
 ) -> dict[str, Any]:
     """
-    Get variable(s) scoped to a workflow instance or session.
+    Get variable(s) scoped to the session or the session's agent-step instance.
 
-    When `workflow` is provided, reads from that workflow instance's variables.
-    When `workflow` is not provided, reads from session-scoped shared variables.
-
-    Args:
-        session_manager: SessionManager instance
-        db: Hub database adapter
-        name: Variable name to get (if None, returns all variables)
-        session_id: Session reference (accepts #N, N, UUID, or prefix). Required to prevent cross-session variable bleed.
-        workflow: Optional workflow name to scope the read to
-        instance_manager: Optional WorkflowInstanceManager for workflow-scoped reads
-        session_var_manager: Optional SessionVariableManager for session-scoped reads
-
-    Returns:
-        Variable value(s) and session info
+    When `scope` is ``step``, reads from the single typed instance. When
+    `scope` is ``session``, reads from session-scoped shared variables.
     """
     # Require explicit session_id to prevent cross-session bleed
     if not session_id:
@@ -202,15 +170,14 @@ def get_variable(
     except ValueError as e:
         return {"success": False, "error": str(e)}
 
-    # Workflow-scoped: read from workflow_instances.variables
-    if workflow:
-        if not instance_manager:
-            return {"success": False, "error": "Workflow-scoped variables require instance_manager"}
-        instance = instance_manager.get_instance(resolved_session_id, workflow)
-        if not instance:
+    if scope == "step":
+        if instance_manager is None:
+            instance_manager = AgentStepInstanceManager(db)
+        instance = instance_manager.get_for_session(resolved_session_id)
+        if instance is None:
             return {
                 "success": False,
-                "error": f"No workflow instance '{workflow}' found for session",
+                "error": "No agent-step instance found for session",
             }
         variables = instance.variables
         if name:
@@ -220,15 +187,13 @@ def get_variable(
                 "variable": name,
                 "value": variables.get(name),
                 "exists": name in variables,
-                "scope": "workflow",
-                "workflow": workflow,
+                "scope": "step",
             }
         return {
             "success": True,
             "session_id": resolved_session_id,
             "variables": variables,
-            "scope": "workflow",
-            "workflow": workflow,
+            "scope": "step",
         }
 
     # Session-scoped: read from session_variables table

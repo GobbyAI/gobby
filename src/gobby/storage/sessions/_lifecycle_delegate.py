@@ -43,7 +43,7 @@ class _LifecycleDelegateMixin:
     def prune_stale_compact_workflow_instances(
         self: _ManagerState, retention_hours: int = 24
     ) -> int:
-        """Reclaim workflow instances from unresumed compact sessions."""
+        """Reclaim typed agent-step instances from unresumed compact sessions."""
         from gobby.storage.session_lifecycle import (
             prune_stale_compact_workflow_instances as _prune_compact,
         )

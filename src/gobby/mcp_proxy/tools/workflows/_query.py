@@ -14,10 +14,8 @@ from gobby.storage.sessions import SessionManager
 from gobby.utils.project_context import get_workflow_project_path
 from gobby.workflows.definitions import WorkflowDefinition
 from gobby.workflows.loader import WorkflowLoader
-from gobby.workflows.state_manager import (
-    SessionVariableManager,
-    WorkflowInstanceManager,
-)
+from gobby.workflows.state_manager import SessionVariableManager
+from gobby.workflows.step_instances import AgentStepInstanceManager
 
 logger = logging.getLogger(__name__)
 
@@ -234,28 +232,13 @@ def list_workflows(
     return {"success": True, "workflows": workflows, "count": len(workflows)}
 
 
-def get_workflow_status(
+def get_step_status(
     session_manager: SessionManager,
     session_id: str | None = None,
-    instance_manager: WorkflowInstanceManager | None = None,
+    instance_manager: AgentStepInstanceManager | None = None,
     session_var_manager: SessionVariableManager | None = None,
 ) -> dict[str, Any]:
-    """
-    Get current workflow status for a session.
-
-    Returns all active workflow instances with per-workflow variables
-    and session variables separately.
-
-    Args:
-        session_manager: SessionManager instance
-        session_id: Session reference (accepts #N, N, UUID, or prefix)
-        instance_manager: Optional WorkflowInstanceManager for multi-workflow status
-        session_var_manager: Optional SessionVariableManager for session variables
-
-    Returns:
-        Workflow state including per-instance details and session variables
-    """
-    # Require explicit session_id to prevent cross-session bleed
+    """Report the session's typed agent-step instance and session variables."""
     if not session_id:
         return {
             "success": False,
@@ -263,7 +246,6 @@ def get_workflow_status(
             "error": "session_id is required. Pass the session ID explicitly to prevent cross-session variable bleed.",
         }
 
-    # Resolve session_id to UUID (accepts #N, N, UUID, or prefix)
     try:
         resolved_session_id = resolve_session_id(session_manager, session_id)
     except ValueError as e:
@@ -273,24 +255,30 @@ def get_workflow_status(
         session_var_manager.get_variables(resolved_session_id) if session_var_manager else {}
     )
 
-    workflows = []
-    if instance_manager:
-        instances = instance_manager.get_active_instances(resolved_session_id)
-        workflows = [
-            {
-                "workflow_name": inst.workflow_name,
-                "enabled": inst.enabled,
-                "priority": inst.priority,
-                "current_step": inst.current_step,
-                "variables": inst.variables,
-            }
-            for inst in instances
-        ]
+    if instance_manager is None:
+        instance = None
+    else:
+        instance = instance_manager.get_for_session(resolved_session_id)
+
+    if instance is None:
+        return {
+            "success": True,
+            "has_workflow": False,
+            "session_id": resolved_session_id,
+            "session_variables": session_vars,
+        }
 
     return {
         "success": True,
-        "has_workflow": len(workflows) > 0,
+        "has_workflow": True,
         "session_id": resolved_session_id,
-        "workflows": workflows,
+        "agent_name": instance.agent_name,
+        "current_step": instance.current_step,
+        "steps": [step.name for step in instance.snapshot.steps],
+        "exit_condition": instance.snapshot.exit_condition,
+        "variables": instance.variables,
         "session_variables": session_vars,
     }
+
+
+get_workflow_status = get_step_status

@@ -7,14 +7,9 @@ from datetime import UTC, datetime
 from typing import Any, Literal, TypeVar
 
 from gobby.storage.hub.protocol import (
-    AgentStepInstanceMutation,
     HubDatabase,
     SessionVariableMutation,
 )
-from gobby.storage.session_resolution import is_session_uuid
-from gobby.utils.datetime import parse_stored_datetime, require_stored_datetime
-
-from .definitions import WorkflowInstance
 
 logger = logging.getLogger(__name__)
 
@@ -63,135 +58,6 @@ def _normalize_string_list(value: Any) -> list[str]:
     if not isinstance(value, list):
         return []
     return [item for item in value if isinstance(item, str)]
-
-
-class WorkflowInstanceManager:
-    """Manages CRUD operations for workflow instances (multi-workflow per session)."""
-
-    def __init__(self, db: HubDatabase):
-        self.db = db
-
-    def get_instance(self, session_id: str, workflow_name: str) -> WorkflowInstance | None:
-        """Get a specific workflow instance by session and workflow name."""
-        if not is_session_uuid(session_id):
-            return None
-        row = self.db.fetchone(
-            "SELECT * FROM workflow_instances WHERE session_id = %s AND workflow_name = %s",
-            (session_id, workflow_name),
-        )
-        if not row:
-            return None
-        return self._row_to_instance(row)
-
-    def get_active_instances(self, session_id: str) -> list[WorkflowInstance]:
-        """Get all enabled workflow instances for a session, sorted deterministically."""
-        if not is_session_uuid(session_id):
-            return []
-        rows = self.db.fetchall(
-            "SELECT * FROM workflow_instances WHERE session_id = %s AND enabled = %s "
-            "ORDER BY priority ASC, workflow_name ASC",
-            (session_id, True),
-        )
-        return [self._row_to_instance(row) for row in rows]
-
-    def save_instance(self, instance: WorkflowInstance) -> None:
-        """Create or update a workflow instance (upsert on session_id + workflow_name)."""
-        if not is_session_uuid(instance.session_id):
-            return
-        now = datetime.now(UTC).isoformat()
-        persisted = self.db.fetchone(
-            """
-            INSERT INTO workflow_instances (
-                id, session_id, workflow_name, enabled, priority,
-                current_step, step_entered_at, step_action_count, total_action_count,
-                variables, context_injected, created_at, updated_at
-            ) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
-            ON CONFLICT(session_id, workflow_name) DO UPDATE SET
-                enabled = excluded.enabled,
-                priority = excluded.priority,
-                current_step = excluded.current_step,
-                step_entered_at = excluded.step_entered_at,
-                step_action_count = excluded.step_action_count,
-                total_action_count = excluded.total_action_count,
-                variables = excluded.variables,
-                context_injected = excluded.context_injected,
-                updated_at = excluded.updated_at
-            RETURNING id, created_at, updated_at
-            """,
-            (
-                instance.id,
-                instance.session_id,
-                instance.workflow_name,
-                instance.enabled,
-                instance.priority,
-                instance.current_step,
-                instance.step_entered_at.isoformat() if instance.step_entered_at else None,
-                instance.step_action_count,
-                instance.total_action_count,
-                _encode_variables_payload(instance.variables),
-                instance.context_injected,
-                instance.created_at.isoformat(),
-                now,
-            ),
-        )
-        if persisted is None:  # pragma: no cover - PostgreSQL RETURNING always yields a row.
-            raise RuntimeError("Workflow instance upsert returned no row")
-        instance.id = persisted["id"]
-        instance.created_at = require_stored_datetime(persisted["created_at"], "created_at")
-        instance.updated_at = require_stored_datetime(persisted["updated_at"], "updated_at")
-
-    def merge_instance_variables(
-        self,
-        session_id: str,
-        workflow_name: str,
-        updates: dict[str, Any],
-    ) -> bool:
-        """Atomically merge variables without rewriting workflow execution state."""
-        if not updates or not is_session_uuid(session_id):
-            return False
-        lock = AgentStepInstanceMutation(session_id=session_id)
-        with self.db.transaction_immediate(lock) as conn:
-            now = datetime.now(UTC).isoformat()
-            cursor = conn.execute(
-                """
-                UPDATE workflow_instances
-                SET variables = COALESCE(variables, '{}'::jsonb) || %s::jsonb,
-                    updated_at = %s
-                WHERE session_id = %s AND workflow_name = %s
-                """,
-                (_encode_variables_payload(updates), now, session_id, workflow_name),
-            )
-            return cursor.rowcount > 0
-
-    def delete_instances_for_session(self, session_id: str) -> int:
-        """Delete all workflow instances for a session and return deleted row count."""
-        if not is_session_uuid(session_id):
-            return 0
-        with self.db.transaction() as conn:
-            cursor = conn.execute(
-                "DELETE FROM workflow_instances WHERE session_id = %s",
-                (session_id,),
-            )
-            return cursor.rowcount
-
-    @staticmethod
-    def _row_to_instance(row: Any) -> WorkflowInstance:
-        """Convert a database row to a WorkflowInstance."""
-        return WorkflowInstance(
-            id=row["id"],
-            session_id=row["session_id"],
-            workflow_name=row["workflow_name"],
-            enabled=bool(row["enabled"]),
-            priority=row["priority"],
-            current_step=row["current_step"],
-            step_entered_at=parse_stored_datetime(row["step_entered_at"]),
-            step_action_count=row["step_action_count"],
-            total_action_count=row["total_action_count"],
-            variables=_decode_variables_payload(row["variables"]),
-            context_injected=bool(row["context_injected"]),
-            created_at=require_stored_datetime(row["created_at"], "created_at"),
-            updated_at=require_stored_datetime(row["updated_at"], "updated_at"),
-        )
 
 
 class SessionVariableManager:

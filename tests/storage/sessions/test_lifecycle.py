@@ -21,8 +21,8 @@ from gobby.terminal_ownership import (
     PaneOwnershipDecision,
     terminal_session_identity,
 )
-from gobby.workflows.definitions import WorkflowInstance
-from gobby.workflows.state_manager import WorkflowInstanceManager
+from gobby.workflows.step_instances import AgentStepInstanceManager
+from tests.workflows.step_instance_fixtures import make_step_instance
 from tests.fixtures.postgres import TEST_USER_ID
 
 pytestmark = pytest.mark.unit
@@ -31,7 +31,11 @@ LOCAL_MACHINE_ID = "20000000-0000-4000-8000-000000000001"
 
 
 @pytest.fixture(autouse=True)
-def _local_machine_identity() -> Iterator[None]:
+def _local_machine_identity(temp_db: HubDatabase) -> Iterator[None]:
+    from gobby.storage.machines import LocalMachineManager
+    from tests.fixtures.postgres import TEST_USER_ID
+
+    LocalMachineManager(temp_db).upsert_seen(LOCAL_MACHINE_ID, TEST_USER_ID)
     with patch("gobby.utils.machine_id._cached_machine_id", LOCAL_MACHINE_ID):
         yield
 
@@ -83,12 +87,11 @@ class TestSessionManagerLifecycle:
             "UPDATE sessions SET agent_run_id = %s WHERE id = %s",
             (run.id, session.id),
         )
-        workflow_manager = WorkflowInstanceManager(session_manager.db)
-        workflow_manager.save_instance(
-            WorkflowInstance(
-                id=str(uuid.uuid4()),
-                session_id=session.id,
-                workflow_name="developer",
+        workflow_manager = AgentStepInstanceManager(session_manager.db)
+        workflow_manager.save(
+            make_step_instance(
+                session.id,
+                agent_name="developer",
                 current_step="implement",
             )
         )
@@ -104,8 +107,9 @@ class TestSessionManagerLifecycle:
         assert reactivated.id == session.id
         assert reactivated.status == "active"
         assert reactivated.agent_run_id == run.id
-        instances = workflow_manager.get_active_instances(session.id)
-        assert [instance.workflow_name for instance in instances] == ["developer"]
+        instance = workflow_manager.get_for_session(session.id)
+        assert instance is not None
+        assert instance.agent_name == "developer"
         preserved_run = run_manager.get(run.id)
         assert preserved_run is not None
         assert preserved_run.child_session_id == session.id

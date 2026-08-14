@@ -207,7 +207,6 @@ async def test_apply_persona_rejects_reserved_caller_variables(
     ):
         for payload in (
             {"_agent_type": "smuggled"},
-            {"_step_workflow_name": "alpha-steps"},
             {"step_workflow_complete": True},
         ):
             result = await apply_persona_impl(
@@ -359,6 +358,95 @@ def test_dispatch_spawn_does_not_seed_step_workflow_name() -> None:
     source = Path("src/gobby/dispatch/spawn.py").read_text(encoding="utf-8")
     assert "_step_workflow_name" not in source
     assert "_register_agent_step_workflow" not in source
+
+
+def test_fresh_snapshot_recovery_emits_structured_warning(
+    snap_db: PostgresHubDatabase, caplog: pytest.LogCaptureFixture
+) -> None:
+    import logging
+    from types import SimpleNamespace
+
+    from gobby.hooks.session_activation import (
+        FRESH_SNAPSHOT_RECOVERY_MARKER,
+        _ensure_step_instance,
+    )
+
+    agent = _agent("alpha", ["claim", "implement"], {"goal": "ship"})
+    row = MagicMock()
+    row.id = "dddddddd-dddd-4ddd-8ddd-dddddddddddd"
+    row.step_workflow_id = LINEAGE
+    session = SimpleNamespace(
+        project_id=None,
+        parent_session_id=None,
+        agent_run_id=None,
+        agent_depth=0,
+    )
+    with (
+        patch(
+            "gobby.workflows.agent_resolver.resolve_agent_with_row",
+            return_value=(agent, row),
+        ),
+        caplog.at_level(logging.WARNING, logger="gobby.hooks.session_activation"),
+    ):
+        created = _ensure_step_instance(snap_db, S1, {"_agent_type": "alpha"}, session)
+    assert created is True
+    recovered = AgentStepInstanceManager(snap_db).get_for_session(S1)
+    assert recovered is not None
+    assert recovered.agent_name == "alpha"
+    assert recovered.current_step == "claim"
+    assert recovered.variables["goal"] == "ship"
+    assert recovered.agent_step_workflow_id == LINEAGE
+    assert caplog.text.count(FRESH_SNAPSHOT_RECOVERY_MARKER) == 1
+    assert S1 in caplog.text
+    assert "alpha" in caplog.text
+    assert row.id in caplog.text
+    assert LINEAGE in caplog.text
+
+    with patch(
+        "gobby.workflows.agent_resolver.resolve_agent_with_row",
+        return_value=(agent, row),
+    ):
+        assert _ensure_step_instance(snap_db, S1, {"_agent_type": "alpha"}, session) is False
+    assert caplog.text.count(FRESH_SNAPSHOT_RECOVERY_MARKER) == 1
+
+
+def test_compacted_mid_workflow_resume_keeps_step_and_variables(
+    snap_db: PostgresHubDatabase,
+) -> None:
+    manager = AgentStepInstanceManager(snap_db)
+    instance = build_step_instance(
+        _agent("alpha", ["claim", "implement"], {"goal": "ship"}),
+        session_id=S1,
+        step_workflow_id=LINEAGE,
+        current_step="implement",
+        variables={"goal": "ship", "progress": 2},
+    )
+    manager.save(instance)
+
+    resumed = manager.get_for_session(S1)
+    assert resumed is not None
+    assert resumed.session_id == S1
+    assert resumed.current_step == "implement"
+    assert resumed.variables == {"goal": "ship", "progress": 2}
+
+
+def test_workflow_instance_types_are_gone() -> None:
+    import gobby.workflows.definitions as definitions
+    import gobby.workflows.state_manager as state_manager
+
+    assert not hasattr(state_manager, "WorkflowInstanceManager")
+    assert not hasattr(definitions, "WorkflowInstance")
+
+
+def test_reserved_variables_omit_step_workflow_name() -> None:
+    from gobby.workflows.reserved_variables import (
+        RESERVED_WORKFLOW_VARIABLES,
+        is_reserved_workflow_variable,
+    )
+
+    assert "_step_workflow_name" not in RESERVED_WORKFLOW_VARIABLES
+    assert is_reserved_workflow_variable("step_workflow_complete")
+    assert not is_reserved_workflow_variable("_step_workflow_name")
 
 
 def test_enforcement_write_paths_hold_one_critical_section() -> None:

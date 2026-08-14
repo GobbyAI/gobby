@@ -7,9 +7,7 @@ import json
 import logging
 import threading
 import time
-import uuid
 from dataclasses import dataclass
-from datetime import UTC, datetime
 from typing import Any
 
 from pydantic import ValidationError
@@ -19,6 +17,8 @@ from gobby.storage.hub.protocol import AgentStepInstanceMutation
 from gobby.storage.sessions import TERMINAL_SESSION_STATUSES
 
 logger = logging.getLogger(__name__)
+
+FRESH_SNAPSHOT_RECOVERY_MARKER = "fresh_snapshot_recovery"
 
 SESSION_ACTIVATION_CONTRACT_VERSION = 1
 SESSION_ACTIVATION_INVARIANTS = (
@@ -185,7 +185,7 @@ def _reconcile_session_activation(
     step_missing = (
         []
         if is_pipeline_session
-        else _missing_step_workflow(db, session_id, variables, session, agent_run)
+        else _missing_step_state(db, session_id, variables, session, agent_run)
     )
     missing.extend(step_missing)
 
@@ -194,7 +194,7 @@ def _reconcile_session_activation(
         activation_succeeded = _activate_agent(handler, session_id, session, override, log)
         if activation_succeeded:
             variables = sv_mgr.get_variables(session_id)
-            step_missing = _missing_step_workflow(db, session_id, variables, session, agent_run)
+            step_missing = _missing_step_state(db, session_id, variables, session, agent_run)
             missing.extend(step_missing)
         elif activation_missing and override is not None:
             return ActivationReconciliationResult(
@@ -215,12 +215,9 @@ def _reconcile_session_activation(
         missing.append("_active_rule_names")
     missing.extend(_missing_baseline_keys(variables))
     updates.update(_baseline_updates(event, variables, log))
-    updates.update(_step_completion_updates(variables))
-    if not is_pipeline_session and _ensure_step_workflow_from_definition(
-        db, session_id, variables, session
-    ):
-        variables = sv_mgr.get_variables(session_id)
+    if not is_pipeline_session and _ensure_step_instance(db, session_id, variables, session):
         missing = [m for m in missing if m != "step_workflow_instance"]
+    updates.update(_step_completion_updates(db, session_id, {**variables, **updates}))
 
     updates.update(_marker_updates(variables))
     if updates:
@@ -426,13 +423,14 @@ def _baseline_updates(
     return updates
 
 
-def _step_completion_updates(variables: dict[str, Any]) -> dict[str, Any]:
-    if (
-        isinstance(variables.get("_step_workflow_name"), str)
-        and "step_workflow_complete" not in variables
-    ):
-        return {"step_workflow_complete": False}
-    return {}
+def _step_completion_updates(db: Any, session_id: str, variables: dict[str, Any]) -> dict[str, Any]:
+    if "step_workflow_complete" in variables:
+        return {}
+    from gobby.workflows.step_instances import AgentStepInstanceManager
+
+    if AgentStepInstanceManager(db).get_for_session(session_id) is None:
+        return {}
+    return {"step_workflow_complete": False}
 
 
 def _project_path(event: HookEvent) -> str | None:
@@ -549,23 +547,25 @@ def _backfill_terminal_pickup(
     )
 
 
-def _activation_agent_name(
+def _resolved_agent_name(
     variables: dict[str, Any],
     agent_run: _AgentRunRecovery | None,
-    missing: list[str],
 ) -> str | None:
     agent_type = variables.get("_agent_type")
     if isinstance(agent_type, str) and agent_type and agent_type != "default":
         return agent_type
     if agent_run and agent_run.agent_name:
         return agent_run.agent_name
-    step_name = variables.get("_step_workflow_name")
-    if isinstance(step_name, str) and step_name.endswith("-steps"):
-        return step_name[: -len("-steps")]
-    for item in missing:
-        if item.endswith("-steps"):
-            return item[: -len("-steps")]
     return None
+
+
+def _activation_agent_name(
+    variables: dict[str, Any],
+    agent_run: _AgentRunRecovery | None,
+    missing: list[str],
+) -> str | None:
+    del missing
+    return _resolved_agent_name(variables, agent_run)
 
 
 def _activate_agent(
@@ -612,7 +612,7 @@ def _activate_agent(
     return True
 
 
-def _missing_step_workflow(
+def _missing_step_state(
     db: Any,
     session_id: str,
     variables: dict[str, Any],
@@ -623,38 +623,35 @@ def _missing_step_workflow(
     if not spawned or not _has_assigned_or_active_task(variables):
         return []
 
-    step_name = variables.get("_step_workflow_name")
-    if not isinstance(step_name, str) or not step_name:
-        if (
-            agent_run
-            and agent_run.agent_name
-            and _workflow_definition_exists(db, agent_run.agent_name, session.project_id)
-        ):
-            return [f"{agent_run.agent_name}-steps"]
+    from gobby.workflows.step_instances import AgentStepInstanceManager
+
+    if AgentStepInstanceManager(db).get_for_session(session_id) is None:
+        if _agent_has_step_workflow(db, variables, session, agent_run):
+            return ["step_workflow_instance"]
         return []
-
-    from gobby.workflows.state_manager import WorkflowInstanceManager
-
-    if WorkflowInstanceManager(db).get_instance(session_id, step_name) is None:
-        return ["step_workflow_instance"]
+    # Same completion-key check as `_step_completion_updates` so the two
+    # predicates cannot drift after `_step_workflow_name` is gone.
     if "step_workflow_complete" not in variables:
         return ["step_workflow_complete"]
     return []
 
 
-def _workflow_definition_exists(db: Any, agent_name: str, project_id: str | None) -> bool:
-    from gobby.storage.workflow_definitions import LocalWorkflowDefinitionManager
+def _agent_has_step_workflow(
+    db: Any,
+    variables: dict[str, Any],
+    session: Any,
+    agent_run: _AgentRunRecovery | None,
+) -> bool:
+    agent_name = _resolved_agent_name(variables, agent_run)
+    if not isinstance(agent_name, str) or not agent_name:
+        return False
+    from gobby.workflows.agent_resolver import resolve_agent
 
-    return (
-        LocalWorkflowDefinitionManager(db).get_by_name(
-            f"{agent_name}-steps",
-            project_id=project_id,
-        )
-        is not None
-    )
+    agent = resolve_agent(agent_name, db, project_id=getattr(session, "project_id", None))
+    return agent is not None and agent.step_workflow is not None
 
 
-def _ensure_step_workflow_from_definition(
+def _ensure_step_instance(
     db: Any,
     session_id: str,
     variables: dict[str, Any],
@@ -664,48 +661,46 @@ def _ensure_step_workflow_from_definition(
     if spawned and not _has_assigned_or_active_task(variables):
         return False
 
-    step_name = variables.get("_step_workflow_name")
-    if not isinstance(step_name, str) or not step_name:
+    agent_name = _resolved_agent_name(variables, None)
+    if not isinstance(agent_name, str) or not agent_name:
         return False
 
-    from gobby.storage.workflow_definitions import LocalWorkflowDefinitionManager
-    from gobby.workflows.definitions import WorkflowInstance
-    from gobby.workflows.state_manager import WorkflowInstanceManager
+    from gobby.workflows.agent_resolver import resolve_agent_with_row
+    from gobby.workflows.step_instances import AgentStepInstanceManager, build_step_instance
 
-    instance_mgr = WorkflowInstanceManager(db)
+    manager = AgentStepInstanceManager(db)
     lock = AgentStepInstanceMutation(session_id=session_id)
+    recovered_ids: tuple[str, str | None] | None = None
     with db.transaction_immediate(lock):
-        if instance_mgr.get_instance(session_id, step_name) is not None:
+        if manager.get_for_session(session_id) is not None:
             return False
-
-        row = LocalWorkflowDefinitionManager(db).get_by_name(
-            step_name,
+        found = resolve_agent_with_row(
+            agent_name,
+            db,
             project_id=getattr(session, "project_id", None),
         )
-        if row is None:
+        if found is None:
             return False
-        try:
-            definition = json.loads(row.definition_json)
-        except (json.JSONDecodeError, TypeError):
+        body, row = found
+        if body.step_workflow is None or not body.step_workflow.steps:
             return False
-        steps = definition.get("steps") or []
-        first = steps[0] if steps else {}
-        first_step = first.get("name") if isinstance(first, dict) else None
-        if not first_step:
-            return False
-
-        instance_mgr.save_instance(
-            WorkflowInstance(
-                id=str(uuid.uuid4()),
+        manager.save(
+            build_step_instance(
+                body,
                 session_id=session_id,
-                workflow_name=step_name,
-                enabled=True,
-                priority=10,
-                current_step=first_step,
-                step_entered_at=datetime.now(UTC),
-                variables=definition.get("variables") or {},
+                step_workflow_id=row.step_workflow_id,
             )
         )
+        recovered_ids = (row.id, row.step_workflow_id)
+    logger.warning(
+        "Recovered missing agent-step instance for session %s agent %s "
+        "definition_id=%s step_workflow_id=%s marker=%s",
+        session_id,
+        agent_name,
+        recovered_ids[0],
+        recovered_ids[1],
+        FRESH_SNAPSHOT_RECOVERY_MARKER,
+    )
     return True
 
 

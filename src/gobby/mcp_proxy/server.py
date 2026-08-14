@@ -7,7 +7,7 @@ import json
 import logging
 from collections.abc import Callable
 from contextlib import AbstractContextManager
-from typing import Annotated, Any
+from typing import Annotated, Any, Literal
 
 from mcp.server.fastmcp import FastMCP
 from mcp.types import CallToolResult, TextContent
@@ -552,14 +552,18 @@ class GobbyDaemonTools:
                 description="Your Gobby Session ID (e.g. #3439). Use the value from 'Gobby Session ID: #N' in your system prompt."
             ),
         ],
-        workflow: str | None = None,
+        scope: Literal["session", "step"] = "session",
     ) -> dict[str, Any]:
-        """Set a variable. Session-scoped by default. Pass workflow param to scope to a specific workflow instance."""
+        """Set a variable. Session-scoped by default. Pass scope='step' for the session instance."""
         if not self._session_manager or not self._session_manager.db:
             return {"success": False, "error": "Session manager not available"}
 
         from gobby.mcp_proxy.tools.workflows._variables import set_variable as _set_var
+        from gobby.workflows.step_instances import AgentStepInstanceManager
 
+        instance_manager = (
+            AgentStepInstanceManager(self._session_manager.db) if scope == "step" else None
+        )
         return await asyncio.to_thread(
             _set_var,
             self._session_manager,
@@ -567,7 +571,8 @@ class GobbyDaemonTools:
             name,
             value,
             session_id,
-            workflow=workflow,
+            scope=scope,
+            instance_manager=instance_manager,
         )
 
     async def get_variable(
@@ -580,21 +585,26 @@ class GobbyDaemonTools:
                 description="Your Gobby Session ID (e.g. #3439). Use the value from 'Gobby Session ID: #N' in your system prompt."
             ),
         ],
-        workflow: str | None = None,
+        scope: Literal["session", "step"] = "session",
     ) -> dict[str, Any]:
-        """Get a variable (or all variables). Session-scoped by default. Pass workflow param to read from a specific workflow instance."""
+        """Get a variable (or all variables). Session-scoped by default. Pass scope='step' for the session instance."""
         if not self._session_manager or not self._session_manager.db:
             return {"success": False, "error": "Session manager not available"}
 
         from gobby.mcp_proxy.tools.workflows._variables import get_variable as _get_var
+        from gobby.workflows.step_instances import AgentStepInstanceManager
 
+        instance_manager = (
+            AgentStepInstanceManager(self._session_manager.db) if scope == "step" else None
+        )
         return await asyncio.to_thread(
             _get_var,
             self._session_manager,
             self._session_manager.db,
             name,
             session_id,
-            workflow=workflow,
+            scope=scope,
+            instance_manager=instance_manager,
         )
 
     # Hook Extension tools migrated to gobby-plugins internal registry
