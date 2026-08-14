@@ -182,7 +182,8 @@ async def monitor_active_lease(
             await asyncio.to_thread(lease.heartbeat)
         except LeaseConnectionLostError:
             logger.error("Active-daemon lease connection lost; requesting shutdown")
-            on_loss()
+            # Drain off the event loop so in-flight handlers can finish.
+            await asyncio.to_thread(on_loss)
             return
 
 

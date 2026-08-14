@@ -2,10 +2,13 @@
 
 from __future__ import annotations
 
+import asyncio
 import logging
+import os
 import threading
 import time
 from collections.abc import Callable
+from pathlib import Path
 from typing import TYPE_CHECKING, cast
 from weakref import WeakKeyDictionary
 
@@ -93,6 +96,27 @@ class _Admission:
             self._fence._in_flight -= 1
             if self._fence._in_flight == 0:
                 self._fence._idle.notify_all()
+
+
+async def await_test_admit_barrier() -> None:
+    """Yield after admission when an isolated e2e barrier file is present."""
+    if os.environ.get("GOBBY_TEST_PROTECT") != "1":
+        return
+    home = os.environ.get("GOBBY_HOME")
+    if not home:
+        return
+    flag = Path(home) / "runtime" / "e2e-admit-barrier"
+    if not flag.is_file():
+        return
+    admitted = flag.with_name("e2e-admit-barrier.admitted")
+    release = flag.with_name("e2e-admit-barrier.release")
+    admitted.write_text("1")
+    deadline = time.monotonic() + 30.0
+    while time.monotonic() < deadline:
+        if release.is_file():
+            return
+        await asyncio.sleep(0.01)
+    raise TimeoutError("e2e admit barrier was not released")
 
 
 def owns_live_lease(lease: object | None) -> bool:

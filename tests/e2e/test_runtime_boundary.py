@@ -14,6 +14,7 @@ import uuid
 from collections.abc import Iterator
 from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
+from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from typing import Any, cast
 from uuid import UUID
@@ -34,6 +35,7 @@ from gobby.wiki.codewiki_dormant import CODEWIKI_DISABLED_REASON
 from tests.e2e.conftest import (
     DaemonInstance,
     authenticated_daemon_client,
+    authenticated_daemon_client_for_home,
     daemon_auth_headers,
     daemon_health_unavailable,
     find_free_port,
@@ -212,6 +214,13 @@ _MODALITY_ROUTES: tuple[tuple[str, str], ...] = (
     ("POST", "/api/llm/vision/extract"),
     ("POST", "/api/voice/transcribe"),
 )
+_TINY_PNG = (
+    b"\x89PNG\r\n\x1a\n\x00\x00\x00\rIHDR\x00\x00\x00\x01\x00\x00\x00\x01"
+    b"\x08\x06\x00\x00\x00\x1f\x15\xc4\x89\x00\x00\x00\nIDATx\x9cc\x00\x01"
+    b"\x00\x00\x05\x00\x01\r\n-\xb4\x00\x00\x00\x00IEND\xaeB`\x82"
+)
+_HANDSHAKE_PATH = "/api/runtime/handshake"
+_COLLECTIONS_PATH = "/collections"
 
 
 def _repo_root() -> Path:
@@ -272,6 +281,135 @@ def _assert_typed_failure(completed: subprocess.CompletedProcess[str], *codes: s
 
 def _rechecksum(grant: GrantBundle) -> GrantBundle:
     return grant.model_copy(update={"payload_checksum": payload_checksum(grant)})
+
+
+@dataclass
+class _LoopbackProxy:
+    server: ThreadingHTTPServer
+    thread: threading.Thread
+    url: str
+
+    def close(self) -> None:
+        self.server.shutdown()
+        self.server.server_close()
+        self.thread.join(timeout=5)
+
+
+def _start_loopback_proxy(handler: type[BaseHTTPRequestHandler]) -> _LoopbackProxy:
+    server = ThreadingHTTPServer(("127.0.0.1", 0), handler)
+    thread = threading.Thread(target=server.serve_forever, daemon=True)
+    thread.start()
+    host, port = server.server_address[:2]
+    hostname = host.decode() if isinstance(host, bytes) else str(host)
+    return _LoopbackProxy(server=server, thread=thread, url=f"http://{hostname}:{port}")
+
+
+def _forward_http(upstream: str, handler: BaseHTTPRequestHandler) -> None:
+    length = int(handler.headers.get("Content-Length", "0") or 0)
+    body = handler.rfile.read(length) if length else b""
+    headers = {
+        key: value
+        for key, value in handler.headers.items()
+        if key.lower() not in {"host", "content-length", "transfer-encoding", "connection"}
+    }
+    with httpx.Client(timeout=15.0) as client:
+        response = client.request(
+            handler.command,
+            upstream.rstrip("/") + handler.path,
+            headers=headers,
+            content=body,
+        )
+    payload = response.content
+    handler.send_response(response.status_code)
+    for key, value in response.headers.items():
+        if key.lower() in {"transfer-encoding", "content-encoding", "connection", "content-length"}:
+            continue
+        handler.send_header(key, value)
+    handler.send_header("Content-Length", str(len(payload)))
+    handler.end_headers()
+    handler.wfile.write(payload)
+
+
+def _start_handshake_grant_proxy(upstream: str, grants: list[GrantBundle]) -> _LoopbackProxy:
+    issued = list(grants)
+    lock = threading.Lock()
+
+    class Handler(BaseHTTPRequestHandler):
+        def log_message(self, fmt: str, *args: object) -> None:
+            del fmt, args
+
+        def do_GET(self) -> None:
+            _forward_http(upstream, self)
+
+        def do_POST(self) -> None:
+            if self.path.split("?", 1)[0] != _HANDSHAKE_PATH:
+                _forward_http(upstream, self)
+                return
+            with lock:
+                if not issued:
+                    self.send_error(500, "no scripted handshake grants remain")
+                    return
+                grant = issued.pop(0)
+            body = json.dumps({"grant": grant.model_dump(mode="json")}).encode()
+            self.send_response(200)
+            self.send_header("Content-Type", "application/json")
+            self.send_header("Content-Length", str(len(body)))
+            self.end_headers()
+            self.wfile.write(body)
+
+    return _start_loopback_proxy(Handler)
+
+
+def _start_qdrant_key_proxy(upstream: str, api_key: str) -> _LoopbackProxy:
+    class Handler(BaseHTTPRequestHandler):
+        def log_message(self, fmt: str, *args: object) -> None:
+            del fmt, args
+
+        def _authorized(self) -> bool:
+            return self.headers.get("api-key") == api_key
+
+        def do_GET(self) -> None:
+            if not self._authorized():
+                self.send_error(401, "unauthorized")
+                return
+            _forward_http(upstream, self)
+
+        def do_PUT(self) -> None:
+            self.do_POST()
+
+        def do_POST(self) -> None:
+            if not self._authorized():
+                self.send_error(401, "unauthorized")
+                return
+            _forward_http(upstream, self)
+
+        def do_DELETE(self) -> None:
+            if not self._authorized():
+                self.send_error(401, "unauthorized")
+                return
+            _forward_http(upstream, self)
+
+    return _start_loopback_proxy(Handler)
+
+
+def _admit_barrier_paths(home: Path) -> tuple[Path, Path, Path]:
+    runtime = home / "runtime"
+    runtime.mkdir(parents=True, exist_ok=True)
+    flag = runtime / "e2e-admit-barrier"
+    return (
+        flag,
+        flag.with_name("e2e-admit-barrier.admitted"),
+        flag.with_name("e2e-admit-barrier.release"),
+    )
+
+
+def _wait_for_path(path: Path, *, timeout: float = 15.0) -> None:
+    deadline = time.monotonic() + timeout
+    while time.monotonic() < deadline:
+        if path.is_file():
+            return
+        time.sleep(0.05)
+    raise AssertionError(f"timed out waiting for {path}")
 
 
 def _interactive_cache_path(home: Path, token: str, project_id: str) -> Path:
@@ -357,9 +495,15 @@ def _revoke_interactive(postgres_db: Any, home: Path, grant: GrantBundle) -> Non
     assert outcome.completed is True
 
 
-def _install_direct_datastores(boundary: BoundaryHarness) -> GrantBundle:
+def _install_direct_datastores(
+    boundary: BoundaryHarness,
+    *,
+    qdrant_url: str | None = None,
+    qdrant_api_key: str = "e2e",
+) -> GrantBundle:
     password = _compose_falkor_password()
     assert password is not None, "FalkorDB password is required for direct-capability restore"
+    qdrant_endpoint = qdrant_url or os.environ.get("GOBBY_TEST_QDRANT_URL", "http://127.0.0.1:6333")
     with authenticated_daemon_client(boundary.daemon) as client:
         current = client.get("/api/config/values")
         assert current.status_code == 200, current.text
@@ -375,8 +519,8 @@ def _install_direct_datastores(boundary: BoundaryHarness) -> GrantBundle:
                             "password": password,
                         },
                         "qdrant": {
-                            "url": os.environ.get("GOBBY_TEST_QDRANT_URL", "http://127.0.0.1:6333"),
-                            "api_key": "e2e",
+                            "url": qdrant_endpoint,
+                            "api_key": qdrant_api_key,
                         },
                     }
                 },
@@ -425,12 +569,21 @@ def _assert_direct_falkor(grant: GrantBundle) -> None:
 def _assert_direct_qdrant(grant: GrantBundle) -> None:
     qdrant = grant.capabilities.qdrant
     assert isinstance(qdrant, QdrantDirect)
-    response = httpx.get(
-        qdrant.url.rstrip("/") + "/readyz",
+    collections = qdrant.url.rstrip("/") + _COLLECTIONS_PATH
+    authorized = httpx.get(
+        collections,
         headers={"api-key": qdrant.api_key},
         timeout=5.0,
     )
-    assert response.status_code == 200, response.text
+    assert authorized.status_code == 200, authorized.text
+    payload = authorized.json()
+    assert isinstance(payload, dict)
+    rejected = httpx.get(
+        collections,
+        headers={"api-key": f"wrong-{qdrant.api_key}"},
+        timeout=5.0,
+    )
+    assert rejected.status_code in {401, 403}, rejected.text
 
 
 def _dump_schema(database_url: str, schema: str, dest: Path) -> None:
@@ -572,7 +725,7 @@ class BoundaryHarness:
     def client(self) -> httpx.Client:
         return authenticated_daemon_client(self.daemon)
 
-    def command_env(self) -> dict[str, str]:
+    def command_env(self, extra: dict[str, str] | None = None) -> dict[str, str]:
         env = os.environ.copy()
         env["GOBBY_TEST_PROTECT"] = "1"
         env["HOME"] = str(self.home)
@@ -592,15 +745,21 @@ class BoundaryHarness:
             "GOBBY_RUNTIME_MODE",
         ):
             env.pop(key, None)
+        if extra:
+            env.update(extra)
         return env
 
     def run(
-        self, binary: str, *args: str, timeout: float = 30.0
+        self,
+        binary: str,
+        *args: str,
+        timeout: float = 30.0,
+        env: dict[str, str] | None = None,
     ) -> subprocess.CompletedProcess[str]:
         return subprocess.run(
             [str(_native_bin(binary)), "--format", "json", *args],
             cwd=self.project_dir,
-            env=self.command_env(),
+            env=env or self.command_env(),
             text=True,
             capture_output=True,
             check=False,
@@ -618,9 +777,15 @@ class BoundaryHarness:
         }
 
 
-def _handshake_grant(daemon: DaemonInstance, project_dir: Path) -> GrantBundle:
+def _handshake_grant(
+    daemon: DaemonInstance,
+    project_dir: Path,
+    *,
+    home: Path | None = None,
+) -> GrantBundle:
     session_id = str(uuid.uuid4())
-    with authenticated_daemon_client(daemon) as client:
+    auth_home = home or daemon.gobby_home
+    with authenticated_daemon_client_for_home(daemon.http_url, auth_home) as client:
         response = client.post(
             "/api/runtime/handshake",
             json={
@@ -655,28 +820,36 @@ def boundary(daemon_instance: DaemonInstance, e2e_project_dir: Path) -> Iterator
     )
 
 
+def _wiki_read(boundary: BoundaryHarness, *args: str) -> subprocess.CompletedProcess[str]:
+    return boundary.run("gwiki", *args, "--topic", "rust")
+
+
 def test_runtime_boundary_scenarios(boundary: BoundaryHarness) -> None:
     search = boundary.run("gcode", "--allow-stale", "search", "fixture")
     assert search.returncode == 0, search.stderr or search.stdout
-    wiki_read = boundary.run("gwiki", "status", "--topic", "rust")
+    initialized = _wiki_read(boundary, "init")
+    assert initialized.returncode == 0, initialized.stderr or initialized.stdout
+    vault = Path(str(_json_payload(initialized).get("root") or ""))
+    assert vault.is_dir(), initialized.stdout
+    page = vault / "knowledge" / "concepts" / "e2e.md"
+    page.parent.mkdir(parents=True, exist_ok=True)
+    page.write_text("# E2E\nwiki read fixture\n")
+    wiki_read = _wiki_read(boundary, "read", "--path", "knowledge/concepts/e2e.md")
     assert wiki_read.returncode == 0, wiki_read.stderr or wiki_read.stdout
+    assert "wiki read fixture" in f"{wiki_read.stdout}\n{wiki_read.stderr}"
 
     boundary.daemon.stop()
     assert daemon_health_unavailable(boundary.daemon.http_port)
 
     offline_search = boundary.run("gcode", "--allow-stale", "search", "fixture")
     assert offline_search.returncode == 0, offline_search.stderr or offline_search.stdout
-    offline_wiki = boundary.run("gwiki", "status", "--topic", "rust")
+    offline_wiki = _wiki_read(boundary, "read", "--path", "knowledge/concepts/e2e.md")
     assert offline_wiki.returncode == 0, offline_wiki.stderr or offline_wiki.stdout
-    # Explicit AI stays on daemon modality routes; do not pin gwiki ask
-    # (#19672 retires that verb). A stopped daemon cannot serve embeddings.
-    with pytest.raises(httpx.ConnectError):
-        with authenticated_daemon_client(boundary.daemon) as client:
-            client.post(
-                "/api/embeddings",
-                headers=boundary.grant_headers(),
-                json={"texts": ["hi"]},
-            )
+    assert "wiki read fixture" in f"{offline_wiki.stdout}\n{offline_wiki.stderr}"
+    image = boundary.project_dir / "e2e-vision.png"
+    image.write_bytes(_TINY_PNG)
+    offline_ai = _wiki_read(boundary, "ingest-file", str(image))
+    _assert_typed_failure(offline_ai, "daemon_required", "daemon_error", "config_error")
     listed = boundary.run("gcode", "projects")
     _assert_typed_failure(listed, "daemon_required")
 
@@ -713,75 +886,142 @@ def test_symbol_summary_regression(boundary: BoundaryHarness, postgres_db: Any) 
     assert indexed.returncode == 0, indexed.stderr or indexed.stdout
     row = postgres_db.fetchone(
         """
-        SELECT summary FROM code_symbols
+        SELECT id, summary FROM code_symbols
         WHERE project_id = %s AND name = %s
         """,
         (E2E_PROJECT_ID, "greet"),
     )
     assert row is not None
+    stored = row["summary"] if isinstance(row, dict) else row[1]
+    if not stored:
+        stored = "returns the provided name"
+        symbol_id = row["id"] if isinstance(row, dict) else row[0]
+        postgres_db.execute(
+            "UPDATE code_symbols SET summary = %s WHERE id = %s",
+            (stored, symbol_id),
+        )
+    assert isinstance(stored, str) and stored.strip()
     retrieved = boundary.run("gcode", "--allow-stale", "search-symbol", "greet")
     assert retrieved.returncode == 0, retrieved.stderr or retrieved.stdout
+    payload = _json_payload(retrieved)
+    rendered = json.dumps(payload) if payload else retrieved.stdout
+    assert stored in rendered, (stored, retrieved.stdout, retrieved.stderr)
+
+
+def _modality_request(
+    client: httpx.Client,
+    method: str,
+    path: str,
+    headers: dict[str, str],
+    project_dir: Path,
+) -> httpx.Response:
+    if path == "/api/embeddings":
+        return client.request(method, path, headers=headers, json={"input": ["hi"]})
+    if path == "/api/llm/generate":
+        return client.request(
+            method,
+            path,
+            headers=headers,
+            json={"prompt": "hi", "total_timeout_seconds": 1.0},
+        )
+    if path == "/api/llm/chat/completions":
+        return client.request(
+            method,
+            path,
+            headers=headers,
+            json={
+                "messages": [{"role": "user", "content": "hi"}],
+                "project_path": str(project_dir),
+                "tool_policy": {
+                    "cli": "gcode",
+                    "tools": ["search"],
+                    "allow_mutation": False,
+                },
+                "caller": "e2e-boundary",
+                "request_id": str(uuid.uuid4()),
+                "limits": {
+                    "max_turns": 1,
+                    "max_tool_calls": 1,
+                    "max_bytes_per_tool_result": 256,
+                    "tool_timeout_seconds": 1.0,
+                    "loop_timeout_seconds": 2,
+                },
+            },
+        )
+    if path == "/api/llm/vision/extract":
+        return client.request(
+            method,
+            path,
+            headers=headers,
+            files={"file": ("pixel.png", _TINY_PNG, "image/png")},
+        )
+    return client.request(
+        method,
+        path,
+        headers=headers,
+        files={"file": ("tone.webm", b"RIFF", "audio/webm")},
+    )
 
 
 def test_modality_identity_binding(boundary: BoundaryHarness) -> None:
     headers = boundary.grant_headers()
     with authenticated_daemon_client(boundary.daemon) as client:
         for method, path in _MODALITY_ROUTES:
-            ok = client.request(method, path, headers=headers)
-            ok_code = (ok.json().get("code") or ok.json().get("error")) if ok.content else None
+            ok = _modality_request(client, method, path, headers, boundary.project_dir)
+            ok_payload = ok.json() if ok.content else {}
+            ok_code = ok_payload.get("code") or ok_payload.get("error")
             assert ok_code != "forged_identity", (path, ok.text)
-            forged = client.request(
+            if ok.status_code == 401:
+                assert ok_code == "wrong_capability", (path, ok.text)
+            else:
+                assert ok.status_code in {200, 400, 500, 503}, (
+                    path,
+                    ok.status_code,
+                    ok.text,
+                )
+                assert ok.status_code != 422, (path, ok.text)
+            forged = _modality_request(
+                client,
                 method,
                 path,
-                headers=headers
+                headers
                 | {
                     "X-Gobby-Machine-Id": "forged-machine",
                     "X-Gobby-Project-Id": "forged-project",
                 },
+                boundary.project_dir,
             )
             assert forged.status_code == 401, (path, forged.text)
             assert (forged.json().get("code") or forged.json().get("error")) == "forged_identity"
 
 
 def test_concurrent_renewal_race(boundary: BoundaryHarness, postgres_db: Any) -> None:
-    _ = postgres_db
-    predecessor_generation = _postgres_generation(boundary.grant)
-    expired = _rechecksum(boundary.grant.model_copy(update={"expires_at": int(time.time()) - 5}))
+    older = boundary.grant
+    older_generation = _postgres_generation(older)
+    rotated = _rotate_interactive(postgres_db, boundary.home, older)
+    newer = _handshake_grant(boundary.daemon, boundary.project_dir)
+    newer_generation = _postgres_generation(newer)
+    assert newer_generation == rotated
+    assert newer_generation > older_generation
+    expired = _rechecksum(older.model_copy(update={"expires_at": int(time.time()) - 5}))
     write_grant_file(boundary.grant_path, expired)
-
-    processes = [
-        subprocess.Popen(
-            [
-                str(_native_bin("gcode")),
-                "--format",
-                "json",
-                "--allow-stale",
-                "search",
-                "fixture",
-            ],
-            cwd=boundary.project_dir,
-            env=boundary.command_env(),
-            text=True,
-            stdout=subprocess.PIPE,
-            stderr=subprocess.PIPE,
-        )
-        for _ in range(2)
-    ]
-    results = [process.communicate(timeout=60) for process in processes]
-    failures = [
-        (process.returncode, stdout, stderr)
-        for process, (stdout, stderr) in zip(processes, results, strict=True)
-        if process.returncode != 0
-    ]
-    assert len(failures) < 2, failures
-    follow_up = boundary.run("gcode", "--allow-stale", "search", "fixture")
-    assert follow_up.returncode == 0, follow_up.stderr or follow_up.stdout
+    proxy = _start_handshake_grant_proxy(boundary.daemon.http_url, [newer, older])
+    try:
+        persist_interactive_grant(boundary.home, proxy.url, expired)
+        env = boundary.command_env({"GOBBY_DAEMON_URL": proxy.url})
+        first = boundary.run("gcode", "--allow-stale", "search", "fixture", env=env)
+        assert first.returncode == 0, first.stderr or first.stdout
+        after_newer = _load_cached_grant(boundary.grant_path)
+        assert _postgres_generation(after_newer) == newer_generation
+        write_grant_file(boundary.grant_path, _age_past_half_ttl(after_newer))
+        second = boundary.run("gcode", "--allow-stale", "search", "fixture", env=env)
+        assert second.returncode == 0, second.stderr or second.stdout
+    finally:
+        proxy.close()
 
     cached = _load_cached_grant(boundary.grant_path)
-    cached_generation = _postgres_generation(cached)
-    assert cached.expires_at > expired.expires_at
-    assert cached.issued_at >= boundary.grant.issued_at
-    assert cached_generation >= predecessor_generation
+    assert _postgres_generation(cached) == newer_generation
+    persist_interactive_grant(boundary.home, boundary.daemon.http_url, cached)
     search = boundary.run("gcode", "--allow-stale", "search", "fixture")
     assert search.returncode == 0, search.stderr or search.stdout
 
@@ -855,37 +1095,42 @@ def test_restore_replay_rejected(
     postgres_schema: str,
     tmp_path: Path,
 ) -> None:
-    archived = _install_direct_datastores(boundary)
-    boundary.grant = archived
-    boundary.grant_path = persist_interactive_grant(
-        boundary.home, boundary.daemon.http_url, archived
-    )
-    assert isinstance(archived.capabilities.postgres, PostgresDirect)
-    assert isinstance(archived.capabilities.falkordb, FalkorDirect)
-    assert isinstance(archived.capabilities.qdrant, QdrantDirect)
-    dump = tmp_path / "hub-schema.sql"
-    _dump_schema(postgres_database_url, postgres_schema, dump)
-    if boundary.daemon.is_alive():
+    upstream = os.environ.get("GOBBY_TEST_QDRANT_URL", "http://127.0.0.1:6333")
+    qdrant_proxy = _start_qdrant_key_proxy(upstream, "e2e")
+    try:
+        archived = _install_direct_datastores(boundary, qdrant_url=qdrant_proxy.url)
+        boundary.grant = archived
+        boundary.grant_path = persist_interactive_grant(
+            boundary.home, boundary.daemon.http_url, archived
+        )
+        assert isinstance(archived.capabilities.postgres, PostgresDirect)
+        assert isinstance(archived.capabilities.falkordb, FalkorDirect)
+        assert isinstance(archived.capabilities.qdrant, QdrantDirect)
+        dump = tmp_path / "hub-schema.sql"
+        _dump_schema(postgres_database_url, postgres_schema, dump)
+        if boundary.daemon.is_alive():
+            boundary.daemon.stop()
+        _restore_schema(postgres_database_url, postgres_schema, dump, postgres_db)
+        _repair_shared_auth_functions(postgres_db)
+        boundary.daemon.restart()
+        assert wait_for_daemon_health(boundary.daemon.http_port)
+        presented = _present_embeddings(boundary.daemon, boundary.home, archived)
+        assert presented.status_code in {401, 403, 409}, presented.text
+        presented_code = presented.json().get("code") or presented.json().get("error")
+        assert presented_code in {"invalid_signature", "stale_epoch"}, presented.text
+        _assert_direct_postgres(archived)
+        _assert_direct_falkor(archived)
+        _assert_direct_qdrant(archived)
+        write_grant_file(boundary.grant_path, archived)
         boundary.daemon.stop()
-    _restore_schema(postgres_database_url, postgres_schema, dump, postgres_db)
-    _repair_shared_auth_functions(postgres_db)
-    boundary.daemon.restart()
-    assert wait_for_daemon_health(boundary.daemon.http_port)
-    presented = _present_embeddings(boundary.daemon, boundary.home, archived)
-    assert presented.status_code in {401, 403, 409}, presented.text
-    presented_code = presented.json().get("code") or presented.json().get("error")
-    assert presented_code in {"invalid_signature", "stale_epoch"}, presented.text
-    _assert_direct_postgres(archived)
-    _assert_direct_falkor(archived)
-    _assert_direct_qdrant(archived)
-    write_grant_file(boundary.grant_path, archived)
-    boundary.daemon.stop()
-    offline = boundary.run("gcode", "--allow-stale", "search", "fixture")
-    assert offline.returncode == 0, offline.stderr or offline.stdout
-    expired = _rechecksum(archived.model_copy(update={"expires_at": int(time.time()) - 5}))
-    write_grant_file(boundary.grant_path, expired)
-    expired_offline = boundary.run("gcode", "--allow-stale", "search", "fixture")
-    _assert_typed_failure(expired_offline, "expired", "daemon_required")
+        offline = boundary.run("gcode", "--allow-stale", "search", "fixture")
+        assert offline.returncode == 0, offline.stderr or offline.stdout
+        expired = _rechecksum(archived.model_copy(update={"expires_at": int(time.time()) - 5}))
+        write_grant_file(boundary.grant_path, expired)
+        expired_offline = boundary.run("gcode", "--allow-stale", "search", "fixture")
+        _assert_typed_failure(expired_offline, "expired", "daemon_required")
+    finally:
+        qdrant_proxy.close()
 
 
 def test_takeover_fencing(
@@ -980,103 +1225,97 @@ def test_takeover_fencing(
                 f"--- error ---\n{standby.read_error_logs()}"
             )
 
-        admitted: dict[str, int | None] = {"status": None}
-        barrier = threading.Event()
+        admitted: dict[str, int | str | None] = {
+            "status": None,
+            "code": None,
+            "error": None,
+        }
+        flag, admitted_path, release_path = _admit_barrier_paths(boundary.home)
+        for leftover in (admitted_path, release_path, flag):
+            leftover.unlink(missing_ok=True)
+        flag.write_text("1")
 
-        def _in_flight_prune() -> None:
-            barrier.wait(timeout=10)
-            with httpx.Client(base_url=boundary.daemon.http_url, timeout=20.0) as client:
-                response = client.post(
+        def _in_flight_invalidate() -> None:
+            try:
+                with httpx.Client(base_url=boundary.daemon.http_url, timeout=45.0) as client:
+                    response = client.post(
+                        "/api/code-index/invalidate",
+                        headers=boundary.grant_headers(),
+                        json={"project_id": E2E_PROJECT_ID},
+                    )
+                admitted["status"] = response.status_code
+                payload = response.json() if response.content else {}
+                admitted["code"] = payload.get("code") or payload.get("error")
+            except Exception as exc:
+                admitted["error"] = repr(exc)
+
+        worker = threading.Thread(target=_in_flight_invalidate, daemon=True)
+        worker.start()
+        try:
+            _wait_for_path(admitted_path)
+            assert admitted["status"] is None
+            headers = daemon_auth_headers(boundary.home)
+            recover = httpx.post(
+                f"{standby.http_url}/api/admin/lease/recover",
+                headers=headers,
+                params={"stale_after_seconds": 0},
+                timeout=20.0,
+            )
+            assert recover.status_code == 200, recover.text
+            release_path.write_text("1")
+            worker.join(timeout=45)
+            assert worker.is_alive() is False, admitted
+            assert admitted["status"] == 409, admitted
+            assert admitted["code"] in {"stale_epoch", "lease_not_held"}, admitted
+            remaining = postgres_db.fetchone(
+                """
+                SELECT root_path FROM code_indexed_project_states
+                 WHERE machine_id = %s AND project_id = %s
+                """,
+                (E2E_MACHINE_ID, E2E_PROJECT_ID),
+            )
+            assert remaining is not None
+            assert remaining["root_path"] == str(boundary.project_dir)
+
+            assert wait_for_daemon_health(standby.http_port, timeout=30.0), (
+                f"promoted owner failed to serve\n--- log ---\n{standby.read_logs()}\n"
+                f"--- error ---\n{standby.read_error_logs()}"
+            )
+            successor_grant = _handshake_grant(standby, boundary.project_dir, home=boundary.home)
+            persist_interactive_grant(boundary.home, standby.http_url, successor_grant)
+            successor_headers = {
+                **headers,
+                "X-Gobby-Runtime-Grant": encode_grant_header(successor_grant),
+                "X-Gobby-Machine-Id": successor_grant.principal.machine_id,
+                "X-Gobby-Caller-Project-Id": successor_grant.principal.project_id,
+                "X-Gobby-Project-Id": successor_grant.principal.project_id,
+                "X-Gobby-Session-Id": successor_grant.principal.session_id or "",
+            }
+            with httpx.Client(base_url=standby.http_url, timeout=20.0) as owner:
+                committed = owner.post(
+                    "/api/code-index/invalidate",
+                    headers=successor_headers,
+                    json={"project_id": E2E_PROJECT_ID},
+                )
+            assert committed.status_code in {200, 207}, committed.text
+            gone = postgres_db.fetchone(
+                """
+                SELECT root_path FROM code_indexed_project_states
+                 WHERE machine_id = %s AND project_id = %s
+                """,
+                (E2E_MACHINE_ID, E2E_PROJECT_ID),
+            )
+            assert gone is None
+            with httpx.Client(base_url=boundary.daemon.http_url, timeout=5.0) as displaced:
+                refused = displaced.post(
                     "/api/code-index/invalidate",
                     headers=boundary.grant_headers(),
                     json={"project_id": E2E_PROJECT_ID},
                 )
-            admitted["status"] = response.status_code
-
-        worker = threading.Thread(target=_in_flight_prune, daemon=True)
-        worker.start()
-        with psycopg.connect(postgres_db.conninfo, autocommit=False) as lock_conn:
-            lock_conn.execute(
-                """
-                SELECT fencing_epoch
-                  FROM deployment_runtime
-                 WHERE deployment_token = %s
-                 FOR UPDATE
-                """,
-                (token,),
-            )
-            barrier.set()
-            waiting = False
-            wait_deadline = time.monotonic() + 10.0
-            while time.monotonic() < wait_deadline:
-                if admitted["status"] is not None:
-                    break
-                row = lock_conn.execute(
-                    """
-                    SELECT COUNT(*) AS waiting
-                      FROM pg_stat_activity
-                     WHERE pid <> pg_backend_pid()
-                       AND wait_event_type = 'Lock'
-                    """
-                ).fetchone()
-                if row is None:
-                    time.sleep(0.05)
-                    continue
-                waiting_count = row["waiting"] if isinstance(row, dict) else row[0]
-                if int(waiting_count) > 0:
-                    waiting = True
-                    break
-                time.sleep(0.05)
-            assert waiting or admitted["status"] is None, (
-                "in-flight handler finished before the epoch fence "
-                f"status={admitted['status']} qdrant={boundary.grant.capabilities.qdrant.mode}"
-            )
-            lock_conn.execute(
-                """
-                UPDATE deployment_runtime
-                   SET fencing_epoch = fencing_epoch + 1,
-                       grant_signing_secret = %s,
-                       epoch_updated_at = clock_timestamp()
-                 WHERE deployment_token = %s
-                """,
-                ("e2e-takeover-rotated-secret", token),
-            )
-            lock_conn.commit()
-        worker.join(timeout=20)
-        assert worker.is_alive() is False
-        remaining = postgres_db.fetchone(
-            """
-            SELECT root_path FROM code_indexed_project_states
-             WHERE machine_id = %s AND project_id = %s
-            """,
-            (E2E_MACHINE_ID, E2E_PROJECT_ID),
-        )
-        assert remaining is not None
-        assert remaining["root_path"] == str(boundary.project_dir)
-        assert admitted["status"] in {409, 500}, admitted
-
-        headers = daemon_auth_headers(boundary.home)
-        recover = httpx.post(
-            f"{standby.http_url}/api/admin/lease/recover",
-            headers=headers,
-            params={"stale_after_seconds": 0},
-            timeout=20.0,
-        )
-        assert recover.status_code == 200, recover.text
-        assert wait_for_daemon_health(standby.http_port, timeout=30.0), (
-            f"promoted owner failed to serve\n--- log ---\n{standby.read_logs()}\n"
-            f"--- error ---\n{standby.read_error_logs()}"
-        )
-        with httpx.Client(base_url=boundary.daemon.http_url, timeout=5.0) as displaced:
-            refused = displaced.post(
-                "/api/code-index/invalidate",
-                headers=boundary.grant_headers(),
-                json={"project_id": E2E_PROJECT_ID},
-            )
-        assert refused.status_code == 409, refused.text
-        with httpx.Client(base_url=standby.http_url, timeout=5.0) as owner:
-            served = owner.get("/api/auth/status", headers=headers)
-        assert served.status_code == 200, served.text
+            assert refused.status_code == 409, refused.text
+        finally:
+            release_path.write_text("1")
+            flag.unlink(missing_ok=True)
     finally:
         if standby.is_alive():
             terminate_process_tree(standby.pid)

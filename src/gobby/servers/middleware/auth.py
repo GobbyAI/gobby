@@ -14,7 +14,7 @@ from starlette.responses import Response
 
 from gobby.config.ui import is_loopback_bind_host
 from gobby.servers.grant_auth import admission_required
-from gobby.servers.lease_fence import LeaseNotHeld
+from gobby.servers.lease_fence import LeaseNotHeld, await_test_admit_barrier
 from gobby.servers.responses import JSONResponse
 
 if TYPE_CHECKING:
@@ -113,6 +113,7 @@ class AuthMiddleware(BaseHTTPMiddleware):
             return await call_next(request)
         try:
             with fence.admit():
+                await await_test_admit_barrier()
                 return await call_next(request)
         except LeaseNotHeld as exc:
             return JSONResponse(
