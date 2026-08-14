@@ -103,7 +103,6 @@ class TestCreateWorkflow:
         [
             (VALID_RULE_YAML, "rule"),
             (VALID_VARIABLE_YAML, "variable"),
-            (VALID_AGENT_YAML, "agent"),
         ],
     )
     def test_create_valid_non_pipeline_types(
@@ -248,6 +247,11 @@ class TestCreateWorkflow:
 
         assert result["success"] is False
         assert "agent, pipeline, rule, variable" in result["error"]
+
+    def test_create_rejects_agent_kind(self, loader: WorkflowLoader) -> None:
+        result = create_workflow_definition(object(), loader, VALID_AGENT_YAML)  # type: ignore[arg-type]
+        assert result["success"] is False
+        assert "agent domain tools" in result["error"]
 
     def test_create_detects_name_conflict(
         self, def_manager: LocalWorkflowDefinitionManager, loader: WorkflowLoader

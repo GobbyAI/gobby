@@ -33,6 +33,8 @@ def sync_imported_definition(
 ) -> WorkflowDefinitionRow:
     """Validate and upsert an imported definition into the runtime database."""
     declared_type = data.get("type")
+    if declared_type == "agent":
+        raise ValueError("Agent definitions use the agent import path, not generic workflow import")
     if declared_type in _WORKFLOW_KINDS:
         WorkflowDefinition.model_validate(data)
         workflow_type = "workflow"

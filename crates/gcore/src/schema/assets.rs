@@ -16,15 +16,12 @@ pub(crate) struct EmbeddedMigration {
     pub sql: &'static str,
 }
 
-// Numbered migrations resume after baseline 375. Later leaves register entries as:
-// EmbeddedMigration {
-//     version: 376,
-//     filename: "376_<name>.sql",
-//     checksum: "<sha256>",
-//     sql: include_str!("../../assets/schema/migrations/376_<name>.sql"),
-// }
-// This leaf keeps the production list empty (APR2-008).
-pub(crate) const MIGRATIONS: &[EmbeddedMigration] = &[];
+pub(crate) const MIGRATIONS: &[EmbeddedMigration] = &[EmbeddedMigration {
+    version: 376,
+    filename: "376_copy_agent_definitions.sql",
+    checksum: "758b35ad7bc1e2dc4451110b3e392e68c03237ae951ce004fe97b96b618fcc21",
+    sql: include_str!("../../assets/schema/migrations/376_copy_agent_definitions.sql"),
+}];
 const _: &str = include_str!("../../assets/schema/migrations/.gitkeep");
 
 pub(crate) fn root_hash() -> String {

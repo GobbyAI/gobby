@@ -20,6 +20,13 @@ from gobby.workflows.loader import WorkflowLoader
 
 logger = logging.getLogger(__name__)
 
+_AGENT_DOMAIN_TOOLS = "Agent definitions use the agent domain tools, not generic workflow CRUD"
+
+
+def _reject_agent_kind(kind: str | None) -> None:
+    if kind == "agent":
+        raise ValueError(_AGENT_DOMAIN_TOOLS)
+
 
 def _resolve_definition(
     def_manager: LocalWorkflowDefinitionManager,
@@ -29,12 +36,15 @@ def _resolve_definition(
 ) -> WorkflowDefinitionRow:
     """Resolve a definition by name or ID. Raises ValueError if not found."""
     if definition_id:
-        return def_manager.get(definition_id, include_deleted=include_deleted)
+        by_id = def_manager.get(definition_id, include_deleted=include_deleted)
+        _reject_agent_kind(by_id.workflow_type)
+        return by_id
     if name:
-        row = def_manager.get_by_name(name, include_deleted=include_deleted)
-        if row is None:
+        by_name = def_manager.get_by_name(name, include_deleted=include_deleted)
+        if by_name is None:
             raise ValueError(f"Workflow definition '{name}' not found")
-        return row
+        _reject_agent_kind(by_name.workflow_type)
+        return by_name
     raise ValueError("Either 'name' or 'definition_id' is required")
 
 
@@ -51,6 +61,7 @@ def _validate_yaml(
         raise ValueError("Invalid YAML: must be a mapping with a 'name' field")
 
     validate_workflow_definition_data(data, expected_type=expected_type)
+    _reject_agent_kind(data.get("type") if expected_type is None else expected_type)
 
     return data
 

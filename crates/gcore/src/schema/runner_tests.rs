@@ -851,16 +851,19 @@ fn gate_tests_destructive_apply_requires_a_verified_v2_backup() -> anyhow::Resul
 }
 
 #[test]
-fn migrations_directory_exists_and_production_list_is_empty() {
+fn migrations_directory_exists_and_copy_agent_entry_is_registered() {
     let migrations_dir =
         std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("assets/schema/migrations");
     assert!(
         migrations_dir.is_dir(),
         "crates/gcore/assets/schema/migrations must exist so later leaves can register include_str entries"
     );
-    assert!(
-        MIGRATIONS.is_empty(),
-        "1.5 re-arms the convention with an empty production list"
+    assert_eq!(MIGRATIONS.len(), 1);
+    assert_eq!(MIGRATIONS[0].version, 376);
+    assert_eq!(MIGRATIONS[0].filename, "376_copy_agent_definitions.sql");
+    assert_eq!(
+        super::assets::sha256_hex(MIGRATIONS[0].sql.as_bytes()),
+        MIGRATIONS[0].checksum
     );
     assert!(
         DESTRUCTIVE_MIGRATION.version > BASELINE_VERSION

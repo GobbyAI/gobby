@@ -7,6 +7,7 @@ import pytest
 from gobby.mcp_proxy.tools.workflows._import import reload_cache
 from gobby.storage.hub.protocol import HubDatabase
 from gobby.storage.projects import LocalProjectManager
+from gobby.workflows.imports import sync_imported_definition
 from gobby.workflows.loader import WorkflowLoader
 
 pytestmark = pytest.mark.integration
@@ -61,3 +62,12 @@ async def test_sync_imported_workflows_loads_project_and_global_files_without_re
     assert result["imported_workflows_synced"] == 2
     assert await loader.load_workflow("global-import") is not None
     assert await loader.load_workflow("project-import", project.id) is not None
+
+
+def test_sync_imported_definition_rejects_agent_kind() -> None:
+    with pytest.raises(ValueError, match="agent import path"):
+        sync_imported_definition(
+            None,
+            {"name": "rogue-agent", "type": "agent", "provider": "claude"},
+            None,
+        )

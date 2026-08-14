@@ -13,9 +13,10 @@ from typing import TYPE_CHECKING, Any
 import yaml
 from fastapi import APIRouter, HTTPException, Query
 from fastapi.responses import Response
-from pydantic import BaseModel, Field, ValidationError, field_validator
+from pydantic import BaseModel, Field, ValidationError, field_validator, model_validator
 
 from gobby.agents.reasoning import normalize_reasoning_effort
+from gobby.storage.definitions import DefinitionNotFoundError
 from gobby.storage.hub.protocol import WorkflowDefinitionMutation
 
 if TYPE_CHECKING:
@@ -23,6 +24,29 @@ if TYPE_CHECKING:
 
 logger = logging.getLogger(__name__)
 _SAFE_DEFINITION_NAME = re.compile(r"^[A-Za-z0-9][A-Za-z0-9_-]{0,127}$")
+_LEGACY_STEP_KEYS = {
+    "steps": "step_workflow.steps",
+    "step_variables": "step_workflow.variables",
+    "exit_condition": "step_workflow.exit_condition",
+}
+
+
+def _reject_legacy_step_keys(data: Any) -> Any:
+    if isinstance(data, dict):
+        for key, hint in _LEGACY_STEP_KEYS.items():
+            if key in data:
+                raise ValueError(f"Use {hint} instead of top-level {key}")
+    return data
+
+
+def _row_body(row: Any) -> dict[str, Any]:
+    raw = row.definition_json
+    if isinstance(raw, str):
+        import json as _json
+
+        parsed = _json.loads(raw)
+        return parsed if isinstance(parsed, dict) else {}
+    return dict(raw)
 
 
 def _bundled_definition_path(agents_path: Path, name: str) -> Path:
@@ -85,6 +109,12 @@ class CreateAgentDefinitionRequest(BaseModel):
     blocked_mcp_tools: list[str] | None = None
     enabled: bool = True
     tags: list[str] | None = None
+    step_workflow: dict[str, Any] | None = None
+
+    @model_validator(mode="before")
+    @classmethod
+    def _reject_legacy_steps(cls, data: Any) -> Any:
+        return _reject_legacy_step_keys(data)
 
     @field_validator("reasoning_effort", mode="before")
     @classmethod
@@ -119,13 +149,16 @@ class UpdateAgentDefinitionRequest(BaseModel):
     workflows: dict[str, Any] | None = None
     lifecycle_variables: dict[str, Any] | None = None
     default_variables: dict[str, Any] | None = None
-    steps: list[dict[str, Any]] | None = None
-    step_variables: dict[str, Any] | None = None
-    exit_condition: str | None = None
+    step_workflow: dict[str, Any] | None = None
     enabled: bool | None = None
     blocked_tools: list[str] | None = None
     blocked_mcp_tools: list[str] | None = None
     tags: list[str] | None = None
+
+    @model_validator(mode="before")
+    @classmethod
+    def _reject_legacy_steps(cls, data: Any) -> Any:
+        return _reject_legacy_step_keys(data)
 
     @field_validator("reasoning_effort", mode="before")
     @classmethod
@@ -199,19 +232,19 @@ def create_agents_router(server: "HTTPServer") -> APIRouter:
     router = APIRouter(prefix="/api/agents", tags=["agents"])
 
     def _get_manager() -> Any:
-        from gobby.storage.workflow_definitions import LocalWorkflowDefinitionManager
+        from gobby.storage.definitions import AgentDefinitionManager
 
-        return LocalWorkflowDefinitionManager(server.services.database)
+        return AgentDefinitionManager(server.services.database)
 
     def _row_to_api_dict(row: Any) -> dict[str, Any] | None:
-        """Convert a workflow_definitions DB row to API response dict.
+        """Convert a typed agent definition row to API response dict.
 
         Returns None if the row fails Pydantic validation (logged and skipped).
         """
         from gobby.workflows.definitions import AgentDefinitionBody
 
         try:
-            body = AgentDefinitionBody.model_validate_json(row.definition_json)
+            body = AgentDefinitionBody.model_validate(_row_body(row))
         except ValidationError as e:
             logger.warning(
                 "Skipping agent definition '%s' (id=%s): %s",
@@ -249,7 +282,6 @@ def create_agents_router(server: "HTTPServer") -> APIRouter:
         try:
             manager = _get_manager()
             rows = manager.list_all(
-                workflow_type="agent",
                 project_id=project_id,
                 include_deleted=include_deleted,
             )
@@ -282,14 +314,16 @@ def create_agents_router(server: "HTTPServer") -> APIRouter:
 
             def load_definition_json() -> str:
                 manager = _get_manager()
-                rows = manager.list_all(workflow_type="agent", project_id=project_id)
+                rows = manager.list_all(project_id=project_id)
                 row = next((r for r in rows if r.name == name), None)
                 if not row:
                     raise HTTPException(
                         status_code=404,
                         detail=f"Agent definition '{name}' not found",
                     )
-                return str(row.definition_json)
+                import json as _json
+
+                return _json.dumps(_row_body(row))
 
             definition_json = await server.run_db(load_definition_json)
             body = AgentDefinitionBody.model_validate_json(definition_json)
@@ -315,7 +349,7 @@ def create_agents_router(server: "HTTPServer") -> APIRouter:
         """Get a single agent definition by name."""
         try:
             manager = _get_manager()
-            rows = manager.list_all(workflow_type="agent", project_id=project_id)
+            rows = manager.list_all(project_id=project_id)
             row = next((r for r in rows if r.name == name), None)
             if not row:
                 raise HTTPException(status_code=404, detail=f"Agent definition '{name}' not found")
@@ -360,19 +394,22 @@ def create_agents_router(server: "HTTPServer") -> APIRouter:
                 workflows=workflows,
                 blocked_tools=request.blocked_tools or [],
                 blocked_mcp_tools=request.blocked_mcp_tools or [],
+                step_workflow=request.step_workflow,
             )
+            dumped = body.model_dump(mode="json")
 
             manager = _get_manager()
             row = manager.create(
                 name=body.name,
-                definition_json=body.model_dump_json(),
-                workflow_type="agent",
+                definition_json=dumped,
                 project_id=request.project_id,
                 description=body.description,
                 source="installed",
                 enabled=body.enabled,
                 tags=request.tags,
             )
+            if dumped.get("step_workflow") is not None:
+                row = manager.set_step_workflow(row.id, dumped["step_workflow"])
             return {"status": "success", "definition": row.to_dict()}
         except Exception as e:
             logger.exception("Error creating agent definition: %s", e)
@@ -396,7 +433,7 @@ def create_agents_router(server: "HTTPServer") -> APIRouter:
             with manager.db.transaction_immediate(WorkflowDefinitionMutation(definition_id)):
                 # Load existing definition_json and apply updates
                 row = manager.get(definition_id)
-                body_dict: dict[str, Any] = _json.loads(row.definition_json)
+                body_dict = _row_body(row)
                 preserved_extra_fields = {
                     "default_workflow",
                     "default_variables",
@@ -444,14 +481,16 @@ def create_agents_router(server: "HTTPServer") -> APIRouter:
                 if "default_variables" in fields:
                     body_dict["default_variables"] = fields["default_variables"]
                 for key in (
-                    "steps",
-                    "step_variables",
-                    "exit_condition",
+                    "step_workflow",
                     "blocked_tools",
                     "blocked_mcp_tools",
                 ):
                     if key in fields:
                         body_dict[key] = fields[key]
+
+                AgentDefinitionBody.model_validate(body_dict)
+                if "step_workflow" in fields:
+                    manager.set_step_workflow(definition_id, fields["step_workflow"])
 
                 update_fields: dict[str, Any] = {
                     "definition_json": _json.dumps(body_dict),
@@ -467,7 +506,7 @@ def create_agents_router(server: "HTTPServer") -> APIRouter:
 
                 row = manager.update(definition_id, **update_fields)
             return {"status": "success", "definition": row.to_dict()}
-        except ValueError as e:
+        except (DefinitionNotFoundError, ValueError) as e:
             raise HTTPException(status_code=404, detail=str(e)) from e
         except HTTPException:
             raise
@@ -497,7 +536,7 @@ def create_agents_router(server: "HTTPServer") -> APIRouter:
             manager = _get_manager()
             row = manager.restore(definition_id)
             return {"status": "success", "definition": row.to_dict()}
-        except ValueError as e:
+        except (DefinitionNotFoundError, ValueError) as e:
             raise HTTPException(status_code=404, detail=str(e)) from e
         except Exception as e:
             logger.exception("Error restoring agent definition: %s", e)
@@ -536,7 +575,7 @@ def create_agents_router(server: "HTTPServer") -> APIRouter:
             manager = _get_manager()
             with manager.db.transaction_immediate(WorkflowDefinitionMutation(definition_id)):
                 row = manager.get(definition_id)
-                body_dict: dict[str, Any] = _json.loads(row.definition_json)
+                body_dict = _row_body(row)
 
                 workflows = body_dict.get("workflows", {})
                 rules: list[str] = list(workflows.get("rules", []))
@@ -553,7 +592,7 @@ def create_agents_router(server: "HTTPServer") -> APIRouter:
                 manager.update(definition_id, definition_json=_json.dumps(body_dict))
 
             return {"status": "success", "rules": rules}
-        except ValueError as e:
+        except (DefinitionNotFoundError, ValueError) as e:
             raise HTTPException(status_code=404, detail=str(e)) from e
         except Exception as e:
             logger.exception("Error patching rules: %s", e)
@@ -570,7 +609,7 @@ def create_agents_router(server: "HTTPServer") -> APIRouter:
             manager = _get_manager()
             with manager.db.transaction_immediate(WorkflowDefinitionMutation(definition_id)):
                 row = manager.get(definition_id)
-                body_dict: dict[str, Any] = _json.loads(row.definition_json)
+                body_dict = _row_body(row)
 
                 workflows = body_dict.get("workflows", {})
                 selectors = workflows.get("rule_selectors") or {"include": [], "exclude": []}
@@ -596,7 +635,7 @@ def create_agents_router(server: "HTTPServer") -> APIRouter:
                 manager.update(definition_id, definition_json=_json.dumps(body_dict))
 
             return {"status": "success", "rule_selectors": rule_selectors}
-        except ValueError as e:
+        except (DefinitionNotFoundError, ValueError) as e:
             raise HTTPException(status_code=404, detail=str(e)) from e
         except Exception as e:
             logger.exception("Error patching rule selectors: %s", e)
@@ -611,7 +650,7 @@ def create_agents_router(server: "HTTPServer") -> APIRouter:
             manager = _get_manager()
             with manager.db.transaction_immediate(WorkflowDefinitionMutation(definition_id)):
                 row = manager.get(definition_id)
-                body_dict: dict[str, Any] = _json.loads(row.definition_json)
+                body_dict = _row_body(row)
 
                 workflows = body_dict.get("workflows", {})
                 variables: dict[str, Any] = dict(workflows.get("variables", {}))
@@ -627,7 +666,7 @@ def create_agents_router(server: "HTTPServer") -> APIRouter:
                 manager.update(definition_id, definition_json=_json.dumps(body_dict))
 
             return {"status": "success", "variables": variables}
-        except ValueError as e:
+        except (DefinitionNotFoundError, ValueError) as e:
             raise HTTPException(status_code=404, detail=str(e)) from e
         except Exception as e:
             logger.exception("Error patching variables: %s", e)
@@ -805,15 +844,17 @@ def create_agents_router(server: "HTTPServer") -> APIRouter:
             data["name"] = data.get("name", name)
             body = AgentDefinitionBody.model_validate(data)
             manager = _get_manager()
+            dumped = body.model_dump(mode="json")
             row = manager.create(
                 name=body.name,
-                definition_json=body.model_dump_json(),
-                workflow_type="agent",
+                definition_json=dumped,
                 project_id=project_id,
                 description=body.description,
                 source="installed",
                 enabled=body.enabled,
             )
+            if dumped.get("step_workflow") is not None:
+                row = manager.set_step_workflow(row.id, dumped["step_workflow"])
             return {"status": "success", "definition": row.to_dict()}
         except HTTPException:
             raise

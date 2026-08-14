@@ -211,15 +211,26 @@ class TemplateHashCache:
         """
         return self._json_cache.get((workflow_type, name))
 
-    def has_drift(self, row: WorkflowDefinitionRow) -> bool:
+    def has_drift(self, row: Any) -> bool:
         """Check if an installed definition has drifted from its template.
 
         Returns False if no template exists for this name (user-created definition).
         """
-        template_hash = self.get_hash(row.workflow_type, row.name)
+        workflow_type = getattr(row, "workflow_type", "agent")
+        template_hash = self.get_hash(workflow_type, row.name)
         if template_hash is None:
             return False
-        installed_hash = compute_definition_hash(row.definition_json)
+        payload = row.definition_json
+        if workflow_type == "agent":
+            from gobby.workflows.definitions import AgentDefinitionBody
+
+            if isinstance(payload, str):
+                payload = AgentDefinitionBody.model_validate_json(payload).model_dump_json()
+            else:
+                payload = AgentDefinitionBody.model_validate(payload).model_dump_json()
+        elif not isinstance(payload, str):
+            payload = json.dumps(payload)
+        installed_hash = compute_definition_hash(payload)
         return template_hash != installed_hash
 
     def annotate_rows(self, rows: list[dict[str, Any]]) -> list[dict[str, Any]]:

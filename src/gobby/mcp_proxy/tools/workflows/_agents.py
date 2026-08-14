@@ -1,7 +1,7 @@
 """
 MCP tools for agent definition CRUD operations.
 
-Wraps LocalWorkflowDefinitionManager with workflow_type='agent' filtering.
+Wraps AgentDefinitionManager with a nested step_workflow surface.
 Provides list, get, toggle, create, and delete operations for agent definitions.
 """
 
@@ -10,20 +10,39 @@ from __future__ import annotations
 import json
 import logging
 from pathlib import Path
+from types import SimpleNamespace
 from typing import Any
 
-from gobby.storage.workflow_definitions import (
-    LocalWorkflowDefinitionManager,
-    WorkflowDefinitionRow,
-)
-from gobby.workflows.definitions import AgentDefinitionBody
+from gobby.storage.definitions import AgentDefinitionManager, AgentDefinitionRow
+from gobby.workflows.definitions import AgentDefinitionBody, AgentStepWorkflowBody
 
 logger = logging.getLogger(__name__)
 
 
-def _agent_summary(row: WorkflowDefinitionRow) -> dict[str, Any]:
+def _row_body(row: AgentDefinitionRow) -> dict[str, Any]:
+    raw = row.definition_json
+    if isinstance(raw, str):
+        parsed = json.loads(raw)
+        if isinstance(parsed, dict):
+            return parsed
+        return {}
+    return dict(raw)
+
+
+def _export_row(row: AgentDefinitionRow) -> Any:
+    return SimpleNamespace(
+        name=row.name,
+        tags=row.tags,
+        workflow_type="agent",
+        definition_json=json.dumps(_row_body(row)),
+    )
+
+
+def _agent_summary(row: AgentDefinitionRow) -> dict[str, Any]:
     """Build a summary dict for an agent definition row."""
-    body = json.loads(row.definition_json)
+    body = _row_body(row)
+    nested = body.get("step_workflow") or {}
+    steps = nested.get("steps") if isinstance(nested, dict) else None
     return {
         "id": row.id,
         "name": row.name,
@@ -33,17 +52,17 @@ def _agent_summary(row: WorkflowDefinitionRow) -> dict[str, Any]:
         "model": body.get("model"),
         "isolation": body.get("isolation"),
         "surfaces": body.get("surfaces", ["spawn"]),
-        "has_steps": bool(body.get("steps")),
-        "step_count": len(body.get("steps") or []),
+        "has_steps": bool(steps),
+        "step_count": len(steps or []),
         "enabled": row.enabled,
         "source": row.source,
         "project_id": row.project_id,
     }
 
 
-def _agent_detail(row: WorkflowDefinitionRow) -> dict[str, Any]:
+def _agent_detail(row: AgentDefinitionRow) -> dict[str, Any]:
     """Build a detailed dict for an agent definition row, including full definition."""
-    raw_body = json.loads(row.definition_json)
+    raw_body = _row_body(row)
     raw_body.setdefault("name", row.name)
     body = AgentDefinitionBody.model_validate(raw_body).model_dump(mode="json")
     return {
@@ -62,9 +81,7 @@ def _agent_detail(row: WorkflowDefinitionRow) -> dict[str, Any]:
         "personality": body.get("personality"),
         "instructions": body.get("instructions"),
         "workflows": body.get("workflows"),
-        "steps": body.get("steps"),
-        "step_variables": body.get("step_variables"),
-        "exit_condition": body.get("exit_condition"),
+        "step_workflow": body.get("step_workflow"),
         "enabled": row.enabled,
         "source": row.source,
         "project_id": row.project_id,
@@ -72,7 +89,7 @@ def _agent_detail(row: WorkflowDefinitionRow) -> dict[str, Any]:
 
 
 def list_agent_definitions(
-    def_manager: LocalWorkflowDefinitionManager,
+    def_manager: AgentDefinitionManager,
     enabled: bool | None = None,
     project_id: str | None = None,
     surface_filter: str | None = None,
@@ -88,7 +105,7 @@ def list_agent_definitions(
     Returns:
         Dict with success, agents list, and count
     """
-    rows = def_manager.list_all(workflow_type="agent", enabled=enabled, project_id=project_id)
+    rows = def_manager.list_all(enabled=enabled, project_id=project_id)
     agents = [_agent_summary(r) for r in rows]
     if surface_filter:
         agents = [agent for agent in agents if surface_filter in agent.get("surfaces", ["spawn"])]
@@ -96,7 +113,7 @@ def list_agent_definitions(
 
 
 def get_agent_definition(
-    def_manager: LocalWorkflowDefinitionManager,
+    def_manager: AgentDefinitionManager,
     name: str,
 ) -> dict[str, Any]:
     """
@@ -110,14 +127,13 @@ def get_agent_definition(
         Dict with success and full agent detail, or error if not found
     """
     row = def_manager.get_by_name(name)
-    if row is None or row.workflow_type != "agent":
+    if row is None:
         return {"success": False, "error": f"Agent definition '{name}' not found"}
 
     try:
-        body = json.loads(row.definition_json)
+        body = _row_body(row)
         if "name" not in body:
             body["name"] = row.name
-        # Validate
         AgentDefinitionBody.model_validate(body)
     except Exception as e:
         return {"success": False, "error": f"Failed to parse agent definition: {e}"}
@@ -131,7 +147,7 @@ def get_agent_definition(
 
 
 def create_agent_definition(
-    def_manager: LocalWorkflowDefinitionManager,
+    def_manager: AgentDefinitionManager,
     name: str,
     definition: dict[str, Any],
     *,
@@ -167,10 +183,10 @@ def create_agent_definition(
     if existing is not None:
         return {"success": False, "error": f"Agent definition '{name}' already exists"}
 
-    row = def_manager.create(
-        name=name,
-        definition_json=json.dumps(validated_definition),
-        workflow_type="agent",
+    row = def_manager.upsert_with_steps(
+        name,
+        validated_definition,
+        validated_definition.get("step_workflow"),
         description=validated_definition.get("description"),
         enabled=validated_definition.get("enabled", True),
         source="installed",
@@ -182,7 +198,7 @@ def create_agent_definition(
     try:
         from gobby.mcp_proxy.tools.workflows._auto_export import auto_export_definition
 
-        auto_export_definition(row, project_path, make_global=make_global_template)
+        auto_export_definition(_export_row(row), project_path, make_global=make_global_template)
     except Exception as e:
         logger.warning("Failed to auto-export agent '%s': %s", name, e)
 
@@ -190,7 +206,7 @@ def create_agent_definition(
 
 
 def toggle_agent_definition(
-    def_manager: LocalWorkflowDefinitionManager,
+    def_manager: AgentDefinitionManager,
     name: str,
     enabled: bool,
 ) -> dict[str, Any]:
@@ -206,7 +222,7 @@ def toggle_agent_definition(
         Dict with success and updated agent, or error if not found
     """
     row = def_manager.get_by_name(name)
-    if row is None or row.workflow_type != "agent":
+    if row is None:
         return {"success": False, "error": f"Agent definition '{name}' not found"}
 
     updated = def_manager.update(row.id, enabled=enabled)
@@ -216,7 +232,7 @@ def toggle_agent_definition(
 
 
 def delete_agent_definition(
-    def_manager: LocalWorkflowDefinitionManager,
+    def_manager: AgentDefinitionManager,
     name: str,
     force: bool = False,
     *,
@@ -236,7 +252,7 @@ def delete_agent_definition(
         Dict with success, or error if not found/protected
     """
     row = def_manager.get_by_name(name)
-    if row is None or row.workflow_type != "agent":
+    if row is None:
         return {"success": False, "error": f"Agent definition '{name}' not found"}
 
     if "gobby" in (row.tags or []) and not force:
@@ -266,7 +282,7 @@ def delete_agent_definition(
 
 
 def update_agent_rules(
-    def_manager: LocalWorkflowDefinitionManager,
+    def_manager: AgentDefinitionManager,
     name: str,
     add: list[str] | None = None,
     remove: list[str] | None = None,
@@ -289,10 +305,10 @@ def update_agent_rules(
         Dict with success and updated rules list
     """
     row = def_manager.get_by_name(name)
-    if row is None or row.workflow_type != "agent":
+    if row is None:
         return {"success": False, "error": f"Agent definition '{name}' not found"}
 
-    body = json.loads(row.definition_json)
+    body = _row_body(row)
     workflows = body.get("workflows", {})
     rules: list[str] = list(workflows.get("rules", []))
 
@@ -312,7 +328,7 @@ def update_agent_rules(
     try:
         from gobby.mcp_proxy.tools.workflows._auto_export import auto_export_definition
 
-        auto_export_definition(updated, project_path, make_global=make_global_template)
+        auto_export_definition(_export_row(updated), project_path, make_global=make_global_template)
     except Exception as e:
         logger.warning("Failed to auto-export agent '%s': %s", name, e)
 
@@ -320,7 +336,7 @@ def update_agent_rules(
 
 
 def update_agent_variables(
-    def_manager: LocalWorkflowDefinitionManager,
+    def_manager: AgentDefinitionManager,
     name: str,
     set_vars: dict[str, Any] | None = None,
     remove: list[str] | None = None,
@@ -343,10 +359,10 @@ def update_agent_variables(
         Dict with success and updated variables dict
     """
     row = def_manager.get_by_name(name)
-    if row is None or row.workflow_type != "agent":
+    if row is None:
         return {"success": False, "error": f"Agent definition '{name}' not found"}
 
-    body = json.loads(row.definition_json)
+    body = _row_body(row)
     workflows = body.get("workflows", {})
     variables: dict[str, Any] = dict(workflows.get("variables", {}))
 
@@ -365,55 +381,50 @@ def update_agent_variables(
     try:
         from gobby.mcp_proxy.tools.workflows._auto_export import auto_export_definition
 
-        auto_export_definition(updated, project_path, make_global=make_global_template)
+        auto_export_definition(_export_row(updated), project_path, make_global=make_global_template)
     except Exception as e:
         logger.warning("Failed to auto-export agent '%s': %s", name, e)
 
     return {"success": True, "variables": variables}
 
 
-def update_agent_steps(
-    def_manager: LocalWorkflowDefinitionManager,
+def update_agent_step_workflow(
+    def_manager: AgentDefinitionManager,
     name: str,
-    steps: list[dict[str, Any]] | None = None,
+    step_workflow: dict[str, Any] | None = None,
     *,
     project_path: Path | None = None,
     make_global_template: bool = False,
 ) -> dict[str, Any]:
-    """
-    Replace an agent's steps entirely.
-
-    Args:
-        def_manager: Definition storage manager
-        name: Agent name
-        steps: New steps list (or None to clear)
-        project_path: Project root for auto-export
-        make_global_template: If True, export to ~/.gobby/workflows/ instead
-
-    Returns:
-        Dict with success and updated steps info
-    """
+    """Replace an agent's nested step workflow, or clear it when None."""
     row = def_manager.get_by_name(name)
-    if row is None or row.workflow_type != "agent":
+    if row is None:
         return {"success": False, "error": f"Agent definition '{name}' not found"}
 
-    body = json.loads(row.definition_json)
-    body["steps"] = steps
+    validated: dict[str, Any] | None = None
+    if step_workflow is not None:
+        try:
+            validated = AgentStepWorkflowBody.model_validate(step_workflow).model_dump(mode="json")
+        except Exception as e:
+            return {"success": False, "error": f"Validation failed: {e}"}
 
-    # Validate the full model
-    try:
-        AgentDefinitionBody.model_validate(body)
-    except Exception as e:
-        return {"success": False, "error": f"Validation failed: {e}"}
-
-    updated = def_manager.update(row.id, definition_json=json.dumps(body))
-    logger.info("Updated steps for agent '%s': %s steps", name, len(steps or []))
+    updated = def_manager.set_step_workflow(row.id, validated)
+    steps = None if validated is None else validated.get("steps") or []
+    logger.info(
+        "Updated step_workflow for agent '%s': %s steps",
+        name,
+        0 if steps is None else len(steps),
+    )
 
     try:
         from gobby.mcp_proxy.tools.workflows._auto_export import auto_export_definition
 
-        auto_export_definition(updated, project_path, make_global=make_global_template)
+        auto_export_definition(_export_row(updated), project_path, make_global=make_global_template)
     except Exception as e:
         logger.warning("Failed to auto-export agent '%s': %s", name, e)
 
-    return {"success": True, "steps": steps, "step_count": len(steps or [])}
+    return {
+        "success": True,
+        "step_workflow": validated,
+        "step_count": 0 if steps is None else len(steps),
+    }

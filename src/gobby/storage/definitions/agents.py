@@ -31,6 +31,7 @@ from gobby.storage.definitions._shared import (
 from gobby.storage.hub.protocol import HubDatabase, Transaction
 from gobby.storage.sql_dialect import older_than_now_expr
 from gobby.utils.datetime import normalize_datetime_model, utc_now
+from gobby.utils.json_helpers import json_dumps
 
 _TABLE = "agent_definitions"
 _WHAT = "Agent definition"
@@ -205,6 +206,28 @@ class AgentDefinitionRow:
             deleted_at=row["deleted_at"] if "deleted_at" in row.keys() else None,
         )
 
+    @property
+    def workflow_type(self) -> str:
+        return "agent"
+
+    def to_dict(self) -> dict[str, Any]:
+        return {
+            "id": self.id,
+            "project_id": self.project_id,
+            "name": self.name,
+            "description": self.description,
+            "workflow_type": "agent",
+            "enabled": self.enabled,
+            "enabled_pinned": self.enabled_pinned,
+            "definition_json": json_dumps(self.definition_json),
+            "source": self.source,
+            "tags": self.tags,
+            "created_at": self.created_at,
+            "updated_at": self.updated_at,
+            "deleted_at": self.deleted_at,
+            "step_workflow_id": self.step_workflow_id,
+        }
+
 
 @normalize_datetime_model(required=("created_at", "updated_at"))
 @dataclass
@@ -302,15 +325,16 @@ class AgentDefinitionManager:
         include_deleted: bool = False,
     ) -> AgentDefinitionRow | None:
         deleted = "" if include_deleted else " AND a.deleted_at IS NULL"
+        order = " ORDER BY a.deleted_at NULLS FIRST" if include_deleted else ""
         if project_id is not None:
             row = self.db.fetchone(
-                f"{_SELECT_HYDRATED} WHERE a.name = %s AND a.project_id = %s{deleted}",
+                f"{_SELECT_HYDRATED} WHERE a.name = %s AND a.project_id = %s{deleted}{order}",
                 (name, project_id),
             )
             if row is not None:
                 return AgentDefinitionRow.from_row(row)
         row = self.db.fetchone(
-            f"{_SELECT_HYDRATED} WHERE a.name = %s AND a.project_id IS NULL{deleted}",
+            f"{_SELECT_HYDRATED} WHERE a.name = %s AND a.project_id IS NULL{deleted}{order}",
             (name,),
         )
         return AgentDefinitionRow.from_row(row) if row is not None else None
@@ -559,6 +583,97 @@ class AgentDefinitionManager:
                     },
                     what=_WHAT,
                 )
+            child_written = _write_child(txn, definition_id, step_workflow)
+            touch_revision(txn, "agents")
+            if child_written:
+                touch_revision(txn, "agent_step_workflows")
+        return self.get(definition_id)
+
+    def upsert_from_sync(
+        self,
+        name: str,
+        body_json: Mapping[str, Any] | str,
+        step_workflow: Mapping[str, Any] | None,
+        *,
+        source: DefinitionSource = "installed",
+        project_id: str | None = None,
+        enabled: bool = True,
+        tags: list[str] | None = None,
+        description: str | None = None,
+        restore: bool = False,
+    ) -> AgentDefinitionRow:
+        parent_body = _parent_body(body_json)
+        now = utc_now()
+        with self.db.transaction() as txn:
+            existing = _find_live(txn, name, project_id)
+            if existing is None and restore:
+                if project_id is None:
+                    existing = txn.execute(
+                        "SELECT id, enabled_pinned FROM agent_definitions "
+                        "WHERE name = %s AND project_id IS NULL AND deleted_at IS NOT NULL "
+                        "ORDER BY deleted_at DESC LIMIT 1",
+                        (name,),
+                    ).fetchone()
+                else:
+                    existing = txn.execute(
+                        "SELECT id, enabled_pinned FROM agent_definitions "
+                        "WHERE name = %s AND project_id = %s AND deleted_at IS NOT NULL "
+                        "ORDER BY deleted_at DESC LIMIT 1",
+                        (name, project_id),
+                    ).fetchone()
+                if existing is not None:
+                    restore_definition(txn, _TABLE, str(existing["id"]), what=_WHAT)
+            if existing is None:
+                definition_id = new_definition_id()
+                insert_definition_row(
+                    txn,
+                    _TABLE,
+                    (
+                        "id",
+                        "project_id",
+                        "name",
+                        "description",
+                        "enabled",
+                        "enabled_pinned",
+                        "definition_json",
+                        "source",
+                        "tags",
+                        "created_at",
+                        "updated_at",
+                    ),
+                    (
+                        definition_id,
+                        project_id,
+                        name,
+                        description,
+                        bool(enabled),
+                        False,
+                        encode_json_value(parent_body),
+                        source,
+                        encode_json_list(tags),
+                        now,
+                        now,
+                    ),
+                )
+            else:
+                definition_id = str(existing["id"])
+                pinned_row = txn.execute(
+                    "SELECT enabled_pinned FROM agent_definitions WHERE id = %s",
+                    (definition_id,),
+                ).fetchone()
+                values = prepare_sync_values(
+                    {"enabled_pinned": bool(pinned_row["enabled_pinned"]) if pinned_row else False},
+                    {
+                        "description": description,
+                        "enabled": bool(enabled),
+                        "definition_json": encode_json_value(parent_body),
+                        "tags": encode_json_list(tags),
+                    },
+                    allowed=_SYNC_FIELDS,
+                )
+                if values:
+                    values["updated_at"] = now
+                    apply_definition_update(txn, _TABLE, definition_id, values, what=_WHAT)
             child_written = _write_child(txn, definition_id, step_workflow)
             touch_revision(txn, "agents")
             if child_written:

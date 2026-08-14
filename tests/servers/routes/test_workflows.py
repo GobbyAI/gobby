@@ -12,6 +12,7 @@ import pytest
 from starlette.testclient import TestClient
 
 from gobby.config.app import DaemonConfig
+from gobby.storage.hub.protocol import HubDatabase
 from gobby.storage.workflow_definitions import (
     LocalWorkflowDefinitionManager,
     compute_definition_hash,
@@ -150,6 +151,35 @@ class TestCreateWorkflow:
         data = resp.json()
         assert data["status"] == "success"
         assert data["definition"]["name"] == "new-workflow"
+
+    def test_create_rejects_agent_kind(self, client: TestClient) -> None:
+        resp = client.post(
+            "/api/workflows",
+            json={
+                "name": "rogue-agent",
+                "definition_json": '{"name": "rogue-agent", "provider": "claude"}',
+                "workflow_type": "agent",
+            },
+        )
+        assert resp.status_code == 400
+        assert "/api/agents" in resp.json()["detail"]
+
+    def test_list_omits_and_rejects_agent_filter(
+        self, client: TestClient, wf_manager: LocalWorkflowDefinitionManager
+    ) -> None:
+        wf_manager.create(
+            name="hidden-agent",
+            definition_json='{"name": "hidden-agent"}',
+            workflow_type="agent",
+            source="installed",
+        )
+        listed = client.get("/api/workflows")
+        assert listed.status_code == 200
+        names = [row["name"] for row in listed.json()["definitions"]]
+        assert "hidden-agent" not in names
+        filtered = client.get("/api/workflows", params={"workflow_type": "agent"})
+        assert filtered.status_code == 400
+        assert "/api/agents" in filtered.json()["detail"]
 
     @pytest.mark.parametrize(
         "definition_json",
@@ -507,7 +537,7 @@ class TestVariables:
         mock_get.assert_called_once()
         assert mock_get.call_args.kwargs["workflow"] == "backend-developer-steps"
 
-    def test_get_variable_with_session_manager(self, temp_db) -> None:
+    def test_get_variable_with_session_manager(self, temp_db: HubDatabase) -> None:
         mock_sm = MagicMock()
         mock_sm.db = temp_db
         srv = create_http_server(

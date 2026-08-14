@@ -90,6 +90,17 @@ def create_workflows_router(server: "HTTPServer") -> APIRouter:
 
         return LocalWorkflowDefinitionManager(server.services.database)
 
+    def _reject_agent_kind(kind: str | None) -> None:
+        if kind == "agent":
+            raise HTTPException(
+                status_code=400,
+                detail="Agent definitions use /api/agents",
+            )
+
+    def _reject_agent_row(definition_id: str) -> None:
+        row = _get_manager().get(definition_id, include_deleted=True)
+        _reject_agent_kind(row.workflow_type)
+
     async def _broadcast_workflow(event: str, definition_id: str, **kwargs: Any) -> None:
         """Broadcast a workflow event via WebSocket if available."""
         ws = server.services.websocket_server
@@ -116,6 +127,7 @@ def create_workflows_router(server: "HTTPServer") -> APIRouter:
     ) -> dict[str, Any]:
         """List workflow definitions with optional filters."""
         try:
+            _reject_agent_kind(workflow_type)
             manager = _get_manager()
             rows = await server.run_db(
                 manager.list_all,
@@ -124,6 +136,7 @@ def create_workflows_router(server: "HTTPServer") -> APIRouter:
                 enabled=enabled,
                 include_deleted=include_deleted,
             )
+            rows = [row for row in rows if row.workflow_type != "agent"]
             definitions = [r.to_dict() for r in rows]
 
             # Annotate with template drift info
@@ -137,6 +150,8 @@ def create_workflows_router(server: "HTTPServer") -> APIRouter:
                 "definitions": definitions,
                 "count": len(rows),
             }
+        except HTTPException:
+            raise
         except Exception as e:
             logger.exception("Error listing workflow definitions")
             raise HTTPException(status_code=500, detail="Internal server error") from e
@@ -145,12 +160,15 @@ def create_workflows_router(server: "HTTPServer") -> APIRouter:
     async def export_workflow(definition_id: str) -> Response:
         """Export a workflow definition as YAML."""
         try:
+            await server.run_db(_reject_agent_row, definition_id)
             yaml_content = await server.run_db(lambda: _get_manager().export_to_yaml(definition_id))
             return Response(
                 content=yaml_content,
                 media_type="application/x-yaml",
                 headers={"Content-Disposition": f'attachment; filename="{definition_id}.yaml"'},
             )
+        except HTTPException:
+            raise
         except ValueError as e:
             raise HTTPException(status_code=404, detail=str(e)) from e
         except Exception as e:
@@ -163,7 +181,10 @@ def create_workflows_router(server: "HTTPServer") -> APIRouter:
         try:
             manager = _get_manager()
             row = await server.run_db(manager.get, definition_id)
+            _reject_agent_kind(row.workflow_type)
             return {"status": "success", "definition": row.to_dict()}
+        except HTTPException:
+            raise
         except ValueError as e:
             raise HTTPException(status_code=404, detail=str(e)) from e
         except Exception as e:
@@ -174,12 +195,17 @@ def create_workflows_router(server: "HTTPServer") -> APIRouter:
     async def import_workflow(request: ImportYAMLRequest) -> dict[str, Any]:
         """Import a workflow definition from YAML content."""
         try:
+            parsed = yaml.safe_load(request.yaml_content)
+            if isinstance(parsed, dict):
+                _reject_agent_kind(parsed.get("type"))
             manager = _get_manager()
             row = await server.run_db(
                 manager.import_from_yaml, request.yaml_content, project_id=request.project_id
             )
             await _broadcast_workflow("workflow_created", row.id)
             return {"status": "success", "definition": row.to_dict()}
+        except HTTPException:
+            raise
         except (ValueError, yaml.YAMLError) as e:
             raise HTTPException(status_code=400, detail=str(e)) from e
         except Exception as e:
@@ -191,9 +217,12 @@ def create_workflows_router(server: "HTTPServer") -> APIRouter:
         """Duplicate a workflow definition with a new name."""
         try:
             manager = _get_manager()
+            await server.run_db(_reject_agent_row, definition_id)
             row = await server.run_db(manager.duplicate, definition_id, request.new_name)
             await _broadcast_workflow("workflow_created", row.id)
             return {"status": "success", "definition": row.to_dict()}
+        except HTTPException:
+            raise
         except ValueError as e:
             raise HTTPException(status_code=404, detail=str(e)) from e
         except Exception as e:
@@ -205,6 +234,7 @@ def create_workflows_router(server: "HTTPServer") -> APIRouter:
         """Create a new workflow definition."""
         try:
             definition = json.loads(request.definition_json)
+            _reject_agent_kind(request.workflow_type)
             if request.workflow_type == "rule":
                 RuleDefinitionBody.model_validate(definition)
         except (json.JSONDecodeError, ValidationError) as e:
@@ -259,9 +289,12 @@ def create_workflows_router(server: "HTTPServer") -> APIRouter:
         """Toggle a workflow definition's enabled status."""
         try:
             manager = _get_manager()
+            await server.run_db(_reject_agent_row, definition_id)
             updated = await server.run_db(manager.toggle_enabled, definition_id)
             await _broadcast_workflow("workflow_updated", definition_id)
             return {"status": "success", "definition": updated.to_dict()}
+        except HTTPException:
+            raise
         except ValueError as e:
             raise HTTPException(status_code=404, detail=str(e)) from e
         except Exception as e:
@@ -273,6 +306,7 @@ def create_workflows_router(server: "HTTPServer") -> APIRouter:
         """Update a workflow definition."""
         try:
             manager = _get_manager()
+            await server.run_db(_reject_agent_row, definition_id)
             fields = request.model_dump(exclude_unset=True)
             if not fields:
                 raise HTTPException(status_code=400, detail="No fields to update")
@@ -292,6 +326,7 @@ def create_workflows_router(server: "HTTPServer") -> APIRouter:
         """Delete a workflow definition (soft-delete)."""
         try:
             manager = _get_manager()
+            await server.run_db(_reject_agent_row, definition_id)
             deleted = await server.run_db(manager.delete, definition_id)
             if not deleted:
                 raise HTTPException(status_code=404, detail="Definition not found")
@@ -311,6 +346,7 @@ def create_workflows_router(server: "HTTPServer") -> APIRouter:
 
             manager = _get_manager()
             row = await server.run_db(manager.get, definition_id)
+            _reject_agent_kind(row.workflow_type)
             cache = get_template_hash_cache()
 
             if not cache.has_drift(row):
@@ -372,9 +408,12 @@ def create_workflows_router(server: "HTTPServer") -> APIRouter:
         """Restore a soft-deleted workflow definition."""
         try:
             manager = _get_manager()
+            await server.run_db(_reject_agent_row, definition_id)
             row = await server.run_db(manager.restore, definition_id)
             await _broadcast_workflow("workflow_updated", definition_id)
             return {"status": "success", "definition": row.to_dict()}
+        except HTTPException:
+            raise
         except ValueError as e:
             raise HTTPException(status_code=404, detail=str(e)) from e
         except Exception as e:
