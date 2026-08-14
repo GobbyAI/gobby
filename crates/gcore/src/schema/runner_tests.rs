@@ -37,6 +37,14 @@ static DESTRUCTIVE_MIGRATION: EmbeddedMigration = EmbeddedMigration {
 };
 static DESTRUCTIVE_MIGRATIONS: &[EmbeddedMigration] = &[DESTRUCTIVE_MIGRATION];
 
+static GUARDED_MIGRATION: EmbeddedMigration = EmbeddedMigration {
+    version: 376,
+    filename: "376_guarded_probe.sql",
+    checksum: "8d86f80f785ac4f918ce34ea7f0dca860266e91dbba95d8a2be0965a9cdd147a",
+    sql: "DO $guard$\nBEGIN\n  IF to_regclass('legacy_probe_source') IS NOT NULL THEN\n    CREATE TABLE IF NOT EXISTS guarded_probe_copied (id integer);\n  END IF;\nEND\n$guard$;\n",
+};
+static GUARDED_MIGRATIONS: &[EmbeddedMigration] = &[GUARDED_MIGRATION];
+
 static DATABASE_TEST_LOCK: Mutex<()> = Mutex::new(());
 
 const GCODE_RLS_TABLES: [&str; 10] = [
@@ -116,6 +124,24 @@ fn test_database() -> anyhow::Result<Option<(ScratchDatabase, Client)>> {
 
 fn install_baseline(client: &mut Client) -> anyhow::Result<()> {
     SchemaRunner::new(client, "public")?.apply()?;
+    Ok(())
+}
+
+fn install_predecessor(client: &mut Client) -> anyhow::Result<()> {
+    const PREDECESSOR_BASELINE_SQL: &str =
+        include_str!("../../tests/fixtures/schema/predecessor_baseline.sql");
+    for statement in split_sql_statements(PREDECESSOR_BASELINE_SQL)? {
+        client.batch_execute(&statement)?;
+    }
+    client.execute(
+        "INSERT INTO schema_migrations(version, filename, checksum, applied_at) \
+         VALUES ($1, $2, $3, NOW())",
+        &[
+            &BASELINE_VERSION,
+            &format!("baseline@{BASELINE_VERSION}"),
+            &PREDECESSOR_BASELINE_CHECKSUM,
+        ],
+    )?;
     Ok(())
 }
 
@@ -322,7 +348,7 @@ fn obsolete_baseline_receipt_is_rejected_without_mutation() -> anyhow::Result<()
     )?;
     client.execute(
         "UPDATE schema_migrations SET checksum = $1 WHERE version = $2",
-        &[&PREDECESSOR_BASELINE_CHECKSUM, &BASELINE_VERSION],
+        &[&ACCOUNT_IDENTITY_PREDECESSOR_CHECKSUM, &BASELINE_VERSION],
     )?;
 
     let error = SchemaRunner::new(&mut client, "public")?
@@ -346,7 +372,7 @@ fn obsolete_baseline_receipt_is_rejected_without_mutation() -> anyhow::Result<()
             &[&BASELINE_VERSION],
         )?
         .get(0);
-    assert_eq!(checksum, PREDECESSOR_BASELINE_CHECKSUM);
+    assert_eq!(checksum, ACCOUNT_IDENTITY_PREDECESSOR_CHECKSUM);
     Ok(())
 }
 
@@ -822,4 +848,166 @@ fn gate_tests_destructive_apply_requires_a_verified_v2_backup() -> anyhow::Resul
         .get(0);
     assert!(table_exists);
     Ok(())
+}
+
+#[test]
+fn migrations_directory_exists_and_production_list_is_empty() {
+    let migrations_dir =
+        std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("assets/schema/migrations");
+    assert!(
+        migrations_dir.is_dir(),
+        "crates/gcore/assets/schema/migrations must exist so later leaves can register include_str entries"
+    );
+    assert!(
+        MIGRATIONS.is_empty(),
+        "1.5 re-arms the convention with an empty production list"
+    );
+    assert!(
+        DESTRUCTIVE_MIGRATION.version > BASELINE_VERSION
+            && GUARDED_MIGRATION.version > BASELINE_VERSION,
+        "injected probe versions must sit above baseline {BASELINE_VERSION}"
+    );
+    assert_eq!(
+        super::assets::sha256_hex(DESTRUCTIVE_MIGRATION.sql.as_bytes()),
+        DESTRUCTIVE_MIGRATION.checksum
+    );
+    assert_eq!(
+        super::assets::sha256_hex(GUARDED_MIGRATION.sql.as_bytes()),
+        GUARDED_MIGRATION.checksum
+    );
+}
+
+#[test]
+fn fresh_destructive_migration_is_receipt_stamped_without_executing() -> anyhow::Result<()> {
+    let _serial = DATABASE_TEST_LOCK
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner);
+    let Some((_database, mut client)) = test_database()? else {
+        return Ok(());
+    };
+
+    let report =
+        SchemaRunner::with_migrations_for_test(&mut client, "public", DESTRUCTIVE_MIGRATIONS)?
+            .apply()?;
+    assert!(report.baseline_applied);
+    assert_eq!(report.migrations_applied, 1);
+
+    let table_exists: bool = client
+        .query_one("SELECT to_regclass('gate_probe') IS NOT NULL", &[])?
+        .get(0);
+    assert!(
+        !table_exists,
+        "fresh lineages must stamp destructive receipts without executing them"
+    );
+    let receipt_count: i64 = client
+        .query_one(
+            "SELECT COUNT(*) FROM schema_migrations WHERE version = 376 AND filename = $1 AND checksum = $2",
+            &[&DESTRUCTIVE_MIGRATION.filename, &DESTRUCTIVE_MIGRATION.checksum],
+        )?
+        .get(0);
+    assert_eq!(receipt_count, 1);
+
+    let second =
+        SchemaRunner::with_migrations_for_test(&mut client, "public", DESTRUCTIVE_MIGRATIONS)?
+            .apply()?;
+    assert!(!second.baseline_applied);
+    assert_eq!(second.migrations_applied, 0);
+    Ok(())
+}
+
+#[test]
+fn existing_lineage_still_refuses_unauthorized_destructive_migration() -> anyhow::Result<()> {
+    let _serial = DATABASE_TEST_LOCK
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner);
+    let Some((_database, mut client)) = test_database()? else {
+        return Ok(());
+    };
+    install_baseline(&mut client)?;
+
+    let error =
+        SchemaRunner::with_migrations_for_test(&mut client, "public", DESTRUCTIVE_MIGRATIONS)?
+            .apply()
+            .expect_err("existing lineages must still refuse unauthorized destructive migrations");
+    assert!(error.to_string().contains("verified hub backup"));
+    let table_exists: bool = client
+        .query_one("SELECT to_regclass('gate_probe') IS NOT NULL", &[])?
+        .get(0);
+    assert!(!table_exists);
+    Ok(())
+}
+
+#[test]
+fn guarded_nondestructive_migration_applies_on_fresh_and_predecessor() -> anyhow::Result<()> {
+    let _serial = DATABASE_TEST_LOCK
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner);
+    let Some((_database, mut client)) = test_database()? else {
+        return Ok(());
+    };
+
+    let fresh = SchemaRunner::with_migrations_for_test(&mut client, "public", GUARDED_MIGRATIONS)?
+        .apply()?;
+    assert!(fresh.baseline_applied);
+    assert_eq!(fresh.migrations_applied, 1);
+    let copied: bool = client
+        .query_one(
+            "SELECT to_regclass('guarded_probe_copied') IS NOT NULL",
+            &[],
+        )?
+        .get(0);
+    assert!(!copied, "absent source must keep the guarded body a no-op");
+    assert_eq!(migration_receipt_count(&mut client, &GUARDED_MIGRATION)?, 1);
+
+    let fresh_replay =
+        SchemaRunner::with_migrations_for_test(&mut client, "public", GUARDED_MIGRATIONS)?
+            .apply()?;
+    assert!(!fresh_replay.baseline_applied);
+    assert_eq!(fresh_replay.migrations_applied, 0);
+
+    let Some((_predecessor_database, mut predecessor_client)) = test_database()? else {
+        return Ok(());
+    };
+    install_predecessor(&mut predecessor_client)?;
+    let predecessor = SchemaRunner::with_migrations_for_test(
+        &mut predecessor_client,
+        "public",
+        GUARDED_MIGRATIONS,
+    )?
+    .apply()?;
+    assert!(predecessor.baseline_applied);
+    assert_eq!(predecessor.migrations_applied, 1);
+    let copied_after_predecessor: bool = predecessor_client
+        .query_one(
+            "SELECT to_regclass('guarded_probe_copied') IS NOT NULL",
+            &[],
+        )?
+        .get(0);
+    assert!(!copied_after_predecessor);
+    assert_eq!(
+        migration_receipt_count(&mut predecessor_client, &GUARDED_MIGRATION)?,
+        1
+    );
+
+    let predecessor_replay = SchemaRunner::with_migrations_for_test(
+        &mut predecessor_client,
+        "public",
+        GUARDED_MIGRATIONS,
+    )?
+    .apply()?;
+    assert!(!predecessor_replay.baseline_applied);
+    assert_eq!(predecessor_replay.migrations_applied, 0);
+    Ok(())
+}
+
+fn migration_receipt_count(
+    client: &mut Client,
+    migration: &EmbeddedMigration,
+) -> anyhow::Result<i64> {
+    Ok(client
+        .query_one(
+            "SELECT COUNT(*) FROM schema_migrations WHERE version = $1 AND filename = $2 AND checksum = $3",
+            &[&migration.version, &migration.filename, &migration.checksum],
+        )?
+        .get(0))
 }

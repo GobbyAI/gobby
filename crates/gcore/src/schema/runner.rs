@@ -166,8 +166,13 @@ impl<'a> SchemaRunner<'a> {
                 ));
             }
         };
-        let migrations_applied =
-            apply_pending_migrations(self.client, &self.schema, self.migrations, backup.is_some())?;
+        let migrations_applied = apply_pending_migrations(
+            self.client,
+            &self.schema,
+            self.migrations,
+            state,
+            backup.is_some(),
+        )?;
         Ok(ApplyReport {
             baseline_applied,
             migrations_applied,
@@ -185,6 +190,18 @@ enum BaselineState {
     AccountIdentityPredecessor,
     PredecessorBaseline,
     CorruptPartial,
+}
+
+impl BaselineState {
+    fn is_fresh_lineage(self) -> bool {
+        matches!(
+            self,
+            Self::Fresh
+                | Self::FreshWithInstallInfra
+                | Self::GcoreCodeIndex
+                | Self::GwikiStandalone
+        )
+    }
 }
 
 const GCORE_CODE_INDEX_TABLES: [&str; 8] = [
@@ -694,6 +711,7 @@ fn apply_pending_migrations(
     client: &mut Client,
     schema: &str,
     migrations: &[EmbeddedMigration],
+    lineage: BaselineState,
     destructive_authorized: bool,
 ) -> Result<usize, SchemaError> {
     let table = qualified_name(schema, "schema_migrations")?;
@@ -728,27 +746,28 @@ fn apply_pending_migrations(
     }
 
     let mut count = 0;
+    let fresh_lineage = lineage.is_fresh_lineage();
     for migration in migrations {
         if applied.contains(&migration.version) {
             continue;
         }
-        if has_directive(migration.sql, "-- gobby:destructive") && !destructive_authorized {
+        let destructive = has_directive(migration.sql, "-- gobby:destructive");
+        let non_transactional = has_directive(migration.sql, "-- gobby:non-transactional");
+        if destructive && !destructive_authorized && !fresh_lineage {
             return Err(SchemaError::Unsupported(format!(
                 "migration {} is destructive; a verified hub backup is required",
                 migration.filename
             )));
         }
-        let non_transactional = has_directive(migration.sql, "-- gobby:non-transactional");
-        if non_transactional
-            && destructive_authorized
-            && has_directive(migration.sql, "-- gobby:destructive")
-        {
+        if non_transactional && destructive {
             return Err(SchemaError::Unsupported(format!(
                 "destructive migration {} cannot be non-transactional",
                 migration.filename
             )));
         }
-        if non_transactional {
+        if destructive && fresh_lineage {
+            stamp_receipt_only(client, &table, migration)?;
+        } else if non_transactional {
             apply_non_transactional(client, &table, migration)?;
         } else {
             apply_transactional(client, &table, migration)?;
@@ -756,6 +775,17 @@ fn apply_pending_migrations(
         count += 1;
     }
     Ok(count)
+}
+
+fn stamp_receipt_only(
+    client: &mut Client,
+    receipt_table: &str,
+    migration: &EmbeddedMigration,
+) -> Result<(), SchemaError> {
+    let mut transaction = client.transaction()?;
+    insert_receipt(&mut transaction, receipt_table, migration)?;
+    transaction.commit()?;
+    Ok(())
 }
 
 fn apply_transactional(
