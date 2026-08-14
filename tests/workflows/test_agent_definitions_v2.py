@@ -66,6 +66,7 @@ class TestAgentDefinitionBodyModel:
         assert body.steps is None
         assert body.step_variables == {}
         assert body.exit_condition is None
+        assert body.step_workflow is None
         assert body.enabled is True
 
     def test_full_creation(self) -> None:
@@ -106,7 +107,7 @@ class TestAgentDefinitionBodyModel:
         from gobby.workflows.definitions import AgentDefinitionBody
 
         fields = AgentDefinitionBody.model_fields
-        assert len(fields) == 26, f"Expected 26 fields, got {len(fields)}: {list(fields.keys())}"
+        assert len(fields) == 27, f"Expected 27 fields, got {len(fields)}: {list(fields.keys())}"
         assert "surfaces" in fields
         assert "reasoning_required" in fields
         assert "fallback_agent" in fields
@@ -114,6 +115,7 @@ class TestAgentDefinitionBodyModel:
         assert "steps" in fields
         assert "step_variables" in fields
         assert "exit_condition" in fields
+        assert "step_workflow" in fields
 
     def test_surfaces_normalize_and_deduplicate(self) -> None:
         """Persona/spawn usage surfaces normalize from YAML-ish inputs."""

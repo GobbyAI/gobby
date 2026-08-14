@@ -1,24 +1,51 @@
 from __future__ import annotations
 
-import math
 from collections.abc import Mapping
 from datetime import UTC, datetime
 from enum import Enum
 from pathlib import PurePosixPath, PureWindowsPath
-from typing import Any, Literal, cast
+from typing import TYPE_CHECKING, Any, Literal
 
 from pydantic import (
     BaseModel,
     ConfigDict,
     Field,
-    StrictBool,
-    StrictStr,
     TypeAdapter,
     field_validator,
     model_validator,
 )
 
-from gobby.agents.reasoning import normalize_reasoning_effort
+if TYPE_CHECKING:
+    from gobby.workflows.agent_models import (
+        AgentDefinitionBody as AgentDefinitionBody,
+    )
+    from gobby.workflows.agent_models import (
+        AgentSelector as AgentSelector,
+    )
+    from gobby.workflows.agent_models import (
+        AgentStepWorkflowBody as AgentStepWorkflowBody,
+    )
+    from gobby.workflows.agent_models import (
+        AgentWorkflows as AgentWorkflows,
+    )
+    from gobby.workflows.pipeline_models import (
+        MCPStepConfig as MCPStepConfig,
+    )
+    from gobby.workflows.pipeline_models import (
+        PipelineApproval as PipelineApproval,
+    )
+    from gobby.workflows.pipeline_models import (
+        PipelineDefinition as PipelineDefinition,
+    )
+    from gobby.workflows.pipeline_models import (
+        PipelineStep as PipelineStep,
+    )
+    from gobby.workflows.pipeline_models import (
+        WebhookConfig as WebhookConfig,
+    )
+    from gobby.workflows.pipeline_models import (
+        WebhookEndpoint as WebhookEndpoint,
+    )
 
 # --- Workflow Definition Models (YAML) ---
 
@@ -438,139 +465,6 @@ class VariableDefinitionBody(BaseModel):
     description: str | None = None
 
 
-class AgentSelector(BaseModel):
-    """Selector for dynamically filtering rules, variables, and skills."""
-
-    include: list[str] = Field(default_factory=lambda: ["*"])
-    exclude: list[str] = Field(default_factory=list)
-
-
-class AgentWorkflows(BaseModel):
-    """Structured orchestration container for an agent definition.
-
-    Replaces the old dict[str, WorkflowSpec] map with explicit typed fields:
-    - pipeline: optional named pipeline (DB-backed) to auto-start
-    - rules: rule names to activate for this agent type
-    - variables: pre-seed session variables (override rule defaults)
-    """
-
-    pipeline: str | None = None
-    rules: list[str] = Field(default_factory=list)
-    rule_selectors: AgentSelector | None = None
-    variable_selectors: AgentSelector | None = None
-    skill_selectors: AgentSelector | None = None
-    skill_format: str | None = None
-    variables: dict[str, Any] = Field(default_factory=dict)
-
-
-class AgentDefinitionBody(BaseModel):
-    """Stored as definition_json in workflow_definitions for workflow_type='agent'.
-
-    Agent identity with structured prompt fields, provider config,
-    spawn parameters, and orchestration. Behavior is defined by rules
-    and optional pipeline, not embedded workflows.
-    """
-
-    @model_validator(mode="before")
-    @classmethod
-    def normalize_empty_strings(cls, data: Any) -> Any:
-        """Replace empty strings with 'inherit' for Literal fields that don't accept ''."""
-        if isinstance(data, dict):
-            defaults = {"isolation": "inherit", "provider": "inherit"}
-            for field, default in defaults.items():
-                if field in data and data[field] == "":
-                    data[field] = default
-            if "surfaces" in data and data["surfaces"] == "":
-                data["surfaces"] = ["spawn"]
-        return data
-
-    name: str
-    description: str | None = None
-    sources: list[str] | None = None  # Session sources this agent applies to (None = all)
-    surfaces: list[Literal["spawn", "persona"]] = Field(
-        default_factory=lambda: cast(list[Literal["spawn", "persona"]], ["spawn"]),
-        description="Where this definition can be used: spawned execution, session personas, or both.",
-    )
-    # Structured prompt fields (composed into preamble at spawn time)
-    role: str | None = None
-    goal: str | None = None
-    personality: str | None = None
-    instructions: str | None = None
-    # Execution
-    provider: str = "inherit"
-    model: StrictStr | None = None
-    reasoning_effort: StrictStr | None = None
-    reasoning_required: StrictBool | None = None
-    fallback_agent: StrictStr | None = None
-    api_base: StrictStr | None = Field(
-        default=None,
-        description="API base URL for the model endpoint (e.g., http://localhost:1234/v1 for LM Studio)",
-    )
-    api_token: StrictStr | None = Field(
-        default=None,
-        description="Auth token for the endpoint. Supports ${ENV_VAR} pattern for env var expansion.",
-    )
-    model_config = ConfigDict(extra="ignore")  # Tolerate stale YAML with removed fields
-
-    isolation: Literal["none", "worktree", "clone", "inherit"] | None = "inherit"
-    base_branch: str = "inherit"
-    timeout: float = 0
-    # Orchestration
-    workflows: AgentWorkflows = Field(default_factory=AgentWorkflows)
-    enabled: bool = True
-    skills: dict[str, list[str]] = Field(default_factory=dict)
-    # Agent-level tool restrictions (applied regardless of step workflow)
-    blocked_tools: list[str] = Field(default_factory=list)
-    blocked_mcp_tools: list[str] = Field(default_factory=list)
-    # Inline step workflow (replaces external step workflow YAML files)
-    steps: list[WorkflowStep] | None = None
-    step_variables: dict[str, Any] = Field(default_factory=dict)
-    exit_condition: str | None = None
-
-    @field_validator("reasoning_effort", mode="before")
-    @classmethod
-    def _normalize_reasoning_effort(cls, value: Any) -> str | None:
-        if value is None:
-            return None
-        if not isinstance(value, str):
-            raise ValueError("reasoning_effort must be a string")
-        return normalize_reasoning_effort(value)
-
-    @field_validator("surfaces", mode="before")
-    @classmethod
-    def _normalize_surfaces(cls, value: Any) -> list[str]:
-        if value is None or value == "":
-            return ["spawn"]
-        if isinstance(value, str):
-            return [value]
-        if isinstance(value, list):
-            normalized: list[str] = []
-            for item in value:
-                if not isinstance(item, str):
-                    raise ValueError("surfaces entries must be strings")
-                if item not in normalized:
-                    normalized.append(item)
-            return normalized
-        raise ValueError("surfaces must be a string or list of strings")
-
-    def supports_surface(self, surface: Literal["spawn", "persona"]) -> bool:
-        """Return True when the definition explicitly supports the requested usage surface."""
-        return surface in self.surfaces
-
-    def build_prompt_preamble(self) -> str | None:
-        """Build structured prompt preamble from role/goal/personality/instructions."""
-        parts = []
-        if self.role:
-            parts.append(f"## Role\n{self.role}")
-        if self.goal:
-            parts.append(f"## Goal\n{self.goal}")
-        if self.personality:
-            parts.append(f"## Personality\n{self.personality}")
-        if self.instructions:
-            parts.append(f"## Instructions\n{self.instructions}")
-        return "\n\n".join(parts) if parts else None
-
-
 class Observer(BaseModel):
     """Observer that watches events and sets variables.
 
@@ -694,175 +588,6 @@ class WorkflowDefinition(BaseModel):
         return None
 
 
-# --- Pipeline Definition Models (YAML) ---
-
-
-class WebhookEndpoint(BaseModel):
-    """Configuration for a webhook endpoint."""
-
-    url: str
-    method: str = "POST"
-    headers: dict[str, str] = Field(default_factory=dict)
-
-
-class WebhookConfig(BaseModel):
-    """Webhook configuration for pipeline events."""
-
-    on_approval_pending: WebhookEndpoint | None = None
-    on_complete: WebhookEndpoint | None = None
-    on_failure: WebhookEndpoint | None = None
-
-
-class PipelineApproval(BaseModel):
-    """Approval gate configuration for a pipeline step."""
-
-    required: bool = False
-    message: str | None = None
-    timeout_seconds: int | None = None
-
-
-class MCPStepConfig(BaseModel):
-    """Configuration for an MCP tool call step in a pipeline."""
-
-    server: str
-    tool: str
-    arguments: dict[str, Any] | None = None
-
-
-class PipelineStep(BaseModel):
-    """A single step in a pipeline workflow.
-
-    Steps must have exactly one execution type: exec, prompt, invoke_pipeline, mcp, or wait.
-    """
-
-    id: str
-
-    # Execution types (mutually exclusive - exactly one required)
-    exec: str | None = None  # Shell command to run
-    prompt: str | None = None  # LLM prompt template
-    invoke_pipeline: str | dict[str, Any] | None = None  # Name of pipeline to invoke
-    mcp: MCPStepConfig | None = None  # Call MCP tool directly
-    wait: dict[str, Any] | None = None  # Block until completion event fires
-
-    # Optional fields
-    condition: str | None = None  # Condition for step execution
-    approval: PipelineApproval | None = None  # Approval gate
-    tools: list[str] = Field(default_factory=list)  # Tool restrictions for prompt steps
-    input: str | None = None  # Explicit input reference (e.g., $prev_step.output)
-    timeout_seconds: float | str | None = None  # Positive exec timeout or template
-
-    @field_validator("timeout_seconds", mode="before")
-    @classmethod
-    def validate_timeout_seconds(cls, value: Any) -> float | str | None:
-        """Validate a positive timeout or a full template expression."""
-        if value is None:
-            return None
-        if isinstance(value, bool):
-            raise ValueError("timeout_seconds must be a positive number")
-        if isinstance(value, (int, float)):
-            if not math.isfinite(value) or value <= 0:
-                raise ValueError("timeout_seconds must be greater than 0")
-            return float(value)
-        if isinstance(value, str):
-            stripped = value.strip()
-            if stripped.startswith("${{") and stripped.endswith("}}") and stripped[3:-2].strip():
-                return value
-        raise ValueError("timeout_seconds must be a positive number or template expression")
-
-    @model_validator(mode="before")
-    @classmethod
-    def reject_activate_workflow(cls, data: Any) -> Any:
-        """Reject the removed pipeline-only workflow activation step."""
-        if isinstance(data, dict) and "activate_workflow" in data:
-            raise ValueError("activate_workflow is not a supported pipeline step type")
-        return data
-
-    def model_post_init(self, __context: Any) -> None:
-        """Validate that exactly one execution type is specified."""
-        exec_types = [
-            self.exec,
-            self.prompt,
-            self.invoke_pipeline,
-            self.mcp,
-            self.wait,
-        ]
-        specified = [t for t in exec_types if t is not None]
-
-        if len(specified) == 0:
-            raise ValueError(
-                "PipelineStep requires at least one execution type: "
-                "exec, prompt, invoke_pipeline, mcp, or wait"
-            )
-        if len(specified) > 1:
-            raise ValueError(
-                "PipelineStep exec, prompt, invoke_pipeline, mcp, and wait are mutually "
-                "exclusive - only one allowed"
-            )
-
-
-class PipelineDefinition(BaseModel):
-    """Definition for a pipeline workflow with typed data flow between steps.
-
-    Pipelines execute steps sequentially with explicit data flow via $step.output references.
-    """
-
-    name: str
-    description: str | None = None
-    version: str = "1.0"
-    type: Literal["pipeline"] = "pipeline"
-    enabled: bool = True
-    priority: int = 100
-    deprecated: bool = False
-    deprecated_reason: str | None = None
-
-    @field_validator("version", mode="before")
-    @classmethod
-    def coerce_version_to_string(cls, v: Any) -> str:
-        """Accept numeric versions (1.0, 2) and coerce to string."""
-        return str(v) if v is not None else "1.0"
-
-    # Input/output schema
-    inputs: dict[str, Any] = Field(default_factory=dict)
-    outputs: dict[str, Any] = Field(default_factory=dict)
-
-    # Pipeline steps
-    steps: list[PipelineStep] = Field(default_factory=list)
-
-    # Webhook notifications
-    webhooks: WebhookConfig | None = None
-
-    # Expose as MCP tool
-    expose_as_tool: bool = False
-
-    # Resume execution after daemon restart (opt-in, steps must be idempotent)
-    resume_on_restart: bool = False
-
-    @field_validator("steps", mode="after")
-    @classmethod
-    def validate_steps(cls, v: list[PipelineStep]) -> list[PipelineStep]:
-        """Validate pipeline steps."""
-        ids = [step.id for step in v]
-        if len(ids) != len(set(ids)):
-            duplicates = [id for id in ids if ids.count(id) > 1]
-            raise ValueError(f"Pipeline step IDs must be unique. Duplicates: {set(duplicates)}")
-
-        return v
-
-    @model_validator(mode="after")
-    def validate_active_pipeline_has_steps(self) -> PipelineDefinition:
-        """Require every pipeline definition to include executable steps."""
-        if not self.steps and not self.deprecated:
-            raise ValueError("Pipeline requires at least one step")
-        return self
-
-    def get_step(self, step_id: str) -> PipelineStep | None:
-        """Get a step by its ID."""
-        for step in self.steps:
-            if step.id == step_id:
-                return step
-        return None
-
-
 def validate_workflow_definition_data(
     data: dict[str, Any],
     *,
@@ -892,6 +617,8 @@ def validate_workflow_definition_data(
         )
 
     if effective_type == "pipeline":
+        from gobby.workflows.pipeline_models import PipelineDefinition
+
         PipelineDefinition.model_validate(data)
         return effective_type
 
@@ -904,6 +631,8 @@ def validate_workflow_definition_data(
         body = {key: value for key, value in data.items() if key not in variable_metadata}
         VariableDefinitionBody.model_validate(body, extra="forbid")
     else:
+        from gobby.workflows.agent_models import AgentDefinitionBody
+
         agent_metadata = {"priority", "type", "version"}
         body = {key: value for key, value in data.items() if key not in agent_metadata}
         AgentDefinitionBody.model_validate(body, extra="forbid")
@@ -963,3 +692,44 @@ class WorkflowInstance(BaseModel):
             if isinstance(val, str):
                 parsed[field] = datetime.fromisoformat(val)
         return cls(**parsed)
+
+
+_AGENT_MODEL_EXPORTS = frozenset(
+    {
+        "AgentDefinitionBody",
+        "AgentSelector",
+        "AgentStepWorkflowBody",
+        "AgentWorkflows",
+    }
+)
+_PIPELINE_MODEL_EXPORTS = frozenset(
+    {
+        "MCPStepConfig",
+        "PipelineApproval",
+        "PipelineDefinition",
+        "PipelineStep",
+        "WebhookConfig",
+        "WebhookEndpoint",
+    }
+)
+
+
+def __getattr__(name: str) -> Any:
+    """Permanently re-export split agent and pipeline models."""
+    if name in _AGENT_MODEL_EXPORTS:
+        from gobby.workflows import agent_models
+
+        value = getattr(agent_models, name)
+        globals()[name] = value
+        return value
+    if name in _PIPELINE_MODEL_EXPORTS:
+        from gobby.workflows import pipeline_models
+
+        value = getattr(pipeline_models, name)
+        globals()[name] = value
+        return value
+    raise AttributeError(f"module {__name__!r} has no attribute {name!r}")
+
+
+def __dir__() -> list[str]:
+    return sorted(set(globals()) | _AGENT_MODEL_EXPORTS | _PIPELINE_MODEL_EXPORTS)
