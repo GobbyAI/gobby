@@ -67,18 +67,7 @@ $function$;
 """
 
 
-def _drop_interactive_principal(executor: Any) -> None:
-    executor.execute(
-        """
-        DROP FUNCTION IF EXISTS gobby_agent_auth.issue_or_reuse_interactive_principal(
-            TEXT, UUID, UUID, UUID, TIMESTAMPTZ, TEXT
-        )
-        """
-    )
-
-
 def _repair_shared_auth_functions(postgres_db: Any) -> None:
-    _drop_interactive_principal(postgres_db)
     postgres_db.execute(_HEARTBEAT_SQL)
     postgres_db.execute(
         """
@@ -88,18 +77,6 @@ def _repair_shared_auth_functions(postgres_db: Any) -> None:
     )
     postgres_db.execute("GRANT SELECT ON public.machines TO gobby_agent_issuer")
     postgres_db.execute("GRANT SELECT ON machines TO gobby_agent_issuer")
-
-
-@pytest.fixture(scope="session", autouse=True)
-def _drop_stale_interactive_principal_before_apply() -> None:
-    """gdaemon cannot REPLACE the 4-col Python function with the 3-col baseline."""
-    url = os.environ.get("DATABASE_URL")
-    if not url:
-        return
-    import psycopg
-
-    with psycopg.connect(url, autocommit=True) as connection:
-        _drop_interactive_principal(connection)
 
 
 def _seed_identity_rows(postgres_db: Any, machine_id: str, user_id: str) -> None:
@@ -618,7 +595,6 @@ def test_takeover_fencing(
     # covered by tests/test_daemon_lease.py.
     standby_home = e2e_project_dir / ".gobby-standby"
     standby_home.mkdir()
-    _drop_interactive_principal(postgres_db)
     http_port = find_free_port()
     ws_port = find_free_port()
     config = _write_daemon_home(

@@ -12,10 +12,10 @@ pub const EXPECTED_API_CONTRACT: i64 = 1;
 
 #[cfg(not(feature = "postgres"))]
 const GOLDEN_BASELINE_CHECKSUM: &str =
-    "b8f24b35612378cd4f4844f2cf57dcd16736717ad54851eba8d69e2292e366b5";
+    "86ad53076df7527fa0b832dd62b91037954a62d301957ef09b0c9f0f69331b33";
 #[cfg(not(feature = "postgres"))]
 const GOLDEN_ASSETS_ROOT_HASH: &str =
-    "e3822300240521644b24541a385e1e61f562547d97156eb53776f961dcc05691";
+    "466dc3eac74063bfdf1f92edc72c6c33fa918bca7f23bde665e53c887ab12093";
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]

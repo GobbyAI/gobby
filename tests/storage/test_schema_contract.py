@@ -70,6 +70,19 @@ def test_production_python_has_no_persistent_postgres_ddl() -> None:
     assert _production_sql_ddl() == _KEPT_ADJACENT_SQL
 
 
+def test_baseline_seals_four_column_interactive_principal() -> None:
+    baseline = (_REPO_ROOT / "crates/gcore/assets/schema/baseline.sql").read_text()
+    assert "DROP FUNCTION IF EXISTS gobby_agent_auth.issue_or_reuse_interactive_principal(" in (
+        baseline
+    )
+    start = baseline.index(
+        "CREATE OR REPLACE FUNCTION gobby_agent_auth.issue_or_reuse_interactive_principal("
+    )
+    returns = baseline[start : start + 800]
+    assert "managed_execution_id UUID" in returns
+    assert "reused BOOLEAN" in returns
+
+
 def test_sweep_pins_database_in_child_environment(monkeypatch: pytest.MonkeyPatch) -> None:
     run = Mock(return_value=subprocess.CompletedProcess([], 0, stdout="", stderr=""))
     monkeypatch.setattr(schema_contract, "resolve_native_bin", lambda name: "/managed/gdaemon")

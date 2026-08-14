@@ -17,7 +17,6 @@ from uuid import UUID, uuid4
 from psycopg.conninfo import conninfo_to_dict, make_conninfo
 
 from gobby.storage.hub.protocol import HubDatabase, Row
-from gobby.storage.interactive_sql import ensure_interactive_sql
 
 AUTH_SCHEMA = "gobby_agent_auth"
 MANAGED_EXECUTION_BOOTSTRAP_ENV = "GOBBY_MANAGED_EXECUTION_BOOTSTRAP"
@@ -310,7 +309,6 @@ class ManagedCredentialManager:
     ) -> InteractiveCredential:
         issued_at = datetime.now(UTC)
         normalized_expiry = self._validate_expiry(issued_at, expires_at)
-        ensure_interactive_sql(self._database.conninfo)
         self.heartbeat()
         password = secrets.token_urlsafe(32)
         try:
@@ -376,7 +374,6 @@ class ManagedCredentialManager:
     ) -> InteractiveCredential:
         issued_at = datetime.now(UTC)
         normalized_expiry = self._validate_expiry(issued_at, expires_at)
-        ensure_interactive_sql(self._database.conninfo)
         self.heartbeat()
         password = secrets.token_urlsafe(32)
         drain_until = self._interactive_drain_until(deployment_token, project_id)
@@ -427,7 +424,6 @@ class ManagedCredentialManager:
         reason: str,
         generation: int | None = None,
     ) -> RevocationOutcome:
-        ensure_interactive_sql(self._database.conninfo)
         row = self._database.fetchone(
             f"""SELECT * FROM {AUTH_SCHEMA}.lookup_interactive_principal(
                 %s::text, %s::uuid, %s::uuid, %s::integer
@@ -459,7 +455,6 @@ class ManagedCredentialManager:
         project_id: UUID,
         generation: int,
     ) -> bool:
-        ensure_interactive_sql(self._database.conninfo)
         row = self._database.fetchone(
             f"""SELECT * FROM {AUTH_SCHEMA}.lookup_interactive_principal(
                 %s::text, %s::uuid, %s::uuid, %s::integer
