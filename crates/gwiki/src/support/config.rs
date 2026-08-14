@@ -235,7 +235,7 @@ mod tests {
 
     use gobby_core::config::{DaemonOrPrimary, DaemonServedConfig};
 
-    use crate::store::MemoryWikiStore;
+    use crate::store::FakeWikiStore;
 
     use super::*;
 
@@ -411,7 +411,7 @@ mod tests {
         write_file(vault.path(), ".gitignore", "knowledge/topics/ignored.md\n");
         write_file(vault.path(), "knowledge/topics/ignored.md", "# Ignored\n");
 
-        let mut store = MemoryWikiStore::default();
+        let mut store = FakeWikiStore::default();
         crate::indexer::index_vault(
             vault.path(),
             &mut store,

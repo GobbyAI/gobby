@@ -247,7 +247,7 @@ mod tests {
 
     use super::*;
     use crate::sources::{SourceKind, SourceManifest};
-    use crate::store::{MemoryWikiStore, WikiDocumentKind};
+    use crate::store::{FakeWikiStore, WikiDocumentKind};
 
     fn sample_snapshot() -> ImageSnapshot {
         ImageSnapshot {
@@ -266,7 +266,7 @@ mod tests {
         let temp = tempfile::tempdir().expect("tempdir");
         let snapshot = sample_snapshot();
         let expected_hash = content_hash(&snapshot.bytes);
-        let mut store = MemoryWikiStore::default();
+        let mut store = FakeWikiStore::default();
 
         let result = ingest_image(
             temp.path(),
@@ -298,7 +298,7 @@ mod tests {
     #[test]
     fn unchanged_image_reingest_reuses_immutable_raw_capture() {
         let temp = tempfile::tempdir().expect("tempdir");
-        let mut store = MemoryWikiStore::default();
+        let mut store = FakeWikiStore::default();
 
         let first = ingest_image(
             temp.path(),
@@ -337,7 +337,7 @@ mod tests {
     #[test]
     fn image_metadata_is_scope_indexed() {
         let temp = tempfile::tempdir().expect("tempdir");
-        let mut store = MemoryWikiStore::default();
+        let mut store = FakeWikiStore::default();
 
         let result = ingest_image(
             temp.path(),
@@ -365,7 +365,7 @@ mod tests {
         let mut context = test_ai_context("http://unused.invalid");
         context.bindings.vision_extract.routing = gobby_core::config::AiRouting::Off;
         let temp = tempfile::tempdir().expect("tempdir");
-        let mut store = MemoryWikiStore::default();
+        let mut store = FakeWikiStore::default();
 
         let result = ingest_image_with_production_vision(
             temp.path(),

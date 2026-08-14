@@ -13,11 +13,15 @@ fn collect_parses_scope_flags() {
     let stdout = String::from_utf8_lossy(&output.stdout);
     let stderr = String::from_utf8_lossy(&output.stderr);
 
-    assert!(output.status.success(), "stderr:\n{stderr}");
-    assert!(stdout.contains("Collect ready"), "{stdout}");
-    assert!(stdout.contains("Accepted: 0"), "{stdout}");
-    assert!(stdout.contains("Skipped: 0"), "{stdout}");
-    assert!(stdout.contains("Scope: topic:rust"), "{stdout}");
+    assert!(
+        !output.status.success(),
+        "collect must not use a memory store"
+    );
+    assert!(
+        stderr.contains("daemon required") || stderr.contains("malformed grant"),
+        "{stderr}"
+    );
+    assert!(!stdout.contains("Collect ready"), "{stdout}");
 }
 
 #[test]
@@ -27,7 +31,9 @@ fn project_collect_requires_postgres_writer_admission() {
 
     assert!(!output.status.success());
     assert!(
-        stderr.contains("PostgreSQL index is required for gwiki collect"),
+        stderr.contains("daemon required")
+            || stderr.contains("malformed grant")
+            || stderr.contains("PostgreSQL index is required for gwiki collect"),
         "{stderr}"
     );
 }

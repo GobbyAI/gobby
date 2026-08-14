@@ -46,7 +46,7 @@ fn summarize_skips_archives_that_already_have_a_session_page() {
     );
     let wiki_dir = temp.path().join("session_wiki");
 
-    let mut store = MemoryWikiStore::default();
+    let mut store = FakeWikiStore::default();
     let first = sync_session_transcript_archives(
         temp.path(),
         &mut store,
@@ -63,7 +63,7 @@ fn summarize_skips_archives_that_already_have_a_session_page() {
     .expect("first sync");
     assert_eq!(first.accepted.len(), 1);
 
-    let mut store = MemoryWikiStore::default();
+    let mut store = FakeWikiStore::default();
     let second = sync_session_transcript_archives(
         temp.path(),
         &mut store,

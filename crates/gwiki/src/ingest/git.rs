@@ -179,7 +179,7 @@ fn bounded_max_run(text: &str, delimiter: char) -> usize {
 mod tests {
     use super::*;
     use crate::sources::{SourceKind, SourceManifest};
-    use crate::store::MemoryWikiStore;
+    use crate::store::FakeWikiStore;
 
     #[test]
     fn git_ingest_records_commit_provenance() {
@@ -199,7 +199,7 @@ mod tests {
                 },
             ],
         };
-        let mut store = MemoryWikiStore::default();
+        let mut store = FakeWikiStore::default();
 
         let result =
             ingest_repository(temp.path(), &mut store, snapshot).expect("ingest git repository");
@@ -251,7 +251,7 @@ mod tests {
                 bytes: b"# Example\n\nRepository notes.\n".to_vec(),
             }],
         };
-        let mut store = MemoryWikiStore::default();
+        let mut store = FakeWikiStore::default();
         let first = ingest_repository(temp.path(), &mut store, snapshot("2026-05-29T18:20:00Z"))
             .expect("first ingest");
 

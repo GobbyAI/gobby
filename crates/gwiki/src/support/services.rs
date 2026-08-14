@@ -24,9 +24,12 @@ use crate::search::semantic::{
 /// Snapshot of the optional runtime services resolvable from the hub config.
 #[derive(Debug, Clone)]
 pub(crate) struct RuntimeServices {
+    #[allow(dead_code)]
     pub(crate) postgres_configured: bool,
+    #[allow(dead_code)]
     pub(crate) falkor: Option<FalkorConfig>,
     pub(crate) qdrant: Option<QdrantConfig>,
+    #[allow(dead_code)]
     pub(crate) embedding: Option<EmbeddingConfig>,
     /// Query-embedding route resolved alongside the raw configs; carries the
     /// AI context needed for daemon-routed embeddings.
@@ -34,17 +37,6 @@ pub(crate) struct RuntimeServices {
 }
 
 impl RuntimeServices {
-    /// No hub database configured: every optional service is unavailable.
-    pub(crate) fn detached() -> Self {
-        Self {
-            postgres_configured: false,
-            falkor: None,
-            qdrant: None,
-            embedding: None,
-            semantic_embedding: None,
-        }
-    }
-
     pub(crate) fn semantic_available(&self) -> bool {
         self.qdrant.is_some() && self.semantic_embedding.is_some()
     }
@@ -67,12 +59,11 @@ impl RuntimeServices {
 
 /// Probe the hub for the datastore-backed optional services.
 ///
-/// Absent hub configuration resolves to [`RuntimeServices::detached`];
-/// a configured-but-unreachable hub is an error, matching `status`.
+/// Service construction requires a grant-resolved DSN. Diagnostic surfaces
+/// such as `gwiki status` must not call this function.
 pub(crate) fn probe_runtime_services(command: &'static str) -> Result<RuntimeServices, WikiError> {
-    let Some(database_url) = crate::support::env::database_url_for(command)? else {
-        return Ok(RuntimeServices::detached());
-    };
+    let database_url = crate::support::env::database_url_for(command)?
+        .ok_or_else(|| WikiError::from(gobby_core::grant::GrantError::DaemonRequired))?;
     let mut conn = gobby_core::postgres::connect_readonly(&database_url).map_err(|error| {
         WikiError::Config {
             detail: format!("failed to connect to PostgreSQL for {command}: {error}"),

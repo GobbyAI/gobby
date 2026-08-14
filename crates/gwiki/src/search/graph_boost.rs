@@ -5,7 +5,9 @@ use gobby_core::config::FalkorConfig;
 use gobby_core::degradation::{DegradationKind, ServiceState};
 use gobby_core::falkor::GraphClient;
 
-use crate::graph::{BACKWARD_LINK_WEIGHT, MemoryWikiGraph, document_target_map};
+#[cfg(test)]
+use crate::graph::MemoryWikiGraph;
+use crate::graph::{BACKWARD_LINK_WEIGHT, document_target_map};
 use crate::links::canonical_target_key;
 use crate::search::{
     SearchError, SearchHitKind, SearchProvenance, SearchScope, SearchSource, WikiSearchResult,
@@ -99,16 +101,19 @@ impl<T: GraphBoostBackend + ?Sized> GraphBoostBackend for Box<T> {
     }
 }
 
+#[cfg(test)]
 pub struct MemoryGraphBoostBackend {
     graph: MemoryWikiGraph,
 }
 
+#[cfg(test)]
 impl MemoryGraphBoostBackend {
     pub fn new(graph: MemoryWikiGraph) -> Self {
         Self { graph }
     }
 }
 
+#[cfg(test)]
 impl GraphBoostBackend for MemoryGraphBoostBackend {
     fn search_graph_boost(
         &mut self,

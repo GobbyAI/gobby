@@ -486,7 +486,7 @@ mod tests {
 
     use super::*;
     use crate::store::{
-        MemoryWikiStore, WikiDocument, WikiDocumentKind, WikiIngestionEvent, WikiLink, WikiSource,
+        FakeWikiStore, WikiDocument, WikiDocumentKind, WikiIngestionEvent, WikiLink, WikiSource,
     };
 
     #[derive(Default)]
@@ -528,7 +528,7 @@ mod tests {
         )
     }
 
-    fn seed_derived_rows(store: &mut MemoryWikiStore, relative: &str) {
+    fn seed_derived_rows(store: &mut FakeWikiStore, relative: &str) {
         let path = PathBuf::from(relative);
         store.documents.insert(
             path.clone(),
@@ -572,7 +572,7 @@ mod tests {
             "knowledge/topics/rust.md",
             "# Rust\n\nSee [[Ownership|ownership]] and [Cargo](knowledge/concepts/cargo.md).\n",
         );
-        let mut store = MemoryWikiStore::default();
+        let mut store = FakeWikiStore::default();
 
         index_vault_for_test(tempdir.path(), &mut store).expect("index vault");
 
@@ -589,7 +589,7 @@ mod tests {
         let tempdir = tempfile::tempdir().expect("tempdir");
         write_file(tempdir.path(), "knowledge/topics/a.md", "# A\n");
         write_file(tempdir.path(), "knowledge/topics/b.md", "# B\n");
-        let mut store = MemoryWikiStore::default();
+        let mut store = FakeWikiStore::default();
         let mut progress = RecordingProgress::default();
 
         index_vault(
@@ -632,7 +632,7 @@ mod tests {
         write_file(tempdir.path(), "knowledge/topics/visible.md", "# Visible\n");
         write_file(tempdir.path(), "knowledge/topics/ignored.md", "# Ignored\n");
 
-        let mut default_store = MemoryWikiStore::default();
+        let mut default_store = FakeWikiStore::default();
         index_vault_for_test(tempdir.path(), &mut default_store).expect("default index vault");
         assert!(
             default_store
@@ -645,7 +645,7 @@ mod tests {
                 .contains_key(&PathBuf::from("knowledge/topics/ignored.md"))
         );
 
-        let mut disabled_store = MemoryWikiStore::default();
+        let mut disabled_store = FakeWikiStore::default();
         index_vault(
             tempdir.path(),
             &mut disabled_store,
@@ -669,7 +669,7 @@ mod tests {
         write_file(tempdir.path(), "raw/source.txt", "raw source stays\n");
         let raw_before = std::fs::read_to_string(tempdir.path().join("raw/source.txt"))
             .expect("read raw source");
-        let mut store = MemoryWikiStore::default();
+        let mut store = FakeWikiStore::default();
         seed_derived_rows(&mut store, "knowledge/topics/stale.md");
 
         index_vault_for_test(tempdir.path(), &mut store).expect("index vault");
@@ -699,7 +699,7 @@ mod tests {
         );
         let raw_path = tempdir.path().join("raw/article.txt");
         let raw_before = std::fs::read_to_string(&raw_path).expect("read raw source");
-        let mut store = MemoryWikiStore::default();
+        let mut store = FakeWikiStore::default();
 
         index_vault_for_test(tempdir.path(), &mut store).expect("index vault");
 
@@ -720,7 +720,7 @@ mod tests {
         let tempdir = tempfile::tempdir().expect("tempdir");
         let body = "# Stable\n\nNo changes.\n";
         write_file(tempdir.path(), "knowledge/concepts/stable.md", body);
-        let mut store = MemoryWikiStore::default();
+        let mut store = FakeWikiStore::default();
 
         index_vault_for_test(tempdir.path(), &mut store).expect("first index");
         assert_eq!(
@@ -756,7 +756,7 @@ mod tests {
             "code/crates/gwiki/src/indexer.md",
             "---\nprovenance:\n  - file: crates/gwiki/src/indexer.rs\n---\n# Indexer\n\nSee [[code/crates/gwiki/src/store|store docs]].\n",
         );
-        let mut store = MemoryWikiStore::default();
+        let mut store = FakeWikiStore::default();
 
         index_vault_for_test(tempdir.path(), &mut store).expect("index vault");
 
@@ -784,7 +784,7 @@ mod tests {
             "code/files/src/lib.rs.md",
             "# src/lib.rs\n\nModule: [[code/modules/src|src]].\n",
         );
-        let mut store = MemoryWikiStore::default();
+        let mut store = FakeWikiStore::default();
 
         index_vault_for_test(tempdir.path(), &mut store).expect("index unified vault");
 
@@ -810,7 +810,7 @@ mod tests {
         write_file(tempdir.path(), "code/a.md", "# A\n\nSee [[B]].\n");
         write_file(tempdir.path(), "code/nested/b.md", "# B\n\nStable.\n");
         write_file(tempdir.path(), "code/nested/ignored.txt", "not markdown\n");
-        let mut store = MemoryWikiStore::default();
+        let mut store = FakeWikiStore::default();
 
         index_vault_for_test(tempdir.path(), &mut store).expect("first index");
 
@@ -861,7 +861,7 @@ mod tests {
         let tempdir = tempfile::tempdir().expect("tempdir");
         let body = "---\ntitle: Rust\ntags:\n  - systems\n  - language\n---\n# Rust\n\nBody.\n";
         write_file(tempdir.path(), "knowledge/topics/rust.md", body);
-        let mut store = MemoryWikiStore::default();
+        let mut store = FakeWikiStore::default();
 
         index_vault_for_test(tempdir.path(), &mut store).expect("index vault");
 
@@ -881,7 +881,7 @@ mod tests {
             "knowledge/topics/plain.md",
             "---\ntitle: Plain\ngenerated_by: unknown-generator\n---\n# Plain\n\nBody.\n",
         );
-        let mut store = MemoryWikiStore::default();
+        let mut store = FakeWikiStore::default();
 
         index_vault_for_test(tempdir.path(), &mut store).expect("index vault");
 
@@ -895,7 +895,7 @@ mod tests {
     fn documents_without_frontmatter_store_empty_object() {
         let tempdir = tempfile::tempdir().expect("tempdir");
         write_file(tempdir.path(), "knowledge/topics/plain.md", "# Plain\n");
-        let mut store = MemoryWikiStore::default();
+        let mut store = FakeWikiStore::default();
 
         index_vault_for_test(tempdir.path(), &mut store).expect("index vault");
 
@@ -908,7 +908,7 @@ mod tests {
         let tempdir = tempfile::tempdir().expect("tempdir");
         let body = "---\ntitle: Broken\n\n# Broken\n\nNo closing delimiter.\n";
         write_file(tempdir.path(), "knowledge/topics/broken.md", body);
-        let mut store = MemoryWikiStore::default();
+        let mut store = FakeWikiStore::default();
 
         index_vault_for_test(tempdir.path(), &mut store).expect("index vault");
 
@@ -922,7 +922,7 @@ mod tests {
         let tempdir = tempfile::tempdir().expect("tempdir");
         let body = "---\ntags:\n  - keep\n---\n# Stable\n";
         write_file(tempdir.path(), "knowledge/concepts/stable.md", body);
-        let mut store = MemoryWikiStore::default();
+        let mut store = FakeWikiStore::default();
 
         index_vault_for_test(tempdir.path(), &mut store).expect("first index");
         let path = PathBuf::from("knowledge/concepts/stable.md");

@@ -80,12 +80,8 @@ fn page_write_and_delete_round_trip_via_stdin() {
 
 #[test]
 fn core_commands_parse_scope_flags() {
-    let cases = [
+    let succeed = [
         vec!["init", "--topic", "rust"],
-        vec!["setup", "--topic", "rust"],
-        vec!["index", "--topic", "rust"],
-        vec!["ingest-file", "--topic", "rust", "README.md"],
-        vec!["search", "--topic", "rust", "ownership"],
         vec![
             "read",
             "--topic",
@@ -94,16 +90,12 @@ fn core_commands_parse_scope_flags() {
             "knowledge/topics/rust.md",
         ],
         vec!["read", "--topic", "rust", "--title", "Rust"],
-        vec!["backlinks", "--topic", "rust", "knowledge/topics/rust.md"],
-        vec!["link-suggest", "--topic", "rust"],
         vec!["audit", "--topic", "rust"],
         vec!["lint", "--topic", "rust"],
         vec!["health", "--topic", "rust"],
         vec!["status", "--topic", "rust"],
-        vec!["--project", "search", "ownership"],
     ];
-
-    for args in cases {
+    for args in succeed {
         let output = gwiki(&args);
         assert!(
             output.status.success(),
@@ -113,10 +105,38 @@ fn core_commands_parse_scope_flags() {
         );
     }
 
+    let store_backed = [
+        vec!["index", "--topic", "rust"],
+        vec!["ingest-file", "--topic", "rust", "README.md"],
+        vec!["search", "--topic", "rust", "ownership"],
+        vec!["backlinks", "--topic", "rust", "knowledge/topics/rust.md"],
+        vec!["link-suggest", "--topic", "rust"],
+        vec!["--project", "search", "ownership"],
+    ];
+    for args in store_backed {
+        let output = gwiki(&args);
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        assert!(
+            !output.status.success(),
+            "{args:?} must require a grant, not degrade to memory\nstdout:\n{}\nstderr:\n{stderr}",
+            String::from_utf8_lossy(&output.stdout),
+        );
+        assert!(
+            stderr.contains("daemon_required")
+                || stderr.contains("daemon required")
+                || stderr.contains("\"code\": \"malformed\""),
+            "{args:?} must fail typed as a grant/daemon error\nstderr:\n{stderr}"
+        );
+    }
+
     let quiet = gwiki(&["--quiet", "status", "--topic", "rust"]);
     assert!(quiet.status.success());
     assert_eq!(String::from_utf8_lossy(&quiet.stderr), "");
-    assert!(String::from_utf8_lossy(&quiet.stdout).contains("\"status\": \"shell-ready\""));
+    let quiet_stdout = String::from_utf8_lossy(&quiet.stdout);
+    assert!(
+        quiet_stdout.contains("\"grant\"") && !quiet_stdout.contains("shell-ready"),
+        "status should report grant state, not shell-ready\n{quiet_stdout}"
+    );
 
     let short_quiet = gwiki(&["status", "--topic", "rust", "-q"]);
     assert!(short_quiet.status.success());

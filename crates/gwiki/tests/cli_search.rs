@@ -5,14 +5,15 @@ fn search_json_includes_scope() {
     let fixture = common::GwikiFixture::new();
 
     let output = fixture.output(&["--format", "json", "search", "--topic", "rust", "ownership"]);
-    common::assert_success(&output, "search");
-
-    let payload = common::json_stdout(&output);
-    assert_eq!(payload["command"], "search");
-    assert_eq!(payload["query"], "ownership");
-    assert_eq!(payload["scope"]["kind"], "topic");
-    assert_eq!(payload["scope"]["id"], "rust");
-    assert!(payload["results"].is_array());
+    assert!(
+        !output.status.success(),
+        "search must not fall back to a memory store"
+    );
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(
+        stderr.contains("daemon required") || stderr.contains("malformed grant"),
+        "{stderr}"
+    );
 }
 
 mod serial_db {
@@ -35,11 +36,7 @@ mod serial_db {
             String::from_utf8_lossy(&output.stdout),
             String::from_utf8_lossy(&output.stderr)
         );
-        assert_json_error(
-            &output,
-            "config_error",
-            "failed to connect to PostgreSQL for gwiki search",
-        );
+        assert_grant_gated(&output);
     }
 
     #[test]
@@ -63,11 +60,7 @@ mod serial_db {
             String::from_utf8_lossy(&output.stdout),
             String::from_utf8_lossy(&output.stderr)
         );
-        assert_json_error(
-            &output,
-            "config_error",
-            "failed to connect to PostgreSQL for gwiki index",
-        );
+        assert_grant_gated(&output);
     }
 
     #[test]
@@ -96,11 +89,7 @@ mod serial_db {
             String::from_utf8_lossy(&output.stdout),
             String::from_utf8_lossy(&output.stderr)
         );
-        assert_json_error(
-            &output,
-            "config_error",
-            "failed to connect to PostgreSQL for gwiki ingest-file",
-        );
+        assert_grant_gated(&output);
     }
 
     #[test]
@@ -111,111 +100,22 @@ mod serial_db {
         };
         let fixture = common::GwikiFixture::new();
         let topic = common::unique_topic("rust");
-        let _cleanup = common::GwikiScopeCleanup::new(database_url.clone(), "topic", topic.clone());
-        let unique_term = common::unique_topic("durablebm25").replace('-', "");
-        let wiki_page = fixture
-            .topic_vault(&topic)
-            .join("knowledge/topics/ownership.md");
-        std::fs::create_dir_all(wiki_page.parent().expect("wiki page parent")).expect("mkdir wiki");
-        std::fs::write(
-            &wiki_page,
-            format!("# Ownership\n\nThe {unique_term} token should be durable.\n"),
-        )
-        .expect("write wiki");
-
-        let setup = fixture.output_with_database_url_in(
-            fixture.root(),
-            &database_url,
-            &[
-                "--format",
-                "json",
-                "setup",
-                "--standalone",
-                "--no-services",
-                "--database-url",
-                &database_url,
-                "--topic",
-                &topic,
-            ],
-        );
-        common::assert_success(&setup, "setup");
-
         let index = fixture.output_with_database_url_in(
             fixture.root(),
             &database_url,
             &["--format", "json", "index", "--topic", &topic],
         );
-        common::assert_success(&index, "index");
-
-        let search = fixture.output_with_database_url_in(
-            fixture.root(),
-            &database_url,
-            &[
-                "--format",
-                "json",
-                "search",
-                "--topic",
-                &topic,
-                "--no-semantic",
-                &unique_term,
-            ],
-        );
-        common::assert_success(&search, "search");
-
-        let payload: serde_json::Value =
-            serde_json::from_slice(&search.stdout).expect("search JSON");
-        let results = payload["results"].as_array().expect("results array");
-        assert!(
-            results
-                .iter()
-                .any(|result| result["wiki_page"].as_str() == Some("knowledge/topics/ownership.md")),
-            "search did not return indexed wiki page\nstdout:\n{}",
-            String::from_utf8_lossy(&search.stdout)
-        );
-
-        let purge = fixture.output_with_database_url_in(
-            fixture.root(),
-            &database_url,
-            &["--format", "json", "purge", "--topic", &topic, "--yes"],
-        );
-        common::assert_success(&purge, "purge");
-
-        let after_purge = fixture.output_with_database_url_in(
-            fixture.root(),
-            &database_url,
-            &[
-                "--format",
-                "json",
-                "search",
-                "--topic",
-                &topic,
-                "--no-semantic",
-                &unique_term,
-            ],
-        );
-        common::assert_success(&after_purge, "search after purge");
-
-        let payload: serde_json::Value =
-            serde_json::from_slice(&after_purge.stdout).expect("search JSON");
-        let results = payload["results"].as_array().expect("results array");
-        assert!(
-            !results
-                .iter()
-                .any(|result| result["wiki_page"].as_str() == Some("knowledge/topics/ownership.md")),
-            "purged wiki page still appeared in search\nstdout:\n{}",
-            String::from_utf8_lossy(&after_purge.stdout)
-        );
+        assert!(!index.status.success(), "env DSN must not bypass grant");
+        assert_grant_gated(&index);
     }
 
-    fn assert_json_error(output: &std::process::Output, code: &str, message_contains: &str) {
-        let payload = common::json_stderr(output);
-        assert_eq!(payload["code"].as_str(), Some(code));
+    fn assert_grant_gated(output: &std::process::Output) {
+        let stderr = String::from_utf8_lossy(&output.stderr);
         assert!(
-            payload["message"]
-                .as_str()
-                .is_some_and(|message| message.contains(message_contains)),
-            "stderr:\n{}",
-            String::from_utf8_lossy(&output.stderr)
+            stderr.contains("daemon required")
+                || stderr.contains("malformed grant")
+                || stderr.contains("daemon_required"),
+            "stderr:\n{stderr}"
         );
     }
 }

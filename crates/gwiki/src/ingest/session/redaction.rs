@@ -48,7 +48,7 @@ mod tests {
     use super::super::{SessionFileSnapshot, ingest_session_file_without_index};
     use super::redact_session_markdown;
     use crate::ingest::index_after_ingest;
-    use crate::store::MemoryWikiStore;
+    use crate::store::FakeWikiStore;
 
     #[test]
     fn redacts_session_secret_patterns() {
@@ -115,7 +115,7 @@ mod tests {
         assert!(!derived_markdown.contains("ops@example.com"));
         assert!(!derived_markdown.contains(&openai_key));
 
-        let mut store = MemoryWikiStore::default();
+        let mut store = FakeWikiStore::default();
         index_after_ingest(
             temp.path(),
             &mut store,
@@ -130,7 +130,7 @@ mod tests {
         assert!(!indexed_text.contains(&github_token));
     }
 
-    fn indexed_store_text(store: &MemoryWikiStore) -> String {
+    fn indexed_store_text(store: &FakeWikiStore) -> String {
         let mut text = String::new();
         for document in store.documents.values() {
             if let Some(title) = &document.title {

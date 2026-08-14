@@ -280,7 +280,7 @@ fn unchanged_url_refresh_promotes_and_advances_cache_freshness() {
     assert_ne!(refreshed.last_verified_at, "unix-ms:1");
     assert!(crate::support::time::parse_unix_ms(&refreshed.last_verified_at).is_some());
 
-    let mut store = crate::store::MemoryWikiStore::default();
+    let mut store = crate::store::FakeWikiStore::default();
     let cached = crate::ingest::url::ingest_urls_with_fetcher(
         &vault,
         &mut store,

@@ -9,7 +9,7 @@ use crate::commands::index::{
 use crate::ingest::{self, session_archive};
 use crate::progress::ProgressOptions;
 use crate::search::SearchScope;
-use crate::support::counts::{IndexCounts, index_counts};
+use crate::support::counts::IndexCounts;
 use crate::support::env::database_url_for;
 use crate::support::scope::{
     resolve_command_scope, resolved_scope_identity, search_scope_for_resolved,
@@ -17,7 +17,7 @@ use crate::support::scope::{
 use crate::support::time::collect_timestamp;
 use crate::{
     CommandOutcome, RunOptions, ScopeIdentity, ScopeSelection, SyncSessionsOptions, WikiError,
-    store, vault,
+    vault,
 };
 
 const COMMAND: &str = "gwiki sync-sessions";
@@ -148,28 +148,9 @@ fn execute_with_database_url(
         return Ok(render_sync_sessions(output_scope, &result, counts));
     }
 
-    let mut store = store::MemoryWikiStore::default();
-    let result = session_archive::sync_session_transcript_archives(
-        scope.root(),
-        &mut store,
-        session_archive::SessionArchiveSyncRequest {
-            archive_dir: &archive_dir,
-            wiki_dir: &wiki_dir,
-            limit: options.limit,
-            raw_mode,
-            enrich: options.enrich,
-            fetched_at: &fetched_at,
-        },
-        &mut progress,
-    )?;
-    let counts = index_counts(&store);
-    crate::log::append_sources_ingested(
-        scope.root(),
-        &output_scope,
-        &fetched_at,
-        result.accepted.iter().map(|accepted| &accepted.result),
-    )?;
-    Ok(render_sync_sessions(output_scope, &result, counts))
+    Err(WikiError::from(
+        gobby_core::grant::GrantError::DaemonRequired,
+    ))
 }
 
 pub(super) fn run_persistent_write_phases<C, T>(

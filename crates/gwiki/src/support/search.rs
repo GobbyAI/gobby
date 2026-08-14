@@ -1,17 +1,23 @@
 use gobby_core::config::ConfigSource;
 use gobby_core::degradation::{DegradationKind, ServiceState};
+#[cfg(test)]
 use std::sync::Arc;
 
-use crate::{search, store};
+use crate::search;
+#[cfg(test)]
+use crate::store;
 
+#[cfg(test)]
 use super::text::{
     display_path, document_kind_name, keyword_score, query_tokens, snippet_from_text,
 };
 
+#[cfg(test)]
 pub(crate) struct StoreBm25Backend {
     pub(crate) hits: Arc<[search::WikiSearchResult]>,
 }
 
+#[cfg(test)]
 impl search::bm25::Bm25SearchBackend for StoreBm25Backend {
     fn search_bm25(
         &mut self,
@@ -23,7 +29,7 @@ impl search::bm25::Bm25SearchBackend for StoreBm25Backend {
 
 pub(crate) struct UnavailableSemanticBackend;
 
-impl search::semantic::SemanticSearchBackend for UnavailableSemanticBackend {
+impl crate::search::semantic::SemanticSearchBackend for UnavailableSemanticBackend {
     fn search_semantic(
         &mut self,
         _request: search::semantic::SemanticSearchRequest,
@@ -58,8 +64,10 @@ impl ConfigSource for PostgresConfigSource<'_> {
     }
 }
 
+#[cfg(test)]
+#[allow(dead_code)]
 pub(crate) fn store_search_hits(
-    store: &store::MemoryWikiStore,
+    store: &store::FakeWikiStore,
     scope: &search::SearchScope,
     query: &str,
 ) -> Vec<search::WikiSearchResult> {

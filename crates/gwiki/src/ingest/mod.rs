@@ -430,7 +430,7 @@ mod tests {
     use crate::api::IngestFileOptions;
     use crate::ingest::file;
     use crate::sources::{CompileStatus, IngestionMethod, SourceKind, SourceRecord};
-    use crate::store::{MemoryWikiStore, WikiIngestionEvent};
+    use crate::store::{FakeWikiStore, WikiIngestionEvent};
 
     fn no_ai_context() -> AiContext {
         let mut source = EnvOnlySource;
@@ -686,7 +686,7 @@ mod tests {
         let source_path = temp.path().join("capture.txt");
         std::fs::write(&source_path, "captured source text\n").expect("write source");
 
-        let mut store = MemoryWikiStore::default();
+        let mut store = FakeWikiStore::default();
         store.file_hashes.insert(
             PathBuf::from("knowledge/topics/existing.md"),
             content_hash(wiki_body.as_bytes()),

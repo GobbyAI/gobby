@@ -2,8 +2,11 @@ use std::path::Path;
 
 use gobby_core::degradation::{DegradationKind, ServiceState};
 
+#[cfg(test)]
 use crate::store;
 
+#[cfg(test)]
+#[allow(dead_code)]
 pub(crate) fn query_tokens(query: &str) -> Vec<String> {
     query
         .split(|ch: char| !ch.is_alphanumeric())
@@ -12,6 +15,8 @@ pub(crate) fn query_tokens(query: &str) -> Vec<String> {
         .collect()
 }
 
+#[cfg(test)]
+#[allow(dead_code)]
 pub(crate) fn keyword_score(text: &str, tokens: &[String]) -> usize {
     let haystack = text.to_lowercase();
     // Contract: `tokens` come from `query_tokens` and are already normalized.
@@ -72,6 +77,8 @@ pub(crate) fn degradation_label(degradation: &DegradationKind) -> String {
     }
 }
 
+#[cfg(test)]
+#[allow(dead_code)]
 pub(crate) fn document_kind_name(kind: store::WikiDocumentKind) -> &'static str {
     match kind {
         store::WikiDocumentKind::SourceCatalog => "source_catalog",

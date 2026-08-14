@@ -1,22 +1,19 @@
 use std::collections::BTreeSet;
-use std::path::{Path, PathBuf};
+use std::path::PathBuf;
 
 use serde::Serialize;
 use serde_json::Value;
 
-use crate::support::config;
 use crate::support::scope::resolve_selection_context;
 use crate::support::{counts, env};
-use crate::{
-    CommandOutcome, ScopeIdentity, ScopeSelection, WikiError, audit, health, indexer, store,
-};
+use crate::{CommandOutcome, ScopeIdentity, ScopeSelection, WikiError, audit, health};
 
 pub(crate) fn execute(selection: ScopeSelection) -> Result<CommandOutcome, WikiError> {
     let resolved = resolve_selection_context(&selection)?;
     let output_scope = resolved.output_scope.clone();
     let root = resolved.scope.root().to_path_buf();
-    let runtime = super::status::runtime_status_for("gwiki trust")?;
-    let index = load_index_counts(resolved.scope.root(), &resolved.search_scope)?;
+    let grant = super::status::grant_status_snapshot();
+    let index = load_index_counts(&resolved.search_scope)?;
     let health = health::inspect(resolved.scope.root(), output_scope.clone())?;
     let audit = audit::run_with_options(
         resolved.scope.root(),
@@ -26,8 +23,17 @@ pub(crate) fn execute(selection: ScopeSelection) -> Result<CommandOutcome, WikiE
     let report = TrustReport::from_parts(
         output_scope,
         root,
-        runtime.mode,
-        runtime.services,
+        grant.state,
+        serde_json::json!({
+            "grant": {
+                "state": grant.state,
+                "deployment_token": grant.deployment_token,
+                "epoch": grant.epoch,
+            },
+            "daemon": {
+                "reachable": grant.reachable,
+            },
+        }),
         index,
         &health,
         &audit,
@@ -51,62 +57,19 @@ struct IndexCountsOutcome {
     degradations: Vec<String>,
 }
 
-fn load_index_counts(
-    root: &Path,
-    scope: &crate::search::SearchScope,
-) -> Result<IndexCountsOutcome, WikiError> {
-    let mut degradations = Vec::new();
-    let mut index_options = config::local_index_options()?;
-    if let Some(database_url) = env::database_url_for("gwiki trust")? {
-        match gobby_core::postgres::connect_readonly(&database_url) {
-            Ok(mut conn) => {
-                index_options = config::index_options_from_conn(&mut conn)?;
-                match counts::postgres_index_counts(&mut conn, scope) {
-                    Ok(counts) => {
-                        return Ok(IndexCountsOutcome {
-                            counts,
-                            backend: "postgres",
-                            degradations,
-                        });
-                    }
-                    Err(error) => {
-                        log::warn!(
-                            "failed to load PostgreSQL index counts for gwiki trust: {error}"
-                        );
-                        degradations.push("postgres_index_counts_unavailable".to_string());
-                    }
-                }
-            }
-            Err(error) => {
-                log::warn!("failed to connect to PostgreSQL for gwiki trust: {error}");
-                degradations.push("postgres_unavailable".to_string());
-            }
+fn load_index_counts(scope: &crate::search::SearchScope) -> Result<IndexCountsOutcome, WikiError> {
+    let database_url = env::database_url_for("gwiki trust")?
+        .ok_or_else(|| WikiError::from(gobby_core::grant::GrantError::DaemonRequired))?;
+    let mut conn = gobby_core::postgres::connect_readonly(&database_url).map_err(|error| {
+        WikiError::Config {
+            detail: format!("failed to connect to PostgreSQL for gwiki trust: {error}"),
         }
-    } else {
-        degradations.push("postgres_unconfigured".to_string());
-    }
-
+    })?;
     Ok(IndexCountsOutcome {
-        counts: memory_index_counts(root, index_options)?,
-        backend: "memory",
-        degradations,
+        counts: counts::postgres_index_counts(&mut conn, scope)?,
+        backend: "postgres",
+        degradations: Vec::new(),
     })
-}
-
-fn memory_index_counts(
-    root: &Path,
-    index_options: indexer::IndexOptions,
-) -> Result<counts::IndexCounts, WikiError> {
-    let mut store = store::MemoryWikiStore::default();
-    if root.is_dir() {
-        indexer::index_vault(
-            root,
-            &mut store,
-            index_options,
-            &mut crate::progress::ProgressOptions::default(),
-        )?;
-    }
-    Ok(counts::index_counts(&store))
 }
 
 #[derive(Debug, Serialize)]
@@ -394,7 +357,7 @@ mod tests {
 
     fn indexed_counts() -> TrustIndexCounts {
         TrustIndexCounts {
-            backend: "memory",
+            backend: "postgres",
             documents: 1,
             chunks: 2,
             links: 3,
@@ -557,13 +520,13 @@ mod tests {
                 sources: 0,
                 ingestions: 0,
             },
-            backend: "memory",
+            backend: "postgres",
             degradations: Vec::new(),
         };
         let report = TrustReport::from_parts(
             scope,
             "wiki-root".into(),
-            "memory",
+            "valid",
             json!({
                 "postgres": {"configured": true},
                 "falkordb": {"configured": true},
@@ -637,7 +600,7 @@ mod tests {
                 &health_summary,
                 &degradations,
             ),
-            runtime: "memory",
+            runtime: "valid",
             services,
             index_counts,
             degradations,

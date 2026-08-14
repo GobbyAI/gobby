@@ -3,7 +3,7 @@ use std::path::{Path, PathBuf};
 
 use super::*;
 use crate::sources::{SourceKind, SourceManifest};
-use crate::store::{MemoryWikiStore, WikiDocumentKind, WikiIngestionEvent};
+use crate::store::{FakeWikiStore, WikiDocumentKind, WikiIngestionEvent};
 
 fn write_file(root: &Path, relative: &str, contents: &[u8]) {
     let path = root.join(relative);
@@ -209,7 +209,7 @@ fn collect_asset_write_failure_rolls_back_new_manifest_entry() {
 fn collect_indexes_accepted_sources() {
     let temp = tempfile::tempdir().expect("tempdir");
     write_file(temp.path(), "inbox/note.txt", b"accepted source text\n");
-    let mut store = MemoryWikiStore::default();
+    let mut store = FakeWikiStore::default();
 
     let report = collect_inbox_and_index(temp.path(), &mut store, "2026-05-29T18:03:00Z")
         .expect("collect and index inbox items");

@@ -6,14 +6,9 @@ use super::{
     StoreError, WikiChunk, WikiDocument, WikiIndexStore, WikiIngestion, WikiLink, WikiSource,
 };
 
-/// In-memory wiki index used by local shell commands and tests.
-///
-/// Large vaults can consume substantial memory because documents, chunks,
-/// links, and source metadata are retained together. Set
-/// `GWIKI_MAX_MEMORY_INDEX_BYTES` to cap the markdown bytes accepted by this
-/// path before indexing.
+/// Test-only in-memory [`WikiIndexStore`]. Production uses [`super::PostgresWikiStore`].
 #[derive(Debug, Default)]
-pub struct MemoryWikiStore {
+pub struct FakeWikiStore {
     pub documents: BTreeMap<PathBuf, WikiDocument>,
     pub chunks: BTreeMap<PathBuf, Vec<WikiChunk>>,
     pub links: BTreeMap<PathBuf, Vec<WikiLink>>,
@@ -27,7 +22,7 @@ pub struct MemoryWikiStore {
     pub source_upserts: usize,
 }
 
-impl WikiIndexStore for MemoryWikiStore {
+impl WikiIndexStore for FakeWikiStore {
     fn indexed_hashes(&mut self) -> Result<BTreeMap<PathBuf, String>, StoreError> {
         Ok(self.file_hashes.clone())
     }

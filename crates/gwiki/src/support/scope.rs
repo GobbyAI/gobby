@@ -1,44 +1,10 @@
 use std::path::Path;
 
 use crate::{
-    ScopeIdentity, ScopeKind, ScopeSelection, WikiError, indexer, scope as wiki_scope, search,
-    store,
+    ScopeIdentity, ScopeKind, ScopeSelection, WikiError, scope as wiki_scope, search, store,
 };
 
-use super::config;
-
 pub(crate) const DEFAULT_PROJECT_ID: &str = "current";
-
-pub(crate) fn indexed_store_for_selection(
-    selection: &ScopeSelection,
-) -> Result<
-    (
-        wiki_scope::ResolvedScope,
-        ScopeIdentity,
-        search::SearchScope,
-        store::MemoryWikiStore,
-    ),
-    WikiError,
-> {
-    let resolved = resolve_selection_context(selection)?;
-    let index_options = config::local_index_options()?;
-    let mut store = store::MemoryWikiStore::default();
-    if resolved.scope.root().is_dir() {
-        indexer::index_vault(
-            resolved.scope.root(),
-            &mut store,
-            index_options,
-            &mut crate::progress::ProgressOptions::default(),
-        )?;
-    }
-
-    Ok((
-        resolved.scope,
-        resolved.output_scope,
-        resolved.search_scope,
-        store,
-    ))
-}
 
 pub(crate) struct ResolvedSelectionContext {
     pub(crate) scope: wiki_scope::ResolvedScope,

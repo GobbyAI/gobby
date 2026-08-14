@@ -1,6 +1,6 @@
 use std::path::{Path, PathBuf};
 
-use gobby_core::ai::effective_config::{ai_source_for_conn, ai_source_without_primary};
+use gobby_core::ai::effective_config::ai_source_for_conn;
 #[cfg(feature = "ai")]
 use gobby_core::ai::effective_route;
 use gobby_core::ai_context::AiContext;
@@ -15,8 +15,8 @@ use serde_json::json;
 use crate::ingest;
 use crate::progress::{ProgressOptions, ProgressPhase, ProgressSink};
 use crate::search::SearchScope;
-use crate::support::config::{index_options_from_conn, local_index_options, qdrant_config_has_url};
-use crate::support::counts::{IndexCounts, index_counts, postgres_index_counts};
+use crate::support::config::{index_options_from_conn, qdrant_config_has_url};
+use crate::support::counts::{IndexCounts, postgres_index_counts};
 use crate::support::env::database_url_for;
 use crate::support::scope::{
     resolve_command_scope, resolved_scope_identity, search_scope_for_resolved,
@@ -144,14 +144,9 @@ fn index_resolved_scope_report(
         });
     }
 
-    let mut index_options = local_index_options()?;
-    index_options.force = force;
-    let mut store = store::MemoryWikiStore::default();
-    indexer::index_vault(scope.root(), &mut store, index_options, progress)?;
-    Ok(IndexReport {
-        counts: index_counts(&store),
-        degradations: Vec::new(),
-    })
+    Err(WikiError::from(
+        gobby_core::grant::GrantError::DaemonRequired,
+    ))
 }
 
 pub(crate) fn execute_ingest_file(
@@ -212,26 +207,9 @@ pub(crate) fn execute_ingest_file(
         return Ok(render_ingest_file(&path, output_scope, &result, counts));
     }
 
-    let mut source = ai_source_without_primary().map_err(|error| WikiError::Config {
-        detail: format!("failed to resolve AI config for gwiki ingest-file: {error}"),
-    })?;
-    let (ai_context, options) = resolve_ingest_ai_context(project_id, &options, &mut source)?;
-    let mut store = store::MemoryWikiStore::default();
-    let result = ingest::file::ingest_path(
-        scope.root(),
-        &mut store,
-        &output_scope,
-        &ai_context,
-        &options,
-        ingest::file::LocalFileSnapshot {
-            path: &path,
-            fetched_at: &fetched_at,
-        },
-        &mut progress_options,
-    )?;
-    let counts = index_counts(&store);
-    crate::log::append_sources_ingested(scope.root(), &output_scope, &fetched_at, [&result])?;
-    Ok(render_ingest_file(&path, output_scope, &result, counts))
+    Err(WikiError::from(
+        gobby_core::grant::GrantError::DaemonRequired,
+    ))
 }
 
 pub(crate) fn execute_ingest_url(
@@ -291,23 +269,9 @@ pub(crate) fn execute_ingest_url(
         return Ok(render_ingest_url(output_scope, &result, counts));
     }
 
-    let mut store = store::MemoryWikiStore::default();
-    let result = ingest::url::ingest_urls(
-        scope.root(),
-        &mut store,
-        &urls,
-        &fetched_at,
-        max_age_hours,
-        &mut progress_options,
-    )?;
-    let counts = index_counts(&store);
-    crate::log::append_sources_ingested(
-        scope.root(),
-        &output_scope,
-        &fetched_at,
-        result.accepted.iter().map(|accepted| &accepted.result),
-    )?;
-    Ok(render_ingest_url(output_scope, &result, counts))
+    Err(WikiError::from(
+        gobby_core::grant::GrantError::DaemonRequired,
+    ))
 }
 
 fn resolve_ingest_ai_context(
@@ -338,10 +302,9 @@ pub(crate) fn resolve_ingest_file_ai_context(
         return resolve_ingest_ai_context(project_id, options, &mut source);
     }
 
-    let mut source = ai_source_without_primary().map_err(|error| WikiError::Config {
-        detail: format!("failed to resolve AI config for {command}: {error}"),
-    })?;
-    resolve_ingest_ai_context(project_id, options, &mut source)
+    Err(WikiError::from(
+        gobby_core::grant::GrantError::DaemonRequired,
+    ))
 }
 
 fn resolve_video_frame_interval_seconds(source: &mut impl ConfigSource) -> Result<u32, WikiError> {

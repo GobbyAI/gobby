@@ -25,7 +25,7 @@ fn write_project(root: &Path) {
 
 fn run_gwiki(home: &Path, cwd: &Path, extra: &[(&str, &str)]) -> Output {
     let mut cmd = Command::new(env!("CARGO_BIN_EXE_gwiki"));
-    cmd.args(["--project", cwd.to_str().expect("utf8"), "status"])
+    cmd.args(["--project", cwd.to_str().expect("utf8"), "collect"])
         .current_dir(cwd)
         .env("HOME", home)
         .env("GOBBY_HOME", home)

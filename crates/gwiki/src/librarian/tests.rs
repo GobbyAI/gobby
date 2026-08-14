@@ -7,7 +7,6 @@ use crate::frontmatter::parse_frontmatter;
 use crate::markdown::parse_markdown;
 use crate::search::semantic::SemanticSearchRequest;
 use crate::sources::{SourceDraft, SourceManifest};
-use crate::support::test_env::EnvGuard;
 
 use super::semantic::{
     DISTINCT_PAIRS_RELATIVE_PATH, NearDuplicatePair, UnresolvedLinkCluster,
@@ -182,7 +181,16 @@ fn librarian_probed_options_reflect_runtime_services() {
         }
     );
     assert_eq!(
-        Options::probed(&RuntimeServices::detached(), false),
+        Options::probed(
+            &RuntimeServices {
+                postgres_configured: false,
+                falkor: None,
+                qdrant: None,
+                embedding: None,
+                semantic_embedding: None,
+            },
+            false,
+        ),
         Options {
             require_postgres_index: true,
             ..Options::offline()
@@ -862,15 +870,15 @@ fn librarian_requires_configured_postgres_index() {
         "knowledge/topics/page.md",
         "# Page\n\nSupported enough.\n",
     );
-    let _database_url = EnvGuard::set("GWIKI_TEST_DATABASE_URL", "postgresql://127.0.0.1:1/gwiki");
-
     let error = run(root, ScopeIdentity::topic("ops"), Options::default(), None)
-        .expect_err("PostgreSQL is required");
+        .expect_err("grant-resolved PostgreSQL is required");
 
+    let message = error.to_string();
     assert!(
-        error
-            .to_string()
-            .contains("failed to connect to PostgreSQL for gwiki librarian"),
+        message.contains("daemon required")
+            || message.contains("malformed grant")
+            || message.contains("grant expired")
+            || message.contains("failed to connect to PostgreSQL for gwiki librarian"),
         "{error}"
     );
 }

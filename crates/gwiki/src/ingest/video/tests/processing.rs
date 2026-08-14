@@ -24,7 +24,7 @@ fn video_produces_transcript_and_frames() {
     let temp = tempfile::tempdir().expect("tempdir");
     let source_path = temp.path().join("lecture-source.mp4");
     std::fs::write(&source_path, b"video bytes").expect("write source video");
-    let mut store = MemoryWikiStore::default();
+    let mut store = FakeWikiStore::default();
     let media = FakeVideoMediaExtractor {
         audio_bytes: b"extracted audio".to_vec(),
         frames: vec![(0, b"frame-zero".to_vec()), (4_000, b"frame-four".to_vec())],
@@ -110,7 +110,7 @@ fn frame_interval_zero_disables_frames() {
     let temp = tempfile::tempdir().expect("tempdir");
     let source_path = temp.path().join("lecture-source.mp4");
     std::fs::write(&source_path, b"video bytes").expect("write source video");
-    let mut store = MemoryWikiStore::default();
+    let mut store = FakeWikiStore::default();
     let media = FakeVideoMediaExtractor {
         audio_bytes: b"extracted audio".to_vec(),
         frames: vec![(0, b"should-not-be-sampled".to_vec())],

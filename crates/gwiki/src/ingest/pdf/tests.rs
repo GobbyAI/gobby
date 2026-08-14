@@ -15,7 +15,7 @@ use super::{PdfMarkdownSummary, PdfPageMarkdown};
 use crate::ScopeIdentity;
 use crate::WikiError;
 use crate::sources::{SourceKind, SourceManifest};
-use crate::store::MemoryWikiStore;
+use crate::store::FakeWikiStore;
 use crate::vision::{VisionClient, VisionEndpoint, VisionExtraction, VisionRequest};
 
 struct FakePdfVisionClient;
@@ -110,7 +110,7 @@ fn combines_text_layer_and_vision() {
         },
     ];
     let vision = FakePdfVisionClient;
-    let mut store = MemoryWikiStore::default();
+    let mut store = FakeWikiStore::default();
 
     let result = ingest_pages_with_vision(
         temp.path(),
@@ -167,7 +167,7 @@ fn unchanged_pdf_reingest_reuses_immutable_raw_capture_and_skips_vision() {
         }]
     };
     let vision = FakePdfVisionClient;
-    let mut store = MemoryWikiStore::default();
+    let mut store = FakeWikiStore::default();
 
     let first = ingest_pages_with_vision(
         temp.path(),
@@ -224,7 +224,7 @@ fn pdf_rendered_page_file_names_use_file_stem_for_uppercase_extension() {
         width: Some(1200),
         height: Some(1600),
     }];
-    let mut store = MemoryWikiStore::default();
+    let mut store = FakeWikiStore::default();
 
     let result = ingest_pages_with_vision(
         temp.path(),
@@ -270,7 +270,7 @@ fn pdf_ingest_preserves_page_refs() {
             },
         ],
     };
-    let mut store = MemoryWikiStore::default();
+    let mut store = FakeWikiStore::default();
 
     let scope = ScopeIdentity::global();
     let result = ingest_pages(temp.path(), &mut store, &scope, snapshot).expect("ingest pdf");
@@ -317,7 +317,7 @@ fn pdf_ingest_rolls_back_manifest_when_asset_write_fails() {
             text: "First page fact.".to_string(),
         }],
     };
-    let mut store = MemoryWikiStore::default();
+    let mut store = FakeWikiStore::default();
 
     ingest_pages(temp.path(), &mut store, &ScopeIdentity::global(), snapshot)
         .expect_err("asset write failure should fail ingest");
@@ -388,7 +388,7 @@ fn pdf_degradation_uses_uniform_metadata() {
 
     let temp = tempfile::tempdir().expect("tempdir");
     let bytes = b"%PDF-1.7\nsource bytes\n%%EOF\n".to_vec();
-    let mut store = MemoryWikiStore::default();
+    let mut store = FakeWikiStore::default();
     let vision = FailingPdfVisionClient;
     let snapshot = PdfSnapshot {
         location: "/tmp/scanned.pdf".to_string(),

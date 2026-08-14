@@ -7,7 +7,7 @@ use flate2::write::GzEncoder;
 use super::*;
 use crate::sources::{CompileStatus, IngestionMethod, SourceDraftRef};
 use crate::store::{
-    MemoryWikiStore, StoreError, WikiChunk, WikiDocument, WikiIndexStore, WikiIngestion, WikiLink,
+    FakeWikiStore, StoreError, WikiChunk, WikiDocument, WikiIndexStore, WikiIngestion, WikiLink,
     WikiSource,
 };
 use crate::support::text::slugify_with_options;
@@ -15,7 +15,7 @@ use crate::support::text::slugify_with_options;
 mod summary;
 
 struct FailingDeletionStore {
-    inner: MemoryWikiStore,
+    inner: FakeWikiStore,
 }
 
 impl WikiIndexStore for FailingDeletionStore {
@@ -76,7 +76,7 @@ fn sync_session_archives_ingests_gzip_and_indexes_once() {
         br#"{"type":"session","timestamp":"2026-06-16T20:00:00Z","payload":{"title":"Archive import","messages":[{"role":"user","content":"Summarize the project."},{"role":"assistant","content":"The session archive is searchable."}]}}"#,
     );
 
-    let mut store = MemoryWikiStore::default();
+    let mut store = FakeWikiStore::default();
     let report = sync_session_transcript_archives(
         temp.path(),
         &mut store,
@@ -117,7 +117,7 @@ fn sync_session_archives_ingests_gzip_and_indexes_once() {
 #[test]
 fn sync_session_archives_treats_missing_archive_dir_as_empty() {
     let temp = tempfile::tempdir().expect("tempdir");
-    let mut store = MemoryWikiStore::default();
+    let mut store = FakeWikiStore::default();
     let report = sync_session_transcript_archives(
         temp.path(),
         &mut store,
@@ -152,7 +152,7 @@ fn sync_session_archives_skips_previously_ingested_hashes() {
         br#"{"type":"session","timestamp":"2026-06-16T20:00:00Z","payload":{"title":"Repeat import","messages":[{"role":"user","content":"First run."}]}}"#,
     );
 
-    let mut store = MemoryWikiStore::default();
+    let mut store = FakeWikiStore::default();
     let first = sync_session_transcript_archives(
         temp.path(),
         &mut store,
@@ -169,7 +169,7 @@ fn sync_session_archives_skips_previously_ingested_hashes() {
     .expect("first sync");
     assert_eq!(first.accepted.len(), 1);
 
-    let mut second_store = MemoryWikiStore::default();
+    let mut second_store = FakeWikiStore::default();
     let second = sync_session_transcript_archives(
         temp.path(),
         &mut second_store,
@@ -204,7 +204,7 @@ fn sync_session_archives_reports_bad_gzip_without_blocking_good_archives() {
     );
     fs::write(archive_dir.join("bad.jsonl.gz"), b"not gzip").expect("bad archive");
 
-    let mut store = MemoryWikiStore::default();
+    let mut store = FakeWikiStore::default();
     let report = sync_session_transcript_archives(
         temp.path(),
         &mut store,
@@ -234,7 +234,7 @@ fn write_archive(path: &Path, bytes: &[u8]) {
     encoder.finish().expect("finish archive");
 }
 
-fn indexed_store_text(store: &MemoryWikiStore) -> String {
+fn indexed_store_text(store: &FakeWikiStore) -> String {
     let mut text = String::new();
     for document in store.documents.values() {
         text.push_str(&document.body);
@@ -283,7 +283,7 @@ fn synthesis_first_ingests_wiki_page() {
         "## Summary\n\nShipped the synthesis-first sourcing loop.\n\n## Key Claims\n\n- The daemon synthesizes one concise page per session.\n\n## Key Quotes\n\n> Synthesis supersedes raw.\n\n## Connections\n\n- [[session-transcript-wiki-fix]]\n\n## Contradictions\n\nNone.\n",
     );
 
-    let mut store = MemoryWikiStore::default();
+    let mut store = FakeWikiStore::default();
     let report = sync_session_transcript_archives(
         vault,
         &mut store,
@@ -343,7 +343,7 @@ fn sync_session_archives_skips_connections_enrichment_when_disabled() {
     ConnectionsEnricher::reset_resolve_count_for_test();
     write_session_wiki(&wiki_dir, external_id, body);
 
-    let mut store = MemoryWikiStore::default();
+    let mut store = FakeWikiStore::default();
     let report = sync_session_transcript_archives(
         vault,
         &mut store,
@@ -387,7 +387,7 @@ fn raw_archive_without_synthesis_uses_session_location() {
         br#"{"type":"session","timestamp":"2026-06-24T00:00:00Z","payload":{"title":"Raw fallback","messages":[{"role":"user","content":"No synthesis here."}]}}"#,
     );
 
-    let mut store = MemoryWikiStore::default();
+    let mut store = FakeWikiStore::default();
     let report = sync_session_transcript_archives(
         vault,
         &mut store,
@@ -430,7 +430,7 @@ fn raw_archive_fallback_requires_opt_in_and_preserves_present_manifest_entry() {
     let archive_path = archive_dir.join(format!("{external_id}.jsonl.gz"));
     fs::write(&archive_path, b"not gzip").expect("raw archive");
 
-    let mut store = MemoryWikiStore::default();
+    let mut store = FakeWikiStore::default();
     let report = sync_session_transcript_archives(
         vault,
         &mut store,
@@ -464,7 +464,7 @@ fn raw_archive_fallback_requires_opt_in_and_preserves_present_manifest_entry() {
         br#"{"type":"session","timestamp":"2026-06-24T00:00:00Z","payload":{"title":"Raw preserve","messages":[{"role":"user","content":"Keep this raw fallback."}]}}"#,
     );
 
-    let mut store = MemoryWikiStore::default();
+    let mut store = FakeWikiStore::default();
     let initial = sync_session_transcript_archives(
         preserve_vault,
         &mut store,
@@ -482,7 +482,7 @@ fn raw_archive_fallback_requires_opt_in_and_preserves_present_manifest_entry() {
     assert_eq!(initial.accepted.len(), 1);
     let record_id = initial.accepted[0].result.record.id.clone();
 
-    let mut rerun_store = MemoryWikiStore::default();
+    let mut rerun_store = FakeWikiStore::default();
     let rerun = sync_session_transcript_archives(
         preserve_vault,
         &mut rerun_store,
@@ -543,7 +543,7 @@ fn synthesis_suppresses_matching_raw_archive() {
     fs::create_dir(&wiki_dir).expect("wiki dir");
     write_session_wiki(&wiki_dir, external_id, "## Summary\n\nConcise synthesis.\n");
 
-    let mut store = MemoryWikiStore::default();
+    let mut store = FakeWikiStore::default();
     let report = sync_session_transcript_archives(
         vault,
         &mut store,
@@ -599,7 +599,7 @@ fn fresh_synthesis_supersedes_previous_synthesis_page() {
     let external_id = "abcdef00-1111-2222-3333-444455556666";
 
     write_session_wiki(&wiki_dir, external_id, "## Summary\n\nFirst revision.\n");
-    let mut store = MemoryWikiStore::default();
+    let mut store = FakeWikiStore::default();
     let first = sync_session_transcript_archives(
         vault,
         &mut store,
@@ -624,7 +624,7 @@ fn fresh_synthesis_supersedes_previous_synthesis_page() {
 
     // The daemon regenerates the synthesis with new content.
     write_session_wiki(&wiki_dir, external_id, "## Summary\n\nSecond revision.\n");
-    let mut store = MemoryWikiStore::default();
+    let mut store = FakeWikiStore::default();
     let second = sync_session_transcript_archives(
         vault,
         &mut store,
@@ -676,7 +676,7 @@ fn failed_fresh_synthesis_preserves_previous_synthesis_page() {
     let external_id = "fedcba00-1111-2222-3333-444455556666";
 
     write_session_wiki(&wiki_dir, external_id, "## Summary\n\nFirst revision.\n");
-    let mut store = MemoryWikiStore::default();
+    let mut store = FakeWikiStore::default();
     let first = sync_session_transcript_archives(
         vault,
         &mut store,
@@ -707,7 +707,7 @@ fn failed_fresh_synthesis_preserves_previous_synthesis_page() {
     let blocking_raw = vault.join("raw").join(format!("{new_id}.md"));
     fs::create_dir(blocking_raw).expect("blocking raw dir");
 
-    let mut store = MemoryWikiStore::default();
+    let mut store = FakeWikiStore::default();
     let second = sync_session_transcript_archives(
         vault,
         &mut store,
@@ -771,7 +771,7 @@ fn synthesis_supersedes_legacy_raw_location_page() {
         "## Summary\n\nReplaces the legacy page.\n",
     );
 
-    let mut store = MemoryWikiStore::default();
+    let mut store = FakeWikiStore::default();
     let report = sync_session_transcript_archives(
         vault,
         &mut store,
@@ -813,7 +813,7 @@ fn failed_deletion_preserves_session_manifest_and_page() {
     write_session_wiki(&wiki_dir, vanished_id, "## Summary\n\nWill vanish later.\n");
     write_session_wiki(&wiki_dir, survivor_id, "## Summary\n\nStays present.\n");
 
-    let mut store = MemoryWikiStore::default();
+    let mut store = FakeWikiStore::default();
     let first = sync_session_transcript_archives(
         vault,
         &mut store,
@@ -885,7 +885,7 @@ fn vanished_session_source_is_reconciled_and_triggers_index() {
     write_session_wiki(&wiki_dir, survivor_id, "## Summary\n\nStays present.\n");
 
     // First sync ingests the synthesis into a persistent store.
-    let mut store = MemoryWikiStore::default();
+    let mut store = FakeWikiStore::default();
     let first = sync_session_transcript_archives(
         vault,
         &mut store,
@@ -980,7 +980,7 @@ fn limit_does_not_false_delete_uncapped_sessions() {
     write_session_wiki(&wiki_dir, second_id, "## Summary\n\nSecond session.\n");
 
     // Ingest both with no limit.
-    let mut store = MemoryWikiStore::default();
+    let mut store = FakeWikiStore::default();
     let initial = sync_session_transcript_archives(
         vault,
         &mut store,
@@ -1000,7 +1000,7 @@ fn limit_does_not_false_delete_uncapped_sessions() {
 
     // Re-run with a cap of 1. The uncapped session must NOT be reconciled away,
     // because reconciliation diffs against the full pre-limit discovery.
-    let mut store = MemoryWikiStore::default();
+    let mut store = FakeWikiStore::default();
     let capped = sync_session_transcript_archives(
         vault,
         &mut store,
@@ -1040,7 +1040,7 @@ fn empty_discovery_preserves_existing_manifest_sessions() {
         br#"{"type":"session","timestamp":"2026-06-24T00:00:00Z","payload":{"title":"Raw preserve","messages":[{"role":"user","content":"Keep me when discovery is empty."}]}}"#,
     );
 
-    let mut store = MemoryWikiStore::default();
+    let mut store = FakeWikiStore::default();
     let first = sync_session_transcript_archives(
         vault,
         &mut store,
@@ -1102,7 +1102,7 @@ fn same_content_at_two_session_locations_ingests_twice() {
     write_archive(&archive_dir.join("session-one.jsonl.gz"), payload);
     write_archive(&archive_dir.join("session-two.jsonl.gz"), payload);
 
-    let mut store = MemoryWikiStore::default();
+    let mut store = FakeWikiStore::default();
     let report = sync_session_transcript_archives(
         vault,
         &mut store,
@@ -1172,7 +1172,7 @@ fn legacy_raw_entry_sharing_hash_is_superseded_by_id() {
     fs::create_dir_all(legacy_derived.parent().expect("parent")).expect("derived dir");
     fs::write(&legacy_derived, "# Legacy raw\n\nold page").expect("legacy derived");
 
-    let mut store = MemoryWikiStore::default();
+    let mut store = FakeWikiStore::default();
     let report = sync_session_transcript_archives(
         vault,
         &mut store,

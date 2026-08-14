@@ -4,7 +4,7 @@ use std::path::Path;
 use super::*;
 use crate::ScopeIdentity;
 use crate::sources::SourceKind;
-use crate::store::MemoryWikiStore;
+use crate::store::FakeWikiStore;
 
 fn zip_bytes(entries: &[(&str, &str)]) -> Vec<u8> {
     let cursor = std::io::Cursor::new(Vec::new());
@@ -97,7 +97,7 @@ fn xlsx_with_sheet_data(sheet_data: &str) -> Vec<u8> {
 
 fn ingest_sample(
     temp: &Path,
-    store: &mut MemoryWikiStore,
+    store: &mut FakeWikiStore,
     file_name: &str,
     kind: SourceKind,
     bytes: Vec<u8>,
@@ -120,7 +120,7 @@ fn ingest_sample(
 #[test]
 fn unchanged_document_reingest_reuses_immutable_raw_capture() {
     let temp = tempfile::tempdir().expect("tempdir");
-    let mut store = MemoryWikiStore::default();
+    let mut store = FakeWikiStore::default();
     let snapshot_for = |timestamp: &str| DocumentSnapshot {
         location: "/tmp/brief.docx".to_string(),
         file_name: "brief.docx".to_string(),
@@ -163,7 +163,7 @@ fn unchanged_document_reingest_reuses_immutable_raw_capture() {
 #[test]
 fn extracts_office_html_and_degrades() {
     let temp = tempfile::tempdir().expect("tempdir");
-    let mut store = MemoryWikiStore::default();
+    let mut store = FakeWikiStore::default();
 
     let cases = [
         (
@@ -245,7 +245,7 @@ fn extracts_office_html_and_degrades() {
 #[test]
 fn office_html_degradation_uses_uniform_metadata() {
     let temp = tempfile::tempdir().expect("tempdir");
-    let mut store = MemoryWikiStore::default();
+    let mut store = FakeWikiStore::default();
 
     let office_bytes = b"not a zip".to_vec();
     let office = ingest_sample(

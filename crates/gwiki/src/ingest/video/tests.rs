@@ -9,7 +9,7 @@ use gobby_core::indexing::{content_hash, file_content_hash};
 
 use super::*;
 use crate::sources::{CompileStatus, IngestionMethod, SourceKind, SourceManifest};
-use crate::store::{MemoryWikiStore, WikiDocumentKind};
+use crate::store::{FakeWikiStore, WikiDocumentKind};
 use crate::transcribe::{
     TranscriptionClient, TranscriptionEndpoint, TranscriptionOutput, TranscriptionRequest,
 };
@@ -255,7 +255,7 @@ fn ingest_with_media(
 ) -> Result<VideoIngestResult, WikiError> {
     let source_path = vault_root.join(format!("{file_name}.source"));
     std::fs::write(&source_path, b"video bytes").expect("write source video");
-    let mut store = MemoryWikiStore::default();
+    let mut store = FakeWikiStore::default();
     let mut progress = crate::progress::ProgressOptions::default();
     ingest_video_file_with_processing(
         vault_root,

@@ -22,7 +22,7 @@ pub use cache::{
     write_binding, write_coherent_pair, write_grant_file,
 };
 pub use handshake::{
-    CapabilityClaims, GRANT_HEADER, MANAGED_BOOTSTRAP_ENV, encode_grant_header,
+    CapabilityClaims, GRANT_HEADER, MANAGED_BOOTSTRAP_ENV, daemon_reachable, encode_grant_header,
     parse_capability_token, reject_remote_endpoint,
 };
 
@@ -32,7 +32,7 @@ use cache::{
     write_settings_file,
 };
 use handshake::{
-    challenge_and_handshake, daemon_reachable, deployment_token as derived_deployment_token,
+    challenge_and_handshake, deployment_token as derived_deployment_token,
     is_default_local_endpoint, parse_capability_token as parse_envelope,
 };
 

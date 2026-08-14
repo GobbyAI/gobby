@@ -13,8 +13,7 @@ use crate::search as wiki_search;
 use crate::support::config::qdrant_config_has_url;
 use crate::support::env::database_url_for;
 use crate::support::scope::{
-    indexed_store_for_selection, resolve_command_scope, resolved_scope_identity,
-    search_scope_for_resolved,
+    resolve_command_scope, resolved_scope_identity, search_scope_for_resolved,
 };
 use crate::support::search as search_support;
 use crate::support::text::degradation_label;
@@ -67,42 +66,19 @@ pub(crate) fn retrieve(
     token_budget: Option<usize>,
     include_candidates: bool,
 ) -> Result<SearchRetrieval, WikiError> {
-    if let Some(database_url) = database_url_for("gwiki search")? {
-        let scope = resolve_command_scope(&selection)?;
-        return run_search_attached(
-            &database_url,
-            resolved_scope_identity(&scope),
-            search_scope_for_resolved(&scope),
-            scope.root().to_path_buf(),
-            query,
-            limit,
-            include_semantic,
-            token_budget,
-            include_candidates,
-        );
-    }
-
-    let (scope, output_scope, search_scope, store) = indexed_store_for_selection(&selection)?;
-    let mut bm25_backend = search_support::StoreBm25Backend {
-        hits: search_support::store_search_hits(&store, &search_scope, &query).into(),
-    };
-    let mut semantic_backend = search_support::UnavailableSemanticBackend;
-    let graph = crate::support::graph::memory_graph_from_store(&store, &search_scope);
-    let mut graph_backend = wiki_search::graph_boost::MemoryGraphBoostBackend::new(graph);
-    run_search_with_backends(
-        &mut bm25_backend,
-        &mut semantic_backend,
-        &mut graph_backend,
-        SearchExecutionInput {
-            output_scope,
-            search_scope,
-            vault_root: scope.root().to_path_buf(),
-            query,
-            limit,
-            include_semantic,
-            token_budget,
-            include_candidates,
-        },
+    let database_url = database_url_for("gwiki search")?
+        .ok_or_else(|| WikiError::from(gobby_core::grant::GrantError::DaemonRequired))?;
+    let scope = resolve_command_scope(&selection)?;
+    run_search_attached(
+        &database_url,
+        resolved_scope_identity(&scope),
+        search_scope_for_resolved(&scope),
+        scope.root().to_path_buf(),
+        query,
+        limit,
+        include_semantic,
+        token_budget,
+        include_candidates,
     )
 }
 

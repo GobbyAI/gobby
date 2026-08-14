@@ -8,7 +8,7 @@ use super::source::{detect_source_kind, source_location};
 use super::*;
 use crate::api::IngestFileOptions;
 use crate::sources::{SourceKind, SourceManifest, SourceReplay};
-use crate::store::MemoryWikiStore;
+use crate::store::FakeWikiStore;
 
 #[derive(Default)]
 struct RecordingProgress {
@@ -74,7 +74,7 @@ fn file_ingest_progress_reports_ingest_and_index_phases() {
     let file_path = temp.path().join("field-notes.md");
     std::fs::write(&file_path, b"# Field Notes\n\nLocal markdown source.\n")
         .expect("write local file");
-    let mut store = MemoryWikiStore::default();
+    let mut store = FakeWikiStore::default();
     let scope = ScopeIdentity::global();
     let ai_context = no_ai_context();
     let options = ingest_options();
@@ -120,7 +120,7 @@ fn temp_scratchpad_file_ingest_omits_replay_metadata() {
     let scratchpad = std::env::temp_dir()
         .join("gobby-agent-scratchpad-replay-test")
         .join("source.txt");
-    let mut store = MemoryWikiStore::default();
+    let mut store = FakeWikiStore::default();
     let scope = ScopeIdentity::global();
     let ai_context = no_ai_context();
     let options = ingest_options();
@@ -154,7 +154,7 @@ fn local_file_ingest_records_replay_metadata() {
     let temp = tempfile::tempdir().expect("tempdir");
     let vault = temp.path().join("vault");
     let source = temp.path().join("source.txt");
-    let mut store = MemoryWikiStore::default();
+    let mut store = FakeWikiStore::default();
     let scope = ScopeIdentity::global();
     let ai_context = no_ai_context();
     let options = ingest_options();
@@ -185,7 +185,7 @@ fn reingesting_changed_file_supersedes_manifest_record() {
     let temp = tempfile::tempdir().expect("tempdir");
     let file_path = temp.path().join("note-pmb.md");
     std::fs::write(&file_path, b"# Note\n\nFirst capture body.\n").expect("write local file");
-    let mut store = MemoryWikiStore::default();
+    let mut store = FakeWikiStore::default();
     let scope = ScopeIdentity::global();
     let ai_context = no_ai_context();
     let options = ingest_options();
@@ -281,7 +281,7 @@ fn file_and_stdin_ingest_hash_sources() {
     let file_path = temp.path().join("field-notes.md");
     std::fs::write(&file_path, file_bytes).expect("write local file");
     let stdin_bytes = b"stdin source text\n".to_vec();
-    let mut store = MemoryWikiStore::default();
+    let mut store = FakeWikiStore::default();
     let scope = ScopeIdentity::global();
     let ai_context = no_ai_context();
     let options = ingest_options();
@@ -335,7 +335,7 @@ fn common_audio_extensions_ingest_as_audio_assets() {
     let temp = tempfile::tempdir().expect("tempdir");
     let file_path = temp.path().join("interview.mp3");
     std::fs::write(&file_path, b"audio bytes").expect("write local file");
-    let mut store = MemoryWikiStore::default();
+    let mut store = FakeWikiStore::default();
     let scope = ScopeIdentity::global();
     let ai_context = no_ai_context();
     let options = ingest_options();
@@ -390,7 +390,7 @@ fn dispatches_media_to_orchestrators() {
     ] {
         let path = temp.path().join(name);
         std::fs::write(&path, format!("{name} bytes")).expect("write media file");
-        let mut store = MemoryWikiStore::default();
+        let mut store = FakeWikiStore::default();
 
         let result = ingest_path_for_test(
             temp.path(),
@@ -420,7 +420,7 @@ fn no_ai_dispatch_degrades() {
     let temp = tempfile::tempdir().expect("tempdir");
     let file_path = temp.path().join("diagram.png");
     std::fs::write(&file_path, b"image bytes").expect("write local file");
-    let mut store = MemoryWikiStore::default();
+    let mut store = FakeWikiStore::default();
     let scope = ScopeIdentity::global();
     let ai_context = no_ai_context();
     let options = ingest_options();
@@ -450,7 +450,7 @@ fn media_dispatch_registers_once() {
     let temp = tempfile::tempdir().expect("tempdir");
     let file_path = temp.path().join("interview.mp3");
     std::fs::write(&file_path, b"audio bytes").expect("write local file");
-    let mut store = MemoryWikiStore::default();
+    let mut store = FakeWikiStore::default();
     let scope = ScopeIdentity::global();
     let ai_context = no_ai_context();
     let options = ingest_options();
@@ -516,7 +516,7 @@ fn detects_documents_and_inlines_structured_text() {
     let scope = ScopeIdentity::global();
     let ai_context = no_ai_context();
     let options = ingest_options();
-    let mut store = MemoryWikiStore::default();
+    let mut store = FakeWikiStore::default();
 
     let small_csv = temp.path().join("data.csv");
     std::fs::write(&small_csv, b"city,count\nDuluth,3\n").expect("write csv");
@@ -558,7 +558,7 @@ fn jsonl_session_archive_routes_to_session_orchestrator() {
         r#"{"type":"session","timestamp":"2026-06-16T20:00:00Z","payload":{"title":"Fixture session","messages":[{"role":"user","content":"Please summarize the trace."},{"role":"assistant","content":"The trace has two calls."}]}}"#,
     )
     .expect("write session jsonl");
-    let mut store = MemoryWikiStore::default();
+    let mut store = FakeWikiStore::default();
     let scope = ScopeIdentity::global();
     let ai_context = no_ai_context();
     let options = ingest_options();
@@ -602,7 +602,7 @@ fn raw_claude_jsonl_session_routes_to_session_orchestrator() {
 {"type":"user","timestamp":"2026-06-16T20:00:03Z","sessionId":"session-1","toolUseResult":{"file":"trace.log"},"message":{"role":"user","content":[{"type":"tool_result","tool_use_id":"toolu_1","content":"call trace","is_error":false}]}}"#,
     )
     .expect("write Claude session jsonl");
-    let mut store = MemoryWikiStore::default();
+    let mut store = FakeWikiStore::default();
     let scope = ScopeIdentity::global();
     let ai_context = no_ai_context();
     let options = ingest_options();
@@ -645,7 +645,7 @@ fn codex_jsonl_session_routes_to_session_orchestrator() {
 {"type":"response_item","timestamp":"2026-06-16T20:00:04Z","payload":{"type":"function_call_output","call_id":"call_1","output":"Output:\n/workspace\n"}}"#,
     )
     .expect("write Codex session jsonl");
-    let mut store = MemoryWikiStore::default();
+    let mut store = FakeWikiStore::default();
     let scope = ScopeIdentity::global();
     let ai_context = no_ai_context();
     let options = ingest_options();
@@ -688,7 +688,7 @@ fn gemini_jsonl_session_is_not_supported() {
 {"type":"result","timestamp":"2026-06-16T20:00:03Z","status":"success","stats":{"tool_calls":0}}"#,
     )
     .expect("write Gemini session jsonl");
-    let mut store = MemoryWikiStore::default();
+    let mut store = FakeWikiStore::default();
     let scope = ScopeIdentity::global();
     let ai_context = no_ai_context();
     let options = ingest_options();
@@ -719,7 +719,7 @@ fn grok_jsonl_session_routes_to_session_orchestrator() {
 {"type":"assistant","content":"exit: 0\nhello","model_id":"grok-build"}"#,
     )
     .expect("write Grok session jsonl");
-    let mut store = MemoryWikiStore::default();
+    let mut store = FakeWikiStore::default();
     let scope = ScopeIdentity::global();
     let ai_context = no_ai_context();
     let options = ingest_options();
@@ -760,7 +760,7 @@ fn droid_jsonl_session_routes_to_session_orchestrator() {
 {"type":"message","id":"assistant-1","timestamp":"2026-06-16T20:08:02Z","message":{"role":"assistant","content":[{"type":"text","text":"OK"}]},"parentId":"user-1"}"#,
     )
     .expect("write Droid session jsonl");
-    let mut store = MemoryWikiStore::default();
+    let mut store = FakeWikiStore::default();
     let scope = ScopeIdentity::global();
     let ai_context = no_ai_context();
     let options = ingest_options();
@@ -800,7 +800,7 @@ fn qwen_jsonl_session_routes_to_session_orchestrator() {
 {"type":"tool_result","uuid":"tool-result-1","parentUuid":"assistant-1","sessionId":"session-1","timestamp":"2026-06-16T21:10:03Z","cwd":"/workspace","version":"0.18.0","toolCallResult":{"callId":"call_1","status":"cancelled"},"message":{"role":"user","parts":[{"functionResponse":{"id":"call_1","name":"write_file","response":{"error":"[Operation Cancelled]"}}}]}}"#,
     )
     .expect("write Qwen session jsonl");
-    let mut store = MemoryWikiStore::default();
+    let mut store = FakeWikiStore::default();
     let scope = ScopeIdentity::global();
     let ai_context = no_ai_context();
     let options = ingest_options();
@@ -839,7 +839,7 @@ fn dispatches_office_html_to_document() {
         b"<!doctype html><html><head><title>Dispatch Doc</title></head><body><main><p>Document dispatch body.</p></main></body></html>",
     )
     .expect("write html");
-    let mut store = MemoryWikiStore::default();
+    let mut store = FakeWikiStore::default();
     let scope = ScopeIdentity::global();
     let ai_context = no_ai_context();
     let options = ingest_options();
@@ -873,7 +873,7 @@ fn dispatches_pdf_to_combined_path() {
     let temp = tempfile::tempdir().expect("tempdir");
     let file_path = temp.path().join("scan.pdf");
     std::fs::write(&file_path, b"%PDF-1.7\nsource bytes\n%%EOF\n").expect("write pdf");
-    let mut store = MemoryWikiStore::default();
+    let mut store = FakeWikiStore::default();
     let scope = ScopeIdentity::global();
     let ai_context = no_ai_context();
     let options = ingest_options();
@@ -903,7 +903,7 @@ fn office_html_store_as_asset_without_documents_feature() {
     let temp = tempfile::tempdir().expect("tempdir");
     let file_path = temp.path().join("page.html");
     std::fs::write(&file_path, b"<html><body>stored only</body></html>").expect("write html");
-    let mut store = MemoryWikiStore::default();
+    let mut store = FakeWikiStore::default();
     let scope = ScopeIdentity::global();
     let ai_context = no_ai_context();
     let options = ingest_options();
@@ -931,7 +931,7 @@ fn pdf_store_as_asset_without_documents_feature() {
     let temp = tempfile::tempdir().expect("tempdir");
     let file_path = temp.path().join("scan.pdf");
     std::fs::write(&file_path, b"%PDF-1.7\nsource bytes\n%%EOF\n").expect("write pdf");
-    let mut store = MemoryWikiStore::default();
+    let mut store = FakeWikiStore::default();
     let scope = ScopeIdentity::global();
     let ai_context = no_ai_context();
     let options = ingest_options();

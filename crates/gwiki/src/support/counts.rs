@@ -1,4 +1,6 @@
-use crate::{WikiError, search, store};
+#[cfg(test)]
+use crate::store;
+use crate::{WikiError, search};
 
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
 pub(crate) struct IndexCounts {
@@ -9,7 +11,9 @@ pub(crate) struct IndexCounts {
     pub(crate) ingestions: usize,
 }
 
-pub(crate) fn index_counts(store: &store::MemoryWikiStore) -> IndexCounts {
+#[cfg(test)]
+#[allow(dead_code)]
+pub(crate) fn index_counts(store: &store::FakeWikiStore) -> IndexCounts {
     IndexCounts {
         documents: store.documents.len(),
         chunks: store.chunks.values().map(Vec::len).sum(),

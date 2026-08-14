@@ -641,7 +641,7 @@ fn compile_after_recapture_emits_single_digest_without_suffix() {
         ),
     ] {
         std::fs::write(&source_path, body).expect("write source");
-        let mut store = crate::store::MemoryWikiStore::default();
+        let mut store = crate::store::FakeWikiStore::default();
         crate::ingest::file::ingest_path(
             &vault_root,
             &mut store,

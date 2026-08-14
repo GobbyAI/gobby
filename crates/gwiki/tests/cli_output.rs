@@ -6,13 +6,13 @@ fn gwiki(args: &[&str]) -> std::process::Output {
 
 #[test]
 fn text_output_uses_renderer() {
-    let output = gwiki(&["--format", "text", "search", "--topic", "rust", "ownership"]);
+    let output = gwiki(&["--format", "text", "status", "--topic", "rust"]);
 
-    common::assert_success(&output, "search");
+    common::assert_success(&output, "status");
 
     let stdout = String::from_utf8_lossy(&output.stdout);
-    assert!(stdout.contains("Search results for \"ownership\""));
-    assert!(stdout.contains("Scope: topic:rust"));
+    assert!(stdout.contains("Scope: topic:rust"), "{stdout}");
+    assert!(stdout.contains("Grant:"), "{stdout}");
     assert!(!stdout.contains("CommandResult"));
     assert!(!stdout.contains("SearchOutput"));
 }

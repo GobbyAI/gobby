@@ -22,7 +22,7 @@ fn video_long_english_translation_reuses_chunk_branch() {
     let temp = tempfile::tempdir().expect("tempdir");
     let source_path = temp.path().join("lecture-source.mp4");
     std::fs::write(&source_path, b"video bytes").expect("write source video");
-    let mut store = MemoryWikiStore::default();
+    let mut store = FakeWikiStore::default();
     let media = FakeVideoMediaExtractor {
         audio_bytes: vec![b'a'; crate::ai::chunk::MAX_AUDIO_UPLOAD_BYTES + 1],
         frames: Vec::new(),

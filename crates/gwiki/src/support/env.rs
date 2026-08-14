@@ -45,7 +45,7 @@ fn acquire_runtime_grant() -> Result<AcquiredGrant, GrantError> {
     acquire(root)
 }
 
-fn project_root_for_grant() -> Option<PathBuf> {
+pub(crate) fn project_root_for_grant() -> Option<PathBuf> {
     ACTIVE_PROJECT_ROOT
         .with(|slot| slot.borrow().clone())
         .or_else(|| {

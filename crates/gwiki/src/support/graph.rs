@@ -4,13 +4,16 @@ use std::path::{Path, PathBuf};
 use gobby_core::vault::lint::{link_lookup_keys, page_targets};
 
 use crate::frontmatter::{WikiFrontmatter, parse_frontmatter};
+use crate::graph;
 use crate::links::{LinkKind, canonical_target_key};
-use crate::{graph, search, store};
+#[cfg(test)]
+use crate::{search, store};
 
 use super::text::slugify;
 
+#[cfg(test)]
 pub(crate) fn memory_graph_from_store(
-    store: &store::MemoryWikiStore,
+    store: &store::FakeWikiStore,
     scope: &search::SearchScope,
 ) -> graph::MemoryWikiGraph {
     let documents = store
@@ -172,12 +175,12 @@ fn is_external_target(target: &str) -> bool {
 mod tests {
     use super::*;
     use crate::store::{
-        MemoryWikiStore, WikiDocument, WikiDocumentKind, WikiLink as StoreWikiLink, WikiSource,
+        FakeWikiStore, WikiDocument, WikiDocumentKind, WikiLink as StoreWikiLink, WikiSource,
     };
 
     #[test]
     fn graph_uses_distinct_source_document_paths() {
-        let mut store = MemoryWikiStore::default();
+        let mut store = FakeWikiStore::default();
         store.documents.insert(
             PathBuf::from("knowledge/topics/rust.md"),
             WikiDocument {
@@ -209,7 +212,7 @@ mod tests {
         );
     }
 
-    fn store_target_maps(store: &MemoryWikiStore) -> GraphTargetMaps {
+    fn store_target_maps(store: &FakeWikiStore) -> GraphTargetMaps {
         graph_target_maps(store.documents.values().map(|document| {
             (
                 &document.path,
@@ -219,7 +222,7 @@ mod tests {
         }))
     }
 
-    fn insert_document(store: &mut MemoryWikiStore, path: &str, title: Option<&str>, body: &str) {
+    fn insert_document(store: &mut FakeWikiStore, path: &str, title: Option<&str>, body: &str) {
         store.documents.insert(
             PathBuf::from(path),
             WikiDocument {
@@ -235,7 +238,7 @@ mod tests {
 
     #[test]
     fn graph_rejects_url_like_external_targets() {
-        let store = MemoryWikiStore::default();
+        let store = FakeWikiStore::default();
         let targets = store_target_maps(&store);
         let source = Path::new("knowledge/topics/source.md");
 
@@ -246,7 +249,7 @@ mod tests {
 
     #[test]
     fn graph_resolves_slug_targets_from_precomputed_map() {
-        let mut store = MemoryWikiStore::default();
+        let mut store = FakeWikiStore::default();
         for path in [
             "knowledge/topics/rust-async.md",
             "knowledge/topics/rust_async.md",
@@ -287,7 +290,7 @@ mod tests {
 
     #[test]
     fn graph_resolves_relative_targets_from_source_document_directory() {
-        let mut store = MemoryWikiStore::default();
+        let mut store = FakeWikiStore::default();
         for path in [
             "knowledge/topics/nested/source.md",
             "knowledge/topics/nested/bar.md",
@@ -319,7 +322,7 @@ mod tests {
         // target, mangling it into knowledge/concepts/knowledge/sources/...
         // and surfacing a bogus link suggestion for a resolvable link.
         let digest = "knowledge/sources/src-5966419ee2f6bb38-session-019e4155.md";
-        let mut store = MemoryWikiStore::default();
+        let mut store = FakeWikiStore::default();
         insert_document(&mut store, "knowledge/concepts/gcode.md", Some("gcode"), "");
         insert_document(&mut store, digest, Some("Session digest"), "");
         store.links.insert(
@@ -354,7 +357,7 @@ mod tests {
         // stays unresolved so lint parity holds.
         let digest = "knowledge/sources/src-5966419ee2f6bb38-session-019e4155.md";
         let scratchpad = "/private/tmp/claude-501/scratchpad/note-orchid.md";
-        let mut store = MemoryWikiStore::default();
+        let mut store = FakeWikiStore::default();
         insert_document(&mut store, digest, Some("Session digest"), "");
         store.links.insert(
             PathBuf::from(digest),
@@ -383,7 +386,7 @@ mod tests {
 
     #[test]
     fn unresolved_targets_keep_their_written_form() {
-        let mut store = MemoryWikiStore::default();
+        let mut store = FakeWikiStore::default();
         insert_document(&mut store, "knowledge/concepts/gcode.md", Some("gcode"), "");
         let targets = store_target_maps(&store);
 
@@ -402,7 +405,7 @@ mod tests {
 
     #[test]
     fn frontmatter_aliases_resolve_like_lint() {
-        let mut store = MemoryWikiStore::default();
+        let mut store = FakeWikiStore::default();
         insert_document(
             &mut store,
             "knowledge/concepts/build-home.md",

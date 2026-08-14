@@ -190,11 +190,13 @@ pub struct LinkSuggestion {
     pub variants: Vec<String>,
 }
 
+#[cfg(test)]
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct RelatedPathOptions {
     pub backward_link_weight: f64,
 }
 
+#[cfg(test)]
 impl Default for RelatedPathOptions {
     fn default() -> Self {
         Self {
@@ -312,6 +314,7 @@ impl MemoryWikiGraph {
         self.facts = facts;
     }
 
+    #[cfg(test)]
     pub fn document_titles(&self, scope: &SearchScope) -> BTreeMap<PathBuf, String> {
         self.facts
             .documents
@@ -434,6 +437,7 @@ impl MemoryWikiGraph {
         suggestions
     }
 
+    #[cfg(test)]
     pub fn related_paths(
         &self,
         scope: &SearchScope,
@@ -443,6 +447,7 @@ impl MemoryWikiGraph {
         self.related_paths_with_options(scope, seed_paths, limit, RelatedPathOptions::default())
     }
 
+    #[cfg(test)]
     pub fn related_paths_with_options(
         &self,
         scope: &SearchScope,

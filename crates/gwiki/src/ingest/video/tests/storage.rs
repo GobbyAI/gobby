@@ -5,7 +5,7 @@ fn stores_original_video() {
     let temp = tempfile::tempdir().expect("tempdir");
     let snapshot = sample_snapshot();
     let expected_hash = content_hash(&snapshot.bytes);
-    let mut store = MemoryWikiStore::default();
+    let mut store = FakeWikiStore::default();
 
     let result = ingest_video(
         temp.path(),
@@ -36,7 +36,7 @@ fn stores_original_video() {
 #[test]
 fn unchanged_video_reingest_reuses_immutable_raw_capture() {
     let temp = tempfile::tempdir().expect("tempdir");
-    let mut store = MemoryWikiStore::default();
+    let mut store = FakeWikiStore::default();
 
     let first = ingest_video(
         temp.path(),
@@ -86,7 +86,7 @@ fn stores_file_backed_video() {
     std::fs::write(&source_path, bytes).expect("write source video");
     let sample = sample_snapshot();
     let expected_hash = file_content_hash(&source_path).expect("hash source video");
-    let mut store = MemoryWikiStore::default();
+    let mut store = FakeWikiStore::default();
 
     let result = ingest_video_file(
         temp.path(),
@@ -121,7 +121,7 @@ fn stores_file_backed_video() {
 #[test]
 fn video_derivatives_keep_provenance() {
     let temp = tempfile::tempdir().expect("tempdir");
-    let mut store = MemoryWikiStore::default();
+    let mut store = FakeWikiStore::default();
 
     let result = ingest_video(
         temp.path(),

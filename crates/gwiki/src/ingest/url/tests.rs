@@ -13,7 +13,7 @@ use super::*;
 use crate::ingest::text_from_utf8_lossy;
 use crate::sources::{FetchProvenance, SourceKind, SourceManifest};
 use crate::store::{
-    MemoryWikiStore, StoreError, WikiChunk, WikiDocument, WikiIndexStore, WikiIngestion, WikiLink,
+    FakeWikiStore, StoreError, WikiChunk, WikiDocument, WikiIndexStore, WikiIngestion, WikiLink,
     WikiSource,
 };
 use crate::support::test_env::EnvGuard;
@@ -54,7 +54,7 @@ fn url_ingest_writes_raw_and_manifest() {
         body,
         content_type: Some("text/html".to_string()),
     };
-    let mut store = MemoryWikiStore::default();
+    let mut store = FakeWikiStore::default();
 
     let result = ingest_snapshot(temp.path(), &mut store, snapshot).expect("ingest url snapshot");
 
@@ -90,7 +90,7 @@ fn url_ingest_preserves_non_html_as_typed_asset() {
         body: body.clone(),
         content_type: Some("Application/PDF; charset=binary".to_string()),
     };
-    let mut store = MemoryWikiStore::default();
+    let mut store = FakeWikiStore::default();
 
     let result =
         ingest_snapshot(temp.path(), &mut store, snapshot).expect("ingest pdf url snapshot");
@@ -148,7 +148,7 @@ fn url_ingest_escapes_wikilink_payloads_and_keeps_frontmatter_intact() {
         body,
         content_type: Some("text/html".to_string()),
     };
-    let mut store = MemoryWikiStore::default();
+    let mut store = FakeWikiStore::default();
 
     let result =
         ingest_snapshot(temp.path(), &mut store, snapshot).expect("ingest hostile snapshot");
@@ -185,7 +185,7 @@ fn url_ingest_escapes_wikilink_delimiters_in_non_html_titles() {
         body: b"plain text payload\n".to_vec(),
         content_type: Some("text/plain".to_string()),
     };
-    let mut store = MemoryWikiStore::default();
+    let mut store = FakeWikiStore::default();
 
     let result = ingest_snapshot(temp.path(), &mut store, snapshot).expect("ingest text snapshot");
 
@@ -217,7 +217,7 @@ fn batch_url_ingest_progress_reports_urls_and_index_phase() {
         "https://example.test/one".to_string(),
         "https://example.test/two".to_string(),
     ];
-    let mut store = MemoryWikiStore::default();
+    let mut store = FakeWikiStore::default();
     let mut progress = RecordingProgress::default();
 
     ingest_urls_with_fetcher(
@@ -262,7 +262,7 @@ fn batch_url_ingest_accepts_successes_and_records_failures() {
         "https://example.test/accepted".to_string(),
         "https://example.test/failure".to_string(),
     ];
-    let mut store = MemoryWikiStore::default();
+    let mut store = FakeWikiStore::default();
 
     let result = ingest_urls_with_fetcher(
         temp.path(),
@@ -367,7 +367,7 @@ fn zero_ttl_forces_refetch_even_at_zero_age() {
         test_snapshot(url, url, "Zero TTL", "unix-ms:1783215000000"),
     )
     .expect("seed fetched URL");
-    let mut html_store = MemoryWikiStore::default();
+    let mut html_store = FakeWikiStore::default();
     let mut fetch_calls = 0;
 
     let result = ingest_urls_with_fetcher(
@@ -400,7 +400,7 @@ fn expired_unchanged_refetch_touches_freshness_and_preserves_capture() {
     .expect("seed fetched URL");
     let first_raw =
         std::fs::read(temp.path().join(&first.raw_path)).expect("read first raw capture");
-    let mut store = MemoryWikiStore::default();
+    let mut store = FakeWikiStore::default();
     let mut fetch_calls = 0;
 
     let refreshed = ingest_urls_with_fetcher(
@@ -453,7 +453,7 @@ fn missing_url_artifacts_and_invalid_freshness_refetch_for_self_healing() {
     )
     .expect("seed HTML URL");
     std::fs::remove_file(html_root.path().join(&html.raw_path)).expect("remove raw");
-    let mut store = MemoryWikiStore::default();
+    let mut store = FakeWikiStore::default();
     let mut html_fetches = 0;
     ingest_urls_with_fetcher(
         html_root.path(),
@@ -480,7 +480,7 @@ fn missing_url_artifacts_and_invalid_freshness_refetch_for_self_healing() {
     .expect("seed PDF URL");
     let asset_path = pdf.asset_path.clone().expect("PDF asset");
     std::fs::remove_file(pdf_root.path().join(&asset_path)).expect("remove asset");
-    let mut pdf_store = MemoryWikiStore::default();
+    let mut pdf_store = FakeWikiStore::default();
     let mut pdf_fetches = 0;
     ingest_urls_with_fetcher(
         pdf_root.path(),
@@ -544,7 +544,7 @@ fn canonical_batch_duplicates_reuse_success_cache_age_and_failure() {
     let urls = vec![first_url.to_string(), duplicate_url.to_string()];
 
     let fresh_root = tempfile::tempdir().expect("fresh tempdir");
-    let mut store = MemoryWikiStore::default();
+    let mut store = FakeWikiStore::default();
     let mut fetches = 0;
     let fresh = ingest_urls_with_fetcher(
         fresh_root.path(),
@@ -629,7 +629,7 @@ fn pre_field_record_promotes_once_and_collect_redrop_cannot_downgrade() {
         legacy.entries[0].fetched_at
     );
 
-    let mut store = MemoryWikiStore::default();
+    let mut store = FakeWikiStore::default();
     let mut fetches = 0;
     ingest_urls_with_fetcher(
         temp.path(),
@@ -681,7 +681,7 @@ fn non_html_url_has_cache_parity_with_html() {
         ingest_snapshot_without_index(temp.path(), pdf_snapshot(url, "unix-ms:1783215000000"))
             .expect("seed PDF URL");
     assert_eq!(first.record.kind, SourceKind::Pdf);
-    let mut store = MemoryWikiStore::default();
+    let mut store = FakeWikiStore::default();
 
     let cached = ingest_urls_with_fetcher(
         temp.path(),
@@ -702,7 +702,7 @@ fn non_html_url_has_cache_parity_with_html() {
 fn reingesting_changed_url_supersedes_manifest_record() {
     let temp = tempfile::tempdir().expect("tempdir");
     let urls = vec!["https://example.test/changing".to_string()];
-    let mut store = MemoryWikiStore::default();
+    let mut store = FakeWikiStore::default();
 
     let first = ingest_urls_with_fetcher(
         temp.path(),
@@ -1000,7 +1000,7 @@ fn remove_freshness_fields_from_manifest(vault_root: &Path) {
 
 #[derive(Default)]
 struct CountingStore {
-    inner: MemoryWikiStore,
+    inner: FakeWikiStore,
     indexed_hash_reads: usize,
     indexed_hashes_reads: usize,
 }
