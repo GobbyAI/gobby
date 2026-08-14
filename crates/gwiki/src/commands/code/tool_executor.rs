@@ -1,3 +1,5 @@
+#![allow(dead_code)] // local-loop executor unused after daemon-only routing
+
 //! Read-only code-index `ToolExecutor` for the gwiki CodeWiki tool loop (#978).
 //!
 //! Wraps the existing read-only gcode index query internals (search, outline,

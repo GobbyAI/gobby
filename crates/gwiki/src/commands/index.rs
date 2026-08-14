@@ -5,8 +5,7 @@ use gobby_core::ai::effective_config::{ai_source_for_conn, ai_source_without_pri
 use gobby_core::ai::effective_route;
 use gobby_core::ai_context::AiContext;
 use gobby_core::config::{
-    AiCapability, AiRouting, ConfigSource, resolve_embedding_config, resolve_falkordb_config,
-    resolve_qdrant_config,
+    AiCapability, AiRouting, ConfigSource, resolve_falkordb_config, resolve_qdrant_config,
 };
 use gobby_core::degradation::{DegradationKind, ServiceState};
 use gobby_core::progress::ProgressBar;
@@ -539,6 +538,7 @@ fn resolve_vector_embedding(
     match effective_embedding_route(context) {
         AiRouting::Off => None,
         AiRouting::Daemon => {
+            let _ = source;
             #[cfg(feature = "ai")]
             {
                 Some(crate::search::semantic::SemanticEmbedding::Daemon(
@@ -548,22 +548,6 @@ fn resolve_vector_embedding(
             #[cfg(not(feature = "ai"))]
             {
                 None
-            }
-        }
-        AiRouting::Direct => {
-            resolve_embedding_config(source).map(crate::search::semantic::SemanticEmbedding::Direct)
-        }
-        AiRouting::Auto => {
-            #[cfg(feature = "ai")]
-            {
-                Some(crate::search::semantic::SemanticEmbedding::Daemon(
-                    Box::new(context.clone()),
-                ))
-            }
-            #[cfg(not(feature = "ai"))]
-            {
-                resolve_embedding_config(source)
-                    .map(crate::search::semantic::SemanticEmbedding::Direct)
             }
         }
     }
@@ -578,18 +562,11 @@ fn effective_embedding_route(context: &AiContext) -> AiRouting {
     {
         match context.binding(AiCapability::Embed).routing {
             AiRouting::Off => AiRouting::Off,
-            AiRouting::Direct => AiRouting::Direct,
             AiRouting::Daemon => {
                 log::warn!(
                     "gwiki was built without ai support; daemon-backed embeddings are disabled"
                 );
                 AiRouting::Off
-            }
-            AiRouting::Auto => {
-                log::warn!(
-                    "gwiki was built without ai support; auto embedding route cannot use the daemon"
-                );
-                AiRouting::Direct
             }
         }
     }
@@ -757,7 +734,7 @@ mod tests {
         let mut source = TestConfigSource { value: None };
         let context = AiContext::resolve(None, &mut source);
 
-        assert_eq!(effective_embedding_route(&context), AiRouting::Direct);
+        assert_eq!(effective_embedding_route(&context), AiRouting::Daemon);
     }
 
     fn sample_counts() -> IndexCounts {

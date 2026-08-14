@@ -129,6 +129,7 @@ mod tests {
             runtime_config_capture_degraded: false,
             indexing: gobby_core::config::IndexingConfig::default(),
             daemon_url: None,
+            grant_ai: None,
             index_scope: crate::config::ProjectIndexScope::Single,
         }
     }
@@ -151,6 +152,7 @@ mod tests {
             runtime_config_capture_degraded: false,
             indexing: gobby_core::config::IndexingConfig::default(),
             daemon_url: None,
+            grant_ai: None,
             index_scope: crate::config::ProjectIndexScope::Overlay {
                 overlay_project_id: "overlay".to_string(),
                 overlay_root: PathBuf::from("/overlay"),

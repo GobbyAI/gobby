@@ -96,8 +96,8 @@ impl ConnectionsEnricher {
             },
         );
         let route = effective_route(&context, AiCapability::TextGenerate);
-        let ai = matches!(route, AiRouting::Direct | AiRouting::Daemon).then(|| {
-            let target = matches!(route, AiRouting::Direct).then(|| {
+        let ai = matches!(route, AiRouting::Daemon).then(|| {
+            let target = matches!(route, AiRouting::Daemon).then(|| {
                 resolve_direct_generation_target(
                     &mut source,
                     &profile_for_tier(GenerationTier::Standard, None),

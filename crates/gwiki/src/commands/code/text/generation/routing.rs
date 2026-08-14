@@ -19,7 +19,7 @@ pub(crate) fn direct_route_candidate_error(
         return None;
     }
     let direct =
-        text_route == AiRouting::Direct || engaged_tool_loop_route == Some(AiRouting::Direct);
+        text_route == AiRouting::Daemon || engaged_tool_loop_route == Some(AiRouting::Daemon);
     direct.then(|| {
         "--ai-aggregate-candidate requires the daemon route (explicit candidates are \
          unsupported on the Direct route); rerun with --ai daemon, or drop the flag and \

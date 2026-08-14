@@ -19,10 +19,9 @@ pub(super) use super::super::transport::{
 };
 pub(super) use super::super::{
     ChatCompletion, ChatCompletionRequest, ChatMessage, ChatRole, ChatTransport,
-    DirectChatTransport, DirectGenerationTarget, FEATURE_HIGH, FEATURE_LOW, FEATURE_MID,
-    GenerationTier, StopReason, ToolCall, ToolChoice, ToolError, ToolExecutor, ToolLoopLimits,
-    ToolSchema, generate_one_shot_pinned, profile_for_tier, resolve_direct_generation_target,
-    run_tool_loop,
+    DirectGenerationTarget, FEATURE_HIGH, FEATURE_LOW, FEATURE_MID, GenerationTier, StopReason,
+    ToolCall, ToolChoice, ToolError, ToolExecutor, ToolLoopLimits, ToolSchema,
+    generate_one_shot_pinned, profile_for_tier, resolve_direct_generation_target, run_tool_loop,
 };
 pub(super) use crate::ai_context::{AiBindings, AiContext, AiLimiter};
 pub(super) use crate::ai_types::{AiError, TokenUsage};
@@ -40,7 +39,7 @@ pub(super) fn request_body_json(raw: &str) -> Value {
 
 pub(super) fn blank_binding() -> CapabilityBinding {
     CapabilityBinding {
-        routing: AiRouting::Direct,
+        routing: AiRouting::Daemon,
         transport: None,
         api_base: None,
         api_key: None,

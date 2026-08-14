@@ -55,6 +55,7 @@ pub trait QueryEmbedder {
 
 #[derive(Debug, Clone)]
 pub enum SemanticEmbedding {
+    #[allow(dead_code)]
     Direct(EmbeddingConfig),
     #[cfg(feature = "ai")]
     Daemon(Box<AiContext>),

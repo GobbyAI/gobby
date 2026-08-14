@@ -5,7 +5,6 @@ use gobby_core::ai::{
     daemon::generate_via_daemon,
     effective_config::{ai_source_for_conn, ai_source_without_primary},
     effective_route,
-    text::generate_text,
 };
 #[cfg(feature = "ai")]
 use gobby_core::ai_context::AiContext;
@@ -111,8 +110,7 @@ fn summarize_outline(
         summarize_outline_with(file, &code, symbols, |prompt, system| {
             let result = match route {
                 AiRouting::Daemon => generate_via_daemon(&ai_context, prompt, Some(system)),
-                AiRouting::Direct => generate_text(&ai_context, prompt, Some(system)),
-                AiRouting::Off | AiRouting::Auto => return None,
+                AiRouting::Off => return None,
             };
             result.ok().map(|result| result.text)
         })

@@ -212,8 +212,18 @@ pub struct Context {
     pub indexing: IndexingSettings,
     /// Gobby daemon base URL (e.g. http://localhost:60887)
     pub daemon_url: Option<String>,
+    /// Grant-backed AI availability used by hybrid search and modality gates.
+    pub grant_ai: Option<GrantAiRuntime>,
     /// Project read/index scope.
     pub index_scope: ProjectIndexScope,
+}
+
+/// Grant snapshot consumed by AI-aware gcode commands.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct GrantAiRuntime {
+    pub capabilities: gobby_core::grant::GrantCapabilities,
+    pub daemon_reachable: bool,
+    pub unexpired: bool,
 }
 
 type ResolvedServices = (
@@ -357,6 +367,11 @@ impl Context {
         let indexing = IndexingSettings::default();
         let code_vectors = CodeVectorSettings::default();
         let _ = services.embedding;
+        let grant_ai = Some(GrantAiRuntime {
+            capabilities: acquired.bundle.capabilities.clone(),
+            daemon_reachable: acquired.daemon_reachable,
+            unexpired: acquired.permits_datastore(),
+        });
 
         Ok(Self {
             database_url,
@@ -370,6 +385,7 @@ impl Context {
             runtime_config_capture_degraded: false,
             indexing,
             daemon_url: Some(gobby_core::daemon_url::daemon_url()),
+            grant_ai,
             index_scope,
         })
     }

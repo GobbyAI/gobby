@@ -231,6 +231,7 @@ fn indexing_adopts_existing_content_version_without_reparse() {
         runtime_config_capture_degraded: false,
         indexing: gobby_core::config::IndexingConfig::default(),
         daemon_url: None,
+        grant_ai: None,
         index_scope: ProjectIndexScope::Single,
     };
     let outcome = index_files(
@@ -339,6 +340,7 @@ fn full_indexing_reparses_previously_adopted_content() {
         runtime_config_capture_degraded: false,
         indexing: gobby_core::config::IndexingConfig::default(),
         daemon_url: None,
+        grant_ai: None,
         index_scope: ProjectIndexScope::Single,
     };
     let outcome = index_files(
@@ -481,6 +483,7 @@ fn overlay_indexing_adopts_existing_content_version_without_reparse() {
         runtime_config_capture_degraded: false,
         indexing: gobby_core::config::IndexingConfig::default(),
         daemon_url: None,
+        grant_ai: None,
         index_scope: ProjectIndexScope::Overlay {
             overlay_project_id: overlay_project_id.clone(),
             overlay_root: overlay_root.path().to_path_buf(),

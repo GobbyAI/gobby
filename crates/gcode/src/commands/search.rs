@@ -4,7 +4,7 @@ use std::collections::HashSet;
 use crate::commands::{scope, token_budget};
 use crate::config::Context;
 use crate::db;
-use crate::models::{PagedResponse, SearchResult, Symbol};
+use crate::models::{PagedResponse, SearchResult, SearchWarning, Symbol};
 use crate::output::{self, Format};
 use crate::search::{fts, graph_boost, rrf};
 use crate::vector::code_symbols;
@@ -24,6 +24,67 @@ pub struct SearchOptions<'a> {
 const LITERAL_QUERY_HINT: &str = "`gcode search` is hybrid/fuzzy concept search. For exact strings, call sites, dotted config keys, quoted strings, or paths, use `gcode grep \"pattern\" [PATH...] -m 50`; for ranked file-content matches, use `gcode search-content \"query\" [PATH...]`.";
 const SEARCH_TOKEN_BUDGET_REFINE_HINT: &str =
     "`--kind`, `--language`, PATH filters, or a narrower query";
+
+#[derive(Debug, Clone, PartialEq)]
+pub(crate) enum SemanticLane {
+    Hits(Vec<(String, f64)>),
+    Degraded(SearchWarning),
+}
+
+#[derive(Debug, Clone)]
+pub(crate) struct HybridSources {
+    pub sources: Vec<(&'static str, Vec<String>)>,
+    pub warnings: Vec<SearchWarning>,
+}
+
+pub(crate) fn semantic_lane_from_grant_outage() -> SemanticLane {
+    SemanticLane::Degraded(SearchWarning {
+        lane: "semantic".to_string(),
+        cause: "daemon_unreachable".to_string(),
+        message: "semantic search degraded: daemon unreachable; lexical and graph results only"
+            .to_string(),
+    })
+}
+
+pub(crate) fn assemble_hybrid_sources(
+    exact: Vec<String>,
+    fts: Vec<String>,
+    semantic: SemanticLane,
+    graph: Vec<String>,
+    expand: Vec<String>,
+) -> HybridSources {
+    let mut sources: Vec<(&'static str, Vec<String>)> = Vec::new();
+    let mut warnings = Vec::new();
+    if !exact.is_empty() {
+        sources.push(("exact", exact));
+    }
+    sources.push(("fts", fts));
+    match semantic {
+        SemanticLane::Hits(hits) if !hits.is_empty() => {
+            sources.push(("semantic", hits.into_iter().map(|(id, _)| id).collect()));
+        }
+        SemanticLane::Hits(_) => {}
+        SemanticLane::Degraded(warning) => warnings.push(warning),
+    }
+    if !graph.is_empty() {
+        sources.push(("graph", graph));
+    }
+    if !expand.is_empty() {
+        sources.push(("graph_expand", expand));
+    }
+    HybridSources { sources, warnings }
+}
+
+fn semantic_lane(ctx: &Context, query: &str, fetch_limit: usize) -> SemanticLane {
+    if ctx
+        .grant_ai
+        .as_ref()
+        .is_some_and(|grant| grant.unexpired && !grant.daemon_reachable)
+    {
+        return semantic_lane_from_grant_outage();
+    }
+    SemanticLane::Hits(code_symbols::semantic_search(ctx, query, fetch_limit))
+}
 
 pub fn search(ctx: &Context, query: &str, options: SearchOptions<'_>) -> anyhow::Result<()> {
     let mut conn = db::connect_readonly(&ctx.database_url)?;
@@ -70,8 +131,11 @@ pub fn search(ctx: &Context, query: &str, options: SearchOptions<'_>) -> anyhow:
     let fts_ids: Vec<String> = fts_results.iter().map(|s| s.id.clone()).collect();
 
     // Source 2: Semantic search (Qdrant + embeddings)
-    let semantic_results = code_symbols::semantic_search(ctx, query, fetch_limit);
-    let semantic_ids: Vec<String> = semantic_results.iter().map(|(id, _)| id.clone()).collect();
+    let semantic = semantic_lane(ctx, query, fetch_limit);
+    let semantic_ids: Vec<String> = match &semantic {
+        SemanticLane::Hits(hits) => hits.iter().map(|(id, _)| id.clone()).collect(),
+        SemanticLane::Degraded(_) => Vec::new(),
+    };
 
     // Source 3: Graph boost (FalkorDB callers + usages of the resolved query symbol)
     let graph_ids = if options.with_graph {
@@ -88,23 +152,8 @@ pub fn search(ctx: &Context, query: &str, options: SearchOptions<'_>) -> anyhow:
         Vec::new()
     };
 
-    // Build RRF sources (only include non-empty sources)
-    let mut sources: Vec<(&str, Vec<String>)> = Vec::new();
-    if !exact_ids.is_empty() {
-        sources.push(("exact", exact_ids));
-    }
-    sources.push(("fts", fts_ids));
-    if !semantic_ids.is_empty() {
-        sources.push(("semantic", semantic_ids));
-    }
-    if !graph_ids.is_empty() {
-        sources.push(("graph", graph_ids));
-    }
-    if !expand_ids.is_empty() {
-        sources.push(("graph_expand", expand_ids));
-    }
-
-    let merged = rrf::merge(sources);
+    let assembled = assemble_hybrid_sources(exact_ids, fts_ids, semantic, graph_ids, expand_ids);
+    let merged = rrf::merge(assembled.sources);
 
     // Build symbol cache from exact and BM25 results.
     let mut symbol_cache: HashMap<String, Symbol> = HashMap::new();
@@ -182,8 +231,12 @@ pub fn search(ctx: &Context, query: &str, options: SearchOptions<'_>) -> anyhow:
             limit: options.limit,
             results,
             hint,
+            warnings: assembled.warnings,
         }),
         Format::Text => {
+            for warning in &assembled.warnings {
+                print_search_warning(ctx, Some(&warning.message));
+            }
             print_search_warning(ctx, hint.as_deref());
             let lines = results
                 .iter()
@@ -268,6 +321,7 @@ pub fn search_symbol(ctx: &Context, query: &str, options: SearchOptions<'_>) -> 
                 limit: options.limit,
                 results,
                 hint,
+                warnings: Vec::new(),
             })
         }
         Format::Text => {
@@ -372,6 +426,7 @@ fn search_symbol_with_graph(
             limit: options.limit,
             results,
             hint,
+            warnings: Vec::new(),
         }),
         Format::Text => {
             print_search_warning(ctx, hint.as_deref());
@@ -446,6 +501,7 @@ pub fn search_text(
             limit,
             results,
             hint,
+            warnings: Vec::new(),
         }),
         Format::Text => {
             print_search_warning(ctx, hint.as_deref());
@@ -551,6 +607,7 @@ pub fn search_content(
             limit,
             results,
             hint,
+            warnings: Vec::new(),
         }),
         Format::Text => {
             print_search_warning(ctx, hint.as_deref());
@@ -790,137 +847,5 @@ fn print_pagination_hint(total: usize, offset: usize, result_count: usize) {
 mod regression_tests;
 
 #[cfg(test)]
-mod tests {
-    use super::*;
-
-    fn symbol(file_path: &str, kind: &str, language: &str) -> Symbol {
-        Symbol {
-            id: "sym-1".to_string(),
-            project_id: "proj".to_string(),
-            file_path: file_path.to_string(),
-            name: "outline".to_string(),
-            qualified_name: "outline".to_string(),
-            kind: kind.to_string(),
-            language: language.to_string(),
-            byte_start: 0,
-            byte_end: 10,
-            line_start: 1,
-            line_end: 2,
-            signature: None,
-            docstring: None,
-            parent_symbol_id: None,
-            file_content_hash: String::new(),
-            content_hash: String::new(),
-            summary: None,
-            created_at: String::new(),
-            updated_at: String::new(),
-        }
-    }
-
-    #[test]
-    fn symbol_filter_rejects_language_kind_path_and_missing_disk_file() {
-        let tmp = tempfile::tempdir().expect("tempdir");
-        let src = tmp.path().join("src");
-        std::fs::create_dir_all(&src).expect("create src");
-        std::fs::write(src.join("lib.rs"), "fn outline() {}").expect("write file");
-        let pattern = glob::Pattern::new("src/*.rs").expect("glob");
-        let sym = symbol("src/lib.rs", "function", "rust");
-
-        assert!(Some("function").is_none_or(|k| sym.kind == k));
-        assert!(Some("rust").is_none_or(|lang| sym.language == lang));
-        assert!(Some(&pattern).is_none_or(|pat| pat.matches(&sym.file_path)));
-    }
-
-    #[test]
-    fn exact_tier_prefers_case_sensitive_match() {
-        assert_eq!(
-            exact_tier("outline", &symbol("src/lib.rs", "function", "rust")),
-            0
-        );
-
-        let mut case_variant = symbol("src/lib.rs", "function", "rust");
-        case_variant.name = "Outline".to_string();
-        case_variant.qualified_name = "Outline".to_string();
-        assert_eq!(exact_tier("outline", &case_variant), 1);
-
-        case_variant.name = "outline_helper".to_string();
-        case_variant.qualified_name = "outline_helper".to_string();
-        assert_eq!(exact_tier("outline", &case_variant), 2);
-    }
-
-    #[test]
-    fn final_score_preserves_display_tier_before_rrf_score() {
-        let exact = symbol("src/lib.rs", "function", "rust");
-        let mut fuzzy = symbol("src/other.rs", "function", "rust");
-        fuzzy.name = "outline_helper".to_string();
-        fuzzy.qualified_name = "outline_helper".to_string();
-
-        assert!(
-            final_rank_score("outline", &exact, 0.01) > final_rank_score("outline", &fuzzy, 0.08)
-        );
-    }
-
-    #[test]
-    fn combines_fetch_cap_and_path_post_filter_hints() {
-        let hint = token_budget::combine_hints(
-            Some(filtered_fetch_cap_hint()),
-            Some(path_filter_post_filter_hint()),
-        )
-        .expect("hint");
-
-        assert!(hint.contains("fetch cap"));
-        assert!(hint.contains("post-filtered"));
-    }
-
-    #[test]
-    fn search_result_token_budget_uses_text_row_estimate() {
-        let mut first = symbol("src/lib.rs", "function", "rust").to_brief();
-        first.score = 1.0;
-        first.sources = Some(vec!["exact".to_string()]);
-        let mut second = symbol("src/other.rs", "function", "rust").to_brief();
-        second.score = 0.9;
-        second.sources = Some(vec!["semantic".to_string()]);
-        let budget = token_budget::estimate_tokens(&format_search_result_line(&first));
-        let expected_path = first.file_path.clone();
-
-        let trimmed = token_budget::trim_results(
-            vec![first, second],
-            Some(budget),
-            SEARCH_TOKEN_BUDGET_REFINE_HINT,
-            format_search_result_line,
-        );
-
-        assert_eq!(trimmed.results.len(), 1);
-        assert_eq!(trimmed.results[0].file_path, expected_path);
-        let hint = trimmed.hint.expect("token budget hint");
-        assert!(hint.contains("1 of 2 results"));
-        assert!(hint.contains("refine with `--kind`, `--language`, PATH filters"));
-    }
-
-    #[test]
-    fn literal_query_hint_detects_literal_like_queries() {
-        for query in [
-            "spawn_ui_server(",
-            "config.ui.mode",
-            "\"quoted string\"",
-            "src/foo.rs",
-        ] {
-            let hint = literal_query_hint(query).expect("literal hint");
-            assert!(hint.contains("gcode grep"));
-            assert!(hint.contains("search-content"));
-        }
-    }
-
-    #[test]
-    fn literal_query_hint_skips_natural_language_queries() {
-        assert!(literal_query_hint("database connection pool").is_none());
-    }
-
-    #[test]
-    fn content_snippet_compaction_collapses_whitespace() {
-        assert_eq!(
-            compact_snippet("  first line\n    second\tline\r\nthird  "),
-            "first line second line third"
-        );
-    }
-}
+#[path = "search_unit_tests.rs"]
+mod tests;

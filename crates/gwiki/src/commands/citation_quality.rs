@@ -155,7 +155,7 @@ fn text_generation_available() -> Result<bool, WikiError> {
     );
     Ok(matches!(
         effective_route(&context, AiCapability::TextGenerate),
-        AiRouting::Direct | AiRouting::Daemon
+        AiRouting::Daemon
     ))
 }
 

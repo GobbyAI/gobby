@@ -75,6 +75,7 @@ fn empty_paged_response<T: Serialize>(
             hint: error
                 .and_then(|err| hint_for_error(ctx, err))
                 .or_else(|| hint_for(ctx)),
+            warnings: Vec::new(),
         }),
         Format::Text => {
             print_graph_hint_text(ctx, error);
@@ -410,6 +411,7 @@ pub fn callers(
             limit,
             results,
             hint: hint_for(ctx),
+            warnings: Vec::new(),
         }),
         Format::Text => {
             if results.is_empty() && offset == 0 {
@@ -473,6 +475,7 @@ pub fn usages(
             limit,
             results,
             hint,
+            warnings: Vec::new(),
         }),
         Format::Text => {
             if unbudgeted_result_count == 0 && offset == 0 {
@@ -523,6 +526,7 @@ pub fn imports(ctx: &Context, file: &str, format: Format) -> anyhow::Result<()> 
             limit: total,
             results,
             hint: hint_for(ctx),
+            warnings: Vec::new(),
         }),
         Format::Text => {
             if results.is_empty() {
@@ -601,6 +605,7 @@ pub fn blast_radius(
             limit: total,
             results,
             hint,
+            warnings: Vec::new(),
         }),
         Format::Text => {
             if total == 0 {

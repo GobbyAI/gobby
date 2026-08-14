@@ -20,10 +20,9 @@ use reqwest::header::AUTHORIZATION;
 use crate::ai::daemon::{
     GenerationBudget, generate_via_daemon_with_candidates, generate_via_daemon_with_max_tokens,
 };
-use crate::ai::text::chat_completion_usage;
 use crate::ai::{
-    chat_api_root, chat_completion_content, chat_completion_model, parse_json_response,
-    reqwest_error, retry_with_backoff, timeout_for,
+    chat_api_root, chat_completion_content, chat_completion_model, chat_completion_usage,
+    parse_json_response, reqwest_error, retry_with_backoff, timeout_for,
 };
 use crate::ai_context::AiContext;
 use crate::ai_types::{AiError, TextResult};
@@ -59,10 +58,9 @@ fn direct_http_client() -> Result<Client, AiError> {
 
 /// One-shot generation for a writing tier on an already-resolved route.
 ///
-/// `route` must be [`AiRouting::Daemon`] or [`AiRouting::Direct`]; `Off`/`Auto`
-/// return [`AiError::NotConfigured`]. For the Direct route, `direct_target` must
-/// carry the profile target the caller resolved with
-/// [`super::profile::resolve_direct_generation_target`].
+/// `route` must be [`AiRouting::Daemon`]; [`AiRouting::Off`] returns
+/// [`AiError::NotConfigured`]. `direct_target` is ignored: generation is
+/// daemon-only.
 #[allow(clippy::too_many_arguments)]
 pub fn generate_one_shot(
     context: &AiContext,
@@ -74,42 +72,29 @@ pub fn generate_one_shot(
     system: Option<&str>,
     max_tokens: Option<usize>,
 ) -> Result<TextResult, AiError> {
+    let _ = direct_target;
     let profile = profile_for_tier(tier, aggregate_override);
-    dispatch_one_shot(
-        route,
-        || {
-            generate_via_daemon_with_max_tokens(
-                context,
-                prompt,
-                system,
-                max_tokens,
-                Some(profile.as_str()),
-                budget_for_tier(tier),
-            )
-        },
-        || {
-            let target = direct_target.ok_or_else(|| {
-                AiError::not_configured(
-                    Some(AiCapability::TextGenerate.as_str().to_string()),
-                    "direct one-shot generation requires a resolved profile target",
-                )
-            })?;
-            generate_text_with_target(context, target, prompt, system, max_tokens)
-        },
-    )
+    dispatch_one_shot(route, || {
+        generate_via_daemon_with_max_tokens(
+            context,
+            prompt,
+            system,
+            max_tokens,
+            Some(profile.as_str()),
+            budget_for_tier(tier),
+        )
+    })
 }
 
 fn dispatch_one_shot<T>(
     route: AiRouting,
     daemon: impl FnOnce() -> Result<T, AiError>,
-    direct: impl FnOnce() -> Result<T, AiError>,
 ) -> Result<T, AiError> {
     match route {
         AiRouting::Daemon => daemon(),
-        AiRouting::Direct => direct(),
-        AiRouting::Off | AiRouting::Auto => Err(AiError::not_configured(
+        AiRouting::Off => Err(AiError::not_configured(
             Some(AiCapability::TextGenerate.as_str().to_string()),
-            "text generation route is off or unresolved (Auto); resolve to Daemon or Direct first",
+            "text generation route is off",
         )),
     }
 }
@@ -145,15 +130,9 @@ pub fn generate_one_shot_pinned(
             candidates,
             budget_for_tier(tier),
         ),
-        AiRouting::Direct => Err(AiError::not_configured(
+        AiRouting::Off => Err(AiError::not_configured(
             Some(AiCapability::TextGenerate.as_str().to_string()),
-            "explicit generation candidates are unsupported on the Direct route (it resolves a \
-             single profile target); use the daemon route, or pin a profile via an aggregate \
-             profile override instead",
-        )),
-        AiRouting::Off | AiRouting::Auto => Err(AiError::not_configured(
-            Some(AiCapability::TextGenerate.as_str().to_string()),
-            "text generation route is off or unresolved (Auto); resolve to Daemon or Direct first",
+            "text generation route is off",
         )),
     }
 }
@@ -231,46 +210,28 @@ mod tests {
     use super::*;
 
     #[test]
-    fn daemon_failure_never_invokes_direct_lane() {
+    fn daemon_failure_does_not_fallback() {
         let daemon_calls = Cell::new(0);
-        let direct_calls = Cell::new(0);
 
-        let result = dispatch_one_shot::<()>(
-            AiRouting::Daemon,
-            || {
-                daemon_calls.set(daemon_calls.get() + 1);
-                Err(AiError::not_configured(None, "daemon failed"))
-            },
-            || {
-                direct_calls.set(direct_calls.get() + 1);
-                Ok(())
-            },
-        );
+        let result = dispatch_one_shot::<()>(AiRouting::Daemon, || {
+            daemon_calls.set(daemon_calls.get() + 1);
+            Err(AiError::not_configured(None, "daemon failed"))
+        });
 
         assert!(result.is_err());
         assert_eq!(daemon_calls.get(), 1);
-        assert_eq!(direct_calls.get(), 0);
     }
 
     #[test]
-    fn direct_failure_never_invokes_daemon_lane() {
+    fn off_route_does_not_invoke_daemon() {
         let daemon_calls = Cell::new(0);
-        let direct_calls = Cell::new(0);
 
-        let result = dispatch_one_shot::<()>(
-            AiRouting::Direct,
-            || {
-                daemon_calls.set(daemon_calls.get() + 1);
-                Ok(())
-            },
-            || {
-                direct_calls.set(direct_calls.get() + 1);
-                Err(AiError::not_configured(None, "direct failed"))
-            },
-        );
+        let result = dispatch_one_shot::<()>(AiRouting::Off, || {
+            daemon_calls.set(daemon_calls.get() + 1);
+            Ok(())
+        });
 
         assert!(result.is_err());
         assert_eq!(daemon_calls.get(), 0);
-        assert_eq!(direct_calls.get(), 1);
     }
 }

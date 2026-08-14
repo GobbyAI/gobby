@@ -7,10 +7,9 @@
 //! (search, outline, symbol read, grep, bounded file read) and pass it in.
 //!
 //! The completion transport is abstracted behind [`ChatTransport`] so the same
-//! loop drives the Direct OpenAI-compatible route (see
-//! [`super::transport::DirectChatTransport`]) and, later, a daemon
-//! tool-passthrough endpoint. Tool execution always stays local to the loop;
-//! the transport only relays messages and returns the model's `tool_calls`.
+//! loop can drive a daemon tool-passthrough endpoint. Tool execution stays
+//! local to the loop; the transport only relays messages and returns the
+//! model's `tool_calls`.
 
 use std::sync::{Arc, OnceLock, mpsc};
 use std::time::{Duration, Instant};

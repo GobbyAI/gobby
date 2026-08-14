@@ -32,6 +32,7 @@ fn make_ctx_no_falkordb() -> Context {
         runtime_config_capture_degraded: false,
         indexing: gobby_core::config::IndexingConfig::default(),
         daemon_url: None,
+        grant_ai: None,
         index_scope: crate::config::ProjectIndexScope::Single,
     }
 }
@@ -501,6 +502,7 @@ fn top_level_read_commands_preserve_json_shape() {
             metadata: None,
         }],
         hint: None,
+        warnings: Vec::new(),
     };
 
     let value = serde_json::to_value(&response).expect("serialize response");
@@ -538,6 +540,7 @@ fn top_level_read_commands_preserve_json_shape() {
             ),
         }],
         hint: None,
+        warnings: Vec::new(),
     };
     let value = serde_json::to_value(&response).expect("serialize metadata response");
 

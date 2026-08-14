@@ -1,28 +1,18 @@
-//! Tool-loop chat generation over both routes.
+//! Daemon-only tool-loop chat generation.
 //!
-//! * [`DirectChatTransport`] is a [`ChatTransport`] targeting OpenAI-compatible
-//!   local servers (LM Studio, vLLM, llama.cpp, and similar) that expose
-//!   function/tool calling through the standard chat schema. It is
-//!   provider-neutral: the model/api_base/api_key come from a resolved
-//!   [`DirectGenerationTarget`], never a pinned vendor. The caller runs the
-//!   local tool loop over it.
-//! * [`daemon_agentic_chat`] is the daemon route: one POST to the daemon's
-//!   agentic `/api/llm/chat/completions` endpoint (#17393), which runs its own
-//!   server-side investigation loop under the caller's [`ToolPolicy`] and
-//!   returns the finished narrative — never `tool_calls` for the caller to
-//!   execute.
+//! [`daemon_agentic_chat`] POSTs to the daemon's agentic
+//! `/api/llm/chat/completions` endpoint, which runs its own server-side
+//! investigation loop under the caller's [`ToolPolicy`] and returns the
+//! finished narrative — never `tool_calls` for the caller to execute.
 
 use std::time::Instant;
 
-use reqwest::blocking::Client;
-use reqwest::header::AUTHORIZATION;
 use serde_json::{Map, Value, json};
 
 use crate::ai::daemon::{daemon_client, daemon_url, read_local_cli_token, with_local_token};
-use crate::ai::text::chat_completion_usage;
 use crate::ai::{
-    chat_api_root, chat_completion_model, parse_json_response, reqwest_error,
-    retry_with_backoff_until, timeout_for,
+    chat_completion_model, chat_completion_usage, parse_json_response, reqwest_error,
+    retry_with_backoff_until,
 };
 use crate::ai_context::AiContext;
 use crate::ai_types::{AiError, TokenUsage};
@@ -31,95 +21,12 @@ use crate::local_token::AGENT_API_TOKEN_ENV;
 
 use super::profile::DirectGenerationTarget;
 use super::tool_loop::{
-    ChatCompletion, ChatCompletionRequest, ChatMessage, ChatRole, ChatTransport, ToolCall,
-    ToolLoopLimits, ToolSchema,
+    ChatCompletion, ChatCompletionRequest, ChatMessage, ChatRole, ToolCall, ToolLoopLimits,
+    ToolSchema,
 };
 
 /// Daemon tool-passthrough chat-completion path (#17393).
 const DAEMON_CHAT_COMPLETIONS_PATH: &str = "/api/llm/chat/completions";
-
-/// Direct OpenAI-compatible chat-completion transport with tool calling.
-pub struct DirectChatTransport<'a> {
-    context: &'a AiContext,
-    target: DirectGenerationTarget,
-    profile: Option<String>,
-    client: Client,
-}
-
-impl<'a> DirectChatTransport<'a> {
-    /// Build a transport for a resolved profile target. `profile` is the feature
-    /// profile name the target was resolved from, recorded for observability.
-    pub fn new(
-        context: &'a AiContext,
-        target: DirectGenerationTarget,
-        profile: Option<String>,
-    ) -> Result<Self, AiError> {
-        let client = Client::builder().build().map_err(reqwest_error)?;
-        Ok(Self {
-            context,
-            target,
-            profile,
-            client,
-        })
-    }
-
-    fn url(&self) -> Result<String, AiError> {
-        let api_base = self.target.api_base().ok_or_else(|| {
-            AiError::not_configured(
-                Some(AiCapability::TextGenerate.as_str().to_string()),
-                "ai.text_generate profile api_base is required for direct tool-calling completions",
-            )
-        })?;
-        Ok(format!("{}/v1/chat/completions", chat_api_root(api_base)))
-    }
-}
-
-impl ChatTransport for DirectChatTransport<'_> {
-    fn complete(&self, request: ChatCompletionRequest<'_>) -> Result<ChatCompletion, AiError> {
-        let url = self.url()?;
-        let body = build_request_body(&self.target, &request);
-        let api_key = self
-            .target
-            .api_key
-            .as_deref()
-            .map(str::trim)
-            .filter(|value| !value.is_empty())
-            .map(str::to_string);
-        let request_timeout = request.timeout.min(timeout_for(AiCapability::TextGenerate));
-        let deadline = Instant::now() + request_timeout;
-
-        let _permit = self.context.limiter.acquire();
-        let value = retry_with_backoff_until(
-            deadline,
-            |remaining| {
-                let mut http = self.client.post(&url).timeout(remaining).json(&body);
-                if let Some(api_key) = api_key.as_deref() {
-                    http = http.header(AUTHORIZATION, format!("Bearer {api_key}"));
-                }
-                parse_json_response(http.send().map_err(reqwest_error)?)
-            },
-            std::thread::sleep,
-        )?;
-
-        parse_completion(&value)
-    }
-
-    fn route(&self) -> &'static str {
-        "direct"
-    }
-
-    fn profile(&self) -> Option<&str> {
-        self.profile.as_deref()
-    }
-
-    fn provider(&self) -> Option<&str> {
-        self.target.provider.as_deref()
-    }
-
-    fn model(&self) -> Option<&str> {
-        self.target.model.as_deref()
-    }
-}
 
 /// Final result of a one-shot daemon-side agentic narrative generation call
 /// (the tool-loop daemon route for codewiki and gwiki).
@@ -188,6 +95,7 @@ pub fn daemon_agentic_chat(
     limits: &ToolLoopLimits,
     reasoning_effort: Option<&str>,
 ) -> Result<DaemonAgenticResult, AiError> {
+    context.require_granted(AiCapability::ToolChat)?;
     let caller = caller.trim();
     if caller.is_empty() {
         return Err(AiError::not_configured(
@@ -517,6 +425,7 @@ fn tool_to_json(tool: &ToolSchema) -> Value {
 }
 
 /// Parse an OpenAI-compatible chat-completion response into a [`ChatCompletion`].
+#[allow(dead_code)]
 pub(crate) fn parse_completion(value: &Value) -> Result<ChatCompletion, AiError> {
     let choice = value
         .get("choices")
@@ -556,6 +465,7 @@ pub(crate) fn parse_completion(value: &Value) -> Result<ChatCompletion, AiError>
     })
 }
 
+#[allow(dead_code)]
 fn parse_tool_call(value: &Value) -> Option<ToolCall> {
     let function = value.get("function")?;
     let name = function.get("name").and_then(Value::as_str)?.to_string();

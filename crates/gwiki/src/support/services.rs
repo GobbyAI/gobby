@@ -8,9 +8,7 @@
 //! config plumbing.
 
 use gobby_core::ai::effective_config::ai_source_for_conn;
-use gobby_core::ai::generation::{
-    GenerationTier, profile_for_tier, resolve_direct_generation_target,
-};
+use gobby_core::ai::generation::GenerationTier;
 use gobby_core::ai::resolve_route_observed;
 use gobby_core::ai_context::{AiContext, AiContextOptions};
 use gobby_core::config::{
@@ -106,7 +104,7 @@ pub(crate) fn probe_runtime_services(command: &'static str) -> Result<RuntimeSer
 pub(crate) fn text_generation_available(
     command: &'static str,
     requested: AiRouting,
-    tier: GenerationTier,
+    _tier: GenerationTier,
 ) -> bool {
     if matches!(requested, AiRouting::Off) {
         return false;
@@ -125,20 +123,13 @@ pub(crate) fn text_generation_available(
     let observed = resolve_route_observed(&context, AiCapability::TextGenerate);
     match observed.route {
         AiRouting::Daemon => true,
-        // The Direct route needs a concrete per-tier target with an api_base
-        // resolved from the same config source.
-        AiRouting::Direct => {
-            resolve_direct_generation_target(&mut source, &profile_for_tier(tier, None))
-                .api_base()
-                .is_some()
-        }
-        _ => false,
+        AiRouting::Off => false,
     }
 }
 
 pub(crate) fn resolve_semantic_embedding(
     context: &AiContext,
-    source: &mut impl gobby_core::config::ConfigSource,
+    _source: &mut impl gobby_core::config::ConfigSource,
 ) -> Option<SemanticEmbedding> {
     match effective_embedding_route(context) {
         AiRouting::Off => None,
@@ -150,17 +141,6 @@ pub(crate) fn resolve_semantic_embedding(
             #[cfg(not(feature = "ai"))]
             {
                 None
-            }
-        }
-        AiRouting::Direct => resolve_embedding_config(source).map(SemanticEmbedding::Direct),
-        AiRouting::Auto => {
-            #[cfg(feature = "ai")]
-            {
-                Some(SemanticEmbedding::Daemon(Box::new(context.clone())))
-            }
-            #[cfg(not(feature = "ai"))]
-            {
-                resolve_embedding_config(source).map(SemanticEmbedding::Direct)
             }
         }
     }
@@ -175,18 +155,11 @@ fn effective_embedding_route(context: &AiContext) -> AiRouting {
     {
         match context.binding(AiCapability::Embed).routing {
             AiRouting::Off => AiRouting::Off,
-            AiRouting::Direct => AiRouting::Direct,
             AiRouting::Daemon => {
                 eprintln!(
                     "warning: gwiki was built without ai support; daemon-backed embeddings are disabled"
                 );
                 AiRouting::Off
-            }
-            AiRouting::Auto => {
-                eprintln!(
-                    "warning: gwiki was built without ai support; auto embedding route cannot use the daemon"
-                );
-                AiRouting::Auto
             }
         }
     }

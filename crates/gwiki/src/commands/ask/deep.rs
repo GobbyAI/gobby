@@ -2,10 +2,7 @@ use std::collections::HashSet;
 use std::fs;
 use std::path::{Component, Path};
 
-use gobby_core::ai::generation::{
-    ChatMessage, DirectGenerationTarget, ToolPolicy, daemon_agentic_chat, profile_for_tier,
-    resolve_direct_generation_target,
-};
+use gobby_core::ai::generation::{ChatMessage, ToolPolicy, daemon_agentic_chat, profile_for_tier};
 use gobby_core::ai::{AiNoticeKind, resolve_route_observed};
 use gobby_core::ai_context::{AiContext, AiContextOptions};
 use gobby_core::ai_types::TokenUsage;
@@ -16,7 +13,7 @@ use crate::commands::ask::narration::strip_leading_model_narration;
 use crate::commands::ask::synthesis::{
     ASK_TIER, mark_ai_unavailable, push_ai_notice_warning, record_synthesis,
 };
-use crate::commands::generation_routes::{routing_label, run_direct_agentic_generation};
+use crate::commands::generation_routes::routing_label;
 use crate::output::{AskAiOutput, AskCitationCheckOutput, AskDeepOutput, AskOutput};
 use crate::support::scope::{resolve_command_scope, resolved_scope_identity};
 use crate::{ScopeSelection, WikiError};
@@ -46,7 +43,7 @@ pub(super) fn synthesize(
     let resolved_scope = resolve_command_scope(&selection)?;
     let vault_root = resolved_scope.root().to_path_buf();
     let project_root = resolved_scope.project_root().map(Path::to_path_buf);
-    let scope_identity = resolved_scope_identity(&resolved_scope);
+    let _scope_identity = resolved_scope_identity(&resolved_scope);
     let mut source = crate::support::config::hub_ai_config_source("gwiki ask --deep")?;
     let context = AiContext::try_resolve_with_options(
         None,
@@ -62,7 +59,7 @@ pub(super) fn synthesize(
     let observed = resolve_route_observed(&context, AiCapability::ToolChat);
     let route = observed.route;
     if let Some(notice) = observed.reason.or_else(|| {
-        (observed.fallback && route == AiRouting::Direct)
+        (observed.fallback && route == AiRouting::Daemon)
             .then_some(AiNoticeKind::AutoFallbackToDirect)
     }) {
         push_ai_notice_warning(output, notice);
@@ -71,29 +68,6 @@ pub(super) fn synthesize(
 
     let profile = profile_for_tier(ASK_TIER, None);
     match route {
-        AiRouting::Direct => {
-            let target = resolve_direct_generation_target(&mut source, &profile);
-            if target.api_base().is_none() {
-                return record_deep_unavailable(
-                    output,
-                    routing_label(route),
-                    None,
-                    Some("direct deep ask requires ai.tool_chat api_base".to_string()),
-                    require_ai,
-                );
-            }
-            run_direct(
-                output,
-                plan,
-                &selection,
-                &vault_root,
-                &scope_identity,
-                &context,
-                &profile,
-                &target,
-                require_ai,
-            )
-        }
         AiRouting::Daemon => {
             let Some(project_root) = project_root else {
                 return record_deep_unavailable(
@@ -114,61 +88,9 @@ pub(super) fn synthesize(
                 require_ai,
             )
         }
-        AiRouting::Off | AiRouting::Auto => {
+        AiRouting::Off => {
             record_deep_unavailable(output, routing_label(route), None, None, require_ai)
         }
-    }
-}
-
-#[allow(clippy::too_many_arguments)]
-fn run_direct(
-    output: &mut AskOutput,
-    plan: &EvidencePlan,
-    selection: &ScopeSelection,
-    vault_root: &Path,
-    scope_identity: &crate::ScopeIdentity,
-    context: &AiContext,
-    profile: &str,
-    target: &DirectGenerationTarget,
-    require_ai: bool,
-) -> Result<(), WikiError> {
-    let messages = deep_messages(direct_system(), plan);
-    match run_direct_agentic_generation(
-        context,
-        profile,
-        target,
-        messages,
-        selection,
-        vault_root,
-        scope_identity,
-        &context.tool_loop_limits,
-    ) {
-        Ok(direct) => {
-            if !direct.data_source_degraded.is_empty() {
-                log::warn!(
-                    "Deep ask: data-source degradation during direct investigation: {}",
-                    direct.data_source_degraded.join(", ")
-                );
-            }
-            let outcome = direct.outcome;
-            record_deep_generation(
-                output,
-                vault_root,
-                DeepGenerationResult {
-                    route: "direct",
-                    model: direct.model,
-                    content: outcome.content,
-                    turns: Some(outcome.observability.turns),
-                    max_turns: context.tool_loop_limits.max_turns,
-                    tool_use_count: outcome.observability.tool_call_count,
-                    usage: outcome.total_usage,
-                    stop_reason: Some(outcome.stop_reason.as_str().to_string()),
-                    completed: outcome.stop_reason.is_completed(),
-                },
-                require_ai,
-            )
-        }
-        Err(error) => record_deep_unavailable(output, "direct", None, Some(error), require_ai),
     }
 }
 
@@ -333,13 +255,6 @@ fn deep_daemon_tool_policy() -> ToolPolicy {
             .collect(),
         allow_mutation: false,
     }
-}
-
-fn direct_system() -> &'static str {
-    "Investigate the wiki with only the read-only tools search_vault, read_document, \
-     backlinks, and sources. Follow relevant links before answering. Cite every \
-     factual claim with an existing [[wiki/page]] and explicitly state claims that \
-     cannot be verified. Return only the final answer."
 }
 
 fn daemon_system() -> &'static str {
@@ -510,10 +425,6 @@ mod tests {
 
     #[test]
     fn prompts_name_each_routes_exact_readonly_tools() {
-        let direct = direct_system();
-        for tool in ["search_vault", "read_document", "backlinks", "sources"] {
-            assert!(direct.contains(tool), "direct prompt omitted {tool}");
-        }
         let daemon = daemon_system();
         for tool in ["search", "read", "backlinks", "sources"] {
             assert!(daemon.contains(tool), "daemon prompt omitted {tool}");

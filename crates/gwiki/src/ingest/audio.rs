@@ -82,7 +82,7 @@ pub fn production_transcription_endpoint(
                 transcription_fallback(translate),
             ))
         }
-    } else if matches!(route, AiRouting::Daemon | AiRouting::Direct) {
+    } else if matches!(route, AiRouting::Daemon) {
         available_production_transcription_endpoint(context, route, translate)
     } else {
         TranscriptionEndpoint::Unavailable(TranscriptionDegradation::for_routing(
@@ -93,7 +93,7 @@ pub fn production_transcription_endpoint(
 }
 
 fn route_available(route: AiRouting) -> bool {
-    matches!(route, AiRouting::Daemon | AiRouting::Direct)
+    matches!(route, AiRouting::Daemon)
 }
 
 #[cfg(feature = "ai")]
@@ -151,7 +151,7 @@ fn available_production_transcription_endpoint(
 fn text_generate_translation_target(context: &AiContext) -> Option<DirectGenerationTarget> {
     if !matches!(
         resolved_transcription_route(context, AiCapability::TextGenerate),
-        AiRouting::Direct
+        AiRouting::Daemon
     ) {
         return None;
     }
@@ -614,15 +614,9 @@ mod tests {
             },
             limiter: AiLimiter::new(1),
             project_id: None,
+            grant: None,
             tool_loop_limits: gobby_core::ai::generation::ToolLoopLimits::default(),
         }
-    }
-
-    #[cfg(feature = "ai")]
-    fn spawn_transcription_server(
-        response: &'static str,
-    ) -> (String, crate::test_http::RequestHandle) {
-        crate::test_http::spawn_json_response(response).expect("spawn test server")
     }
 
     #[cfg(feature = "ai")]
@@ -677,10 +671,8 @@ mod tests {
 
     #[cfg(feature = "ai")]
     #[test]
-    fn production_transcription_writes_fields() {
-        let response = r#"{"text":"Production routed transcript.","source_language":"es","language":"en","model":"whisper-prod","task":"transcribe","translated":false,"segments":[{"start":0.0,"end":1.25,"text":"Production routed transcript."}]}"#;
-        let (api_base, request) = spawn_transcription_server(response);
-        let context = test_context(AiRouting::Direct, Some(api_base));
+    fn off_routing_skips_production_transcription() {
+        let context = test_context(AiRouting::Off, None);
         let temp = tempfile::tempdir().expect("tempdir");
         let mut store = MemoryWikiStore::default();
 
@@ -691,64 +683,9 @@ mod tests {
             sample_snapshot(),
             &context,
         )
-        .expect("ingest audio with production transcript");
+        .expect("ingest audio with AI off");
 
-        // `join` detects server-thread panics; the inner `expect` verifies the
-        // server actually captured the HTTP request.
-        let request = request
-            .join()
-            .expect("transcription test server thread joins");
-        let request = request.expect("transcription request was captured");
-        assert!(request.starts_with("POST /v1/audio/transcriptions HTTP/1.1"));
-        assert!(result.transcription_degradation.is_none());
-
-        let markdown =
-            std::fs::read_to_string(temp.path().join(&result.transcript_path)).expect("markdown");
-        assert!(markdown.contains("transcription_status: transcribed"));
-        assert!(markdown.contains("transcription_language: en"));
-        assert!(markdown.contains("transcription_source_language: es"));
-        assert!(markdown.contains("transcription_model: whisper-prod"));
-        assert!(markdown.contains("transcription_task: transcribe"));
-        assert!(markdown.contains("translated: \"false\""));
-        assert!(markdown.contains("[00:00:00] Production routed transcript."));
-    }
-
-    #[cfg(feature = "ai")]
-    #[test]
-    fn production_path_applies_translation() {
-        let response = r#"{"text":"Translated transcript.","source_language":"es","language":"es","model":"whisper-prod","task":"translate","translated":true,"segments":[{"start":0.0,"end":1.25,"text":"Translated transcript."}]}"#;
-        let (api_base, request) = spawn_transcription_server(response);
-        let context = test_context(AiRouting::Direct, Some(api_base));
-        let temp = tempfile::tempdir().expect("tempdir");
-        let mut store = MemoryWikiStore::default();
-
-        let result = ingest_audio_with_transcription(
-            temp.path(),
-            &mut store,
-            ScopeIdentity::topic("field-work"),
-            sample_snapshot(),
-            production_transcription_endpoint(&context, true),
-        )
-        .expect("ingest translated audio");
-
-        // `join` detects server-thread panics; the inner `expect` verifies the
-        // server actually captured the HTTP request.
-        let request = request
-            .join()
-            .expect("translation test server thread joins");
-        let request = request.expect("translation request was captured");
-        assert!(request.starts_with("POST /v1/audio/translations HTTP/1.1"));
-        assert!(result.transcription_degradation.is_none());
-
-        let markdown =
-            std::fs::read_to_string(temp.path().join(&result.transcript_path)).expect("markdown");
-        assert!(markdown.contains("transcription_status: transcribed"));
-        assert!(markdown.contains("transcription_language: en"));
-        assert!(markdown.contains("transcription_source_language: es"));
-        assert!(markdown.contains("transcription_target_language: en"));
-        assert!(markdown.contains("transcription_task: translate"));
-        assert!(markdown.contains("translated: \"true\""));
-        assert!(markdown.contains("[00:00:00] Translated transcript."));
+        assert!(result.transcription_degradation.is_some());
     }
 
     #[cfg(feature = "ai")]

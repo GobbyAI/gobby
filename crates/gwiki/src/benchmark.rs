@@ -3,8 +3,8 @@ use std::collections::{BTreeMap, BTreeSet, HashMap};
 use gobby_core::ai::effective_route;
 use gobby_core::ai_context::AiContext;
 use gobby_core::config::{
-    AiCapability, AiRouting, FalkorConfig, QdrantConfig, resolve_embedding_config,
-    resolve_falkordb_config, resolve_qdrant_config,
+    AiCapability, AiRouting, FalkorConfig, QdrantConfig, resolve_falkordb_config,
+    resolve_qdrant_config,
 };
 use gobby_core::degradation::DegradationKind;
 use gobby_core::falkor::GraphClient;
@@ -519,6 +519,7 @@ fn resolve_benchmark_embedding(
     match effective_route(context, AiCapability::Embed) {
         AiRouting::Off => None,
         AiRouting::Daemon => {
+            let _ = source;
             #[cfg(feature = "ai")]
             {
                 Some(SemanticEmbedding::Daemon(Box::new(context.clone())))
@@ -528,8 +529,6 @@ fn resolve_benchmark_embedding(
                 None
             }
         }
-        AiRouting::Direct => resolve_embedding_config(source).map(SemanticEmbedding::Direct),
-        AiRouting::Auto => None,
     }
 }
 
@@ -571,15 +570,10 @@ fn model_provider(optional: &OptionalBenchmarkSources) -> AvailabilityReport {
 
 fn model_provider_available(context: &AiContext) -> bool {
     let route = effective_route(context, AiCapability::TextGenerate);
-    let binding = context.binding(AiCapability::TextGenerate);
+    let _binding = context.binding(AiCapability::TextGenerate);
     match route {
         AiRouting::Off => false,
         AiRouting::Daemon => true,
-        AiRouting::Direct => {
-            binding.api_base.as_deref().is_some_and(non_empty)
-                && binding.model.as_deref().is_some_and(non_empty)
-        }
-        AiRouting::Auto => false,
     }
 }
 

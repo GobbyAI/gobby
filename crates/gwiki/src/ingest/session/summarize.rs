@@ -71,10 +71,10 @@ impl SessionSummarizer {
             },
         );
         let route = effective_route(&context, AiCapability::TextGenerate);
-        if matches!(route, AiRouting::Direct | AiRouting::Daemon) {
+        if matches!(route, AiRouting::Daemon) {
             // Standalone summaries are the Standard (`feature_low`) text-generate tier;
             // resolve the Direct-route target so generation routes through tier->profile.
-            let target = matches!(route, AiRouting::Direct).then(|| {
+            let target = matches!(route, AiRouting::Daemon).then(|| {
                 resolve_direct_generation_target(
                     &mut source,
                     &profile_for_tier(GenerationTier::Standard, None),

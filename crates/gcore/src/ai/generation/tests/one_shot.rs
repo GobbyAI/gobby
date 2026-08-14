@@ -16,6 +16,7 @@ fn pinned_context() -> AiContext {
         limiter: AiLimiter::new(1),
         tool_loop_limits: ToolLoopLimits::default(),
         project_id: None,
+        grant: None,
     }
 }
 
@@ -27,27 +28,20 @@ fn pinned_candidates() -> Vec<FeatureCandidate> {
 }
 
 #[test]
-fn pinned_one_shot_rejects_direct_route_with_clear_error() {
-    // The Direct route resolves a single profile target and cannot honor an
-    // explicit candidate chain; it must fail loudly, never generate unpinned.
+fn pinned_one_shot_rejects_off_route() {
     let error = generate_one_shot_pinned(
         &pinned_context(),
-        AiRouting::Direct,
+        AiRouting::Off,
         GenerationTier::Aggregate,
         &pinned_candidates(),
         "prompt",
         None,
         None,
     )
-    .expect_err("direct route rejects explicit candidates");
+    .expect_err("off route rejects pinned generation");
 
     assert!(matches!(error, AiError::NotConfigured { .. }), "{error}");
-    assert!(
-        error
-            .to_string()
-            .contains("unsupported on the Direct route"),
-        "{error}"
-    );
+    assert!(error.to_string().contains("route is off"), "{error}");
 }
 
 #[test]
@@ -68,21 +62,4 @@ fn pinned_one_shot_requires_at_least_one_candidate() {
         error.to_string().contains("at least one candidate"),
         "{error}"
     );
-}
-
-#[test]
-fn pinned_one_shot_rejects_off_and_auto_routes() {
-    for route in [AiRouting::Off, AiRouting::Auto] {
-        let error = generate_one_shot_pinned(
-            &pinned_context(),
-            route,
-            GenerationTier::Aggregate,
-            &pinned_candidates(),
-            "prompt",
-            None,
-            None,
-        )
-        .expect_err("unresolved route rejected");
-        assert!(matches!(error, AiError::NotConfigured { .. }), "{error}");
-    }
 }

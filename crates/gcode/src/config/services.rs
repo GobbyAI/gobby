@@ -2,7 +2,7 @@
 
 use gobby_core::ai_context::AiContext;
 use gobby_core::config::embedding_keys;
-use gobby_core::config::{AiCapability, AiRouting, CapabilityBinding, ConfigSource};
+use gobby_core::config::{AiCapability, CapabilityBinding, ConfigSource};
 use gobby_core::provisioning::{GCORE_CONFIG_FILENAME, StandaloneConfig};
 use postgres::Client;
 use std::fmt;
@@ -437,14 +437,8 @@ pub(crate) fn resolve_embedding_config_from_source(
 }
 
 fn embedding_binding_routes_direct(binding: &CapabilityBinding) -> bool {
-    match binding.routing {
-        AiRouting::Off | AiRouting::Daemon => false,
-        AiRouting::Auto | AiRouting::Direct => binding
-            .api_base
-            .as_deref()
-            .map(str::trim)
-            .is_some_and(|value| !value.is_empty()),
-    }
+    let _ = binding;
+    false
 }
 
 fn embedding_binding_uses_openai_http(binding: &CapabilityBinding) -> bool {

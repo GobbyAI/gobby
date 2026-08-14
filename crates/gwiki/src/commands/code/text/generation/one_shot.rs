@@ -5,7 +5,6 @@ use gobby_core::ai::{
     AiNoticeKind,
     daemon::{GenerationBudget, generate_via_daemon_with_max_tokens},
     effective_route, resolve_route_observed,
-    text::generate_text,
 };
 use gobby_core::ai_types::AiError;
 use gobby_core::config::{AiCapability, AiRouting};
@@ -58,7 +57,7 @@ impl ResolvedTextGenerator {
 
     pub(crate) fn notice_kind(&self) -> Option<AiNoticeKind> {
         self.no_generator_reason.or_else(|| {
-            (self.ai_fallback && self.ai_route == AiRouting::Direct)
+            (self.ai_fallback && self.ai_route == AiRouting::Daemon)
                 .then_some(AiNoticeKind::AutoFallbackToDirect)
         })
     }
@@ -71,13 +70,13 @@ pub(crate) fn resolve_text_generator(
     let ai_context = resolve_ai_context(ctx, ai.routing);
     let observed = resolve_route_observed(&ai_context, AiCapability::TextGenerate);
     let route = observed.route;
-    if matches!(route, AiRouting::Off | AiRouting::Auto) {
+    if matches!(route, AiRouting::Off) {
         return ResolvedTextGenerator::skipped(route, observed.fallback, observed.reason);
     }
 
     let aggregate_profile = ai.aggregate_profile.clone();
     let aggregate_candidates = ai.aggregate_candidates.clone();
-    let direct_targets = matches!(route, AiRouting::Direct)
+    let direct_targets = matches!(route, AiRouting::Daemon)
         .then(|| resolve_direct_tier_targets(ctx, aggregate_profile.as_deref()));
     if direct_targets
         .as_ref()
@@ -152,7 +151,7 @@ pub(crate) fn resolve_text_verifier(
 ) -> Option<Box<SyncTextVerifier<'static>>> {
     let mut ai_context = resolve_ai_context(ctx, ai.routing);
     let route = effective_route(&ai_context, AiCapability::TextGenerate);
-    if matches!(route, AiRouting::Off | AiRouting::Auto) {
+    if matches!(route, AiRouting::Off) {
         return None;
     }
 
@@ -171,7 +170,7 @@ pub(crate) fn resolve_text_verifier(
         .clone()
         .or_else(|| binding.verify_api_key.clone());
 
-    if matches!(route, AiRouting::Direct) {
+    if matches!(route, AiRouting::Daemon) {
         let text_generate = &mut ai_context.bindings.text_generate;
         if let Some(model) = verify_model {
             text_generate.model = Some(model);
@@ -193,8 +192,7 @@ pub(crate) fn resolve_text_verifier(
                 Some(verify_profile.as_str()),
                 GenerationBudget::Interactive,
             ),
-            AiRouting::Direct => generate_text(&ai_context, prompt, Some(system)),
-            AiRouting::Off | AiRouting::Auto => {
+            AiRouting::Off => {
                 unreachable!("non-generating routes returned above")
             }
         });
@@ -310,13 +308,13 @@ mod tests {
     #[test]
     fn resolved_text_generator_classifies_notice_kinds() {
         let no_generator = ResolvedTextGenerator::skipped(
-            AiRouting::Direct,
+            AiRouting::Daemon,
             false,
             Some(AiNoticeKind::NoGenerator),
         );
 
         assert_eq!(no_generator.notice_kind(), Some(AiNoticeKind::NoGenerator));
-        assert_eq!(no_generator.ai_outcome().route, AiRouting::Direct);
+        assert_eq!(no_generator.ai_outcome().route, AiRouting::Daemon);
         assert_eq!(
             no_generator.ai_outcome().status,
             AiGenerationStatus::Skipped
@@ -324,7 +322,7 @@ mod tests {
 
         let fallback_direct = ResolvedTextGenerator {
             generator: Some(Box::new(|_, _, _| Some("generated".to_string()))),
-            ai_route: AiRouting::Direct,
+            ai_route: AiRouting::Daemon,
             ai_fallback: true,
             no_generator_reason: None,
         };

@@ -3,8 +3,6 @@ use gobby_core::ai::daemon::{
 };
 use gobby_core::ai::effective_route;
 use gobby_core::ai::generation::{DirectGenerationTarget, GenerationTier, generate_one_shot};
-use gobby_core::ai::transcription::{TranscriptionTask, transcribe};
-use gobby_core::ai::vision::describe_image;
 use gobby_core::ai_context::AiContext;
 use gobby_core::ai_types::{AiError, TranscriptionResult as CoreTranscriptionResult, VisionResult};
 use gobby_core::config::{AiCapability, AiRouting};
@@ -62,15 +60,7 @@ impl TranscriptionClient for ProductionTranscriptionClient {
                     prompt: None,
                 },
             ),
-            AiRouting::Direct => transcribe(
-                &self.context,
-                request.bytes.to_vec(),
-                request.file_name,
-                mime,
-                TranscriptionTask::Transcribe,
-                None,
-            ),
-            AiRouting::Off | AiRouting::Auto => Err(route_unavailable(capability, route)),
+            AiRouting::Off => Err(route_unavailable(capability, route)),
         };
 
         result
@@ -99,15 +89,7 @@ impl TranscriptionClient for ProductionTranscriptionClient {
                     prompt: None,
                 },
             ),
-            AiRouting::Direct => transcribe(
-                &self.context,
-                request.bytes.to_vec(),
-                request.file_name,
-                mime,
-                TranscriptionTask::Translate,
-                language_hint,
-            ),
-            AiRouting::Off | AiRouting::Auto => Err(route_unavailable(capability, route)),
+            AiRouting::Off => Err(route_unavailable(capability, route)),
         };
 
         result
@@ -199,7 +181,7 @@ impl ProductionTranscriptionClient {
         let result = match route {
             // Segment translation is the Standard (`feature_low`) text-generate tier;
             // route both transports through the shared tier->profile mapping.
-            AiRouting::Daemon | AiRouting::Direct => generate_one_shot(
+            AiRouting::Daemon => generate_one_shot(
                 &self.context,
                 route,
                 GenerationTier::Standard,
@@ -209,7 +191,7 @@ impl ProductionTranscriptionClient {
                 Some(system),
                 None,
             ),
-            AiRouting::Off | AiRouting::Auto => Err(route_unavailable(capability, route)),
+            AiRouting::Off => Err(route_unavailable(capability, route)),
         }
         .map_err(ai_error_to_wiki_error)?;
 
@@ -310,8 +292,7 @@ impl VisionClient for ProductionVisionClient {
                 request.file_name,
                 mime,
             ),
-            AiRouting::Direct => describe_image(&self.context, request.bytes.to_vec(), mime),
-            AiRouting::Off | AiRouting::Auto => Err(route_unavailable(capability, route)),
+            AiRouting::Off => Err(route_unavailable(capability, route)),
         };
 
         result
@@ -333,9 +314,7 @@ fn route_unavailable(capability: AiCapability, route: AiRouting) -> AiError {
 
 fn route_name(route: AiRouting) -> &'static str {
     match route {
-        AiRouting::Auto => "auto",
         AiRouting::Daemon => "daemon",
-        AiRouting::Direct => "direct",
         AiRouting::Off => "off",
     }
 }
@@ -419,25 +398,6 @@ mod tests {
             )
         );
 
-        let direct_audio_client = ProductionTranscriptionClient::new(
-            test_context(binding(AiRouting::Direct, None)),
-            None,
-        );
-        let direct_audio_error = direct_audio_client
-            .transcribe(&TranscriptionRequest {
-                file_name: "audio.wav",
-                mime_type: Some("audio/wav"),
-                asset_path: &audio_path,
-                bytes: b"audio",
-            })
-            .expect_err("explicit direct routing is forced to the direct transport");
-
-        assert!(
-            direct_audio_error
-                .to_string()
-                .contains("ai.audio_transcribe.api_base is required for direct audio transcribe")
-        );
-
         let vision_client =
             ProductionVisionClient::new(test_context(binding(AiRouting::Off, None)));
         let image_path = PathBuf::from("raw/image.png");
@@ -486,6 +446,7 @@ mod tests {
             },
             limiter: AiLimiter::new(1),
             project_id: Some("project-123".to_string()),
+            grant: None,
             tool_loop_limits: gobby_core::ai::generation::ToolLoopLimits::default(),
         }
     }

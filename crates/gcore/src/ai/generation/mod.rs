@@ -8,8 +8,7 @@
 //!   limits, and observability and never depends on gcode/gwiki.
 //!
 //! Profiles route by [`GenerationTier`]: the Daemon route forwards the profile
-//! name; the Direct route resolves it to a concrete [`DirectGenerationTarget`]
-//! from `~/.gobby/gcore.yaml` (standalone, plaintext `api_key` allowed).
+//! name to the daemon, which owns provider and model selection.
 
 pub mod one_shot;
 pub mod profile;
@@ -25,7 +24,7 @@ pub use tool_loop::{
     ToolCall, ToolChoice, ToolError, ToolExecutor, ToolLoopLimits, ToolLoopObservability,
     ToolLoopOutcome, ToolSchema, run_tool_loop,
 };
-pub use transport::{DaemonAgenticResult, DirectChatTransport, ToolPolicy, daemon_agentic_chat};
+pub use transport::{DaemonAgenticResult, ToolPolicy, daemon_agentic_chat};
 
 #[cfg(test)]
 mod tests;

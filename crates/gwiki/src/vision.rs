@@ -32,9 +32,7 @@ impl VisionDegradation {
     pub(crate) fn for_routing(routing: AiRouting, fallback: &str) -> Self {
         let reason = match routing {
             AiRouting::Off => ModalityDegradationReason::Disabled,
-            AiRouting::Auto | AiRouting::Daemon | AiRouting::Direct => {
-                ModalityDegradationReason::MissingEndpoint
-            }
+            AiRouting::Daemon => ModalityDegradationReason::MissingEndpoint,
         };
         Self {
             reason,

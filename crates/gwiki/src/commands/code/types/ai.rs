@@ -74,8 +74,7 @@ impl Default for CodewikiAiOutcome {
 fn ai_route_label(route: AiRouting) -> &'static str {
     match route {
         AiRouting::Daemon => "daemon",
-        AiRouting::Direct => "direct",
-        AiRouting::Auto | AiRouting::Off => "off",
+        AiRouting::Off => "off",
     }
 }
 

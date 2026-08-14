@@ -84,7 +84,7 @@ pub(crate) fn ingest_image_with_production_vision_without_index(
     #[cfg(feature = "ai")]
     {
         let routing = effective_route(ai_context, capability);
-        let client = matches!(routing, AiRouting::Daemon | AiRouting::Direct)
+        let client = matches!(routing, AiRouting::Daemon)
             .then(|| ProductionVisionClient::new(ai_context.clone()));
         let endpoint = match client.as_ref() {
             Some(client) => VisionEndpoint::Available(client),
@@ -236,7 +236,7 @@ fn render_raw_image_markdown(
 #[allow(dead_code, reason = "reserved gwiki CLI/API split")]
 fn default_vision_degradation() -> VisionDegradation {
     VisionDegradation::for_routing(
-        AiRouting::Auto,
+        AiRouting::Daemon,
         "Keep raw image assets and surface filename/metadata only; skip visual extraction.",
     )
 }
@@ -361,10 +361,9 @@ mod tests {
 
     #[cfg(feature = "ai")]
     #[test]
-    fn production_vision_writes_description_and_ocr() {
-        let response = r#"{"model":"gpt-4.1-mini","choices":[{"message":{"content":"{\"description\":\"A labeled wiring diagram\",\"ocr_text\":\"VCC GND Sensor\"}"}}]}"#;
-        let (api_base, request) = spawn_vision_server(response);
-        let context = test_ai_context(&api_base);
+    fn off_routing_skips_production_vision() {
+        let mut context = test_ai_context("http://unused.invalid");
+        context.bindings.vision_extract.routing = gobby_core::config::AiRouting::Off;
         let temp = tempfile::tempdir().expect("tempdir");
         let mut store = MemoryWikiStore::default();
 
@@ -375,26 +374,8 @@ mod tests {
             &context,
             sample_snapshot(),
         )
-        .expect("ingest image with production vision");
-        let request = request.join().expect("vision test server thread joins");
-        let request = request.expect("vision request was captured");
-
-        assert!(request.starts_with("POST /v1/chat/completions HTTP/1.1"));
-        assert!(request.contains("data:image/png;base64,"));
-        assert!(result.vision_degradation.is_none());
-
-        let document = store
-            .documents
-            .get(&result.derived_path)
-            .expect("derived image document indexed");
-        assert!(document.body.contains("vision_status: extracted"));
-        assert!(document.body.contains("vision_model: gpt-4.1-mini"));
-        assert!(
-            document
-                .body
-                .contains("## Vision Description\n\nA labeled wiring diagram")
-        );
-        assert!(document.body.contains("## OCR Text\n\nVCC GND Sensor"));
+        .expect("ingest image with AI off");
+        assert!(result.vision_degradation.is_some());
     }
 
     #[cfg(feature = "ai")]
@@ -403,7 +384,7 @@ mod tests {
         use gobby_core::config::{AiRouting, AiTuning, CapabilityBinding};
 
         let binding = CapabilityBinding {
-            routing: AiRouting::Direct,
+            routing: AiRouting::Daemon,
             transport: None,
             api_base: Some(api_base.to_string()),
             api_key: None,
@@ -434,12 +415,8 @@ mod tests {
             },
             limiter: AiLimiter::new(1),
             project_id: None,
+            grant: None,
             tool_loop_limits: gobby_core::ai::generation::ToolLoopLimits::default(),
         }
-    }
-
-    #[cfg(feature = "ai")]
-    fn spawn_vision_server(response: &'static str) -> (String, crate::test_http::RequestHandle) {
-        crate::test_http::spawn_json_response(response).expect("spawn test server")
     }
 }

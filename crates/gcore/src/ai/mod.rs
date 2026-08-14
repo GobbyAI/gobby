@@ -14,10 +14,9 @@ pub mod daemon;
 pub mod effective_config;
 pub mod embeddings;
 pub mod generation;
-pub mod probe;
-pub mod text;
-pub mod transcription;
-pub mod vision;
+mod grant_gate;
+
+pub use grant_gate::{require_modality, require_modality_ready};
 
 // Local reasoning models decode long, large-prompt generations at tens of
 // tokens per second; a shared 60s budget timed out the biggest codewiki
@@ -45,114 +44,23 @@ pub enum AiNoticeKind {
     GenerationFailed,
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-enum DaemonProbeState {
-    Available,
-    Unavailable,
-    Unreachable,
-}
-
 pub fn effective_route(context: &AiContext, capability: AiCapability) -> AiRouting {
     resolve_route_observed(context, capability).route
 }
 
 pub fn resolve_route_observed(context: &AiContext, capability: AiCapability) -> ObservedAiRoute {
-    resolve_route_observed_with_probe_state(context, capability, |capability| {
-        let availability = probe::probe_daemon_capability(capability);
-        daemon_probe_state(&availability)
-    })
-}
-
-fn daemon_probe_state(availability: &probe::CapabilityAvailability) -> DaemonProbeState {
-    if availability.available {
-        DaemonProbeState::Available
-    } else if availability
-        .degradation
-        .as_ref()
-        .is_some_and(|degradation| {
-            degradation.reason == probe::CapabilityDegradationReason::Unreachable
-        })
-    {
-        DaemonProbeState::Unreachable
-    } else {
-        DaemonProbeState::Unavailable
+    match context.binding(capability).routing {
+        AiRouting::Off => observed(AiRouting::Off, false, None),
+        AiRouting::Daemon => observed(AiRouting::Daemon, false, None),
     }
-}
-
-#[cfg(test)]
-fn effective_route_with_probe(
-    context: &AiContext,
-    capability: AiCapability,
-    mut daemon_available: impl FnMut(AiCapability) -> bool,
-) -> AiRouting {
-    resolve_route_observed_with_probe(context, capability, &mut daemon_available).route
 }
 
 pub fn resolve_route_observed_with_probe(
     context: &AiContext,
     capability: AiCapability,
-    mut daemon_available: impl FnMut(AiCapability) -> bool,
+    _daemon_available: impl FnMut(AiCapability) -> bool,
 ) -> ObservedAiRoute {
-    resolve_route_observed_with_probe_state(context, capability, |capability| {
-        if daemon_available(capability) {
-            DaemonProbeState::Available
-        } else {
-            DaemonProbeState::Unavailable
-        }
-    })
-}
-
-fn resolve_route_observed_with_probe_state(
-    context: &AiContext,
-    capability: AiCapability,
-    mut daemon_state: impl FnMut(AiCapability) -> DaemonProbeState,
-) -> ObservedAiRoute {
-    match context.binding(capability).routing {
-        AiRouting::Off => observed(AiRouting::Off, false, None),
-        AiRouting::Direct => observed(AiRouting::Direct, false, None),
-        AiRouting::Daemon => observed(AiRouting::Daemon, false, None),
-        AiRouting::Auto => daemon_route_or_fallback(context, capability, &mut daemon_state),
-    }
-}
-
-fn daemon_route_or_fallback(
-    context: &AiContext,
-    capability: AiCapability,
-    daemon_state: &mut impl FnMut(AiCapability) -> DaemonProbeState,
-) -> ObservedAiRoute {
-    let direct_fallback = direct_route_or_off(context, capability);
-    match daemon_state(capability) {
-        DaemonProbeState::Available => observed(AiRouting::Daemon, false, None),
-        // Reachability is a transport observation. Keep the configured daemon
-        // route when no direct fallback exists so callers receive the actual
-        // daemon transport failure instead of a false disabled-capability state.
-        DaemonProbeState::Unreachable if direct_fallback == AiRouting::Off => {
-            observed(AiRouting::Daemon, false, None)
-        }
-        DaemonProbeState::Unavailable | DaemonProbeState::Unreachable => match direct_fallback {
-            AiRouting::Direct => observed(
-                AiRouting::Direct,
-                true,
-                Some(AiNoticeKind::AutoFallbackToDirect),
-            ),
-            AiRouting::Off => observed(AiRouting::Off, true, Some(AiNoticeKind::AutoFallbackToOff)),
-            route => observed(route, true, None),
-        },
-    }
-}
-
-fn direct_route_or_off(context: &AiContext, capability: AiCapability) -> AiRouting {
-    if context
-        .binding(capability)
-        .api_base
-        .as_deref()
-        .map(str::trim)
-        .is_some_and(|value| !value.is_empty())
-    {
-        AiRouting::Direct
-    } else {
-        AiRouting::Off
-    }
+    resolve_route_observed(context, capability)
 }
 
 fn observed(route: AiRouting, fallback: bool, reason: Option<AiNoticeKind>) -> ObservedAiRoute {
@@ -451,6 +359,7 @@ fn duration_to_ms(duration: Duration) -> u64 {
     duration.as_millis().min(u128::from(u64::MAX)) as u64
 }
 
+#[allow(dead_code)]
 fn chat_completions_url(cfg: &AiContext, capability: AiCapability) -> Result<String, AiError> {
     let binding = cfg.binding(capability);
     let api_base = binding
@@ -488,6 +397,28 @@ pub(crate) fn chat_completion_content(value: &serde_json::Value) -> Result<Strin
         .ok_or_else(|| AiError::parse_failure("chat completion response missing message content"))
 }
 
+pub(crate) fn chat_completion_usage(
+    value: &serde_json::Value,
+) -> Option<crate::ai_types::TokenUsage> {
+    let usage = value.get("usage")?;
+    Some(crate::ai_types::TokenUsage {
+        input_tokens: usage
+            .get("prompt_tokens")
+            .or_else(|| usage.get("input_tokens"))
+            .and_then(serde_json::Value::as_u64)
+            .and_then(|value| usize::try_from(value).ok()),
+        output_tokens: usage
+            .get("completion_tokens")
+            .or_else(|| usage.get("output_tokens"))
+            .and_then(serde_json::Value::as_u64)
+            .and_then(|value| usize::try_from(value).ok()),
+        total_tokens: usage
+            .get("total_tokens")
+            .and_then(serde_json::Value::as_u64)
+            .and_then(|value| usize::try_from(value).ok()),
+    })
+}
+
 pub(crate) fn chat_completion_model(value: &serde_json::Value) -> Option<String> {
     value
         .get("model")
@@ -495,6 +426,10 @@ pub(crate) fn chat_completion_model(value: &serde_json::Value) -> Option<String>
         .filter(|model| !model.is_empty())
         .map(str::to_string)
 }
+
+#[cfg(test)]
+#[path = "tests.rs"]
+mod contract_tests;
 
 #[cfg(test)]
 mod tests {
@@ -640,274 +575,5 @@ mod tests {
             chat_api_root("http://localhost:11434/v10"),
             "http://localhost:11434/v10"
         );
-    }
-
-    #[test]
-    fn effective_route_auto_falls_through_per_capability() {
-        use crate::config::{AiRouting, AiTuning};
-
-        let context = AiContext {
-            bindings: crate::ai_context::AiBindings {
-                embed: binding(AiRouting::Auto, None),
-                audio_transcribe: binding(AiRouting::Auto, Some("http://direct.test")),
-                audio_translate: binding(AiRouting::Auto, Some("http://direct.test")),
-                vision_extract: binding(AiRouting::Auto, None),
-                text_generate: binding(AiRouting::Auto, Some("http://direct.test")),
-            },
-            tuning: AiTuning {
-                max_concurrency: 1,
-                keep_alive: None,
-            },
-            limiter: crate::ai_context::AiLimiter::new(1),
-            tool_loop_limits: crate::ai::generation::ToolLoopLimits::default(),
-            project_id: None,
-        };
-
-        assert_eq!(
-            effective_route_with_probe(&context, AiCapability::AudioTranscribe, |_| true),
-            AiRouting::Daemon
-        );
-        assert_eq!(
-            effective_route_with_probe(&context, AiCapability::AudioTranslate, |_| false),
-            AiRouting::Direct
-        );
-        assert_eq!(
-            effective_route_with_probe(&context, AiCapability::VisionExtract, |_| false),
-            AiRouting::Off
-        );
-        assert_eq!(
-            effective_route_with_probe(&context, AiCapability::TextGenerate, |_| false),
-            AiRouting::Direct
-        );
-        assert_eq!(
-            effective_route_with_probe(&context, AiCapability::Embed, |_| true),
-            AiRouting::Daemon
-        );
-    }
-
-    #[test]
-    fn observed_route_reports_auto_fallback_reasons() {
-        use crate::config::{AiRouting, AiTuning};
-
-        let context = AiContext {
-            bindings: crate::ai_context::AiBindings {
-                embed: binding(AiRouting::Auto, None),
-                audio_transcribe: binding(AiRouting::Auto, Some("http://direct.test")),
-                audio_translate: binding(AiRouting::Auto, Some("http://direct.test")),
-                vision_extract: binding(AiRouting::Auto, None),
-                text_generate: binding(AiRouting::Auto, Some("http://direct.test")),
-            },
-            tuning: AiTuning {
-                max_concurrency: 1,
-                keep_alive: None,
-            },
-            limiter: crate::ai_context::AiLimiter::new(1),
-            tool_loop_limits: crate::ai::generation::ToolLoopLimits::default(),
-            project_id: None,
-        };
-
-        assert_eq!(
-            resolve_route_observed_with_probe(&context, AiCapability::TextGenerate, |_| true),
-            ObservedAiRoute {
-                route: AiRouting::Daemon,
-                fallback: false,
-                reason: None,
-            }
-        );
-        assert_eq!(
-            resolve_route_observed_with_probe(&context, AiCapability::TextGenerate, |_| false),
-            ObservedAiRoute {
-                route: AiRouting::Direct,
-                fallback: true,
-                reason: Some(AiNoticeKind::AutoFallbackToDirect),
-            }
-        );
-        assert_eq!(
-            resolve_route_observed_with_probe(&context, AiCapability::VisionExtract, |_| false),
-            ObservedAiRoute {
-                route: AiRouting::Off,
-                fallback: true,
-                reason: Some(AiNoticeKind::AutoFallbackToOff),
-            }
-        );
-    }
-
-    #[test]
-    fn unreachable_probe_preserves_daemon_route_without_direct_fallback() {
-        use crate::config::{AiRouting, AiTuning};
-
-        let context = AiContext {
-            bindings: crate::ai_context::AiBindings {
-                embed: binding(AiRouting::Auto, None),
-                audio_transcribe: binding(AiRouting::Auto, None),
-                audio_translate: binding(AiRouting::Auto, None),
-                vision_extract: binding(AiRouting::Auto, None),
-                text_generate: binding(AiRouting::Auto, Some("http://direct.test")),
-            },
-            tuning: AiTuning {
-                max_concurrency: 1,
-                keep_alive: None,
-            },
-            limiter: crate::ai_context::AiLimiter::new(1),
-            tool_loop_limits: crate::ai::generation::ToolLoopLimits::default(),
-            project_id: None,
-        };
-
-        let unreachable = probe::CapabilityAvailability {
-            capability: AiCapability::Embed,
-            available: false,
-            status_route: None,
-            degradation: Some(probe::CapabilityDegradation {
-                capability: AiCapability::Embed,
-                reason: probe::CapabilityDegradationReason::Unreachable,
-                message: "daemon starting".to_string(),
-                http_status: None,
-            }),
-        };
-        let unavailable = probe::CapabilityAvailability {
-            degradation: Some(probe::CapabilityDegradation {
-                reason: probe::CapabilityDegradationReason::NotAdvertised,
-                message: "capability disabled".to_string(),
-                ..unreachable
-                    .degradation
-                    .clone()
-                    .expect("unreachable degradation")
-            }),
-            ..unreachable.clone()
-        };
-
-        assert_eq!(
-            resolve_route_observed_with_probe_state(&context, AiCapability::Embed, |_| {
-                daemon_probe_state(&unreachable)
-            }),
-            ObservedAiRoute {
-                route: AiRouting::Daemon,
-                fallback: false,
-                reason: None,
-            }
-        );
-        assert_eq!(
-            resolve_route_observed_with_probe_state(&context, AiCapability::TextGenerate, |_| {
-                DaemonProbeState::Unreachable
-            },),
-            ObservedAiRoute {
-                route: AiRouting::Direct,
-                fallback: true,
-                reason: Some(AiNoticeKind::AutoFallbackToDirect),
-            }
-        );
-        assert_eq!(
-            daemon_probe_state(&unavailable),
-            DaemonProbeState::Unavailable
-        );
-    }
-
-    #[test]
-    fn effective_route_explicit_routing_modes_are_forced() {
-        use crate::config::{AiRouting, AiTuning};
-
-        let context = AiContext {
-            bindings: crate::ai_context::AiBindings {
-                embed: binding(AiRouting::Daemon, Some("http://direct.test")),
-                audio_transcribe: binding(AiRouting::Daemon, Some("http://direct.test")),
-                audio_translate: binding(AiRouting::Auto, Some("http://direct.test")),
-                vision_extract: binding(AiRouting::Off, Some("http://direct.test")),
-                text_generate: binding(AiRouting::Direct, None),
-            },
-            tuning: AiTuning {
-                max_concurrency: 1,
-                keep_alive: None,
-            },
-            limiter: crate::ai_context::AiLimiter::new(1),
-            tool_loop_limits: crate::ai::generation::ToolLoopLimits::default(),
-            project_id: None,
-        };
-
-        assert_eq!(
-            effective_route_with_probe(&context, AiCapability::AudioTranscribe, |_| false),
-            AiRouting::Daemon
-        );
-        assert_eq!(
-            effective_route_with_probe(&context, AiCapability::TextGenerate, |_| false),
-            AiRouting::Direct
-        );
-        assert_eq!(
-            effective_route_with_probe(&context, AiCapability::VisionExtract, |_| true),
-            AiRouting::Off
-        );
-        assert_eq!(
-            effective_route_with_probe(&context, AiCapability::Embed, |_| true),
-            AiRouting::Daemon
-        );
-        assert_eq!(
-            resolve_route_observed_with_probe(&context, AiCapability::TextGenerate, |_| false),
-            ObservedAiRoute {
-                route: AiRouting::Direct,
-                fallback: false,
-                reason: None,
-            }
-        );
-        assert_eq!(
-            resolve_route_observed_with_probe(&context, AiCapability::AudioTranscribe, |_| false),
-            ObservedAiRoute {
-                route: AiRouting::Daemon,
-                fallback: false,
-                reason: None,
-            }
-        );
-    }
-
-    #[test]
-    fn auto_uses_explicit_direct_config_when_daemon_unavailable() {
-        use crate::config::{AiRouting, AiTuning};
-
-        let context = AiContext {
-            bindings: crate::ai_context::AiBindings {
-                embed: binding(AiRouting::Auto, None),
-                audio_transcribe: binding(AiRouting::Auto, None),
-                audio_translate: binding(AiRouting::Auto, None),
-                vision_extract: binding(AiRouting::Auto, None),
-                text_generate: binding(AiRouting::Auto, Some("http://direct.test")),
-            },
-            tuning: AiTuning {
-                max_concurrency: 1,
-                keep_alive: None,
-            },
-            limiter: crate::ai_context::AiLimiter::new(1),
-            tool_loop_limits: crate::ai::generation::ToolLoopLimits::default(),
-            project_id: None,
-        };
-
-        assert_eq!(
-            context
-                .binding(AiCapability::TextGenerate)
-                .api_base
-                .as_deref(),
-            Some("http://direct.test")
-        );
-        assert_eq!(
-            effective_route_with_probe(&context, AiCapability::TextGenerate, |_| false),
-            AiRouting::Direct
-        );
-    }
-
-    fn binding(routing: AiRouting, api_base: Option<&str>) -> CapabilityBinding {
-        CapabilityBinding {
-            routing,
-            transport: None,
-            api_base: api_base.map(str::to_string),
-            api_key: None,
-            model: None,
-            provider: None,
-            task: None,
-            language: None,
-            target_lang: None,
-            profile: None,
-            candidates: None,
-            reasoning_effort: None,
-            verify_profile: None,
-            verify_model: None,
-            verify_api_key: None,
-        }
     }
 }

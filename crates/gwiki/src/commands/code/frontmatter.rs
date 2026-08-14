@@ -192,7 +192,7 @@ fn ai_body_note(outcome: CodewikiAiOutcome) -> Option<&'static str> {
         AiGenerationStatus::Skipped if outcome.fallback || outcome.route != AiRouting::Off => {
             Some("AI generation did not run; this page contains structural documentation only.")
         }
-        AiGenerationStatus::Generated if outcome.fallback && outcome.route == AiRouting::Direct => {
+        AiGenerationStatus::Generated if outcome.fallback && outcome.route == AiRouting::Daemon => {
             Some(
                 "Auto routing could not use the daemon, so this page was generated through the Direct route.",
             )

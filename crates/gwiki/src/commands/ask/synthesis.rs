@@ -1,7 +1,4 @@
-use gobby_core::ai::generation::{
-    DirectGenerationTarget, GenerationTier, generate_one_shot, profile_for_tier,
-    resolve_direct_generation_target,
-};
+use gobby_core::ai::generation::{DirectGenerationTarget, GenerationTier, generate_one_shot};
 use gobby_core::ai::{AiNoticeKind, resolve_route_observed};
 use gobby_core::ai_context::{AiContext, AiContextOptions};
 use gobby_core::config::{AiCapability, AiRouting};
@@ -42,7 +39,7 @@ pub(super) fn synthesize(
     let observed = resolve_route_observed(&context, AiCapability::TextGenerate);
     let route = observed.route;
     if let Some(notice) = observed.reason.or_else(|| {
-        (observed.fallback && route == AiRouting::Direct)
+        (observed.fallback && route == AiRouting::Daemon)
             .then_some(AiNoticeKind::AutoFallbackToDirect)
     }) {
         push_ai_notice_warning(output, notice);
@@ -57,27 +54,8 @@ pub(super) fn synthesize(
     });
 
     match route {
-        AiRouting::Direct => {
-            // Resolve the per-tier target from the same config source (hub
-            // config_store plus any standalone gcore.yaml) the context was
-            // built from; the Daemon route forwards the profile name instead.
-            let target =
-                resolve_direct_generation_target(&mut source, &profile_for_tier(ASK_TIER, None));
-            if target.api_base().is_none() {
-                push_ai_notice_warning(output, AiNoticeKind::NoGenerator);
-                return mark_ai_unavailable(
-                    output,
-                    require_ai,
-                    Some("direct AI synthesis requires ai.text_generate api_base".to_string()),
-                    "ai_unavailable",
-                );
-            }
-            generate_synthesis(output, plan, &context, route, Some(&target), require_ai)
-        }
         AiRouting::Daemon => generate_synthesis(output, plan, &context, route, None, require_ai),
-        AiRouting::Auto | AiRouting::Off => {
-            mark_ai_unavailable(output, require_ai, None, "ai_unavailable")
-        }
+        AiRouting::Off => mark_ai_unavailable(output, require_ai, None, "ai_unavailable"),
     }
 }
 
@@ -211,9 +189,7 @@ fn synthesis_system() -> &'static str {
 
 fn routing_label(route: AiRouting) -> &'static str {
     match route {
-        AiRouting::Auto => "auto",
         AiRouting::Daemon => "daemon",
-        AiRouting::Direct => "direct",
         AiRouting::Off => "off",
     }
 }
@@ -232,7 +208,10 @@ mod tests {
     fn ask_generates_on_the_module_feature_profile() {
         use gobby_core::ai::generation::FEATURE_MID;
         assert_eq!(ASK_TIER, GenerationTier::Module);
-        assert_eq!(profile_for_tier(ASK_TIER, None), FEATURE_MID);
+        assert_eq!(
+            gobby_core::ai::generation::profile_for_tier(ASK_TIER, None),
+            FEATURE_MID
+        );
     }
 
     #[test]

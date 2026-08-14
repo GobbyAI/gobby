@@ -1,3 +1,5 @@
+#![allow(dead_code)] // local-loop executor unused after daemon-only routing
+
 //! Tool-loop vault executor for `gwiki compile`.
 //!
 //! Exposes the wiki vault's hybrid search and scoped document read as

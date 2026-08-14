@@ -11,7 +11,7 @@ fn ai_routing_per_capability_precedence() {
 
     assert_eq!(
         resolve_capability_routing(&mut source, AiCapability::AudioTranscribe),
-        AiRouting::Direct
+        AiRouting::Daemon
     );
 
     let mut source = TestSource::with_values([(ai_keys::ROUTING, "off")]);
@@ -23,7 +23,7 @@ fn ai_routing_per_capability_precedence() {
     let mut source = TestSource::default();
     assert_eq!(
         resolve_capability_routing(&mut source, AiCapability::TextGenerate),
-        AiRouting::Auto
+        AiRouting::Daemon
     );
 
     let mut source = TestSource::with_values([
@@ -32,7 +32,7 @@ fn ai_routing_per_capability_precedence() {
     ]);
     assert_eq!(
         resolve_capability_routing(&mut source, AiCapability::TextGenerate),
-        AiRouting::Direct
+        AiRouting::Daemon
     );
 
     assert_eq!("daemon".parse::<AiRouting>().ok(), Some(AiRouting::Daemon));
@@ -278,7 +278,7 @@ fn audio_translate_inherits_transcribe_binding() {
     let translate = resolve_capability_binding(&mut source, AiCapability::AudioTranslate);
     let transcribe = resolve_capability_binding(&mut source, AiCapability::AudioTranscribe);
 
-    assert_eq!(translate.routing, AiRouting::Direct);
+    assert_eq!(translate.routing, AiRouting::Daemon);
     assert_eq!(translate.transport.as_deref(), Some("daemon_native"));
     assert_eq!(translate.api_base.as_deref(), Some("http://stt:8080/v1"));
     assert_eq!(translate.api_key.as_deref(), Some("resolved-STT_KEY"));
@@ -352,10 +352,7 @@ fn postgres_config_source_resolves_secrets() {
                 embedding_keys::AI_API_BASE,
                 "http://stored-embedding:11434".to_string(),
             ),
-            (
-                embedding_keys::AI_API_KEY,
-                "$secret:OPENAI_API_KEY".to_string(),
-            ),
+            (embedding_keys::AI_API_KEY, "$secret:HUB_TOKEN".to_string()),
         ]),
         secret_reads: 0,
     };
@@ -364,10 +361,7 @@ fn postgres_config_source_resolves_secrets() {
         resolve_embedding_config(&mut source).expect("embedding config")
     };
 
-    assert_eq!(
-        config.api_key.as_deref(),
-        Some("secret::$secret:OPENAI_API_KEY")
-    );
+    assert_eq!(config.api_key.as_deref(), Some("secret::$secret:HUB_TOKEN"));
     assert_eq!(conn.secret_reads, 2);
 }
 

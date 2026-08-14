@@ -339,6 +339,7 @@ fn test_ai_context() -> AiContext {
         },
         limiter: AiLimiter::new(1),
         project_id: Some("project-1".to_string()),
+        grant: None,
         tool_loop_limits: gobby_core::ai::generation::ToolLoopLimits::default(),
     }
 }

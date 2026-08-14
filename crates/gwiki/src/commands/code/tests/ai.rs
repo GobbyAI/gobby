@@ -448,7 +448,7 @@ fn ai_route_outcomes_render_frontmatter_body_notes_and_meta() {
         },
         Case {
             name: "auto_fallback_direct",
-            outcome: CodewikiAiOutcome::generated(AiRouting::Direct, true),
+            outcome: CodewikiAiOutcome::generated(AiRouting::Daemon, true),
             degraded: false,
             route: "direct",
             fallback: true,
@@ -466,7 +466,7 @@ fn ai_route_outcomes_render_frontmatter_body_notes_and_meta() {
         },
         Case {
             name: "direct_no_generator",
-            outcome: CodewikiAiOutcome::skipped(AiRouting::Direct, false),
+            outcome: CodewikiAiOutcome::skipped(AiRouting::Daemon, false),
             degraded: false,
             route: "direct",
             fallback: false,
@@ -829,7 +829,7 @@ fn direct_route_candidate_error_gates_pinned_runs() {
 
     // No pins: every route combination proceeds.
     assert!(
-        direct_route_candidate_error(&[], AiRouting::Direct, Some(AiRouting::Direct)).is_none()
+        direct_route_candidate_error(&[], AiRouting::Daemon, Some(AiRouting::Daemon)).is_none()
     );
     // Pinned + daemon everywhere: proceeds (tool loop absent or daemon).
     assert!(direct_route_candidate_error(&pinned, AiRouting::Daemon, None).is_none());
@@ -838,9 +838,9 @@ fn direct_route_candidate_error_gates_pinned_runs() {
     );
     // Pinned + a Direct-resolved lane fails the run with an actionable message.
     for (text_route, tool_loop_route) in [
-        (AiRouting::Direct, None),
-        (AiRouting::Direct, Some(AiRouting::Daemon)),
-        (AiRouting::Daemon, Some(AiRouting::Direct)),
+        (AiRouting::Daemon, None),
+        (AiRouting::Daemon, Some(AiRouting::Daemon)),
+        (AiRouting::Daemon, Some(AiRouting::Daemon)),
     ] {
         let error = direct_route_candidate_error(&pinned, text_route, tool_loop_route)
             .expect("direct route rejected");

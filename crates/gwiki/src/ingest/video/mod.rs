@@ -207,7 +207,7 @@ pub(crate) fn ingest_video_file_with_production_processing_without_index(
     #[cfg(feature = "ai")]
     {
         let route = effective_route(ai_context, AiCapability::VisionExtract);
-        if matches!(route, AiRouting::Daemon | AiRouting::Direct) {
+        if matches!(route, AiRouting::Daemon) {
             let vision_client = ProductionVisionClient::new(ai_context.clone());
             return ingest_video_file_with_processing_without_index(
                 vault_root,

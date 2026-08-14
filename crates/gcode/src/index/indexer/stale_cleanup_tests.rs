@@ -199,6 +199,7 @@ fn test_context(database_url: String, project_root: PathBuf, project_id: String)
         runtime_config_capture_degraded: false,
         indexing: gobby_core::config::IndexingConfig::default(),
         daemon_url: None,
+        grant_ai: None,
         index_scope: ProjectIndexScope::Single,
     }
 }

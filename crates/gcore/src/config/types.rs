@@ -49,9 +49,7 @@ impl Default for IndexingConfig {
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Hash)]
 pub enum AiRouting {
     #[default]
-    Auto,
     Daemon,
-    Direct,
     Off,
 }
 
@@ -60,9 +58,7 @@ impl std::str::FromStr for AiRouting {
 
     fn from_str(value: &str) -> Result<Self, Self::Err> {
         match value.trim() {
-            "auto" => Ok(Self::Auto),
             "daemon" => Ok(Self::Daemon),
-            "direct" => Ok(Self::Direct),
             "off" => Ok(Self::Off),
             value => Err(ParseAiRoutingError {
                 value: value.to_string(),

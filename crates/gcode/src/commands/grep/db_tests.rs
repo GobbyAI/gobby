@@ -194,6 +194,7 @@ fn grep_scopes_chunks_to_local_machine_file_state() {
         runtime_config_capture_degraded: false,
         indexing: gobby_core::config::IndexingConfig::default(),
         daemon_url: None,
+        grant_ai: None,
         index_scope: ProjectIndexScope::Single,
     };
     let options = GrepOptions {

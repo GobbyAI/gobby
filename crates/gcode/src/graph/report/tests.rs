@@ -290,6 +290,7 @@ fn report_degradation_contract() {
         runtime_config_capture_degraded: false,
         indexing: gobby_core::config::IndexingConfig::default(),
         daemon_url: None,
+        grant_ai: None,
         index_scope: crate::config::ProjectIndexScope::Single,
     };
     let err = generate_report(&ctx).expect_err("missing graph service is required");

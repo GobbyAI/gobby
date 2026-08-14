@@ -4,12 +4,10 @@
 //! gwiki capability uses.
 
 use std::path::{Path, PathBuf};
-use std::sync::Arc;
 
 use gobby_core::ai::generation::{
-    ChatMessage, ChatTransport, DirectChatTransport, DirectGenerationTarget, GenerationTier,
-    ToolExecutor, ToolLoopLimits, ToolLoopOutcome, ToolPolicy, daemon_agentic_chat,
-    generate_one_shot, profile_for_tier, resolve_direct_generation_target, run_tool_loop,
+    ChatMessage, DirectGenerationTarget, GenerationTier, ToolPolicy, daemon_agentic_chat,
+    generate_one_shot, profile_for_tier,
 };
 use gobby_core::ai::{AiNoticeKind, resolve_route_observed_with_probe};
 use gobby_core::ai_context::{AiContext, AiContextOptions};
@@ -17,8 +15,6 @@ use gobby_core::config::{AiCapability, AiRouting};
 
 use crate::explainer::{ExplainerPrompt, ExplainerResponse};
 use crate::{ScopeIdentity, ScopeSelection};
-
-use super::vault_tools::VaultToolExecutor;
 
 /// Compiled wiki articles and recaps are gwiki's curated narrative surface, so
 /// they generate on the aggregate tier — for the `compile` command, the
@@ -39,14 +35,6 @@ pub(crate) type BoxedExplainerGenerator =
 pub(crate) struct ToolLoopGeneration {
     pub(crate) generator: BoxedExplainerGenerator,
     pub(crate) info: ToolLoopInfo,
-}
-
-/// Provider metadata and the unmodified bounded-loop result from a direct
-/// OpenAI-compatible tool-chat investigation.
-pub(crate) struct DirectAgenticGeneration {
-    pub(crate) model: Option<String>,
-    pub(crate) outcome: ToolLoopOutcome,
-    pub(crate) data_source_degraded: Vec<String>,
 }
 
 /// Read-only gwiki subcommands the daemon's agent may run during a tool-loop
@@ -96,7 +84,7 @@ pub(crate) fn resolve_ai_selection(
     capability: AiCapability,
     daemon_available: bool,
 ) -> AiSelection {
-    let route = if matches!(requested, AiRouting::Auto) {
+    let route = if matches!(requested, AiRouting::Daemon) {
         if daemon_available {
             AiRouting::Daemon
         } else {
@@ -119,11 +107,8 @@ pub(crate) fn resolve_ai_selection(
         requested
     };
     let selection_reason = match (requested, route) {
-        (AiRouting::Auto, AiRouting::Daemon) => "auto_selected_daemon",
-        (AiRouting::Auto, AiRouting::Direct) => "auto_selected_direct",
-        (AiRouting::Auto, _) => "auto_selected_off",
-        (AiRouting::Daemon, _) => "requested_daemon",
-        (AiRouting::Direct, _) => "requested_direct",
+        (AiRouting::Daemon, AiRouting::Daemon) => "requested_daemon",
+        (AiRouting::Daemon, AiRouting::Off) => "requested_daemon_off",
         (AiRouting::Off, _) => "requested_off",
     };
     AiSelection {
@@ -148,7 +133,7 @@ pub(crate) fn resolve_tool_loop_generator(
     scope_identity: ScopeIdentity,
     command: &'static str,
 ) -> Option<ToolLoopGeneration> {
-    if matches!(route, AiRouting::Off | AiRouting::Auto) {
+    if matches!(route, AiRouting::Off) {
         return None;
     }
     let mut source = crate::support::config::hub_ai_config_source(command).ok()?;
@@ -168,16 +153,7 @@ pub(crate) fn resolve_tool_loop_generator(
         return None;
     }
     let profile = profile_for_tier(ARTICLE_TIER, None);
-    let target = if matches!(route, AiRouting::Direct) {
-        let target =
-            resolve_direct_generation_target(&mut source, &profile_for_tier(ARTICLE_TIER, None));
-        // A direct tool loop with no resolved api_base cannot run; decline so
-        // the caller falls back to the one-shot explainer.
-        target.api_base()?;
-        Some(target)
-    } else {
-        None
-    };
+    let target = None;
     let info = ToolLoopInfo {
         route_label: routing_label(route),
         notice: None,
@@ -210,50 +186,18 @@ pub(crate) fn resolve_tool_loop_generator(
 /// transport would re-prompt forever, and did 422 before this port because it
 /// omitted the route's required `project_path`/`tool_policy` fields).
 ///
-/// Direct route: the local tool loop where the model investigates the vault
-/// via [`VaultToolExecutor`]. Data-source degradation mid-loop is logged as
-/// evidence, never a generation failure.
-#[allow(clippy::too_many_arguments)]
-pub(crate) fn run_direct_agentic_generation(
-    context: &AiContext,
-    profile: &str,
-    target: &DirectGenerationTarget,
-    messages: Vec<ChatMessage>,
-    scope: &ScopeSelection,
-    vault_root: &Path,
-    scope_identity: &ScopeIdentity,
-    limits: &ToolLoopLimits,
-) -> Result<DirectAgenticGeneration, String> {
-    let transport = DirectChatTransport::new(context, target.clone(), Some(profile.to_string()))
-        .map_err(|error| error.to_string())?;
-    let model = transport.model().map(str::to_string);
-    let executor = Arc::new(VaultToolExecutor::new(
-        scope.clone(),
-        vault_root.to_path_buf(),
-        scope_identity.clone(),
-    ));
-    let loop_executor: Arc<dyn ToolExecutor> = executor.clone();
-    let outcome = run_tool_loop(&transport, loop_executor, messages, limits, None)
-        .map_err(|error| error.to_string())?;
-    Ok(DirectAgenticGeneration {
-        model,
-        outcome,
-        data_source_degraded: executor.data_source_degraded(),
-    })
-}
-
 #[allow(clippy::too_many_arguments)]
 fn run_agentic_generation(
     context: &AiContext,
     route: AiRouting,
     caller: &str,
     profile: &str,
-    target: Option<&DirectGenerationTarget>,
+    _target: Option<&DirectGenerationTarget>,
     project_root: Option<&Path>,
     prompt: &ExplainerPrompt,
-    scope: &ScopeSelection,
-    vault_root: &Path,
-    scope_identity: &ScopeIdentity,
+    _scope: &ScopeSelection,
+    _vault_root: &Path,
+    _scope_identity: &ScopeIdentity,
 ) -> Result<ExplainerResponse, String> {
     let messages = vec![
         ChatMessage::system(prompt.system.to_string()),
@@ -288,53 +232,7 @@ fn run_agentic_generation(
                 usage: result.usage,
             })
         }
-        AiRouting::Direct => {
-            let target = target
-                .ok_or_else(|| "direct tool loop requires a resolved profile target".to_string())?;
-            let direct = run_direct_agentic_generation(
-                context,
-                profile,
-                target,
-                messages,
-                scope,
-                vault_root,
-                scope_identity,
-                &context.tool_loop_limits,
-            )?;
-            // Data-source degradation (graph/semantic backend down mid-loop) is
-            // evidence degradation, not a generation failure — log it without
-            // hard-failing.
-            if !direct.data_source_degraded.is_empty() {
-                log::warn!(
-                    "Tool loop: data-source degradation during tool loop: {}",
-                    direct.data_source_degraded.join(", ")
-                );
-            }
-            let ToolLoopOutcome {
-                content,
-                stop_reason,
-                observability,
-                total_usage,
-            } = direct.outcome;
-            if !stop_reason.is_completed() {
-                return Err(format!(
-                    "tool loop did not complete ({})",
-                    stop_reason.as_str()
-                ));
-            }
-            let content = content
-                .filter(|text| !text.trim().is_empty())
-                .ok_or_else(|| "tool loop returned no content".to_string())?;
-            Ok(ExplainerResponse {
-                text: content,
-                model: direct.model,
-                route: routing_label(route),
-                tool_use_count: Some(observability.tool_call_count),
-                turns: Some(observability.turns),
-                usage: total_usage,
-            })
-        }
-        AiRouting::Off | AiRouting::Auto => Err("tool-chat route is off or unresolved".to_string()),
+        AiRouting::Off => Err("tool-chat route is off".to_string()),
     }
 }
 
@@ -425,7 +323,7 @@ pub(crate) fn resolve_explainer_transport(
     route: AiRouting,
     command: &'static str,
 ) -> ExplainerTransport {
-    if matches!(route, AiRouting::Off | AiRouting::Auto) {
+    if matches!(route, AiRouting::Off) {
         return ExplainerTransport::off(None);
     }
     match crate::support::config::hub_ai_config_source(command) {
@@ -439,40 +337,17 @@ pub(crate) fn resolve_explainer_transport(
                 },
             );
             match route {
-                route @ (AiRouting::Daemon | AiRouting::Direct) => {
-                    // The Direct route needs a concrete per-tier target resolved
-                    // from the same config source (hub config_store plus any
-                    // standalone gcore.yaml). The Daemon route forwards the
-                    // profile name and ignores the target.
-                    let target = matches!(route, AiRouting::Direct).then(|| {
-                        resolve_direct_generation_target(
-                            &mut source,
-                            &profile_for_tier(ARTICLE_TIER, None),
-                        )
-                    });
-                    if target
-                        .as_ref()
-                        .is_some_and(|target| target.api_base().is_none())
-                    {
-                        return ExplainerTransport::Unresolved {
-                            route,
-                            notice: Some(AiNoticeKind::NoGenerator),
-                            error: "direct AI synthesis requires ai.text_generate api_base"
-                                .to_string(),
-                        };
-                    }
-                    ExplainerTransport::Resolved {
-                        route,
-                        notice: None,
-                        context: Box::new(context),
-                        target,
-                    }
-                }
-                _ => ExplainerTransport::off(None),
+                AiRouting::Daemon => ExplainerTransport::Resolved {
+                    route,
+                    notice: None,
+                    context: Box::new(context),
+                    target: None,
+                },
+                AiRouting::Off => ExplainerTransport::off(None),
             }
         }
         Err(error) => match route {
-            AiRouting::Daemon | AiRouting::Direct => ExplainerTransport::Unresolved {
+            AiRouting::Daemon => ExplainerTransport::Unresolved {
                 route,
                 notice: Some(AiNoticeKind::NoGenerator),
                 error: error.to_string(),
@@ -494,9 +369,7 @@ pub(crate) fn notice_for_explainer_status(
 
 pub(crate) fn routing_label(route: AiRouting) -> &'static str {
     match route {
-        AiRouting::Auto => "auto",
         AiRouting::Daemon => "daemon",
-        AiRouting::Direct => "direct",
         AiRouting::Off => "off",
     }
 }
@@ -551,7 +424,7 @@ mod tests {
 
     #[test]
     fn observed_auto_daemon_up_ignores_direct_config() {
-        let context = ai_context(AiRouting::Auto, Some("http://direct.test"));
+        let context = ai_context(AiRouting::Daemon, Some("http://direct.test"));
 
         assert_eq!(
             gobby_core::ai::resolve_route_observed_with_probe(
@@ -571,15 +444,15 @@ mod tests {
     fn auto_selection_prefers_advertised_daemon_without_loading_direct_config() {
         assert_eq!(
             resolve_ai_selection(
-                AiRouting::Auto,
+                AiRouting::Daemon,
                 "gwiki test",
                 AiCapability::TextGenerate,
                 true,
             ),
             AiSelection {
-                requested: AiRouting::Auto,
+                requested: AiRouting::Daemon,
                 route: AiRouting::Daemon,
-                selection_reason: "auto_selected_daemon",
+                selection_reason: "requested_daemon",
             }
         );
     }
@@ -659,7 +532,8 @@ mod tests {
             },
             limiter: AiLimiter::new(1),
             project_id: None,
-            tool_loop_limits: ToolLoopLimits::default(),
+            grant: None,
+            tool_loop_limits: gobby_core::ai::generation::ToolLoopLimits::default(),
         }
     }
 }

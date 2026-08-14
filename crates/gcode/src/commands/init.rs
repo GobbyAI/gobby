@@ -66,6 +66,7 @@ pub fn run(project_root: &Path, format: Format, quiet: bool) -> anyhow::Result<(
         runtime_config_capture_degraded: false,
         indexing: gobby_core::config::IndexingConfig::default(),
         daemon_url: None,
+        grant_ai: None,
         index_scope: config::ProjectIndexScope::Single,
     };
     let index_result =

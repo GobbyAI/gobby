@@ -540,6 +540,16 @@ pub struct PagedResponse<T: Serialize> {
     pub results: Vec<T>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub hint: Option<String>,
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    pub warnings: Vec<SearchWarning>,
+}
+
+/// Structured hybrid-search degradation notice.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+pub struct SearchWarning {
+    pub lane: String,
+    pub cause: String,
+    pub message: String,
 }
 
 /// Slim symbol for outline output — only what agents need.

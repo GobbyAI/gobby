@@ -276,12 +276,9 @@ fn is_false(value: &bool) -> bool {
 
 fn routing_name(routing: AiRouting) -> String {
     match routing {
-        AiRouting::Auto => "auto",
-        AiRouting::Daemon => "daemon",
-        AiRouting::Direct => "direct",
-        AiRouting::Off => "off",
+        AiRouting::Daemon => "daemon".to_string(),
+        AiRouting::Off => "off".to_string(),
     }
-    .to_string()
 }
 
 fn parse_routing(

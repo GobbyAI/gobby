@@ -364,6 +364,7 @@ fn clone_context(
         runtime_config_capture_degraded: ctx.runtime_config_capture_degraded(),
         indexing: ctx.indexing.clone(),
         daemon_url: ctx.daemon_url.clone(),
+        grant_ai: None,
         index_scope,
     }
 }

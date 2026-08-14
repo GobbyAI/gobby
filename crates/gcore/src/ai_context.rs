@@ -29,8 +29,16 @@ pub struct AiContext {
     pub tuning: AiTuning,
     pub limiter: AiLimiter,
     pub project_id: Option<String>,
+    pub grant: Option<GrantAiState>,
     #[cfg(feature = "ai")]
     pub tool_loop_limits: ToolLoopLimits,
+}
+
+/// Grant snapshot used to gate AI calls before HTTP.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct GrantAiState {
+    pub capabilities: crate::grant::GrantCapabilities,
+    pub daemon_reachable: bool,
 }
 
 impl AiContext {
@@ -94,6 +102,7 @@ impl AiContext {
             tuning,
             limiter,
             project_id,
+            grant: None,
             #[cfg(feature = "ai")]
             tool_loop_limits,
         })
@@ -101,6 +110,17 @@ impl AiContext {
 
     pub fn binding(&self, capability: AiCapability) -> &CapabilityBinding {
         self.bindings.get(capability)
+    }
+
+    #[cfg(feature = "ai")]
+    pub fn require_granted(
+        &self,
+        capability: AiCapability,
+    ) -> Result<(), crate::ai_types::AiError> {
+        let Some(grant) = &self.grant else {
+            return Ok(());
+        };
+        crate::ai::require_modality_ready(&grant.capabilities, grant.daemon_reachable, capability)
     }
 }
 
@@ -543,7 +563,7 @@ ai:
         assert_eq!(no_db_embed.api_key.as_deref(), Some("yaml-key"));
         assert_eq!(
             route(&no_db_context, AiCapability::AudioTranscribe),
-            AiRouting::Direct
+            AiRouting::Daemon
         );
         assert_eq!(no_db_context.tuning.max_concurrency, 3);
         assert_eq!(no_db_context.limiter.max_concurrency(), 3);
@@ -613,7 +633,7 @@ ai:
 
         assert_eq!(
             route(&context, AiCapability::TextGenerate),
-            AiRouting::Direct
+            AiRouting::Daemon
         );
         assert_eq!(
             context
@@ -645,7 +665,7 @@ ai:
 
         // No parallel ai.tool_chat.* tree: ToolChat routes off the resolved
         // text_generate binding, so its routing/endpoint/reasoning match.
-        assert_eq!(route(&context, AiCapability::ToolChat), AiRouting::Direct);
+        assert_eq!(route(&context, AiCapability::ToolChat), AiRouting::Daemon);
         assert_eq!(
             context.binding(AiCapability::ToolChat),
             context.binding(AiCapability::TextGenerate)
@@ -767,9 +787,9 @@ ai:
         );
         assert_eq!(
             route(&context, AiCapability::VisionExtract),
-            AiRouting::Direct
+            AiRouting::Daemon
         );
-        assert_eq!(route(&context, AiCapability::Embed), AiRouting::Auto);
+        assert_eq!(route(&context, AiCapability::Embed), AiRouting::Daemon);
 
         let source = TestSource::with_values([
             (ai_keys::AUDIO_TRANSCRIBE_ROUTING, "daemon"),
@@ -780,7 +800,7 @@ ai:
             None,
             &mut source,
             AiContextOptions {
-                forced_routing: Some(AiRouting::Direct),
+                forced_routing: Some(AiRouting::Daemon),
                 ..AiContextOptions::default()
             },
         );
@@ -791,7 +811,7 @@ ai:
             AiCapability::VisionExtract,
             AiCapability::TextGenerate,
         ] {
-            assert_eq!(route(&forced, capability), AiRouting::Direct);
+            assert_eq!(route(&forced, capability), AiRouting::Daemon);
         }
 
         let source = TestSource::with_values([(ai_keys::AUDIO_TRANSCRIBE_ROUTING, "daemon")]);
@@ -801,7 +821,7 @@ ai:
             &mut source,
             AiContextOptions {
                 no_ai: true,
-                forced_routing: Some(AiRouting::Direct),
+                forced_routing: Some(AiRouting::Daemon),
             },
         );
         for capability in [
@@ -826,14 +846,14 @@ ai:
 
         let context = AiContext::resolve(None, &mut source);
 
-        assert_eq!(route(&context, AiCapability::Embed), AiRouting::Auto);
+        assert_eq!(route(&context, AiCapability::Embed), AiRouting::Daemon);
         assert_eq!(
             route(&context, AiCapability::VisionExtract),
-            AiRouting::Direct
+            AiRouting::Daemon
         );
         assert_eq!(
             route(&context, AiCapability::TextGenerate),
-            AiRouting::Direct
+            AiRouting::Daemon
         );
         assert_eq!(context.binding(AiCapability::Embed).api_base, None);
         assert_eq!(context.binding(AiCapability::VisionExtract).api_base, None);

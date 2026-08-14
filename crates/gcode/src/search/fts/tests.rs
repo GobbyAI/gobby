@@ -792,6 +792,7 @@ fn overlay_visibility_context(ids: &OverlayFixtureIds) -> Context {
         runtime_config_capture_degraded: false,
         indexing: gobby_core::config::IndexingConfig::default(),
         daemon_url: None,
+        grant_ai: None,
         index_scope: ProjectIndexScope::Overlay {
             overlay_project_id: ids.overlay_project_id.clone(),
             overlay_root: PathBuf::from("/tmp/gcode-overlay"),
@@ -814,6 +815,7 @@ fn single_project_context(database_url: &str, project_id: &str) -> Context {
         runtime_config_capture_degraded: false,
         indexing: gobby_core::config::IndexingConfig::default(),
         daemon_url: None,
+        grant_ai: None,
         index_scope: ProjectIndexScope::Single,
     }
 }

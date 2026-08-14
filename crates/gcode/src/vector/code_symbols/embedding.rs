@@ -159,13 +159,12 @@ fn embedding_source_from_resolved_ai_context(
     ai_context: AiContext,
     direct_config: Option<EmbeddingConfig>,
 ) -> Option<EmbeddingSource> {
+    let _ = direct_config;
     match effective_route(&ai_context, AiCapability::Embed) {
         gobby_core::config::AiRouting::Off => None,
         gobby_core::config::AiRouting::Daemon => {
             Some(EmbeddingSource::Daemon(Box::new(ai_context)))
         }
-        gobby_core::config::AiRouting::Direct => direct_config.map(EmbeddingSource::Direct),
-        gobby_core::config::AiRouting::Auto => None,
     }
 }
 
@@ -179,7 +178,8 @@ struct ResolvedEmbeddingAiContext {
 fn resolve_embedding_ai_context(ctx: &Context) -> Option<ResolvedEmbeddingAiContext> {
     if let Ok(mut conn) = db::connect_readonly(&ctx.database_url) {
         let mut source = effective_ai_source(ai_source_for_conn(&mut conn))?;
-        let context = AiContext::resolve(Some(ctx.project_id.clone()), &mut source);
+        let mut context = AiContext::resolve(Some(ctx.project_id.clone()), &mut source);
+        attach_grant(&mut context, ctx);
         let direct_config = gobby_core::config::resolve_embedding_config_from_binding(
             &mut source,
             context.binding(AiCapability::Embed),
@@ -192,6 +192,7 @@ fn resolve_embedding_ai_context(ctx: &Context) -> Option<ResolvedEmbeddingAiCont
 
     let mut source = effective_ai_source(ai_source_without_primary())?;
     let mut context = AiContext::resolve(Some(ctx.project_id.clone()), &mut source);
+    attach_grant(&mut context, ctx);
     if let Some(embedding) = &ctx.embedding {
         context.bindings.embed.api_base = Some(embedding.api_base.clone());
         context.bindings.embed.model = Some(embedding.model.clone());
@@ -206,6 +207,16 @@ fn resolve_embedding_ai_context(ctx: &Context) -> Option<ResolvedEmbeddingAiCont
         context,
         direct_config,
     })
+}
+
+#[cfg(feature = "ai")]
+fn attach_grant(context: &mut AiContext, ctx: &Context) {
+    if let Some(grant) = &ctx.grant_ai {
+        context.grant = Some(gobby_core::ai_context::GrantAiState {
+            capabilities: grant.capabilities.clone(),
+            daemon_reachable: grant.daemon_reachable,
+        });
+    }
 }
 
 #[cfg(feature = "ai")]
@@ -361,9 +372,8 @@ pub fn vector_text_for_symbol(symbol: &Symbol) -> String {
 #[cfg(test)]
 mod tests {
     use super::{EmbeddingSource, embedding_source_from_resolved_ai_context};
-    use crate::config::EmbeddingConfig;
     use gobby_core::ai_context::AiContext;
-    use gobby_core::config::{ConfigSource, ai_keys, embedding_keys};
+    use gobby_core::config::{ConfigSource, ai_keys};
     use std::collections::HashMap;
 
     #[derive(Default)]
@@ -394,18 +404,6 @@ mod tests {
 
     #[test]
     fn resolves_via_shared_routing() {
-        let mut auto_source = TestSource::with_values([
-            (ai_keys::EMBEDDINGS_ROUTING, "auto"),
-            (ai_keys::EMBEDDINGS_TRANSPORT, "openai_compatible_http"),
-            (
-                ai_keys::EMBEDDINGS_API_BASE,
-                "http://embeddings.local:11434/v1",
-            ),
-        ]);
-        let config = crate::config::resolve_embedding_config_from_source(None, &mut auto_source)
-            .expect("auto route with endpoint should use direct embeddings");
-        assert_eq!(config.api_base, "http://embeddings.local:11434/v1");
-
         let mut daemon_source = TestSource::with_values([
             (ai_keys::EMBEDDINGS_ROUTING, "daemon"),
             (
@@ -432,7 +430,7 @@ mod tests {
     #[test]
     fn reads_endpoint_from_shared_binding() {
         let mut source = TestSource::with_values([
-            (ai_keys::EMBEDDINGS_ROUTING, "direct"),
+            (ai_keys::EMBEDDINGS_ROUTING, "daemon"),
             (ai_keys::EMBEDDINGS_TRANSPORT, "openai_compatible_http"),
             (
                 ai_keys::EMBEDDINGS_API_BASE,
@@ -440,43 +438,24 @@ mod tests {
             ),
             (ai_keys::EMBEDDINGS_MODEL, "shared-embed-model"),
             (ai_keys::EMBEDDINGS_API_KEY, "$secret:EMBEDDING_KEY"),
-            (embedding_keys::AI_QUERY_PREFIX, "query:"),
-            (embedding_keys::AI_TIMEOUT_SECONDS, "12"),
         ]);
 
-        let config = crate::config::resolve_embedding_config_from_source(None, &mut source)
-            .expect("embedding config from shared binding");
-
-        assert_eq!(config.api_base, "http://shared-binding.local:11434/v1");
-        assert_eq!(config.model, "shared-embed-model");
-        assert_eq!(config.api_key.as_deref(), Some("resolved-embedding-key"));
-        assert_eq!(config.query_prefix.as_deref(), Some("query:"));
-        assert_eq!(config.timeout_seconds, 12);
+        assert!(
+            crate::config::resolve_embedding_config_from_source(None, &mut source).is_none(),
+            "daemon routing must not harvest a local embedding endpoint"
+        );
     }
 
     #[test]
-    fn direct_source_uses_resolved_embedding_config() {
-        let mut source = TestSource::with_values([
-            (ai_keys::EMBEDDINGS_ROUTING, "direct"),
-            (ai_keys::EMBEDDINGS_TRANSPORT, "openai_compatible_http"),
-            (ai_keys::EMBEDDINGS_API_BASE, "http://resolved.local/v1"),
-            (ai_keys::EMBEDDINGS_MODEL, "resolved-embed-model"),
-        ]);
+    fn daemon_source_is_selected_for_daemon_route() {
+        let mut source = TestSource::with_values([(ai_keys::EMBEDDINGS_ROUTING, "daemon")]);
         let context = AiContext::resolve(None, &mut source);
-        let direct_config = EmbeddingConfig {
-            api_base: "http://resolved.local/v1".to_string(),
-            model: "resolved-embed-model".to_string(),
-            api_key: None,
-            query_prefix: None,
-            timeout_seconds: 10,
-        };
 
-        let source =
-            embedding_source_from_resolved_ai_context(context, Some(direct_config.clone()));
+        let source = embedding_source_from_resolved_ai_context(context, None);
 
         match source {
-            Some(EmbeddingSource::Direct(config)) => assert_eq!(config, direct_config),
-            other => panic!("expected direct embedding source, got {other:?}"),
+            Some(EmbeddingSource::Daemon(_)) => {}
+            other => panic!("expected daemon embedding source, got {other:?}"),
         }
     }
 }

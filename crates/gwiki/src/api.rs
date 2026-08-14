@@ -548,11 +548,11 @@ mod tests {
         let original_translate_route = context.bindings.audio_translate.routing;
 
         IngestFileOptions {
-            transcription_routing: Some(AiRouting::Direct),
+            transcription_routing: Some(AiRouting::Daemon),
             ..IngestFileOptions::default()
         }
         .apply_to_ai_context(&mut context);
-        assert_eq!(context.bindings.audio_transcribe.routing, AiRouting::Direct);
+        assert_eq!(context.bindings.audio_transcribe.routing, AiRouting::Daemon);
         assert_eq!(
             context.bindings.audio_translate.routing,
             original_translate_route
@@ -563,7 +563,7 @@ mod tests {
         let original_transcribe_route = context.bindings.audio_transcribe.routing;
         IngestFileOptions {
             translate: true,
-            transcription_routing: Some(AiRouting::Direct),
+            transcription_routing: Some(AiRouting::Daemon),
             ..IngestFileOptions::default()
         }
         .apply_to_ai_context(&mut context);
@@ -571,7 +571,7 @@ mod tests {
             context.bindings.audio_transcribe.routing,
             original_transcribe_route
         );
-        assert_eq!(context.bindings.audio_translate.routing, AiRouting::Direct);
+        assert_eq!(context.bindings.audio_translate.routing, AiRouting::Daemon);
     }
 
     #[test]

@@ -1,8 +1,8 @@
 use std::sync::Arc;
 
 use gobby_core::ai::generation::{
-    ChatMessage, ChatTransport, DirectChatTransport, DirectGenerationTarget, GenerationTier,
-    ToolExecutor, ToolLoopLimits, ToolPolicy, daemon_agentic_chat, profile_for_tier, run_tool_loop,
+    ChatMessage, ChatTransport, GenerationTier, ToolExecutor, ToolLoopLimits, ToolPolicy,
+    daemon_agentic_chat, profile_for_tier, run_tool_loop,
 };
 use gobby_core::ai::resolve_route_observed;
 use gobby_core::config::{AiCapability, AiRouting};
@@ -13,7 +13,7 @@ use crate::commands::code::{
 };
 
 use super::outcome::GenerationOutcome;
-use super::routing::{resolve_ai_context, resolve_direct_targets};
+use super::routing::resolve_ai_context;
 
 const CODEWIKI_READONLY_GCODE_TOOLS: &[&str] = &[
     "search",
@@ -129,6 +129,7 @@ fn tool_loop_daemon_system_prompt(page_system: &str) -> String {
     format!("{page_system}\n\n{TOOL_LOOP_DAEMON_DIRECTIVE}")
 }
 
+#[allow(dead_code)]
 fn run_direct_tool_loop(
     transport: &dyn ChatTransport,
     ctx: &CodeEngineRuntime,
@@ -165,29 +166,15 @@ fn run_direct_tool_loop(
     }
 }
 
-fn resolve_aggregate_direct_target(
-    ctx: &CodeEngineRuntime,
-    aggregate_override: Option<&str>,
-) -> DirectGenerationTarget {
-    let [target] = resolve_direct_targets(
-        ctx,
-        [profile_for_tier(
-            GenerationTier::Aggregate,
-            aggregate_override,
-        )],
-    );
-    target
-}
-
 pub(crate) fn resolve_tool_loop_generator(
     ctx: &CodeEngineRuntime,
     ai: &CodewikiAiOptions,
-    graph_availability: CodewikiGraphAvailability,
+    _graph_availability: CodewikiGraphAvailability,
 ) -> ResolvedToolLoopGenerator {
     let ai_context = resolve_ai_context(ctx, ai.routing);
     let observed = resolve_route_observed(&ai_context, AiCapability::ToolChat);
     let route = observed.route;
-    if matches!(route, AiRouting::Off | AiRouting::Auto) {
+    if matches!(route, AiRouting::Off) {
         return ResolvedToolLoopGenerator {
             generator: None,
             ai_outcome: CodewikiAiOutcome::skipped(route, observed.fallback),
@@ -196,19 +183,7 @@ pub(crate) fn resolve_tool_loop_generator(
     let aggregate_profile = ai.aggregate_profile.clone();
     let profile = profile_for_tier(GenerationTier::Aggregate, aggregate_profile.as_deref());
     let aggregate_candidates = ai.aggregate_candidates.clone();
-    let direct_target = if matches!(route, AiRouting::Direct) {
-        let target = resolve_aggregate_direct_target(ctx, aggregate_profile.as_deref());
-        if target.api_base().is_none() {
-            return ResolvedToolLoopGenerator {
-                generator: None,
-                ai_outcome: CodewikiAiOutcome::skipped(route, observed.fallback),
-            };
-        }
-        Some(target)
-    } else {
-        None
-    };
-    let max_tokens = ai.prose_depth.max_tokens();
+    let _max_tokens = ai.prose_depth.max_tokens();
     let register = ai.register;
     let ctx_owned = ctx.clone();
     let project_path = ctx.project_root.display().to_string();
@@ -244,27 +219,7 @@ pub(crate) fn resolve_tool_loop_generator(
                     }
                 }
             }
-            AiRouting::Direct => match direct_target.clone() {
-                Some(target) => {
-                    match DirectChatTransport::new(&ai_context, target, Some(profile.clone())) {
-                        Ok(transport) => run_direct_tool_loop(
-                            &transport,
-                            &ctx_owned,
-                            graph_availability,
-                            system.as_ref(),
-                            prompt,
-                            &ai_context.tool_loop_limits,
-                            max_tokens,
-                        ),
-                        Err(error) => {
-                            log_tool_loop_error(&ctx_owned, "transport initialization", &error);
-                            ToolLoopResult::unavailable()
-                        }
-                    }
-                }
-                None => ToolLoopResult::unavailable(),
-            },
-            AiRouting::Off | AiRouting::Auto => ToolLoopResult::skipped(),
+            AiRouting::Off => ToolLoopResult::skipped(),
         }
     });
     ResolvedToolLoopGenerator {

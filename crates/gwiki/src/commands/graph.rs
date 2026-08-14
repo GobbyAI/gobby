@@ -2,7 +2,7 @@ use std::path::Path;
 
 use gobby_core::ai::effective_config::ai_source_for_conn;
 use gobby_core::ai_context::AiContext;
-use gobby_core::config::{AiRouting, ConfigSource, resolve_embedding_config};
+use gobby_core::config::{AiRouting, ConfigSource};
 use serde_json::json;
 
 use crate::graph::{GraphExportOptions, WikiGraphFacts};
@@ -128,25 +128,8 @@ fn has_embedding_capability(routing: AiRouting, source: &mut impl ConfigSource) 
     match routing {
         AiRouting::Off => false,
         AiRouting::Daemon => {
-            #[cfg(feature = "ai")]
-            {
-                true
-            }
-            #[cfg(not(feature = "ai"))]
-            {
-                false
-            }
-        }
-        AiRouting::Direct => resolve_embedding_config(source).is_some(),
-        AiRouting::Auto => {
-            #[cfg(feature = "ai")]
-            {
-                true
-            }
-            #[cfg(not(feature = "ai"))]
-            {
-                resolve_embedding_config(source).is_some()
-            }
+            let _ = source;
+            cfg!(feature = "ai")
         }
     }
 }

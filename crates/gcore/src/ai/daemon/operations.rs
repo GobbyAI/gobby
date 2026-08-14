@@ -56,6 +56,7 @@ pub fn transcribe_via_daemon(
     options: DaemonTranscriptionOptions<'_>,
 ) -> Result<TranscriptionResult, AiError> {
     let capability = audio_capability(options.capability)?;
+    cfg.require_granted(capability)?;
     let binding = cfg.binding(capability);
     let client = daemon_client()?;
     let token = read_local_cli_token()?;
@@ -109,6 +110,7 @@ pub fn describe_image_via_daemon(
     mime: &str,
 ) -> Result<VisionResult, AiError> {
     let capability = AiCapability::VisionExtract;
+    cfg.require_granted(capability)?;
     let binding = cfg.binding(capability);
     let client = daemon_client()?;
     let token = read_local_cli_token()?;
@@ -206,6 +208,7 @@ fn generate_text_via_daemon(
     budget: GenerationBudget,
 ) -> Result<TextResult, AiError> {
     let capability = AiCapability::TextGenerate;
+    cfg.require_granted(capability)?;
     let client = daemon_client()?;
     let token = read_local_cli_token()?;
     let url = daemon_url(TEXT_GENERATE_PATH);
@@ -265,6 +268,7 @@ pub fn embed_via_daemon(
     is_query: bool,
 ) -> Result<DaemonEmbeddingResult, AiError> {
     let capability = AiCapability::Embed;
+    cfg.require_granted(capability)?;
     let binding = cfg.binding(capability);
     let client = daemon_client()?;
     let token = read_local_cli_token()?;

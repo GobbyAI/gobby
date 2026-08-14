@@ -146,7 +146,7 @@ fn runtime_carries_non_datastore_context() {
         .expect("one-shot source is readable");
     let tool_loop = fs::read_to_string(root.join("text/generation/tool_loop.rs"))
         .expect("tool-loop source is readable");
-    for route in ["AiRouting::Off", "AiRouting::Direct", "AiRouting::Daemon"] {
+    for route in ["AiRouting::Off", "AiRouting::Daemon", "AiRouting::Daemon"] {
         assert!(one_shot.contains(route), "one-shot omits `{route}`");
         assert!(tool_loop.contains(route), "tool loop omits `{route}`");
     }

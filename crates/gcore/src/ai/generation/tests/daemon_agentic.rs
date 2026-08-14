@@ -16,6 +16,7 @@ fn daemon_agentic_context(project_id: Option<&str>) -> AiContext {
         limiter: AiLimiter::new(1),
         tool_loop_limits: ToolLoopLimits::default(),
         project_id: project_id.map(str::to_string),
+        grant: None,
     }
 }
 

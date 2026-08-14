@@ -153,12 +153,12 @@ pub(super) fn model_contradiction_findings(
         },
     );
     let route = effective_route(&context, AiCapability::TextGenerate);
-    if matches!(route, AiRouting::Off | AiRouting::Auto) {
+    if matches!(route, AiRouting::Off) {
         return Ok(Vec::new());
     }
     // Contradiction QA is the Module (`feature_mid`) text-generate tier; resolve the
     // Direct-route target from the same config source and route through tier->profile.
-    let target = matches!(route, AiRouting::Direct).then(|| {
+    let target = matches!(route, AiRouting::Daemon).then(|| {
         resolve_direct_generation_target(
             &mut source,
             &profile_for_tier(GenerationTier::Module, None),
