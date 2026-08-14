@@ -58,6 +58,24 @@ CREATE TABLE IF NOT EXISTS session_variables (
 """
 
 _TYPED_SQL = """
+CREATE TABLE IF NOT EXISTS sessions (
+    id uuid PRIMARY KEY,
+    project_id uuid
+);
+CREATE TABLE IF NOT EXISTS session_variable_defaults (
+    id uuid PRIMARY KEY,
+    project_id uuid,
+    name text NOT NULL,
+    description text,
+    enabled boolean DEFAULT true NOT NULL,
+    enabled_pinned boolean DEFAULT false NOT NULL,
+    default_value jsonb,
+    source text DEFAULT 'installed'::text NOT NULL,
+    tags jsonb,
+    deleted_at timestamptz,
+    created_at timestamptz DEFAULT now() NOT NULL,
+    updated_at timestamptz DEFAULT now() NOT NULL
+);
 CREATE TABLE IF NOT EXISTS definition_revisions (
     domain text PRIMARY KEY,
     revision bigint DEFAULT 0 NOT NULL,
