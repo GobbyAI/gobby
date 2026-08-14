@@ -194,6 +194,8 @@ cases, and share the same per-client rate limit.
 | `POST` | `/api/sessions/{session_id}/stop` | Set a stop signal. |
 | `GET` | `/api/sessions/{session_id}/stop` | Read stop-signal state. |
 | `DELETE` | `/api/sessions/{session_id}/stop` | Clear stop-signal state. |
+| `POST` | `/api/sessions/{session_id}/variables/set` | Set a live session variable. |
+| `POST` | `/api/sessions/{session_id}/variables/get` | Get a live session variable. |
 
 ### `POST /api/sessions/register`
 
@@ -459,22 +461,26 @@ in the request body marks `plan_enhancement_rounds` as explicit, so an explicit
 | `POST` | `/api/skills/{skill_id}/move-to-project` | Move a skill to project scope. |
 | `POST` | `/api/skills/{skill_id}/move-to-installed` | Move a project skill to installed scope. |
 | `POST` | `/api/skills/{skill_id}/restore` | Restore a deleted skill. |
-| `GET` | `/api/workflows` | List workflows. |
-| `POST` | `/api/workflows` | Create a workflow. |
-| `POST` | `/api/workflows/import` | Import a workflow. |
-| `GET` | `/api/workflows/templates` | List workflow templates. |
-| `POST` | `/api/workflows/variables/set` | Set a workflow variable. |
-| `POST` | `/api/workflows/variables/get` | Get a workflow variable. |
-| `GET` | `/api/workflows/{definition_id}` | Get a workflow. |
-| `PUT` | `/api/workflows/{definition_id}` | Update a workflow. |
-| `DELETE` | `/api/workflows/{definition_id}` | Delete a workflow. |
-| `GET` | `/api/workflows/{definition_id}/export` | Export a workflow. |
-| `POST` | `/api/workflows/{definition_id}/duplicate` | Duplicate a workflow. |
-| `POST` | `/api/workflows/{definition_id}/restore` | Restore a deleted workflow. |
-| `POST` | `/api/workflows/{definition_id}/restore-from-template` | Restore a workflow from its template. |
-| `POST` | `/api/workflows/{definition_id}/move-to-project` | Move a workflow to project scope. |
-| `POST` | `/api/workflows/{definition_id}/move-to-global` | Move a workflow to global scope. |
-| `PUT` | `/api/workflows/{definition_id}/toggle` | Toggle a workflow. |
+| `GET` | `/api/pipelines/definitions` | List pipeline definitions. |
+| `POST` | `/api/pipelines/definitions` | Create a pipeline definition. |
+| `POST` | `/api/pipelines/definitions/import` | Import a pipeline definition. |
+| `GET` | `/api/pipelines/definitions/templates` | List pipeline templates. |
+| `GET` | `/api/pipelines/definitions/{definition_id}` | Get a pipeline definition. |
+| `PUT` | `/api/pipelines/definitions/{definition_id}` | Update a pipeline definition. |
+| `DELETE` | `/api/pipelines/definitions/{definition_id}` | Delete a pipeline definition. |
+| `GET` | `/api/pipelines/definitions/{definition_id}/export` | Export a pipeline definition. |
+| `POST` | `/api/pipelines/definitions/{definition_id}/duplicate` | Duplicate a pipeline definition. |
+| `POST` | `/api/pipelines/definitions/{definition_id}/restore` | Restore a deleted pipeline definition. |
+| `POST` | `/api/pipelines/definitions/{definition_id}/restore-from-template` | Restore a pipeline from its template. |
+| `POST` | `/api/pipelines/definitions/{definition_id}/move-to-project` | Move a pipeline definition to project scope. |
+| `POST` | `/api/pipelines/definitions/{definition_id}/move-to-global` | Move a pipeline definition to global scope. |
+| `PUT` | `/api/pipelines/definitions/{definition_id}/toggle` | Toggle a pipeline definition. |
+| `GET` | `/api/variables` | List variable definitions. |
+| `POST` | `/api/variables` | Create a variable definition. |
+| `PUT` | `/api/variables/{ref}` | Update a variable definition. |
+| `DELETE` | `/api/variables/{ref}` | Delete a variable definition. |
+| `PUT` | `/api/variables/{ref}/toggle` | Toggle a variable definition. |
+| `POST` | `/api/variables/{ref}/restore-from-template` | Restore a variable definition from its template. |
 | `GET` | `/api/rules` | List rules. |
 | `POST` | `/api/rules` | Create a rule. |
 | `PUT` | `/api/rules` | Replace/update the rules collection. |
@@ -652,4 +658,4 @@ Hook execution is the exception: adapter-compatible hook failures are usually
 acknowledged with a response that lets the caller continue, because CLI hooks
 must not crash the calling agent runtime.
 
-_Last verified: 2026-07-10_
+_Last verified: 2026-08-14_

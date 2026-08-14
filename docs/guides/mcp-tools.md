@@ -601,27 +601,21 @@ call_tool("gobby-memory", "search_memories", {
 
 ## Workflows, Rules, Pipelines, Agent Definitions (`gobby-workflows`)
 
-47 discoverable tools. The umbrella registry for declarative definitions
-and pipeline execution. Standalone rules, reusable variables,
-persona-capable agent definitions, generic workflows, and pipelines all
-live here. The table below lists the stable primary surface; older
-pipeline-run query compatibility entries may still appear in discovery.
+The umbrella registry for domain definitions and pipeline execution.
+Standalone rules, reusable variables, persona-capable agent definitions, and
+pipelines live here. There is no generic definition CRUD surface; pick the
+domain tool that matches the object you want. The table below lists the
+stable primary surface; older pipeline-run query compatibility entries may
+still appear in discovery.
 
-### Workflow Definitions
+### Evaluation And Runtime
 
 | Tool | Description |
 | :--- | :--- |
-| `list_workflows` | List workflow and step-workflow definitions. |
-| `get_workflow` | Inspect a workflow definition. |
-| `create_workflow` | Create a workflow or pipeline definition from YAML content. |
-| `update_workflow` | Update a workflow or pipeline definition. |
-| `delete_workflow` | Soft-delete a workflow or pipeline definition. |
-| `restore_workflow` | Restore a soft-deleted definition. |
-| `export_workflow` | Export a definition as YAML. |
-| `evaluate_workflow` | Validate without executing — structural and semantic checks. |
-| `import_workflow` | Import a workflow from a file path. |
-| `reload_cache` | Clear and re-sync the bundled workflow cache. |
-| `get_workflow_status` | Current session workflow/runtime state. |
+| `get_step_status` | Current session agent-step snapshot and live session variables. |
+| `evaluate_pipeline` | Validate a pipeline definition without executing it. |
+| `evaluate_agent` | Validate an agent definition and its nested step workflow without executing. |
+| `reload_cache` | Clear the pipeline cache and re-sync bundled and imported definitions. |
 
 ### Rules
 
@@ -656,7 +650,7 @@ pipeline-run query compatibility entries may still appear in discovery.
 | `delete_agent_definition` | Soft-delete an agent definition. |
 | `update_agent_rules` | Add or remove rules from an agent's workflows. |
 | `update_agent_variables` | Set or remove variables on an agent's workflows. |
-| `update_agent_steps` | Replace an agent's inline step workflow. |
+| `update_agent_step_workflow` | Replace an agent's nested `step_workflow` object, or pass `None` to clear it. |
 
 ### Pipelines
 
@@ -1104,4 +1098,4 @@ lease, so callers can correct and retry without an extra schema round-trip.
 - [orchestration.md](./orchestration.md) — Dispatch and automation model
 - [code-index.md](./code-index.md) — `gcode` for code search and retrieval
 
-_Last verified: 2026-05-23_
+_Last verified: 2026-08-14_

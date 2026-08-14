@@ -63,6 +63,13 @@ The dispatcher enforces a global agent-slot cap (`max_active_agents`, default 10
 the cap is full, no persistent queue is needed; the next heartbeat re-evaluates task
 manifest state.
 
+Definition storage is per-domain. Bundled and project YAML land in
+`rule_definitions`, `agent_definitions` (optional one-to-one
+`agent_step_workflows` child), `session_variable_defaults`, and
+`pipeline_definitions`. Dispatch resolves `assigned_agent` through
+`agent_definitions`. Runtime step enforcement reads the immutable snapshot
+on `agent_step_instances`, not the live child row.
+
 Retired orchestration templates are removed from bundled workflow, agent, and skill roots.
 Workflow and agent sync reads top-level YAML, while skill sync reads one directory per skill;
 all three soft-delete Gobby-owned installed rows for definitions missing from disk. Therefore
