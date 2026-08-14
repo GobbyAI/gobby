@@ -121,7 +121,7 @@ class TestParallelOrchestratorWorkflow:
         tool_names = [t["name"] for t in tools]
 
         expected_tools = [
-            "get_workflow_status",
+            "get_step_status",
         ]
 
         for tool in expected_tools:
@@ -543,13 +543,13 @@ class TestParallelTaskProcessing:
 class TestWorkflowActivation:
     """Tests for workflow activation in parallel orchestration context."""
 
-    def test_get_workflow_status_no_active_workflow(
+    def test_get_step_status_no_active_workflow(
         self,
         daemon_instance: DaemonInstance,
         mcp_client: MCPTestClient,
         cli_events: CLIEventSimulator,
     ) -> None:
-        """Test get_workflow_status returns correct status when no workflow active."""
+        """Test get_step_status returns correct status when no workflow active."""
         # Setup session
         project_result = cli_events.register_test_project(
             project_id="00000000-0000-0000-0000-000000000e2e",
@@ -571,7 +571,7 @@ class TestWorkflowActivation:
         # Get workflow status - should indicate no active workflow
         raw_result = mcp_client.call_tool(
             server_name="gobby-workflows",
-            tool_name="get_workflow_status",
+            tool_name="get_step_status",
             arguments={"session_id": session_id},
         )
         result = unwrap_result(raw_result)

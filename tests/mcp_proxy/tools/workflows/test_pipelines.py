@@ -217,9 +217,7 @@ class TestRegisterPipelineTools:
 
         with (
             patch("gobby.mcp_proxy.tools.workflows._pipelines._register_exposed_pipeline_tools"),
-            patch(
-                "gobby.mcp_proxy.tools.workflows._pipelines.PipelineDefinitionManager"
-            ) as MockDM,
+            patch("gobby.mcp_proxy.tools.workflows._pipelines.PipelineDefinitionManager") as MockDM,
         ):
             register_pipeline_tools(registry, db=db)
             MockDM.assert_called_once_with(db)

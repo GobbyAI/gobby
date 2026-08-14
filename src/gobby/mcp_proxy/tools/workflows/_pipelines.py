@@ -155,7 +155,10 @@ def create_pipeline_definition(
         from gobby.mcp_proxy.tools.workflows._auto_export import auto_export_definition
 
         auto_export_definition(
-            cast(Any, _export_row(row)), project_path, make_global=make_global_template
+            cast(Any, _export_row(row)),
+            project_path,
+            kind="pipeline",
+            make_global=make_global_template,
         )
     except Exception as e:
         logger.warning("Failed to auto-export definition '%s': %s", row.name, e)
@@ -213,7 +216,10 @@ def update_pipeline_definition(
         from gobby.mcp_proxy.tools.workflows._auto_export import auto_export_definition
 
         auto_export_definition(
-            cast(Any, _export_row(updated)), project_path, make_global=make_global_template
+            cast(Any, _export_row(updated)),
+            project_path,
+            kind="pipeline",
+            make_global=make_global_template,
         )
     except Exception as e:
         logger.warning("Failed to auto-export definition '%s': %s", updated.name, e)
@@ -246,7 +252,7 @@ def delete_pipeline_definition(
         from gobby.mcp_proxy.tools.workflows._auto_export import auto_delete_definition
 
         is_user = bool(row.tags and "user" in row.tags)
-        auto_delete_definition(row.name, "pipeline", Path.cwd(), delete_global=is_user)
+        auto_delete_definition(row.name, Path.cwd(), kind="pipeline", delete_global=is_user)
     except Exception as e:
         logger.warning("Failed to delete template '%s': %s", row.name, e)
     loader.clear_cache()

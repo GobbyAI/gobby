@@ -21,7 +21,9 @@ def _agent() -> dict:
 def test_no_write_permissions() -> None:
     agent = _agent()
     review_step = next(step for step in agent["step_workflow"]["steps"] if step["name"] == "review")
-    terminate_step = next(step for step in agent["step_workflow"]["steps"] if step["name"] == "terminate")
+    terminate_step = next(
+        step for step in agent["step_workflow"]["steps"] if step["name"] == "terminate"
+    )
     instructions = agent["instructions"]
 
     assert review_step.get("allowed_tools") != "all"
@@ -144,9 +146,7 @@ def test_auto_claimed_reviewers_do_not_reclaim() -> None:
     assert "do not call" in instructions
     assert "claim_task again" in instructions
     assert "Do NOT call claim_task after spawn-time auto-claim" in instructions
-    assert (
-        "Do not call claim_task or get_workflow_status in REVIEW" in review_step["status_message"]
-    )
+    assert "Do not call claim_task or get_step_status in REVIEW" in review_step["status_message"]
 
 
 def test_reviewer_avoids_workflow_status_and_full_test_suites() -> None:
@@ -155,7 +155,7 @@ def test_reviewer_avoids_workflow_status_and_full_test_suites() -> None:
     review_step = next(step for step in agent["step_workflow"]["steps"] if step["name"] == "review")
     status_message = review_step["status_message"]
 
-    assert "Do NOT call get_workflow_status" in instructions
+    assert "Do NOT call get_step_status" in instructions
     assert "Do NOT run full pytest, Cargo, Vitest, or Jest suites" in instructions
     assert "`cargo test -p <package>`" in instructions
     assert "`cargo test <name> -p <package>`" in instructions

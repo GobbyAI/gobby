@@ -5,18 +5,16 @@ from __future__ import annotations
 import json
 from collections.abc import Iterator
 from contextlib import contextmanager
-from importlib import import_module
 from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import AsyncMock
 
 import pytest
-import yaml
 
 from gobby.mcp_proxy.tools.workflows import create_workflows_registry
+from gobby.storage.definitions.pipelines import PipelineDefinitionManager
 from gobby.storage.hub.protocol import HubDatabase
 from gobby.storage.pipelines import LocalPipelineExecutionManager
-from gobby.storage.definitions.pipelines import PipelineDefinitionManager
 from gobby.utils.project_context import reset_project_context, set_project_context
 from gobby.utils.session_context import session_context_for_test
 from gobby.workflows.pipeline_loader import PipelineLoader
@@ -94,36 +92,37 @@ steps:
     loader.global_dirs = []
     registry = create_workflows_registry(db=temp_db, loader=loader)
 
+    yaml_v1 = source.read_text(encoding="utf-8")
     with _tool_context(project_path):
         imported = await registry.call(
-            "import_workflow",
-            {"source_path": str(source), "workflow_name": "imported-step"},
+            "create_pipeline",
+            {"yaml_content": yaml_v1, "project_id": PROJECT_ID},
         )
-        fetched = await registry.call("get_workflow", {"name": "imported-step"})
+        fetched = await registry.call("get_pipeline", {"name": "imported-step"})
         loaded_by_path = await loader.load_pipeline("imported-step", project_path=project_path)
         discovered_by_path = await loader.discover_pipelines(project_path=project_path)
 
-        source.write_text(
-            source.read_text(encoding="utf-8").replace("First version", "Second version"),
-            encoding="utf-8",
-        )
+        yaml_v2 = yaml_v1.replace("First version", "Second version")
         updated = await registry.call(
-            "import_workflow",
-            {"source_path": str(source), "workflow_name": "imported-step"},
+            "update_pipeline",
+            {
+                "definition_id": imported["definition"]["id"],
+                "yaml_content": yaml_v2,
+            },
         )
-        fetched_updated = await registry.call("get_workflow", {"name": "imported-step"})
+        fetched_updated = await registry.call("get_pipeline", {"name": "imported-step"})
 
     assert imported["success"] is True
-    assert updated["definition_id"] == imported["definition_id"]
+    imported_id = imported["definition"]["id"]
+    assert updated["success"] is True
+    assert updated["definition"]["id"] == imported_id
     assert fetched["success"] is True
     assert fetched["description"] == "First version"
     assert loaded_by_path is not None
     assert loaded_by_path.description == "First version"
     assert any(item.name == "imported-step" and item.is_project for item in discovered_by_path)
     assert fetched_updated["description"] == "Second version"
-    destination_data = yaml.safe_load(Path(imported["destination"]).read_text(encoding="utf-8"))
-    assert destination_data["name"] == "imported-step"
-    row = PipelineDefinitionManager(temp_db).get(imported["definition_id"])
+    row = PipelineDefinitionManager(temp_db).get(imported_id)
     assert row.project_id == PROJECT_ID
     assert row.enabled is True
 
@@ -166,7 +165,10 @@ version: 1.0
     )
 
     with _tool_context(project_path):
-        imported = await registry.call("import_workflow", {"source_path": str(source)})
+        imported = await registry.call(
+            "create_pipeline",
+            {"yaml_content": source.read_text(encoding="utf-8"), "project_id": PROJECT_ID},
+        )
         fetched = await registry.call("get_pipeline", {"name": "imported-pipeline"})
         loaded_by_path = await loader.load_pipeline("imported-pipeline", project_path=project_path)
         discovered_by_path = await loader.discover_pipelines(project_path=project_path)
@@ -182,7 +184,7 @@ version: 1.0
         any(item.name == "imported-pipeline" and item.is_project for item in discovered_by_path)
         is expected_enabled
     )
-    row = PipelineDefinitionManager(temp_db).get(imported["definition_id"])
+    row = PipelineDefinitionManager(temp_db).get(imported["definition"]["id"])
     assert row.enabled is expected_enabled
     if expected_enabled:
         assert started["success"] is True
@@ -216,23 +218,19 @@ steps:
 """,
         encoding="utf-8",
     )
-    global_dir = tmp_path / "global-workflows"
-    import_tools = import_module("gobby.mcp_proxy.tools.workflows._import")
-    monkeypatch.setattr(import_tools, "get_global_workflows_dir", lambda: global_dir)
     loader = PipelineLoader(db=temp_db)
     loader.global_dirs = []
     registry = create_workflows_registry(db=temp_db, loader=loader)
 
     with _tool_context(project_path):
         imported = await registry.call(
-            "import_workflow",
-            {"source_path": str(source), "is_global": True},
+            "create_pipeline",
+            {"yaml_content": source.read_text(encoding="utf-8")},
         )
         fetched = await registry.call("get_pipeline", {"name": "global-step"})
 
     assert imported["success"] is True
     assert fetched["success"] is True
-    row = PipelineDefinitionManager(temp_db).get(imported["definition_id"])
+    row = PipelineDefinitionManager(temp_db).get(imported["definition"]["id"])
     assert row.project_id is None
     assert row.enabled is False
-    assert Path(imported["destination"]).parent == global_dir

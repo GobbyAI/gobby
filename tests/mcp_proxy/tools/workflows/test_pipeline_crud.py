@@ -2,9 +2,8 @@
 
 from __future__ import annotations
 
-import yaml
-
 import pytest
+import yaml
 
 from gobby.mcp_proxy.tools.workflows._pipelines import (
     _require_pipeline,

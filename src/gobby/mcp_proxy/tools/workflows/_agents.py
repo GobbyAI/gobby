@@ -198,7 +198,9 @@ def create_agent_definition(
     try:
         from gobby.mcp_proxy.tools.workflows._auto_export import auto_export_definition
 
-        auto_export_definition(_export_row(row), project_path, make_global=make_global_template)
+        auto_export_definition(
+            _export_row(row), project_path, kind="agent", make_global=make_global_template
+        )
     except Exception as e:
         logger.warning("Failed to auto-export agent '%s': %s", name, e)
 
@@ -273,7 +275,7 @@ def delete_agent_definition(
         from gobby.mcp_proxy.tools.workflows._auto_export import auto_delete_definition
 
         is_user = bool(row.tags and "user" in row.tags)
-        auto_delete_definition(name, "agent", project_path, delete_global=is_user)
+        auto_delete_definition(name, project_path, kind="agent", delete_global=is_user)
     except Exception as e:
         logger.warning("Failed to delete agent template '%s': %s", name, e)
 
@@ -328,7 +330,9 @@ def update_agent_rules(
     try:
         from gobby.mcp_proxy.tools.workflows._auto_export import auto_export_definition
 
-        auto_export_definition(_export_row(updated), project_path, make_global=make_global_template)
+        auto_export_definition(
+            _export_row(updated), project_path, kind="agent", make_global=make_global_template
+        )
     except Exception as e:
         logger.warning("Failed to auto-export agent '%s': %s", name, e)
 
@@ -381,7 +385,9 @@ def update_agent_variables(
     try:
         from gobby.mcp_proxy.tools.workflows._auto_export import auto_export_definition
 
-        auto_export_definition(_export_row(updated), project_path, make_global=make_global_template)
+        auto_export_definition(
+            _export_row(updated), project_path, kind="agent", make_global=make_global_template
+        )
     except Exception as e:
         logger.warning("Failed to auto-export agent '%s': %s", name, e)
 
@@ -419,7 +425,9 @@ def update_agent_step_workflow(
     try:
         from gobby.mcp_proxy.tools.workflows._auto_export import auto_export_definition
 
-        auto_export_definition(_export_row(updated), project_path, make_global=make_global_template)
+        auto_export_definition(
+            _export_row(updated), project_path, kind="agent", make_global=make_global_template
+        )
     except Exception as e:
         logger.warning("Failed to auto-export agent '%s': %s", name, e)
 

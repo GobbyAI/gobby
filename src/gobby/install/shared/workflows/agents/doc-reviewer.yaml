@@ -70,7 +70,7 @@ instructions: |
   - A verdict must happen before the workflow may end the turn and terminate.
   - Do NOT terminate or exit the agent process without calling end_agent_run.
   - Use context-aware progressive discovery: call leased known tools directly; fetch schemas directly for known unleased tools; use list_tools only for unknown tool names and list_mcp_servers only for unknown servers or registries.
-  - While in LOAD_SKILLS, do not call claim_task, get_task, get_workflow_status,
+  - While in LOAD_SKILLS, do not call claim_task, get_task, get_step_status,
     or get_agent_definition. Only load skills from gobby-skills until the
     workflow advances to REVIEW.
 
@@ -120,7 +120,7 @@ step_workflow:
       mcp_error_policy: stay
       description: "Load required documentation review skills"
       status_message: |
-        Load skills now. Do not call claim_task, get_task, get_workflow_status, or
+        Load skills now. Do not call claim_task, get_task, get_step_status, or
         get_agent_definition in this step.
 
         Call these exact tools before reviewing:

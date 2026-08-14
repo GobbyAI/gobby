@@ -6,7 +6,7 @@ from unittest.mock import MagicMock, patch
 
 import pytest
 
-from gobby.cli.installers.shared import sync_bundled_content_to_db
+from gobby.sync_registry import sync_bundled_content_to_db
 
 SYNC_TARGETS = (
     "gobby.skills.sync.sync_bundled_skills",
@@ -39,7 +39,7 @@ def test_noop_bundled_sync_emits_debug_without_info(
 ) -> None:
     with (
         _mock_sync_targets(),
-        caplog.at_level(logging.DEBUG, logger="gobby.cli.installers.shared"),
+        caplog.at_level(logging.DEBUG, logger="gobby.sync_registry"),
     ):
         result = sync_bundled_content_to_db(MagicMock())
 
@@ -59,7 +59,7 @@ def test_changed_bundled_sync_emits_one_aggregate_info(
     changed_target = "gobby.skills.sync.sync_bundled_skills"
     with (
         _mock_sync_targets(changed_target=changed_target),
-        caplog.at_level(logging.DEBUG, logger="gobby.cli.installers.shared"),
+        caplog.at_level(logging.DEBUG, logger="gobby.sync_registry"),
     ):
         result = sync_bundled_content_to_db(MagicMock())
 

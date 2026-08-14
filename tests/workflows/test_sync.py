@@ -362,10 +362,9 @@ rules:
         assert result["updated"] == 1
         assert manager.get_by_name("restore-rule") is not None
 
-    def test_reload_cache_resync_updates_rule_event(
-        self, db: HubDatabase, manager: LocalWorkflowDefinitionManager, tmp_path: Path
-    ) -> None:
+    def test_reload_cache_resync_updates_rule_event(self, db: HubDatabase, tmp_path: Path) -> None:
         from gobby.mcp_proxy.tools.workflows._import import reload_cache
+        from gobby.storage.definitions.rules import RuleDefinitionManager
         from gobby.workflows.sync_rules import sync_bundled_rules
 
         rules_dir = tmp_path / "rules"
@@ -381,6 +380,7 @@ rules:
       reason: "old event"
 """
         )
+        manager = RuleDefinitionManager(db)
 
         with (
             patch("gobby.workflows.sync_rules.get_bundled_rules_paths", return_value=[rules_dir]),
@@ -393,7 +393,10 @@ rules:
 
             row = manager.get_by_name("bundled-rule")
             assert row is not None
-            assert json.loads(row.definition_json)["event"] == "stop"
+            body = row.definition_json
+            if isinstance(body, str):
+                body = json.loads(body)
+            assert body["event"] == "stop"
 
             rule_yaml.write_text(
                 """
@@ -414,7 +417,10 @@ rules:
 
         row = manager.get_by_name("bundled-rule")
         assert row is not None
-        assert json.loads(row.definition_json)["event"] == "turn_end"
+        body = row.definition_json
+        if isinstance(body, str):
+            body = json.loads(body)
+        assert body["event"] == "turn_end"
 
 
 # ═══════════════════════════════════════════════════════════════════════

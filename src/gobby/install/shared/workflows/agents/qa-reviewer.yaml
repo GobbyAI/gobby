@@ -80,7 +80,7 @@ instructions: |
   - Do NOT edit files, write files, or commit changes. This agent is read-only.
   - Do NOT call close_task — dispatcher lifecycle transitions own task closure.
   - Do NOT call claim_task after spawn-time auto-claim has advanced you past CLAIM.
-  - Do NOT call get_workflow_status; the active step prompt is authoritative.
+  - Do NOT call get_step_status; the active step prompt is authoritative.
   - Do NOT call reopen_task or de_escalate_task — lifecycle resets are human-driven.
   - Do NOT call git push — remote publication is handled only by explicit PR delivery.
   - Do NOT run full pytest, Cargo, Vitest, or Jest suites. Run only focused commands
@@ -99,7 +99,7 @@ instructions: |
   - Do NOT terminate or exit the agent process without calling end_agent_run.
   - Always use `uv run` for Python commands.
   - Use context-aware progressive discovery: call leased known tools directly; fetch schemas directly for known unleased tools; use list_tools only for unknown tool names and list_mcp_servers only for unknown servers or registries.
-  - While in LOAD_SKILLS, do not call claim_task, get_task, get_workflow_status,
+  - While in LOAD_SKILLS, do not call claim_task, get_task, get_step_status,
     or get_agent_definition. Only load skills from gobby-skills until the
     workflow advances to REVIEW.
 
@@ -150,7 +150,7 @@ step_workflow:
       mcp_error_policy: stay
       description: "Load required QA session skills"
       status_message: |
-        Load skills now. Do not call claim_task, get_task, get_workflow_status, or
+        Load skills now. Do not call claim_task, get_task, get_step_status, or
         get_agent_definition in this step.
 
         Call these exact tools before reviewing:
@@ -185,7 +185,7 @@ step_workflow:
       description: "Review spec compliance first, then code quality, and emit verdict"
       status_message: |
         Review the code changes for the assigned task.
-        Do not call claim_task or get_workflow_status in REVIEW.
+        Do not call claim_task or get_step_status in REVIEW.
         Apply push-injected `qa-miss` lessons as a mandatory first-pass checklist
         at review start before evaluating the diff.
         1. spec_compliance: compare task description, validation criteria, coverage labels,
