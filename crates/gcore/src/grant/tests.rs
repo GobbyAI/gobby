@@ -1,0 +1,1046 @@
+use std::fs;
+use std::io::{Read, Write};
+use std::net::TcpListener;
+use std::path::{Path, PathBuf};
+
+use std::thread;
+use std::time::{Duration, Instant};
+
+use serde_json::{Value, json};
+
+use super::*;
+use crate::local_token::{AGENT_API_TOKEN_ENV, AUTHORIZATION_HEADER, LOCAL_CLI_TOKEN_FILENAME};
+
+const TOKEN: &str = "operator-token";
+const MACHINE: &str = "machine-test";
+const PROJECT: &str = "project-test";
+const NOW: i64 = 1_700_000_100;
+
+struct EnvGuard {
+    _lock: std::sync::MutexGuard<'static, ()>,
+    saved: Vec<(&'static str, Option<std::ffi::OsString>)>,
+}
+
+impl EnvGuard {
+    fn set(vars: &[(&'static str, Option<&str>)]) -> Self {
+        let lock = crate::config::TEST_ENV_LOCK
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        let saved = vars
+            .iter()
+            .map(|(name, _)| (*name, std::env::var_os(name)))
+            .collect();
+        // SAFETY: TEST_ENV_LOCK serializes env mutation for this process.
+        unsafe {
+            for (name, value) in vars {
+                match value {
+                    Some(value) => std::env::set_var(name, value),
+                    None => std::env::remove_var(name),
+                }
+            }
+        }
+        Self { _lock: lock, saved }
+    }
+}
+
+impl Drop for EnvGuard {
+    fn drop(&mut self) {
+        // SAFETY: the guard still holds TEST_ENV_LOCK.
+        unsafe {
+            for (name, value) in &self.saved {
+                match value {
+                    Some(value) => std::env::set_var(name, value),
+                    None => std::env::remove_var(name),
+                }
+            }
+        }
+    }
+}
+
+struct Harness {
+    _home: tempfile::TempDir,
+    _project: tempfile::TempDir,
+    home: PathBuf,
+    project_root: PathBuf,
+}
+
+impl Harness {
+    fn new() -> Self {
+        let home = tempfile::tempdir().expect("home");
+        let project = tempfile::tempdir().expect("project");
+        fs::write(home.path().join("machine_id"), MACHINE).expect("machine");
+        fs::write(home.path().join(LOCAL_CLI_TOKEN_FILENAME), TOKEN).expect("token");
+        let gobby = project.path().join(".gobby");
+        fs::create_dir_all(&gobby).expect("project dir");
+        fs::write(
+            gobby.join("project.json"),
+            format!(r#"{{"id":"{PROJECT}","name":"test"}}"#),
+        )
+        .expect("project json");
+        Self {
+            home: home.path().to_path_buf(),
+            project_root: project.path().to_path_buf(),
+            _home: home,
+            _project: project,
+        }
+    }
+
+    fn request<'a>(&'a self, daemon_url: Option<String>) -> AcquireRequest<'a> {
+        AcquireRequest {
+            project_root: &self.project_root,
+            home: Some(&self.home),
+            daemon_url,
+            now: Some(NOW),
+            session_id: Some("cli".into()),
+            deadline: Some(Duration::from_secs(2)),
+            stale_lock_after: Some(Duration::from_millis(200)),
+        }
+    }
+}
+
+fn golden_dir() -> PathBuf {
+    PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../tests/runtime_grants/golden")
+}
+
+fn load_golden(name: &str) -> (Vec<u8>, GrantBundle) {
+    let raw = fs::read(golden_dir().join(name)).expect(name);
+    let grant = serde_json::from_slice::<GrantBundle>(raw.trim_ascii()).expect("parse golden");
+    (raw, grant)
+}
+
+fn fixture_grant(kind: PrincipalKind) -> GrantBundle {
+    let (_, mut grant) = load_golden("direct_datastores.json");
+    grant.principal.kind = kind;
+    grant.principal.machine_id = MACHINE.into();
+    grant.principal.project_id = PROJECT.into();
+    grant.principal.session_id = Some("cli".into());
+    if kind.is_managed() {
+        grant.principal.execution_id = Some("exec-1".into());
+    } else {
+        grant.principal.execution_id = None;
+    }
+    grant.deployment.token = "cafebabedeadbeef".into();
+    grant.issued_at = NOW - 100;
+    grant.expires_at = NOW + 3_500;
+    grant.schema_identity = expected_schema_identity();
+    grant.api_contract = EXPECTED_API_CONTRACT;
+    grant.config_revision = 7;
+    grant.signature = "00".repeat(32);
+    grant.with_checksum()
+}
+
+fn write_cache(harness: &Harness, grant: &GrantBundle, settings: Option<&CachedSettings>) {
+    let path = interactive_cache_path(&harness.home, &grant.deployment.token, PROJECT);
+    write_grant_file(&path, grant).expect("write cache");
+    if let Some(settings) = settings {
+        write_settings_file_for(&path, settings);
+    }
+}
+
+fn write_settings_file_for(grant_path: &Path, settings: &CachedSettings) {
+    super::cache::write_settings_file(&settings_cache_path(grant_path), settings)
+        .expect("settings");
+}
+
+fn write_binding_for(harness: &Harness, url: &str, token: &str) {
+    write_binding(
+        &harness.home,
+        &TrustedBinding {
+            endpoint: url.trim_end_matches('/').to_string(),
+            deployment_token: token.to_string(),
+        },
+    )
+    .expect("binding");
+}
+
+fn hmac_hex(key: &[u8], data: &[u8]) -> String {
+    let pkey = openssl::pkey::PKey::hmac(key).expect("key");
+    let mut signer =
+        openssl::sign::Signer::new(openssl::hash::MessageDigest::sha256(), &pkey).expect("signer");
+    signer.update(data).expect("update");
+    let raw = signer.sign_to_vec().expect("sign");
+    raw.iter().map(|byte| format!("{byte:02x}")).collect()
+}
+
+fn b64url_decode(value: &str) -> Vec<u8> {
+    let mut padded = value.replace('-', "+").replace('_', "/");
+    while !padded.len().is_multiple_of(4) {
+        padded.push('=');
+    }
+    openssl::base64::decode_block(&padded).expect("b64")
+}
+
+fn envelope_token(exp: i64, project_id: &str) -> String {
+    let payload = json!({
+        "exp": exp,
+        "iat": exp - 60,
+        "machine_id": MACHINE,
+        "project_id": project_id,
+        "session_id": "cli",
+        "agent_run_id": "exec-1",
+    });
+    let encoded = openssl::base64::encode_block(payload.to_string().as_bytes())
+        .replace('+', "-")
+        .replace('/', "_")
+        .trim_end_matches('=')
+        .to_string();
+    let sig = openssl::base64::encode_block(b"sig-bytes-for-tests-32!!!!!!!!!!!")
+        .replace('+', "-")
+        .replace('/', "_")
+        .trim_end_matches('=')
+        .to_string();
+    format!("gobby-agent-v1.{encoded}.{sig}")
+}
+
+#[derive(Clone)]
+enum Step {
+    Challenge { valid: bool, token: String },
+    Handshake { grant: Box<GrantBundle> },
+    Config { revision: i64 },
+}
+
+struct Scripted {
+    url: String,
+    requests: thread::JoinHandle<Vec<String>>,
+}
+
+fn read_http(stream: &mut impl Read) -> String {
+    let mut request = Vec::new();
+    let mut chunk = [0_u8; 1024];
+    loop {
+        let read = match stream.read(&mut chunk) {
+            Ok(0) => break,
+            Ok(read) => read,
+            Err(_) => break,
+        };
+        request.extend_from_slice(&chunk[..read]);
+        if let Some(header_end) = request.windows(4).position(|window| window == b"\r\n\r\n") {
+            let header = String::from_utf8_lossy(&request[..header_end]);
+            let content_length = header.lines().find_map(|line| {
+                let (name, value) = line.split_once(':')?;
+                name.trim()
+                    .eq_ignore_ascii_case("content-length")
+                    .then(|| value.trim().parse::<usize>().ok())
+                    .flatten()
+            });
+            if let Some(length) = content_length {
+                if request.len().saturating_sub(header_end + 4) >= length {
+                    break;
+                }
+            } else {
+                break;
+            }
+        }
+    }
+    String::from_utf8_lossy(&request).into_owned()
+}
+
+fn spawn_scripted(steps: Vec<Step>) -> Scripted {
+    let listener = TcpListener::bind("127.0.0.1:0").expect("bind");
+    let url = format!("http://{}", listener.local_addr().expect("addr"));
+    let requests = thread::spawn(move || {
+        let mut captured = Vec::new();
+        for step in steps {
+            let request = loop {
+                let Ok((mut stream, _)) = listener.accept() else {
+                    return captured;
+                };
+                let _ = stream.set_read_timeout(Some(Duration::from_secs(2)));
+                let request = read_http(&mut stream);
+                if request.contains("HTTP/") {
+                    let (status, body) = match &step {
+                        Step::Challenge { valid, token } => {
+                            let nonce = request
+                                .split("\"nonce\":\"")
+                                .nth(1)
+                                .and_then(|rest| rest.split('"').next())
+                                .unwrap_or_default();
+                            let proof = if *valid {
+                                hmac_hex(token.as_bytes(), &b64url_decode(nonce))
+                            } else {
+                                "00".repeat(32)
+                            };
+                            (200, json!({"proof": proof}).to_string())
+                        }
+                        Step::Handshake { grant } => (
+                            200,
+                            json!({
+                                "grant": serde_json::to_value(grant).expect("grant json"),
+                                "deployment_token": grant.deployment.token,
+                                "fencing_epoch": grant.deployment.fencing_epoch,
+                            })
+                            .to_string(),
+                        ),
+                        Step::Config { revision } => (
+                            200,
+                            json!({
+                                "config_revision": revision,
+                                "settings": {"ai.embeddings.model": "nomic"}
+                            })
+                            .to_string(),
+                        ),
+                    };
+                    let _ = write!(
+                        stream,
+                        "HTTP/1.1 {status} OK\r\ncontent-type: application/json\r\ncontent-length: {}\r\nconnection: close\r\n\r\n{body}",
+                        body.len()
+                    );
+                    break request;
+                }
+            };
+            captured.push(request);
+        }
+        captured
+    });
+    Scripted { url, requests }
+}
+
+fn join(scripted: Scripted) -> Vec<String> {
+    scripted.requests.join().expect("server")
+}
+
+fn has_header(request: &str, name: &str) -> bool {
+    request.lines().any(|line| {
+        line.split_once(':')
+            .is_some_and(|(header, _)| header.eq_ignore_ascii_case(name))
+    })
+}
+
+#[test]
+fn golden_vectors_match_python() {
+    let mut files = 0;
+    for entry in fs::read_dir(golden_dir()).expect("golden dir") {
+        let entry = entry.expect("entry");
+        if entry.path().extension().and_then(|ext| ext.to_str()) != Some("json") {
+            continue;
+        }
+        files += 1;
+        let raw = fs::read(entry.path()).expect("read");
+        let grant: GrantBundle = serde_json::from_slice(raw.trim_ascii())
+            .unwrap_or_else(|error| panic!("{}: {error}", entry.path().display()));
+        let canonical = grant.model_dump_canonical().expect("canonical");
+        assert_eq!(canonical, raw, "{}", entry.path().display());
+        verify_payload_checksum(&grant).expect("checksum");
+    }
+    assert!(files >= 3, "expected the 1.2 golden set");
+}
+
+#[test]
+fn api_contract_gate() {
+    let harness = Harness::new();
+    let mut grant = fixture_grant(PrincipalKind::Interactive);
+    grant.api_contract = 99;
+    grant = grant.with_checksum();
+    let path = harness.home.join("managed.json");
+    write_grant_file(&path, &grant).expect("write");
+    let _env = EnvGuard::set(&[(MANAGED_BOOTSTRAP_ENV, Some(path.to_str().unwrap()))]);
+    let error = acquire_with(&harness.request(None)).expect_err("contract");
+    assert_eq!(error, GrantError::ApiContractMismatch);
+    assert_eq!(error.cli_code(), "api_contract_mismatch");
+    assert_eq!(error.exit_status(), 2);
+
+    let old_client = golden_dir().join("old_client_new_grant.json");
+    if old_client.exists() {
+        let raw = fs::read(old_client).expect("old/new golden");
+        let grant: GrantBundle = serde_json::from_slice(raw.trim_ascii()).expect("parse");
+        assert_ne!(grant.api_contract, EXPECTED_API_CONTRACT);
+        assert!(matches!(
+            validate_for_construction(
+                &grant,
+                &grant.principal.project_id,
+                &grant.principal.machine_id,
+                None,
+                grant.principal.kind.is_managed()
+            ),
+            Err(GrantError::ApiContractMismatch)
+        ));
+    } else {
+        let (_, mut grant) = load_golden("direct_datastores.json");
+        grant.api_contract = EXPECTED_API_CONTRACT + 1;
+        grant = grant.with_checksum();
+        assert_eq!(
+            validate_for_construction(
+                &grant,
+                &grant.principal.project_id,
+                &grant.principal.machine_id,
+                None,
+                false
+            ),
+            Err(GrantError::ApiContractMismatch)
+        );
+    }
+}
+
+#[test]
+fn schema_mismatch_refuses_construction() {
+    let harness = Harness::new();
+    let mut grant = fixture_grant(PrincipalKind::Interactive);
+    grant.schema_identity.baseline_version += 1;
+    grant = grant.with_checksum();
+    let path = harness.home.join("managed.json");
+    write_grant_file(&path, &grant).expect("write");
+    let _env = EnvGuard::set(&[(MANAGED_BOOTSTRAP_ENV, Some(path.to_str().unwrap()))]);
+    let error = acquire_with(&harness.request(None)).expect_err("schema");
+    assert_eq!(error, GrantError::SchemaMismatch);
+}
+
+#[test]
+fn corrupt_grant_refused_offline() {
+    let harness = Harness::new();
+    let grant = fixture_grant(PrincipalKind::Interactive);
+    write_binding_for(&harness, "http://127.0.0.1:1", &grant.deployment.token);
+    let path = interactive_cache_path(&harness.home, &grant.deployment.token, PROJECT);
+    write_grant_file(&path, &grant).expect("write");
+    let mut raw = fs::read(&path).expect("read");
+    raw[20] ^= 0x01;
+    fs::write(&path, raw).expect("corrupt payload");
+    let error =
+        acquire_with(&harness.request(Some("http://127.0.0.1:1".into()))).expect_err("payload");
+    assert!(matches!(error, GrantError::Malformed(_)));
+
+    write_grant_file(&path, &grant).expect("rewrite");
+    let mut parsed: Value = serde_json::from_slice(&fs::read(&path).unwrap()).unwrap();
+    parsed["payload_checksum"] = json!("ff".repeat(32));
+    fs::write(&path, serde_json::to_vec(&parsed).unwrap()).unwrap();
+    let error =
+        acquire_with(&harness.request(Some("http://127.0.0.1:1".into()))).expect_err("checksum");
+    assert!(matches!(error, GrantError::Malformed(_)));
+}
+
+#[test]
+fn inspect_is_non_authorizing() {
+    let harness = Harness::new();
+    assert!(matches!(
+        inspect_cached_grant_at(
+            &harness.project_root,
+            Some(&harness.home),
+            Some("http://127.0.0.1:60887"),
+            Some(NOW)
+        ),
+        CachedGrantInspection::Absent
+    ));
+    let grant = fixture_grant(PrincipalKind::Interactive);
+    write_binding_for(&harness, "http://127.0.0.1:60887", &grant.deployment.token);
+    write_cache(&harness, &grant, None);
+    let inspected = inspect_cached_grant_at(
+        &harness.project_root,
+        Some(&harness.home),
+        Some("http://127.0.0.1:60887"),
+        Some(NOW),
+    );
+    assert!(matches!(inspected, CachedGrantInspection::Valid { .. }));
+    let debug = format!("{inspected:?}");
+    assert!(!debug.contains("postgresql://"));
+    assert!(!debug.contains("falkor-secret"));
+    assert!(!debug.contains("qdrant-secret"));
+
+    let mut expiring = grant.clone();
+    expiring.issued_at = NOW - 100;
+    expiring.expires_at = NOW + 10;
+    expiring = expiring.with_checksum();
+    write_cache(&harness, &expiring, None);
+    assert!(matches!(
+        inspect_cached_grant_at(
+            &harness.project_root,
+            Some(&harness.home),
+            Some("http://127.0.0.1:60887"),
+            Some(NOW)
+        ),
+        CachedGrantInspection::Expiring { .. }
+    ));
+
+    let mut expired = grant;
+    expired.expires_at = NOW - 1;
+    expired = expired.with_checksum();
+    write_cache(&harness, &expired, None);
+    assert!(matches!(
+        inspect_cached_grant_at(
+            &harness.project_root,
+            Some(&harness.home),
+            Some("http://127.0.0.1:60887"),
+            Some(NOW)
+        ),
+        CachedGrantInspection::Expired { .. }
+    ));
+}
+
+#[test]
+fn outage_window_semantics() {
+    let harness = Harness::new();
+    let grant = fixture_grant(PrincipalKind::Interactive);
+    write_binding_for(&harness, "http://127.0.0.1:1", &grant.deployment.token);
+    write_cache(&harness, &grant, None);
+    let acquired =
+        acquire_with(&harness.request(Some("http://127.0.0.1:1".into()))).expect("cached");
+    assert!(acquired.permits_datastore());
+    assert!(!acquired.permits_ai());
+
+    let mut expired = grant;
+    expired.expires_at = NOW - 1;
+    expired = expired.with_checksum();
+    write_cache(&harness, &expired, None);
+    let error =
+        acquire_with(&harness.request(Some("http://127.0.0.1:1".into()))).expect_err("expired");
+    assert_eq!(error, GrantError::DaemonRequired);
+}
+
+#[test]
+fn managed_grant_never_overwrites_interactive_cache() {
+    let harness = Harness::new();
+    let interactive = fixture_grant(PrincipalKind::Interactive);
+    write_binding_for(
+        &harness,
+        "http://127.0.0.1:1",
+        &interactive.deployment.token,
+    );
+    write_cache(&harness, &interactive, None);
+    let cache_path = interactive_cache_path(&harness.home, &interactive.deployment.token, PROJECT);
+    let before = fs::read(&cache_path).expect("before");
+
+    let mut managed = fixture_grant(PrincipalKind::AgentRun);
+    managed.deployment.token = interactive.deployment.token.clone();
+    managed = managed.with_checksum();
+    let managed_path = harness.home.join("agent-grant.json");
+    write_grant_file(&managed_path, &managed).expect("managed");
+    let _env = EnvGuard::set(&[(MANAGED_BOOTSTRAP_ENV, Some(managed_path.to_str().unwrap()))]);
+    let acquired =
+        acquire_with(&harness.request(Some("http://127.0.0.1:1".into()))).expect("managed");
+    assert_eq!(acquired.source, GrantSource::ManagedFile);
+    assert_eq!(acquired.bundle.principal.kind, PrincipalKind::AgentRun);
+    assert_eq!(fs::read(&cache_path).expect("after"), before);
+}
+
+#[test]
+fn remote_endpoint_refused_before_auth() {
+    let harness = Harness::new();
+    let listener = TcpListener::bind("127.0.0.1:0").expect("bind");
+    let port = listener.local_addr().unwrap().port();
+    let handle = thread::spawn(move || {
+        let _ = listener.accept();
+    });
+    let error = acquire_with(&harness.request(Some(format!("http://example.com:{port}"))))
+        .expect_err("remote");
+    assert_eq!(error, GrantError::RemoteEndpoint);
+    drop(handle);
+}
+
+#[test]
+fn substituted_listener_gets_no_bearer() {
+    let harness = Harness::new();
+    let scripted = spawn_scripted(vec![Step::Challenge {
+        valid: false,
+        token: TOKEN.into(),
+    }]);
+    let url = scripted.url.clone();
+    let error = acquire_with(&harness.request(Some(url))).expect_err("proof");
+    assert!(matches!(error, GrantError::Malformed(_)));
+    let requests = join(scripted);
+    assert_eq!(requests.len(), 1);
+    assert!(requests[0].contains("POST /api/runtime/handshake/challenge"));
+    assert!(!has_header(&requests[0], AUTHORIZATION_HEADER));
+    assert!(load_binding(&harness.home, &requests[0]).is_none());
+}
+
+#[test]
+fn acquire_resolves_managed_then_cache_then_handshake() {
+    let harness = Harness::new();
+    let mut grant = fixture_grant(PrincipalKind::Interactive);
+    grant.deployment.token = deployment_token(&harness.home);
+    grant = grant.with_checksum();
+    let scripted = spawn_scripted(vec![
+        Step::Challenge {
+            valid: true,
+            token: TOKEN.into(),
+        },
+        Step::Handshake {
+            grant: Box::new(grant.clone()),
+        },
+        Step::Config {
+            revision: grant.config_revision,
+        },
+    ]);
+    let acquired = acquire_with(&harness.request(Some(scripted.url.clone()))).expect("handshake");
+    assert_eq!(acquired.source, GrantSource::Handshake);
+    write_binding_for(&harness, "http://127.0.0.1:1", &grant.deployment.token);
+    let _ = join(scripted);
+    let cache = interactive_cache_path(&harness.home, &grant.deployment.token, PROJECT);
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        assert_eq!(
+            fs::metadata(&cache).unwrap().permissions().mode() & 0o777,
+            0o600
+        );
+    }
+    let cached = acquire_with(&harness.request(Some("http://127.0.0.1:1".into()))).expect("cache");
+    assert_eq!(cached.source, GrantSource::Cache);
+
+    let managed = fixture_grant(PrincipalKind::ToolChat);
+    let managed_path = harness.home.join("tool.json");
+    write_grant_file(&managed_path, &managed).expect("managed");
+    let _env = EnvGuard::set(&[(MANAGED_BOOTSTRAP_ENV, Some(managed_path.to_str().unwrap()))]);
+    let acquired =
+        acquire_with(&harness.request(Some("http://127.0.0.1:1".into()))).expect("managed");
+    assert_eq!(acquired.source, GrantSource::ManagedFile);
+}
+
+#[test]
+fn renewal_is_non_blocking_past_half_ttl() {
+    let harness = Harness::new();
+    let mut grant = fixture_grant(PrincipalKind::Interactive);
+    grant.issued_at = NOW - 100;
+    grant.expires_at = NOW + 10;
+    grant = grant.with_checksum();
+    write_binding_for(&harness, "http://127.0.0.1:9", &grant.deployment.token);
+    write_cache(&harness, &grant, None);
+    let lock = grant_lock_path(&interactive_cache_path(
+        &harness.home,
+        &grant.deployment.token,
+        PROJECT,
+    ));
+    let _held = try_lock(&lock).expect("lock").expect("held");
+    let started = Instant::now();
+    let acquired =
+        acquire_with(&harness.request(Some("http://127.0.0.1:9".into()))).expect("serve");
+    assert!(started.elapsed() < Duration::from_millis(400));
+    assert_eq!(acquired.bundle.expires_at, grant.expires_at);
+}
+
+#[test]
+fn concurrent_renewal_refuses_downgrade() {
+    let harness = Harness::new();
+    let mut current = fixture_grant(PrincipalKind::Interactive);
+    if let PostgresCapability::Direct {
+        credential_generation,
+        ..
+    } = &mut current.capabilities.postgres
+    {
+        *credential_generation = 5;
+    }
+    current = current.with_checksum();
+    write_binding_for(&harness, "http://127.0.0.1:1", &current.deployment.token);
+    write_cache(&harness, &current, None);
+    let path = interactive_cache_path(&harness.home, &current.deployment.token, PROJECT);
+
+    let mut older = current.clone();
+    if let PostgresCapability::Direct {
+        credential_generation,
+        ..
+    } = &mut older.capabilities.postgres
+    {
+        *credential_generation = 4;
+    }
+    older = older.with_checksum();
+    assert!(!super::cache::newer_generation(Some(&current), &older));
+
+    let mut newer = current.clone();
+    if let PostgresCapability::Direct {
+        credential_generation,
+        ..
+    } = &mut newer.capabilities.postgres
+    {
+        *credential_generation = 6;
+    }
+    newer = newer.with_checksum();
+    write_grant_file(&path, &newer).expect("newer wins");
+    let loaded = load_grant_file(&path).expect("load");
+    assert_eq!(loaded.credential_generation(), Some(6));
+}
+
+#[test]
+fn bounded_renewal_contention() {
+    let harness = Harness::new();
+    let mut grant = fixture_grant(PrincipalKind::Interactive);
+    grant.expires_at = NOW - 1;
+    grant = grant.with_checksum();
+    let listener = TcpListener::bind("127.0.0.1:0").expect("reachable daemon");
+    let url = format!("http://{}", listener.local_addr().unwrap());
+    write_binding_for(&harness, &url, &grant.deployment.token);
+    write_cache(&harness, &grant, None);
+    let lock_path = grant_lock_path(&interactive_cache_path(
+        &harness.home,
+        &grant.deployment.token,
+        PROJECT,
+    ));
+    let _held = try_lock(&lock_path).expect("lock").expect("held");
+    let mut request = harness.request(Some(url));
+    request.deadline = Some(Duration::from_millis(80));
+    let error = acquire_with(&request).expect_err("timeout");
+    assert_eq!(error, GrantError::Timeout);
+    drop(listener);
+
+    drop(_held);
+    fs::write(&lock_path, "1\n1\n").expect("stale lock");
+    let mut fresh = grant.clone();
+    fresh.expires_at = NOW + 3_000;
+    fresh = fresh.with_checksum();
+    let scripted = spawn_scripted(vec![
+        Step::Challenge {
+            valid: true,
+            token: TOKEN.into(),
+        },
+        Step::Handshake {
+            grant: Box::new(fresh.clone()),
+        },
+        Step::Config {
+            revision: fresh.config_revision,
+        },
+    ]);
+    let mut request = harness.request(Some(scripted.url.clone()));
+    request.stale_lock_after = Some(Duration::from_secs(0));
+    let acquired = acquire_with(&request).expect("stale takeover");
+    assert!(!acquired.bundle.is_expired(NOW));
+    let _ = join(scripted);
+}
+
+#[test]
+fn endpoint_deployment_binding() {
+    let harness = Harness::new();
+    let derived = deployment_token(&harness.home);
+    let mut grant = fixture_grant(PrincipalKind::Interactive);
+    grant.deployment.token = derived.clone();
+    grant = grant.with_checksum();
+    let scripted = spawn_scripted(vec![
+        Step::Challenge {
+            valid: true,
+            token: TOKEN.into(),
+        },
+        Step::Handshake {
+            grant: Box::new(grant.clone()),
+        },
+        Step::Config {
+            revision: grant.config_revision,
+        },
+    ]);
+    acquire_with(&harness.request(Some(scripted.url.clone()))).expect("bind");
+    let _ = join(scripted);
+    let binding = load_binding(&harness.home, "http://127.0.0.1:60887");
+    assert!(binding.is_none() || binding.unwrap().deployment_token == derived);
+
+    let mut other = grant.clone();
+    other.deployment.token = "0123456789abcdef".into();
+    other = other.with_checksum();
+    write_cache(&harness, &other, None);
+    write_binding_for(&harness, "http://127.0.0.1:1", "0123456789abcdef");
+    let acquired =
+        acquire_with(&harness.request(Some("http://127.0.0.1:1".into()))).expect("outage binding");
+    assert_eq!(acquired.bundle.deployment.token, "0123456789abcdef");
+}
+
+#[test]
+fn refresh_destination_by_source() {
+    let harness = Harness::new();
+    let interactive = fixture_grant(PrincipalKind::Interactive);
+    write_binding_for(
+        &harness,
+        "http://127.0.0.1:1",
+        &interactive.deployment.token,
+    );
+    write_cache(&harness, &interactive, None);
+    let cache_path = interactive_cache_path(&harness.home, &interactive.deployment.token, PROJECT);
+    let cache_before = fs::read(&cache_path).unwrap();
+
+    let mut managed = fixture_grant(PrincipalKind::AgentRun);
+    managed.expires_at = NOW - 1;
+    managed = managed.with_checksum();
+    let managed_path = harness.home.join("run.json");
+    write_grant_file(&managed_path, &managed).unwrap();
+    let mut renewed = managed.clone();
+    renewed.expires_at = NOW + 3_000;
+    if let PostgresCapability::Direct {
+        credential_generation,
+        ..
+    } = &mut renewed.capabilities.postgres
+    {
+        *credential_generation += 1;
+    }
+    renewed = renewed.with_checksum();
+    assert_ne!(
+        renewed.credential_generation(),
+        managed.credential_generation()
+    );
+    assert_eq!(fs::read(&cache_path).unwrap(), cache_before);
+}
+
+#[test]
+fn managed_refresh_envelope_auth() {
+    let harness = Harness::new();
+    let mut managed = fixture_grant(PrincipalKind::AgentRun);
+    managed.expires_at = NOW - 1;
+    managed = managed.with_checksum();
+    let managed_path = harness.home.join("run.json");
+    write_grant_file(&managed_path, &managed).unwrap();
+
+    let _env = EnvGuard::set(&[
+        (MANAGED_BOOTSTRAP_ENV, Some(managed_path.to_str().unwrap())),
+        (AGENT_API_TOKEN_ENV, None),
+    ]);
+    let error =
+        acquire_with(&harness.request(Some("http://127.0.0.1:9".into()))).expect_err("no envelope");
+    assert_eq!(error, GrantError::Expired);
+    drop(_env);
+
+    let expired = envelope_token(NOW - 10, PROJECT);
+    let _env = EnvGuard::set(&[
+        (MANAGED_BOOTSTRAP_ENV, Some(managed_path.to_str().unwrap())),
+        (AGENT_API_TOKEN_ENV, Some(&expired)),
+    ]);
+    let error = acquire_with(&harness.request(Some("http://127.0.0.1:9".into())))
+        .expect_err("expired envelope");
+    assert_eq!(error, GrantError::Expired);
+    drop(_env);
+
+    let mismatch = envelope_token(NOW + 60, "other-project");
+    let _env = EnvGuard::set(&[
+        (MANAGED_BOOTSTRAP_ENV, Some(managed_path.to_str().unwrap())),
+        (AGENT_API_TOKEN_ENV, Some(&mismatch)),
+    ]);
+    let error =
+        acquire_with(&harness.request(Some("http://127.0.0.1:9".into()))).expect_err("mismatch");
+    assert!(matches!(error, GrantError::Malformed(_)));
+}
+
+#[test]
+fn config_revision_coherence() {
+    let harness = Harness::new();
+    let mut grant = fixture_grant(PrincipalKind::Interactive);
+    grant.deployment.token = deployment_token(&harness.home);
+    grant.config_revision = 2;
+    grant = grant.with_checksum();
+    let scripted = spawn_scripted(vec![
+        Step::Challenge {
+            valid: true,
+            token: TOKEN.into(),
+        },
+        Step::Handshake {
+            grant: Box::new(grant.clone()),
+        },
+        Step::Config { revision: 3 },
+        Step::Challenge {
+            valid: true,
+            token: TOKEN.into(),
+        },
+        Step::Handshake {
+            grant: Box::new(grant.clone()),
+        },
+        Step::Config { revision: 2 },
+    ]);
+    let acquired = acquire_with(&harness.request(Some(scripted.url.clone()))).expect("coherent");
+    assert_eq!(acquired.bundle.config_revision, 2);
+    assert_eq!(
+        acquired
+            .settings
+            .as_ref()
+            .map(|settings| settings.config_revision),
+        Some(2)
+    );
+    let _ = join(scripted);
+}
+
+#[test]
+fn config_revision_second_mismatch_terminal() {
+    let harness = Harness::new();
+    let mut prior = fixture_grant(PrincipalKind::Interactive);
+    prior.deployment.token = deployment_token(&harness.home);
+    prior.config_revision = 1;
+    prior.issued_at = NOW - 200;
+    prior.expires_at = NOW - 1;
+    prior = prior.with_checksum();
+    write_cache(
+        &harness,
+        &prior,
+        Some(&CachedSettings {
+            config_revision: 1,
+            settings: Default::default(),
+        }),
+    );
+    let mut next = prior.clone();
+    next.config_revision = 2;
+    next = next.with_checksum();
+    let scripted = spawn_scripted(vec![
+        Step::Challenge {
+            valid: true,
+            token: TOKEN.into(),
+        },
+        Step::Handshake {
+            grant: Box::new(next.clone()),
+        },
+        Step::Config { revision: 3 },
+        Step::Challenge {
+            valid: true,
+            token: TOKEN.into(),
+        },
+        Step::Handshake {
+            grant: Box::new(next),
+        },
+        Step::Config { revision: 4 },
+    ]);
+    write_binding_for(&harness, &scripted.url, &prior.deployment.token);
+    let error =
+        acquire_with(&harness.request(Some(scripted.url.clone()))).expect_err("second mismatch");
+    assert_eq!(error, GrantError::ConfigRevisionMismatch);
+    let _ = join(scripted);
+    let cached = load_grant_file(&interactive_cache_path(
+        &harness.home,
+        &prior.deployment.token,
+        PROJECT,
+    ))
+    .expect("prior preserved");
+    assert_eq!(cached.config_revision, 1);
+}
+
+#[test]
+fn machine_config_is_grant_presented_and_not_capability() {
+    let grant = fixture_grant(PrincipalKind::Interactive);
+    let scripted = spawn_scripted(vec![Step::Config {
+        revision: grant.config_revision,
+    }]);
+    let settings = fetch_runtime_config(&scripted.url, &grant, Some(TOKEN), Duration::from_secs(1))
+        .expect("config");
+    let requests = join(scripted);
+    assert!(requests[0].contains("GET /api/runtime/config"));
+    assert!(has_header(&requests[0], GRANT_HEADER));
+    assert!(!settings.settings.contains_key("databases.postgres.dsn"));
+    assert_eq!(settings.config_revision, grant.config_revision);
+}
+
+fn spawn_managed_challenge(token: &str, grant: GrantBundle) -> Scripted {
+    let claims = parse_capability_token(token).expect("claims");
+    let secret = claims.signature.clone();
+    let listener = TcpListener::bind("127.0.0.1:0").expect("bind");
+    let url = format!("http://{}", listener.local_addr().unwrap());
+    let requests = thread::spawn(move || {
+        let mut captured = Vec::new();
+        for step in 0..3 {
+            let (mut stream, request) = loop {
+                let Ok((mut stream, _)) = listener.accept() else {
+                    return captured;
+                };
+                let _ = stream.set_read_timeout(Some(Duration::from_secs(2)));
+                let request = read_http(&mut stream);
+                if request.contains("HTTP/") {
+                    break (stream, request);
+                }
+            };
+            captured.push(request.clone());
+            let (status, body) = if step == 0 {
+                let nonce = request
+                    .split("\"nonce\":\"")
+                    .nth(1)
+                    .and_then(|rest| rest.split('"').next())
+                    .unwrap_or_default();
+                let proof = hmac_hex(&secret, &b64url_decode(nonce));
+                (200, json!({"proof": proof}).to_string())
+            } else if step == 1 {
+                (
+                    200,
+                    json!({
+                        "grant": serde_json::to_value(&grant).unwrap(),
+                        "deployment_token": grant.deployment.token,
+                        "fencing_epoch": grant.deployment.fencing_epoch
+                    })
+                    .to_string(),
+                )
+            } else {
+                (
+                    200,
+                    json!({
+                        "config_revision": grant.config_revision,
+                        "settings": {}
+                    })
+                    .to_string(),
+                )
+            };
+            let _ = write!(
+                stream,
+                "HTTP/1.1 {status} OK\r\ncontent-type: application/json\r\ncontent-length: {}\r\nconnection: close\r\n\r\n{body}",
+                body.len()
+            );
+        }
+        captured
+    });
+    Scripted { url, requests }
+}
+
+#[test]
+fn refresh_destination_by_source_managed_writes_managed_file() {
+    let harness = Harness::new();
+    let interactive = fixture_grant(PrincipalKind::Interactive);
+    write_binding_for(
+        &harness,
+        "http://127.0.0.1:1",
+        &interactive.deployment.token,
+    );
+    write_cache(&harness, &interactive, None);
+    let cache_path = interactive_cache_path(&harness.home, &interactive.deployment.token, PROJECT);
+    let cache_before = fs::read(&cache_path).unwrap();
+
+    let mut managed = fixture_grant(PrincipalKind::AgentRun);
+    managed.expires_at = NOW - 1;
+    managed = managed.with_checksum();
+    let managed_path = harness.home.join("run.json");
+    write_grant_file(&managed_path, &managed).unwrap();
+    let mut renewed = managed.clone();
+    renewed.expires_at = NOW + 3_000;
+    if let PostgresCapability::Direct {
+        credential_generation,
+        ..
+    } = &mut renewed.capabilities.postgres
+    {
+        *credential_generation += 1;
+    }
+    renewed = renewed.with_checksum();
+    let token = envelope_token(NOW + 60, PROJECT);
+    let scripted = spawn_managed_challenge(&token, renewed.clone());
+    let _env = EnvGuard::set(&[
+        (MANAGED_BOOTSTRAP_ENV, Some(managed_path.to_str().unwrap())),
+        (AGENT_API_TOKEN_ENV, Some(&token)),
+    ]);
+    let acquired = acquire_with(&harness.request(Some(scripted.url.clone()))).expect("refresh");
+    let requests = join(scripted);
+    assert!(
+        requests
+            .iter()
+            .any(|request| has_header(request, AUTHORIZATION_HEADER)
+                && request.contains(&format!("Bearer {token}")))
+    );
+    assert!(
+        !requests
+            .iter()
+            .any(|request| request.contains(&format!("Bearer {TOKEN}")))
+    );
+    assert_eq!(acquired.source, GrantSource::ManagedFile);
+    assert_eq!(fs::read(&cache_path).unwrap(), cache_before);
+    let written = load_grant_file(&managed_path).unwrap();
+    assert_eq!(
+        written.credential_generation(),
+        renewed.credential_generation()
+    );
+}
+
+#[test]
+fn managed_refresh_uses_envelope_not_operator_on_wire() {
+    let harness = Harness::new();
+    let mut managed = fixture_grant(PrincipalKind::AgentRun);
+    managed.expires_at = NOW - 1;
+    managed = managed.with_checksum();
+    let managed_path = harness.home.join("run.json");
+    write_grant_file(&managed_path, &managed).unwrap();
+    let mut renewed = managed.clone();
+    renewed.expires_at = NOW + 3_000;
+    renewed = renewed.with_checksum();
+    let token = envelope_token(NOW + 60, PROJECT);
+    let scripted = spawn_managed_challenge(&token, renewed);
+    let _env = EnvGuard::set(&[
+        (MANAGED_BOOTSTRAP_ENV, Some(managed_path.to_str().unwrap())),
+        (AGENT_API_TOKEN_ENV, Some(&token)),
+    ]);
+    acquire_with(&harness.request(Some(scripted.url.clone()))).expect("refresh");
+    let requests = join(scripted);
+    let handshake = requests
+        .iter()
+        .find(|request| request.contains("POST /api/runtime/handshake HTTP"))
+        .expect("handshake");
+    assert!(handshake.contains(&format!("Bearer {token}")));
+    assert!(!handshake.contains(&format!("Bearer {TOKEN}")));
+}

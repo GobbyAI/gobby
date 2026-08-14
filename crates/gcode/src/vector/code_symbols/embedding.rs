@@ -2,15 +2,19 @@ use std::collections::{HashMap, hash_map::Entry};
 use std::sync::{Mutex, OnceLock};
 
 use crate::config::{Context, EmbeddingConfig};
+#[cfg(feature = "ai")]
 use crate::db;
 use crate::models::Symbol;
+#[cfg(feature = "ai")]
 use gobby_core::ai::{
     daemon,
     effective_config::{ai_source_for_conn, ai_source_without_primary},
     effective_route,
 };
 use gobby_core::ai_context::AiContext;
+#[cfg(feature = "ai")]
 use gobby_core::ai_types::AiError;
+#[cfg(feature = "ai")]
 use gobby_core::config::AiCapability;
 
 use super::types::VectorLifecycleError;
@@ -89,13 +93,12 @@ impl EmbeddingBackend {
                 embed_text(client, config, &input)
             }
             EmbeddingSource::Daemon(context) => {
-                let texts = vec![text.to_string()];
-                let result = daemon::embed_via_daemon(context, &texts, true)
-                    .map_err(|error| VectorLifecycleError::EmbeddingResponse(error.to_string()))?;
-                result.embeddings.into_iter().next().ok_or_else(|| {
-                    VectorLifecycleError::EmbeddingResponse(
-                        "daemon embedding response was empty".to_string(),
-                    )
+                embed_via_daemon_or_err(context, &[text.to_string()]).and_then(|embeddings| {
+                    embeddings.into_iter().next().ok_or_else(|| {
+                        VectorLifecycleError::EmbeddingResponse(
+                            "daemon embedding response was empty".to_string(),
+                        )
+                    })
                 })
             }
         }
@@ -114,18 +117,44 @@ impl EmbeddingBackend {
                 })?;
                 embed_text_batch(client, config, texts)
             }
-            EmbeddingSource::Daemon(context) => daemon::embed_via_daemon(context, texts, false)
-                .map(|result| result.embeddings)
-                .map_err(|error| VectorLifecycleError::EmbeddingResponse(error.to_string())),
+            EmbeddingSource::Daemon(context) => embed_via_daemon_or_err(context, texts),
         }
     }
 }
 
-pub fn embedding_source_from_context(ctx: &Context) -> Option<EmbeddingSource> {
-    let resolved = resolve_embedding_ai_context(ctx)?;
-    embedding_source_from_resolved_ai_context(resolved.context, resolved.direct_config)
+fn embed_via_daemon_or_err(
+    context: &AiContext,
+    texts: &[String],
+) -> Result<Vec<Vec<f32>>, VectorLifecycleError> {
+    #[cfg(feature = "ai")]
+    {
+        daemon::embed_via_daemon(context, texts, texts.len() == 1)
+            .map(|result| result.embeddings)
+            .map_err(|error| VectorLifecycleError::EmbeddingResponse(error.to_string()))
+    }
+    #[cfg(not(feature = "ai"))]
+    {
+        let _ = (context, texts);
+        Err(VectorLifecycleError::EmbeddingResponse(
+            "gcode built without the ai feature".to_string(),
+        ))
+    }
 }
 
+pub fn embedding_source_from_context(ctx: &Context) -> Option<EmbeddingSource> {
+    #[cfg(feature = "ai")]
+    {
+        let resolved = resolve_embedding_ai_context(ctx)?;
+        return embedding_source_from_resolved_ai_context(resolved.context, resolved.direct_config);
+    }
+    #[cfg(not(feature = "ai"))]
+    {
+        let _ = ctx;
+        None
+    }
+}
+
+#[cfg(feature = "ai")]
 fn embedding_source_from_resolved_ai_context(
     ai_context: AiContext,
     direct_config: Option<EmbeddingConfig>,
@@ -140,11 +169,13 @@ fn embedding_source_from_resolved_ai_context(
     }
 }
 
+#[cfg(feature = "ai")]
 struct ResolvedEmbeddingAiContext {
     context: AiContext,
     direct_config: Option<EmbeddingConfig>,
 }
 
+#[cfg(feature = "ai")]
 fn resolve_embedding_ai_context(ctx: &Context) -> Option<ResolvedEmbeddingAiContext> {
     if let Ok(mut conn) = db::connect_readonly(&ctx.database_url) {
         let mut source = effective_ai_source(ai_source_for_conn(&mut conn))?;
@@ -177,6 +208,7 @@ fn resolve_embedding_ai_context(ctx: &Context) -> Option<ResolvedEmbeddingAiCont
     })
 }
 
+#[cfg(feature = "ai")]
 fn effective_ai_source<T>(source: anyhow::Result<T>) -> Option<T> {
     match source {
         Ok(source) => Some(source),
@@ -216,7 +248,18 @@ pub fn embed_text(
     config: &EmbeddingConfig,
     text: &str,
 ) -> Result<Vec<f32>, VectorLifecycleError> {
-    gobby_core::ai::embeddings::embed_one(client, config, text).map_err(embedding_error)
+    #[cfg(feature = "ai")]
+    {
+        return gobby_core::ai::embeddings::embed_one(client, config, text)
+            .map_err(embedding_error);
+    }
+    #[cfg(not(feature = "ai"))]
+    {
+        let _ = (client, config, text);
+        Err(VectorLifecycleError::EmbeddingResponse(
+            "gcode built without the ai feature".to_string(),
+        ))
+    }
 }
 
 pub fn probe_embedding_dim(config: &EmbeddingConfig) -> Result<usize, VectorLifecycleError> {
@@ -229,9 +272,21 @@ pub fn embed_text_batch(
     config: &EmbeddingConfig,
     texts: &[String],
 ) -> Result<Vec<Vec<f32>>, VectorLifecycleError> {
-    gobby_core::ai::embeddings::embed_batch(client, config, texts).map_err(embedding_error)
+    #[cfg(feature = "ai")]
+    {
+        return gobby_core::ai::embeddings::embed_batch(client, config, texts)
+            .map_err(embedding_error);
+    }
+    #[cfg(not(feature = "ai"))]
+    {
+        let _ = (client, config, texts);
+        Err(VectorLifecycleError::EmbeddingResponse(
+            "gcode built without the ai feature".to_string(),
+        ))
+    }
 }
 
+#[cfg(feature = "ai")]
 fn embedding_error(error: AiError) -> VectorLifecycleError {
     match error {
         AiError::HttpStatus { status, body } => VectorLifecycleError::EmbeddingHttp {

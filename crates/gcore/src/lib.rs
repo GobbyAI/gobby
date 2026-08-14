@@ -19,6 +19,7 @@ pub mod ai_types;
 pub mod codewiki_contract;
 pub mod config;
 pub mod degradation;
+pub mod grant;
 mod libpq;
 pub mod local_token;
 pub mod machine;

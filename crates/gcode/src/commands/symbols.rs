@@ -1,12 +1,15 @@
 use std::collections::{BTreeMap, HashSet};
 
+#[cfg(feature = "ai")]
 use gobby_core::ai::{
     daemon::generate_via_daemon,
     effective_config::{ai_source_for_conn, ai_source_without_primary},
     effective_route,
     text::generate_text,
 };
+#[cfg(feature = "ai")]
 use gobby_core::ai_context::AiContext;
+#[cfg(feature = "ai")]
 use gobby_core::config::{AiCapability, AiRouting};
 
 use crate::commands::scope;
@@ -19,7 +22,9 @@ use crate::savings;
 use crate::utils::short_id;
 use crate::visibility;
 
+#[cfg(feature = "ai")]
 const OUTLINE_SYSTEM_PROMPT: &str = "You write concise code outlines for developers. Return a compact natural-language outline focused on responsibilities, main symbols, and notable control flow. Do not include markdown fences.";
+#[cfg(feature = "ai")]
 const OUTLINE_SUMMARY_MAX_BYTES: u64 = 1024 * 1024;
 
 pub fn outline(
@@ -87,25 +92,34 @@ fn summarize_outline(
     file: &str,
     symbols: &[Symbol],
 ) -> Option<String> {
-    let path = ctx.project_root.join(file);
-    let metadata = path.metadata().ok()?;
-    if metadata.len() > OUTLINE_SUMMARY_MAX_BYTES {
+    #[cfg(not(feature = "ai"))]
+    {
+        let _ = (ctx, conn, file, symbols);
         return None;
     }
-    let code = std::fs::read_to_string(path).ok()?;
-    let ai_context = resolve_outline_ai_context(ctx, conn).ok()?;
-    let route = effective_route(&ai_context, AiCapability::TextGenerate);
+    #[cfg(feature = "ai")]
+    {
+        let path = ctx.project_root.join(file);
+        let metadata = path.metadata().ok()?;
+        if metadata.len() > OUTLINE_SUMMARY_MAX_BYTES {
+            return None;
+        }
+        let code = std::fs::read_to_string(path).ok()?;
+        let ai_context = resolve_outline_ai_context(ctx, conn).ok()?;
+        let route = effective_route(&ai_context, AiCapability::TextGenerate);
 
-    summarize_outline_with(file, &code, symbols, |prompt, system| {
-        let result = match route {
-            AiRouting::Daemon => generate_via_daemon(&ai_context, prompt, Some(system)),
-            AiRouting::Direct => generate_text(&ai_context, prompt, Some(system)),
-            AiRouting::Off | AiRouting::Auto => return None,
-        };
-        result.ok().map(|result| result.text)
-    })
+        summarize_outline_with(file, &code, symbols, |prompt, system| {
+            let result = match route {
+                AiRouting::Daemon => generate_via_daemon(&ai_context, prompt, Some(system)),
+                AiRouting::Direct => generate_text(&ai_context, prompt, Some(system)),
+                AiRouting::Off | AiRouting::Auto => return None,
+            };
+            result.ok().map(|result| result.text)
+        })
+    }
 }
 
+#[cfg(feature = "ai")]
 fn resolve_outline_ai_context(
     ctx: &Context,
     conn: Option<&mut postgres::Client>,
@@ -133,6 +147,7 @@ fn resolve_outline_ai_context(
     ))
 }
 
+#[cfg(feature = "ai")]
 fn summarize_outline_with(
     file: &str,
     code: &str,
@@ -149,6 +164,7 @@ fn summarize_outline_with(
     })
 }
 
+#[cfg(feature = "ai")]
 fn outline_summary_prompt(file: &str, code: &str, symbols: &[Symbol]) -> String {
     let mut prompt = format!("File: {file}\n\nSymbols:\n");
     if symbols.is_empty() {

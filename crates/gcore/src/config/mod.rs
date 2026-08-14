@@ -5,6 +5,7 @@
 //! focused follow-up modules so this baseline crate remains small.
 
 mod daemon_source;
+mod machine_config;
 mod resolve;
 mod runtime_contract;
 mod types;
@@ -13,6 +14,7 @@ mod types;
 pub const CODE_GRAPH_NAME: &str = "gobby_code";
 
 pub use daemon_source::{DaemonOrPrimary, DaemonServedConfig, routing_overrides_only};
+pub use machine_config::{MachineConfig, RUNTIME_CONFIG_PATH, fetch_machine_config};
 pub use resolve::{
     ConfigSource, EnvOnlySource, INDEXING_EXTRA_EXCLUDES_KEY, INDEXING_RESPECT_GITIGNORE_KEY,
     LayeredConfigSource, decode_config_value, resolve_ai_setting, resolve_ai_tuning,

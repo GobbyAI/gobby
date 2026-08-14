@@ -3,7 +3,7 @@ use std::error::Error as StdError;
 use std::io;
 use std::path::Path;
 use std::sync::OnceLock;
-use std::time::{Duration, SystemTime, UNIX_EPOCH};
+use std::time::Duration;
 
 use serde::Deserialize;
 use thiserror::Error;
@@ -11,15 +11,11 @@ use thiserror::Error;
 #[cfg(feature = "postgres")]
 use crate::ai_context::PostgresAiConfigSource;
 use crate::ai_context::{AiConfigSource, NoPrimaryAiConfigSource};
-use crate::config::{
-    ConfigSource, DaemonOrPrimary, DaemonServedConfig, is_machine_config_key,
-    routing_overrides_only,
-};
+use crate::config::{ConfigSource, DaemonOrPrimary, DaemonServedConfig, routing_overrides_only};
 use crate::provisioning::{StandaloneConfig, gcore_config_path};
 use crate::runtime_mode::{RuntimeMode, RuntimeModeError, runtime_mode};
 
 pub const EFFECTIVE_CONFIG_PATH: &str = "/api/config/effective";
-pub const SERVICE_CAPABILITIES_PATH: &str = "/api/config/service-capabilities";
 
 const EFFECTIVE_CONFIG_TIMEOUT: Duration = Duration::from_secs(5);
 const POSTGRES_DSN_KEY: &str = "databases.postgres.dsn";
@@ -73,87 +69,6 @@ struct EffectiveConfigEnvelope {
     config: BTreeMap<String, String>,
 }
 
-#[derive(Debug, Deserialize)]
-#[serde(deny_unknown_fields)]
-struct ServiceCapabilityBundle {
-    version: u8,
-    revision: i64,
-    execution: ManagedExecutionBinding,
-    config: BTreeMap<String, String>,
-    services: ManagedServices,
-}
-
-#[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq)]
-#[serde(rename_all = "snake_case")]
-enum ManagedExecutionOwnerKind {
-    AgentRun,
-    ToolChat,
-}
-
-#[derive(Debug, Deserialize)]
-#[serde(deny_unknown_fields)]
-struct ManagedExecutionBinding {
-    owner_kind: ManagedExecutionOwnerKind,
-    execution_id: String,
-    project_id: String,
-    session_id: String,
-    expires_at: u64,
-}
-
-#[derive(Debug, Deserialize)]
-#[serde(deny_unknown_fields)]
-struct ManagedServices {
-    embeddings: ManagedService,
-    falkordb: ManagedService,
-    qdrant: ManagedService,
-}
-
-#[derive(Debug, Deserialize)]
-#[serde(deny_unknown_fields)]
-struct ManagedService {
-    mode: ManagedServiceMode,
-    operations: Vec<ManagedBrokerOperation>,
-}
-
-#[derive(Debug, Deserialize, PartialEq, Eq)]
-#[serde(rename_all = "snake_case")]
-enum ManagedServiceMode {
-    Direct,
-    Brokered,
-    Unavailable,
-}
-
-#[derive(Debug, Deserialize)]
-#[serde(deny_unknown_fields)]
-struct ManagedBrokerOperation {
-    name: ManagedBrokerName,
-    method: ManagedBrokerMethod,
-    path: String,
-}
-
-#[derive(Debug, Copy, Clone, Deserialize, PartialEq, Eq)]
-#[serde(rename_all = "snake_case")]
-enum ManagedBrokerName {
-    Embed,
-    ClearProjection,
-    RebuildProjection,
-    InvalidateProjection,
-}
-
-#[derive(Debug, Deserialize, PartialEq, Eq)]
-enum ManagedBrokerMethod {
-    #[serde(rename = "POST")]
-    Post,
-}
-
-#[derive(Debug)]
-struct ManagedExecutionIdentity {
-    owner_kind: ManagedExecutionOwnerKind,
-    execution_id: String,
-    project_id: String,
-    session_id: String,
-}
-
 static EFFECTIVE_CONFIG_STATE: OnceLock<EffectiveConfigState> = OnceLock::new();
 
 pub fn daemon_mode_layers() -> Result<Option<EffectiveConfigLayers>, EffectiveConfigError> {
@@ -167,15 +82,34 @@ pub fn daemon_mode_layers_at(
     gobby_home: &Path,
 ) -> Result<EffectiveConfigLayers, EffectiveConfigError> {
     let token = crate::local_token::read_local_cli_token_for(gobby_home).ok();
-    if managed_execution_enabled() {
-        let identity = managed_execution_identity()?;
-        let daemon = fetch_service_capabilities_at(
+    if let Some(path) = std::env::var_os(MANAGED_EXECUTION_BOOTSTRAP_ENV) {
+        let grant = crate::grant::load_grant_file(Path::new(&path)).map_err(|_| {
+            EffectiveConfigError::LocalConfiguration {
+                reason: "managed grant file could not be loaded",
+            }
+        })?;
+        let settings = crate::config::fetch_machine_config(
             base_url,
+            &grant,
             token.as_deref(),
-            &identity,
             EFFECTIVE_CONFIG_TIMEOUT,
-        )?;
-        return Ok((daemon, None));
+        )
+        .map_err(|error| match error {
+            crate::grant::GrantError::Timeout => EffectiveConfigError::Transport {
+                kind: EffectiveConfigTransportKind::Timeout,
+            },
+            crate::grant::GrantError::DaemonRequired => EffectiveConfigError::Transport {
+                kind: EffectiveConfigTransportKind::Unreachable,
+            },
+            _ => EffectiveConfigError::LocalConfiguration {
+                reason: "managed runtime config fetch failed",
+            },
+        })?;
+        validate_served_values(&settings.settings)?;
+        return Ok((
+            DaemonServedConfig::new(settings.config_revision, settings.settings),
+            None,
+        ));
     }
     let daemon = fetch_daemon_served_config_at(base_url, token.as_deref())?;
     let path = gcore_config_path(gobby_home);
@@ -193,49 +127,6 @@ pub fn daemon_mode_layers_at(
     Ok((daemon, routing))
 }
 
-fn managed_execution_enabled() -> bool {
-    std::env::var_os(MANAGED_EXECUTION_BOOTSTRAP_ENV).is_some()
-}
-
-fn managed_execution_identity() -> Result<ManagedExecutionIdentity, EffectiveConfigError> {
-    fn required(name: &str) -> Result<String, EffectiveConfigError> {
-        std::env::var(name)
-            .ok()
-            .map(|value| value.trim().to_string())
-            .filter(|value| !value.is_empty())
-            .ok_or(EffectiveConfigError::LocalConfiguration {
-                reason: "managed execution identity is incomplete",
-            })
-    }
-
-    fn optional(name: &str) -> Option<String> {
-        std::env::var(name)
-            .ok()
-            .map(|value| value.trim().to_string())
-            .filter(|value| !value.is_empty())
-    }
-
-    let (owner_kind, execution_id) = match (
-        optional("GOBBY_AGENT_RUN_ID"),
-        optional("GOBBY_MANAGED_EXECUTION_ID"),
-    ) {
-        (Some(execution_id), None) => (ManagedExecutionOwnerKind::AgentRun, execution_id),
-        (None, Some(execution_id)) => (ManagedExecutionOwnerKind::ToolChat, execution_id),
-        _ => {
-            return Err(EffectiveConfigError::LocalConfiguration {
-                reason: "managed execution owner is incomplete or ambiguous",
-            });
-        }
-    };
-
-    Ok(ManagedExecutionIdentity {
-        owner_kind,
-        execution_id,
-        project_id: required("GOBBY_PROJECT_ID")?,
-        session_id: required("GOBBY_SESSION_ID")?,
-    })
-}
-
 pub fn fetch_daemon_served_config_at(
     base_url: &str,
     token: Option<&str>,
@@ -248,7 +139,7 @@ fn fetch_daemon_served_config_at_with_timeout(
     token: Option<&str>,
     timeout: Duration,
 ) -> Result<DaemonServedConfig, EffectiveConfigError> {
-    let (status, body) = fetch_config_body(base_url, EFFECTIVE_CONFIG_PATH, token, timeout, None)?;
+    let (status, body) = fetch_config_body(base_url, EFFECTIVE_CONFIG_PATH, token, timeout)?;
     let envelope: EffectiveConfigEnvelope =
         serde_json::from_str(&body).map_err(|_| EffectiveConfigError::Protocol {
             status,
@@ -258,48 +149,15 @@ fn fetch_daemon_served_config_at_with_timeout(
     Ok(DaemonServedConfig::new(envelope.revision, envelope.config))
 }
 
-fn fetch_service_capabilities_at(
-    base_url: &str,
-    token: Option<&str>,
-    identity: &ManagedExecutionIdentity,
-    timeout: Duration,
-) -> Result<DaemonServedConfig, EffectiveConfigError> {
-    let (status, body) = fetch_config_body(
-        base_url,
-        SERVICE_CAPABILITIES_PATH,
-        token,
-        timeout,
-        Some(identity),
-    )?;
-    let bundle: ServiceCapabilityBundle =
-        serde_json::from_str(&body).map_err(|_| EffectiveConfigError::Protocol {
-            status,
-            reason: "response did not match the required service capability bundle",
-        })?;
-    validate_managed_bundle(&bundle, identity)?;
-    Ok(DaemonServedConfig::new(bundle.revision, bundle.config))
-}
-
 fn fetch_config_body(
     base_url: &str,
     path: &str,
     token: Option<&str>,
     timeout: Duration,
-    identity: Option<&ManagedExecutionIdentity>,
 ) -> Result<(u16, String), EffectiveConfigError> {
     let url = format!("{}{}", base_url.trim_end_matches('/'), path);
-    let mut request =
+    let request =
         crate::local_token::apply_bearer_header_with_token(ureq::get(&url).timeout(timeout), token);
-    if let Some(identity) = identity {
-        let owner_header = match identity.owner_kind {
-            ManagedExecutionOwnerKind::AgentRun => "X-Gobby-Agent-Run-Id",
-            ManagedExecutionOwnerKind::ToolChat => "X-Gobby-Managed-Execution-Id",
-        };
-        request = request
-            .set(owner_header, &identity.execution_id)
-            .set("X-Gobby-Caller-Project-Id", &identity.project_id)
-            .set("X-Gobby-Session-Id", &identity.session_id);
-    }
     let response = match request.call() {
         Ok(response) => response,
         Err(ureq::Error::Status(status, _)) => {
@@ -335,116 +193,6 @@ fn classify_response_body_error(error: &io::Error) -> EffectiveConfigTransportKi
         | io::ErrorKind::UnexpectedEof => EffectiveConfigTransportKind::Unreachable,
         _ => EffectiveConfigTransportKind::Other,
     }
-}
-
-fn validate_managed_bundle(
-    bundle: &ServiceCapabilityBundle,
-    identity: &ManagedExecutionIdentity,
-) -> Result<(), EffectiveConfigError> {
-    if bundle.version != 1 {
-        return Err(EffectiveConfigError::Contract {
-            key: "version".to_string(),
-            reason: "unsupported service capability version",
-        });
-    }
-    if bundle.execution.owner_kind != identity.owner_kind
-        || bundle.execution.execution_id != identity.execution_id
-        || bundle.execution.project_id != identity.project_id
-        || bundle.execution.session_id != identity.session_id
-    {
-        return Err(EffectiveConfigError::Contract {
-            key: "execution".to_string(),
-            reason: "service capability identity does not match managed execution",
-        });
-    }
-    let now = SystemTime::now()
-        .duration_since(UNIX_EPOCH)
-        .unwrap_or_default()
-        .as_secs();
-    if bundle.execution.expires_at <= now {
-        return Err(EffectiveConfigError::Contract {
-            key: "execution.expires_at".to_string(),
-            reason: "service capability is expired",
-        });
-    }
-    // Secret-bearing keys (`reference` secrecy) are never machine-exportable:
-    // the Python registry fails closed at load time if one enters the export
-    // set, so `is_machine_config_key` rejects them here at the key level.
-    // Machine clients that need those values resolve them datastore-side via
-    // `DaemonOrPrimary::DaemonWithSecrets`; managed embeddings stay brokered
-    // through the daemon. `validate_served_values` below is the narrower
-    // value-level backstop: it rejects strings containing `$secret:` or `${`.
-    for key in bundle.config.keys() {
-        if !is_machine_config_key(key) {
-            return Err(EffectiveConfigError::Contract {
-                key: key.clone(),
-                reason: "configuration key is not allowed in managed execution",
-            });
-        }
-    }
-    validate_served_values(&bundle.config)?;
-    validate_managed_services(&bundle.services)
-}
-
-fn validate_managed_services(services: &ManagedServices) -> Result<(), EffectiveConfigError> {
-    if services.embeddings.mode != ManagedServiceMode::Brokered {
-        return Err(EffectiveConfigError::Contract {
-            key: "services.embeddings.mode".to_string(),
-            reason: "managed embeddings must use the daemon broker",
-        });
-    }
-    validate_broker_operations(
-        "embeddings",
-        &services.embeddings,
-        &[(ManagedBrokerName::Embed, "/api/embeddings")],
-    )?;
-    validate_broker_operations(
-        "falkordb",
-        &services.falkordb,
-        &[
-            (
-                ManagedBrokerName::ClearProjection,
-                "/api/code-index/graph/clear",
-            ),
-            (
-                ManagedBrokerName::RebuildProjection,
-                "/api/code-index/graph/rebuild",
-            ),
-        ],
-    )?;
-    validate_broker_operations(
-        "qdrant",
-        &services.qdrant,
-        &[(
-            ManagedBrokerName::InvalidateProjection,
-            "/api/code-index/invalidate",
-        )],
-    )?;
-    Ok(())
-}
-
-fn validate_broker_operations(
-    service_name: &str,
-    service: &ManagedService,
-    expected: &[(ManagedBrokerName, &str)],
-) -> Result<(), EffectiveConfigError> {
-    let valid = service.operations.len() == expected.len()
-        && service
-            .operations
-            .iter()
-            .zip(expected)
-            .all(|(operation, (name, path))| {
-                operation.name == *name
-                    && operation.method == ManagedBrokerMethod::Post
-                    && operation.path == *path
-            });
-    if valid {
-        return Ok(());
-    }
-    Err(EffectiveConfigError::Contract {
-        key: format!("services.{service_name}.operations"),
-        reason: "broker operation does not match the typed capability contract",
-    })
 }
 
 fn classify_transport_error(transport: &ureq::Transport) -> EffectiveConfigTransportKind {

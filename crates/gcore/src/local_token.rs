@@ -49,13 +49,11 @@ pub fn authorization_bearer(token: &str) -> String {
     format!("Bearer {token}")
 }
 
-#[cfg(feature = "ai")]
 pub fn apply_bearer_header(request: ureq::Request) -> ureq::Request {
     let token = read_local_cli_token().ok();
     apply_bearer_header_with_token(request, token.as_deref())
 }
 
-#[cfg(feature = "ai")]
 pub fn apply_bearer_header_with_token(
     request: ureq::Request,
     token: Option<&str>,

@@ -1,7 +1,6 @@
 use std::path::{Path, PathBuf};
 
 use anyhow::{Context, bail};
-use gobby_core::ai::effective_config::EffectiveConfigError;
 use gobby_core::bootstrap::HubDatabaseBootstrap;
 use gobby_core::provisioning::{GCORE_CONFIG_FILENAME, StandaloneConfig};
 use gobby_core::runtime_mode::{RuntimeMode, runtime_mode};
@@ -35,10 +34,20 @@ pub fn resolve_database_url() -> anyhow::Result<String> {
         &home,
         mode,
         |name| std::env::var(name).ok(),
-        gobby_core::ai::effective_config::daemon_dsn,
+        daemon_dsn,
         |url| gobby_core::postgres::connect_readonly(url).is_ok(),
         gobby_core::provisioning::probe_postgres_hub_identity,
     )
+}
+
+#[cfg(feature = "ai")]
+fn daemon_dsn() -> anyhow::Result<Option<String>> {
+    gobby_core::ai::effective_config::daemon_dsn().map_err(anyhow::Error::from)
+}
+
+#[cfg(not(feature = "ai"))]
+fn daemon_dsn() -> anyhow::Result<Option<String>> {
+    Ok(None)
 }
 
 #[cfg(test)]
@@ -46,7 +55,7 @@ fn resolve_database_url_from_sources(
     home: &Path,
     mode: RuntimeMode,
     get_var: impl FnMut(&str) -> Option<String>,
-    daemon_dsn: impl FnOnce() -> Result<Option<String>, EffectiveConfigError>,
+    daemon_dsn: impl FnOnce() -> anyhow::Result<Option<String>>,
     database_reachable: impl FnMut(&str) -> bool,
 ) -> anyhow::Result<String> {
     resolve_database_url_from_sources_with_identity_and_reachability(
@@ -64,7 +73,7 @@ fn resolve_database_url_from_sources_with_identity(
     home: &Path,
     mode: RuntimeMode,
     get_var: impl FnMut(&str) -> Option<String>,
-    daemon_dsn: impl FnOnce() -> Result<Option<String>, EffectiveConfigError>,
+    daemon_dsn: impl FnOnce() -> anyhow::Result<Option<String>>,
     database_reachable: impl FnMut(&str) -> bool,
     identity_probe: impl FnMut(&str) -> anyhow::Result<gobby_core::provisioning::HubIdentityProbeResult>,
 ) -> anyhow::Result<String> {
@@ -82,7 +91,7 @@ fn resolve_database_url_from_sources_with_identity_and_reachability(
     home: &Path,
     mode: RuntimeMode,
     mut get_var: impl FnMut(&str) -> Option<String>,
-    daemon_dsn: impl FnOnce() -> Result<Option<String>, EffectiveConfigError>,
+    daemon_dsn: impl FnOnce() -> anyhow::Result<Option<String>>,
     mut database_reachable: impl FnMut(&str) -> bool,
     mut identity_probe: impl FnMut(
         &str,
@@ -347,14 +356,7 @@ mod tests {
             home.path(),
             RuntimeMode::Daemon,
             |_| None,
-            || {
-                Err(
-                    gobby_core::ai::effective_config::EffectiveConfigError::Contract {
-                        key: "databases.postgres.dsn".to_string(),
-                        reason: "test contract failure",
-                    },
-                )
-            },
+            || Err(anyhow::anyhow!("test contract failure")),
             |_| true,
         )
         .expect_err("daemon DSN error must propagate");

@@ -1,5 +1,6 @@
 use std::collections::HashMap;
 
+#[cfg(feature = "ai")]
 use gobby_core::ai::effective_config::{
     EffectiveConfigError, EffectiveConfigLayers, daemon_mode_layers,
 };
@@ -48,9 +49,22 @@ pub(crate) fn read_config_layers() -> anyhow::Result<ConfigLayers> {
             hub_fallback_reason: None,
         });
     }
-    Ok(layers_from_daemon_result(daemon_mode_layers()))
+    #[cfg(feature = "ai")]
+    {
+        return Ok(layers_from_daemon_result(daemon_mode_layers()));
+    }
+    #[cfg(not(feature = "ai"))]
+    {
+        return Ok(ConfigLayers {
+            daemon: None,
+            standalone: None,
+            mode: ConfigMode::Hub,
+            hub_fallback_reason: Some("gcode built without the ai feature".to_string()),
+        });
+    }
 }
 
+#[cfg(feature = "ai")]
 fn layers_from_daemon_result(
     result: Result<Option<EffectiveConfigLayers>, EffectiveConfigError>,
 ) -> ConfigLayers {
