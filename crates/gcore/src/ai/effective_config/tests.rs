@@ -330,7 +330,7 @@ fn malformed_local_yaml_after_fetch_keeps_daemon_mode_without_routing() {
     ]);
     let home = temp_home();
     fs::write(home.path().join("grant-backed config"), "ai: [malformed")
-        .expect("write malformed gcore yaml");
+        .expect("write malformed grant-backed yaml");
     let (base_url, request) =
         spawn_json_response(r#"{"revision":7,"config":{"ai.embeddings.model":"served-model"}}"#)
             .expect("spawn daemon");

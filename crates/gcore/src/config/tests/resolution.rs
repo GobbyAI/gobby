@@ -1,4 +1,3 @@
-use super::super::resolve::FALKORDB_DEFAULT_PORT;
 use super::*;
 
 #[test]
@@ -46,56 +45,6 @@ fn resolve_env_pattern_with_defaults() {
         resolve_env_pattern("plain-value").unwrap(),
         Some("plain-value".to_string())
     );
-}
-
-#[test]
-fn env_overrides_config_store() {
-    let env = EnvGuard::new();
-    env.set("GOBBY_FALKORDB_HOST", "env-falkor.local");
-    env.set("GOBBY_FALKORDB_PORT", "17000");
-    env.set("GOBBY_FALKORDB_PASSWORD", "env-pass");
-    env.set("GOBBY_QDRANT_URL", "http://env-qdrant:6333");
-    env.set("GOBBY_QDRANT_API_KEY", "env-qdrant-key");
-
-    let mut source = TestSource::with_values([
-        ("databases.falkordb.host", "stored-falkor.local"),
-        ("databases.falkordb.port", "16000"),
-        ("databases.falkordb.password", "stored-pass"),
-        ("databases.qdrant.url", "http://stored-qdrant:6333"),
-        ("databases.qdrant.api_key", "stored-qdrant-key"),
-    ]);
-
-    let falkordb = resolve_falkordb_config(&mut source).expect("falkordb config");
-    let qdrant = resolve_qdrant_config(&mut source).expect("qdrant config");
-
-    assert_eq!(falkordb.host, "env-falkor.local");
-    assert_eq!(falkordb.port, 17000);
-    assert_eq!(falkordb.password.as_deref(), Some("env-pass"));
-    assert_eq!(qdrant.url.as_deref(), Some("http://env-qdrant:6333"));
-    assert_eq!(qdrant.api_key.as_deref(), Some("env-qdrant-key"));
-}
-
-#[test]
-#[serial_test::serial(config_log_capture)]
-fn invalid_falkordb_env_port_warns_and_uses_default() {
-    let env = EnvGuard::new();
-    env.set("GOBBY_FALKORDB_HOST", "env-falkor.local");
-    env.set("GOBBY_FALKORDB_PORT", "notaport");
-    let mut source = TestSource::with_values([("databases.falkordb.port", "17000")]);
-
-    let (falkordb, warnings) =
-        capture_warn_logs(|| resolve_falkordb_config(&mut source).expect("falkordb config"));
-
-    assert_eq!(falkordb.host, "env-falkor.local");
-    assert_eq!(falkordb.port, FALKORDB_DEFAULT_PORT);
-    let matching = warnings
-        .iter()
-        .filter(|warning| warning.contains("GOBBY_FALKORDB_PORT"))
-        .collect::<Vec<_>>();
-    assert_eq!(matching.len(), 1, "{warnings:?}");
-    assert!(matching[0].contains("invalid port"));
-    assert!(matching[0].contains(&format!("using default {FALKORDB_DEFAULT_PORT}")));
-    assert!(!matching[0].contains("notaport"));
 }
 
 #[test]

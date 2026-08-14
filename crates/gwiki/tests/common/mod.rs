@@ -101,7 +101,7 @@ impl GwikiFixture {
 
     pub fn command_with_database_url_in(&self, cwd: &Path, database_url: &str) -> Command {
         let mut command = self.command_in(cwd);
-        command.env("GWIKI_TEST_DATABASE_URL", database_url);
+        attach_managed_grant(&mut command, self.home(), PROJECT_ID, database_url);
         command
     }
 
@@ -243,16 +243,36 @@ pub fn strip_service_env(command: &mut Command) -> &mut Command {
         "GOBBY_TEST_POSTGRES_DSN",
         "GCODE_TEST_DATABASE_URL",
         "GCODE_POSTGRES_TEST_DATABASE_URL",
-        "GOBBY_FALKORDB_HOST",
-        "GOBBY_FALKORDB_PORT",
-        "GOBBY_FALKORDB_PASSWORD",
-        "GOBBY_QDRANT_URL",
-        "GOBBY_QDRANT_API_KEY",
         "GOBBY_HOME",
+        "GOBBY_MANAGED_EXECUTION_BOOTSTRAP",
     ] {
         command.env_remove(key);
     }
     command
+}
+
+pub fn attach_managed_grant(
+    command: &mut Command,
+    home: &Path,
+    project_id: &str,
+    database_url: &str,
+) {
+    fs::create_dir_all(home).expect("create grant home");
+    let machine_path = home.join("machine_id");
+    if !machine_path.exists() {
+        fs::write(&machine_path, "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa").expect("machine id");
+    }
+    let machine = fs::read_to_string(&machine_path).expect("read machine id");
+    let grant = gobby_core::grant::managed_direct_grant(
+        project_id,
+        machine.trim(),
+        &gobby_core::grant::DirectConnections::postgres(database_url),
+    );
+    let path = gobby_core::grant::write_managed_bootstrap(&home.join("grants"), &grant)
+        .expect("write managed grant");
+    command
+        .env("GOBBY_HOME", home)
+        .env("GOBBY_MANAGED_EXECUTION_BOOTSTRAP", path);
 }
 
 fn cleanup_gwiki_scope(database_url: &str, scope_kind: &str, scope_id: &str) {

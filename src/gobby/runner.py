@@ -368,6 +368,9 @@ async def run_gobby(
 
         runner = await GobbyRunner.create(config_path=config_path, verbose=verbose)
         runner.daemon_lease = lease
+        from gobby.runner_init.servers import _bind_runtime_grants
+
+        _bind_runtime_grants(runner.http_server, runner)
         lease_monitor_stop = asyncio.Event()
         async with asyncio.TaskGroup() as tasks:
             tasks.create_task(

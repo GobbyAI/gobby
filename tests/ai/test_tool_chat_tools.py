@@ -229,8 +229,6 @@ async def test_run_argv_managed_context_strips_operator_database_env(
         return Process()
 
     monkeypatch.setenv("DATABASE_URL", "postgresql://operator/database-url")
-    monkeypatch.setenv("GCODE_DATABASE_URL", "postgresql://operator/gcode-url")
-    monkeypatch.setenv("GOBBY_POSTGRES_DSN", "postgresql://operator/gobby-url")
     monkeypatch.setattr(
         "gobby.ai._tool_chat_tools.asyncio.create_subprocess_exec",
         create_process,
@@ -248,8 +246,6 @@ async def test_run_argv_managed_context_strips_operator_database_env(
     assert captured_env is not None
     assert captured_env["GOBBY_MANAGED_EXECUTION_BOOTSTRAP"] == "/managed/bootstrap.json"
     assert "DATABASE_URL" not in captured_env
-    assert "GCODE_DATABASE_URL" not in captured_env
-    assert "GOBBY_POSTGRES_DSN" not in captured_env
 
 
 @pytest.mark.asyncio

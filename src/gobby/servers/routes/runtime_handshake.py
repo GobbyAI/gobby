@@ -92,7 +92,10 @@ def grant_error_response(error: GrantRejection | HandshakeRejection) -> JSONResp
         status = 409
     elif error.code in {"expired", "credential_before_proof"}:
         status = 401
-    return JSONResponse(status_code=status, content={"code": error.code, "error": error.code})
+    return JSONResponse(
+        status_code=status,
+        content={"code": error.code, "error": error.code, "message": error.message},
+    )
 
 
 def create_runtime_handshake_router(server: Any) -> APIRouter:
@@ -130,7 +133,8 @@ def create_runtime_handshake_router(server: Any) -> APIRouter:
     def handshake(request: Request, body: HandshakeRequest) -> JSONResponse:
         if not server.auth_service.is_request_authenticated(request):
             raise HTTPException(status_code=401, detail="Authentication required")
-        service = getattr(server, "handshake_service", None)
+        factory = getattr(server, "handshake_factory", None)
+        service = factory() if callable(factory) else getattr(server, "handshake_service", None)
         if service is None:
             raise HTTPException(status_code=503, detail="handshake service unavailable")
         try:

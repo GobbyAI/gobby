@@ -786,11 +786,27 @@ mod tests {
             r#"{"id":"11111111-1111-4111-8111-111111111111"}"#,
         )
         .expect("write project json");
-        let _database_url =
-            EnvGuard::set("GWIKI_TEST_DATABASE_URL", "postgresql://127.0.0.1:1/gwiki");
+        let home = temp.path().join("home");
+        std::fs::create_dir_all(&home).expect("create grant home");
+        std::fs::write(
+            home.join("machine_id"),
+            "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa",
+        )
+        .expect("write machine id");
+        let grant = gobby_core::grant::managed_direct_grant(
+            "11111111-1111-4111-8111-111111111111",
+            "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa",
+            &gobby_core::grant::DirectConnections::postgres("postgresql://127.0.0.1:1/gwiki"),
+        );
+        let grant_path = gobby_core::grant::write_managed_bootstrap(&home.join("grants"), &grant)
+            .expect("write managed grant");
+        let _grant_env = EnvGuard::set("GOBBY_MANAGED_EXECUTION_BOOTSTRAP", grant_path.as_os_str())
+            .and_set("GOBBY_HOME", home.as_os_str());
+        crate::support::env::set_active_project_root(Some(temp.path().to_path_buf()));
 
         let error =
             execute(ScopeSelection::project(temp.path())).expect_err("PostgreSQL is required");
+        crate::support::env::set_active_project_root(None);
 
         assert!(
             error

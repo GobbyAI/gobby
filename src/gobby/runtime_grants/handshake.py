@@ -83,8 +83,8 @@ class HandshakeService:
     grants: GrantService
     local_machine_id: str
     operator_token: str
-    issue_postgres: Callable[[], PostgresDirect]
-    admitted_projects: frozenset[str]
+    issue_postgres: Callable[[GrantPrincipal], PostgresDirect]
+    admitted_projects: frozenset[str] | Callable[[str], bool]
     clock: Callable[[], int]
     principal_lock_key: Callable[[str, str, str], tuple[str, ...]] | None = None
     _locks: dict[tuple[str, ...], threading.Lock] = field(default_factory=dict)
@@ -102,7 +102,7 @@ class HandshakeService:
                 "operator machine_id must match the daemon machine",
                 code="claims_mismatch",
             )
-        if project_id not in self.admitted_projects:
+        if not self._project_admitted(project_id):
             raise HandshakeRejection("project is not admitted", code="claims_mismatch")
         principal = GrantPrincipal(
             kind="interactive",
@@ -169,7 +169,7 @@ class HandshakeService:
         )
         lock = self._lock_for(key)
         with lock:
-            postgres = self.issue_postgres()
+            postgres = self.issue_postgres(principal)
             now = self.clock()
             ttl = GRANT_TTL_SECONDS
             if token_exp is not None:
@@ -178,6 +178,12 @@ class HandshakeService:
             return self.grants.issue(
                 principal=principal, postgres=postgres, now=now, ttl_seconds=ttl
             )
+
+    def _project_admitted(self, project_id: str) -> bool:
+        admitted = self.admitted_projects
+        if callable(admitted):
+            return admitted(project_id)
+        return project_id in admitted
 
     def _lock_for(self, key: tuple[str, ...]) -> threading.Lock:
         with self._locks_guard:

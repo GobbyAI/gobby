@@ -192,12 +192,13 @@ fn ai_binding_resolution_error_logs_config_key() {
 
 #[test]
 #[serial_test::serial(config_log_capture)]
-fn env_override_resolution_error_logs_env_key() {
-    let env = EnvGuard::new();
+fn config_override_resolution_error_logs_config_key() {
     let raw_value = "UNRESOLVABLE_QDRANT_KEY";
-    env.set("GOBBY_QDRANT_API_KEY", raw_value);
     let mut source = FailingResolveSource::with_values_and_failures(
-        [("databases.qdrant.url", "http://stored-qdrant:6333")],
+        [
+            ("databases.qdrant.url", "http://stored-qdrant:6333"),
+            ("databases.qdrant.api_key", raw_value),
+        ],
         [raw_value],
     );
 
@@ -208,7 +209,7 @@ fn env_override_resolution_error_logs_env_key() {
     assert!(qdrant.api_key.is_none());
     let matching = warnings
         .iter()
-        .filter(|warning| warning.contains("GOBBY_QDRANT_API_KEY"))
+        .filter(|warning| warning.contains("databases.qdrant.api_key"))
         .collect::<Vec<_>>();
     assert_eq!(matching.len(), 1, "{warnings:?}");
     assert!(matching[0].contains("resolver failed"));
@@ -397,8 +398,7 @@ fn resolve_config_handles_json_encoded_store_values() {
 #[test]
 fn qdrant_and_embedding_resolution_order() {
     {
-        let env = EnvGuard::new();
-        env.set("GOBBY_QDRANT_API_KEY", "env-qdrant-key");
+        let _env = EnvGuard::new();
         let mut source = TestSource::with_values([
             ("databases.qdrant.url", "http://stored-qdrant:6333"),
             ("databases.qdrant.api_key", "stored-qdrant-key"),
@@ -415,7 +415,7 @@ fn qdrant_and_embedding_resolution_order() {
         let embedding = resolve_embedding_config(&mut source).expect("embedding config");
 
         assert_eq!(qdrant.url.as_deref(), Some("http://stored-qdrant:6333"));
-        assert_eq!(qdrant.api_key.as_deref(), Some("env-qdrant-key"));
+        assert_eq!(qdrant.api_key.as_deref(), Some("stored-qdrant-key"));
         assert_eq!(embedding.api_base, "http://stored-embedding:11434/v1");
         assert_eq!(embedding.model, "stored-embedding-model");
         assert_eq!(embedding.api_key.as_deref(), Some("grant-embedding-key"));

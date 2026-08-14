@@ -165,20 +165,11 @@ impl ConfigSource for EnvOnlySource {
     }
 }
 
-/// Resolve FalkorDB config from env, config_store, then defaults.
+/// Resolve FalkorDB config from the grant-backed config source.
 pub fn resolve_falkordb_config(source: &mut impl ConfigSource) -> Option<FalkorConfig> {
-    let host = resolve_setting(source, "GOBBY_FALKORDB_HOST", "databases.falkordb.host")?;
-    let port = resolve_port(
-        source,
-        "GOBBY_FALKORDB_PORT",
-        "databases.falkordb.port",
-        FALKORDB_DEFAULT_PORT,
-    );
-    let password = resolve_setting(
-        source,
-        "GOBBY_FALKORDB_PASSWORD",
-        "databases.falkordb.password",
-    );
+    let host = resolve_config_setting(source, "databases.falkordb.host")?;
+    let port = resolve_config_port(source, "databases.falkordb.port", FALKORDB_DEFAULT_PORT);
+    let password = resolve_config_setting(source, "databases.falkordb.password");
 
     Some(FalkorConfig {
         host,
@@ -187,11 +178,11 @@ pub fn resolve_falkordb_config(source: &mut impl ConfigSource) -> Option<FalkorC
     })
 }
 
-/// Resolve Qdrant config from env and config_store.
+/// Resolve Qdrant config from the grant-backed config source.
 pub fn resolve_qdrant_config(source: &mut impl ConfigSource) -> Option<QdrantConfig> {
-    let url = resolve_setting(source, "GOBBY_QDRANT_URL", "databases.qdrant.url");
+    let url = resolve_config_setting(source, "databases.qdrant.url");
     url.as_ref()?;
-    let api_key = resolve_setting(source, "GOBBY_QDRANT_API_KEY", "databases.qdrant.api_key");
+    let api_key = resolve_config_setting(source, "databases.qdrant.api_key");
 
     Some(QdrantConfig { url, api_key })
 }
@@ -527,55 +518,23 @@ fn contains_unresolved_env_pattern(value: &str) -> bool {
     value.contains("${")
 }
 
-fn resolve_setting(
-    source: &mut impl ConfigSource,
-    env_key: &str,
-    config_key: &str,
-) -> Option<String> {
-    resolve_setting_from_keys(source, env_key, &[config_key])
+fn resolve_config_setting(source: &mut impl ConfigSource, config_key: &str) -> Option<String> {
+    let value = source.config_value(config_key)?;
+    resolve_non_empty(source, config_key, &value)
 }
 
-fn resolve_setting_from_keys(
-    source: &mut impl ConfigSource,
-    env_key: &str,
-    config_keys: &[&str],
-) -> Option<String> {
-    if let Some(value) = env_value(env_key) {
-        return resolve_non_empty(source, env_key, &value);
-    }
-    for config_key in config_keys {
-        let Some(value) = source.config_value(config_key) else {
-            continue;
-        };
-        if let Some(resolved) = resolve_non_empty(source, config_key, &value) {
-            return Some(resolved);
-        }
-    }
-    None
-}
-
-fn resolve_port(
-    source: &mut impl ConfigSource,
-    env_key: &str,
-    config_key: &str,
-    default: u16,
-) -> u16 {
-    let (source_key, raw_port) = if let Some(raw_port) = env_value(env_key) {
-        (env_key, raw_port)
-    } else {
-        let Some(raw_port) = source.config_value(config_key) else {
-            return default;
-        };
-        (config_key, raw_port)
+fn resolve_config_port(source: &mut impl ConfigSource, config_key: &str, default: u16) -> u16 {
+    let Some(raw_port) = source.config_value(config_key) else {
+        return default;
     };
-    let Some(resolved) = resolve_non_empty(source, source_key, &raw_port) else {
+    let Some(resolved) = resolve_non_empty(source, config_key, &raw_port) else {
         return default;
     };
     match resolved.parse::<u16>() {
         Ok(port) => port,
         Err(error) => {
             log::warn!(
-                "invalid port for config key {source_key:?}: {error}; using default {default}"
+                "invalid port for config key {config_key:?}: {error}; using default {default}"
             );
             default
         }

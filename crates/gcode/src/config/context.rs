@@ -47,10 +47,6 @@ pub type EmbeddingConfig = gobby_core::config::EmbeddingConfig;
 pub const FALKORDB_GRAPH_NAME: &str = gobby_core::config::CODE_GRAPH_NAME;
 pub const CODE_SYMBOL_COLLECTION_PREFIX: &str = "code_symbols_";
 
-pub const GOBBY_FALKORDB_HOST_ENV: &str = "GOBBY_FALKORDB_HOST";
-pub const GOBBY_FALKORDB_PORT_ENV: &str = "GOBBY_FALKORDB_PORT";
-pub const GOBBY_FALKORDB_PASSWORD_ENV: &str = "GOBBY_FALKORDB_PASSWORD";
-
 pub const FALKORDB_HOST_CONFIG_KEY: &str = "databases.falkordb.host";
 pub const FALKORDB_PORT_CONFIG_KEY: &str = "databases.falkordb.port";
 pub const FALKORDB_PASSWORD_CONFIG_KEY: &str = "databases.falkordb.password";

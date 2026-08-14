@@ -165,12 +165,7 @@ mod tests {
     }
 
     fn degraded_markers(mut source: TestConfigSource) -> Vec<String> {
-        let _env = EnvGuard::unset("GOBBY_FALKORDB_HOST")
-            .and_unset("GOBBY_FALKORDB_PORT")
-            .and_unset("GOBBY_FALKORDB_PASSWORD")
-            .and_unset("GOBBY_QDRANT_URL")
-            .and_unset("GOBBY_QDRANT_API_KEY")
-            .and_set("GWIKI_TEST_ENV_GUARD_AND_SET", "1");
+        let _env = EnvGuard::set("GWIKI_TEST_ENV_GUARD_AND_SET", "1");
         degraded_optional_sources_from_config(&mut source)
     }
 

@@ -465,7 +465,7 @@ mod tests {
     #[test]
     #[serial_test::serial]
     fn daemon_service_source_uses_only_served_values() {
-        temp_env::with_var("GOBBY_QDRANT_URL", Some("http://env.example:6333"), || {
+        {
             let mut source = ServiceSource::daemon(served([(
                 "databases.qdrant.url",
                 "http://daemon.example:6333",
@@ -477,7 +477,7 @@ mod tests {
                     .as_deref(),
                 Some("http://daemon.example:6333")
             );
-        });
+        }
 
         let mut source = ServiceSource::daemon(served([(
             "databases.qdrant.url",
@@ -551,32 +551,26 @@ mod tests {
     #[test]
     #[serial_test::serial]
     fn daemon_service_source_fails_closed_for_missing_values() {
-        temp_env::with_vars(
-            [
-                ("GOBBY_QDRANT_URL", Some("http://env.example:6333")),
-                ("GOBBY_QDRANT_API_KEY", Some("shared-env-secret")),
-            ],
-            || {
-                let mut source = ServiceSource::daemon(served([(
-                    "databases.qdrant.url",
-                    "http://bundle.example:6333",
-                )]));
+        {
+            let mut source = ServiceSource::daemon(served([(
+                "databases.qdrant.url",
+                "http://bundle.example:6333",
+            )]));
 
-                assert_eq!(
-                    source
-                        .config_value("databases.qdrant.url")
-                        .expect("resolve bundle value")
-                        .as_deref(),
-                    Some("http://bundle.example:6333")
-                );
-                assert_eq!(
-                    source
-                        .config_value("databases.qdrant.api_key")
-                        .expect("secret key fails closed"),
-                    None
-                );
-            },
-        );
+            assert_eq!(
+                source
+                    .config_value("databases.qdrant.url")
+                    .expect("resolve bundle value")
+                    .as_deref(),
+                Some("http://bundle.example:6333")
+            );
+            assert_eq!(
+                source
+                    .config_value("databases.qdrant.api_key")
+                    .expect("secret key fails closed"),
+                None
+            );
+        }
     }
 
     static CAPTURED_WARNINGS: std::sync::Mutex<Vec<String>> = std::sync::Mutex::new(Vec::new());

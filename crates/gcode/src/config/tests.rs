@@ -69,13 +69,7 @@ fn create_linked_worktree(tmp: &tempfile::TempDir) -> (PathBuf, PathBuf) {
     (repo, linked)
 }
 
-const SERVICE_ENV_KEYS: &[&str] = &[
-    "GOBBY_FALKORDB_HOST",
-    "GOBBY_FALKORDB_PORT",
-    "GOBBY_FALKORDB_PASSWORD",
-    "GOBBY_QDRANT_URL",
-    "GOBBY_QDRANT_API_KEY",
-];
+const SERVICE_ENV_KEYS: &[&str] = &["GOBBY_INDEXING_RESPECT_GITIGNORE"];
 
 fn with_service_env<R>(
     overrides: &[(&'static str, Option<&'static str>)],
@@ -123,7 +117,7 @@ fn production_ai_sources_use_effective_config_helpers() {
 #[test]
 #[serial_test::serial]
 fn adapter_env_precedence_and_json_decode() {
-    with_service_env(&[("GOBBY_FALKORDB_HOST", Some("env-falkor.local"))], || {
+    with_service_env(&[], || {
         let values = std::collections::HashMap::from([
             ("databases.falkordb.host", r#""stored-falkor.local""#),
             ("databases.falkordb.port", r#""16380""#),

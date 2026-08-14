@@ -107,21 +107,35 @@ pub(super) fn run_gcode_with_format(
     if !machine_id_path.exists() {
         fs::write(&machine_id_path, HARNESS_MACHINE_ID).expect("write harness machine id");
     }
+    let project_id = project_id_for(cwd);
+    let port = env.falkor_port.parse::<i64>().unwrap_or(6379);
+    let connections = gobby_core::grant::DirectConnections::postgres(&env.database_url)
+        .with_falkor(&env.falkor_host, port, env.falkor_password.as_deref());
+    let grant =
+        gobby_core::grant::managed_direct_grant(&project_id, HARNESS_MACHINE_ID, &connections);
+    let grant_path = gobby_core::grant::write_managed_bootstrap(&gobby_home.join("grants"), &grant)
+        .expect("write managed grant");
     let mut command = Command::new(env!("CARGO_BIN_EXE_gcode"));
     command
         .current_dir(cwd)
-        .env("GCODE_TEST_DATABASE_URL", &env.database_url)
-        .env("GOBBY_FALKORDB_HOST", &env.falkor_host)
-        .env("GOBBY_FALKORDB_PORT", &env.falkor_port)
-        .env("GOBBY_HOME", gobby_home)
+        .env("GOBBY_HOME", &gobby_home)
+        .env("GOBBY_MANAGED_EXECUTION_BOOTSTRAP", grant_path)
         .arg("--allow-stale")
         .arg("--format")
         .arg(format)
         .args(args);
-    if let Some(password) = &env.falkor_password {
-        command.env("GOBBY_FALKORDB_PASSWORD", password);
-    }
     command.output().expect("run gcode")
+}
+
+fn project_id_for(cwd: &std::path::Path) -> String {
+    let path = cwd.join(".gobby").join("gcode.json");
+    let Ok(raw) = fs::read_to_string(path) else {
+        return TEST_PROJECT_ID.to_string();
+    };
+    serde_json::from_str::<Value>(&raw)
+        .ok()
+        .and_then(|value| value.get("id")?.as_str().map(str::to_string))
+        .unwrap_or_else(|| TEST_PROJECT_ID.to_string())
 }
 
 pub(super) fn json_command(env: &StandaloneEnv, cwd: &std::path::Path, args: &[&str]) -> Value {

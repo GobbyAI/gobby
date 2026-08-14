@@ -1,8 +1,14 @@
-use anyhow::{Context as _, bail};
+use anyhow::{bail, Context as _};
 use gobby_core::search::BM25_SCORE_REGPROCEDURE;
 use postgres::Client;
 
-const DEFAULT_SCHEMA: &str = "public";
+fn current_schema_name(client: &mut Client) -> anyhow::Result<String> {
+    client
+        .query_one("SELECT current_schema()", &[])
+        .context("failed to resolve current_schema")?
+        .try_get(0)
+        .context("failed to decode current_schema")
+}
 
 struct TableContract {
     name: &'static str,
@@ -153,7 +159,8 @@ pub fn validate_runtime_schema(client: &mut Client) -> anyhow::Result<()> {
         );
     }
 
-    let missing_tables = missing_relations(client, REQUIRED_TABLES)?;
+    let schema = current_schema_name(client)?;
+    let missing_tables = missing_relations(client, &schema, REQUIRED_TABLES)?;
     if !missing_tables.is_empty() {
         bail!(
             "PostgreSQL hub is missing required code-index tables: {}. {MIGRATION_HINT}",
@@ -161,7 +168,7 @@ pub fn validate_runtime_schema(client: &mut Client) -> anyhow::Result<()> {
         );
     }
 
-    let missing_columns = missing_table_columns(client, DEFAULT_SCHEMA, TABLE_CONTRACTS)?;
+    let missing_columns = missing_table_columns(client, &schema, TABLE_CONTRACTS)?;
     if !missing_columns.is_empty() {
         bail!(
             "PostgreSQL hub is missing required code-index columns: {}. {MIGRATION_HINT}",
@@ -169,7 +176,7 @@ pub fn validate_runtime_schema(client: &mut Client) -> anyhow::Result<()> {
         );
     }
 
-    let missing_indexes = missing_relations(client, REQUIRED_BM25_INDEXES)?;
+    let missing_indexes = missing_relations(client, &schema, REQUIRED_BM25_INDEXES)?;
     if !missing_indexes.is_empty() {
         bail!(
             "PostgreSQL hub is missing required pg_search BM25 indexes: {}. {MIGRATION_HINT}",
@@ -199,10 +206,14 @@ fn procedure_exists(client: &mut Client, procedure: &str) -> anyhow::Result<bool
         .context("failed to decode PostgreSQL procedure check")
 }
 
-fn missing_relations(client: &mut Client, relations: &[&str]) -> anyhow::Result<Vec<String>> {
+fn missing_relations(
+    client: &mut Client,
+    schema: &str,
+    relations: &[&str],
+) -> anyhow::Result<Vec<String>> {
     let mut missing = Vec::new();
     for relation in relations {
-        let qualified = format!("{DEFAULT_SCHEMA}.{relation}");
+        let qualified = format!("{schema}.{relation}");
         let row = client
             .query_one("SELECT to_regclass($1) IS NOT NULL", &[&qualified])
             .with_context(|| format!("failed to check PostgreSQL relation `{qualified}`"))?;
@@ -245,8 +256,8 @@ fn missing_table_columns(
 }
 
 #[cfg(test)]
-fn required_relation_regclass_name(relation: &str) -> String {
-    format!("{DEFAULT_SCHEMA}.{relation}")
+fn required_relation_regclass_name(schema: &str, relation: &str) -> String {
+    format!("{schema}.{relation}")
 }
 
 #[cfg(test)]
@@ -260,20 +271,16 @@ mod tests {
             .iter()
             .find(|contract| contract.name == "code_indexed_files")
             .expect("code_indexed_files contract");
-        assert!(
-            indexed_files
-                .required_columns
-                .contains(&"vector_sync_attempted_at")
-        );
+        assert!(indexed_files
+            .required_columns
+            .contains(&"vector_sync_attempted_at"));
         let code_symbols = TABLE_CONTRACTS
             .iter()
             .find(|contract| contract.name == "code_symbols")
             .expect("code_symbols contract");
-        assert!(
-            code_symbols
-                .required_columns
-                .contains(&"summary_attempted_at")
-        );
+        assert!(code_symbols
+            .required_columns
+            .contains(&"summary_attempted_at"));
         assert!(REQUIRED_BM25_INDEXES.contains(&"code_symbols_search_bm25"));
         assert!(REQUIRED_BM25_INDEXES.contains(&"code_content_search_bm25"));
         assert_eq!(BM25_SCORE_REGPROCEDURE, "pdb.score(anyelement)");
@@ -300,15 +307,15 @@ mod tests {
     #[test]
     fn missing_schema_requires_setup() {
         assert!(
-            MIGRATION_HINT.contains("gcode setup --standalone"),
-            "missing runtime schema guidance must point standalone users at explicit setup"
+            MIGRATION_HINT.contains("gdaemon apply"),
+            "missing runtime schema guidance must name gdaemon apply"
         );
     }
 
     #[test]
-    fn relation_validation_qualifies_public_schema() {
+    fn relation_validation_qualifies_current_schema() {
         assert_eq!(
-            required_relation_regclass_name("code_symbols"),
+            required_relation_regclass_name("public", "code_symbols"),
             "public.code_symbols"
         );
     }

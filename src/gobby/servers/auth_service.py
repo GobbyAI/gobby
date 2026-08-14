@@ -247,11 +247,12 @@ class AuthService:
         if self._grant_service is None:
             return AuthDecision(allowed=False, code="missing_grant", status_code=401)
 
+        now = self._clock() if self._clock is not None else None
         presented = present_or_reject(
             self._grant_service,
             raw_grant,
-            now=self._clock() if self._clock is not None else None,
-            required=grant_route.required,
+            now=now,
+            required=None,
         )
         if isinstance(presented, AuthDecision):
             return presented
@@ -260,6 +261,15 @@ class AuthService:
                 return AuthDecision(allowed=False, code="forged_identity", status_code=401)
         if not identity_headers_match(request, presented.principal):
             return AuthDecision(allowed=False, code="forged_identity", status_code=401)
+        if grant_route.required is not None:
+            presented = present_or_reject(
+                self._grant_service,
+                raw_grant,
+                now=now,
+                required=grant_route.required,
+            )
+            if isinstance(presented, AuthDecision):
+                return presented
         if grant_route.effectful and not self._effectful_allowed():
             return AuthDecision(allowed=False, code="lease_not_held", status_code=409)
         return AuthDecision(

@@ -72,11 +72,6 @@ impl EnvGuard {
     fn clear(&self) {
         let _held_env_lock = &self.lock;
         for key in [
-            "GOBBY_FALKORDB_HOST",
-            "GOBBY_FALKORDB_PORT",
-            "GOBBY_FALKORDB_PASSWORD",
-            "GOBBY_QDRANT_URL",
-            "GOBBY_QDRANT_API_KEY",
             "GOBBY_INDEXING_RESPECT_GITIGNORE",
             "GOBBY_TEST_PRESENT",
             "GOBBY_TEST_MISSING",

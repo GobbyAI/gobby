@@ -51,7 +51,13 @@ def _struct_body(source: str, name: str) -> str:
 
 
 def _without_rust_unit_tests(source: str) -> str:
-    return source.split("#[cfg(test)]", maxsplit=1)[0]
+    return re.sub(
+        r"#\[cfg\(test\)\]\s*mod\s+tests\b.*",
+        "",
+        source,
+        count=1,
+        flags=re.S,
+    )
 
 
 def _assert_field(body: str, declaration: str) -> None:
@@ -86,8 +92,9 @@ def _assert_falkordb_config(config: str, context: str) -> None:
     )
     _assert_field(context, "pub falkordb: Option<FalkorConfig>")
 
-    assert re.search(r"let\s+falkordb\s*=\s*if\s+services\.falkordb", config)
-    assert "resolve_falkordb_config(conn, layers)?" in config
+    assert "grant::acquire" in config
+    assert "db::falkor_from_grant" in config
+    assert "fn falkor_from_grant" in config
     graph_name_literal = re.search(r"graph_name:\s*\"gobby_code\"\.to_string\(\)", config)
     graph_name_const = 'const FALKORDB_GRAPH_NAME: &str = "gobby_code";' in config and re.search(
         r"graph_name:\s*FALKORDB_GRAPH_NAME\.to_string\(\)", config
@@ -103,9 +110,6 @@ def _assert_falkordb_config(config: str, context: str) -> None:
             "databases.falkordb.host",
             "databases.falkordb.port",
             "databases.falkordb.password",
-            "GOBBY_FALKORDB_HOST",
-            "GOBBY_FALKORDB_PORT",
-            "GOBBY_FALKORDB_PASSWORD",
         ),
     )
 
@@ -134,6 +138,7 @@ def test_phase7_config_tracks_falkordb_and_neo4j_cutover() -> None:
         (
             _read("crates/gcode/src/config/context.rs"),
             _read("crates/gcode/src/config/services.rs"),
+            _read("crates/gcode/src/db/resolution.rs"),
         )
     )
     config_facade = _read("crates/gcode/src/config.rs")
@@ -148,13 +153,7 @@ def test_phase7_config_tracks_falkordb_and_neo4j_cutover() -> None:
             "pub use context::{",
             "Context",
             "FALKORDB_GRAPH_NAME",
-            "FALKORDB_HOST_CONFIG_KEY",
-            "FALKORDB_PASSWORD_CONFIG_KEY",
-            "FALKORDB_PORT_CONFIG_KEY",
             "FalkorConfig",
-            "GOBBY_FALKORDB_HOST_ENV",
-            "GOBBY_FALKORDB_PASSWORD_ENV",
-            "GOBBY_FALKORDB_PORT_ENV",
         ),
     )
 
@@ -230,6 +229,71 @@ def test_phase7_cargo_dependencies_and_lockfile_track_falkordb_client() -> None:
     assert "neo4rs" not in package_names
 
 
+_REMOVED_CREDENTIAL_MARKERS: tuple[str, ...] = (
+    "GCODE_DATABASE_URL",
+    "GWIKI_DATABASE_URL",
+    "GOBBY_POSTGRES_DSN",
+    "GOBBY_FALKORDB_",
+    "GOBBY_QDRANT_",
+)
+_CRATE_AUDIT_ROOTS: tuple[str, ...] = ("gcode", "gcore", "gwiki", "gdaemon", "ghook")
+_GRANT_CAPABILITY_MARKERS: tuple[str, ...] = (
+    "PostgresCapability",
+    "FalkorCapability",
+    "QdrantCapability",
+    "GOBBY_MANAGED_EXECUTION_BOOTSTRAP",
+    "write_managed_bootstrap",
+)
+
+
+def _iter_crate_sources() -> list[Path]:
+    repo = _gobby_cli_repo()
+    files: list[Path] = []
+    for crate in _CRATE_AUDIT_ROOTS:
+        root = repo / "crates" / crate
+        if not root.is_dir():
+            continue
+        files.extend(
+            path
+            for path in root.rglob("*")
+            if path.is_file()
+            and path.suffix in {".rs", ".toml", ".json", ".md"}
+            and path.name != "CHANGELOG.md"
+        )
+    return files
+
+
+def test_contract_on_grant_fixtures() -> None:
+    """Phase-7 and crate fixtures bind services through signed grants only."""
+    repo = _gobby_cli_repo()
+    context = _read("crates/gcode/src/config/context.rs")
+    resolution = _read("crates/gcode/src/db/resolution.rs")
+    gwiki_common = _read("crates/gwiki/tests/common/mod.rs")
+    storage_conformance = (repo / "tests/code_index/test_gcode_storage_conformance.py").read_text()
+
+    for fragment in _GRANT_CAPABILITY_MARKERS:
+        assert fragment in resolution or fragment in context or fragment in gwiki_common, fragment
+
+    assert "postgres_dsn_from_grant" in resolution
+    assert "falkor_from_grant" in resolution
+    assert "qdrant_from_grant" in resolution
+    assert "GOBBY_MANAGED_EXECUTION_BOOTSTRAP" in gwiki_common
+    assert "GOBBY_RUNTIME_MODE" not in storage_conformance
+    assert "standalone" not in storage_conformance.lower()
+    for marker in ("GCODE_DATABASE_URL", "GOBBY_POSTGRES_DSN", "gcore.yaml"):
+        assert marker not in storage_conformance
+
+    leaked: list[str] = []
+    for path in _iter_crate_sources():
+        text = path.read_text(errors="replace")
+        if "gcore.yaml" in text and path.suffix in {".rs", ".toml"}:
+            leaked.append(f"{path.relative_to(repo)}:gcore.yaml")
+        for marker in _REMOVED_CREDENTIAL_MARKERS:
+            if marker in text:
+                leaked.append(f"{path.relative_to(repo)}:{marker}")
+    assert leaked == []
+
+
 def test_phase7_ports_all_eight_read_queries_without_unbound_numeric_params() -> None:
     """Phase 7.3 ports every Rust graph read helper to FalkorDB query semantics."""
     code_graph_facade = _read("crates/gcode/src/graph/code_graph.rs")
@@ -285,7 +349,7 @@ def test_phase7_ports_all_eight_read_queries_without_unbound_numeric_params() ->
         (
             "target:CodeSymbol OR target:UnresolvedCallee OR target:ExternalSymbol",
             "typed_query::clamp_limit(limit, MAX_GRAPH_LIMIT)",
-            "typed_query::clamp_offset(offset, MAX_GRAPH_LIMIT)",
+            "fn clamp_offset(offset: usize)",
         ),
     )
     _assert_matches(
@@ -293,7 +357,6 @@ def test_phase7_ports_all_eight_read_queries_without_unbound_numeric_params() ->
         (
             r"pub\s+fn\s+cypher_string_literal\(s:\s*&str\)\s*->\s*String",
             r"pub\s+fn\s+id_list_literal\(ids:\s*&\[String\]\)\s*->\s*String",
-            r"pub\s+fn\s+clamp_offset\(offset:\s*usize,\s*max:\s*usize\)\s*->\s*usize",
             r"pub\s+fn\s+clamp_limit\(limit:\s*usize,\s*max:\s*usize\)\s*->\s*usize",
         ),
     )

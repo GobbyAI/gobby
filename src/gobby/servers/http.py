@@ -99,6 +99,7 @@ class HTTPServer:
         self.auth_service = AuthService(lambda: self.services.database)
         self.grant_service: Any = None
         self.handshake_service: Any = None
+        self.handshake_factory: Any = None
 
         # WebSocket server reference (set by GobbyRunner after construction)
         self.websocket_server: WebSocketServer | None = None

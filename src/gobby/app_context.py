@@ -109,6 +109,7 @@ class ServiceContainer:
 
     # Code Index
     code_indexer: Any | None = None  # CodeIndexContext
+    code_index_pruner: Any | None = None  # CodeIndexPruner
 
     # Config
     config_runtime: ConfigRuntime | None = None

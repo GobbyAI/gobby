@@ -45,6 +45,22 @@ mod serial_db {
         home
     }
 
+    fn attach_managed_grant(
+        command: &mut Command,
+        home: &Path,
+        project_id: &str,
+        connections: gobby_core::grant::DirectConnections,
+    ) {
+        let machine = std::fs::read_to_string(home.join("machine_id")).expect("read machine id");
+        let grant =
+            gobby_core::grant::managed_direct_grant(project_id, machine.trim(), &connections);
+        let path = gobby_core::grant::write_managed_bootstrap(&home.join("grants"), &grant)
+            .expect("write managed grant");
+        command
+            .env("GOBBY_HOME", home)
+            .env("GOBBY_MANAGED_EXECUTION_BOOTSTRAP", path);
+    }
+
     /// Deterministic uuid for a seeded child row of `project_id`.
     fn row_uuid(project_id: &str, label: &str) -> uuid::Uuid {
         uuid::Uuid::new_v5(
@@ -93,10 +109,10 @@ mod serial_db {
         )
         .expect("delete local indexed file state");
 
-        let output = Command::new(env!("CARGO_BIN_EXE_gcode"))
+        let home = isolated_gobby_home(project.path());
+        let mut command = Command::new(env!("CARGO_BIN_EXE_gcode"));
+        command
             .current_dir(project.path())
-            .env("GCODE_TEST_DATABASE_URL", &database_url)
-            .env("GOBBY_HOME", isolated_gobby_home(project.path()))
             .arg("--allow-stale")
             .arg("--format")
             .arg("json")
@@ -106,9 +122,14 @@ mod serial_db {
                 "--file",
                 FILE_PATH,
                 "--allow-missing-indexed-file",
-            ])
-            .output()
-            .expect("run gcode vector sync-file");
+            ]);
+        attach_managed_grant(
+            &mut command,
+            &home,
+            PROJECT_ID,
+            gobby_core::grant::DirectConnections::postgres(&database_url),
+        );
+        let output = command.output().expect("run gcode vector sync-file");
 
         assert!(
             output.status.success(),
@@ -175,19 +196,19 @@ mod serial_db {
         seed_file_state(&mut conn, valid_project_id, FILE_PATH);
         seed_unselected_project_rows(&mut conn, orphan_project_id);
 
-        let output = Command::new(env!("CARGO_BIN_EXE_gcode"))
+        let home = isolated_gobby_home(project.path());
+        let mut command = Command::new(env!("CARGO_BIN_EXE_gcode"));
+        command
             .current_dir(project.path())
-            .env("GCODE_TEST_DATABASE_URL", &database_url)
-            .env("GOBBY_HOME", isolated_gobby_home(project.path()))
-            .env_remove("GOBBY_FALKORDB_HOST")
-            .env_remove("GOBBY_FALKORDB_PORT")
-            .env_remove("GOBBY_FALKORDB_PASSWORD")
-            .env_remove("GOBBY_QDRANT_URL")
-            .env_remove("GOBBY_QDRANT_API_KEY")
             .arg("--allow-stale")
-            .args(["prune", "--force"])
-            .output()
-            .expect("run gcode prune");
+            .args(["prune", "--force"]);
+        attach_managed_grant(
+            &mut command,
+            &home,
+            valid_project_id,
+            gobby_core::grant::DirectConnections::postgres(&database_url),
+        );
+        let output = command.output().expect("run gcode prune");
 
         assert!(
             output.status.success(),
@@ -228,19 +249,29 @@ mod serial_db {
         );
 
         let cwd = tempfile::tempdir().expect("temp cwd");
-        let output = Command::new(env!("CARGO_BIN_EXE_gcode"))
+        std::fs::create_dir_all(cwd.path().join(".gobby")).expect("create .gobby");
+        std::fs::write(
+            cwd.path().join(".gobby/project.json"),
+            serde_json::json!({"id": stale_project_id, "name": "prune-stale"}).to_string(),
+        )
+        .expect("write project identity");
+        let home = isolated_gobby_home(cwd.path());
+        let mut command = Command::new(env!("CARGO_BIN_EXE_gcode"));
+        command
             .current_dir(cwd.path())
-            .env("GCODE_TEST_DATABASE_URL", &database_url)
-            .env("GOBBY_HOME", isolated_gobby_home(cwd.path()))
-            .env("GOBBY_FALKORDB_HOST", "127.0.0.1")
-            .env("GOBBY_FALKORDB_PORT", "1")
-            .env_remove("GOBBY_FALKORDB_PASSWORD")
-            .env_remove("GOBBY_QDRANT_URL")
-            .env_remove("GOBBY_QDRANT_API_KEY")
             .arg("--allow-stale")
-            .args(["prune", "--force"])
-            .output()
-            .expect("run gcode prune");
+            .args(["prune", "--force"]);
+        attach_managed_grant(
+            &mut command,
+            &home,
+            stale_project_id,
+            gobby_core::grant::DirectConnections::postgres(&database_url).with_falkor(
+                "127.0.0.1",
+                1,
+                None,
+            ),
+        );
+        let output = command.output().expect("run gcode prune");
 
         assert!(
             !output.status.success(),
@@ -275,19 +306,26 @@ mod serial_db {
         )]);
 
         let cwd = tempfile::tempdir().expect("temp cwd");
-        let output = Command::new(env!("CARGO_BIN_EXE_gcode"))
+        std::fs::create_dir_all(cwd.path().join(".gobby")).expect("create .gobby");
+        std::fs::write(
+            cwd.path().join(".gobby/project.json"),
+            serde_json::json!({"id": stale_project_id, "name": "prune-qdrant"}).to_string(),
+        )
+        .expect("write project identity");
+        let home = isolated_gobby_home(cwd.path());
+        let mut command = Command::new(env!("CARGO_BIN_EXE_gcode"));
+        command
             .current_dir(cwd.path())
-            .env("GCODE_TEST_DATABASE_URL", &database_url)
-            .env("GOBBY_HOME", isolated_gobby_home(cwd.path()))
-            .env_remove("GOBBY_FALKORDB_HOST")
-            .env_remove("GOBBY_FALKORDB_PORT")
-            .env_remove("GOBBY_FALKORDB_PASSWORD")
-            .env("GOBBY_QDRANT_URL", qdrant_url)
-            .env_remove("GOBBY_QDRANT_API_KEY")
             .arg("--allow-stale")
-            .args(["prune", "--force"])
-            .output()
-            .expect("run gcode prune");
+            .args(["prune", "--force"]);
+        attach_managed_grant(
+            &mut command,
+            &home,
+            stale_project_id,
+            gobby_core::grant::DirectConnections::postgres(&database_url)
+                .with_qdrant(qdrant_url, None),
+        );
+        let output = command.output().expect("run gcode prune");
         let requests = requests
             .join()
             .expect("join Qdrant server")

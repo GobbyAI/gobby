@@ -2,6 +2,7 @@
 
 mod bundle;
 mod cache;
+pub mod fixture;
 mod handshake;
 
 use std::path::{Path, PathBuf};
@@ -21,6 +22,7 @@ pub use cache::{
     interactive_cache_path, load_binding, load_grant_file, settings_cache_path, try_lock,
     write_binding, write_coherent_pair, write_grant_file,
 };
+pub use fixture::{DirectConnections, managed_direct_grant, write_managed_bootstrap};
 pub use handshake::{
     AGENT_RUN_HEADER, CALLER_PROJECT_HEADER, CapabilityClaims, GRANT_HEADER, MACHINE_HEADER,
     MANAGED_BOOTSTRAP_ENV, MANAGED_EXECUTION_HEADER, SESSION_HEADER, TARGET_PROJECT_HEADER,

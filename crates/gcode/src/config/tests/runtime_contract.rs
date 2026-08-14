@@ -12,7 +12,7 @@ use gobby_core::config::{
 #[test]
 #[serial_test::serial]
 fn gobby_mode_uses_registry_authority() {
-    super::with_service_env(&[("GOBBY_FALKORDB_HOST", Some("env-host"))], || {
+    super::with_service_env(&[], || {
         let served = DaemonServedConfig::new(
             7,
             BTreeMap::from([(

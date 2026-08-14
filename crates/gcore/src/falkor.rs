@@ -741,7 +741,7 @@ mod tests {
     #[test]
     fn live_graph_read_is_env_gated() {
         let Some((config, graph_name)) = live_falkor_fixture() else {
-            eprintln!("skipping live FalkorDB read test: GOBBY_FALKORDB_HOST is not set");
+            eprintln!("skipping live FalkorDB read test: no managed grant fixture");
             return;
         };
 
@@ -762,23 +762,23 @@ mod tests {
     }
 
     fn live_falkor_fixture() -> Option<(FalkorConfig, String)> {
-        let host = std::env::var("GOBBY_FALKORDB_HOST").ok()?;
-        let port = std::env::var("GOBBY_FALKORDB_PORT")
-            .ok()
-            .and_then(|value| value.parse::<u16>().ok())
-            .unwrap_or(16379);
-        let password = std::env::var("GOBBY_FALKORDB_PASSWORD")
-            .ok()
-            .filter(|value| !value.is_empty());
-        let graph_name = std::env::var("GOBBY_FALKORDB_TEST_GRAPH")
-            .unwrap_or_else(|_| "gobby_core_live_test".to_string());
+        let path = std::env::var("GOBBY_MANAGED_EXECUTION_BOOTSTRAP").ok()?;
+        let grant = crate::grant::load_grant_file(std::path::Path::new(&path)).ok()?;
+        let crate::grant::FalkorCapability::Direct {
+            host,
+            port,
+            password,
+        } = grant.capabilities.falkordb
+        else {
+            return None;
+        };
         Some((
             FalkorConfig {
                 host,
-                port,
-                password,
+                port: u16::try_from(port).unwrap_or(16379),
+                password: (!password.is_empty()).then_some(password),
             },
-            graph_name,
+            "gobby_core_live_test".to_string(),
         ))
     }
 

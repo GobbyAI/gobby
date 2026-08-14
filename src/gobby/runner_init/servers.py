@@ -140,6 +140,7 @@ def init_servers(runner: GobbyRunner) -> None:
         detection_registry=runner.detection_registry,
         communications_manager=runner.communications_manager,
         code_indexer=runner.code_indexer,
+        code_index_pruner=getattr(runner, "code_index_pruner", None),
         cron_storage=runner.cron_storage,
         cron_scheduler=runner.cron_scheduler,
         system_automation_loop=runner.system_automation_loop,
@@ -332,7 +333,12 @@ def init_servers(runner: GobbyRunner) -> None:
 
 def _bind_runtime_grants(server: HTTPServer, runner: GobbyRunner) -> None:
     import time
+    from datetime import UTC, datetime, timedelta
+    from uuid import UUID
 
+    from gobby.runtime_grants.handshake import HandshakeRejection, HandshakeService
+    from gobby.runtime_grants.schema import GrantPrincipal, PostgresDirect
+    from gobby.runtime_grants.service import DeploymentGrantContext, GrantService
     from gobby.servers.grant_auth import LiveLeaseGrantService
     from gobby.servers.lease_fence import EffectFence
 
@@ -350,3 +356,70 @@ def _bind_runtime_grants(server: HTTPServer, runner: GobbyRunner) -> None:
         effect_fence=fence,
         clock=lambda: int(time.time()),
     )
+
+    credentials = getattr(runner, "managed_credential_manager", None)
+    secrets = getattr(runner, "secret_store", None)
+    database = getattr(runner, "database", None)
+    if credentials is None or secrets is None or database is None:
+        return
+
+    def _project_admitted(project_id: str) -> bool:
+        try:
+            row = database.fetchone("SELECT 1 FROM projects WHERE id = %s", (project_id,))
+        except Exception:
+            return False
+        return row is not None
+
+    def _issue_postgres(principal: GrantPrincipal) -> PostgresDirect:
+        session_id = principal.session_id or str(principal.project_id)
+        try:
+            issued = credentials.issue_interactive(
+                deployment_token=str(lease.deployment_token),
+                project_id=UUID(principal.project_id),
+                session_id=UUID(session_id),
+                expires_at=datetime.now(UTC) + timedelta(hours=1),
+                secret_store=secrets,
+            )
+        except Exception as error:
+            logger.exception("interactive grant credential issuance failed")
+            raise HandshakeRejection(
+                f"interactive credential issuance failed: {error}",
+                code="managed_source",
+            ) from error
+        return PostgresDirect(
+            dsn=issued.dsn,
+            role_name=issued.role_name,
+            credential_generation=issued.credential_generation,
+            valid_until=int(issued.expires_at.timestamp()),
+        )
+
+    def _handshake_factory() -> HandshakeService:
+        token = getattr(lease, "deployment_token", None)
+        epoch = getattr(lease, "fencing_epoch", None)
+        secret = getattr(lease, "grant_signing_secret", None)
+        if token is None or epoch is None or not secret:
+            raise RuntimeError("active-daemon lease has no grant signing context")
+        grants = GrantService(
+            runtime=runtime,
+            context=DeploymentGrantContext(
+                token=str(token),
+                fencing_epoch=int(epoch),
+                signing_secret=str(secret),
+            ),
+            clock=lambda: int(time.time()),
+        )
+        operator_token = server.auth_service.local_token() or ""
+        return HandshakeService(
+            grants=grants,
+            local_machine_id=str(lease.machine_id),
+            operator_token=operator_token,
+            issue_postgres=_issue_postgres,
+            admitted_projects=_project_admitted,
+            clock=lambda: int(time.time()),
+        )
+
+    server.handshake_factory = _handshake_factory
+    try:
+        server.handshake_service = _handshake_factory()
+    except Exception:
+        logger.exception("runtime handshake factory is not ready")

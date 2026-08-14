@@ -239,21 +239,33 @@ fn run_gcode(
     _embedding_url: &str,
     args: &[&str],
 ) -> Output {
+    let home = cwd.join(".no-daemon-home");
+    fs::create_dir_all(&home).expect("create no-daemon home");
+    if !home.join("machine_id").exists() {
+        fs::write(
+            home.join("machine_id"),
+            "ff5dd0ce-20a1-5f6c-8a89-ea85c2bbeea9",
+        )
+        .expect("write machine id");
+    }
+    let machine = fs::read_to_string(home.join("machine_id")).expect("read machine id");
+    let port = env.falkor_port.parse::<i64>().unwrap_or(6379);
+    let connections = gobby_core::grant::DirectConnections::postgres(&env.database_url)
+        .with_falkor(&env.falkor_host, port, env.falkor_password.as_deref())
+        .with_qdrant(qdrant_url, None);
+    let grant =
+        gobby_core::grant::managed_direct_grant(TEST_PROJECT_ID, machine.trim(), &connections);
+    let grant_path = gobby_core::grant::write_managed_bootstrap(&home.join("grants"), &grant)
+        .expect("write managed grant");
     let mut command = Command::new(env!("CARGO_BIN_EXE_gcode"));
     command
         .current_dir(cwd)
-        .env("GCODE_TEST_DATABASE_URL", &env.database_url)
-        .env("GOBBY_FALKORDB_HOST", &env.falkor_host)
-        .env("GOBBY_FALKORDB_PORT", &env.falkor_port)
-        .env("GOBBY_QDRANT_URL", qdrant_url)
-        .env("GOBBY_HOME", cwd.join(".no-daemon-home"))
+        .env("GOBBY_HOME", home)
+        .env("GOBBY_MANAGED_EXECUTION_BOOTSTRAP", grant_path)
         .arg("--allow-stale")
         .arg("--format")
         .arg("json")
         .args(args);
-    if let Some(password) = &env.falkor_password {
-        command.env("GOBBY_FALKORDB_PASSWORD", password);
-    }
     command.output().expect("run gcode")
 }
 

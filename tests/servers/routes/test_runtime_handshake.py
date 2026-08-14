@@ -87,7 +87,7 @@ def _postgres() -> PostgresDirect:
 def _handshake(service: GrantService | None = None) -> HandshakeService:
     grants = service or _grant_service()
 
-    def issue_postgres() -> PostgresDirect:
+    def issue_postgres(_principal: Any) -> PostgresDirect:
         return _postgres()
 
     return HandshakeService(
@@ -253,7 +253,7 @@ def test_bearer_claim_binding_matrix() -> None:
             grants=_grant_service(),
             local_machine_id=LOCAL_MACHINE_ID,
             operator_token=OPERATOR_TOKEN,
-            issue_postgres=lambda: (_ for _ in ()).throw(
+            issue_postgres=lambda _principal: (_ for _ in ()).throw(
                 HandshakeRejection("managed source failed", code="managed_source")
             ),
             admitted_projects=frozenset({PROJECT_ID}),
@@ -268,7 +268,7 @@ def test_expiry_bounded_and_serialized() -> None:
     gate = threading.Lock()
     hold = threading.Event()
 
-    def issue_postgres() -> PostgresDirect:
+    def issue_postgres(_principal: Any) -> PostgresDirect:
         nonlocal concurrent, peak
         with gate:
             concurrent += 1
@@ -313,7 +313,7 @@ def test_expiry_bounded_and_serialized() -> None:
     assert peak == 1
 
 
-def test_epoch_bump_rejects_prior_grants() -> None:
+def test_epoch_bump_rejects_prior_grants(tmp_path: Path) -> None:
     grants = _grant_service(epoch=3)
     handshake = _handshake(grants)
     grant = handshake.issue_for_operator(
@@ -330,13 +330,17 @@ def test_epoch_bump_rejects_prior_grants() -> None:
     with pytest.raises(StaleEpochGrant):
         grants.present(grant)
 
-    server = _config_server(grants)
+    server = _config_server(grants, tmp_path / "local_cli_token")
     client = TestClient(server.app)
     response = client.get(
         "/api/runtime/config",
         headers={
             "Authorization": f"Bearer {OPERATOR_TOKEN}",
             "X-Gobby-Runtime-Grant": encode_grant_header(grant),
+            "X-Gobby-Machine-Id": grant.principal.machine_id,
+            "X-Gobby-Caller-Project-Id": grant.principal.project_id,
+            "X-Gobby-Project-Id": grant.principal.project_id,
+            "X-Gobby-Session-Id": grant.principal.session_id or "",
         },
     )
     assert response.status_code == 409
@@ -432,11 +436,22 @@ def test_operator_and_agent_grants_are_v2() -> None:
     assert decode_grant_header(encode_grant_header(operator)).signature == operator.signature
 
 
-def _config_server(grants: GrantService) -> Any:
+def _config_server(grants: GrantService, token_file: Path) -> Any:
+    from gobby.servers.lease_fence import EffectFence
+
     server = create_http_server(config=DaemonConfig(), authenticated_requests=False)
-    token_file = Path("/tmp/unused-handshake")
+    token_file.write_text(OPERATOR_TOKEN)
     server.auth_service = AuthService(lambda: server.services.database, token_file=token_file)
+    server.auth_service.bind_runtime(
+        grant_service=grants,
+        lease_live=lambda: True,
+        local_machine_id=LOCAL_MACHINE_ID,
+        effect_fence=EffectFence(),
+        clock=lambda: 1_700_000_000,
+    )
     server.grant_service = grants
     server.handshake_service = _handshake(grants)
     setattr(server.auth_service, "is_request_authenticated", lambda _request: True)
+    setattr(server.auth_service, "_legacy_authenticated", lambda _request: True)
+    setattr(server.auth_service, "_credential_accepted", lambda _request: True)
     return server

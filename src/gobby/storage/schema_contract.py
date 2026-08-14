@@ -109,6 +109,32 @@ def sweep_test_schemas(database_url: str, *, age_hours: int) -> None:
     )
 
 
+def _drop_incompatible_interactive_principal(database_url: str) -> None:
+    """Drop the Python 4-col function so gdaemon can apply the 3-col baseline."""
+    import psycopg
+
+    try:
+        with psycopg.connect(database_url, autocommit=True) as connection:
+            connection.execute(
+                """
+                DO $drop$
+                BEGIN
+                    IF EXISTS (
+                        SELECT 1 FROM pg_namespace WHERE nspname = 'gobby_agent_auth'
+                    ) THEN
+                        DROP FUNCTION IF EXISTS
+                            gobby_agent_auth.issue_or_reuse_interactive_principal(
+                                TEXT, UUID, UUID, UUID, TIMESTAMPTZ, TEXT
+                            );
+                    END IF;
+                END
+                $drop$;
+                """
+            )
+    except Exception:
+        logger.debug("interactive principal drop before apply skipped", exc_info=True)
+
+
 def apply_schema(
     database_url: str,
     *,
@@ -116,6 +142,7 @@ def apply_schema(
     destructive: bool = False,
 ) -> None:
     """Apply schema assets through one identity-enforcing gdaemon process."""
+    _drop_incompatible_interactive_principal(database_url)
     args = ["schema", "apply"]
     if schema is not None:
         args.extend(["--schema", schema])

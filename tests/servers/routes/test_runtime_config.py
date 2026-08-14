@@ -66,7 +66,7 @@ def _services(config: DaemonConfig) -> tuple[GrantService, HandshakeService, Any
         grants=grants,
         local_machine_id=LOCAL_MACHINE_ID,
         operator_token=OPERATOR_TOKEN,
-        issue_postgres=_postgres,
+        issue_postgres=lambda _principal: _postgres(),
         admitted_projects=frozenset({PROJECT_ID}),
         clock=lambda: 1_700_000_000,
     )
@@ -84,6 +84,16 @@ def _client(
     setattr(
         server.auth_service,
         "is_request_authenticated",
+        lambda request: bool(request.headers.get("Authorization")),
+    )
+    setattr(
+        server.auth_service,
+        "_legacy_authenticated",
+        lambda request: bool(request.headers.get("Authorization")),
+    )
+    setattr(
+        server.auth_service,
+        "_credential_accepted",
         lambda request: bool(request.headers.get("Authorization")),
     )
     server.grant_service = grants
