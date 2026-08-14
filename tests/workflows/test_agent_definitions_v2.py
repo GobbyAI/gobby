@@ -4,7 +4,7 @@ Covers:
 - AgentDefinitionBody model (current expanded field set including surfaces)
 - AgentWorkflows model (pipeline, rules, variables)
 - agent_scope field on RuleDefinitionBody (list[str] | None)
-- Serialization to/from rule_definitions as workflow_type='agent'
+- Serialization to/from agent_definitions
 """
 
 from __future__ import annotations
@@ -331,12 +331,12 @@ class TestAgentScopeOnRuleDefinitionBody:
 
 
 # ═══════════════════════════════════════════════════════════════════════
-# Storage: rule_definitions with workflow_type='agent'
+# Storage: agent_definitions
 # ═══════════════════════════════════════════════════════════════════════
 
 
 class TestAgentDefinitionStorage:
-    """Agent definitions stored in rule_definitions as workflow_type='agent'."""
+    """Agent definitions stored in agent_definitions."""
 
     def _make_agent_json(self, **overrides: Any) -> str:
         from gobby.workflows.definitions import AgentDefinitionBody
@@ -347,7 +347,7 @@ class TestAgentDefinitionStorage:
         return body.model_dump_json()
 
     def test_create_agent_definition(self, manager: AgentDefinitionManager) -> None:
-        """Create an agent definition stored as workflow_type='agent'."""
+        """Create an agent definition stored in agent_definitions."""
         row = manager.create(
             name="test-developer-agent",
             definition_json=self._make_agent_json(
@@ -357,7 +357,7 @@ class TestAgentDefinitionStorage:
             ),
         )
         assert row.name == "test-developer-agent"
-        assert row.workflow_type == "agent"
+        assert row.definition_json is not None
 
     def test_round_trip_through_storage(self, manager: AgentDefinitionManager) -> None:
         """Store and retrieve agent definition, deserialize definition_json."""
@@ -411,7 +411,7 @@ class TestAgentDefinitionStorage:
 
         agents = manager.list_all()
         assert {agent.name for agent in agents} == {"test-agent-list"}
-        assert agents[0].workflow_type == "agent"
+        assert agents[0].name == "test-agent-list"
 
     def test_soft_delete_agent(self, manager: AgentDefinitionManager) -> None:
         """Soft-deleted agents are excluded from default queries."""
@@ -437,7 +437,6 @@ class TestAgentDefinitionStorage:
 
         row = manager.get_by_name("test-coordinator-agent")
         assert row is not None
-        assert row.workflow_type == "agent"
 
         from gobby.workflows.definitions import AgentDefinitionBody
 

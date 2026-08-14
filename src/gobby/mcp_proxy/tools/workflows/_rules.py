@@ -38,7 +38,6 @@ def _rule_body(row: RuleDefinitionRow) -> dict[str, Any]:
 def _export_row(row: RuleDefinitionRow) -> Any:
     return SimpleNamespace(
         name=row.name,
-        workflow_type="rule",
         definition_json=json.dumps(_rule_body(row)),
         tags=row.tags,
     )
@@ -47,7 +46,7 @@ def _export_row(row: RuleDefinitionRow) -> Any:
 def _rule_has_drift(row: RuleDefinitionRow) -> bool:
     from gobby.workflows.template_hashes import get_template_hash_cache
 
-    return get_template_hash_cache().has_drift(_export_row(row))
+    return get_template_hash_cache().has_drift(row, kind="rule")
 
 
 def _rule_brief(row: RuleDefinitionRow) -> dict[str, Any]:

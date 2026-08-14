@@ -33,7 +33,6 @@ def _export_row(row: AgentDefinitionRow) -> Any:
     return SimpleNamespace(
         name=row.name,
         tags=row.tags,
-        workflow_type="agent",
         definition_json=json.dumps(_row_body(row)),
     )
 

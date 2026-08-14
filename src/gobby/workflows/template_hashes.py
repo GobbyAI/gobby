@@ -213,9 +213,9 @@ class TemplateHashCache:
 
         Returns False if no template exists for this name (user-created definition).
         """
-        resolved_kind = (
-            kind or getattr(row, "kind", None) or getattr(row, "workflow_type", None) or "agent"
-        )
+        resolved_kind = kind or getattr(row, "kind", None)
+        if not isinstance(resolved_kind, str) or not resolved_kind:
+            raise TypeError("has_drift requires a domain kind")
         template_hash = self.get_hash(resolved_kind, row.name)
         if template_hash is None:
             return False
@@ -236,7 +236,7 @@ class TemplateHashCache:
         """Add has_template_update field to a list of definition dicts.
 
         Convenience method for API responses — mutates dicts in place.
-        Rows must carry a domain `kind` (not `workflow_type`).
+        Rows must carry a domain `kind`.
         """
         for row_dict in rows:
             name = row_dict.get("name")

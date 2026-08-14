@@ -296,7 +296,6 @@ def _export_row(row: SessionVariableDefaultRow) -> Any:
 
     return SimpleNamespace(
         name=row.name,
-        workflow_type="variable",
         definition_json=json.dumps(
             {
                 "variable": row.name,

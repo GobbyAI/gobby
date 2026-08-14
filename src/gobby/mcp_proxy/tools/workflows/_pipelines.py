@@ -49,7 +49,6 @@ logger = logging.getLogger(__name__)
 def _export_row(row: PipelineDefinitionRow) -> SimpleNamespace:
     return SimpleNamespace(
         name=row.name,
-        workflow_type="pipeline",
         definition_json=json.dumps(row.definition_json),
         tags=row.tags,
     )
@@ -98,7 +97,6 @@ def _pipeline_summary(row: PipelineDefinitionRow) -> dict[str, Any]:
     return {
         "id": row.id,
         "name": row.name,
-        "workflow_type": "pipeline",
         "description": row.description,
         "version": row.version,
         "enabled": row.enabled,
@@ -278,7 +276,6 @@ def export_pipeline_definition(
     return {
         "success": True,
         "name": row.name,
-        "workflow_type": "pipeline",
         "yaml_content": yaml.safe_dump(payload, sort_keys=False),
     }
 

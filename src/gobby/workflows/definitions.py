@@ -389,7 +389,7 @@ class RuleEffect(BaseModel):
 
 
 class RuleDefinitionBody(BaseModel):
-    """Stored as definition_json in workflow_definitions for workflow_type='rule'."""
+    """Stored as definition_json on rule_definitions."""
 
     model_config = ConfigDict(extra="forbid")
 
@@ -457,7 +457,7 @@ def split_rule_definition_data(
 
 
 class VariableDefinitionBody(BaseModel):
-    """Stored as definition_json in workflow_definitions for workflow_type='variable'."""
+    """Stored as definition_json on session_variable_defaults."""
 
     variable: str  # variable name
     value: Any  # default value

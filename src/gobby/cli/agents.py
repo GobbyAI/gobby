@@ -374,7 +374,7 @@ def show_agent_definition(name: str, json_format: bool) -> None:
     """Show details for an agent definition."""
     with agent_definition_manager_context() as manager:
         row = manager.get_by_name(name)
-    if row is None or row.workflow_type != "agent":
+    if row is None:
         click.echo(f"Agent definition not found: {name}", err=True)
         raise SystemExit(1)
 

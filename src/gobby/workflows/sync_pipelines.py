@@ -139,7 +139,7 @@ def sync_bundled_pipelines(db: HubDatabase) -> dict[str, Any]:
             if data.get("type") != "pipeline":
                 logger.warning(
                     "Skipping non-pipeline YAML file",
-                    extra={"workflow": str(yaml_file), "workflow_type": data.get("type")},
+                    extra={"workflow": str(yaml_file), "yaml_type": data.get("type")},
                 )
                 scan_complete = False
                 continue

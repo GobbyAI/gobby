@@ -251,7 +251,7 @@ class AgentEventHandlerMixin(EventHandlersBase):
 
         Everything needed is already in DB from SessionStart activation:
         - Agent name: _agent_type session variable
-        - Agent definition: workflow_definitions table
+        - Agent definition: agent_definitions table
         """
         if not self._session_manager:
             return

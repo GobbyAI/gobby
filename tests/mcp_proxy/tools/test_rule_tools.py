@@ -1,23 +1,20 @@
 """Tests for rule MCP tools.
 
-Verifies that rule tools wrap RuleDefinitionManager with
-workflow_type='rule' filtering:
+Verifies that rule tools wrap RuleDefinitionManager:
 - list_rules: returns only rules, supports event/group/enabled filters
 - get_rule: returns full rule definition by name
 - toggle_rule: updates enabled flag
-- create_rule: creates with workflow_type='rule'
+- create_rule: creates a typed rule row
 - delete_rule: soft-deletes (bundled protected)
 """
 
 from __future__ import annotations
 
-import json
-
 import pytest
 
+from gobby.storage.definitions.pipelines import PipelineDefinitionManager
 from gobby.storage.definitions.rules import RuleDefinitionManager
 from gobby.storage.hub.protocol import HubDatabase
-from gobby.storage.definitions.rules import RuleDefinitionManager
 
 pytestmark = pytest.mark.unit
 
@@ -59,10 +56,16 @@ def _create_test_rule(
 
 
 def _create_test_workflow(db: HubDatabase, name: str = "test-wf") -> str:
-    """Create a non-rule workflow to verify filtering."""
-    row = RuleDefinitionManager(db).create(
+    """Create a sibling-domain pipeline so rule tools cannot see it."""
+    row = PipelineDefinitionManager(db).create(
         name=name,
-        definition_json=json.dumps({"name": name}),
+        definition_json={
+            "name": name,
+            "type": "pipeline",
+            "steps": [{"id": "noop", "exec": "true"}],
+        },
+        version="1.0",
+        source="custom",
     )
     return row.id
 
@@ -341,7 +344,7 @@ class TestUpdateRule:
         assert "not found" in result["error"].lower()
 
     def test_update_skips_workflows(self, def_manager, rule_tools) -> None:
-        """Workflows (non-rule rows) should not be updatable through update_rule."""
+        """Sibling-domain rows must not be updatable through update_rule."""
         _create_test_workflow(def_manager.db, name="my-wf")
 
         result = rule_tools["update_rule"](name="my-wf", description="x")
@@ -355,7 +358,7 @@ class TestUpdateRule:
 
 
 class TestCreateRule:
-    """create_rule creates with workflow_type='rule'."""
+    """create_rule creates a typed rule row."""
 
     def test_creates_rule(self, def_manager, rule_tools) -> None:
         body = {

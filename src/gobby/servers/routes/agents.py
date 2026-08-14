@@ -268,7 +268,7 @@ def create_agents_router(server: "HTTPServer") -> APIRouter:
             "deleted_at": row.deleted_at,
             "tags": row.tags,
             "sources": body.sources,
-            "has_template_update": cache.has_drift(row),
+            "has_template_update": cache.has_drift(row, kind="agent"),
         }
 
     @router.get("/definitions")
@@ -278,7 +278,7 @@ def create_agents_router(server: "HTTPServer") -> APIRouter:
         source_filter: str | None = Query(None),
         surface_filter: str | None = Query(None),
     ) -> dict[str, Any]:
-        """List all agent definitions from workflow_definitions."""
+        """List all agent definitions from agent_definitions."""
         try:
             manager = _get_manager()
             rows = manager.list_all(

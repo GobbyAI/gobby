@@ -1,6 +1,6 @@
 """Factory for creating the spawn_agent MCP tool registry.
 
-Loads agent definitions from workflow_definitions (DB-backed AgentDefinitionBody)
+Loads agent definitions from agent_definitions (DB-backed AgentDefinitionBody)
 and delegates to spawn_agent_impl for execution.
 """
 
@@ -234,7 +234,7 @@ def _load_agent_body(
     project_id: str | None = None,
     cli_source: str | None = None,
 ) -> AgentDefinitionBody | None:
-    """Load an agent definition from workflow_definitions via direct lookup.
+    """Load an agent definition from agent_definitions via direct lookup.
 
     Args:
         name: Agent name to look up.

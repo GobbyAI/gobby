@@ -178,7 +178,7 @@ class EnforcementCompletionMixin:
             cleanup_session_id = session_id
         cleanup_agent_runtime_state = _facade_attr("cleanup_agent_runtime_state")
         if terminal_reason == "daemon_stop":
-            # The run was parked by a daemon stop: its workflow_instances rows
+            # The run was parked by a daemon stop: its agent_step_instances
             # are retained for resume and waiting subscribers must not receive
             # a false success. Forward the parked reason so cleanup keeps the
             # workflow rows, and skip completion delivery entirely.

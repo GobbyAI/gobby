@@ -44,7 +44,7 @@ def test_create_update_export_delete_pipeline(
     created = create_pipeline_definition(manager, loader, VALID_PIPELINE_YAML)
     assert created["success"] is True
     assert created["definition"]["name"] == "test-pipeline"
-    assert created["definition"]["workflow_type"] == "pipeline"
+    assert "workflow_type" not in created["definition"]
     row = manager.get_by_name("test-pipeline")
     assert row is not None
     assert row.enabled is True

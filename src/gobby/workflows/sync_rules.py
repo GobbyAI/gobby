@@ -279,7 +279,7 @@ def _sync_single_rule(
     sync_tag: str,
     result: dict[str, Any],
 ) -> None:
-    """Sync a single rule to workflow_definitions.
+    """Sync a single rule to rule_definitions.
 
     Creates an installed row if none exists. Existing sync-managed rows are
     refreshed when the YAML changes, applying enabled defaults until the user

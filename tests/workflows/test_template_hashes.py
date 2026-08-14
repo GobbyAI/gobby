@@ -56,13 +56,11 @@ def test_load_agents_hashes_nested_step_workflow(tmp_path: Path) -> None:
             },
         }
     )
-    row = SimpleNamespace(name="coder", workflow_type="agent", definition_json=body.model_dump())
+    row = SimpleNamespace(name="coder", kind="agent", definition_json=body.model_dump())
     assert cache.has_drift(row) is False
     drifted = dict(body.model_dump())
     drifted["step_workflow"]["steps"] = [{"name": "implement"}]
-    assert cache.has_drift(
-        SimpleNamespace(name="coder", workflow_type="agent", definition_json=drifted)
-    )
+    assert cache.has_drift(SimpleNamespace(name="coder", kind="agent", definition_json=drifted))
     assert compute_definition_hash(body.model_dump_json()) == cache.get_hash("agent", "coder")
 
 

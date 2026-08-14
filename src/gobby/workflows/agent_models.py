@@ -59,7 +59,7 @@ class AgentStepWorkflowBody(BaseModel):
 
 
 class AgentDefinitionBody(BaseModel):
-    """Stored as definition_json in workflow_definitions for workflow_type='agent'.
+    """Stored as definition_json on agent_definitions.
 
     Agent identity with structured prompt fields, provider config,
     spawn parameters, and orchestration. Behavior is defined by rules

@@ -206,17 +206,12 @@ class AgentDefinitionRow:
             deleted_at=row["deleted_at"] if "deleted_at" in row.keys() else None,
         )
 
-    @property
-    def workflow_type(self) -> str:
-        return "agent"
-
     def to_dict(self) -> dict[str, Any]:
         return {
             "id": self.id,
             "project_id": self.project_id,
             "name": self.name,
             "description": self.description,
-            "workflow_type": "agent",
             "enabled": self.enabled,
             "enabled_pinned": self.enabled_pinned,
             "definition_json": json_dumps(self.definition_json),

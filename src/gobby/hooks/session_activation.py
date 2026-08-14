@@ -637,7 +637,7 @@ def _missing_step_state(
             return ["step_workflow_instance"]
         return []
     # Same completion-key check as `_step_completion_updates` so the two
-    # predicates cannot drift after `_step_workflow_name` is gone.
+    # predicates cannot drift after the reserved name seed was removed.
     if "step_workflow_complete" not in variables:
         return ["step_workflow_complete"]
     return []
