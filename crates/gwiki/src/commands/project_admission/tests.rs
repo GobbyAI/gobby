@@ -113,9 +113,6 @@ fn dispatch_classification_pins_every_persistent_writer_arm() {
                 translate: false,
                 target_lang: None,
                 video_frame_interval_seconds: None,
-                transcription_routing: None,
-                vision_routing: None,
-                text_routing: None,
             },
         },
         Command::IngestUrl {

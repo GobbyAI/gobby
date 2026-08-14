@@ -9,6 +9,7 @@ use super::mapping::command_from_cli;
 use super::*;
 
 mod code;
+mod routing;
 
 #[test]
 fn cli_subcommands_match_clap_variants() {
@@ -40,23 +41,14 @@ fn research_subcommand_is_removed() {
 fn ask_flag_surface_supports_deep_investigation() {
     use clap::Parser;
 
-    let cli = Cli::try_parse_from([
-        "gwiki",
-        "ask",
-        "--deep",
-        "--ai",
-        "daemon",
-        "--require-ai",
-        "How does indexing work?",
-    ])
-    .expect("ask flags parse");
+    let cli = Cli::try_parse_from(["gwiki", "ask", "--deep", "How does indexing work?"])
+        .expect("ask flags parse");
     let CliCommand::Ask(args) = cli.command else {
         panic!("expected ask command");
     };
     assert!(!args.llm);
     assert!(args.deep);
-    assert_eq!(args.ai, AiRouting::Daemon);
-    assert!(args.require_ai);
+    assert!(!args.no_ai);
 }
 
 #[test]
@@ -185,9 +177,6 @@ fn ingest_file_cli_flags_map_to_command_options() {
             translate: true,
             target_lang: Some("es".to_string()),
             video_frame_interval_seconds: Some(0),
-            transcription_routing: Some(AiRouting::Daemon),
-            vision_routing: Some(AiRouting::Off),
-            text_routing: Some(AiRouting::Daemon),
         },
         ScopeSelection::detect(),
     )
@@ -202,15 +191,7 @@ fn ingest_file_cli_flags_map_to_command_options() {
 
     let mut source = EnvOnlySource;
     let mut context = AiContext::resolve(None, &mut source);
-    let original_transcribe_route = context.bindings.audio_transcribe.routing;
     options.apply_to_ai_context(&mut context);
-    assert_eq!(
-        context.bindings.audio_transcribe.routing,
-        original_transcribe_route
-    );
-    assert_eq!(context.bindings.audio_translate.routing, AiRouting::Daemon);
-    assert_eq!(context.bindings.vision_extract.routing, AiRouting::Off);
-    assert_eq!(context.bindings.text_generate.routing, AiRouting::Daemon);
     assert_eq!(
         context.bindings.audio_translate.target_lang.as_deref(),
         Some("es")
@@ -224,8 +205,7 @@ fn ask_cli_flags_map_to_command_options() {
             question: "How do hooks work?".to_string(),
             llm: true,
             deep: true,
-            ai: AiRouting::Daemon,
-            require_ai: true,
+            no_ai: false,
             token_budget: Some(2000),
             include_candidates: true,
         }),
@@ -239,7 +219,6 @@ fn ask_cli_flags_map_to_command_options() {
         llm,
         deep,
         ai,
-        require_ai,
         token_budget,
         include_candidates,
     } = command
@@ -251,7 +230,6 @@ fn ask_cli_flags_map_to_command_options() {
     assert!(llm);
     assert!(deep);
     assert_eq!(ai, AiRouting::Daemon);
-    assert!(require_ai);
     assert_eq!(token_budget, Some(2000));
     assert!(include_candidates);
 }
@@ -749,8 +727,7 @@ fn upkeep_cli_flags_map_to_command_options() {
         "--time-budget-seconds",
         "1320",
         "--dry-run",
-        "--ai",
-        "off",
+        "--no-ai",
     ])
     .expect("parse upkeep command");
     let CliCommand::Upkeep(args) = cli.command else {
@@ -761,7 +738,7 @@ fn upkeep_cli_flags_map_to_command_options() {
     assert_eq!(args.max_sources_per_page, 6);
     assert_eq!(args.time_budget_seconds, Some(1320));
     assert!(args.dry_run);
-    assert_eq!(args.ai, AiRouting::Off);
+    assert!(args.no_ai);
 
     let command =
         command_from_cli(CliCommand::Upkeep(args), cli.scope.into()).expect("map upkeep command");
@@ -784,20 +761,20 @@ fn upkeep_cli_flags_map_to_command_options() {
     assert_eq!(default_args.max_sources_per_page, 12);
     assert_eq!(default_args.time_budget_seconds, None);
     assert!(!default_args.dry_run);
-    assert_eq!(default_args.ai, AiRouting::Daemon);
+    assert!(!default_args.no_ai);
 }
 
 #[test]
 fn recap_cli_flags_map_to_command_options() {
     use clap::Parser;
 
-    let cli = Cli::try_parse_from(["gwiki", "recap", "--date", "2026-07-04", "--ai", "off"])
+    let cli = Cli::try_parse_from(["gwiki", "recap", "--date", "2026-07-04", "--no-ai"])
         .expect("parse recap command");
     let CliCommand::Recap(args) = cli.command else {
         panic!("expected parsed recap command");
     };
     assert_eq!(args.date.as_deref(), Some("2026-07-04"));
-    assert_eq!(args.ai, AiRouting::Off);
+    assert!(args.no_ai);
 
     let command =
         command_from_cli(CliCommand::Recap(args), cli.scope.into()).expect("map recap command");
@@ -812,7 +789,7 @@ fn recap_cli_flags_map_to_command_options() {
         panic!("expected parsed recap command");
     };
     assert!(default_args.date.is_none());
-    assert_eq!(default_args.ai, AiRouting::Daemon);
+    assert!(!default_args.no_ai);
 }
 
 #[test]

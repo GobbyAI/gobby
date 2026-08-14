@@ -170,8 +170,7 @@ fn public_cli_smoke_uses_gwiki_modules() {
             "--topic",
             "rust",
             "compile",
-            "--ai",
-            "off",
+            "--no-ai",
             "--outline",
             "Overview",
             "--target",
@@ -246,9 +245,7 @@ fn public_cli_smoke_compiles_accepted_notes_and_audits_in_topic_scope() {
     let compile = gwiki(
         &fixture,
         fixture.root(),
-        &[
-            "--format", "json", "--topic", "rust", "compile", "--ai", "off",
-        ],
+        &["--format", "json", "--topic", "rust", "compile", "--no-ai"],
     );
     common::assert_success(&compile, "compile");
     let compile_payload = common::json_stdout(&compile);
@@ -317,8 +314,7 @@ fn public_cli_smoke_compile_source_bootstraps_fresh_topic_checkpoint() {
             "Fresh Vault Compile",
             "--source",
             &source_id,
-            "--ai",
-            "off",
+            "--no-ai",
         ],
     );
     common::assert_success(&compile, "compile");
@@ -387,8 +383,7 @@ fn public_cli_smoke_targeted_project_compile_requires_topic_before_writes() {
             "--target",
             "knowledge/topics/ambiguous.md",
             "--write-intent",
-            "--ai",
-            "off",
+            "--no-ai",
         ],
     );
 

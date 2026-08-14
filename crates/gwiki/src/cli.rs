@@ -2,7 +2,6 @@ use std::ffi::{OsStr, OsString};
 use std::path::PathBuf;
 
 use clap::{ArgGroup, Args, Parser, Subcommand, ValueEnum};
-use gobby_core::config::AiRouting;
 use gobby_wiki::{BenchmarkOptions, Command, GraphInclude, UpkeepOptions, WikiError, output};
 
 mod code;
@@ -159,15 +158,6 @@ enum CliCommand {
         /// Seconds between sampled video frames; 0 disables frames.
         #[arg(long = "video-frame-interval", value_name = "SECONDS")]
         video_frame_interval_seconds: Option<u32>,
-        /// Routing override for audio transcription and translation.
-        #[arg(long, value_name = "auto|daemon|direct|off")]
-        transcription_routing: Option<AiRouting>,
-        /// Routing override for vision extraction.
-        #[arg(long, value_name = "auto|daemon|direct|off")]
-        vision_routing: Option<AiRouting>,
-        /// Routing override for text generation.
-        #[arg(long, value_name = "auto|daemon|direct|off")]
-        text_routing: Option<AiRouting>,
     },
     /// Fetch URL sources into the wiki inbox.
     IngestUrl {
@@ -373,13 +363,9 @@ struct AskArgs {
     #[arg(long)]
     deep: bool,
 
-    /// AI routing override for synthesis. Inert unless --llm or --deep is set.
-    #[arg(long, default_value = "auto", value_name = "auto|daemon|direct|off")]
-    ai: AiRouting,
-
-    /// Fail if synthesis is requested but no AI route succeeds.
-    #[arg(long = "require-ai")]
-    require_ai: bool,
+    /// Disable daemon-backed synthesis for this invocation.
+    #[arg(long)]
+    no_ai: bool,
 
     /// Trim retrieval hits to fit an approximate token budget, emitting a narrowing hint.
     #[arg(long = "token-budget", value_name = "N", value_parser = parse_positive_usize)]
@@ -557,9 +543,9 @@ struct LinkSuggestArgs {
 
 #[derive(Debug, Args)]
 struct LibrarianArgs {
-    /// AI routing for the model-provider probe behind patch suggestions.
-    #[arg(long, default_value = "auto", value_name = "auto|daemon|direct|off")]
-    ai: AiRouting,
+    /// Disable daemon-backed patch suggestions for this invocation.
+    #[arg(long)]
+    no_ai: bool,
 }
 
 #[derive(Debug, Args)]
@@ -600,9 +586,9 @@ struct UpkeepArgs {
     )]
     time_budget_seconds: Option<u64>,
 
-    /// AI routing for concept-page synthesis.
-    #[arg(long, default_value = "auto", value_name = "auto|daemon|direct|off")]
-    ai: AiRouting,
+    /// Disable daemon-backed concept-page synthesis for this invocation.
+    #[arg(long)]
+    no_ai: bool,
 }
 
 #[derive(Debug, Args)]
@@ -611,9 +597,9 @@ struct RecapArgs {
     #[arg(long, value_name = "YYYY-MM-DD")]
     date: Option<String>,
 
-    /// AI routing for the single-shot recap synthesis.
-    #[arg(long, default_value = "auto", value_name = "auto|daemon|direct|off")]
-    ai: AiRouting,
+    /// Disable daemon-backed recap synthesis for this invocation.
+    #[arg(long)]
+    no_ai: bool,
 }
 
 #[derive(Debug, Args)]
@@ -639,9 +625,9 @@ struct CompileArgs {
     #[arg(long = "write-intent")]
     write_intent: bool,
 
-    /// AI routing for explainer synthesis over accepted sources.
-    #[arg(long, default_value = "auto", value_name = "auto|daemon|direct|off")]
-    ai: AiRouting,
+    /// Disable daemon-backed explainer synthesis for this invocation.
+    #[arg(long)]
+    no_ai: bool,
 }
 
 #[derive(Debug, Args)]

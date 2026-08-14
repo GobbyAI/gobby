@@ -1,16 +1,5 @@
 use std::collections::{BTreeMap, HashSet};
 
-#[cfg(feature = "ai")]
-use gobby_core::ai::{
-    daemon::generate_via_daemon,
-    effective_config::{ai_source_for_conn, ai_source_without_primary},
-    effective_route,
-};
-#[cfg(feature = "ai")]
-use gobby_core::ai_context::AiContext;
-#[cfg(feature = "ai")]
-use gobby_core::config::{AiCapability, AiRouting};
-
 use crate::commands::scope;
 use crate::config::Context;
 use crate::db;
@@ -21,28 +10,13 @@ use crate::savings;
 use crate::utils::short_id;
 use crate::visibility;
 
-#[cfg(feature = "ai")]
-const OUTLINE_SYSTEM_PROMPT: &str = "You write concise code outlines for developers. Return a compact natural-language outline focused on responsibilities, main symbols, and notable control flow. Do not include markdown fences.";
-#[cfg(feature = "ai")]
-const OUTLINE_SUMMARY_MAX_BYTES: u64 = 1024 * 1024;
-
-pub fn outline(
-    ctx: &Context,
-    file: &str,
-    format: Format,
-    verbose: bool,
-    summarize: bool,
-) -> anyhow::Result<()> {
+pub fn outline(ctx: &Context, file: &str, format: Format, verbose: bool) -> anyhow::Result<()> {
     let mut conn = db::connect_readonly(&ctx.database_url)?;
     let file = scope::normalize_file_arg(ctx, file);
     let symbols = visibility::visible_symbols_for_file(&mut conn, ctx, &file)?;
 
     if symbols.is_empty() && !ctx.quiet {
         eprintln!("{}", outline_missing_diagnostic(&mut conn, ctx, &file));
-    }
-
-    if summarize && let Some(summary) = summarize_outline(ctx, Some(&mut conn), &file, &symbols) {
-        return output::print_text(&summary);
     }
 
     // Report savings: outline bytes vs full file bytes
@@ -83,109 +57,6 @@ pub fn outline(
             }
         }
     }
-}
-
-fn summarize_outline(
-    ctx: &Context,
-    conn: Option<&mut postgres::Client>,
-    file: &str,
-    symbols: &[Symbol],
-) -> Option<String> {
-    #[cfg(not(feature = "ai"))]
-    {
-        let _ = (ctx, conn, file, symbols);
-        return None;
-    }
-    #[cfg(feature = "ai")]
-    {
-        let path = ctx.project_root.join(file);
-        let metadata = path.metadata().ok()?;
-        if metadata.len() > OUTLINE_SUMMARY_MAX_BYTES {
-            return None;
-        }
-        let code = std::fs::read_to_string(path).ok()?;
-        let ai_context = resolve_outline_ai_context(ctx, conn).ok()?;
-        let route = effective_route(&ai_context, AiCapability::TextGenerate);
-
-        summarize_outline_with(file, &code, symbols, |prompt, system| {
-            let result = match route {
-                AiRouting::Daemon => generate_via_daemon(&ai_context, prompt, Some(system)),
-                AiRouting::Off => return None,
-            };
-            result.ok().map(|result| result.text)
-        })
-    }
-}
-
-#[cfg(feature = "ai")]
-fn resolve_outline_ai_context(
-    ctx: &Context,
-    conn: Option<&mut postgres::Client>,
-) -> anyhow::Result<AiContext> {
-    if let Some(conn) = conn {
-        let mut source = ai_source_for_conn(conn)?;
-        return Ok(AiContext::resolve(
-            Some(ctx.project_id.clone()),
-            &mut source,
-        ));
-    }
-
-    if let Ok(mut conn) = db::connect_readonly(&ctx.database_url) {
-        let mut source = ai_source_for_conn(&mut conn)?;
-        return Ok(AiContext::resolve(
-            Some(ctx.project_id.clone()),
-            &mut source,
-        ));
-    }
-
-    let mut source = ai_source_without_primary()?;
-    Ok(AiContext::resolve(
-        Some(ctx.project_id.clone()),
-        &mut source,
-    ))
-}
-
-#[cfg(feature = "ai")]
-fn summarize_outline_with(
-    file: &str,
-    code: &str,
-    symbols: &[Symbol],
-    generate: impl FnOnce(&str, &str) -> Option<String>,
-) -> Option<String> {
-    if code.trim().is_empty() {
-        return None;
-    }
-    let prompt = outline_summary_prompt(file, code, symbols);
-    generate(&prompt, OUTLINE_SYSTEM_PROMPT).and_then(|summary| {
-        let summary = summary.trim();
-        (!summary.is_empty()).then(|| summary.to_string())
-    })
-}
-
-#[cfg(feature = "ai")]
-fn outline_summary_prompt(file: &str, code: &str, symbols: &[Symbol]) -> String {
-    let mut prompt = format!("File: {file}\n\nSymbols:\n");
-    if symbols.is_empty() {
-        prompt.push_str("- No indexed symbols.\n");
-    } else {
-        for symbol in symbols {
-            prompt.push_str(&format!(
-                "- {} [{}] lines {}-{}",
-                symbol.qualified_name, symbol.kind, symbol.line_start, symbol.line_end
-            ));
-            if let Some(signature) = symbol
-                .signature
-                .as_deref()
-                .filter(|value| !value.is_empty())
-            {
-                prompt.push_str(&format!(": {signature}"));
-            }
-            prompt.push('\n');
-        }
-    }
-    prompt.push_str("\nCode:\n");
-    prompt.push_str(code);
-    prompt
 }
 
 fn render_outline_text(symbols: &[Symbol]) -> String {
@@ -510,47 +381,6 @@ mod tests {
             )
         );
         assert_eq!(unsupported_file_type_diagnostic("src/lib.rs"), None);
-    }
-
-    #[test]
-    fn summarizes_when_configured() {
-        let symbols = vec![symbol()];
-        let summary = summarize_outline_with(
-            "src/commands.rs",
-            "pub fn outline() -> anyhow::Result<()> { Ok(()) }",
-            &symbols,
-            |prompt, system| {
-                assert_eq!(system, OUTLINE_SYSTEM_PROMPT);
-                assert!(prompt.contains("File: src/commands.rs"));
-                assert!(prompt.contains("Symbols:"));
-                assert!(prompt.contains("outline [function] lines 7-63"));
-                assert!(prompt.contains("Code:"));
-                assert!(prompt.contains("pub fn outline()"));
-                Some("Natural-language outline".to_string())
-            },
-        );
-
-        assert_eq!(summary, Some("Natural-language outline".to_string()));
-    }
-
-    #[test]
-    fn outline_summary_size_cap_is_one_mib() {
-        assert_eq!(OUTLINE_SUMMARY_MAX_BYTES, 1024 * 1024);
-    }
-
-    #[test]
-    fn degrades_to_ast() {
-        let symbols = vec![symbol()];
-        let ast_outline = render_outline_text(&symbols);
-        let output = summarize_outline_with(
-            "src/commands.rs",
-            "pub fn outline() -> anyhow::Result<()> { Ok(()) }",
-            &symbols,
-            |_prompt, _system| None,
-        )
-        .unwrap_or(ast_outline.clone());
-
-        assert_eq!(output, ast_outline);
     }
 
     #[test]

@@ -207,7 +207,7 @@ pub fn contract() -> CliContract {
             CommandContract {
                 daemon_consumed: true,
                 positionals: vec![PositionalContract::required("FILE")],
-                flags: vec![FlagContract::switch("--summarize")],
+                flags: vec![],
                 json_output_keys: outline_keys(),
                 ..CommandContract::new("outline", "Show a hierarchical symbol tree for a file.")
             },

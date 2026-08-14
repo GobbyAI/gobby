@@ -533,9 +533,9 @@ fn run() -> anyhow::Result<()> {
             )
         }
 
-        Command::Outline { file, summarize } => {
+        Command::Outline { file } => {
             ensure_file_fresh(&ctx, cli.allow_stale, &file)?;
-            commands::symbols::outline(&ctx, &file, format, cli.verbose, summarize)
+            commands::symbols::outline(&ctx, &file, format, cli.verbose)
         }
         Command::Symbol { id } => {
             ensure_symbol_fresh(&ctx, cli.allow_stale, &id)?;

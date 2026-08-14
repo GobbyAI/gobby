@@ -410,8 +410,7 @@ fn failure_paths_match_legacy() {
             "--out",
             "invalid-complete-scope",
             "--complete-scope",
-            "--ai",
-            "off",
+            "--no-ai",
             "--allow-stale",
         ],
     );

@@ -86,8 +86,6 @@ fn code_generation_flags_map_through_the_public_command() {
         "crates",
         "src",
         "--complete-scope",
-        "--ai",
-        "daemon",
         "--ai-depth",
         "symbols",
         "--ai-aggregate-profile",
@@ -113,7 +111,7 @@ fn code_generation_flags_map_through_the_public_command() {
     assert_eq!(options.out.as_deref(), Some("wiki"));
     assert_eq!(options.scope, ["crates", "src"]);
     assert!(options.complete_scope);
-    assert_eq!(options.ai, Some(gobby_core::config::AiRouting::Daemon));
+    assert_eq!(options.ai, None);
     assert_eq!(options.ai_depth, AiDepth::Symbols);
     assert_eq!(options.ai_prose_depth, ProseDepth::Deep);
     assert_eq!(options.ai_register.as_deref(), Some("maintainer"));
@@ -131,9 +129,6 @@ fn code_generation_flags_map_through_the_public_command() {
 
 #[test]
 fn code_value_enums_accept_the_full_legacy_surface() {
-    for value in ["auto", "daemon", "direct", "off"] {
-        assert!(Cli::try_parse_from(["gwiki", "code", "--ai", value]).is_ok());
-    }
     for value in ["sections", "files", "symbols"] {
         assert!(Cli::try_parse_from(["gwiki", "code", "--ai-depth", value]).is_ok());
     }
@@ -153,7 +148,7 @@ fn code_mode_conflicts_match_the_legacy_matrix() {
     let generation_flags: &[&[&str]] = &[
         &["--scope", "src"],
         &["--scope", "src", "--complete-scope"],
-        &["--ai", "off"],
+        &["--no-ai"],
         &["--ai-depth", "symbols"],
         &["--ai-aggregate-profile", "feature_high"],
         &["--ai-aggregate-candidate", "claude/sonnet@high"],

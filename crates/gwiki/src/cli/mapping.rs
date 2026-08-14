@@ -64,9 +64,6 @@ pub(super) fn command_from_cli_with_runtime(
             translate,
             target_lang,
             video_frame_interval_seconds,
-            transcription_routing,
-            vision_routing,
-            text_routing,
         } => Ok(Command::IngestFile {
             path,
             scope,
@@ -75,9 +72,6 @@ pub(super) fn command_from_cli_with_runtime(
                 translate,
                 target_lang,
                 video_frame_interval_seconds,
-                transcription_routing,
-                vision_routing,
-                text_routing,
             },
         }),
         CliCommand::IngestUrl {
@@ -147,8 +141,7 @@ pub(super) fn command_from_cli_with_runtime(
             scope,
             llm: args.llm,
             deep: args.deep,
-            ai: args.ai,
-            require_ai: args.require_ai,
+            ai: routing_from_no_ai(args.no_ai),
             token_budget: args.token_budget,
             include_candidates: args.include_candidates,
         }),
@@ -205,7 +198,7 @@ pub(super) fn command_from_cli_with_runtime(
             target_kind: args.kind.into(),
             target_page: args.target,
             write_intent: args.write_intent,
-            ai: args.ai,
+            ai: routing_from_no_ai(args.no_ai),
             scope,
         }),
         CliCommand::Export(args) => Ok(Command::Export {
@@ -231,7 +224,10 @@ pub(super) fn command_from_cli_with_runtime(
             check: args.check,
         }),
         CliCommand::Health => Ok(Command::Health { scope }),
-        CliCommand::Librarian(args) => Ok(Command::Librarian { scope, ai: args.ai }),
+        CliCommand::Librarian(args) => Ok(Command::Librarian {
+            scope,
+            ai: routing_from_no_ai(args.no_ai),
+        }),
         CliCommand::Upkeep(args) => Ok(Command::Upkeep {
             scope,
             options: gobby_wiki::UpkeepOptions {
@@ -241,16 +237,24 @@ pub(super) fn command_from_cli_with_runtime(
                 dry_run: args.dry_run,
                 time_budget_seconds: args.time_budget_seconds,
             },
-            ai: args.ai,
+            ai: routing_from_no_ai(args.no_ai),
         }),
         CliCommand::Recap(args) => Ok(Command::Recap {
             scope,
             options: gobby_wiki::RecapOptions { date: args.date },
-            ai: args.ai,
+            ai: routing_from_no_ai(args.no_ai),
         }),
         CliCommand::Status => Ok(Command::Status { scope }),
         CliCommand::Trust => Ok(Command::Trust { scope }),
         CliCommand::CitationQuality => Ok(Command::CitationQuality { scope }),
+    }
+}
+
+fn routing_from_no_ai(no_ai: bool) -> gobby_core::config::AiRouting {
+    if no_ai {
+        gobby_core::config::AiRouting::Off
+    } else {
+        gobby_core::config::AiRouting::Daemon
     }
 }
 

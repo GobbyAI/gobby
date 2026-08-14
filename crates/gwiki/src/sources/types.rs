@@ -1,8 +1,6 @@
 use std::fmt;
 use std::path::PathBuf;
-use std::str::FromStr;
 
-use gobby_core::config::AiRouting;
 use serde::{Deserialize, Serialize};
 
 use crate::{IngestFileOptions, WikiError};
@@ -233,12 +231,6 @@ pub struct SourceReplayOptions {
     pub target_lang: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub video_frame_interval_seconds: Option<u32>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub transcription_routing: Option<String>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub vision_routing: Option<String>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub text_routing: Option<String>,
 }
 
 impl SourceReplayOptions {
@@ -248,9 +240,6 @@ impl SourceReplayOptions {
             translate: options.translate,
             target_lang: options.target_lang.clone(),
             video_frame_interval_seconds: options.video_frame_interval_seconds,
-            transcription_routing: options.transcription_routing.map(routing_name),
-            vision_routing: options.vision_routing.map(routing_name),
-            text_routing: options.text_routing.map(routing_name),
         }
     }
 
@@ -260,38 +249,10 @@ impl SourceReplayOptions {
             translate: self.translate,
             target_lang: self.target_lang.clone(),
             video_frame_interval_seconds: self.video_frame_interval_seconds,
-            transcription_routing: parse_routing(
-                "transcription_routing",
-                &self.transcription_routing,
-            )?,
-            vision_routing: parse_routing("vision_routing", &self.vision_routing)?,
-            text_routing: parse_routing("text_routing", &self.text_routing)?,
         })
     }
 }
 
 fn is_false(value: &bool) -> bool {
     !*value
-}
-
-fn routing_name(routing: AiRouting) -> String {
-    match routing {
-        AiRouting::Daemon => "daemon".to_string(),
-        AiRouting::Off => "off".to_string(),
-    }
-}
-
-fn parse_routing(
-    field: &'static str,
-    value: &Option<String>,
-) -> Result<Option<AiRouting>, WikiError> {
-    value
-        .as_deref()
-        .map(|value| {
-            AiRouting::from_str(value).map_err(|error| WikiError::InvalidInput {
-                field,
-                message: error.to_string(),
-            })
-        })
-        .transpose()
 }

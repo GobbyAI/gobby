@@ -1,10 +1,10 @@
 use chrono::{NaiveDate, Utc};
-use gobby_core::config::{AiCapability, AiRouting};
+use gobby_core::config::AiRouting;
 
 use crate::explainer::{ExplainerGenerator, ExplainerPrompt};
 use crate::support::scope::resolve_selection_context;
 use crate::support::time::collect_timestamp;
-use crate::{CommandOutcome, RecapOptions, ScopeSelection, WikiError, daemon, recap};
+use crate::{CommandOutcome, RecapOptions, ScopeSelection, WikiError, recap};
 
 use super::generation_routes::{
     ai_notice_label, resolve_ai_selection, resolve_explainer_transport, routing_label,
@@ -21,13 +21,7 @@ pub(crate) fn execute(
     let vault_root = context.scope.root().to_path_buf();
     let timestamp = collect_timestamp()?;
     let date = resolve_date(options.date.as_deref())?;
-    let daemon_report = daemon::probe_daemon_capabilities();
-    let ai_selection = resolve_ai_selection(
-        ai,
-        COMMAND,
-        AiCapability::TextGenerate,
-        daemon_report.synthesis.available,
-    );
+    let ai_selection = resolve_ai_selection(ai);
 
     // Recap is one bounded completion by design — never the tool loop —
     // so it survives local models that cannot drive an agent loop.

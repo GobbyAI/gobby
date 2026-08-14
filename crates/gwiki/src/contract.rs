@@ -68,8 +68,7 @@ pub fn contract() -> CliContract {
                 flags: vec![
                     FlagContract::switch("--llm"),
                     FlagContract::switch("--deep"),
-                    ai_flag("--ai"),
-                    FlagContract::switch("--require-ai"),
+                    FlagContract::switch("--no-ai"),
                     FlagContract::value("--token-budget", "N"),
                 ],
                 json_output_keys: scoped_keys(vec![
@@ -279,7 +278,7 @@ pub fn contract() -> CliContract {
                     FlagContract::switch("--force"),
                     FlagContract::repeatable_value("--scope", "PATH"),
                     FlagContract::switch("--complete-scope"),
-                    ai_flag("--ai"),
+                    FlagContract::switch("--no-ai"),
                     FlagContract::value("--ai-depth", "sections|files|symbols")
                         .allowed(vec!["sections", "files", "symbols"]),
                     FlagContract::value("--ai-aggregate-profile", "PROFILE"),
@@ -349,7 +348,7 @@ pub fn contract() -> CliContract {
                         .allowed(vec!["source", "concept", "topic"]),
                     FlagContract::value("--target", "PAGE"),
                     FlagContract::switch("--write-intent"),
-                    ai_flag("--ai"),
+                    FlagContract::switch("--no-ai"),
                 ],
                 json_output_keys: scoped_keys(vec![
                     "status",
@@ -476,7 +475,7 @@ pub fn contract() -> CliContract {
             CommandContract {
                 daemon_consumed: true,
                 positionals: vec![],
-                flags: vec![ai_flag("--ai")],
+                flags: vec![FlagContract::switch("--no-ai")],
                 json_output_keys: scoped_keys(vec![
                     "checks",
                     "suggested_tasks",
@@ -510,7 +509,7 @@ pub fn contract() -> CliContract {
                     FlagContract::value("--max-sources-per-page", "N"),
                     FlagContract::value("--time-budget-seconds", "SECONDS"),
                     FlagContract::switch("--dry-run"),
-                    ai_flag("--ai"),
+                    FlagContract::switch("--no-ai"),
                 ],
                 json_output_keys: scoped_keys(vec![
                     "timestamp",
@@ -543,7 +542,10 @@ pub fn contract() -> CliContract {
             CommandContract {
                 daemon_consumed: true,
                 positionals: vec![],
-                flags: vec![FlagContract::value("--date", "YYYY-MM-DD"), ai_flag("--ai")],
+                flags: vec![
+                    FlagContract::value("--date", "YYYY-MM-DD"),
+                    FlagContract::switch("--no-ai"),
+                ],
                 json_output_keys: scoped_keys(vec![
                     "timestamp",
                     "date",
@@ -736,15 +738,7 @@ fn ingest_file_flags() -> Vec<FlagContract> {
         FlagContract::switch("--translate"),
         FlagContract::value("--target-lang", "LANG"),
         FlagContract::value("--video-frame-interval", "SECONDS"),
-        ai_flag("--transcription-routing"),
-        ai_flag("--vision-routing"),
-        ai_flag("--text-routing"),
     ]
-}
-
-fn ai_flag(name: &'static str) -> FlagContract {
-    FlagContract::value(name, "auto|daemon|direct|off")
-        .allowed(vec!["auto", "daemon", "direct", "off"])
 }
 
 fn optional_positional(name: &'static str, repeatable: bool) -> PositionalContract {

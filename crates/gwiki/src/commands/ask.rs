@@ -25,7 +25,6 @@ pub(crate) fn execute(
     llm: bool,
     deep: bool,
     ai: AiRouting,
-    require_ai: bool,
     token_budget: Option<usize>,
     include_candidates: bool,
 ) -> Result<CommandOutcome, WikiError> {
@@ -33,7 +32,7 @@ pub(crate) fn execute(
         let flag = if deep { "--deep" } else { "--llm" };
         return Err(WikiError::InvalidInput {
             field: "ask",
-            message: format!("{flag} cannot be combined with --ai off"),
+            message: format!("{flag} cannot be combined with --no-ai"),
         });
     }
 
@@ -48,9 +47,9 @@ pub(crate) fn execute(
     let plan = evidence::plan_evidence(&retrieval);
     let mut output = assembly::ask_output_from_retrieval(retrieval.output, &plan);
     if deep {
-        deep::synthesize(&mut output, &plan, selection, ai, require_ai)?;
+        deep::synthesize(&mut output, &plan, selection, ai, true)?;
     } else if llm {
-        synthesis::synthesize(&mut output, &plan, ai, require_ai)?;
+        synthesis::synthesize(&mut output, &plan, ai, true)?;
     }
     render::render(output)
 }
@@ -67,11 +66,10 @@ mod tests {
             true,
             false,
             AiRouting::Off,
-            false,
             None,
             false,
         )
-        .expect_err("ask --llm --ai off should fail before retrieval");
+        .expect_err("ask --llm --no-ai should fail before retrieval");
 
         assert!(matches!(
             error,
@@ -87,11 +85,10 @@ mod tests {
             false,
             true,
             AiRouting::Off,
-            false,
             None,
             false,
         )
-        .expect_err("ask --deep --ai off should fail before retrieval");
+        .expect_err("ask --deep --no-ai should fail before retrieval");
 
         assert!(matches!(
             error,

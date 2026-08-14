@@ -17,7 +17,6 @@ mod commands;
 pub(crate) mod compile;
 pub mod contract;
 pub(crate) mod credibility;
-pub(crate) mod daemon;
 pub mod document;
 pub mod explainer;
 pub mod exports;

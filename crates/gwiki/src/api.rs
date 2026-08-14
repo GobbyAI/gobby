@@ -75,7 +75,6 @@ pub enum Command {
         llm: bool,
         deep: bool,
         ai: AiRouting,
-        require_ai: bool,
         token_budget: Option<usize>,
         /// Opt-in: also retrieve quarantined candidate pages (#17727).
         include_candidates: bool,
@@ -283,9 +282,6 @@ pub struct IngestFileOptions {
     pub translate: bool,
     pub target_lang: Option<String>,
     pub video_frame_interval_seconds: Option<u32>,
-    pub transcription_routing: Option<AiRouting>,
-    pub vision_routing: Option<AiRouting>,
-    pub text_routing: Option<AiRouting>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -325,33 +321,20 @@ pub struct ReviewReportOptions {
 
 impl IngestFileOptions {
     pub fn apply_to_ai_context(&self, context: &mut AiContext) {
-        if !self.no_ai {
-            if let Some(routing) = self.transcription_routing {
-                if self.translate {
-                    context.bindings.audio_translate.routing = routing;
-                } else {
-                    context.bindings.audio_transcribe.routing = routing;
-                }
-            }
-            if let Some(routing) = self.vision_routing {
-                context.bindings.vision_extract.routing = routing;
-            }
-            if let Some(routing) = self.text_routing {
-                context.bindings.text_generate.routing = routing;
-            }
-            if self.translate
-                && let Some(target_lang) = &self.target_lang
-            {
-                context.bindings.audio_translate.target_lang = Some(target_lang.clone());
-            }
+        if self.no_ai {
+            context.bindings.embed.routing = AiRouting::Off;
+            context.bindings.audio_transcribe.routing = AiRouting::Off;
+            context.bindings.audio_translate.routing = AiRouting::Off;
+            context.bindings.vision_extract.routing = AiRouting::Off;
+            context.bindings.text_generate.routing = AiRouting::Off;
             return;
         }
 
-        context.bindings.embed.routing = AiRouting::Off;
-        context.bindings.audio_transcribe.routing = AiRouting::Off;
-        context.bindings.audio_translate.routing = AiRouting::Off;
-        context.bindings.vision_extract.routing = AiRouting::Off;
-        context.bindings.text_generate.routing = AiRouting::Off;
+        if self.translate
+            && let Some(target_lang) = &self.target_lang
+        {
+            context.bindings.audio_translate.target_lang = Some(target_lang.clone());
+        }
     }
 }
 
@@ -542,36 +525,19 @@ mod tests {
     }
 
     #[test]
-    fn transcription_routing_applies_to_active_audio_capability() {
+    fn no_ai_forces_every_capability_off() {
         let mut source = EnvOnlySource;
         let mut context = AiContext::resolve(None, &mut source);
-        let original_translate_route = context.bindings.audio_translate.routing;
-
         IngestFileOptions {
-            transcription_routing: Some(AiRouting::Daemon),
+            no_ai: true,
             ..IngestFileOptions::default()
         }
         .apply_to_ai_context(&mut context);
-        assert_eq!(context.bindings.audio_transcribe.routing, AiRouting::Daemon);
-        assert_eq!(
-            context.bindings.audio_translate.routing,
-            original_translate_route
-        );
-
-        let mut source = EnvOnlySource;
-        let mut context = AiContext::resolve(None, &mut source);
-        let original_transcribe_route = context.bindings.audio_transcribe.routing;
-        IngestFileOptions {
-            translate: true,
-            transcription_routing: Some(AiRouting::Daemon),
-            ..IngestFileOptions::default()
-        }
-        .apply_to_ai_context(&mut context);
-        assert_eq!(
-            context.bindings.audio_transcribe.routing,
-            original_transcribe_route
-        );
-        assert_eq!(context.bindings.audio_translate.routing, AiRouting::Daemon);
+        assert_eq!(context.bindings.embed.routing, AiRouting::Off);
+        assert_eq!(context.bindings.audio_transcribe.routing, AiRouting::Off);
+        assert_eq!(context.bindings.audio_translate.routing, AiRouting::Off);
+        assert_eq!(context.bindings.vision_extract.routing, AiRouting::Off);
+        assert_eq!(context.bindings.text_generate.routing, AiRouting::Off);
     }
 
     #[test]

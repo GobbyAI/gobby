@@ -239,6 +239,12 @@ impl FeatureCandidate {
         };
         let (provider, model) = candidate.split_once('/').unwrap_or(("", ""));
         let (provider, model) = (provider.trim(), model.trim());
+        if trimmed.contains("://") || provider.contains("://") || model.contains("://") {
+            return Err(format!(
+                "invalid candidate `{label}`: expected provider/model[@effort], \
+                 not a provider/api_base URL"
+            ));
+        }
         if provider.is_empty() || model.is_empty() {
             return Err(format!(
                 "invalid candidate `{label}`: expected provider/model[@effort], \

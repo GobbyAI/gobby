@@ -1,10 +1,10 @@
-use gobby_core::config::{AiCapability, AiRouting};
+use gobby_core::config::AiRouting;
 
 use crate::explainer::{ExplainerGenerator, ExplainerPrompt};
 use crate::support::scope::resolve_selection_context;
 use crate::support::services;
 use crate::support::time::collect_timestamp;
-use crate::{CommandOutcome, ScopeSelection, UpkeepOptions, WikiError, daemon, session, upkeep};
+use crate::{CommandOutcome, ScopeSelection, UpkeepOptions, WikiError, session, upkeep};
 
 use super::generation_routes::{
     ai_notice_label, resolve_ai_selection, resolve_explainer_transport,
@@ -23,13 +23,7 @@ pub(crate) fn execute(
     let research_scope = session::ResearchScope::from(&context.scope);
     let vault_root = research_scope.root().to_path_buf();
     let timestamp = collect_timestamp()?;
-    let daemon_report = daemon::probe_daemon_capabilities();
-    let ai_selection = resolve_ai_selection(
-        ai,
-        COMMAND,
-        AiCapability::TextGenerate,
-        daemon_report.synthesis.available,
-    );
+    let ai_selection = resolve_ai_selection(ai);
 
     let mut notes: Vec<String> = Vec::new();
     // A configured-but-unreachable hub only degrades the near-duplicate layer;
@@ -56,7 +50,7 @@ pub(crate) fn execute(
         min_mentions: options.min_mentions,
         max_sources_per_page: options.max_sources_per_page,
         dry_run: options.dry_run,
-        daemon_synthesis_available: daemon_report.synthesis.available,
+        daemon_synthesis_available: matches!(ai_selection.route, AiRouting::Daemon),
         hard_fail_on_generation_failure: false,
         archive_after_days: upkeep::DEFAULT_ARCHIVE_AFTER_DAYS,
         time_budget_seconds: options.time_budget_seconds,

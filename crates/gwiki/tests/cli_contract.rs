@@ -297,7 +297,7 @@ fn parity_contract_tracks_code_grounding_and_dependency_classification() {
             "--force",
             "--scope",
             "--complete-scope",
-            "--ai",
+            "--no-ai",
             "--ai-depth",
             "--ai-aggregate-profile",
             "--ai-aggregate-candidate",

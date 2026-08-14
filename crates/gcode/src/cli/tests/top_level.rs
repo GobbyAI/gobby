@@ -60,6 +60,31 @@ fn test_parse_callers_remains_top_level() {
 }
 
 #[test]
+fn outline_has_no_summarize_surface() {
+    let error = match Cli::try_parse_from(["gcode", "outline", "--summarize", "src/lib.rs"]) {
+        Ok(_) => panic!("outline --summarize must be gone"),
+        Err(error) => error,
+    };
+    assert_eq!(error.kind(), clap::error::ErrorKind::UnknownArgument);
+
+    let parsed = Cli::try_parse_from(["gcode", "outline", "src/lib.rs"]).expect("outline parses");
+    match parsed.command {
+        Command::Outline { file, .. } => assert_eq!(file, "src/lib.rs"),
+        _ => panic!("expected outline"),
+    }
+
+    let outline = gobby_code::contract::contract()
+        .commands
+        .into_iter()
+        .find(|command| command.name == "outline")
+        .expect("outline contract");
+    assert!(
+        outline.flags.iter().all(|flag| flag.name != "--summarize"),
+        "in-memory outline contract still lists --summarize"
+    );
+}
+
+#[test]
 fn test_parse_usages_remains_top_level() {
     let cli = Cli::try_parse_from(["gcode", "usages", "DatabasePool"]).expect("usages parses");
 

@@ -19,7 +19,7 @@ pub(super) struct CodeArgs {
         conflicts_with_all = [
             "scope",
             "complete_scope",
-            "ai",
+            "no_ai",
             "ai_depth",
             "ai_aggregate_profile",
             "ai_aggregate_candidate",
@@ -46,9 +46,9 @@ pub(super) struct CodeArgs {
     /// Treat --scope paths as the complete publication boundary.
     #[arg(long)]
     complete_scope: bool,
-    /// Override AI routing for generated summaries.
-    #[arg(long, value_name = "auto|daemon|direct|off")]
-    ai: Option<AiRouting>,
+    /// Disable daemon-backed generation for this invocation.
+    #[arg(long)]
+    no_ai: bool,
     /// AI prose depth.
     #[arg(long, value_enum, default_value_t = AiDepthArg::Files)]
     ai_depth: AiDepthArg,
@@ -97,7 +97,7 @@ pub(super) struct CodeArgs {
             "force",
             "scope",
             "complete_scope",
-            "ai",
+            "no_ai",
             "ai_depth",
             "ai_aggregate_profile",
             "ai_aggregate_candidate",
@@ -138,7 +138,7 @@ impl CodeArgs {
             force: self.force,
             scope: self.scope,
             complete_scope: self.complete_scope,
-            ai: self.ai,
+            ai: self.no_ai.then_some(AiRouting::Off),
             ai_depth: self.ai_depth.into(),
             ai_prose_depth: self.ai_prose_depth.into(),
             ai_register: self.ai_register.map(AiRegisterArg::label),

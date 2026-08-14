@@ -2,14 +2,14 @@ use std::io::ErrorKind;
 use std::path::{Path, PathBuf};
 
 use gobby_core::ai::AiNoticeKind;
-use gobby_core::config::{AiCapability, AiRouting};
+use gobby_core::config::AiRouting;
 
 use crate::explainer::{ExplainerGenerator, ExplainerPrompt, ExplainerReport};
 use crate::sources::SourceManifest;
 use crate::support::scope::{resolve_command_scope, resolved_scope_identity};
 use crate::{
-    CommandOutcome, ScopeIdentity, ScopeSelection, WikiError, compile as wiki_compile, daemon,
-    session, synthesis, vault,
+    CommandOutcome, ScopeIdentity, ScopeSelection, WikiError, compile as wiki_compile, session,
+    synthesis, vault,
 };
 
 use super::generation_routes::{
@@ -47,14 +47,8 @@ pub(crate) fn execute(
         reconcile_checkpoint_sources(&mut session)?;
     }
     let topic = resolve_compile_topic(topic_seed, &session);
-    let daemon_report = daemon::probe_daemon_capabilities();
-    let daemon_synthesis_available = daemon_report.synthesis.available;
-    let ai_selection = resolve_ai_selection(
-        ai,
-        COMMAND,
-        AiCapability::TextGenerate,
-        daemon_synthesis_available,
-    );
+    let ai_selection = resolve_ai_selection(ai);
+    let daemon_synthesis_available = matches!(ai_selection.route, AiRouting::Daemon);
     let output_scope = resolved_scope_identity(&resolved_scope);
     let vault_root = session.scope.root().to_path_buf();
 

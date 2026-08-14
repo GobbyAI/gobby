@@ -276,9 +276,6 @@ mod tests {
                     translate: false,
                     target_lang: None,
                     video_frame_interval_seconds: None,
-                    transcription_routing: None,
-                    vision_routing: None,
-                    text_routing: None,
                 },
             }),
         };

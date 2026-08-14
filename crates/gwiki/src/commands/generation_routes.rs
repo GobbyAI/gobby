@@ -5,13 +5,13 @@
 
 use std::path::{Path, PathBuf};
 
+use gobby_core::ai::AiNoticeKind;
 use gobby_core::ai::generation::{
     ChatMessage, DirectGenerationTarget, GenerationTier, ToolPolicy, daemon_agentic_chat,
     generate_one_shot, profile_for_tier,
 };
-use gobby_core::ai::{AiNoticeKind, resolve_route_observed_with_probe};
 use gobby_core::ai_context::{AiContext, AiContextOptions};
-use gobby_core::config::{AiCapability, AiRouting};
+use gobby_core::config::AiRouting;
 
 use crate::explainer::{ExplainerPrompt, ExplainerResponse};
 use crate::{ScopeIdentity, ScopeSelection};
@@ -78,42 +78,14 @@ pub(crate) struct AiSelection {
     pub(crate) selection_reason: &'static str,
 }
 
-pub(crate) fn resolve_ai_selection(
-    requested: AiRouting,
-    command: &'static str,
-    capability: AiCapability,
-    daemon_available: bool,
-) -> AiSelection {
-    let route = if matches!(requested, AiRouting::Daemon) {
-        if daemon_available {
-            AiRouting::Daemon
-        } else {
-            match crate::support::config::hub_ai_config_source(command) {
-                Ok(mut source) => {
-                    let context = AiContext::resolve_with_options(
-                        None,
-                        &mut source,
-                        AiContextOptions {
-                            no_ai: false,
-                            forced_routing: Some(requested),
-                        },
-                    );
-                    resolve_route_observed_with_probe(&context, capability, |_| false).route
-                }
-                Err(_) => AiRouting::Off,
-            }
-        }
-    } else {
-        requested
-    };
-    let selection_reason = match (requested, route) {
-        (AiRouting::Daemon, AiRouting::Daemon) => "requested_daemon",
-        (AiRouting::Daemon, AiRouting::Off) => "requested_daemon_off",
-        (AiRouting::Off, _) => "requested_off",
+pub(crate) fn resolve_ai_selection(requested: AiRouting) -> AiSelection {
+    let selection_reason = match requested {
+        AiRouting::Daemon => "requested_daemon",
+        AiRouting::Off => "requested_off",
     };
     AiSelection {
         requested,
-        route,
+        route: requested,
         selection_reason,
     }
 }
@@ -388,7 +360,7 @@ mod tests {
     use super::*;
     use gobby_core::ai::ObservedAiRoute;
     use gobby_core::ai_context::{AiBindings, AiLimiter};
-    use gobby_core::config::{AiTuning, CapabilityBinding};
+    use gobby_core::config::{AiCapability, AiTuning, CapabilityBinding};
 
     #[test]
     fn articles_generate_on_the_aggregate_feature_profile() {
@@ -443,12 +415,7 @@ mod tests {
     #[test]
     fn auto_selection_prefers_advertised_daemon_without_loading_direct_config() {
         assert_eq!(
-            resolve_ai_selection(
-                AiRouting::Daemon,
-                "gwiki test",
-                AiCapability::TextGenerate,
-                true,
-            ),
+            resolve_ai_selection(AiRouting::Daemon),
             AiSelection {
                 requested: AiRouting::Daemon,
                 route: AiRouting::Daemon,

@@ -479,6 +479,22 @@ fn feature_candidate_parses_cli_labels() {
 }
 
 #[test]
+fn feature_candidate_rejects_provider_api_base_forms() {
+    for label in [
+        "https://api.openai.com/v1",
+        "openai/http://localhost:1234/v1",
+        "openai/https://api.openai.com/v1@high",
+    ] {
+        let error = FeatureCandidate::parse_cli_label(label)
+            .expect_err("provider/api_base candidate form rejected");
+        assert!(
+            error.contains("provider/model") || error.contains("api_base") || error.contains("url"),
+            "{label}: {error}"
+        );
+    }
+}
+
+#[test]
 fn feature_candidate_rejects_malformed_cli_labels() {
     for label in ["sonnet", "/sonnet", "claude/", "@xhigh", "", "  "] {
         let error = FeatureCandidate::parse_cli_label(label).expect_err("malformed label rejected");

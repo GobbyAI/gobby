@@ -264,12 +264,7 @@ pub(crate) enum Command {
 
     // ── Symbol Retrieval (works in all modes) ────────────────────────
     /// Hierarchical symbol tree for a file
-    Outline {
-        /// Use text generation to produce a natural-language outline when configured
-        #[arg(long)]
-        summarize: bool,
-        file: String,
-    },
+    Outline { file: String },
     /// Fetch symbol source code by ID (byte-offset read)
     Symbol { id: String },
     /// Fetch symbol source code at PATH:LINE or PATH:LINE:COLUMN

@@ -1,7 +1,6 @@
 use super::render::{canonicalize_location, existing_index_without_manifest};
 use super::*;
 use crate::IngestFileOptions;
-use gobby_core::config::AiRouting;
 use std::path::PathBuf;
 
 #[test]
@@ -136,9 +135,6 @@ fn local_file_replay_metadata_round_trips_through_manifest() {
         translate: true,
         target_lang: Some("es".to_string()),
         video_frame_interval_seconds: Some(11),
-        transcription_routing: Some(AiRouting::Daemon),
-        vision_routing: Some(AiRouting::Off),
-        text_routing: Some(AiRouting::Daemon),
     };
     let replay = SourceReplay::local_file(PathBuf::from("notes/source.md"), &options);
 
@@ -159,12 +155,10 @@ fn local_file_replay_metadata_round_trips_through_manifest() {
         panic!("expected local file replay");
     };
     assert_eq!(path, &PathBuf::from("notes/source.md"));
-    assert_eq!(
-        replay_options.transcription_routing.as_deref(),
-        Some("daemon")
-    );
-    assert_eq!(replay_options.vision_routing.as_deref(), Some("off"));
-    assert_eq!(replay_options.text_routing.as_deref(), Some("daemon"));
+    assert!(replay_options.no_ai);
+    assert!(replay_options.translate);
+    assert_eq!(replay_options.target_lang.as_deref(), Some("es"));
+    assert_eq!(replay_options.video_frame_interval_seconds, Some(11));
 
     let restored = replay_options
         .to_ingest_file_options()

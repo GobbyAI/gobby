@@ -728,16 +728,7 @@
           "repeatable": false
         }
       ],
-      "flags": [
-        {
-          "name": "--summarize",
-          "takes_value": false,
-          "value_name": null,
-          "allowed_values": [],
-          "required": false,
-          "repeatable": false
-        }
-      ],
+      "flags": [],
       "json_output_keys": [
         "id",
         "name",
