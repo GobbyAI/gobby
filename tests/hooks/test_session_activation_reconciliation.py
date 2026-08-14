@@ -157,37 +157,6 @@ def _create_worker_agent(db: HubDatabase) -> None:
         },
         source="custom",
     )
-    manager = RuleDefinitionManager(db)
-    manager.create(
-        name="worker",
-        source="custom",
-        definition_json=json.dumps(
-            {
-                "name": "worker",
-                "role": "Worker",
-                "blocked_tools": ["Bash"],
-                "blocked_mcp_tools": ["gobby-tasks.close_task"],
-                "workflows": {"rule_selectors": {"include": ["tag:worker"], "exclude": []}},
-                "step_workflow": {
-                    "variables": {"ticket": "14475"},
-                    "steps": [{"name": "claim"}, {"name": "implement"}],
-                },
-            }
-        ),
-    )
-    manager.create(
-        name="worker-steps",
-        source="agent",
-        enabled=False,
-        definition_json=json.dumps(
-            {
-                "name": "worker-steps",
-                "type": "step",
-                "steps": [{"name": "claim"}, {"name": "implement"}],
-                "variables": {"ticket": "14475"},
-            }
-        ),
-    )
 
 
 def _create_parent_and_child(
