@@ -30,7 +30,7 @@ from gobby.storage.definitions._shared import (
     soft_delete_definition,
     touch_revision,
 )
-from gobby.storage.hub.protocol import HubDatabase
+from gobby.storage.hub.protocol import HubDatabase, Transaction
 from gobby.utils.datetime import normalize_datetime_model, utc_now
 
 _TABLE = "pipeline_definitions"
@@ -49,6 +49,20 @@ def canonicalize_pipeline_definition(
         raise ValueError("pipeline definition_json must be an object")
     payload["name"] = name
     return payload
+
+
+def _lock_live_row(txn: Transaction, definition_id: str) -> PipelineDefinitionRow:
+    row = txn.execute(
+        """
+        SELECT * FROM pipeline_definitions
+        WHERE id = %s AND deleted_at IS NULL
+        FOR UPDATE
+        """,
+        (definition_id,),
+    ).fetchone()
+    if row is None:
+        raise DefinitionNotFoundError(f"{_WHAT} {definition_id} not found")
+    return PipelineDefinitionRow.from_row(row)
 
 
 _UPDATE_FIELDS = frozenset(
@@ -225,18 +239,18 @@ class PipelineDefinitionManager:
                 values[key] = value
         if not values:
             return self.get(definition_id)
-        current = self.get(definition_id)
-        target_name = str(values["name"]) if "name" in values else current.name
-        if "definition_json" in values:
-            values["definition_json"] = encode_json_value(
-                canonicalize_pipeline_definition(target_name, values["definition_json"])
-            )
-        elif "name" in values:
-            values["definition_json"] = encode_json_value(
-                canonicalize_pipeline_definition(target_name, current.definition_json)
-            )
-        values["updated_at"] = utc_now()
         with self.db.transaction() as txn:
+            current = _lock_live_row(txn, definition_id)
+            target_name = str(values["name"]) if "name" in values else current.name
+            if "definition_json" in values:
+                values["definition_json"] = encode_json_value(
+                    canonicalize_pipeline_definition(target_name, values["definition_json"])
+                )
+            elif "name" in values:
+                values["definition_json"] = encode_json_value(
+                    canonicalize_pipeline_definition(target_name, current.definition_json)
+                )
+            values["updated_at"] = utc_now()
             if "name" in values:
                 assert_live_name_free(
                     txn,
