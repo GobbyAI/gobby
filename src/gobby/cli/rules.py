@@ -29,18 +29,18 @@ import click
 
 from gobby.cli.runtime import require_cli_database
 from gobby.cli.utils_config import get_daemon_client
-from gobby.storage.workflow_definitions import LocalWorkflowDefinitionManager
+from gobby.storage.definitions.rules import RuleDefinitionManager
 from gobby.utils.daemon_client import DaemonClient
 
 
-def _get_manager() -> LocalWorkflowDefinitionManager:
-    """Get workflow definition manager."""
+def _get_manager() -> RuleDefinitionManager:
+    """Get typed rule definition manager."""
     db = require_cli_database()
-    return LocalWorkflowDefinitionManager(db)
+    return RuleDefinitionManager(db)
 
 
 @contextmanager
-def _manager_context() -> Iterator[LocalWorkflowDefinitionManager]:
+def _manager_context() -> Iterator[RuleDefinitionManager]:
     """Yield a workflow definition manager borrowing the CLI runtime database."""
     manager = _get_manager()
     yield manager
@@ -105,7 +105,10 @@ def _toggle_rule_via_daemon(ctx: click.Context, name: str, *, enabled: bool) -> 
 
 def _parse_rule_body(row: Any) -> dict[str, Any]:
     """Parse rule definition JSON body."""
-    return cast(dict[str, Any], json.loads(row.definition_json))
+    payload = row.definition_json
+    if isinstance(payload, dict):
+        return payload
+    return cast(dict[str, Any], json.loads(payload))
 
 
 def _rule_summary(row: Any) -> dict[str, Any]:
@@ -167,7 +170,7 @@ def list_rules(
         elif group:
             rows = manager.list_rules_by_group(group, enabled=enabled_flag)
         else:
-            rows = manager.list_all(workflow_type="rule", enabled=enabled_flag)
+            rows = manager.list_all(enabled=enabled_flag)
 
     if json_output:
         summaries = [_rule_summary(r) for r in rows]
@@ -196,7 +199,7 @@ def show_rule(name: str, json_output: bool) -> None:
     with _manager_context() as manager:
         row = manager.get_by_name(name)
 
-    if row is None or row.workflow_type != "rule":
+    if row is None:
         click.echo(f"Rule not found: {name}", err=True)
         sys.exit(1)
 
@@ -285,7 +288,7 @@ def export_rules(group: str | None) -> None:
         if group:
             rows = manager.list_rules_by_group(group, enabled=None)
         else:
-            rows = manager.list_all(workflow_type="rule")
+            rows = manager.list_all()
 
     if not rows:
         click.echo("No rules to export.")

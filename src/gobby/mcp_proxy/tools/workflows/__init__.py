@@ -55,6 +55,7 @@ from gobby.mcp_proxy.tools.workflows._variables import (
     update_variable,
 )
 from gobby.storage.definitions import AgentDefinitionManager
+from gobby.storage.definitions.rules import RuleDefinitionManager
 from gobby.storage.hub.protocol import HubDatabase
 from gobby.storage.sessions import SessionManager
 from gobby.storage.workflow_definitions import LocalWorkflowDefinitionManager
@@ -144,6 +145,7 @@ def create_workflows_registry(
     _instance_manager = AgentStepInstanceManager(_db) if _db is not None else None
     _session_var_manager = SessionVariableManager(_db) if _db is not None else None
     _def_manager = LocalWorkflowDefinitionManager(_db) if _db is not None else None
+    _rule_manager = RuleDefinitionManager(_db) if _db is not None else None
     _agent_manager = AgentDefinitionManager(_db) if _db is not None else None
 
     registry = InternalToolRegistry(
@@ -409,27 +411,27 @@ def create_workflows_registry(
         enabled: bool | None = None,
         brief: bool = False,
     ) -> dict[str, Any]:
-        if _def_manager is None:
+        if _rule_manager is None:
             return {"error": "Rule tools require database connection"}
-        return list_rules(_def_manager, event, group, enabled, brief=brief)
+        return list_rules(_rule_manager, event, group, enabled, brief=brief)
 
     @registry.tool(
         name="get_rule",
         description="Get full details of a standalone rule by name.",
     )
     def _get_rule(name: str) -> dict[str, Any]:
-        if _def_manager is None:
+        if _rule_manager is None:
             return {"error": "Rule tools require database connection"}
-        return get_rule(_def_manager, name)
+        return get_rule(_rule_manager, name)
 
     @registry.tool(
         name="toggle_rule",
         description="Enable or disable a standalone rule by name.",
     )
     def _toggle_rule(name: str, enabled: bool) -> dict[str, Any]:
-        if _def_manager is None:
+        if _rule_manager is None:
             return {"error": "Rule tools require database connection"}
-        return toggle_rule(_def_manager, name, enabled)
+        return toggle_rule(_rule_manager, name, enabled)
 
     @registry.tool(
         name="create_rule",
@@ -441,11 +443,11 @@ def create_workflows_registry(
         project_path: str | None = None,
         make_template: bool = False,
     ) -> dict[str, Any]:
-        if _def_manager is None:
+        if _rule_manager is None:
             return {"error": "Rule tools require database connection"}
         pp = Path(project_path) if project_path else None
         return create_rule(
-            _def_manager, name, definition, project_path=pp, make_global_template=make_template
+            _rule_manager, name, definition, project_path=pp, make_global_template=make_template
         )
 
     @registry.tool(
@@ -456,9 +458,9 @@ def create_workflows_registry(
         name: str,
         force: bool = False,
     ) -> dict[str, Any]:
-        if _def_manager is None:
+        if _rule_manager is None:
             return {"error": "Rule tools require database connection"}
-        return delete_rule(_def_manager, name, force)
+        return delete_rule(_rule_manager, name, force)
 
     @registry.tool(
         name="update_rule",
@@ -479,11 +481,11 @@ def create_workflows_registry(
         project_path: str | None = None,
         make_template: bool = False,
     ) -> dict[str, Any]:
-        if _def_manager is None:
+        if _rule_manager is None:
             return {"error": "Rule tools require database connection"}
         pp = Path(project_path) if project_path else None
         return update_rule(
-            _def_manager,
+            _rule_manager,
             name,
             definition=definition,
             description=description,

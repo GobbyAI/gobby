@@ -209,10 +209,11 @@ def activate_default_agent(
 
     _ta_queries = time.monotonic()
     from gobby.skills.manager import SkillManager
+    from gobby.storage.definitions.rules import RuleDefinitionManager
     from gobby.storage.workflow_definitions import LocalWorkflowDefinitionManager
 
+    enabled_rules = RuleDefinitionManager(handler._session_manager.db).list_all(enabled=True)
     def_manager = LocalWorkflowDefinitionManager(handler._session_manager.db)
-    enabled_rules = [r for r in def_manager.list_all(workflow_type="rule") if r.enabled]
     enabled_variables = [v for v in def_manager.list_all(workflow_type="variable") if v.enabled]
     all_skills = SkillManager(handler._session_manager.db).list_skills()
 

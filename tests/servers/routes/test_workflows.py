@@ -6,6 +6,7 @@ create_http_server() with a real LocalWorkflowDefinitionManager backed by temp_d
 
 from __future__ import annotations
 
+import json
 from unittest.mock import MagicMock, patch
 
 import pytest
@@ -57,11 +58,8 @@ def client(server) -> TestClient:
 def _create_workflow(wf_manager: LocalWorkflowDefinitionManager, **kwargs) -> dict:
     defaults = {
         "name": "test-workflow",
-        "definition_json": RuleDefinitionBody(
-            event=RuleTriggerEvent.BEFORE_TOOL,
-            effects=[RuleEffect(type="block", reason="test")],
-        ).model_dump_json(),
-        "workflow_type": "rule",
+        "definition_json": json.dumps({"name": "test-workflow", "type": "step", "steps": []}),
+        "workflow_type": "workflow",
     }
     defaults.update(kwargs)
     row = wf_manager.create(**defaults)
@@ -94,12 +92,12 @@ class TestListWorkflows:
     def test_list_filter_by_type(
         self, client: TestClient, wf_manager: LocalWorkflowDefinitionManager
     ) -> None:
-        _create_workflow(wf_manager, name="wf-rule", workflow_type="rule")
+        _create_workflow(wf_manager, name="wf-step", workflow_type="workflow")
         _create_workflow(wf_manager, name="wf-pipe", workflow_type="pipeline", definition_json="{}")
-        resp = client.get("/api/workflows?workflow_type=rule")
+        resp = client.get("/api/workflows?workflow_type=pipeline")
         data = resp.json()
         assert data["count"] == 1
-        assert data["definitions"][0]["name"] == "wf-rule"
+        assert data["definitions"][0]["name"] == "wf-pipe"
 
     def test_list_filter_by_enabled(
         self, client: TestClient, wf_manager: LocalWorkflowDefinitionManager
@@ -140,17 +138,29 @@ class TestCreateWorkflow:
     def test_create_success(self, client: TestClient) -> None:
         body = {
             "name": "new-workflow",
-            "definition_json": RuleDefinitionBody(
-                event=RuleTriggerEvent.STOP,
-                effects=[RuleEffect(type="block", reason="stop")],
-            ).model_dump_json(),
-            "workflow_type": "rule",
+            "definition_json": json.dumps({"name": "new-workflow", "type": "step", "steps": []}),
+            "workflow_type": "workflow",
         }
         resp = client.post("/api/workflows", json=body)
         assert resp.status_code == 200
         data = resp.json()
         assert data["status"] == "success"
         assert data["definition"]["name"] == "new-workflow"
+
+    def test_create_rejects_rule_kind(self, client: TestClient) -> None:
+        resp = client.post(
+            "/api/workflows",
+            json={
+                "name": "rogue-rule",
+                "definition_json": RuleDefinitionBody(
+                    event=RuleTriggerEvent.STOP,
+                    effects=[RuleEffect(type="block", reason="stop")],
+                ).model_dump_json(),
+                "workflow_type": "rule",
+            },
+        )
+        assert resp.status_code == 400
+        assert "/api/rules" in resp.json()["detail"]
 
     def test_create_rejects_agent_kind(self, client: TestClient) -> None:
         resp = client.post(
@@ -181,6 +191,23 @@ class TestCreateWorkflow:
         assert filtered.status_code == 400
         assert "/api/agents" in filtered.json()["detail"]
 
+    def test_list_omits_and_rejects_rule_filter(
+        self, client: TestClient, wf_manager: LocalWorkflowDefinitionManager
+    ) -> None:
+        wf_manager.create(
+            name="hidden-rule",
+            definition_json='{"event": "stop", "effects": []}',
+            workflow_type="rule",
+            source="installed",
+        )
+        listed = client.get("/api/workflows")
+        assert listed.status_code == 200
+        names = [row["name"] for row in listed.json()["definitions"]]
+        assert "hidden-rule" not in names
+        filtered = client.get("/api/workflows", params={"workflow_type": "rule"})
+        assert filtered.status_code == 400
+        assert "/api/rules" in filtered.json()["detail"]
+
     @pytest.mark.parametrize(
         "definition_json",
         ["not-json", '{"unexpected": true}'],
@@ -209,7 +236,7 @@ class TestCreateWorkflow:
             json={
                 "name": existing["name"],
                 "definition_json": existing["definition_json"],
-                "workflow_type": "rule",
+                "workflow_type": "workflow",
             },
         )
 
@@ -484,7 +511,7 @@ class TestVariables:
         mock_set.assert_called_once()
         assert mock_set.call_args.kwargs["value"] == ["tasks"]
 
-    def test_set_variable_accepts_workflow_scope(self) -> None:
+    def test_set_variable_accepts_step_scope(self) -> None:
         mock_sm = MagicMock()
         mock_sm.db = MagicMock()
         srv = create_http_server(
@@ -503,15 +530,15 @@ class TestVariables:
                     "name": "implementation_complete",
                     "value": True,
                     "session_id": "#1",
-                    "workflow": "backend-developer-steps",
+                    "scope": "step",
                 },
             )
 
         assert resp.status_code == 200
         mock_set.assert_called_once()
-        assert mock_set.call_args.kwargs["workflow"] == "backend-developer-steps"
+        assert mock_set.call_args.kwargs["scope"] == "step"
 
-    def test_get_variable_accepts_workflow_scope(self) -> None:
+    def test_get_variable_accepts_step_scope(self) -> None:
         mock_sm = MagicMock()
         mock_sm.db = MagicMock()
         srv = create_http_server(
@@ -529,13 +556,13 @@ class TestVariables:
                 json={
                     "name": "implementation_complete",
                     "session_id": "#1",
-                    "workflow": "backend-developer-steps",
+                    "scope": "step",
                 },
             )
 
         assert resp.status_code == 200
         mock_get.assert_called_once()
-        assert mock_get.call_args.kwargs["workflow"] == "backend-developer-steps"
+        assert mock_get.call_args.kwargs["scope"] == "step"
 
     def test_get_variable_with_session_manager(self, temp_db: HubDatabase) -> None:
         mock_sm = MagicMock()

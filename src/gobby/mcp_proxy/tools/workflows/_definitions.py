@@ -21,11 +21,14 @@ from gobby.workflows.loader import WorkflowLoader
 logger = logging.getLogger(__name__)
 
 _AGENT_DOMAIN_TOOLS = "Agent definitions use the agent domain tools, not generic workflow CRUD"
+_RULE_DOMAIN_TOOLS = "Rule definitions use the rule domain tools, not generic workflow CRUD"
 
 
 def _reject_agent_kind(kind: str | None) -> None:
     if kind == "agent":
         raise ValueError(_AGENT_DOMAIN_TOOLS)
+    if kind == "rule":
+        raise ValueError(_RULE_DOMAIN_TOOLS)
 
 
 def _resolve_definition(
@@ -60,8 +63,10 @@ def _validate_yaml(
     if not isinstance(data, dict) or "name" not in data:
         raise ValueError("Invalid YAML: must be a mapping with a 'name' field")
 
+    _reject_agent_kind(data.get("type"))
+    if expected_type is not None:
+        _reject_agent_kind(expected_type)
     validate_workflow_definition_data(data, expected_type=expected_type)
-    _reject_agent_kind(data.get("type") if expected_type is None else expected_type)
 
     return data
 

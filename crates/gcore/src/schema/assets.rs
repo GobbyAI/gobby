@@ -29,6 +29,12 @@ pub(crate) const MIGRATIONS: &[EmbeddedMigration] = &[
         checksum: "43b6c25263c1e510f28c540d9cc24e62ffcad67a3a8dddde3645bdb6a5e92821",
         sql: include_str!("../../assets/schema/migrations/377_copy_agent_step_instances.sql"),
     },
+    EmbeddedMigration {
+        version: 378,
+        filename: "378_copy_rule_definitions.sql",
+        checksum: "22c9e75b20c1000f364fc004fe5648ecf165922943d4c852cdf26ccbb6cdf3e8",
+        sql: include_str!("../../assets/schema/migrations/378_copy_rule_definitions.sql"),
+    },
 ];
 const _: &str = include_str!("../../assets/schema/migrations/.gitkeep");
 

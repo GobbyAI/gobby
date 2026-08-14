@@ -95,7 +95,10 @@ def decode_json_object(value: Any) -> dict[str, Any] | None:
     if isinstance(value, dict):
         return dict(value)
     if isinstance(value, str):
-        parsed = json.loads(value)
+        try:
+            parsed = json.loads(value)
+        except json.JSONDecodeError:
+            return None
         if isinstance(parsed, dict):
             return parsed
     return None

@@ -8,7 +8,7 @@ from typing import TYPE_CHECKING, Any
 
 from gobby.hooks.events import HookEvent, HookResponse
 from gobby.mcp_proxy.metrics_events import MetricsEventRecord
-from gobby.storage.workflow_definitions import WorkflowDefinitionRow
+from gobby.storage.definitions.rules import RuleDefinitionRow
 from gobby.telemetry.rule_allow_audit import RuleResult, record_rule_evaluation
 from gobby.workflows.block_audit import combined_rule_condition, log_enforcement_block
 from gobby.workflows.definitions import RuleDefinitionBody, RuleEffect
@@ -101,7 +101,7 @@ class EvaluationMixin:
         async def _apply_effect(
             self,
             effect: RuleEffect,
-            row: WorkflowDefinitionRow,
+            row: RuleDefinitionRow,
             variables: dict[str, Any],
             ctx: dict[str, Any],
             allowed_funcs: dict[str, Callable[..., Any]],
@@ -236,7 +236,7 @@ class EvaluationMixin:
     def _render_rule_block_reason(
         self,
         evaluation: EvaluationContext,
-        row: WorkflowDefinitionRow,
+        row: RuleDefinitionRow,
         effect: RuleEffect,
         ctx: dict[str, Any],
         allowed_funcs: dict[str, Callable[..., Any]],
@@ -258,7 +258,7 @@ class EvaluationMixin:
 
     async def _run_rule_loop(
         self,
-        rules: list[tuple[WorkflowDefinitionRow, RuleDefinitionBody]],
+        rules: list[tuple[RuleDefinitionRow, RuleDefinitionBody]],
         evaluation: EvaluationContext,
         *,
         aggregate_blocks: bool,

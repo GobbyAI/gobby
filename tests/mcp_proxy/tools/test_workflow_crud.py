@@ -101,7 +101,6 @@ class TestCreateWorkflow:
     @pytest.mark.parametrize(
         ("yaml_content", "expected_type"),
         [
-            (VALID_RULE_YAML, "rule"),
             (VALID_VARIABLE_YAML, "variable"),
         ],
     )
@@ -213,9 +212,7 @@ class TestCreateWorkflow:
     @pytest.mark.parametrize(
         "yaml_content",
         [
-            VALID_RULE_YAML + "junk: true\n",
             VALID_VARIABLE_YAML + "junk: true\n",
-            VALID_AGENT_YAML + "junk: true\n",
         ],
     )
     def test_create_rejects_junk_non_pipeline_bodies(
@@ -252,6 +249,11 @@ class TestCreateWorkflow:
         result = create_workflow_definition(object(), loader, VALID_AGENT_YAML)  # type: ignore[arg-type]
         assert result["success"] is False
         assert "agent domain tools" in result["error"]
+
+    def test_create_rejects_rule_kind(self, loader: WorkflowLoader) -> None:
+        result = create_workflow_definition(object(), loader, VALID_RULE_YAML)  # type: ignore[arg-type]
+        assert result["success"] is False
+        assert "rule domain tools" in result["error"]
 
     def test_create_detects_name_conflict(
         self, def_manager: LocalWorkflowDefinitionManager, loader: WorkflowLoader
@@ -398,48 +400,56 @@ steps:
     def test_update_rejects_type_change(
         self, def_manager: LocalWorkflowDefinitionManager, loader: WorkflowLoader
     ) -> None:
-        create_workflow_definition(def_manager, loader, VALID_RULE_YAML)
+        create_workflow_definition(def_manager, loader, VALID_VARIABLE_YAML)
 
         result = update_workflow_definition(
             def_manager,
             loader,
-            name="test-rule",
-            yaml_content=VALID_VARIABLE_YAML.replace("test-variable", "test-rule"),
+            name="test-variable",
+            yaml_content=VALID_WORKFLOW_YAML.replace("test-workflow", "test-variable"),
         )
 
         assert result["success"] is False
-        assert "does not match existing workflow type 'rule'" in result["error"]
-        assert def_manager.get_by_name("test-rule").workflow_type == "rule"
+        assert "does not match existing workflow type 'variable'" in result["error"]
+        assert def_manager.get_by_name("test-variable").workflow_type == "variable"
 
     def test_update_without_type_validates_using_existing_type(
         self, def_manager: LocalWorkflowDefinitionManager, loader: WorkflowLoader
     ) -> None:
-        create_workflow_definition(def_manager, loader, VALID_RULE_YAML)
+        create_workflow_definition(def_manager, loader, VALID_VARIABLE_YAML)
         replacement = """\
-name: test-rule
-event: after_tool
-effects:
-  - type: observe
-    category: test
+name: test-variable
+variable: test-variable
+value: 2
 """
 
         result = update_workflow_definition(
-            def_manager, loader, name="test-rule", yaml_content=replacement
+            def_manager, loader, name="test-variable", yaml_content=replacement
         )
 
         assert result["success"] is True
-        assert result["definition"]["workflow_type"] == "rule"
+        assert result["definition"]["workflow_type"] == "variable"
+
+    def test_update_rejects_rule_kind(
+        self, def_manager: LocalWorkflowDefinitionManager, loader: WorkflowLoader
+    ) -> None:
+        create_workflow_definition(def_manager, loader, VALID_VARIABLE_YAML)
+        result = update_workflow_definition(
+            def_manager, loader, name="test-variable", yaml_content=VALID_RULE_YAML
+        )
+        assert result["success"] is False
+        assert "rule domain tools" in result["error"]
 
     def test_update_without_type_rejects_junk_for_existing_type(
         self, def_manager: LocalWorkflowDefinitionManager, loader: WorkflowLoader
     ) -> None:
-        create_workflow_definition(def_manager, loader, VALID_AGENT_YAML)
+        create_workflow_definition(def_manager, loader, VALID_VARIABLE_YAML)
 
         result = update_workflow_definition(
             def_manager,
             loader,
-            name="test-agent",
-            yaml_content="name: test-agent\nrole: replacement\njunk: true\n",
+            name="test-variable",
+            yaml_content="name: test-variable\nvariable: test_value\nvalue: 1\njunk: true\n",
         )
 
         assert result["success"] is False
@@ -824,7 +834,7 @@ class TestPipelineTypeFiltering:
         def_manager.create(
             name="test-rule",
             definition_json='{"name": "test-rule", "event": "stop"}',
-            workflow_type="rule",
+            workflow_type="variable",
             source="installed",
         )
         err = _require_pipeline(def_manager, name="test-rule")

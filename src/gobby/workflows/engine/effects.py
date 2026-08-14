@@ -25,7 +25,7 @@ from gobby.hooks.events import HookEvent
 from gobby.hooks.normalization import is_shell_tool
 from gobby.sessions.compact_markers import WORKFLOW_REQUESTED_SKILLS_VARIABLE
 from gobby.skills.materialization import SkillScriptMaterializer
-from gobby.storage.workflow_definitions import WorkflowDefinitionRow
+from gobby.storage.definitions.rules import RuleDefinitionRow
 from gobby.workflows.engine._offload import offload
 from gobby.workflows.engine.delivery_formatting import (
     DeliveryFormattingMixin,
@@ -99,7 +99,7 @@ class EffectsMixin(DeliveryFormattingMixin):
     async def _apply_effect(
         self,
         effect: Any,
-        row: WorkflowDefinitionRow,
+        row: RuleDefinitionRow,
         variables: dict[str, Any],
         ctx: dict[str, Any],
         allowed_funcs: dict[str, Callable[..., Any]],
@@ -396,7 +396,7 @@ class EffectsMixin(DeliveryFormattingMixin):
     async def _apply_run_command(
         self,
         effect: Any,
-        row: WorkflowDefinitionRow,
+        row: RuleDefinitionRow,
         ctx: dict[str, Any],
         context_parts: list[str],
     ) -> None:

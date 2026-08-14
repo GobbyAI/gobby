@@ -15,6 +15,7 @@ import json
 
 import pytest
 
+from gobby.storage.definitions.rules import RuleDefinitionManager
 from gobby.storage.hub.protocol import HubDatabase
 from gobby.storage.workflow_definitions import LocalWorkflowDefinitionManager
 
@@ -28,12 +29,12 @@ def db(temp_db: HubDatabase) -> HubDatabase:
 
 
 @pytest.fixture
-def def_manager(db: HubDatabase) -> LocalWorkflowDefinitionManager:
-    return LocalWorkflowDefinitionManager(db)
+def def_manager(db: HubDatabase) -> RuleDefinitionManager:
+    return RuleDefinitionManager(db)
 
 
 def _create_test_rule(
-    def_manager: LocalWorkflowDefinitionManager,
+    def_manager: RuleDefinitionManager,
     name: str = "test-rule",
     event: str = "before_tool",
     group: str = "test-group",
@@ -49,8 +50,7 @@ def _create_test_rule(
     }
     row = def_manager.create(
         name=name,
-        definition_json=json.dumps(body),
-        workflow_type="rule",
+        definition_json=body,
         enabled=enabled,
         source=source,
         tags=tags,
@@ -58,11 +58,9 @@ def _create_test_rule(
     return row.id
 
 
-def _create_test_workflow(
-    def_manager: LocalWorkflowDefinitionManager, name: str = "test-wf"
-) -> str:
+def _create_test_workflow(db: HubDatabase, name: str = "test-wf") -> str:
     """Create a non-rule workflow to verify filtering."""
-    row = def_manager.create(
+    row = LocalWorkflowDefinitionManager(db).create(
         name=name,
         definition_json=json.dumps({"name": name}),
         workflow_type="workflow",
@@ -102,7 +100,7 @@ class TestListRules:
 
     def test_returns_only_rules(self, def_manager, rule_tools) -> None:
         _create_test_rule(def_manager, name="my-rule")
-        _create_test_workflow(def_manager, name="my-workflow")
+        _create_test_workflow(def_manager.db, name="my-workflow")
 
         result = rule_tools["list_rules"]()
         assert result["success"] is True
@@ -280,7 +278,7 @@ class TestUpdateRule:
         assert result["rule"]["effects"] == [{"type": "block", "reason": "replaced"}]
 
         row = def_manager.get_by_name("my-rule")
-        body = json.loads(row.definition_json)
+        body = row.definition_json
         assert body["event"] == "turn_end"
         assert body["effects"] == [{"type": "block", "reason": "replaced"}]
 
@@ -312,7 +310,7 @@ class TestUpdateRule:
 
         # Metadata should be hoisted off the body, not duplicated inside it.
         row = def_manager.get_by_name("my-rule")
-        stored_body = json.loads(row.definition_json)
+        stored_body = row.definition_json
         assert "description" not in stored_body
         assert "priority" not in stored_body
 
@@ -345,7 +343,7 @@ class TestUpdateRule:
 
     def test_update_skips_workflows(self, def_manager, rule_tools) -> None:
         """Workflows (non-rule rows) should not be updatable through update_rule."""
-        _create_test_workflow(def_manager, name="my-wf")
+        _create_test_workflow(def_manager.db, name="my-wf")
 
         result = rule_tools["update_rule"](name="my-wf", description="x")
         assert result["success"] is False
@@ -373,10 +371,10 @@ class TestCreateRule:
         assert result["success"] is True
         assert result["rule"]["name"] == "new-rule"
 
-        # Verify it's stored as workflow_type='rule'
         row = def_manager.get_by_name("new-rule")
         assert row is not None
-        assert row.workflow_type == "rule"
+        assert row.name == "new-rule"
+        assert row.definition_json["event"] == "before_tool"
 
     def test_validates_definition(self, rule_tools) -> None:
         """Should reject invalid rule definitions."""

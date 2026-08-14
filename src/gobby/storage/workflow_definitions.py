@@ -39,10 +39,6 @@ def bump_workflow_definitions_revision() -> None:
     with _WORKFLOW_DEFINITIONS_REVISION_LOCK:
         _WORKFLOW_DEFINITIONS_REVISION += 1
 
-    from gobby.hooks.session_activation import clear_active_rule_names_cache
-
-    clear_active_rule_names_cache()
-
 
 @normalize_datetime_model(
     required=(

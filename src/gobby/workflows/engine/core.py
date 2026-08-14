@@ -27,16 +27,14 @@ from gobby.skills.materialization import (
 )
 from gobby.storage.definitions.agents import AgentDefinitionManager
 from gobby.storage.definitions.revisions import get_definitions_revision
+from gobby.storage.definitions.rules import RuleDefinitionManager, RuleDefinitionRow
 from gobby.storage.hub.protocol import HubDatabase
 from gobby.storage.pipeline_subscribers import (
     CompletionSubscriberManager,
     PipelineSubscriberStorageError,
 )
 from gobby.storage.workflow_audit import WorkflowAuditManager
-from gobby.storage.workflow_definitions import (
-    LocalWorkflowDefinitionManager,
-    WorkflowDefinitionRow,
-)
+from gobby.storage.workflow_definitions import LocalWorkflowDefinitionManager
 from gobby.telemetry.tracing import create_span
 from gobby.workflows.definitions import (
     AgentDefinitionBody,
@@ -109,7 +107,7 @@ __all__ = [
 class RuleEngine(EvaluationMixin, EffectsMixin, TemplatingMixin, EnforcementMixin):
     """Single-pass rule evaluation engine.
 
-    Loads rules from workflow_definitions (workflow_type='rule'),
+    Loads rules from rule_definitions via RuleDefinitionManager,
     applies session overrides, evaluates in priority order.
     """
 
@@ -127,6 +125,7 @@ class RuleEngine(EvaluationMixin, EffectsMixin, TemplatingMixin, EnforcementMixi
     ):
         self.db = db
         self.definition_manager = LocalWorkflowDefinitionManager(db)
+        self.rule_manager = RuleDefinitionManager(db)
         self.agent_manager = AgentDefinitionManager(db)
         self.instance_manager = AgentStepInstanceManager(db)
         self.workflow_audit = WorkflowAuditManager(db)
@@ -148,9 +147,8 @@ class RuleEngine(EvaluationMixin, EffectsMixin, TemplatingMixin, EnforcementMixi
         """Prepare skill scripts referenced by enabled rules."""
         try:
             rows = await offload(
-                self.definition_manager.list_all,
+                self.rule_manager.list_all,
                 project_id=project_id,
-                workflow_type="rule",
                 enabled=True,
             )
         except Exception:
@@ -585,13 +583,13 @@ class RuleEngine(EvaluationMixin, EffectsMixin, TemplatingMixin, EnforcementMixi
 
     def _load_rules(
         self, rule_events: list[RuleTriggerEvent]
-    ) -> list[tuple[WorkflowDefinitionRow, RuleDefinitionBody]]:
+    ) -> list[tuple[RuleDefinitionRow, RuleDefinitionBody]]:
         """Load enabled rules matching any trigger event, sorted by priority."""
-        ordered: list[tuple[int, WorkflowDefinitionRow, RuleDefinitionBody]] = []
+        ordered: list[tuple[int, RuleDefinitionRow, RuleDefinitionBody]] = []
         seen_rows: set[str] = set()
 
         for trigger_index, rule_event in enumerate(rule_events):
-            rows = self.definition_manager.list_rules_by_event(
+            rows = self.rule_manager.list_by_event(
                 event=rule_event.value,
                 enabled=True,
             )
@@ -599,7 +597,12 @@ class RuleEngine(EvaluationMixin, EffectsMixin, TemplatingMixin, EnforcementMixi
                 if row.id in seen_rows:
                     continue
                 try:
-                    body = RuleDefinitionBody.model_validate_json(row.definition_json)
+                    payload = row.definition_json
+                    body = (
+                        RuleDefinitionBody.model_validate(payload)
+                        if isinstance(payload, dict)
+                        else RuleDefinitionBody.model_validate_json(payload)
+                    )
                     ordered.append((trigger_index, row, body))
                     seen_rows.add(row.id)
                 except Exception as e:
@@ -610,9 +613,9 @@ class RuleEngine(EvaluationMixin, EffectsMixin, TemplatingMixin, EnforcementMixi
 
     def _filter_by_agent_scope(
         self,
-        rules: list[tuple[WorkflowDefinitionRow, RuleDefinitionBody]],
+        rules: list[tuple[RuleDefinitionRow, RuleDefinitionBody]],
         agent_type: str | None,
-    ) -> list[tuple[WorkflowDefinitionRow, RuleDefinitionBody]]:
+    ) -> list[tuple[RuleDefinitionRow, RuleDefinitionBody]]:
         """Filter rules by agent_scope.
 
         - Rules with no agent_scope (None) are global — always included.
@@ -631,9 +634,9 @@ class RuleEngine(EvaluationMixin, EffectsMixin, TemplatingMixin, EnforcementMixi
 
     def _filter_by_audience(
         self,
-        rules: list[tuple[WorkflowDefinitionRow, RuleDefinitionBody]],
+        rules: list[tuple[RuleDefinitionRow, RuleDefinitionBody]],
         variables: dict[str, Any],
-    ) -> list[tuple[WorkflowDefinitionRow, RuleDefinitionBody]]:
+    ) -> list[tuple[RuleDefinitionRow, RuleDefinitionBody]]:
         """Filter rules by broad runtime audience."""
         return [(row, body) for row, body in rules if self._audience_matches(body, variables)]
 
@@ -660,11 +663,11 @@ class RuleEngine(EvaluationMixin, EffectsMixin, TemplatingMixin, EnforcementMixi
 
     def _filter_by_active_rules(
         self,
-        rules: list[tuple[WorkflowDefinitionRow, RuleDefinitionBody]],
+        rules: list[tuple[RuleDefinitionRow, RuleDefinitionBody]],
         variables: dict[str, Any],
         *,
         project_id: str | None = None,
-    ) -> list[tuple[WorkflowDefinitionRow, RuleDefinitionBody]]:
+    ) -> list[tuple[RuleDefinitionRow, RuleDefinitionBody]]:
         """Filter rules using the current agent definition, falling back to session metadata."""
         agent = self._load_active_agent_definition(
             variables.get("_agent_type"),

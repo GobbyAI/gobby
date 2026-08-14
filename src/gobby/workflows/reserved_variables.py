@@ -3,7 +3,7 @@
 from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
-    from gobby.storage.workflow_definitions import WorkflowDefinitionRow
+    from gobby.storage.definitions.rules import RuleDefinitionRow
 
 RESERVED_WORKFLOW_VARIABLES = frozenset(
     {
@@ -33,7 +33,7 @@ def is_reserved_workflow_variable(name: str) -> bool:
     )
 
 
-def is_internal_rule(row: "WorkflowDefinitionRow") -> bool:
+def is_internal_rule(row: "RuleDefinitionRow") -> bool:
     """Return whether a rule comes from Gobby's trusted installed definitions."""
     tags = row.tags or []
     return (

@@ -13,6 +13,7 @@ from typing import Any
 from pydantic import ValidationError
 
 from gobby.hooks.events import HookEvent
+from gobby.storage.definitions.revisions import register_revision_listener
 from gobby.storage.hub.protocol import AgentStepInstanceMutation
 from gobby.storage.sessions import TERMINAL_SESSION_STATUSES
 
@@ -82,6 +83,9 @@ def clear_active_rule_names_cache() -> None:
     """Clear cached active-rule selector resolution."""
     with _ACTIVE_RULE_NAMES_CACHE_LOCK:
         _ACTIVE_RULE_NAMES_CACHE.clear()
+
+
+register_revision_listener("rules", clear_active_rule_names_cache)
 
 
 def _purge_expired_active_rule_names_cache(now: float) -> None:
@@ -345,7 +349,8 @@ def _resolve_active_rule_names(
     agent_name: str,
     project_id: str | None,
 ) -> set[str] | None:
-    from gobby.storage.workflow_definitions import LocalWorkflowDefinitionManager
+    from gobby.storage.definitions.agents import AgentDefinitionManager
+    from gobby.storage.definitions.rules import RuleDefinitionManager
     from gobby.workflows.definitions import AgentDefinitionBody
     from gobby.workflows.selectors import resolve_rules_for_agent
 
@@ -358,13 +363,15 @@ def _resolve_active_rule_names(
             if now - cached_at < _ACTIVE_RULE_NAMES_CACHE_TTL_SECONDS:
                 return set(active_rules)
 
-    manager = LocalWorkflowDefinitionManager(db)
-    row = manager.get_by_name(agent_name, project_id=project_id)
-    if row is None or row.workflow_type != "agent" or not row.definition_json:
+    agent_manager = AgentDefinitionManager(db)
+    row = agent_manager.get_by_name(agent_name, project_id=project_id)
+    if row is None or not row.definition_json:
         return None
 
     try:
-        data = json.loads(row.definition_json)
+        data = row.definition_json
+        if isinstance(data, str):
+            data = json.loads(data)
         if isinstance(data, dict):
             data.setdefault("name", row.name)
         agent = AgentDefinitionBody.model_validate(data)
@@ -388,7 +395,7 @@ def _resolve_active_rule_names(
         )
         return None
 
-    rules = manager.list_all(project_id=project_id, workflow_type="rule", enabled=True)
+    rules = RuleDefinitionManager(db).list_all(project_id=project_id, enabled=True)
     active_rules = resolve_rules_for_agent(agent, rules)
     now = time.monotonic()
     with _ACTIVE_RULE_NAMES_CACHE_LOCK:

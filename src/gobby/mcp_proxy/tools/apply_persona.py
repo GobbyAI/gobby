@@ -58,8 +58,9 @@ def build_persona_changes(
     )
 
     if enabled_rules is None:
-        def_manager = LocalWorkflowDefinitionManager(db)
-        enabled_rules = def_manager.list_all(workflow_type="rule", enabled=True)
+        from gobby.storage.definitions.rules import RuleDefinitionManager
+
+        enabled_rules = RuleDefinitionManager(db).list_all(enabled=True)
 
     if all_skills is None:
         skill_mgr = SkillManager(db)

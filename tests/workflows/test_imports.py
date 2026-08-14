@@ -71,3 +71,17 @@ def test_sync_imported_definition_rejects_agent_kind() -> None:
             {"name": "rogue-agent", "type": "agent", "provider": "claude"},
             None,
         )
+
+
+def test_sync_imported_definition_rejects_rule_kind() -> None:
+    with pytest.raises(ValueError, match="rule tools"):
+        sync_imported_definition(
+            None,
+            {
+                "name": "rogue-rule",
+                "type": "rule",
+                "event": "before_tool",
+                "effects": [{"type": "block", "reason": "nope"}],
+            },
+            None,
+        )

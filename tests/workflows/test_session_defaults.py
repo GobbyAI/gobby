@@ -71,7 +71,9 @@ rules:
         assert result["errors"] == []
 
         # Verify rules exist in DB
-        mgr = LocalWorkflowDefinitionManager(db)
+        from gobby.storage.definitions.rules import RuleDefinitionManager
+
+        mgr = RuleDefinitionManager(db)
         mode_rule = mgr.get_by_name("init-mode-level")
         assert mode_rule is not None
         assert mode_rule.enabled

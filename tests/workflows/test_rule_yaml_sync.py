@@ -12,8 +12,8 @@ from pathlib import Path
 import pytest
 
 from gobby.mcp_proxy.tools.workflows._rules import update_rule
+from gobby.storage.definitions.rules import RuleDefinitionManager
 from gobby.storage.hub.protocol import HubDatabase
-from gobby.storage.workflow_definitions import LocalWorkflowDefinitionManager
 from gobby.workflows.sync_rules import sync_bundled_rules
 
 pytestmark = pytest.mark.unit
@@ -27,8 +27,8 @@ def db(temp_db: HubDatabase) -> HubDatabase:
 
 
 @pytest.fixture
-def manager(db: HubDatabase) -> LocalWorkflowDefinitionManager:
-    return LocalWorkflowDefinitionManager(db)
+def manager(db: HubDatabase) -> RuleDefinitionManager:
+    return RuleDefinitionManager(db)
 
 
 @pytest.fixture
@@ -43,7 +43,7 @@ class TestSingleRuleYaml:
     """Parse a single-rule YAML file."""
 
     def test_single_rule_synced(
-        self, db: HubDatabase, manager: LocalWorkflowDefinitionManager, rules_dir: Path
+        self, db: HubDatabase, manager: RuleDefinitionManager, rules_dir: Path
     ) -> None:
         """A YAML file with one rule should create one workflow_definitions row."""
         (rules_dir / "simple.yaml").write_text(
@@ -63,14 +63,13 @@ rules:
         assert result["synced"] == 1
         assert result["errors"] == []
 
-        rows = manager.list_all(workflow_type="rule")
+        rows = manager.list_all()
         assert len(rows) == 1
         assert rows[0].name == "no-push"
-        assert rows[0].workflow_type == "rule"
         assert rows[0].source == "installed"
 
     def test_rule_definition_json_is_valid(
-        self, db: HubDatabase, manager: LocalWorkflowDefinitionManager, rules_dir: Path
+        self, db: HubDatabase, manager: RuleDefinitionManager, rules_dir: Path
     ) -> None:
         """The stored definition_json should be a valid RuleDefinitionBody."""
         (rules_dir / "simple.yaml").write_text(
@@ -86,14 +85,14 @@ rules:
         )
         sync_bundled_rules(db, rules_dir)
 
-        rows = manager.list_all(workflow_type="rule")
-        body = json.loads(rows[0].definition_json)
+        rows = manager.list_all()
+        body = rows[0].definition_json
         assert body["event"] == "before_tool"
         assert body["effects"][0]["type"] == "block"
         assert body["effects"][0]["tools"] == ["Edit"]
 
     def test_rule_enabled_defaults_true(
-        self, db: HubDatabase, manager: LocalWorkflowDefinitionManager, rules_dir: Path
+        self, db: HubDatabase, manager: RuleDefinitionManager, rules_dir: Path
     ) -> None:
         """Bundled rules are enabled by default."""
         (rules_dir / "simple.yaml").write_text(
@@ -108,11 +107,11 @@ rules:
         )
         sync_bundled_rules(db, rules_dir)
 
-        rows = manager.list_all(workflow_type="rule")
+        rows = manager.list_all()
         assert rows[0].enabled is True
 
     def test_turn_end_rule_syncs(
-        self, db: HubDatabase, manager: LocalWorkflowDefinitionManager, rules_dir: Path
+        self, db: HubDatabase, manager: RuleDefinitionManager, rules_dir: Path
     ) -> None:
         """Semantic turn_end rules should sync like any other rule event."""
         (rules_dir / "turn-end.yaml").write_text(
@@ -129,8 +128,8 @@ rules:
         result = sync_bundled_rules(db, rules_dir)
 
         assert result["synced"] == 1
-        rows = manager.list_all(workflow_type="rule")
-        body = json.loads(rows[0].definition_json)
+        rows = manager.list_all()
+        body = rows[0].definition_json
         assert body["event"] == "turn_end"
 
 
@@ -138,7 +137,7 @@ class TestMultiRuleYamlWithDefaults:
     """Parse multi-rule YAML with file-level defaults."""
 
     def test_multiple_rules_from_one_file(
-        self, db: HubDatabase, manager: LocalWorkflowDefinitionManager, rules_dir: Path
+        self, db: HubDatabase, manager: RuleDefinitionManager, rules_dir: Path
     ) -> None:
         """Multiple rules in one YAML file should create multiple rows."""
         (rules_dir / "multi.yaml").write_text(
@@ -165,12 +164,12 @@ rules:
         result = sync_bundled_rules(db, rules_dir)
 
         assert result["synced"] == 2
-        rows = manager.list_all(workflow_type="rule")
+        rows = manager.list_all()
         names = sorted(r.name for r in rows)
         assert names == ["rule-a", "rule-b"]
 
     def test_file_level_group_inherited(
-        self, db: HubDatabase, manager: LocalWorkflowDefinitionManager, rules_dir: Path
+        self, db: HubDatabase, manager: RuleDefinitionManager, rules_dir: Path
     ) -> None:
         """File-level group should be inherited by each rule."""
         (rules_dir / "grouped.yaml").write_text(
@@ -187,12 +186,12 @@ rules:
         )
         sync_bundled_rules(db, rules_dir)
 
-        rows = manager.list_all(workflow_type="rule")
-        body = json.loads(rows[0].definition_json)
+        rows = manager.list_all()
+        body = rows[0].definition_json
         assert body["group"] == "safety-rules"
 
     def test_file_level_sources_inherited(
-        self, db: HubDatabase, manager: LocalWorkflowDefinitionManager, rules_dir: Path
+        self, db: HubDatabase, manager: RuleDefinitionManager, rules_dir: Path
     ) -> None:
         """File-level sources should be set on the workflow_definitions row."""
         (rules_dir / "sourced.yaml").write_text(
@@ -209,7 +208,7 @@ rules:
         )
         sync_bundled_rules(db, rules_dir)
 
-        rows = manager.list_all(workflow_type="rule")
+        rows = manager.list_all()
         assert rows[0].sources is not None
         sources = (
             json.loads(rows[0].sources) if isinstance(rows[0].sources, str) else rows[0].sources
@@ -218,7 +217,7 @@ rules:
         assert "codex" in sources
 
     def test_file_level_tags_inherited(
-        self, db: HubDatabase, manager: LocalWorkflowDefinitionManager, rules_dir: Path
+        self, db: HubDatabase, manager: RuleDefinitionManager, rules_dir: Path
     ) -> None:
         """File-level tags should be set on the workflow_definitions row."""
         (rules_dir / "tagged.yaml").write_text(
@@ -235,7 +234,7 @@ rules:
         )
         sync_bundled_rules(db, rules_dir)
 
-        rows = manager.list_all(workflow_type="rule")
+        rows = manager.list_all()
         assert rows[0].tags is not None
 
     def test_rule_without_tags_uses_empty_list(self) -> None:
@@ -264,7 +263,7 @@ rules:
         assert manager.create.call_args.kwargs["tags"] == []
 
     def test_rule_level_priority_overrides_default(
-        self, db: HubDatabase, manager: LocalWorkflowDefinitionManager, rules_dir: Path
+        self, db: HubDatabase, manager: RuleDefinitionManager, rules_dir: Path
     ) -> None:
         """Rule-level priority should override file-level default."""
         (rules_dir / "priority.yaml").write_text(
@@ -287,7 +286,7 @@ rules:
         )
         sync_bundled_rules(db, rules_dir)
 
-        rows = manager.list_all(workflow_type="rule")
+        rows = manager.list_all()
         by_name = {r.name: r for r in rows}
         assert by_name["high-pri"].priority == 10
         assert by_name["low-pri"].priority == 90
@@ -297,7 +296,7 @@ class TestUpsertOnResync:
     """Re-running sync should update changed rules, skip unchanged."""
 
     def test_unchanged_rule_skipped(
-        self, db: HubDatabase, manager: LocalWorkflowDefinitionManager, rules_dir: Path
+        self, db: HubDatabase, manager: RuleDefinitionManager, rules_dir: Path
     ) -> None:
         """Syncing the same rule twice should skip on second run."""
         yaml_content = """
@@ -318,7 +317,7 @@ rules:
         assert result2["skipped"] == 1
 
     def test_enabled_default_flip_updates_unmodified_rule(
-        self, db: HubDatabase, manager: LocalWorkflowDefinitionManager, rules_dir: Path
+        self, db: HubDatabase, manager: RuleDefinitionManager, rules_dir: Path
     ) -> None:
         rule_file = rules_dir / "changing.yaml"
         rule_file.write_text(
@@ -337,7 +336,7 @@ rules:
         seeded = manager.get_by_name("mutable-rule")
         assert seeded is not None
         assert seeded.enabled is False
-        assert seeded.enabled_user_modified is False
+        assert seeded.enabled_pinned is False
 
         rule_file.write_text(
             """
@@ -356,10 +355,10 @@ rules:
         assert updated is not None
         assert result["updated"] == 1
         assert updated.enabled is True
-        assert updated.enabled_user_modified is False
+        assert updated.enabled_pinned is False
 
     def test_enabled_default_flip_preserves_explicit_user_disable(
-        self, db: HubDatabase, manager: LocalWorkflowDefinitionManager, rules_dir: Path
+        self, db: HubDatabase, manager: RuleDefinitionManager, rules_dir: Path
     ) -> None:
         rule_file = rules_dir / "changing.yaml"
         rule_file.write_text(
@@ -379,7 +378,7 @@ rules:
         assert response["success"] is True
         explicitly_disabled = manager.get_by_name("mutable-rule")
         assert explicitly_disabled is not None
-        assert explicitly_disabled.enabled_user_modified is True
+        assert explicitly_disabled.enabled_pinned is True
 
         rule_file.write_text(
             """
@@ -397,10 +396,10 @@ rules:
         preserved = manager.get_by_name("mutable-rule")
         assert preserved is not None
         assert preserved.enabled is False
-        assert preserved.enabled_user_modified is True
+        assert preserved.enabled_pinned is True
 
     def test_message_only_change_updates_reason_and_preserves_enabled_toggle(
-        self, db: HubDatabase, manager: LocalWorkflowDefinitionManager, rules_dir: Path
+        self, db: HubDatabase, manager: RuleDefinitionManager, rules_dir: Path
     ) -> None:
         """Syncing message drift should update the row and retain the operator toggle."""
         (rules_dir / "changing.yaml").write_text(
@@ -415,8 +414,8 @@ rules:
         )
         sync_bundled_rules(db, rules_dir)
 
-        rows = manager.list_all(workflow_type="rule")
-        body1 = json.loads(rows[0].definition_json)
+        rows = manager.list_all()
+        body1 = rows[0].definition_json
         assert body1["effects"][0]["reason"] == "Version 1."
         original_enabled = rows[0].enabled
 
@@ -436,14 +435,14 @@ rules:
         assert result2["updated"] == 1
 
         # Bundled row is refreshed, but user toggle is preserved.
-        rows = manager.list_all(workflow_type="rule")
-        body2 = json.loads(rows[0].definition_json)
+        rows = manager.list_all()
+        body2 = rows[0].definition_json
         assert body2["effects"][0]["reason"] == "Version 2."
         assert original_enabled is True
         assert rows[0].enabled is False
 
     def test_user_or_custom_rule_not_overwritten(
-        self, db: HubDatabase, manager: LocalWorkflowDefinitionManager, rules_dir: Path
+        self, db: HubDatabase, manager: RuleDefinitionManager, rules_dir: Path
     ) -> None:
         """Only bundled gobby rows should be refreshed on re-sync."""
         manager.create(
@@ -454,7 +453,6 @@ rules:
                     "effects": [{"type": "block", "reason": "Keep original user rule"}],
                 }
             ),
-            workflow_type="rule",
             source="installed",
             tags=["user"],
             enabled=True,
@@ -467,7 +465,6 @@ rules:
                     "effects": [{"type": "block", "reason": "Keep original custom rule"}],
                 }
             ),
-            workflow_type="rule",
             source="custom",
             tags=["gobby"],
             enabled=True,
@@ -498,11 +495,11 @@ rules:
         custom_row = manager.get_by_name("custom-owned-rule")
         assert user_row is not None
         assert custom_row is not None
-        assert json.loads(user_row.definition_json)["event"] == "stop"
-        assert json.loads(custom_row.definition_json)["event"] == "stop"
+        assert user_row.definition_json["event"] == "stop"
+        assert custom_row.definition_json["event"] == "stop"
 
     def test_soft_deleted_template_restored_on_resync(
-        self, db: HubDatabase, manager: LocalWorkflowDefinitionManager, rules_dir: Path
+        self, db: HubDatabase, manager: RuleDefinitionManager, rules_dir: Path
     ) -> None:
         """A soft-deleted template rule should be restored on re-sync."""
         (rules_dir / "deletable.yaml").write_text(
@@ -517,7 +514,7 @@ rules:
         )
         sync_bundled_rules(db, rules_dir)
 
-        rows = manager.list_all(workflow_type="rule")
+        rows = manager.list_all()
         manager.delete(rows[0].id)
 
         # Verify it's soft-deleted
@@ -540,7 +537,7 @@ class TestInvalidRuleYaml:
     """Invalid YAML should be skipped with errors logged."""
 
     def test_missing_event_field_skipped(
-        self, db: HubDatabase, manager: LocalWorkflowDefinitionManager, rules_dir: Path
+        self, db: HubDatabase, manager: RuleDefinitionManager, rules_dir: Path
     ) -> None:
         """A rule without 'event' should be skipped."""
         (rules_dir / "bad.yaml").write_text(
@@ -558,7 +555,7 @@ rules:
         assert len(result["errors"]) > 0
 
     def test_missing_effect_field_skipped(
-        self, db: HubDatabase, manager: LocalWorkflowDefinitionManager, rules_dir: Path
+        self, db: HubDatabase, manager: RuleDefinitionManager, rules_dir: Path
     ) -> None:
         """A rule without 'effect' should be skipped."""
         (rules_dir / "bad2.yaml").write_text(
@@ -592,7 +589,7 @@ class TestMultipleFiles:
     """Multiple rule YAML files should all be synced."""
 
     def test_rules_from_multiple_files(
-        self, db: HubDatabase, manager: LocalWorkflowDefinitionManager, rules_dir: Path
+        self, db: HubDatabase, manager: RuleDefinitionManager, rules_dir: Path
     ) -> None:
         """Rules from different YAML files should all be synced."""
         (rules_dir / "file1.yaml").write_text(
@@ -618,6 +615,6 @@ rules:
         result = sync_bundled_rules(db, rules_dir)
 
         assert result["synced"] == 2
-        rows = manager.list_all(workflow_type="rule")
+        rows = manager.list_all()
         names = sorted(r.name for r in rows)
         assert names == ["rule-from-file1", "rule-from-file2"]

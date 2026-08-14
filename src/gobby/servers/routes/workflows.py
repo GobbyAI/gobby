@@ -96,9 +96,17 @@ def create_workflows_router(server: "HTTPServer") -> APIRouter:
                 status_code=400,
                 detail="Agent definitions use /api/agents",
             )
+        if kind == "rule":
+            raise HTTPException(
+                status_code=400,
+                detail="Rule definitions use /api/rules",
+            )
 
     def _reject_agent_row(definition_id: str) -> None:
-        row = _get_manager().get(definition_id, include_deleted=True)
+        try:
+            row = _get_manager().get(definition_id, include_deleted=True)
+        except ValueError:
+            return
         _reject_agent_kind(row.workflow_type)
 
     async def _broadcast_workflow(event: str, definition_id: str, **kwargs: Any) -> None:
@@ -136,7 +144,7 @@ def create_workflows_router(server: "HTTPServer") -> APIRouter:
                 enabled=enabled,
                 include_deleted=include_deleted,
             )
-            rows = [row for row in rows if row.workflow_type != "agent"]
+            rows = [row for row in rows if row.workflow_type not in {"agent", "rule"}]
             definitions = [r.to_dict() for r in rows]
 
             # Annotate with template drift info

@@ -1,8 +1,8 @@
 #![cfg(feature = "postgres")]
 
 use gobby_core::schema::{
-    BASELINE_CHECKSUM, BASELINE_VERSION, RUNNER_PROTOCOL_VERSION, SEED_MANIFEST_JSON, SchemaRunner,
-    parse_backup_manifest, schema_identity, split_sql_statements,
+    parse_backup_manifest, schema_identity, split_sql_statements, SchemaRunner, BASELINE_CHECKSUM,
+    BASELINE_VERSION, RUNNER_PROTOCOL_VERSION, SEED_MANIFEST_JSON,
 };
 
 #[test]
@@ -17,18 +17,18 @@ fn embedded_assets_publish_a_complete_schema_identity() {
     assert_eq!(identity.runner_protocol_version, RUNNER_PROTOCOL_VERSION);
     assert_eq!(identity.baseline.version, BASELINE_VERSION);
     assert_eq!(identity.baseline.checksum, BASELINE_CHECKSUM);
-    assert_eq!(identity.latest_asset.version, 377);
+    assert_eq!(identity.latest_asset.version, 378);
     assert_eq!(
         identity.latest_asset.filename,
-        "377_copy_agent_step_instances.sql"
+        "378_copy_rule_definitions.sql"
     );
     assert_eq!(
         identity.latest_asset.checksum,
-        "43b6c25263c1e510f28c540d9cc24e62ffcad67a3a8dddde3645bdb6a5e92821"
+        "22c9e75b20c1000f364fc004fe5648ecf165922943d4c852cdf26ccbb6cdf3e8"
     );
     assert_eq!(
         identity.root_hash,
-        "30053321e3d558780358a1395f3ca8be4723cd61ccd8a0508def667bd62080ea"
+        "d2629723ac4151b6fb96a3c2975bf9edea551baaad40e0d2498b7ed71696021b"
     );
 
     let _public_runner_type = std::any::type_name::<SchemaRunner<'static>>();
