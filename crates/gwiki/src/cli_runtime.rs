@@ -122,10 +122,17 @@ fn reset_sigpipe() {}
 fn print_error(format: output::Format, error: &WikiError) {
     match format {
         output::Format::Json => {
-            let payload = json!({
-                "code": error.code(),
-                "message": error.to_string(),
-            });
+            let payload = match error {
+                WikiError::Grant { source } => json!({
+                    "error": source.cli_code(),
+                    "code": source.cli_code(),
+                    "message": source.to_string(),
+                }),
+                _ => json!({
+                    "code": error.code(),
+                    "message": error.to_string(),
+                }),
+            };
             let mut stderr = std::io::stderr().lock();
             if output::print_json(&mut stderr, &payload).is_err() {
                 eprintln!("gwiki: {error}");
@@ -145,6 +152,7 @@ fn exit_code_for_error(error: &WikiError) -> ExitCode {
         | WikiError::NotFound { .. }
         | WikiError::AlreadyExists { .. }
         | WikiError::PreconditionFailed { .. } => ExitCode::from(2),
+        WikiError::Grant { source } => ExitCode::from(source.exit_status() as u8),
         WikiError::Config { .. }
         | WikiError::Io { .. }
         | WikiError::Json { .. }

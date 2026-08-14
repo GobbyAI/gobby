@@ -54,9 +54,7 @@ pub(crate) fn require_attached_index_without_database_for_test(
 
 pub(crate) fn require_postgres_index(command: &'static str) -> Result<Client, WikiError> {
     let database_url = env::database_url_for(command)?.ok_or_else(|| WikiError::Config {
-        detail: format!(
-            "PostgreSQL index is required for {command}; configure GWIKI_DATABASE_URL or GOBBY_POSTGRES_DSN"
-        ),
+        detail: format!("PostgreSQL index is required for {command}; acquire a runtime grant"),
     })?;
 
     gobby_core::postgres::connect_readonly(&database_url).map_err(|error| WikiError::Config {
@@ -66,9 +64,7 @@ pub(crate) fn require_postgres_index(command: &'static str) -> Result<Client, Wi
 
 pub(crate) fn require_postgres_index_readwrite(command: &'static str) -> Result<Client, WikiError> {
     let database_url = env::database_url_for(command)?.ok_or_else(|| WikiError::Config {
-        detail: format!(
-            "PostgreSQL index is required for {command}; configure GWIKI_DATABASE_URL or GOBBY_POSTGRES_DSN"
-        ),
+        detail: format!("PostgreSQL index is required for {command}; acquire a runtime grant"),
     })?;
 
     gobby_core::postgres::connect_readwrite(&database_url).map_err(|error| WikiError::Config {

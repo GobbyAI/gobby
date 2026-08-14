@@ -1,3 +1,5 @@
+#![allow(dead_code)]
+
 use crate::utils::short_id;
 
 const ORPHAN_PROJECT_SUMMARY_LIMIT: usize = 8;

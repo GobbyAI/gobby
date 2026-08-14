@@ -1,3 +1,5 @@
+#![allow(dead_code)]
+
 use std::collections::HashMap;
 
 #[cfg(feature = "ai")]
@@ -51,7 +53,7 @@ pub(crate) fn read_config_layers() -> anyhow::Result<ConfigLayers> {
     }
     #[cfg(feature = "ai")]
     {
-        return Ok(layers_from_daemon_result(daemon_mode_layers()));
+        Ok(layers_from_daemon_result(daemon_mode_layers()))
     }
     #[cfg(not(feature = "ai"))]
     {

@@ -1,5 +1,7 @@
 //! Classification of projection records against the indexed-project authority.
 
+#![allow(dead_code)]
+
 use std::collections::HashSet;
 
 use crate::config;

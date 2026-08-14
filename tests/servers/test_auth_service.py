@@ -224,6 +224,47 @@ def test_agent_bearer_is_bound_to_run_identity_and_routes(
     )
 
 
+def test_projects_listing_operator_only(
+    temp_db: HubDatabase,
+    tmp_path: Path,
+    live_agent_run: AgentRun,
+) -> None:
+    token_file = tmp_path / "local_cli_token"
+    token_file.write_text("operator-token")
+    _set_api_token(temp_db, "operator-token")
+    service = AuthService(lambda: temp_db, token_file=token_file)
+    capability = issue_agent_api_token(
+        "operator-token",
+        agent_run_id=live_agent_run.id,
+        session_id="session-123",
+        project_id="project-123",
+    )
+    capability_headers = {
+        "Authorization": f"Bearer {capability}",
+        "X-Gobby-Agent-Run-Id": live_agent_run.id,
+        "X-Gobby-Session-Id": "session-123",
+        "X-Gobby-Project-Id": "project-123",
+    }
+
+    assert service.is_request_authenticated(
+        _request({"Authorization": "Bearer operator-token"}, method="GET", path="/api/projects")
+    )
+    assert not service.is_request_authenticated(_request({}, method="GET", path="/api/projects"))
+    assert not service.is_request_authenticated(
+        _request(capability_headers, method="GET", path="/api/projects")
+    )
+    assert service.is_request_authenticated(
+        _request(
+            {"Authorization": "Bearer operator-token"},
+            method="POST",
+            path="/api/code-index/prune",
+        )
+    )
+    assert not service.is_request_authenticated(
+        _request(capability_headers, method="POST", path="/api/code-index/prune")
+    )
+
+
 def test_local_token_refreshes_after_rotation(
     temp_db: HubDatabase,
     tmp_path: Path,

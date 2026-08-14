@@ -144,6 +144,31 @@ fn global_prune_discovery_uses_local_roots_and_24_hour_grace() {
 }
 
 #[test]
+fn global_prune_uses_daemon_client() {
+    let prune = include_str!("../prune.rs");
+    let shared = include_str!("../shared.rs");
+    let projects = include_str!("../projects.rs");
+    assert!(
+        prune.contains("post_code_index_prune") || prune.contains("/api/code-index/prune"),
+        "global prune must dispatch through the operator-only daemon route"
+    );
+    assert!(
+        !prune.contains("discover_global_prune")
+            || prune.contains("post_code_index_prune")
+            || prune.contains("request_global_prune"),
+        "global prune must not keep a local discovery/mutation datastore path"
+    );
+    assert!(
+        !shared.contains("fn collect_projects(") && !shared.contains("db::resolve_database_url"),
+        "shared direct-DSN helper must be deleted"
+    );
+    assert!(
+        !projects.contains("collect_projects(") && !projects.contains("db::resolve_database_url"),
+        "gcode projects must not construct a direct datastore context"
+    );
+}
+
+#[test]
 fn prune_without_project_uses_all_indexed_projection_scope() {
     assert_eq!(
         projection_cleanup_scope(None),

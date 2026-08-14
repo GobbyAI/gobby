@@ -244,6 +244,21 @@ pub(crate) fn run_with_exit_code() -> std::process::ExitCode {
                 }
                 return std::process::ExitCode::from(doctor_exit.exit_code());
             }
+            if let Some(cli_error) = error.downcast_ref::<crate::cli_error::CliError>() {
+                if let Err(print_error) = cli_error.print() {
+                    eprintln!("Error: {print_error:?}");
+                    return std::process::ExitCode::FAILURE;
+                }
+                return std::process::ExitCode::from(cli_error.exit_status);
+            }
+            if let Some(grant_error) = error.downcast_ref::<gobby_core::grant::GrantError>() {
+                let cli_error = crate::cli_error::CliError::grant(grant_error.clone());
+                if let Err(print_error) = cli_error.print() {
+                    eprintln!("Error: {print_error:?}");
+                    return std::process::ExitCode::FAILURE;
+                }
+                return std::process::ExitCode::from(cli_error.exit_status);
+            }
             eprintln!("Error: {error:?}");
             std::process::ExitCode::FAILURE
         }

@@ -2,6 +2,7 @@ use std::fmt;
 use std::path::PathBuf;
 use std::time::Duration;
 
+use gobby_core::grant::GrantError;
 use gobby_core::setup::SetupError;
 
 use crate::{indexer, search};
@@ -76,6 +77,9 @@ pub enum WikiError {
     Generation {
         detail: String,
     },
+    Grant {
+        source: GrantError,
+    },
 }
 
 impl WikiError {
@@ -99,6 +103,7 @@ impl WikiError {
             Self::Setup { .. } => "setup_error",
             Self::Freshness { .. } => "freshness_error",
             Self::Generation { .. } => "generation_error",
+            Self::Grant { source } => source.cli_code(),
         }
     }
 
@@ -181,6 +186,7 @@ impl fmt::Display for WikiError {
             Self::Index { source } => write!(f, "index: {source} ({})", self.code()),
             Self::Search { source } => write!(f, "query: {source} ({})", self.code()),
             Self::Setup { source } => write!(f, "gwiki setup failed: {source} ({})", self.code()),
+            Self::Grant { source } => write!(f, "{source}"),
         }
     }
 }
@@ -211,8 +217,15 @@ impl std::error::Error for WikiError {
             Self::Index { source } => Some(source),
             Self::Search { source } => Some(source),
             Self::Setup { source } => Some(source),
+            Self::Grant { source } => Some(source),
             _ => None,
         }
+    }
+}
+
+impl From<GrantError> for WikiError {
+    fn from(source: GrantError) -> Self {
+        Self::Grant { source }
     }
 }
 

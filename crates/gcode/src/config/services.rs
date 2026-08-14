@@ -1,3 +1,5 @@
+#![allow(dead_code)]
+
 use gobby_core::ai_context::AiContext;
 use gobby_core::config::embedding_keys;
 use gobby_core::config::{AiCapability, AiRouting, CapabilityBinding, ConfigSource};
@@ -11,7 +13,6 @@ use super::{
 };
 use crate::config::context::{
     FALKORDB_HOST_CONFIG_KEY, FALKORDB_PASSWORD_CONFIG_KEY, FALKORDB_PORT_CONFIG_KEY,
-    GOBBY_FALKORDB_HOST_ENV, GOBBY_FALKORDB_PASSWORD_ENV, GOBBY_FALKORDB_PORT_ENV,
     IndexingSettings,
 };
 use crate::config::layers::{ConfigLayers, HubConfigCapture, ServiceSource};
@@ -28,11 +29,6 @@ pub(super) trait ServiceConfigSource {
 
 pub(super) fn service_env_value(key: &str) -> Option<String> {
     let env_key = match key {
-        FALKORDB_HOST_CONFIG_KEY => GOBBY_FALKORDB_HOST_ENV,
-        FALKORDB_PORT_CONFIG_KEY => GOBBY_FALKORDB_PORT_ENV,
-        FALKORDB_PASSWORD_CONFIG_KEY => GOBBY_FALKORDB_PASSWORD_ENV,
-        "databases.qdrant.url" => "GOBBY_QDRANT_URL",
-        "databases.qdrant.api_key" => "GOBBY_QDRANT_API_KEY",
         gobby_core::config::INDEXING_RESPECT_GITIGNORE_KEY => "GOBBY_INDEXING_RESPECT_GITIGNORE",
         _ => return None,
     };

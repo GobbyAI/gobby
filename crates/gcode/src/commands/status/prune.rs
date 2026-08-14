@@ -1,3 +1,5 @@
+#![allow(dead_code)]
+
 use std::collections::{BTreeMap, HashSet};
 use std::path::{Path, PathBuf};
 
@@ -19,10 +21,7 @@ use inventory::{
     CollectionInventory, ScopeInventory, all_collection_orphan_ids, all_scope_orphan_ids,
     classify_collection_inventory, classify_scope_inventory,
 };
-use reconcile::{
-    ReconcileTotals, SweepOutcome, print_optional_reconcile_totals, print_reconcile_totals,
-    sweep_discovered_ids_with,
-};
+use reconcile::{ReconcileTotals, SweepOutcome, print_reconcile_totals, sweep_discovered_ids_with};
 
 const GLOBAL_SERVICE_CONTEXT_PROJECT_ID: &str = "00000000-0000-0000-0000-000000000000";
 const CODE_INDEX_RETENTION_HOURS: i32 = 24;
@@ -190,61 +189,21 @@ fn prune_project_scoped(
 }
 
 fn prune_global(force: bool, quiet: bool, retention_days: u32) -> anyhow::Result<()> {
-    let mut discovery = discover_global_prune(quiet, retention_days)?;
-    let pending = discovery.destructive_set();
-    if !authorize_prune_with(force, &pending, |_| confirm_global_prune(&discovery))? {
-        eprintln!("Aborted.");
-        return Ok(());
+    let _ = quiet;
+    let outcome = crate::daemon::post_code_index_prune(force, retention_days)?;
+    if !quiet {
+        eprintln!(
+            "Global prune: completed={}, failed={}, skipped={}",
+            outcome.completed.len(),
+            outcome.failed.len(),
+            outcome.skipped.len()
+        );
     }
-
-    let machine_state_totals = mutate_machine_states(&discovery);
-    print_reconcile_totals("machine_states", &machine_state_totals);
-    let registry_project_totals = mutate_registry_projects(&discovery);
-    print_reconcile_totals("registry_projects", &registry_project_totals);
-    refresh_global_projection_inventories(&mut discovery, &pending)?;
-    let collection_totals = mutate_orphan_collections(&discovery);
-    let graph_totals = mutate_orphan_graph_scopes(&discovery);
-    let content_gc_totals =
-        prune_content_versions(&discovery.services, &discovery.content_gc_candidates)?;
-    print_content_gc_totals(&content_gc_totals);
-    print_optional_reconcile_totals(
-        "Qdrant collection reconciliation",
-        discovery.services.qdrant.is_some(),
-        collection_totals.as_ref(),
-        discovery.collections.as_ref().map(|inventory| {
-            (
-                inventory.existing_orphan_ids.len(),
-                inventory.would_be_orphan_ids.len(),
-            )
-        }),
-    );
-    print_optional_reconcile_totals(
-        "Falkor graph-scope reconciliation",
-        discovery.services.falkordb.is_some(),
-        graph_totals.as_ref(),
-        discovery.graph_scopes.as_ref().map(|inventory| {
-            (
-                inventory.existing_orphan_ids.len(),
-                inventory.would_be_orphan_ids.len(),
-            )
-        }),
-    );
-    let failed = machine_state_totals.failed
-        + registry_project_totals.failed
-        + collection_totals.as_ref().map_or(0, |totals| totals.failed)
-        + graph_totals.as_ref().map_or(0, |totals| totals.failed)
-        + content_gc_totals.failed_versions;
-    if machine_state_totals.has_failures()
-        || registry_project_totals.has_failures()
-        || collection_totals
-            .as_ref()
-            .is_some_and(ReconcileTotals::has_failures)
-        || graph_totals
-            .as_ref()
-            .is_some_and(ReconcileTotals::has_failures)
-        || content_gc_totals.failed_versions > 0
-    {
-        anyhow::bail!("gcode prune completed with {failed} reconciliation failure(s)");
+    if !outcome.failed.is_empty() {
+        anyhow::bail!(
+            "gcode prune completed with {} reconciliation failure(s)",
+            outcome.failed.len()
+        );
     }
     Ok(())
 }

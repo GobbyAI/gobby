@@ -5,6 +5,8 @@
 //!
 //! Source: src/gobby/config/bootstrap.py, src/gobby/config/persistence.py
 
+#![allow(dead_code)]
+
 use std::fmt;
 use std::path::{Path, PathBuf};
 
@@ -13,15 +15,19 @@ use gobby_core::project::{find_project_root, read_project_id};
 use postgres::Client;
 use uuid::Uuid;
 
-use super::layers::{HubConfigCapture, HubConfigCaptureStatus, ServiceSource, read_config_layers};
+use super::layers::{HubConfigCapture, HubConfigCaptureStatus, ServiceSource};
 use super::services::{
     resolve_code_vector_settings_from_source, resolve_embedding_config_from_service_source,
     resolve_falkordb_config_from_source, resolve_indexing_settings_from_source,
     resolve_qdrant_config_from_source,
 };
+
+use crate::cli_error::CliError;
+use crate::daemon;
 use crate::db;
 use crate::git::{self, WorktreeKind};
 use crate::utils::short_id;
+use gobby_core::grant;
 
 /// FalkorDB connection configuration.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -318,40 +324,39 @@ impl Context {
         quiet: bool,
         services: ServiceConfigSelection,
     ) -> anyhow::Result<Self> {
-        let database_url = db::resolve_database_url()?;
         let project_root = match project_override {
-            Some(p) => {
-                let path = PathBuf::from(p);
-                if path.is_dir() {
-                    path.canonicalize()?
-                } else {
-                    // Not a directory — try name lookup in the PostgreSQL hub.
-                    resolve_project_by_name(p, &database_url)?
-                }
-            }
-            None => detect_project_root()?,
+            Some(value) => resolve_override_root(value)?,
+            None => detect_project_root().map_err(|_| CliError::project_required())?,
         };
 
-        let identity = resolve_project_identity(&project_root, MissingIdentity::Error)?;
+        let identity = match resolve_project_identity(&project_root, MissingIdentity::Error) {
+            Ok(identity) => identity,
+            Err(_) if project_override.is_none() => {
+                return Err(CliError::project_required().into());
+            }
+            Err(error) => return Err(error),
+        };
         warn_project_identity(&identity, quiet);
         let project_id = identity.project_id;
         let index_scope = identity.index_scope;
 
-        // Resolve service configs from config_store (best-effort).
-        let layers = read_config_layers()?;
+        let acquired = grant::acquire(&project_root).map_err(CliError::grant)?;
+        let database_url = db::database_url_from_acquired(&acquired)?;
+        let falkordb = services
+            .falkordb
+            .then(|| db::falkor_from_grant(&acquired.bundle))
+            .flatten();
+        let qdrant = services
+            .qdrant
+            .then(|| db::qdrant_from_grant(&acquired.bundle))
+            .flatten();
+
         let mut conn = db::connect_readonly(&database_url)?;
         validate_parent_code_index(&mut conn, &index_scope)?;
-        let (
-            falkordb,
-            qdrant,
-            embedding,
-            indexing,
-            code_vectors,
-            runtime_config_capture_degraded,
-            _config_revision,
-        ) = resolve_services(&mut conn, &layers, services)?;
-
-        let daemon_url = Some(gobby_core::daemon_url::daemon_url());
+        let embedding = None;
+        let indexing = IndexingSettings::default();
+        let code_vectors = CodeVectorSettings::default();
+        let _ = services.embedding;
 
         Ok(Self {
             database_url,
@@ -362,9 +367,9 @@ impl Context {
             qdrant,
             embedding,
             code_vectors,
-            runtime_config_capture_degraded,
+            runtime_config_capture_degraded: false,
             indexing,
-            daemon_url,
+            daemon_url: Some(gobby_core::daemon_url::daemon_url()),
             index_scope,
         })
     }
@@ -376,37 +381,17 @@ impl Context {
         services: ServiceConfigSelection,
     ) -> anyhow::Result<Self> {
         let project_id = normalize_project_id(project_id)?;
-        let database_url = db::resolve_database_url()?;
-
-        let layers = read_config_layers()?;
-        let mut conn = db::connect_readonly(&database_url)?;
-        let (
-            falkordb,
-            qdrant,
-            embedding,
-            indexing,
-            code_vectors,
-            runtime_config_capture_degraded,
-            _config_revision,
-        ) = resolve_services(&mut conn, &layers, services)?;
-
-        let daemon_url = Some(gobby_core::daemon_url::daemon_url());
-
-        Ok(Self {
-            database_url,
-            project_root: PathBuf::new(),
-            project_id,
-            quiet,
-            falkordb,
-            qdrant,
-            embedding,
-            code_vectors,
-            runtime_config_capture_degraded,
-            indexing,
-            daemon_url,
-            index_scope: ProjectIndexScope::Single,
-        })
+        let looked_up = daemon::lookup_project_by_id(&project_id)?;
+        Self::resolve_with_services(looked_up.root.to_str(), quiet, services)
     }
+}
+
+fn resolve_override_root(project_override: &str) -> anyhow::Result<PathBuf> {
+    let path = PathBuf::from(project_override);
+    if path.is_dir() {
+        return Ok(path.canonicalize()?);
+    }
+    Ok(daemon::lookup_project_by_name(project_override)?.root)
 }
 
 pub fn resolve_project_identity(

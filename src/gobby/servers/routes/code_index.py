@@ -34,6 +34,13 @@ class InvalidateIndexRequest(BaseModel):
     project_id: str
 
 
+class GlobalPruneRequest(BaseModel):
+    """Request body for POST /api/code-index/prune."""
+
+    force: bool = False
+    retention_days: int | None = None
+
+
 def _require_project_id(project_id: str | None) -> str:
     if not project_id:
         raise HTTPException(status_code=400, detail="project_id is required")
@@ -391,6 +398,16 @@ def create_code_index_router(server: HTTPServer) -> APIRouter:
         if not result.get("success", False):
             raise HTTPException(status_code=400, detail=result.get("error", "Unknown error"))
         return cast(dict[str, Any], result)
+
+    @router.post("/prune")
+    async def global_prune(body: GlobalPruneRequest | None = None) -> JSONResponse:
+        """Operator-only global prune: hub sweep plus per-project grant children."""
+        del body
+        pruner = getattr(server.services, "code_index_pruner", None)
+        if pruner is None:
+            raise HTTPException(status_code=503, detail="Code index pruner not available")
+        outcome = await pruner.run_operator_global_prune()
+        return JSONResponse(content=outcome)
 
     @router.post("/invalidate")
     async def invalidate_index(request: Request, body: InvalidateIndexRequest) -> JSONResponse:

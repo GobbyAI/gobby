@@ -61,6 +61,17 @@ class CodeIndexPruneResult(TypedDict):
     retried_projects: int
 
 
+class OperatorPruneItem(TypedDict, total=False):
+    project_id: str
+    reason: str
+
+
+class OperatorPruneOutcome(TypedDict):
+    completed: list[str]
+    failed: list[OperatorPruneItem]
+    skipped: list[OperatorPruneItem]
+
+
 class CodeIndexPruner:
     """Coordinates startup and cron gcode prune runs."""
 
@@ -116,6 +127,56 @@ class CodeIndexPruner:
         if not outcomes:
             return "Code index prune skipped: dirty=0"
         return "Code index prune completed: " + ", ".join(outcomes)
+
+    async def run_operator_global_prune(self) -> OperatorPruneOutcome:
+        """Snapshot indexed projects, reconcile projections, then delete stale hub rows."""
+        snapshot = list(await self._context.run_db(self._context.storage.list_indexed_projects))
+        completed: list[str] = []
+        failed: list[OperatorPruneItem] = []
+        skipped: list[OperatorPruneItem] = []
+
+        async def _handle(project: Any) -> None:
+            project_id = str(getattr(project, "id", "") or "")
+            root_path = str(getattr(project, "root_path", "") or "")
+            if not project_id:
+                skipped.append({"project_id": "", "reason": "missing_id"})
+                return
+            if not root_path:
+                skipped.append({"project_id": project_id, "reason": "missing_root"})
+                return
+            root = Path(root_path).expanduser()
+            outcome = await self.prune_project(
+                project_id=project_id,
+                root_path=str(root),
+                dirty=True,
+                reason="operator_global_prune",
+            )
+            if outcome.endswith(":pruned") or outcome.endswith(":deferred_pending_sync"):
+                if not root.exists():
+                    deleter = getattr(
+                        self._context.storage, "delete_stale_project_records", None
+                    ) or getattr(self._context.storage, "delete_project_index", None)
+                    if deleter is not None:
+                        await self._context.run_db(deleter, project_id)
+                completed.append(project_id)
+                return
+            if outcome.endswith(":skipped_locked") or outcome.endswith(":skipped_missing_root"):
+                skipped.append({"project_id": project_id, "reason": outcome.rsplit(":", 1)[-1]})
+                return
+            await self._context.run_db(
+                self._context.storage.mark_prune_dirty,
+                project_id,
+                root_path,
+                "operator_prune_failed",
+            )
+            failed.append({"project_id": project_id, "reason": outcome})
+
+        await asyncio.gather(*(_handle(project) for project in snapshot))
+        return {
+            "completed": completed,
+            "failed": failed,
+            "skipped": skipped,
+        }
 
     async def prune_all_projects(self) -> CodeIndexPruneResult:
         """Run global gcode prune and retry targeted projects only on failure."""

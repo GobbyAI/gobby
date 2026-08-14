@@ -47,11 +47,6 @@ fn days_to_ymd(mut days: i64) -> (i64, i64, i64) {
     (y, m, d)
 }
 
-pub(super) fn collect_projects() -> anyhow::Result<Vec<IndexedProject>> {
-    let database_url = db::resolve_database_url()?;
-    collect_projects_from(&database_url)
-}
-
 pub(super) fn collect_projects_from(database_url: &str) -> anyhow::Result<Vec<IndexedProject>> {
     let mut conn = db::connect_readonly(database_url)?;
     let mut seen_ids = std::collections::HashSet::new();

@@ -6,10 +6,10 @@ use crate::models::IndexedProject;
 use crate::output::{self, Format};
 use crate::utils::short_id;
 
-use super::shared::{collect_projects, display_name, format_coverage, format_timestamp};
+use super::shared::{display_name, format_coverage, format_timestamp};
 
 pub fn projects(format: Format) -> anyhow::Result<()> {
-    let all_projects = collect_projects()?;
+    let all_projects = crate::daemon::list_projects()?;
 
     match format {
         Format::Json => output::print_json(&all_projects),

@@ -145,7 +145,7 @@ pub fn embedding_source_from_context(ctx: &Context) -> Option<EmbeddingSource> {
     #[cfg(feature = "ai")]
     {
         let resolved = resolve_embedding_ai_context(ctx)?;
-        return embedding_source_from_resolved_ai_context(resolved.context, resolved.direct_config);
+        embedding_source_from_resolved_ai_context(resolved.context, resolved.direct_config)
     }
     #[cfg(not(feature = "ai"))]
     {
@@ -250,8 +250,7 @@ pub fn embed_text(
 ) -> Result<Vec<f32>, VectorLifecycleError> {
     #[cfg(feature = "ai")]
     {
-        return gobby_core::ai::embeddings::embed_one(client, config, text)
-            .map_err(embedding_error);
+        gobby_core::ai::embeddings::embed_one(client, config, text).map_err(embedding_error)
     }
     #[cfg(not(feature = "ai"))]
     {
@@ -274,8 +273,7 @@ pub fn embed_text_batch(
 ) -> Result<Vec<Vec<f32>>, VectorLifecycleError> {
     #[cfg(feature = "ai")]
     {
-        return gobby_core::ai::embeddings::embed_batch(client, config, texts)
-            .map_err(embedding_error);
+        gobby_core::ai::embeddings::embed_batch(client, config, texts).map_err(embedding_error)
     }
     #[cfg(not(feature = "ai"))]
     {

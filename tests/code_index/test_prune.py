@@ -54,6 +54,7 @@ class PruneStorage:
         self.marked_dirty: list[tuple[str, str, str]] = []
         self.cleared_dirty: list[str] = []
         self.failures: list[tuple[str, str]] = []
+        self.deleted_hub: list[str] = []
 
     def list_prune_dirty_projects(
         self,
@@ -96,6 +97,10 @@ class PruneStorage:
 
     def record_prune_failure(self, project_id: str, error: str) -> None:
         self.failures.append((project_id, error))
+
+    def delete_stale_project_records(self, project_id: str) -> None:
+        self.deleted_hub.append(project_id)
+        self.projects = [project for project in self.projects if getattr(project, "id", "") != project_id]
 
 
 class PruneGateway:

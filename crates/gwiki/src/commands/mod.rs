@@ -44,8 +44,55 @@ use crate::{
 };
 
 pub(crate) fn run(command: Command, run_options: RunOptions) -> Result<CommandOutcome, WikiError> {
+    if let Some(root) = command_project_root(&command) {
+        crate::support::env::set_active_project_root(Some(root));
+    }
     let project_lock = project_admission::acquire_command_lock(&command)?;
     run_with_project_lock(project_lock, || dispatch(command, run_options))
+}
+
+fn command_project_root(command: &Command) -> Option<std::path::PathBuf> {
+    match command {
+        Command::Init { scope }
+        | Command::Setup { scope, .. }
+        | Command::Index { scope, .. }
+        | Command::Collect { scope }
+        | Command::IngestFile { scope, .. }
+        | Command::IngestUrl { scope, .. }
+        | Command::SyncSessions { scope, .. }
+        | Command::Refresh { scope, .. }
+        | Command::Sources { scope }
+        | Command::RemoveSource { scope, .. }
+        | Command::Search { scope, .. }
+        | Command::Ask { scope, .. }
+        | Command::Read { scope, .. }
+        | Command::Pages { scope, .. }
+        | Command::PageWrite { scope, .. }
+        | Command::PageDelete { scope, .. }
+        | Command::Backlinks { scope, .. }
+        | Command::LinkSuggest { scope, .. }
+        | Command::Benchmark { scope, .. }
+        | Command::Compile { scope, .. }
+        | Command::Export { scope, .. }
+        | Command::Graph { scope, .. }
+        | Command::GraphContext { scope }
+        | Command::ReviewReport { scope, .. }
+        | Command::Audit { scope }
+        | Command::Lint { scope }
+        | Command::Normalize { scope, .. }
+        | Command::Health { scope }
+        | Command::Librarian { scope, .. }
+        | Command::Upkeep { scope, .. }
+        | Command::Recap { scope, .. }
+        | Command::Status { scope }
+        | Command::Trust { scope }
+        | Command::CitationQuality { scope } => scope.project_root().map(Path::to_path_buf),
+        Command::Purge { target, .. } => match target {
+            crate::PurgeTarget::Selection(scope) => scope.project_root().map(Path::to_path_buf),
+            crate::PurgeTarget::ProjectId(_) => None,
+        },
+        Command::Code(_) | Command::Prune { .. } => None,
+    }
 }
 
 fn dispatch(command: Command, run_options: RunOptions) -> Result<CommandOutcome, WikiError> {

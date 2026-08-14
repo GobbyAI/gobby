@@ -4,87 +4,63 @@
 const DEFAULT_MAX_INBOX_ITEM_BYTES: u64 = 500_000_000;
 
 use crate::error::WikiError;
-use gobby_core::ai::effective_config::{EffectiveConfigError, daemon_dsn};
-use gobby_core::provisioning::{StandaloneConfig, gcore_config_path};
-use gobby_core::runtime_mode::{RuntimeMode, runtime_mode};
-use std::path::{Path, PathBuf};
+use gobby_core::grant::{AcquiredGrant, GrantError, PostgresCapability, acquire};
+use std::cell::RefCell;
+use std::path::PathBuf;
 
-const GWIKI_DATABASE_URL_ENV: &str = "GWIKI_DATABASE_URL";
-const GOBBY_POSTGRES_DSN_ENV: &str = "GOBBY_POSTGRES_DSN";
-
-pub(crate) fn database_url() -> anyhow::Result<Option<String>> {
-    database_url_from_sources(
-        database_url_from_env(),
-        runtime_mode()?,
-        gobby_core::gobby_home,
-        daemon_dsn,
-    )
+thread_local! {
+    static ACTIVE_PROJECT_ROOT: RefCell<Option<PathBuf>> = const { RefCell::new(None) };
 }
 
-fn database_url_from_sources(
-    env_database_url: Option<String>,
-    mode: RuntimeMode,
-    home: impl FnOnce() -> anyhow::Result<PathBuf>,
-    daemon_dsn: impl FnOnce() -> Result<Option<String>, EffectiveConfigError>,
-) -> anyhow::Result<Option<String>> {
-    if let Some(database_url) = env_database_url {
-        return Ok(Some(database_url));
-    }
+pub(crate) fn set_active_project_root(root: Option<PathBuf>) {
+    ACTIVE_PROJECT_ROOT.with(|slot| *slot.borrow_mut() = root);
+}
 
-    let home = home()?;
-    if mode == RuntimeMode::Daemon
-        && let Some(database_url) = non_empty_trimmed(daemon_dsn()?)
-    {
-        return Ok(Some(database_url));
-    }
-
-    let bootstrap_path = home.join("bootstrap.yaml");
-    match gobby_core::bootstrap::postgres_database_url_from_bootstrap_file(&bootstrap_path) {
-        Ok(Some(database_url)) => return Ok(Some(database_url)),
-        Ok(None) => {}
-        Err(error) => {
-            log::debug!(
-                "failed to resolve gwiki database URL from bootstrap file {}: {error}",
-                bootstrap_path.display()
-            );
-        }
-    }
-    match mode {
-        RuntimeMode::Daemon => Ok(None),
-        RuntimeMode::Standalone => resolve_database_url_from_gcore_config(&home),
-    }
+pub(crate) fn database_url() -> anyhow::Result<Option<String>> {
+    let grant = acquire_runtime_grant()?;
+    Ok(Some(postgres_dsn_from_grant(&grant)?))
 }
 
 pub(crate) fn database_url_for(command: &str) -> Result<Option<String>, WikiError> {
-    database_url().map_err(|error| WikiError::Config {
-        detail: format!("failed to resolve PostgreSQL hub for {command}: {error}"),
+    database_url().map_err(|error| {
+        if let Some(grant) = error.downcast_ref::<GrantError>() {
+            return WikiError::from(grant.clone());
+        }
+        if let Some(grant) = error.downcast_ref::<WikiError>() {
+            return match grant {
+                WikiError::Grant { source } => WikiError::from(source.clone()),
+                other => WikiError::Config {
+                    detail: format!("failed to resolve PostgreSQL hub for {command}: {other}"),
+                },
+            };
+        }
+        WikiError::Config {
+            detail: format!("failed to resolve PostgreSQL hub for {command}: {error}"),
+        }
     })
 }
 
-pub(crate) fn database_url_from_env() -> Option<String> {
-    [GWIKI_DATABASE_URL_ENV, GOBBY_POSTGRES_DSN_ENV]
-        .into_iter()
-        .find_map(|name| {
-            std::env::var(name)
-                .ok()
-                .map(|value| value.trim().to_string())
-                .filter(|value| !value.is_empty())
+fn acquire_runtime_grant() -> Result<AcquiredGrant, GrantError> {
+    let root = project_root_for_grant().ok_or(GrantError::DaemonRequired)?;
+    acquire(root)
+}
+
+fn project_root_for_grant() -> Option<PathBuf> {
+    ACTIVE_PROJECT_ROOT
+        .with(|slot| slot.borrow().clone())
+        .or_else(|| {
+            let cwd = std::env::current_dir().ok()?;
+            gobby_core::project::find_project_root(&cwd)
         })
 }
 
-fn resolve_database_url_from_gcore_config(home: &Path) -> anyhow::Result<Option<String>> {
-    let Some(config) = StandaloneConfig::read_at(&gcore_config_path(home))? else {
-        return Ok(None);
-    };
-    Ok(config
-        .get("databases.postgres.dsn")
-        .and_then(|value| non_empty_trimmed(Some(value.to_string()))))
-}
-
-fn non_empty_trimmed(value: Option<String>) -> Option<String> {
-    value
-        .map(|value| value.trim().to_string())
-        .filter(|value| !value.is_empty())
+fn postgres_dsn_from_grant(grant: &AcquiredGrant) -> Result<String, GrantError> {
+    match &grant.bundle.capabilities.postgres {
+        PostgresCapability::Direct { dsn, .. } if !dsn.trim().is_empty() => Ok(dsn.clone()),
+        _ => Err(GrantError::Malformed(
+            "postgres capability is not a direct DSN".into(),
+        )),
+    }
 }
 
 pub(crate) fn max_inbox_item_bytes_from_env() -> u64 {
@@ -104,7 +80,6 @@ fn parse_positive_u64(raw: &str) -> Option<u64> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use std::fs;
 
     #[test]
     fn positive_u64_env_parser_rejects_invalid_values() {
@@ -116,144 +91,24 @@ mod tests {
     }
 
     #[test]
-    fn database_url_logs_bad_bootstrap_and_falls_back_to_gcore_config() {
-        let home = tempfile::tempdir().expect("create home");
-        fs::write(home.path().join("bootstrap.yaml"), "database_url: [")
-            .expect("write bad bootstrap");
-        fs::write(
-            home.path().join("gcore.yaml"),
-            "databases:\n  postgres:\n    dsn: postgresql://gcore.example/gobby\n",
-        )
-        .expect("write gcore config");
-        let resolved = database_url_from_sources(
-            None,
-            RuntimeMode::Standalone,
-            || Ok(home.path().to_path_buf()),
-            || panic!("standalone mode must bypass daemon DSN resolution"),
-        )
-        .expect("resolve database url")
-        .expect("gcore database url");
-
-        assert_eq!(resolved, "postgresql://gcore.example/gobby");
-    }
-
-    #[test]
-    fn database_url_sources_prefer_environment_then_daemon() {
-        let home = tempfile::tempdir().expect("create home");
-        fs::write(
-            home.path().join("bootstrap.yaml"),
-            "database_url: postgresql://bootstrap.example/gobby\n",
-        )
-        .expect("write bootstrap");
-        fs::write(
-            home.path().join("gcore.yaml"),
-            "databases:\n  postgres:\n    dsn: postgresql://gcore.example/gobby\n",
-        )
-        .expect("write gcore config");
-
-        let env = database_url_from_sources(
-            Some("postgresql://env.example/gobby".to_string()),
-            RuntimeMode::Daemon,
-            || panic!("environment must bypass Gobby home"),
-            || panic!("environment must bypass daemon DSN"),
-        )
-        .expect("environment database url");
-        assert_eq!(env.as_deref(), Some("postgresql://env.example/gobby"));
-
-        let daemon = database_url_from_sources(
-            None,
-            RuntimeMode::Daemon,
-            || Ok(home.path().to_path_buf()),
-            || Ok(Some(" postgresql://daemon.example/gobby ".to_string())),
-        )
-        .expect("daemon database url");
-        assert_eq!(daemon.as_deref(), Some("postgresql://daemon.example/gobby"));
-
-        let bootstrap = database_url_from_sources(
-            None,
-            RuntimeMode::Daemon,
-            || Ok(home.path().to_path_buf()),
-            || Ok(None),
-        )
-        .expect("bootstrap database url");
-        assert_eq!(
-            bootstrap.as_deref(),
-            Some("postgresql://bootstrap.example/gobby")
-        );
-
-        let blank_daemon = database_url_from_sources(
-            None,
-            RuntimeMode::Daemon,
-            || Ok(home.path().to_path_buf()),
-            || Ok(Some(" \n\t".to_string())),
-        )
-        .expect("blank daemon database url");
-        assert_eq!(
-            blank_daemon.as_deref(),
-            Some("postgresql://bootstrap.example/gobby")
-        );
-    }
-
-    #[test]
-    fn daemon_dsn_error_stops_before_bootstrap_and_gcore_yaml() {
-        let home = tempfile::tempdir().expect("create home");
-        fs::write(
-            home.path().join("bootstrap.yaml"),
-            "database_url: postgresql://bootstrap.example/gobby\n",
-        )
-        .expect("write bootstrap");
-        fs::write(
-            home.path().join("gcore.yaml"),
-            "databases:\n  postgres:\n    dsn: postgresql://gcore.example/gobby\n",
-        )
-        .expect("write gcore config");
-
-        let error = database_url_from_sources(
-            None,
-            RuntimeMode::Daemon,
-            || Ok(home.path().to_path_buf()),
-            || {
-                Err(
-                    gobby_core::ai::effective_config::EffectiveConfigError::Contract {
-                        key: "databases.postgres.dsn".to_string(),
-                        reason: "test contract failure",
-                    },
-                )
-            },
-        )
-        .expect_err("daemon DSN error");
-
-        assert!(error.to_string().contains("test contract failure"));
-    }
-
-    #[test]
-    fn daemon_mode_excludes_gcore_yaml_and_standalone_skips_daemon_dsn() {
-        let home = tempfile::tempdir().expect("create home");
-        fs::write(
-            home.path().join("gcore.yaml"),
-            "databases:\n  postgres:\n    dsn: postgresql://gcore.example/gobby\n",
-        )
-        .expect("write gcore config");
-
-        let daemon = database_url_from_sources(
-            None,
-            RuntimeMode::Daemon,
-            || Ok(home.path().to_path_buf()),
-            || Ok(None),
-        )
-        .expect("daemon database url");
-        assert_eq!(daemon, None);
-
-        let standalone = database_url_from_sources(
-            None,
-            RuntimeMode::Standalone,
-            || Ok(home.path().to_path_buf()),
-            || panic!("standalone mode must bypass daemon DSN resolution"),
-        )
-        .expect("standalone database url");
-        assert_eq!(
-            standalone.as_deref(),
-            Some("postgresql://gcore.example/gobby")
-        );
+    fn env_and_bootstrap_dsn_helpers_are_gone() {
+        let source = include_str!("env.rs");
+        let production = source
+            .split("#[cfg(test)]")
+            .next()
+            .expect("production source");
+        for forbidden in [
+            "GWIKI_DATABASE_URL",
+            "GOBBY_POSTGRES_DSN",
+            "database_url_from_sources",
+            "postgres_database_url_from_bootstrap_file",
+            "daemon_dsn",
+        ] {
+            assert!(
+                !production.contains(forbidden),
+                "gwiki env.rs still contains {forbidden}"
+            );
+        }
+        assert!(source.contains("acquire("));
     }
 }

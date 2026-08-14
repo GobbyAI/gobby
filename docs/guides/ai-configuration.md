@@ -1,5 +1,12 @@
 # AI Configuration
 
+gcode and gwiki require a live Gobby daemon to issue a runtime grant before any
+datastore or AI work. With no grant and no daemon, both binaries fail with the
+typed **daemon required** error and never open PostgreSQL, FalkorDB, or Qdrant.
+Connection material comes only from the grant; `GCODE_DATABASE_URL`,
+`GWIKI_DATABASE_URL`, `GOBBY_POSTGRES_DSN`, and related service environment
+variables are not consulted.
+
 Gobby CLI tools route AI by capability. Each capability can use the daemon,
 a direct OpenAI-compatible HTTP endpoint, or stay off. Direct endpoints can be
 cloud OpenAI-compatible APIs, a faster-whisper server, or a local text/vision

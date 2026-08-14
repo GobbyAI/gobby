@@ -33,6 +33,8 @@ pub(crate) mod visibility;
 extern crate self as gobby_code;
 
 mod cli;
+mod cli_error;
+mod daemon;
 mod dispatch;
 
 #[cfg(test)]

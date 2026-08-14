@@ -9,7 +9,7 @@ use gobby_core::provisioning::{
 use gobby_core::setup::{SetupContext, StandaloneSetup};
 use serde_json::json;
 
-use crate::support::env::{database_url_for, database_url_from_env};
+use crate::support::env::database_url_for;
 use crate::support::scope::{resolve_command_scope, resolved_scope_identity};
 use crate::support::text::postgres_object_kind;
 use crate::{
@@ -56,7 +56,7 @@ pub(crate) fn execute(
         let mut ensure_options = EnsureHubOptions::new(home.clone());
         ensure_options.service_options = service_options.clone();
         ensure_options.provision_services = !options.no_services;
-        if let Some(database_url) = options.database_url.clone().or_else(database_url_from_env) {
+        if let Some(database_url) = options.database_url.clone() {
             ensure_options.candidate_database_urls.push(database_url);
         }
         let (database_url, service_report) =
