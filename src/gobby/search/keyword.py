@@ -90,7 +90,9 @@ _TABLE_CONFIGS: dict[str, _TableConfig] = {
         postgres_columns=("content", "tags_text"),
         filters={"project_id": "project_id", "is_global": "is_global"},
         active_clause="deleted_at IS NULL",
-        tie_break_columns=("created_at", "id"),
+        # id is unique; extra ORDER BY columns are not in memories_search_bm25 and
+        # disable ParadeDB Top-K (a 25-way Dream UNION ALL then misses its 30s budget).
+        tie_break_columns=("id",),
     ),
     "skills": _TableConfig(
         table="skills",
