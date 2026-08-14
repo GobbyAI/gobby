@@ -37,6 +37,7 @@ CONTEXT_HANDOFF_RULES = {
     "clear-pending-context-reset-on-start",
     "inject-previous-session-summary",
     "inject-compact-handoff",
+    "inject-compact-handoff-on-prompt",
     "inject-task-context-on-start",
     "inject-wiki-overview",
     "preserve-context-on-compact",
@@ -310,6 +311,158 @@ class TestInjectCompactHandoff:
             variables={"session_summary": "Prior-window summary"},
         )
         assert not (empty_ledger.context and "Durable Tool-Call Evidence" in empty_ledger.context)
+
+    def test_prompt_rule_event_and_effect(self, db, manager) -> None:
+        _sync_bundled(db)
+        row = manager.get_by_name("inject-compact-handoff-on-prompt")
+        assert row is not None
+        body = RuleDefinitionBody.model_validate_json(row.definition_json)
+        assert body.event.value == "turn_start"
+        assert body.when is not None
+        assert "compact_handoff_inject_pending" in body.when
+        assert body.effects is not None
+        effects = body.effects
+        assert effects[0].type == "inject_context"
+        template = effects[0].template
+        assert template is not None
+        assert "<!-- gobby:injected-context:begin -->" in template
+        assert "<!-- gobby:injected-context:end -->" in template
+        assert "Continuation Context" in template
+        assert "wiki_overview" in template
+        assert "user_profile_content" in template
+        assert "task_context" in template
+        assert effects[1].type == "set_variable"
+        assert effects[1].variable == "compact_handoff_inject_pending"
+        assert effects[1].value is False
+        assert effects[2].variable == "pending_context_reset"
+        assert effects[2].value is False
+
+    @pytest.mark.asyncio
+    async def test_prompt_path_injects_handoff_wiki_profile_task_and_skills(
+        self, db: HubDatabase
+    ) -> None:
+        _sync_bundled(db)
+        engine = RuleEngine(db)
+        event = HookEvent(
+            event_type=HookEventType.BEFORE_AGENT,
+            session_id=SESSION_ID,
+            source=SessionSource.GROK,
+            timestamp=datetime.now(UTC),
+            data={},
+        )
+        first = await engine.evaluate(
+            event,
+            session_id=SESSION_ID,
+            variables={
+                "compact_handoff_inject_pending": True,
+                "plan_mode": True,
+                "session_summary": "Grok compact continuation UNIQUE_SUMMARY",
+                "mcp_calls": {
+                    "gobby-sessions": ["compact_self"],
+                    "gobby-tasks": ["claim_task"],
+                },
+                "compact_resume_required_skills": ["tasks"],
+                "compact_resume_advisory_skills": ["restraint"],
+                "wiki_overview": "Wiki UNIQUE_WIKI",
+                "user_profile_content": "Profile UNIQUE_PROFILE",
+                "task_context": "Task UNIQUE_TASK",
+            },
+        )
+        assert first.context is not None
+        assert "<!-- gobby:injected-context:begin -->" in first.context
+        assert "Grok compact continuation UNIQUE_SUMMARY" in first.context
+        assert "Durable Tool-Call Evidence" in first.context
+        assert "`gobby-sessions`: compact_self" in first.context
+        assert "Required Skill Reload" in first.context
+        assert '{"name":"tasks"}' in first.context
+        assert "Advisory Skill Reload" in first.context
+        assert "`restraint`" in first.context
+        assert "Wiki UNIQUE_WIKI" in first.context
+        assert "Profile UNIQUE_PROFILE" in first.context
+        assert "Task UNIQUE_TASK" in first.context
+
+    @pytest.mark.asyncio
+    async def test_prompt_path_omits_profile_for_spawned_agent(self, db: HubDatabase) -> None:
+        _sync_bundled(db)
+        engine = RuleEngine(db)
+        event = HookEvent(
+            event_type=HookEventType.BEFORE_AGENT,
+            session_id=SESSION_ID,
+            source=SessionSource.GROK,
+            timestamp=datetime.now(UTC),
+            data={},
+        )
+        spawned = await engine.evaluate(
+            event,
+            session_id=SESSION_ID,
+            variables={
+                "compact_handoff_inject_pending": True,
+                "plan_mode": True,
+                "is_spawned_agent": True,
+                "session_summary": "Spawned continuation UNIQUE_SPAWNED",
+                "user_profile_content": "Profile UNIQUE_SPAWNED_PROFILE",
+                "wiki_overview": "Wiki UNIQUE_SPAWNED_WIKI",
+            },
+        )
+        assert spawned.context is not None
+        assert "Spawned continuation UNIQUE_SPAWNED" in spawned.context
+        assert "Wiki UNIQUE_SPAWNED_WIKI" in spawned.context
+        assert "Profile UNIQUE_SPAWNED_PROFILE" not in spawned.context
+        assert "## Global User Profile" not in spawned.context
+
+    @pytest.mark.asyncio
+    async def test_prompt_path_skips_when_pending_false(self, db: HubDatabase) -> None:
+        _sync_bundled(db)
+        engine = RuleEngine(db)
+        event = HookEvent(
+            event_type=HookEventType.BEFORE_AGENT,
+            session_id=SESSION_ID,
+            source=SessionSource.GROK,
+            timestamp=datetime.now(UTC),
+            data={},
+        )
+        skipped = await engine.evaluate(
+            event,
+            session_id=SESSION_ID,
+            variables={
+                "compact_handoff_inject_pending": False,
+                "plan_mode": True,
+                "session_summary": "Should not inject UNIQUE_SKIP",
+            },
+        )
+        assert not (skipped.context and "UNIQUE_SKIP" in skipped.context)
+        assert not (skipped.context and "Continuation Context" in skipped.context)
+
+    @pytest.mark.asyncio
+    async def test_prompt_path_is_one_shot(self, db: HubDatabase) -> None:
+        _sync_bundled(db)
+        engine = RuleEngine(db)
+        event = HookEvent(
+            event_type=HookEventType.BEFORE_AGENT,
+            session_id=SESSION_ID,
+            source=SessionSource.GROK,
+            timestamp=datetime.now(UTC),
+            data={},
+        )
+        variables: dict[str, Any] = {
+            "compact_handoff_inject_pending": True,
+            "pending_context_reset": True,
+            "plan_mode": True,
+            "session_summary": "One-shot UNIQUE_ONCE",
+            "compact_resume_required_skills": ["tasks"],
+            "compact_resume_advisory_skills": ["restraint"],
+        }
+        first = await engine.evaluate(event, session_id=SESSION_ID, variables=variables)
+        assert first.context is not None
+        assert "One-shot UNIQUE_ONCE" in first.context
+        assert variables["compact_handoff_inject_pending"] is False
+        assert variables["pending_context_reset"] is False
+        assert variables["compact_resume_required_skills"] == []
+        assert variables["compact_resume_advisory_skills"] == []
+
+        second = await engine.evaluate(event, session_id=SESSION_ID, variables=variables)
+        assert not (second.context and "One-shot UNIQUE_ONCE" in second.context)
+        assert not (second.context and "Continuation Context" in second.context)
 
 
 # ═══════════════════════════════════════════════════════════════════════
