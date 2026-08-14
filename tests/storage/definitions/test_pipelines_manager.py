@@ -45,6 +45,7 @@ def test_crud_duplicate_scope_and_canvas_version(definition_db: PostgresHubDatab
     assert moved.project_id == _PROJECT
     copy = manager.duplicate(moved.id, "lint-copy")
     assert copy.name == "lint-copy"
+    assert copy.definition_json["name"] == "lint-copy"
     assert copy.project_id == _PROJECT
     assert copy.canvas_json == {"x": 2}
     with pytest.raises(DefinitionNameConflictError):
@@ -64,4 +65,16 @@ def test_pipeline_live_conflict_and_restore(definition_db: PostgresHubDatabase) 
         manager.restore(first.id)
     manager.hard_delete(replacement.id)
     restored = manager.restore(first.id)
-    assert restored.definition_json == {"steps": []}
+    assert restored.definition_json == {"name": "build", "steps": []}
+
+
+def test_create_and_rename_rewrite_payload_name(definition_db: PostgresHubDatabase) -> None:
+    manager = _mgr(definition_db)
+    created = manager.create(
+        name="lint",
+        definition_json={"name": "stale-name", "steps": [{"run": "ruff"}]},
+    )
+    assert created.definition_json["name"] == "lint"
+    renamed = manager.update(created.id, name="lint-v2")
+    assert renamed.name == "lint-v2"
+    assert renamed.definition_json["name"] == "lint-v2"

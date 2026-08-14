@@ -116,12 +116,6 @@ def create_variable_definitions_router(server: HTTPServer) -> APIRouter:
             raise HTTPException(status_code=400, detail=f"Invalid variable: {e}") from e
         try:
             manager = _get_manager()
-            existing = await server.run_db(manager.get_by_name, request.name)
-            if existing is not None:
-                raise HTTPException(
-                    status_code=409,
-                    detail=f"Variable '{request.name}' already exists",
-                )
             row = await server.run_db(
                 manager.create,
                 name=request.name,

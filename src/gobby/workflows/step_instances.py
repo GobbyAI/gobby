@@ -119,10 +119,10 @@ def _row_to_instance(row: Any) -> AgentStepInstance:
 
 def _cas_matches(
     existing: AgentStepInstance,
-    if_match: tuple[str | None, datetime],
+    if_match: tuple[str, datetime],
 ) -> bool:
-    expected_lineage, expected_updated = if_match
-    return existing.agent_step_workflow_id == expected_lineage and to_aware_utc(
+    expected_id, expected_updated = if_match
+    return str(existing.id) == str(expected_id) and to_aware_utc(
         existing.updated_at
     ) == to_aware_utc(expected_updated)
 
@@ -149,7 +149,7 @@ class AgentStepInstanceManager:
         self,
         instance: AgentStepInstance,
         *,
-        if_match: tuple[str | None, datetime] | None = None,
+        if_match: tuple[str, datetime] | None = None,
     ) -> None:
         """Upsert mutable fields. Snapshot, lineage, created_at, and agent_name stay put."""
         if not is_session_uuid(instance.session_id):
@@ -171,8 +171,7 @@ class AgentStepInstanceManager:
                     )
                 if if_match is not None and not _cas_matches(existing, if_match):
                     raise StaleStepInstanceWriteError(
-                        f"stale save for session {instance.session_id}: "
-                        "agent_step_workflow_id or updated_at mismatch"
+                        f"stale save for session {instance.session_id}: id or updated_at mismatch"
                     )
                 persisted = self._update_mutable(txn, instance)
             instance.id = persisted.id

@@ -117,28 +117,6 @@ CREATE TABLE IF NOT EXISTS agent_step_workflows (
     created_at timestamptz DEFAULT now() NOT NULL,
     updated_at timestamptz DEFAULT now() NOT NULL
 );
-
-CREATE TABLE IF NOT EXISTS rule_definitions (
-    id uuid PRIMARY KEY,
-    project_id uuid,
-    name text NOT NULL,
-    description text,
-    workflow_type text DEFAULT 'workflow'::text NOT NULL,
-    version text DEFAULT '1.0'::text,
-    enabled boolean DEFAULT true,
-    enabled_user_modified boolean DEFAULT false NOT NULL,
-    priority integer DEFAULT 100,
-    sources jsonb,
-    definition_json jsonb NOT NULL,
-    canvas_json jsonb,
-    source text DEFAULT 'installed'::text,
-    tags jsonb,
-    deleted_at timestamptz,
-    created_at timestamptz DEFAULT now() NOT NULL,
-    updated_at timestamptz DEFAULT now() NOT NULL
-);
-ALTER TABLE rule_definitions
-    ADD CONSTRAINT idx_wf_defs_name_project UNIQUE NULLS NOT DISTINCT (name, project_id, source);
 """
 
 

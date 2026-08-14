@@ -318,7 +318,7 @@ class TestCreateDefinition:
     def test_create_duplicate_name_fails(self, client: TestClient) -> None:
         client.post("/api/agents/definitions", json={"name": "dup"})
         response = client.post("/api/agents/definitions", json={"name": "dup"})
-        assert response.status_code == 500
+        assert response.status_code == 409
 
     def test_create_with_tags_and_enabled(self, client: TestClient) -> None:
         response = client.post(
@@ -330,6 +330,47 @@ class TestCreateDefinition:
         definition = response.json()["definition"]
         assert definition["tags"] == ["review", "qa"]
         assert definition["enabled"] is False
+
+    def test_create_with_steps_persists_parent_and_child(self, client: TestClient) -> None:
+        response = client.post(
+            "/api/agents/definitions",
+            json={
+                "name": "steppy",
+                "step_workflow": {
+                    "variables": {"goal": "ship"},
+                    "exit_condition": "done",
+                    "steps": [{"name": "claim"}],
+                },
+            },
+        )
+        assert response.status_code == 200
+        definition = response.json()["definition"]
+        assert definition["step_workflow_id"] is not None
+        body = AgentDefinitionBody.model_validate_json(definition["definition_json"])
+        assert body.step_workflow is not None
+        assert body.step_workflow.steps[0].name == "claim"
+
+    def test_create_with_steps_rolls_back_when_child_write_fails(
+        self, client: TestClient, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        def _boom(*_args: object, **_kwargs: object) -> bool:
+            raise RuntimeError("child write failed")
+
+        monkeypatch.setattr("gobby.storage.definitions.agents._write_child", _boom)
+        response = client.post(
+            "/api/agents/definitions",
+            json={
+                "name": "atomic-agent",
+                "step_workflow": {
+                    "steps": [{"name": "claim"}],
+                },
+            },
+        )
+        assert response.status_code == 500
+        listed = client.get("/api/agents/definitions")
+        assert listed.status_code == 200
+        names = {row["name"] for row in listed.json()["definitions"]}
+        assert "atomic-agent" not in names
 
 
 # ---------------------------------------------------------------------------
@@ -468,6 +509,33 @@ class TestImportDefinition:
         data = response.json()
         assert data["status"] == "success"
         assert data["definition"]["name"] == "importable"
+
+    def test_import_with_steps_is_atomic(self, client: TestClient, tmp_path: Path) -> None:
+        agents_dir = tmp_path / "agents"
+        agents_dir.mkdir()
+        (agents_dir / "stepped.yaml").write_text(
+            "name: stepped\n"
+            "provider: claude\n"
+            "mode: autonomous\n"
+            "step_workflow:\n"
+            "  exit_condition: done\n"
+            "  steps:\n"
+            "    - name: claim\n"
+        )
+
+        with patch(
+            "gobby.agents.sync.get_bundled_agents_path",
+            return_value=agents_dir,
+        ):
+            response = client.post("/api/agents/definitions/import/stepped")
+
+        assert response.status_code == 200
+        definition = response.json()["definition"]
+        assert definition["name"] == "stepped"
+        assert definition["step_workflow_id"] is not None
+        body = AgentDefinitionBody.model_validate_json(definition["definition_json"])
+        assert body.step_workflow is not None
+        assert body.step_workflow.steps[0].name == "claim"
 
     def test_import_not_found(self, client: TestClient, tmp_path: Path) -> None:
         agents_dir = tmp_path / "agents"

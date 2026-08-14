@@ -3,15 +3,17 @@
 from __future__ import annotations
 
 import importlib
+from pathlib import Path
 from unittest.mock import patch
 
 import pytest
 from starlette.testclient import TestClient
 
 from gobby.config.app import DaemonConfig
+from gobby.storage.definitions._shared import compute_definition_hash
 from gobby.storage.definitions.variables import SessionVariableDefaultManager
 from gobby.storage.hub.protocol import HubDatabase
-from gobby.storage.definitions._shared import compute_definition_hash
+from gobby.storage.projects import LocalProjectManager
 from gobby.workflows.template_hashes import TemplateHashCache
 from tests.servers.conftest import create_http_server
 
@@ -94,6 +96,31 @@ def test_restore_from_template_uses_kind_cache(
         resp = client.post(f"/api/variables/{row.id}/restore-from-template")
     assert resp.status_code == 200
     assert resp.json()["variable"]["value"] == "bundled"
+
+
+def test_create_project_override_when_global_exists(
+    client: TestClient,
+    temp_db: HubDatabase,
+    tmp_path: Path,
+) -> None:
+    global_resp = client.post(
+        "/api/variables",
+        json={"name": "shared_var", "value": "global"},
+    )
+    assert global_resp.status_code == 200
+    project = LocalProjectManager(temp_db).create(
+        name="var-override-proj",
+        repo_path=str(tmp_path),
+    )
+    resp = client.post(
+        "/api/variables",
+        json={"name": "shared_var", "value": "project", "project_id": project.id},
+    )
+    assert resp.status_code == 200
+    created = resp.json()["variable"]
+    assert created["name"] == "shared_var"
+    assert created["project_id"] == project.id
+    assert created["value"] == "project"
 
 
 def test_unknown_variable_is_404(client: TestClient) -> None:

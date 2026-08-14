@@ -664,6 +664,16 @@ def test_definition_delete_set_null_keeps_snapshot_enforcement(
     assert remaining.snapshot.exit_condition == "done"
     assert remaining.snapshot.steps[0].allowed_tools == ["Read"]
 
+    before = remaining.updated_at
+    cas_token = (str(remaining.id), before)
+    remaining.variables = {**remaining.variables, "progress": 1}
+    AgentStepInstanceManager(typed_snap_db).save(remaining, if_match=cas_token)
+    after_cas = AgentStepInstanceManager(typed_snap_db).get_for_session(S1)
+    assert after_cas is not None
+    assert after_cas.agent_step_workflow_id is None
+    assert after_cas.variables["progress"] == 1
+    assert after_cas.updated_at != before
+
     incomplete = first_incomplete_step_workflow(typed_snap_db, S1)
     assert incomplete is not None
     assert incomplete.exit_condition == "done"
@@ -1024,9 +1034,7 @@ def test_compact_end_retains_instance_expired_end_deletes(
         def __init__(self) -> None:
             self.logger = MagicMock()
             self._session_manager = None
-            self._workflow_handler = cast(
-                Any, SimpleNamespace(rule_engine=RuleEngine(db=snap_db))
-            )
+            self._workflow_handler = cast(Any, SimpleNamespace(rule_engine=RuleEngine(db=snap_db)))
             self._session_storage = MagicMock()
             self._session_coordinator = None
             self._session_end_auto_link_worker = None

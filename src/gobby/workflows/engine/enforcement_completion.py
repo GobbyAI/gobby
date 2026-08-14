@@ -257,7 +257,7 @@ class EnforcementCompletionMixin:
         if step is None or instance is None:
             return None
         definition = instance.snapshot
-        cas_token = (instance.agent_step_workflow_id, instance.updated_at)
+        cas_token = (str(instance.id), instance.updated_at)
 
         tool_name = event.data.get("tool_name", "")
         tool_input = event.data.get("tool_input") or {}
@@ -428,7 +428,7 @@ class EnforcementCompletionMixin:
                     )
                 except StaleStepInstanceWriteError:
                     return None
-                cas_token = (instance.agent_step_workflow_id, instance.updated_at)
+                cas_token = (str(instance.id), instance.updated_at)
 
                 # Reset consecutive-tool-block counters so failures from the
                 # previous step don't bleed into the new one

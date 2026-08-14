@@ -16,7 +16,7 @@ from fastapi.responses import Response
 from pydantic import BaseModel, Field, ValidationError, field_validator, model_validator
 
 from gobby.agents.reasoning import normalize_reasoning_effort
-from gobby.storage.definitions import DefinitionNotFoundError
+from gobby.storage.definitions import DefinitionNameConflictError, DefinitionNotFoundError
 from gobby.storage.hub.protocol import WorkflowDefinitionMutation
 
 if TYPE_CHECKING:
@@ -399,18 +399,20 @@ def create_agents_router(server: "HTTPServer") -> APIRouter:
             dumped = body.model_dump(mode="json")
 
             manager = _get_manager()
-            row = manager.create(
-                name=body.name,
-                definition_json=dumped,
+            row = manager.upsert_with_steps(
+                body.name,
+                dumped,
+                dumped.get("step_workflow"),
                 project_id=request.project_id,
                 description=body.description,
                 source="installed",
                 enabled=body.enabled,
                 tags=request.tags,
+                create_only=True,
             )
-            if dumped.get("step_workflow") is not None:
-                row = manager.set_step_workflow(row.id, dumped["step_workflow"])
             return {"status": "success", "definition": row.to_dict()}
+        except DefinitionNameConflictError as e:
+            raise HTTPException(status_code=409, detail=str(e)) from e
         except Exception as e:
             logger.exception("Error creating agent definition: %s", e)
             raise HTTPException(status_code=500, detail="Internal server error") from e
@@ -845,19 +847,21 @@ def create_agents_router(server: "HTTPServer") -> APIRouter:
             body = AgentDefinitionBody.model_validate(data)
             manager = _get_manager()
             dumped = body.model_dump(mode="json")
-            row = manager.create(
-                name=body.name,
-                definition_json=dumped,
+            row = manager.upsert_with_steps(
+                body.name,
+                dumped,
+                dumped.get("step_workflow"),
                 project_id=project_id,
                 description=body.description,
                 source="installed",
                 enabled=body.enabled,
+                create_only=True,
             )
-            if dumped.get("step_workflow") is not None:
-                row = manager.set_step_workflow(row.id, dumped["step_workflow"])
             return {"status": "success", "definition": row.to_dict()}
         except HTTPException:
             raise
+        except DefinitionNameConflictError as e:
+            raise HTTPException(status_code=409, detail=str(e)) from e
         except Exception as e:
             logger.exception("Error importing agent definition '%s': %s", name, e)
             raise HTTPException(status_code=500, detail="Internal server error") from e

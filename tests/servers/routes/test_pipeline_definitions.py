@@ -11,10 +11,10 @@ import pytest
 from starlette.testclient import TestClient
 
 from gobby.config.app import DaemonConfig
+from gobby.storage.definitions._shared import compute_definition_hash
 from gobby.storage.definitions.pipelines import PipelineDefinitionManager
 from gobby.storage.hub.protocol import HubDatabase
 from gobby.storage.projects import LocalProjectManager
-from gobby.storage.definitions._shared import compute_definition_hash
 from gobby.workflows.template_hashes import TemplateHashCache
 from tests.servers.conftest import create_http_server
 
@@ -214,7 +214,14 @@ def test_duplicate_import_export_restore(
         json={"new_name": "copy-pipe"},
     )
     assert duplicated.status_code == 200
-    assert duplicated.json()["definition"]["name"] == "copy-pipe"
+    copied = duplicated.json()["definition"]
+    assert copied["name"] == "copy-pipe"
+    payload = (
+        json.loads(copied["definition_json"])
+        if isinstance(copied["definition_json"], str)
+        else copied["definition_json"]
+    )
+    assert payload["name"] == "copy-pipe"
 
     exported = client.get(f"/api/pipelines/definitions/{row.id}/export")
     assert exported.status_code == 200
@@ -278,6 +285,31 @@ def test_restore_from_template_and_moves(
     globalized = client.post(f"/api/pipelines/definitions/{row.id}/move-to-global")
     assert globalized.status_code == 200
     assert globalized.json()["definition"]["project_id"] is None
+
+
+def test_create_project_override_when_global_exists(
+    client: TestClient,
+    pipe_manager: PipelineDefinitionManager,
+    temp_db: HubDatabase,
+    tmp_path: Path,
+) -> None:
+    _create_pipeline(pipe_manager, name="shared-pipe")
+    project = LocalProjectManager(temp_db).create(
+        name="override-proj",
+        repo_path=str(tmp_path),
+    )
+    resp = client.post(
+        "/api/pipelines/definitions",
+        json={
+            "name": "shared-pipe",
+            "project_id": project.id,
+            "definition_json": json.dumps({**SAMPLE_PIPELINE, "name": "shared-pipe"}),
+        },
+    )
+    assert resp.status_code == 200
+    created = resp.json()["definition"]
+    assert created["project_id"] == project.id
+    assert created["name"] == "shared-pipe"
 
 
 def test_unknown_definition_is_404(client: TestClient) -> None:

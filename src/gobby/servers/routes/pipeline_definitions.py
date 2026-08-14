@@ -288,14 +288,6 @@ def create_pipeline_definitions_router(server: HTTPServer) -> APIRouter:
             raise HTTPException(status_code=400, detail=f"Invalid definition_json: {e}") from e
         try:
             manager = _get_manager()
-            existing = await server.run_db(
-                manager.get_by_name, request.name, project_id=request.project_id
-            )
-            if existing is not None:
-                raise HTTPException(
-                    status_code=409,
-                    detail=f"Pipeline definition '{request.name}' already exists",
-                )
             canvas = None if request.canvas_json is None else json.loads(request.canvas_json)
             row = await server.run_db(
                 manager.create,

@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import json
 from collections.abc import Mapping
 from dataclasses import dataclass
 from datetime import datetime
@@ -34,6 +35,22 @@ from gobby.utils.datetime import normalize_datetime_model, utc_now
 
 _TABLE = "pipeline_definitions"
 _WHAT = "Pipeline definition"
+
+
+def canonicalize_pipeline_definition(
+    name: str, definition_json: Mapping[str, Any] | str
+) -> dict[str, Any]:
+    """Force payload identity to match the row name."""
+    if isinstance(definition_json, str):
+        payload: Any = json.loads(definition_json)
+    else:
+        payload = dict(definition_json)
+    if not isinstance(payload, dict):
+        raise ValueError("pipeline definition_json must be an object")
+    payload["name"] = name
+    return payload
+
+
 _UPDATE_FIELDS = frozenset(
     {
         "name",
@@ -108,6 +125,7 @@ class PipelineDefinitionManager:
     ) -> PipelineDefinitionRow:
         definition_id = new_definition_id()
         now = utc_now()
+        definition_json = canonicalize_pipeline_definition(name, definition_json)
         with self.db.transaction() as txn:
             assert_live_name_free(txn, _TABLE, name, project_id, what=_WHAT)
             insert_definition_row(
@@ -207,14 +225,23 @@ class PipelineDefinitionManager:
                 values[key] = value
         if not values:
             return self.get(definition_id)
+        current = self.get(definition_id)
+        target_name = str(values["name"]) if "name" in values else current.name
+        if "definition_json" in values:
+            values["definition_json"] = encode_json_value(
+                canonicalize_pipeline_definition(target_name, values["definition_json"])
+            )
+        elif "name" in values:
+            values["definition_json"] = encode_json_value(
+                canonicalize_pipeline_definition(target_name, current.definition_json)
+            )
         values["updated_at"] = utc_now()
         with self.db.transaction() as txn:
             if "name" in values:
-                current = self.get(definition_id)
                 assert_live_name_free(
                     txn,
                     _TABLE,
-                    str(values["name"]),
+                    target_name,
                     current.project_id,
                     exclude_id=definition_id,
                     what=_WHAT,

@@ -343,7 +343,7 @@ def test_stale_save_after_persona_replacement_rejected(instance_db: PostgresHubD
     with pytest.raises(StaleStepInstanceWriteError):
         manager.save(
             stale,
-            if_match=(stale.agent_step_workflow_id, stale.updated_at),
+            if_match=(str(stale.id), stale.updated_at),
         )
 
     after = manager.get_for_session(S1)
@@ -385,7 +385,7 @@ def test_save_rejects_agent_identity_change(instance_db: PostgresHubDatabase) ->
     with pytest.raises(StaleStepInstanceWriteError):
         manager.save(
             again,
-            if_match=(again.agent_step_workflow_id, again.updated_at),
+            if_match=(str(again.id), again.updated_at),
         )
 
     final = manager.get_for_session(S1)

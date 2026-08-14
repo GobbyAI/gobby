@@ -181,6 +181,7 @@ class PipelineLoader(PipelineLoaderSyncMixin):
             detect_override_conflict(row, mgr.get_by_name(name, project_id=None))
         try:
             data = _row_definition_dict(row)
+            data["name"] = row.name
 
             if "extends" in data:
                 parent_name = data["extends"]

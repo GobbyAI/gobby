@@ -745,12 +745,12 @@ fn apply_pending_migrations(
         applied.insert(version);
     }
 
-    let mut count = 0;
+    let pending: Vec<&EmbeddedMigration> = migrations
+        .iter()
+        .filter(|migration| !applied.contains(&migration.version))
+        .collect();
     let fresh_lineage = lineage.is_fresh_lineage();
-    for migration in migrations {
-        if applied.contains(&migration.version) {
-            continue;
-        }
+    for migration in &pending {
         let destructive = has_directive(migration.sql, "-- gobby:destructive");
         let non_transactional = has_directive(migration.sql, "-- gobby:non-transactional");
         if destructive && !destructive_authorized && !fresh_lineage {
@@ -765,6 +765,12 @@ fn apply_pending_migrations(
                 migration.filename
             )));
         }
+    }
+
+    let mut count = 0;
+    for migration in pending {
+        let destructive = has_directive(migration.sql, "-- gobby:destructive");
+        let non_transactional = has_directive(migration.sql, "-- gobby:non-transactional");
         if destructive && fresh_lineage {
             stamp_receipt_only(client, &table, migration)?;
         } else if non_transactional {

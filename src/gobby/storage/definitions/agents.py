@@ -9,6 +9,7 @@ from datetime import datetime
 from typing import Any
 
 from gobby.storage.definitions._shared import (
+    DefinitionNameConflictError,
     DefinitionNotFoundError,
     DefinitionSource,
     apply_definition_update,
@@ -525,11 +526,15 @@ class AgentDefinitionManager:
         enabled: bool = True,
         tags: list[str] | None = None,
         description: str | None = None,
+        create_only: bool = False,
     ) -> AgentDefinitionRow:
         parent_body = _parent_body(body_json)
         now = utc_now()
         with self.db.transaction() as txn:
             existing = _find_live(txn, name, project_id)
+            if existing is not None and create_only:
+                scope = "global" if project_id is None else f"project {project_id}"
+                raise DefinitionNameConflictError(f"{_WHAT} {name!r} already exists in {scope}")
             if existing is None:
                 definition_id = new_definition_id()
                 insert_definition_row(

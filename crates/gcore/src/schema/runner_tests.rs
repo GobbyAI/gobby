@@ -48,6 +48,20 @@ static GUARDED_MIGRATION: EmbeddedMigration = EmbeddedMigration {
 };
 static GUARDED_MIGRATIONS: &[EmbeddedMigration] = &[GUARDED_MIGRATION];
 
+static COPY_THEN_FENCE: EmbeddedMigration = EmbeddedMigration {
+    version: 376,
+    filename: "376_copy_probe.sql",
+    checksum: "7ec5f3b7cf557fcee6903676bc89a7ff89ed0c1100e44775e5df1a01d3c38689",
+    sql: "CREATE TABLE copy_probe (id integer);\n",
+};
+static DESTRUCTIVE_AFTER_COPY: EmbeddedMigration = EmbeddedMigration {
+    version: 377,
+    filename: "377_destructive_probe.sql",
+    checksum: "c5824af6e3aa4151609e330dca97948d7ba3a22293248883d5fc4d335165638e",
+    sql: "-- gobby:destructive\nCREATE TABLE drop_probe (id integer);\n",
+};
+static COPY_THEN_DESTRUCTIVE: &[EmbeddedMigration] = &[COPY_THEN_FENCE, DESTRUCTIVE_AFTER_COPY];
+
 static DATABASE_TEST_LOCK: Mutex<()> = Mutex::new(());
 
 const GCODE_RLS_TABLES: [&str; 10] = [
@@ -997,6 +1011,50 @@ fn existing_lineage_still_refuses_unauthorized_destructive_migration() -> anyhow
         .query_one("SELECT to_regclass('gate_probe') IS NOT NULL", &[])?
         .get(0);
     assert!(!table_exists);
+    Ok(())
+}
+
+#[test]
+fn unauthorized_destructive_in_pending_batch_applies_nothing() -> anyhow::Result<()> {
+    let _serial = DATABASE_TEST_LOCK
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner);
+    let Some((_database, mut client)) = test_database()? else {
+        return Ok(());
+    };
+    SchemaRunner::with_migrations_for_test(&mut client, "public", &[])?.apply()?;
+
+    assert_eq!(
+        super::assets::sha256_hex(COPY_THEN_FENCE.sql.as_bytes()),
+        COPY_THEN_FENCE.checksum
+    );
+    assert_eq!(
+        super::assets::sha256_hex(DESTRUCTIVE_AFTER_COPY.sql.as_bytes()),
+        DESTRUCTIVE_AFTER_COPY.checksum
+    );
+
+    let error =
+        SchemaRunner::with_migrations_for_test(&mut client, "public", COPY_THEN_DESTRUCTIVE)?
+            .apply()
+            .expect_err("pending destructive must preflight-fail before any copy applies");
+    assert!(error.to_string().contains("verified hub backup"));
+
+    let copy_exists: bool = client
+        .query_one("SELECT to_regclass('copy_probe') IS NOT NULL", &[])?
+        .get(0);
+    let drop_exists: bool = client
+        .query_one("SELECT to_regclass('drop_probe') IS NOT NULL", &[])?
+        .get(0);
+    assert!(
+        !copy_exists,
+        "copy migration must not commit before the rejected destructive"
+    );
+    assert!(!drop_exists);
+    assert_eq!(migration_receipt_count(&mut client, &COPY_THEN_FENCE)?, 0);
+    assert_eq!(
+        migration_receipt_count(&mut client, &DESTRUCTIVE_AFTER_COPY)?,
+        0
+    );
     Ok(())
 }
 

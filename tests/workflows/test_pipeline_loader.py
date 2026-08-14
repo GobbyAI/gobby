@@ -73,6 +73,35 @@ async def test_load_and_discover_pipelines(temp_db: HubDatabase) -> None:
 
 
 @pytest.mark.asyncio
+async def test_loader_uses_row_name_when_payload_name_differs(temp_db: HubDatabase) -> None:
+    manager = PipelineDefinitionManager(temp_db)
+    row = manager.create(
+        name="canonical-pipe",
+        definition_json={
+            "name": "canonical-pipe",
+            "type": "pipeline",
+            "steps": [{"id": "s1", "exec": "echo hi"}],
+        },
+    )
+    temp_db.execute(
+        "UPDATE pipeline_definitions SET definition_json = %s WHERE id = %s",
+        (
+            json.dumps(
+                {
+                    "name": "stale-embedded-name",
+                    "type": "pipeline",
+                    "steps": [{"id": "s1", "exec": "echo hi"}],
+                }
+            ),
+            row.id,
+        ),
+    )
+    loaded = await PipelineLoader(db=temp_db).load_pipeline("canonical-pipe")
+    assert loaded is not None
+    assert loaded.name == "canonical-pipe"
+
+
+@pytest.mark.asyncio
 async def test_extends_resolution_and_cycle(temp_db: HubDatabase) -> None:
     _seed_pipeline(
         temp_db,
