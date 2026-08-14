@@ -97,9 +97,22 @@ impl GrantError {
         matches!(self, Self::Malformed(message) if message == "stale_epoch")
     }
 
-    fn is_retryable_presentation(&self) -> bool {
+    pub fn is_retryable_presentation(&self) -> bool {
         self.is_stale_epoch()
             || matches!(self, Self::Malformed(message) if message == "invalid_signature")
+    }
+
+    pub fn from_presentation_http(status: u16, body: &str) -> Option<Self> {
+        if body.contains("revoked") {
+            return Some(Self::Revoked);
+        }
+        if status == 409 || body.contains("stale_epoch") {
+            return Some(Self::Malformed("stale_epoch".to_string()));
+        }
+        if body.contains("invalid_signature") {
+            return Some(Self::Malformed("invalid_signature".to_string()));
+        }
+        None
     }
 }
 
@@ -147,6 +160,8 @@ pub struct AcquireRequest<'a> {
     pub session_id: Option<String>,
     pub deadline: Option<Duration>,
     pub stale_lock_after: Option<Duration>,
+    pub managed_bootstrap: Option<&'a Path>,
+    pub managed_envelope: Option<&'a str>,
 }
 
 impl<'a> AcquireRequest<'a> {
@@ -159,6 +174,8 @@ impl<'a> AcquireRequest<'a> {
             session_id: None,
             deadline: None,
             stale_lock_after: None,
+            managed_bootstrap: None,
+            managed_envelope: None,
         }
     }
 }
@@ -173,6 +190,8 @@ struct AcquireCtx {
     session_id: Option<String>,
     deadline: Instant,
     stale_lock_after: Duration,
+    managed_bootstrap: Option<PathBuf>,
+    managed_envelope: Option<String>,
 }
 
 pub fn acquire(project_root: impl AsRef<Path>) -> Result<AcquiredGrant, GrantError> {
@@ -182,7 +201,7 @@ pub fn acquire(project_root: impl AsRef<Path>) -> Result<AcquiredGrant, GrantErr
 pub fn acquire_with(request: &AcquireRequest<'_>) -> Result<AcquiredGrant, GrantError> {
     let ctx = AcquireCtx::from_request(request)?;
     handshake::reject_remote_endpoint(&ctx.daemon_url)?;
-    if let Some(path) = managed_bootstrap_path() {
+    if let Some(path) = managed_bootstrap_path(&ctx) {
         return acquire_managed(&ctx, &path);
     }
     acquire_interactive(&ctx)
@@ -192,13 +211,26 @@ pub fn acquire_with(request: &AcquireRequest<'_>) -> Result<AcquiredGrant, Grant
 /// rejection triggers exactly one locked re-handshake, cache replace, and retry.
 pub fn present_with_single_retry<T, F>(
     request: &AcquireRequest<'_>,
-    mut present: F,
+    present: F,
 ) -> Result<T, GrantError>
 where
     F: FnMut(&GrantBundle) -> Result<T, GrantError>,
 {
     let acquired = acquire_with(request)?;
-    match present(&acquired.bundle) {
+    present_bundle_with_single_retry(request, &acquired.bundle, present)
+}
+
+/// Present an already-acquired grant. Restart/takeover stale-epoch or rotated
+/// signature errors force exactly one re-handshake and retry.
+pub fn present_bundle_with_single_retry<T, F>(
+    request: &AcquireRequest<'_>,
+    grant: &GrantBundle,
+    mut present: F,
+) -> Result<T, GrantError>
+where
+    F: FnMut(&GrantBundle) -> Result<T, GrantError>,
+{
+    match present(grant) {
         Ok(value) => Ok(value),
         Err(error) if error.is_retryable_presentation() => {
             let refreshed = force_rehandshake(request)?;
@@ -280,8 +312,8 @@ pub fn fetch_runtime_config(
     );
     let response = handshake::http_json("GET", &url, None, bearer, Some(grant), timeout)?;
     if !(200..300).contains(&response.status) {
-        if response.status == 403 && response.body.contains("revoked") {
-            return Err(GrantError::Revoked);
+        if let Some(error) = GrantError::from_presentation_http(response.status, &response.body) {
+            return Err(error);
         }
         if response.status == 401 {
             return Err(GrantError::Expired);
@@ -323,6 +355,8 @@ impl AcquireCtx {
             session_id: request.session_id.clone(),
             deadline: Instant::now() + request.deadline.unwrap_or(DEFAULT_DEADLINE),
             stale_lock_after: request.stale_lock_after.unwrap_or(DEFAULT_STALE_LOCK),
+            managed_bootstrap: request.managed_bootstrap.map(Path::to_path_buf),
+            managed_envelope: request.managed_envelope.map(str::to_string),
         })
     }
 
@@ -440,7 +474,7 @@ fn force_rehandshake(request: &AcquireRequest<'_>) -> Result<AcquiredGrant, Gran
     if !ctx.reachable() {
         return Err(GrantError::DaemonRequired);
     }
-    if let Some(path) = managed_bootstrap_path() {
+    if let Some(path) = managed_bootstrap_path(&ctx) {
         let destination = path.to_path_buf();
         let lock_path = grant_lock_path(&destination);
         let _lock = lock_with_deadline(&lock_path, ctx.stale_lock_after, ctx.deadline)?;
@@ -464,23 +498,10 @@ fn finish_loaded(
     managed: bool,
 ) -> Result<AcquiredGrant, GrantError> {
     if grant.is_expired(ctx.now) {
-        return refresh_or_fail(ctx, Some(&grant), source, destination, managed, true);
+        return refresh_or_fail(ctx, Some(&grant), source, destination, managed, true, None);
     }
-    if grant.past_half_ttl(ctx.now) && ctx.reachable() {
-        let lock_path = grant_lock_path(&destination);
-        if let Some(_lock) = try_lock(&lock_path)? {
-            let refreshed = refresh_or_fail(
-                ctx,
-                Some(&grant),
-                source,
-                destination.clone(),
-                managed,
-                false,
-            );
-            if let Ok(acquired) = refreshed {
-                return Ok(acquired);
-            }
-        }
+    if let Some(acquired) = maybe_proactive_refresh(ctx, &grant, source, &destination, managed) {
+        return Ok(acquired);
     }
     let reachable = ctx.reachable();
     let settings = matching_settings(&destination, &grant);
@@ -502,23 +523,10 @@ fn finish_loaded_with_settings(
     managed: bool,
 ) -> Result<AcquiredGrant, GrantError> {
     if grant.is_expired(ctx.now) {
-        return refresh_or_fail(ctx, Some(&grant), source, destination, managed, true);
+        return refresh_or_fail(ctx, Some(&grant), source, destination, managed, true, None);
     }
-    if grant.past_half_ttl(ctx.now) && ctx.reachable() {
-        let lock_path = grant_lock_path(&destination);
-        if let Some(_lock) = try_lock(&lock_path)? {
-            let refreshed = refresh_or_fail(
-                ctx,
-                Some(&grant),
-                source,
-                destination.clone(),
-                managed,
-                false,
-            );
-            if let Ok(acquired) = refreshed {
-                return Ok(acquired);
-            }
-        }
+    if let Some(acquired) = maybe_proactive_refresh(ctx, &grant, source, &destination, managed) {
+        return Ok(acquired);
     }
     Ok(AcquiredGrant {
         bundle: grant,
@@ -529,6 +537,29 @@ fn finish_loaded_with_settings(
     })
 }
 
+fn maybe_proactive_refresh(
+    ctx: &AcquireCtx,
+    grant: &GrantBundle,
+    source: GrantSource,
+    destination: &Path,
+    managed: bool,
+) -> Option<AcquiredGrant> {
+    if !(grant.past_half_ttl(ctx.now) && ctx.reachable()) {
+        return None;
+    }
+    let lock = try_lock(&grant_lock_path(destination)).ok().flatten()?;
+    refresh_or_fail(
+        ctx,
+        Some(grant),
+        source,
+        destination.to_path_buf(),
+        managed,
+        false,
+        Some(lock),
+    )
+    .ok()
+}
+
 fn refresh_or_fail(
     ctx: &AcquireCtx,
     existing: Option<&GrantBundle>,
@@ -536,6 +567,7 @@ fn refresh_or_fail(
     destination: PathBuf,
     managed: bool,
     mandatory: bool,
+    held_lock: Option<GrantFileLock>,
 ) -> Result<AcquiredGrant, GrantError> {
     if managed {
         let _ = managed_envelope(ctx, existing)?;
@@ -558,11 +590,17 @@ fn refresh_or_fail(
         };
     }
     let lock_path = grant_lock_path(&destination);
-    let _lock = if mandatory {
-        lock_with_deadline(&lock_path, ctx.stale_lock_after, ctx.deadline)?
+    let _lock = if held_lock.is_some() {
+        held_lock
+    } else if mandatory {
+        Some(lock_with_deadline(
+            &lock_path,
+            ctx.stale_lock_after,
+            ctx.deadline,
+        )?)
     } else {
         match try_lock(&lock_path)? {
-            Some(lock) => lock,
+            Some(lock) => Some(lock),
             None => {
                 let grant = existing.cloned().ok_or(GrantError::DaemonRequired)?;
                 let settings = matching_settings(&destination, &grant);
@@ -597,21 +635,30 @@ fn refresh_or_fail(
             existing.map(|grant| grant.deployment.token.as_str()),
             false,
         )
-        .or_else(|error| {
-            if error.is_stale_epoch() {
-                handshake_interactive(
-                    ctx,
-                    existing.map(|grant| grant.deployment.token.as_str()),
-                    false,
-                )
-            } else {
-                Err(error)
-            }
-        })
+    }
+}
+
+fn with_presentation_retry<T, F>(mut op: F) -> Result<T, GrantError>
+where
+    F: FnMut() -> Result<T, GrantError>,
+{
+    match op() {
+        Ok(value) => Ok(value),
+        Err(error) if error.is_retryable_presentation() => op(),
+        Err(error) => Err(error),
     }
 }
 
 fn handshake_interactive(
+    ctx: &AcquireCtx,
+    expected_deployment: Option<&str>,
+    verify_derived: bool,
+) -> Result<AcquiredGrant, GrantError> {
+    let expected = expected_deployment.map(ToOwned::to_owned);
+    with_presentation_retry(|| handshake_interactive_once(ctx, expected.as_deref(), verify_derived))
+}
+
+fn handshake_interactive_once(
     ctx: &AcquireCtx,
     expected_deployment: Option<&str>,
     verify_derived: bool,
@@ -631,12 +678,11 @@ fn handshake_interactive(
         None,
         ctx.deadline,
     )?;
-    let expected_ref = expected.as_deref();
     validate_grant(
         &grant,
         &ctx.project_id,
         &ctx.machine_id,
-        expected_ref,
+        expected.as_deref(),
         false,
     )?;
     persist_interactive(ctx, grant, &token)
@@ -646,9 +692,12 @@ fn managed_envelope(
     ctx: &AcquireCtx,
     existing: Option<&GrantBundle>,
 ) -> Result<(String, CapabilityClaims), GrantError> {
-    let envelope =
-        std::env::var(crate::local_token::AGENT_API_TOKEN_ENV).map_err(|_| GrantError::Expired)?;
-    let envelope = envelope.trim();
+    let owned = match ctx.managed_envelope.as_deref() {
+        Some(envelope) => envelope.to_string(),
+        None => std::env::var(crate::local_token::AGENT_API_TOKEN_ENV)
+            .map_err(|_| GrantError::Expired)?,
+    };
+    let envelope = owned.trim();
     if envelope.is_empty() {
         return Err(GrantError::Expired);
     }
@@ -667,6 +716,14 @@ fn managed_envelope(
 }
 
 fn handshake_managed(
+    ctx: &AcquireCtx,
+    existing: Option<&GrantBundle>,
+    destination: PathBuf,
+) -> Result<AcquiredGrant, GrantError> {
+    with_presentation_retry(|| handshake_managed_once(ctx, existing, destination.clone()))
+}
+
+fn handshake_managed_once(
     ctx: &AcquireCtx,
     existing: Option<&GrantBundle>,
     destination: PathBuf,
@@ -771,12 +828,10 @@ fn fetch_settings_coherent(
         return Ok((grant, Some(settings)));
     }
     let retried = if managed {
-        let envelope = std::env::var(crate::local_token::AGENT_API_TOKEN_ENV)
-            .map_err(|_| GrantError::ConfigRevisionMismatch)?;
-        let claims = parse_envelope(envelope.trim())?;
+        let (envelope, claims) = managed_envelope(ctx, previous_grant.as_ref())?;
         challenge_and_handshake(
             &ctx.daemon_url,
-            envelope.trim(),
+            &envelope,
             &ctx.machine_id,
             &ctx.project_id,
             Some(&claims.session_id),
@@ -797,7 +852,9 @@ fn fetch_settings_coherent(
     };
     let timeout = ctx.remaining()?;
     let retried_bearer = if managed {
-        std::env::var(crate::local_token::AGENT_API_TOKEN_ENV).ok()
+        ctx.managed_envelope
+            .clone()
+            .or_else(|| std::env::var(crate::local_token::AGENT_API_TOKEN_ENV).ok())
     } else {
         interactive_bearer(&ctx.home).ok()
     };
@@ -819,8 +876,10 @@ fn interactive_bearer(home: &Path) -> Result<String, GrantError> {
         .map_err(|error| GrantError::Malformed(error.to_string()))
 }
 
-fn managed_bootstrap_path() -> Option<PathBuf> {
-    std::env::var_os(MANAGED_BOOTSTRAP_ENV).map(PathBuf::from)
+fn managed_bootstrap_path(ctx: &AcquireCtx) -> Option<PathBuf> {
+    ctx.managed_bootstrap
+        .clone()
+        .or_else(|| std::env::var_os(MANAGED_BOOTSTRAP_ENV).map(PathBuf::from))
 }
 
 fn validate_managed_identity(grant: &GrantBundle) -> Result<(), GrantError> {

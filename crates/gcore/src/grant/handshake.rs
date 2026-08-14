@@ -231,14 +231,11 @@ pub fn challenge_and_handshake(
 }
 
 pub fn grant_from_handshake(response: HttpResponse) -> Result<GrantBundle, GrantError> {
-    if response.status == 409 {
-        return Err(GrantError::Malformed("stale_epoch".to_string()));
+    if let Some(error) = GrantError::from_presentation_http(response.status, &response.body) {
+        return Err(error);
     }
     if response.status == 401 {
         return Err(GrantError::Expired);
-    }
-    if response.status == 403 && response.body.contains("revoked") {
-        return Err(GrantError::Revoked);
     }
     if !(200..300).contains(&response.status) {
         return classify_http(response.status, &response.body);
@@ -312,14 +309,11 @@ fn read_response(response: ureq::Response) -> Result<HttpResponse, GrantError> {
 }
 
 fn classify_http(status: u16, body: &str) -> Result<GrantBundle, GrantError> {
-    if body.contains("revoked") {
-        return Err(GrantError::Revoked);
+    if let Some(error) = GrantError::from_presentation_http(status, body) {
+        return Err(error);
     }
     if status == 401 || body.contains("expired") {
         return Err(GrantError::Expired);
-    }
-    if status == 409 || body.contains("stale_epoch") {
-        return Err(GrantError::Malformed("stale_epoch".to_string()));
     }
     Err(GrantError::Malformed(format!(
         "handshake failed with HTTP {status}"

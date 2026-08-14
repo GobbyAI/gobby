@@ -9,53 +9,12 @@ use std::time::{Duration, Instant};
 use serde_json::{Value, json};
 
 use super::*;
-use crate::local_token::{AGENT_API_TOKEN_ENV, AUTHORIZATION_HEADER, LOCAL_CLI_TOKEN_FILENAME};
+use crate::local_token::{AUTHORIZATION_HEADER, LOCAL_CLI_TOKEN_FILENAME};
 
 const TOKEN: &str = "operator-token";
 const MACHINE: &str = "machine-test";
 const PROJECT: &str = "project-test";
 const NOW: i64 = 1_700_000_100;
-
-struct EnvGuard {
-    _lock: std::sync::MutexGuard<'static, ()>,
-    saved: Vec<(&'static str, Option<std::ffi::OsString>)>,
-}
-
-impl EnvGuard {
-    fn set(vars: &[(&'static str, Option<&str>)]) -> Self {
-        let lock = crate::config::TEST_ENV_LOCK
-            .lock()
-            .unwrap_or_else(std::sync::PoisonError::into_inner);
-        let saved = vars
-            .iter()
-            .map(|(name, _)| (*name, std::env::var_os(name)))
-            .collect();
-        // SAFETY: TEST_ENV_LOCK serializes env mutation for this process.
-        unsafe {
-            for (name, value) in vars {
-                match value {
-                    Some(value) => std::env::set_var(name, value),
-                    None => std::env::remove_var(name),
-                }
-            }
-        }
-        Self { _lock: lock, saved }
-    }
-}
-
-impl Drop for EnvGuard {
-    fn drop(&mut self) {
-        // SAFETY: the guard still holds TEST_ENV_LOCK.
-        unsafe {
-            for (name, value) in &self.saved {
-                match value {
-                    Some(value) => std::env::set_var(name, value),
-                    None => std::env::remove_var(name),
-                }
-            }
-        }
-    }
-}
 
 struct Harness {
     _home: tempfile::TempDir,
@@ -94,6 +53,8 @@ impl Harness {
             session_id: Some("cli".into()),
             deadline: Some(Duration::from_secs(2)),
             stale_lock_after: Some(Duration::from_millis(200)),
+            managed_bootstrap: None,
+            managed_envelope: None,
         }
     }
 }
@@ -199,6 +160,7 @@ enum Step {
     Challenge { valid: bool, token: String },
     Handshake { grant: Box<GrantBundle> },
     Config { revision: i64 },
+    Reject { status: u16, body: String },
 }
 
 struct Scripted {
@@ -281,6 +243,7 @@ fn spawn_scripted(steps: Vec<Step>) -> Scripted {
                             })
                             .to_string(),
                         ),
+                        Step::Reject { status, body } => (*status, body.clone()),
                     };
                     let _ = write!(
                         stream,
@@ -335,8 +298,9 @@ fn api_contract_gate() {
     grant = grant.with_checksum();
     let path = harness.home.join("managed.json");
     write_grant_file(&path, &grant).expect("write");
-    let _env = EnvGuard::set(&[(MANAGED_BOOTSTRAP_ENV, Some(path.to_str().unwrap()))]);
-    let error = acquire_with(&harness.request(None)).expect_err("contract");
+    let mut request = harness.request(None);
+    request.managed_bootstrap = Some(&path);
+    let error = acquire_with(&request).expect_err("contract");
     assert_eq!(error, GrantError::ApiContractMismatch);
     assert_eq!(error.cli_code(), "api_contract_mismatch");
     assert_eq!(error.exit_status(), 2);
@@ -381,8 +345,9 @@ fn schema_mismatch_refuses_construction() {
     grant = grant.with_checksum();
     let path = harness.home.join("managed.json");
     write_grant_file(&path, &grant).expect("write");
-    let _env = EnvGuard::set(&[(MANAGED_BOOTSTRAP_ENV, Some(path.to_str().unwrap()))]);
-    let error = acquire_with(&harness.request(None)).expect_err("schema");
+    let mut request = harness.request(None);
+    request.managed_bootstrap = Some(&path);
+    let error = acquire_with(&request).expect_err("schema");
     assert_eq!(error, GrantError::SchemaMismatch);
 }
 
@@ -504,9 +469,9 @@ fn managed_grant_never_overwrites_interactive_cache() {
     managed = managed.with_checksum();
     let managed_path = harness.home.join("agent-grant.json");
     write_grant_file(&managed_path, &managed).expect("managed");
-    let _env = EnvGuard::set(&[(MANAGED_BOOTSTRAP_ENV, Some(managed_path.to_str().unwrap()))]);
-    let acquired =
-        acquire_with(&harness.request(Some("http://127.0.0.1:1".into()))).expect("managed");
+    let mut request = harness.request(Some("http://127.0.0.1:1".into()));
+    request.managed_bootstrap = Some(&managed_path);
+    let acquired = acquire_with(&request).expect("managed");
     assert_eq!(acquired.source, GrantSource::ManagedFile);
     assert_eq!(acquired.bundle.principal.kind, PrincipalKind::AgentRun);
     assert_eq!(fs::read(&cache_path).expect("after"), before);
@@ -580,9 +545,9 @@ fn acquire_resolves_managed_then_cache_then_handshake() {
     let managed = fixture_grant(PrincipalKind::ToolChat);
     let managed_path = harness.home.join("tool.json");
     write_grant_file(&managed_path, &managed).expect("managed");
-    let _env = EnvGuard::set(&[(MANAGED_BOOTSTRAP_ENV, Some(managed_path.to_str().unwrap()))]);
-    let acquired =
-        acquire_with(&harness.request(Some("http://127.0.0.1:1".into()))).expect("managed");
+    let mut request = harness.request(Some("http://127.0.0.1:1".into()));
+    request.managed_bootstrap = Some(&managed_path);
+    let acquired = acquire_with(&request).expect("managed");
     assert_eq!(acquired.source, GrantSource::ManagedFile);
 }
 
@@ -606,6 +571,95 @@ fn renewal_is_non_blocking_past_half_ttl() {
         acquire_with(&harness.request(Some("http://127.0.0.1:9".into()))).expect("serve");
     assert!(started.elapsed() < Duration::from_millis(400));
     assert_eq!(acquired.bundle.expires_at, grant.expires_at);
+}
+
+#[test]
+fn proactive_renewal_refreshes_when_lock_owned() {
+    let harness = Harness::new();
+    let mut cached = fixture_grant(PrincipalKind::Interactive);
+    cached.issued_at = NOW - 100;
+    cached.expires_at = NOW + 10;
+    cached.deployment.token = deployment_token(&harness.home);
+    cached = cached.with_checksum();
+    let mut fresh = cached.clone();
+    fresh.expires_at = NOW + 3_000;
+    fresh = fresh.with_checksum();
+    write_binding_for(&harness, "http://127.0.0.1:1", &cached.deployment.token);
+    write_cache(&harness, &cached, None);
+    let scripted = spawn_scripted(vec![
+        Step::Challenge {
+            valid: true,
+            token: TOKEN.into(),
+        },
+        Step::Handshake {
+            grant: Box::new(fresh.clone()),
+        },
+        Step::Config {
+            revision: fresh.config_revision,
+        },
+    ]);
+    write_binding_for(&harness, &scripted.url, &cached.deployment.token);
+    let acquired = acquire_with(&harness.request(Some(scripted.url.clone()))).expect("renew");
+    assert_eq!(acquired.bundle.expires_at, fresh.expires_at);
+    let requests = join(scripted);
+    assert_eq!(
+        requests
+            .iter()
+            .filter(|request| request.contains("POST /api/runtime/handshake HTTP"))
+            .count(),
+        1
+    );
+}
+
+#[test]
+fn handshake_retries_once_on_stale_epoch() {
+    let harness = Harness::new();
+    let mut grant = fixture_grant(PrincipalKind::Interactive);
+    grant.deployment.token = deployment_token(&harness.home);
+    grant = grant.with_checksum();
+    let scripted = spawn_scripted(vec![
+        Step::Challenge {
+            valid: true,
+            token: TOKEN.into(),
+        },
+        Step::Reject {
+            status: 409,
+            body: "stale_epoch".into(),
+        },
+        Step::Challenge {
+            valid: true,
+            token: TOKEN.into(),
+        },
+        Step::Handshake {
+            grant: Box::new(grant.clone()),
+        },
+        Step::Config {
+            revision: grant.config_revision,
+        },
+    ]);
+    let acquired = acquire_with(&harness.request(Some(scripted.url.clone()))).expect("retry");
+    assert_eq!(acquired.bundle.deployment.token, grant.deployment.token);
+    let requests = join(scripted);
+    assert_eq!(
+        requests
+            .iter()
+            .filter(|request| request.contains("POST /api/runtime/handshake HTTP"))
+            .count(),
+        2
+    );
+}
+
+#[test]
+fn presentation_http_classifies_retryable_restart_errors() {
+    assert!(
+        GrantError::from_presentation_http(409, "stale_epoch")
+            .is_some_and(|error| error.is_retryable_presentation())
+    );
+    assert!(
+        GrantError::from_presentation_http(401, "invalid_signature")
+            .is_some_and(|error| error.is_retryable_presentation())
+    );
+    assert!(GrantError::from_presentation_http(401, "expired").is_none());
 }
 
 #[test]
@@ -773,32 +827,19 @@ fn managed_refresh_envelope_auth() {
     let managed_path = harness.home.join("run.json");
     write_grant_file(&managed_path, &managed).unwrap();
 
-    let _env = EnvGuard::set(&[
-        (MANAGED_BOOTSTRAP_ENV, Some(managed_path.to_str().unwrap())),
-        (AGENT_API_TOKEN_ENV, None),
-    ]);
-    let error =
-        acquire_with(&harness.request(Some("http://127.0.0.1:9".into()))).expect_err("no envelope");
+    let mut request = harness.request(Some("http://127.0.0.1:9".into()));
+    request.managed_bootstrap = Some(&managed_path);
+    let error = acquire_with(&request).expect_err("no envelope");
     assert_eq!(error, GrantError::Expired);
-    drop(_env);
 
     let expired = envelope_token(NOW - 10, PROJECT);
-    let _env = EnvGuard::set(&[
-        (MANAGED_BOOTSTRAP_ENV, Some(managed_path.to_str().unwrap())),
-        (AGENT_API_TOKEN_ENV, Some(&expired)),
-    ]);
-    let error = acquire_with(&harness.request(Some("http://127.0.0.1:9".into())))
-        .expect_err("expired envelope");
+    request.managed_envelope = Some(&expired);
+    let error = acquire_with(&request).expect_err("expired envelope");
     assert_eq!(error, GrantError::Expired);
-    drop(_env);
 
     let mismatch = envelope_token(NOW + 60, "other-project");
-    let _env = EnvGuard::set(&[
-        (MANAGED_BOOTSTRAP_ENV, Some(managed_path.to_str().unwrap())),
-        (AGENT_API_TOKEN_ENV, Some(&mismatch)),
-    ]);
-    let error =
-        acquire_with(&harness.request(Some("http://127.0.0.1:9".into()))).expect_err("mismatch");
+    request.managed_envelope = Some(&mismatch);
+    let error = acquire_with(&request).expect_err("mismatch");
     assert!(matches!(error, GrantError::Malformed(_)));
 }
 
@@ -994,11 +1035,10 @@ fn refresh_destination_by_source_managed_writes_managed_file() {
     renewed = renewed.with_checksum();
     let token = envelope_token(NOW + 60, PROJECT);
     let scripted = spawn_managed_challenge(&token, renewed.clone());
-    let _env = EnvGuard::set(&[
-        (MANAGED_BOOTSTRAP_ENV, Some(managed_path.to_str().unwrap())),
-        (AGENT_API_TOKEN_ENV, Some(&token)),
-    ]);
-    let acquired = acquire_with(&harness.request(Some(scripted.url.clone()))).expect("refresh");
+    let mut request = harness.request(Some(scripted.url.clone()));
+    request.managed_bootstrap = Some(&managed_path);
+    request.managed_envelope = Some(&token);
+    let acquired = acquire_with(&request).expect("refresh");
     let requests = join(scripted);
     assert!(
         requests
@@ -1033,11 +1073,10 @@ fn managed_refresh_uses_envelope_not_operator_on_wire() {
     renewed = renewed.with_checksum();
     let token = envelope_token(NOW + 60, PROJECT);
     let scripted = spawn_managed_challenge(&token, renewed);
-    let _env = EnvGuard::set(&[
-        (MANAGED_BOOTSTRAP_ENV, Some(managed_path.to_str().unwrap())),
-        (AGENT_API_TOKEN_ENV, Some(&token)),
-    ]);
-    acquire_with(&harness.request(Some(scripted.url.clone()))).expect("refresh");
+    let mut request = harness.request(Some(scripted.url.clone()));
+    request.managed_bootstrap = Some(&managed_path);
+    request.managed_envelope = Some(&token);
+    acquire_with(&request).expect("refresh");
     let requests = join(scripted);
     let handshake = requests
         .iter()
