@@ -15,7 +15,7 @@ from typing import Any
 from pydantic import ValidationError
 
 from gobby.hooks.events import HookEvent
-from gobby.storage.hub.protocol import WorkflowInstanceMutation
+from gobby.storage.hub.protocol import AgentStepInstanceMutation
 from gobby.storage.sessions import TERMINAL_SESSION_STATUSES
 
 logger = logging.getLogger(__name__)
@@ -673,7 +673,7 @@ def _ensure_step_workflow_from_definition(
     from gobby.workflows.state_manager import WorkflowInstanceManager
 
     instance_mgr = WorkflowInstanceManager(db)
-    lock = WorkflowInstanceMutation(session_id=session_id, workflow_name=step_name)
+    lock = AgentStepInstanceMutation(session_id=session_id)
     with db.transaction_immediate(lock):
         if instance_mgr.get_instance(session_id, step_name) is not None:
             return False

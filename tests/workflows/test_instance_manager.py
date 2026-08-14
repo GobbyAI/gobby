@@ -167,7 +167,7 @@ def test_merge_instance_variables_preserves_concurrent_step_transition(
 def test_instance_mutations_serialize_parallel_step_and_variable_writes(
     db: HubDatabase,
 ) -> None:
-    from gobby.storage.hub.protocol import WorkflowInstanceMutation
+    from gobby.storage.hub.protocol import AgentStepInstanceMutation
     from gobby.workflows.definitions import WorkflowInstance
     from gobby.workflows.state_manager import WorkflowInstanceManager
 
@@ -187,7 +187,7 @@ def test_instance_mutations_serialize_parallel_step_and_variable_writes(
     finish_transition = threading.Event()
 
     def transition_step() -> None:
-        lock = WorkflowInstanceMutation(session_id=S1, workflow_name="auto-task")
+        lock = AgentStepInstanceMutation(session_id=S1)
         with db.transaction_immediate(lock):
             instance = mgr.get_instance(S1, "auto-task")
             assert instance is not None

@@ -18,7 +18,7 @@ import logging
 import uuid
 from typing import Any
 
-from gobby.storage.hub.protocol import HubDatabase, WorkflowInstanceMutation
+from gobby.storage.hub.protocol import AgentStepInstanceMutation, HubDatabase
 from gobby.workflows.definitions import AgentDefinitionBody
 
 logger = logging.getLogger(__name__)
@@ -109,7 +109,7 @@ def build_persona_changes(
         nested = agent_body.step_workflow
         step_wf_name = f"{agent_body.name}-steps"
         instance_mgr = WorkflowInstanceManager(db)
-        lock = WorkflowInstanceMutation(session_id=session_id, workflow_name=step_wf_name)
+        lock = AgentStepInstanceMutation(session_id=session_id)
         with db.transaction_immediate(lock):
             if _session_has_assigned_or_active_task(db, session_id):
                 existing_instance = instance_mgr.get_instance(session_id, step_wf_name)
