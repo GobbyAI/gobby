@@ -889,8 +889,8 @@ class TestDaemonProxy:
         assert result == {"success": True}
         mock_request.assert_awaited_once_with(
             "POST",
-            "/api/workflows/variables/set",
-            json={"name": "resume_state", "value": value, "session_id": "#1"},
+            "/api/sessions/%231/variables/set",
+            json={"name": "resume_state", "value": value, "scope": "session"},
             session_id="#1",
         )
 

@@ -18,7 +18,6 @@ from typing import Any
 import yaml
 
 from gobby.storage.workflow_definitions import (
-    WorkflowDefinitionRow,
     compute_definition_hash,
 )
 
@@ -29,7 +28,7 @@ class TemplateHashCache:
     """Cache of hashes for bundled template YAML files.
 
     Reads template directories once at startup and stores
-    (workflow_type, name) -> hash(definition_json) mappings for cheap drift checks.
+    (kind, name) -> hash(definition_json) mappings for cheap drift checks.
     """
 
     def __init__(self) -> None:
@@ -199,29 +198,31 @@ class TemplateHashCache:
 
     # ── Drift detection ──
 
-    def get_hash(self, workflow_type: str, name: str) -> str | None:
-        """Get the cached hash for a template by workflow type and name."""
-        return self._hashes.get((workflow_type, name))
+    def get_hash(self, kind: str, name: str) -> str | None:
+        """Get the cached hash for a template by domain kind and name."""
+        return self._hashes.get((kind, name))
 
-    def get_template_json(self, workflow_type: str, name: str) -> str | None:
-        """Get the definition_json for a template by workflow type and name.
+    def get_template_json(self, kind: str, name: str) -> str | None:
+        """Get the definition_json for a template by domain kind and name.
 
         Returns the cached serialized JSON from the template file.
         Returns None if no bundled template exists for this name.
         """
-        return self._json_cache.get((workflow_type, name))
+        return self._json_cache.get((kind, name))
 
-    def has_drift(self, row: Any) -> bool:
+    def has_drift(self, row: Any, kind: str | None = None) -> bool:
         """Check if an installed definition has drifted from its template.
 
         Returns False if no template exists for this name (user-created definition).
         """
-        workflow_type = getattr(row, "workflow_type", "agent")
-        template_hash = self.get_hash(workflow_type, row.name)
+        resolved_kind = (
+            kind or getattr(row, "kind", None) or getattr(row, "workflow_type", None) or "agent"
+        )
+        template_hash = self.get_hash(resolved_kind, row.name)
         if template_hash is None:
             return False
         payload = row.definition_json
-        if workflow_type == "agent":
+        if resolved_kind == "agent":
             from gobby.workflows.definitions import AgentDefinitionBody
 
             if isinstance(payload, str):
@@ -237,13 +238,14 @@ class TemplateHashCache:
         """Add has_template_update field to a list of definition dicts.
 
         Convenience method for API responses — mutates dicts in place.
+        Rows must carry a domain `kind` (not `workflow_type`).
         """
         for row_dict in rows:
             name = row_dict.get("name")
-            workflow_type = row_dict.get("workflow_type")
+            kind = row_dict.get("kind")
             definition_json = row_dict.get("definition_json")
-            if workflow_type and name and definition_json:
-                template_hash = self.get_hash(workflow_type, name)
+            if kind and name and definition_json:
+                template_hash = self.get_hash(kind, name)
                 if template_hash is not None:
                     installed_hash = compute_definition_hash(definition_json)
                     row_dict["has_template_update"] = template_hash != installed_hash

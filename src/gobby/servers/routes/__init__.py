@@ -28,6 +28,7 @@ from gobby.servers.routes.memory import create_memory_router
 from gobby.servers.routes.memory_dream import create_memory_dream_router
 from gobby.servers.routes.metrics import create_metrics_router
 from gobby.servers.routes.observations import create_observations_router
+from gobby.servers.routes.pipeline_definitions import create_pipeline_definitions_router
 from gobby.servers.routes.pipelines import create_pipelines_router
 from gobby.servers.routes.profiles import create_profiles_router
 from gobby.servers.routes.projects import create_projects_router
@@ -39,10 +40,10 @@ from gobby.servers.routes.source_control import create_source_control_router
 from gobby.servers.routes.stages import create_stages_router
 from gobby.servers.routes.tasks import create_tasks_router
 from gobby.servers.routes.traces import create_traces_router
+from gobby.servers.routes.variable_definitions import create_variable_definitions_router
 from gobby.servers.routes.voice import create_voice_router
 from gobby.servers.routes.wiki import create_wiki_router
 from gobby.servers.routes.wiki_code import create_wiki_code_router
-from gobby.servers.routes.workflows import create_workflows_router
 
 __all__ = [
     "create_admin_router",
@@ -66,6 +67,7 @@ __all__ = [
     "create_memory_dream_router",
     "create_metrics_router",
     "create_observations_router",
+    "create_pipeline_definitions_router",
     "create_pipelines_router",
     "create_projects_router",
     "create_profiles_router",
@@ -77,9 +79,9 @@ __all__ = [
     "create_stages_router",
     "create_tasks_router",
     "create_traces_router",
+    "create_variable_definitions_router",
     "create_voice_router",
     "create_webhooks_router",
     "create_wiki_router",
     "create_wiki_code_router",
-    "create_workflows_router",
 ]

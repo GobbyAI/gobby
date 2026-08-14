@@ -64,3 +64,26 @@ def test_load_agents_hashes_nested_step_workflow(tmp_path: Path) -> None:
         SimpleNamespace(name="coder", workflow_type="agent", definition_json=drifted)
     )
     assert compute_definition_hash(body.model_dump_json()) == cache.get_hash("agent", "coder")
+
+
+def test_annotate_rows_keys_by_kind_not_workflow_type() -> None:
+    cache = TemplateHashCache()
+    cache._hashes[("pipeline", "demo")] = compute_definition_hash('{"name":"demo"}')
+    kind_rows: list[dict[str, object]] = [
+        {
+            "name": "demo",
+            "kind": "pipeline",
+            "definition_json": '{"name":"other"}',
+        }
+    ]
+    legacy_rows: list[dict[str, object]] = [
+        {
+            "name": "demo",
+            "workflow_type": "pipeline",
+            "definition_json": '{"name":"other"}',
+        }
+    ]
+    cache.annotate_rows(kind_rows)
+    cache.annotate_rows(legacy_rows)
+    assert kind_rows[0]["has_template_update"] is True
+    assert legacy_rows[0]["has_template_update"] is False
