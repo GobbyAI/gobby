@@ -65,6 +65,16 @@ async def cleanup_failed_spawn(
             task_manager=task_manager,
             message=error,
         )
+        db = getattr(run_storage, "db", None)
+        if db is not None:
+            from gobby.agents.runtime_cleanup import cleanup_agent_runtime_state
+
+            cleanup_agent_runtime_state(
+                db,
+                run_id=run_id,
+                child_session_id=child_session_id,
+                terminal_reason="spawn_rollback",
+            )
     await cleanup_created_isolation(handler, spawn_config, cleanup=cleanup_isolation)
     _delete_child_session(runner, run_storage, run_id, child_session_id)
 
