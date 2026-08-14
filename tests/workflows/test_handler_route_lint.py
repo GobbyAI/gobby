@@ -170,11 +170,12 @@ def test_bundled_agent_handler_routes_are_clean() -> None:
     findings: dict[str, list[str]] = {}
     for path in sorted(agents_dir.glob("*.yaml")):
         agent = AgentDefinitionBody.model_validate(yaml.safe_load(path.read_text()))
+        nested = agent.step_workflow
         definition = WorkflowDefinition(
             name=agent.name,
-            steps=agent.steps or [],
-            variables=agent.step_variables,
-            exit_condition=agent.exit_condition,
+            steps=nested.steps if nested else [],
+            variables=nested.variables if nested else {},
+            exit_condition=nested.exit_condition if nested else None,
         )
         codes = [finding.code for finding in check_handler_routes(definition)]
         if codes:

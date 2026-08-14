@@ -162,8 +162,8 @@ def _register_qa_reviewer_workflow(
         "name": workflow_name,
         "version": "1.0",
         "enabled": True,
-        "variables": agent["step_variables"],
-        "steps": agent["steps"],
+        "variables": agent["step_workflow"]["variables"],
+        "steps": agent["step_workflow"]["steps"],
         "exit_condition": "current_step == 'terminate'",
     }
 
@@ -174,7 +174,7 @@ def _register_qa_reviewer_workflow(
         priority=100,
         enabled=True,
     )
-    variables = dict(agent["step_variables"])
+    variables = dict(agent["step_workflow"]["variables"])
     variables.update(
         {
             "task_claimed": True,
@@ -216,7 +216,9 @@ def _register_expansion_qa_workflow(
             priority=100,
             current_step="coverage_check",
             step_entered_at=datetime.now(UTC),
-            variables=dict(agent_body.step_variables),
+            variables=dict(
+                agent_body.step_workflow.variables if agent_body.step_workflow else {}
+            ),
         )
     )
     return instance_manager

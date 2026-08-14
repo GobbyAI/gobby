@@ -75,8 +75,11 @@ def inspect_skill_composition(
     additional_skills: tuple[str, ...],
 ) -> SkillCompositionReport:
     """Validate required and task-specific skills and report their tool union."""
+    required_skills = None
+    if agent_body is not None and agent_body.step_workflow is not None:
+        required_skills = agent_body.step_workflow.variables.get("required_skills")
     required, required_errors = _normalize_skill_names(
-        agent_body.step_variables.get("required_skills") if agent_body is not None else None,
+        required_skills,
         "required_skills",
     )
     additional, additional_errors = _normalize_skill_names(

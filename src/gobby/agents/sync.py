@@ -88,7 +88,7 @@ def get_bundled_agents_path() -> Path:
 
 def _refresh_step_workflow(body: AgentDefinitionBody, db: HubDatabase) -> None:
     """Refresh the generated step workflow row for agents with inline steps."""
-    if body.steps:
+    if body.step_workflow:
         register_agent_step_workflow(body, db)
 
 

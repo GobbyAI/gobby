@@ -10,6 +10,7 @@ import pytest
 from gobby.storage.hub.protocol import HubDatabase
 from gobby.workflows.definitions import (
     AgentDefinitionBody,
+    AgentStepWorkflowBody,
     AgentWorkflows,
 )
 
@@ -155,10 +156,12 @@ class TestBuildPersonaChanges:
 
         agent = AgentDefinitionBody(
             name="stepper",
-            steps=[
-                WorkflowStep(name="plan", instructions="Plan the work"),
-                WorkflowStep(name="execute", instructions="Do the work"),
-            ],
+            step_workflow=AgentStepWorkflowBody(
+                steps=[
+                    WorkflowStep(name="plan", instructions="Plan the work"),
+                    WorkflowStep(name="execute", instructions="Do the work"),
+                ],
+            ),
         )
         changes, _, _ = build_persona_changes(
             agent_body=agent,
@@ -208,7 +211,9 @@ class TestBuildPersonaChanges:
         SessionVariableManager(db).merge_variables(session_id, task_variables)
         agent = AgentDefinitionBody(
             name="stepper",
-            steps=[WorkflowStep(name="plan", instructions="Plan the work")],
+            step_workflow=AgentStepWorkflowBody(
+                steps=[WorkflowStep(name="plan", instructions="Plan the work")],
+            ),
         )
 
         changes, _, _ = build_persona_changes(
@@ -254,10 +259,12 @@ class TestBuildPersonaChanges:
 
         agent = AgentDefinitionBody(
             name="stepper",
-            steps=[
-                WorkflowStep(name="plan", instructions="Plan the work"),
-                WorkflowStep(name="execute", instructions="Do the work"),
-            ],
+            step_workflow=AgentStepWorkflowBody(
+                steps=[
+                    WorkflowStep(name="plan", instructions="Plan the work"),
+                    WorkflowStep(name="execute", instructions="Do the work"),
+                ],
+            ),
         )
         changes, _, _ = build_persona_changes(
             agent_body=agent,
@@ -312,11 +319,13 @@ class TestBuildPersonaChanges:
 
         agent = AgentDefinitionBody(
             name="stepper",
-            step_variables={"task_claimed": False, "loaded_skills": []},
-            steps=[
-                WorkflowStep(name="claim", instructions="Claim the task"),
-                WorkflowStep(name="execute", instructions="Do the work"),
-            ],
+            step_workflow=AgentStepWorkflowBody(
+                variables={"task_claimed": False, "loaded_skills": []},
+                steps=[
+                    WorkflowStep(name="claim", instructions="Claim the task"),
+                    WorkflowStep(name="execute", instructions="Do the work"),
+                ],
+            ),
         )
 
         changes, _, _ = build_persona_changes(
@@ -395,7 +404,9 @@ class TestBuildSessionPersonaChanges:
             ),
             blocked_tools=["Write"],
             blocked_mcp_tools=["gobby-tasks:delete_task"],
-            steps=[WorkflowStep(name="plan", instructions="Plan")],
+            step_workflow=AgentStepWorkflowBody(
+                steps=[WorkflowStep(name="plan", instructions="Plan")],
+            ),
         )
 
         changes, active_skills = build_session_persona_changes(agent, db)

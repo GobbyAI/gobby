@@ -88,8 +88,8 @@ def _agent_definition_summary(row: WorkflowDefinitionRow) -> dict[str, Any]:
         "mode": raw.get("mode"),
         "isolation": body.isolation,
         "surfaces": body.surfaces,
-        "has_steps": bool(body.steps),
-        "step_count": len(body.steps or []),
+        "has_steps": body.step_workflow is not None,
+        "step_count": len(body.step_workflow.steps) if body.step_workflow else 0,
         "enabled": row.enabled,
         "source": row.source,
         "project_id": row.project_id,
@@ -108,11 +108,9 @@ def _agent_definition_detail(row: WorkflowDefinitionRow) -> dict[str, Any]:
         "personality": body.personality,
         "instructions": body.instructions,
         "workflows": body.workflows.model_dump(exclude_none=True),
-        "steps": [step.model_dump(exclude_none=True) for step in body.steps]
-        if body.steps
-        else None,
-        "step_variables": body.step_variables,
-        "exit_condition": body.exit_condition,
+        "step_workflow": (
+            body.step_workflow.model_dump(exclude_none=True) if body.step_workflow else None
+        ),
         "blocked_tools": body.blocked_tools,
         "blocked_mcp_tools": body.blocked_mcp_tools,
         "sources": body.sources,

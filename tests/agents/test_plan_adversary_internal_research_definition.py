@@ -31,7 +31,7 @@ def _agent(name: str) -> dict[str, Any]:
 
 
 def _review(agent: dict[str, Any]) -> dict[str, Any]:
-    return next(step for step in agent["steps"] if step["name"] == "review")
+    return next(step for step in agent["step_workflow"]["steps"] if step["name"] == "review")
 
 
 def test_adversary_agents_pin_the_reviewer_model() -> None:
@@ -77,7 +77,7 @@ def test_all_plan_agents_block_gobby_spawn_at_agent_level() -> None:
     for name in PLAN_AGENTS:
         agent = _agent(name)
         assert "gobby-agents:spawn_agent" in set(agent["blocked_mcp_tools"])
-        for step in agent["steps"]:
+        for step in agent["step_workflow"]["steps"]:
             allowed = set(step.get("allowed_mcp_tools") or [])
             assert "gobby-agents:spawn_agent" not in allowed
 

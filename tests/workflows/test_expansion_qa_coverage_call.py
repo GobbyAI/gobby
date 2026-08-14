@@ -44,7 +44,7 @@ async def test_workflow_calls_evaluate_with_full_scope(
 
 def test_expansion_qa_yaml_wires_coverage_gate() -> None:
     agent = yaml.safe_load(AGENT_PATH.read_text(encoding="utf-8"))
-    step = next(step for step in agent["steps"] if step["name"] == "coverage_check")
+    step = next(step for step in agent["step_workflow"]["steps"] if step["name"] == "coverage_check")
     instructions = agent["instructions"]
 
     assert "run_expansion_qa_coverage" in instructions
@@ -59,7 +59,7 @@ def test_expansion_qa_yaml_wires_coverage_gate() -> None:
 
 def test_expansion_qa_yaml_requires_review_verdict_before_terminate() -> None:
     agent = yaml.safe_load(AGENT_PATH.read_text(encoding="utf-8"))
-    steps = {step["name"]: step for step in agent["steps"]}
+    steps = {step["name"]: step for step in agent["step_workflow"]["steps"]}
     coverage_step = steps["coverage_check"]
     coverage_success_tools = {handler["tool"] for handler in coverage_step["on_mcp_success"]}
     coverage_blocked = set(coverage_step["blocked_mcp_tools"])

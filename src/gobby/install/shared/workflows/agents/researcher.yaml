@@ -3,7 +3,7 @@ description: |
   Discovery-stage researcher for lifecycle build research. Gathers evidence and
   records Research Findings on the assigned task before architecture begins.
 
-version: "1.0"
+version: "1.1"
 enabled: true
 priority: 20
 surfaces: [spawn, persona]
@@ -64,85 +64,86 @@ workflows:
       - "tag:default"
       - "tag:worker-safety"
       - "tag:task-skill-gates"
-step_variables:
-  task_claimed: false
-  skill_loaded: false
-  handoff_ready: false
+step_workflow:
+  variables:
+    task_claimed: false
+    skill_loaded: false
+    handoff_ready: false
 
-steps:
-  - name: claim
-    mcp_error_policy: stay
-    description: "Claim the assigned research task"
-    status_message: |
-      Claim assigned_task_id with claim_task, then read it with get_task.
-    allowed_tools:
-      - mcp__gobby__call_tool
-      - mcp__gobby__list_mcp_servers
-      - mcp__gobby__list_tools
-      - mcp__gobby__get_tool_schema
-    allowed_mcp_tools:
-      - "gobby-tasks:claim_task"
-      - "gobby-tasks:get_task"
-    on_mcp_success:
-      - server: gobby-tasks
-        tool: claim_task
-        action: set_variable
-        variable: task_claimed
-        value: true
-    transitions:
-      - to: load_skill
-        when: "vars.task_claimed"
+  exit_condition: "vars.handoff_ready"
+  steps:
+    - name: claim
+      mcp_error_policy: stay
+      description: "Claim the assigned research task"
+      status_message: |
+        Claim assigned_task_id with claim_task, then read it with get_task.
+      allowed_tools:
+        - mcp__gobby__call_tool
+        - mcp__gobby__list_mcp_servers
+        - mcp__gobby__list_tools
+        - mcp__gobby__get_tool_schema
+      allowed_mcp_tools:
+        - "gobby-tasks:claim_task"
+        - "gobby-tasks:get_task"
+      on_mcp_success:
+        - server: gobby-tasks
+          tool: claim_task
+          action: set_variable
+          variable: task_claimed
+          value: true
+      transitions:
+        - to: load_skill
+          when: "vars.task_claimed"
 
-  - name: load_skill
-    mcp_error_policy: stay
-    description: "Load the research methodology skill"
-    status_message: |
-      Call get_skill(name="research") on gobby-skills, then continue before drafting.
-      Use only mcp__gobby__call_tool in this step. Call get_skill directly:
-      call_tool("gobby-skills", "get_skill", {"name": "research"}).
-      Do not use native Skill, GitHub/app connector, or Computer Use tools.
-    allowed_tools:
-      - mcp__gobby__call_tool
-      - mcp__gobby__list_mcp_servers
-      - mcp__gobby__list_tools
-      - mcp__gobby__get_tool_schema
-    allowed_mcp_tools:
-      - "gobby-skills:get_skill"
-    on_mcp_success:
-      - server: gobby-skills
-        tool: get_skill
-        when: "tool_input.name == 'research'"
-        action: set_variable
-        variable: skill_loaded
-        value: true
-    transitions:
-      - to: draft
-        when: "vars.skill_loaded"
+    - name: load_skill
+      mcp_error_policy: stay
+      description: "Load the research methodology skill"
+      status_message: |
+        Call get_skill(name="research") on gobby-skills, then continue before drafting.
+        Use only mcp__gobby__call_tool in this step. Call get_skill directly:
+        call_tool("gobby-skills", "get_skill", {"name": "research"}).
+        Do not use native Skill, GitHub/app connector, or Computer Use tools.
+      allowed_tools:
+        - mcp__gobby__call_tool
+        - mcp__gobby__list_mcp_servers
+        - mcp__gobby__list_tools
+        - mcp__gobby__get_tool_schema
+      allowed_mcp_tools:
+        - "gobby-skills:get_skill"
+      on_mcp_success:
+        - server: gobby-skills
+          tool: get_skill
+          when: "tool_input.name == 'research'"
+          action: set_variable
+          variable: skill_loaded
+          value: true
+      transitions:
+        - to: draft
+          when: "vars.skill_loaded"
 
-  - name: draft
-    mcp_error_policy: stay
-    description: "Draft and persist the Research Findings"
-    status_message: |
-      Read assigned_task_id with get_task, update only the research marker block
-      with update_task, re-read it, then call end_agent_run. Escalate only for
-      blocking missing decisions.
-    allowed_tools: "all"
-    allowed_mcp_tools:
-      - "gobby-tasks:get_task"
-      - "gobby-tasks:update_task"
-      - "gobby-tasks:escalate_task"
-      - "gobby-agents:end_agent_run"
-    on_mcp_success:
-      - server: gobby-agents
-        tool: end_agent_run
-        action: set_variable
-        variable: handoff_ready
-        value: true
-      - server: gobby-tasks
-        tool: escalate_task
-        action: set_variable
-        variable: handoff_ready
-        value: true
-    transitions: []
+    - name: draft
+      mcp_error_policy: stay
+      description: "Draft and persist the Research Findings"
+      status_message: |
+        Read assigned_task_id with get_task, update only the research marker block
+        with update_task, re-read it, then call end_agent_run. Escalate only for
+        blocking missing decisions.
+      allowed_tools: "all"
+      allowed_mcp_tools:
+        - "gobby-tasks:get_task"
+        - "gobby-tasks:update_task"
+        - "gobby-tasks:escalate_task"
+        - "gobby-agents:end_agent_run"
+      on_mcp_success:
+        - server: gobby-agents
+          tool: end_agent_run
+          action: set_variable
+          variable: handoff_ready
+          value: true
+        - server: gobby-tasks
+          tool: escalate_task
+          action: set_variable
+          variable: handoff_ready
+          value: true
+      transitions: []
 
-exit_condition: "vars.handoff_ready"

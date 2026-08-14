@@ -97,7 +97,8 @@ def _advance_initial_step(
     current_step: str,
     variables: dict[str, Any],
 ) -> str:
-    steps = {step.name: step for step in (agent_body.steps or [])}
+    nested_steps = agent_body.step_workflow.steps if agent_body.step_workflow else []
+    steps = {step.name: step for step in nested_steps}
     max_transitions = len(steps) + 1
 
     for _ in range(max_transitions):
@@ -135,7 +136,8 @@ def _initial_step_state_for_spawn(
     initial_variables: dict[str, Any] | None = None,
 ) -> tuple[str, dict[str, Any]]:
     """Return the initial step workflow state for a spawned agent."""
-    step_variables = dict(agent_body.step_variables)
+    nested = agent_body.step_workflow
+    step_variables = dict(nested.variables) if nested else {}
     if initial_variables and "additional_skills" in initial_variables:
         step_variables["additional_skills"] = initial_variables["additional_skills"]
 
@@ -146,7 +148,7 @@ def _initial_step_state_for_spawn(
         for skill in additional_skills
     )
 
-    steps = agent_body.steps or []
+    steps = nested.steps if nested else []
     if not steps:
         raise ValueError("Cannot initialize step state for an agent with no steps")
     first_step = steps[0]
@@ -884,7 +886,7 @@ async def spawn_agent_impl(
         has_assigned_task = bool(
             resolved_task_id or effective_initial_variables.get("assigned_task_id")
         )
-        if has_assigned_task and step_wf_name and agent_body and agent_body.steps and db:
+        if has_assigned_task and step_wf_name and agent_body and agent_body.step_workflow and db:
             try:
                 from gobby.workflows.definitions import WorkflowInstance
                 from gobby.workflows.state_manager import WorkflowInstanceManager
@@ -918,7 +920,7 @@ async def spawn_agent_impl(
                     step_wf_name,
                     spawn_result.child_session_id,
                     agent_body.name,
-                    agent_body.steps[0].name,
+                    agent_body.step_workflow.steps[0].name,
                 )
             except Exception as e:
                 logger.exception("Failed to create step workflow instance: %s", e)

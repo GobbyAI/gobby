@@ -63,9 +63,6 @@ class TestAgentDefinitionBodyModel:
         assert body.workflows.rules == []
         assert body.workflows.pipeline is None
         assert body.workflows.variables == {}
-        assert body.steps is None
-        assert body.step_variables == {}
-        assert body.exit_condition is None
         assert body.step_workflow is None
         assert body.enabled is True
 
@@ -104,18 +101,22 @@ class TestAgentDefinitionBodyModel:
 
     def test_field_count(self) -> None:
         """AgentDefinitionBody exposes the current expanded field set."""
-        from gobby.workflows.definitions import AgentDefinitionBody
+        from gobby.workflows.definitions import AgentDefinitionBody, AgentStepWorkflowBody
 
         fields = AgentDefinitionBody.model_fields
-        assert len(fields) == 27, f"Expected 27 fields, got {len(fields)}: {list(fields.keys())}"
+        assert len(fields) == 24, f"Expected 24 fields, got {len(fields)}: {list(fields.keys())}"
         assert "surfaces" in fields
         assert "reasoning_required" in fields
         assert "fallback_agent" in fields
         assert "max_turns" not in fields
-        assert "steps" in fields
-        assert "step_variables" in fields
-        assert "exit_condition" in fields
+        assert "steps" not in fields
+        assert "step_variables" not in fields
+        assert "exit_condition" not in fields
         assert "step_workflow" in fields
+        nested = AgentStepWorkflowBody.model_fields
+        assert "steps" in nested
+        assert "variables" in nested
+        assert "exit_condition" in nested
 
     def test_surfaces_normalize_and_deduplicate(self) -> None:
         """Persona/spawn usage surfaces normalize from YAML-ish inputs."""

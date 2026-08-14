@@ -265,13 +265,13 @@ async def evaluate_agent_definition(
 
     check_agent_tool_gates(agent, result)
 
-    if agent.steps:
+    if agent.step_workflow:
         inline = WorkflowDefinition(
             name=f"{agent.name} (inline steps)",
             type="step",
-            steps=agent.steps,
-            variables=agent.step_variables or {},
-            exit_condition=agent.exit_condition,
+            steps=agent.step_workflow.steps,
+            variables=agent.step_workflow.variables or {},
+            exit_condition=agent.step_workflow.exit_condition,
         )
         # check_agent_tool_gates already covered inline step gates; the
         # structural pass re-adds them, so dedupe by (code, message).
@@ -609,7 +609,7 @@ def check_agent_tool_gates(agent: AgentDefinitionBody, result: WorkflowEvaluatio
     _check_mcp_ref_format(
         owner, "blocked_mcp_tools", agent.blocked_mcp_tools, result, blocking=True
     )
-    for step in agent.steps or []:
+    for step in agent.step_workflow.steps if agent.step_workflow else []:
         check_step_tool_gates(step, result)
 
 

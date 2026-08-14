@@ -20,8 +20,8 @@ def _agent() -> dict:
 
 def test_no_write_permissions() -> None:
     agent = _agent()
-    review_step = next(step for step in agent["steps"] if step["name"] == "review")
-    terminate_step = next(step for step in agent["steps"] if step["name"] == "terminate")
+    review_step = next(step for step in agent["step_workflow"]["steps"] if step["name"] == "review")
+    terminate_step = next(step for step in agent["step_workflow"]["steps"] if step["name"] == "terminate")
     instructions = agent["instructions"]
 
     assert review_step.get("allowed_tools") != "all"
@@ -40,7 +40,7 @@ def test_no_write_permissions() -> None:
 def test_emits_review_verdict() -> None:
     agent = _agent()
     instructions = agent["instructions"]
-    review_step = next(step for step in agent["steps"] if step["name"] == "review")
+    review_step = next(step for step in agent["step_workflow"]["steps"] if step["name"] == "review")
     status_message = review_step["status_message"]
     success_tools = {item["tool"] for item in review_step.get("on_mcp_success", [])}
     allowed_mcp_tools = set(review_step.get("allowed_mcp_tools", []))
@@ -63,7 +63,7 @@ def test_emits_review_verdict() -> None:
 
 def test_stale_reviewers_can_terminate_after_task_already_advanced() -> None:
     agent = _agent()
-    review_step = next(step for step in agent["steps"] if step["name"] == "review")
+    review_step = next(step for step in agent["step_workflow"]["steps"] if step["name"] == "review")
     status_message = review_step["status_message"]
     success_handlers = review_step.get("on_mcp_success", [])
 
@@ -85,7 +85,7 @@ def test_stale_reviewers_can_terminate_after_task_already_advanced() -> None:
 def test_escalation_is_limited_to_broken_workflow() -> None:
     agent = _agent()
     instructions = agent["instructions"]
-    review_step = next(step for step in agent["steps"] if step["name"] == "review")
+    review_step = next(step for step in agent["step_workflow"]["steps"] if step["name"] == "review")
     status_message = review_step["status_message"]
 
     assert 'Use escalate_task only for "my workflow is broken" failures' in instructions
@@ -97,13 +97,13 @@ def test_escalation_is_limited_to_broken_workflow() -> None:
 
 def test_loads_required_skills_before_review() -> None:
     agent = _agent()
-    steps = {step["name"]: step for step in agent["steps"]}
+    steps = {step["name"]: step for step in agent["step_workflow"]["steps"]}
     claim_step = steps["claim"]
     load_step = steps["load_skills"]
     instructions = agent["instructions"]
 
     assert "tech-writer" not in instructions
-    assert agent["step_variables"]["required_skills"] == [
+    assert agent["step_workflow"]["variables"]["required_skills"] == [
         "code-index",
         "tasks",
         "review-learning",
@@ -118,7 +118,7 @@ def test_loads_required_skills_before_review() -> None:
     # Every required skill must be named in the load step prompt; the prior
     # mismatch (review-learning gated but never instructed) deadlocked the
     # transition that requires all required_skills in loaded_skills.
-    for skill_name in agent["step_variables"]["required_skills"]:
+    for skill_name in agent["step_workflow"]["variables"]["required_skills"]:
         assert f'get_skill(name="{skill_name}")' in load_step["status_message"]
     assert load_step["transitions"] == [
         {
@@ -136,7 +136,7 @@ def test_loads_required_skills_before_review() -> None:
 def test_auto_claimed_reviewers_do_not_reclaim() -> None:
     agent = _agent()
     instructions = agent["instructions"]
-    review_step = next(step for step in agent["steps"] if step["name"] == "review")
+    review_step = next(step for step in agent["step_workflow"]["steps"] if step["name"] == "review")
 
     assert "Spawn-time auto-claim normally completes this" in instructions
     assert "Only call claim_task when the active step prompt says" in instructions
@@ -152,7 +152,7 @@ def test_auto_claimed_reviewers_do_not_reclaim() -> None:
 def test_reviewer_avoids_workflow_status_and_full_test_suites() -> None:
     agent = _agent()
     instructions = agent["instructions"]
-    review_step = next(step for step in agent["steps"] if step["name"] == "review")
+    review_step = next(step for step in agent["step_workflow"]["steps"] if step["name"] == "review")
     status_message = review_step["status_message"]
 
     assert "Do NOT call get_workflow_status" in instructions
@@ -184,7 +184,7 @@ def test_reviewer_avoids_workflow_status_and_full_test_suites() -> None:
 def test_leaf_review_is_ordered_by_spec_then_quality() -> None:
     agent = _agent()
     instructions = agent["instructions"]
-    review_step = next(step for step in agent["steps"] if step["name"] == "review")
+    review_step = next(step for step in agent["step_workflow"]["steps"] if step["name"] == "review")
     status_message = review_step["status_message"]
 
     assert instructions.index("spec_compliance") < instructions.index("code_quality")
@@ -197,7 +197,7 @@ def test_leaf_review_is_ordered_by_spec_then_quality() -> None:
 def test_tdd_audit_evidence_is_language_aware() -> None:
     agent = _agent()
     instructions = agent["instructions"]
-    review_step = next(step for step in agent["steps"] if step["name"] == "review")
+    review_step = next(step for step in agent["step_workflow"]["steps"] if step["name"] == "review")
     status_message = review_step["status_message"]
 
     for text in (instructions, status_message):
@@ -217,11 +217,11 @@ def test_proportionality_is_code_quality_tier_and_does_not_gate_spec() -> None:
     """
     agent = _agent()
     instructions = agent["instructions"]
-    review_step = next(step for step in agent["steps"] if step["name"] == "review")
+    review_step = next(step for step in agent["step_workflow"]["steps"] if step["name"] == "review")
     status_message = review_step["status_message"]
 
     # Loaded as a required QA skill (consistent with the deadlock fix).
-    assert "proportionality" in agent["step_variables"]["required_skills"]
+    assert "proportionality" in agent["step_workflow"]["variables"]["required_skills"]
 
     # Applied inside the code_quality tier, after spec_compliance, naming the
     # simpler form, and explicitly not gating spec_compliance.

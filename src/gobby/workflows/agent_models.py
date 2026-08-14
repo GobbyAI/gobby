@@ -117,11 +117,24 @@ class AgentDefinitionBody(BaseModel):
     # Agent-level tool restrictions (applied regardless of step workflow)
     blocked_tools: list[str] = Field(default_factory=list)
     blocked_mcp_tools: list[str] = Field(default_factory=list)
-    # Inline step workflow (replaces external step workflow YAML files)
-    steps: list[WorkflowStep] | None = None
-    step_variables: dict[str, Any] = Field(default_factory=dict)
-    exit_condition: str | None = None
     step_workflow: AgentStepWorkflowBody | None = None
+
+    @model_validator(mode="before")
+    @classmethod
+    def reject_legacy_step_keys(cls, data: Any) -> Any:
+        """Reject removed top-level step keys so extra=ignore cannot drop them."""
+        if not isinstance(data, dict):
+            return data
+        replacements = {
+            "steps": "step_workflow.steps",
+            "step_variables": "step_workflow.variables",
+            "exit_condition": "step_workflow.exit_condition",
+        }
+        present = [key for key in replacements if key in data]
+        if present:
+            named = ", ".join(f"{key} (use {replacements[key]})" for key in present)
+            raise ValueError(f"top-level step fields are no longer accepted: {named}")
+        return data
 
     @field_validator("reasoning_effort", mode="before")
     @classmethod

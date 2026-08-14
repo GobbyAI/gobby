@@ -38,13 +38,13 @@ def _agent(name: str) -> dict[str, Any]:
 
 def _allowed_mcp_tools(agent: dict[str, Any]) -> set[str]:
     tools: set[str] = set()
-    for step in agent.get("steps", []):
+    for step in agent.get("step_workflow", {}).get("steps", []):
         tools.update(step.get("allowed_mcp_tools", []) or [])
     return tools
 
 
 def _step(agent: dict[str, Any], name: str) -> dict[str, Any]:
-    matches = [step for step in agent.get("steps", []) if step.get("name") == name]
+    matches = [step for step in agent.get("step_workflow", {}).get("steps", []) if step.get("name") == name]
     assert len(matches) == 1
     return cast(dict[str, Any], matches[0])
 
@@ -82,9 +82,9 @@ def _install_merge_worker_workflow(
         "name": agent["name"],
         "version": agent["version"],
         "enabled": True,
-        "variables": agent.get("step_variables", {}),
-        "steps": agent["steps"],
-        "exit_condition": agent["exit_condition"],
+        "variables": agent.get("step_workflow", {}).get("variables", {}),
+        "steps": agent["step_workflow"]["steps"],
+        "exit_condition": agent["step_workflow"].get("exit_condition"),
     }
     definition = WorkflowDefinition(**workflow_data)
     manager = LocalWorkflowDefinitionManager(db)
@@ -318,7 +318,7 @@ def test_merge_worker_retries_worktree_cleanup_three_times_before_termination() 
     agent = _agent("merge-worker")
     cleanup = _step(agent, "cleanup")
 
-    assert agent["step_variables"]["worktree_cleanup_failures"] == 0
+    assert agent["step_workflow"]["variables"]["worktree_cleanup_failures"] == 0
     failure_updates = [
         update
         for update in [*cleanup["on_mcp_success"], *cleanup["on_mcp_error"]]

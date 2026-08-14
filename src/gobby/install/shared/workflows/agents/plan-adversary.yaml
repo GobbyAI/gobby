@@ -3,7 +3,7 @@ description: |
   Adversarial plan reviewer for the stage-native planning flow. Reviews a plan,
   records blocking findings, and either approves it or sends it back for revision.
 
-version: "1.1"
+version: "1.2"
 enabled: true
 priority: 20
 surfaces: [spawn, persona]
@@ -237,175 +237,176 @@ workflows:
       # lifecycle calls are stage-control actions, not discovery deliverables.
       - "tag:task-skill-gates"
 
-step_variables:
-  task_claimed: false
-  skill_loaded: false
-  proportionality_loaded: false
-  review_complete: false
+step_workflow:
+  variables:
+    task_claimed: false
+    skill_loaded: false
+    proportionality_loaded: false
+    review_complete: false
 
-steps:
-  - name: claim
-    description: "Claim the assigned planning review task"
-    status_message: |
-      Claim the assigned planning task with claim_task(task_id=assigned_task_id),
-      then read it with get_task. The spawning session typically already holds
-      the claim for coordination; the delegated claim path advances this step
-      without an explicit override.
-    allowed_tools:
-      - mcp__gobby__call_tool
-      - mcp__gobby__list_mcp_servers
-      - mcp__gobby__list_tools
-      - mcp__gobby__get_tool_schema
-    allowed_mcp_tools:
-      - "gobby-tasks:claim_task"
-      - "gobby-tasks:get_task"
-    on_mcp_success:
-      - server: gobby-tasks
-        tool: claim_task
-        action: set_variable
-        variable: task_claimed
-        value: true
-    on_mcp_error:
-      - server: gobby-tasks
-        tool: claim_task
-        when: tool_output.error_code == "TASK_CLOSED"
-        action: set_variable
-        variable: task_claimed
-        value: true
-    transitions:
-      - to: load_skill
-        when: "vars.task_claimed"
+  exit_condition: "current_step == 'terminate'"
+  steps:
+    - name: claim
+      description: "Claim the assigned planning review task"
+      status_message: |
+        Claim the assigned planning task with claim_task(task_id=assigned_task_id),
+        then read it with get_task. The spawning session typically already holds
+        the claim for coordination; the delegated claim path advances this step
+        without an explicit override.
+      allowed_tools:
+        - mcp__gobby__call_tool
+        - mcp__gobby__list_mcp_servers
+        - mcp__gobby__list_tools
+        - mcp__gobby__get_tool_schema
+      allowed_mcp_tools:
+        - "gobby-tasks:claim_task"
+        - "gobby-tasks:get_task"
+      on_mcp_success:
+        - server: gobby-tasks
+          tool: claim_task
+          action: set_variable
+          variable: task_claimed
+          value: true
+      on_mcp_error:
+        - server: gobby-tasks
+          tool: claim_task
+          when: tool_output.error_code == "TASK_CLOSED"
+          action: set_variable
+          variable: task_claimed
+          value: true
+      transitions:
+        - to: load_skill
+          when: "vars.task_claimed"
 
-  - name: load_skill
-    mcp_error_policy: stay
-    description: "Load the plan-review and proportionality methodology skills"
-    status_message: |
-      Load BOTH methodology skills before reviewing: call get_skill(name="plan-review")
-      AND get_skill(name="proportionality") on gobby-skills, then continue.
-      Use only mcp__gobby__call_tool in this step. Call get_skill directly:
-      call_tool("gobby-skills", "get_skill", {"name": "plan-review"}) and
-      call_tool("gobby-skills", "get_skill", {"name": "proportionality"}).
-      Do not use native Skill, GitHub/app connector, or Computer Use tools.
-      Both returned skills are authoritative: `plan-review` is the review
-      methodology, `proportionality` is the shared anti-Rube-Goldberg criterion
-      backing the over-engineering finding category. Follow both exactly.
-    allowed_tools:
-      - mcp__gobby__call_tool
-      - mcp__gobby__list_mcp_servers
-      - mcp__gobby__list_tools
-      - mcp__gobby__get_tool_schema
-    allowed_mcp_tools:
-      - "gobby-skills:get_skill"
-      # The spawn prompt directs the reviewer to read the prepared evidence
-      # snapshot immediately; allow that read here so an eager first fetch
-      # does not burn identical-denial strikes. Skills still gate the
-      # transition to review.
-      - "gobby-plans:get_plan_review_snapshot"
-    on_mcp_success:
-      - server: gobby-skills
-        tool: get_skill
-        when: "tool_input.name == 'plan-review'"
-        action: set_variable
-        variable: skill_loaded
-        value: true
-      - server: gobby-skills
-        tool: get_skill
-        when: "tool_input.name == 'proportionality'"
-        action: set_variable
-        variable: proportionality_loaded
-        value: true
-    transitions:
-      - to: review
-        when: "vars.skill_loaded and vars.proportionality_loaded"
+    - name: load_skill
+      mcp_error_policy: stay
+      description: "Load the plan-review and proportionality methodology skills"
+      status_message: |
+        Load BOTH methodology skills before reviewing: call get_skill(name="plan-review")
+        AND get_skill(name="proportionality") on gobby-skills, then continue.
+        Use only mcp__gobby__call_tool in this step. Call get_skill directly:
+        call_tool("gobby-skills", "get_skill", {"name": "plan-review"}) and
+        call_tool("gobby-skills", "get_skill", {"name": "proportionality"}).
+        Do not use native Skill, GitHub/app connector, or Computer Use tools.
+        Both returned skills are authoritative: `plan-review` is the review
+        methodology, `proportionality` is the shared anti-Rube-Goldberg criterion
+        backing the over-engineering finding category. Follow both exactly.
+      allowed_tools:
+        - mcp__gobby__call_tool
+        - mcp__gobby__list_mcp_servers
+        - mcp__gobby__list_tools
+        - mcp__gobby__get_tool_schema
+      allowed_mcp_tools:
+        - "gobby-skills:get_skill"
+        # The spawn prompt directs the reviewer to read the prepared evidence
+        # snapshot immediately; allow that read here so an eager first fetch
+        # does not burn identical-denial strikes. Skills still gate the
+        # transition to review.
+        - "gobby-plans:get_plan_review_snapshot"
+      on_mcp_success:
+        - server: gobby-skills
+          tool: get_skill
+          when: "tool_input.name == 'plan-review'"
+          action: set_variable
+          variable: skill_loaded
+          value: true
+        - server: gobby-skills
+          tool: get_skill
+          when: "tool_input.name == 'proportionality'"
+          action: set_variable
+          variable: proportionality_loaded
+          value: true
+      transitions:
+        - to: review
+          when: "vars.skill_loaded and vars.proportionality_loaded"
 
-  - name: review
-    description: "Review the implementation plan and decide"
-    status_message: |
-      Review the plan artifact. If blocking issues remain, reject review with
-      reject_review(stage_name="planning", findings=[...],
-      coverage_attestation={...}).
-      If the plan is sound, approve it with
-      approve_review(stage_name="planning", round_number=..., findings=[],
-      routing_decisions={...}, manifest_entries=[...],
-      coverage_attestation={...}, evidence_id=...). Proceed directly to
-      end_agent_run. Do not send_message on this staged path. Use escalate_task
-      only for true human-intervention blockers.
-    allowed_tools: "all"
-    blocked_mcp_tools:
-      - "gobby-tasks:close_task"
-      - "gobby-tasks:de_escalate_task"
-      - "gobby-tasks-ops:submit_for_review"
-      - "gobby-tasks:reopen_task"
-      - "gobby-plans:apply_plan_review_manifest"
-      - "gobby-plans:derive_plan_handoff_manifest"
-      - "gobby-plans:apply_plan_handoff_manifest"
-      - "gobby-plans:finalize_plan_review_evidence"
-      - "gobby-plans:checkpoint_plan_review_lesson_mint"
-      - "gobby-agents:end_agent_run"
-      - "gobby-agents:spawn_agent"
-      - "gobby-agents:kill_agent"
-    allowed_mcp_tools:
-      - "gobby-tasks-ops:approve_review"
-      - "gobby-tasks-ops:reject_review"
-      - "gobby-tasks:escalate_task"
-      - "gobby-tasks:get_task"
-      - "gobby-tasks:list_tasks"
-      - "gobby-plans:get_plan_review_snapshot"
-      - "gobby-plans:derive_plan_review_manifest"
-      - "gobby-plans:validate_plan_review_coverage"
-      - "gobby-plans:expire_plan_review_evidence"
-      - "gobby-review-learning:recall_review_lessons_by_class"
-      - "gobby-review-learning:list_check_keys"
-    on_mcp_success:
-      - server: gobby-tasks-ops
-        tool: approve_review
-        action: set_variable
-        variable: review_complete
-        value: true
-      - server: gobby-tasks-ops
-        tool: reject_review
-        action: set_variable
-        variable: review_complete
-        value: true
-      - server: gobby-tasks
-        tool: escalate_task
-        action: set_variable
-        variable: review_complete
-        value: true
-    on_mcp_error:
-      - server: gobby-tasks-ops
-        tool: approve_review
-        when: tool_output.error_code == "TASK_CLOSED"
-        action: set_variable
-        variable: review_complete
-        value: true
-      - server: gobby-tasks-ops
-        tool: reject_review
-        when: tool_output.error_code == "TASK_CLOSED"
-        action: set_variable
-        variable: review_complete
-        value: true
-      - server: gobby-tasks
-        tool: escalate_task
-        when: tool_output.error_code == "TASK_CLOSED"
-        action: set_variable
-        variable: review_complete
-        value: true
-    transitions:
-      - to: terminate
-        when: "vars.review_complete"
+    - name: review
+      description: "Review the implementation plan and decide"
+      status_message: |
+        Review the plan artifact. If blocking issues remain, reject review with
+        reject_review(stage_name="planning", findings=[...],
+        coverage_attestation={...}).
+        If the plan is sound, approve it with
+        approve_review(stage_name="planning", round_number=..., findings=[],
+        routing_decisions={...}, manifest_entries=[...],
+        coverage_attestation={...}, evidence_id=...). Proceed directly to
+        end_agent_run. Do not send_message on this staged path. Use escalate_task
+        only for true human-intervention blockers.
+      allowed_tools: "all"
+      blocked_mcp_tools:
+        - "gobby-tasks:close_task"
+        - "gobby-tasks:de_escalate_task"
+        - "gobby-tasks-ops:submit_for_review"
+        - "gobby-tasks:reopen_task"
+        - "gobby-plans:apply_plan_review_manifest"
+        - "gobby-plans:derive_plan_handoff_manifest"
+        - "gobby-plans:apply_plan_handoff_manifest"
+        - "gobby-plans:finalize_plan_review_evidence"
+        - "gobby-plans:checkpoint_plan_review_lesson_mint"
+        - "gobby-agents:end_agent_run"
+        - "gobby-agents:spawn_agent"
+        - "gobby-agents:kill_agent"
+      allowed_mcp_tools:
+        - "gobby-tasks-ops:approve_review"
+        - "gobby-tasks-ops:reject_review"
+        - "gobby-tasks:escalate_task"
+        - "gobby-tasks:get_task"
+        - "gobby-tasks:list_tasks"
+        - "gobby-plans:get_plan_review_snapshot"
+        - "gobby-plans:derive_plan_review_manifest"
+        - "gobby-plans:validate_plan_review_coverage"
+        - "gobby-plans:expire_plan_review_evidence"
+        - "gobby-review-learning:recall_review_lessons_by_class"
+        - "gobby-review-learning:list_check_keys"
+      on_mcp_success:
+        - server: gobby-tasks-ops
+          tool: approve_review
+          action: set_variable
+          variable: review_complete
+          value: true
+        - server: gobby-tasks-ops
+          tool: reject_review
+          action: set_variable
+          variable: review_complete
+          value: true
+        - server: gobby-tasks
+          tool: escalate_task
+          action: set_variable
+          variable: review_complete
+          value: true
+      on_mcp_error:
+        - server: gobby-tasks-ops
+          tool: approve_review
+          when: tool_output.error_code == "TASK_CLOSED"
+          action: set_variable
+          variable: review_complete
+          value: true
+        - server: gobby-tasks-ops
+          tool: reject_review
+          when: tool_output.error_code == "TASK_CLOSED"
+          action: set_variable
+          variable: review_complete
+          value: true
+        - server: gobby-tasks
+          tool: escalate_task
+          when: tool_output.error_code == "TASK_CLOSED"
+          action: set_variable
+          variable: review_complete
+          value: true
+      transitions:
+        - to: terminate
+          when: "vars.review_complete"
 
-  - name: terminate
-    description: "Self-terminate"
-    status_message: >-
-      Call mcp__gobby__call_tool with server_name="gobby-agents",
-      tool_name="end_agent_run", and arguments={} to finish the run.
-    allowed_tools:
-      - mcp__gobby__call_tool
-      - mcp__gobby__list_mcp_servers
-      - mcp__gobby__list_tools
-      - mcp__gobby__get_tool_schema
-    allowed_mcp_tools:
-      - "gobby-agents:end_agent_run"
+    - name: terminate
+      description: "Self-terminate"
+      status_message: >-
+        Call mcp__gobby__call_tool with server_name="gobby-agents",
+        tool_name="end_agent_run", and arguments={} to finish the run.
+      allowed_tools:
+        - mcp__gobby__call_tool
+        - mcp__gobby__list_mcp_servers
+        - mcp__gobby__list_tools
+        - mcp__gobby__get_tool_schema
+      allowed_mcp_tools:
+        - "gobby-agents:end_agent_run"
 
-exit_condition: "current_step == 'terminate'"

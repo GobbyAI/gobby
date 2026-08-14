@@ -13,14 +13,6 @@ pytestmark = pytest.mark.unit
 _STEPFUL_YAML = """
 name: planner
 description: Nested stepful agent
-steps:
-  - name: plan
-    description: Draft the plan
-    allowed_tools: all
-step_variables:
-  required_skills:
-    - plan-draft
-exit_condition: "current_step == 'terminate'"
 step_workflow:
   variables:
     required_skills:
@@ -67,15 +59,11 @@ def test_step_workflow_nesting() -> None:
 
     fields = AgentDefinitionBody.model_fields
     assert "step_workflow" in fields
-    assert "steps" in fields
-    assert "step_variables" in fields
-    assert "exit_condition" in fields
+    assert "steps" not in fields
+    assert "step_variables" not in fields
+    assert "exit_condition" not in fields
 
     stepful = AgentDefinitionBody.model_validate(_load(_STEPFUL_YAML))
-    assert stepful.steps is not None
-    assert [step.name for step in stepful.steps] == ["plan"]
-    assert stepful.step_variables["required_skills"] == ["plan-draft"]
-    assert stepful.exit_condition == "current_step == 'terminate'"
     assert stepful.step_workflow is not None
     assert [step.name for step in stepful.step_workflow.steps] == ["plan", "terminate"]
     assert stepful.step_workflow.variables["required_skills"] == ["plan-draft"]
@@ -86,16 +74,44 @@ def test_step_workflow_nesting() -> None:
     restored = AgentDefinitionBody.model_validate(stepful.model_dump())
     assert restored.step_workflow is not None
     assert restored.step_workflow.model_dump() == stepful.step_workflow.model_dump()
-    assert restored.steps is not None
-    assert [step.name for step in restored.steps] == ["plan"]
 
     stepless = AgentDefinitionBody.model_validate(_load(_STEPLESS_YAML))
     assert stepless.step_workflow is None
-    assert stepless.steps is None
-    assert stepless.step_variables == {}
-    assert stepless.exit_condition is None
     stepless_restored = AgentDefinitionBody.model_validate(stepless.model_dump())
     assert stepless_restored.step_workflow is None
 
     with pytest.raises(ValidationError):
         AgentStepWorkflowBody(steps=[])
+
+
+def test_legacy_step_keys_rejected() -> None:
+    """Top-level step fields are gone and fail loud with nested replacement names."""
+    from gobby.workflows.agent_models import AgentDefinitionBody
+
+    fields = AgentDefinitionBody.model_fields
+    assert "step_workflow" in fields
+    assert "steps" not in fields
+    assert "step_variables" not in fields
+    assert "exit_condition" not in fields
+
+    with pytest.raises(ValidationError, match="step_workflow.steps"):
+        AgentDefinitionBody.model_validate(
+            {
+                "name": "planner",
+                "steps": [{"name": "plan", "allowed_tools": "all"}],
+            }
+        )
+    with pytest.raises(ValidationError, match="step_workflow.variables"):
+        AgentDefinitionBody.model_validate(
+            {
+                "name": "planner",
+                "step_variables": {"required_skills": ["plan-draft"]},
+            }
+        )
+    with pytest.raises(ValidationError, match="step_workflow.exit_condition"):
+        AgentDefinitionBody.model_validate(
+            {
+                "name": "planner",
+                "exit_condition": "current_step == 'terminate'",
+            }
+        )

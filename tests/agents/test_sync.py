@@ -8,7 +8,7 @@ from unittest.mock import patch
 import pytest
 import yaml
 
-from gobby.agents.sync import sync_bundled_agents
+from gobby.agents.sync import get_bundled_agents_path, sync_bundled_agents
 from gobby.storage.hub.protocol import HubDatabase
 from gobby.storage.workflow_definitions import LocalWorkflowDefinitionManager
 from gobby.workflows.definitions import AgentDefinitionBody
@@ -142,13 +142,14 @@ class TestSyncBundledAgents:
             "description: Merge helper\n"
             "provider: claude\n"
             "mode: interactive\n"
-            "steps:\n"
-            "  - name: merge\n"
-            "    allowed_tools:\n"
-            "      - mcp__gobby__call_tool\n"
-            "    allowed_mcp_tools:\n"
-            "      - gobby-worktrees:get_worktree\n"
-            "      - gobby-merge:inspect_merge_state\n"
+            "step_workflow:\n"
+            "  steps:\n"
+            "    - name: merge\n"
+            "      allowed_tools:\n"
+            "        - mcp__gobby__call_tool\n"
+            "      allowed_mcp_tools:\n"
+            "        - gobby-worktrees:get_worktree\n"
+            "        - gobby-merge:inspect_merge_state\n"
         )
         (agents_dir / "merge-helper.yaml").write_text(agent_yaml)
 
@@ -691,6 +692,33 @@ class TestSyncBundledAgents:
         assert "conductor" not in names
         assert "developer" not in names
         assert "pipeline-worker" not in names
+
+
+_STEPLESS_BUNDLED_AGENTS = frozenset(
+    {"comms-agent", "default", "goal-taskmaster", "triage-agent"}
+)
+_LEGACY_STEP_KEYS = ("steps", "step_variables", "exit_condition")
+
+
+@pytest.mark.unit
+def test_bundled_agents_nested_step_workflow() -> None:
+    """All 25 bundled agents load under the nested step_workflow model."""
+    from gobby.workflows.definitions import AgentDefinitionBody
+
+    paths = sorted(get_bundled_agents_path().glob("*.yaml"))
+    assert len(paths) == 25
+
+    for path in paths:
+        raw = yaml.safe_load(path.read_text(encoding="utf-8"))
+        assert isinstance(raw, dict)
+        for key in _LEGACY_STEP_KEYS:
+            assert key not in raw, f"{path.name} still has top-level {key}"
+        body = AgentDefinitionBody.model_validate(raw)
+        if path.stem in _STEPLESS_BUNDLED_AGENTS:
+            assert body.step_workflow is None, path.name
+        else:
+            assert body.step_workflow is not None, path.name
+            assert len(body.step_workflow.steps) >= 1, path.name
 
 
 @pytest.mark.unit

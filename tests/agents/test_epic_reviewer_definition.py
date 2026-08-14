@@ -21,7 +21,7 @@ def _agent() -> dict[str, Any]:
 
 def test_three_outcomes() -> None:
     agent = _agent()
-    review_step = next(step for step in agent["steps"] if step["name"] == "review")
+    review_step = next(step for step in agent["step_workflow"]["steps"] if step["name"] == "review")
     success_tools = {item["tool"] for item in review_step.get("on_mcp_success", [])}
 
     assert {
@@ -32,14 +32,16 @@ def test_three_outcomes() -> None:
 
 
 def test_review_step_stays_active_after_mcp_error() -> None:
-    review_step = next(step for step in _agent()["steps"] if step["name"] == "review")
+    review_step = next(
+        step for step in _agent()["step_workflow"]["steps"] if step["name"] == "review"
+    )
 
     assert review_step["mcp_error_policy"] == "stay"
 
 
 def test_success_path_uses_complete_stage_for_in_progress_epic_qa() -> None:
     agent = _agent()
-    review_step = next(step for step in agent["steps"] if step["name"] == "review")
+    review_step = next(step for step in agent["step_workflow"]["steps"] if step["name"] == "review")
     blocked = set(review_step["blocked_mcp_tools"])
     instructions = agent["instructions"]
     status = review_step["status_message"]
@@ -56,14 +58,14 @@ def test_success_path_uses_complete_stage_for_in_progress_epic_qa() -> None:
     assert "gobby-agents:end_agent_run" in blocked
     assert (
         "gobby-agents:end_agent_run"
-        in next(step for step in agent["steps"] if step["name"] == "terminate")["allowed_mcp_tools"]
+        in next(step for step in agent["step_workflow"]["steps"] if step["name"] == "terminate")["allowed_mcp_tools"]
     )
 
 
 def test_reads_subtree() -> None:
     agent = _agent()
-    claim_step = next(step for step in agent["steps"] if step["name"] == "claim")
-    review_text = next(step for step in agent["steps"] if step["name"] == "review")[
+    claim_step = next(step for step in agent["step_workflow"]["steps"] if step["name"] == "claim")
+    review_text = next(step for step in agent["step_workflow"]["steps"] if step["name"] == "review")[
         "status_message"
     ]
 
@@ -76,7 +78,7 @@ def test_reads_subtree() -> None:
 def test_docs_epics_can_use_discovery_brief_plan_substitute() -> None:
     agent = _agent()
     instructions = agent["instructions"]
-    status = next(step for step in agent["steps"] if step["name"] == "review")["status_message"]
+    status = next(step for step in agent["step_workflow"]["steps"] if step["name"] == "review")["status_message"]
 
     assert "Discovery Brief" in instructions
     assert "descendant task set" in instructions
@@ -88,7 +90,7 @@ def test_docs_epics_can_use_discovery_brief_plan_substitute() -> None:
 def test_epic_review_order_is_spec_quality_testing_proportionality() -> None:
     agent = _agent()
     instructions = agent["instructions"]
-    status = next(step for step in agent["steps"] if step["name"] == "review")["status_message"]
+    status = next(step for step in agent["step_workflow"]["steps"] if step["name"] == "review")["status_message"]
 
     # Anchor on the explicit "Review in order" sentence: the `proportionality`
     # skill name also appears earlier in the skill-load list, so a bare
@@ -105,10 +107,10 @@ def test_epic_review_order_is_spec_quality_testing_proportionality() -> None:
 
 def test_loads_required_skills_before_review() -> None:
     agent = _agent()
-    steps = {step["name"]: step for step in agent["steps"]}
+    steps = {step["name"]: step for step in agent["step_workflow"]["steps"]}
     load_step = steps["load_skill"]
 
-    assert agent["step_variables"]["required_skills"] == [
+    assert agent["step_workflow"]["variables"]["required_skills"] == [
         "code-index",
         "epic-review",
         "review-learning",
@@ -117,7 +119,7 @@ def test_loads_required_skills_before_review() -> None:
         "proportionality",
     ]
     assert load_step["allowed_mcp_tools"] == ["gobby-skills:get_skill"]
-    for skill_name in agent["step_variables"]["required_skills"]:
+    for skill_name in agent["step_workflow"]["variables"]["required_skills"]:
         assert f'get_skill(name="{skill_name}")' in load_step["status_message"]
     assert load_step["transitions"] == [
         {
@@ -144,7 +146,7 @@ def test_loads_required_skills_before_review() -> None:
 
 def test_closed_epic_routes_to_post_hoc_review_with_reopen_permission() -> None:
     agent = _agent()
-    steps = {step["name"]: step for step in agent["steps"]}
+    steps = {step["name"]: step for step in agent["step_workflow"]["steps"]}
     claim = steps["claim"]
     closed_review = steps["closed_review"]
 
@@ -167,7 +169,7 @@ def test_closed_epic_routes_to_post_hoc_review_with_reopen_permission() -> None:
 def test_tdd_audit_evidence_is_language_aware() -> None:
     agent = _agent()
     instructions = agent["instructions"]
-    review_text = next(step for step in agent["steps"] if step["name"] == "review")[
+    review_text = next(step for step in agent["step_workflow"]["steps"] if step["name"] == "review")[
         "status_message"
     ]
 

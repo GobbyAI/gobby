@@ -10,7 +10,11 @@ from unittest.mock import AsyncMock, MagicMock, patch
 import pytest
 import yaml
 
-from gobby.workflows.definitions import AgentDefinitionBody, AgentWorkflows
+from gobby.workflows.definitions import (
+    AgentDefinitionBody,
+    AgentStepWorkflowBody,
+    AgentWorkflows,
+)
 from gobby.workflows.safe_evaluator import SafeExpressionEvaluator
 
 if TYPE_CHECKING:
@@ -336,24 +340,26 @@ class TestSpawnAgentStepVariables:
         agent_body = AgentDefinitionBody(
             name="plan-adversary",
             provider="codex",
-            step_variables={
-                "task_claimed": False,
-                "skill_loaded": False,
-                "review_complete": False,
-            },
-            steps=[
-                {
-                    "name": "claim",
-                    "allowed_tools": ["mcp__gobby__call_tool"],
-                    "allowed_mcp_tools": ["gobby-tasks:claim_task", "gobby-tasks:get_task"],
-                    "transitions": [{"to": "load_skill", "when": "vars.task_claimed"}],
+            step_workflow=AgentStepWorkflowBody(
+                variables={
+                    "task_claimed": False,
+                    "skill_loaded": False,
+                    "review_complete": False,
                 },
-                {
-                    "name": "load_skill",
-                    "allowed_tools": ["mcp__gobby__call_tool"],
-                    "allowed_mcp_tools": ["gobby-skills:get_skill"],
-                },
-            ],
+                steps=[
+                    {
+                        "name": "claim",
+                        "allowed_tools": ["mcp__gobby__call_tool"],
+                        "allowed_mcp_tools": ["gobby-tasks:claim_task", "gobby-tasks:get_task"],
+                        "transitions": [{"to": "load_skill", "when": "vars.task_claimed"}],
+                    },
+                    {
+                        "name": "load_skill",
+                        "allowed_tools": ["mcp__gobby__call_tool"],
+                        "allowed_mcp_tools": ["gobby-skills:get_skill"],
+                    },
+                ],
+            ),
         )
 
         registry = create_spawn_agent_registry(

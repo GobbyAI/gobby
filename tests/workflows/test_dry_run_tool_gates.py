@@ -17,6 +17,7 @@ import yaml
 
 from gobby.workflows.definitions import (
     AgentDefinitionBody,
+    AgentStepWorkflowBody,
     WorkflowDefinition,
     WorkflowStep,
 )
@@ -147,7 +148,9 @@ class TestAgentToolGates:
     def test_agent_inline_steps_are_linted(self) -> None:
         agent = AgentDefinitionBody(
             name="worker",
-            steps=[WorkflowStep(name="work", blocked_tools=["Wokflow"])],
+            step_workflow=AgentStepWorkflowBody(
+                steps=[WorkflowStep(name="work", blocked_tools=["Wokflow"])],
+            ),
         )
         result = _evaluation()
         check_agent_tool_gates(agent, result)

@@ -538,6 +538,7 @@ class TestSessionStartAndHelpers:
         mock_agent_body.workflows.variables = {"good_var": "val", "_bad_var": "skip"}
         mock_agent_body.steps = None
         mock_agent_body.step_variables = {}
+        mock_agent_body.step_workflow = None
 
         mock_rule = MagicMock()
         mock_rule.name = "rule1"
@@ -581,6 +582,7 @@ class TestSessionStartAndHelpers:
         mock_agent_body.workflows.variables = {}
         mock_agent_body.steps = None
         mock_agent_body.step_variables = {}
+        mock_agent_body.step_workflow = None
 
         with (
             patch("gobby.workflows.selectors.resolve_rules_for_agent", return_value=set()),

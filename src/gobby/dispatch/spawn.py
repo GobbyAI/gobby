@@ -145,11 +145,12 @@ def _with_skill_allowed_tools(
     allowed_tools: tuple[str, ...],
 ) -> AgentDefinitionBody | None:
     """Return an agent definition whose restricted steps include composed skill tools."""
-    if agent_body is None or not agent_body.steps or not allowed_tools:
+    if agent_body is None or agent_body.step_workflow is None or not allowed_tools:
         return agent_body
 
     composed = agent_body.model_copy(deep=True)
-    for step in composed.steps or ():
+    assert composed.step_workflow is not None
+    for step in composed.step_workflow.steps:
         if step.allowed_tools == "all":
             continue
         step.allowed_tools = list(dict.fromkeys((*step.allowed_tools, *allowed_tools)))
@@ -243,7 +244,7 @@ async def spawn_agent(
             initial_variables["_agent_rules"] = agent_body.workflows.rules
         if agent_body.workflows.variables:
             initial_variables.update(agent_body.workflows.variables)
-        if agent_body.steps:
+        if agent_body.step_workflow:
             from gobby.mcp_proxy.tools.spawn_agent._factory import _register_agent_step_workflow
 
             initial_variables["_step_workflow_name"] = _register_agent_step_workflow(

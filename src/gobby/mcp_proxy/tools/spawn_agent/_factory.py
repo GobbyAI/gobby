@@ -428,7 +428,7 @@ def create_spawn_agent_registry(
 
         # Auto-register inline step workflow when the spawn has task-shaped work.
         has_assigned_task = bool(task_id or initial_variables.get("assigned_task_id"))
-        if agent_body and agent_body.steps and db and has_assigned_task:
+        if agent_body and agent_body.step_workflow and db and has_assigned_task:
             step_wf_name = _register_agent_step_workflow(agent_body, db)
             initial_variables["_step_workflow_name"] = step_wf_name
 

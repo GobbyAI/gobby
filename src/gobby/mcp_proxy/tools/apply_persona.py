@@ -102,10 +102,11 @@ def build_persona_changes(
     if agent_body.blocked_mcp_tools:
         changes["_agent_blocked_mcp_tools"] = agent_body.blocked_mcp_tools
 
-    if agent_body.steps and is_spawned:
+    if agent_body.step_workflow and is_spawned:
         from gobby.workflows.definitions import WorkflowInstance
         from gobby.workflows.state_manager import WorkflowInstanceManager
 
+        nested = agent_body.step_workflow
         step_wf_name = f"{agent_body.name}-steps"
         instance_mgr = WorkflowInstanceManager(db)
         lock = WorkflowInstanceMutation(session_id=session_id, workflow_name=step_wf_name)
@@ -119,8 +120,8 @@ def build_persona_changes(
                         workflow_name=step_wf_name,
                         enabled=True,
                         priority=10,
-                        current_step=agent_body.steps[0].name,
-                        variables=dict(agent_body.step_variables),
+                        current_step=nested.steps[0].name,
+                        variables=dict(nested.variables),
                     )
                     instance_mgr.save_instance(step_instance)
                     logger.info(
@@ -128,7 +129,7 @@ def build_persona_changes(
                         step_wf_name,
                         session_id,
                         agent_body.name,
-                        agent_body.steps[0].name,
+                        nested.steps[0].name,
                     )
                 else:
                     logger.debug(

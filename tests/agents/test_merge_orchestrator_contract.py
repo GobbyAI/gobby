@@ -195,7 +195,7 @@ def _agent() -> dict[str, Any]:
 
 
 def _step(agent: dict[str, Any], name: str) -> dict[str, Any]:
-    matches = [step for step in agent["steps"] if step["name"] == name]
+    matches = [step for step in agent["step_workflow"]["steps"] if step["name"] == name]
     assert len(matches) == 1
     return cast(dict[str, Any], matches[0])
 
@@ -234,9 +234,9 @@ def _install_workflow(
         "name": agent["name"],
         "version": agent["version"],
         "enabled": True,
-        "variables": agent["step_variables"],
-        "steps": agent["steps"],
-        "exit_condition": agent["exit_condition"],
+        "variables": agent["step_workflow"]["variables"],
+        "steps": agent["step_workflow"]["steps"],
+        "exit_condition": agent["step_workflow"].get("exit_condition"),
     }
     definition_manager = LocalWorkflowDefinitionManager(db)
     existing = definition_manager.get_by_name(agent["name"])
@@ -266,7 +266,7 @@ def _install_workflow(
             priority=100,
             current_step=current_step,
             step_entered_at=datetime.now(UTC),
-            variables=dict(agent["step_variables"]),
+            variables=dict(agent["step_workflow"]["variables"]),
         )
     )
     return manager
@@ -365,8 +365,8 @@ def test_merge_orchestrator_uses_wake_driven_agent_waits() -> None:
     assert "waited for" in instructions
     assert "historical delivery campaign failures" in instructions
     assert "continue the active resolution" in instructions
-    assert "no_progress_merge_status_count" in agent["step_variables"]
-    assert agent["step_variables"]["current_batch_run_ids"] == []
+    assert "no_progress_merge_status_count" in agent["step_workflow"]["variables"]
+    assert agent["step_workflow"]["variables"]["current_batch_run_ids"] == []
 
 
 def test_merge_orchestrator_allows_already_implemented_close_path() -> None:
@@ -415,7 +415,7 @@ def test_merge_orchestrator_loads_build_coordinator_skill_before_agent_queries()
     assert "vars.skill_loaded and vars.build_coordinator_skill_loaded" in {
         transition["when"] for transition in load_skill["transitions"]
     }
-    assert agent["step_variables"]["build_coordinator_skill_loaded"] is False
+    assert agent["step_workflow"]["variables"]["build_coordinator_skill_loaded"] is False
 
 
 @pytest.mark.asyncio

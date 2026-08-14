@@ -16,6 +16,7 @@ from gobby.storage.projects import LocalProjectManager
 from gobby.storage.workflow_definitions import LocalWorkflowDefinitionManager
 from gobby.workflows.definitions import (
     AgentDefinitionBody,
+    AgentStepWorkflowBody,
     PipelineDefinition,
     PipelineStep,
     WorkflowStep,
@@ -1000,7 +1001,9 @@ class TestRegisterAgentStepWorkflow:
 
         body = AgentDefinitionBody(
             name="rogue-agent",
-            steps=[WorkflowStep(name="claim")],
+            step_workflow=AgentStepWorkflowBody(
+                steps=[WorkflowStep(name="claim")],
+            ),
         )
         returned_name = _register_agent_step_workflow(body, db)
 

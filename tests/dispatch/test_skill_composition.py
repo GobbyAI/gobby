@@ -17,7 +17,11 @@ from gobby.storage.sessions import SessionManager
 from gobby.storage.skills import LocalSkillManager
 from gobby.storage.tasks import LocalTaskManager
 from gobby.storage.workflow_definitions import LocalWorkflowDefinitionManager
-from gobby.workflows.definitions import AgentDefinitionBody, WorkflowStep
+from gobby.workflows.definitions import (
+    AgentDefinitionBody,
+    AgentStepWorkflowBody,
+    WorkflowStep,
+)
 
 pytestmark = pytest.mark.integration
 
@@ -43,7 +47,10 @@ def _skill(
 def _agent(name: str = "composition-agent") -> AgentDefinitionBody:
     return AgentDefinitionBody(
         name=name,
-        step_variables={"required_skills": ["required-skill"]},
+        step_workflow=AgentStepWorkflowBody(
+            variables={"required_skills": ["required-skill"]},
+            steps=[WorkflowStep(name="work", allowed_tools="all")],
+        ),
     )
 
 
@@ -103,21 +110,23 @@ def test_skill_composition_clean_pass_through_reports_allowed_tools_union(
 def test_composed_skill_tools_extend_restricted_steps_without_mutating_definition() -> None:
     agent = AgentDefinitionBody(
         name="restricted-agent",
-        steps=[
-            WorkflowStep(name="work", allowed_tools=["Read"]),
-            WorkflowStep(name="unrestricted", allowed_tools="all"),
-        ],
+        step_workflow=AgentStepWorkflowBody(
+            steps=[
+                WorkflowStep(name="work", allowed_tools=["Read"]),
+                WorkflowStep(name="unrestricted", allowed_tools="all"),
+            ],
+        ),
     )
 
     composed = _with_skill_allowed_tools(agent, ("Bash", "Read"))
 
     assert composed is not None
     assert composed is not agent
-    assert composed.steps is not None
-    assert composed.steps[0].allowed_tools == ["Read", "Bash"]
-    assert composed.steps[1].allowed_tools == "all"
-    assert agent.steps is not None
-    assert agent.steps[0].allowed_tools == ["Read"]
+    assert composed.step_workflow is not None
+    assert composed.step_workflow.steps[0].allowed_tools == ["Read", "Bash"]
+    assert composed.step_workflow.steps[1].allowed_tools == "all"
+    assert agent.step_workflow is not None
+    assert agent.step_workflow.steps[0].allowed_tools == ["Read"]
 
 
 def test_skill_composition_uses_single_visible_skill_query(

@@ -16,7 +16,9 @@ def register_agent_step_workflow(
     db: HubDatabase,
 ) -> str:
     """Create or refresh the generated step workflow for an agent definition."""
+    # P3 scaffolding
     step_workflow_name = f"{agent_body.name}-steps"
+    nested = agent_body.step_workflow
 
     wf_data = {
         "name": step_workflow_name,
@@ -24,9 +26,9 @@ def register_agent_step_workflow(
         "type": "step",
         "version": "2.0",
         "enabled": False,
-        "steps": [step.model_dump() for step in (agent_body.steps or [])],
-        "variables": agent_body.step_variables,
-        "exit_condition": agent_body.exit_condition,
+        "steps": [step.model_dump() for step in (nested.steps if nested else [])],
+        "variables": dict(nested.variables) if nested else {},
+        "exit_condition": nested.exit_condition if nested else None,
     }
     definition_json = json.dumps(wf_data)
     now = datetime.now(UTC).isoformat()
