@@ -72,7 +72,7 @@ if TYPE_CHECKING:
     from gobby.sync.memories import MemoryBackupManager
     from gobby.tasks.validation import TaskValidator
     from gobby.wiki.watcher import WikiWatcher
-    from gobby.workflows.loader import WorkflowLoader
+    from gobby.workflows.pipeline_loader import PipelineLoader
     from gobby.workflows.pipeline_executor import PipelineExecutor
     from gobby.worktrees.executor import WorktreeDeleteExecutor
     from gobby.worktrees.git import WorktreeGitManager
@@ -191,7 +191,7 @@ class GobbyRunner:
     # Phase 3: orchestration (init_orchestration)
     wake_dispatcher: WakeDispatcher
     completion_registry: CompletionEventRegistry
-    workflow_loader: WorkflowLoader | None
+    workflow_loader: PipelineLoader | None
     pipeline_execution_manager: LocalPipelineExecutionManager | None
     pipeline_executor: PipelineExecutor | None
     agent_runner: AgentRunner | None

@@ -132,7 +132,7 @@ def test_show_workflow(cli_runner, mock_loader) -> None:
             defi = WorkflowDefinition(
                 name="test", steps=[WorkflowStep(name="step1", description="step desc")]
             )
-            mock_loader.load_workflow_sync.return_value = defi
+            mock_loader.load_pipeline_sync.return_value = defi
 
             result = cli_runner.invoke(workflows, ["show", "test"])
 
@@ -146,7 +146,7 @@ def test_show_workflow_not_found(cli_runner, mock_loader) -> None:
     """Test show workflow when workflow not found."""
     with patch("gobby.cli.workflows.common.get_workflow_loader", return_value=mock_loader):
         with patch("gobby.cli.workflows.common.get_project_path", return_value=None):
-            mock_loader.load_workflow_sync.return_value = None
+            mock_loader.load_pipeline_sync.return_value = None
 
             result = cli_runner.invoke(workflows, ["show", "nonexistent"])
 
@@ -162,7 +162,7 @@ def test_show_workflow_json_format(cli_runner, mock_loader) -> None:
                 name="test",
                 steps=[WorkflowStep(name="step1", description="step desc")],
             )
-            mock_loader.load_workflow_sync.return_value = defi
+            mock_loader.load_pipeline_sync.return_value = defi
 
             result = cli_runner.invoke(workflows, ["show", "test", "--json"])
 
@@ -186,7 +186,7 @@ def test_show_workflow_with_tools(cli_runner, mock_loader) -> None:
                     )
                 ],
             )
-            mock_loader.load_workflow_sync.return_value = defi
+            mock_loader.load_pipeline_sync.return_value = defi
 
             result = cli_runner.invoke(workflows, ["show", "test"])
 
@@ -297,7 +297,14 @@ async def test_import_workflow_file(
 ) -> None:
     """CLI imports become immediately visible to the DB-backed loader."""
     source_file = tmp_path / "source_wf.yaml"
-    source_file.write_text("name: Imported Workflow\ntype: step\ndescription: Test")
+    source_file.write_text(
+        "name: Imported Workflow\n"
+        "type: pipeline\n"
+        "description: Test\n"
+        "steps:\n"
+        "  - id: work\n"
+        "    exec: echo test\n"
+    )
 
     project_dir = tmp_path / "project"
     project_dir.mkdir()
@@ -315,7 +322,7 @@ async def test_import_workflow_file(
 
     assert result.exit_code == 0, result.output
     assert "Imported workflow" in result.output
-    imported = await common.create_workflow_loader(temp_db).load_workflow(
+    imported = await common.create_workflow_loader(temp_db).load_pipeline(
         "Imported Workflow",
         project.id,
     )

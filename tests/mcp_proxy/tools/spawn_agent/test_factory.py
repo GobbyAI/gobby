@@ -145,14 +145,14 @@ class TestSpawnAgentDefaults:
                 "gobby.mcp_proxy.tools.spawn_agent._factory._load_agent_body",
                 return_value=AgentDefinitionBody(name="default", provider="claude"),
             ),
-            patch("gobby.workflows.loader.WorkflowLoader") as loader_class,
+            patch("gobby.workflows.pipeline_loader.PipelineLoader") as loader_class,
             patch(
                 "gobby.mcp_proxy.tools.spawn_agent._factory.spawn_agent_impl",
                 new_callable=AsyncMock,
                 return_value={"success": True},
             ) as mock_spawn_impl,
         ):
-            loader_class.return_value.load_workflow = AsyncMock(return_value=pipeline)
+            loader_class.return_value.load_pipeline = AsyncMock(return_value=pipeline)
 
             result = await registry.call(
                 "spawn_agent",
@@ -164,7 +164,7 @@ class TestSpawnAgentDefaults:
             )
 
         assert result["success"] is True
-        loader_class.return_value.load_workflow.assert_awaited_once_with(
+        loader_class.return_value.load_pipeline.assert_awaited_once_with(
             "review-pipeline",
             project_path="/path/to/project",
         )

@@ -309,7 +309,7 @@ async def run_pipeline(
     when the pipeline finishes.
 
     Args:
-        loader: WorkflowLoader instance
+        loader: PipelineLoader instance
         executor: PipelineExecutor instance
         name: Pipeline name to run
         inputs: Input values for the pipeline
@@ -391,7 +391,7 @@ async def resume_pipeline(
     then re-executes via the executor's resume path.
 
     Args:
-        loader: WorkflowLoader instance
+        loader: PipelineLoader instance
         executor: PipelineExecutor instance
         execution_manager: LocalPipelineExecutionManager instance
         execution_id: ID of the failed execution to resume
@@ -625,7 +625,7 @@ async def resume_interrupted_pipelines(
     interrupt_stale_running_executions(exclude_ids=...).
 
     Args:
-        loader: WorkflowLoader for loading pipeline definitions.
+        loader: PipelineLoader for loading pipeline definitions.
         executor: PipelineExecutor instance.
         execution_manager: LocalPipelineExecutionManager instance.
         project_id: Current project ID (unused; each execution resumes under

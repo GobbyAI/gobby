@@ -107,7 +107,7 @@ def show_workflow(ctx: click.Context, name: str, json_format: bool) -> None:
     loader = common.get_workflow_loader()
     project_path = common.get_project_path()
 
-    definition = loader.load_workflow_sync(name, project_path)
+    definition = loader.load_pipeline_sync(name, project_path)
     if not definition:
         click.echo(f"Workflow '{name}' not found.", err=True)
         raise SystemExit(1)

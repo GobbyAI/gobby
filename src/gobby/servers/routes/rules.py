@@ -21,7 +21,7 @@ from gobby.mcp_proxy.tools.workflows._rules import (
 )
 from gobby.servers.routes.configuration_context import require_config_snapshot
 from gobby.workflows.definitions import split_rule_definition_data
-from gobby.workflows.loader import _is_bundled_template
+from gobby.workflows.pipeline_loader import _is_bundled_template
 
 if TYPE_CHECKING:
     from gobby.servers.http import HTTPServer

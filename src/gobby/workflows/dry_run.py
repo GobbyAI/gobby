@@ -15,16 +15,15 @@ from typing import TYPE_CHECKING, Any, Protocol
 
 from gobby.workflows.definitions import (
     AgentDefinitionBody,
-    PipelineDefinition,
     WorkflowDefinition,
     WorkflowStep,
 )
-from gobby.workflows.dry_run_validation import analyze_condition, runtime_resolution_mismatches
+from gobby.workflows.dry_run_validation import analyze_condition
 from gobby.workflows.handler_route_lint import check_handler_routes
 from gobby.workflows.native_tools import is_known_native_tool
 
 if TYPE_CHECKING:
-    from gobby.workflows.loader import WorkflowLoader
+    from gobby.workflows.pipeline_loader import PipelineLoader
 
 logger = logging.getLogger(__name__)
 
@@ -98,7 +97,6 @@ class WorkflowEvaluation:
     valid: bool
     items: list[EvaluationItem] = field(default_factory=list)
     workflow_name: str | None = None
-    workflow_type: str | None = None  # "step", "lifecycle", "pipeline"
     step_trace: list[WorkflowStepTrace] = field(default_factory=list)
     lifecycle_path: list[str] = field(default_factory=list)
     variables_declared: list[str] = field(default_factory=list)
@@ -108,7 +106,6 @@ class WorkflowEvaluation:
             "valid": self.valid,
             "items": [i.to_dict() for i in self.items],
             "workflow_name": self.workflow_name,
-            "workflow_type": self.workflow_type,
             "step_trace": [s.to_dict() for s in self.step_trace],
             "lifecycle_path": self.lifecycle_path,
             "variables_declared": self.variables_declared,
@@ -137,29 +134,17 @@ _BUILTIN_VARIABLES = {
 }
 
 
-async def evaluate_workflow(
+async def evaluate_pipeline_definition(
     name: str,
-    workflow_loader: WorkflowLoader,
+    workflow_loader: PipelineLoader,
     project_id: str | None = None,
     mcp_manager: MCPInventoryProtocol | None = None,
 ) -> WorkflowEvaluation:
-    """
-    Evaluate a workflow definition for structural and semantic issues.
-
-    Args:
-        name: Workflow name to evaluate.
-        workflow_loader: WorkflowLoader instance.
-        project_id: Optional project UUID for scoped resolution.
-        mcp_manager: Optional MCPClientManager for semantic MCP tool checks.
-
-    Returns:
-        WorkflowEvaluation with findings.
-    """
+    """Evaluate a pipeline definition. Agent steps use evaluate_agent_definition."""
     result = WorkflowEvaluation(valid=True, workflow_name=name)
 
-    # --- Phase A: Load & Basic Validation ---
     try:
-        definition = await workflow_loader.load_workflow(name, project_id)
+        definition = await workflow_loader.load_pipeline(name, project_id)
     except ValueError as e:
         result.valid = False
         result.items.append(
@@ -167,7 +152,7 @@ async def evaluate_workflow(
                 layer="structure",
                 level="error",
                 code="WORKFLOW_LOAD_ERROR",
-                message=f"Failed to load workflow '{name}': {e}",
+                message=f"Failed to load pipeline '{name}': {e}",
             )
         )
         return result
@@ -184,63 +169,14 @@ async def evaluate_workflow(
         )
         return result
 
-    # Pipeline definitions get basic info only
-    if isinstance(definition, PipelineDefinition):
-        result.workflow_type = "pipeline"
-        result.items.append(
-            EvaluationItem(
-                layer="structure",
-                level="info",
-                code="PIPELINE_TYPE",
-                message=f"'{name}' is a pipeline workflow — step checks skipped",
-            )
+    result.items.append(
+        EvaluationItem(
+            layer="structure",
+            level="info",
+            code="PIPELINE_TYPE",
+            message=f"'{name}' is a pipeline workflow — step checks skipped",
         )
-        return result
-
-    result.workflow_type = definition.type
-
-    for mismatch in runtime_resolution_mismatches(name, workflow_loader, project_id):
-        result.items.append(
-            EvaluationItem(
-                layer="structure",
-                level="warning",
-                code="RUNTIME_DEFINITION_MISMATCH",
-                message=f"Dry-run uses {mismatch}",
-                detail={"workflow": name, "mismatch": mismatch},
-            )
-        )
-
-    # Always-on workflows get info notice
-    if definition.enabled:
-        result.items.append(
-            EvaluationItem(
-                layer="structure",
-                level="info",
-                code="ALWAYS_ON",
-                message=f"'{name}' is an always-on workflow (enabled: true) — runs automatically on events",
-            )
-        )
-
-    result.variables_declared = list(definition.variables.keys())
-
-    # --- Phase B: Structural Validation ---
-    _check_structure(definition, result)
-
-    # --- Phase C: Semantic Validation ---
-    await _check_semantics(definition, result, mcp_manager)
-
-    from gobby.workflows.dry_run_trace import _build_lifecycle_path, _build_step_trace
-
-    # --- Step Trace Generation ---
-    _build_step_trace(definition, result)
-
-    # --- Lifecycle Path ---
-    _build_lifecycle_path(definition, result)
-
-    # Determine overall validity
-    if any(i.level == "error" for i in result.items):
-        result.valid = False
-
+    )
     return result
 
 
@@ -263,7 +199,6 @@ async def evaluate_agent_definition(
         WorkflowEvaluation with findings.
     """
     result = WorkflowEvaluation(valid=True, workflow_name=agent.name)
-    result.workflow_type = "agent"
 
     check_agent_tool_gates(agent, result)
 
@@ -277,6 +212,7 @@ async def evaluate_agent_definition(
             )
         )
     else:
+        result.variables_declared = list((agent.step_workflow.variables or {}).keys())
         inline = WorkflowDefinition(
             name=f"{agent.name} (inline steps)",
             type="step",

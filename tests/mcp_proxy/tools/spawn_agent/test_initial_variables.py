@@ -172,12 +172,12 @@ class TestSpawnAgentPipelineInjection:
                 "gobby.mcp_proxy.tools.spawn_agent._factory._load_agent_body",
                 return_value=agent_body,
             ),
-            patch("gobby.workflows.loader.WorkflowLoader") as mock_wf_loader_cls,
+            patch("gobby.workflows.pipeline_loader.PipelineLoader") as mock_wf_loader_cls,
             patch("gobby.mcp_proxy.tools.spawn_agent._factory.get_project_context") as mock_ctx,
             patch("gobby.mcp_proxy.tools.spawn_agent._factory.spawn_agent_impl") as mock_spawn_impl,
         ):
             mock_loader_instance = MagicMock()
-            mock_loader_instance.load_workflow = AsyncMock(return_value=pipeline_def)
+            mock_loader_instance.load_pipeline = AsyncMock(return_value=pipeline_def)
             mock_wf_loader_cls.return_value = mock_loader_instance
 
             mock_ctx.return_value = {
@@ -200,7 +200,7 @@ class TestSpawnAgentPipelineInjection:
             )
 
             assert result["success"] is True
-            mock_loader_instance.load_workflow.assert_awaited_once_with(
+            mock_loader_instance.load_pipeline.assert_awaited_once_with(
                 "my-pipeline",
                 project_path="/path/to/project",
             )
@@ -234,12 +234,12 @@ class TestSpawnAgentPipelineInjection:
                 "gobby.mcp_proxy.tools.spawn_agent._factory._load_agent_body",
                 return_value=agent_body,
             ),
-            patch("gobby.workflows.loader.WorkflowLoader") as mock_wf_loader_cls,
+            patch("gobby.workflows.pipeline_loader.PipelineLoader") as mock_wf_loader_cls,
             patch("gobby.mcp_proxy.tools.spawn_agent._factory.get_project_context") as mock_ctx,
             patch("gobby.mcp_proxy.tools.spawn_agent._factory.spawn_agent_impl") as mock_spawn_impl,
         ):
             mock_loader_instance = MagicMock()
-            mock_loader_instance.load_workflow = AsyncMock(return_value=workflow_def)
+            mock_loader_instance.load_pipeline = AsyncMock(return_value=workflow_def)
             mock_wf_loader_cls.return_value = mock_loader_instance
 
             mock_ctx.return_value = {
@@ -262,7 +262,7 @@ class TestSpawnAgentPipelineInjection:
             )
 
             assert result["success"] is True
-            mock_loader_instance.load_workflow.assert_awaited_once_with(
+            mock_loader_instance.load_pipeline.assert_awaited_once_with(
                 "my-workflow",
                 project_path="/path/to/project",
             )

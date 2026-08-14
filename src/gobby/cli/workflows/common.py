@@ -7,23 +7,23 @@ from pathlib import Path
 from gobby.cli.runtime import require_cli_database
 from gobby.cli.utils import resolve_session_id as resolve_session_id
 from gobby.storage.hub.protocol import HubDatabase
-from gobby.workflows.loader import WorkflowLoader
+from gobby.workflows.pipeline_loader import PipelineLoader
 from gobby.workflows.state_manager import SessionVariableManager
 
 _db_instance: HubDatabase | None = None
 _session_var_manager_instance: SessionVariableManager | None = None
 
 
-def create_workflow_loader(db: HubDatabase | None = None) -> WorkflowLoader:
+def create_workflow_loader(db: HubDatabase | None = None) -> PipelineLoader:
     """Get a DB-backed workflow loader.
 
     Workflow and pipeline definitions live in the DB registry; a loader
     without a database cannot see bundled definitions.
     """
-    return WorkflowLoader(db=db or require_cli_database())
+    return PipelineLoader(db=db or require_cli_database())
 
 
-def get_workflow_loader(db: HubDatabase | None = None) -> WorkflowLoader:
+def get_workflow_loader(db: HubDatabase | None = None) -> PipelineLoader:
     return create_workflow_loader(db)
 
 

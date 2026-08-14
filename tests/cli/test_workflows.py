@@ -82,7 +82,7 @@ def test_list_workflows_found(mock_open, mock_yaml, mock_project_path, mock_load
 
 def test_show_workflow(mock_loader) -> None:
     """Test 'workflows show' with valid name."""
-    mock_loader.load_workflow_sync.return_value = MOCK_WORKFLOW
+    mock_loader.load_pipeline_sync.return_value = MOCK_WORKFLOW
 
     runner = CliRunner()
     result = runner.invoke(workflows, ["show", "test-workflow"])
@@ -95,7 +95,7 @@ def test_show_workflow(mock_loader) -> None:
 
 def test_show_workflow_not_found(mock_loader) -> None:
     """Test 'workflows show' with invalid name."""
-    mock_loader.load_workflow_sync.return_value = None
+    mock_loader.load_pipeline_sync.return_value = None
 
     runner = CliRunner()
     result = runner.invoke(workflows, ["show", "invalid"])

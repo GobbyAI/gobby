@@ -19,7 +19,7 @@ from gobby.storage.workflow_definitions import (
     compute_definition_hash,
 )
 from gobby.workflows.definitions import RuleDefinitionBody, RuleEffect, RuleTriggerEvent
-from gobby.workflows.loader import WorkflowLoader
+from gobby.workflows.pipeline_loader import PipelineLoader
 from gobby.workflows.template_hashes import TemplateHashCache
 from tests.servers.conftest import create_http_server
 
@@ -95,9 +95,8 @@ class TestListWorkflows:
         _create_workflow(wf_manager, name="wf-step", workflow_type="workflow")
         _create_workflow(wf_manager, name="wf-pipe", workflow_type="pipeline", definition_json="{}")
         resp = client.get("/api/workflows?workflow_type=pipeline")
-        data = resp.json()
-        assert data["count"] == 1
-        assert data["definitions"][0]["name"] == "wf-pipe"
+        assert resp.status_code == 400
+        assert "pipeline domain MCP tools" in resp.json()["detail"]
 
     def test_list_filter_by_enabled(
         self, client: TestClient, wf_manager: LocalWorkflowDefinitionManager
@@ -220,6 +219,21 @@ class TestCreateWorkflow:
         assert resp.status_code == 400
         assert "variable domain MCP tools" in resp.json()["detail"]
 
+    def test_create_rejects_pipeline_kind(self, client: TestClient) -> None:
+        resp = client.post(
+            "/api/workflows",
+            json={
+                "name": "rogue-pipeline",
+                "definition_json": (
+                    '{"name": "rogue-pipeline", "type": "pipeline", '
+                    '"steps": [{"id": "s1", "exec": "echo hi"}]}'
+                ),
+                "workflow_type": "pipeline",
+            },
+        )
+        assert resp.status_code == 400
+        assert "pipeline domain MCP tools" in resp.json()["detail"]
+
     def test_list_omits_and_rejects_variable_filter(
         self, client: TestClient, wf_manager: LocalWorkflowDefinitionManager
     ) -> None:
@@ -236,6 +250,23 @@ class TestCreateWorkflow:
         filtered = client.get("/api/workflows", params={"workflow_type": "variable"})
         assert filtered.status_code == 400
         assert "variable domain MCP tools" in filtered.json()["detail"]
+
+    def test_list_omits_and_rejects_pipeline_filter(
+        self, client: TestClient, wf_manager: LocalWorkflowDefinitionManager
+    ) -> None:
+        wf_manager.create(
+            name="hidden-pipeline",
+            definition_json='{"name": "hidden-pipeline", "type": "pipeline", "steps": []}',
+            workflow_type="pipeline",
+            source="installed",
+        )
+        listed = client.get("/api/workflows")
+        assert listed.status_code == 200
+        names = [row["name"] for row in listed.json()["definitions"]]
+        assert "hidden-pipeline" not in names
+        filtered = client.get("/api/workflows", params={"workflow_type": "pipeline"})
+        assert filtered.status_code == 400
+        assert "pipeline domain MCP tools" in filtered.json()["detail"]
 
     @pytest.mark.parametrize(
         "definition_json",
@@ -409,11 +440,8 @@ type: pipeline
             },
         )
 
-        assert resp.status_code == 200
-        assert resp.json()["definition"]["enabled"] is expected_enabled
-        pipeline = WorkflowLoader(wf_manager.db).load_pipeline_sync("imported-pipeline")
-        assert pipeline is not None
-        assert pipeline.enabled is expected_enabled
+        assert resp.status_code == 400
+        assert "pipeline domain MCP tools" in resp.json()["detail"]
 
     def test_import_invalid_yaml(self, client: TestClient) -> None:
         resp = client.post(

@@ -80,7 +80,7 @@ class ServiceContainer:
 
     # Pipelines
     pipeline_executor: Any | None = None  # PipelineExecutor
-    workflow_loader: Any | None = None  # WorkflowLoader
+    workflow_loader: Any | None = None  # PipelineLoader
     pipeline_execution_manager: Any | None = None  # LocalPipelineExecutionManager
 
     # Completion Events

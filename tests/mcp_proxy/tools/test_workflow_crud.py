@@ -11,8 +11,11 @@ from gobby.mcp_proxy.tools.workflows._definitions import (
     update_workflow_definition,
 )
 from gobby.storage.hub.protocol import HubDatabase
-from gobby.storage.workflow_definitions import LocalWorkflowDefinitionManager
-from gobby.workflows.loader import WorkflowLoader
+from gobby.storage.workflow_definitions import (
+    LocalWorkflowDefinitionManager,
+    WorkflowDefinitionRow,
+)
+from gobby.workflows.pipeline_loader import PipelineLoader
 
 pytestmark = pytest.mark.unit
 
@@ -86,10 +89,21 @@ def def_manager(db: HubDatabase) -> LocalWorkflowDefinitionManager:
 
 
 @pytest.fixture
-def loader(tmp_path) -> WorkflowLoader:
-    loader = WorkflowLoader()
+def loader(tmp_path) -> PipelineLoader:
+    loader = PipelineLoader()
     loader.global_dirs = [tmp_path / "workflows"]
     return loader
+
+
+def _seed_generic(
+    def_manager: LocalWorkflowDefinitionManager, name: str = "test-workflow"
+) -> WorkflowDefinitionRow:
+    return def_manager.create(
+        name=name,
+        definition_json=json.dumps({"name": name, "steps": []}),
+        workflow_type="workflow",
+        source="installed",
+    )
 
 
 # =============================================================================
@@ -98,7 +112,7 @@ def loader(tmp_path) -> WorkflowLoader:
 
 
 class TestCreateWorkflow:
-    def test_create_rejects_variable_yaml_before_validation(self, loader: WorkflowLoader) -> None:
+    def test_create_rejects_variable_yaml_before_validation(self, loader: PipelineLoader) -> None:
         result = create_workflow_definition(
             object(),  # type: ignore[arg-type]
             loader,
@@ -108,53 +122,35 @@ class TestCreateWorkflow:
         assert "variable domain tools" in result["error"]
 
     def test_create_valid_workflow(
-        self, def_manager: LocalWorkflowDefinitionManager, loader: WorkflowLoader
+        self, def_manager: LocalWorkflowDefinitionManager, loader: PipelineLoader
     ) -> None:
-        loader.db = def_manager.db
         result = create_workflow_definition(def_manager, loader, VALID_WORKFLOW_YAML)
-
-        assert result["success"] is True
-        defn = result["definition"]
-        assert defn["name"] == "test-workflow"
-        assert defn["workflow_type"] == "pipeline"
-        assert defn["description"] == "A test workflow"
-        assert defn["version"] == "1.0"
-        assert defn["enabled"] is True
-        pipeline = loader.load_pipeline_sync("test-workflow")
-        assert pipeline is not None
-        assert pipeline.enabled is True
+        assert result["success"] is False
+        assert "pipeline domain MCP tools" in result["error"]
 
     def test_create_valid_pipeline(
-        self, def_manager: LocalWorkflowDefinitionManager, loader: WorkflowLoader
+        self, def_manager: LocalWorkflowDefinitionManager, loader: PipelineLoader
     ) -> None:
         result = create_workflow_definition(def_manager, loader, VALID_PIPELINE_YAML)
-
-        assert result["success"] is True
-        defn = result["definition"]
-        assert defn["name"] == "test-pipeline"
-        assert defn["workflow_type"] == "pipeline"
+        assert result["success"] is False
+        assert "pipeline domain MCP tools" in result["error"]
 
     def test_create_pipeline_normalizes_disabled_string(
         self, def_manager: LocalWorkflowDefinitionManager
     ) -> None:
-        loader = WorkflowLoader(def_manager.db)
+        loader = PipelineLoader(def_manager.db)
         yaml_content = VALID_PIPELINE_YAML.replace(
             "type: pipeline", 'type: pipeline\nenabled: "false"'
         )
-
         result = create_workflow_definition(def_manager, loader, yaml_content)
-
-        assert result["success"] is True
-        assert result["definition"]["enabled"] is False
-        pipeline = loader.load_pipeline_sync("test-pipeline")
-        assert pipeline is not None
-        assert pipeline.enabled is False
+        assert result["success"] is False
+        assert "pipeline domain MCP tools" in result["error"]
 
     def test_create_with_project_id(
         self,
         db: HubDatabase,
         def_manager: LocalWorkflowDefinitionManager,
-        loader: WorkflowLoader,
+        loader: PipelineLoader,
     ) -> None:
         db.execute(
             "INSERT INTO projects (id, name, created_at, updated_at) "
@@ -169,15 +165,11 @@ class TestCreateWorkflow:
             project_id="11111111-1111-4111-8111-111111110001",
         )
 
-        assert result["success"] is True
-        row = def_manager.get_by_name(
-            "test-workflow", project_id="11111111-1111-4111-8111-111111110001"
-        )
-        assert row is not None
-        assert row.project_id == "11111111-1111-4111-8111-111111110001"
+        assert result["success"] is False
+        assert "pipeline domain MCP tools" in result["error"]
 
     def test_create_rejects_invalid_yaml(
-        self, def_manager: LocalWorkflowDefinitionManager, loader: WorkflowLoader
+        self, def_manager: LocalWorkflowDefinitionManager, loader: PipelineLoader
     ) -> None:
         result = create_workflow_definition(def_manager, loader, "not: [valid: yaml: {{")
 
@@ -185,7 +177,7 @@ class TestCreateWorkflow:
         assert "YAML parse error" in result["error"]
 
     def test_create_rejects_missing_name(
-        self, def_manager: LocalWorkflowDefinitionManager, loader: WorkflowLoader
+        self, def_manager: LocalWorkflowDefinitionManager, loader: PipelineLoader
     ) -> None:
         result = create_workflow_definition(def_manager, loader, INVALID_YAML_NO_NAME)
 
@@ -193,7 +185,7 @@ class TestCreateWorkflow:
         assert "Validation failed" in result["error"]
 
     def test_create_rejects_pydantic_failures(
-        self, def_manager: LocalWorkflowDefinitionManager, loader: WorkflowLoader
+        self, def_manager: LocalWorkflowDefinitionManager, loader: PipelineLoader
     ) -> None:
         result = create_workflow_definition(def_manager, loader, INVALID_YAML_BAD_PIPELINE)
 
@@ -211,7 +203,7 @@ class TestCreateWorkflow:
     def test_create_rejects_missing_or_unsupported_type(
         self,
         def_manager: LocalWorkflowDefinitionManager,
-        loader: WorkflowLoader,
+        loader: PipelineLoader,
         yaml_content: str,
     ) -> None:
         result = create_workflow_definition(def_manager, loader, yaml_content)
@@ -219,32 +211,33 @@ class TestCreateWorkflow:
         assert result["success"] is False
         assert "agent, pipeline, rule, variable" in result["error"]
 
-    def test_create_rejects_agent_kind(self, loader: WorkflowLoader) -> None:
+    def test_create_rejects_agent_kind(self, loader: PipelineLoader) -> None:
         result = create_workflow_definition(object(), loader, VALID_AGENT_YAML)  # type: ignore[arg-type]
         assert result["success"] is False
         assert "agent domain tools" in result["error"]
 
-    def test_create_rejects_rule_kind(self, loader: WorkflowLoader) -> None:
+    def test_create_rejects_rule_kind(self, loader: PipelineLoader) -> None:
         result = create_workflow_definition(object(), loader, VALID_RULE_YAML)  # type: ignore[arg-type]
         assert result["success"] is False
         assert "rule domain tools" in result["error"]
 
-    def test_create_rejects_variable_kind(self, loader: WorkflowLoader) -> None:
+    def test_create_rejects_variable_kind(self, loader: PipelineLoader) -> None:
         result = create_workflow_definition(object(), loader, VALID_VARIABLE_YAML)  # type: ignore[arg-type]
         assert result["success"] is False
         assert "variable domain tools" in result["error"]
 
-    def test_create_detects_name_conflict(
-        self, def_manager: LocalWorkflowDefinitionManager, loader: WorkflowLoader
-    ) -> None:
-        # Create first
-        result1 = create_workflow_definition(def_manager, loader, VALID_WORKFLOW_YAML)
-        assert result1["success"] is True
+    def test_create_rejects_pipeline_kind(self, loader: PipelineLoader) -> None:
+        result = create_workflow_definition(object(), loader, VALID_PIPELINE_YAML)  # type: ignore[arg-type]
+        assert result["success"] is False
+        assert "pipeline domain MCP tools" in result["error"]
 
-        # Try to create duplicate
-        result2 = create_workflow_definition(def_manager, loader, VALID_WORKFLOW_YAML)
-        assert result2["success"] is False
-        assert "already exists" in result2["error"]
+    def test_create_detects_name_conflict(
+        self, def_manager: LocalWorkflowDefinitionManager, loader: PipelineLoader
+    ) -> None:
+        _seed_generic(def_manager)
+        result = create_workflow_definition(def_manager, loader, VALID_WORKFLOW_YAML)
+        assert result["success"] is False
+        assert "pipeline domain MCP tools" in result["error"]
 
 
 # =============================================================================
@@ -254,9 +247,9 @@ class TestCreateWorkflow:
 
 class TestUpdateWorkflow:
     def test_update_by_name(
-        self, def_manager: LocalWorkflowDefinitionManager, loader: WorkflowLoader
+        self, def_manager: LocalWorkflowDefinitionManager, loader: PipelineLoader
     ) -> None:
-        create_workflow_definition(def_manager, loader, VALID_WORKFLOW_YAML)
+        _seed_generic(def_manager)
 
         result = update_workflow_definition(
             def_manager, loader, name="test-workflow", description="Updated desc"
@@ -266,10 +259,10 @@ class TestUpdateWorkflow:
         assert result["definition"]["description"] == "Updated desc"
 
     def test_update_by_id(
-        self, def_manager: LocalWorkflowDefinitionManager, loader: WorkflowLoader
+        self, def_manager: LocalWorkflowDefinitionManager, loader: PipelineLoader
     ) -> None:
-        created = create_workflow_definition(def_manager, loader, VALID_WORKFLOW_YAML)
-        defn_id = created["definition"]["id"]
+        created = _seed_generic(def_manager)
+        defn_id = created.id
 
         result = update_workflow_definition(def_manager, loader, definition_id=defn_id, priority=25)
 
@@ -277,9 +270,9 @@ class TestUpdateWorkflow:
         assert result["definition"]["priority"] == 25
 
     def test_update_multiple_fields(
-        self, def_manager: LocalWorkflowDefinitionManager, loader: WorkflowLoader
+        self, def_manager: LocalWorkflowDefinitionManager, loader: PipelineLoader
     ) -> None:
-        create_workflow_definition(def_manager, loader, VALID_WORKFLOW_YAML)
+        _seed_generic(def_manager)
 
         result = update_workflow_definition(
             def_manager,
@@ -301,9 +294,9 @@ class TestUpdateWorkflow:
         assert defn["tags"] == ["production"]
 
     def test_update_with_yaml_replacement(
-        self, def_manager: LocalWorkflowDefinitionManager, loader: WorkflowLoader
+        self, def_manager: LocalWorkflowDefinitionManager, loader: PipelineLoader
     ) -> None:
-        create_workflow_definition(def_manager, loader, VALID_WORKFLOW_YAML)
+        _seed_generic(def_manager)
 
         new_yaml = """\
 name: test-workflow
@@ -318,14 +311,13 @@ steps:
             def_manager, loader, name="test-workflow", yaml_content=new_yaml
         )
 
-        assert result["success"] is True
-        assert result["definition"]["description"] == "Replaced definition"
-        assert result["definition"]["version"] == "3.0"
+        assert result["success"] is False
+        assert "pipeline domain MCP tools" in result["error"]
 
     def test_update_validates_yaml(
-        self, def_manager: LocalWorkflowDefinitionManager, loader: WorkflowLoader
+        self, def_manager: LocalWorkflowDefinitionManager, loader: PipelineLoader
     ) -> None:
-        create_workflow_definition(def_manager, loader, VALID_WORKFLOW_YAML)
+        _seed_generic(def_manager)
 
         result = update_workflow_definition(
             def_manager, loader, name="test-workflow", yaml_content=INVALID_YAML_BAD_PIPELINE
@@ -335,7 +327,7 @@ steps:
         assert "YAML validation failed" in result["error"]
 
     def test_update_not_found(
-        self, def_manager: LocalWorkflowDefinitionManager, loader: WorkflowLoader
+        self, def_manager: LocalWorkflowDefinitionManager, loader: PipelineLoader
     ) -> None:
         result = update_workflow_definition(
             def_manager, loader, name="nonexistent", description="x"
@@ -345,9 +337,9 @@ steps:
         assert "not found" in result["error"]
 
     def test_update_no_fields(
-        self, def_manager: LocalWorkflowDefinitionManager, loader: WorkflowLoader
+        self, def_manager: LocalWorkflowDefinitionManager, loader: PipelineLoader
     ) -> None:
-        create_workflow_definition(def_manager, loader, VALID_WORKFLOW_YAML)
+        _seed_generic(def_manager)
 
         result = update_workflow_definition(def_manager, loader, name="test-workflow")
 
@@ -355,7 +347,7 @@ steps:
         assert "No fields to update" in result["error"]
 
     def test_update_requires_name_or_id(
-        self, def_manager: LocalWorkflowDefinitionManager, loader: WorkflowLoader
+        self, def_manager: LocalWorkflowDefinitionManager, loader: PipelineLoader
     ) -> None:
         result = update_workflow_definition(def_manager, loader, description="x")
 
@@ -363,23 +355,23 @@ steps:
         assert "required" in result["error"]
 
     def test_update_yaml_replacement_rejects_step_type(
-        self, def_manager: LocalWorkflowDefinitionManager, loader: WorkflowLoader
+        self, def_manager: LocalWorkflowDefinitionManager, loader: PipelineLoader
     ) -> None:
         """Regression: `type: step` used to silently rewrite workflow_type to
         'pipeline' via _LEGACY_TYPE_MAP. Now it must error."""
-        create_workflow_definition(def_manager, loader, VALID_WORKFLOW_YAML)
+        _seed_generic(def_manager)
 
         rogue_yaml = "name: test-workflow\ntype: step\nsteps:\n  - name: claim\n"
         result = update_workflow_definition(
             def_manager, loader, name="test-workflow", yaml_content=rogue_yaml
         )
         assert result["success"] is False
-        assert "Invalid type" in result["error"]
+        assert "Invalid or missing 'type'" in result["error"]
 
     def test_update_rejects_type_change(
-        self, def_manager: LocalWorkflowDefinitionManager, loader: WorkflowLoader
+        self, def_manager: LocalWorkflowDefinitionManager, loader: PipelineLoader
     ) -> None:
-        create_workflow_definition(def_manager, loader, VALID_PIPELINE_YAML)
+        _seed_generic(def_manager, name="test-pipeline")
 
         result = update_workflow_definition(
             def_manager,
@@ -388,12 +380,13 @@ steps:
             yaml_content=VALID_WORKFLOW_YAML.replace("test-workflow", "test-pipeline"),
         )
 
-        assert result["success"] is False or result["definition"]["workflow_type"] == "pipeline"
+        assert result["success"] is False
+        assert "pipeline domain MCP tools" in result["error"]
 
     def test_update_rejects_rule_kind(
-        self, def_manager: LocalWorkflowDefinitionManager, loader: WorkflowLoader
+        self, def_manager: LocalWorkflowDefinitionManager, loader: PipelineLoader
     ) -> None:
-        create_workflow_definition(def_manager, loader, VALID_PIPELINE_YAML)
+        _seed_generic(def_manager, name="test-pipeline")
         result = update_workflow_definition(
             def_manager, loader, name="test-pipeline", yaml_content=VALID_RULE_YAML
         )
@@ -401,9 +394,9 @@ steps:
         assert "rule domain tools" in result["error"]
 
     def test_update_rejects_variable_kind(
-        self, def_manager: LocalWorkflowDefinitionManager, loader: WorkflowLoader
+        self, def_manager: LocalWorkflowDefinitionManager, loader: PipelineLoader
     ) -> None:
-        create_workflow_definition(def_manager, loader, VALID_PIPELINE_YAML)
+        _seed_generic(def_manager, name="test-pipeline")
         result = update_workflow_definition(
             def_manager, loader, name="test-pipeline", yaml_content=VALID_VARIABLE_YAML
         )
@@ -418,9 +411,9 @@ steps:
 
 class TestDeleteWorkflow:
     def test_delete_by_name(
-        self, def_manager: LocalWorkflowDefinitionManager, loader: WorkflowLoader
+        self, def_manager: LocalWorkflowDefinitionManager, loader: PipelineLoader
     ) -> None:
-        create_workflow_definition(def_manager, loader, VALID_WORKFLOW_YAML)
+        _seed_generic(def_manager)
 
         result = delete_workflow_definition(def_manager, loader, name="test-workflow")
 
@@ -429,10 +422,10 @@ class TestDeleteWorkflow:
         assert def_manager.get_by_name("test-workflow") is None
 
     def test_delete_by_id(
-        self, def_manager: LocalWorkflowDefinitionManager, loader: WorkflowLoader
+        self, def_manager: LocalWorkflowDefinitionManager, loader: PipelineLoader
     ) -> None:
-        created = create_workflow_definition(def_manager, loader, VALID_WORKFLOW_YAML)
-        defn_id = created["definition"]["id"]
+        created = _seed_generic(def_manager)
+        defn_id = created.id
 
         result = delete_workflow_definition(def_manager, loader, definition_id=defn_id)
 
@@ -440,7 +433,7 @@ class TestDeleteWorkflow:
         assert result["deleted"]["id"] == defn_id
 
     def test_delete_bundled_protection(
-        self, def_manager: LocalWorkflowDefinitionManager, loader: WorkflowLoader
+        self, def_manager: LocalWorkflowDefinitionManager, loader: PipelineLoader
     ) -> None:
         # Create a bundled definition with gobby tag
         def_manager.create(
@@ -455,7 +448,7 @@ class TestDeleteWorkflow:
         assert "bundled" in result["error"]
 
     def test_delete_bundled_force(
-        self, def_manager: LocalWorkflowDefinitionManager, loader: WorkflowLoader
+        self, def_manager: LocalWorkflowDefinitionManager, loader: PipelineLoader
     ) -> None:
         def_manager.create(
             name="bundled-wf",
@@ -469,7 +462,7 @@ class TestDeleteWorkflow:
         assert def_manager.get_by_name("bundled-wf") is None
 
     def test_delete_not_found(
-        self, def_manager: LocalWorkflowDefinitionManager, loader: WorkflowLoader
+        self, def_manager: LocalWorkflowDefinitionManager, loader: PipelineLoader
     ) -> None:
         result = delete_workflow_definition(def_manager, loader, name="nonexistent")
 
@@ -477,7 +470,7 @@ class TestDeleteWorkflow:
         assert "not found" in result["error"]
 
     def test_delete_requires_name_or_id(
-        self, def_manager: LocalWorkflowDefinitionManager, loader: WorkflowLoader
+        self, def_manager: LocalWorkflowDefinitionManager, loader: PipelineLoader
     ) -> None:
         result = delete_workflow_definition(def_manager, loader)
 
@@ -492,22 +485,22 @@ class TestDeleteWorkflow:
 
 class TestExportWorkflow:
     def test_export_by_name(
-        self, def_manager: LocalWorkflowDefinitionManager, loader: WorkflowLoader
+        self, def_manager: LocalWorkflowDefinitionManager, loader: PipelineLoader
     ) -> None:
-        create_workflow_definition(def_manager, loader, VALID_WORKFLOW_YAML)
+        _seed_generic(def_manager)
 
         result = export_workflow_definition(def_manager, name="test-workflow")
 
         assert result["success"] is True
         assert result["name"] == "test-workflow"
-        assert result["workflow_type"] == "pipeline"
+        assert result["workflow_type"] == "workflow"
         assert "name: test-workflow" in result["yaml_content"]
 
     def test_export_by_id(
-        self, def_manager: LocalWorkflowDefinitionManager, loader: WorkflowLoader
+        self, def_manager: LocalWorkflowDefinitionManager, loader: PipelineLoader
     ) -> None:
-        created = create_workflow_definition(def_manager, loader, VALID_WORKFLOW_YAML)
-        defn_id = created["definition"]["id"]
+        created = _seed_generic(def_manager)
+        defn_id = created.id
 
         result = export_workflow_definition(def_manager, definition_id=defn_id)
 
@@ -515,7 +508,7 @@ class TestExportWorkflow:
         assert isinstance(result["yaml_content"], str)
 
     def test_export_not_found(
-        self, def_manager: LocalWorkflowDefinitionManager, loader: WorkflowLoader
+        self, def_manager: LocalWorkflowDefinitionManager, loader: PipelineLoader
     ) -> None:
         result = export_workflow_definition(def_manager, name="nonexistent")
 
@@ -523,21 +516,20 @@ class TestExportWorkflow:
         assert "not found" in result["error"]
 
     def test_export_returns_valid_yaml(
-        self, def_manager: LocalWorkflowDefinitionManager, loader: WorkflowLoader
+        self, def_manager: LocalWorkflowDefinitionManager, loader: PipelineLoader
     ) -> None:
         import yaml
 
-        create_workflow_definition(def_manager, loader, VALID_PIPELINE_YAML)
+        _seed_generic(def_manager, name="test-pipeline")
 
         result = export_workflow_definition(def_manager, name="test-pipeline")
 
         assert result["success"] is True
         data = yaml.safe_load(result["yaml_content"])
         assert data["name"] == "test-pipeline"
-        assert data["type"] == "pipeline"
 
     def test_export_requires_name_or_id(
-        self, def_manager: LocalWorkflowDefinitionManager, loader: WorkflowLoader
+        self, def_manager: LocalWorkflowDefinitionManager, loader: PipelineLoader
     ) -> None:
         result = export_workflow_definition(def_manager)
 
@@ -618,18 +610,12 @@ class TestRegistryIntegration:
             project_ids: list[str | None] = []
 
             @staticmethod
-            async def load_workflow(name: str, project_id: str | None = None):
+            async def load_pipeline(name: str, project_id: str | None = None):
                 FakeLoader.project_ids.append(project_id)
-                return WorkflowDefinition(
-                    name=name,
-                    type="step",
-                    steps=[
-                        WorkflowStep(
-                            name="start",
-                            allowed_mcp_tools=["gobby-tasks:missing_tool"],
-                        )
-                    ],
-                )
+                return None
+
+            def discover_pipelines_sync(self) -> list[object]:
+                return []
 
         project_id = "11111111-1111-4111-8111-111111111111"
         monkeypatch.setattr(
@@ -644,8 +630,7 @@ class TestRegistryIntegration:
         result = await registry.call("evaluate_workflow", {"name": "inventory-test"})
 
         codes = {item["code"] for item in result["items"]}
-        assert "SEMANTIC_CHECKS_SKIPPED" not in codes
-        assert "UNKNOWN_MCP_TOOL" in codes
+        assert "WORKFLOW_NOT_FOUND" in codes
         assert FakeLoader.project_ids == [project_id]
 
     async def test_evaluate_agent_definition_uses_project_scope(
@@ -687,7 +672,6 @@ class TestRegistryIntegration:
 
         assert result["valid"] is True
         assert result["workflow_name"] == "project-agent"
-        assert result["workflow_type"] == "agent"
         assert all(item["code"] != "UNKNOWN_MCP_SERVER" for item in result["items"])
 
 
@@ -778,43 +762,37 @@ class TestNoDatabaseError:
 
 
 class TestPipelineTypeFiltering:
-    """Pipeline CRUD wrappers reject non-pipeline definitions."""
+    """Pipeline CRUD wrappers resolve only typed pipeline rows."""
 
-    def test_update_pipeline_rejects_non_pipeline(
-        self, def_manager: LocalWorkflowDefinitionManager
-    ) -> None:
+    def test_update_pipeline_rejects_non_pipeline(self, db: HubDatabase) -> None:
         from gobby.mcp_proxy.tools.workflows._pipelines import _require_pipeline
+        from gobby.storage.definitions.pipelines import PipelineDefinitionManager
 
-        # Create a non-pipeline definition directly
-        def_manager.create(
-            name="test-rule",
-            definition_json='{"name": "test-rule", "event": "stop"}',
-            workflow_type="workflow",
-            source="installed",
-        )
-        err = _require_pipeline(def_manager, name="test-rule")
-
+        err = _require_pipeline(PipelineDefinitionManager(db), name="test-rule")
         assert err is not None
         assert err["success"] is False
-        assert "not a pipeline" in err["error"]
+        assert "not found" in err["error"]
 
-    def test_update_pipeline_accepts_pipeline(
-        self, def_manager: LocalWorkflowDefinitionManager, loader: WorkflowLoader
-    ) -> None:
+    def test_update_pipeline_accepts_pipeline(self, db: HubDatabase) -> None:
         from gobby.mcp_proxy.tools.workflows._pipelines import _require_pipeline
+        from gobby.storage.definitions.pipelines import PipelineDefinitionManager
 
-        create_workflow_definition(def_manager, loader, VALID_PIPELINE_YAML)
-        err = _require_pipeline(def_manager, name="test-pipeline")
-
+        manager = PipelineDefinitionManager(db)
+        manager.create(
+            name="test-pipeline",
+            definition_json={
+                "name": "test-pipeline",
+                "type": "pipeline",
+                "steps": [{"id": "s1", "exec": "echo hi"}],
+            },
+        )
+        err = _require_pipeline(manager, name="test-pipeline")
         assert err is None
 
-    def test_require_pipeline_not_found(
-        self,
-        def_manager: LocalWorkflowDefinitionManager,
-    ) -> None:
+    def test_require_pipeline_not_found(self, db: HubDatabase) -> None:
         from gobby.mcp_proxy.tools.workflows._pipelines import _require_pipeline
+        from gobby.storage.definitions.pipelines import PipelineDefinitionManager
 
-        err = _require_pipeline(def_manager, name="nonexistent")
-
+        err = _require_pipeline(PipelineDefinitionManager(db), name="nonexistent")
         assert err is not None
         assert "not found" in err["error"]

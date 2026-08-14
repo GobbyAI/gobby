@@ -7,7 +7,7 @@ import pytest
 from gobby.mcp_proxy.tools.workflows import create_workflows_registry
 from gobby.storage.hub.protocol import HubDatabase
 from gobby.storage.workflow_definitions import LocalWorkflowDefinitionManager
-from gobby.workflows.loader import WorkflowLoader
+from gobby.workflows.pipeline_loader import PipelineLoader
 
 
 @pytest.mark.asyncio
@@ -27,7 +27,7 @@ async def test_get_workflow_returns_not_found_for_rule_row(
         ),
         workflow_type="rule",
     )
-    registry = create_workflows_registry(db=temp_db, loader=WorkflowLoader(db=temp_db))
+    registry = create_workflows_registry(db=temp_db, loader=PipelineLoader(db=temp_db))
 
     result = await registry.call("get_workflow", {"name": rule_name})
 

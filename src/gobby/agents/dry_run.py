@@ -18,7 +18,7 @@ if TYPE_CHECKING:
     from gobby.agents.runner import AgentRunner
     from gobby.storage.hub.protocol import HubDatabase
     from gobby.workflows.dry_run import MCPInventoryProtocol
-    from gobby.workflows.loader import WorkflowLoader
+    from gobby.workflows.pipeline_loader import PipelineLoader
 
 logger = logging.getLogger(__name__)
 
@@ -77,7 +77,7 @@ async def evaluate_spawn(
     project_path: str | None = None,
     # Injected dependencies
     db: HubDatabase | None = None,
-    workflow_loader: WorkflowLoader | None = None,
+    workflow_loader: PipelineLoader | None = None,
     runner: AgentRunner | None = None,
     session_manager: Any | None = None,
     git_manager: Any | None = None,
@@ -161,7 +161,7 @@ async def evaluate_spawn(
 
         # Validate workflow for agent usage
         if workflow_loader is not None:
-            is_valid, error_msg = await workflow_loader.validate_workflow_for_agent(
+            is_valid, error_msg = await workflow_loader.validate_pipeline_for_agent(
                 effective_workflow,
                 workflow_project_id,
             )
@@ -305,11 +305,11 @@ async def evaluate_spawn(
     except Exception:
         logger.debug("Failed to check terminal availability", exc_info=True)
 
-    # ---- Layer 5: Workflow Evaluation (delegates to evaluate_workflow) ----
+    # ---- Layer 5: Pipeline Evaluation (delegates to evaluate_pipeline_definition) ----
     if effective_workflow and workflow_loader is not None:
-        from gobby.workflows.dry_run import evaluate_workflow
+        from gobby.workflows.dry_run import evaluate_pipeline_definition
 
-        wf_eval = await evaluate_workflow(
+        wf_eval = await evaluate_pipeline_definition(
             effective_workflow,
             workflow_loader,
             workflow_project_id,

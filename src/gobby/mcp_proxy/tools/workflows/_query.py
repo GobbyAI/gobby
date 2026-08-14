@@ -12,8 +12,7 @@ import yaml
 from gobby.mcp_proxy.tools.workflows._resolution import resolve_session_id
 from gobby.storage.sessions import SessionManager
 from gobby.utils.project_context import get_workflow_project_path
-from gobby.workflows.definitions import WorkflowDefinition
-from gobby.workflows.loader import WorkflowLoader
+from gobby.workflows.pipeline_loader import PipelineLoader
 from gobby.workflows.state_manager import SessionVariableManager
 from gobby.workflows.step_instances import AgentStepInstanceManager
 
@@ -24,7 +23,7 @@ _WORKFLOW_KINDS = frozenset({"step", "lifecycle"})
 
 
 async def get_workflow(
-    loader: WorkflowLoader,
+    loader: PipelineLoader,
     name: str,
     project_id: str | None = None,
 ) -> dict[str, Any]:
@@ -32,62 +31,36 @@ async def get_workflow(
     Get workflow details including steps, triggers, and settings.
 
     Args:
-        loader: WorkflowLoader instance
+        loader: PipelineLoader instance
         name: Workflow name (without .yaml extension)
         project_id: Project UUID for scoped lookup.
 
     Returns:
         Workflow definition details
     """
-    definition = await loader.load_workflow(name, project_id)
+    definition = await loader.load_pipeline(name, project_id)
 
     if not definition:
         return {"success": False, "error": f"Workflow '{name}' not found"}
 
-    # Handle WorkflowDefinition vs PipelineDefinition
-    if isinstance(definition, WorkflowDefinition):
-        return {
-            "success": True,
-            "name": definition.name,
-            "enabled": definition.enabled,
-            "description": definition.description,
-            "version": definition.version,
-            "steps": (
-                [
-                    {
-                        "name": s.name,
-                        "description": s.description,
-                        "allowed_tools": s.allowed_tools,
-                        "blocked_tools": s.blocked_tools,
-                    }
-                    for s in definition.steps
-                ]
-                if definition.steps
-                else []
-            ),
-            "triggers": {},
-            "settings": definition.settings,
-        }
-    else:
-        # PipelineDefinition
-        return {
-            "success": True,
-            "name": definition.name,
-            "type": "pipeline",
-            "description": definition.description,
-            "version": definition.version,
-            "steps": (
-                [{"id": s.id, "exec": s.exec, "prompt": s.prompt} for s in definition.steps]
-                if definition.steps
-                else []
-            ),
-            "triggers": {},
-            "settings": {},
-        }
+    return {
+        "success": True,
+        "name": definition.name,
+        "type": "pipeline",
+        "description": definition.description,
+        "version": definition.version,
+        "steps": (
+            [{"id": s.id, "exec": s.exec, "prompt": s.prompt} for s in definition.steps]
+            if definition.steps
+            else []
+        ),
+        "triggers": {},
+        "settings": {},
+    }
 
 
 def list_workflows(
-    loader: WorkflowLoader,
+    loader: PipelineLoader,
     project_path: str | None = None,
     workflow_type: WorkflowKind | None = None,
     global_only: bool = False,
@@ -102,7 +75,7 @@ def list_workflows(
     when DB has no results or DB is unavailable.
 
     Args:
-        loader: WorkflowLoader instance
+        loader: PipelineLoader instance
         project_path: Project directory path. Auto-discovered from cwd if not provided.
         workflow_type: Filter by workflow kind ("step" or "lifecycle")
         global_only: If True, only show global workflows (ignore project)

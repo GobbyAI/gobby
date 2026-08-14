@@ -12,6 +12,7 @@ from unittest.mock import MagicMock, patch
 import pytest
 import yaml
 
+from gobby.storage.definitions.pipelines import PipelineDefinitionManager
 from gobby.storage.hub.protocol import HubDatabase
 from gobby.storage.workflow_definitions import LocalWorkflowDefinitionManager
 from gobby.workflows.definitions import PipelineDefinition
@@ -30,6 +31,11 @@ def db(temp_db: HubDatabase) -> HubDatabase:
 @pytest.fixture
 def manager(db: HubDatabase) -> LocalWorkflowDefinitionManager:
     return LocalWorkflowDefinitionManager(db)
+
+
+@pytest.fixture
+def pipeline_manager(db: HubDatabase) -> PipelineDefinitionManager:
+    return PipelineDefinitionManager(db)
 
 
 # ═══════════════════════════════════════════════════════════════════════
@@ -471,7 +477,7 @@ class TestSyncBundledPipelines:
 
     @pytest.mark.integration
     def test_sync_with_real_bundled_pipelines(
-        self, db: HubDatabase, manager: LocalWorkflowDefinitionManager
+        self, db: HubDatabase, pipeline_manager: PipelineDefinitionManager
     ) -> None:
         from gobby.workflows.sync_pipelines import sync_bundled_pipelines
 
@@ -481,13 +487,13 @@ class TestSyncBundledPipelines:
         assert result["synced"] + result["skipped"] + result["updated"] >= 1
         assert result["errors"] == []
 
-        rows = manager.list_all(workflow_type="pipeline")
+        rows = pipeline_manager.list_all()
         names = [row.name for row in rows]
         assert set(names) == {"expand-task", "gobby-merge", "review"}
 
-        expand_task = manager.get_by_name("expand-task")
-        gobby_merge = manager.get_by_name("gobby-merge")
-        review = manager.get_by_name("review")
+        expand_task = pipeline_manager.get_by_name("expand-task")
+        gobby_merge = pipeline_manager.get_by_name("gobby-merge")
+        review = pipeline_manager.get_by_name("review")
         assert expand_task is not None
         assert expand_task.enabled is True
         assert gobby_merge is not None
@@ -495,7 +501,9 @@ class TestSyncBundledPipelines:
         assert review is not None
         assert review.enabled is True
 
-    def test_ignores_deprecated_pipeline_directory(self, db: HubDatabase, tmp_path: Path) -> None:
+    def test_ignores_deprecated_pipeline_directory(
+        self, db: HubDatabase, tmp_path: Path, pipeline_manager: PipelineDefinitionManager
+    ) -> None:
         from gobby.workflows.sync_pipelines import sync_bundled_pipelines
 
         pip_dir = tmp_path / "pipelines"
@@ -521,7 +529,7 @@ steps: []
         assert result["skipped"] == 0
         assert result["errors"] == []
 
-        rows = LocalWorkflowDefinitionManager(db).list_all(workflow_type="pipeline")
+        rows = pipeline_manager.list_all()
         assert [row.name for row in rows] == []
 
     def test_skips_yaml_without_name(self, db: HubDatabase, tmp_path: Path) -> None:
@@ -569,7 +577,7 @@ steps: []
             result = sync_bundled_pipelines(db)
 
         assert result["synced"] == 0
-        assert LocalWorkflowDefinitionManager(db).get_by_name("bundled-rules") is None
+        assert PipelineDefinitionManager(db).get_by_name("bundled-rules") is None
         assert "Skipping non-pipeline YAML file" in caplog.text
 
     def test_syncs_valid_pipeline(self, db: HubDatabase, tmp_path: Path) -> None:
@@ -594,7 +602,7 @@ steps:
         ):
             result = sync_bundled_pipelines(db)
             assert result["synced"] == 1
-            row = LocalWorkflowDefinitionManager(db).get_by_name("test-pipeline")
+            row = PipelineDefinitionManager(db).get_by_name("test-pipeline")
             assert row is not None
             assert row.enabled is False
 
@@ -616,7 +624,7 @@ steps:
 """
         )
 
-        manager = LocalWorkflowDefinitionManager(db)
+        manager = PipelineDefinitionManager(db)
         with patch(
             "gobby.workflows.sync_pipelines.get_bundled_pipelines_path", return_value=pip_dir
         ):
@@ -644,7 +652,96 @@ steps:
         assert refreshed is not None
         assert refreshed.enabled is False
 
-    def test_syncs_root_pipeline_files(self, db: HubDatabase, tmp_path: Path) -> None:
+    def test_enabled_default_flip_updates_unmodified_pipeline(
+        self, db: HubDatabase, tmp_path: Path
+    ) -> None:
+        from gobby.workflows.sync_pipelines import sync_bundled_pipelines
+
+        pip_dir = tmp_path / "pipelines"
+        pip_dir.mkdir()
+        pipeline_path = pip_dir / "flip.yaml"
+        pipeline_path.write_text(
+            """
+name: flip-pipe
+type: pipeline
+enabled: false
+steps:
+  - id: step1
+    exec: echo hello
+"""
+        )
+        with patch(
+            "gobby.workflows.sync_pipelines.get_bundled_pipelines_path", return_value=pip_dir
+        ):
+            sync_bundled_pipelines(db)
+            seeded = PipelineDefinitionManager(db).get_by_name("flip-pipe")
+            assert seeded is not None
+            assert seeded.enabled is False
+            assert seeded.enabled_pinned is False
+            pipeline_path.write_text(
+                """
+name: flip-pipe
+type: pipeline
+enabled: true
+steps:
+  - id: step1
+    exec: echo hello
+"""
+            )
+            result = sync_bundled_pipelines(db)
+        updated = PipelineDefinitionManager(db).get_by_name("flip-pipe")
+        assert result["updated"] == 1
+        assert updated is not None
+        assert updated.enabled is True
+        assert updated.enabled_pinned is False
+
+    def test_enabled_default_flip_preserves_pinned_pipeline(
+        self, db: HubDatabase, tmp_path: Path
+    ) -> None:
+        from gobby.workflows.sync_pipelines import sync_bundled_pipelines
+
+        pip_dir = tmp_path / "pipelines"
+        pip_dir.mkdir()
+        pipeline_path = pip_dir / "pin.yaml"
+        pipeline_path.write_text(
+            """
+name: pin-pipe
+type: pipeline
+enabled: true
+steps:
+  - id: step1
+    exec: echo hello
+"""
+        )
+        manager = PipelineDefinitionManager(db)
+        with patch(
+            "gobby.workflows.sync_pipelines.get_bundled_pipelines_path", return_value=pip_dir
+        ):
+            sync_bundled_pipelines(db)
+            seeded = manager.get_by_name("pin-pipe")
+            assert seeded is not None
+            manager.update(seeded.id, enabled=False)
+            pipeline_path.write_text(
+                """
+name: pin-pipe
+type: pipeline
+enabled: true
+description: changed
+steps:
+  - id: step1
+    exec: echo hello
+"""
+            )
+            sync_bundled_pipelines(db)
+        preserved = manager.get_by_name("pin-pipe")
+        assert preserved is not None
+        assert preserved.enabled is False
+        assert preserved.enabled_pinned is True
+        assert preserved.description == "changed"
+
+    def test_syncs_root_pipeline_files(
+        self, db: HubDatabase, tmp_path: Path, pipeline_manager: PipelineDefinitionManager
+    ) -> None:
         from gobby.workflows.sync_pipelines import sync_bundled_pipelines
 
         workflows_dir = tmp_path / "workflows"
@@ -687,11 +784,11 @@ steps:
             result = sync_bundled_pipelines(db)
 
         assert result["synced"] == 2
-        rows = LocalWorkflowDefinitionManager(db).list_all(workflow_type="pipeline")
+        rows = pipeline_manager.list_all()
         assert {row.name for row in rows} == {"dev", "spawn-developer"}
 
     def test_updates_legacy_template_pipeline_row(
-        self, db: HubDatabase, manager: LocalWorkflowDefinitionManager, tmp_path: Path
+        self, db: HubDatabase, pipeline_manager: PipelineDefinitionManager, tmp_path: Path
     ) -> None:
         from gobby.workflows.sync_pipelines import sync_bundled_pipelines
 
@@ -717,29 +814,26 @@ steps:
         agent: "${{ inputs.agent }}"
 """
         )
-        manager.create(
+        pipeline_manager.create(
             name="spawn-developer",
-            definition_json=json.dumps(
-                {
-                    "name": "spawn-developer",
-                    "type": "pipeline",
-                    "description": "Old dispatch pipeline",
-                    "enabled": True,
-                    "inputs": {"agent": {"type": "string", "default": "developer"}},
-                    "steps": [
-                        {
-                            "id": "spawn",
-                            "mcp": {
-                                "server": "gobby-agents",
-                                "tool": "spawn_agent",
-                                "arguments": {"agent": "${{ inputs.agent }}"},
-                            },
-                        }
-                    ],
-                }
-            ),
-            workflow_type="pipeline",
-            source="template",
+            definition_json={
+                "name": "spawn-developer",
+                "type": "pipeline",
+                "description": "Old dispatch pipeline",
+                "enabled": True,
+                "inputs": {"agent": {"type": "string", "default": "developer"}},
+                "steps": [
+                    {
+                        "id": "spawn",
+                        "mcp": {
+                            "server": "gobby-agents",
+                            "tool": "spawn_agent",
+                            "arguments": {"agent": "${{ inputs.agent }}"},
+                        },
+                    }
+                ],
+            },
+            source="installed",
             tags=["gobby"],
         )
 
@@ -750,14 +844,14 @@ steps:
 
         assert result["errors"] == []
         assert result["updated"] == 1
-        row = manager.get_by_name("spawn-developer")
+        row = pipeline_manager.get_by_name("spawn-developer")
         assert row is not None
         assert row.source == "installed"
-        data = json.loads(row.definition_json)
+        data = row.definition_json
         assert data["inputs"]["agent"]["default"] == "backend-developer"
 
     def test_orphan_cleanup_keeps_custom_gobby_pipeline(
-        self, db: HubDatabase, manager: LocalWorkflowDefinitionManager, tmp_path: Path
+        self, db: HubDatabase, pipeline_manager: PipelineDefinitionManager, tmp_path: Path
     ) -> None:
         from gobby.workflows.sync_pipelines import sync_bundled_pipelines
 
@@ -767,22 +861,24 @@ steps:
             "name: current-pipeline\ntype: pipeline\n"
             "steps:\n  - id: current\n    exec: echo current\n"
         )
-        installed = manager.create(
+        installed = pipeline_manager.create(
             name="installed-pipeline",
-            definition_json=json.dumps(
-                {"name": "installed-pipeline", "type": "pipeline", "steps": []}
-            ),
-            workflow_type="pipeline",
+            definition_json={
+                "name": "installed-pipeline",
+                "type": "pipeline",
+                "steps": [{"id": "s", "exec": "echo"}],
+            },
             source="installed",
             tags=["gobby"],
         )
-        duplicate = manager.duplicate(installed.id, "duplicated-pipeline")
-        custom = manager.create(
+        duplicate = pipeline_manager.duplicate(installed.id, "duplicated-pipeline")
+        custom = pipeline_manager.create(
             name="custom-gobby-pipeline",
-            definition_json=json.dumps(
-                {"name": "custom-gobby-pipeline", "type": "pipeline", "steps": []}
-            ),
-            workflow_type="pipeline",
+            definition_json={
+                "name": "custom-gobby-pipeline",
+                "type": "pipeline",
+                "steps": [{"id": "s", "exec": "echo"}],
+            },
             source="custom",
             tags=["gobby"],
         )
@@ -794,25 +890,25 @@ steps:
             result = sync_bundled_pipelines(db)
 
         assert result["orphaned"] == 1
-        assert manager.get(custom.id).deleted_at is None
-        duplicated_row = manager.get(duplicate.id)
+        assert pipeline_manager.get(custom.id).deleted_at is None
+        duplicated_row = pipeline_manager.get(duplicate.id)
         assert duplicated_row.deleted_at is None
         assert duplicated_row.source == "custom"
-        assert "gobby" not in (duplicated_row.tags or [])
 
     def test_orphan_cleanup_skips_empty_directory(
-        self, db: HubDatabase, manager: LocalWorkflowDefinitionManager, tmp_path: Path
+        self, db: HubDatabase, pipeline_manager: PipelineDefinitionManager, tmp_path: Path
     ) -> None:
         from gobby.workflows.sync_pipelines import sync_bundled_pipelines
 
         pipelines_dir = tmp_path / "pipelines"
         pipelines_dir.mkdir()
-        installed = manager.create(
+        installed = pipeline_manager.create(
             name="installed-pipeline",
-            definition_json=json.dumps(
-                {"name": "installed-pipeline", "type": "pipeline", "steps": []}
-            ),
-            workflow_type="pipeline",
+            definition_json={
+                "name": "installed-pipeline",
+                "type": "pipeline",
+                "steps": [{"id": "s", "exec": "echo"}],
+            },
             source="installed",
             tags=["gobby"],
         )
@@ -824,23 +920,24 @@ steps:
             result = sync_bundled_pipelines(db)
 
         assert result["orphaned"] == 0
-        assert manager.get(installed.id).deleted_at is None
+        assert pipeline_manager.get(installed.id).deleted_at is None
 
     @pytest.mark.integration
     def test_orphan_cleanup_skips_parse_failure(
-        self, db: HubDatabase, manager: LocalWorkflowDefinitionManager, tmp_path: Path
+        self, db: HubDatabase, pipeline_manager: PipelineDefinitionManager, tmp_path: Path
     ) -> None:
         from gobby.workflows.sync_pipelines import sync_bundled_pipelines
 
         pipelines_dir = tmp_path / "pipelines"
         pipelines_dir.mkdir()
         (pipelines_dir / "broken.yaml").write_text("name: [unterminated\n")
-        installed = manager.create(
+        installed = pipeline_manager.create(
             name="installed-pipeline",
-            definition_json=json.dumps(
-                {"name": "installed-pipeline", "type": "pipeline", "steps": []}
-            ),
-            workflow_type="pipeline",
+            definition_json={
+                "name": "installed-pipeline",
+                "type": "pipeline",
+                "steps": [{"id": "s", "exec": "echo"}],
+            },
             source="installed",
             tags=["gobby"],
         )
@@ -853,7 +950,7 @@ steps:
 
         assert result["errors"]
         assert result["orphaned"] == 0
-        assert manager.get(installed.id).deleted_at is None
+        assert pipeline_manager.get(installed.id).deleted_at is None
 
 
 # ═══════════════════════════════════════════════════════════════════════

@@ -36,7 +36,7 @@ from gobby.storage.tasks import LocalTaskManager
 from gobby.storage.worktrees import LocalWorktreeManager
 from gobby.utils.daemon_client import DaemonClient
 from gobby.workflows.hooks import WorkflowHookHandler
-from gobby.workflows.loader import WorkflowLoader
+from gobby.workflows.pipeline_loader import PipelineLoader
 
 if TYPE_CHECKING:
     import asyncio
@@ -75,7 +75,7 @@ class _Autonomous:
 class _WorkflowComponents:
     """Container for workflow engine components."""
 
-    loader: WorkflowLoader
+    loader: PipelineLoader
     template_engine: TemplateEngine
     skill_manager: HookSkillManager
     pipeline_executor: PipelineExecutor | None
@@ -99,7 +99,7 @@ class HookManagerComponents:
     progress_tracker: ProgressTracker
     stuck_detector: StuckDetector
     memory_manager: MemoryManager
-    workflow_loader: WorkflowLoader
+    workflow_loader: PipelineLoader
     template_engine: Any  # TemplateEngine
     skill_manager: HookSkillManager
     pipeline_executor: Any  # PipelineExecutor | None
@@ -599,7 +599,7 @@ class HookManagerFactory:
         from gobby.workflows.evaluation_runtime import WorkflowEvaluationRuntime
         from gobby.workflows.templates import TemplateEngine
 
-        loader = WorkflowLoader(db=database)
+        loader = PipelineLoader(db=database)
         template_engine = TemplateEngine()
         metrics_event_store = MetricsEventStore(database)
         skill_manager = HookSkillManager(

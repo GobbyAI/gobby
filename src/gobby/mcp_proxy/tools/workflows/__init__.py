@@ -61,7 +61,7 @@ from gobby.storage.hub.protocol import HubDatabase
 from gobby.storage.sessions import SessionManager
 from gobby.storage.workflow_definitions import LocalWorkflowDefinitionManager
 from gobby.utils.project_context import get_project_context, get_workflow_project_path
-from gobby.workflows.loader import WorkflowLoader
+from gobby.workflows.pipeline_loader import PipelineLoader
 from gobby.workflows.state_manager import SessionVariableManager
 from gobby.workflows.step_instances import AgentStepInstanceManager
 
@@ -102,7 +102,7 @@ class _ExternalMCPInventory(Protocol):
 
 
 def create_workflows_registry(
-    loader: WorkflowLoader | None = None,
+    loader: PipelineLoader | None = None,
     session_manager: SessionManager | None = None,
     db: HubDatabase | None = None,
     internal_manager: _InternalRegistryInventory | None = None,
@@ -120,7 +120,7 @@ def create_workflows_registry(
     variables, and agent definitions.
 
     Args:
-        loader: WorkflowLoader instance
+        loader: PipelineLoader instance
         session_manager: SessionManager instance (created from db if not provided)
         db: Database instance for creating default managers
         internal_manager: Internal registry inventory for semantic MCP checks
@@ -133,7 +133,7 @@ def create_workflows_registry(
         InternalToolRegistry with workflow, pipeline, rule, and agent definition tools
     """
     _db = db
-    _loader = loader or WorkflowLoader(db=_db)
+    _loader = loader or PipelineLoader(db=_db)
 
     if session_manager is not None:
         _session_manager = session_manager
@@ -223,14 +223,14 @@ def create_workflows_registry(
         Returns:
             Dict with valid bool, items list, step_trace, and lifecycle_path.
         """
-        from gobby.workflows.dry_run import evaluate_agent_definition, evaluate_workflow
+        from gobby.workflows.dry_run import evaluate_agent_definition, evaluate_pipeline_definition
 
         mcp_inventory = workflow_mcp_inventory(internal_manager, mcp_manager_resolver)
 
         project_ctx = get_project_context()
         project_id = project_ctx.get("id") if project_ctx else None
 
-        eval_result = await evaluate_workflow(
+        eval_result = await evaluate_pipeline_definition(
             name,
             _loader,
             project_id,
@@ -755,7 +755,6 @@ def create_workflows_registry(
         db=_db,
         session_manager=_session_manager,
         completion_registry=completion_registry,
-        def_manager=_def_manager,
     )
 
     return registry

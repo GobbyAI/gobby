@@ -45,7 +45,7 @@ def test_list_workflows_empty(runner, mock_loader) -> None:
 
 
 def test_show_workflow_not_found(runner, mock_loader) -> None:
-    mock_loader.load_workflow_sync.return_value = None
+    mock_loader.load_pipeline_sync.return_value = None
     with patch("gobby.cli.workflows.common.get_project_path", return_value=None):
         result = runner.invoke(workflows, ["show", "unknown"])
         assert result.exit_code == 1
@@ -59,7 +59,7 @@ def test_status_no_variables(runner, mock_session_var_manager, mock_resolve_sess
     assert "No variables set" in result.output
 
 
-def test_reload_workflows_success(runner) -> None:
+def test_reload_pipelines_success(runner) -> None:
     with patch("gobby.utils.daemon_url.daemon_url", return_value="http://127.0.0.1:60887"):
         with patch("psutil.process_iter") as mock_iter:
             proc = Mock()
@@ -76,7 +76,7 @@ def test_reload_workflows_success(runner) -> None:
                 assert "headers" in mock_post.call_args.kwargs
 
 
-def test_reload_workflows_daemon_failure_exits_nonzero(runner) -> None:
+def test_reload_pipelines_daemon_failure_exits_nonzero(runner) -> None:
     with patch("gobby.utils.daemon_url.daemon_url", return_value="http://127.0.0.1:60887"):
         with patch("psutil.process_iter") as mock_iter:
             proc = Mock()
@@ -99,7 +99,7 @@ def test_reload_workflows_daemon_failure_exits_nonzero(runner) -> None:
                 m_loader.return_value.clear_cache.assert_not_called()
 
 
-def test_reload_workflows_fallback(runner) -> None:
+def test_reload_pipelines_fallback(runner) -> None:
     with patch("gobby.utils.daemon_url.daemon_url", return_value="http://127.0.0.1:60887"):
         with (
             patch("psutil.process_iter", return_value=[]),

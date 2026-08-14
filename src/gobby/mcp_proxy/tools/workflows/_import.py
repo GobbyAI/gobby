@@ -14,13 +14,13 @@ from gobby.agents.detection.registry import DetectionManifestRegistry
 from gobby.paths import get_global_workflows_dir
 from gobby.utils.project_context import get_workflow_project_path
 from gobby.workflows.imports import sync_imported_definition, sync_imported_workflows
-from gobby.workflows.loader import WorkflowLoader
+from gobby.workflows.pipeline_loader import PipelineLoader
 
 logger = logging.getLogger(__name__)
 
 
 def import_workflow(
-    loader: WorkflowLoader,
+    loader: PipelineLoader,
     source_path: str,
     workflow_name: str | None = None,
     is_global: bool = False,
@@ -33,7 +33,7 @@ def import_workflow(
     Import a workflow from a file.
 
     Args:
-        loader: WorkflowLoader instance
+        loader: PipelineLoader instance
         source_path: Path to the workflow YAML file
         workflow_name: Override the workflow name (defaults to name in file)
         is_global: Install to global ~/.gobby/workflows instead of project
@@ -128,7 +128,7 @@ def import_workflow(
 
 
 def reload_cache(
-    loader: WorkflowLoader,
+    loader: PipelineLoader,
     db: Any | None = None,
     *,
     project_path: str | None = None,
@@ -143,7 +143,7 @@ def reload_cache(
     pipelines, agents, and variables are re-synced into the database.
 
     Args:
-        loader: WorkflowLoader instance whose cache to clear.
+        loader: PipelineLoader instance whose cache to clear.
         db: Optional database instance. If provided, bundled definitions
             are re-synced to the DB after clearing the cache.
 

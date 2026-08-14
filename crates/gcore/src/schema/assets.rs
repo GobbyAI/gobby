@@ -41,6 +41,12 @@ pub(crate) const MIGRATIONS: &[EmbeddedMigration] = &[
         checksum: "5ddc85363a92ff8469eb179c5807255ef1739b68741fdebdd23749e364159e38",
         sql: include_str!("../../assets/schema/migrations/379_copy_session_variable_defaults.sql"),
     },
+    EmbeddedMigration {
+        version: 380,
+        filename: "380_copy_pipeline_definitions.sql",
+        checksum: "7943bdd5896422ce29ce19674a9b51590c519a7543148ecbe443ee81cfc231d0",
+        sql: include_str!("../../assets/schema/migrations/380_copy_pipeline_definitions.sql"),
+    },
 ];
 const _: &str = include_str!("../../assets/schema/migrations/.gitkeep");
 

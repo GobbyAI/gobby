@@ -29,7 +29,7 @@ def list_pipelines(ctx: click.Context, json_format: bool) -> None:
     loader = facade.get_workflow_loader()
     project_id = facade._get_project_id()
 
-    discovered = loader.discover_pipeline_workflows_sync(project_id or None)
+    discovered = loader.discover_pipelines_sync(project_id or None)
 
     if json_format:
         pipeline_list = []

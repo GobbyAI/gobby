@@ -16,7 +16,7 @@ from gobby.storage.workflow_definitions import (
     LocalWorkflowDefinitionManager,
     WorkflowDefinitionRow,
 )
-from gobby.workflows.loader import WorkflowLoader
+from gobby.workflows.pipeline_loader import PipelineLoader
 
 logger = logging.getLogger(__name__)
 
@@ -24,6 +24,9 @@ _AGENT_DOMAIN_TOOLS = "Agent definitions use the agent domain tools, not generic
 _RULE_DOMAIN_TOOLS = "Rule definitions use the rule domain tools, not generic workflow CRUD"
 _VARIABLE_DOMAIN_TOOLS = (
     "Variable definitions use the variable domain tools, not generic workflow CRUD"
+)
+_PIPELINE_DOMAIN_TOOLS = (
+    "Pipeline definitions use the pipeline domain MCP tools, not generic workflow CRUD"
 )
 
 
@@ -34,6 +37,8 @@ def _reject_agent_kind(kind: str | None) -> None:
         raise ValueError(_RULE_DOMAIN_TOOLS)
     if kind == "variable":
         raise ValueError(_VARIABLE_DOMAIN_TOOLS)
+    if kind == "pipeline":
+        raise ValueError(_PIPELINE_DOMAIN_TOOLS)
 
 
 def _resolve_definition(
@@ -78,7 +83,7 @@ def _validate_yaml(
 
 def create_workflow_definition(
     def_manager: LocalWorkflowDefinitionManager,
-    loader: WorkflowLoader,
+    loader: PipelineLoader,
     yaml_content: str,
     project_id: str | None = None,
     *,
@@ -93,7 +98,7 @@ def create_workflow_definition(
 
     Args:
         def_manager: Definition storage manager
-        loader: WorkflowLoader (cache is cleared after creation)
+        loader: PipelineLoader (cache is cleared after creation)
         yaml_content: Full YAML definition content
         project_id: Optional project scope
         project_path: Project root for auto-export
@@ -155,7 +160,7 @@ def create_workflow_definition(
 
 def update_workflow_definition(
     def_manager: LocalWorkflowDefinitionManager,
-    loader: WorkflowLoader,
+    loader: PipelineLoader,
     name: str | None = None,
     definition_id: str | None = None,
     description: str | None = None,
@@ -176,7 +181,7 @@ def update_workflow_definition(
 
     Args:
         def_manager: Definition storage manager
-        loader: WorkflowLoader (cache is cleared after update)
+        loader: PipelineLoader (cache is cleared after update)
         name: Resolve definition by name
         definition_id: Resolve definition by ID
         description: New description
@@ -262,7 +267,7 @@ def update_workflow_definition(
 
 def delete_workflow_definition(
     def_manager: LocalWorkflowDefinitionManager,
-    loader: WorkflowLoader,
+    loader: PipelineLoader,
     name: str | None = None,
     definition_id: str | None = None,
     force: bool = False,
@@ -275,7 +280,7 @@ def delete_workflow_definition(
 
     Args:
         def_manager: Definition storage manager
-        loader: WorkflowLoader (cache is cleared after deletion)
+        loader: PipelineLoader (cache is cleared after deletion)
         name: Resolve definition by name
         definition_id: Resolve definition by ID
         force: Override bundled protection
@@ -320,7 +325,7 @@ def delete_workflow_definition(
 
 def restore_workflow_definition(
     def_manager: LocalWorkflowDefinitionManager,
-    loader: WorkflowLoader,
+    loader: PipelineLoader,
     name: str | None = None,
     definition_id: str | None = None,
 ) -> dict[str, Any]:
@@ -329,7 +334,7 @@ def restore_workflow_definition(
 
     Args:
         def_manager: Definition storage manager
-        loader: WorkflowLoader (cache is cleared after restore)
+        loader: PipelineLoader (cache is cleared after restore)
         name: Resolve definition by name
         definition_id: Resolve definition by ID
 

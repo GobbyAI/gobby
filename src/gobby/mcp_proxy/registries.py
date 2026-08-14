@@ -32,7 +32,7 @@ if TYPE_CHECKING:
     from gobby.storage.tasks import LocalTaskManager
     from gobby.storage.worktrees import LocalWorktreeManager
     from gobby.tasks.validation import TaskValidator
-    from gobby.workflows.loader import WorkflowLoader
+    from gobby.workflows.pipeline_loader import PipelineLoader
     from gobby.workflows.pipeline_executor import PipelineExecutor
     from gobby.worktrees.executor import WorktreeDeleteExecutor
     from gobby.worktrees.git import WorktreeGitManager
@@ -62,7 +62,7 @@ def setup_internal_registries(
     tool_proxy_getter: Callable[[], ToolProxyService | None] | None = None,
     inter_session_message_manager: InterSessionMessageManager | None = None,
     pipeline_executor: PipelineExecutor | None = None,
-    workflow_loader: WorkflowLoader | None = None,
+    workflow_loader: PipelineLoader | None = None,
     pipeline_execution_manager: LocalPipelineExecutionManager | None = None,
     hook_manager_resolver: Callable[[], HookManager | None] | None = None,
     config_service_getter: Callable[[], ConfigValuesService] | None = None,

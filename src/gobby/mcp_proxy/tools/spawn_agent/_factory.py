@@ -412,10 +412,10 @@ def create_spawn_agent_registry(
 
         # Inject _assigned_pipeline if the workflow is a PipelineDefinition
         if effective_workflow:
-            from gobby.workflows.loader import WorkflowLoader
+            from gobby.workflows.pipeline_loader import PipelineLoader
 
-            wf_loader = WorkflowLoader(db=db)
-            wf_def = await wf_loader.load_workflow(
+            wf_loader = PipelineLoader(db=db)
+            wf_def = await wf_loader.load_pipeline(
                 effective_workflow,
                 project_path=effective_project_path,
             )

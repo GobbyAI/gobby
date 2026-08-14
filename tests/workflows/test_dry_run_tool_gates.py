@@ -26,7 +26,7 @@ from gobby.workflows.dry_run import (
     check_agent_tool_gates,
     check_step_tool_gates,
     evaluate_agent_definition,
-    evaluate_workflow,
+    evaluate_pipeline_definition,
 )
 from gobby.workflows.native_tools import is_known_native_tool
 
@@ -179,7 +179,6 @@ class TestAgentToolGates:
         )
         result = await evaluate_agent_definition(agent)
         assert result.valid
-        assert result.workflow_type == "agent"
 
 
 class TestBlockedMcpSemanticSeverity:
@@ -195,12 +194,17 @@ class TestBlockedMcpSemanticSeverity:
                 )
             ],
         )
-        loader = MagicMock()
-        loader.load_workflow = AsyncMock(return_value=definition)
         mcp_manager = MagicMock()
         mcp_manager.get_available_servers.return_value = ["gobby-agents"]
         mcp_manager.list_tools = AsyncMock(return_value={"gobby-agents": [{"name": "kill_agent"}]})
-        result = await evaluate_workflow("wf", loader, mcp_manager=mcp_manager)
+        result = await evaluate_agent_definition(
+            AgentDefinitionBody(
+                name="wf",
+                provider="claude",
+                step_workflow=AgentStepWorkflowBody(steps=definition.steps),
+            ),
+            mcp_manager=mcp_manager,
+        )
         errors = [i for i in result.items if i.code == "UNKNOWN_MCP_TOOL"]
         assert errors and all(i.level == "error" for i in errors)
         assert not result.valid
@@ -212,12 +216,17 @@ class TestBlockedMcpSemanticSeverity:
             type="step",
             steps=[WorkflowStep(name="work", allowed_mcp_tools=["gobby-agents:kill_agentt"])],
         )
-        loader = MagicMock()
-        loader.load_workflow = AsyncMock(return_value=definition)
         mcp_manager = MagicMock()
         mcp_manager.get_available_servers.return_value = ["gobby-agents"]
         mcp_manager.list_tools = AsyncMock(return_value={"gobby-agents": [{"name": "kill_agent"}]})
-        result = await evaluate_workflow("wf", loader, mcp_manager=mcp_manager)
+        result = await evaluate_agent_definition(
+            AgentDefinitionBody(
+                name="wf",
+                provider="claude",
+                step_workflow=AgentStepWorkflowBody(steps=definition.steps),
+            ),
+            mcp_manager=mcp_manager,
+        )
         warnings = [i for i in result.items if i.code == "UNKNOWN_MCP_TOOL"]
         assert warnings and all(i.level == "warning" for i in warnings)
         assert result.valid
