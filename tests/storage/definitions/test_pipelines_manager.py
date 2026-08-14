@@ -199,3 +199,72 @@ def test_concurrent_rename_and_content_update_both_orderings(
     assert row.name == "lint-v2"
     assert row.definition_json["name"] == "lint-v2"
     assert row.definition_json["steps"] == _NEW_STEPS
+
+
+def test_sync_does_not_override_concurrent_user_pin(
+    definition_db: PostgresHubDatabase,
+    postgres_database_url: str,
+) -> None:
+    created = _mgr(definition_db).create(
+        name="lint",
+        definition_json={"steps": _OLD_STEPS},
+        enabled=True,
+    )
+    assert created.enabled_pinned is False
+    schema_row = definition_db.fetchone("SELECT current_schema() AS schema")
+    assert schema_row is not None
+    schema = str(schema_row["schema"])
+    writer_db = PostgresHubDatabase(definition_db.conninfo)
+    writer_db.open()
+    assert _mgr(writer_db).get(created.id).enabled is True
+    finished = Event()
+    errors: list[BaseException] = []
+
+    def run_sync() -> None:
+        try:
+            _mgr(writer_db).update_from_sync(
+                created.id,
+                enabled=False,
+                description="from-template",
+            )
+        except BaseException as exc:
+            errors.append(exc)
+        finally:
+            finished.set()
+
+    writer = Thread(target=run_sync, daemon=True)
+    try:
+        with psycopg.connect(postgres_database_url) as holder:
+            _set_search_path(holder, schema)
+            holder.execute("BEGIN")
+            try:
+                locked = holder.execute(
+                    "SELECT id FROM pipeline_definitions WHERE id = %s FOR UPDATE",
+                    (created.id,),
+                ).fetchone()
+                assert locked is not None
+                writer.start()
+                _wait_for_row_lock_waiter(postgres_database_url, finished)
+                holder.execute(
+                    """
+                    UPDATE pipeline_definitions
+                    SET enabled = TRUE, enabled_pinned = TRUE, updated_at = now()
+                    WHERE id = %s
+                    """,
+                    (created.id,),
+                )
+                holder.execute("COMMIT")
+            except BaseException:
+                holder.execute("ROLLBACK")
+                raise
+        assert finished.wait(timeout=5)
+        writer.join(timeout=1)
+        if errors:
+            raise errors[0]
+    finally:
+        writer_db.close()
+
+    row = _mgr(definition_db).get(created.id)
+    assert row.enabled is True
+    assert row.enabled_pinned is True
+    assert row.description == "from-template"

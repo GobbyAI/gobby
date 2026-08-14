@@ -213,11 +213,7 @@ class PipelineDefinitionManager:
         )
 
     def update_from_sync(self, definition_id: str, **fields: Any) -> PipelineDefinitionRow:
-        current = self.get(definition_id)
-        values = prepare_sync_values(current.__dict__, fields, allowed=_SYNC_FIELDS)
-        if not values:
-            return current
-        return self._write_update(definition_id, values, allowed=_SYNC_FIELDS)
+        return self._write_update(definition_id, fields, allowed=_SYNC_FIELDS, from_sync=True)
 
     def _write_update(
         self,
@@ -225,22 +221,28 @@ class PipelineDefinitionManager:
         fields: Mapping[str, Any],
         *,
         allowed: frozenset[str],
+        from_sync: bool = False,
     ) -> PipelineDefinitionRow:
         unknown = set(fields) - allowed
         if unknown:
             raise ValueError(f"Unknown definition field(s): {', '.join(sorted(unknown))}")
-        values: dict[str, Any] = {}
-        for key, value in fields.items():
-            if key == "tags":
-                values[key] = encode_json_list(value)
-            elif key in {"definition_json", "canvas_json"}:
-                values[key] = encode_json_value(value)
-            else:
-                values[key] = value
-        if not values:
-            return self.get(definition_id)
         with self.db.transaction() as txn:
             current = _lock_live_row(txn, definition_id)
+            incoming: Mapping[str, Any] = fields
+            if from_sync:
+                incoming = prepare_sync_values(current.__dict__, fields, allowed=allowed)
+                if not incoming:
+                    return current
+            values: dict[str, Any] = {}
+            for key, value in incoming.items():
+                if key == "tags":
+                    values[key] = encode_json_list(value)
+                elif key in {"definition_json", "canvas_json"}:
+                    values[key] = encode_json_value(value)
+                else:
+                    values[key] = value
+            if not values:
+                return current
             target_name = str(values["name"]) if "name" in values else current.name
             if "definition_json" in values:
                 values["definition_json"] = encode_json_value(
