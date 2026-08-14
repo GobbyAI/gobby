@@ -7,7 +7,7 @@ import time
 from collections.abc import Callable, Iterator, Mapping, Sequence
 from pathlib import Path
 from types import SimpleNamespace
-from typing import TYPE_CHECKING, Any, cast
+from typing import TYPE_CHECKING, Any, Literal, cast
 from unittest.mock import MagicMock, patch
 
 import pytest
@@ -696,7 +696,14 @@ def _grant_service() -> Any:
     )
 
 
-def _signed_presentation_grant(*, session_id: str = "cli-session") -> Any:
+def _signed_presentation_grant(
+    *,
+    session_id: str = "cli-session",
+    kind: Literal["interactive", "agent_run", "tool_chat"] = "interactive",
+    machine_id: str = "machine-1",
+    project_id: str = "project-1",
+    execution_id: str | None = None,
+) -> Any:
     from gobby.runtime_grants import sign_grant
     from gobby.runtime_grants.schema import GrantBundle, GrantPrincipal, PostgresDirect
     from tests.runtime_grants.support import GOLDEN_SECRET
@@ -704,10 +711,10 @@ def _signed_presentation_grant(*, session_id: str = "cli-session") -> Any:
     service = _grant_service()
     issued = service.issue(
         principal=GrantPrincipal(
-            kind="interactive",
-            machine_id="machine-1",
-            project_id="project-1",
-            execution_id=None,
+            kind=kind,
+            machine_id=machine_id,
+            project_id=project_id,
+            execution_id=execution_id,
             session_id=session_id,
         ),
         postgres=PostgresDirect(
@@ -907,3 +914,90 @@ def test_in_transaction_epoch_fencing(temp_db: HubDatabase) -> None:
     with pytest.raises(LeaseNotHeld):
         with fence.admit():
             pass
+
+
+def test_agent_bearer_cannot_present_foreign_grant(
+    temp_db: HubDatabase,
+    tmp_path: Path,
+    live_agent_run: AgentRun,
+) -> None:
+    from gobby.runtime_grants import encode_grant_header
+
+    service, operator_headers = _grant_auth_service(temp_db, tmp_path)
+    agent_token = issue_agent_api_token(
+        "operator-token",
+        agent_run_id=live_agent_run.id,
+        session_id="11111111-2222-3333-4444-555555555555",
+        project_id="project-123",
+        machine_id=LOCAL_MACHINE_ID,
+    )
+    mixed = service.authenticate(
+        _request(
+            {
+                "Authorization": f"Bearer {agent_token}",
+                _GRANT_HEADER: operator_headers[_GRANT_HEADER],
+                "X-Gobby-Caller-Project-Id": "project-123",
+                "X-Gobby-Project-Id": "project-123",
+                "X-Gobby-Session-Id": "11111111-2222-3333-4444-555555555555",
+                "X-Gobby-Agent-Run-Id": live_agent_run.id,
+                _MACHINE_HEADER: LOCAL_MACHINE_ID,
+            },
+            method="POST",
+            path="/api/embeddings",
+        )
+    )
+    assert mixed.allowed is False
+    assert mixed.code == "forged_identity"
+
+    matching_grant = _signed_presentation_grant(
+        kind="agent_run",
+        machine_id=LOCAL_MACHINE_ID,
+        project_id="project-123",
+        session_id="11111111-2222-3333-4444-555555555555",
+        execution_id=live_agent_run.id,
+    )
+    matched = service.authenticate(
+        _request(
+            {
+                "Authorization": f"Bearer {agent_token}",
+                _GRANT_HEADER: encode_grant_header(matching_grant),
+                "X-Gobby-Caller-Project-Id": "project-123",
+                "X-Gobby-Project-Id": "project-123",
+                "X-Gobby-Session-Id": "11111111-2222-3333-4444-555555555555",
+                "X-Gobby-Agent-Run-Id": live_agent_run.id,
+                _MACHINE_HEADER: LOCAL_MACHINE_ID,
+            },
+            method="POST",
+            path="/api/embeddings",
+        )
+    )
+    assert matched.allowed is True
+    assert matched.bearer_claims is not None
+    assert matched.bearer_claims.agent_run_id == live_agent_run.id
+    assert matched.principal is not None
+    assert matched.principal.execution_id == live_agent_run.id
+
+    other_grant = _signed_presentation_grant(
+        kind="agent_run",
+        machine_id=LOCAL_MACHINE_ID,
+        project_id="project-123",
+        session_id="11111111-2222-3333-4444-555555555555",
+        execution_id="99999999-0000-4000-8000-000000000099",
+    )
+    stolen = service.authenticate(
+        _request(
+            {
+                "Authorization": f"Bearer {agent_token}",
+                _GRANT_HEADER: encode_grant_header(other_grant),
+                "X-Gobby-Caller-Project-Id": "project-123",
+                "X-Gobby-Project-Id": "project-123",
+                "X-Gobby-Session-Id": "11111111-2222-3333-4444-555555555555",
+                "X-Gobby-Agent-Run-Id": live_agent_run.id,
+                _MACHINE_HEADER: LOCAL_MACHINE_ID,
+            },
+            method="POST",
+            path="/api/embeddings",
+        )
+    )
+    assert stolen.allowed is False
+    assert stolen.code == "forged_identity"

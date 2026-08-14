@@ -8,7 +8,7 @@ import threading
 import time
 from collections.abc import Callable
 from pathlib import Path
-from typing import NamedTuple
+from typing import Literal, NamedTuple
 
 from starlette.requests import HTTPConnection
 
@@ -16,6 +16,7 @@ from gobby.identity import DUMMY_PASSWORD_HASH, verify_password_hash
 from gobby.servers.grant_auth import (
     GRANT_HEADER,
     AuthDecision,
+    bearer_matches_grant,
     identity_headers_match,
     match_grant_route,
     present_or_reject,
@@ -238,7 +239,8 @@ class AuthService:
         if grant_route is None:
             return AuthDecision(allowed=self._legacy_authenticated(request))
 
-        if not self._credential_accepted(request):
+        bearer = self._accepted_bearer(request)
+        if bearer is False:
             return AuthDecision(allowed=False, code="missing_auth", status_code=401)
 
         raw_grant = request.headers.get(GRANT_HEADER)
@@ -256,9 +258,12 @@ class AuthService:
         )
         if isinstance(presented, AuthDecision):
             return presented
-        if self._local_machine_id is not None and presented.principal.kind == "interactive":
-            if presented.principal.machine_id != self._local_machine_id:
-                return AuthDecision(allowed=False, code="forged_identity", status_code=401)
+        if not bearer_matches_grant(
+            presented.principal,
+            claims=bearer,
+            local_machine_id=self._local_machine_id,
+        ):
+            return AuthDecision(allowed=False, code="forged_identity", status_code=401)
         if not identity_headers_match(request, presented.principal):
             return AuthDecision(allowed=False, code="forged_identity", status_code=401)
         if grant_route.required is not None:
@@ -276,6 +281,7 @@ class AuthService:
             allowed=True,
             principal=presented.principal,
             grant=presented,
+            bearer_claims=bearer,
             status_code=200,
         )
 
@@ -299,31 +305,30 @@ class AuthService:
         return False
 
     def _credential_accepted(self, request: HTTPConnection) -> bool:
+        return self._accepted_bearer(request) is not False
+
+    def _accepted_bearer(
+        self, request: HTTPConnection
+    ) -> AgentApiTokenClaims | None | Literal[False]:
+        """Return agent claims, None for the local operator, or False if rejected."""
         authorization = request.headers.get("Authorization")
         if authorization is not None:
             parts = authorization.split(maxsplit=1)
             if parts and parts[0].casefold() == "bearer" and len(parts) == 2:
                 if self.verify_bearer(parts[1]):
-                    return True
-                return self._agent_credential_accepted(request, parts[1])
+                    return None
+                claims = self._verified_agent_claims_for_token(request, parts[1])
+                return claims if claims is not None else False
         local_token = request.headers.get(_LOCAL_TOKEN_HEADER)
         if local_token is not None:
-            return self.verify_bearer(local_token)
+            return None if self.verify_bearer(local_token) else False
         session_token = request.cookies.get(_SESSION_COOKIE)
         if session_token is not None:
-            return self.validate_session(session_token)
+            return None if self.validate_session(session_token) else False
         return False
 
     def _agent_credential_accepted(self, request: HTTPConnection, token: str) -> bool:
-        operator_token = self.local_token()
-        if operator_token is None:
-            return False
-        claims = verify_agent_api_token(token, operator_token)
-        if claims is None:
-            return False
-        if _agent_capability_allows(request) is None:
-            return False
-        return self._managed_capability_is_live(claims)
+        return self._verified_agent_claims_for_token(request, token) is not None
 
     def _effectful_allowed(self) -> bool:
         if self._lease_live is not None and not self._lease_live():

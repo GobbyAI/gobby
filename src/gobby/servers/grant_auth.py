@@ -15,6 +15,7 @@ from gobby.runtime_grants import (
     decode_grant_header,
 )
 from gobby.runtime_grants.schema import BrokerOperation, GrantBundle, GrantPrincipal
+from gobby.utils.local_token import AgentApiTokenClaims
 
 if TYPE_CHECKING:
     from starlette.requests import HTTPConnection
@@ -44,6 +45,7 @@ class AuthDecision:
     status_code: int = 401
     principal: GrantPrincipal | None = None
     grant: GrantBundle | None = None
+    bearer_claims: AgentApiTokenClaims | None = None
 
 
 _GRANT_ROUTES: tuple[GrantRoute, ...] = (
@@ -183,6 +185,37 @@ def present_or_reject(
             message=exc.message,
             status_code=status,
         )
+
+
+def bearer_matches_grant(
+    principal: GrantPrincipal,
+    *,
+    claims: AgentApiTokenClaims | None,
+    local_machine_id: str | None,
+) -> bool:
+    """Require the grant identity to match the bearer, or be an explicit narrowing.
+
+    A live principal-A capability cannot present a copied principal-B grant.
+    Grant fields may be omitted (narrower); they may not name a different owner.
+    """
+    if claims is None:
+        return principal.kind == "interactive" and (
+            local_machine_id is None or principal.machine_id == local_machine_id
+        )
+    if principal.project_id != claims.project_id:
+        return False
+    if principal.machine_id != claims.machine_id:
+        return False
+    if principal.session_id is not None and principal.session_id != claims.session_id:
+        return False
+    owner = claims.agent_run_id or claims.managed_execution_id
+    if principal.execution_id is not None and principal.execution_id != owner:
+        return False
+    if claims.agent_run_id is not None:
+        return principal.kind == "agent_run"
+    if claims.managed_execution_id is not None:
+        return principal.kind == "tool_chat"
+    return False
 
 
 def identity_headers_match(request: HTTPConnection, principal: GrantPrincipal) -> bool:
