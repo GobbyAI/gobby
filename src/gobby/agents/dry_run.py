@@ -65,27 +65,6 @@ class SpawnEvaluation:
         return [i for i in self.items if i.level == "warning"]
 
 
-def _load_agent_body(
-    name: str,
-    db: HubDatabase | None,
-    project_id: str | None = None,
-) -> Any:
-    """Load an AgentDefinitionBody from the DB by name."""
-    if db is None:
-        return None
-    try:
-        from gobby.storage.workflow_definitions import LocalWorkflowDefinitionManager
-        from gobby.workflows.definitions import AgentDefinitionBody
-
-        manager = LocalWorkflowDefinitionManager(db)
-        row = manager.get_by_name(name, project_id=project_id)
-        if row is not None and row.workflow_type == "agent":
-            return AgentDefinitionBody.model_validate_json(row.definition_json)
-    except Exception as e:
-        logger.warning("Failed to load agent definition '%s': %s", name, e)
-    return None
-
-
 async def evaluate_spawn(
     agent: str = "default",
     workflow: str | None = None,
@@ -122,7 +101,11 @@ async def evaluate_spawn(
     workflow_project_id = project_ctx.get("id") if project_ctx else None
 
     # ---- Layer 1: Agent Definition Resolution ----
-    agent_body = _load_agent_body(agent, db, workflow_project_id)
+    agent_body = None
+    if db is not None:
+        from gobby.workflows.agent_resolver import resolve_agent
+
+        agent_body = resolve_agent(agent, db, project_id=workflow_project_id)
 
     if agent_body is None:
         result.agent_found = False

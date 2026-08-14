@@ -24,9 +24,9 @@ from gobby.cli.runtime import require_cli_database
 from gobby.cli.utils import resolve_session_id
 from gobby.cli.utils_config import get_daemon_client, get_daemon_url
 from gobby.storage.agents import AgentRunStatus, LocalAgentRunManager
+from gobby.storage.definitions.agents import AgentDefinitionManager, AgentDefinitionRow
 from gobby.storage.hub.protocol import HubDatabase
 from gobby.storage.sql_dialect import older_than_now_expr
-from gobby.storage.workflow_definitions import LocalWorkflowDefinitionManager, WorkflowDefinitionRow
 from gobby.utils.json_helpers import json_dumps
 from gobby.utils.local_token import daemon_auth_headers
 from gobby.utils.uuid_validation import is_full_uuid
@@ -50,13 +50,13 @@ def agent_run_manager_context() -> Iterator[LocalAgentRunManager]:
     yield get_agent_run_manager()
 
 
-def get_agent_definition_manager() -> LocalWorkflowDefinitionManager:
-    """Get initialized workflow definition manager for agent definitions."""
-    return LocalWorkflowDefinitionManager(require_cli_database())
+def get_agent_definition_manager() -> AgentDefinitionManager:
+    """Get initialized typed manager for agent definitions."""
+    return AgentDefinitionManager(require_cli_database())
 
 
 @contextmanager
-def agent_definition_manager_context() -> Iterator[LocalWorkflowDefinitionManager]:
+def agent_definition_manager_context() -> Iterator[AgentDefinitionManager]:
     """Yield an agent definition manager borrowing the CLI database."""
     yield get_agent_definition_manager()
 
@@ -66,17 +66,23 @@ def _escape_like_prefix(prefix: str) -> str:
     return prefix.replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_")
 
 
-def _agent_body(row: WorkflowDefinitionRow) -> tuple[AgentDefinitionBody, dict[str, Any]]:
+def _agent_body(row: AgentDefinitionRow) -> tuple[AgentDefinitionBody, dict[str, Any]]:
     """Parse and validate an agent definition row."""
-    data = json.loads(row.definition_json)
-    if not isinstance(data, dict):
+    data = row.definition_json
+    if isinstance(data, str):
+        parsed = json.loads(data)
+        if not isinstance(parsed, dict):
+            raise ValueError(f"Agent definition '{row.name}' is not a JSON object")
+        data = parsed
+    elif not isinstance(data, dict):
         raise ValueError(f"Agent definition '{row.name}' is not a JSON object")
-    data.setdefault("name", row.name)
-    body = AgentDefinitionBody.model_validate(data)
-    return body, data
+    payload = dict(data)
+    payload.setdefault("name", row.name)
+    body = AgentDefinitionBody.model_validate(payload)
+    return body, payload
 
 
-def _agent_definition_summary(row: WorkflowDefinitionRow) -> dict[str, Any]:
+def _agent_definition_summary(row: AgentDefinitionRow) -> dict[str, Any]:
     """Build an agent definition summary for CLI output."""
     body, raw = _agent_body(row)
     return {
@@ -96,7 +102,7 @@ def _agent_definition_summary(row: WorkflowDefinitionRow) -> dict[str, Any]:
     }
 
 
-def _agent_definition_detail(row: WorkflowDefinitionRow) -> dict[str, Any]:
+def _agent_definition_detail(row: AgentDefinitionRow) -> dict[str, Any]:
     """Build detailed agent definition output."""
     body, raw = _agent_body(row)
     return {
@@ -335,7 +341,7 @@ def list_agent_definitions(
 ) -> None:
     """List agent definitions."""
     with agent_definition_manager_context() as manager:
-        rows = manager.list_all(workflow_type="agent", enabled=enabled_flag)
+        rows = manager.list_all(enabled=enabled_flag)
     summaries = [_agent_definition_summary(row) for row in rows]
     if surface:
         summaries = [agent for agent in summaries if surface in agent.get("surfaces", ["spawn"])]

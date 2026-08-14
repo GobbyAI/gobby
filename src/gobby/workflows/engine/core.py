@@ -25,6 +25,8 @@ from gobby.skills.materialization import (
     SkillScriptMaterializer,
     get_skill_script_materializer,
 )
+from gobby.storage.definitions.agents import AgentDefinitionManager
+from gobby.storage.definitions.revisions import get_definitions_revision
 from gobby.storage.hub.protocol import HubDatabase
 from gobby.storage.pipeline_subscribers import (
     CompletionSubscriberManager,
@@ -34,7 +36,6 @@ from gobby.storage.workflow_audit import WorkflowAuditManager
 from gobby.storage.workflow_definitions import (
     LocalWorkflowDefinitionManager,
     WorkflowDefinitionRow,
-    get_workflow_definitions_revision,
 )
 from gobby.telemetry.tracing import create_span
 from gobby.workflows.definitions import (
@@ -126,6 +127,7 @@ class RuleEngine(EvaluationMixin, EffectsMixin, TemplatingMixin, EnforcementMixi
     ):
         self.db = db
         self.definition_manager = LocalWorkflowDefinitionManager(db)
+        self.agent_manager = AgentDefinitionManager(db)
         self.instance_manager = WorkflowInstanceManager(db)
         self.workflow_audit = WorkflowAuditManager(db)
         self._skill_manager = skill_manager
@@ -138,7 +140,7 @@ class RuleEngine(EvaluationMixin, EffectsMixin, TemplatingMixin, EnforcementMixi
         self.skill_script_materializer = skill_script_materializer or get_skill_script_materializer(
             db
         )
-        self._agent_def_cache_revision = get_workflow_definitions_revision()
+        self._agent_def_cache_revision = get_definitions_revision("agents")
         self._agent_def_cache: dict[tuple[str, str | None], AgentDefinitionBody | None] = {}
         self._background_run_commands: dict[tuple[str, str], asyncio.Task[None]] = {}
 
@@ -686,7 +688,7 @@ class RuleEngine(EvaluationMixin, EffectsMixin, TemplatingMixin, EnforcementMixi
         if not isinstance(agent_type, str) or not agent_type:
             return None
 
-        revision = get_workflow_definitions_revision()
+        revision = get_definitions_revision("agents")
         if revision != self._agent_def_cache_revision:
             self._agent_def_cache.clear()
             self._agent_def_cache_revision = revision
@@ -696,17 +698,16 @@ class RuleEngine(EvaluationMixin, EffectsMixin, TemplatingMixin, EnforcementMixi
             return self._agent_def_cache[cache_key]
 
         agent: AgentDefinitionBody | None = None
-        row = self.definition_manager.get_by_name(
-            agent_type,
-            project_id=project_id,
-            workflow_type="agent",
-        )
-        if row is not None and row.workflow_type == "agent" and row.definition_json:
+        row = self.agent_manager.get_by_name(agent_type, project_id=project_id)
+        if row is not None:
             try:
-                data = json.loads(row.definition_json)
+                data = row.definition_json
+                if isinstance(data, str):
+                    data = json.loads(data)
                 if isinstance(data, dict):
-                    data.setdefault("name", row.name)
-                agent = AgentDefinitionBody.model_validate(data)
+                    payload = dict(data)
+                    payload.setdefault("name", row.name)
+                    agent = AgentDefinitionBody.model_validate(payload)
             except (json.JSONDecodeError, TypeError) as exc:
                 logger.debug("Failed to decode active agent definition %s: %s", agent_type, exc)
             except ValidationError as exc:

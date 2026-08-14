@@ -8,6 +8,7 @@ from types import SimpleNamespace
 from typing import Any, cast
 
 from gobby.dispatch import rules as dispatch_rules
+from gobby.storage.definitions.agents import AgentDefinitionManager, AgentDefinitionRow
 from gobby.storage.hub.protocol import HubDatabase
 from gobby.storage.tasks._artifacts import TaskArtifactManager
 from gobby.storage.tasks._blocking import hydrate_task_blocking_state
@@ -16,7 +17,6 @@ from gobby.storage.tasks._models import Task
 from gobby.storage.tasks._stage_hydration import hydrate_task_stage_state
 from gobby.storage.tasks._stage_registry import StageRegistryEntry, StageRegistryManager
 from gobby.storage.tasks._stage_types import StageState
-from gobby.storage.workflow_definitions import LocalWorkflowDefinitionManager, WorkflowDefinitionRow
 from gobby.workflows.definitions import AgentDefinitionBody
 
 
@@ -210,17 +210,12 @@ def _agent_definitions(
     *,
     project_id: str | None,
 ) -> dict[str, SimpleNamespace]:
-    manager = LocalWorkflowDefinitionManager(db)
+    manager = AgentDefinitionManager(db)
     if project_id is None:
-        rows = [
-            row
-            for row in manager.list_all(workflow_type="agent", include_deleted=False)
-            if row.project_id is None
-        ]
+        rows = [row for row in manager.list_all(include_deleted=False) if row.project_id is None]
     else:
         rows = manager.list_all(
             project_id=project_id,
-            workflow_type="agent",
             include_deleted=False,
         )
     definitions: dict[str, SimpleNamespace] = {}
@@ -229,13 +224,19 @@ def _agent_definitions(
     return definitions
 
 
-def _agent_definition_precedence(row: WorkflowDefinitionRow) -> tuple[int, str]:
+def _agent_definition_precedence(row: AgentDefinitionRow) -> tuple[int, str]:
     return (0 if row.project_id is None else 1, row.name)
 
 
-def _agent_definition_view(row: WorkflowDefinitionRow) -> SimpleNamespace:
+def _agent_definition_view(row: AgentDefinitionRow) -> SimpleNamespace:
     try:
-        body = AgentDefinitionBody.model_validate_json(row.definition_json)
+        data = row.definition_json
+        if isinstance(data, str):
+            body = AgentDefinitionBody.model_validate_json(data)
+        else:
+            payload = dict(data)
+            payload.setdefault("name", row.name)
+            body = AgentDefinitionBody.model_validate(payload)
     except ValueError as exc:
         return SimpleNamespace(
             name=row.name,

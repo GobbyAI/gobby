@@ -3,13 +3,15 @@
 from __future__ import annotations
 
 import json
+from datetime import UTC, datetime
+from typing import Any
 from unittest.mock import MagicMock, patch
 
 import pytest
 from click.testing import CliRunner
 
 from gobby.cli import cli
-from gobby.storage.workflow_definitions import WorkflowDefinitionRow
+from gobby.storage.definitions.agents import AgentDefinitionRow
 from gobby.workflows.definitions import AgentDefinitionBody
 
 pytestmark = pytest.mark.unit
@@ -28,7 +30,8 @@ def _agent_row(
     provider: str = "claude",
     model: str | None = None,
     surfaces: list[str] | None = None,
-) -> WorkflowDefinitionRow:
+    step_workflow: dict[str, Any] | None = None,
+) -> AgentDefinitionRow:
     body = AgentDefinitionBody(
         name=name,
         description=description,
@@ -38,18 +41,19 @@ def _agent_row(
         role="Builder",
         timeout=120.0,
         enabled=enabled,
+        step_workflow=step_workflow,
     )
-    return WorkflowDefinitionRow(
+    return AgentDefinitionRow(
         id=f"wf-{name}",
         name=name,
         description=description,
-        workflow_type="agent",
         enabled=enabled,
-        priority=100,
-        definition_json=body.model_dump_json(),
+        enabled_pinned=False,
+        definition_json=body.model_dump(mode="json"),
         source="installed",
-        created_at="2026-01-01T00:00:00Z",
-        updated_at="2026-01-01T00:00:00Z",
+        created_at=datetime(2026, 1, 1, tzinfo=UTC),
+        updated_at=datetime(2026, 1, 1, tzinfo=UTC),
+        step_workflow_id="sw-1" if step_workflow is not None else None,
     )
 
 
@@ -75,7 +79,7 @@ class TestAgentDefinitionsList:
         assert "Found 1 agent definition" in result.output
         assert "developer" in result.output
         assert "Build features" in result.output
-        manager.list_all.assert_called_once_with(workflow_type="agent", enabled=None)
+        manager.list_all.assert_called_once_with(enabled=None)
 
     @patch("gobby.cli.agents.get_agent_definition_manager")
     def test_filters_by_enabled_and_surface(
@@ -93,7 +97,7 @@ class TestAgentDefinitionsList:
         assert result.exit_code == 0
         assert "persona-ready" in result.output
         assert "spawn-only" not in result.output
-        manager.list_all.assert_called_once_with(workflow_type="agent", enabled=True)
+        manager.list_all.assert_called_once_with(enabled=True)
 
     @patch("gobby.cli.agents.get_agent_definition_manager")
     def test_json_output(self, mock_get_manager: MagicMock, runner: CliRunner) -> None:
@@ -145,7 +149,31 @@ class TestAgentDefinitionsShow:
         data = json.loads(result.output)
         assert data["name"] == "developer"
         assert data["surfaces"] == ["spawn", "persona"]
+        assert "step_workflow" in data
+        assert data["step_workflow"] is None
         assert "max_turns" not in data
+
+    @patch("gobby.cli.agents.get_agent_definition_manager")
+    def test_show_json_emits_nested_step_workflow(
+        self, mock_get_manager: MagicMock, runner: CliRunner
+    ) -> None:
+        manager = MagicMock()
+        manager.get_by_name.return_value = _agent_row(
+            "developer",
+            step_workflow={
+                "variables": {"required_skills": ["tdd"]},
+                "steps": [{"name": "implement"}],
+            },
+        )
+        mock_get_manager.return_value = manager
+
+        result = runner.invoke(cli, ["agents", "show", "developer", "--json"])
+
+        assert result.exit_code == 0
+        data = json.loads(result.output)
+        assert data["step_workflow"]["variables"]["required_skills"] == ["tdd"]
+        assert data["step_workflow"]["steps"][0]["name"] == "implement"
+        assert "steps" not in data
 
     @patch("gobby.cli.agents.get_agent_run_manager")
     @patch("gobby.cli.agents.get_agent_definition_manager")
