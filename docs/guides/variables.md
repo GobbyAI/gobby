@@ -407,6 +407,7 @@ These are set during execution, not initialized from definitions:
 | `full_session_summary` | string | Previous session summary (for handoff), full untruncated text |
 | `handoff_summary_injectable` | string | Budget-bounded copy of the handoff summary for inline `additionalContext` injection; carries a `get_handoff_context` breadcrumb when truncated. Rules inject this rather than `full_session_summary` to avoid Claude Code's ~10K char hard truncation. |
 | `session_summary` | string | Session summary set alongside `full_session_summary` on handoff/compact |
+| `compact_handoff_inject_pending` | bool | One-shot Grok compact rehydrate flag. `apply_in_place_compact_context_loss` sets it on Grok `post_compact` when `auto_inject_handoff` is on. `inject-compact-handoff-on-prompt` injects the marked continuation on the next `turn_start` and clears it. |
 
 ---
 
