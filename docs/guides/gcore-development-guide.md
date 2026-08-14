@@ -26,7 +26,7 @@ The baseline crate remains dependency-light. Consumers that only need project di
 | `degradation` | always | Shared vocabulary for configured-service unavailability, explicit degraded paths, partial search, stale indexes, skipped artifacts, and fatal core errors. |
 | `ai` | `ai` | Shared AI routing, direct/daemon transports, profile tiers, embeddings, and agentic/tool-loop generation primitives. |
 | `schema` | `postgres` | Hub schema apply/verify authority. Runtime commands validate externally managed resources and do not implicitly migrate them. |
-| `token_budget` | always | Shared token-budget trimming helpers — bounds prompt/context payloads to a token ceiling so consumers (`gwiki ask`, `gwiki code`) reuse one budgeting primitive. |
+| `token_budget` | always | Shared token-budget trimming helpers — bounds prompt/context payloads to a token ceiling so consumers (`gwiki search`, `gwiki code`) reuse one budgeting primitive. |
 | `postgres` | `postgres` | PostgreSQL hub adapter boundary. Validates Gobby-owned schema and BM25 requirements without creating, altering, or dropping managed objects. |
 | `falkor` | `falkor` | FalkorDB adapter boundary. Graph connection helpers live here without making FalkorDB a baseline dependency. |
 | `qdrant` | `qdrant` | Qdrant adapter boundary for vector search/storage integration. |

@@ -65,16 +65,6 @@ pub enum Command {
         /// librarian/upkeep loops. Default retrieval excludes candidates.
         include_candidates: bool,
     },
-    Ask {
-        query: String,
-        scope: ScopeSelection,
-        llm: bool,
-        deep: bool,
-        ai: AiRouting,
-        token_budget: Option<usize>,
-        /// Opt-in: also retrieve quarantined candidate pages (#17727).
-        include_candidates: bool,
-    },
     Read {
         target: ReadTarget,
         scope: ScopeSelection,

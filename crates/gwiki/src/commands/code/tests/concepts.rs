@@ -360,7 +360,7 @@ fn guided_tour_spine_numbers_chapters_with_callout_and_reciprocal_nav() {
             doc.contains("9. [[code/narrative/09-troubleshooting|Troubleshooting]]"),
             "{path}: {doc}"
         );
-        assert!(doc.contains("`gwiki ask"), "{path}: {doc}");
+        assert!(!doc.contains("`gwiki ask"), "{path}: {doc}");
         assert!(doc.contains("`gwiki search"), "{path}: {doc}");
     }
 

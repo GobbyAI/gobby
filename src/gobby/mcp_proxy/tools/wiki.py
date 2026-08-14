@@ -14,7 +14,6 @@ from gobby.gwiki_gateway import (
     GwikiGatewayError,
     normalize_kind,
     normalize_page_write_mode,
-    resolve_ask_timeout,
 )
 from gobby.mcp_proxy.tools.internal import InternalToolRegistry
 from gobby.sessions.transcript_archive import get_archive_dir
@@ -62,7 +61,7 @@ def create_wiki_registry(
     registry = InternalToolRegistry(
         name="gobby-wiki",
         description=(
-            "Wiki tools - wiki_search, wiki_ask, wiki_read, wiki_attach, wiki_ingest, "
+            "Wiki tools - wiki_search, wiki_read, wiki_attach, wiki_ingest, "
             "wiki_write_page, wiki_delete_page, wiki_compile, wiki_audit, wiki_trust, "
             "wiki_health, wiki_list_sources, wiki_remove_source, wiki_sync_sessions"
         ),
@@ -129,44 +128,6 @@ def create_wiki_registry(
                 project,
                 topic,
                 lambda gwiki: gwiki.search(query, limit=limit, token_budget=token_budget),
-            )
-        )
-
-    @registry.tool(
-        name="wiki_ask",
-        description=(
-            "Ask a question about the wiki. Read-only thin RAG over wiki search: "
-            "top-k hits become a bounded evidence prompt (~12K-token cap) and one "
-            "completion returns an answer with grounded citations. Output reports "
-            "hits, sources, code_citations, evidence, prompt_token_budget, "
-            "prompt_tokens_estimated, and truncation accounting."
-        ),
-    )
-    async def wiki_ask(
-        query: str,
-        project: str | None = None,
-        topic: str | None = None,
-        llm: bool = False,
-        deep: bool = False,
-        ai: str | None = None,
-        require_ai: bool = False,
-        token_budget: int | None = None,
-    ) -> dict[str, Any]:
-        ai_value = _normalize_ai(ai) if ai is not None else None
-        timeout_seconds = resolve_ask_timeout(llm, deep)
-        return await _guard(
-            lambda: read_call(
-                project,
-                topic,
-                lambda gwiki: gwiki.ask(
-                    query,
-                    llm=llm,
-                    deep=deep,
-                    ai=ai_value,
-                    require_ai=require_ai,
-                    token_budget=token_budget,
-                ),
-                timeout_seconds=timeout_seconds,
             )
         )
 

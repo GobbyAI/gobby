@@ -64,54 +64,6 @@ class FakeGateway:
         }
         return self._result("search", payload)
 
-    async def ask(
-        self,
-        query: str,
-        *,
-        llm: bool = False,
-        deep: bool = False,
-        ai: str | None = None,
-        require_ai: bool = False,
-        token_budget: int | None = None,
-    ) -> dict[str, Any]:
-        generation_requested = llm or deep
-        if not generation_requested and (ai is not None or require_ai):
-            names = [
-                name
-                for name, enabled in (("ai", ai is not None), ("require_ai", require_ai))
-                if enabled
-            ]
-            raise ValueError(f"{' and '.join(names)} require llm=True or deep=True")
-        self.calls.append(
-            (
-                "ask",
-                {
-                    "query": query,
-                    "llm": llm,
-                    "deep": deep,
-                    "ai": ai,
-                    "require_ai": require_ai,
-                    "token_budget": token_budget,
-                },
-            )
-        )
-        payload = {
-            "command": "ask",
-            "query": query,
-            "status": "retrieved",
-            "hits": [],
-            "related_pages": [],
-            "sources": [],
-            "gaps": [],
-            "stale_candidates": [],
-            "suggested_questions": [],
-            "warnings": [],
-        }
-        if generation_requested:
-            payload["ai"] = {"requested": True, "route": "direct", "status": "available"}
-            payload["synthesis"] = {"answer": "Hooks run at turn boundaries."}
-        return self._result("ask", payload)
-
     async def read(
         self,
         *,
@@ -333,7 +285,6 @@ async def test_tool_schemas(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> 
 
     assert {
         "wiki_search",
-        "wiki_ask",
         "wiki_read",
         "wiki_attach",
         "wiki_ingest",
@@ -351,19 +302,7 @@ async def test_tool_schemas(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> 
         search_schema["properties"]
     )
     assert search_schema["required"] == ["query"]
-
-    ask_schema = _schema("wiki_ask")
-    assert {
-        "query",
-        "project",
-        "topic",
-        "llm",
-        "deep",
-        "ai",
-        "require_ai",
-        "token_budget",
-    } <= set(ask_schema["properties"])
-    assert ask_schema["required"] == ["query"]
+    assert "wiki_ask" not in tool_names
 
     ingest_schema = _schema("wiki_ingest")
     assert "max_age_hours" in ingest_schema["properties"]
@@ -403,32 +342,6 @@ async def test_tool_schemas(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> 
     assert read_result["scope"] == {"identity": "topic:docs", "project": None, "topic": "docs"}
     assert FakeGateway.instances[-1].calls == [
         ("read", {"path": None, "title": "Page"}),
-    ]
-
-    ask_result = await registry.call(
-        "wiki_ask",
-        {
-            "query": "How do hooks work?",
-            "deep": True,
-            "ai": "direct",
-            "require_ai": True,
-            "token_budget": 4096,
-            "topic": "docs",
-        },
-    )
-    assert ask_result["payload"]["synthesis"]["answer"] == "Hooks run at turn boundaries."
-    assert FakeGateway.instances[-1].calls == [
-        (
-            "ask",
-            {
-                "query": "How do hooks work?",
-                "llm": False,
-                "deep": True,
-                "ai": "direct",
-                "require_ai": True,
-                "token_budget": 4096,
-            },
-        ),
     ]
 
     archive_dir = tmp_path / ".gobby" / "session_transcripts" / "custom"
@@ -869,30 +782,6 @@ async def test_wiki_compile_uses_generation_gateway_timeout() -> None:
 
     assert result["success"] is True
     assert FakeGateway.instances[-1].timeout_seconds == GENERATION_GWIKI_TIMEOUT_SECONDS
-
-
-@pytest.mark.asyncio
-@pytest.mark.parametrize(
-    ("arguments", "expected_timeout"),
-    [
-        (
-            {"query": "q", "deep": True, "ai": "daemon", "require_ai": True},
-            GENERATION_GWIKI_TIMEOUT_SECONDS,
-        ),
-        ({"query": "q", "llm": True}, GENERATION_GWIKI_TIMEOUT_SECONDS),
-        ({"query": "q", "llm": True, "ai": "off"}, GENERATION_GWIKI_TIMEOUT_SECONDS),
-        ({"query": "q"}, INTERACTIVE_GWIKI_TIMEOUT_SECONDS),
-    ],
-)
-async def test_wiki_ask_gateway_timeout_tracks_ai_routing(
-    arguments: dict[str, Any], expected_timeout: float
-) -> None:
-    registry = _registry()
-
-    result = await registry.call("wiki_ask", arguments)
-
-    assert result["success"] is True
-    assert FakeGateway.instances[-1].timeout_seconds == expected_timeout
 
 
 @pytest.mark.asyncio

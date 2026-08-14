@@ -81,7 +81,7 @@ The daemon refreshes these exports on a schedule.\n\n\
 - Page confidence (0-100, derived): cited-source credibility, freshness half-life, and backlinks; surfaced by `gwiki health`, `gwiki trust`, and per-page JSON.\n\
 - Claim classification: `EXTRACTED` (directly cited), `INFERRED` (page-level grounding), `AMBIGUOUS` (flagged uncertainty).\n\n\
 ## Query\n\n\
-- `gwiki search \"<term>\"` / `gwiki ask \"<question>\"` — retrieval over the vault.\n\
+- `gwiki search \"<term>\"` — retrieval over the vault.\n\
 - `gwiki read <page>` — read a page with metadata.\n\
 - `gwiki trust` — trust status of the search, graph, freshness, and audit surfaces.\n";
 

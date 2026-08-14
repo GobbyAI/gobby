@@ -48,17 +48,13 @@ fn setup_subcommand_is_removed() {
 }
 
 #[test]
-fn ask_flag_surface_supports_deep_investigation() {
+fn ask_subcommand_is_removed() {
     use clap::Parser;
 
-    let cli = Cli::try_parse_from(["gwiki", "ask", "--deep", "How does indexing work?"])
-        .expect("ask flags parse");
-    let CliCommand::Ask(args) = cli.command else {
-        panic!("expected ask command");
-    };
-    assert!(!args.llm);
-    assert!(args.deep);
-    assert!(!args.no_ai);
+    assert!(!CLI_SUBCOMMANDS.contains(&"ask"));
+    let error = Cli::try_parse_from(["gwiki", "ask", "How does indexing work?"])
+        .expect_err("ask must no longer parse");
+    assert_eq!(error.kind(), clap::error::ErrorKind::InvalidSubcommand);
 }
 
 #[test]
@@ -206,42 +202,6 @@ fn ingest_file_cli_flags_map_to_command_options() {
         context.bindings.audio_translate.target_lang.as_deref(),
         Some("es")
     );
-}
-
-#[test]
-fn ask_cli_flags_map_to_command_options() {
-    let command = command_from_cli(
-        CliCommand::Ask(AskArgs {
-            question: "How do hooks work?".to_string(),
-            llm: true,
-            deep: true,
-            no_ai: false,
-            token_budget: Some(2000),
-            include_candidates: true,
-        }),
-        ScopeSelection::topic("docs"),
-    )
-    .expect("map ask command");
-
-    let Command::Ask {
-        query,
-        scope,
-        llm,
-        deep,
-        ai,
-        token_budget,
-        include_candidates,
-    } = command
-    else {
-        panic!("expected ask command");
-    };
-    assert_eq!(query, "How do hooks work?");
-    assert_eq!(scope, ScopeSelection::topic("docs"));
-    assert!(llm);
-    assert!(deep);
-    assert_eq!(ai, AiRouting::Daemon);
-    assert_eq!(token_budget, Some(2000));
-    assert!(include_candidates);
 }
 
 #[test]

@@ -70,7 +70,7 @@ impl VaultToolExecutor {
         let limit = arg_usize(args, "limit", DEFAULT_SEARCH_LIMIT, MAX_SEARCH_LIMIT);
         // Agent-facing vault search keeps the default surface: quarantined
         // candidate pages stay hidden until promoted (#17727).
-        let retrieval = search::retrieve(
+        let output = search::retrieve(
             query.clone(),
             self.selection.clone(),
             limit,
@@ -83,18 +83,18 @@ impl VaultToolExecutor {
             .data_source_degraded
             .lock()
             .unwrap_or_else(std::sync::PoisonError::into_inner);
-        for degradation in &retrieval.output.degradations {
+        for degradation in &output.degradations {
             degraded.insert(degradation.clone());
         }
         drop(degraded);
-        if retrieval.output.results.is_empty() {
+        if output.results.is_empty() {
             return Ok(format!("No vault documents matched `{query}`."));
         }
         let mut block = format!(
             "{} vault document(s) matching `{query}`:\n",
-            retrieval.output.results.len()
+            output.results.len()
         );
-        for (index, result) in retrieval.output.results.iter().enumerate() {
+        for (index, result) in output.results.iter().enumerate() {
             let title = result
                 .title
                 .clone()

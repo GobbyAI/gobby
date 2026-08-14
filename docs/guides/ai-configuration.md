@@ -45,14 +45,12 @@ Use `--no-ai` when a command must not call the daemon for AI:
 
 ```bash
 gwiki ingest-file media/private-recording.mp3 --no-ai
-gwiki ask --no-ai "What does the vault say about leases?"
 gwiki code --no-ai
 ```
 
 `--no-ai` forces embeddings, transcription, translation, vision, and text
 generation off for that command. gwiki still stores the source as a raw asset
-and records degraded derived output where applicable. `gwiki ask --llm` and
-`--deep` cannot be combined with `--no-ai`.
+and records degraded derived output where applicable.
 
 ## Profiles and candidates
 

@@ -24,7 +24,6 @@ const CLI_SUBCOMMANDS: &[&str] = &[
     "purge",
     "prune",
     "search",
-    "ask",
     "read",
     "pages",
     "page",
@@ -183,8 +182,6 @@ enum CliCommand {
     Prune(PruneArgs),
     /// Search wiki documents in the selected scope.
     Search(SearchArgs),
-    /// Ask a question about wiki documents in the selected scope.
-    Ask(AskArgs),
     /// Read a wiki page or document in the selected scope.
     Read(ReadArgs),
     /// List indexed wiki pages and unindexed outputs reports.
@@ -298,32 +295,6 @@ struct SearchArgs {
     token_budget: Option<usize>,
 
     /// Also return quarantined candidate pages (librarian/upkeep loops).
-    #[arg(long = "include-candidates")]
-    include_candidates: bool,
-}
-
-#[derive(Debug, Args)]
-struct AskArgs {
-    #[arg(value_name = "QUESTION")]
-    question: String,
-
-    /// Synthesize an answer from retrieved wiki hits.
-    #[arg(long)]
-    llm: bool,
-
-    /// Investigate the wiki with a bounded read-only agent before answering.
-    #[arg(long)]
-    deep: bool,
-
-    /// Disable daemon-backed synthesis for this invocation.
-    #[arg(long)]
-    no_ai: bool,
-
-    /// Trim retrieval hits to fit an approximate token budget, emitting a narrowing hint.
-    #[arg(long = "token-budget", value_name = "N", value_parser = parse_positive_usize)]
-    token_budget: Option<usize>,
-
-    /// Also retrieve quarantined candidate pages (librarian/upkeep loops).
     #[arg(long = "include-candidates")]
     include_candidates: bool,
 }

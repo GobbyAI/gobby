@@ -12,27 +12,18 @@ ID; chunk IDs, Qdrant point IDs, and graph document IDs for the same page must
 merge into one search result while preserving all `sources`, per-source
 `explanations`, and the emitted `fusion_key`.
 
-## Retrieval Primitive: `search` and `ask`
+## Retrieval Primitive: `search`
 
 `gwiki search` is the single bounded retrieval primitive for both humans and
-agents. There is no standalone reason-act `research` loop; the calling agent
-composes `search` + `read` itself. Do not reintroduce a `research` command. Each
-search hit carries a bounded query-token snippet (never a full document body),
-provenance (`wiki_page`, `source_path`, `result_type`), contributing `sources`
-with per-source `explanations`, and hit-tied `code_citations`.
+agents. There is no standalone reason-act `research` loop and no embedded `ask`
+RAG command; the calling agent composes `search` + `read` itself. Do not
+reintroduce a `research` or `ask` command. Each search hit carries a bounded
+query-token snippet (never a full document body), provenance (`wiki_page`,
+`source_path`, `result_type`), contributing `sources` with per-source
+`explanations`, and hit-tied `code_citations`.
 
-`gwiki ask` is a thin bounded-evidence RAG layer over `search`. It retrieves the
-top-k hits, builds a query-centered evidence prompt capped at
-`prompt_token_budget` (~12K estimated tokens), and — only with `--llm` — runs a
-single completion. Keep `ask` thin: it must not grow into a multi-step research
-agent. Without `--llm` it is a pure retrieval command with no AI route.
-Synthesized answers are checked post-generation against the retrieved evidence;
-the verdict lands in `synthesis.citation_check` (see
-`crates/gwiki/src/output.rs`).
-
-Both commands accept `--token-budget <N>`, which trims results/retrieval hits to
-fit an approximate token budget and emits a narrowing hint when hits are dropped.
-On `ask` this applies in addition to the `prompt_token_budget` evidence cap.
+`search` accepts `--token-budget <N>`, which trims results to fit an approximate
+token budget and emits a narrowing hint when hits are dropped.
 
 ## Session Transcript Ingest (`sync-sessions`)
 

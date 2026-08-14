@@ -43,7 +43,6 @@ Every gateway call carries explicit scope:
 | `gwiki ingest-url --format json URL...` | One or more URLs and scope flags | Explicit write | CLI owns fetching, persistence, failure classification, and batch indexing. |
 | `gwiki collect --format json` | Scope flags | Explicit write | Processes inbox items into raw sources. |
 | `gwiki compile --format json` | Compile target/options and scope flags | Explicit write | Writes compiled wiki material only under CLI rules. |
-| `gwiki ask --format json` | Question text and scope flags; optional `--llm`, `--ai`, `--require-ai` | Read-only | Question answering over scoped wiki content; consumed by `GET /api/wiki/ask` and the `wiki_ask` MCP tool. |
 | `gwiki trust --format json` | Scope flags | Read-only | Reports source trust state; consumed by the `wiki_trust` MCP tool. |
 | `gwiki audit --format json` | Scope flags and audit options | Read-only | Scheduled audits are allowed, but audit remains read-only unless a future fix command says otherwise. |
 | `gwiki health --format json` | Scope flags | Read-only | Scheduled health checks are read-only status/report jobs. |

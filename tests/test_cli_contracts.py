@@ -125,17 +125,6 @@ async def test_gwiki_gateway_argv_conforms_to_vendored_contract() -> None:
         ("status", "status", gateway.status),
         ("index", "index", gateway.index),
         ("search", "search", lambda: gateway.search("ownership", limit=5, token_budget=2048)),
-        (
-            "ask",
-            "ask",
-            lambda: gateway.ask(
-                "ownership",
-                deep=True,
-                ai="direct",
-                require_ai=True,
-                token_budget=2048,
-            ),
-        ),
         ("read", "read", lambda: gateway.read(path="docs/wiki.md")),
         ("graph", "graph", lambda: gateway.graph(include="knowledge")),
         ("pages", "pages", lambda: gateway.pages(prefix="code/")),
@@ -213,8 +202,6 @@ async def test_gwiki_gateway_argv_conforms_to_vendored_contract() -> None:
         assert "--format" in argv
         if cli_name == "search":
             assert "--token-budget" in _observed_flags(argv)
-        if cli_name == "ask":
-            assert {"--deep", "--ai", "--require-ai", "--token-budget"} <= _observed_flags(argv)
         if cli_name == "page write":
             assert {"--path", "--mode", "--expected-hash"} <= _observed_flags(argv)
             assert gateway.stdin_by_command["write_page"] == b"# Demo\n"
@@ -231,17 +218,6 @@ async def test_gwiki_gateway_argv_conforms_to_vendored_contract() -> None:
             } <= _observed_flags(argv)
             assert argv[2] == "Ownership Story"
         assert "--project" in argv
-
-
-@pytest.mark.asyncio
-@pytest.mark.parametrize("options", [{"ai": "direct"}, {"require_ai": True}])
-async def test_gwiki_gateway_rejects_ai_options_without_generation(
-    options: dict[str, Any],
-) -> None:
-    gateway = RecordingGwikiGateway()
-
-    with pytest.raises(ValueError, match="require llm=True or deep=True"):
-        await gateway.ask("ownership", **options)
 
 
 @pytest.mark.unit
@@ -338,7 +314,6 @@ def test_wiki_mcp_tools_are_backed_by_documented_gwiki_commands() -> None:
     }
     tool_to_command = {
         "wiki_search": "search",
-        "wiki_ask": "ask",
         "wiki_read": "read",
         "wiki_attach": "ingest-file",
         "wiki_ingest": "ingest-url",
@@ -366,7 +341,7 @@ def test_wiki_mcp_tools_are_backed_by_documented_gwiki_commands() -> None:
 def test_gwiki_contract_documents_daemon_parsed_keys() -> None:
     contract = _contract("gwiki")
 
-    assert contract["contract_version"] == 17
+    assert contract["contract_version"] == 18
     assert {"changed_paths", "citations", "raw_path", "source_path", "path"} <= _json_keys(
         contract, "ingest-file"
     )
@@ -374,16 +349,7 @@ def test_gwiki_contract_documents_daemon_parsed_keys() -> None:
         contract, "ingest-url"
     )
     assert {"path", "raw_path", "source_path"} <= _json_keys(contract, "sources")
-    assert {
-        "hits",
-        "sources",
-        "code_citations",
-        "evidence",
-        "prompt_token_budget",
-        "prompt_tokens_estimated",
-        "warnings",
-    } <= _json_keys(contract, "ask")
-    assert "related_pages" not in _json_keys(contract, "ask")
+    assert "ask" not in {command["name"] for command in contract["commands"]}
     assert {"results", "code_citations", "snippet", "source_path", "result_type"} <= _json_keys(
         contract, "search"
     )

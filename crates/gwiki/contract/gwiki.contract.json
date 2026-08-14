@@ -1,6 +1,6 @@
 {
   "tool": "gwiki",
-  "contract_version": 17,
+  "contract_version": 18,
   "summary": "Local-first wiki CLI for capture, search, upkeep, and synthesis.",
   "global_flags": [
     {
@@ -156,90 +156,6 @@
         "code_citations",
         "degradations"
       ]
-    },
-    {
-      "name": "ask",
-      "summary": "Ask a question about wiki documents in the selected scope.",
-      "daemon_consumed": true,
-      "positionals": [
-        {
-          "name": "QUESTION",
-          "required": true,
-          "repeatable": false
-        }
-      ],
-      "flags": [
-        {
-          "name": "--llm",
-          "takes_value": false,
-          "value_name": null,
-          "allowed_values": [],
-          "required": false,
-          "repeatable": false
-        },
-        {
-          "name": "--deep",
-          "takes_value": false,
-          "value_name": null,
-          "allowed_values": [],
-          "required": false,
-          "repeatable": false
-        },
-        {
-          "name": "--no-ai",
-          "takes_value": false,
-          "value_name": null,
-          "allowed_values": [],
-          "required": false,
-          "repeatable": false
-        },
-        {
-          "name": "--token-budget",
-          "takes_value": true,
-          "value_name": "N",
-          "allowed_values": [],
-          "required": false,
-          "repeatable": false
-        }
-      ],
-      "json_output_keys": [
-        "command",
-        "scope",
-        "query",
-        "status",
-        "degraded",
-        "degraded_sources",
-        "hits",
-        "sources",
-        "code_citations",
-        "evidence",
-        "prompt_token_budget",
-        "prompt_tokens_estimated",
-        "truncated",
-        "truncated_components",
-        "warnings",
-        "hint",
-        "ai",
-        "synthesis"
-      ],
-      "hard_dependencies": [
-        "PostgreSQL"
-      ],
-      "optional_dependencies": [
-        "model synthesis",
-        "Qdrant+embeddings",
-        "FalkorDB graph boost"
-      ],
-      "multimodal": "none",
-      "degradation": {
-        "output_shape": "model off emits retrieval-only hits with grounded citations; signal loss falls back to BM25-only evidence",
-        "metadata_keys": [
-          "degraded",
-          "degraded_sources[]",
-          "truncated",
-          "truncated_components[]"
-        ]
-      }
     },
     {
       "name": "read",

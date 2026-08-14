@@ -6,7 +6,7 @@ use gobby_core::cli_contract::{
 pub fn contract() -> CliContract {
     CliContract {
         tool: "gwiki",
-        contract_version: 17,
+        contract_version: 18,
         summary: "Local-first wiki CLI for capture, search, upkeep, and synthesis.",
         global_flags: vec![format_flag(), FlagContract::switch("--quiet")],
         scope: Some(ScopeContract {
@@ -61,54 +61,6 @@ pub fn contract() -> CliContract {
                     "degradations",
                 ]),
                 ..CommandContract::new("search", "Search wiki documents in the selected scope.")
-            },
-            CommandContract {
-                daemon_consumed: true,
-                positionals: vec![PositionalContract::required("QUESTION")],
-                flags: vec![
-                    FlagContract::switch("--llm"),
-                    FlagContract::switch("--deep"),
-                    FlagContract::switch("--no-ai"),
-                    FlagContract::value("--token-budget", "N"),
-                ],
-                json_output_keys: scoped_keys(vec![
-                    "query",
-                    "status",
-                    "degraded",
-                    "degraded_sources",
-                    "hits",
-                    "sources",
-                    "code_citations",
-                    "evidence",
-                    "prompt_token_budget",
-                    "prompt_tokens_estimated",
-                    "truncated",
-                    "truncated_components",
-                    "warnings",
-                    "hint",
-                    "ai",
-                    "synthesis",
-                ]),
-                hard_dependencies: vec!["PostgreSQL"],
-                optional_dependencies: vec![
-                    "model synthesis",
-                    "Qdrant+embeddings",
-                    "FalkorDB graph boost",
-                ],
-                multimodal: Some("none"),
-                degradation: Some(DegradationContract {
-                    output_shape: "model off emits retrieval-only hits with grounded citations; signal loss falls back to BM25-only evidence",
-                    metadata_keys: vec![
-                        "degraded",
-                        "degraded_sources[]",
-                        "truncated",
-                        "truncated_components[]",
-                    ],
-                }),
-                ..CommandContract::new(
-                    "ask",
-                    "Ask a question about wiki documents in the selected scope.",
-                )
             },
             CommandContract {
                 daemon_consumed: true,

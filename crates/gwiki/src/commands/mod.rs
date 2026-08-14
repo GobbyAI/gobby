@@ -1,4 +1,3 @@
-pub(crate) mod ask;
 pub(crate) mod audit;
 pub(crate) mod backlinks;
 pub(crate) mod benchmark;
@@ -62,7 +61,6 @@ fn command_project_root(command: &Command) -> Option<std::path::PathBuf> {
         | Command::Sources { scope }
         | Command::RemoveSource { scope, .. }
         | Command::Search { scope, .. }
-        | Command::Ask { scope, .. }
         | Command::Read { scope, .. }
         | Command::Pages { scope, .. }
         | Command::PageWrite { scope, .. }
@@ -138,23 +136,6 @@ fn dispatch(command: Command, run_options: RunOptions) -> Result<CommandOutcome,
             scope,
             limit,
             include_semantic,
-            token_budget,
-            include_candidates,
-        ),
-        Command::Ask {
-            query,
-            scope,
-            llm,
-            deep,
-            ai,
-            token_budget,
-            include_candidates,
-        } => ask::execute(
-            query,
-            scope,
-            llm,
-            deep,
-            ai,
             token_budget,
             include_candidates,
         ),

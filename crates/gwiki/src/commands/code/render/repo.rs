@@ -209,9 +209,7 @@ pub(crate) fn render_repo_doc(
     doc.push_str(
         "Browse all concepts in the [[code/concepts/index|Concept tree and narrative tours]].\n\n",
     );
-    doc.push_str(
-        "Ask questions across this vault with `gwiki ask \"...\"`, or find pages with `gwiki search \"...\"`.\n\n",
-    );
+    doc.push_str("Find pages in this vault with `gwiki search \"...\"`.\n\n");
     write_section(&mut doc, "Overview", &summary);
     // Link the deterministic analysis/catalog pages so they are reachable from
     // the front page instead of orphaned (#904). Only the pages that were

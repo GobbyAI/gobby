@@ -33,28 +33,3 @@ fn status_goes_to_stderr() {
         "{stderr}"
     );
 }
-
-#[test]
-fn ask_llm_rejects_no_ai() {
-    let fixture = common::GwikiFixture::new();
-    let init = fixture.output(&["init", "--topic", "rust"]);
-    common::assert_success(&init, "topic init");
-
-    let output = fixture.output(&[
-        "--format",
-        "text",
-        "ask",
-        "--topic",
-        "rust",
-        "--llm",
-        "--no-ai",
-        "Which page types does codewiki emit?",
-    ]);
-
-    assert!(!output.status.success(), "ask --llm --no-ai must fail");
-    let stderr = String::from_utf8_lossy(&output.stderr);
-    assert!(
-        stderr.contains("--no-ai") || stderr.contains("cannot be combined"),
-        "{stderr}"
-    );
-}

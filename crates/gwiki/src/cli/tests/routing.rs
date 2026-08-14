@@ -24,8 +24,6 @@ fn assert_unknown_argument(args: &[&str]) {
 
 #[test]
 fn gwiki_rejects_routing_flags_except_no_ai() {
-    assert_unknown_argument(&["gwiki", "ask", "--ai", "daemon", "How?"]);
-    assert_unknown_argument(&["gwiki", "ask", "--require-ai", "How?"]);
     assert_unknown_argument(&["gwiki", "code", "--ai", "off"]);
     assert_unknown_argument(&["gwiki", "compile", "--ai", "off"]);
     assert_unknown_argument(&["gwiki", "upkeep", "--ai", "off"]);
@@ -71,13 +69,6 @@ fn contains_flag(text: &str, flag: &str) -> bool {
 
 #[test]
 fn no_ai_maps_commands_to_off() {
-    let ask = Cli::try_parse_from(["gwiki", "ask", "--no-ai", "How?"]).expect("ask --no-ai");
-    let command = command_from_cli(ask.command, ask.scope.into()).expect("map ask");
-    let Command::Ask { ai, .. } = command else {
-        panic!("expected ask");
-    };
-    assert_eq!(ai, AiRouting::Off);
-
     let upkeep = Cli::try_parse_from(["gwiki", "upkeep", "--no-ai"]).expect("upkeep --no-ai");
     let command = command_from_cli(upkeep.command, upkeep.scope.into()).expect("map upkeep");
     let Command::Upkeep { ai, .. } = command else {

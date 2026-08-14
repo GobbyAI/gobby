@@ -132,15 +132,6 @@ pub(super) fn command_from_cli_with_runtime(
             token_budget: args.token_budget,
             include_candidates: args.include_candidates,
         }),
-        CliCommand::Ask(args) => Ok(Command::Ask {
-            query: args.question,
-            scope,
-            llm: args.llm,
-            deep: args.deep,
-            ai: routing_from_no_ai(args.no_ai),
-            token_budget: args.token_budget,
-            include_candidates: args.include_candidates,
-        }),
         CliCommand::Read(args) => {
             let target = match (args.path, args.title) {
                 (Some(path), None) => ReadTarget::Path(path),

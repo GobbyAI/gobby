@@ -17,7 +17,6 @@ from gobby.gwiki_gateway import (
     GwikiGatewayError,
     normalize_kind,
     normalize_page_write_mode,
-    resolve_ask_timeout,
 )
 from gobby.servers.chat_attachment_limits import (
     DEFAULT_ATTACHMENT_MAX_FILE_BYTES,
@@ -78,37 +77,6 @@ def create_wiki_router(server: HTTPServer) -> APIRouter:
             topic,
             lambda gateway: gateway.search(search_query, limit=limit),
         )
-
-    @router.get("/ask")
-    async def ask(
-        q: str | None = Query(None),
-        query: str | None = Query(None),
-        llm: bool = Query(False),
-        deep: bool = Query(False),
-        ai: str | None = Query(None),
-        require_ai: bool = Query(False),
-        project: str | None = Query(None),
-        topic: str | None = Query(None),
-    ) -> dict[str, Any]:
-        ask_query = _one_query(q, query)
-        ai_value = _normalize_ai(ai) if ai is not None else None
-        timeout_seconds = resolve_ask_timeout(llm, deep)
-        try:
-            return await _read(
-                server,
-                project,
-                topic,
-                lambda gateway: gateway.ask(
-                    ask_query,
-                    llm=llm,
-                    deep=deep,
-                    ai=ai_value,
-                    require_ai=require_ai,
-                ),
-                timeout_seconds=timeout_seconds,
-            )
-        except ValueError as exc:
-            raise HTTPException(400, detail=str(exc) or "Invalid wiki ask request") from exc
 
     @router.get("/read")
     async def read(

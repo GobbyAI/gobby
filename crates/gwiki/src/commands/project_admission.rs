@@ -44,7 +44,6 @@ fn classify_command(command: &Command) -> CommandClassification<'_> {
         | Command::Sources { .. }
         | Command::RemoveSource { dry_run: true, .. }
         | Command::Search { .. }
-        | Command::Ask { .. }
         | Command::Read { .. }
         | Command::Pages { .. }
         | Command::PageWrite { .. }

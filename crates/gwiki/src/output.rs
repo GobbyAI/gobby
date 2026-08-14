@@ -128,46 +128,6 @@ pub fn code_citations_from_results(results: &[SearchResultOutput]) -> Vec<CodeCi
     citations
 }
 
-/// Bounded-evidence ask output: retrieval hits plus the prompt-budget
-/// accounting for the single synthesis completion. Evidence excerpts are
-/// in-memory only; the output records which pages contributed and how much.
-#[derive(Debug, Clone, PartialEq, serde::Serialize)]
-pub struct AskOutput {
-    pub command: &'static str,
-    pub scope: ScopeIdentity,
-    pub query: String,
-    pub status: &'static str,
-    pub degraded: bool,
-    pub degraded_sources: Vec<String>,
-    pub hits: Vec<SearchResultOutput>,
-    pub sources: Vec<String>,
-    pub code_citations: Vec<CodeCitationOutput>,
-    pub evidence: Vec<AskEvidenceOutput>,
-    pub prompt_token_budget: usize,
-    pub prompt_tokens_estimated: usize,
-    pub truncated: bool,
-    pub truncated_components: Vec<String>,
-    pub warnings: Vec<String>,
-    /// Narrowing hint emitted when `--token-budget` trimmed the retrieval hits.
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub hint: Option<String>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub ai: Option<AskAiOutput>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub deep: Option<AskDeepOutput>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub synthesis: Option<AskSynthesisOutput>,
-}
-
-/// One evidence excerpt included in the bounded synthesis prompt.
-#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize)]
-pub struct AskEvidenceOutput {
-    pub wiki_page: PathBuf,
-    pub source_path: PathBuf,
-    pub content_hash: String,
-    pub excerpt_chars: usize,
-}
-
 #[derive(Debug, Clone, PartialEq, Eq, serde::Serialize)]
 pub struct CodeCitationOutput {
     pub file: String,
@@ -216,45 +176,6 @@ pub struct SearchResultOutput {
     pub score: f64,
     pub sources: Vec<String>,
     pub explanations: Vec<SearchSourceExplanationOutput>,
-}
-
-#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize)]
-pub struct AskAiOutput {
-    pub requested: bool,
-    pub requested_mode: &'static str,
-    pub route: &'static str,
-    pub status: &'static str,
-    pub model: Option<String>,
-    pub error: Option<String>,
-}
-
-#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize)]
-pub struct AskDeepOutput {
-    pub route: &'static str,
-    pub model: Option<String>,
-    pub turns: Option<usize>,
-    pub tool_use_count: usize,
-    pub max_turns: Option<usize>,
-    pub usage: Option<gobby_core::ai_types::TokenUsage>,
-    pub stop_reason: Option<String>,
-}
-
-#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize)]
-pub struct AskSynthesisOutput {
-    pub answer: String,
-    pub model: Option<String>,
-    pub citation_check: AskCitationCheckOutput,
-}
-
-/// Post-generation grounding verdict for a synthesized answer. Unlike persisted
-/// wiki prose (validated by `lint` and `audit`), `ask --llm` output is
-/// ephemeral, so the claim check runs inline against the retrieved evidence
-/// and flags any claim it cannot ground.
-#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize)]
-pub struct AskCitationCheckOutput {
-    pub status: &'static str,
-    pub checked_claims: usize,
-    pub unsupported_claims: Vec<String>,
 }
 
 #[derive(Debug, Clone, PartialEq, serde::Serialize)]

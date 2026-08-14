@@ -16,5 +16,5 @@ rules:
 
           {{ wiki_overview }}
 
-          Query the wiki through the gobby-wiki MCP server (`wiki_search`, `wiki_ask`, `wiki_read`).
+          Query the wiki through the gobby-wiki MCP server (`wiki_search`, `wiki_read`).
           <!-- gobby:injected-context:end -->

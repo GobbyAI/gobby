@@ -226,14 +226,12 @@ pub(crate) fn append_guided_tour(doc: &mut String, chapters: &[(&str, &str)]) {
         let _ = writeln!(doc, "{}. [[code/narrative/{slug}|{title}]]", index + 1);
     }
     doc.push('\n');
-    append_ask_hint(doc);
+    append_search_hint(doc);
 }
 
-/// One-line pointer to the conversational/search leg over the same vault.
-pub(crate) fn append_ask_hint(doc: &mut String) {
-    doc.push_str(
-        "Ask questions across this vault with `gwiki ask \"...\"`, or find pages with `gwiki search \"...\"`.\n\n",
-    );
+/// One-line pointer to search over the same vault.
+pub(crate) fn append_search_hint(doc: &mut String) {
+    doc.push_str("Find pages in this vault with `gwiki search \"...\"`.\n\n");
 }
 
 /// Renders the reciprocal `Previous`/`Next` chapter navigation at the foot of a

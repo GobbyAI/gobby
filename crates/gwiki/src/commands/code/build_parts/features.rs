@@ -240,7 +240,6 @@ fn resolve_gwiki_handler(command: &str) -> (&'static str, &'static str) {
             "crates/gwiki/src/commands/search.rs",
             "commands::search::execute",
         ),
-        "ask" => ("crates/gwiki/src/commands/ask.rs", "commands::ask::execute"),
         "read" => (
             "crates/gwiki/src/commands/read.rs",
             "commands::read::execute",

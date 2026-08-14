@@ -15,7 +15,7 @@ use serde::Serialize;
 use crate::synthesis::{SynthesisInput, relative_path};
 
 /// Hard cap on the estimated token count of the explainer prompt (system +
-/// user), matching `gwiki ask`'s prompt budget discipline.
+/// user), matching compile's prompt budget discipline.
 pub const EXPLAINER_PROMPT_TOKEN_BUDGET: usize = 12_000;
 
 /// Per-source excerpt bound entering the prompt.

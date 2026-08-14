@@ -4,11 +4,7 @@ use std::path::PathBuf;
 
 use gobby_wiki::{
     ScopeIdentity,
-    output::{
-        AskAiOutput, AskCitationCheckOutput, AskDeepOutput, AskEvidenceOutput, AskOutput,
-        AskSynthesisOutput, CodeCitationOutput, SearchOutput, SearchResultOutput, SearchResultType,
-        SearchSourceExplanationOutput,
-    },
+    output::{SearchOutput, SearchResultOutput, SearchResultType, SearchSourceExplanationOutput},
 };
 use serde_json::Value;
 
@@ -91,129 +87,6 @@ fn assert_classification(
     assert_eq!(command["degradation"], degradation);
 }
 
-#[test]
-fn ask_contract_keys_serialize_from_representative_output() {
-    let contract = gobby_wiki::contract::contract();
-    let ask = contract
-        .commands
-        .iter()
-        .find(|command| command.name == "ask")
-        .expect("ask command contract");
-    let output =
-        serde_json::to_value(representative_ask_output()).expect("representative ask output JSON");
-
-    let missing_key = missing_json_output_key(&ask.json_output_keys, &output);
-    assert!(
-        missing_key.is_none(),
-        "command `{}` declares json_output_key `{}`, but representative output does not serialize \
-         that key:\n{}",
-        ask.name,
-        missing_key.unwrap_or("<none>"),
-        serde_json::to_string_pretty(&output).expect("serialize output context")
-    );
-}
-
-#[test]
-fn deep_output_serializes_stop_reason_and_optional_turns() {
-    let direct = serde_json::to_value(AskDeepOutput {
-        route: "direct",
-        model: Some("test-model".to_string()),
-        turns: Some(8),
-        tool_use_count: 24,
-        max_turns: Some(8),
-        usage: None,
-        stop_reason: Some("max_tool_calls".to_string()),
-    })
-    .expect("direct deep output");
-    assert_eq!(direct["stop_reason"], "max_tool_calls");
-    assert_eq!(direct["turns"], 8);
-
-    let daemon = serde_json::to_value(AskDeepOutput {
-        route: "daemon",
-        model: None,
-        turns: None,
-        tool_use_count: 0,
-        max_turns: Some(8),
-        usage: None,
-        stop_reason: None,
-    })
-    .expect("daemon deep output");
-    for key in [
-        "route",
-        "model",
-        "turns",
-        "tool_use_count",
-        "max_turns",
-        "usage",
-        "stop_reason",
-    ] {
-        assert!(
-            daemon.get(key).is_some(),
-            "missing deep key {key}: {daemon}"
-        );
-    }
-    assert!(daemon["turns"].is_null());
-    assert!(daemon["stop_reason"].is_null());
-}
-
-fn representative_ask_output() -> AskOutput {
-    AskOutput {
-        command: "ask",
-        scope: ScopeIdentity::topic("contract-guardrails"),
-        query: "How do contract keys stay honest?".to_string(),
-        status: "answered",
-        degraded: false,
-        degraded_sources: Vec::new(),
-        hits: vec![representative_search_hit()],
-        sources: vec!["knowledge/topics/contract-guardrails.md".to_string()],
-        code_citations: vec![CodeCitationOutput {
-            file: "crates/gwiki/src/output.rs".to_string(),
-            line: Some(102),
-            symbol: Some("AskOutput".to_string()),
-        }],
-        evidence: vec![AskEvidenceOutput {
-            wiki_page: PathBuf::from("knowledge/topics/contract-guardrails.md"),
-            source_path: PathBuf::from("crates/gwiki/src/contract.rs"),
-            content_hash: "page-hash".to_string(),
-            excerpt_chars: 51,
-        }],
-        prompt_token_budget: 12_000,
-        prompt_tokens_estimated: 64,
-        truncated: true,
-        truncated_components: vec!["evidence".to_string()],
-        warnings: vec!["semantic search degraded".to_string()],
-        hint: Some("Review grounded citations before trusting synthesis.".to_string()),
-        ai: Some(AskAiOutput {
-            requested: true,
-            requested_mode: "auto",
-            route: "local",
-            status: "degraded",
-            model: Some("test-model".to_string()),
-            error: Some("synthetic warning".to_string()),
-        }),
-        deep: Some(AskDeepOutput {
-            route: "direct",
-            model: Some("test-model".to_string()),
-            turns: Some(2),
-            tool_use_count: 3,
-            max_turns: Some(8),
-            usage: None,
-            stop_reason: Some("completed".to_string()),
-        }),
-        synthesis: Some(AskSynthesisOutput {
-            answer: "Contract keys must serialize from command output.".to_string(),
-            model: Some("test-model".to_string()),
-            citation_check: AskCitationCheckOutput {
-                status: "unsupported_claims",
-                checked_claims: 1,
-                unsupported_claims: vec![
-                    "Contract keys must serialize from command output.".to_string(),
-                ],
-            },
-        }),
-    }
-}
-
 fn representative_search_hit() -> SearchResultOutput {
     SearchResultOutput {
         title: Some("Contract guardrails".to_string()),
@@ -280,7 +153,7 @@ fn json_contains_key(value: &Value, key: &str) -> bool {
 #[test]
 fn parity_contract_tracks_code_grounding_and_dependency_classification() {
     let contract = pinned_contract();
-    assert_eq!(contract["contract_version"], 17);
+    assert_eq!(contract["contract_version"], 18);
     assert!(
         contract["commands"]
             .as_array()
@@ -333,48 +206,13 @@ fn parity_contract_tracks_code_grounding_and_dependency_classification() {
         }),
     );
 
-    let ask = command(&contract, "ask");
-    assert_classification(
-        ask,
-        true,
-        serde_json::json!(["PostgreSQL"]),
-        serde_json::json!([
-            "model synthesis",
-            "Qdrant+embeddings",
-            "FalkorDB graph boost"
-        ]),
-        serde_json::json!({
-            "output_shape": "model off emits retrieval-only hits with grounded citations; signal loss falls back to BM25-only evidence",
-            "metadata_keys": [
-                "degraded",
-                "degraded_sources[]",
-                "truncated",
-                "truncated_components[]"
-            ]
-        }),
-    );
-    assert_eq!(
-        ask["json_output_keys"],
-        serde_json::json!([
-            "command",
-            "scope",
-            "query",
-            "status",
-            "degraded",
-            "degraded_sources",
-            "hits",
-            "sources",
-            "code_citations",
-            "evidence",
-            "prompt_token_budget",
-            "prompt_tokens_estimated",
-            "truncated",
-            "truncated_components",
-            "warnings",
-            "hint",
-            "ai",
-            "synthesis"
-        ])
+    assert!(
+        contract["commands"]
+            .as_array()
+            .expect("commands array")
+            .iter()
+            .all(|command| command["name"] != "ask"),
+        "retired ask command must be absent from gwiki contract"
     );
 
     let graph_context = command(&contract, "graph-context");

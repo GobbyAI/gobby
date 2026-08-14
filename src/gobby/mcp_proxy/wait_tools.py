@@ -34,7 +34,6 @@ EXTENDED_TIMEOUT_TOOL_NAMES = (
     # size and cannot fit the default 30s request timeout (#17593). The
     # daemon's gwiki subprocess guard (GENERATION_GWIKI_TIMEOUT_SECONDS) sits
     # 30s below this HTTP cap so structured timeout envelopes still arrive.
-    "wiki_ask",
     "wiki_compile",
     # Agent spawn performs bounded isolation repair (env preseed, hook copy),
     # child-session creation, and tmux launch; under concurrent fleet load the

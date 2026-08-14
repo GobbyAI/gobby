@@ -1,5 +1,3 @@
-use std::path::PathBuf;
-
 use gobby_core::ai::effective_config::ai_source_for_conn;
 use gobby_core::ai_context::AiContext;
 #[cfg(test)]
@@ -19,21 +17,6 @@ use crate::support::search as search_support;
 use crate::support::text::degradation_label;
 use crate::{CommandOutcome, ScopeIdentity, ScopeSelection, WikiError};
 
-/// Retrieval result pairing command output with provenance-bearing raw content.
-pub(crate) struct SearchRetrieval {
-    pub(crate) output: SearchOutput,
-    pub(crate) evidence: Vec<SearchEvidence>,
-}
-
-#[derive(Debug)]
-pub(crate) struct SearchEvidence {
-    pub(crate) fusion_key: String,
-    pub(crate) wiki_page: PathBuf,
-    pub(crate) source_path: PathBuf,
-    pub(crate) body: String,
-    pub(crate) content_hash: String,
-}
-
 /// Narrowing levers suggested when `--token-budget` trims the result set.
 const SEARCH_TOKEN_BUDGET_REFINE_HINT: &str = "--limit, a narrower query, or a topic scope";
 
@@ -45,17 +28,14 @@ pub(crate) fn execute(
     token_budget: Option<usize>,
     include_candidates: bool,
 ) -> Result<CommandOutcome, WikiError> {
-    render(
-        retrieve(
-            query,
-            selection,
-            limit,
-            include_semantic,
-            token_budget,
-            include_candidates,
-        )?
-        .output,
-    )
+    render(retrieve(
+        query,
+        selection,
+        limit,
+        include_semantic,
+        token_budget,
+        include_candidates,
+    )?)
 }
 
 pub(crate) fn retrieve(
@@ -65,7 +45,7 @@ pub(crate) fn retrieve(
     include_semantic: bool,
     token_budget: Option<usize>,
     include_candidates: bool,
-) -> Result<SearchRetrieval, WikiError> {
+) -> Result<SearchOutput, WikiError> {
     let database_url = database_url_for("gwiki search")?
         .ok_or_else(|| WikiError::from(gobby_core::grant::GrantError::DaemonRequired))?;
     let scope = resolve_command_scope(&selection)?;
@@ -96,7 +76,7 @@ fn run_search_attached(
     include_semantic: bool,
     token_budget: Option<usize>,
     include_candidates: bool,
-) -> Result<SearchRetrieval, WikiError> {
+) -> Result<SearchOutput, WikiError> {
     let mut conn = gobby_core::postgres::connect_readonly(database_url).map_err(|error| {
         WikiError::Config {
             detail: format!("failed to connect to PostgreSQL for gwiki search: {error}"),
@@ -201,7 +181,7 @@ fn run_search_with_backends<B, S, G>(
     semantic_backend: &mut S,
     graph_backend: &mut G,
     input: SearchExecutionInput,
-) -> Result<SearchRetrieval, WikiError>
+) -> Result<SearchOutput, WikiError>
 where
     B: wiki_search::bm25::Bm25SearchBackend,
     S: wiki_search::semantic::SemanticSearchBackend,
@@ -219,7 +199,6 @@ where
         },
     )?;
     let mut results = Vec::with_capacity(response.results.len());
-    let mut evidence = Vec::with_capacity(response.results.len());
     for result in response.results {
         // Default retrieval excludes archived pages and quarantined
         // candidates (shared default-surface predicate); the vault file is
@@ -246,17 +225,9 @@ where
                 });
             }
         };
-        let content_hash = crate::page_version::content_hash(&current_markdown);
         let body_start = frontmatter_body_start(&current_markdown).unwrap_or(0);
         let evidence_body = &current_markdown[body_start..];
         let snippet = bounded_snippet(evidence_body, &input.query);
-        evidence.push(SearchEvidence {
-            fusion_key: fusion_key.clone(),
-            wiki_page: result.path.clone(),
-            source_path: result.source_path.clone(),
-            body: evidence_body.to_string(),
-            content_hash,
-        });
         results.push(SearchResultOutput {
             title: result.title,
             fusion_key,
@@ -295,7 +266,6 @@ where
         format_search_result_line,
     );
     let results = budgeted.results;
-    evidence.truncate(results.len());
     let mut output = SearchOutput::new(
         input.output_scope,
         input.query,
@@ -304,7 +274,7 @@ where
         degradations,
     );
     output.hint = budgeted.hint;
-    Ok(SearchRetrieval { output, evidence })
+    Ok(output)
 }
 
 /// Render one search hit as a single line for `ceil(chars/4)` token estimation.
@@ -495,12 +465,7 @@ mod tests {
         )
         .expect("search runs");
 
-        assert_eq!(retrieval.output.results[0].snippet.trim(), body);
-        assert_eq!(retrieval.evidence[0].body.trim(), body);
-        assert_eq!(
-            retrieval.evidence[0].content_hash,
-            crate::page_version::content_hash(&markdown)
-        );
+        assert_eq!(retrieval.results[0].snippet.trim(), body);
     }
 
     #[test]
@@ -530,8 +495,7 @@ mod tests {
         )
         .expect("stale hit is ignored");
 
-        assert!(retrieval.output.results.is_empty());
-        assert!(retrieval.evidence.is_empty());
+        assert!(retrieval.results.is_empty());
     }
 
     #[test]
@@ -664,14 +628,11 @@ mod tests {
         .expect("search runs");
 
         let pages: Vec<String> = retrieval
-            .output
             .results
             .iter()
             .map(|result| result.wiki_page.display().to_string())
             .collect();
         assert_eq!(pages, vec!["knowledge/concepts/live.md".to_string()]);
-        // Evidence stays aligned with the filtered result rows.
-        assert_eq!(retrieval.evidence.len(), retrieval.output.results.len());
     }
 
     fn candidate_vault_retrieval(include_candidates: bool) -> Vec<String> {
@@ -717,7 +678,6 @@ mod tests {
         )
         .expect("search runs");
         retrieval
-            .output
             .results
             .iter()
             .map(|result| result.wiki_page.display().to_string())

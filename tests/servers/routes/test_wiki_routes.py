@@ -14,7 +14,6 @@ from starlette.testclient import TestClient
 from gobby.config.app import DaemonConfig
 from gobby.gwiki_gateway import (
     GENERATION_GWIKI_TIMEOUT_SECONDS,
-    INTERACTIVE_GWIKI_TIMEOUT_SECONDS,
     INTERACTIVE_HEALTH_GWIKI_TIMEOUT_SECONDS,
     GwikiCommandError,
     GwikiGateway,
@@ -64,34 +63,6 @@ class FakeGateway:
     async def search(self, query: str, *, limit: int | None = None) -> dict[str, Any]:
         self.calls.append(("search", {"query": query, "limit": limit}))
         return self._result("search", payload={"query": query, "limit": limit})
-
-    async def ask(
-        self,
-        query: str,
-        *,
-        llm: bool = False,
-        deep: bool = False,
-        ai: str | None = None,
-        require_ai: bool = False,
-    ) -> dict[str, Any]:
-        generation_requested = llm or deep
-        if not generation_requested and (ai is not None or require_ai):
-            names = [
-                name
-                for name, enabled in (("ai", ai is not None), ("require_ai", require_ai))
-                if enabled
-            ]
-            raise ValueError(f"{' and '.join(names)} require llm=True or deep=True")
-        payload = {
-            "query": query,
-            "llm": llm,
-            "deep": deep,
-            "ai": ai,
-            "require_ai": require_ai,
-            "status": "retrieved",
-        }
-        self.calls.append(("ask", payload))
-        return self._result("ask", payload=payload)
 
     async def read(
         self,
@@ -309,44 +280,13 @@ def test_status_search_read_and_gateway_scope(client: TestClient) -> None:
     assert FakeGateway.instances[-1].project is None
     assert FakeGateway.instances[-1].topic == "t"
 
-    ask = client.get(
-        "/api/wiki/ask",
-        params={
-            "q": "hooks?",
-            "deep": True,
-            "ai": "direct",
-            "require_ai": True,
-            "topic": "t",
-        },
-    )
-    assert ask.status_code == 200
-    assert ask.json()["payload"] == {
-        "command": "ask",
-        "query": "hooks?",
-        "llm": False,
-        "deep": True,
-        "ai": "direct",
-        "require_ai": True,
-        "status": "retrieved",
-    }
-    assert FakeGateway.instances[-1].calls == [
-        (
-            "ask",
-            {
-                "query": "hooks?",
-                "llm": False,
-                "deep": True,
-                "ai": "direct",
-                "require_ai": True,
-                "status": "retrieved",
-            },
-        )
-    ]
-
     no_selector = client.get("/api/wiki/read")
     both_selectors = client.get("/api/wiki/read", params={"path": "a.md", "title": "A"})
     assert no_selector.status_code == 400
     assert both_selectors.status_code == 400
+
+    retired_ask = client.get("/api/wiki/ask", params={"q": "hooks?"})
+    assert retired_ask.status_code == 404
 
     read = client.get("/api/wiki/read", params={"title": "A"})
     assert read.status_code == 200
@@ -836,23 +776,6 @@ def test_compile_route_uses_generation_gateway_timeout(client: TestClient) -> No
 
     assert response.status_code == 200
     assert FakeGateway.instances[-1].timeout_seconds == GENERATION_GWIKI_TIMEOUT_SECONDS
-
-
-def test_ask_route_gateway_timeout_tracks_ai_routing(client: TestClient) -> None:
-    generative = client.get(
-        "/api/wiki/ask",
-        params={"q": "hooks?", "deep": True, "ai": "daemon", "require_ai": True},
-    )
-    assert generative.status_code == 200
-    assert FakeGateway.instances[-1].timeout_seconds == GENERATION_GWIKI_TIMEOUT_SECONDS
-
-    retrieval_only = client.get("/api/wiki/ask", params={"q": "hooks?"})
-    assert retrieval_only.status_code == 200
-    assert FakeGateway.instances[-1].timeout_seconds == INTERACTIVE_GWIKI_TIMEOUT_SECONDS
-
-    invalid_ai = client.get("/api/wiki/ask", params={"q": "hooks?", "ai": "daemon"})
-    assert invalid_ai.status_code == 400
-    assert invalid_ai.json()["detail"] == "ai require llm=True or deep=True"
 
 
 def test_write_routes_delegate_to_coordinator(

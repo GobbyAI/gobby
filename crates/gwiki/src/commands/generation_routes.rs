@@ -208,7 +208,7 @@ fn run_agentic_generation(
     }
 }
 
-/// Resolved explainer transport, mirroring `gwiki ask` honesty semantics:
+/// Resolved explainer transport, mirroring compile honesty semantics:
 /// `Off` skips synthesis structurally; an unresolved explicit daemon/direct
 /// request still runs an attempt so the failure is recorded as degradation.
 pub(crate) enum ExplainerTransport {
