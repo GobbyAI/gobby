@@ -8,6 +8,7 @@ from gobby.runtime_grants.handshake import (
     encode_grant_header,
 )
 from gobby.runtime_grants.launch import ManagedLaunch, materialize_managed_launch
+from gobby.runtime_grants.revocation import GrantRevocationStore
 from gobby.runtime_grants.schema import GrantBundle
 from gobby.runtime_grants.service import (
     DeploymentGrantContext,
@@ -37,6 +38,7 @@ __all__ = [
     "encode_grant_header",
     "materialize_managed_launch",
     "GrantRejection",
+    "GrantRevocationStore",
     "GrantService",
     "InvalidGrantSignature",
     "RequiredCapability",

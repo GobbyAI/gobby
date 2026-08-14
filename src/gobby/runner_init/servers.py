@@ -337,7 +337,8 @@ def _bind_runtime_grants(server: HTTPServer, runner: GobbyRunner) -> None:
     from uuid import UUID
 
     from gobby.runtime_grants.handshake import HandshakeRejection, HandshakeService
-    from gobby.runtime_grants.schema import GrantPrincipal, PostgresDirect
+    from gobby.runtime_grants.revocation import GrantRevocationStore
+    from gobby.runtime_grants.schema import GrantBundle, GrantPrincipal, PostgresDirect
     from gobby.runtime_grants.service import DeploymentGrantContext, GrantService
     from gobby.servers.grant_auth import LiveLeaseGrantService
     from gobby.servers.lease_fence import EffectFence, bind_fenced_writer
@@ -346,7 +347,10 @@ def _bind_runtime_grants(server: HTTPServer, runner: GobbyRunner) -> None:
     runtime = getattr(runner, "config_runtime", None)
     if lease is None or runtime is None:
         return
-    presenter = LiveLeaseGrantService(runtime, lease, clock=lambda: int(time.time()))
+    revocations = GrantRevocationStore()
+    presenter = LiveLeaseGrantService(
+        runtime, lease, clock=lambda: int(time.time()), revocations=revocations
+    )
     fence = EffectFence()
     server.effect_fence = fence
     database = getattr(runner, "database", None)
@@ -365,6 +369,23 @@ def _bind_runtime_grants(server: HTTPServer, runner: GobbyRunner) -> None:
     secrets = getattr(runner, "secret_store", None)
     if credentials is None or secrets is None or database is None:
         return
+    bind = getattr(credentials, "bind_grant_revocations", None)
+    if callable(bind):
+        bind(revocations)
+
+    def _principal_revoked(grant: GrantBundle) -> bool:
+        generation = getattr(grant.capabilities.postgres, "credential_generation", None)
+        if not isinstance(generation, int) or grant.principal.kind != "interactive":
+            return False
+        return bool(
+            credentials.interactive_generation_revoked(
+                deployment_token=grant.deployment.token,
+                project_id=UUID(grant.principal.project_id),
+                generation=generation,
+            )
+        )
+
+    revocations.set_principal_revoked(_principal_revoked)
 
     def _project_admitted(project_id: str) -> bool:
         try:
@@ -410,6 +431,7 @@ def _bind_runtime_grants(server: HTTPServer, runner: GobbyRunner) -> None:
                 signing_secret=str(secret),
             ),
             clock=lambda: int(time.time()),
+            revocations=revocations,
         )
         operator_token = server.auth_service.local_token() or ""
         return HandshakeService(

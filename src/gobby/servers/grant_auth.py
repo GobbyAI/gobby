@@ -9,6 +9,7 @@ from typing import TYPE_CHECKING, cast
 from gobby.runtime_grants import (
     DeploymentGrantContext,
     GrantRejection,
+    GrantRevocationStore,
     GrantService,
     RequiredCapability,
     StaleEpochGrant,
@@ -271,10 +272,12 @@ class LiveLeaseGrantService:
         runtime: object,
         lease: object,
         clock: Callable[[], int],
+        revocations: GrantRevocationStore | None = None,
     ) -> None:
         self._runtime = runtime
         self._lease = lease
         self._clock = clock
+        self.revocations = revocations or GrantRevocationStore()
 
     def present(
         self,
@@ -283,12 +286,18 @@ class LiveLeaseGrantService:
         now: int | None = None,
         required: RequiredCapability | None = None,
     ) -> GrantBundle:
+        return self._grant_service().present(grant, now=now, required=required)
+
+    def revoke(self, grant: GrantBundle) -> None:
+        self._grant_service().revoke(grant)
+
+    def _grant_service(self) -> GrantService:
         epoch = getattr(self._lease, "fencing_epoch", None)
         secret = getattr(self._lease, "grant_signing_secret", None)
         token = getattr(self._lease, "deployment_token", None)
         if epoch is None or not secret or not token:
             raise StaleEpochGrant("active-daemon lease has no fencing epoch")
-        service = GrantService(
+        return GrantService(
             runtime=self._runtime,  # type: ignore[arg-type]
             context=DeploymentGrantContext(
                 token=str(token),
@@ -296,5 +305,5 @@ class LiveLeaseGrantService:
                 signing_secret=str(secret),
             ),
             clock=self._clock,
+            revocations=self.revocations,
         )
-        return service.present(grant, now=now, required=required)

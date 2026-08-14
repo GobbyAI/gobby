@@ -10,6 +10,7 @@ from urllib.parse import urlsplit
 
 from gobby.config.runtime import RuntimeActiveBundle
 from gobby.config.runtime_models import ConfigSnapshot
+from gobby.runtime_grants.revocation import GrantRevocationStore
 from gobby.runtime_grants.schema import (
     API_CONTRACT,
     GRANT_VERSION,
@@ -206,7 +207,7 @@ class GrantService:
     runtime: ConfigCapture
     context: DeploymentGrantContext
     clock: Callable[[], int] | None = None
-    _revoked: set[str] = field(default_factory=set)
+    revocations: GrantRevocationStore = field(default_factory=GrantRevocationStore)
 
     def issue(
         self,
@@ -256,14 +257,14 @@ class GrantService:
             raise StaleEpochGrant("grant fencing epoch is stale")
         if self._now(now) >= grant.expires_at:
             raise ExpiredGrant("grant has expired")
-        if grant.payload_checksum in self._revoked:
+        if self.revocations.is_revoked(grant):
             raise RevokedGrant("grant has been revoked")
         if required is not None and not _capability_matches(grant, required):
             raise WrongCapabilityGrant("grant lacks the required capability")
         return grant
 
     def revoke(self, grant: GrantBundle) -> None:
-        self._revoked.add(grant.payload_checksum)
+        self.revocations.revoke_grant(grant)
 
     def _now(self, now: int | None) -> int:
         if now is not None:

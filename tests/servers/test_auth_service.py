@@ -669,7 +669,7 @@ _AI_BROKER_ROUTES: tuple[tuple[str, str], ...] = (
 )
 
 
-def _grant_service() -> Any:
+def _grant_service(revocations: Any | None = None) -> Any:
     from gobby.runtime_grants import DeploymentGrantContext, GrantService
     from tests.runtime_grants.support import (
         DEPLOYMENT_TOKEN,
@@ -686,14 +686,17 @@ def _grant_service() -> Any:
         qdrant_url="http://qdrant-a.test:6333",
         api_key="qdrant-secret-a",
     )
-    return GrantService(
-        runtime=StaticRuntime(snapshot),
-        context=DeploymentGrantContext(
+    kwargs: dict[str, Any] = {
+        "runtime": StaticRuntime(snapshot),
+        "context": DeploymentGrantContext(
             token=DEPLOYMENT_TOKEN,
             fencing_epoch=FENCING_EPOCH,
             signing_secret=GOLDEN_SECRET,
         ),
-    )
+    }
+    if revocations is not None:
+        kwargs["revocations"] = revocations
+    return GrantService(**kwargs)
 
 
 def _signed_presentation_grant(
@@ -1026,3 +1029,68 @@ def test_agent_bearer_cannot_present_foreign_grant(
     )
     assert stolen.allowed is False
     assert stolen.code == "forged_identity"
+
+
+def test_revoked_grant_cannot_be_reused_across_requests(
+    temp_db: HubDatabase, tmp_path: Path
+) -> None:
+    from gobby.runtime_grants import GrantRevocationStore, RevokedGrant, encode_grant_header
+    from gobby.servers.grant_auth import LiveLeaseGrantService
+    from gobby.servers.lease_fence import EffectFence
+    from tests.runtime_grants.support import DEPLOYMENT_TOKEN, FENCING_EPOCH, GOLDEN_SECRET
+
+    store = GrantRevocationStore()
+    grant = _signed_presentation_grant()
+    token_file = tmp_path / "local_cli_token"
+    token_file.write_text("operator-token")
+    _set_api_token(temp_db, "operator-token")
+    headers = {
+        "Authorization": "Bearer operator-token",
+        _GRANT_HEADER: encode_grant_header(grant),
+        "X-Gobby-Caller-Project-Id": grant.principal.project_id,
+        "X-Gobby-Project-Id": grant.principal.project_id,
+        "X-Gobby-Session-Id": grant.principal.session_id or "",
+        _MACHINE_HEADER: grant.principal.machine_id,
+    }
+
+    first = AuthService(
+        lambda: temp_db,
+        token_file=token_file,
+        grant_service=_grant_service(store),
+        lease_live=lambda: True,
+        local_machine_id="machine-1",
+        effect_fence=EffectFence(),
+        clock=lambda: _GRANT_NOW + 10,
+    )
+    allowed = first.authenticate(_request(headers, method="POST", path="/api/embeddings"))
+    assert allowed.allowed is True
+
+    store.revoke_grant(grant)
+    second = AuthService(
+        lambda: temp_db,
+        token_file=token_file,
+        grant_service=_grant_service(store),
+        lease_live=lambda: True,
+        local_machine_id="machine-1",
+        effect_fence=EffectFence(),
+        clock=lambda: _GRANT_NOW + 10,
+    )
+    denied = second.authenticate(_request(headers, method="POST", path="/api/embeddings"))
+    assert denied.allowed is False
+    assert denied.code == "revoked"
+    assert denied.status_code == 401
+
+    lease = SimpleNamespace(
+        fencing_epoch=FENCING_EPOCH,
+        grant_signing_secret=GOLDEN_SECRET,
+        deployment_token=DEPLOYMENT_TOKEN,
+    )
+    presenter = LiveLeaseGrantService(
+        _grant_service().runtime,
+        lease,
+        clock=lambda: _GRANT_NOW + 10,
+        revocations=store,
+    )
+    with pytest.raises(RevokedGrant) as captured:
+        presenter.present(grant, now=_GRANT_NOW + 10)
+    assert captured.value.code == "revoked"

@@ -38,6 +38,18 @@ class CredentialAuthorizationError(ValueError):
     """A managed execution request does not match authoritative session scope."""
 
 
+class GrantRevocationSink(Protocol):
+    def revoke_execution(self, execution_id: UUID, generation: int | None) -> None: ...
+
+    def revoke_interactive(
+        self,
+        *,
+        deployment_token: str,
+        project_id: UUID,
+        generation: int | None,
+    ) -> None: ...
+
+
 class _CredentialDatabase(Protocol):
     @property
     def conninfo(self) -> str: ...
@@ -122,6 +134,10 @@ class ManagedCredentialManager:
         self._runtime_root = runtime_root
         self._owns_database = owns_database
         self._interactive_grant_expiry: dict[tuple[str, UUID, int], datetime] = {}
+        self._grant_revocations: GrantRevocationSink | None = None
+
+    def bind_grant_revocations(self, sink: GrantRevocationSink) -> None:
+        self._grant_revocations = sink
 
     def close(self) -> None:
         if self._owns_database and hasattr(self._database, "close"):
@@ -265,6 +281,8 @@ class ManagedCredentialManager:
 
         self._delete_bootstrap(managed_execution_id, generation)
         self._delete_retry_record(managed_execution_id)
+        if self._grant_revocations is not None:
+            self._grant_revocations.revoke_execution(managed_execution_id, generation)
         return RevocationOutcome(completed=True, revoked_count=revoked_count)
 
     def issue_tool_request(
@@ -433,7 +451,14 @@ class ManagedCredentialManager:
         if row is None:
             return RevocationOutcome(completed=True, revoked_count=0)
         execution_id = UUID(str(_row_value(row, "managed_execution_id")))
-        return self.revoke(execution_id, generation=generation, reason=reason)
+        outcome = self.revoke(execution_id, generation=generation, reason=reason)
+        if outcome.completed and self._grant_revocations is not None:
+            self._grant_revocations.revoke_interactive(
+                deployment_token=deployment_token,
+                project_id=project_id,
+                generation=generation,
+            )
+        return outcome
 
     def remember_interactive_grant_expiry(
         self,
