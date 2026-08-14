@@ -212,11 +212,14 @@ def resolve_variables_for_agent(
 
     for var in all_variables:
         definition_json: dict[str, Any] = {}
-        if var.definition_json:
+        payload = getattr(var, "definition_json", None)
+        if payload:
             try:
-                definition_json = json.loads(var.definition_json)
+                parsed = json.loads(payload) if isinstance(payload, str) else payload
             except (json.JSONDecodeError, TypeError):
-                pass
+                parsed = {}
+            if isinstance(parsed, dict):
+                definition_json = parsed
 
         for inc in selectors.include:
             dim, val = parse_selector(inc)

@@ -101,6 +101,11 @@ def create_workflows_router(server: "HTTPServer") -> APIRouter:
                 status_code=400,
                 detail="Rule definitions use /api/rules",
             )
+        if kind == "variable":
+            raise HTTPException(
+                status_code=400,
+                detail="Variable definitions use the variable domain MCP tools",
+            )
 
     def _reject_agent_row(definition_id: str) -> None:
         try:
@@ -144,7 +149,7 @@ def create_workflows_router(server: "HTTPServer") -> APIRouter:
                 enabled=enabled,
                 include_deleted=include_deleted,
             )
-            rows = [row for row in rows if row.workflow_type not in {"agent", "rule"}]
+            rows = [row for row in rows if row.workflow_type not in {"agent", "rule", "variable"}]
             definitions = [r.to_dict() for r in rows]
 
             # Annotate with template drift info

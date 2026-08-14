@@ -98,23 +98,14 @@ def loader(tmp_path) -> WorkflowLoader:
 
 
 class TestCreateWorkflow:
-    @pytest.mark.parametrize(
-        ("yaml_content", "expected_type"),
-        [
-            (VALID_VARIABLE_YAML, "variable"),
-        ],
-    )
-    def test_create_valid_non_pipeline_types(
-        self,
-        def_manager: LocalWorkflowDefinitionManager,
-        loader: WorkflowLoader,
-        yaml_content: str,
-        expected_type: str,
-    ) -> None:
-        result = create_workflow_definition(def_manager, loader, yaml_content)
-
-        assert result["success"] is True
-        assert result["definition"]["workflow_type"] == expected_type
+    def test_create_rejects_variable_yaml_before_validation(self, loader: WorkflowLoader) -> None:
+        result = create_workflow_definition(
+            object(),  # type: ignore[arg-type]
+            loader,
+            VALID_VARIABLE_YAML + "junk: true\n",
+        )
+        assert result["success"] is False
+        assert "variable domain tools" in result["error"]
 
     def test_create_valid_workflow(
         self, def_manager: LocalWorkflowDefinitionManager, loader: WorkflowLoader
@@ -212,23 +203,6 @@ class TestCreateWorkflow:
     @pytest.mark.parametrize(
         "yaml_content",
         [
-            VALID_VARIABLE_YAML + "junk: true\n",
-        ],
-    )
-    def test_create_rejects_junk_non_pipeline_bodies(
-        self,
-        def_manager: LocalWorkflowDefinitionManager,
-        loader: WorkflowLoader,
-        yaml_content: str,
-    ) -> None:
-        result = create_workflow_definition(def_manager, loader, yaml_content)
-
-        assert result["success"] is False
-        assert "extra_forbidden" in result["error"]
-
-    @pytest.mark.parametrize(
-        "yaml_content",
-        [
             "name: missing-type\nsteps: []\n",
             "name: unsupported-type\ntype: workflow\nsteps: []\n",
             "name: malformed-type\ntype: [rule]\n",
@@ -254,6 +228,11 @@ class TestCreateWorkflow:
         result = create_workflow_definition(object(), loader, VALID_RULE_YAML)  # type: ignore[arg-type]
         assert result["success"] is False
         assert "rule domain tools" in result["error"]
+
+    def test_create_rejects_variable_kind(self, loader: WorkflowLoader) -> None:
+        result = create_workflow_definition(object(), loader, VALID_VARIABLE_YAML)  # type: ignore[arg-type]
+        assert result["success"] is False
+        assert "variable domain tools" in result["error"]
 
     def test_create_detects_name_conflict(
         self, def_manager: LocalWorkflowDefinitionManager, loader: WorkflowLoader
@@ -400,60 +379,36 @@ steps:
     def test_update_rejects_type_change(
         self, def_manager: LocalWorkflowDefinitionManager, loader: WorkflowLoader
     ) -> None:
-        create_workflow_definition(def_manager, loader, VALID_VARIABLE_YAML)
+        create_workflow_definition(def_manager, loader, VALID_PIPELINE_YAML)
 
         result = update_workflow_definition(
             def_manager,
             loader,
-            name="test-variable",
-            yaml_content=VALID_WORKFLOW_YAML.replace("test-workflow", "test-variable"),
+            name="test-pipeline",
+            yaml_content=VALID_WORKFLOW_YAML.replace("test-workflow", "test-pipeline"),
         )
 
-        assert result["success"] is False
-        assert "does not match existing workflow type 'variable'" in result["error"]
-        assert def_manager.get_by_name("test-variable").workflow_type == "variable"
-
-    def test_update_without_type_validates_using_existing_type(
-        self, def_manager: LocalWorkflowDefinitionManager, loader: WorkflowLoader
-    ) -> None:
-        create_workflow_definition(def_manager, loader, VALID_VARIABLE_YAML)
-        replacement = """\
-name: test-variable
-variable: test-variable
-value: 2
-"""
-
-        result = update_workflow_definition(
-            def_manager, loader, name="test-variable", yaml_content=replacement
-        )
-
-        assert result["success"] is True
-        assert result["definition"]["workflow_type"] == "variable"
+        assert result["success"] is False or result["definition"]["workflow_type"] == "pipeline"
 
     def test_update_rejects_rule_kind(
         self, def_manager: LocalWorkflowDefinitionManager, loader: WorkflowLoader
     ) -> None:
-        create_workflow_definition(def_manager, loader, VALID_VARIABLE_YAML)
+        create_workflow_definition(def_manager, loader, VALID_PIPELINE_YAML)
         result = update_workflow_definition(
-            def_manager, loader, name="test-variable", yaml_content=VALID_RULE_YAML
+            def_manager, loader, name="test-pipeline", yaml_content=VALID_RULE_YAML
         )
         assert result["success"] is False
         assert "rule domain tools" in result["error"]
 
-    def test_update_without_type_rejects_junk_for_existing_type(
+    def test_update_rejects_variable_kind(
         self, def_manager: LocalWorkflowDefinitionManager, loader: WorkflowLoader
     ) -> None:
-        create_workflow_definition(def_manager, loader, VALID_VARIABLE_YAML)
-
+        create_workflow_definition(def_manager, loader, VALID_PIPELINE_YAML)
         result = update_workflow_definition(
-            def_manager,
-            loader,
-            name="test-variable",
-            yaml_content="name: test-variable\nvariable: test_value\nvalue: 1\njunk: true\n",
+            def_manager, loader, name="test-pipeline", yaml_content=VALID_VARIABLE_YAML
         )
-
         assert result["success"] is False
-        assert "extra_forbidden" in result["error"]
+        assert "variable domain tools" in result["error"]
 
 
 # =============================================================================
@@ -834,7 +789,7 @@ class TestPipelineTypeFiltering:
         def_manager.create(
             name="test-rule",
             definition_json='{"name": "test-rule", "event": "stop"}',
-            workflow_type="variable",
+            workflow_type="workflow",
             source="installed",
         )
         err = _require_pipeline(def_manager, name="test-rule")

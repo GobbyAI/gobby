@@ -6,7 +6,6 @@ Covers:
 
 from __future__ import annotations
 
-import json
 from collections.abc import Iterator
 from contextlib import contextmanager
 from datetime import UTC, datetime
@@ -16,7 +15,7 @@ from unittest.mock import MagicMock, patch
 import pytest
 
 from gobby.sessions.compact_markers import SKILL_LIST_VARIABLE_NAMES
-from gobby.storage.workflow_definitions import WorkflowDefinitionRow
+from gobby.storage.definitions.variables import SessionVariableDefaultRow
 from gobby.workflows.step_instances import AgentStepInstance
 from tests.workflows.step_instance_fixtures import make_step_instance
 
@@ -314,18 +313,14 @@ def _make_var_row(
     description: str | None = None,
     tags: list[str] | None = None,
     deleted_at: datetime | None = None,
-) -> WorkflowDefinitionRow:
-    """Create a WorkflowDefinitionRow for a variable definition."""
-    body = {"variable": name, "value": value}
-    if description:
-        body["description"] = description
-    return WorkflowDefinitionRow(
+) -> SessionVariableDefaultRow:
+    """Create a SessionVariableDefaultRow for a variable definition."""
+    return SessionVariableDefaultRow(
         id=f"id-{name}",
         name=name,
-        workflow_type="variable",
         enabled=True,
-        priority=100,
-        definition_json=json.dumps(body),
+        enabled_pinned=False,
+        default_value=value,
         source="custom",
         created_at=datetime(2026, 1, 1, tzinfo=UTC),
         updated_at=datetime(2026, 1, 1, tzinfo=UTC),
@@ -354,17 +349,17 @@ def _patch_auto_export(collision: bool = False) -> Iterator[None]:
 
 
 def _mock_def_manager(
-    existing: WorkflowDefinitionRow | None = None,
-    deleted: WorkflowDefinitionRow | None = None,
+    existing: SessionVariableDefaultRow | None = None,
+    deleted: SessionVariableDefaultRow | None = None,
 ) -> MagicMock:
-    """Create a mock LocalWorkflowDefinitionManager."""
+    """Create a mock SessionVariableDefaultManager."""
     mgr = MagicMock()
     mgr.db = MagicMock()
 
-    def get_by_name(name: str, include_deleted: bool = False) -> WorkflowDefinitionRow | None:
+    def get_by_name(name: str, include_deleted: bool = False) -> SessionVariableDefaultRow | None:
         if include_deleted and deleted:
             return deleted
-        if existing and existing.source != "template":
+        if existing:
             return existing
         return None
 
@@ -390,15 +385,16 @@ class TestCreateVariable:
         assert result["variable"]["value"] == "hello"
         mgr.create.assert_called_once()
         call_kwargs = mgr.create.call_args
-        assert call_kwargs[1]["workflow_type"] == "variable"
+        assert call_kwargs[1]["default_value"] == "hello"
         assert call_kwargs[1]["source"] == "installed"
 
     def test_create_variable_name_collision(self) -> None:
         from gobby.mcp_proxy.tools.workflows._variables import create_variable
 
-        mgr = _mock_def_manager()
+        existing = _make_var_row("gobby_var", tags=["gobby"])
+        mgr = _mock_def_manager(existing=existing)
 
-        with _patch_auto_export(collision=True):
+        with _patch_auto_export():
             result = create_variable(mgr, "gobby_var", "val")
 
         assert result["success"] is False

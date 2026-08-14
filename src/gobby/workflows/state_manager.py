@@ -1,14 +1,24 @@
 import json
 import logging
+import threading
 import time
+import weakref
 from collections.abc import Callable, Mapping
 from copy import deepcopy
 from datetime import UTC, datetime
 from typing import Any, Literal, TypeVar
 
+from gobby.storage.definitions.revisions import (
+    get_definitions_revision,
+    register_revision_listener,
+)
 from gobby.storage.hub.protocol import (
     HubDatabase,
     SessionVariableMutation,
+)
+from gobby.workflows.variable_defaults import (
+    load_variable_defaults,
+    resolve_session_project_id,
 )
 
 logger = logging.getLogger(__name__)
@@ -60,6 +70,21 @@ def _normalize_string_list(value: Any) -> list[str]:
     return [item for item in value if isinstance(item, str)]
 
 
+_LIVE_VARIABLE_MANAGERS: weakref.WeakSet["SessionVariableManager"] = weakref.WeakSet()
+_VARIABLE_CACHE_LOCK = threading.Lock()
+
+
+def _clear_variable_defaults_caches() -> None:
+    """Drop every SessionVariableManager defaults cache on a variables revision."""
+    with _VARIABLE_CACHE_LOCK:
+        for manager in tuple(_LIVE_VARIABLE_MANAGERS):
+            manager._defaults_cache.clear()
+            manager._defaults_cache_times.clear()
+
+
+register_revision_listener("variables", _clear_variable_defaults_caches)
+
+
 class SessionVariableManager:
     """Manages session-scoped shared variables (visible to all workflows).
 
@@ -72,8 +97,9 @@ class SessionVariableManager:
 
     def __init__(self, db: HubDatabase):
         self.db = db
-        self._defaults_cache: dict[str, Any] | None = None
-        self._defaults_cache_time: float = 0.0
+        self._defaults_cache: dict[tuple[str | None, int], dict[str, Any]] = {}
+        self._defaults_cache_times: dict[tuple[str | None, int], float] = {}
+        _LIVE_VARIABLE_MANAGERS.add(self)
 
     def get_variables(self, session_id: str) -> dict[str, Any]:
         """Get all session variables with definition defaults applied.
@@ -90,42 +116,38 @@ class SessionVariableManager:
         if row:
             session_vars = _decode_variables_payload(row["variables"])
 
-        return self._apply_variable_defaults(session_vars)
-
-    def _get_variable_defaults(self) -> dict[str, Any]:
-        """Load default values from enabled, installed variable definitions.
-
-        Results are cached for ``_DEFAULTS_CACHE_TTL`` seconds to avoid
-        per-hook DB overhead.  The definition set only changes on
-        ``gobby sync`` / ``gobby init`` which are rare operations.
-        """
-        now = time.monotonic()
-        if (
-            self._defaults_cache is not None
-            and (now - self._defaults_cache_time) < self._DEFAULTS_CACHE_TTL
-        ):
-            return deepcopy(self._defaults_cache)
-
-        rows = self.db.fetchall(
-            "SELECT name, definition_json FROM workflow_definitions "
-            "WHERE workflow_type = 'variable' AND enabled = %s AND source = 'installed'",
-            (True,),
+        return self._apply_variable_defaults(
+            session_vars, resolve_session_project_id(self.db, session_id)
         )
-        defaults: dict[str, Any] = {}
-        for row in rows:
-            try:
-                body = json.loads(row["definition_json"])
-                defaults[body.get("variable", row["name"])] = body.get("value")
-            except (json.JSONDecodeError, TypeError, AttributeError, KeyError):
-                continue
 
-        self._defaults_cache = defaults
-        self._defaults_cache_time = now
+    def _get_variable_defaults(self, project_id: str | None) -> dict[str, Any]:
+        """Load enabled defaults for one project, keyed by revision.
+
+        Results are cached for ``_DEFAULTS_CACHE_TTL`` seconds and dropped
+        when the variables domain revision advances.
+        """
+        revision = get_definitions_revision("variables")
+        cache_key = (project_id, revision)
+        now = time.monotonic()
+        cached = self._defaults_cache.get(cache_key)
+        cached_at = self._defaults_cache_times.get(cache_key)
+        if (
+            cached is not None
+            and cached_at is not None
+            and (now - cached_at) < self._DEFAULTS_CACHE_TTL
+        ):
+            return deepcopy(cached)
+
+        defaults = load_variable_defaults(self.db, project_id)
+        self._defaults_cache[cache_key] = defaults
+        self._defaults_cache_times[cache_key] = now
         return deepcopy(defaults)
 
-    def _apply_variable_defaults(self, variables: dict[str, Any]) -> dict[str, Any]:
-        """Layer stored variables over installed definition defaults."""
-        defaults = self._get_variable_defaults()
+    def _apply_variable_defaults(
+        self, variables: dict[str, Any], project_id: str | None
+    ) -> dict[str, Any]:
+        """Layer stored variables over project-scoped definition defaults."""
+        defaults = self._get_variable_defaults(project_id)
         if not defaults:
             return variables
         return {**defaults, **variables}
@@ -145,7 +167,9 @@ class SessionVariableManager:
             ).fetchone()
             variables = _decode_variables_payload(row["variables"]) if row else {}
             if apply_defaults:
-                variables = self._apply_variable_defaults(variables)
+                variables = self._apply_variable_defaults(
+                    variables, resolve_session_project_id(self.db, session_id)
+                )
             result, changed = mutator(variables)
             if not changed:
                 return result

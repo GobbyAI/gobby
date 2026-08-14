@@ -85,3 +85,12 @@ def test_sync_imported_definition_rejects_rule_kind() -> None:
             },
             None,
         )
+
+
+def test_sync_imported_definition_rejects_variable_kind() -> None:
+    with pytest.raises(ValueError, match="variable domain MCP tools"):
+        sync_imported_definition(
+            None,
+            {"name": "rogue-variable", "type": "variable", "value": 1},
+            None,
+        )

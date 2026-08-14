@@ -56,6 +56,7 @@ from gobby.mcp_proxy.tools.workflows._variables import (
 )
 from gobby.storage.definitions import AgentDefinitionManager
 from gobby.storage.definitions.rules import RuleDefinitionManager
+from gobby.storage.definitions.variables import SessionVariableDefaultManager
 from gobby.storage.hub.protocol import HubDatabase
 from gobby.storage.sessions import SessionManager
 from gobby.storage.workflow_definitions import LocalWorkflowDefinitionManager
@@ -146,6 +147,7 @@ def create_workflows_registry(
     _session_var_manager = SessionVariableManager(_db) if _db is not None else None
     _def_manager = LocalWorkflowDefinitionManager(_db) if _db is not None else None
     _rule_manager = RuleDefinitionManager(_db) if _db is not None else None
+    _variable_manager = SessionVariableDefaultManager(_db) if _db is not None else None
     _agent_manager = AgentDefinitionManager(_db) if _db is not None else None
 
     registry = InternalToolRegistry(
@@ -505,18 +507,18 @@ def create_workflows_registry(
     def _list_variables(
         enabled: bool | None = None,
     ) -> dict[str, Any]:
-        if _def_manager is None:
+        if _variable_manager is None:
             return {"error": "Variable tools require database connection"}
-        return list_variables(_def_manager, enabled)
+        return list_variables(_variable_manager, enabled)
 
     @registry.tool(
         name="get_variable_definition",
         description="Get a variable definition by name. Returns the definition details including default value.",
     )
     def _get_variable_definition(name: str) -> dict[str, Any]:
-        if _def_manager is None:
+        if _variable_manager is None:
             return {"error": "Variable tools require database connection"}
-        return get_variable_definition(_def_manager, name)
+        return get_variable_definition(_variable_manager, name)
 
     @registry.tool(
         name="create_variable",
@@ -529,11 +531,11 @@ def create_workflows_registry(
         project_path: str | None = None,
         make_template: bool = False,
     ) -> dict[str, Any]:
-        if _def_manager is None:
+        if _variable_manager is None:
             return {"error": "Variable tools require database connection"}
         pp = Path(project_path) if project_path else None
         return create_variable(
-            _def_manager,
+            _variable_manager,
             name,
             value,
             description,
@@ -552,11 +554,11 @@ def create_workflows_registry(
         project_path: str | None = None,
         make_template: bool = False,
     ) -> dict[str, Any]:
-        if _def_manager is None:
+        if _variable_manager is None:
             return {"error": "Variable tools require database connection"}
         pp = Path(project_path) if project_path else None
         return update_variable(
-            _def_manager,
+            _variable_manager,
             name,
             value,
             description,
@@ -572,18 +574,18 @@ def create_workflows_registry(
         name: str,
         force: bool = False,
     ) -> dict[str, Any]:
-        if _def_manager is None:
+        if _variable_manager is None:
             return {"error": "Variable tools require database connection"}
-        return delete_variable(_def_manager, name, force)
+        return delete_variable(_variable_manager, name, force)
 
     @registry.tool(
         name="export_variable",
         description="Export a variable definition as YAML content.",
     )
     def _export_variable(name: str) -> dict[str, Any]:
-        if _def_manager is None:
+        if _variable_manager is None:
             return {"error": "Variable tools require database connection"}
-        return export_variable(_def_manager, name)
+        return export_variable(_variable_manager, name)
 
     # ── Agent definition CRUD tools ──
 

@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import json
 from unittest.mock import MagicMock, patch
 
 import pytest
@@ -235,7 +234,6 @@ class TestBuildPersonaChanges:
         db: HubDatabase,
         task_key: str,
     ) -> None:
-        from gobby.mcp_proxy.tools.apply_persona import build_persona_changes
         from gobby.workflows.definitions import WorkflowStep
         from gobby.workflows.state_manager import SessionVariableManager
         from gobby.workflows.step_instances import AgentStepInstanceManager
@@ -355,16 +353,9 @@ class TestBuildPersonaChanges:
     def test_db_variable_definitions(self, db: HubDatabase) -> None:
         """Variable definitions from the DB get applied."""
         from gobby.mcp_proxy.tools.apply_persona import build_persona_changes
-        from gobby.storage.workflow_definitions import LocalWorkflowDefinitionManager
+        from gobby.storage.definitions import SessionVariableDefaultManager
 
-        # Insert a variable definition
-        def_manager = LocalWorkflowDefinitionManager(db)
-        def_manager.create(
-            name="my_db_var",
-            workflow_type="variable",
-            definition_json=json.dumps({"value": "from_db"}),
-            source="installed",
-        )
+        SessionVariableDefaultManager(db).create(name="my_db_var", default_value="from_db")
 
         agent = AgentDefinitionBody(name="test")
         changes, _, _ = build_persona_changes(

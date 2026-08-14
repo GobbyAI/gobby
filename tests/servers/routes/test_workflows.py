@@ -208,6 +208,35 @@ class TestCreateWorkflow:
         assert filtered.status_code == 400
         assert "/api/rules" in filtered.json()["detail"]
 
+    def test_create_rejects_variable_kind(self, client: TestClient) -> None:
+        resp = client.post(
+            "/api/workflows",
+            json={
+                "name": "rogue-variable",
+                "definition_json": '{"variable": "rogue-variable", "value": 1}',
+                "workflow_type": "variable",
+            },
+        )
+        assert resp.status_code == 400
+        assert "variable domain MCP tools" in resp.json()["detail"]
+
+    def test_list_omits_and_rejects_variable_filter(
+        self, client: TestClient, wf_manager: LocalWorkflowDefinitionManager
+    ) -> None:
+        wf_manager.create(
+            name="hidden-variable",
+            definition_json='{"variable": "hidden-variable", "value": 1}',
+            workflow_type="variable",
+            source="installed",
+        )
+        listed = client.get("/api/workflows")
+        assert listed.status_code == 200
+        names = [row["name"] for row in listed.json()["definitions"]]
+        assert "hidden-variable" not in names
+        filtered = client.get("/api/workflows", params={"workflow_type": "variable"})
+        assert filtered.status_code == 400
+        assert "variable domain MCP tools" in filtered.json()["detail"]
+
     @pytest.mark.parametrize(
         "definition_json",
         ["not-json", '{"unexpected": true}'],

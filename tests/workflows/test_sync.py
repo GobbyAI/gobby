@@ -923,7 +923,10 @@ variables:
         result = sync_bundled_variables(db, variables_path=var_dir)
         assert len(result["errors"]) == 1
 
-    def test_does_not_overwrite_existing_variable(self, db: HubDatabase, tmp_path: Path) -> None:
+    def test_enabled_default_flip_updates_unmodified_variable(
+        self, db: HubDatabase, tmp_path: Path
+    ) -> None:
+        from gobby.storage.definitions import SessionVariableDefaultManager
         from gobby.workflows.sync_variables import sync_bundled_variables
 
         var_dir = tmp_path / "variables"
@@ -934,21 +937,71 @@ variables:
 variables:
   update_var:
     value: "v1"
+    enabled: false
 """
         )
-
         sync_bundled_variables(db, variables_path=var_dir)
+        seeded = SessionVariableDefaultManager(db).get_by_name("update_var")
+        assert seeded is not None
+        assert seeded.enabled is False
+        assert seeded.enabled_pinned is False
 
         var_file.write_text(
             """
 variables:
   update_var:
     value: "v2"
+    enabled: true
 """
         )
-        # Sync no longer overwrites — drift detected at runtime
         result = sync_bundled_variables(db, variables_path=var_dir)
-        assert result["skipped"] == 1
+        updated = SessionVariableDefaultManager(db).get_by_name("update_var")
+        assert result["updated"] == 1
+        assert updated is not None
+        assert updated.default_value == "v2"
+        assert updated.enabled is True
+        assert updated.enabled_pinned is False
+
+    def test_enabled_default_flip_preserves_pinned_variable(
+        self, db: HubDatabase, tmp_path: Path
+    ) -> None:
+        from gobby.storage.definitions import SessionVariableDefaultManager
+        from gobby.workflows.sync_variables import sync_bundled_variables
+
+        var_dir = tmp_path / "variables"
+        var_dir.mkdir()
+        var_file = var_dir / "test.yaml"
+        var_file.write_text(
+            """
+variables:
+  update_var:
+    value: "v1"
+    enabled: true
+"""
+        )
+        sync_bundled_variables(db, variables_path=var_dir)
+        mgr = SessionVariableDefaultManager(db)
+        seeded = mgr.get_by_name("update_var")
+        assert seeded is not None
+        mgr.update(seeded.id, enabled=False)
+        pinned = mgr.get_by_name("update_var")
+        assert pinned is not None
+        assert pinned.enabled_pinned is True
+
+        var_file.write_text(
+            """
+variables:
+  update_var:
+    value: "v2"
+    enabled: true
+"""
+        )
+        sync_bundled_variables(db, variables_path=var_dir)
+        preserved = mgr.get_by_name("update_var")
+        assert preserved is not None
+        assert preserved.default_value == "v2"
+        assert preserved.enabled is False
+        assert preserved.enabled_pinned is True
 
     def test_skips_unchanged_variable(self, db: HubDatabase, tmp_path: Path) -> None:
         from gobby.workflows.sync_variables import sync_bundled_variables
@@ -988,17 +1041,14 @@ variables:
         result = sync_bundled_variables(db, variables_path=var_dir)
         assert result["orphaned"] >= 1
 
-    def test_removed_human_wait_variable_is_soft_deleted(
-        self,
-        db: HubDatabase,
-        manager: LocalWorkflowDefinitionManager,
-    ) -> None:
+    def test_removed_human_wait_variable_is_soft_deleted(self, db: HubDatabase) -> None:
+        from gobby.storage.definitions import SessionVariableDefaultManager
         from gobby.workflows.sync_variables import sync_bundled_variables
 
+        manager = SessionVariableDefaultManager(db)
         obsolete = manager.create(
             name="waiting_on_user_input",
-            definition_json=json.dumps({"value": False}),
-            workflow_type="variable",
+            default_value=False,
             source="installed",
             tags=["gobby"],
         )
@@ -1006,7 +1056,7 @@ variables:
         result = sync_bundled_variables(db)
 
         assert result["orphaned"] == 1
-        assert manager.get_by_name("waiting_on_user_input", workflow_type="variable") is None
+        assert manager.get_by_name("waiting_on_user_input") is None
         deleted = manager.get(obsolete.id, include_deleted=True)
         assert deleted.deleted_at is not None
 
@@ -1024,7 +1074,9 @@ variables:
 
         result = sync_bundled_variables(db, variables_path=var_dir)
 
-        manager = LocalWorkflowDefinitionManager(db)
+        from gobby.storage.definitions import SessionVariableDefaultManager
+
+        manager = SessionVariableDefaultManager(db)
         assert result["orphaned"] == 0
         assert manager.get_by_name("retained_var") is not None
 
@@ -1043,7 +1095,9 @@ variables:
 
         sync_bundled_variables(db, variables_path=var_dir)
 
-        manager = LocalWorkflowDefinitionManager(db)
+        from gobby.storage.definitions import SessionVariableDefaultManager
+
+        manager = SessionVariableDefaultManager(db)
         row = manager.get_by_name("restore_var")
         assert row is not None
         manager.delete(row.id)
@@ -1078,7 +1132,9 @@ variables:
         (var_dir / "broken.yaml").write_text(":\n  invalid: [yaml\n  broken")
         result = sync_bundled_variables(db, variables_path=var_dir)
 
-        manager = LocalWorkflowDefinitionManager(db)
+        from gobby.storage.definitions import SessionVariableDefaultManager
+
+        manager = SessionVariableDefaultManager(db)
         assert result["success"] is False
         assert result["orphaned"] == 0
         assert manager.get_by_name("retained_var") is not None

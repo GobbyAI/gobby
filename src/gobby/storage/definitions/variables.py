@@ -2,10 +2,13 @@
 
 from __future__ import annotations
 
+import json
 from collections.abc import Mapping
 from dataclasses import dataclass
 from datetime import datetime
 from typing import Any
+
+from psycopg.types.json import Jsonb
 
 from gobby.storage.definitions._shared import (
     DefinitionNotFoundError,
@@ -14,7 +17,6 @@ from gobby.storage.definitions._shared import (
     assert_live_name_free,
     decode_json_list,
     encode_json_list,
-    encode_json_scalar,
     fetch_definition_by_name,
     fetch_definition_row,
     hard_delete_definition,
@@ -35,6 +37,16 @@ _TABLE = "session_variable_defaults"
 _WHAT = "Session variable default"
 _UPDATE_FIELDS = frozenset({"name", "description", "enabled", "default_value", "tags"})
 _SYNC_FIELDS = _UPDATE_FIELDS
+
+
+def _decode_default_value(value: Any) -> Any:
+    """Undo hub row normalization that dumps JSON objects/arrays to text."""
+    if not isinstance(value, str) or not value or value[0] not in "[{":
+        return value
+    try:
+        return json.loads(value)
+    except json.JSONDecodeError:
+        return value
 
 
 @normalize_datetime_model(required=("created_at", "updated_at"), optional=("deleted_at",))
@@ -62,7 +74,7 @@ class SessionVariableDefaultRow:
             description=row["description"],
             enabled=bool(row["enabled"]),
             enabled_pinned=bool(row["enabled_pinned"]),
-            default_value=row["default_value"],
+            default_value=_decode_default_value(row["default_value"]),
             source=row["source"] or "installed",
             tags=decode_json_list(row["tags"]),
             created_at=row["created_at"],
@@ -115,7 +127,7 @@ class SessionVariableDefaultManager:
                     description,
                     bool(enabled),
                     False,
-                    encode_json_scalar(default_value),
+                    None if default_value is None else Jsonb(default_value),
                     source,
                     encode_json_list(tags),
                     now,
@@ -180,7 +192,7 @@ class SessionVariableDefaultManager:
             if key == "tags":
                 values[key] = encode_json_list(value)
             elif key == "default_value":
-                values[key] = encode_json_scalar(value)
+                values[key] = None if value is None else Jsonb(value)
             else:
                 values[key] = value
         if not values:

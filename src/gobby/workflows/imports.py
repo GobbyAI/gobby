@@ -37,6 +37,10 @@ def sync_imported_definition(
         raise ValueError("Agent definitions use the agent import path, not generic workflow import")
     if declared_type == "rule":
         raise ValueError("Rule definitions use the rule tools, not generic workflow import")
+    if declared_type == "variable":
+        raise ValueError(
+            "Variable definitions use the variable domain MCP tools, not generic workflow import"
+        )
     if declared_type in _WORKFLOW_KINDS:
         WorkflowDefinition.model_validate(data)
         workflow_type = "workflow"

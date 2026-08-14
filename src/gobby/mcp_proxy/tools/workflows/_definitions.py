@@ -22,6 +22,9 @@ logger = logging.getLogger(__name__)
 
 _AGENT_DOMAIN_TOOLS = "Agent definitions use the agent domain tools, not generic workflow CRUD"
 _RULE_DOMAIN_TOOLS = "Rule definitions use the rule domain tools, not generic workflow CRUD"
+_VARIABLE_DOMAIN_TOOLS = (
+    "Variable definitions use the variable domain tools, not generic workflow CRUD"
+)
 
 
 def _reject_agent_kind(kind: str | None) -> None:
@@ -29,6 +32,8 @@ def _reject_agent_kind(kind: str | None) -> None:
         raise ValueError(_AGENT_DOMAIN_TOOLS)
     if kind == "rule":
         raise ValueError(_RULE_DOMAIN_TOOLS)
+    if kind == "variable":
+        raise ValueError(_VARIABLE_DOMAIN_TOOLS)
 
 
 def _resolve_definition(

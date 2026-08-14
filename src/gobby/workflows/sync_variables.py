@@ -1,13 +1,10 @@
 """Variable definition synchronization from bundled YAML templates.
 
 Single-row model: templates live on disk only. The DB holds installed rows
-directly. **Existing active installed rows are not modified during sync** —
-drift between the on-disk template and the DB row is detected via hash
-comparison at runtime, not corrected here. Soft-deleted sync-managed rows are
-restored when their template reappears.
+directly. Sync-managed rows are refreshed or restored from their on-disk YAML,
+while user/custom rows remain protected.
 """
 
-import json
 import logging
 from pathlib import Path
 from typing import Any
@@ -15,9 +12,11 @@ from typing import Any
 import yaml
 from pydantic import ValidationError
 
+from gobby.storage.definitions.variables import (
+    SessionVariableDefaultManager,
+    SessionVariableDefaultRow,
+)
 from gobby.storage.hub.protocol import HubDatabase
-from gobby.storage.sql_dialect import json_array_contains_condition
-from gobby.storage.workflow_definitions import LocalWorkflowDefinitionManager
 
 logger = logging.getLogger(__name__)
 
@@ -38,12 +37,11 @@ def sync_bundled_variables(
     variables_path: Path | list[Path] | None = None,
     tag: str = "gobby",
 ) -> dict[str, Any]:
-    """Sync variable definitions from YAML files to the database.
+    """Sync variable definitions from YAML files to session_variable_defaults.
 
-    Creates installed rows directly from template files. **Existing active
-    installed rows are not modified during sync** — drift is detected via
-    hash comparison at runtime, not corrected here. Soft-deleted rows are
-    restored when their template reappears.
+    Creates installed rows directly from template files. Existing bundled
+    rows are refreshed when the YAML changes, preserving a pinned enabled
+    toggle. User/custom rows are not overwritten.
 
     Args:
         db: Database connection.
@@ -80,7 +78,7 @@ def sync_bundled_variables(
         )
         return result
 
-    manager = LocalWorkflowDefinitionManager(db)
+    manager = SessionVariableDefaultManager(db)
     on_disk: set[str] = set()
 
     variable_files = sorted(
@@ -135,19 +133,10 @@ def sync_bundled_variables(
 
     result["orphaned"] = 0
     if scan_is_authoritative and variable_files and not result["errors"]:
-        tag_condition, tag_params = json_array_contains_condition(db, "tags", tag)
-        orphan_rows = db.fetchall(
-            "SELECT id, name FROM workflow_definitions "
-            "WHERE workflow_type = 'variable' "
-            f"AND {tag_condition} AND source = 'installed' AND deleted_at IS NULL",
-            tag_params,
-        )
-        for row in orphan_rows:
-            if row["name"] not in on_disk:
-                manager.delete(row["id"])
-                logger.debug(
-                    "Soft-deleted orphaned bundled variable", extra={"variable": row["name"]}
-                )
+        for row in manager.list_all():
+            if row.source == "installed" and tag in (row.tags or []) and row.name not in on_disk:
+                manager.delete(row.id)
+                logger.debug("Soft-deleted orphaned bundled variable", extra={"variable": row.name})
                 result["orphaned"] += 1
 
     result["success"] = not result["errors"]
@@ -168,66 +157,98 @@ def sync_bundled_variables(
 
 
 def _sync_single_variable(
-    manager: LocalWorkflowDefinitionManager,
+    manager: SessionVariableDefaultManager,
     var_name: str,
     var_data: dict[str, Any],
     file_tags: list[str] | None,
     sync_tag: str,
     result: dict[str, Any],
 ) -> None:
-    """Sync a single variable to workflow_definitions.
-
-    Creates an installed row if none exists. **Existing active installed
-    rows are not modified** — drift is detected via hash comparison at
-    runtime, not corrected during sync. Soft-deleted sync-managed rows are restored.
-    """
+    """Sync a single variable to session_variable_defaults."""
     from gobby.workflows.definitions import VariableDefinitionBody
 
-    body_dict: dict[str, Any] = {
-        "variable": var_name,
-        "value": var_data.get("value"),
-    }
-    if var_data.get("description"):
-        body_dict["description"] = var_data["description"]
+    default_value = var_data.get("value")
+    description = var_data.get("description")
+    enabled = bool(var_data.get("enabled", True))
 
     try:
-        VariableDefinitionBody(**body_dict)
+        VariableDefinitionBody(variable=var_name, value=default_value, description=description)
     except ValidationError as ve:
         raise ValueError(f"Invalid variable definition: {ve}") from ve
-
-    definition_json = json.dumps(body_dict)
-    description = var_data.get("description")
 
     existing = manager.get_by_name(var_name, include_deleted=True)
 
     if existing is not None:
         if existing.deleted_at is not None:
-            if (
-                existing.source == "installed"
-                and existing.project_id is None
-                and sync_tag in (existing.tags or [])
-            ):
+            if _is_sync_managed_variable(existing, sync_tag):
                 manager.restore(existing.id)
+                update_fields = _build_variable_update_fields(
+                    existing=existing,
+                    default_value=default_value,
+                    description=description,
+                    enabled=enabled,
+                    tags=file_tags,
+                )
+                if update_fields:
+                    manager.update_from_sync(existing.id, **update_fields)
                 result["updated"] += 1
                 return
             result["skipped"] += 1
             return
 
-        # Row exists and is active — skip (no overwrite).
-        # Drift between the on-disk template and the DB row is detected
-        # via hash comparison at runtime, not corrected during sync.
+        if _is_sync_managed_variable(existing, sync_tag):
+            update_fields = _build_variable_update_fields(
+                existing=existing,
+                default_value=default_value,
+                description=description,
+                enabled=enabled,
+                tags=file_tags,
+            )
+            if update_fields:
+                manager.update_from_sync(existing.id, **update_fields)
+                result["updated"] += 1
+                return
+
         result["skipped"] += 1
         return
 
     manager.create(
         name=var_name,
-        definition_json=definition_json,
-        workflow_type="variable",
+        default_value=default_value,
         project_id=None,
         description=description,
-        enabled=True,
-        priority=100,
+        enabled=enabled,
         source="installed",
         tags=file_tags,
     )
     result["synced"] += 1
+
+
+def _is_sync_managed_variable(existing: SessionVariableDefaultRow, sync_tag: str) -> bool:
+    """Return whether an existing row is safe for template sync to manage."""
+    return (
+        existing.source == "installed"
+        and existing.project_id is None
+        and sync_tag in (existing.tags or [])
+    )
+
+
+def _build_variable_update_fields(
+    *,
+    existing: SessionVariableDefaultRow,
+    default_value: Any,
+    description: str | None,
+    enabled: bool,
+    tags: list[str] | None,
+) -> dict[str, Any]:
+    """Build the minimal field set needed to refresh a bundled variable row."""
+    update_fields: dict[str, Any] = {}
+    if existing.default_value != default_value:
+        update_fields["default_value"] = default_value
+    if existing.description != description:
+        update_fields["description"] = description
+    if not existing.enabled_pinned and existing.enabled != enabled:
+        update_fields["enabled"] = enabled
+    if existing.tags != tags:
+        update_fields["tags"] = tags
+    return update_fields

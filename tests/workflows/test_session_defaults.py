@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import json
 from pathlib import Path
 
 import pytest
@@ -113,17 +112,19 @@ class TestBundledVariablesSync:
         assert result["synced"] > 0, "Expected at least one variable to sync"
 
     def test_synced_variables_have_correct_type(self, db) -> None:
-        """All synced variables should have workflow_type='variable'."""
+        """All synced variables should land on the typed table as installed."""
+        from gobby.storage.definitions import SessionVariableDefaultManager
+
         sync_bundled_variables(db)
-        mgr = LocalWorkflowDefinitionManager(db)
-        rows = mgr.list_all(workflow_type="variable", include_deleted=False)
+        rows = SessionVariableDefaultManager(db).list_all(include_deleted=False)
         assert len(rows) >= 18
         for row in rows:
-            assert row.workflow_type == "variable"
             assert row.source == "installed"
 
     def test_multi_variable_file_format(self, db, tmp_path) -> None:
         """A file with variables: dict should create multiple variable rows."""
+        from gobby.storage.definitions import SessionVariableDefaultManager
+
         var_dir = tmp_path / "variables"
         var_dir.mkdir()
         (var_dir / "test-vars.yaml").write_text(
@@ -145,18 +146,15 @@ variables:
         assert result["synced"] == 2
         assert result["errors"] == []
 
-        mgr = LocalWorkflowDefinitionManager(db)
+        mgr = SessionVariableDefaultManager(db)
         var_a = mgr.get_by_name("my_var_a")
         assert var_a is not None
-        assert var_a.workflow_type == "variable"
-        body_a = json.loads(var_a.definition_json)
-        assert body_a["value"] is True
+        assert var_a.default_value is True
         assert "test-tag" in (var_a.tags or [])
 
         var_b = mgr.get_by_name("my_var_b")
         assert var_b is not None
-        body_b = json.loads(var_b.definition_json)
-        assert body_b["value"] == 42
+        assert var_b.default_value == 42
 
     def test_variable_idempotent_resync(self, db) -> None:
         """Running sync twice should skip already-synced variables."""
@@ -199,8 +197,10 @@ variables:
 
         Note: task_ref was removed — claimed_tasks map handles this now.
         """
+        from gobby.storage.definitions import SessionVariableDefaultManager
+
         sync_bundled_variables(db)
-        mgr = LocalWorkflowDefinitionManager(db)
+        mgr = SessionVariableDefaultManager(db)
 
         expected_vars = {
             "require_uv",
@@ -222,15 +222,109 @@ variables:
             "unlocked_tools",
         }
 
-        rows = mgr.list_all(workflow_type="variable", include_deleted=False)
+        rows = mgr.list_all(include_deleted=False)
         synced_names = {r.name for r in rows}
         assert expected_vars.issubset(synced_names), f"Missing: {expected_vars - synced_names}"
 
     def test_plan_memory_write_nudge_defaults_false(self, db: HubDatabase) -> None:
-        sync_bundled_variables(db)
-        mgr = LocalWorkflowDefinitionManager(db)
+        from gobby.storage.definitions import SessionVariableDefaultManager
 
-        row = mgr.get_by_name("plan_memory_write_nudge_fired")
+        sync_bundled_variables(db)
+        row = SessionVariableDefaultManager(db).get_by_name("plan_memory_write_nudge_fired")
         assert row is not None
-        body = json.loads(row.definition_json)
-        assert body["value"] is False
+        assert row.default_value is False
+
+
+_PROJECT_A = "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa"
+_PROJECT_B = "bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb"
+_PROJECT_NONE = "cccccccc-cccc-4ccc-8ccc-cccccccccccc"
+_SESS_A = "11111111-1111-4111-8111-111111111111"
+_SESS_B = "22222222-2222-4222-8222-222222222222"
+_SESS_NONE = "33333333-3333-4333-8333-333333333333"
+
+
+def _seed_project_scoped_defaults(db: HubDatabase) -> None:
+    from gobby.storage.definitions import SessionVariableDefaultManager
+
+    for project_id, name in (
+        (_PROJECT_A, "proj-a"),
+        (_PROJECT_B, "proj-b"),
+        (_PROJECT_NONE, "proj-none"),
+    ):
+        db.execute("INSERT INTO projects (id, name) VALUES (%s, %s)", (project_id, name))
+    for session_id, project_id in (
+        (_SESS_A, _PROJECT_A),
+        (_SESS_B, _PROJECT_B),
+        (_SESS_NONE, _PROJECT_NONE),
+    ):
+        db.execute(
+            "INSERT INTO sessions (id, external_id, machine_id, source, project_id, "
+            "created_at, updated_at) VALUES (%s, %s, %s, %s, %s, CURRENT_TIMESTAMP, "
+            "CURRENT_TIMESTAMP)",
+            (
+                session_id,
+                f"ext-{session_id}",
+                "21000000-0000-4000-8000-000000000001",
+                "claude",
+                project_id,
+            ),
+        )
+    mgr = SessionVariableDefaultManager(db)
+    mgr.create(name="theme", default_value="global")
+    mgr.create(name="only_global", default_value="g")
+    mgr.create(name="theme", default_value="alpha", project_id=_PROJECT_A)
+    mgr.create(name="only_a", default_value="a", project_id=_PROJECT_A)
+    mgr.create(name="theme", default_value="beta", project_id=_PROJECT_B)
+
+
+def _expected_for(project_id: str | None) -> dict[str, object]:
+    if project_id == _PROJECT_A:
+        return {"theme": "alpha", "only_global": "g", "only_a": "a"}
+    if project_id == _PROJECT_B:
+        return {"theme": "beta", "only_global": "g"}
+    return {"theme": "global", "only_global": "g"}
+
+
+def test_project_scoped_defaults_isolation(db: HubDatabase) -> None:
+    """Alternating project A / B / none sees own overrides plus globals."""
+    from gobby.mcp_proxy.tools.apply_persona import build_persona_changes
+    from gobby.workflows.definitions import AgentDefinitionBody
+    from gobby.workflows.state_manager import SessionVariableManager
+    from gobby.workflows.variable_defaults import (
+        load_variable_defaults,
+        merge_unloaded_variable_defaults,
+        resolve_session_project_id,
+    )
+
+    _seed_project_scoped_defaults(db)
+    agent = AgentDefinitionBody(name="default")
+    sv_mgr = SessionVariableManager(db)
+
+    assert load_variable_defaults(db, None) == _expected_for(None)
+    for session_id, project_id in (
+        (_SESS_A, _PROJECT_A),
+        (_SESS_B, _PROJECT_B),
+        (_SESS_NONE, _PROJECT_NONE),
+        (_SESS_A, _PROJECT_A),
+        (_SESS_B, _PROJECT_B),
+        (_SESS_NONE, _PROJECT_NONE),
+    ):
+        expected = _expected_for(project_id)
+        assert resolve_session_project_id(db, session_id) == project_id
+        assert load_variable_defaults(db, project_id) == expected
+
+        applied = sv_mgr.get_variables(session_id)
+        for key, value in expected.items():
+            assert applied[key] == value
+        assert applied.get("only_a") == (expected.get("only_a"))
+
+        lazy_vars: dict[str, object] = {}
+        merged = merge_unloaded_variable_defaults(db, session_id, lazy_vars)
+        for key, value in expected.items():
+            assert merged[key] == value
+        assert merged["_variable_defaults_loaded"] is True
+
+        changes, _, _ = build_persona_changes(agent_body=agent, session_id=session_id, db=db)
+        for key, value in expected.items():
+            assert changes[key] == value
+        assert changes.get("only_a") == expected.get("only_a")

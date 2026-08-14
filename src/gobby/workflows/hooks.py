@@ -497,43 +497,30 @@ class WorkflowHookHandler(WorkflowToolContextMixin):
 
                 # Lazy-init variable presets for sessions that started before gobby init.
                 # Mirrors the baseline_dirty_files pattern below — one-time DB hit per session.
-                if "_variable_defaults_loaded" not in variables and event.project_id:
+                if "_variable_defaults_loaded" not in variables:
                     try:
-                        from gobby.storage.workflow_definitions import (
-                            LocalWorkflowDefinitionManager,
+                        from gobby.workflows.variable_defaults import (
+                            merge_unloaded_variable_defaults,
                         )
 
-                        def_manager = LocalWorkflowDefinitionManager(self.rule_engine.db)
-                        enabled_variables = [
-                            v
-                            for v in await asyncio.to_thread(
-                                def_manager.list_all,
-                                workflow_type="variable",
-                            )
-                            if v.enabled
-                        ]
-                        defaults: dict[str, Any] = {}
-                        for var_row in enabled_variables:
-                            try:
-                                var_body = json.loads(var_row.definition_json)
-                                key = var_body.get("variable", var_row.name)
-                                if key not in variables:
-                                    defaults[key] = var_body.get("value")
-                            except (json.JSONDecodeError, AttributeError) as e:
-                                logger.warning(
-                                    "Skipping malformed variable definition %s: %s",
-                                    getattr(var_row, "name", "<unknown>"),
-                                    e,
-                                    exc_info=True,
+                        defaults = await asyncio.to_thread(
+                            merge_unloaded_variable_defaults,
+                            self.rule_engine.db,
+                            session_id,
+                            variables,
+                        )
+                        if defaults:
+                            variables.update(defaults)
+                            if (
+                                self._session_var_manager
+                                and session_id
+                                and not variable_load_failed
+                            ):
+                                await asyncio.to_thread(
+                                    self._session_var_manager.merge_variables,
+                                    session_id,
+                                    defaults,
                                 )
-                        defaults["_variable_defaults_loaded"] = True
-                        variables.update(defaults)
-                        if self._session_var_manager and session_id and not variable_load_failed:
-                            await asyncio.to_thread(
-                                self._session_var_manager.merge_variables,
-                                session_id,
-                                defaults,
-                            )
                     except Exception as e:
                         logger.warning(
                             "Could not lazy-load variable defaults session=%s project=%s: %s",

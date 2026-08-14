@@ -13,7 +13,6 @@ This module intentionally carries two related but distinct behaviors:
 
 from __future__ import annotations
 
-import json
 import logging
 from typing import Any
 
@@ -24,6 +23,10 @@ from gobby.storage.hub.protocol import (
 )
 from gobby.workflows.definitions import AgentDefinitionBody
 from gobby.workflows.reserved_variables import is_reserved_workflow_variable
+from gobby.workflows.variable_defaults import (
+    load_variable_defaults,
+    resolve_session_project_id,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -50,7 +53,6 @@ def build_persona_changes(
 ) -> tuple[dict[str, Any], set[str], set[str] | None]:
     """Compute full activation changes for an agent-backed session."""
     from gobby.skills.manager import SkillManager
-    from gobby.storage.workflow_definitions import LocalWorkflowDefinitionManager
     from gobby.workflows.selectors import (
         resolve_rules_for_agent,
         resolve_skills_for_agent,
@@ -66,9 +68,16 @@ def build_persona_changes(
         skill_mgr = SkillManager(db)
         all_skills = skill_mgr.list_skills()
 
+    project_id = resolve_session_project_id(db, session_id)
     if enabled_variables is None:
-        def_manager = LocalWorkflowDefinitionManager(db)
-        enabled_variables = def_manager.list_all(workflow_type="variable", enabled=True)
+        from gobby.storage.definitions.variables import SessionVariableDefaultManager
+
+        enabled_variables = SessionVariableDefaultManager(db).list_all(
+            project_id=project_id,
+            enabled=True,
+        )
+        if project_id is None:
+            enabled_variables = [row for row in enabled_variables if row.project_id is None]
 
     active_rules = resolve_rules_for_agent(agent_body, enabled_rules)
 
@@ -92,15 +101,13 @@ def build_persona_changes(
                 continue
             changes[key] = value
 
+    defaults = load_variable_defaults(db, project_id)
     active_variable_names = resolve_variables_for_agent(agent_body, enabled_variables)
-    for var_row in enabled_variables:
-        if active_variable_names is None or var_row.name in active_variable_names:
-            try:
-                var_body = json.loads(var_row.definition_json)
-                if var_row.name not in changes:
-                    changes[var_row.name] = var_body.get("value")
-            except json.JSONDecodeError:
-                logger.debug("Failed to parse variable definition for %s", var_row.name)
+    for name, value in defaults.items():
+        if name in changes:
+            continue
+        if active_variable_names is None or name in active_variable_names:
+            changes[name] = value
 
     if agent_body.blocked_tools:
         changes["_agent_blocked_tools"] = agent_body.blocked_tools
