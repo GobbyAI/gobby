@@ -101,7 +101,7 @@ impl GwikiFixture {
 
     pub fn command_with_database_url_in(&self, cwd: &Path, database_url: &str) -> Command {
         let mut command = self.command_in(cwd);
-        command.env("GWIKI_DATABASE_URL", database_url);
+        command.env("GWIKI_TEST_DATABASE_URL", database_url);
         command
     }
 
@@ -145,7 +145,6 @@ impl GwikiFixture {
     fn apply_isolated_env<'a>(&self, command: &'a mut Command) -> &'a mut Command {
         command
             .env("GOBBY_WIKI_HUB", &self.hub)
-            .env(gobby_core::runtime_mode::RUNTIME_MODE_ENV, "standalone")
             .env("HOME", &self.home)
             .env("XDG_CONFIG_HOME", self.root.join("xdg-config"))
             .env("XDG_DATA_HOME", self.root.join("xdg-data"))
@@ -239,10 +238,10 @@ impl Drop for GwikiScopeCleanup {
 
 pub fn strip_service_env(command: &mut Command) -> &mut Command {
     for key in [
-        "GWIKI_DATABASE_URL",
+        "GWIKI_TEST_DATABASE_URL",
         "GWIKI_POSTGRES_TEST_DATABASE_URL",
-        "GOBBY_POSTGRES_DSN",
-        "GCODE_DATABASE_URL",
+        "GOBBY_TEST_POSTGRES_DSN",
+        "GCODE_TEST_DATABASE_URL",
         "GCODE_POSTGRES_TEST_DATABASE_URL",
         "GOBBY_FALKORDB_HOST",
         "GOBBY_FALKORDB_PORT",
@@ -253,7 +252,6 @@ pub fn strip_service_env(command: &mut Command) -> &mut Command {
     ] {
         command.env_remove(key);
     }
-    command.env(gobby_core::runtime_mode::RUNTIME_MODE_ENV, "standalone");
     command
 }
 

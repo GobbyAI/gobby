@@ -2,10 +2,8 @@ use gobby_core::ai::effective_config::{
     EffectiveConfigLayers, ai_source_with_secret_primary, daemon_mode_layers,
 };
 use gobby_core::config::{
-    ConfigSource, DaemonOrPrimary, EnvOnlySource, LayeredConfigSource, QdrantConfig,
-    resolve_indexing_config,
+    ConfigSource, DaemonOrPrimary, EnvOnlySource, QdrantConfig, resolve_indexing_config,
 };
-use gobby_core::provisioning::{StandaloneConfig, gcore_config_path};
 use postgres::Client;
 
 use crate::indexer::IndexOptions;
@@ -18,7 +16,7 @@ type HubPrimaryFactory<'a> = Box<dyn FnOnce() -> anyhow::Result<HubPrimary> + 'a
 
 /// Hub-backed primary AI config layer with a lazily-opened connection.
 ///
-/// Commands that synthesize daemon-independently still need `$secret:`
+/// Commands that synthesize daemon-independently still need `secret-marker `
 /// references (the canonical api_key pattern) to resolve through the
 /// PostgreSQL hub when it is reachable; without a hub, plain values resolve
 /// and secrets degrade explicitly. Construction is I/O-free — the connection
@@ -88,20 +86,9 @@ impl ConfigSource for HubPrimary {
     }
 
     fn resolve_value(&mut self, value: &str) -> anyhow::Result<String> {
-        match self.state() {
-            HubConnState::Open(conn) => {
-                gobby_core::secrets::resolve_config_value(value, conn.as_mut())
-            }
-            HubConnState::Unavailable(cause) => {
-                if value.trim_start().starts_with("$secret:") {
-                    anyhow::bail!(
-                        "secret resolution requires the PostgreSQL hub ({cause}); configure the \
-                         hub or use a literal api_key"
-                    );
-                }
-                Ok(value.to_string())
-            }
-        }
+        gobby_core::config::reject_secret_marker(value)?;
+        let _ = self.state();
+        Ok(value.to_string())
     }
 }
 
@@ -143,31 +130,19 @@ impl Default for SharedCodeGraphLimits {
 }
 
 pub(crate) fn local_index_options() -> Result<IndexOptions, WikiError> {
-    resolve_index_options_from_layers(
-        read_effective_config_layers()?,
-        EnvOnlySource,
-        read_standalone_config,
-    )
+    resolve_index_options_from_layers(read_effective_config_layers()?, EnvOnlySource)
 }
 
 pub(crate) fn index_options_from_conn(conn: &mut Client) -> Result<IndexOptions, WikiError> {
     let primary = PostgresConfigSource { conn };
-    resolve_index_options_from_layers(
-        read_effective_config_layers()?,
-        primary,
-        read_standalone_config,
-    )
+    resolve_index_options_from_layers(read_effective_config_layers()?, primary)
 }
 
 pub(crate) fn shared_code_graph_limits_from_conn(
     conn: &mut Client,
 ) -> Result<SharedCodeGraphLimits, WikiError> {
     let primary = PostgresConfigSource { conn };
-    resolve_shared_code_graph_limits_from_layers(
-        read_effective_config_layers()?,
-        primary,
-        read_standalone_config,
-    )
+    resolve_shared_code_graph_limits_from_layers(read_effective_config_layers()?, primary)
 }
 
 pub(crate) fn qdrant_config_has_url(config: &QdrantConfig) -> bool {
@@ -175,15 +150,6 @@ pub(crate) fn qdrant_config_has_url(config: &QdrantConfig) -> bool {
         .url
         .as_deref()
         .is_some_and(|url| !url.trim().is_empty())
-}
-
-fn read_standalone_config() -> Result<Option<StandaloneConfig>, WikiError> {
-    let home = gobby_core::gobby_home().map_err(|error| WikiError::Config {
-        detail: format!("failed to resolve Gobby home for gwiki indexing config: {error}"),
-    })?;
-    StandaloneConfig::read_at(&gcore_config_path(&home)).map_err(|error| WikiError::Config {
-        detail: format!("failed to read gwiki indexing config: {error}"),
-    })
 }
 
 fn read_effective_config_layers() -> Result<Option<EffectiveConfigLayers>, WikiError> {
@@ -195,37 +161,26 @@ fn read_effective_config_layers() -> Result<Option<EffectiveConfigLayers>, WikiE
 fn resolve_index_options_from_layers<P: ConfigSource>(
     layers: Option<EffectiveConfigLayers>,
     primary: P,
-    standalone: impl FnOnce() -> Result<Option<StandaloneConfig>, WikiError>,
 ) -> Result<IndexOptions, WikiError> {
-    resolve_from_layers(layers, primary, standalone, resolve_index_options)
+    resolve_from_layers(layers, primary, resolve_index_options)
 }
 
 fn resolve_shared_code_graph_limits_from_layers<P: ConfigSource>(
     layers: Option<EffectiveConfigLayers>,
     primary: P,
-    standalone: impl FnOnce() -> Result<Option<StandaloneConfig>, WikiError>,
 ) -> Result<SharedCodeGraphLimits, WikiError> {
-    resolve_from_layers(
-        layers,
-        primary,
-        standalone,
-        resolve_shared_code_graph_limits,
-    )
+    resolve_from_layers(layers, primary, resolve_shared_code_graph_limits)
 }
 
 fn resolve_from_layers<P: ConfigSource, T>(
     layers: Option<EffectiveConfigLayers>,
     primary: P,
-    standalone: impl FnOnce() -> Result<Option<StandaloneConfig>, WikiError>,
-    resolve: impl FnOnce(
-        &mut LayeredConfigSource<DaemonOrPrimary<P>, StandaloneConfig>,
-    ) -> Result<T, WikiError>,
+    resolve: impl FnOnce(&mut DaemonOrPrimary<P>) -> Result<T, WikiError>,
 ) -> Result<T, WikiError> {
-    let (primary, fallback) = match layers {
-        Some((served, routing_overrides)) => (DaemonOrPrimary::Daemon(served), routing_overrides),
-        None => (DaemonOrPrimary::Primary(primary), standalone()?),
+    let mut source = match layers {
+        Some(served) => DaemonOrPrimary::Daemon(served),
+        None => DaemonOrPrimary::Primary(primary),
     };
-    let mut source = LayeredConfigSource::new(Some(primary), fallback);
     resolve(&mut source)
 }
 
@@ -278,7 +233,7 @@ mod tests {
     use std::collections::BTreeMap;
     use std::path::Path;
 
-    use gobby_core::config::{DaemonOrPrimary, DaemonServedConfig, routing_overrides_only};
+    use gobby_core::config::{DaemonOrPrimary, DaemonServedConfig};
 
     use crate::store::MemoryWikiStore;
 
@@ -330,15 +285,10 @@ mod tests {
     }
 
     #[test]
-    fn shared_code_graph_limits_use_config_source_over_standalone() {
-        let primary = TestSource::default()
+    fn shared_code_graph_limits_use_grant_backed_source() {
+        let mut source = TestSource::default()
             .with(SHARED_CODE_CALL_EDGE_LIMIT_KEY, "11")
             .with(SHARED_CODE_IMPORT_EDGE_LIMIT_KEY, "12");
-        let fallback = gobby_core::provisioning::StandaloneConfig::from_yaml_str(
-            "gwiki:\n  shared_code:\n    call_edge_limit: 21\n    import_edge_limit: 22\n",
-        )
-        .expect("standalone config");
-        let mut source = LayeredConfigSource::new(Some(primary), Some(fallback));
 
         let limits = resolve_shared_code_graph_limits(&mut source).expect("limits");
 
@@ -352,21 +302,11 @@ mod tests {
     }
 
     #[test]
-    fn standalone_shared_code_graph_limits_read_gcore_yaml() {
-        let home = tempfile::tempdir().expect("home");
-        write_file(
-            home.path(),
-            "gcore.yaml",
-            "gwiki:\n  shared_code:\n    call_edge_limit: 31\n    import_edge_limit: 32\n",
-        );
-        let standalone = StandaloneConfig::read_at(&gcore_config_path(home.path()))
-            .expect("read standalone config");
-
-        let limits =
-            resolve_shared_code_graph_limits_from_layers(None, TestSource::default(), || {
-                Ok(standalone)
-            })
-            .expect("limits");
+    fn shared_code_graph_limits_read_grant_backed_values() {
+        let source = TestSource::default()
+            .with(SHARED_CODE_CALL_EDGE_LIMIT_KEY, "31")
+            .with(SHARED_CODE_IMPORT_EDGE_LIMIT_KEY, "32");
+        let limits = resolve_shared_code_graph_limits_from_layers(None, source).expect("limits");
 
         assert_eq!(
             limits,
@@ -393,50 +333,14 @@ mod tests {
     }
 
     #[test]
-    fn standalone_index_options_read_gcore_yaml() {
-        let home = tempfile::tempdir().expect("home");
-        write_file(
-            home.path(),
-            "gcore.yaml",
-            "indexing:\n  respect_gitignore: false\n",
-        );
-        let standalone = StandaloneConfig::read_at(&gcore_config_path(home.path()))
-            .expect("read standalone config");
-
-        let options =
-            resolve_index_options_from_layers(None, TestSource::default(), || Ok(standalone))
-                .expect("index options");
-
+    fn grant_backed_index_options_read_served_values() {
+        let source = TestSource::default().with("indexing.respect_gitignore", "false");
+        let options = resolve_index_options_from_layers(None, source).expect("index options");
         assert!(!options.respect_gitignore);
     }
 
     #[test]
-    fn daemon_index_options_prefer_served_values_over_full_yaml() {
-        let served = DaemonServedConfig::new(
-            7,
-            BTreeMap::from([(
-                "indexing.respect_gitignore".to_string(),
-                "false".to_string(),
-            )]),
-        );
-        let full_yaml = StandaloneConfig::from_yaml_str_raw(
-            "indexing:\n  respect_gitignore: true\nai:\n  routing: direct\n",
-        )
-        .expect("full yaml");
-        let routing = Some(routing_overrides_only(full_yaml));
-
-        let options = resolve_index_options_from_layers(
-            Some((served, routing)),
-            TestSource::default(),
-            || panic!("daemon mode must not read full standalone config"),
-        )
-        .expect("daemon index options");
-
-        assert!(!options.respect_gitignore);
-    }
-
-    #[test]
-    fn daemon_index_options_ignore_malformed_full_yaml_fallback() {
+    fn daemon_index_options_use_served_values() {
         let served = DaemonServedConfig::new(
             7,
             BTreeMap::from([(
@@ -445,12 +349,7 @@ mod tests {
             )]),
         );
 
-        let options =
-            resolve_index_options_from_layers(Some((served, None)), TestSource::default(), || {
-                Err(WikiError::Config {
-                    detail: "malformed routing yaml".to_string(),
-                })
-            })
+        let options = resolve_index_options_from_layers(Some(served), TestSource::default())
             .expect("daemon index options");
 
         assert!(!options.respect_gitignore);
@@ -482,7 +381,6 @@ mod tests {
                         ),
                         primary()?,
                     ),
-                    None,
                 ))
             },
         )
@@ -504,18 +402,9 @@ mod tests {
     }
 
     #[test]
-    fn memory_indexing_uses_injected_standalone_options() {
-        let home = tempfile::tempdir().expect("home");
-        write_file(
-            home.path(),
-            "gcore.yaml",
-            "indexing:\n  respect_gitignore: false\n",
-        );
-        let standalone = StandaloneConfig::read_at(&gcore_config_path(home.path()))
-            .expect("read standalone config");
-        let options =
-            resolve_index_options_from_layers(None, TestSource::default(), || Ok(standalone))
-                .expect("index options");
+    fn memory_indexing_uses_injected_grant_backed_options() {
+        let source = TestSource::default().with("indexing.respect_gitignore", "false");
+        let options = resolve_index_options_from_layers(None, source).expect("index options");
 
         let vault = tempfile::tempdir().expect("vault");
         std::fs::create_dir(vault.path().join(".git")).expect("git dir");

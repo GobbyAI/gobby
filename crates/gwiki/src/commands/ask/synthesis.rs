@@ -14,7 +14,7 @@ use crate::output::{AskAiOutput, AskCitationCheckOutput, AskOutput, AskSynthesis
 /// `profile_for_tier` (Module -> feature_mid); provider/model resolution stays
 /// in config and is never pinned here. The Daemon route forwards the resolved
 /// profile name; the Direct route resolves it to a concrete target so a
-/// standalone gcore.yaml routes ask to its own provider/model/api_key.
+/// standalone grant-backed config routes ask to its own provider/model/api_key.
 pub(super) const ASK_TIER: GenerationTier = GenerationTier::Module;
 
 /// Run the single bounded-prompt completion over the planned evidence.

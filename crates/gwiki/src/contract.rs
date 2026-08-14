@@ -723,7 +723,6 @@ pub fn contract() -> CliContract {
             "precondition_failed",
             "index",
             "search",
-            "setup",
         ],
     }
 }

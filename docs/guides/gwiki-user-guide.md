@@ -35,16 +35,13 @@ sha256sum -c gwiki-*.sha256
 `sha256sum -c` should print `OK` for the downloaded `gwiki` artifact. On macOS,
 install GNU coreutils for `sha256sum`, or compare the digest with `shasum -a 256`.
 
-`gwiki` is daemon-independent but not database-independent. PostgreSQL-backed
-search uses ParadeDB's **`pg_search`** BM25 indexes on the `gwiki_documents` and
-`gwiki_chunks` tables. The hub DSN is resolved from `~/.gobby/bootstrap.yaml`.
-Run `gwiki setup --standalone` only against a PostgreSQL hub where the
-`pg_search` extension is installed — setup preflights the extension before it
-creates any BM25 indexes.
+`gwiki` is a daemon client. PostgreSQL-backed search uses ParadeDB's
+**`pg_search`** BM25 indexes on the `gwiki_documents` and `gwiki_chunks` tables.
+The hub DSN comes from the signed grant. Apply hub schema with `gdaemon apply`
+so `pg_search` and BM25 indexes exist before wiki commands run.
 
-PostgreSQL, FalkorDB, Qdrant, and the embedding endpoint are the required
-runtime stack. Use `gwiki setup --standalone` to provision or validate the same
-Docker-backed services that attached Gobby mode uses.
+PostgreSQL, FalkorDB, Qdrant, and daemon AI contracts are the required runtime
+stack. The Python installer owns Docker service provisioning.
 
 ### Scopes: `--project` vs `--topic`
 
@@ -94,24 +91,10 @@ gwiki --topic rust-async init
 The `knowledge/sources`, `knowledge/concepts`, and `knowledge/topics`
 subdirectories line up with the three `compile --kind` values.
 
-### Set Up Storage
+### Hub Schema
 
-```bash
-gwiki --topic rust-async setup --standalone
-```
-
-`gwiki setup` creates gwiki-owned derived storage. `--standalone` resolves or
-provisions the shared Gobby hub before creating gwiki storage, and provisions
-Docker services when no reachable hub is configured. Setup preflights
-`pg_search` before creating BM25 indexes.
-
-**Options:**
-- `--standalone` — Resolve or provision the shared Gobby hub before creating gwiki storage.
-- `--database-url <DSN>` — PostgreSQL URL to use for setup without persisting the value in output.
-- `--no-services` — Do not provision Docker services when no reachable hub is configured.
-- `--falkordb-host <HOST>`, `--falkordb-port <PORT>`, `--falkordb-password <PASSWORD>` — FalkorDB graph store.
-- `--qdrant-url <URL>` — Qdrant vector store.
-- `--embedding-provider`, `--embedding-api-base <URL>`, `--embedding-model`, `--embedding-query-prefix`, `--embedding-vector-dim <DIM>`, `--embedding-api-key <KEY>` — Embedding endpoint for semantic search.
+Wiki tables and BM25 indexes are applied by `gdaemon apply` on the Gobby hub.
+gwiki does not create, alter, or drop datastore schema.
 
 Valid embedding provider values are `lmstudio`, `ollama`,
 `openai-compatible`, and `none`. `gwiki` is pre-release, so removed aliases are
@@ -717,8 +700,8 @@ and `citations.rs`; see the
 
 ## AI Routing & Configuration
 
-`gwiki` routes AI per capability. Each capability can use the daemon, a direct
-OpenAI-compatible HTTP endpoint, or stay off:
+`gwiki` routes AI per capability through the daemon grant. Each capability can
+use the daemon or stay off (`--no-ai`):
 
 | Capability | Used for |
 |------------|----------|
@@ -728,47 +711,18 @@ OpenAI-compatible HTTP endpoint, or stay off:
 | Text generation (`ai.text_generate`) | `ask --llm` synthesis, derived text |
 | Embeddings (`ai.embeddings`) | Semantic vectors for hybrid search |
 
-Routing values are `auto`, `daemon`, `direct`, and `off`. `direct` means any
-OpenAI-compatible endpoint, local or remote — there is no `local` route.
+Routing values are `daemon` and `off`. Use `--no-ai` to force every capability
+off for one command while still storing the raw asset and recording degraded
+derived output.
 
-gwiki selects one runtime mode per invocation. `GOBBY_RUNTIME_MODE=standalone`
-selects standalone explicitly. Unset, empty, and `auto` values select daemon
-when `GOBBY_DAEMON_URL` is non-empty or the Gobby OS service is installed;
-otherwise they select standalone. Installation is authoritative even when the
-service is stopped or disabled. Environment and installation changes apply to
-the next gwiki invocation.
-
-The mode controls both config and DSN sources:
-
-| Mode | Runtime config | PostgreSQL DSN |
-|------|----------------|----------------|
-| Daemon | Environment → daemon effective config → routing-only `gcore.yaml` | `GWIKI_DATABASE_URL` / `GOBBY_POSTGRES_DSN` → daemon effective config → `bootstrap.yaml` |
-| Standalone | Environment → PostgreSQL `config_store` → full `gcore.yaml` | `GWIKI_DATABASE_URL` / `GOBBY_POSTGRES_DSN` → `bootstrap.yaml` → full `gcore.yaml` |
-
-Daemon transport, authentication, and server failures are hard errors. Daemon
-mode never reads full `gcore.yaml` as a DSN fallback.
-
-`GOBBY_*` environment variables are not an AI configuration layer.
-`ai.text_generate.*` is the CLI standalone/direct namespace; daemon text
-generation uses daemon provider config such as
-`ai.generation.local.endpoints.<name>`.
+The PostgreSQL DSN and service material come from the signed grant. Daemon
+transport, authentication, and server failures are hard errors.
 
 Indexing respects `.gitignore`, `.git/info/exclude`, and global git excludes by
-default. It follows the selected runtime config stack, then defaults to `true`:
+default (`indexing.respect_gitignore`, default `true`).
 
-```yaml
-indexing:
-  respect_gitignore: true
-```
-
-Override routing for a single ingest with `--transcription-routing`,
-`--vision-routing`, and `--text-routing`, or take the privacy path with
-`--no-ai`, which forces every capability to `off` for that command while still
-storing the raw asset and recording degraded derived output.
-
-For the full capability/backend matrix, mixed-routing examples, local model
-budget, and `$secret:` handling, see the canonical
-[AI Configuration](./ai-configuration.md) guide.
+For the capability matrix and outage behavior, see
+[AI Configuration](./ai-configuration.md).
 
 ## Graceful Degradation
 
@@ -830,22 +784,20 @@ gwiki --project /path/to/repo status
 
 ### `pg_search` missing
 
-`setup` preflights ParadeDB's `pg_search` extension and fails if it is absent.
-Install the `pg_search` extension on the PostgreSQL hub before running
-`gwiki setup --standalone`.
+Install the `pg_search` extension on the PostgreSQL hub and apply schema with
+`gdaemon apply`.
 
 ### Semantic Search Configuration Error
 
-Qdrant and the embedding endpoint are required for PostgreSQL-backed search.
-Run `gwiki setup --standalone` or attach to Gobby's full datastore stack, then
-re-run `gwiki index`.
+Qdrant and the embedding endpoint come from the daemon grant. Confirm the
+daemon is running, then re-run `gwiki index`.
 
 ### Media ingest produced skeleton output
 
 The relevant AI capability was routed `off` or was unavailable, so ingest stored
 the raw asset with degradation markers instead of derived text. Check the
 `degradations` array, then re-run with an explicit routing override (for example
-`--transcription-routing direct`) once the backend is reachable. `--no-ai`
+`--no-ai`) once the backend is reachable. `--no-ai`
 always produces degraded output by design.
 
 ### `compile` refuses to overwrite a page

@@ -11,9 +11,7 @@ use thiserror::Error;
 #[cfg(feature = "postgres")]
 use crate::ai_context::PostgresAiConfigSource;
 use crate::ai_context::{AiConfigSource, NoPrimaryAiConfigSource};
-use crate::config::{ConfigSource, DaemonOrPrimary, DaemonServedConfig, routing_overrides_only};
-use crate::provisioning::{StandaloneConfig, gcore_config_path};
-use crate::runtime_mode::{RuntimeMode, RuntimeModeError, runtime_mode};
+use crate::config::{ConfigSource, DaemonOrPrimary, DaemonServedConfig, contains_secret_marker};
 
 pub const EFFECTIVE_CONFIG_PATH: &str = "/api/config/effective";
 
@@ -21,7 +19,7 @@ const EFFECTIVE_CONFIG_TIMEOUT: Duration = Duration::from_secs(5);
 const POSTGRES_DSN_KEY: &str = "databases.postgres.dsn";
 const MANAGED_EXECUTION_BOOTSTRAP_ENV: &str = "GOBBY_MANAGED_EXECUTION_BOOTSTRAP";
 
-pub type EffectiveConfigLayers = (DaemonServedConfig, Option<StandaloneConfig>);
+pub type EffectiveConfigLayers = DaemonServedConfig;
 pub type EffectiveLocalAiSource = AiConfigSource<DaemonOrPrimary<NoPrimaryAiConfigSource>>;
 
 #[cfg(feature = "postgres")]
@@ -33,8 +31,6 @@ pub type EffectivePostgresAiSource<'a> = AiConfigSource<
 
 #[derive(Debug, Clone, Error, PartialEq, Eq)]
 pub enum EffectiveConfigError {
-    #[error(transparent)]
-    RuntimeMode(#[from] RuntimeModeError),
     #[error("daemon effective config request failed: {kind}")]
     Transport { kind: EffectiveConfigTransportKind },
     #[error("daemon effective config request failed with HTTP {status}")]
@@ -72,9 +68,7 @@ struct EffectiveConfigEnvelope {
 static EFFECTIVE_CONFIG_STATE: OnceLock<EffectiveConfigState> = OnceLock::new();
 
 pub fn daemon_mode_layers() -> Result<Option<EffectiveConfigLayers>, EffectiveConfigError> {
-    daemon_mode_layers_for(runtime_mode()?, || {
-        layers_from_state(effective_config_state())
-    })
+    daemon_mode_layers_for(|| layers_from_state(effective_config_state()))
 }
 
 pub fn daemon_mode_layers_at(
@@ -106,25 +100,12 @@ pub fn daemon_mode_layers_at(
             },
         })?;
         validate_served_values(&settings.settings)?;
-        return Ok((
-            DaemonServedConfig::new(settings.config_revision, settings.settings),
-            None,
+        return Ok(DaemonServedConfig::new(
+            settings.config_revision,
+            settings.settings,
         ));
     }
-    let daemon = fetch_daemon_served_config_at(base_url, token.as_deref())?;
-    let path = gcore_config_path(gobby_home);
-    let routing = match StandaloneConfig::read_raw_at(&path) {
-        Ok(config) => config.map(routing_overrides_only),
-        Err(error) => {
-            log::warn!(
-                "daemon effective config is available; ignoring local routing overrides from {}: \
-                 {error}",
-                path.display()
-            );
-            None
-        }
-    };
-    Ok((daemon, routing))
+    fetch_daemon_served_config_at(base_url, token.as_deref())
 }
 
 pub fn fetch_daemon_served_config_at(
@@ -225,27 +206,19 @@ fn transport_error_is_timeout(transport: &ureq::Transport) -> bool {
 }
 
 pub fn daemon_dsn() -> Result<Option<String>, EffectiveConfigError> {
-    match runtime_mode()? {
-        RuntimeMode::Daemon => daemon_dsn_from_state(effective_config_state()),
-        RuntimeMode::Standalone => Ok(None),
-    }
+    daemon_dsn_from_state(effective_config_state())
 }
 
 pub fn ai_source_with_primary<P: ConfigSource>(
     primary: impl FnOnce() -> anyhow::Result<P>,
 ) -> anyhow::Result<AiConfigSource<DaemonOrPrimary<P>>> {
     match daemon_mode_layers()? {
-        Some((daemon, routing)) => Ok(AiConfigSource::with_primary(
-            DaemonOrPrimary::Daemon(daemon),
-            routing,
-        )),
-        None => {
-            let gobby_home = crate::gobby_home()?;
-            AiConfigSource::with_primary_from_gobby_home(
-                DaemonOrPrimary::Primary(primary()?),
-                &gobby_home,
-            )
-        }
+        Some(daemon) => Ok(AiConfigSource::with_primary(DaemonOrPrimary::Daemon(
+            daemon,
+        ))),
+        None => Ok(AiConfigSource::with_primary(DaemonOrPrimary::Primary(
+            primary()?,
+        ))),
     }
 }
 
@@ -254,28 +227,25 @@ pub fn ai_source_without_primary() -> anyhow::Result<EffectiveLocalAiSource> {
 }
 
 /// Like [`ai_source_with_primary`], but keeps the primary attached in daemon
-/// mode so secret-reference keys (never served by the daemon) fall through to
-/// it and `$secret:` values resolve datastore-side. The factory therefore runs
-/// in both modes — use this only when constructing the primary is cheap and
-/// side-effect free (an already-open connection, or a lazily-connecting
-/// source); `ai_source_with_primary` keeps the historical guarantee that
-/// daemon mode never invokes the factory.
+/// mode for keys the daemon never serves. Unresolved secret markers fail typed
+/// as grant-issuance bugs instead of unwrapping client-side.
 pub fn ai_source_with_secret_primary<P: ConfigSource>(
     primary: impl FnOnce() -> anyhow::Result<P>,
 ) -> anyhow::Result<AiConfigSource<DaemonOrPrimary<P>>> {
     match daemon_mode_layers()? {
-        Some((daemon, routing)) => Ok(AiConfigSource::with_primary(
+        Some(daemon) => Ok(AiConfigSource::with_primary(
             DaemonOrPrimary::DaemonWithSecrets(daemon, primary()?),
-            routing,
         )),
-        None => {
-            let gobby_home = crate::gobby_home()?;
-            AiConfigSource::with_primary_from_gobby_home(
-                DaemonOrPrimary::Primary(primary()?),
-                &gobby_home,
-            )
-        }
+        None => Ok(AiConfigSource::with_primary(DaemonOrPrimary::Primary(
+            primary()?,
+        ))),
     }
+}
+
+#[cfg(feature = "postgres")]
+fn reject_secret_value(value: &str, _conn: &mut postgres::Client) -> anyhow::Result<String> {
+    crate::config::reject_secret_marker(value)?;
+    Ok(value.to_string())
 }
 
 #[cfg(feature = "postgres")]
@@ -285,8 +255,7 @@ pub fn ai_source_for_conn(
     ai_source_with_secret_primary(|| {
         Ok(PostgresAiConfigSource::new(
             conn,
-            crate::secrets::resolve_config_value
-                as fn(&str, &mut postgres::Client) -> anyhow::Result<String>,
+            reject_secret_value as fn(&str, &mut postgres::Client) -> anyhow::Result<String>,
         ))
     })
 }
@@ -315,19 +284,15 @@ fn layers_from_state(
 }
 
 fn daemon_mode_layers_for(
-    mode: RuntimeMode,
     daemon_layers: impl FnOnce() -> Result<EffectiveConfigLayers, EffectiveConfigError>,
 ) -> Result<Option<EffectiveConfigLayers>, EffectiveConfigError> {
-    match mode {
-        RuntimeMode::Daemon => daemon_layers().map(Some),
-        RuntimeMode::Standalone => Ok(None),
-    }
+    daemon_layers().map(Some)
 }
 
 fn daemon_dsn_from_state(
     state: &EffectiveConfigState,
 ) -> Result<Option<String>, EffectiveConfigError> {
-    let (mut daemon, _) = layers_from_state(state)?;
+    let mut daemon = layers_from_state(state)?;
     Ok(daemon
         .config_value(POSTGRES_DSN_KEY)
         .map(|dsn| dsn.trim().to_string())
@@ -336,7 +301,7 @@ fn daemon_dsn_from_state(
 
 fn validate_served_values(values: &BTreeMap<String, String>) -> Result<(), EffectiveConfigError> {
     for (key, value) in values {
-        if value.contains("$secret:") {
+        if contains_secret_marker(value) {
             return Err(EffectiveConfigError::Contract {
                 key: key.clone(),
                 reason: "value contains an unresolved secret reference",
@@ -355,18 +320,16 @@ fn validate_served_values(values: &BTreeMap<String, String>) -> Result<(), Effec
 #[cfg(test)]
 fn ai_source_with_primary_from_layers<P: ConfigSource>(
     layers: Result<Option<EffectiveConfigLayers>, EffectiveConfigError>,
-    gobby_home: &Path,
+    _gobby_home: &Path,
     primary: impl FnOnce() -> anyhow::Result<P>,
 ) -> anyhow::Result<AiConfigSource<DaemonOrPrimary<P>>> {
     match layers? {
-        Some((daemon, routing)) => Ok(AiConfigSource::with_primary(
-            DaemonOrPrimary::Daemon(daemon),
-            routing,
-        )),
-        None => AiConfigSource::with_primary_from_gobby_home(
-            DaemonOrPrimary::Primary(primary()?),
-            gobby_home,
-        ),
+        Some(daemon) => Ok(AiConfigSource::with_primary(DaemonOrPrimary::Daemon(
+            daemon,
+        ))),
+        None => Ok(AiConfigSource::with_primary(DaemonOrPrimary::Primary(
+            primary()?,
+        ))),
     }
 }
 

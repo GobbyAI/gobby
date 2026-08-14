@@ -1,4 +1,4 @@
-use gobby_core::setup::ValidationContext;
+use gobby_core::schema::ValidationContext;
 use postgres::Client;
 
 use crate::{WikiError, support::env};

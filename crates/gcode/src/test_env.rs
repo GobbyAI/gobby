@@ -22,7 +22,7 @@ fn resolve_postgres_test_database_url(purpose: &str) -> String {
                 "{purpose} requires a PostgreSQL test database URL; set \
                  {GCODE_POSTGRES_TEST_DATABASE_URL_ENV}, \
                  {GOBBY_POSTGRES_TEST_DATABASE_URL_ENV}, {DATABASE_URL_ENV}, \
-                 GOBBY_POSTGRES_TEST_* components, or {GOBBY_HOME_ENV}/bootstrap.yaml"
+                 or GOBBY_POSTGRES_TEST_* components"
             )
         }
         Err(error) => {
@@ -53,11 +53,7 @@ fn postgres_test_database_url_from_sources() -> anyhow::Result<Option<String>> {
         return Ok(Some(database_url));
     }
 
-    if let Some(database_url) = postgres_test_database_url_from_parts() {
-        return Ok(Some(database_url));
-    }
-
-    postgres_test_database_url_from_bootstrap()
+    Ok(postgres_test_database_url_from_parts())
 }
 
 fn postgres_test_database_url_from_parts() -> Option<String> {
@@ -70,13 +66,6 @@ fn postgres_test_database_url_from_parts() -> Option<String> {
     Some(format!(
         "postgresql://{user}:{password}@{host}:{port}/{database}"
     ))
-}
-
-fn postgres_test_database_url_from_bootstrap() -> anyhow::Result<Option<String>> {
-    let Some(path) = gobby_core::bootstrap::bootstrap_path() else {
-        return Ok(None);
-    };
-    gobby_core::bootstrap::postgres_database_url_from_bootstrap_file(&path)
 }
 
 fn non_empty_env(name: &str) -> Option<String> {
@@ -110,8 +99,8 @@ pub fn destructive_postgres_test_override_enabled() -> bool {
 }
 
 /// Provision the code-index schema once per process so DB-backed tests pass
-/// from any starting database state without a manual `gcode setup --standalone`
-/// between runs. Non-`_test` databases are left untouched.
+/// from any starting database state via hub schema apply. Non-`_test`
+/// databases are left untouched.
 fn ensure_code_index_schema(database_url: &str) {
     static PROVISIONED: std::sync::OnceLock<
         std::sync::Mutex<std::collections::HashMap<String, Result<(), String>>>,
@@ -136,20 +125,12 @@ fn provision_code_index_schema(database_url: &str) -> Result<(), String> {
     }
     let mut client = gobby_core::postgres::connect_readwrite(database_url)
         .map_err(|error| format!("connect to the test database: {error:#}"))?;
-    let mut request =
-        crate::setup::StandaloneSetupRequest::new(true, Some(database_url.to_string()), None);
-    request.overwrite_code_index = true;
-    let status = crate::setup::run_standalone_setup(&request, &mut client)
-        .map_err(|error| format!("standalone setup: {error}"))?;
-    if status.failed.is_empty() {
-        return Ok(());
-    }
-    Err(status
-        .failed
-        .iter()
-        .map(|failure| format!("{}: {}", failure.name, failure.reason))
-        .collect::<Vec<_>>()
-        .join("; "))
+    let mut runner = gobby_core::schema::SchemaRunner::new(&mut client, "public")
+        .map_err(|error| format!("schema runner: {error}"))?;
+    runner
+        .apply()
+        .map(|_| ())
+        .map_err(|error| format!("gdaemon schema apply: {error}"))
 }
 
 #[cfg(test)]
@@ -236,7 +217,7 @@ mod tests {
 
     #[test]
     #[serial_test::serial(serial_db)]
-    fn test_env_uses_bootstrap_fallback() {
+    fn test_env_does_not_use_bootstrap_yaml() {
         let dir = tempfile::tempdir().unwrap();
         std::fs::write(
             dir.path().join("bootstrap.yaml"),
@@ -250,7 +231,7 @@ mod tests {
                 postgres_test_database_url_from_sources()
                     .unwrap()
                     .as_deref(),
-                Some("postgresql://bootstrap/gobby")
+                None
             );
         });
     }

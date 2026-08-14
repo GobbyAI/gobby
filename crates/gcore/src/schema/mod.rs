@@ -4,6 +4,7 @@
 //! verification. Consumer crates retain ownership of CRUD and domain behavior.
 
 mod assets;
+mod attached;
 mod baseline_refresh;
 mod error;
 mod external;
@@ -20,6 +21,9 @@ mod runner_tests;
 pub use assets::{
     BASELINE_CHECKSUM, BASELINE_SQL, BASELINE_VERSION, CATALOG_MANIFEST_JSON,
     RUNNER_PROTOCOL_VERSION, SEED_MANIFEST_JSON,
+};
+pub use attached::{
+    AttachedValidator, RequiredObject, StoreKind, ValidationContext, ValidationReport,
 };
 pub use error::SchemaError;
 pub use external::{

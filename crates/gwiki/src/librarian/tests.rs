@@ -862,7 +862,7 @@ fn librarian_requires_configured_postgres_index() {
         "knowledge/topics/page.md",
         "# Page\n\nSupported enough.\n",
     );
-    let _database_url = EnvGuard::set("GWIKI_DATABASE_URL", "postgresql://127.0.0.1:1/gwiki");
+    let _database_url = EnvGuard::set("GWIKI_TEST_DATABASE_URL", "postgresql://127.0.0.1:1/gwiki");
 
     let error = run(root, ScopeIdentity::topic("ops"), Options::default(), None)
         .expect_err("PostgreSQL is required");

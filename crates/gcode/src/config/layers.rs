@@ -7,17 +7,14 @@ use gobby_core::ai::effective_config::{
     EffectiveConfigError, EffectiveConfigLayers, daemon_mode_layers,
 };
 use gobby_core::config::{ConfigSource, DaemonServedConfig};
-use gobby_core::provisioning::StandaloneConfig;
-use gobby_core::runtime_mode::{RuntimeMode, runtime_mode};
 use postgres::Client;
 
 use super::runtime_contract::{HubConfigSnapshot, capture_hub_snapshot};
-use super::services::{ServiceConfigSource, read_standalone_config_optional, service_env_value};
+use super::services::ServiceConfigSource;
 
 #[derive(Debug, Clone)]
 pub(crate) struct ConfigLayers {
     daemon: Option<DaemonServedConfig>,
-    standalone: Option<StandaloneConfig>,
     mode: ConfigMode,
     hub_fallback_reason: Option<String>,
 }
@@ -26,7 +23,6 @@ pub(crate) struct ConfigLayers {
 enum ConfigMode {
     Daemon,
     Hub,
-    Standalone,
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -43,26 +39,17 @@ pub(super) enum HubConfigCaptureStatus {
 }
 
 pub(crate) fn read_config_layers() -> anyhow::Result<ConfigLayers> {
-    if runtime_mode()? == RuntimeMode::Standalone {
-        return Ok(ConfigLayers {
-            daemon: None,
-            standalone: read_standalone_config_optional(),
-            mode: ConfigMode::Standalone,
-            hub_fallback_reason: None,
-        });
-    }
     #[cfg(feature = "ai")]
     {
         Ok(layers_from_daemon_result(daemon_mode_layers()))
     }
     #[cfg(not(feature = "ai"))]
     {
-        return Ok(ConfigLayers {
+        Ok(ConfigLayers {
             daemon: None,
-            standalone: None,
             mode: ConfigMode::Hub,
             hub_fallback_reason: Some("gcode built without the ai feature".to_string()),
-        });
+        })
     }
 }
 
@@ -71,18 +58,16 @@ fn layers_from_daemon_result(
     result: Result<Option<EffectiveConfigLayers>, EffectiveConfigError>,
 ) -> ConfigLayers {
     match result {
-        Ok(Some((daemon, _routing))) => {
+        Ok(Some(daemon)) => {
             warn_for_unregistered_served_keys(&daemon);
             ConfigLayers {
                 daemon: Some(daemon),
-                standalone: None,
                 mode: ConfigMode::Daemon,
                 hub_fallback_reason: None,
             }
         }
         Ok(None) => ConfigLayers {
             daemon: None,
-            standalone: None,
             mode: ConfigMode::Hub,
             hub_fallback_reason: Some(
                 "daemon runtime mode returned no served configuration".to_string(),
@@ -90,7 +75,6 @@ fn layers_from_daemon_result(
         },
         Err(error) => ConfigLayers {
             daemon: None,
-            standalone: None,
             mode: ConfigMode::Hub,
             hub_fallback_reason: Some(format!("daemon runtime configuration unavailable: {error}")),
         },
@@ -118,11 +102,6 @@ pub(super) enum ServiceSource {
         hits: HashMap<String, &'static str>,
     },
     Hub(HubConfigSnapshot),
-    Standalone {
-        config: Option<StandaloneConfig>,
-        hits: HashMap<String, &'static str>,
-        last_value_from_yaml: bool,
-    },
 }
 
 impl ServiceSource {
@@ -174,11 +153,6 @@ impl ServiceSource {
                     capture_failure(error, layers.hub_fallback_reason.as_deref(), hub_capture)
                 }
             },
-            ConfigMode::Standalone => Ok((
-                Self::standalone(layers.standalone.clone()),
-                None,
-                HubConfigCaptureStatus::Complete,
-            )),
         }
     }
 
@@ -217,11 +191,11 @@ impl ServiceSource {
         Self::Hub(snapshot)
     }
 
-    pub(super) fn standalone(config: Option<StandaloneConfig>) -> Self {
-        Self::Standalone {
-            config,
+    fn empty_daemon() -> Self {
+        Self::Daemon {
+            served: DaemonServedConfig::new(0, std::collections::BTreeMap::new()),
+            hub_secrets: None,
             hits: HashMap::new(),
-            last_value_from_yaml: false,
         }
     }
 }
@@ -257,51 +231,18 @@ impl ServiceConfigSource for ServiceSource {
                 Ok(value)
             }
             Self::Hub(snapshot) => Ok(snapshot.value(key).map(str::to_string)),
-            Self::Standalone {
-                config,
-                hits,
-                last_value_from_yaml,
-            } => {
-                *last_value_from_yaml = false;
-                if let Some(value) = service_env_value(key) {
-                    hits.insert(key.to_string(), "env");
-                    return Ok(Some(value));
-                }
-                let value = config
-                    .as_mut()
-                    .and_then(|standalone| standalone.config_value(key));
-                if value.is_some() {
-                    hits.insert(key.to_string(), "gcore.yaml");
-                    *last_value_from_yaml = true;
-                }
-                Ok(value)
-            }
         }
     }
 
     fn resolve_value(&mut self, value: &str) -> anyhow::Result<String> {
-        match self {
-            Self::Standalone {
-                config,
-                last_value_from_yaml,
-                ..
-            } => {
-                if std::mem::take(last_value_from_yaml)
-                    && let Some(standalone) = config.as_mut()
-                {
-                    return standalone.resolve_value(value);
-                }
-                Ok(value.to_string())
-            }
-            Self::Daemon { .. } | Self::Hub(_) => Ok(value.to_string()),
-        }
+        gobby_core::config::reject_secret_marker(value)?;
+        Ok(value.to_string())
     }
 
     fn hit_source(&self, key: &str) -> Option<&'static str> {
         match self {
             Self::Daemon { hits, .. } => hits.get(key).copied(),
             Self::Hub(snapshot) => snapshot.value(key).map(|_| "config_store"),
-            Self::Standalone { hits, .. } => hits.get(key).copied(),
         }
     }
 }
@@ -316,7 +257,7 @@ fn capture_failure(
     }
     warn_capture_failure(daemon_reason, &error);
     Ok((
-        ServiceSource::standalone(read_standalone_config_optional()),
+        ServiceSource::empty_daemon(),
         None,
         HubConfigCaptureStatus::Degraded,
     ))
@@ -326,17 +267,17 @@ fn warn_capture_failure(daemon_reason: Option<&str>, error: &anyhow::Error) {
     if super::runtime_contract::hub_capture_permission_denied(error) {
         log::warn!(
             "runtime configuration is unavailable to this scoped database role; using \
-             defaults/env/gcore.yaml because scoped roles intentionally cannot read config_store \
+             defaults/env/grant-backed config because scoped roles intentionally cannot read config_store \
              values or secret material directly"
         );
     } else if let Some(reason) = daemon_reason {
         log::warn!(
             "{reason}; PostgreSQL runtime configuration capture also failed; using \
-             defaults/env/gcore.yaml: {error:#}"
+             defaults/env/grant-backed config: {error:#}"
         );
     } else {
         log::warn!(
-            "PostgreSQL runtime configuration capture failed; using defaults/env/gcore.yaml: \
+            "PostgreSQL runtime configuration capture failed; using defaults/env/grant-backed config: \
              {error:#}"
         );
     }
@@ -404,7 +345,6 @@ mod tests {
         let mut connection = scoped_connection("best-effort scoped hub capture");
         let layers = ConfigLayers {
             daemon: None,
-            standalone: None,
             mode: ConfigMode::Hub,
             hub_fallback_reason: Some("daemon runtime configuration unavailable".to_string()),
         };
@@ -414,15 +354,15 @@ mod tests {
             &layers,
             HubConfigCapture::ImmediateBestEffort,
         )
-        .expect("scoped reads fall back to standalone layers");
+        .expect("scoped reads degrade without local credential fallback");
 
-        assert!(matches!(source, ServiceSource::Standalone { .. }));
+        assert!(matches!(source, ServiceSource::Daemon { .. }));
         assert_eq!(revision, None);
         assert_eq!(status, HubConfigCaptureStatus::Degraded);
         let warnings = captured_warnings();
         assert_eq!(warnings.len(), 1);
         assert!(warnings[0].contains("scoped database role"));
-        assert!(warnings[0].contains("defaults/env/gcore.yaml"));
+        assert!(warnings[0].contains("defaults/env/grant-backed config"));
         assert!(!warnings[0].contains("database corruption"));
     }
 
@@ -439,14 +379,14 @@ mod tests {
         )
         .expect("best-effort reads tolerate every runtime capture failure");
 
-        assert!(matches!(source, ServiceSource::Standalone { .. }));
+        assert!(matches!(source, ServiceSource::Daemon { .. }));
         assert_eq!(revision, None);
         assert_eq!(status, HubConfigCaptureStatus::Degraded);
         let warnings = captured_warnings();
         assert_eq!(warnings.len(), 1);
         assert!(warnings[0].contains("daemon runtime configuration unavailable"));
         assert!(warnings[0].contains("connection refused"));
-        assert!(warnings[0].contains("defaults/env/gcore.yaml"));
+        assert!(warnings[0].contains("defaults/env/grant-backed config"));
     }
 
     #[test]
@@ -460,7 +400,6 @@ mod tests {
                 "databases.qdrant.url",
                 "http://daemon-qdrant.example",
             )])),
-            standalone: None,
             mode: ConfigMode::Daemon,
             hub_fallback_reason: None,
         };
@@ -470,9 +409,9 @@ mod tests {
             &layers,
             HubConfigCapture::ImmediateBestEffort,
         )
-        .expect("hybrid reads fall back instead of mixing served and local config");
+        .expect("hybrid reads degrade instead of mixing served and local config");
 
-        assert!(matches!(source, ServiceSource::Standalone { .. }));
+        assert!(matches!(source, ServiceSource::Daemon { .. }));
         assert_eq!(revision, None);
         assert_eq!(status, HubConfigCaptureStatus::Degraded);
         assert_eq!(captured_warnings().len(), 1);
@@ -486,7 +425,6 @@ mod tests {
         let mut connection = scoped_connection("required scoped hub capture");
         let layers = ConfigLayers {
             daemon: None,
-            standalone: None,
             mode: ConfigMode::Hub,
             hub_fallback_reason: Some("daemon runtime configuration unavailable".to_string()),
         };

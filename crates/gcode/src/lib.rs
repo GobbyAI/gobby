@@ -21,7 +21,6 @@ mod projection;
 mod savings;
 mod schema;
 mod search;
-mod setup;
 mod skill;
 #[doc(hidden)]
 #[cfg(any(test, feature = "test-support"))]
@@ -141,12 +140,12 @@ mod tests {
                 .expect("read config/runtime_contract.rs");
         assert!(config_services.contains("gobby_core::config::{"));
         assert!(config_services.contains("ConfigSource"));
-        assert!(config_services.contains("StandaloneConfig"));
+        assert!(!config_services.contains(&format!("{}{}", "Standalone", "Config")));
         assert!(config_layers.contains("impl ServiceConfigSource for ServiceSource"));
         assert!(config_services.contains("struct ErrorCapturingConfigSource"));
         assert!(config_services.contains("impl<S> ConfigSource for ErrorCapturingConfigSource"));
         assert!(!config_services.contains("impl ConfigSource for PostgresConfigSource"));
-        assert!(runtime_contract.contains("gobby_core::secrets::resolve_config_value"));
+        assert!(runtime_contract.contains("gobby_core::config::reject_secret_marker"));
         assert!(runtime_contract.contains("gobby_core::config::decode_config_value"));
         assert!(config_services.contains("gobby_core::config::decode_config_value"));
         assert!(!config_root.contains("fn decode_config_value("));

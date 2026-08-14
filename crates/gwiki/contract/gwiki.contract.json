@@ -1474,7 +1474,6 @@
     "already_exists",
     "precondition_failed",
     "index",
-    "search",
-    "setup"
+    "search"
   ]
 }

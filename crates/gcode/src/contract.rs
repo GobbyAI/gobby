@@ -38,31 +38,6 @@ pub fn contract() -> CliContract {
                 )
             },
             CommandContract {
-                positionals: vec![],
-                flags: vec![
-                    FlagContract::switch("--standalone").required(),
-                    FlagContract::value("--database-url", "DATABASE_URL"),
-                    FlagContract::switch("--no-services"),
-                    FlagContract::switch("--overwrite-code-index"),
-                    FlagContract::value("--schema", "SCHEMA"),
-                    FlagContract::value("--embedding-provider", "PROVIDER"),
-                    FlagContract::value("--embedding-api-base", "URL"),
-                    FlagContract::value("--embedding-model", "MODEL"),
-                    FlagContract::value("--embedding-query-prefix", "PREFIX"),
-                    FlagContract::value("--embedding-vector-dim", "N"),
-                    FlagContract::value("--embedding-api-key", "KEY"),
-                    FlagContract::value("--falkordb-host", "HOST"),
-                    FlagContract::value("--falkordb-port", "PORT"),
-                    FlagContract::value("--falkordb-password", "PASSWORD"),
-                    FlagContract::value("--qdrant-url", "URL"),
-                ],
-                json_output_keys: vec![],
-                ..CommandContract::new(
-                    "setup",
-                    "Create gcode-owned standalone database objects and local service config.",
-                )
-            },
-            CommandContract {
                 daemon_consumed: true,
                 positionals: vec![PositionalContract {
                     name: "PATH",

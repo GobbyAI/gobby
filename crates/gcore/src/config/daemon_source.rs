@@ -1,8 +1,6 @@
 use std::collections::BTreeMap;
 
-use crate::provisioning::StandaloneConfig;
-
-use super::ConfigSource;
+use super::{ConfigSource, reject_secret_marker};
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct DaemonServedConfig {
@@ -37,6 +35,7 @@ impl ConfigSource for DaemonServedConfig {
     }
 
     fn resolve_value(&mut self, value: &str) -> anyhow::Result<String> {
+        reject_secret_marker(value)?;
         Ok(value.to_string())
     }
 }
@@ -44,11 +43,9 @@ impl ConfigSource for DaemonServedConfig {
 #[derive(Debug, Clone)]
 pub enum DaemonOrPrimary<P> {
     Daemon(DaemonServedConfig),
-    /// Daemon-served values plus a datastore-backed primary consulted only
-    /// for secret-reference keys. The daemon never serves secrets in
-    /// plaintext; keys the contract marks `reference` fall through to the
-    /// primary, which returns the stored `$secret:` form and resolves it
-    /// datastore-side.
+    /// Daemon-served values plus a revision-coherent primary for keys the
+    /// daemon never serves. Unresolved secret markers are grant-issuance bugs
+    /// and fail typed instead of unwrapping client-side.
     DaemonWithSecrets(DaemonServedConfig, P),
     Primary(P),
 }
@@ -83,18 +80,10 @@ impl<P: ConfigSource> ConfigSource for DaemonOrPrimary<P> {
     }
 
     fn resolve_value(&mut self, value: &str) -> anyhow::Result<String> {
+        reject_secret_marker(value)?;
         match self {
             Self::Daemon(source) => source.resolve_value(value),
-            Self::DaemonWithSecrets(source, secrets) => {
-                if value.trim_start().starts_with("$secret:") {
-                    require_matching_revision(source, secrets)?;
-                    let resolved = secrets.resolve_value(value)?;
-                    require_matching_revision(source, secrets)?;
-                    Ok(resolved)
-                } else {
-                    source.resolve_value(value)
-                }
-            }
+            Self::DaemonWithSecrets(source, _secrets) => source.resolve_value(value),
             Self::Primary(source) => source.resolve_value(value),
         }
     }
@@ -113,15 +102,6 @@ fn require_matching_revision(
         daemon.revision()
     );
     Ok(())
-}
-
-pub fn routing_overrides_only(config: StandaloneConfig) -> StandaloneConfig {
-    let values = config
-        .into_values()
-        .into_iter()
-        .filter(|(key, _)| is_routing_key(key))
-        .collect();
-    StandaloneConfig::new(values)
 }
 
 fn is_routing_key(key: &str) -> bool {

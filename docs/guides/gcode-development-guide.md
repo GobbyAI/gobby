@@ -76,18 +76,9 @@ A new dedicated module that owns all `git` shell-out logic for project-root dete
 
 ### PostgreSQL Bootstrap
 
-`src/db.rs` resolves PostgreSQL DSNs according to the process-lifetime runtime
-mode. Daemon mode checks `GCODE_DATABASE_URL` / `GOBBY_POSTGRES_DSN`, then asks
-the local daemon broker for its effective configuration through
-`POST /api/local/runtime/database-url` with `X-Gobby-Local-Token` from
-`local_cli_token` and a 3s timeout, then checks `$GOBBY_HOME/bootstrap.yaml`
-`database_url`. A daemon broker failure is a daemon-mode error; it never falls
-back to full `gcore.yaml` or standalone resolution.
-
-Standalone mode checks `GCODE_DATABASE_URL` / `GOBBY_POSTGRES_DSN`, then
-`$GOBBY_HOME/bootstrap.yaml` `database_url`, then full
-`$GOBBY_HOME/gcore.yaml` `databases.postgres.dsn`. Bootstrap fallback requires
-an inline `database_url`.
+`src/db.rs` resolves PostgreSQL DSNs from the signed daemon grant. There is one
+runtime: acquire a grant, then use the grant DSN. Client DSN environment
+variables and local credential files are not consulted.
 `connect_readwrite()` and `connect_readonly()` both return a synchronous
 `postgres::Client`; PostgreSQL permissions decide actual access.
 
@@ -98,38 +89,19 @@ tell users to configure the PostgreSQL hub with the required code-index schema.
 
 ### Service Configuration
 
-gcode uses gcore's process-lifetime runtime mode. `GOBBY_RUNTIME_MODE` accepts
-`auto` or `standalone`; empty and unset values mean `auto`. Explicit standalone
-wins, then a non-empty `GOBBY_DAEMON_URL`, then a registered Gobby OS service.
-No registration selects standalone. The mode is fixed until the next gcode
-invocation.
+gcode is a daemon client. Runtime configuration comes from the signed grant and
+daemon-served machine config. A missing daemon, authentication failure, or
+server error is a hard error.
 
-Configuration stacks are mode-specific:
-
-| Mode | Runtime config | PostgreSQL DSN |
-|------|----------------|----------------|
-| Daemon | Environment → daemon effective config → routing-only `gcore.yaml` | `GCODE_DATABASE_URL` / `GOBBY_POSTGRES_DSN` → daemon effective config → `bootstrap.yaml` |
-| Standalone | Environment → PostgreSQL `config_store` → full `gcore.yaml` | `GCODE_DATABASE_URL` / `GOBBY_POSTGRES_DSN` → `bootstrap.yaml` → full `gcore.yaml` |
-
-Daemon mode never reads full `gcore.yaml` as a DSN fallback. A registered but
-stopped or disabled daemon, authentication failure, or server error is a hard
-daemon-mode error. It does not trigger standalone config resolution.
-
-Embedding keys use the canonical `ai.embeddings.*` namespace.
-`ai.text_generate.*` is the CLI standalone/direct namespace; daemon text
-generation uses daemon provider config such as
-`ai.generation.local.endpoints.<name>` and request-level provider/model
-selection.
-
-Config values are JSON-encoded in `config_store` — strings have surrounding quotes stripped. Secret patterns like `$secret:NAME` are resolved via `secrets.rs` (Fernet decryption using machine_id + salt, 600K PBKDF2 iterations).
+Embedding keys use the canonical `ai.embeddings.*` namespace. Text generation
+uses daemon provider config. Unresolved secret markers that reach the client
+are grant-issuance bugs and fail typed.
 
 ### Runtime Model
 
-gcode supports daemon and standalone runtime modes and requires a configured
-PostgreSQL hub in either mode. Service installation selects daemon mode in
-`auto`; explicit standalone or absent installation selects standalone. Project
-identity still comes from `.gobby/project.json`, `.gobby/gcode.json`, isolated
-roots, linked worktrees, or generated identity during `gcode init`.
+gcode requires an acquired daemon grant and a configured PostgreSQL hub.
+Project identity still comes from `.gobby/project.json`, `.gobby/gcode.json`,
+isolated roots, linked worktrees, or generated identity during `gcode init`.
 
 ## Indexing Pipeline
 
@@ -684,12 +656,8 @@ gcode invalidate      # destructive reset of current project's code-index rows
 resolved project id, FalkorDB cleanup targets nodes with that project id, and
 Qdrant cleanup targets only `code_symbols_{project_id}`.
 
-`gcode setup --standalone --overwrite-code-index` is the full standalone
-code-index reset. It drops/recreates only allowlisted gcode PostgreSQL
-relations and BM25 indexes, clears code-index graph labels in FalkorDB, and
-deletes Qdrant collections with the `code_symbols_` prefix. Default standalone
-setup fails on incompatible existing code-index state and prints the overwrite
-rerun guidance.
+Schema application belongs to `gdaemon apply`. `gcode invalidate` remains the
+project-scoped reset for indexed facts.
 
 ### Code Documentation Generation
 

@@ -281,6 +281,14 @@ fn json_contains_key(value: &Value, key: &str) -> bool {
 fn parity_contract_tracks_code_grounding_and_dependency_classification() {
     let contract = pinned_contract();
     assert_eq!(contract["contract_version"], 17);
+    assert!(
+        contract["commands"]
+            .as_array()
+            .expect("commands array")
+            .iter()
+            .all(|command| command["name"] != "setup"),
+        "standalone setup command must be absent from gwiki contract"
+    );
 
     let code = command(&contract, "code");
     assert_eq!(code["positionals"], serde_json::json!([]));

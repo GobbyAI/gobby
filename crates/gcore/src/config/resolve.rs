@@ -22,6 +22,24 @@ pub fn decode_config_value(raw: &str) -> Option<String> {
     }
 }
 
+/// Prefix used by grant-issuance bugs that leak unresolved secret markers.
+pub fn secret_marker_prefix() -> String {
+    format!("${}:", "secret")
+}
+
+/// True when `value` still carries an unresolved secret marker.
+pub fn contains_secret_marker(value: &str) -> bool {
+    value.contains(&secret_marker_prefix())
+}
+
+/// Fail typed when a secret marker reaches a client crate.
+pub fn reject_secret_marker(value: &str) -> anyhow::Result<()> {
+    if contains_secret_marker(value) {
+        anyhow::bail!("grant-issuance bug: unresolved secret marker reached the client");
+    }
+    Ok(())
+}
+
 /// Resolve `${VAR}` and `${VAR:-default}` environment variable patterns.
 pub fn resolve_env_pattern(value: &str) -> anyhow::Result<Option<String>> {
     if !value.contains("${") {
@@ -142,9 +160,7 @@ impl ConfigSource for EnvOnlySource {
     }
 
     fn resolve_value(&mut self, value: &str) -> anyhow::Result<String> {
-        if value.contains("$secret:") {
-            anyhow::bail!("secret resolution requires a datastore-backed config source");
-        }
+        reject_secret_marker(value)?;
         resolve_env_pattern(value)?.ok_or_else(|| anyhow::anyhow!("unresolved pattern: {value}"))
     }
 }
@@ -180,12 +196,12 @@ pub fn resolve_qdrant_config(source: &mut impl ConfigSource) -> Option<QdrantCon
     Some(QdrantConfig { url, api_key })
 }
 
-/// Resolve embedding API config from config_store/gcore.yaml.
+/// Resolve embedding API config from the grant-backed source.
 pub fn resolve_embedding_config(source: &mut impl ConfigSource) -> Option<EmbeddingConfig> {
     resolve_embedding_config_resolution(source).map(|resolution| resolution.config)
 }
 
-/// Resolve indexing config from env/config_store/gcore.yaml/defaults.
+/// Resolve indexing config from env, grant-backed source, then defaults.
 pub fn resolve_indexing_config(source: &mut impl ConfigSource) -> anyhow::Result<IndexingConfig> {
     let respect_gitignore = match env_value(INDEXING_RESPECT_GITIGNORE_ENV) {
         Some(value) => parse_config_bool_or_default(INDEXING_RESPECT_GITIGNORE_ENV, &value, true),
@@ -480,7 +496,7 @@ fn parse_config_bool_or_default(source_key: &str, value: &str, default: bool) ->
 
 /// Resolve an AI config value and reject empty or still-unexpanded placeholders.
 ///
-/// AI config resolves from `config_store`/gcore.yaml, but stored values may
+/// AI config resolves from `config_store`/grant-backed config, but stored values may
 /// reference secrets or `${VAR}`. Unresolved placeholders must not masquerade as
 /// usable endpoints, models, or keys.
 fn resolve_ai_non_empty(

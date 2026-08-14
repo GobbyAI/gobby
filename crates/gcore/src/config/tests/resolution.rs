@@ -115,34 +115,29 @@ fn falkordb_password_resolves_current_config_key() {
 }
 
 #[test]
-fn config_source_handles_secrets() {
+fn config_source_uses_grant_backed_plaintext() {
     let _env = EnvGuard::new();
     let mut source = TestSource::with_values([
         ("databases.falkordb.host", "falkor.local"),
-        ("databases.falkordb.password", "$secret:FALKOR_PASS"),
+        ("databases.falkordb.password", "grant-pass"),
     ]);
 
     let config = resolve_falkordb_config(&mut source).expect("falkordb config");
 
-    assert_eq!(config.password.as_deref(), Some("resolved-FALKOR_PASS"));
-    assert!(
-        source
-            .resolved_values
-            .iter()
-            .any(|value| value == "$secret:FALKOR_PASS")
-    );
+    assert_eq!(config.password.as_deref(), Some("grant-pass"));
 }
 
 #[test]
-fn env_only_source_rejects_secret_patterns() {
+fn env_only_source_rejects_secret_markers() {
     let _env = EnvGuard::new();
     let mut source = EnvOnlySource;
+    let marker = crate::config::secret_marker_prefix() + "FALKOR_PASS";
 
     let error = source
-        .resolve_value("$secret:FALKOR_PASS")
-        .expect_err("secret resolution should require a datastore-backed source");
+        .resolve_value(&marker)
+        .expect_err("secret marker must fail typed");
 
-    assert!(error.to_string().contains("secret resolution"));
+    assert!(error.to_string().contains("grant-issuance"));
 }
 
 #[test]

@@ -89,6 +89,14 @@ fn contract_is_version_four_without_codewiki() {
             .all(|command| command["name"] != "codewiki"),
         "retired codewiki command must be absent"
     );
+    assert!(
+        contract["commands"]
+            .as_array()
+            .expect("commands array")
+            .iter()
+            .all(|command| command["name"] != "setup"),
+        "standalone setup command must be absent"
+    );
 }
 
 #[test]

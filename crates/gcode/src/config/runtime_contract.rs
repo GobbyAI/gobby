@@ -63,13 +63,9 @@ pub(super) fn capture_hub_snapshot_with_hook(
                 "registered runtime configuration key {key:?} contains an environment reference"
             );
         }
-        let resolved = if value.contains("$secret:") {
-            gobby_core::secrets::resolve_config_value(&value, &mut transaction)
-                .with_context(|| format!("failed to resolve runtime configuration key {key:?}"))?
-        } else {
-            value
-        };
-        values.insert(key, resolved);
+        gobby_core::config::reject_secret_marker(&value)
+            .with_context(|| format!("grant-issuance bug in runtime configuration key {key:?}"))?;
+        values.insert(key, value);
     }
     transaction
         .commit()

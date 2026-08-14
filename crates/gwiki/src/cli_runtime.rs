@@ -160,7 +160,6 @@ fn exit_code_for_error(error: &WikiError) -> ExitCode {
         | WikiError::Registry { .. }
         | WikiError::Daemon { .. }
         | WikiError::Timeout { .. }
-        | WikiError::Setup { .. }
         | WikiError::Freshness { .. }
         | WikiError::Generation { .. } => ExitCode::from(1),
     }

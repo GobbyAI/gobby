@@ -16,30 +16,10 @@ Graph and semantic features are configured at runtime, not behind Cargo feature
 flags. Gobby-managed projects provide the required Docker-backed stack:
 PostgreSQL with `pg_search`, FalkorDB, Qdrant, and an embedding endpoint.
 
-Runtime indexing/search requires Gobby's PostgreSQL hub. gcode asks the local
-daemon broker for the hub DSN first. If the daemon is unavailable, it checks
-fallback sources in order: `GCODE_DATABASE_URL`, `GOBBY_POSTGRES_DSN`,
-`~/.gobby/gcore.yaml` `databases.postgres.dsn`, then bootstrap `database_url`.
-Bootstrap fallback requires an inline `database_url`.
-
-For daemon-independent service provisioning:
-
-```bash
-gcode setup --standalone
-```
-
-The default setup path is non-destructive. If incompatible existing code-index
-PostgreSQL state is detected, setup fails with guidance instead of dropping
-objects. For daemon adoption or explicit recovery, run:
-
-```bash
-gcode setup --standalone --overwrite-code-index
-```
-
-That advanced reset recreates only gcode-owned code-index PostgreSQL objects,
-clears code-index graph nodes in FalkorDB, and deletes Qdrant collections named
-with the `code_symbols_` prefix. It leaves Gobby project files, config,
-secrets, tasks, sessions, memory, and other daemon-owned data untouched.
+Runtime indexing/search requires Gobby's PostgreSQL hub. gcode acquires a
+signed grant from the local daemon and uses the grant DSN. Start the Gobby
+daemon and apply hub schema with `gdaemon apply`. Client DSN environment
+variables and local credential files are not used.
 
 If you use [Gobby](https://github.com/GobbyAI/gobby), gcode is already installed.
 
@@ -95,7 +75,7 @@ gcode offers four search modes for different use cases.
 The default. Combines pg_search BM25 text matching with semantic similarity,
 graph boost, and graph expansion using Reciprocal Rank Fusion. Full hybrid
 ranking requires PostgreSQL with `pg_search`, Qdrant, FalkorDB, and a reachable
-embedding endpoint; `gcode setup` provisions or validates that stack. When
+embedding endpoint; the daemon grant and hub schema provide that stack. When
 semantic or graph services are unavailable, search degrades to the reachable
 sources instead of failing as long as BM25 search is available. JSON results
 still expose `score` as the final display rank score, `rrf_score` as the raw RRF
@@ -505,14 +485,10 @@ gcode invalidate
 gcode index
 ```
 
-`invalidate` deletes only rows for the current project from PostgreSQL. When a
-daemon URL or standalone service config is available, it also cleans only that
-project's FalkorDB graph nodes and `code_symbols_{project_id}` Qdrant
+`invalidate` deletes only rows for the current project from PostgreSQL. When
+the daemon grant includes graph and vector capabilities, it also cleans only
+that project's FalkorDB graph nodes and `code_symbols_{project_id}` Qdrant
 projection. Use `--force` to skip the confirmation prompt.
-
-For a full standalone code-index reset across projects and projections, use
-`gcode setup --standalone --overwrite-code-index`. That command is intended for
-daemon adoption and explicit recovery.
 
 Graph projection lifecycle is separate:
 
@@ -535,11 +511,10 @@ gcode vector cleanup-orphans
 
 ## Operating Model
 
-gcode is daemon-independent but not database-independent:
-- Database: PostgreSQL hub from `~/.gobby/bootstrap.yaml`
-- Required bootstrap: inline `database_url`
+gcode is a daemon client, not a standalone database tool:
+- Database: grant-resolved PostgreSQL hub DSN
 - Identity: `.gobby/project.json`, `.gobby/gcode.json`, isolated root, linked worktree, or generated identity from `gcode init`
-- Required service configs: FalkorDB, Qdrant, and embeddings via env vars or PostgreSQL `config_store`
+- Required service configs: FalkorDB, Qdrant, and embeddings from the signed grant and daemon-served config
 
 Graph commands and semantic search become available when the required services
 are configured; unhealthy services are reported as degraded required sources.
@@ -555,40 +530,21 @@ Both cases are reported by `gcode init`'s status line (`isolated`, `linked-workt
 
 ## Configuration
 
-gcode resolves graph/vector infrastructure configuration in this order:
+gcode resolves graph/vector infrastructure from the signed daemon grant and
+daemon-served runtime config. FalkorDB defaults to port `16379` and graph name
+`gobby_code` once a host is granted. Embedding settings come from
+daemon-served `ai.embeddings.*` keys, with model `nomic-embed-text` once an
+embeddings API base is configured.
 
-1. **Environment variables** — `GOBBY_FALKORDB_HOST`, `GOBBY_FALKORDB_PORT`, `GOBBY_FALKORDB_PASSWORD`, `GOBBY_QDRANT_URL`
-2. **config_store table** — Key-value pairs in the PostgreSQL hub (`databases.falkordb.host`, `databases.falkordb.port`, `databases.falkordb.password`, `databases.qdrant.*`)
-3. **Hardcoded defaults** — FalkorDB port `16379` and graph name `gobby_code` once a host is configured; no default FalkorDB host is assumed
-
-Semantic search embedding config resolves from:
-1. **config_store table** — `ai.embeddings.api_base`, `ai.embeddings.model`, `ai.embeddings.api_key`
-2. **standalone config** — `~/.gobby/gcore.yaml` with the same `ai.embeddings.*` keys
-3. **Hardcoded defaults** — model `nomic-embed-text` once an embeddings API base is configured
-
-Indexing git-ignore behavior resolves from `config_store`, then
-`~/.gobby/gcore.yaml`, then default `true`. Set it in standalone config as:
-
-```yaml
-indexing:
-  respect_gitignore: true
-  extra_excludes:
-    - generated
-    - "*.snapshot"
-```
+Indexing git-ignore behavior resolves from grant-backed `indexing.respect_gitignore`
+(default `true`) and `indexing.extra_excludes`.
 
 `extra_excludes` adds component-name glob patterns to gcode's built-in
 exclusions. Full and explicit indexing apply the same combined pattern set, and
 a full scan prunes facts for files that become excluded.
 
-The database connection is resolved in this order:
-1. Local daemon broker
-2. `GCODE_DATABASE_URL`
-3. `GOBBY_POSTGRES_DSN`
-4. `~/.gobby/gcore.yaml` `databases.postgres.dsn`
-5. `~/.gobby/bootstrap.yaml` `database_url`
-
-Use the daemon broker path or an explicit fallback source for daemonless access.
+The database connection is the grant DSN. There is no client DSN environment
+variable or local credential file.
 
 The daemon URL (used by `invalidate` and savings reporting) is resolved by the
 shared `gobby_core::daemon_url` contract:

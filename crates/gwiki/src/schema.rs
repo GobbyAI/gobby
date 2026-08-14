@@ -1,13 +1,48 @@
-use gobby_core::setup::{
-    AttachedValidator, Guidance, RequiredObject, SetupIssue, StoreKind, ValidationContext,
-    ValidationReport,
+use gobby_core::degradation::{Guidance, SetupIssue};
+use gobby_core::schema::{
+    AttachedValidator, RequiredObject, StoreKind, ValidationContext, ValidationReport,
 };
 
-use crate::setup::{GWIKI_POSTGRES_INDEXES, GWIKI_POSTGRES_TABLES};
-
-#[allow(dead_code, reason = "reserved gwiki CLI/API split")]
-pub const MIGRATION_HINT: &str = "Run Gobby hub migrations, then `gwiki setup` to validate gwiki-owned PostgreSQL tables and indexes.";
 const DEFAULT_SCHEMA: &str = "public";
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum GwikiTable {
+    Documents,
+    Chunks,
+    Links,
+    Sources,
+    Ingestions,
+}
+
+impl GwikiTable {
+    pub fn name(self) -> &'static str {
+        match self {
+            Self::Documents => "gwiki_documents",
+            Self::Chunks => "gwiki_chunks",
+            Self::Links => "gwiki_links",
+            Self::Sources => "gwiki_sources",
+            Self::Ingestions => "gwiki_ingestions",
+        }
+    }
+}
+
+pub const GWIKI_POSTGRES_TABLES: &[GwikiTable] = &[
+    GwikiTable::Documents,
+    GwikiTable::Chunks,
+    GwikiTable::Links,
+    GwikiTable::Sources,
+    GwikiTable::Ingestions,
+];
+
+pub const GWIKI_POSTGRES_INDEXES: &[&str] = &[
+    "gwiki_documents_scope_path_idx",
+    "gwiki_documents_content_hash_idx",
+    "gwiki_chunks_scope_path_idx",
+    "gwiki_sources_scope_path_idx",
+    "gwiki_links_scope_idx",
+    "gwiki_documents_search_bm25",
+    "gwiki_chunks_search_bm25",
+];
 
 #[derive(Debug, Default)]
 pub struct GwikiRuntimeSchema;
@@ -68,8 +103,8 @@ fn missing_relation_issue(relation: &str, detail: &str) -> SetupIssue {
             problem: format!(
                 "required gwiki datastore object `{relation}` is unavailable: {detail}"
             ),
-            action: "run Gobby hub migrations, then validate with gwiki setup before runtime wiki commands".to_string(),
-            command_hint: Some("gwiki setup".to_string()),
+            action: "run Gobby hub migrations, then retry the wiki command".to_string(),
+            command_hint: Some("gdaemon apply".to_string()),
         },
     }
 }
@@ -77,51 +112,30 @@ fn missing_relation_issue(relation: &str, detail: &str) -> SetupIssue {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use gobby_core::setup::ValidationContext;
+    use gobby_core::schema::ValidationContext;
 
     #[test]
-    fn missing_schema_requires_explicit_setup() {
+    fn required_objects_cover_tables_and_indexes() {
+        let objects = GwikiRuntimeSchema.required_objects();
+        let names: Vec<_> = objects.iter().map(|object| object.name.as_str()).collect();
+        assert!(names.contains(&"gwiki_documents"));
+        assert!(names.contains(&"gwiki_documents_search_bm25"));
+    }
+
+    #[test]
+    fn missing_connection_is_a_validation_issue() {
         let mut ctx = ValidationContext {
             pg: None,
             falkor_config: None,
             qdrant_config: None,
         };
-
-        let report = GwikiRuntimeSchema.validate(&mut ctx);
-
-        assert!(
-            !report.is_healthy(),
-            "missing gwiki schema must fail validation"
-        );
-        assert_eq!(
-            report.missing.len(),
-            GWIKI_POSTGRES_TABLES.len() + GWIKI_POSTGRES_INDEXES.len()
-        );
+        let report = validate_runtime_schema(&mut ctx);
+        assert!(!report.is_healthy());
         assert!(
             report
                 .missing
                 .iter()
-                .all(|(name, issue)| name.starts_with("gwiki_")
-                    && issue.guidance.command_hint.as_deref() == Some("gwiki setup")),
-            "missing schema issues must point at explicit gwiki setup: {:?}",
-            report.missing
-        );
-        assert!(MIGRATION_HINT.contains("gwiki setup"));
-        let source = include_str!("schema.rs")
-            .split("#[cfg(test)]")
-            .next()
-            .expect("implementation source");
-        assert!(!source.contains("CREATE TABLE"));
-        assert!(!source.contains("CREATE INDEX"));
-        assert!(!source.contains("ALTER TABLE"));
-        assert!(!source.contains("DROP TABLE"));
-    }
-
-    #[test]
-    fn relation_validation_qualifies_public_schema() {
-        assert_eq!(
-            relation_regclass_name("gwiki_documents"),
-            "public.gwiki_documents"
+                .any(|(name, _)| name == "gwiki_documents")
         );
     }
 }

@@ -134,9 +134,7 @@ impl ConfigSource for TestSource {
 
     fn resolve_value(&mut self, value: &str) -> anyhow::Result<String> {
         self.resolved_values.push(value.to_string());
-        if let Some(secret_name) = value.strip_prefix("$secret:") {
-            return Ok(format!("resolved-{secret_name}"));
-        }
+        reject_secret_marker(value)?;
         Ok(resolve_env_pattern(value)?.unwrap_or_else(|| value.to_string()))
     }
 }
@@ -211,3 +209,4 @@ mod embedding_guard;
 mod indexing;
 mod resolution;
 mod runtime_contract;
+mod standalone_removed;

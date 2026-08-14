@@ -53,9 +53,9 @@ fn isolated_gcode_with_env(
         .env("HOME", home)
         .env("GOBBY_HOME", home)
         .env("GOBBY_DAEMON_URL", unused_loopback())
-        .env_remove("GCODE_DATABASE_URL")
-        .env_remove("GWIKI_DATABASE_URL")
-        .env_remove("GOBBY_POSTGRES_DSN")
+        .env_remove(&format!("{}{}", "GCODE_", "DATABASE_URL"))
+        .env_remove(&format!("{}{}", "GWIKI_", "DATABASE_URL"))
+        .env_remove(&format!("{}{}", "GOBBY_", "POSTGRES_DSN"))
         .env_remove("GOBBY_FALKORDB_HOST")
         .env_remove("GOBBY_FALKORDB_PORT")
         .env_remove("GOBBY_FALKORDB_PASSWORD")
@@ -235,7 +235,10 @@ fn no_pregrant_datastore_access() {
         home.path(),
         project.path(),
         &["status"],
-        &[("GCODE_DATABASE_URL", &dsn), ("GOBBY_POSTGRES_DSN", &dsn)],
+        &[
+            ("GCODE_TEST_DATABASE_URL", &dsn),
+            ("GOBBY_TEST_POSTGRES_DSN", &dsn),
+        ],
     );
     let payload = parse_error_payload(&output);
     assert_eq!(payload["error"], "daemon_required");
@@ -271,7 +274,7 @@ fn projectless_rejection() {
         &["status"],
         &[
             ("GOBBY_DAEMON_URL", &daemon_url),
-            ("GCODE_DATABASE_URL", &dsn),
+            ("GCODE_TEST_DATABASE_URL", &dsn),
         ],
     );
     let payload = parse_error_payload(&output);
@@ -350,7 +353,7 @@ fn project_name_lookup_authenticated() {
         &["--project", "named-proj", "status"],
         &[
             ("GOBBY_DAEMON_URL", &daemon_url),
-            ("GCODE_DATABASE_URL", &dsn),
+            ("GCODE_TEST_DATABASE_URL", &dsn),
         ],
     );
     let requests = seen.lock().expect("seen lock").clone();

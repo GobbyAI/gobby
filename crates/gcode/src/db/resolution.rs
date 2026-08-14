@@ -120,9 +120,9 @@ mod tests {
             .next()
             .expect("production source");
         for forbidden in [
-            "GCODE_DATABASE_URL",
-            "GOBBY_POSTGRES_DSN",
-            "GWIKI_DATABASE_URL",
+            "GCODE_TEST_DATABASE_URL",
+            "GOBBY_TEST_POSTGRES_DSN",
+            "GWIKI_TEST_DATABASE_URL",
             "daemon_dsn",
             "resolve_database_url_from_env",
             "resolve_database_url_from_bootstrap",

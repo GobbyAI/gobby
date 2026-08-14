@@ -2,8 +2,126 @@ use anyhow::{Context as _, bail};
 use gobby_core::search::BM25_SCORE_REGPROCEDURE;
 use postgres::Client;
 
-use crate::setup::DEFAULT_SCHEMA;
-use crate::setup::contracts::{TABLE_CONTRACTS, TableContract};
+const DEFAULT_SCHEMA: &str = "public";
+
+struct TableContract {
+    name: &'static str,
+    required_columns: &'static [&'static str],
+}
+
+const TABLE_CONTRACTS: &[TableContract] = &[
+    TableContract {
+        name: "code_indexed_projects",
+        required_columns: &["id", "created_at", "updated_at"],
+    },
+    TableContract {
+        name: "code_indexed_project_states",
+        required_columns: &[
+            "machine_id",
+            "project_id",
+            "root_path",
+            "total_files",
+            "total_symbols",
+            "last_indexed_at",
+            "index_duration_ms",
+            "created_at",
+            "updated_at",
+        ],
+    },
+    TableContract {
+        name: "code_indexed_files",
+        required_columns: &[
+            "id",
+            "project_id",
+            "file_path",
+            "language",
+            "content_hash",
+            "symbol_count",
+            "byte_size",
+            "graph_synced",
+            "vectors_synced",
+            "graph_sync_attempted_at",
+            "vector_sync_attempted_at",
+            "indexed_at",
+            "last_referenced_at",
+        ],
+    },
+    TableContract {
+        name: "code_indexed_file_states",
+        required_columns: &[
+            "machine_id",
+            "project_id",
+            "file_path",
+            "content_hash",
+            "updated_at",
+        ],
+    },
+    TableContract {
+        name: "code_symbols",
+        required_columns: &[
+            "id",
+            "project_id",
+            "file_path",
+            "name",
+            "qualified_name",
+            "kind",
+            "language",
+            "byte_start",
+            "byte_end",
+            "line_start",
+            "line_end",
+            "signature",
+            "docstring",
+            "parent_symbol_id",
+            "file_content_hash",
+            "content_hash",
+            "summary",
+            "summary_attempted_at",
+            "created_at",
+            "updated_at",
+        ],
+    },
+    TableContract {
+        name: "code_content_chunks",
+        required_columns: &[
+            "id",
+            "project_id",
+            "file_path",
+            "content_hash",
+            "chunk_index",
+            "line_start",
+            "line_end",
+            "content",
+            "language",
+            "created_at",
+        ],
+    },
+    TableContract {
+        name: "code_imports",
+        required_columns: &[
+            "id",
+            "project_id",
+            "source_file",
+            "content_hash",
+            "target_module",
+        ],
+    },
+    TableContract {
+        name: "code_calls",
+        required_columns: &[
+            "id",
+            "project_id",
+            "caller_symbol_id",
+            "callee_symbol_id",
+            "callee_name",
+            "callee_target_kind",
+            "callee_external_module",
+            "file_path",
+            "content_hash",
+            "line",
+        ],
+    },
+];
 
 const REQUIRED_TABLES: &[&str] = &[
     "code_indexed_projects",
@@ -18,7 +136,7 @@ const REQUIRED_TABLES: &[&str] = &[
 
 const REQUIRED_BM25_INDEXES: &[&str] = &["code_symbols_search_bm25", "code_content_search_bm25"];
 
-const MIGRATION_HINT: &str = "Configure the Gobby PostgreSQL hub with the required code-index schema, `pg_search` extension, and BM25 indexes. For standalone databases, run `gcode setup --standalone --database-url <dsn>`.";
+const MIGRATION_HINT: &str = "Configure the Gobby PostgreSQL hub with the required code-index schema, `pg_search` extension, and BM25 indexes via `gdaemon apply`.";
 
 /// Validate that the Gobby-owned PostgreSQL hub schema exists.
 ///

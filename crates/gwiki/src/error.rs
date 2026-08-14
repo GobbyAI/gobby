@@ -3,7 +3,6 @@ use std::path::PathBuf;
 use std::time::Duration;
 
 use gobby_core::grant::GrantError;
-use gobby_core::setup::SetupError;
 
 use crate::{indexer, search};
 
@@ -68,9 +67,6 @@ pub enum WikiError {
     Search {
         source: search::SearchError,
     },
-    Setup {
-        source: SetupError,
-    },
     Freshness {
         detail: String,
     },
@@ -100,7 +96,6 @@ impl WikiError {
             Self::Timeout { .. } => "timeout",
             Self::Index { .. } => "index_error",
             Self::Search { .. } => "search_error",
-            Self::Setup { .. } => "setup_error",
             Self::Freshness { .. } => "freshness_error",
             Self::Generation { .. } => "generation_error",
             Self::Grant { source } => source.cli_code(),
@@ -185,7 +180,6 @@ impl fmt::Display for WikiError {
             }
             Self::Index { source } => write!(f, "index: {source} ({})", self.code()),
             Self::Search { source } => write!(f, "query: {source} ({})", self.code()),
-            Self::Setup { source } => write!(f, "gwiki setup failed: {source} ({})", self.code()),
             Self::Grant { source } => write!(f, "{source}"),
         }
     }
@@ -216,7 +210,6 @@ impl std::error::Error for WikiError {
             Self::Yaml { source, .. } => Some(source),
             Self::Index { source } => Some(source),
             Self::Search { source } => Some(source),
-            Self::Setup { source } => Some(source),
             Self::Grant { source } => Some(source),
             _ => None,
         }
@@ -238,12 +231,6 @@ impl From<indexer::IndexError> for WikiError {
 impl From<search::SearchError> for WikiError {
     fn from(error: search::SearchError) -> Self {
         Self::Search { source: error }
-    }
-}
-
-impl From<SetupError> for WikiError {
-    fn from(error: SetupError) -> Self {
-        Self::Setup { source: error }
     }
 }
 
@@ -312,17 +299,5 @@ mod tests {
         assert!(config.is_ffmpeg_unavailable());
         assert!(io.is_ffmpeg_unavailable());
         assert!(!other_io.is_ffmpeg_unavailable());
-    }
-
-    #[test]
-    fn setup_error_source_is_preserved() {
-        let error = WikiError::from(SetupError::CreationFailed {
-            object: "gwiki_documents".to_string(),
-            message: "permission denied".to_string(),
-        });
-
-        assert_eq!(error.code(), "setup_error");
-        assert!(error.source().is_some());
-        assert!(error.to_string().contains("gwiki setup failed"));
     }
 }

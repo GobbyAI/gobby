@@ -48,7 +48,6 @@ pub(crate) mod schema;
 pub(crate) mod scope;
 pub(crate) mod search;
 pub mod session;
-pub(crate) mod setup;
 pub mod sources;
 pub(crate) mod store;
 pub mod synthesis;
@@ -62,8 +61,7 @@ pub(crate) mod vision;
 pub use api::{
     BenchmarkOptions, Command, CommandOutcome, CommandResult, GraphCommandOptions,
     IngestFileOptions, PageWriteMode, PurgeTarget, ReadTarget, RecapOptions, ReviewReportOptions,
-    RunOptions, ScopeIdentity, ScopeKind, ScopeSelection, SetupOptions, SyncSessionsOptions,
-    UpkeepOptions,
+    RunOptions, ScopeIdentity, ScopeKind, ScopeSelection, SyncSessionsOptions, UpkeepOptions,
 };
 pub use commands::code::{
     AiDepth, CodeCommandOptions, DEFAULT_CODE_GRAPH_EDGE_LIMIT, ProseDepth, VerifyScope,

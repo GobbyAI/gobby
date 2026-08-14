@@ -39,7 +39,6 @@ fn classify_command(command: &Command) -> CommandClassification<'_> {
         } => writer(scope, "gwiki remove-source"),
         Command::Purge { target, .. } => CommandClassification::ExplicitPurge { target },
         Command::Init { .. }
-        | Command::Setup { .. }
         | Command::Prune { .. }
         | Command::Refresh { dry_run: true, .. }
         | Command::Sources { .. }

@@ -12,7 +12,6 @@ use code::CodeArgs;
 const CLI_SUBCOMMANDS: &[&str] = &[
     "init",
     "contract",
-    "setup",
     "index",
     "collect",
     "code",
@@ -130,8 +129,6 @@ enum CliCommand {
 
     /// Initialize a wiki vault.
     Init,
-    /// Create gwiki-owned derived storage.
-    Setup(SetupArgs),
     /// Index markdown and source notes in the selected scope.
     Index {
         /// Re-index documents even when content hashes are unchanged.
@@ -264,51 +261,6 @@ struct GraphArgs {
     /// Restrict the graph to knowledge or code facts.
     #[arg(long, value_enum, default_value = "all")]
     include: GraphInclude,
-}
-
-#[derive(Debug, Args)]
-struct SetupArgs {
-    /// Resolve or provision the shared Gobby hub before creating gwiki storage.
-    #[arg(long)]
-    standalone: bool,
-
-    /// PostgreSQL URL to use for setup without persisting the flag value in output.
-    #[arg(long = "database-url", value_name = "DSN")]
-    database_url: Option<String>,
-
-    /// Do not provision Docker services when no reachable hub is configured.
-    #[arg(long)]
-    no_services: bool,
-
-    #[arg(long, value_name = "HOST")]
-    falkordb_host: Option<String>,
-
-    #[arg(long, value_name = "PORT")]
-    falkordb_port: Option<u16>,
-
-    #[arg(long, value_name = "PASSWORD")]
-    falkordb_password: Option<String>,
-
-    #[arg(long, value_name = "URL")]
-    qdrant_url: Option<String>,
-
-    #[arg(long, value_name = "PROVIDER")]
-    embedding_provider: Option<String>,
-
-    #[arg(long, value_name = "URL")]
-    embedding_api_base: Option<String>,
-
-    #[arg(long, value_name = "MODEL")]
-    embedding_model: Option<String>,
-
-    #[arg(long, value_name = "PREFIX")]
-    embedding_query_prefix: Option<String>,
-
-    #[arg(long, value_name = "DIM")]
-    embedding_vector_dim: Option<usize>,
-
-    #[arg(long, value_name = "KEY")]
-    embedding_api_key: Option<String>,
 }
 
 #[derive(Debug, Args)]

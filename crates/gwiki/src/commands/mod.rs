@@ -28,7 +28,6 @@ pub(crate) mod refresh;
 pub(crate) mod review_report;
 pub(crate) mod search;
 pub(crate) mod session_sync;
-pub(crate) mod setup;
 pub(crate) mod sources;
 pub(crate) mod status;
 pub(crate) mod trust;
@@ -54,7 +53,6 @@ pub(crate) fn run(command: Command, run_options: RunOptions) -> Result<CommandOu
 fn command_project_root(command: &Command) -> Option<std::path::PathBuf> {
     match command {
         Command::Init { scope }
-        | Command::Setup { scope, .. }
         | Command::Index { scope, .. }
         | Command::Collect { scope }
         | Command::IngestFile { scope, .. }
@@ -98,7 +96,6 @@ fn command_project_root(command: &Command) -> Option<std::path::PathBuf> {
 fn dispatch(command: Command, run_options: RunOptions) -> Result<CommandOutcome, WikiError> {
     match command {
         Command::Init { scope } => init::execute(scope),
-        Command::Setup { scope, options } => setup::execute(scope, options),
         Command::Index { scope, force } => index::execute(scope, run_options, force),
         Command::Collect { scope } => collect::execute(scope),
         Command::Code(options) => code::run_command(options).map_err(WikiError::from),

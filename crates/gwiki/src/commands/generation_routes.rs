@@ -22,7 +22,7 @@ use crate::{ScopeIdentity, ScopeSelection};
 /// Tier -> feature profile is owned by gcore's `profile_for_tier` (Aggregate ->
 /// feature_high); provider/model resolution stays in config and is never pinned
 /// here. The Daemon route forwards the resolved profile name; the Direct route
-/// resolves it to a concrete target so a standalone gcore.yaml routes synthesis
+/// resolves it to a concrete target so a standalone grant-backed config routes synthesis
 /// to its own provider/model/api_key.
 pub(crate) const ARTICLE_TIER: GenerationTier = GenerationTier::Aggregate;
 

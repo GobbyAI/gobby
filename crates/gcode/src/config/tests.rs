@@ -148,19 +148,18 @@ fn adapter_env_precedence_and_json_decode() {
         .expect("qdrant config");
         let embedding = resolve_embedding_config_from_values(config_value_for(&values), |value| {
             Ok(value.to_string())
-        })
-        .expect("embedding config");
+        });
 
-        assert_eq!(falkor.host, "env-falkor.local");
+        assert_eq!(falkor.host, "stored-falkor.local");
         assert_eq!(falkor.port, 16380);
         assert_eq!(falkor.password.as_deref(), Some("stored-pass"));
         assert_eq!(falkor.graph_name, FALKORDB_GRAPH_NAME);
         assert_eq!(qdrant.url.as_deref(), Some("http://qdrant.local:6333"));
         assert_eq!(qdrant.api_key.as_deref(), Some("qdrant-key"));
-        assert_eq!(embedding.api_base, "http://embeddings.local:11434");
-        assert_eq!(embedding.model, "embed-model");
-        assert_eq!(embedding.api_key, None);
-        assert_eq!(embedding.timeout_seconds, 10);
+        assert!(
+            embedding.is_none(),
+            "local embedding resolution is daemon-routed"
+        );
     });
 }
 
@@ -217,39 +216,32 @@ fn daemon_url_normalizes_wildcard_bootstrap_bind_host() {
 
 #[test]
 #[serial_test::serial]
-fn adapter_resolves_config_store_secrets() {
+fn adapter_resolves_grant_backed_plaintext() {
     with_service_env(&[], || {
         let values = std::collections::HashMap::from([
             ("databases.falkordb.host", "falkor.local"),
-            ("databases.falkordb.password", "$secret:falkordb_password"),
+            ("databases.falkordb.password", "grant-falkor"),
             ("databases.qdrant.url", "http://qdrant.local:6333"),
-            ("databases.qdrant.api_key", "$secret:qdrant_api_key"),
+            ("databases.qdrant.api_key", "grant-qdrant"),
             (embedding_keys::AI_API_BASE, "http://embeddings.local:11434"),
-            (embedding_keys::AI_API_KEY, "$secret:embedding_api_key"),
+            (embedding_keys::AI_API_KEY, "grant-embedding"),
         ]);
 
-        fn resolve_secret_stub(value: &str) -> anyhow::Result<String> {
-            match value {
-                "$secret:falkordb_password" => Ok("resolved-falkor".to_string()),
-                "$secret:qdrant_api_key" => Ok("resolved-qdrant".to_string()),
-                "$secret:embedding_api_key" => Ok("resolved-embedding".to_string()),
-                value => Ok(value.to_string()),
-            }
-        }
+        let falkor = resolve_falkordb_config_from_values(config_value_for(&values), |value| {
+            Ok(value.to_string())
+        })
+        .expect("falkordb config");
+        let qdrant = resolve_qdrant_config_from_values(config_value_for(&values), |value| {
+            Ok(value.to_string())
+        })
+        .expect("qdrant config");
+        let embedding = resolve_embedding_config_from_values(config_value_for(&values), |value| {
+            Ok(value.to_string())
+        });
 
-        let falkor =
-            resolve_falkordb_config_from_values(config_value_for(&values), resolve_secret_stub)
-                .expect("falkordb config");
-        let qdrant =
-            resolve_qdrant_config_from_values(config_value_for(&values), resolve_secret_stub)
-                .expect("qdrant config");
-        let embedding =
-            resolve_embedding_config_from_values(config_value_for(&values), resolve_secret_stub)
-                .expect("embedding config");
-
-        assert_eq!(falkor.password.as_deref(), Some("resolved-falkor"));
-        assert_eq!(qdrant.api_key.as_deref(), Some("resolved-qdrant"));
-        assert_eq!(embedding.api_key.as_deref(), Some("resolved-embedding"));
+        assert_eq!(falkor.password.as_deref(), Some("grant-falkor"));
+        assert_eq!(qdrant.api_key.as_deref(), Some("grant-qdrant"));
+        assert!(embedding.is_none());
     });
 }
 

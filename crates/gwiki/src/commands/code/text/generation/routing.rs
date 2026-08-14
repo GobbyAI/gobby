@@ -39,7 +39,7 @@ pub(super) fn generation_tier(tier: PromptTier) -> GenerationTier {
 }
 
 /// Direct-route generation targets resolved once per tier, so a standalone
-/// `gcore.yaml` can route `feature_low/mid/high` to their own
+/// grant-backed config can route `feature_low/mid/high` to their own
 /// provider/model/api_key. Only built when the resolved route is Direct.
 pub(super) struct DirectTierTargets {
     aggregate: DirectGenerationTarget,

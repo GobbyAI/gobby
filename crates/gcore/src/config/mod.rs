@@ -13,15 +13,16 @@ mod types;
 /// FalkorDB graph name owned by the gcode code graph projection.
 pub const CODE_GRAPH_NAME: &str = "gobby_code";
 
-pub use daemon_source::{DaemonOrPrimary, DaemonServedConfig, routing_overrides_only};
+pub use daemon_source::{DaemonOrPrimary, DaemonServedConfig};
 pub use machine_config::{MachineConfig, RUNTIME_CONFIG_PATH, fetch_machine_config};
 pub use resolve::{
     ConfigSource, EnvOnlySource, INDEXING_EXTRA_EXCLUDES_KEY, INDEXING_RESPECT_GITIGNORE_KEY,
-    LayeredConfigSource, decode_config_value, resolve_ai_setting, resolve_ai_tuning,
-    resolve_capability_binding, resolve_capability_routing, resolve_embedding_config,
-    resolve_embedding_config_from_binding, resolve_embedding_config_resolution,
-    resolve_env_pattern, resolve_falkordb_config, resolve_indexing_config,
-    resolve_indexing_config_from_source, resolve_qdrant_config,
+    LayeredConfigSource, contains_secret_marker, decode_config_value, reject_secret_marker,
+    resolve_ai_setting, resolve_ai_tuning, resolve_capability_binding, resolve_capability_routing,
+    resolve_embedding_config, resolve_embedding_config_from_binding,
+    resolve_embedding_config_resolution, resolve_env_pattern, resolve_falkordb_config,
+    resolve_indexing_config, resolve_indexing_config_from_source, resolve_qdrant_config,
+    secret_marker_prefix,
 };
 pub use runtime_contract::{
     CodecVector, DynamicSegmentError, decode_dynamic_segment, encode_dynamic_segment,

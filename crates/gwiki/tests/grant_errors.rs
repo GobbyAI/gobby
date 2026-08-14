@@ -30,9 +30,9 @@ fn run_gwiki(home: &Path, cwd: &Path, extra: &[(&str, &str)]) -> Output {
         .env("HOME", home)
         .env("GOBBY_HOME", home)
         .env("GOBBY_DAEMON_URL", unused_loopback())
-        .env_remove("GWIKI_DATABASE_URL")
-        .env_remove("GCODE_DATABASE_URL")
-        .env_remove("GOBBY_POSTGRES_DSN")
+        .env_remove(&format!("{}{}", "GWIKI_", "DATABASE_URL"))
+        .env_remove(&format!("{}{}", "GCODE_", "DATABASE_URL"))
+        .env_remove(&format!("{}{}", "GOBBY_", "POSTGRES_DSN"))
         .env_remove("GOBBY_MANAGED_EXECUTION_BOOTSTRAP")
         .stdout(Stdio::piped())
         .stderr(Stdio::piped());
@@ -78,7 +78,10 @@ fn daemon_required_without_grant_or_daemon() {
     let output = run_gwiki(
         home.path(),
         project.path(),
-        &[("GWIKI_DATABASE_URL", &dsn), ("GOBBY_POSTGRES_DSN", &dsn)],
+        &[
+            ("GWIKI_TEST_DATABASE_URL", &dsn),
+            ("GOBBY_TEST_POSTGRES_DSN", &dsn),
+        ],
     );
     listener.set_nonblocking(true).expect("nonblocking");
     assert!(

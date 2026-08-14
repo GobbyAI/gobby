@@ -5,8 +5,8 @@ use gobby_core::config::{
 use postgres::Client;
 use serde::Serialize;
 
+use crate::schema::GwikiTable;
 use crate::search::SearchScope;
-use crate::setup::GwikiTable;
 use crate::support::config::qdrant_config_has_url;
 use crate::support::postgres::require_postgres_index_readwrite;
 use crate::support::scope::{

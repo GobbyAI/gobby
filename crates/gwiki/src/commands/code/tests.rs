@@ -65,7 +65,7 @@ fn documents_code_and_config_excludes_content_only_by_default() {
     // Code and structured config (json/yaml) are documented.
     assert!(should_document_file("crates/gcode/src/lib.rs", false));
     assert!(should_document_file(
-        "crates/gcore/assets/docker-compose.services.yml",
+        "src/gobby/data/docker-compose.services.yml",
         false
     ));
     assert!(should_document_file(

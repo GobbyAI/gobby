@@ -14,7 +14,7 @@
 //!
 //! The Daemon route forwards the resolved profile name verbatim; the Direct
 //! route feeds it to [`super::profile::resolve_direct_generation_target`] to
-//! look up provider/model/api_base/api_key from `~/.gobby/gcore.yaml`.
+//! look up provider/model/api_base/api_key from the grant-backed daemon config.
 
 /// Lightest writing tier: per-file/per-symbol summaries.
 pub const FEATURE_LOW: &str = "feature_low";

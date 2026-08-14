@@ -110,11 +110,10 @@ pub(super) fn run_gcode_with_format(
     let mut command = Command::new(env!("CARGO_BIN_EXE_gcode"));
     command
         .current_dir(cwd)
-        .env("GCODE_DATABASE_URL", &env.database_url)
+        .env("GCODE_TEST_DATABASE_URL", &env.database_url)
         .env("GOBBY_FALKORDB_HOST", &env.falkor_host)
         .env("GOBBY_FALKORDB_PORT", &env.falkor_port)
         .env("GOBBY_HOME", gobby_home)
-        .env(gobby_core::runtime_mode::RUNTIME_MODE_ENV, "standalone")
         .arg("--allow-stale")
         .arg("--format")
         .arg(format)

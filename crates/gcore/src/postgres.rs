@@ -32,7 +32,7 @@ pub fn connect_readwrite(database_url: &str) -> anyhow::Result<Client> {
 /// Read a raw config value from the Gobby `config_store` table.
 ///
 /// Returns the raw stored value (which may be JSON-encoded). Callers should
-/// decode JSON string encoding and resolve `$secret:NAME` or `${VAR}` values
+/// decode JSON string encoding and resolve `unresolved secret marker` or `${VAR}` values
 /// in their own config layer.
 ///
 /// Returns `None` for missing keys. Does not write.

@@ -21,7 +21,7 @@ Routing is selected per capability with `auto`, `daemon`, `direct`, or `off`.
 - `auto` probes daemon capability status first, then uses configured direct fallback if the capability is not advertised.
 - `off` reports the capability unavailable.
 
-CLI AI capability config resolves from daemon-supported `config_store` keys first, then standalone `~/.gobby/gcore.yaml`, then defaults. There is no `GOBBY_*` environment layer for AI capability config. Command flags may still override routing, provider, or model for one invocation.
+CLI AI capability config resolves from daemon-served grant-backed keys. There is no client credential file and no `GOBBY_*` environment layer for AI capability config. Use `--no-ai` to force every capability off for one invocation.
 
 `ai.text_generate.*` is the CLI standalone/direct namespace. The daemon does not accept `ai.text_generate.*` writes in `config_store`; daemon text generation resolves providers from the daemon runtime config instead. Named local daemon endpoints live under `ai.generation.local.endpoints.<name>` and are selected with providers such as `local:lm-studio`.
 

@@ -5,7 +5,6 @@ pub(crate) mod index;
 pub(crate) mod init;
 pub(crate) mod scope;
 pub(crate) mod search;
-pub(crate) mod setup;
 pub(crate) mod status;
 pub(crate) mod symbol_at;
 pub(crate) mod symbols;

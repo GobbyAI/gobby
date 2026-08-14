@@ -11,7 +11,6 @@ pub mod cli_contract;
 pub mod daemon_url;
 pub mod database_concurrency;
 pub mod project;
-pub mod provisioning;
 
 // Always available - lightweight foundation modules.
 pub mod ai_context;
@@ -25,8 +24,6 @@ pub mod local_token;
 pub mod machine;
 pub mod markdown;
 pub mod progress;
-pub mod runtime_mode;
-pub mod setup;
 pub mod token_budget;
 pub mod vault;
 
@@ -49,9 +46,6 @@ pub mod postgres;
 
 #[cfg(feature = "postgres")]
 pub mod schema;
-
-#[cfg(feature = "postgres")]
-pub mod secrets;
 
 #[cfg(feature = "falkor")]
 pub mod falkor;

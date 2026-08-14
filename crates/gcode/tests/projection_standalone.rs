@@ -84,7 +84,7 @@ fn graph_and_vector_lifecycle_commands_run_without_daemon() {
     let gobby_home = project.path().join(".no-daemon-home");
     fs::create_dir_all(&gobby_home).expect("create gobby home");
     fs::write(
-        gobby_home.join("gcore.yaml"),
+        gobby_home.join("grant-backed config"),
         format!(
             "{api_base}: {embedding_url}/v1\n{api_key}: test-key\n{model}: embed-small\n{dim}: 3\n",
             api_base = embedding_keys::AI_API_BASE,
@@ -98,7 +98,7 @@ fn graph_and_vector_lifecycle_commands_run_without_daemon() {
     let mut conn = Client::connect(&env.database_url, NoTls).expect("connect PostgreSQL");
     if config_store_has_embedding_overrides(&mut conn) {
         eprintln!(
-            "skipping projection_standalone smoke; config_store AI embedding keys override the mock gcore.yaml"
+            "skipping projection_standalone smoke; config_store AI embedding keys override the mock grant-backed config"
         );
         return;
     }
@@ -242,12 +242,11 @@ fn run_gcode(
     let mut command = Command::new(env!("CARGO_BIN_EXE_gcode"));
     command
         .current_dir(cwd)
-        .env("GCODE_DATABASE_URL", &env.database_url)
+        .env("GCODE_TEST_DATABASE_URL", &env.database_url)
         .env("GOBBY_FALKORDB_HOST", &env.falkor_host)
         .env("GOBBY_FALKORDB_PORT", &env.falkor_port)
         .env("GOBBY_QDRANT_URL", qdrant_url)
         .env("GOBBY_HOME", cwd.join(".no-daemon-home"))
-        .env(gobby_core::runtime_mode::RUNTIME_MODE_ENV, "standalone")
         .arg("--allow-stale")
         .arg("--format")
         .arg("json")

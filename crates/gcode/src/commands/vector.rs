@@ -275,7 +275,7 @@ mod tests {
         };
         use gobby_core::config::AiRouting;
 
-        let mut source = AiConfigSource::with_primary(NoPrimaryAiConfigSource, None);
+        let mut source = AiConfigSource::with_primary(NoPrimaryAiConfigSource);
         let context = AiContext::resolve_with_options(
             Some("project-1".to_string()),
             &mut source,

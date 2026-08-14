@@ -6,8 +6,8 @@ use serde::Serialize;
 
 use crate::commands::purge::{BackendConfigs, optional_backend_configs, purge_scope_state};
 use crate::project_lock::{PruneProjectLock, try_acquire_prune_lock};
+use crate::schema::GWIKI_POSTGRES_TABLES;
 use crate::search::SearchScope;
-use crate::setup::GWIKI_POSTGRES_TABLES;
 use crate::support::config::qdrant_config_has_url;
 use crate::support::postgres::require_postgres_index_readwrite;
 use crate::{CommandOutcome, CommandResult, ScopeIdentity, WikiError};

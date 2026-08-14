@@ -2,7 +2,7 @@ use std::path::Path;
 
 use gobby_core::degradation::{DegradationKind, ServiceState};
 
-use crate::{setup, store};
+use crate::store;
 
 pub(crate) fn query_tokens(query: &str) -> Vec<String> {
     query
@@ -79,14 +79,6 @@ pub(crate) fn document_kind_name(kind: store::WikiDocumentKind) -> &'static str 
         store::WikiDocumentKind::Concept => "concept",
         store::WikiDocumentKind::Topic => "topic",
         store::WikiDocumentKind::CodeDoc => "code_doc",
-    }
-}
-
-pub(crate) fn postgres_object_kind(kind: setup::GwikiPostgresObjectKind) -> &'static str {
-    match kind {
-        setup::GwikiPostgresObjectKind::Preflight => "preflight",
-        setup::GwikiPostgresObjectKind::Table => "table",
-        setup::GwikiPostgresObjectKind::Index => "index",
     }
 }
 

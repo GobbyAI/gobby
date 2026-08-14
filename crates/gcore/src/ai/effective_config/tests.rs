@@ -298,7 +298,7 @@ fn served_secret_or_environment_references_are_contract_failures() {
     let cases = [
         (
             "ai.embeddings.model",
-            "$secret:embedding_model",
+            "secret-marker embedding_model",
             "unresolved secret reference",
         ),
         (
@@ -331,7 +331,7 @@ fn malformed_local_yaml_after_fetch_keeps_daemon_mode_without_routing() {
         ("GOBBY_AGENT_API_TOKEN", None),
     ]);
     let home = temp_home();
-    fs::write(home.path().join("gcore.yaml"), "ai: [malformed")
+    fs::write(home.path().join("grant-backed config"), "ai: [malformed")
         .expect("write malformed gcore yaml");
     let (base_url, request) =
         spawn_json_response(r#"{"revision":7,"config":{"ai.embeddings.model":"served-model"}}"#)
@@ -376,7 +376,7 @@ fn daemon_dsn_trims_available_value_and_propagates_failed_state() {
 fn primary_factory_is_lazy_in_daemon_mode_and_once_in_standalone_mode() {
     let home = temp_home();
     fs::write(
-        home.path().join("gcore.yaml"),
+        home.path().join("grant-backed config"),
         "ai.embeddings.model: standalone-model\n",
     )
     .expect("write standalone config");

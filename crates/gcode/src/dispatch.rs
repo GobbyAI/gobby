@@ -1,4 +1,4 @@
-use crate::{commands, config, freshness, output, setup};
+use crate::{commands, config, freshness, output};
 use clap::Parser as _;
 
 use crate::cli::{self, Cli, Command, EmbeddingsCommand, GraphCommand, VectorCommand};
@@ -104,7 +104,6 @@ fn service_config_selection(command: &Command) -> config::ServiceConfigSelection
         }
         Command::Contract
         | Command::Init
-        | Command::Setup { .. }
         | Command::Projects
         | Command::SearchText { .. }
         | Command::SearchContent { .. }
@@ -120,14 +119,7 @@ fn service_config_selection(command: &Command) -> config::ServiceConfigSelection
     }
 }
 
-fn dispatch_early_command<F>(
-    cli: &Cli,
-    format: output::Format,
-    setup_runner: F,
-) -> anyhow::Result<bool>
-where
-    F: FnOnce(setup::StandaloneSetupRequest, output::Format, bool) -> anyhow::Result<()>,
-{
+fn dispatch_early_command(cli: &Cli, format: output::Format) -> anyhow::Result<bool> {
     match &cli.command {
         Command::Init => {
             let root = match &cli.project {
@@ -142,43 +134,6 @@ where
                 output::Format::Json => output::print_json(&crate::contract::contract())?,
                 output::Format::Text => output::print_text("gcode CLI contract v1")?,
             }
-            Ok(true)
-        }
-        Command::Setup {
-            standalone,
-            database_url,
-            no_services,
-            overwrite_code_index,
-            schema,
-            embedding_provider,
-            embedding_api_base,
-            embedding_model,
-            embedding_query_prefix,
-            embedding_vector_dim,
-            embedding_api_key,
-            falkordb_host,
-            falkordb_port,
-            falkordb_password,
-            qdrant_url,
-        } => {
-            let mut request = setup::StandaloneSetupRequest::new(
-                *standalone,
-                database_url.clone(),
-                Some(schema.clone()),
-            );
-            request.no_services = *no_services;
-            request.overwrite_code_index = *overwrite_code_index;
-            request.embedding_provider = embedding_provider.clone();
-            request.embedding_api_base = embedding_api_base.clone();
-            request.embedding_model = embedding_model.clone();
-            request.embedding_query_prefix = embedding_query_prefix.clone();
-            request.embedding_vector_dim = *embedding_vector_dim;
-            request.embedding_api_key = embedding_api_key.clone().into();
-            request.falkordb_host = falkordb_host.clone();
-            request.falkordb_port = *falkordb_port;
-            request.falkordb_password = falkordb_password.clone().into();
-            request.qdrant_url = qdrant_url.clone();
-            setup_runner(request, format, cli.quiet)?;
             Ok(true)
         }
         Command::Projects => {
@@ -271,7 +226,7 @@ fn run() -> anyhow::Result<()> {
     let format = cli::effective_format(cli.format, &cli.command);
 
     // Commands that must run before Context::resolve() (work on uninitialized projects)
-    if dispatch_early_command(&cli, format, commands::setup::run)? {
+    if dispatch_early_command(&cli, format)? {
         return Ok(());
     }
 
@@ -284,11 +239,7 @@ fn run() -> anyhow::Result<()> {
     match cli.command {
         // These commands are handled before Context::resolve(); this arm keeps the
         // exhaustive match explicit if the early-dispatch block returns normally.
-        Command::Contract
-        | Command::Init
-        | Command::Setup { .. }
-        | Command::Projects
-        | Command::Prune { .. } => Ok(()),
+        Command::Contract | Command::Init | Command::Projects | Command::Prune { .. } => Ok(()),
         Command::Index {
             path,
             files,

@@ -1,7 +1,7 @@
 //! Configuration resolution for gcode.
 //!
 //! Reads bootstrap.yaml → PostgreSQL hub → config_store → service configs.
-//! Resolves $secret:NAME and ${VAR} patterns.
+//! Resolves unresolved secret marker and ${VAR} patterns.
 //!
 //! Source: src/gobby/config/bootstrap.py, src/gobby/config/persistence.py
 

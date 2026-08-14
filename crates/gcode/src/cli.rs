@@ -51,54 +51,6 @@ pub(crate) enum Command {
     // ── Project Setup ────────────────────────────────────────────────
     /// Initialize project context (.gobby/gcode.json)
     Init,
-    /// Explicitly create gcode-owned standalone database objects
-    Setup {
-        /// Required opt-in for setup writes in v1
-        #[arg(long, required = true)]
-        standalone: bool,
-        /// PostgreSQL database URL to set up
-        #[arg(long)]
-        database_url: Option<String>,
-        /// Skip Docker service provisioning
-        #[arg(long)]
-        no_services: bool,
-        /// Drop/recreate gcode-owned code-index state and clear code-index projections
-        #[arg(long)]
-        overwrite_code_index: bool,
-        /// PostgreSQL schema namespace for gcode-owned objects
-        #[arg(long, default_value = "public")]
-        schema: String,
-        /// Embedding provider to store in gcore.yaml
-        #[arg(long)]
-        embedding_provider: Option<String>,
-        /// OpenAI-compatible embedding API base URL
-        #[arg(long)]
-        embedding_api_base: Option<String>,
-        /// Embedding model name
-        #[arg(long)]
-        embedding_model: Option<String>,
-        /// Query prefix to prepend before embedding search queries
-        #[arg(long)]
-        embedding_query_prefix: Option<String>,
-        /// Embedding vector dimension
-        #[arg(long)]
-        embedding_vector_dim: Option<usize>,
-        /// Embedding API key to store in local gcore.yaml
-        #[arg(long)]
-        embedding_api_key: Option<String>,
-        /// FalkorDB host to store in gcore.yaml
-        #[arg(long)]
-        falkordb_host: Option<String>,
-        /// FalkorDB port to store in gcore.yaml
-        #[arg(long)]
-        falkordb_port: Option<u16>,
-        /// FalkorDB password for Docker provisioning or external config
-        #[arg(long)]
-        falkordb_password: Option<String>,
-        /// Qdrant URL to store in gcore.yaml when services are not provisioned
-        #[arg(long)]
-        qdrant_url: Option<String>,
-    },
     /// Index a directory (full or incremental). Writes symbols, files, and chunks to PostgreSQL hub
     Index {
         /// Path to index (default: project root)

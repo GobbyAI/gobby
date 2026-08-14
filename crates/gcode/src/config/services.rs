@@ -3,10 +3,7 @@
 use gobby_core::ai_context::AiContext;
 use gobby_core::config::embedding_keys;
 use gobby_core::config::{AiCapability, CapabilityBinding, ConfigSource};
-use gobby_core::provisioning::{GCORE_CONFIG_FILENAME, StandaloneConfig};
 use postgres::Client;
-use std::fmt;
-use std::path::PathBuf;
 
 use super::{
     CodeVectorConfigError, CodeVectorSettings, FALKORDB_GRAPH_NAME, FalkorConfig, QdrantConfig,
@@ -16,7 +13,6 @@ use crate::config::context::{
     IndexingSettings,
 };
 use crate::config::layers::{ConfigLayers, HubConfigCapture, ServiceSource};
-use crate::db;
 
 pub(super) trait ServiceConfigSource {
     fn config_value(&mut self, key: &str) -> anyhow::Result<Option<String>>;
@@ -77,80 +73,6 @@ where
     fn resolve_value(&mut self, value: &str) -> anyhow::Result<String> {
         self.source.resolve_value(value)
     }
-}
-
-pub(crate) fn read_standalone_config_optional() -> Option<StandaloneConfig> {
-    match read_standalone_config() {
-        Ok(config) => Some(config),
-        Err(StandaloneConfigReadError::NotFound { .. }) => None,
-        Err(error) => {
-            log::warn!("{error}");
-            None
-        }
-    }
-}
-
-#[derive(Debug)]
-pub(crate) enum StandaloneConfigReadError {
-    Home {
-        source: anyhow::Error,
-    },
-    NotFound {
-        path: PathBuf,
-    },
-    Read {
-        path: PathBuf,
-        source: std::io::Error,
-    },
-    Parse {
-        path: PathBuf,
-        source: anyhow::Error,
-    },
-}
-
-impl fmt::Display for StandaloneConfigReadError {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        match self {
-            Self::Home { source } => {
-                write!(
-                    f,
-                    "failed to resolve Gobby home for standalone config: {source}"
-                )
-            }
-            Self::NotFound { path } => {
-                write!(f, "standalone gcode config not found at {}", path.display())
-            }
-            Self::Read { path, source } => write!(
-                f,
-                "failed to read standalone gcode config at {}: {source}",
-                path.display()
-            ),
-            Self::Parse { path, source } => write!(
-                f,
-                "failed to parse standalone gcode config at {}: {source}",
-                path.display()
-            ),
-        }
-    }
-}
-
-impl std::error::Error for StandaloneConfigReadError {}
-
-pub(crate) fn read_standalone_config() -> Result<StandaloneConfig, StandaloneConfigReadError> {
-    let home = db::gobby_home().map_err(|source| StandaloneConfigReadError::Home { source })?;
-    let path = home.join(GCORE_CONFIG_FILENAME);
-    let contents = std::fs::read_to_string(&path).map_err(|source| {
-        if source.kind() == std::io::ErrorKind::NotFound {
-            StandaloneConfigReadError::NotFound { path: path.clone() }
-        } else {
-            StandaloneConfigReadError::Read {
-                path: path.clone(),
-                source,
-            }
-        }
-    })?;
-    StandaloneConfig::from_yaml_str(&contents)
-        .map_err(|source| StandaloneConfigReadError::Parse { path, source })
 }
 
 #[cfg(test)]
@@ -382,7 +304,7 @@ fn resolve_service_port(
     }
 }
 
-/// Resolve embedding API configuration from config_store + gcore.yaml.
+/// Resolve embedding API configuration from config_store + grant-backed config.
 ///
 /// Returns None if no api_base is found (BM25 only).
 ///

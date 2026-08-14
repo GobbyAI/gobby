@@ -786,7 +786,8 @@ mod tests {
             r#"{"id":"11111111-1111-4111-8111-111111111111"}"#,
         )
         .expect("write project json");
-        let _database_url = EnvGuard::set("GWIKI_DATABASE_URL", "postgresql://127.0.0.1:1/gwiki");
+        let _database_url =
+            EnvGuard::set("GWIKI_TEST_DATABASE_URL", "postgresql://127.0.0.1:1/gwiki");
 
         let error =
             execute(ScopeSelection::project(temp.path())).expect_err("PostgreSQL is required");

@@ -4,12 +4,12 @@
 //! In daemon mode the profile name is forwarded to the daemon, which owns
 //! provider/model selection. In standalone mode there is no daemon, so a
 //! profile such as `feature_high` must resolve to a concrete
-//! provider/model/api_base/api_key here, read from `~/.gobby/gcore.yaml`.
+//! provider/model/api_base/api_key here, read from the grant-backed daemon config.
 //!
 //! Resolution reads `ai.text_generate.profiles.<profile>.<field>` and falls
 //! back to the base `ai.text_generate.<field>` binding when a profile-specific
 //! field is unset. All values flow through [`resolve_ai_setting`], so
-//! `$secret:` and `${ENV}` patterns resolve exactly as they do for the base
+//! `secret-marker ` and `${ENV}` patterns resolve exactly as they do for the base
 //! binding, and a plaintext `api_key` in standalone YAML is accepted.
 
 use crate::config::{ConfigSource, ai_keys, resolve_ai_setting};

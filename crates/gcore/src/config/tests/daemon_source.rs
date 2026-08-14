@@ -1,7 +1,5 @@
 use super::*;
-use crate::provisioning::StandaloneConfig;
 use std::collections::{BTreeMap, VecDeque};
-use std::fs;
 
 #[derive(Debug)]
 struct PrimarySource;
@@ -164,25 +162,16 @@ fn daemon_with_secrets_falls_through_only_for_secret_reference_keys() {
 }
 
 #[test]
-fn daemon_with_secrets_resolves_secret_references_via_the_primary() {
+fn daemon_with_secrets_rejects_secret_markers() {
     let mut source = DaemonOrPrimary::DaemonWithSecrets(
         DaemonServedConfig::new(7, BTreeMap::new()),
         PrimarySource,
     );
-
-    assert_eq!(
-        source
-            .resolve_value("$secret:falkordb_password")
-            .expect("secret resolution"),
-        "primary:$secret:falkordb_password"
-    );
-    assert_eq!(
-        source
-            .resolve_value("  $secret:leading_whitespace")
-            .expect("secret resolution"),
-        "primary:  $secret:leading_whitespace"
-    );
-    // Non-secret values keep the served-config identity contract.
+    let marker = crate::config::secret_marker_prefix() + "falkordb_password";
+    let error = source
+        .resolve_value(&marker)
+        .expect_err("secret marker must fail typed");
+    assert!(error.to_string().contains("grant-issuance"));
     assert_eq!(
         source
             .resolve_value("${CLIENT_ENV_MUST_NOT_EXPAND}")
@@ -220,62 +209,9 @@ fn daemon_with_secrets_rejects_revision_changes_around_lookup_and_resolution() {
         DaemonServedConfig::new(7, BTreeMap::new()),
         SequencedPrimarySource::new([Ok(Some(7)), Ok(Some(8))]),
     );
+    let marker = crate::config::secret_marker_prefix() + "embedding_api_key";
     let error = resolution_source
-        .resolve_value("$secret:embedding_api_key")
-        .expect_err("revision change must fail closed");
-    assert!(error.to_string().contains("daemon=7, primary=8"));
-}
-
-#[test]
-fn routing_overrides_drop_non_routing_and_switch_run_values() {
-    let config = StandaloneConfig::new(BTreeMap::from([
-        ("ai.routing".to_string(), "daemon".to_string()),
-        ("ai.text_generate.routing".to_string(), "direct".to_string()),
-        (
-            "ai.embeddings.provider".to_string(),
-            "openai-compatible".to_string(),
-        ),
-        ("ai.embeddings.switch_run".to_string(), "42".to_string()),
-    ]));
-
-    let routing = routing_overrides_only(config);
-
-    assert_eq!(
-        routing.values(),
-        &BTreeMap::from([
-            ("ai.routing".to_string(), "daemon".to_string()),
-            ("ai.text_generate.routing".to_string(), "direct".to_string(),),
-        ])
-    );
-}
-
-#[test]
-fn raw_yaml_skips_text_generation_derivation() {
-    let yaml = "ai:\n  embeddings:\n    provider: openai-compatible\n";
-
-    let raw = StandaloneConfig::from_yaml_str_raw(yaml).expect("parse raw config");
-    let derived = StandaloneConfig::from_yaml_str(yaml).expect("parse derived config");
-
-    assert_eq!(raw.get(ai_keys::TEXT_GENERATE_ROUTING), None);
-    assert_eq!(derived.get(ai_keys::TEXT_GENERATE_ROUTING), Some("direct"));
-}
-
-#[test]
-fn raw_file_routing_survives_routing_only_filter() {
-    let dir = tempfile::tempdir().expect("tempdir");
-    let path = dir.path().join("gcore.yaml");
-    fs::write(
-        &path,
-        "ai:\n  routing: daemon\n  embeddings:\n    provider: ollama\n  text_generate:\n    routing: direct\n",
-    )
-    .expect("write config");
-
-    let raw = StandaloneConfig::read_raw_at(&path)
-        .expect("read raw config")
-        .expect("config present");
-    let routing = routing_overrides_only(raw);
-
-    assert_eq!(routing.get("ai.routing"), Some("daemon"));
-    assert_eq!(routing.get(ai_keys::TEXT_GENERATE_ROUTING), Some("direct"));
-    assert_eq!(routing.get("ai.embeddings.provider"), None);
+        .resolve_value(&marker)
+        .expect_err("secret marker must fail typed");
+    assert!(error.to_string().contains("grant-issuance"));
 }

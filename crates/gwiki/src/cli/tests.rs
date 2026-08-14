@@ -38,6 +38,16 @@ fn research_subcommand_is_removed() {
 }
 
 #[test]
+fn setup_subcommand_is_removed() {
+    use clap::Parser;
+
+    assert!(!CLI_SUBCOMMANDS.contains(&"setup"));
+    let error = Cli::try_parse_from(["gwiki", "setup", "--standalone"])
+        .expect_err("setup must no longer parse");
+    assert_eq!(error.kind(), clap::error::ErrorKind::InvalidSubcommand);
+}
+
+#[test]
 fn ask_flag_surface_supports_deep_investigation() {
     use clap::Parser;
 
@@ -651,43 +661,6 @@ fn refresh_cli_flags_map_to_command_options() {
     let rooted_project = Cli::try_parse_from(["gwiki", "refresh", "--project", "/repo"])
         .expect("parse explicit project root");
     assert_eq!(rooted_project.scope.project, Some(PathBuf::from("/repo")));
-}
-
-#[test]
-fn setup_cli_flags_map_to_command_options() {
-    let command = command_from_cli(
-        CliCommand::Setup(SetupArgs {
-            standalone: true,
-            database_url: Some("postgresql://localhost/gwiki".to_string()),
-            no_services: true,
-            falkordb_host: Some("127.0.0.2".to_string()),
-            falkordb_port: Some(26379),
-            falkordb_password: Some("secret".to_string()),
-            qdrant_url: Some("http://localhost:7333".to_string()),
-            embedding_provider: Some("openai-compatible".to_string()),
-            embedding_api_base: Some("http://localhost:1234/v1".to_string()),
-            embedding_model: Some("embed-small".to_string()),
-            embedding_query_prefix: Some("query: ".to_string()),
-            embedding_vector_dim: Some(1024),
-            embedding_api_key: Some("api-key".to_string()),
-        }),
-        ScopeSelection::detect(),
-    )
-    .expect("map setup command");
-
-    let Command::Setup { options, .. } = command else {
-        panic!("expected setup command");
-    };
-    assert!(options.standalone);
-    assert_eq!(
-        options.database_url.as_deref(),
-        Some("postgresql://localhost/gwiki")
-    );
-    assert!(options.no_services);
-    assert_eq!(options.falkordb_host.as_deref(), Some("127.0.0.2"));
-    assert_eq!(options.falkordb_port, Some(26379));
-    assert_eq!(options.qdrant_url.as_deref(), Some("http://localhost:7333"));
-    assert_eq!(options.embedding_vector_dim, Some(1024));
 }
 
 #[test]

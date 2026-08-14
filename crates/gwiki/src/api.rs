@@ -12,10 +12,6 @@ pub enum Command {
     Init {
         scope: ScopeSelection,
     },
-    Setup {
-        scope: ScopeSelection,
-        options: SetupOptions,
-    },
     Index {
         scope: ScopeSelection,
         force: bool,
@@ -229,23 +225,6 @@ pub enum PageWriteMode {
     Upsert,
     /// Fail with a distinct error if the page already exists.
     Create,
-}
-
-#[derive(Debug, Clone, Default, PartialEq, Eq)]
-pub struct SetupOptions {
-    pub standalone: bool,
-    pub database_url: Option<String>,
-    pub no_services: bool,
-    pub falkordb_host: Option<String>,
-    pub falkordb_port: Option<u16>,
-    pub falkordb_password: Option<String>,
-    pub qdrant_url: Option<String>,
-    pub embedding_provider: Option<String>,
-    pub embedding_api_base: Option<String>,
-    pub embedding_model: Option<String>,
-    pub embedding_query_prefix: Option<String>,
-    pub embedding_vector_dim: Option<usize>,
-    pub embedding_api_key: Option<String>,
 }
 
 /// Behavior flags for `gwiki graph`.

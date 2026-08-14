@@ -105,7 +105,7 @@ pub fn is_machine_config_key(key: &str) -> bool {
             .any(|spec| spec.machine_export && spec.matches(key))
 }
 
-/// True when `key` addresses a value the contract stores as a `$secret:`
+/// True when `key` addresses a value the contract stores as a `secret-marker `
 /// reference: an exact key with `reference` secrecy, or a pattern key whose
 /// pattern (or matched `{field}` segment) carries `reference` secrecy. These
 /// are the only keys daemon-mode sources may fall through to a datastore

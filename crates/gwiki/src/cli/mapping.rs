@@ -6,7 +6,7 @@ use std::path::{Path, PathBuf};
 
 use super::{
     CliCommand, CompileKind, ExportArgs, ExportSubcommand, PageMode, PageSubcommand,
-    ReviewReportArgs, ScopeArgs, SetupArgs,
+    ReviewReportArgs, ScopeArgs,
 };
 
 #[cfg(test)]
@@ -52,10 +52,6 @@ pub(super) fn command_from_cli_with_runtime(
             )))
         }
         CliCommand::Init => Ok(Command::Init { scope }),
-        CliCommand::Setup(args) => Ok(Command::Setup {
-            scope,
-            options: args.into(),
-        }),
         CliCommand::Index { force } => Ok(Command::Index { scope, force }),
         CliCommand::Collect => Ok(Command::Collect { scope }),
         CliCommand::IngestFile {
@@ -308,26 +304,6 @@ impl From<ScopeArgs> for ScopeSelection {
             Self::project(project_root)
         } else {
             Self::detect()
-        }
-    }
-}
-
-impl From<SetupArgs> for gobby_wiki::SetupOptions {
-    fn from(args: SetupArgs) -> Self {
-        Self {
-            standalone: args.standalone,
-            database_url: args.database_url,
-            no_services: args.no_services,
-            falkordb_host: args.falkordb_host,
-            falkordb_port: args.falkordb_port,
-            falkordb_password: args.falkordb_password,
-            qdrant_url: args.qdrant_url,
-            embedding_provider: args.embedding_provider,
-            embedding_api_base: args.embedding_api_base,
-            embedding_model: args.embedding_model,
-            embedding_query_prefix: args.embedding_query_prefix,
-            embedding_vector_dim: args.embedding_vector_dim,
-            embedding_api_key: args.embedding_api_key,
         }
     }
 }

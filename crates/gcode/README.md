@@ -89,21 +89,17 @@ Expand-Archive gcode.zip -DestinationPath .
 cargo install gobby-code
 ```
 
-Graph and semantic features are configured at runtime. You do not need Cargo
-feature flags to enable FalkorDB, Qdrant, or embeddings support. Gobby-managed
-projects read FalkorDB settings from `databases.falkordb.*`; daemon-independent
-setups can use `GOBBY_FALKORDB_HOST`, `GOBBY_FALKORDB_PORT`, and
-`GOBBY_FALKORDB_PASSWORD`.
+Graph and semantic features are configured at runtime through a signed daemon
+grant. You do not need Cargo feature flags to enable FalkorDB, Qdrant, or
+embeddings support. Connection material and AI routing come from the grant and
+daemon-served config; gcode does not read local credential files or client DSN
+environment variables.
 
-Runtime indexing/search requires a migrated Gobby PostgreSQL hub. gcode
-asks the local daemon broker for the hub DSN first. If the daemon is
-unavailable, resolution checks `GCODE_DATABASE_URL`, `GOBBY_POSTGRES_DSN`,
-`~/.gobby/gcore.yaml` `databases.postgres.dsn`, then bootstrap
-`database_url`.
-
-Standalone setup is tested against PostgreSQL 18 with `pg_search` BM25 indexes.
-The schema preflight reads PostgreSQL catalogs such as `pg_class` and
-`pg_namespace` to validate only gcode-owned code-index tables and indexes.
+Runtime indexing/search requires a migrated Gobby PostgreSQL hub. Start the
+Gobby daemon and run `gcode` against a project the daemon has granted. Schema
+application belongs to `gdaemon apply`. The schema preflight reads PostgreSQL
+catalogs such as `pg_class` and `pg_namespace` to validate only gcode-owned
+code-index tables and indexes.
 
 ### With Gobby
 
@@ -163,7 +159,6 @@ gcode vector cleanup-orphans              # Remove code-symbol vectors for unind
 # Project management
 gcode status                              # Index stats
 gcode projects                            # List all indexed projects
-gcode setup --standalone                  # Provision daemon-independent services
 gcode index                               # Re-index (incremental)
 gcode invalidate                          # Clear index, force full re-index
 gcode prune                               # Remove stale projects + reconcile orphaned projections
@@ -232,7 +227,7 @@ Gobby adds scheduling, shared runtime config, semantic services, and infrastruct
 
 **PostgreSQL DSNs can stay out of plaintext files.** Isolated gcode runtimes
 ask the daemon broker first. Operators who need daemonless access can opt into
-`GCODE_DATABASE_URL`, `GOBBY_POSTGRES_DSN`, `~/.gobby/gcore.yaml`, or inline
+`GCODE_TEST_DATABASE_URL`, `GOBBY_TEST_POSTGRES_DSN`, the grant-backed daemon config, or inline
 bootstrap `database_url`.
 
 **Indexing happens automatically.** The Gobby daemon watches for file changes and re-indexes in the background. Without the daemon, run `gcode index` manually.

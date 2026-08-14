@@ -396,7 +396,7 @@ mod tests {
 
         fn resolve_value(&mut self, value: &str) -> anyhow::Result<String> {
             match value {
-                "$secret:EMBEDDING_KEY" => Ok("resolved-embedding-key".to_string()),
+                "secret-marker EMBEDDING_KEY" => Ok("resolved-embedding-key".to_string()),
                 value => Ok(value.to_string()),
             }
         }
@@ -437,7 +437,7 @@ mod tests {
                 "http://shared-binding.local:11434/v1",
             ),
             (ai_keys::EMBEDDINGS_MODEL, "shared-embed-model"),
-            (ai_keys::EMBEDDINGS_API_KEY, "$secret:EMBEDDING_KEY"),
+            (ai_keys::EMBEDDINGS_API_KEY, "secret-marker EMBEDDING_KEY"),
         ]);
 
         assert!(

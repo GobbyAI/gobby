@@ -19,13 +19,13 @@ The baseline crate remains dependency-light. Consumers that only need project di
 | `project` | always | Walk up from a starting directory to find a `.gobby/` directory containing `project.json` or `gcode.json`. Read the `id` field from the project identity file. |
 | `bootstrap` | always | Read `~/.gobby/bootstrap.yaml` to get the daemon's listen endpoint (`bind_host`, `daemon_port`). Falls back to `127.0.0.1:60887` when the file is missing or malformed. |
 | `daemon_url` | always | One daemon-URL resolver for all binaries: `GOBBY_DAEMON_URL` → `GOBBY_PORT` → bootstrap endpoint, normalizing wildcard listen addresses (`0.0.0.0`, `::`, `::0`) to `127.0.0.1` and bracketing bare IPv6 literals. |
-| `runtime_mode` | always | Select and cache `Daemon` or `Standalone` from `GOBBY_RUNTIME_MODE`, an explicit daemon URL, and installed OS service artifacts. |
+| `grant` | always | Signed grant handshake, cache, and typed grant errors for daemon-native clients. |
 | `codewiki_contract` | always | Frontmatter contract for codewiki-generated vault pages: shared key/value constants plus a golden page fixture pinned by gwiki's emitter and parser tests. |
 | `config` | always | Shared configuration-resolution contracts. Environment variables, `config_store`, and defaults are represented here as the foundation expands. |
 | `context` | always | Shared runtime context contracts for project identity, daemon URL, and service configuration. Consumer-specific CLI state stays outside. |
 | `degradation` | always | Shared vocabulary for configured-service unavailability, explicit degraded paths, partial search, stale indexes, skipped artifacts, and fatal core errors. |
 | `ai` | `ai` | Shared AI routing, direct/daemon transports, profile tiers, embeddings, and agentic/tool-loop generation primitives. |
-| `setup` | always | Attached and standalone setup contracts. Runtime commands validate externally managed resources and do not implicitly migrate them. |
+| `schema` | `postgres` | Hub schema apply/verify authority. Runtime commands validate externally managed resources and do not implicitly migrate them. |
 | `token_budget` | always | Shared token-budget trimming helpers — bounds prompt/context payloads to a token ceiling so consumers (`gwiki ask`, `gwiki code`) reuse one budgeting primitive. |
 | `postgres` | `postgres` | PostgreSQL hub adapter boundary. Validates Gobby-owned schema and BM25 requirements without creating, altering, or dropping managed objects. |
 | `falkor` | `falkor` | FalkorDB adapter boundary. Graph connection helpers live here without making FalkorDB a baseline dependency. |
@@ -100,44 +100,11 @@ let url = gobby_core::daemon_url::daemon_url();
 ureq::post(&format!("{url}/api/hooks/execute")).send_string(body)?;
 ```
 
-### `runtime_mode`
+### `grant`
 
-```rust
-pub enum RuntimeMode {
-    Daemon,
-    Standalone,
-}
-
-pub fn runtime_mode() -> Result<RuntimeMode, RuntimeModeError>;
-```
-
-`GOBBY_RUNTIME_MODE=standalone` selects standalone explicitly. The default,
-an empty value, and `auto` use this precedence:
-
-1. A non-empty `GOBBY_DAEMON_URL` selects daemon mode for remote clients.
-2. A registered OS service selects daemon mode.
-3. No registration selects standalone mode.
-
-Registration means the platform installer artifact exists:
-
-- macOS: `~/Library/LaunchAgents/com.gobby.daemon.plist`
-- Linux:
-  `${XDG_CONFIG_HOME:-~/.config}/systemd/user/gobby-daemon.service`
-- Windows: `$GOBBY_HOME/gobby-daemon.task.xml`
-
-Unsupported platforms select standalone in `auto`. Unknown
-`GOBBY_RUNTIME_MODE` values are configuration errors.
-
-The first successful selection is cached for the process lifetime. Changes to
-environment variables, service installation, enablement, or running state take
-effect on the next process invocation. Daemon mode stays selected when the
-registered service is stopped or disabled; clients report the daemon failure
-instead of changing configuration stacks.
-
-With the `ai` feature, effective daemon config is fetched once after daemon
-mode is selected. Transport failures and every non-2xx response are sanitized
-hard errors. `daemon_mode_layers()` returns `None` only when runtime mode is
-standalone.
+Clients acquire a signed grant before constructing feature services. There is
+one runtime: daemon-granted. Unresolved secret markers that reach a client are
+grant-issuance bugs and fail typed.
 
 ### `falkor`
 
@@ -222,13 +189,12 @@ ai = ["dep:reqwest", "dep:base64", "dep:bytes", "dep:httpdate", "dep:rand", "dep
 full = ["postgres", "falkor", "qdrant", "indexing", "search", "graph-analytics", "ai"]
 ```
 
-`openssl` is intentionally **not** feature-gated: the always-compiled
-`fernet`/`secrets` path pulls `openssl-sys` into every dependency graph, so the
-crate declares `openssl = { version = "0.10", features = ["vendored"] }` as a
-non-optional dependency. This unifies `openssl-sys` to a static (vendored) build
-across all consumers and targets — including graphs that omit `postgres`
-(ghook, gcode's build-dependency graph) — which the Windows release runners
-require because they have no system OpenSSL.
+`openssl` is intentionally **not** feature-gated. The crate declares
+`openssl = { version = "0.10", features = ["vendored"] }` as a non-optional
+dependency so `openssl-sys` stays a static (vendored) build across all
+consumers and targets — including graphs that omit `postgres` (ghook, gcode's
+build-dependency graph) — which the Windows release runners require because
+they have no system OpenSSL.
 
 Feature rationale:
 
@@ -294,20 +260,15 @@ feature profile, project context, max-turn settings, reasoning effort, and a
 `ToolPolicy` that lists allowed tools and whether mutation is allowed. CodeWiki
 uses a read-only policy for aggregate page investigation.
 
-AI config values resolve from datastore-backed config sources first, then
-standalone `~/.gobby/gcore.yaml`, then defaults. Datastore-backed sources may
-resolve `$secret:NAME` through the Gobby secret store; env-only sources reject
-secret references so unresolved placeholders do not leak into outbound HTTP
-headers or daemon requests. Keep Fernet/DEK handling in `secrets`; config
-resolvers should call the source's value resolver rather than decrypting
-directly.
+AI config values resolve from grant-backed and daemon-served sources. Unresolved
+secret markers that reach a client are grant-issuance bugs and fail typed.
 
 ## Adding a New Helper
 
 Before adding a module or function to `gobby-core`, check:
 
 1. **Do at least two binaries need it?** If only one does, keep it in that binary.
-2. **Does it belong in an existing boundary?** Prefer `config`, `context`, `degradation`, `setup`, `postgres`, `falkor`, `qdrant`, `indexing`, or `search` before adding a new top-level module.
+2. **Does it belong in an existing boundary?** Prefer `config`, `context`, `degradation`, `grant`, `schema`, `postgres`, `falkor`, `qdrant`, `indexing`, or `search` before adding a new top-level module.
 3. **Is it dependency-light, or properly feature-gated?** New baseline deps propagate to *every* binary. Heavy deps belong behind a narrowly named feature.
 4. **Does it respect setup mode?** Attached-mode helpers validate externally managed state. Standalone setup helpers run only through explicit setup flows.
 5. **Is it stateless or near-stateless?** `gobby-core` functions are pure or do narrow I/O (read one file, return result). A module that holds connection pools or background workers belongs elsewhere.

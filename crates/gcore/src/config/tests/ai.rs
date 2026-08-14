@@ -113,7 +113,7 @@ fn ai_config_resolves_store_then_yaml_no_env() {
                 ai_keys::TEXT_GENERATE_API_BASE,
                 "http://store-text:11434/v1",
             ),
-            (ai_keys::TEXT_GENERATE_API_KEY, "$secret:TEXT_KEY"),
+            (ai_keys::TEXT_GENERATE_API_KEY, "grant-text-key"),
             (ai_keys::MAX_CONCURRENCY, "3"),
         ],
         [
@@ -132,7 +132,7 @@ fn ai_config_resolves_store_then_yaml_no_env() {
         Some("http://store-text:11434/v1")
     );
     assert_eq!(binding.model.as_deref(), Some("interpolated-text-model"));
-    assert_eq!(binding.api_key.as_deref(), Some("resolved-TEXT_KEY"));
+    assert_eq!(binding.api_key.as_deref(), Some("grant-text-key"));
     assert_eq!(tuning.max_concurrency, 3);
     assert_eq!(tuning.keep_alive.as_deref(), Some("30s"));
 
@@ -171,7 +171,7 @@ fn ai_config_resolves_store_then_yaml_no_env() {
 #[test]
 #[serial_test::serial(config_log_capture)]
 fn ai_binding_resolution_error_logs_config_key() {
-    let raw_value = "$secret:MISSING_AI_KEY";
+    let raw_value = "UNRESOLVABLE_AI_KEY";
     let mut source = FailingResolveSource::with_values_and_failures(
         [(ai_keys::TEXT_GENERATE_API_BASE, raw_value)],
         [raw_value],
@@ -194,7 +194,7 @@ fn ai_binding_resolution_error_logs_config_key() {
 #[serial_test::serial(config_log_capture)]
 fn env_override_resolution_error_logs_env_key() {
     let env = EnvGuard::new();
-    let raw_value = "$secret:MISSING_QDRANT_KEY";
+    let raw_value = "UNRESOLVABLE_QDRANT_KEY";
     env.set("GOBBY_QDRANT_API_KEY", raw_value);
     let mut source = FailingResolveSource::with_values_and_failures(
         [("databases.qdrant.url", "http://stored-qdrant:6333")],
@@ -265,7 +265,7 @@ fn audio_translate_inherits_transcribe_binding() {
         (ai_keys::AUDIO_TRANSCRIBE_ROUTING, "direct"),
         (ai_keys::AUDIO_TRANSCRIBE_TRANSPORT, "daemon_native"),
         (ai_keys::AUDIO_TRANSCRIBE_API_BASE, "http://stt:8080/v1"),
-        (ai_keys::AUDIO_TRANSCRIBE_API_KEY, "$secret:STT_KEY"),
+        (ai_keys::AUDIO_TRANSCRIBE_API_KEY, "grant-stt-key"),
         (ai_keys::AUDIO_TRANSCRIBE_MODEL, "whisper-large-v3"),
         (ai_keys::AUDIO_TRANSCRIBE_PROVIDER, "faster-whisper"),
         (ai_keys::AUDIO_TRANSCRIBE_TASK, "transcribe"),
@@ -281,7 +281,7 @@ fn audio_translate_inherits_transcribe_binding() {
     assert_eq!(translate.routing, AiRouting::Daemon);
     assert_eq!(translate.transport.as_deref(), Some("daemon_native"));
     assert_eq!(translate.api_base.as_deref(), Some("http://stt:8080/v1"));
-    assert_eq!(translate.api_key.as_deref(), Some("resolved-STT_KEY"));
+    assert_eq!(translate.api_key.as_deref(), Some("grant-stt-key"));
     assert_eq!(translate.model.as_deref(), Some("translate-override"));
     assert_eq!(translate.provider.as_deref(), Some("translate-provider"));
     assert_eq!(translate.target_lang.as_deref(), Some("es"));
@@ -306,7 +306,7 @@ fn embedding_config_uses_ai_namespace() {
     let mut source = TestSource::with_values([
         (embedding_keys::AI_API_BASE, "http://new-embedding:11434"),
         (embedding_keys::AI_MODEL, "new-model"),
-        (embedding_keys::AI_API_KEY, "$secret:AI_KEY"),
+        (embedding_keys::AI_API_KEY, "grant-ai-key"),
         (embedding_keys::AI_QUERY_PREFIX, "new-query:"),
         (embedding_keys::AI_TIMEOUT_SECONDS, "12"),
     ]);
@@ -317,7 +317,7 @@ fn embedding_config_uses_ai_namespace() {
     assert_eq!(resolution.namespace, embedding_keys::AI_NAMESPACE);
     assert_eq!(config.api_base, "http://new-embedding:11434");
     assert_eq!(config.model, "new-model");
-    assert_eq!(config.api_key.as_deref(), Some("resolved-AI_KEY"));
+    assert_eq!(config.api_key.as_deref(), Some("grant-ai-key"));
     assert_eq!(config.query_prefix.as_deref(), Some("new-query:"));
     assert_eq!(config.timeout_seconds, 12);
 }
@@ -352,7 +352,7 @@ fn postgres_config_source_resolves_secrets() {
                 embedding_keys::AI_API_BASE,
                 "http://stored-embedding:11434".to_string(),
             ),
-            (embedding_keys::AI_API_KEY, "$secret:HUB_TOKEN".to_string()),
+            (embedding_keys::AI_API_KEY, "HUB_TOKEN".to_string()),
         ]),
         secret_reads: 0,
     };
@@ -361,7 +361,7 @@ fn postgres_config_source_resolves_secrets() {
         resolve_embedding_config(&mut source).expect("embedding config")
     };
 
-    assert_eq!(config.api_key.as_deref(), Some("secret::$secret:HUB_TOKEN"));
+    assert_eq!(config.api_key.as_deref(), Some("secret::HUB_TOKEN"));
     assert_eq!(conn.secret_reads, 2);
 }
 
@@ -371,7 +371,7 @@ fn resolve_config_handles_json_encoded_store_values() {
     let mut source = TestSource::with_raw_values([
         ("databases.falkordb.host", r#""json-falkor.local""#),
         ("databases.falkordb.port", r#""17001""#),
-        ("databases.falkordb.password", r#""$secret:FALKOR_PASS""#),
+        ("databases.falkordb.password", r#""grant-falkor-pass""#),
         ("databases.qdrant.url", r#""http://json-qdrant:6333""#),
         ("databases.qdrant.api_key", r#"["alpha",1]"#),
         (
@@ -387,7 +387,7 @@ fn resolve_config_handles_json_encoded_store_values() {
 
     assert_eq!(falkordb.host, "json-falkor.local");
     assert_eq!(falkordb.port, 17001);
-    assert_eq!(falkordb.password.as_deref(), Some("resolved-FALKOR_PASS"));
+    assert_eq!(falkordb.password.as_deref(), Some("grant-falkor-pass"));
     assert_eq!(qdrant.url.as_deref(), Some("http://json-qdrant:6333"));
     assert_eq!(qdrant.api_key.as_deref(), Some(r#"["alpha",1]"#));
     assert_eq!(embedding.api_base, "http://json-embedding:11434");
@@ -407,7 +407,7 @@ fn qdrant_and_embedding_resolution_order() {
                 "http://stored-embedding:11434/v1",
             ),
             (embedding_keys::AI_MODEL, "stored-embedding-model"),
-            (embedding_keys::AI_API_KEY, "$secret:EMBEDDING_KEY"),
+            (embedding_keys::AI_API_KEY, "grant-embedding-key"),
             (embedding_keys::AI_QUERY_PREFIX, "stored-query-prefix:"),
         ]);
 
@@ -418,7 +418,7 @@ fn qdrant_and_embedding_resolution_order() {
         assert_eq!(qdrant.api_key.as_deref(), Some("env-qdrant-key"));
         assert_eq!(embedding.api_base, "http://stored-embedding:11434/v1");
         assert_eq!(embedding.model, "stored-embedding-model");
-        assert_eq!(embedding.api_key.as_deref(), Some("resolved-EMBEDDING_KEY"));
+        assert_eq!(embedding.api_key.as_deref(), Some("grant-embedding-key"));
         assert_eq!(
             embedding.query_prefix.as_deref(),
             Some("stored-query-prefix:")

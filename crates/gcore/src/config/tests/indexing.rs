@@ -1,5 +1,4 @@
 use super::*;
-use crate::provisioning::StandaloneConfig;
 
 #[test]
 fn indexing_config_defaults_to_respecting_gitignore() {
@@ -13,31 +12,12 @@ fn indexing_config_defaults_to_respecting_gitignore() {
 }
 
 #[test]
-fn indexing_config_resolves_extra_excludes_from_standalone_yaml() {
+fn indexing_config_resolves_extra_excludes_from_grant_backed_source() {
     let _env = EnvGuard::new();
-    let standalone = StandaloneConfig::from_yaml_str(
-        "indexing:\n  extra_excludes:\n    - generated\n    - '*.snapshot'\n",
-    )
-    .expect("standalone config");
-    let mut source =
-        LayeredConfigSource::<TestSource, StandaloneConfig>::new(None, Some(standalone));
-
-    let indexing = resolve_indexing_config(&mut source).expect("indexing config");
-
-    assert_eq!(indexing.extra_excludes, ["generated", "*.snapshot"]);
-}
-
-#[test]
-fn indexing_config_store_extra_excludes_override_standalone_yaml() {
-    let _env = EnvGuard::new();
-    let store = TestSource::with_raw_values([(
+    let mut source = TestSource::with_raw_values([(
         INDEXING_EXTRA_EXCLUDES_KEY,
         r#"["generated","*.snapshot"]"#,
     )]);
-    let standalone =
-        StandaloneConfig::from_yaml_str("indexing:\n  extra_excludes:\n    - ignored\n")
-            .expect("standalone config");
-    let mut source = LayeredConfigSource::new(Some(store), Some(standalone));
 
     let indexing = resolve_indexing_config(&mut source).expect("indexing config");
 
@@ -57,30 +37,10 @@ fn indexing_config_rejects_invalid_extra_excludes() {
 }
 
 #[test]
-fn indexing_config_resolves_standalone_yaml_values() {
+fn indexing_config_resolves_grant_backed_boolean_values() {
     let _env = EnvGuard::new();
     for (raw, expected) in [("true", true), ("false", false)] {
-        let standalone =
-            StandaloneConfig::from_yaml_str(&format!("indexing:\n  respect_gitignore: {raw}\n"))
-                .expect("standalone config");
-        let mut source =
-            LayeredConfigSource::<TestSource, StandaloneConfig>::new(None, Some(standalone));
-
-        let indexing = resolve_indexing_config(&mut source).expect("indexing config");
-
-        assert_eq!(indexing.respect_gitignore, expected);
-    }
-}
-
-#[test]
-fn indexing_config_resolves_config_store_values_before_yaml() {
-    let _env = EnvGuard::new();
-    for (raw, yaml, expected) in [("false", "true", false), ("true", "false", true)] {
-        let store = TestSource::with_raw_values([(INDEXING_RESPECT_GITIGNORE_KEY, raw)]);
-        let standalone =
-            StandaloneConfig::from_yaml_str(&format!("indexing:\n  respect_gitignore: {yaml}\n"))
-                .expect("standalone config");
-        let mut source = LayeredConfigSource::new(Some(store), Some(standalone));
+        let mut source = TestSource::with_raw_values([(INDEXING_RESPECT_GITIGNORE_KEY, raw)]);
 
         let indexing = resolve_indexing_config(&mut source).expect("indexing config");
 
@@ -109,13 +69,10 @@ fn indexing_config_invalid_boolean_warns_and_uses_default() {
 }
 
 #[test]
-fn indexing_config_env_overrides_config_sources() {
+fn indexing_config_env_overrides_grant_backed_source() {
     let env = EnvGuard::new();
     env.set("GOBBY_INDEXING_RESPECT_GITIGNORE", "false");
-    let standalone = StandaloneConfig::from_yaml_str("indexing:\n  respect_gitignore: true\n")
-        .expect("standalone config");
-    let store = TestSource::with_raw_values([(INDEXING_RESPECT_GITIGNORE_KEY, "true")]);
-    let mut source = LayeredConfigSource::new(Some(store), Some(standalone));
+    let mut source = TestSource::with_raw_values([(INDEXING_RESPECT_GITIGNORE_KEY, "true")]);
 
     let indexing = resolve_indexing_config(&mut source).expect("indexing config");
 

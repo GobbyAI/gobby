@@ -95,9 +95,8 @@ mod serial_db {
 
         let output = Command::new(env!("CARGO_BIN_EXE_gcode"))
             .current_dir(project.path())
-            .env("GCODE_DATABASE_URL", &database_url)
+            .env("GCODE_TEST_DATABASE_URL", &database_url)
             .env("GOBBY_HOME", isolated_gobby_home(project.path()))
-            .env(gobby_core::runtime_mode::RUNTIME_MODE_ENV, "standalone")
             .arg("--allow-stale")
             .arg("--format")
             .arg("json")
@@ -178,9 +177,8 @@ mod serial_db {
 
         let output = Command::new(env!("CARGO_BIN_EXE_gcode"))
             .current_dir(project.path())
-            .env("GCODE_DATABASE_URL", &database_url)
+            .env("GCODE_TEST_DATABASE_URL", &database_url)
             .env("GOBBY_HOME", isolated_gobby_home(project.path()))
-            .env(gobby_core::runtime_mode::RUNTIME_MODE_ENV, "standalone")
             .env_remove("GOBBY_FALKORDB_HOST")
             .env_remove("GOBBY_FALKORDB_PORT")
             .env_remove("GOBBY_FALKORDB_PASSWORD")
@@ -232,9 +230,8 @@ mod serial_db {
         let cwd = tempfile::tempdir().expect("temp cwd");
         let output = Command::new(env!("CARGO_BIN_EXE_gcode"))
             .current_dir(cwd.path())
-            .env("GCODE_DATABASE_URL", &database_url)
+            .env("GCODE_TEST_DATABASE_URL", &database_url)
             .env("GOBBY_HOME", isolated_gobby_home(cwd.path()))
-            .env(gobby_core::runtime_mode::RUNTIME_MODE_ENV, "standalone")
             .env("GOBBY_FALKORDB_HOST", "127.0.0.1")
             .env("GOBBY_FALKORDB_PORT", "1")
             .env_remove("GOBBY_FALKORDB_PASSWORD")
@@ -280,9 +277,8 @@ mod serial_db {
         let cwd = tempfile::tempdir().expect("temp cwd");
         let output = Command::new(env!("CARGO_BIN_EXE_gcode"))
             .current_dir(cwd.path())
-            .env("GCODE_DATABASE_URL", &database_url)
+            .env("GCODE_TEST_DATABASE_URL", &database_url)
             .env("GOBBY_HOME", isolated_gobby_home(cwd.path()))
-            .env(gobby_core::runtime_mode::RUNTIME_MODE_ENV, "standalone")
             .env_remove("GOBBY_FALKORDB_HOST")
             .env_remove("GOBBY_FALKORDB_PORT")
             .env_remove("GOBBY_FALKORDB_PASSWORD")

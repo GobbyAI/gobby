@@ -9,10 +9,9 @@ use std::sync::{Arc, Condvar, Mutex};
 #[cfg(feature = "ai")]
 use crate::ai::generation::ToolLoopLimits;
 use crate::config::{
-    AiCapability, AiRouting, AiTuning, CapabilityBinding, ConfigSource, resolve_ai_tuning,
-    resolve_capability_binding,
+    AiCapability, AiRouting, AiTuning, CapabilityBinding, ConfigSource, reject_secret_marker,
+    resolve_ai_tuning, resolve_capability_binding,
 };
-use crate::provisioning::{StandaloneConfig, gcore_config_path};
 
 const ALL_CAPABILITIES: [AiCapability; 5] = [
     AiCapability::Embed,
@@ -283,24 +282,17 @@ impl std::fmt::Debug for LimiterInner {
     }
 }
 
-/// Layered AI config source: primary config_store-like source, then gcore.yaml.
-///
-/// The source is intentionally AI-only: plain values are returned literally and
-/// `$secret:` values are delegated to the primary source when present.
+/// Grant-backed AI config source. Secret markers fail typed as grant-issuance bugs.
 #[derive(Debug, Clone)]
 pub struct AiConfigSource<P = NoPrimaryAiConfigSource> {
     primary: Option<P>,
-    standalone: Option<StandaloneConfig>,
 }
 
 pub type LocalAiConfigSource = AiConfigSource<NoPrimaryAiConfigSource>;
 
 impl LocalAiConfigSource {
-    pub fn from_gobby_home(gobby_home: &std::path::Path) -> anyhow::Result<Self> {
-        Ok(Self::with_primary(
-            NoPrimaryAiConfigSource,
-            StandaloneConfig::read_at(&gcore_config_path(gobby_home))?,
-        ))
+    pub fn empty() -> Self {
+        Self { primary: None }
     }
 }
 
@@ -308,21 +300,10 @@ impl<P> AiConfigSource<P>
 where
     P: ConfigSource,
 {
-    pub fn with_primary(primary: P, standalone: Option<StandaloneConfig>) -> Self {
+    pub fn with_primary(primary: P) -> Self {
         Self {
             primary: Some(primary),
-            standalone,
         }
-    }
-
-    pub fn with_primary_from_gobby_home(
-        primary: P,
-        gobby_home: &std::path::Path,
-    ) -> anyhow::Result<Self> {
-        Ok(Self::with_primary(
-            primary,
-            StandaloneConfig::read_at(&gcore_config_path(gobby_home))?,
-        ))
     }
 }
 
@@ -330,26 +311,23 @@ impl<P> ConfigSource for AiConfigSource<P>
 where
     P: ConfigSource,
 {
+    fn snapshot_revision(&mut self) -> anyhow::Result<Option<i64>> {
+        match self.primary.as_mut() {
+            Some(source) => source.snapshot_revision(),
+            None => Ok(None),
+        }
+    }
+
     fn config_value(&mut self, key: &str) -> Option<String> {
         self.primary
             .as_mut()
             .and_then(|source| source.config_value(key))
-            .or_else(|| {
-                self.standalone
-                    .as_mut()
-                    .and_then(|standalone| standalone.config_value(key))
-            })
     }
 
     fn resolve_value(&mut self, value: &str) -> anyhow::Result<String> {
-        if value.trim().starts_with("$secret:") {
-            let Some(primary) = self.primary.as_mut() else {
-                anyhow::bail!("secret resolution requires a daemon-backed AI config source");
-            };
-            return primary.resolve_value(value);
-        }
-        match self.standalone.as_mut() {
-            Some(standalone) => standalone.resolve_value(value),
+        reject_secret_marker(value)?;
+        match self.primary.as_mut() {
+            Some(primary) => primary.resolve_value(value),
             None => resolve_non_secret_config_value(value),
         }
     }
@@ -360,7 +338,7 @@ fn resolve_non_secret_config_value(value: &str) -> anyhow::Result<String> {
         .ok_or_else(|| anyhow::anyhow!("unresolved pattern: {value}"))
 }
 
-/// Empty primary layer for local-only `gcore.yaml` resolution.
+/// Empty primary layer for callers without a grant-backed AI source.
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
 pub struct NoPrimaryAiConfigSource;
 
@@ -370,9 +348,7 @@ impl ConfigSource for NoPrimaryAiConfigSource {
     }
 
     fn resolve_value(&mut self, value: &str) -> anyhow::Result<String> {
-        if value.trim().starts_with("$secret:") {
-            anyhow::bail!("secret resolution requires a daemon-backed AI config source");
-        }
+        reject_secret_marker(value)?;
         resolve_non_secret_config_value(value)
     }
 }
@@ -381,7 +357,7 @@ impl ConfigSource for NoPrimaryAiConfigSource {
 #[cfg(feature = "postgres")]
 pub struct PostgresAiConfigSource<'a, R> {
     conn: &'a mut postgres::Client,
-    resolver: R,
+    _resolver: R,
     config_store_available: bool,
 }
 
@@ -393,7 +369,7 @@ where
     pub fn new(conn: &'a mut postgres::Client, resolver: R) -> Self {
         Self {
             conn,
-            resolver,
+            _resolver: resolver,
             config_store_available: true,
         }
     }
@@ -433,9 +409,7 @@ where
     }
 
     fn resolve_value(&mut self, value: &str) -> anyhow::Result<String> {
-        if value.trim().starts_with("$secret:") {
-            return (self.resolver)(value, self.conn);
-        }
+        reject_secret_marker(value)?;
         Ok(value.to_string())
     }
 }
@@ -454,17 +428,10 @@ fn config_store_missing(error: &anyhow::Error) -> bool {
 mod tests {
     use super::*;
     use crate::config::{AiCapability, AiRouting, ConfigSource, ai_keys};
-    use crate::provisioning::gcore_config_path;
     use std::collections::HashMap;
-    use std::fs;
-    use std::path::PathBuf;
-    use std::sync::{Mutex, MutexGuard};
-
-    static CWD_LOCK: Mutex<()> = Mutex::new(());
 
     struct TestSource {
         values: HashMap<&'static str, String>,
-        resolved: HashMap<&'static str, String>,
     }
 
     impl TestSource {
@@ -474,19 +441,7 @@ mod tests {
                     .into_iter()
                     .map(|(key, value)| (key, value.to_string()))
                     .collect(),
-                resolved: HashMap::new(),
             }
-        }
-
-        fn with_resolved(
-            mut self,
-            values: impl IntoIterator<Item = (&'static str, &'static str)>,
-        ) -> Self {
-            self.resolved = values
-                .into_iter()
-                .map(|(key, value)| (key, value.to_string()))
-                .collect();
-            self
         }
     }
 
@@ -496,141 +451,51 @@ mod tests {
         }
 
         fn resolve_value(&mut self, value: &str) -> anyhow::Result<String> {
-            self.resolved
-                .get(value)
-                .cloned()
-                .ok_or_else(|| anyhow::anyhow!("unresolved test value: {value}"))
+            reject_secret_marker(value)?;
+            Ok(value.to_string())
         }
-    }
-
-    struct CurrentDirGuard {
-        _lock: MutexGuard<'static, ()>,
-        original: PathBuf,
-    }
-
-    impl CurrentDirGuard {
-        fn set(path: &std::path::Path) -> Self {
-            let guard = CWD_LOCK
-                .lock()
-                .unwrap_or_else(|poisoned| poisoned.into_inner());
-            let original = std::env::current_dir().expect("current dir");
-            std::env::set_current_dir(path).expect("set current dir");
-            Self {
-                _lock: guard,
-                original,
-            }
-        }
-    }
-
-    impl Drop for CurrentDirGuard {
-        fn drop(&mut self) {
-            std::env::set_current_dir(&self.original).expect("restore current dir");
-        }
-    }
-
-    fn write_gcore_yaml(home: &std::path::Path, contents: &str) {
-        let path = gcore_config_path(home);
-        fs::create_dir_all(path.parent().expect("gcore config parent")).unwrap();
-        fs::write(path, contents).unwrap();
     }
 
     #[test]
-    fn resolves_in_db_and_no_db_modes() {
-        let home = tempfile::tempdir().unwrap();
-        write_gcore_yaml(
-            home.path(),
-            r#"
-ai:
-  embeddings:
-    api_base: http://yaml-embedding
-    model: yaml-embedding-model
-    api_key: yaml-key
-  audio_transcribe:
-    routing: direct
-  max_concurrency: 3
-"#,
-        );
-
-        let mut no_db = LocalAiConfigSource::from_gobby_home(home.path()).unwrap();
-        let no_db_context = AiContext::resolve(Some("yaml-project".to_string()), &mut no_db);
-
-        let no_db_embed = no_db_context.binding(AiCapability::Embed);
-        assert_eq!(
-            no_db_embed.api_base.as_deref(),
-            Some("http://yaml-embedding")
-        );
-        assert_eq!(no_db_embed.model.as_deref(), Some("yaml-embedding-model"));
-        assert_eq!(no_db_embed.api_key.as_deref(), Some("yaml-key"));
-        assert_eq!(
-            route(&no_db_context, AiCapability::AudioTranscribe),
-            AiRouting::Daemon
-        );
-        assert_eq!(no_db_context.tuning.max_concurrency, 3);
-        assert_eq!(no_db_context.limiter.max_concurrency(), 3);
-        assert_eq!(no_db_context.project_id.as_deref(), Some("yaml-project"));
-
-        let primary = TestSource::with_values([
-            (ai_keys::EMBEDDINGS_API_BASE, "http://db-embedding"),
-            (ai_keys::EMBEDDINGS_API_KEY, "$secret:db-embedding-key"),
+    fn resolves_from_grant_backed_primary() {
+        let mut source = AiConfigSource::with_primary(TestSource::with_values([
+            (ai_keys::EMBEDDINGS_API_BASE, "http://grant-embedding"),
+            (ai_keys::EMBEDDINGS_MODEL, "grant-embedding-model"),
+            (ai_keys::EMBEDDINGS_API_KEY, "grant-key"),
             (ai_keys::AUDIO_TRANSCRIBE_ROUTING, "daemon"),
-            (ai_keys::MAX_CONCURRENCY, "2"),
-        ])
-        .with_resolved([("$secret:db-embedding-key", "resolved-db-key")]);
-        let mut db = AiConfigSource::with_primary_from_gobby_home(primary, home.path()).unwrap();
-        let db_context = AiContext::resolve(Some("db-project".to_string()), &mut db);
+            (ai_keys::MAX_CONCURRENCY, "3"),
+        ]));
+        let context = AiContext::resolve(Some("grant-project".to_string()), &mut source);
 
-        let db_embed = db_context.binding(AiCapability::Embed);
-        assert_eq!(db_embed.api_base.as_deref(), Some("http://db-embedding"));
-        assert_eq!(db_embed.model.as_deref(), Some("yaml-embedding-model"));
-        assert_eq!(db_embed.api_key.as_deref(), Some("resolved-db-key"));
+        let embed = context.binding(AiCapability::Embed);
+        assert_eq!(embed.api_base.as_deref(), Some("http://grant-embedding"));
+        assert_eq!(embed.model.as_deref(), Some("grant-embedding-model"));
+        assert_eq!(embed.api_key.as_deref(), Some("grant-key"));
         assert_eq!(
-            route(&db_context, AiCapability::AudioTranscribe),
+            route(&context, AiCapability::AudioTranscribe),
             AiRouting::Daemon
         );
-        assert_eq!(db_context.tuning.max_concurrency, 2);
+        assert_eq!(context.tuning.max_concurrency, 3);
+        assert_eq!(context.limiter.max_concurrency(), 3);
+        assert_eq!(context.project_id.as_deref(), Some("grant-project"));
     }
 
     #[test]
     fn project_id_is_caller_supplied() {
-        let home = tempfile::tempdir().unwrap();
-        write_gcore_yaml(home.path(), "ai:\n  routing: direct\n");
-        let cwd = tempfile::tempdir().unwrap();
-        fs::create_dir_all(cwd.path().join(".gobby")).unwrap();
-        fs::write(
-            cwd.path().join(".gobby/project.json"),
-            r#"{"id":"stray-cwd-project"}"#,
-        )
-        .unwrap();
-        let _cwd = CurrentDirGuard::set(cwd.path());
-
-        let mut topic_source = LocalAiConfigSource::from_gobby_home(home.path()).unwrap();
+        let mut topic_source = LocalAiConfigSource::empty();
         let topic_context = AiContext::resolve(None, &mut topic_source);
         assert_eq!(topic_context.project_id, None);
 
-        let mut project_source = LocalAiConfigSource::from_gobby_home(home.path()).unwrap();
+        let mut project_source = LocalAiConfigSource::empty();
         let project_context =
             AiContext::resolve(Some("scope-project".to_string()), &mut project_source);
         assert_eq!(project_context.project_id.as_deref(), Some("scope-project"));
     }
 
     #[test]
-    fn db_without_config_store_falls_through() {
-        let home = tempfile::tempdir().unwrap();
-        write_gcore_yaml(
-            home.path(),
-            r#"
-ai:
-  text_generate:
-    routing: direct
-    api_base: http://yaml-text
-"#,
-        );
-        let primary = TestSource::with_values([]);
-        let mut source =
-            AiConfigSource::with_primary_from_gobby_home(primary, home.path()).unwrap();
-
+    fn missing_primary_uses_defaults() {
+        let mut source = LocalAiConfigSource::empty();
         let context = AiContext::resolve(None, &mut source);
-
         assert_eq!(
             route(&context, AiCapability::TextGenerate),
             AiRouting::Daemon
@@ -640,31 +505,19 @@ ai:
                 .binding(AiCapability::TextGenerate)
                 .api_base
                 .as_deref(),
-            Some("http://yaml-text")
+            None
         );
     }
 
     #[test]
     fn tool_chat_reuses_the_text_generate_binding() {
-        let home = tempfile::tempdir().unwrap();
-        write_gcore_yaml(
-            home.path(),
-            r#"
-ai:
-  text_generate:
-    routing: direct
-    api_base: http://yaml-text
-    reasoning_effort: high
-"#,
-        );
-        let primary = TestSource::with_values([]);
-        let mut source =
-            AiConfigSource::with_primary_from_gobby_home(primary, home.path()).unwrap();
+        let mut source = AiConfigSource::with_primary(TestSource::with_values([
+            (ai_keys::TEXT_GENERATE_API_BASE, "http://grant-text"),
+            (ai_keys::TEXT_GENERATE_REASONING_EFFORT, "high"),
+        ]));
 
         let context = AiContext::resolve(None, &mut source);
 
-        // No parallel ai.tool_chat.* tree: ToolChat routes off the resolved
-        // text_generate binding, so its routing/endpoint/reasoning match.
         assert_eq!(route(&context, AiCapability::ToolChat), AiRouting::Daemon);
         assert_eq!(
             context.binding(AiCapability::ToolChat),
@@ -702,49 +555,13 @@ ai:
     }
 
     #[test]
-    fn standalone_values_expand_env_patterns_for_db_fallback() {
-        let home = tempfile::tempdir().unwrap();
-        write_gcore_yaml(
-            home.path(),
-            r#"
-ai:
-  text_generate:
-    routing: direct
-    api_base: ${GOBBY_CONTEXT_TEST_MISSING:-http://expanded-text}
-"#,
-        );
-        let primary = TestSource::with_values([]);
-        let mut source =
-            AiConfigSource::with_primary_from_gobby_home(primary, home.path()).unwrap();
-
-        let context = AiContext::resolve(None, &mut source);
-
-        assert_eq!(
-            context
-                .binding(AiCapability::TextGenerate)
-                .api_base
-                .as_deref(),
-            Some("http://expanded-text")
-        );
-    }
-
-    #[test]
-    fn primary_only_values_expand_env_patterns_without_standalone() {
-        let primary = TestSource::with_values([(
-            ai_keys::TEXT_GENERATE_API_BASE,
-            "${GOBBY_AI_CONTEXT_PRIMARY_FALLBACK_TEST_MISSING:-http://fallback}",
-        )]);
-        let mut source = AiConfigSource::with_primary(primary, None);
-
-        let context = AiContext::resolve(None, &mut source);
-
-        assert_eq!(
-            context
-                .binding(AiCapability::TextGenerate)
-                .api_base
-                .as_deref(),
-            Some("http://fallback")
-        );
+    fn secret_markers_fail_typed_on_ai_source() {
+        let marker = crate::config::secret_marker_prefix() + "embedding_api_key";
+        let mut source = LocalAiConfigSource::empty();
+        let error = source
+            .resolve_value(&marker)
+            .expect_err("secret marker must fail typed");
+        assert!(format!("{error:#}").contains("grant-issuance"));
     }
 
     #[test]
@@ -779,7 +596,7 @@ ai:
             (ai_keys::AUDIO_TRANSCRIBE_ROUTING, "daemon"),
             (ai_keys::VISION_EXTRACT_ROUTING, "direct"),
         ]);
-        let mut source = AiConfigSource::with_primary(source, None);
+        let mut source = AiConfigSource::with_primary(source);
         let context = AiContext::resolve(None, &mut source);
         assert_eq!(
             route(&context, AiCapability::AudioTranscribe),
@@ -795,7 +612,7 @@ ai:
             (ai_keys::AUDIO_TRANSCRIBE_ROUTING, "daemon"),
             (ai_keys::VISION_EXTRACT_ROUTING, "off"),
         ]);
-        let mut source = AiConfigSource::with_primary(source, None);
+        let mut source = AiConfigSource::with_primary(source);
         let forced = AiContext::resolve_with_options(
             None,
             &mut source,
@@ -815,7 +632,7 @@ ai:
         }
 
         let source = TestSource::with_values([(ai_keys::AUDIO_TRANSCRIBE_ROUTING, "daemon")]);
-        let mut source = AiConfigSource::with_primary(source, None);
+        let mut source = AiConfigSource::with_primary(source);
         let disabled = AiContext::resolve_with_options(
             None,
             &mut source,
@@ -842,7 +659,7 @@ ai:
             (ai_keys::VISION_EXTRACT_ROUTING, "direct"),
             (ai_keys::TEXT_GENERATE_ROUTING, "direct"),
         ]);
-        let mut source = AiConfigSource::with_primary(source, None);
+        let mut source = AiConfigSource::with_primary(source);
 
         let context = AiContext::resolve(None, &mut source);
 
