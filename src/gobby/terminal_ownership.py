@@ -5,7 +5,7 @@ from __future__ import annotations
 import logging
 import os
 import subprocess
-from collections.abc import Callable, Mapping
+from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass
 from datetime import datetime
 from enum import Enum
@@ -239,8 +239,33 @@ def _newest_session(sessions: list[object]) -> object:
     return max(sessions, key=terminal_session_creation_order)
 
 
-def resolve_pane_ownership(
+def _select_same_process_owner(
     sessions: list[object],
+    *,
+    requested_session_id: str | None,
+) -> object:
+    """Pick the live session on one PID; fall back to requested, then newest."""
+    requested = _non_empty_text(requested_session_id)
+    live = [
+        session for session in sessions if getattr(session, "status", None) in {"active", "paused"}
+    ]
+    if len(live) == 1:
+        return live[0]
+    if len(live) > 1:
+        if requested is not None:
+            for session in live:
+                if _session_id(session) == requested:
+                    return session
+        return _newest_session(live)
+    if requested is not None:
+        for session in sessions:
+            if _session_id(session) == requested:
+                return session
+    return _newest_session(sessions)
+
+
+def resolve_pane_ownership(
+    sessions: Sequence[object],
     *,
     requested_session_id: str | None = None,
     process_factory: Callable[[int], _ProcessLike] = psutil.Process,
@@ -253,6 +278,7 @@ def resolve_pane_ownership(
         session
         for session in sessions
         if getattr(session, "status", None) in TERMINAL_OWNER_STATUSES
+        or _session_id(session) == requested
     ]
     identities = {
         identity
@@ -299,7 +325,10 @@ def resolve_pane_ownership(
         group.append(session)
 
     if len(live_by_pid) == 1:
-        owner = _newest_session(next(iter(live_by_pid.values()))[1])
+        owner = _select_same_process_owner(
+            next(iter(live_by_pid.values()))[1],
+            requested_session_id=requested,
+        )
         return PaneOwnershipDecision(
             identity,
             requested,

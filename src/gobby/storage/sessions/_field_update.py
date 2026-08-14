@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-from dataclasses import replace
 from typing import TYPE_CHECKING, Protocol
 
 from gobby.sessions.status_events import SessionStatusTransition
@@ -294,7 +293,7 @@ class _FieldUpdateMixin(_SessionMetadataUpdateMixin, _SummaryUpdateMixin, _Title
                     and candidate.agent_depth == 0
                 ):
                     decision = resolve_pane_ownership(
-                        [replace(candidate, status="active")],
+                        [candidate],
                         requested_session_id=session_id,
                     )
                     validated_ids = sorted(decision.validated_session_ids)
@@ -309,14 +308,8 @@ class _FieldUpdateMixin(_SessionMetadataUpdateMixin, _SummaryUpdateMixin, _Title
                     if candidate.agent_run_id is None and candidate.agent_depth == 0
                 ]
                 if interactive_candidates:
-                    resolution_candidates: list[object] = [
-                        replace(candidate, status="active")
-                        if candidate.id == session_id and candidate.status == "expired"
-                        else candidate
-                        for candidate in interactive_candidates
-                    ]
                     decision = resolve_pane_ownership(
-                        resolution_candidates,
+                        interactive_candidates,
                         requested_session_id=session_id,
                     )
                     validated_ids = sorted(decision.validated_session_ids)
