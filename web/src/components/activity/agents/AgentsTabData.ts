@@ -43,9 +43,11 @@ export interface AgentDefInfo {
     } | null;
     lifecycle_variables: Record<string, unknown>;
     default_variables: Record<string, unknown>;
-    steps?: WorkflowStep[] | null;
-    step_variables?: Record<string, unknown> | null;
-    exit_condition?: string | null;
+    step_workflow?: {
+      steps?: WorkflowStep[] | null;
+      variables?: Record<string, unknown> | null;
+      exit_condition?: string | null;
+    } | null;
     blocked_tools?: string[] | null;
     blocked_mcp_tools?: string[] | null;
   };
@@ -69,6 +71,8 @@ export interface AgentDraft {
   variables: Record<string, unknown>;
   skills: string[];
   steps: WorkflowStep[];
+  stepVariables: Record<string, unknown>;
+  exitCondition: string;
   blockedTools: string[];
   blockedMcpTools: string[];
 }
@@ -129,6 +133,8 @@ export function createAgentDraft(): AgentDraft {
     variables: {},
     skills: [],
     steps: [],
+    stepVariables: {},
+    exitCondition: "",
     blockedTools: [],
     blockedMcpTools: [],
   };
@@ -161,17 +167,17 @@ export async function loadProviderCatalog(): Promise<ProviderModelEntry[]> {
 export async function loadPipelineList(): Promise<
   { id: string; name: string }[]
 > {
-  const response = await fetch(
-    `${getBaseUrl()}/api/workflows?workflow_type=pipeline`,
-  );
+  const response = await fetch(`${getBaseUrl()}/api/pipelines/definitions`);
   if (!response.ok) return [];
   const data = await response.json();
-  if (!Array.isArray(data?.workflows)) return [];
-  return data.workflows
-    .filter((workflow: { deleted_at?: string | null }) => !workflow.deleted_at)
-    .map((workflow: { id: string; name: string }) => ({
-      id: workflow.id,
-      name: workflow.name,
+  if (!Array.isArray(data?.definitions)) return [];
+  return data.definitions
+    .filter(
+      (definition: { deleted_at?: string | null }) => !definition.deleted_at,
+    )
+    .map((definition: { id: string; name: string }) => ({
+      id: definition.id,
+      name: definition.name,
     }));
 }
 
@@ -263,7 +269,13 @@ export function agentToDraft(agent: AgentDefInfo): AgentDraft {
     skills: Array.isArray(skillSelectors?.include)
       ? skillSelectors.include.filter((skill) => skill !== "*")
       : [],
-    steps: definition.steps ?? [],
+    steps: definition.step_workflow?.steps ?? [],
+    stepVariables:
+      definition.step_workflow?.variables &&
+      typeof definition.step_workflow.variables === "object"
+        ? definition.step_workflow.variables
+        : {},
+    exitCondition: definition.step_workflow?.exit_condition ?? "",
     blockedTools: definition.blocked_tools ?? [],
     blockedMcpTools: definition.blocked_mcp_tools ?? [],
   };

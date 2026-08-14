@@ -1,61 +1,56 @@
 import { fireEvent, render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { afterEach, beforeEach, describe, it, expect, vi } from "vitest";
-import { WorkflowVariablesEditor } from "../WorkflowVariablesEditor";
+import { VariableDefaultsEditor } from "../VariableDefaultsEditor";
 import { parseVariableInput, variableDisplayValue } from "../workflowVariables";
-import type { WorkflowDetail } from "../../../hooks/useWorkflows";
+import type { VariableDef } from "../../../hooks/useVariableDefs";
 
 const mocks = vi.hoisted(() => ({
-  workflows: [] as WorkflowDetail[],
+  variables: [] as VariableDef[],
   isLoading: false,
-  fetchWorkflows: vi.fn(async (_params?: { workflow_type?: string }) => true),
-  createWorkflow: vi.fn(async (_params: Record<string, unknown>) => null),
+  fetchVariables: vi.fn(async () => true),
+  createVariable: vi.fn(async (_params: Record<string, unknown>) => null),
   toggleEnabled: vi.fn(
-    async (_id: string): Promise<WorkflowDetail | null> => null,
+    async (_id: string): Promise<VariableDef | null> => null,
   ),
-  deleteWorkflow: vi.fn(async (_id: string) => true),
+  deleteVariable: vi.fn(async (_id: string) => true),
 }));
 
-vi.mock("../../../hooks/useWorkflows", () => ({
-  useWorkflows: () => ({
-    workflows: mocks.workflows,
+vi.mock("../../../hooks/useVariableDefs", () => ({
+  useVariableDefs: () => ({
+    variables: mocks.variables,
     isLoading: mocks.isLoading,
-    fetchWorkflows: mocks.fetchWorkflows,
-    createWorkflow: mocks.createWorkflow,
+    fetchVariables: mocks.fetchVariables,
+    createVariable: mocks.createVariable,
     toggleEnabled: mocks.toggleEnabled,
-    deleteWorkflow: mocks.deleteWorkflow,
+    deleteVariable: mocks.deleteVariable,
   }),
 }));
 
-function makeVariable(overrides: Partial<WorkflowDetail> = {}): WorkflowDetail {
+function makeVariable(overrides: Partial<VariableDef> = {}): VariableDef {
   return {
     id: "var-1",
     name: "max_retries",
     description: "Default retry budget",
-    workflow_type: "variable",
-    version: "1.0",
     enabled: true,
-    priority: 100,
     source: "installed",
-    sources: null,
     tags: null,
     project_id: null,
     created_at: "2026-01-01T00:00:00Z",
     updated_at: "2026-01-01T00:00:00Z",
     deleted_at: null,
-    definition_json: JSON.stringify({ variable: "max_retries", value: 3 }),
-    canvas_json: null,
+    default_value: 3,
     ...overrides,
   };
 }
 
 beforeEach(() => {
-  mocks.workflows = [];
+  mocks.variables = [];
   mocks.isLoading = false;
-  mocks.fetchWorkflows.mockReset().mockResolvedValue(true);
-  mocks.createWorkflow.mockReset().mockResolvedValue(null);
+  mocks.fetchVariables.mockReset().mockResolvedValue(true);
+  mocks.createVariable.mockReset().mockResolvedValue(null);
   mocks.toggleEnabled.mockReset().mockResolvedValue(null);
-  mocks.deleteWorkflow.mockReset().mockResolvedValue(true);
+  mocks.deleteVariable.mockReset().mockResolvedValue(true);
 });
 
 afterEach(() => {
@@ -76,34 +71,30 @@ describe("parseVariableInput", () => {
 });
 
 describe("variableDisplayValue", () => {
-  it("formats stored definition values and tolerates malformed JSON", () => {
-    expect(variableDisplayValue(JSON.stringify({ value: true }))).toBe("true");
-    expect(variableDisplayValue(JSON.stringify({ value: [1, 2] }))).toBe(
-      "[1,2]",
-    );
-    expect(variableDisplayValue(JSON.stringify({ value: "x" }))).toBe("x");
-    expect(variableDisplayValue(JSON.stringify({ value: null }))).toBe("null");
-    expect(variableDisplayValue("not json")).toBe("-");
+  it("formats default_value and treats missing as null", () => {
+    expect(variableDisplayValue(true)).toBe("true");
+    expect(variableDisplayValue([1, 2])).toBe("[1,2]");
+    expect(variableDisplayValue("x")).toBe("x");
+    expect(variableDisplayValue(null)).toBe("null");
+    expect(variableDisplayValue(undefined)).toBe("null");
   });
 });
 
-describe("WorkflowVariablesEditor", () => {
-  it("scopes its initial fetch to variable definitions", () => {
-    render(<WorkflowVariablesEditor />);
-    expect(mocks.fetchWorkflows).toHaveBeenCalledWith({
-      workflow_type: "variable",
-    });
+describe("VariableDefaultsEditor", () => {
+  it("loads variable defaults from the domain hook", () => {
+    render(<VariableDefaultsEditor />);
+    expect(mocks.fetchVariables).toHaveBeenCalled();
   });
 
   it("renders an empty state when there are no variable definitions", () => {
-    mocks.workflows = [];
-    render(<WorkflowVariablesEditor />);
+    mocks.variables = [];
+    render(<VariableDefaultsEditor />);
     expect(screen.getByText(/No variable defaults yet/i)).toBeInTheDocument();
   });
 
   it("renders a row per variable with its name, display value, source, and enabled state", () => {
-    mocks.workflows = [makeVariable()];
-    render(<WorkflowVariablesEditor />);
+    mocks.variables = [makeVariable()];
+    render(<VariableDefaultsEditor />);
 
     expect(screen.getByText("max_retries")).toBeInTheDocument();
     expect(screen.getByText("3")).toBeInTheDocument();
@@ -113,23 +104,8 @@ describe("WorkflowVariablesEditor", () => {
     ).toBeChecked();
   });
 
-  it("only renders variable-typed definitions, ignoring other workflow rows", () => {
-    mocks.workflows = [
-      makeVariable(),
-      makeVariable({
-        id: "wf-1",
-        name: "some_pipeline",
-        workflow_type: "pipeline",
-      }),
-    ];
-    render(<WorkflowVariablesEditor />);
-
-    expect(screen.getByText("max_retries")).toBeInTheDocument();
-    expect(screen.queryByText("some_pipeline")).toBeNull();
-  });
-
   it("creates a variable with a parsed default value from the add form", async () => {
-    render(<WorkflowVariablesEditor />);
+    render(<VariableDefaultsEditor />);
 
     fireEvent.click(screen.getByRole("button", { name: "Add variable" }));
     fireEvent.change(screen.getByLabelText("Variable name"), {
@@ -140,29 +116,27 @@ describe("WorkflowVariablesEditor", () => {
     });
     fireEvent.click(screen.getByRole("button", { name: "Save variable" }));
 
-    await waitFor(() => expect(mocks.createWorkflow).toHaveBeenCalledTimes(1));
-    const arg = mocks.createWorkflow.mock.calls[0]?.[0];
+    await waitFor(() => expect(mocks.createVariable).toHaveBeenCalledTimes(1));
+    const arg = mocks.createVariable.mock.calls[0]?.[0];
     expect(arg?.name).toBe("feature_flag");
-    expect(arg?.workflow_type).toBe("variable");
+    expect(arg?.value).toBe(true);
     expect(arg?.enabled).toBe(true);
-    expect(JSON.parse(String(arg?.definition_json))).toMatchObject({
-      variable: "feature_flag",
-      value: true,
-    });
+    expect(arg).not.toHaveProperty(["workflow", "type"].join("_"));
+    expect(arg).not.toHaveProperty("definition_json");
   });
 
   it("does not submit when the name is blank", () => {
-    render(<WorkflowVariablesEditor />);
+    render(<VariableDefaultsEditor />);
     fireEvent.click(screen.getByRole("button", { name: "Add variable" }));
     fireEvent.click(screen.getByRole("button", { name: "Save variable" }));
-    expect(mocks.createWorkflow).not.toHaveBeenCalled();
+    expect(mocks.createVariable).not.toHaveBeenCalled();
   });
 
   it("toggles a variable through the hook", async () => {
-    mocks.workflows = [makeVariable()];
+    mocks.variables = [makeVariable()];
     mocks.toggleEnabled.mockResolvedValue(makeVariable({ enabled: false }));
     const user = userEvent.setup();
-    render(<WorkflowVariablesEditor />);
+    render(<VariableDefaultsEditor />);
 
     await user.click(
       screen.getByRole("switch", { name: "Toggle max_retries" }),
@@ -174,25 +148,25 @@ describe("WorkflowVariablesEditor", () => {
 
   it("deletes a deletable variable after confirmation", () => {
     vi.spyOn(window, "confirm").mockReturnValue(true);
-    mocks.workflows = [makeVariable()];
-    render(<WorkflowVariablesEditor />);
+    mocks.variables = [makeVariable()];
+    render(<VariableDefaultsEditor />);
 
     fireEvent.click(screen.getByRole("button", { name: "Delete max_retries" }));
-    expect(mocks.deleteWorkflow).toHaveBeenCalledWith("var-1");
+    expect(mocks.deleteVariable).toHaveBeenCalledWith("var-1");
   });
 
   it("does not offer deletion for bundled template variables", () => {
-    mocks.workflows = [makeVariable({ source: "template" })];
-    render(<WorkflowVariablesEditor />);
+    mocks.variables = [makeVariable({ source: "template" })];
+    render(<VariableDefaultsEditor />);
     expect(
       screen.queryByRole("button", { name: "Delete max_retries" }),
     ).toBeNull();
   });
 
   it("distinguishes a failed fetch from an empty variable list", async () => {
-    mocks.fetchWorkflows.mockResolvedValue(false);
+    mocks.fetchVariables.mockResolvedValue(false);
 
-    render(<WorkflowVariablesEditor />);
+    render(<VariableDefaultsEditor />);
 
     expect(await screen.findByRole("alert", { name: "" })).toHaveTextContent(
       "Could not load variable defaults.",
@@ -201,7 +175,7 @@ describe("WorkflowVariablesEditor", () => {
   });
 
   it("shows a save failure and keeps the add form open", async () => {
-    render(<WorkflowVariablesEditor />);
+    render(<VariableDefaultsEditor />);
     fireEvent.click(screen.getByRole("button", { name: "Add variable" }));
     fireEvent.change(screen.getByLabelText("Variable name"), {
       target: { value: "feature_flag" },
@@ -216,9 +190,9 @@ describe("WorkflowVariablesEditor", () => {
 
   it("shows a delete failure", async () => {
     vi.spyOn(window, "confirm").mockReturnValue(true);
-    mocks.workflows = [makeVariable()];
-    mocks.deleteWorkflow.mockResolvedValue(false);
-    render(<WorkflowVariablesEditor />);
+    mocks.variables = [makeVariable()];
+    mocks.deleteVariable.mockResolvedValue(false);
+    render(<VariableDefaultsEditor />);
 
     fireEvent.click(screen.getByRole("button", { name: "Delete max_retries" }));
 

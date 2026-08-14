@@ -1,7 +1,7 @@
 import { SettingsSection, type SettingsSectionFields } from "./SettingsSection";
 import { useSettingsSectionContext } from "./SettingsSectionContext";
 import { SwitchField } from "../../activity/fields";
-import { WorkflowVariablesEditor } from "../WorkflowVariablesEditor";
+import { VariableDefaultsEditor } from "../VariableDefaultsEditor";
 import {
   ListMapConfigField,
   NumberConfigField,
@@ -20,8 +20,8 @@ import {
  * the workflow engine, tmux agent spawning, cron scheduler, automation loop,
  * and pipeline config groups — all draft-backed through the #17108 foundation.
  * Two surfaces are live rather than draft-backed: the rules-engine enforcement
- * toggle (`/api/rules`, threaded through context) and the workflow-variable
- * editor (`/api/workflows`, self-contained in WorkflowVariablesEditor).
+ * toggle (`/api/rules`, threaded through context) and the variable-defaults
+ * editor (`/api/variables`, self-contained in VariableDefaultsEditor).
  */
 
 // All `gobby-tasks.*` draft paths live under the hyphenated key; getByPath
@@ -650,7 +650,7 @@ function WorkflowVariablesGroup() {
       title="Workflow variables"
       hint="Session variable defaults. Edited live, separate from the config draft below."
     >
-      <WorkflowVariablesEditor />
+      <VariableDefaultsEditor />
     </Subsection>
   );
 }

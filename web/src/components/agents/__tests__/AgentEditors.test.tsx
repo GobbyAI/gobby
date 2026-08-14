@@ -153,6 +153,11 @@ describe("agent definition editors", () => {
         workflows: { rule_selectors: { include: ["review"] } },
         lifecycle_variables: {},
         default_variables: {},
+        step_workflow: {
+          steps: [{ name: "review", description: "Review the change" }],
+          variables: { current_step: "review" },
+          exit_condition: "review_complete == true",
+        },
       },
       source: "project",
       source_path: null,
@@ -174,7 +179,9 @@ describe("agent definition editors", () => {
     );
 
     expect(screen.getByText("Reviews changes")).toBeInTheDocument();
-    expect(screen.getByText("review")).toBeInTheDocument();
+    expect(screen.getAllByText("review").length).toBeGreaterThan(0);
+    expect(screen.getByText("Review the change")).toBeInTheDocument();
+    expect(screen.getByText(/Steps \(1\)/)).toBeInTheDocument();
     expect(screen.getByRole("button", { name: "Close panel" })).toBeEnabled();
     expect(screen.queryByLabelText("Name")).not.toBeInTheDocument();
     expect(

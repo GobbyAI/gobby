@@ -2,7 +2,7 @@ import { act, renderHook, waitFor } from "@testing-library/react";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
 import { useCronJobs, type CronJob } from "../useCronJobs";
-import { useWorkflows } from "../useWorkflows";
+import { usePipelineDefs } from "../usePipelineDefs";
 
 vi.mock("../useWebSocketEvent", () => ({
   useWebSocketEvent: () => undefined,
@@ -118,7 +118,7 @@ describe("selection fetch race protection", () => {
     expect(fetchMock).toHaveBeenCalledTimes(1);
   });
 
-  it("keeps the latest workflow filter results and detail selection", async () => {
+  it("keeps the latest pipeline filter results and detail selection", async () => {
     const initialList = deferredResponse();
     const filteredA = deferredResponse();
     const filteredB = deferredResponse();
@@ -127,46 +127,47 @@ describe("selection fetch race protection", () => {
     vi.stubGlobal(
       "fetch",
       vi.fn((url: string) => {
-        if (url.endsWith("/api/workflows")) return initialList.promise;
+        if (url.endsWith("/api/pipelines/definitions"))
+          return initialList.promise;
         if (url.includes("project_id=project-a")) return filteredA.promise;
         if (url.includes("project_id=project-b")) return filteredB.promise;
-        if (url.endsWith("/workflow-a")) return detailA.promise;
+        if (url.endsWith("/pipeline-a")) return detailA.promise;
         return detailB.promise;
       }),
     );
 
-    const { result } = renderHook(() => useWorkflows());
+    const { result } = renderHook(() => usePipelineDefs());
     await act(async () => {
       initialList.resolve(jsonResponse({ definitions: [] }));
     });
     await waitFor(() => expect(result.current.isLoading).toBe(false));
 
     act(() => {
-      void result.current.fetchWorkflows({ project_id: "project-a" });
-      void result.current.fetchWorkflows({ project_id: "project-b" });
+      void result.current.fetchPipelines({ project_id: "project-a" });
+      void result.current.fetchPipelines({ project_id: "project-b" });
     });
     await act(async () => {
-      filteredB.resolve(jsonResponse({ definitions: [{ id: "workflow-b" }] }));
+      filteredB.resolve(jsonResponse({ definitions: [{ id: "pipeline-b" }] }));
     });
     await act(async () => {
       filteredA.reject(new Error("stale list failure"));
     });
-    expect(result.current.workflows.map((workflow) => workflow.id)).toEqual([
-      "workflow-b",
+    expect(result.current.pipelines.map((pipeline) => pipeline.id)).toEqual([
+      "pipeline-b",
     ]);
 
     act(() => {
-      void result.current.selectWorkflow("workflow-a");
-      void result.current.selectWorkflow("workflow-b");
+      void result.current.selectPipeline("pipeline-a");
+      void result.current.selectPipeline("pipeline-b");
     });
     await act(async () => {
-      detailB.resolve(jsonResponse({ definition: { id: "workflow-b" } }));
+      detailB.resolve(jsonResponse({ definition: { id: "pipeline-b" } }));
     });
     await act(async () => {
-      detailA.resolve(jsonResponse({ definition: { id: "workflow-a" } }));
+      detailA.resolve(jsonResponse({ definition: { id: "pipeline-a" } }));
     });
 
-    expect(result.current.selectedId).toBe("workflow-b");
-    expect(result.current.selectedWorkflow?.id).toBe("workflow-b");
+    expect(result.current.selectedId).toBe("pipeline-b");
+    expect(result.current.selectedPipeline?.id).toBe("pipeline-b");
   });
 });

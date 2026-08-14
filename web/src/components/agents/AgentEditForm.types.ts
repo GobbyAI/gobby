@@ -50,9 +50,11 @@ export interface AgentItemForPanel {
     } | null;
     lifecycle_variables: Record<string, unknown>;
     default_variables: Record<string, unknown>;
-    steps?: WorkflowStep[] | null;
-    step_variables?: Record<string, unknown> | null;
-    exit_condition?: string | null;
+    step_workflow?: {
+      steps?: WorkflowStep[] | null;
+      variables?: Record<string, unknown> | null;
+      exit_condition?: string | null;
+    } | null;
     blocked_tools?: string[] | null;
     blocked_mcp_tools?: string[] | null;
   };

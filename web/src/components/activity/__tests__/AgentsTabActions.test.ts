@@ -42,9 +42,11 @@ function agentDefinition(): AgentDefInfo {
       },
       lifecycle_variables: { task_claimed: false },
       default_variables: { review_depth: "full" },
-      steps: [{ name: "review", description: "Review the change" }],
-      step_variables: { current_step: "review" },
-      exit_condition: "review_complete == true",
+      step_workflow: {
+        steps: [{ name: "review", description: "Review the change" }],
+        variables: { current_step: "review" },
+        exit_condition: "review_complete == true",
+      },
       blocked_tools: ["Write"],
       blocked_mcp_tools: ["dangerous-tool"],
     },
@@ -110,9 +112,11 @@ describe("AgentsTabActions", () => {
       sandbox_config: { filesystem: "workspace-write" },
       lifecycle_variables: { task_claimed: false },
       default_variables: { review_depth: "full" },
-      steps: [{ name: "review", description: "Review the change" }],
-      step_variables: { current_step: "review" },
-      exit_condition: "review_complete == true",
+      step_workflow: {
+        steps: [{ name: "review", description: "Review the change" }],
+        variables: { current_step: "review" },
+        exit_condition: "review_complete == true",
+      },
       blocked_tools: ["Write"],
       blocked_mcp_tools: ["dangerous-tool"],
       workflows: expect.objectContaining({
@@ -120,5 +124,25 @@ describe("AgentsTabActions", () => {
       }),
     });
     expect(body).not.toHaveProperty("sandbox");
+  });
+
+  it("round-trips nested step_workflow through draft and save body", () => {
+    const agent = agentDefinition();
+    const draft = agentToDraft(agent);
+    const body = buildAgentDefinitionBody(draft);
+
+    expect(draft.steps).toEqual([
+      { name: "review", description: "Review the change" },
+    ]);
+    expect(draft.stepVariables).toEqual({ current_step: "review" });
+    expect(draft.exitCondition).toBe("review_complete == true");
+    expect(body.step_workflow).toEqual({
+      steps: [{ name: "review", description: "Review the change" }],
+      variables: { current_step: "review" },
+      exit_condition: "review_complete == true",
+    });
+    expect(body).not.toHaveProperty("steps");
+    expect(body).not.toHaveProperty("step_variables");
+    expect(body).not.toHaveProperty("exit_condition");
   });
 });

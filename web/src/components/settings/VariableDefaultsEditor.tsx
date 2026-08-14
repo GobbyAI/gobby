@@ -1,29 +1,25 @@
-import { useEffect, useMemo, useState } from "react";
-import { useWorkflows, type WorkflowDetail } from "../../hooks/useWorkflows";
+import { useEffect, useState } from "react";
+import { useVariableDefs, type VariableDef } from "../../hooks/useVariableDefs";
 import { Button } from "../ui/Button";
 import { Switch } from "../ui/Switch";
 import { TextField } from "../activity/fields";
 import { parseVariableInput, variableDisplayValue } from "./workflowVariables";
 
 /**
- * Live editor for workflow variable defaults (`/api/workflows?workflow_type=
- * variable`), re-homed from the legacy configuration page so it survives that
- * page's deletion. Unlike the draft-backed config rows in the section, variable
- * add / toggle / delete write immediately through `useWorkflows`. Bundled
- * `template` variables are read-only; variables you add (`source: installed`)
- * can be toggled or deleted. The value-parsing helpers live in
- * `./workflowVariables` so this file can export only components.
+ * Live editor for session variable defaults (`/api/variables`). Add / toggle /
+ * delete write immediately through `useVariableDefs`. Bundled `template`
+ * variables are read-only; variables you add can be toggled or deleted.
  */
 
-export function WorkflowVariablesEditor() {
+export function VariableDefaultsEditor() {
   const {
-    workflows,
+    variables,
     isLoading,
-    fetchWorkflows,
-    createWorkflow,
+    fetchVariables,
+    createVariable,
     toggleEnabled,
-    deleteWorkflow,
-  } = useWorkflows();
+    deleteVariable,
+  } = useVariableDefs();
   const [showForm, setShowForm] = useState(false);
   const [name, setName] = useState("");
   const [value, setValue] = useState("");
@@ -32,18 +28,13 @@ export function WorkflowVariablesEditor() {
 
   useEffect(() => {
     let active = true;
-    void fetchWorkflows({ workflow_type: "variable" }).then((ok) => {
+    void fetchVariables().then((ok) => {
       if (active && !ok) setError("Could not load variable defaults.");
     });
     return () => {
       active = false;
     };
-  }, [fetchWorkflows]);
-
-  const variables = useMemo(
-    () => workflows.filter((workflow) => workflow.workflow_type === "variable"),
-    [workflows],
-  );
+  }, [fetchVariables]);
 
   function resetForm() {
     setName("");
@@ -56,16 +47,10 @@ export function WorkflowVariablesEditor() {
     const trimmedName = name.trim();
     if (!trimmedName) return;
     const trimmedDescription = description.trim();
-    const definitionJson = JSON.stringify({
-      variable: trimmedName,
-      value: parseVariableInput(value),
-      description: trimmedDescription || undefined,
-    });
     setError(null);
-    const created = await createWorkflow({
+    const created = await createVariable({
       name: trimmedName,
-      definition_json: definitionJson,
-      workflow_type: "variable",
+      value: parseVariableInput(value),
       description: trimmedDescription || undefined,
       enabled: true,
     });
@@ -76,16 +61,16 @@ export function WorkflowVariablesEditor() {
     }
   }
 
-  async function handleToggle(variable: WorkflowDetail) {
+  async function handleToggle(variable: VariableDef) {
     setError(null);
     const updated = await toggleEnabled(variable.id);
     if (!updated) setError(`Could not update "${variable.name}".`);
   }
 
-  async function handleDelete(variable: WorkflowDetail) {
+  async function handleDelete(variable: VariableDef) {
     if (!window.confirm(`Delete variable "${variable.name}"?`)) return;
     setError(null);
-    const deleted = await deleteWorkflow(variable.id);
+    const deleted = await deleteVariable(variable.id);
     if (!deleted) setError(`Could not delete "${variable.name}".`);
   }
 
@@ -195,7 +180,7 @@ export function WorkflowVariablesEditor() {
               </div>
               <div className="flex flex-wrap items-baseline gap-x-3 gap-y-1">
                 <code className="text-sm leading-[1.6] break-all text-muted-foreground">
-                  {variableDisplayValue(variable.definition_json)}
+                  {variableDisplayValue(variable.default_value)}
                 </code>
                 {variable.description ? (
                   <span className="text-sm leading-[1.6] text-foreground-muted">
@@ -211,4 +196,4 @@ export function WorkflowVariablesEditor() {
   );
 }
 
-export default WorkflowVariablesEditor;
+export default VariableDefaultsEditor;
