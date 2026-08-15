@@ -46,8 +46,7 @@ def test_build_rules_sync_with_audience(temp_db: HubDatabase) -> None:
 
     row = manager.get_by_name("build-agent-block-full-pytest")
     assert row is not None
-    body = yaml.safe_load(row.definition_json)
-    assert body["audience"] == "autonomous"
+    assert row.definition_json["audience"] == "autonomous"
 
 
 @pytest.mark.asyncio

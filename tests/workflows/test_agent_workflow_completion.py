@@ -17,11 +17,11 @@ from gobby.agents.tmux import TmuxConfig
 from gobby.events.completion_registry import CompletionEventRegistry
 from gobby.hooks.events import HookEvent, HookEventType, SessionSource
 from gobby.storage.agents import LocalAgentRunManager
+from gobby.storage.definitions.agents import AgentDefinitionManager
 from gobby.storage.hub.protocol import HubDatabase
 from gobby.storage.pipeline_subscribers import CompletionSubscriberManager
 from gobby.storage.sessions import SessionManager
 from gobby.storage.tasks import LocalTaskManager, TaskDispatchMutexManager
-from gobby.storage.definitions.agents import AgentDefinitionManager
 from gobby.workflows.agent_models import AgentStepWorkflowBody
 from gobby.workflows.definitions import AgentDefinitionBody
 from gobby.workflows.engine.core import RuleEngine
@@ -125,7 +125,6 @@ def _register_agent_workflow(
     manager.create(
         name=workflow_name,
         definition_json=json.dumps(workflow_data),
-        priority=100,
         enabled=True,
     )
     instance_manager.save(
@@ -175,7 +174,6 @@ def _register_qa_reviewer_workflow(
     manager.create(
         name=workflow_name,
         definition_json=json.dumps(workflow_data),
-        priority=100,
         enabled=True,
     )
     variables = dict(agent["step_workflow"]["variables"])
@@ -307,7 +305,7 @@ class TestAgentWorkflowCompletion:
     ) -> None:
         instance_manager = _register_agent_workflow(
             db,
-            agent_name="epic-reviewer",
+            workflow_name="epic-reviewer",
             review_tool="complete_stage",
         )
         runner = MagicMock()
@@ -571,7 +569,7 @@ class TestAgentWorkflowCompletion:
                 "status": "success",
                 "run_id": "ff807256-1906-55de-b7b3-94163bb18352",
                 "via": "workflow_terminate",
-                "workflow": "expansion-qa-steps",
+                "workflow": "expansion-qa",
             },
             message="Agent ff807256-1906-55de-b7b3-94163bb18352 completed via workflow terminate",
         )
@@ -822,7 +820,7 @@ class TestAgentWorkflowCompletion:
     ) -> None:
         instance_manager = _register_agent_workflow(
             db,
-            agent_name="merge-orchestrator-test",
+            workflow_name="merge-orchestrator-test",
             review_tool="verify_in_worktree",
             review_success_handlers=[
                 {

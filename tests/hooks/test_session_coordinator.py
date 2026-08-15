@@ -17,7 +17,6 @@ Test categories:
 from __future__ import annotations
 
 import asyncio
-import json
 import logging
 import threading
 import uuid
@@ -65,33 +64,33 @@ def _create_session_row(db: HubDatabase, session_id: str) -> None:
 
 
 def _install_step_workflow(db: HubDatabase, session_id: str, current_step: str) -> None:
-    from gobby.storage.definitions.rules import RuleDefinitionManager
+    from gobby.storage.definitions.agents import AgentDefinitionManager
     from gobby.workflows.agent_models import AgentStepWorkflowBody
-    from gobby.workflows.definitions import WorkflowStep
-    from gobby.workflows.step_instances import AgentStepInstance, AgentStepInstanceManager
+    from gobby.workflows.definitions import AgentDefinitionBody
+    from gobby.workflows.step_instances import AgentStepInstanceManager, build_step_instance
 
-    definition = {
-        "name": "merge-worker",
-        "version": "1.0",
-        "enabled": True,
-        "steps": [
-            {"name": "resolve_conflicts"},
-            {"name": "terminate"},
-        ],
-        "exit_condition": "current_step == 'terminate'",
-    }
-    RuleDefinitionManager(db).create(
+    definition = AgentDefinitionBody(
         name="merge-worker",
-        definition_json=json.dumps(definition),
+        step_workflow=AgentStepWorkflowBody.model_validate(
+            {
+                "steps": [
+                    {"name": "resolve_conflicts"},
+                    {"name": "terminate"},
+                ],
+                "exit_condition": "current_step == 'terminate'",
+            }
+        ),
+    )
+    AgentDefinitionManager(db).create(
+        name=definition.name,
+        definition_json=definition.model_dump(mode="json"),
         enabled=True,
     )
     AgentStepInstanceManager(db).save(
-        AgentStepInstance(
-            # workflow_instances.id is a native uuid column.
-            id=str(uuid.uuid5(uuid.NAMESPACE_URL, f"inst-{session_id}")),
+        build_step_instance(
+            definition,
             session_id=session_id,
-            agent_name="merge-worker",
-            snapshot=AgentStepWorkflowBody(steps=[WorkflowStep(name=current_step)]),
+            step_workflow_id=None,
             current_step=current_step,
             variables={},
         )
@@ -850,7 +849,6 @@ class TestAgentRunCompletion:
             prompt="resolve merge conflicts",
             workflow_name="merge-worker",
             agent_name="merge-worker",
-            snapshot=AgentStepWorkflowBody(steps=[WorkflowStep(name=current_step)]),
             child_session_id=CHILD_SESSION_ID,
         )
         run_manager.start(run.id)
@@ -892,7 +890,6 @@ class TestAgentRunCompletion:
             prompt="resolve merge conflicts",
             workflow_name="merge-worker",
             agent_name="merge-worker",
-            snapshot=AgentStepWorkflowBody(steps=[WorkflowStep(name=current_step)]),
             child_session_id=CHILD_SESSION_ID,
         )
         run_manager.start(run.id)

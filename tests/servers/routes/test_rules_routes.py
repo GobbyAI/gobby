@@ -23,9 +23,9 @@ from starlette.testclient import TestClient
 from gobby.config.app import DaemonConfig
 from gobby.config.runtime import ConfigRuntime
 from gobby.config.runtime_models import ConfigSnapshot
+from gobby.storage.definitions.pipelines import PipelineDefinitionManager
 from gobby.storage.definitions.rules import RuleDefinitionManager
 from gobby.storage.hub.protocol import HubDatabase
-from gobby.storage.definitions.rules import RuleDefinitionManager
 from tests.servers.conftest import StubConfigRuntime, create_http_server
 
 pytestmark = pytest.mark.unit
@@ -133,7 +133,7 @@ class TestListRules:
         self, client: TestClient, def_manager: RuleDefinitionManager
     ) -> None:
         _seed_rule(def_manager, name="my-rule")
-        RuleDefinitionManager(def_manager.db).create(
+        PipelineDefinitionManager(def_manager.db).create(
             name="my-workflow",
             definition_json=json.dumps({"name": "my-workflow"}),
         )
@@ -332,10 +332,10 @@ class TestUpdateRule:
         self, client: TestClient, def_manager: RuleDefinitionManager
     ) -> None:
         _seed_rule(def_manager, name="my-rule")
-        RuleDefinitionManager(def_manager.db).create(
+        PipelineDefinitionManager(def_manager.db).create(
             name="workflow-name",
             definition_json=json.dumps({"steps": []}),
-            source="template",
+            source="installed",
         )
 
         resp = client.put("/api/rules/my-rule", json={"name": "workflow-name"})

@@ -56,8 +56,8 @@ def _create_agent(
 @pytest.fixture
 def mock_workflow_loader() -> MagicMock:
     loader = MagicMock()
-    loader.load_workflow = AsyncMock(return_value=None)
-    loader.validate_workflow_for_agent = AsyncMock(return_value=(True, None))
+    loader.load_pipeline = AsyncMock(return_value=None)
+    loader.validate_pipeline_for_agent = AsyncMock(return_value=(True, None))
     return loader
 
 
@@ -247,7 +247,7 @@ class TestWorkflowEvaluation:
                 WorkflowStep(name="done"),
             ],
         )
-        mock_workflow_loader.load_workflow.return_value = wf_definition
+        mock_workflow_loader.load_pipeline.return_value = wf_definition
         project_id = "11111111-1111-4111-8111-111111111111"
         monkeypatch.setattr(
             "gobby.utils.project_context.get_project_context",
@@ -262,11 +262,14 @@ class TestWorkflowEvaluation:
 
         assert result.workflow_evaluation is not None
         assert result.workflow_evaluation.valid is True
-        assert len(result.workflow_evaluation.step_trace) == 2
-        mock_workflow_loader.validate_workflow_for_agent.assert_awaited_once_with(
+        assert result.workflow_evaluation.step_trace == []
+        assert any(
+            item.code == "PIPELINE_TYPE" for item in result.workflow_evaluation.items
+        )
+        mock_workflow_loader.validate_pipeline_for_agent.assert_awaited_once_with(
             "worker", project_id
         )
-        mock_workflow_loader.load_workflow.assert_awaited_once_with("worker", project_id)
+        mock_workflow_loader.load_pipeline.assert_awaited_once_with("worker", project_id)
 
     @pytest.mark.asyncio
     async def test_explicit_project_path_overrides_ambient_workflow_scope(
@@ -278,7 +281,7 @@ class TestWorkflowEvaluation:
     ) -> None:
         """An explicit target path determines workflow scoping for cross-project dry runs."""
         db = _setup_db(definition_db)
-        mock_workflow_loader.load_workflow.return_value = WorkflowDefinition(
+        mock_workflow_loader.load_pipeline.return_value = WorkflowDefinition(
             name="worker",
             steps=[WorkflowStep(name="done")],
         )
@@ -304,10 +307,10 @@ class TestWorkflowEvaluation:
 
         assert result.workflow_evaluation is not None
         assert result.workflow_evaluation.valid is True
-        mock_workflow_loader.validate_workflow_for_agent.assert_awaited_once_with(
+        mock_workflow_loader.validate_pipeline_for_agent.assert_awaited_once_with(
             "worker", target_id
         )
-        mock_workflow_loader.load_workflow.assert_awaited_once_with("worker", target_id)
+        mock_workflow_loader.load_pipeline.assert_awaited_once_with("worker", target_id)
 
     @pytest.mark.asyncio
     async def test_workflow_invalid_for_agent(
@@ -317,7 +320,7 @@ class TestWorkflowEvaluation:
         db = _setup_db(definition_db)
         _create_agent(db, pipeline="lifecycle-wf")
 
-        mock_workflow_loader.validate_workflow_for_agent.return_value = (
+        mock_workflow_loader.validate_pipeline_for_agent.return_value = (
             False,
             "Cannot use lifecycle workflow",
         )
@@ -355,7 +358,7 @@ class TestHappyPath:
                 WorkflowStep(name="done"),
             ],
         )
-        mock_workflow_loader.load_workflow.return_value = wf_definition
+        mock_workflow_loader.load_pipeline.return_value = wf_definition
 
         result = await evaluate_spawn(
             agent="test-agent",
@@ -387,7 +390,7 @@ class TestToDict:
 
     def test_spawn_evaluation_with_workflow_eval(self) -> None:
         """SpawnEvaluation with embedded workflow eval serializes correctly."""
-        wf_eval = WorkflowEvaluation(valid=True, workflow_name="test", workflow_type="step")
+        wf_eval = WorkflowEvaluation(valid=True, workflow_name="test")
         result = SpawnEvaluation(
             can_spawn=True,
             agent_name="test",

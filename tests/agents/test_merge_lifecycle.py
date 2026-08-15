@@ -2,8 +2,6 @@
 
 from __future__ import annotations
 
-import json
-import uuid
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any, cast
@@ -12,12 +10,11 @@ import pytest
 import yaml
 
 from gobby.hooks.events import HookEvent, HookEventType, SessionSource
-from gobby.storage.hub.protocol import HubDatabase
 from gobby.storage.definitions.agents import AgentDefinitionManager
-from gobby.workflows.definitions import WorkflowDefinition
+from gobby.storage.hub.protocol import HubDatabase
+from gobby.workflows.definitions import AgentDefinitionBody
 from gobby.workflows.engine.core import RuleEngine
-from gobby.workflows.step_instances import AgentStepInstanceManager
-from tests.workflows.step_instance_fixtures import make_step_instance
+from gobby.workflows.step_instances import AgentStepInstanceManager, build_step_instance
 
 pytestmark = pytest.mark.unit
 
@@ -81,31 +78,23 @@ def _install_merge_worker_workflow(
     current_step: str = "merge",
 ) -> AgentStepInstanceManager:
     agent = _agent("merge-worker")
-    workflow_data = {
-        "name": agent["name"],
-        "version": agent["version"],
-        "enabled": True,
-        "variables": agent.get("step_workflow", {}).get("variables", {}),
-        "steps": agent["step_workflow"]["steps"],
-        "exit_condition": agent["step_workflow"].get("exit_condition"),
-    }
-    definition = WorkflowDefinition(**workflow_data)
+    definition = AgentDefinitionBody.model_validate(agent)
     manager = AgentDefinitionManager(db)
     manager.create(
         name=definition.name,
-        definition_json=json.dumps(workflow_data),
-        priority=100,
+        definition_json=definition.model_dump(mode="json"),
         enabled=True,
     )
 
     _create_session(db, session_id)
     instance_manager = AgentStepInstanceManager(db)
     instance_manager.save(
-        make_step_instance(
-            session_id,
-            agent_name=definition.name.removesuffix("-steps"),
+        build_step_instance(
+            definition,
+            session_id=session_id,
+            step_workflow_id=None,
             current_step=current_step,
-            variables=dict(definition.variables),
+            variables=dict(definition.step_workflow.variables if definition.step_workflow else {}),
         )
     )
     return instance_manager

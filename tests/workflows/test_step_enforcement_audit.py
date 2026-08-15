@@ -2,7 +2,6 @@
 
 import json
 import threading
-import uuid
 from datetime import UTC, datetime
 from typing import TYPE_CHECKING, Any
 from unittest.mock import patch
@@ -11,11 +10,14 @@ import pytest
 
 from gobby.hooks.events import HookEvent, HookEventType, SessionSource
 from gobby.storage.definitions.agents import AgentDefinitionManager
-from gobby.workflows.definitions import WorkflowDefinition
-from gobby.workflows.engine.core import RuleEngine
 from gobby.workflows.agent_models import AgentStepWorkflowBody
-from gobby.workflows.definitions import WorkflowStep
-from gobby.workflows.step_instances import AgentStepInstance, AgentStepInstanceManager
+from gobby.workflows.definitions import AgentDefinitionBody
+from gobby.workflows.engine.core import RuleEngine
+from gobby.workflows.step_instances import (
+    AgentStepInstance,
+    AgentStepInstanceManager,
+    build_step_instance,
+)
 
 if TYPE_CHECKING:
     from gobby.storage.hub.protocol import HubDatabase
@@ -107,22 +109,22 @@ def _setup_workflow(
         ],
         "exit_condition": "current_step == 'implement'",
     }
-    definition = WorkflowDefinition(**workflow_data)
+    definition = AgentDefinitionBody(
+        name="audit-workflow",
+        step_workflow=AgentStepWorkflowBody.model_validate(workflow_data),
+    )
     manager.create(
         name=definition.name,
-        definition_json=json.dumps(workflow_data),
+        definition_json=definition.model_dump(mode="json"),
         enabled=True,
     )
     instance_mgr.save(
-        AgentStepInstance(
-            id=str(uuid.uuid4()),
+        build_step_instance(
+            definition,
             session_id=SESSION_ID,
-            agent_name=definition.name,
-            snapshot=AgentStepWorkflowBody(steps=[WorkflowStep(name="claim")]),
-            enabled=True,
+            step_workflow_id=None,
             current_step="claim",
-            step_entered_at=datetime.now(UTC),
-            variables=dict(definition.variables),
+            variables=dict(definition.step_workflow.variables if definition.step_workflow else {}),
         )
     )
 
@@ -216,19 +218,23 @@ async def test_step_transition_writes_run_outside_event_loop_thread(
     audit_threads: list[int] = []
     save_threads: list[int] = []
     original_log_transition = engine.workflow_audit.log_transition
-    original_save_instance = engine.instance_manager.save_instance
+    original_save = engine.instance_manager.save
 
     def log_transition(*args: object, **kwargs: object) -> None:
         audit_threads.append(threading.get_ident())
         original_log_transition(*args, **kwargs)
 
-    def save_instance(*args: object, **kwargs: object) -> None:
+    def save(
+        instance: AgentStepInstance,
+        *,
+        if_match: tuple[str, datetime] | None = None,
+    ) -> None:
         save_threads.append(threading.get_ident())
-        original_save_instance(*args, **kwargs)
+        original_save(instance, if_match=if_match)
 
     with (
         patch.object(engine.workflow_audit, "log_transition", side_effect=log_transition),
-        patch.object(engine.instance_manager, "save_instance", side_effect=save_instance),
+        patch.object(engine.instance_manager, "save", side_effect=save),
     ):
         response = await engine.evaluate(event, session_id=SESSION_ID, variables={})
 

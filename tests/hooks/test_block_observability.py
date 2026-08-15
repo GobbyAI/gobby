@@ -15,11 +15,10 @@ from gobby.hooks.dispatchers.webhook import evaluate_blocking_webhooks
 from gobby.hooks.events import HookEvent, HookEventType, SessionSource
 from gobby.servers.chat_session import ChatSession
 from gobby.servers.websocket.chat import ChatMixin
-from gobby.storage.hub.protocol import HubDatabase
 from gobby.storage.definitions.rules import RuleDefinitionManager, RuleDefinitionRow
+from gobby.storage.hub.protocol import HubDatabase
 from gobby.workflows.engine.core import RuleEngine
 from gobby.workflows.step_instances import AgentStepInstanceManager
-from tests.workflows.step_instance_fixtures import make_step_instance
 
 pytestmark = pytest.mark.unit
 
@@ -215,7 +214,7 @@ async def test_rule_block_reason_and_log_are_structured(
 ) -> None:
     rule = _insert_block_rule(db, name="test-empty-block-reason", event="stop", reason="")
     assert rule.priority == 10
-    assert "priority" not in json.loads(rule.definition_json)
+    assert "priority" not in rule.definition_json
     event = _make_event(event_type=HookEventType.STOP)
 
     with caplog.at_level(logging.DEBUG):
