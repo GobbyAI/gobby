@@ -20,6 +20,8 @@ from qdrant_client.http.models.models import (
 )
 from qdrant_client.models import Distance, VectorParams
 
+from gobby.storage.embedding_generation_state import EmbeddingGenerationLeaseLost
+
 if TYPE_CHECKING:
     from gobby.memory.vectorstore import VectorStore
 
@@ -73,7 +75,10 @@ class VectorStoreCollectionDimensionError(RuntimeError):
 
 def is_recoverable_vector_store_error(error: BaseException) -> bool:
     """Return True for transient VectorStore/Qdrant availability errors."""
-    if isinstance(error, VectorStoreUnavailableError | ResponseHandlingException):
+    if isinstance(
+        error,
+        VectorStoreUnavailableError | ResponseHandlingException | EmbeddingGenerationLeaseLost,
+    ):
         return True
     if isinstance(error, UnexpectedResponse):
         return error.status_code is not None and 500 <= error.status_code < 600

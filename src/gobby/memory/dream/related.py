@@ -448,6 +448,7 @@ async def _run_channel[T](
 ) -> T:
     loop = asyncio.get_running_loop()
     detail = "unknown failure"
+    last_error: Exception | None = None
     for attempt in range(1, context.retry_attempts + 1):
         metrics = _AttemptMetrics()
         started = loop.time()
@@ -460,6 +461,7 @@ async def _run_channel[T](
             async with asyncio.timeout(context.channel_timeout_seconds):
                 return await task
         except TimeoutError as exc:
+            last_error = exc
             task.cancel()
             with suppress(asyncio.CancelledError, TimeoutError):
                 await task
@@ -476,6 +478,7 @@ async def _run_channel[T](
                 await task
             raise
         except Exception as exc:
+            last_error = exc
             detail = f"{type(exc).__name__}: {exc}"
         _log_attempt_failure(
             channel,
@@ -488,7 +491,10 @@ async def _run_channel[T](
         if attempt < context.retry_attempts:
             backoffs = RELATED_EVIDENCE_RETRY_BACKOFF_SECONDS
             await asyncio.sleep(backoffs[min(attempt - 1, len(backoffs) - 1)])
-    raise RelatedEvidenceChannelError(channel, attempts=context.retry_attempts, detail=detail)
+    error = RelatedEvidenceChannelError(channel, attempts=context.retry_attempts, detail=detail)
+    if last_error is None:
+        raise error
+    raise error from last_error
 
 
 async def _drain_tasks(tasks: list[asyncio.Task[Any]]) -> None:

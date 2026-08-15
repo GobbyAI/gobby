@@ -17,6 +17,7 @@ from gobby.memory.services.dedup import (
     _memory_richness_score,
 )
 from gobby.memory.vectorstore import VectorStoreUnavailableError
+from gobby.storage.embedding_generation_state import EmbeddingGenerationLeaseLost
 
 pytestmark = pytest.mark.unit
 
@@ -399,6 +400,28 @@ class TestProcess:
         )
 
         assert len(result.added) == 1
+
+    async def test_fenced_lease_search_uses_rate_limited_fallback(
+        self,
+        dedup_service: DedupService,
+        mock_vector_store: Any,
+        mock_storage: Any,
+        caplog: pytest.LogCaptureFixture,
+    ) -> None:
+        error = EmbeddingGenerationLeaseLost("Embedding generation serving is fenced")
+        mock_vector_store.search.side_effect = error
+        mock_memory = MagicMock(id="mem-fenced")
+        mock_storage.create_memory = MagicMock(return_value=mock_memory)
+
+        with caplog.at_level(logging.WARNING, logger="gobby.memory.services.dedup"):
+            result = await dedup_service.process(
+                content="Some content",
+                project_id="proj-1",
+            )
+
+        assert result.added == [mock_memory]
+        assert "Vector search unavailable, falling back to simple store" in caplog.text
+        assert "Vector search failed" not in caplog.text
 
     @pytest.mark.asyncio
     async def test_vectorstore_unavailable_does_not_disable_embeddings(

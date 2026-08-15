@@ -7,6 +7,7 @@ update_memory correctly interact with local storage and VectorStore.
 from __future__ import annotations
 
 import asyncio
+import logging
 from datetime import UTC, datetime, timedelta
 from types import SimpleNamespace
 from unittest.mock import AsyncMock, MagicMock
@@ -16,6 +17,7 @@ import pytest
 from gobby.config.persistence import MemoryConfig
 from gobby.memory.manager import MemoryManager
 from gobby.memory.vectorstore import VectorStore
+from gobby.storage.embedding_generation_state import EmbeddingGenerationLeaseLost
 from gobby.storage.hub.protocol import HubDatabase
 from gobby.storage.projects import PERSONAL_PROJECT_ID
 
@@ -114,6 +116,25 @@ async def test_create_memory_upserts_to_qdrant(
     call_args = mock_vector_store.upsert.call_args
     assert call_args[0][0] == memory.id  # memory_id
     assert "project_id" in call_args[0][2]  # payload has project_id
+
+
+async def test_fenced_lease_upsert_preserves_durable_reindex_intent(
+    manager: MemoryManager,
+    mock_vector_store: AsyncMock,
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    mock_vector_store.upsert.side_effect = EmbeddingGenerationLeaseLost(
+        "Embedding generation serving is fenced"
+    )
+
+    with caplog.at_level(logging.WARNING):
+        memory = await manager.create_memory(content="retry vector indexing after recovery")
+
+    stored = manager.get_memory(memory.id)
+    assert stored is not None
+    assert stored.vector_needs_reindex is True
+    assert "VectorStore upsert unavailable" in caplog.text
+    assert "VectorStore upsert failed" not in caplog.text
 
 
 @pytest.mark.asyncio
@@ -227,6 +248,25 @@ async def test_delete_memory_removes_from_qdrant(
     mock_vector_store.delete.assert_awaited_once_with(memory.id)
     assert mock_vector_store.delete.await_count == 1
     assert mock_vector_store.delete.await_args is not None
+
+
+async def test_fenced_lease_purge_uses_rate_limited_availability_reporting(
+    manager: MemoryManager,
+    mock_vector_store: AsyncMock,
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    error = EmbeddingGenerationLeaseLost("Embedding generation serving is fenced")
+    availability_logger = MagicMock()
+    manager._lifecycle_service._log_vector_store_failure = availability_logger
+    mock_vector_store.delete.side_effect = error
+
+    with caplog.at_level(logging.WARNING, logger="gobby.memory.services.lifecycle"):
+        await manager._lifecycle_service.purge_secondary_indices("missing-memory")
+
+    availability_logger.assert_called_once_with(
+        "VectorStore purge unavailable for missing-memory", error
+    )
+    assert "VectorStore purge failed" not in caplog.text
 
 
 @pytest.mark.asyncio
