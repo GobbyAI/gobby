@@ -72,8 +72,8 @@ if TYPE_CHECKING:
     from gobby.sync.memories import MemoryBackupManager
     from gobby.tasks.validation import TaskValidator
     from gobby.wiki.watcher import WikiWatcher
-    from gobby.workflows.pipeline_loader import PipelineLoader
     from gobby.workflows.pipeline_executor import PipelineExecutor
+    from gobby.workflows.pipeline_loader import PipelineLoader
     from gobby.worktrees.executor import WorktreeDeleteExecutor
     from gobby.worktrees.git import WorktreeGitManager
 

@@ -32,8 +32,8 @@ if TYPE_CHECKING:
     from gobby.storage.tasks import LocalTaskManager
     from gobby.storage.worktrees import LocalWorktreeManager
     from gobby.tasks.validation import TaskValidator
-    from gobby.workflows.pipeline_loader import PipelineLoader
     from gobby.workflows.pipeline_executor import PipelineExecutor
+    from gobby.workflows.pipeline_loader import PipelineLoader
     from gobby.worktrees.executor import WorktreeDeleteExecutor
     from gobby.worktrees.git import WorktreeGitManager
     from gobby.worktrees.merge import MergeResolver
