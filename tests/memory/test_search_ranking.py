@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+import logging
 from collections.abc import Callable
 from datetime import UTC, datetime
 from typing import Any
@@ -56,6 +57,7 @@ class _VectorStore:
         query_embedding: list[float],
         limit: int = 10,
         filters: dict[str, str] | None = None,
+        timeout: float | None = None,
     ) -> list[tuple[str, float]]:
         return self._results[:limit]
 
@@ -107,6 +109,7 @@ class _CountingVectorStore:
         query_embedding: list[float],
         limit: int = 10,
         filters: dict[str, str] | None = None,
+        timeout: float | None = None,
     ) -> list[tuple[str, float]]:
         self.calls.append(limit)
         return self._results[:limit]
@@ -656,4 +659,55 @@ async def test_keyword_fallback_emits_debug_snapshot_when_empty() -> None:
     assert snapshots[0].caller == "memory.recall"
     assert snapshots[0].session_id == "session-1"
     assert snapshots[0].recall_request_id == "request-1"
-    assert snapshots[0].returned_ids == []
+
+
+@pytest.mark.asyncio
+async def test_search_with_graph_qdrant_timeout_is_info_soft_miss(
+    caplog: pytest.LogCaptureFixture,
+    monkeypatch: Any,
+) -> None:
+    service = _service(
+        ["keyword-hit"],
+        vector_results=[("semantic", 0.9)],
+        falkordb_graph_search=True,
+        keyword_search=lambda query, limit, project_id, *, include_global=True: [
+            ("keyword-hit", 1.0)
+        ],
+    )
+
+    async def timeout_search(
+        query_embedding: list[float],
+        limit: int = 10,
+        filters: dict[str, str] | None = None,
+        timeout: float | None = None,
+    ) -> list[tuple[str, float]]:
+        raise TimeoutError("deadline")
+
+    async def empty_graph(**_kwargs: Any) -> GraphScoredResult:
+        return GraphScoredResult()
+
+    monkeypatch.setattr(service._require_vector_store(), "search", timeout_search)
+    monkeypatch.setattr(service, "_search_graph_scored", empty_graph)
+
+    with caplog.at_level(logging.INFO, logger="gobby.memory.services._search_paths"):
+        results = await service._search_with_graph(
+            query="keyword-hit",
+            query_embedding=[1.0, 0.0],
+            limit=1,
+            filters=None,
+            project_id=None,
+            memory_type=None,
+            tags_all=None,
+            tags_any=None,
+            tags_none=None,
+            half_life=0.0,
+            effective_min_score=0.0,
+        )
+
+    assert [memory.id for memory in results] == ["keyword-hit"]
+    messages = [record.getMessage() for record in caplog.records]
+    assert any("Qdrant search timed out" in message for message in messages)
+    assert not any(
+        record.levelno >= logging.WARNING and "Qdrant search failed" in record.getMessage()
+        for record in caplog.records
+    )

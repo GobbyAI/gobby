@@ -90,6 +90,7 @@ class _TestHandler(SessionEventHandlerMixin):
         self._skill_manager = None
         self._skills_config = None
         self._session_task_manager = None
+        self._session_message_processors: dict[str, Any] = {}
         self._dispatch_session_summaries_fn = None
         self._get_machine_id = MagicMock(return_value="21000000-0000-4000-8000-000000000001")
         self._resolve_project_id = MagicMock(return_value="proj-1")
@@ -205,6 +206,8 @@ class TestHandleSessionEnd:
         handler = _TestHandler()
         event = _make_event(event_type=HookEventType.SESSION_END, data={"cwd": "/tmp"})
         event.metadata["_platform_session_id"] = "sess-1"
+        processor = MagicMock()
+        handler._session_message_processors["sess-1"] = processor
 
         # Test basic execution
         resp = handler.handle_session_end(event)
@@ -213,7 +216,8 @@ class TestHandleSessionEnd:
         # Should call auto_link_commits and complete_agent_run
         handler._task_manager = MagicMock()
         handler._session_coordinator.complete_agent_run.assert_called_once()
-        handler._message_processor_resolver().unregister_session.assert_called_with("sess-1")
+        processor.unregister_session.assert_called_with("sess-1")
+        assert "sess-1" not in handler._session_message_processors
         handler._session_manager.update_status_if_non_terminal.assert_called_with(
             "sess-1", "expired"
         )
@@ -238,10 +242,13 @@ class TestHandleSessionEnd:
         event = _make_event(event_type=HookEventType.SESSION_END, session_id="ext-1")
 
         handler._session_manager.lookup_session_id.return_value = "db-sess-1"
+        processor = MagicMock()
+        handler._session_message_processors["db-sess-1"] = processor
         handler.handle_session_end(event)
 
         assert event.metadata.get("_platform_session_id") == "db-sess-1"
-        handler._message_processor_resolver().unregister_session.assert_called_with("db-sess-1")
+        processor.unregister_session.assert_called_with("db-sess-1")
+        assert "db-sess-1" not in handler._session_message_processors
 
     def test_handle_session_end_exceptions(self) -> None:
         handler = _TestHandler()

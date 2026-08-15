@@ -20,6 +20,10 @@ from gobby.storage.projects import PERSONAL_PROJECT_ID
 pytestmark = [pytest.mark.unit, pytest.mark.asyncio]
 
 
+def _neighbor_row(source_key: str, related_entity_key: str) -> dict[str, str]:
+    return {"source_key": source_key, "related_entity_key": related_entity_key}
+
+
 @pytest.fixture
 def mock_falkor() -> AsyncMock:
     """Mock FalkorDBClient."""
@@ -247,10 +251,14 @@ class TestFindRelatedMemoryIds:
         mock_falkor: AsyncMock,
     ) -> None:
         """find_related_memory_ids returns memory IDs via graph traversal."""
+        python_key = entity_key(PERSONAL_PROJECT_ID, "Python")
+        fastapi_key = entity_key(PERSONAL_PROJECT_ID, "FastAPI")
         mock_falkor.query = AsyncMock(
             side_effect=[
-                [{"related_entity_key": entity_key(PERSONAL_PROJECT_ID, "Django")}],
-                [{"related_entity_key": entity_key(PERSONAL_PROJECT_ID, "Starlette")}],
+                [
+                    _neighbor_row(python_key, entity_key(PERSONAL_PROJECT_ID, "Django")),
+                    _neighbor_row(fastapi_key, entity_key(PERSONAL_PROJECT_ID, "Starlette")),
+                ],
                 [
                     {"memory_id": "mem-100"},
                     {"memory_id": "mem-200"},
@@ -261,8 +269,8 @@ class TestFindRelatedMemoryIds:
 
         result = await service.find_related_memory_ids(
             entity_keys=[
-                entity_key(PERSONAL_PROJECT_ID, "Python"),
-                entity_key(PERSONAL_PROJECT_ID, "FastAPI"),
+                python_key,
+                fastapi_key,
             ],
             max_hops=1,
             limit=20,
@@ -286,15 +294,14 @@ class TestFindRelatedMemoryIds:
         cypher = mock_falkor.query.call_args.args[0]
         params = mock_falkor.query.call_args.args[1]
         assert "[*1.." not in cypher
-        assert "(start:_Entity {entity_key: $entity_key})-[r]-(neighbor:_Entity)" in cypher
+        assert "UNWIND $source_keys AS source_key" in cypher
+        assert "(start:_Entity {entity_key: source_key})-[r]-(neighbor:_Entity)" in cypher
         assert "NOT (type(r) IN $excluded_relationship_types)" in cypher
         assert params["excluded_relationship_types"] == ["MENTIONED_IN", "RELATES_TO_CODE"]
-        # The query pulls the highest raw-weight candidates first; weight/decay scoring
-        # and the top-N neighbor cap are then applied in Python.
-        assert params["neighbor_limit"] == 64
+        assert params["source_keys"] == [entity_key(PERSONAL_PROJECT_ID, "Python")]
+        assert "neighbor_limit" not in params
         assert "coalesce(r.weight, 1.0) AS edge_weight" in cypher
         assert "r.updated_at AS updated_at" in cypher
-        assert "ORDER BY coalesce(r.weight, 1.0) DESC" in cypher
 
     async def test_caps_seed_entities(
         self,
@@ -307,9 +314,8 @@ class TestFindRelatedMemoryIds:
 
         await service.find_related_memory_ids(entity_keys=keys, max_hops=1)
 
-        assert mock_falkor.query.await_count == 8
-        queried_keys = [call.args[1]["entity_key"] for call in mock_falkor.query.call_args_list]
-        assert queried_keys == keys[:8]
+        assert mock_falkor.query.await_count == 1
+        assert mock_falkor.query.call_args.args[1]["source_keys"] == keys[:8]
 
     async def test_caps_neighbors_before_memory_lookup(
         self,
@@ -317,8 +323,9 @@ class TestFindRelatedMemoryIds:
         mock_falkor: AsyncMock,
     ) -> None:
         """Neighbor rows are capped before related memory lookup."""
+        source_key = entity_key(PERSONAL_PROJECT_ID, "Python")
         neighbor_rows = [
-            {"related_entity_key": entity_key(PERSONAL_PROJECT_ID, f"Neighbor{i}")}
+            _neighbor_row(source_key, entity_key(PERSONAL_PROJECT_ID, f"Neighbor{i}"))
             for i in range(12)
         ]
         mock_falkor.query = AsyncMock(side_effect=[neighbor_rows, []])
@@ -331,8 +338,8 @@ class TestFindRelatedMemoryIds:
 
         neighbor_params = mock_falkor.query.call_args_list[0].args[1]
         memory_params = mock_falkor.query.call_args_list[1].args[1]
-        # The query pulls a generous candidate set (64); the top-N cap is in Python.
-        assert neighbor_params["neighbor_limit"] == 64
+        assert neighbor_params["source_keys"] == [entity_key(PERSONAL_PROJECT_ID, "Python")]
+        assert "neighbor_limit" not in neighbor_params
         assert len(memory_params["entity_keys"]) == 8
 
     async def test_project_filters_apply_to_traversal_and_memory_lookup(
@@ -341,15 +348,16 @@ class TestFindRelatedMemoryIds:
         mock_falkor: AsyncMock,
     ) -> None:
         """Project filters apply to start entity, related entity, and memory nodes."""
+        auth_key = entity_key("proj-A", "Auth")
         mock_falkor.query = AsyncMock(
             side_effect=[
-                [{"related_entity_key": entity_key("proj-A", "AuthService")}],
+                [_neighbor_row(auth_key, entity_key("proj-A", "AuthService"))],
                 [{"memory_id": "mem-100"}],
             ]
         )
 
         await service.find_related_memory_ids(
-            entity_keys=[entity_key("proj-A", "Auth")],
+            entity_keys=[auth_key],
             max_hops=1,
             project_id="proj-A",
         )
@@ -394,15 +402,16 @@ class TestFindRelatedMemoryIds:
             mock_falkor.query.assert_not_awaited()
 
             clock[0] = 61.0
+            python_key = entity_key(PERSONAL_PROJECT_ID, "Python")
             mock_falkor.query = AsyncMock(
                 side_effect=[
-                    [{"related_entity_key": entity_key(PERSONAL_PROJECT_ID, "Django")}],
+                    [_neighbor_row(python_key, entity_key(PERSONAL_PROJECT_ID, "Django"))],
                     [{"memory_id": "mem-100"}],
                 ]
             )
 
             result = await service.find_related_memory_ids(
-                entity_keys=[entity_key(PERSONAL_PROJECT_ID, "Python")],
+                entity_keys=[python_key],
                 max_hops=1,
             )
 
@@ -469,31 +478,30 @@ class TestFindRelatedMemoryIds:
         mock_falkor: AsyncMock,
     ) -> None:
         """find_related_memory_ids clamps max_hops to 1-3."""
+        key_a = entity_key(PERSONAL_PROJECT_ID, "A")
+        key_b = entity_key(PERSONAL_PROJECT_ID, "B")
+        key_c = entity_key(PERSONAL_PROJECT_ID, "C")
         mock_falkor.query = AsyncMock(
             side_effect=[
-                [{"related_entity_key": entity_key(PERSONAL_PROJECT_ID, "B")}],
-                [{"related_entity_key": entity_key(PERSONAL_PROJECT_ID, "C")}],
-                [{"related_entity_key": entity_key(PERSONAL_PROJECT_ID, "D")}],
+                [_neighbor_row(key_a, key_b)],
+                [_neighbor_row(key_b, key_c)],
+                [_neighbor_row(key_c, entity_key(PERSONAL_PROJECT_ID, "D"))],
                 [],
             ]
         )
 
-        await service.find_related_memory_ids(
-            entity_keys=[entity_key(PERSONAL_PROJECT_ID, "A")], max_hops=10
-        )
+        await service.find_related_memory_ids(entity_keys=[key_a], max_hops=10)
         neighbor_queries = mock_falkor.query.call_args_list[:3]
         assert len(neighbor_queries) == 3
         assert all("[*1.." not in call.args[0] for call in neighbor_queries)
 
         mock_falkor.query = AsyncMock(
             side_effect=[
-                [{"related_entity_key": entity_key(PERSONAL_PROJECT_ID, "B")}],
+                [_neighbor_row(key_a, key_b)],
                 [],
             ]
         )
-        await service.find_related_memory_ids(
-            entity_keys=[entity_key(PERSONAL_PROJECT_ID, "A")], max_hops=0
-        )
+        await service.find_related_memory_ids(entity_keys=[key_a], max_hops=0)
         neighbor_queries = mock_falkor.query.call_args_list[:1]
         assert len(neighbor_queries) == 1
         assert "[*1.." not in neighbor_queries[0].args[0]

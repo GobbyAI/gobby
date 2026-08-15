@@ -147,6 +147,12 @@ class TestSessionStartSourceEnum:
         assert SessionStartSource("NEW") is SessionStartSource.STARTUP
         assert SessionStartSource(" new ") is SessionStartSource.STARTUP
 
+    def test_load_alias_maps_to_resume(self) -> None:
+        """Grok emits source='load' after compact/resume; map to RESUME."""
+        assert SessionStartSource("load") is SessionStartSource.RESUME
+        assert SessionStartSource("LOAD") is SessionStartSource.RESUME
+        assert SessionStartSource(" load ") is SessionStartSource.RESUME
+
 
 class TestSessionEndReasonEnum:
     """Tests for SessionEndReason enum."""
@@ -165,6 +171,12 @@ class TestSessionEndReasonEnum:
         }
         actual = {r.name for r in SessionEndReason}
         assert actual == expected
+
+    def test_shutdown_alias_maps_to_exit(self) -> None:
+        """Grok 1.0.3 emits reason='shutdown'; map to EXIT without a new member."""
+        assert SessionEndReason("shutdown") is SessionEndReason.EXIT
+        assert SessionEndReason("SHUTDOWN") is SessionEndReason.EXIT
+        assert SessionEndReason(" shutdown ") is SessionEndReason.EXIT
 
 
 class TestCompactTriggerEnum:
@@ -261,6 +273,12 @@ class TestSessionStartInput:
         assert input_data.source is SessionStartSource.STARTUP
         assert input_data.source.value == "startup"
 
+    def test_source_load_alias_maps_to_resume(self) -> None:
+        """Grok SessionStart source='load' validates as RESUME."""
+        input_data = SessionStartInput(external_id="grok-session", source="load")
+        assert input_data.source is SessionStartSource.RESUME
+        assert input_data.source.value == "resume"
+
 
 class TestSessionStartOutput:
     """Tests for SessionStartOutput model."""
@@ -308,6 +326,11 @@ class TestSessionEndInput:
     def test_runtime_exit_reason(self) -> None:
         """Test runtime exit reason emitted by Qwen session lifecycle events."""
         input_data = SessionEndInput(external_id="key", reason="exit")
+        assert input_data.reason == SessionEndReason.EXIT
+
+    def test_runtime_shutdown_reason(self) -> None:
+        """Grok 1.0.3 SessionEnd reason='shutdown' validates as EXIT."""
+        input_data = SessionEndInput(external_id="key", reason="shutdown")
         assert input_data.reason == SessionEndReason.EXIT
 
 

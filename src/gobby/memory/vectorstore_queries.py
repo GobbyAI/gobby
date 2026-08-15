@@ -53,6 +53,7 @@ class VectorStoreQueries:
         limit: int = 10,
         filters: dict[str, str] | Filter | None = None,
         collection_name: str | None = None,
+        timeout: float | None = None,
     ) -> list[tuple[str, float]]:
         """Search for similar vectors."""
         store = self._store
@@ -65,6 +66,7 @@ class VectorStoreQueries:
                 query=query_embedding,
                 query_filter=payload_filter(filters),
                 limit=limit,
+                timeout=timeout,
             )
         except Exception as exc:
             store._raise_if_recoverable(exc)

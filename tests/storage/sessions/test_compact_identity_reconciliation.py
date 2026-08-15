@@ -18,8 +18,9 @@ from gobby.storage import session_activity
 from gobby.storage.hub.protocol import HubDatabase
 from gobby.storage.session_activity import reconcile_compact_session_activity
 from gobby.storage.sessions import SessionManager
+from tests.fixtures.postgres import TEST_MACHINE_ID_PREFIX
 
-LOCAL_MACHINE_ID = "20000000-0000-4000-8000-000000000006"
+LOCAL_MACHINE_ID = f"{TEST_MACHINE_ID_PREFIX}000000000006"
 
 
 @pytest.fixture(autouse=True)
@@ -45,7 +46,7 @@ def _register(
 ) -> str:
     return manager.register_session(
         external_id=external_id,
-        machine_id="20000000-0000-4000-8000-000000000006",
+        machine_id=LOCAL_MACHINE_ID,
         source="claude",
         project_id=project_id,
         terminal_context=terminal_context or dict(TERMINAL_CONTEXT),
@@ -241,6 +242,45 @@ def test_populated_historical_terminal_row_does_not_block_compact_reactivation(
     historical = manager.get(historical_id)
     assert historical is not None
     assert historical.status == "expired"
+
+
+def test_ended_later_populated_sibling_does_not_block_compact_reactivation(
+    temp_db: HubDatabase,
+    sample_project: dict[str, Any],
+) -> None:
+    manager = SessionManager(temp_db)
+    canonical_id = _register(
+        manager,
+        project_id=sample_project["id"],
+        external_id="canonical-provider-id",
+    )
+    sibling_id = _register(
+        manager,
+        project_id=sample_project["id"],
+        external_id="ended-sibling-provider-id",
+    )
+    _mark_compact(temp_db, canonical_id, message_count=20)
+    temp_db.execute(
+        """
+        UPDATE sessions
+        SET status = 'handoff_ready',
+            message_count = 4,
+            created_at = created_at + INTERVAL '1 second'
+        WHERE id = %s
+        """,
+        (sibling_id,),
+    )
+
+    resolution = reconcile_compact_session_activity(manager, canonical_id)
+
+    assert resolution.success
+    assert resolution.session is not None
+    assert resolution.session.id == canonical_id
+    assert resolution.session.status == "active"
+    sibling = manager.get(sibling_id)
+    assert sibling is not None
+    assert sibling.status == "handoff_ready"
+    assert sibling.id not in resolution.deleted_ghost_ids
 
 
 def test_compact_resolution_uses_marker_and_exact_terminal_process(

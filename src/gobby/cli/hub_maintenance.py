@@ -12,6 +12,8 @@ from pathlib import Path
 from typing import Protocol
 
 import click
+from psycopg import ProgrammingError
+from psycopg.conninfo import conninfo_to_dict
 
 from gobby.cli.hub_backup.cli import _start_daemon
 from gobby.cli.postgres_backup import _resolve_database_url as _resolve_backup_database_url
@@ -35,6 +37,7 @@ from gobby.storage.maintenance_epoch import (
     record_batch_backup,
     release_maintenance_epoch,
 )
+from gobby.utils.env import is_test_protect_enabled
 
 
 class CampaignExecutor(Protocol):
@@ -83,7 +86,7 @@ def run_campaign(ctx: click.Context, campaign: Campaign) -> None:
     executor = _load_campaign_executor(campaign)
     intent: JsonObject = {"campaign": campaign}
     database_url = _resolve_database_url()
-    _stop_daemon_before_fence()
+    _stop_daemon_before_fence(database_url)
     owner_command = f"hub-maintenance:{campaign}"
     epoch = open_maintenance_epoch(
         database_url,
@@ -113,7 +116,7 @@ def run_campaign(ctx: click.Context, campaign: Campaign) -> None:
 def resume_campaign(ctx: click.Context) -> None:
     """Resume the open campaign using only hub-resident state."""
     database_url = _resolve_database_url()
-    _stop_daemon_before_fence()
+    _stop_daemon_before_fence(database_url)
     epoch = discover_active_maintenance_epoch(database_url)
     if epoch is None:
         raise click.ClickException("No maintenance epoch is open")
@@ -183,13 +186,24 @@ def abort_campaign(disposition: str) -> None:
     click.echo(f"Maintenance epoch {epoch.id} aborted and released")
 
 
-def _stop_daemon_before_fence() -> None:
+def _stop_daemon_before_fence(database_url: str) -> None:
     """Stop the live daemon before the login fence can strand its pool.
 
     An epoch opened against a running daemon terminates its pool connections
     and then rejects every reconnect, wedging the daemon until restart
     (#19437). The fence must only ever go up over a quiesced hub.
     """
+    if is_test_protect_enabled():
+        try:
+            database_name = conninfo_to_dict(database_url).get("dbname")
+        except ProgrammingError:
+            database_name = None
+        if database_name != "gobby_test":
+            raise click.ClickException(
+                "GOBBY_TEST_PROTECT permits hub maintenance only against the exact "
+                "database name 'gobby_test'; the configured target is missing, malformed, "
+                "or different"
+            )
     if not stop_daemon(shutdown_source="cli_hub_maintenance"):
         raise click.ClickException(
             "Could not stop the running daemon; refusing to open a maintenance "

@@ -93,8 +93,11 @@ def reconcile_compact_session_activity(
                 current.terminal_context,
             )
         ]
+        ghosts: list[Session] = []
         for competitor in competitors:
-            if not _is_empty_compact_ghost(manager.db, competitor):
+            if _is_empty_compact_ghost(manager.db, competitor):
+                ghosts.append(competitor)
+            elif not _is_ended_terminal_sibling(competitor):
                 conflicts.append(competitor.id)
 
         if conflicts:
@@ -122,9 +125,9 @@ def reconcile_compact_session_activity(
                 error_code="session_deleted",
                 error=f"Compact session {current.id} is deleted.",
             )
-        for competitor in competitors:
-            conn.execute("DELETE FROM sessions WHERE id = %s", (competitor.id,))
-            deleted_ids.append(competitor.id)
+        for ghost in ghosts:
+            conn.execute("DELETE FROM sessions WHERE id = %s", (ghost.id,))
+            deleted_ids.append(ghost.id)
 
     _notify_session_change(manager, "session_updated", current.id)
     for deleted_id in deleted_ids:
@@ -167,6 +170,11 @@ def _activate_without_competitors(
         )
     _notify_session_change(manager, "session_updated", current.id)
     return SessionActivityResolution(session=manager.get(current.id))
+
+
+def _is_ended_terminal_sibling(session: Session) -> bool:
+    """Later same-pane rows that already finished must not block compact_self."""
+    return session.status in {"handoff_ready", "expired"}
 
 
 def _is_empty_compact_ghost(db: HubDatabase, session: Session) -> bool:

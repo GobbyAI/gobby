@@ -458,7 +458,7 @@
     "workflows/rules/code-index/require-code-index-skill.yaml": "8b57b5bff7f941b26b63b8956643ca7e0383752902cf52d010a799069c48fa17",
     "workflows/rules/context-handoff/auto-compact-after-task-close.yaml": "a24b11dd5ea367bd36ee0fc97444c8655996eba3c6af40875dd78ac26c8d28fd",
     "workflows/rules/context-handoff/clear-pending-context-reset-on-start.yaml": "64628aec03c9eb7495a8410dee0fd297448a818c97421cd92778df8762070237",
-    "workflows/rules/context-handoff/inject-compact-handoff.yaml": "d6c2093623a4d596cb22fdbab1794d93bdba779add1fb5c614c00edb8ab461d7",
+    "workflows/rules/context-handoff/inject-compact-handoff.yaml": "5b30dca8227381ef1b88ca2bbbe6dcaeca3fd7ba909913f5a00be46f9e64f3ce",
     "workflows/rules/context-handoff/inject-previous-session-summary.yaml": "71ae576e53a70ac782671f3156461fb4061e4926222b583a63fb999ca5f09aa2",
     "workflows/rules/context-handoff/inject-task-context-on-start.yaml": "4b389a39c6dfd228ec85cb0d9e59b27cbc0066d2a5681c475e15e6b870db01d9",
     "workflows/rules/context-handoff/inject-user-profile.yaml": "50f0c6bb2450267e6e30aa583fef12305436f85a053f89ded871d036d883d614",

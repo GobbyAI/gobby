@@ -1442,7 +1442,7 @@ New dev agent for BE-stack leaves. Tool allowlist tuned for the BE toolchain: py
 
 Also serves as the **default-agent fallback** invoked by `rule_dispatch_leaf` (§1.7) when a leaf arrives with no `assigned_agent` — paired with an `AppendAuditMarker` so fallbacks are audit-visible. R4.F3 broadens the set of categories that hit this fallback path (any of `code`/`config`/`docs`/`test`).
 
-Same `additional_skills` loading contract as §2.5 — expander-assigned augmentations (`django`, `fastapi`, `sqlalchemy`, `postgres`, etc.) load first, then the agent works the task.
+Same `additional_skills` loading contract as §2.5 — expander-assigned augmentations (`django`, `fastapi`, `postgres`, etc.) load first, then the agent works the task.
 
 Same `close_task` unblock and skip-stage branching as §2.5.
 
@@ -2013,7 +2013,7 @@ Target: `CLAUDE.md` (project root), `GUIDING_PRINCIPLES.md`, any `docs/` page re
 - **GitHub-issue → autonomous-loop → PR demo** (the killer feature): future epic. Requires #12728 plus a new "issue-importer" rule/agent that creates tasks from GitHub issues on watched repos.
 - **Autonomous self-improvement loop** (yolo-driven, no human in loop): future epic. Infrastructure exists once yolo flag lands; agent design is its own large effort.
 - **Gobby → Rust port of the dispatcher module**: explicitly deferred. Current decision logic is cold-path; Python is the right tool. Revisit when a real hot path emerges.
-- **Finer-grained tech skills** (`react`, `django`, `sqlalchemy`, `playwright`, etc.): authoring those as standalone gobby skills is follow-up work. This epic ships only the two role-level agent templates (`frontend-developer`, `backend-developer`) with their own baseline-skills blocks, plus the expander's wiring to populate `additional_skills` when needed. Agents degrade gracefully when `additional_skills` lists a skill that doesn't exist (log + continue).
+- **Finer-grained tech skills** (`react`, `django`, `playwright`, etc.): authoring those as standalone gobby skills is follow-up work. This epic ships only the two role-level agent templates (`frontend-developer`, `backend-developer`) with their own baseline-skills blocks, plus the expander's wiring to populate `additional_skills` when needed. Agents degrade gracefully when `additional_skills` lists a skill that doesn't exist (log + continue).
 - **PostgreSQL migration + cloud backup**: deferred as its own epic. The schema designed here (six columns on `tasks` + three 1:1-adjacent tables) is PG-ready: same column types, same constraints, same indexes. The migration from SQLite to PG is straightforward data copy + `tasks.jsonl` retirement. This plan does not depend on tasks.jsonl git-sync for any of its audit trails; all audit data (lifecycle events, dispatcher ticks, description markers) is database-native or filesystem-local.
 - **Additional built-in agents** (`docs-writer`, `migration-runner`, `security-reviewer`, etc.): follow-up work driven by audits of `## Agent Selection` markers — when `backend-developer` default shows up repeatedly for a specific kind of task, that's the signal to author a specialized agent. Expander prompt tuning follows the same audit feedback loop.
 - **`auto` profile with LLM-assisted classification**: current plan ships a rule-based `auto` (plan-file → review; leaf → quick; epic with plan → full; epic without plan → error). LLM-based classification is a follow-up if rule-based proves too coarse.

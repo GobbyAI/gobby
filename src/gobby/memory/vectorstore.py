@@ -204,6 +204,7 @@ class VectorStore:
         limit: int = 10,
         filters: dict[str, str] | Filter | None = None,
         collection_name: str | None = None,
+        timeout: float | None = None,
     ) -> list[tuple[str, float]]:
         """Search for similar vectors.
 
@@ -214,6 +215,7 @@ class VectorStore:
             limit,
             filters,
             collection_name,
+            timeout=timeout,
         )
 
     async def search_with_payload(

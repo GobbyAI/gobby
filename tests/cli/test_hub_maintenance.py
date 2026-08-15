@@ -82,7 +82,11 @@ def _install_lifecycle_fakes(
     batch: DestructiveBatch,
     events: list[str],
 ) -> None:
-    monkeypatch.setattr(command, "_resolve_database_url", lambda: "postgresql://example/gobby")
+    monkeypatch.setattr(
+        command,
+        "_resolve_database_url",
+        lambda: "postgresql://example/gobby_test",
+    )
     monkeypatch.setattr(
         command,
         "stop_daemon",
@@ -153,6 +157,107 @@ def _install_lifecycle_fakes(
         lambda *_args, **_kwargs: _record(events, "release", epoch),
     )
     monkeypatch.setattr(command, "_start_daemon", lambda: events.append("restart"))
+
+
+@pytest.mark.parametrize(
+    "arguments",
+    [
+        ["hub-maintenance", "run", "purge"],
+        ["hub-maintenance", "resume"],
+    ],
+    ids=["run", "resume"],
+)
+def test_protected_maintenance_refuses_non_rehearsal_database_before_state_access(
+    monkeypatch: pytest.MonkeyPatch,
+    arguments: list[str],
+) -> None:
+    events: list[str] = []
+
+    def record_unexpected_call(*_args: object, **_kwargs: object) -> None:
+        events.append("unexpected")
+
+    monkeypatch.setenv("GOBBY_TEST_PROTECT", "1")
+    monkeypatch.setattr(
+        command,
+        "_resolve_database_url",
+        lambda: "postgresql://operator:secret@example/gobby",
+    )
+    monkeypatch.setattr(command, "_load_campaign_executor", lambda _campaign: object())
+    monkeypatch.setattr(command, "stop_daemon", record_unexpected_call)
+    monkeypatch.setattr(command, "open_maintenance_epoch", record_unexpected_call)
+    monkeypatch.setattr(command, "create_destructive_batch", record_unexpected_call)
+    monkeypatch.setattr(command, "discover_active_maintenance_epoch", record_unexpected_call)
+    monkeypatch.setattr(command, "get_destructive_batch", record_unexpected_call)
+
+    result = CliRunner().invoke(cli, arguments)
+
+    assert result.exit_code != 0
+    assert "GOBBY_TEST_PROTECT" in result.output
+    assert "gobby_test" in result.output
+    assert "secret" not in result.output
+    assert events == []
+
+
+def test_protected_maintenance_allows_exact_rehearsal_database(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    events: list[str] = []
+    monkeypatch.setenv("GOBBY_TEST_PROTECT", "1")
+    monkeypatch.setattr(
+        command,
+        "stop_daemon",
+        lambda **_kwargs: _record(events, "stop-daemon", True),
+    )
+
+    command._stop_daemon_before_fence("postgresql://example/gobby_test")
+
+    assert events == ["stop-daemon"]
+
+
+def test_unprotected_maintenance_allows_non_rehearsal_database(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    events: list[str] = []
+    monkeypatch.delenv("GOBBY_TEST_PROTECT", raising=False)
+    monkeypatch.setattr(
+        command,
+        "stop_daemon",
+        lambda **_kwargs: _record(events, "stop-daemon", True),
+    )
+
+    command._stop_daemon_before_fence("postgresql://example/gobby")
+
+    assert events == ["stop-daemon"]
+
+
+@pytest.mark.parametrize(
+    "database_url",
+    [
+        "postgresql://example",
+        "host=example",
+        "not a dsn",
+        "postgresql://operator:secret@example/%zz",
+    ],
+    ids=["uri-missing-name", "keyword-missing-name", "invalid-dsn", "malformed-name"],
+)
+def test_protected_maintenance_fails_closed_for_missing_or_malformed_database_name(
+    monkeypatch: pytest.MonkeyPatch,
+    database_url: str,
+) -> None:
+    events: list[str] = []
+    monkeypatch.setenv("GOBBY_TEST_PROTECT", "1")
+    monkeypatch.setattr(
+        command,
+        "stop_daemon",
+        lambda **_kwargs: _record(events, "stop-daemon", True),
+    )
+
+    with pytest.raises(click.ClickException, match="GOBBY_TEST_PROTECT") as exc_info:
+        command._stop_daemon_before_fence(database_url)
+
+    assert "gobby_test" in exc_info.value.message
+    assert "secret" not in exc_info.value.message
+    assert events == []
 
 
 def test_run_owns_open_backup_apply_verify_release_and_restart(

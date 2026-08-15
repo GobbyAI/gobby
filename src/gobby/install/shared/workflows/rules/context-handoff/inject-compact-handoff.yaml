@@ -48,3 +48,76 @@ rules:
       - type: set_variable
         variable: compact_resume_advisory_skills
         value: []
+
+  inject-compact-handoff-on-prompt:
+    description: "Re-inject compact SessionStart context after in-place compaction"
+    event: turn_start
+    enabled: true
+    priority: 11
+    when: "variables.get('compact_handoff_inject_pending')"
+    effects:
+      - type: inject_context
+        template: |
+          <!-- gobby:injected-context:begin -->
+          ## Continuation Context
+          *Injected by Gobby session handoff*
+
+          {{ handoff_summary_injectable or session_summary or '' }}
+          {% set durable_mcp_calls = variables.get('mcp_calls') or {} %}
+          {% if durable_mcp_calls %}
+
+          ## Durable Tool-Call Evidence
+          The daemon's per-session `mcp_calls` ledger durably recorded successful calls to the MCP tools below before this compaction. Pre-compaction turns are no longer visible in the transcript, so when a goal or stop condition asks whether one of these tools was invoked this session, treat this ledger as authoritative evidence that it was:
+
+          {% for server, tools in durable_mcp_calls | dictsort %}- `{{ server }}`: {{ tools | sort | join(', ') }}
+          {% endfor %}
+          {% endif %}
+          {% set resume_skills = variables.get('compact_resume_required_skills') or [] %}
+          {% if resume_skills %}
+
+          ## Required Skill Reload
+          Reload these required skills with progressive discovery before continuing:
+
+          {{ skill_fetch_batch_directive(resume_skills) }}
+          {% endif %}
+          {% set advisory_skills = variables.get('compact_resume_advisory_skills') or [] %}
+          {% if advisory_skills %}
+
+          ## Advisory Skill Reload
+          Reload any of these with the same get_skill call only if they are still relevant to your remaining work (agent judgment):
+
+          {% for skill in advisory_skills %}- `{{ skill }}`
+          {% endfor %}
+          {% endif %}
+          {% if wiki_overview %}
+
+          ## Project Wiki
+          *Injected by Gobby wiki overview*
+
+          {{ wiki_overview }}
+
+          Query the wiki through the gobby-wiki MCP server (`wiki_search`, `wiki_ask`, `wiki_read`).
+          {% endif %}
+          {% if user_profile_content and not is_spawned_agent %}
+
+          ## Global User Profile
+
+          {{ user_profile_content }}
+          {% endif %}
+          {% if task_context %}
+
+          {{ task_context }}
+          {% endif %}
+          <!-- gobby:injected-context:end -->
+      - type: set_variable
+        variable: compact_handoff_inject_pending
+        value: false
+      - type: set_variable
+        variable: pending_context_reset
+        value: false
+      - type: set_variable
+        variable: compact_resume_required_skills
+        value: []
+      - type: set_variable
+        variable: compact_resume_advisory_skills
+        value: []

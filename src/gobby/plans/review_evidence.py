@@ -495,9 +495,19 @@ class PlanReviewEvidenceService:
         evidence_id: str,
         prose: str,
         round_result: Mapping[str, object] | None = None,
+        *,
+        plan_path: str | Path | None = None,
     ) -> dict[str, object]:
         evidence = self.get_evidence(evidence_id)
-        plan_path = self._evidence_path(evidence)
+        if plan_path is None:
+            resolved = self._evidence_path(evidence)
+        else:
+            resolved, relative_path = self._resolve_plan_path(evidence.project_id, plan_path)
+            if relative_path != evidence.plan_path:
+                raise ReviewEvidenceError(
+                    "wrong_plan",
+                    f"evidence belongs to {evidence.plan_path}, not {relative_path}",
+                )
         mutation = PlanReviewEvidenceMutation(
             project_id=evidence.project_id,
             plan_path=evidence.plan_path,
@@ -506,12 +516,26 @@ class PlanReviewEvidenceService:
         # against concurrent plan writers (manifest apply, checkpoint drain).
         with self.db.transaction_immediate(mutation) as transaction:
             locked = self.store.require(evidence_id, transaction=transaction, for_update=True)
-            self._verify_reviewed_bytes(locked, plan_path.read_bytes())
+            if locked.expired_at is not None:
+                raise ReviewEvidenceError("evidence_replay", "evidence is expired")
+            if locked.dispatch_run_id is None:
+                raise ReviewEvidenceError(
+                    "binding_pending",
+                    "evidence run binding is pending",
+                    retryable=True,
+                )
+            payload = locked.round_result
+            if round_result is not None:
+                payload = self._round_result_for_evidence(locked.evidence_id, round_result)
+            # Vote → repair → fence: accepted needs_review repairs change
+            # reviewed sections. approved and missing verdicts stay identity-checked.
+            if payload is None or payload.get("verdict") != "needs_review":
+                self._verify_reviewed_bytes(locked, resolved.read_bytes())
             return self.checkpoints.append_plan_changelog_round(
                 evidence_id,
                 prose,
                 round_result,
-                plan_path=plan_path,
+                plan_path=resolved,
             )
 
     def finalize_plan_review_evidence(

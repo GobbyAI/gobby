@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+import json
 import threading
 from concurrent.futures import ThreadPoolExecutor
 from datetime import UTC, datetime
@@ -607,6 +608,111 @@ def test_failed_schedule_does_not_replace_newer_pending_marker(session_db: HubDa
 
     assert scheduled is False
     assert sv_mgr.get_variables(SESSION_ID)[COMPACT_SELF_CONTINUE_VARIABLE] == new_payload
+
+
+def test_in_place_compact_consumes_pending_on_same_terminal_row(
+    session_db: HubDatabase,
+) -> None:
+    marked_id = "00000000-0000-4000-8000-000000000014"
+    terminal_context = {
+        "tmux_pane": "%11",
+        "tmux_socket_path": "/tmp/tmux-compact-test",
+        "parent_pid": 30234,
+        "parent_create_time": 1786658058.615728,
+    }
+    session_db.execute(
+        """
+        UPDATE sessions
+           SET terminal_context = %s::jsonb, session_type = 'terminal'
+         WHERE id = %s
+        """,
+        (json.dumps(terminal_context), SESSION_ID),
+    )
+    session_db.execute(
+        """
+        INSERT INTO sessions (
+            id, external_id, machine_id, source, project_id,
+            session_type, terminal_context
+        )
+        VALUES (%s, %s, %s, %s, %s, 'terminal', %s::jsonb)
+        """,
+        (
+            marked_id,
+            "compact-marked-row",
+            "21000000-0000-4000-8000-000000000001",
+            "grok",
+            PROJECT_ID,
+            json.dumps(terminal_context),
+        ),
+    )
+    assert mark_compact_self_continuation_pending(session_db, marked_id)
+
+    with patch(
+        "gobby.sessions.compact_continuation.schedule_compact_self_continuation",
+        return_value=True,
+    ) as mock_schedule:
+        scheduled = consume_and_schedule_compact_self_continuation(
+            session_db,
+            pending_session_id=SESSION_ID,
+            target_session=SimpleNamespace(
+                id=SESSION_ID,
+                terminal_context=terminal_context,
+            ),
+        )
+
+    assert scheduled is True
+    mock_schedule.assert_called_once()
+    variables = SessionVariableManager(session_db).get_variables(marked_id)
+    assert COMPACT_SELF_CONTINUE_VARIABLE not in variables
+
+
+def test_in_place_compact_does_not_steal_pending_from_other_terminal(
+    session_db: HubDatabase,
+) -> None:
+    marked_id = "00000000-0000-4000-8000-000000000015"
+    session_db.execute(
+        """
+        INSERT INTO sessions (
+            id, external_id, machine_id, source, project_id,
+            session_type, terminal_context
+        )
+        VALUES (%s, %s, %s, %s, %s, 'terminal', %s::jsonb)
+        """,
+        (
+            marked_id,
+            "other-pane-marked-row",
+            "21000000-0000-4000-8000-000000000001",
+            "grok",
+            PROJECT_ID,
+            json.dumps(
+                {
+                    "tmux_pane": "%99",
+                    "tmux_socket_path": "/tmp/tmux-compact-test",
+                    "parent_pid": 99999,
+                    "parent_create_time": 1.0,
+                }
+            ),
+        ),
+    )
+    assert mark_compact_self_continuation_pending(session_db, marked_id)
+
+    scheduled = consume_and_schedule_compact_self_continuation(
+        session_db,
+        pending_session_id=SESSION_ID,
+        target_session=SimpleNamespace(
+            id=SESSION_ID,
+            terminal_context={
+                "tmux_pane": "%11",
+                "tmux_socket_path": "/tmp/tmux-compact-test",
+                "parent_pid": 30234,
+                "parent_create_time": 1786658058.615728,
+            },
+        ),
+    )
+
+    assert scheduled is False
+    variables = SessionVariableManager(session_db).get_variables(marked_id)
+    assert COMPACT_SELF_CONTINUE_VARIABLE in variables
 
 
 def test_persist_compact_resume_required_skills_reloads_claimed_task_skill(

@@ -237,6 +237,10 @@ def test_recoverable_vector_store_errors(error: BaseException) -> None:
     assert is_recoverable_vector_store_error(error) is True
 
 
+def test_timeout_error_is_not_recoverable_vector_store_error() -> None:
+    assert is_recoverable_vector_store_error(TimeoutError("deadline")) is False
+
+
 @pytest.mark.asyncio
 async def test_list_collection_names_uses_public_initialized_accessor(
     vector_store: VectorStore,

@@ -29,8 +29,10 @@ from gobby.sessions.compact_markers import (
     LOADING_SKILLS_NAME,
     WORKFLOW_REQUESTED_SKILLS_VARIABLE,
 )
+from gobby.sessions.handoff_identity import terminal_process_contexts_match
 from gobby.sessions.tmux_context import get_tmux_manager_for_context, parse_terminal_context_value
 from gobby.storage.hub.protocol import SessionVariableMutation
+from gobby.storage.session_models import Session
 from gobby.utils.injected_context import INJECTED_CONTEXT_BEGIN
 
 if TYPE_CHECKING:
@@ -428,17 +430,26 @@ def consume_and_schedule_compact_self_continuation(
     target_session: Any,
     loop: Any | None = None,
 ) -> bool:
-    """Consume a fresh marker from a session and schedule its continuation prompt.
+    """Consume a fresh marker and schedule its continuation prompt.
 
-    Compaction is an in-place handoff, so the pending marker lives on the same
-    session row that emits the provider's readiness event.
+    Compaction is in-place on one pane. compact_self may persist the marker on
+    the MCP-resolved row while PostCompact arrives on the provider hook row;
+    both identify the same terminal process, so a unique same-pane marker is
+    still this compact's continuation.
     """
     if not pending_session_id:
         return False
     pending = _take_compact_self_continuation_pending(db, pending_session_id)
-    if pending is None:
-        return False
     source_session_id = pending_session_id
+    if pending is None:
+        sibling = _take_same_terminal_compact_self_continuation_pending(
+            db,
+            pending_session_id,
+            target_session,
+        )
+        if sibling is None:
+            return False
+        source_session_id, pending = sibling
     prompt, payload = pending
     if schedule_compact_self_continuation(target_session, prompt, loop=loop):
         return True
@@ -456,6 +467,51 @@ def consume_and_schedule_compact_self_continuation(
             exc_info=True,
         )
     return False
+
+
+def _take_same_terminal_compact_self_continuation_pending(
+    db: HubDatabase,
+    pending_session_id: str,
+    target_session: Any,
+) -> tuple[str, tuple[str, dict[str, Any]]] | None:
+    """Take the unique fresh marker on the same live terminal process."""
+    target_context = getattr(target_session, "terminal_context", None)
+    if parse_terminal_context_value(target_context) is None:
+        return None
+    try:
+        rows = db.fetchall(
+            """
+            SELECT s.*
+              FROM sessions s
+              JOIN session_variables sv ON sv.session_id = s.id
+             WHERE s.id <> %s
+               AND s.session_type = 'terminal'
+               AND s.status <> 'deleted'
+               AND jsonb_typeof(sv.variables -> %s) = 'object'
+            """,
+            (pending_session_id, COMPACT_SELF_CONTINUE_VARIABLE),
+        )
+    except Exception:
+        logger.warning(
+            "Failed listing same-terminal compact_self markers for session %s",
+            pending_session_id,
+            exc_info=True,
+        )
+        return None
+    matching = [
+        candidate
+        for row in rows
+        if terminal_process_contexts_match(
+            (candidate := Session.from_row(row)).terminal_context,
+            target_context,
+        )
+    ]
+    if len(matching) != 1:
+        return None
+    taken = _take_compact_self_continuation_pending(db, matching[0].id)
+    if taken is None:
+        return None
+    return matching[0].id, taken
 
 
 async def _send_compact_self_continuation(

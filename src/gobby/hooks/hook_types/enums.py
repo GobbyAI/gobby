@@ -132,11 +132,18 @@ class SessionStartSource(str, Enum):
     def _missing_(cls, value: object) -> SessionStartSource | None:
         """Map provider aliases to canonical members.
 
-        Grok emits SessionStart with ``source: "new"`` for a cold start. Accept
-        that alias as ``startup`` so Pydantic broadcast validation succeeds.
+        Grok emits SessionStart with ``source: "new"`` for a cold start and
+        ``source: "load"`` after compact/resume. Accept those aliases so
+        Pydantic broadcast validation succeeds. Identity resolution still
+        promotes a compact restart to ``compact`` when the row is marked.
         """
-        if isinstance(value, str) and value.strip().lower() == "new":
+        if not isinstance(value, str):
+            return None
+        alias = value.strip().lower()
+        if alias == "new":
             return cls.STARTUP
+        if alias == "load":
+            return cls.RESUME
         return None
 
 
@@ -166,6 +173,17 @@ class SessionEndReason(str, Enum):
 
     OTHER = "other"
     """Other/unspecified reason"""
+
+    @classmethod
+    def _missing_(cls, value: object) -> SessionEndReason | None:
+        """Map provider aliases to canonical members.
+
+        Grok 1.0.3 emits SessionEnd with ``reason: "shutdown"``. Accept that
+        alias as ``exit`` so Pydantic broadcast validation succeeds.
+        """
+        if isinstance(value, str) and value.strip().lower() == "shutdown":
+            return cls.EXIT
+        return None
 
 
 class CompactTrigger(str, Enum):

@@ -44,9 +44,6 @@ _DIRECT_MEMORY_LINK_FACTOR = 4
 _RELATED_ENTITY_SEED_LIMIT = 8
 _RELATED_ENTITY_NEIGHBOR_LIMIT = 8
 _RELATED_ENTITY_LIMIT_FACTOR = 4
-# Generous per-source candidate cap pulled from FalkorDB before Python-side
-# weight/decay scoring; the top _RELATED_ENTITY_NEIGHBOR_LIMIT survive per source.
-_RELATED_ENTITY_QUERY_LIMIT = 64
 _STRUCTURAL_RELATIONSHIP_TYPES = ("MENTIONED_IN", "RELATES_TO_CODE")
 _TRAVERSAL_TIMEOUT_THRESHOLD = 3
 _TRAVERSAL_TIMEOUT_COOLDOWN_SECONDS = 60.0
@@ -409,32 +406,39 @@ class KnowledgeGraphReader:
         for _ in range(max_hops):
             hop_best: dict[str, float] = {}
             hop_components: dict[str, dict[str, float | None]] = {}
+            if not frontier:
+                break
+            rows = await self._falkor.query(
+                "UNWIND $source_keys AS source_key "
+                "MATCH (start:_Entity {entity_key: source_key})-[r]-(neighbor:_Entity) "
+                "WHERE ((start.project_id = $project_id AND start.is_global = false) "
+                "OR ($include_global AND start.is_global = true)) "
+                "AND ((neighbor.project_id = $project_id AND neighbor.is_global = false) "
+                "OR ($include_global AND neighbor.is_global = true)) "
+                "AND NOT (type(r) IN $excluded_relationship_types) "
+                "RETURN source_key AS source_key, "
+                "neighbor.entity_key AS related_entity_key, "
+                "coalesce(r.weight, 1.0) AS edge_weight, r.weight AS raw_weight, "
+                "r.support AS edge_support, r.updated_at AS updated_at",
+                {
+                    "source_keys": [source_key for source_key, _score in frontier],
+                    "project_id": project_id,
+                    "include_global": include_global,
+                    "excluded_relationship_types": list(_STRUCTURAL_RELATIONSHIP_TYPES),
+                },
+            )
+            rows_by_source: dict[str, list[dict[str, Any]]] = {}
+            for row in rows:
+                source_key = row.get("source_key")
+                if not source_key:
+                    continue
+                rows_by_source.setdefault(str(source_key), []).append(row)
             for source_key, source_score in frontier:
-                rows = await self._falkor.query(
-                    "MATCH (start:_Entity {entity_key: $entity_key})-[r]-(neighbor:_Entity) "
-                    "WHERE ((start.project_id = $project_id AND start.is_global = false) "
-                    "OR ($include_global AND start.is_global = true)) "
-                    "AND ((neighbor.project_id = $project_id AND neighbor.is_global = false) "
-                    "OR ($include_global AND neighbor.is_global = true)) "
-                    "AND NOT (type(r) IN $excluded_relationship_types) "
-                    "RETURN neighbor.entity_key AS related_entity_key, "
-                    "coalesce(r.weight, 1.0) AS edge_weight, r.weight AS raw_weight, "
-                    "r.support AS edge_support, r.updated_at AS updated_at "
-                    "ORDER BY coalesce(r.weight, 1.0) DESC "
-                    "LIMIT $neighbor_limit",
-                    {
-                        "entity_key": source_key,
-                        "project_id": project_id,
-                        "include_global": include_global,
-                        "neighbor_limit": _RELATED_ENTITY_QUERY_LIMIT,
-                        "excluded_relationship_types": list(_STRUCTURAL_RELATIONSHIP_TYPES),
-                    },
-                )
                 # Score each candidate, keep the strongest edge per neighbor, then cap
                 # to the top _RELATED_ENTITY_NEIGHBOR_LIMIT for this source.
                 best_by_key: dict[str, float] = {}
                 best_row_by_key: dict[str, dict[str, Any]] = {}
-                for row in rows:
+                for row in rows_by_source.get(source_key, []):
                     related_key = row.get("related_entity_key")
                     if not related_key or related_key in seen:
                         continue

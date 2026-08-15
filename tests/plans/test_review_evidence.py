@@ -973,6 +973,24 @@ def _round_checkpoint(evidence_id: str = "evidence-1", round_number: int = 2) ->
 _ROUND_PROSE = "**Round 2** `kind: verification`\n\n- verdict: needs_review"
 
 
+def test_append_round_entry_allows_multibyte_text_before_v1(tmp_path: Path) -> None:
+    plan_path = _round_entry_plan(tmp_path)
+    plan_path.write_text(
+        plan_path.read_text(encoding="utf-8").replace(
+            "# Round Entry",
+            "# Round Entry 日本語 — café 🎯",
+            1,
+        ),
+        encoding="utf-8",
+    )
+    checkpoint = _round_checkpoint()
+
+    assert append_round_entry(plan_path, _ROUND_PROSE, checkpoint) is True
+    text = plan_path.read_text(encoding="utf-8")
+    assert "日本語 — café 🎯" in text
+    assert text.index(_ROUND_PROSE) < text.index(checkpoint.decode("utf-8"))
+
+
 def test_append_round_entry_inserts_before_next_section(tmp_path: Path) -> None:
     plan_path = _round_entry_plan(tmp_path)
     checkpoint = _round_checkpoint()
@@ -1084,3 +1102,156 @@ def test_append_plan_changelog_round_needs_review_end_to_end(
     )
     assert replay["applied"] is False
     assert plan_path.read_text(encoding="utf-8") == text
+
+
+def _bind_interactive_review(
+    service: PlanReviewEvidenceService,
+    project_id: str,
+    session_id: str,
+    plan_path: Path,
+) -> str:
+    prepared = service.prepare_plan_review_round(
+        project_id=project_id,
+        plan_path=plan_path,
+        round_number=2,
+        session_id=session_id,
+    )
+    run = LocalAgentRunManager(service.db).create(
+        parent_session_id=session_id,
+        provider="codex",
+        prompt="review",
+    )
+    service.bind_evidence_run(prepared.evidence_id, run.id)
+    return prepared.evidence_id
+
+
+def _needs_review_result(evidence_id: str) -> dict[str, object]:
+    return {
+        "verdict": "needs_review",
+        "findings": [],
+        "coverage_attestation": coverage_attestation(
+            evidence_id=evidence_id,
+            shadow_valid=False,
+        ),
+    }
+
+
+def _repair_reviewed_section(plan_path: Path) -> None:
+    current = plan_path.read_bytes()
+    repaired = current.replace(b"Behavior exists.", b"Repaired behavior exists.", 1)
+    assert repaired != current
+    plan_path.write_bytes(repaired)
+
+
+def test_append_plan_changelog_round_after_needs_review_repairs(
+    review_setup: tuple[PlanReviewEvidenceService, str, str, Path],
+) -> None:
+    service, project_id, session_id, plan_path = review_setup
+    evidence_id = _bind_interactive_review(service, project_id, session_id, plan_path)
+    _repair_reviewed_section(plan_path)
+    with pytest.raises(ReviewEvidenceError) as stale:
+        service.verify_plan_unchanged(evidence_id, plan_path)
+    assert stale.value.code == "stale_plan_evidence"
+
+    round_result = _needs_review_result(evidence_id)
+    result = service.append_plan_changelog_round(evidence_id, _ROUND_PROSE, round_result)
+
+    assert result["applied"] is True
+    rendered = service.render_plan_changelog_round(evidence_id, round_result)
+    text = plan_path.read_text(encoding="utf-8")
+    assert "Repaired behavior exists." in text
+    assert text.index(_ROUND_PROSE) < text.index(rendered.decode("utf-8"))
+    service.finalize_plan_review_evidence(evidence_id, round_result)
+    assert service.get_evidence(evidence_id).finalized_at is not None
+
+
+def test_append_plan_changelog_round_rejects_unbound_evidence(
+    review_setup: tuple[PlanReviewEvidenceService, str, str, Path],
+) -> None:
+    service, project_id, session_id, plan_path = review_setup
+    prepared = service.prepare_plan_review_round(
+        project_id=project_id,
+        plan_path=plan_path,
+        round_number=2,
+        session_id=session_id,
+    )
+
+    with pytest.raises(ReviewEvidenceError) as unbound:
+        service.append_plan_changelog_round(
+            prepared.evidence_id,
+            _ROUND_PROSE,
+            _needs_review_result(prepared.evidence_id),
+        )
+    assert unbound.value.code == "binding_pending"
+
+
+def test_append_plan_changelog_round_rejects_expired_evidence(
+    review_setup: tuple[PlanReviewEvidenceService, str, str, Path],
+) -> None:
+    service, project_id, session_id, plan_path = review_setup
+    prepared = service.prepare_plan_review_round(
+        project_id=project_id,
+        plan_path=plan_path,
+        round_number=2,
+        session_id=session_id,
+    )
+    manager = LocalAgentRunManager(service.db)
+    run = manager.create(
+        parent_session_id=session_id,
+        provider="codex",
+        prompt="review",
+    )
+    service.bind_evidence_run(prepared.evidence_id, run.id)
+    manager.cancel(run.id)
+    service.expire_plan_review_evidence(prepared.evidence_id)
+
+    with pytest.raises(ReviewEvidenceError) as expired:
+        service.append_plan_changelog_round(
+            prepared.evidence_id,
+            _ROUND_PROSE,
+            _needs_review_result(prepared.evidence_id),
+        )
+    assert expired.value.code == "evidence_replay"
+
+
+def test_append_plan_changelog_round_rejects_wrong_plan_path(
+    review_setup: tuple[PlanReviewEvidenceService, str, str, Path],
+) -> None:
+    service, project_id, session_id, plan_path = review_setup
+    evidence_id = _bind_interactive_review(service, project_id, session_id, plan_path)
+    other = plan_path.with_name("other-plan.md")
+    other.write_bytes(plan_path.read_bytes())
+
+    with pytest.raises(ReviewEvidenceError) as wrong:
+        service.append_plan_changelog_round(
+            evidence_id,
+            _ROUND_PROSE,
+            _needs_review_result(evidence_id),
+            plan_path=other,
+        )
+    assert wrong.value.code == "wrong_plan"
+
+
+def test_append_plan_changelog_round_approved_still_requires_identity(
+    review_setup: tuple[PlanReviewEvidenceService, str, str, Path],
+) -> None:
+    service, project_id, session_id, plan_path = review_setup
+    evidence_id = _bind_interactive_review(service, project_id, session_id, plan_path)
+    _repair_reviewed_section(plan_path)
+    derived = service.derive_plan_review_manifest(evidence_id, routing_decisions={})
+    manifest_entries = derived["manifest_entries"]
+    assert isinstance(manifest_entries, list)
+    approved = {
+        "verdict": "approved",
+        "findings": [],
+        "routing_decisions": {},
+        "manifest_entries": manifest_entries,
+        "coverage_attestation": coverage_attestation(
+            evidence_id=evidence_id,
+            manifest_entries=manifest_entries,
+        ),
+    }
+
+    with pytest.raises(ReviewEvidenceError) as stale:
+        service.append_plan_changelog_round(evidence_id, _ROUND_PROSE, approved)
+    assert stale.value.code == "stale_plan_evidence"

@@ -275,13 +275,15 @@ def _checkpoint_is_replayed(current: bytes, checkpoint: bytes) -> bool:
 
 def _validate_round_entry_plan(plan_path: Path, current: bytes, updated: bytes) -> None:
     """Prove the appended entry changed only the V1 section and still parses."""
-    start, end = _section_span(current.decode("utf-8"), "V1")
-    prefix = current[:start]
-    suffix = current[end:]
+    current_text = current.decode("utf-8")
+    updated_text = updated.decode("utf-8")
+    start, end = _section_span(current_text, "V1")
+    prefix = current_text[:start]
+    suffix = current_text[end:]
     if (
-        not updated.startswith(prefix)
-        or not updated.endswith(suffix)
-        or len(updated) < start + len(suffix)
+        not updated_text.startswith(prefix)
+        or not updated_text.endswith(suffix)
+        or len(updated_text) < start + len(suffix)
     ):
         raise ReviewEvidenceError(
             "invalid_round_entry",

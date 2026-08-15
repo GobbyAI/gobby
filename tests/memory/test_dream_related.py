@@ -766,6 +766,8 @@ def test_bulk_keyword_statement_shape() -> None:
     assert sql.count("UNION ALL") == 1
     assert sql.count("ROW_NUMBER() OVER ()") == 2
     assert sql.count(single_sql) >= 1
+    assert "ORDER BY score DESC, id ASC" in single_sql
+    assert "created_at" not in single_sql
     assert params[0] == "cand-1"
     assert params[1 : 1 + len(single_params)] == single_params
     assert "cand-3" in params
@@ -823,6 +825,32 @@ async def test_bulk_keyword_and_hydration_against_postgres(postgres_db: Any) -> 
     assert "cand-empty" not in keyword_hits
     assert [memory.id for memory in hydrated] == [first_memory.id]
     assert hydrated[0].project_id == _PROJECT_A
+
+
+@pytest.mark.integration
+async def test_bulk_keyword_25_candidates_finish_under_channel_budget(
+    postgres_db: Any,
+) -> None:
+    postgres_db.execute(
+        "INSERT INTO projects (id, name) VALUES (%s, %s)",
+        (_PROJECT_A, "Budget Project A"),
+    )
+    storage = LocalMemoryManager(postgres_db)
+    tokens = [f"budgetlexeme{index:02d}" for index in range(25)]
+    for token in tokens:
+        storage.create_memory(token, project_id=_PROJECT_A)
+    loop = asyncio.get_running_loop()
+    started = loop.time()
+    hits = await _keyword_hits_bulk(
+        [_candidate(f"cand-{index}", content=token) for index, token in enumerate(tokens)],
+        db=postgres_db,
+        scope=RetrievalScope.project_only(_PROJECT_A),
+        fetch_limit=5,
+    )
+    elapsed = loop.time() - started
+
+    assert elapsed < 10.0
+    assert len(hits) == 25
 
 
 @pytest.mark.unit
