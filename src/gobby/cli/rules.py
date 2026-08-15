@@ -166,9 +166,9 @@ def list_rules(
     """List rules with optional filters."""
     with _manager_context() as manager:
         if event:
-            rows = manager.list_rules_by_event(event, enabled=enabled_flag)
+            rows = manager.list_by_event(event, enabled=enabled_flag)
         elif group:
-            rows = manager.list_rules_by_group(group, enabled=enabled_flag)
+            rows = manager.list_by_group(group, enabled=enabled_flag)
         else:
             rows = manager.list_all(enabled=enabled_flag)
 
@@ -286,7 +286,7 @@ def export_rules(group: str | None) -> None:
 
     with _manager_context() as manager:
         if group:
-            rows = manager.list_rules_by_group(group, enabled=None)
+            rows = manager.list_by_group(group, enabled=None)
         else:
             rows = manager.list_all()
 

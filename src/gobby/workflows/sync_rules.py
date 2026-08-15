@@ -397,7 +397,7 @@ def _is_sync_managed_rule(existing: Any, sync_tag: str) -> bool:
 def _build_rule_update_fields(
     *,
     existing: Any,
-    definition_json: str,
+    definition_json: dict[str, Any],
     description: str | None,
     enabled: bool,
     priority: int,
@@ -429,4 +429,4 @@ def _json_payloads_equal(left: Any, right: Any) -> bool:
         right_payload: object = json.loads(right) if isinstance(right, str) else right
         return left_payload == right_payload
     except (TypeError, ValueError, json.JSONDecodeError):
-        return left == right
+        return bool(left == right)
