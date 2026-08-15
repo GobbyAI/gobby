@@ -312,6 +312,150 @@ class TestExpansionRuns:
         assert run_manager.get_latest_for_task(child.id) is None
 
     @pytest.mark.asyncio
+    async def test_start_expansion_run_prefers_nearest_registered_plan(
+        self,
+        expansion_registry: Any,
+        task_manager: LocalTaskManager,
+        parent_task: str,
+        test_session: str,
+    ) -> None:
+        ancestor = task_manager.get_task(parent_task)
+        _register_active_plan(
+            task_manager,
+            ancestor.id,
+            plan_id="ancestor-strategy-a",
+            plan_path=".gobby/plans/ancestor-strategy-a.md",
+        )
+        _register_active_plan(
+            task_manager,
+            ancestor.id,
+            plan_id="ancestor-strategy-b",
+            plan_path=".gobby/plans/ancestor-strategy-b.md",
+        )
+        child = task_manager.create_task(
+            project_id=ancestor.project_id,
+            title="Implementation epic",
+            parent_task_id=ancestor.id,
+            task_type="epic",
+            validation_criteria="Implementation epic organization is observable.",
+        )
+        child_path = _register_active_plan(
+            task_manager,
+            child.id,
+            plan_id="child-implementation",
+            plan_path=".gobby/plans/child-implementation.md",
+        )
+        grandchild = task_manager.create_task(
+            project_id=ancestor.project_id,
+            title="Organizational grandchild",
+            parent_task_id=child.id,
+            task_type="epic",
+            validation_criteria="Grandchild organization is observable.",
+        )
+        run_manager = LocalExpansionRunManager(task_manager.db)
+
+        with patch(
+            "gobby.mcp_proxy.tools.tasks._expansion._execute_run_background",
+            new=AsyncMock(return_value=None),
+        ):
+            with session_context_for_test(test_session):
+                child_result = await expansion_registry.call(
+                    "start_expansion_run",
+                    {"task_id": child.id, "auto_apply": False},
+                )
+                grandchild_result = await expansion_registry.call(
+                    "start_expansion_run",
+                    {"task_id": grandchild.id, "auto_apply": False},
+                )
+            await drain_asyncio_tasks()
+
+        assert child_result["run_id"] == grandchild_result["run_id"]
+        run = run_manager.get(child_result["run_id"])
+        assert run is not None
+        assert run.parent_task_id == child.id
+        assert run.plan_file == child_path
+        assert run_manager.get_latest_for_task(grandchild.id) is None
+
+    @pytest.mark.asyncio
+    async def test_start_expansion_run_rejects_multiple_plans_on_nearest_ancestor(
+        self,
+        expansion_registry: Any,
+        task_manager: LocalTaskManager,
+        parent_task: str,
+        test_session: str,
+    ) -> None:
+        _register_active_plan(
+            task_manager,
+            parent_task,
+            plan_id="same-root-a",
+            plan_path=".gobby/plans/same-root-a.md",
+        )
+        _register_active_plan(
+            task_manager,
+            parent_task,
+            plan_id="same-root-b",
+            plan_path=".gobby/plans/same-root-b.md",
+        )
+
+        with session_context_for_test(test_session):
+            result = await expansion_registry.call(
+                "start_expansion_run",
+                {"task_id": parent_task, "auto_apply": False},
+            )
+
+        assert "multiple active registered plans" in result["error"]
+        assert LocalExpansionRunManager(task_manager.db).get_latest_for_task(parent_task) is None
+
+    @pytest.mark.asyncio
+    async def test_start_expansion_run_explicit_plan_file_selects_ancestor(
+        self,
+        expansion_registry: Any,
+        task_manager: LocalTaskManager,
+        parent_task: str,
+        test_session: str,
+    ) -> None:
+        ancestor = task_manager.get_task(parent_task)
+        ancestor_path = _register_active_plan(
+            task_manager,
+            ancestor.id,
+            plan_id="ancestor-strategy",
+            plan_path=".gobby/plans/ancestor-strategy.md",
+        )
+        child = task_manager.create_task(
+            project_id=ancestor.project_id,
+            title="Implementation epic",
+            parent_task_id=ancestor.id,
+            task_type="epic",
+            validation_criteria="Implementation epic organization is observable.",
+        )
+        _register_active_plan(
+            task_manager,
+            child.id,
+            plan_id="child-implementation",
+            plan_path=".gobby/plans/child-implementation.md",
+        )
+
+        with patch(
+            "gobby.mcp_proxy.tools.tasks._expansion._execute_run_background",
+            new=AsyncMock(return_value=None),
+        ):
+            with session_context_for_test(test_session):
+                result = await expansion_registry.call(
+                    "start_expansion_run",
+                    {
+                        "task_id": child.id,
+                        "plan_file": ancestor_path,
+                        "auto_apply": False,
+                    },
+                )
+            await drain_asyncio_tasks()
+
+        run = LocalExpansionRunManager(task_manager.db).get(result["run_id"])
+        assert run is not None
+        assert run.parent_task_id == ancestor.id
+        assert run.plan_file == ancestor_path
+
+    @pytest.mark.asyncio
     async def test_audited_reset_allows_plan_override_on_registered_root(
         self,
         expansion_registry,
