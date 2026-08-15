@@ -15,16 +15,15 @@ from typing import TYPE_CHECKING, Any, Protocol
 
 from gobby.workflows.definitions import (
     AgentDefinitionBody,
-    PipelineDefinition,
     WorkflowDefinition,
     WorkflowStep,
 )
-from gobby.workflows.dry_run_validation import analyze_condition, runtime_resolution_mismatches
+from gobby.workflows.dry_run_validation import analyze_condition
 from gobby.workflows.handler_route_lint import check_handler_routes
 from gobby.workflows.native_tools import is_known_native_tool
 
 if TYPE_CHECKING:
-    from gobby.workflows.loader import WorkflowLoader
+    from gobby.workflows.pipeline_loader import PipelineLoader
 
 logger = logging.getLogger(__name__)
 
@@ -98,7 +97,6 @@ class WorkflowEvaluation:
     valid: bool
     items: list[EvaluationItem] = field(default_factory=list)
     workflow_name: str | None = None
-    workflow_type: str | None = None  # "step", "lifecycle", "pipeline"
     step_trace: list[WorkflowStepTrace] = field(default_factory=list)
     lifecycle_path: list[str] = field(default_factory=list)
     variables_declared: list[str] = field(default_factory=list)
@@ -108,7 +106,6 @@ class WorkflowEvaluation:
             "valid": self.valid,
             "items": [i.to_dict() for i in self.items],
             "workflow_name": self.workflow_name,
-            "workflow_type": self.workflow_type,
             "step_trace": [s.to_dict() for s in self.step_trace],
             "lifecycle_path": self.lifecycle_path,
             "variables_declared": self.variables_declared,
@@ -137,29 +134,17 @@ _BUILTIN_VARIABLES = {
 }
 
 
-async def evaluate_workflow(
+async def evaluate_pipeline_definition(
     name: str,
-    workflow_loader: WorkflowLoader,
+    workflow_loader: PipelineLoader,
     project_id: str | None = None,
     mcp_manager: MCPInventoryProtocol | None = None,
 ) -> WorkflowEvaluation:
-    """
-    Evaluate a workflow definition for structural and semantic issues.
-
-    Args:
-        name: Workflow name to evaluate.
-        workflow_loader: WorkflowLoader instance.
-        project_id: Optional project UUID for scoped resolution.
-        mcp_manager: Optional MCPClientManager for semantic MCP tool checks.
-
-    Returns:
-        WorkflowEvaluation with findings.
-    """
+    """Evaluate a pipeline definition. Agent steps use evaluate_agent_definition."""
     result = WorkflowEvaluation(valid=True, workflow_name=name)
 
-    # --- Phase A: Load & Basic Validation ---
     try:
-        definition = await workflow_loader.load_workflow(name, project_id)
+        definition = await workflow_loader.load_pipeline(name, project_id)
     except ValueError as e:
         result.valid = False
         result.items.append(
@@ -167,7 +152,7 @@ async def evaluate_workflow(
                 layer="structure",
                 level="error",
                 code="WORKFLOW_LOAD_ERROR",
-                message=f"Failed to load workflow '{name}': {e}",
+                message=f"Failed to load pipeline '{name}': {e}",
             )
         )
         return result
@@ -184,61 +169,14 @@ async def evaluate_workflow(
         )
         return result
 
-    # Pipeline definitions get basic info only
-    if isinstance(definition, PipelineDefinition):
-        result.workflow_type = "pipeline"
-        result.items.append(
-            EvaluationItem(
-                layer="structure",
-                level="info",
-                code="PIPELINE_TYPE",
-                message=f"'{name}' is a pipeline workflow — step checks skipped",
-            )
+    result.items.append(
+        EvaluationItem(
+            layer="structure",
+            level="info",
+            code="PIPELINE_TYPE",
+            message=f"'{name}' is a pipeline workflow — step checks skipped",
         )
-        return result
-
-    result.workflow_type = definition.type
-
-    for mismatch in runtime_resolution_mismatches(name, workflow_loader, project_id):
-        result.items.append(
-            EvaluationItem(
-                layer="structure",
-                level="warning",
-                code="RUNTIME_DEFINITION_MISMATCH",
-                message=f"Dry-run uses {mismatch}",
-                detail={"workflow": name, "mismatch": mismatch},
-            )
-        )
-
-    # Always-on workflows get info notice
-    if definition.enabled:
-        result.items.append(
-            EvaluationItem(
-                layer="structure",
-                level="info",
-                code="ALWAYS_ON",
-                message=f"'{name}' is an always-on workflow (enabled: true) — runs automatically on events",
-            )
-        )
-
-    result.variables_declared = list(definition.variables.keys())
-
-    # --- Phase B: Structural Validation ---
-    _check_structure(definition, result)
-
-    # --- Phase C: Semantic Validation ---
-    await _check_semantics(definition, result, mcp_manager)
-
-    # --- Step Trace Generation ---
-    _build_step_trace(definition, result)
-
-    # --- Lifecycle Path ---
-    _build_lifecycle_path(definition, result)
-
-    # Determine overall validity
-    if any(i.level == "error" for i in result.items):
-        result.valid = False
-
+    )
     return result
 
 
@@ -261,17 +199,26 @@ async def evaluate_agent_definition(
         WorkflowEvaluation with findings.
     """
     result = WorkflowEvaluation(valid=True, workflow_name=agent.name)
-    result.workflow_type = "agent"
 
     check_agent_tool_gates(agent, result)
 
-    if agent.steps:
+    if agent.step_workflow is None:
+        result.items.append(
+            EvaluationItem(
+                layer="structure",
+                level="info",
+                code="NO_STEP_WORKFLOW",
+                message=f"Agent '{agent.name}' has no step workflow",
+            )
+        )
+    else:
+        result.variables_declared = list((agent.step_workflow.variables or {}).keys())
         inline = WorkflowDefinition(
             name=f"{agent.name} (inline steps)",
             type="step",
-            steps=agent.steps,
-            variables=agent.step_variables or {},
-            exit_condition=agent.exit_condition,
+            steps=agent.step_workflow.steps,
+            variables=agent.step_workflow.variables or {},
+            exit_condition=agent.step_workflow.exit_condition,
         )
         # check_agent_tool_gates already covered inline step gates; the
         # structural pass re-adds them, so dedupe by (code, message).
@@ -280,6 +227,8 @@ async def evaluate_agent_definition(
         _check_structure(inline, inline_result)
         await _check_semantics(inline, inline_result, mcp_manager)
         result.items.extend(i for i in inline_result.items if (i.code, i.message) not in seen)
+        from gobby.workflows.dry_run_trace import _build_lifecycle_path, _build_step_trace
+
         _build_step_trace(inline, result)
         _build_lifecycle_path(inline, result)
 
@@ -609,7 +558,7 @@ def check_agent_tool_gates(agent: AgentDefinitionBody, result: WorkflowEvaluatio
     _check_mcp_ref_format(
         owner, "blocked_mcp_tools", agent.blocked_mcp_tools, result, blocking=True
     )
-    for step in agent.steps or []:
+    for step in agent.step_workflow.steps if agent.step_workflow else []:
         check_step_tool_gates(step, result)
 
 
@@ -907,86 +856,3 @@ def _check_mcp_handler_ref(
                 detail={"step": step_name, "server": server, "tool": tool, "ref": ref},
             )
         )
-
-
-def _build_step_trace(definition: WorkflowDefinition, result: WorkflowEvaluation) -> None:
-    """Build step trace summaries for each step."""
-    for step in definition.steps:
-        # Summarize on_enter actions
-        action_summaries: list[str] = []
-        for action in step.on_enter:
-            if isinstance(action, dict):
-                action_type = action.get("type", "unknown")
-                if action_type == "call_mcp_tool":
-                    server = action.get("server_name", "?")
-                    tool = action.get("tool_name", "?")
-                    action_summaries.append(f"call_mcp_tool: {server}:{tool}")
-                elif action_type == "set_variable":
-                    var_name = action.get("name", "?")
-                    action_summaries.append(f"set_variable: {var_name}")
-                elif action_type == "inject_message":
-                    action_summaries.append("inject_message")
-                else:
-                    action_summaries.append(action_type)
-
-        # Summarize transitions
-        transitions = [{"to": t.to, "when": t.when} for t in step.transitions]
-
-        # Summarize on_mcp_success/error
-        mcp_success: list[str] = []
-        for handler in step.on_mcp_success:
-            if isinstance(handler, dict):
-                server = handler.get("server", "?")
-                tool = handler.get("tool", "?")
-                action = handler.get("action", "?")
-                mcp_success.append(f"{server}:{tool} -> {action}")
-
-        mcp_error: list[str] = []
-        for handler in step.on_mcp_error:
-            if isinstance(handler, dict):
-                server = handler.get("server", "?")
-                tool = handler.get("tool", "?")
-                action = handler.get("action", "?")
-                mcp_error.append(f"{server}:{tool} -> {action}")
-
-        result.step_trace.append(
-            WorkflowStepTrace(
-                name=step.name,
-                description=step.description,
-                on_enter_actions=action_summaries,
-                allowed_tools=step.allowed_tools,
-                blocked_tools=step.blocked_tools,
-                allowed_mcp_tools=step.allowed_mcp_tools,
-                blocked_mcp_tools=step.blocked_mcp_tools,
-                transitions=transitions,
-                on_mcp_success=mcp_success,
-                on_mcp_error=mcp_error,
-            )
-        )
-
-
-def _build_lifecycle_path(definition: WorkflowDefinition, result: WorkflowEvaluation) -> None:
-    """List all reachable lifecycle steps in breadth-first transition order."""
-    if not definition.steps:
-        return
-
-    step_map = {s.name: s for s in definition.steps}
-    path: list[str] = []
-    visited: set[str] = set()
-    queue: deque[str] = deque([definition.steps[0].name])
-
-    while queue:
-        current = queue.popleft()
-        if current in visited:
-            continue
-        visited.add(current)
-        path.append(current)
-        step = step_map.get(current)
-        if step:
-            queue.extend(
-                transition.to
-                for transition in step.transitions
-                if transition.to in step_map and transition.to not in visited
-            )
-
-    result.lifecycle_path = path

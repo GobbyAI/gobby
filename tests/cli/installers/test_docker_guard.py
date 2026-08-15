@@ -179,7 +179,7 @@ def test_hub_backup_store_fails_closed_before_container_exec(
     _protect(monkeypatch)
 
     with pytest.raises(DockerTestProtectError, match="hub backup FalkorDB command"):
-        hub_stores._redis_cli("PING")
+        hub_stores._redis_cli("gobby-falkordb", "PING")
 
 
 def test_hub_backup_verification_fails_closed_before_docker(

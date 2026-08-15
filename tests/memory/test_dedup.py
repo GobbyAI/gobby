@@ -7,7 +7,7 @@ from typing import Any
 from unittest.mock import AsyncMock, MagicMock
 
 import pytest
-from qdrant_client.models import FieldCondition
+from qdrant_client.models import FieldCondition, MatchValue
 
 from gobby.memory.services.dedup import (
     NEAR_EXACT_THRESHOLD,
@@ -445,7 +445,7 @@ class TestProcess:
         assert [
             condition.match.value
             for condition in filters.must
-            if isinstance(condition, FieldCondition)
+            if isinstance(condition, FieldCondition) and isinstance(condition.match, MatchValue)
         ] == [True]
 
 

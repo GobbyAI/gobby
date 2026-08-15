@@ -1,7 +1,6 @@
-"""Synchronous wrappers for WorkflowLoader async methods.
+"""Synchronous wrappers for PipelineLoader async methods.
 
-Provides WorkflowLoaderSyncMixin for CLI / startup contexts without a running loop.
-Extracted from loader.py as part of Strangler Fig decomposition (Wave 2).
+Provides PipelineLoaderSyncMixin for CLI / startup contexts without a running loop.
 """
 
 from __future__ import annotations
@@ -14,22 +13,15 @@ from pathlib import Path
 from typing import TYPE_CHECKING, Any, Protocol, TypeVar, cast, runtime_checkable
 
 if TYPE_CHECKING:
-    from .definitions import PipelineDefinition, WorkflowDefinition
     from .loader_cache import DiscoveredWorkflow
+    from .pipeline_models import PipelineDefinition
 
 _T = TypeVar("_T")
 
 
 @runtime_checkable
-class _WorkflowLoaderProtocol(Protocol):
-    """Protocol declaring async methods that WorkflowLoaderSyncMixin wraps."""
-
-    async def load_workflow(
-        self,
-        name: str,
-        project_path: Path | str | None = None,
-        _inheritance_chain: list[str] | None = None,
-    ) -> WorkflowDefinition | PipelineDefinition | None: ...
+class _PipelineLoaderProtocol(Protocol):
+    """Protocol declaring async methods that PipelineLoaderSyncMixin wraps."""
 
     async def load_pipeline(
         self,
@@ -38,23 +30,19 @@ class _WorkflowLoaderProtocol(Protocol):
         _inheritance_chain: list[str] | None = None,
     ) -> PipelineDefinition | None: ...
 
-    async def discover_workflows(
+    async def discover_pipelines(
         self, project_path: Path | str | None = None
     ) -> list[DiscoveredWorkflow]: ...
 
-    async def discover_pipeline_workflows(
-        self, project_path: Path | str | None = None
-    ) -> list[DiscoveredWorkflow]: ...
-
-    async def validate_workflow_for_agent(
+    async def validate_pipeline_for_agent(
         self,
-        workflow_name: str,
+        pipeline_name: str,
         project_id: str | None = None,
     ) -> tuple[bool, str | None]: ...
 
 
-class WorkflowLoaderSyncMixin:
-    """Mixin providing synchronous wrappers for async WorkflowLoader methods."""
+class PipelineLoaderSyncMixin:
+    """Mixin providing synchronous wrappers for async PipelineLoader methods."""
 
     _sync_executor: concurrent.futures.ThreadPoolExecutor | None = None
     _sync_executor_lock: threading.Lock = threading.Lock()
@@ -84,28 +72,15 @@ class WorkflowLoaderSyncMixin:
             loop = None
 
         if loop is None:
-            # No event loop running - safe to use asyncio.run()
             return asyncio.run(coro)
 
-        # A synchronous caller cannot drive its own running loop. Run the
-        # coroutine on the dedicated executor thread instead.
-        pool = WorkflowLoaderSyncMixin._get_sync_executor()
+        pool = PipelineLoaderSyncMixin._get_sync_executor()
         return pool.submit(asyncio.run, coro).result()
 
     @property
-    def _async_self(self) -> _WorkflowLoaderProtocol:
+    def _async_self(self) -> _PipelineLoaderProtocol:
         """Cast self to the protocol so mypy knows the async methods exist."""
-        return cast(_WorkflowLoaderProtocol, self)
-
-    def load_workflow_sync(
-        self,
-        name: str,
-        project_path: Path | str | None = None,
-        _inheritance_chain: list[str] | None = None,
-    ) -> WorkflowDefinition | PipelineDefinition | None:
-        return self._run_sync(
-            self._async_self.load_workflow(name, project_path, _inheritance_chain)
-        )
+        return cast(_PipelineLoaderProtocol, self)
 
     def load_pipeline_sync(
         self,
@@ -117,21 +92,16 @@ class WorkflowLoaderSyncMixin:
             self._async_self.load_pipeline(name, project_path, _inheritance_chain)
         )
 
-    def discover_workflows_sync(
+    def discover_pipelines_sync(
         self, project_path: Path | str | None = None
     ) -> list[DiscoveredWorkflow]:
-        return self._run_sync(self._async_self.discover_workflows(project_path))
+        return self._run_sync(self._async_self.discover_pipelines(project_path))
 
-    def discover_pipeline_workflows_sync(
-        self, project_path: Path | str | None = None
-    ) -> list[DiscoveredWorkflow]:
-        return self._run_sync(self._async_self.discover_pipeline_workflows(project_path))
-
-    def validate_workflow_for_agent_sync(
+    def validate_pipeline_for_agent_sync(
         self,
-        workflow_name: str,
+        pipeline_name: str,
         project_id: str | None = None,
     ) -> tuple[bool, str | None]:
         return self._run_sync(
-            self._async_self.validate_workflow_for_agent(workflow_name, project_id)
+            self._async_self.validate_pipeline_for_agent(pipeline_name, project_id)
         )

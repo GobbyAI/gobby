@@ -10,7 +10,7 @@ import pytest
 
 from gobby.hooks.events import HookEvent, HookEventType, SessionSource
 from gobby.storage.hub.protocol import HubDatabase
-from gobby.storage.workflow_definitions import LocalWorkflowDefinitionManager
+from gobby.storage.definitions.rules import RuleDefinitionManager
 from gobby.workflows.definitions import RuleDefinitionBody, RuleEffect
 from gobby.workflows.engine.core import RuleEngine
 
@@ -23,7 +23,7 @@ def db(temp_db: HubDatabase) -> HubDatabase:
     return database
 
 
-def _make_blocking_rule(manager: LocalWorkflowDefinitionManager) -> str:
+def _make_blocking_rule(manager: RuleDefinitionManager) -> str:
     body = RuleDefinitionBody(
         event="before_tool",
         when="event.data.get('tool_name') == 'Bash'",
@@ -33,7 +33,6 @@ def _make_blocking_rule(manager: LocalWorkflowDefinitionManager) -> str:
     row = manager.create(
         name="disable-propagation-probe",
         definition_json=body.model_dump_json(),
-        workflow_type="rule",
         enabled=True,
         priority=1,
         source="installed",
@@ -54,7 +53,7 @@ def _make_bash_event() -> HookEvent:
 
 @pytest.mark.asyncio
 async def test_disable_rule_takes_effect_on_next_event_in_process(db: HubDatabase) -> None:
-    manager = LocalWorkflowDefinitionManager(db)
+    manager = RuleDefinitionManager(db)
     rule_id = _make_blocking_rule(manager)
     engine = RuleEngine(db)
     event = _make_bash_event()
@@ -77,7 +76,7 @@ async def test_disable_rule_takes_effect_across_processes(
     postgres_database_url: str,
     postgres_schema: str,
 ) -> None:
-    manager = LocalWorkflowDefinitionManager(db)
+    manager = RuleDefinitionManager(db)
     rule_id = _make_blocking_rule(manager)
     engine = RuleEngine(db)
     event = _make_bash_event()
@@ -99,12 +98,12 @@ def _disable_rule_in_child_process(database_url: str, schema: str, rule_id: str)
 import sys
 
 from gobby.storage.hub.postgres import PostgresHubDatabase
-from gobby.storage.workflow_definitions import LocalWorkflowDefinitionManager
+from gobby.storage.definitions.rules import RuleDefinitionManager
 
 database_url, schema, rule_id = sys.argv[1:]
 db = PostgresHubDatabase(database_url + f"?options=-csearch_path%3D{schema}")
 try:
-    manager = LocalWorkflowDefinitionManager(db)
+    manager = RuleDefinitionManager(db)
     manager.update(rule_id, enabled=False)
 finally:
     db.close()

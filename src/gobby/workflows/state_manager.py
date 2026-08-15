@@ -1,20 +1,25 @@
 import json
 import logging
+import threading
 import time
+import weakref
 from collections.abc import Callable, Mapping
 from copy import deepcopy
 from datetime import UTC, datetime
 from typing import Any, Literal, TypeVar
 
+from gobby.storage.definitions.revisions import (
+    get_definitions_revision,
+    register_revision_listener,
+)
 from gobby.storage.hub.protocol import (
     HubDatabase,
     SessionVariableMutation,
-    WorkflowInstanceMutation,
 )
-from gobby.storage.session_resolution import is_session_uuid
-from gobby.utils.datetime import parse_stored_datetime, require_stored_datetime
-
-from .definitions import WorkflowInstance
+from gobby.workflows.variable_defaults import (
+    load_variable_defaults,
+    resolve_session_project_id,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -65,133 +70,19 @@ def _normalize_string_list(value: Any) -> list[str]:
     return [item for item in value if isinstance(item, str)]
 
 
-class WorkflowInstanceManager:
-    """Manages CRUD operations for workflow instances (multi-workflow per session)."""
+_LIVE_VARIABLE_MANAGERS: weakref.WeakSet["SessionVariableManager"] = weakref.WeakSet()
+_VARIABLE_CACHE_LOCK = threading.Lock()
 
-    def __init__(self, db: HubDatabase):
-        self.db = db
 
-    def get_instance(self, session_id: str, workflow_name: str) -> WorkflowInstance | None:
-        """Get a specific workflow instance by session and workflow name."""
-        if not is_session_uuid(session_id):
-            return None
-        row = self.db.fetchone(
-            "SELECT * FROM workflow_instances WHERE session_id = %s AND workflow_name = %s",
-            (session_id, workflow_name),
-        )
-        if not row:
-            return None
-        return self._row_to_instance(row)
+def _clear_variable_defaults_caches() -> None:
+    """Drop every SessionVariableManager defaults cache on a variables revision."""
+    with _VARIABLE_CACHE_LOCK:
+        for manager in tuple(_LIVE_VARIABLE_MANAGERS):
+            manager._defaults_cache.clear()
+            manager._defaults_cache_times.clear()
 
-    def get_active_instances(self, session_id: str) -> list[WorkflowInstance]:
-        """Get all enabled workflow instances for a session, sorted deterministically."""
-        if not is_session_uuid(session_id):
-            return []
-        rows = self.db.fetchall(
-            "SELECT * FROM workflow_instances WHERE session_id = %s AND enabled = %s "
-            "ORDER BY priority ASC, workflow_name ASC",
-            (session_id, True),
-        )
-        return [self._row_to_instance(row) for row in rows]
 
-    def save_instance(self, instance: WorkflowInstance) -> None:
-        """Create or update a workflow instance (upsert on session_id + workflow_name)."""
-        if not is_session_uuid(instance.session_id):
-            return
-        now = datetime.now(UTC).isoformat()
-        persisted = self.db.fetchone(
-            """
-            INSERT INTO workflow_instances (
-                id, session_id, workflow_name, enabled, priority,
-                current_step, step_entered_at, step_action_count, total_action_count,
-                variables, context_injected, created_at, updated_at
-            ) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
-            ON CONFLICT(session_id, workflow_name) DO UPDATE SET
-                enabled = excluded.enabled,
-                priority = excluded.priority,
-                current_step = excluded.current_step,
-                step_entered_at = excluded.step_entered_at,
-                step_action_count = excluded.step_action_count,
-                total_action_count = excluded.total_action_count,
-                variables = excluded.variables,
-                context_injected = excluded.context_injected,
-                updated_at = excluded.updated_at
-            RETURNING id, created_at, updated_at
-            """,
-            (
-                instance.id,
-                instance.session_id,
-                instance.workflow_name,
-                instance.enabled,
-                instance.priority,
-                instance.current_step,
-                instance.step_entered_at.isoformat() if instance.step_entered_at else None,
-                instance.step_action_count,
-                instance.total_action_count,
-                _encode_variables_payload(instance.variables),
-                instance.context_injected,
-                instance.created_at.isoformat(),
-                now,
-            ),
-        )
-        if persisted is None:  # pragma: no cover - PostgreSQL RETURNING always yields a row.
-            raise RuntimeError("Workflow instance upsert returned no row")
-        instance.id = persisted["id"]
-        instance.created_at = require_stored_datetime(persisted["created_at"], "created_at")
-        instance.updated_at = require_stored_datetime(persisted["updated_at"], "updated_at")
-
-    def merge_instance_variables(
-        self,
-        session_id: str,
-        workflow_name: str,
-        updates: dict[str, Any],
-    ) -> bool:
-        """Atomically merge variables without rewriting workflow execution state."""
-        if not updates or not is_session_uuid(session_id):
-            return False
-        lock = WorkflowInstanceMutation(session_id=session_id, workflow_name=workflow_name)
-        with self.db.transaction_immediate(lock) as conn:
-            now = datetime.now(UTC).isoformat()
-            cursor = conn.execute(
-                """
-                UPDATE workflow_instances
-                SET variables = COALESCE(variables, '{}'::jsonb) || %s::jsonb,
-                    updated_at = %s
-                WHERE session_id = %s AND workflow_name = %s
-                """,
-                (_encode_variables_payload(updates), now, session_id, workflow_name),
-            )
-            return cursor.rowcount > 0
-
-    def delete_instances_for_session(self, session_id: str) -> int:
-        """Delete all workflow instances for a session and return deleted row count."""
-        if not is_session_uuid(session_id):
-            return 0
-        with self.db.transaction() as conn:
-            cursor = conn.execute(
-                "DELETE FROM workflow_instances WHERE session_id = %s",
-                (session_id,),
-            )
-            return cursor.rowcount
-
-    @staticmethod
-    def _row_to_instance(row: Any) -> WorkflowInstance:
-        """Convert a database row to a WorkflowInstance."""
-        return WorkflowInstance(
-            id=row["id"],
-            session_id=row["session_id"],
-            workflow_name=row["workflow_name"],
-            enabled=bool(row["enabled"]),
-            priority=row["priority"],
-            current_step=row["current_step"],
-            step_entered_at=parse_stored_datetime(row["step_entered_at"]),
-            step_action_count=row["step_action_count"],
-            total_action_count=row["total_action_count"],
-            variables=_decode_variables_payload(row["variables"]),
-            context_injected=bool(row["context_injected"]),
-            created_at=require_stored_datetime(row["created_at"], "created_at"),
-            updated_at=require_stored_datetime(row["updated_at"], "updated_at"),
-        )
+register_revision_listener("variables", _clear_variable_defaults_caches)
 
 
 class SessionVariableManager:
@@ -206,8 +97,9 @@ class SessionVariableManager:
 
     def __init__(self, db: HubDatabase):
         self.db = db
-        self._defaults_cache: dict[str, Any] | None = None
-        self._defaults_cache_time: float = 0.0
+        self._defaults_cache: dict[tuple[str | None, int], dict[str, Any]] = {}
+        self._defaults_cache_times: dict[tuple[str | None, int], float] = {}
+        _LIVE_VARIABLE_MANAGERS.add(self)
 
     def get_variables(self, session_id: str) -> dict[str, Any]:
         """Get all session variables with definition defaults applied.
@@ -224,42 +116,38 @@ class SessionVariableManager:
         if row:
             session_vars = _decode_variables_payload(row["variables"])
 
-        return self._apply_variable_defaults(session_vars)
-
-    def _get_variable_defaults(self) -> dict[str, Any]:
-        """Load default values from enabled, installed variable definitions.
-
-        Results are cached for ``_DEFAULTS_CACHE_TTL`` seconds to avoid
-        per-hook DB overhead.  The definition set only changes on
-        ``gobby sync`` / ``gobby init`` which are rare operations.
-        """
-        now = time.monotonic()
-        if (
-            self._defaults_cache is not None
-            and (now - self._defaults_cache_time) < self._DEFAULTS_CACHE_TTL
-        ):
-            return deepcopy(self._defaults_cache)
-
-        rows = self.db.fetchall(
-            "SELECT name, definition_json FROM workflow_definitions "
-            "WHERE workflow_type = 'variable' AND enabled = %s AND source = 'installed'",
-            (True,),
+        return self._apply_variable_defaults(
+            session_vars, resolve_session_project_id(self.db, session_id)
         )
-        defaults: dict[str, Any] = {}
-        for row in rows:
-            try:
-                body = json.loads(row["definition_json"])
-                defaults[body.get("variable", row["name"])] = body.get("value")
-            except (json.JSONDecodeError, TypeError, AttributeError, KeyError):
-                continue
 
-        self._defaults_cache = defaults
-        self._defaults_cache_time = now
+    def _get_variable_defaults(self, project_id: str | None) -> dict[str, Any]:
+        """Load enabled defaults for one project, keyed by revision.
+
+        Results are cached for ``_DEFAULTS_CACHE_TTL`` seconds and dropped
+        when the variables domain revision advances.
+        """
+        revision = get_definitions_revision("variables")
+        cache_key = (project_id, revision)
+        now = time.monotonic()
+        cached = self._defaults_cache.get(cache_key)
+        cached_at = self._defaults_cache_times.get(cache_key)
+        if (
+            cached is not None
+            and cached_at is not None
+            and (now - cached_at) < self._DEFAULTS_CACHE_TTL
+        ):
+            return deepcopy(cached)
+
+        defaults = load_variable_defaults(self.db, project_id)
+        self._defaults_cache[cache_key] = defaults
+        self._defaults_cache_times[cache_key] = now
         return deepcopy(defaults)
 
-    def _apply_variable_defaults(self, variables: dict[str, Any]) -> dict[str, Any]:
-        """Layer stored variables over installed definition defaults."""
-        defaults = self._get_variable_defaults()
+    def _apply_variable_defaults(
+        self, variables: dict[str, Any], project_id: str | None
+    ) -> dict[str, Any]:
+        """Layer stored variables over project-scoped definition defaults."""
+        defaults = self._get_variable_defaults(project_id)
         if not defaults:
             return variables
         return {**defaults, **variables}
@@ -279,7 +167,9 @@ class SessionVariableManager:
             ).fetchone()
             variables = _decode_variables_payload(row["variables"]) if row else {}
             if apply_defaults:
-                variables = self._apply_variable_defaults(variables)
+                variables = self._apply_variable_defaults(
+                    variables, resolve_session_project_id(self.db, session_id)
+                )
             result, changed = mutator(variables)
             if not changed:
                 return result

@@ -17,7 +17,6 @@ Test categories:
 from __future__ import annotations
 
 import asyncio
-import json
 import logging
 import threading
 import uuid
@@ -65,32 +64,33 @@ def _create_session_row(db: HubDatabase, session_id: str) -> None:
 
 
 def _install_step_workflow(db: HubDatabase, session_id: str, current_step: str) -> None:
-    from gobby.storage.workflow_definitions import LocalWorkflowDefinitionManager
-    from gobby.workflows.definitions import WorkflowInstance
-    from gobby.workflows.state_manager import WorkflowInstanceManager
+    from gobby.storage.definitions.agents import AgentDefinitionManager
+    from gobby.workflows.agent_models import AgentStepWorkflowBody
+    from gobby.workflows.definitions import AgentDefinitionBody
+    from gobby.workflows.step_instances import AgentStepInstanceManager, build_step_instance
 
-    definition = {
-        "name": "merge-worker",
-        "version": "1.0",
-        "enabled": True,
-        "steps": [
-            {"name": "resolve_conflicts"},
-            {"name": "terminate"},
-        ],
-        "exit_condition": "current_step == 'terminate'",
-    }
-    LocalWorkflowDefinitionManager(db).create(
+    definition = AgentDefinitionBody(
         name="merge-worker",
-        definition_json=json.dumps(definition),
-        workflow_type="workflow",
+        step_workflow=AgentStepWorkflowBody.model_validate(
+            {
+                "steps": [
+                    {"name": "resolve_conflicts"},
+                    {"name": "terminate"},
+                ],
+                "exit_condition": "current_step == 'terminate'",
+            }
+        ),
+    )
+    AgentDefinitionManager(db).create(
+        name=definition.name,
+        definition_json=definition.model_dump(mode="json"),
         enabled=True,
     )
-    WorkflowInstanceManager(db).save_instance(
-        WorkflowInstance(
-            # workflow_instances.id is a native uuid column.
-            id=str(uuid.uuid5(uuid.NAMESPACE_URL, f"inst-{session_id}")),
+    AgentStepInstanceManager(db).save(
+        build_step_instance(
+            definition,
             session_id=session_id,
-            workflow_name="merge-worker",
+            step_workflow_id=None,
             current_step=current_step,
             variables={},
         )

@@ -68,6 +68,7 @@ def _make_agent_body(
     body.blocked_mcp_tools = []
     body.steps = None
     body.step_variables = {}
+    body.step_workflow = None
     return body
 
 

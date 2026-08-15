@@ -53,7 +53,7 @@ from .tokens import tokens
 from .ui import ui
 from .uninstall import uninstall
 from .utils import get_gobby_home
-from .workflows import workflows
+from .variables import variables
 from .worktrees import worktrees
 
 
@@ -116,7 +116,7 @@ cli.add_command(mcp_proxy)
 cli.add_command(projects)
 cli.add_command(profiles)
 cli.add_command(rules)
-cli.add_command(workflows)
+cli.add_command(variables)
 cli.add_command(merge)
 cli.add_command(pipelines)
 cli.add_command(github)

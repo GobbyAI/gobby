@@ -241,86 +241,18 @@ def _copy_docs(source: Path, target: Path, installed: dict[str, list[str]]) -> N
 def sync_bundled_content_to_db(
     db: "HubDatabase",
     skip_types: set[str] | None = None,
+    *,
+    only: set[str] | None = None,
 ) -> dict[str, Any]:
-    """Sync all bundled content definitions to the database.
+    """Sync bundled content, then user templates, into the database.
 
-    Called during ``gobby install`` as the single import point.
-    The daemon no longer syncs on startup (except in dev mode).
-
-    Args:
-        db: Database connection implementing HubDatabase.
-        skip_types: Optional set of content type names to skip (e.g. ``{"workflows"}``).
-            Used by the integrity checker to block tampered types.
-
-    Returns:
-        Dict with total_synced count and any errors.
+    The bundled fan-out lives in :mod:`gobby.sync_registry`. This wrapper
+    keeps user-template import for install-time callers.
     """
-    result: dict[str, Any] = {
-        "total_synced": 0,
-        "errors": [],
-        "details": {},
-    }
-    bundled_changes: dict[str, int] = {}
+    from gobby.sync_registry import sync_bundled_content_to_db as _sync_bundled
 
-    # (content_type, module_path, function_name)
-    sync_targets: list[tuple[str, str, str]] = [
-        ("skills", "gobby.skills.sync", "sync_bundled_skills"),
-        ("prompts", "gobby.prompts.sync", "sync_bundled_prompts"),
-        ("agents", "gobby.agents.sync", "sync_bundled_agents"),
-        ("pipelines", "gobby.workflows.sync_pipelines", "sync_bundled_pipelines"),
-        ("rules", "gobby.workflows.sync_rules", "sync_bundled_rules"),
-        ("variables", "gobby.workflows.sync_variables", "sync_bundled_variables"),
-        ("build_profiles", "gobby.storage.build_profiles", "sync_bundled_build_profiles"),
-        (
-            "detection_manifests",
-            "gobby.agents.detection.registry",
-            "sync_bundled_detection_manifests",
-        ),
-    ]
+    result = _sync_bundled(db, only=only, skip_types=skip_types)
 
-    for content_type, module_path, func_name in sync_targets:
-        if skip_types and content_type in skip_types:
-            logger.debug("Skipping sync of bundled %s", content_type)
-            result["details"][content_type] = {"skipped": True}
-            continue
-        try:
-            module = __import__(module_path, fromlist=[func_name])
-            sync_fn = getattr(module, func_name)
-            sync_result = sync_fn(db)
-            synced = sync_result.get("synced", 0) + sync_result.get("updated", 0)
-            result["total_synced"] += synced
-            result["details"][content_type] = sync_result
-            changed = sum(
-                value
-                for key in ("synced", "updated", "orphaned", "purged_project_overrides")
-                if isinstance((value := sync_result.get(key)), int)
-            )
-            if changed > 0:
-                bundled_changes[content_type] = changed
-                logger.debug("Synced %s bundled %s changes to database", changed, content_type)
-        except Exception as e:
-            msg = f"Failed to sync bundled {content_type}: {e}"
-            logger.warning(msg)
-            result["errors"].append(msg)
-
-    # Skills and workflow definitions are created as installed rows directly
-    # by the sync functions above — no separate install step needed.
-    if bundled_changes:
-        logger.info(
-            "Bundled content sync changed database state",
-            extra={
-                "changed": sum(bundled_changes.values()),
-                "content_types": bundled_changes,
-            },
-        )
-    else:
-        logger.debug(
-            "Bundled content sync made no database changes",
-            extra={"content_types": list(result["details"])},
-        )
-
-    # Sync user templates from .gobby/workflows/ and ~/.gobby/workflows/ back to DB.
-    # Skip in dev mode — bundled templates are managed directly in source tree.
     try:
         from gobby.utils.dev import is_dev_mode
 

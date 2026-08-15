@@ -25,17 +25,15 @@ from gobby.skills.materialization import (
     SkillScriptMaterializer,
     get_skill_script_materializer,
 )
+from gobby.storage.definitions.agents import AgentDefinitionManager
+from gobby.storage.definitions.revisions import get_definitions_revision
+from gobby.storage.definitions.rules import RuleDefinitionManager, RuleDefinitionRow
 from gobby.storage.hub.protocol import HubDatabase
 from gobby.storage.pipeline_subscribers import (
     CompletionSubscriberManager,
     PipelineSubscriberStorageError,
 )
 from gobby.storage.workflow_audit import WorkflowAuditManager
-from gobby.storage.workflow_definitions import (
-    LocalWorkflowDefinitionManager,
-    WorkflowDefinitionRow,
-    get_workflow_definitions_revision,
-)
 from gobby.telemetry.tracing import create_span
 from gobby.workflows.definitions import (
     AgentDefinitionBody,
@@ -67,7 +65,7 @@ from gobby.workflows.engine.event_utils import (
 )
 from gobby.workflows.engine.templating import TemplatingMixin
 from gobby.workflows.selectors import rule_matches_agent
-from gobby.workflows.state_manager import WorkflowInstanceManager
+from gobby.workflows.step_instances import AgentStepInstanceManager
 
 logger = logging.getLogger(__name__)
 
@@ -108,7 +106,7 @@ __all__ = [
 class RuleEngine(EvaluationMixin, EffectsMixin, TemplatingMixin, EnforcementMixin):
     """Single-pass rule evaluation engine.
 
-    Loads rules from workflow_definitions (workflow_type='rule'),
+    Loads rules from rule_definitions via RuleDefinitionManager,
     applies session overrides, evaluates in priority order.
     """
 
@@ -125,8 +123,9 @@ class RuleEngine(EvaluationMixin, EffectsMixin, TemplatingMixin, EnforcementMixi
         skill_script_materializer: SkillScriptMaterializer | None = None,
     ):
         self.db = db
-        self.definition_manager = LocalWorkflowDefinitionManager(db)
-        self.instance_manager = WorkflowInstanceManager(db)
+        self.rule_manager = RuleDefinitionManager(db)
+        self.agent_manager = AgentDefinitionManager(db)
+        self.instance_manager = AgentStepInstanceManager(db)
         self.workflow_audit = WorkflowAuditManager(db)
         self._skill_manager = skill_manager
         self._event_store = metrics_event_store
@@ -138,7 +137,7 @@ class RuleEngine(EvaluationMixin, EffectsMixin, TemplatingMixin, EnforcementMixi
         self.skill_script_materializer = skill_script_materializer or get_skill_script_materializer(
             db
         )
-        self._agent_def_cache_revision = get_workflow_definitions_revision()
+        self._agent_def_cache_revision = get_definitions_revision("agents")
         self._agent_def_cache: dict[tuple[str, str | None], AgentDefinitionBody | None] = {}
         self._background_run_commands: dict[tuple[str, str], asyncio.Task[None]] = {}
 
@@ -146,9 +145,8 @@ class RuleEngine(EvaluationMixin, EffectsMixin, TemplatingMixin, EnforcementMixi
         """Prepare skill scripts referenced by enabled rules."""
         try:
             rows = await offload(
-                self.definition_manager.list_all,
+                self.rule_manager.list_all,
                 project_id=project_id,
-                workflow_type="rule",
                 enabled=True,
             )
         except Exception:
@@ -162,7 +160,7 @@ class RuleEngine(EvaluationMixin, EffectsMixin, TemplatingMixin, EnforcementMixi
         skills: set[str] = set()
         for row in rows:
             try:
-                body = RuleDefinitionBody.model_validate_json(row.definition_json)
+                body = RuleDefinitionBody.model_validate(row.definition_json)
             except Exception:
                 logger.warning(
                     "Workflow skill prewarm skipped invalid rule %s for project %s",
@@ -583,13 +581,13 @@ class RuleEngine(EvaluationMixin, EffectsMixin, TemplatingMixin, EnforcementMixi
 
     def _load_rules(
         self, rule_events: list[RuleTriggerEvent]
-    ) -> list[tuple[WorkflowDefinitionRow, RuleDefinitionBody]]:
+    ) -> list[tuple[RuleDefinitionRow, RuleDefinitionBody]]:
         """Load enabled rules matching any trigger event, sorted by priority."""
-        ordered: list[tuple[int, WorkflowDefinitionRow, RuleDefinitionBody]] = []
+        ordered: list[tuple[int, RuleDefinitionRow, RuleDefinitionBody]] = []
         seen_rows: set[str] = set()
 
         for trigger_index, rule_event in enumerate(rule_events):
-            rows = self.definition_manager.list_rules_by_event(
+            rows = self.rule_manager.list_by_event(
                 event=rule_event.value,
                 enabled=True,
             )
@@ -597,7 +595,12 @@ class RuleEngine(EvaluationMixin, EffectsMixin, TemplatingMixin, EnforcementMixi
                 if row.id in seen_rows:
                     continue
                 try:
-                    body = RuleDefinitionBody.model_validate_json(row.definition_json)
+                    payload = row.definition_json
+                    body = (
+                        RuleDefinitionBody.model_validate(payload)
+                        if isinstance(payload, dict)
+                        else RuleDefinitionBody.model_validate_json(payload)
+                    )
                     ordered.append((trigger_index, row, body))
                     seen_rows.add(row.id)
                 except Exception as e:
@@ -608,9 +611,9 @@ class RuleEngine(EvaluationMixin, EffectsMixin, TemplatingMixin, EnforcementMixi
 
     def _filter_by_agent_scope(
         self,
-        rules: list[tuple[WorkflowDefinitionRow, RuleDefinitionBody]],
+        rules: list[tuple[RuleDefinitionRow, RuleDefinitionBody]],
         agent_type: str | None,
-    ) -> list[tuple[WorkflowDefinitionRow, RuleDefinitionBody]]:
+    ) -> list[tuple[RuleDefinitionRow, RuleDefinitionBody]]:
         """Filter rules by agent_scope.
 
         - Rules with no agent_scope (None) are global — always included.
@@ -629,9 +632,9 @@ class RuleEngine(EvaluationMixin, EffectsMixin, TemplatingMixin, EnforcementMixi
 
     def _filter_by_audience(
         self,
-        rules: list[tuple[WorkflowDefinitionRow, RuleDefinitionBody]],
+        rules: list[tuple[RuleDefinitionRow, RuleDefinitionBody]],
         variables: dict[str, Any],
-    ) -> list[tuple[WorkflowDefinitionRow, RuleDefinitionBody]]:
+    ) -> list[tuple[RuleDefinitionRow, RuleDefinitionBody]]:
         """Filter rules by broad runtime audience."""
         return [(row, body) for row, body in rules if self._audience_matches(body, variables)]
 
@@ -658,11 +661,11 @@ class RuleEngine(EvaluationMixin, EffectsMixin, TemplatingMixin, EnforcementMixi
 
     def _filter_by_active_rules(
         self,
-        rules: list[tuple[WorkflowDefinitionRow, RuleDefinitionBody]],
+        rules: list[tuple[RuleDefinitionRow, RuleDefinitionBody]],
         variables: dict[str, Any],
         *,
         project_id: str | None = None,
-    ) -> list[tuple[WorkflowDefinitionRow, RuleDefinitionBody]]:
+    ) -> list[tuple[RuleDefinitionRow, RuleDefinitionBody]]:
         """Filter rules using the current agent definition, falling back to session metadata."""
         agent = self._load_active_agent_definition(
             variables.get("_agent_type"),
@@ -686,7 +689,7 @@ class RuleEngine(EvaluationMixin, EffectsMixin, TemplatingMixin, EnforcementMixi
         if not isinstance(agent_type, str) or not agent_type:
             return None
 
-        revision = get_workflow_definitions_revision()
+        revision = get_definitions_revision("agents")
         if revision != self._agent_def_cache_revision:
             self._agent_def_cache.clear()
             self._agent_def_cache_revision = revision
@@ -696,17 +699,16 @@ class RuleEngine(EvaluationMixin, EffectsMixin, TemplatingMixin, EnforcementMixi
             return self._agent_def_cache[cache_key]
 
         agent: AgentDefinitionBody | None = None
-        row = self.definition_manager.get_by_name(
-            agent_type,
-            project_id=project_id,
-            workflow_type="agent",
-        )
-        if row is not None and row.workflow_type == "agent" and row.definition_json:
+        row = self.agent_manager.get_by_name(agent_type, project_id=project_id)
+        if row is not None:
             try:
-                data = json.loads(row.definition_json)
+                data = row.definition_json
+                if isinstance(data, str):
+                    data = json.loads(data)
                 if isinstance(data, dict):
-                    data.setdefault("name", row.name)
-                agent = AgentDefinitionBody.model_validate(data)
+                    payload = dict(data)
+                    payload.setdefault("name", row.name)
+                    agent = AgentDefinitionBody.model_validate(payload)
             except (json.JSONDecodeError, TypeError) as exc:
                 logger.debug("Failed to decode active agent definition %s: %s", agent_type, exc)
             except ValidationError as exc:

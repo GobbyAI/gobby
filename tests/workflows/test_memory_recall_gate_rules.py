@@ -72,10 +72,10 @@ def _memory_tool_event(tool_name: str) -> HookEvent:
 def engine(temp_db: HubDatabase) -> RuleEngine:
     sync_bundled_rules(temp_db, get_bundled_rules_path())
     with temp_db.transaction() as conn:
-        conn.execute("UPDATE workflow_definitions SET enabled = FALSE")
+        conn.execute("UPDATE rule_definitions SET enabled = FALSE")
         for rule_name in RULE_NAMES:
             conn.execute(
-                "UPDATE workflow_definitions SET enabled = TRUE WHERE name = %s",
+                "UPDATE rule_definitions SET enabled = TRUE WHERE name = %s",
                 (rule_name,),
             )
     return RuleEngine(temp_db)

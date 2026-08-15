@@ -32,7 +32,7 @@ from gobby.servers.routes.rules import create_rules_router
 from gobby.servers.routes.sessions.core import register_core_routes
 from gobby.servers.tool_approvals import get_global_approval_rules
 from gobby.storage.hub.protocol import HubDatabase
-from gobby.storage.workflow_definitions import LocalWorkflowDefinitionManager
+from gobby.storage.definitions.rules import RuleDefinitionManager
 from gobby.workflows.definitions import RuleDefinitionBody, RuleEffect, RuleTriggerEvent
 from gobby.workflows.engine.core import RuleEngine
 
@@ -100,14 +100,13 @@ def _route_methods(router: APIRouter) -> set[tuple[str, str]]:
 
 @pytest.mark.asyncio
 async def test_rules_use_runtime_snapshot(policy_db: HubDatabase) -> None:
-    manager = LocalWorkflowDefinitionManager(policy_db)
+    manager = RuleDefinitionManager(policy_db)
     manager.create(
         name="live-runtime-policy",
         definition_json=RuleDefinitionBody(
             event=RuleTriggerEvent.BEFORE_TOOL,
             effects=[RuleEffect(type="block", reason="live policy blocked")],
         ).model_dump_json(),
-        workflow_type="rule",
     )
     runtime = CountingRuntime(
         _snapshot(

@@ -9,7 +9,8 @@ import pytest
 import yaml
 
 from gobby.workflows.definitions import AgentDefinitionBody, WorkflowDefinition, WorkflowStep
-from gobby.workflows.dry_run import evaluate_workflow
+from gobby.workflows.agent_models import AgentStepWorkflowBody
+from gobby.workflows.dry_run import evaluate_agent_definition
 from gobby.workflows.handler_route_lint import check_handler_routes
 
 pytestmark = pytest.mark.unit
@@ -43,10 +44,17 @@ def _definition(
 @pytest.mark.asyncio
 async def test_evaluator_warns_when_success_handler_has_no_failure_route() -> None:
     definition = _definition(success=[_handler("gobby-tasks", "close_task")], error=[])
-    loader = MagicMock()
-    loader.load_workflow = AsyncMock(return_value=definition)
-
-    result = await evaluate_workflow("handler-routes", loader)
+    result = await evaluate_agent_definition(
+        AgentDefinitionBody(
+            name=definition.name,
+            provider="claude",
+            step_workflow=AgentStepWorkflowBody(
+                steps=definition.steps,
+                variables=definition.variables or {},
+                exit_condition=definition.exit_condition,
+            ),
+        )
+    )
 
     finding = next(item for item in result.items if item.code == "MISSING_FAILURE_ROUTE")
     assert finding.level == "warning"
@@ -170,11 +178,12 @@ def test_bundled_agent_handler_routes_are_clean() -> None:
     findings: dict[str, list[str]] = {}
     for path in sorted(agents_dir.glob("*.yaml")):
         agent = AgentDefinitionBody.model_validate(yaml.safe_load(path.read_text()))
+        nested = agent.step_workflow
         definition = WorkflowDefinition(
             name=agent.name,
-            steps=agent.steps or [],
-            variables=agent.step_variables,
-            exit_condition=agent.exit_condition,
+            steps=nested.steps if nested else [],
+            variables=nested.variables if nested else {},
+            exit_condition=nested.exit_condition if nested else None,
         )
         codes = [finding.code for finding in check_handler_routes(definition)]
         if codes:

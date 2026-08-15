@@ -8,7 +8,7 @@ import asyncio  # noqa: F401 - facade for split pipeline modules
 import getpass
 import json
 import logging
-from pathlib import Path  # noqa: F401 - facade for pipelines_import
+from pathlib import Path
 from typing import Any
 
 import click
@@ -16,7 +16,12 @@ import httpx
 import yaml  # noqa: F401 - used by pipelines_import through this module facade
 
 from gobby.cli._build_daemon import _daemon_error_detail, _daemon_error_message
-from gobby.cli.pipelines_catalog import list_pipelines, run_pipeline, show_pipeline
+from gobby.cli.pipelines_catalog import (
+    check_pipeline,
+    list_pipelines,
+    run_pipeline,
+    show_pipeline,
+)
 from gobby.cli.pipelines_import import import_pipeline
 from gobby.cli.pipelines_runs import (
     approve_pipeline,
@@ -27,15 +32,29 @@ from gobby.cli.pipelines_runs import (
     search_executions,
     show_pipeline_run,
 )
-from gobby.cli.workflows.common import get_project_path as get_project_path
-from gobby.cli.workflows.common import get_workflow_loader
+from gobby.cli.runtime import require_cli_database
+from gobby.storage.hub.protocol import HubDatabase
 from gobby.utils.daemon_url import DaemonUrlError
 from gobby.utils.json_helpers import json_dumps
 from gobby.workflows.lobster_compat import (  # noqa: F401 - facade for pipelines_import
     LobsterImporter,
 )
+from gobby.workflows.pipeline_loader import PipelineLoader
 
 logger = logging.getLogger(__name__)
+
+
+def get_project_path() -> Path | None:
+    """Get current project path if in a gobby project."""
+    cwd = Path.cwd()
+    if (cwd / ".gobby").exists():
+        return cwd
+    return None
+
+
+def get_workflow_loader(db: HubDatabase | None = None) -> PipelineLoader:
+    """Return a DB-backed pipeline loader."""
+    return PipelineLoader(db=db or require_cli_database())
 
 
 def _cli_actor() -> str:
@@ -210,6 +229,7 @@ def pipelines() -> None:
 
 pipelines.add_command(list_pipelines)
 pipelines.add_command(show_pipeline)
+pipelines.add_command(check_pipeline)
 pipelines.add_command(run_pipeline)
 pipelines.add_command(pipeline_runs)
 pipelines.add_command(approve_pipeline)
@@ -221,6 +241,7 @@ pipelines.add_command(import_pipeline)
 
 __all__ = [
     "approve_pipeline",
+    "check_pipeline",
     "history_pipeline",
     "import_pipeline",
     "list_pipeline_runs",

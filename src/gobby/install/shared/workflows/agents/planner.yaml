@@ -3,7 +3,7 @@ description: |
   Planner agent for the stage-native planning flow. Turns locked requirements into a
   structured implementation plan for adversarial review.
 
-version: "1.0"
+version: "1.1"
 enabled: true
 priority: 20
 surfaces: [spawn, persona]
@@ -120,106 +120,107 @@ workflows:
       - "tag:worker-safety"
   variables:
     plan_mode: true
-step_variables:
-  task_claimed: false
-  skill_loaded: false
-  plan_handoff_complete: false
+step_workflow:
+  variables:
+    task_claimed: false
+    skill_loaded: false
+    plan_handoff_complete: false
 
-steps:
-  - name: claim
-    mcp_error_policy: stay
-    description: "Claim the assigned planning task"
-    status_message: |
-      Claim the assigned planning task with claim_task, then read it with get_task.
-    allowed_tools:
-      - mcp__gobby__call_tool
-      - mcp__gobby__list_mcp_servers
-      - mcp__gobby__list_tools
-      - mcp__gobby__get_tool_schema
-    allowed_mcp_tools:
-      - "gobby-tasks:claim_task"
-      - "gobby-tasks:get_task"
-    on_mcp_success:
-      - server: gobby-tasks
-        tool: claim_task
-        action: set_variable
-        variable: task_claimed
-        value: true
-    transitions:
-      - to: load_skill
-        when: "vars.task_claimed"
+  exit_condition: "current_step == 'terminate'"
+  steps:
+    - name: claim
+      mcp_error_policy: stay
+      description: "Claim the assigned planning task"
+      status_message: |
+        Claim the assigned planning task with claim_task, then read it with get_task.
+      allowed_tools:
+        - mcp__gobby__call_tool
+        - mcp__gobby__list_mcp_servers
+        - mcp__gobby__list_tools
+        - mcp__gobby__get_tool_schema
+      allowed_mcp_tools:
+        - "gobby-tasks:claim_task"
+        - "gobby-tasks:get_task"
+      on_mcp_success:
+        - server: gobby-tasks
+          tool: claim_task
+          action: set_variable
+          variable: task_claimed
+          value: true
+      transitions:
+        - to: load_skill
+          when: "vars.task_claimed"
 
-  - name: load_skill
-    mcp_error_policy: stay
-    description: "Load the plan-draft methodology skill"
-    status_message: |
-      Call get_skill(name="plan-draft") on gobby-skills, then continue before drafting.
-      Use only mcp__gobby__call_tool in this step. Call get_skill directly:
-      call_tool("gobby-skills", "get_skill", {"name": "plan-draft"}).
-      Do not use native Skill, GitHub/app connector, or Computer Use tools.
-      The returned skill content is the authoritative methodology for this
-      agent and must be followed exactly.
-    allowed_tools:
-      - mcp__gobby__call_tool
-      - mcp__gobby__list_mcp_servers
-      - mcp__gobby__list_tools
-      - mcp__gobby__get_tool_schema
-    allowed_mcp_tools:
-      - "gobby-skills:get_skill"
-    on_mcp_success:
-      - server: gobby-skills
-        tool: get_skill
-        when: "tool_input.name == 'plan-draft'"
-        action: set_variable
-        variable: skill_loaded
-        value: true
-    transitions:
-      - to: plan
-        when: "vars.skill_loaded"
+    - name: load_skill
+      mcp_error_policy: stay
+      description: "Load the plan-draft methodology skill"
+      status_message: |
+        Call get_skill(name="plan-draft") on gobby-skills, then continue before drafting.
+        Use only mcp__gobby__call_tool in this step. Call get_skill directly:
+        call_tool("gobby-skills", "get_skill", {"name": "plan-draft"}).
+        Do not use native Skill, GitHub/app connector, or Computer Use tools.
+        The returned skill content is the authoritative methodology for this
+        agent and must be followed exactly.
+      allowed_tools:
+        - mcp__gobby__call_tool
+        - mcp__gobby__list_mcp_servers
+        - mcp__gobby__list_tools
+        - mcp__gobby__get_tool_schema
+      allowed_mcp_tools:
+        - "gobby-skills:get_skill"
+      on_mcp_success:
+        - server: gobby-skills
+          tool: get_skill
+          when: "tool_input.name == 'plan-draft'"
+          action: set_variable
+          variable: skill_loaded
+          value: true
+      transitions:
+        - to: plan
+          when: "vars.skill_loaded"
 
-  - name: plan
-    mcp_error_policy: stay
-    description: "Draft or revise the implementation plan"
-    status_message: |
-      Draft or revise the requested plan artifact. If requirements are
-      insufficient, escalate the planning task with the concrete missing
-      questions. Otherwise submit the planning task for adversarial review with
-      submit_for_review(stage_name="planning").
-    allowed_tools: "all"
-    blocked_mcp_tools:
-      - "gobby-tasks:close_task"
-      - "gobby-tasks:de_escalate_task"
-      - "gobby-tasks-ops:approve_review"
-      - "gobby-tasks-ops:reject_review"
-      - "gobby-tasks:reopen_task"
-      - "gobby-agents:spawn_agent"
-      - "gobby-agents:kill_agent"
-    on_mcp_success:
-      - server: gobby-tasks-ops
-        tool: submit_for_review
-        action: set_variable
-        variable: plan_handoff_complete
-        value: true
-      - server: gobby-tasks
-        tool: escalate_task
-        action: set_variable
-        variable: plan_handoff_complete
-        value: true
-    transitions:
-      - to: terminate
-        when: "vars.plan_handoff_complete"
+    - name: plan
+      mcp_error_policy: stay
+      description: "Draft or revise the implementation plan"
+      status_message: |
+        Draft or revise the requested plan artifact. If requirements are
+        insufficient, escalate the planning task with the concrete missing
+        questions. Otherwise submit the planning task for adversarial review with
+        submit_for_review(stage_name="planning").
+      allowed_tools: "all"
+      blocked_mcp_tools:
+        - "gobby-tasks:close_task"
+        - "gobby-tasks:de_escalate_task"
+        - "gobby-tasks-ops:approve_review"
+        - "gobby-tasks-ops:reject_review"
+        - "gobby-tasks:reopen_task"
+        - "gobby-agents:spawn_agent"
+        - "gobby-agents:kill_agent"
+      on_mcp_success:
+        - server: gobby-tasks-ops
+          tool: submit_for_review
+          action: set_variable
+          variable: plan_handoff_complete
+          value: true
+        - server: gobby-tasks
+          tool: escalate_task
+          action: set_variable
+          variable: plan_handoff_complete
+          value: true
+      transitions:
+        - to: terminate
+          when: "vars.plan_handoff_complete"
 
-  - name: terminate
-    description: "Self-terminate"
-    status_message: >-
-      Call mcp__gobby__call_tool with server_name="gobby-agents",
-      tool_name="end_agent_run", and arguments={} to finish the run.
-    allowed_tools:
-      - mcp__gobby__call_tool
-      - mcp__gobby__list_mcp_servers
-      - mcp__gobby__list_tools
-      - mcp__gobby__get_tool_schema
-    allowed_mcp_tools:
-      - "gobby-agents:end_agent_run"
+    - name: terminate
+      description: "Self-terminate"
+      status_message: >-
+        Call mcp__gobby__call_tool with server_name="gobby-agents",
+        tool_name="end_agent_run", and arguments={} to finish the run.
+      allowed_tools:
+        - mcp__gobby__call_tool
+        - mcp__gobby__list_mcp_servers
+        - mcp__gobby__list_tools
+        - mcp__gobby__get_tool_schema
+      allowed_mcp_tools:
+        - "gobby-agents:end_agent_run"
 
-exit_condition: "current_step == 'terminate'"

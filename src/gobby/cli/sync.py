@@ -7,8 +7,11 @@ selective syncing, and force mode.
 import logging
 import sys
 from pathlib import Path
+from typing import Any, Protocol
 
 import click
+
+from gobby.storage.hub.protocol import HubDatabase
 
 from .utils import get_install_dir
 
@@ -21,6 +24,14 @@ CONTENT_TYPE_SYNC_TARGETS: dict[str, set[str]] = {
     "rules": {"rules"},
     "agents": {"agents"},
     "workflows": {"pipelines", "variables", "build_profiles"},
+}
+REINSTALL_KINDS = ("rules", "agents", "pipelines", "variables")
+REINSTALL_TARGETS: dict[str, set[str]] = {
+    "rules": {"rules"},
+    "agents": {"agents"},
+    "pipelines": {"pipelines"},
+    "variables": {"variables"},
+    "all": set(REINSTALL_KINDS),
 }
 
 
@@ -40,12 +51,19 @@ CONTENT_TYPE_SYNC_TARGETS: dict[str, set[str]] = {
     help="Sync only specific content types (repeatable).",
 )
 @click.option("--verbose", is_flag=True, help="Show per-type details.")
+@click.option(
+    "--reinstall",
+    type=click.Choice([*REINSTALL_KINDS, "all"], case_sensitive=False),
+    default=None,
+    help="Hard-delete bundled installed definitions and re-sync that domain.",
+)
 def sync(
     force: bool,
     verify_only: bool,
     fail_on_verify: bool,
     types: tuple[str, ...],
     verbose: bool,
+    reinstall: str | None,
 ) -> None:
     """Sync bundled content (skills, prompts, rules, agents, workflows) to the database.
 
@@ -114,7 +132,10 @@ def sync(
         sys.exit(0)
 
     # --- Filter to requested types ---
-    if types:
+    only: set[str] | None = None
+    if reinstall:
+        only = set(REINSTALL_TARGETS[reinstall])
+    elif types:
         from gobby.sync.integrity import BUNDLED_SYNC_CONTENT_TYPES
 
         requested = _sync_targets_for_cli_types(set(types))
@@ -124,8 +145,8 @@ def sync(
             skip_types = BUNDLED_SYNC_CONTENT_TYPES - requested
 
     # --- Initialize DB and sync ---
-    from gobby.cli.installers.shared import sync_bundled_content_to_db
     from gobby.cli.runtime import require_cli_database
+    from gobby.sync_registry import sync_bundled_content_to_db
 
     try:
         db = require_cli_database()
@@ -133,8 +154,19 @@ def sync(
         click.echo(f"Database unavailable: {exc}", err=True)
         sys.exit(1)
 
+    if reinstall:
+        type_label = reinstall
+        if not force:
+            click.confirm(
+                f"This will delete and reinstall only bundled {type_label} definitions. "
+                "User and project definitions will be preserved. Continue?",
+                abort=True,
+            )
+        deleted = _delete_installed_definitions(db, only or set())
+        click.echo(f"Deleted {deleted} existing definitions")
+
     click.echo("Syncing bundled content to database...")
-    sync_result = sync_bundled_content_to_db(db, skip_types=skip_types)
+    sync_result = sync_bundled_content_to_db(db, only=only, skip_types=skip_types)
 
     total = sync_result["total_synced"]
     errors = sync_result["errors"]
@@ -168,3 +200,37 @@ def _sync_targets_for_cli_types(types: set[str]) -> set[str]:
     for content_type in types:
         targets.update(CONTENT_TYPE_SYNC_TARGETS.get(content_type, []))
     return targets
+
+
+class _InstalledDefinitionManager(Protocol):
+    def list_all(self) -> list[Any]: ...
+    def hard_delete(self, definition_id: str) -> bool: ...
+
+
+def _delete_installed_definitions(db: HubDatabase, kinds: set[str]) -> int:
+    """Hard-delete bundled installed rows for the requested domain kinds."""
+    from gobby.storage.definitions.agents import AgentDefinitionManager
+    from gobby.storage.definitions.pipelines import PipelineDefinitionManager
+    from gobby.storage.definitions.rules import RuleDefinitionManager
+    from gobby.storage.definitions.variables import SessionVariableDefaultManager
+
+    deleted = 0
+    if "rules" in kinds:
+        deleted += _hard_delete_installed(RuleDefinitionManager(db))
+    if "agents" in kinds:
+        deleted += _hard_delete_installed(AgentDefinitionManager(db))
+    if "pipelines" in kinds:
+        deleted += _hard_delete_installed(PipelineDefinitionManager(db))
+    if "variables" in kinds:
+        deleted += _hard_delete_installed(SessionVariableDefaultManager(db))
+    return deleted
+
+
+def _hard_delete_installed(manager: _InstalledDefinitionManager) -> int:
+    deleted = 0
+    for row in manager.list_all():
+        if row.source != "installed":
+            continue
+        if manager.hard_delete(str(row.id)):
+            deleted += 1
+    return deleted

@@ -20,8 +20,9 @@ _GDAEMON_PIN = MANAGED_BIN_VERSION_PINS["gdaemon"]
 
 
 def _stub_non_schema_setup(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+    from gobby import sync_registry
     from gobby.cli import install_setup_impeccable, install_setup_srt, installers
-    from gobby.cli.installers import ide_config, shared, tmux_config
+    from gobby.cli.installers import ide_config, tmux_config
 
     monkeypatch.setattr(
         installers,
@@ -29,7 +30,9 @@ def _stub_non_schema_setup(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> N
         lambda: {"success": True, "servers_added": [], "servers_skipped": []},
     )
     monkeypatch.setattr(
-        shared, "sync_bundled_content_to_db", lambda db: {"total_synced": 0, "errors": []}
+        sync_registry,
+        "sync_bundled_content_to_db",
+        lambda db: {"total_synced": 0, "errors": []},
     )
     monkeypatch.setattr(
         install_setup_srt,

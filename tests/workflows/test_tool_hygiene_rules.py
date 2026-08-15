@@ -10,7 +10,7 @@ import pytest
 from gobby.hooks.events import HookEvent, HookEventType, SessionSource
 from gobby.hooks.normalization import normalize_tool_fields
 from gobby.storage.hub.protocol import HubDatabase
-from gobby.storage.workflow_definitions import LocalWorkflowDefinitionManager
+from gobby.storage.definitions.rules import RuleDefinitionManager
 from gobby.workflows.definitions import RuleDefinitionBody, RuleEffect
 from gobby.workflows.engine.core import RuleEngine
 from gobby.workflows.sync_rules import sync_bundled_rules
@@ -35,8 +35,8 @@ def db(temp_db: HubDatabase) -> HubDatabase:
 
 
 @pytest.fixture
-def manager(db: HubDatabase) -> LocalWorkflowDefinitionManager:
-    return LocalWorkflowDefinitionManager(db)
+def manager(db: HubDatabase) -> RuleDefinitionManager:
+    return RuleDefinitionManager(db)
 
 
 def _sync_bundled(db):
@@ -50,10 +50,10 @@ class TestToolHygieneSync:
     """Test that tool-hygiene.yaml syncs correctly."""
 
     def test_bundled_file_syncs_target_rules(self, db, manager) -> None:
-        """Key tool-hygiene rules should sync to workflow_definitions."""
+        """Key tool-hygiene rules should sync to rule_definitions."""
         _sync_bundled(db)
 
-        rules = manager.list_all(workflow_type="rule")
+        rules = manager.list_all()
         rule_names = {r.name for r in rules}
 
         assert "block-escaped-quotes" not in rule_names
@@ -64,20 +64,20 @@ class TestToolHygieneSync:
         """All tool-hygiene rules should have group='tool-hygiene'."""
         _sync_bundled(db)
 
-        rules = manager.list_all(workflow_type="rule")
+        rules = manager.list_all()
         for row in rules:
             if row.name in {"require-uv"} | CLAUDE_MEMORY_RULES:
-                body = json.loads(row.definition_json)
+                body = row.definition_json
                 assert body.get("group") == "tool-hygiene", f"{row.name} missing group"
 
     def test_all_rules_are_valid_pydantic(self, db, manager) -> None:
         """All synced rules should be valid RuleDefinitionBody instances."""
         _sync_bundled(db)
 
-        rules = manager.list_all(workflow_type="rule")
+        rules = manager.list_all()
         for row in rules:
             if row.name in {"require-uv"} | CLAUDE_MEMORY_RULES:
-                body = RuleDefinitionBody.model_validate_json(row.definition_json)
+                body = RuleDefinitionBody.model_validate(row.definition_json)
                 effect_types = {e.type for e in body.resolved_effects}
                 assert effect_types <= {"block", "set_variable", "rewrite_input", "inject_context"}
 
@@ -91,7 +91,6 @@ class TestToolHygieneSync:
         manager.create(
             name="block-escaped-quotes",
             definition_json=body.model_dump_json(),
-            workflow_type="rule",
             enabled=True,
             priority=20,
             tags=["tool-hygiene", "gobby"],
@@ -125,7 +124,7 @@ class TestRequireUvRule:
         row = manager.get_by_name("require-uv")
         assert row is not None
 
-        body = RuleDefinitionBody.model_validate_json(row.definition_json)
+        body = RuleDefinitionBody.model_validate(row.definition_json)
         assert body.event.value == "before_tool"
         assert row.description == "Require uv for Python package management"
         assert len(body.resolved_effects) == 1
@@ -141,7 +140,7 @@ class TestRequireUvRule:
         _sync_bundled(db)
 
         row = manager.get_by_name("require-uv")
-        body = RuleDefinitionBody.model_validate_json(row.definition_json)
+        body = RuleDefinitionBody.model_validate(row.definition_json)
 
         effect_types = {e.type for e in body.resolved_effects}
         assert "rewrite_input" not in effect_types
@@ -152,7 +151,7 @@ class TestRequireUvRule:
         _sync_bundled(db)
 
         row = manager.get_by_name("require-uv")
-        body = RuleDefinitionBody.model_validate_json(row.definition_json)
+        body = RuleDefinitionBody.model_validate(row.definition_json)
 
         assert body.when is not None
         assert "require_uv" in body.when
@@ -240,7 +239,7 @@ class TestClaudeMemoryHygieneRules:
         for rule_name, tools in expected_tools.items():
             row = manager.get_by_name(rule_name)
             assert row is not None
-            body = RuleDefinitionBody.model_validate_json(row.definition_json)
+            body = RuleDefinitionBody.model_validate(row.definition_json)
             assert body.when is not None
             assert "canonical_tool_kind" in body.when
             assert "touches_claude_memory_path" in body.when

@@ -127,7 +127,10 @@ def configure_task_close_validation(
                 "ai.generation.timeout_seconds": 15,
                 "ai.generation.candidate_timeout_seconds": 5,
                 "ai.generation.cli_candidate_timeout_seconds": 5,
-                "ai.generation.endpoints": {"e2e": endpoint},
+                "ai.generation.endpoints.e2e.protocol": endpoint["protocol"],
+                "ai.generation.endpoints.e2e.wire_api": endpoint["wire_api"],
+                "ai.generation.endpoints.e2e.api_base": endpoint["api_base"],
+                "ai.generation.endpoints.e2e.model": endpoint["model"],
             }
         ),
         source="e2e-fixture",

@@ -6,11 +6,9 @@ import json
 import logging
 from typing import TYPE_CHECKING, Any
 
-import pydantic
-
 from gobby.hooks.events import HookEvent, HookResponse
-from gobby.storage.workflow_definitions import LocalWorkflowDefinitionManager
-from gobby.workflows.definitions import WorkflowDefinition, WorkflowInstance, WorkflowStep
+from gobby.storage.hub._ambient import ambient_transaction
+from gobby.workflows.definitions import WorkflowStep
 from gobby.workflows.enforcement.blocking import (
     is_discovery_tool,
     is_infrastructure_tool,
@@ -18,7 +16,7 @@ from gobby.workflows.enforcement.blocking import (
 )
 from gobby.workflows.engine.skill_load_guidance import skill_load_block_guidance
 from gobby.workflows.reserved_variables import is_reserved_workflow_variable
-from gobby.workflows.state_manager import WorkflowInstanceManager
+from gobby.workflows.step_instances import AgentStepInstance, AgentStepInstanceManager
 
 if TYPE_CHECKING:
     from gobby.storage.workflow_audit import WorkflowAuditManager
@@ -59,8 +57,7 @@ def _reserved_variable_block_guidance(variable_name: str, step_name: str | None)
 class EnforcementCheckMixin:
     """Tool restriction checks for agent and step workflow enforcement."""
 
-    instance_manager: WorkflowInstanceManager
-    definition_manager: LocalWorkflowDefinitionManager
+    instance_manager: AgentStepInstanceManager
 
     if TYPE_CHECKING:
         workflow_audit: WorkflowAuditManager
@@ -84,7 +81,7 @@ class EnforcementCheckMixin:
             session_id: str,
             variables: dict[str, Any],
             step: WorkflowStep,
-            instance: WorkflowInstance,
+            instance: AgentStepInstance,
             tool_name: str,
             mcp_server: str,
             mcp_tool_name: str,
@@ -130,7 +127,7 @@ class EnforcementCheckMixin:
     @staticmethod
     def _denial_scope(
         run_id: str,
-        instance: WorkflowInstance,
+        instance: AgentStepInstance,
         step: WorkflowStep,
     ) -> dict[str, str]:
         entered_at = instance.step_entered_at
@@ -153,7 +150,7 @@ class EnforcementCheckMixin:
         target: str,
         reason: str,
         step: WorkflowStep | None = None,
-        instance: WorkflowInstance | None = None,
+        instance: AgentStepInstance | None = None,
     ) -> str:
         """Persist a run/instance/step/rule/target denial and terminalize on the third."""
         active_run = self._active_agent_run(session_id)
@@ -162,7 +159,7 @@ class EnforcementCheckMixin:
         run, storage = active_run
 
         if step is None or instance is None:
-            resolved_step, resolved_instance, _definition = self._get_step_for_session(session_id)
+            resolved_step, resolved_instance = self._get_step_for_session(session_id)
             if resolved_step is None or resolved_instance is None:
                 return reason
             step = resolved_step
@@ -188,29 +185,38 @@ class EnforcementCheckMixin:
             "scope": scope,
             "counts": counts,
         }
-        self.instance_manager.save_instance(instance)
+        self.instance_manager.save(instance)
 
         if count < _TERMINAL_DENIAL_COUNT:
             return reason
 
         terminal_error = (
             "Agent run blocked after 3 identical enforcement denials: "
-            f"workflow={instance.workflow_name}, step={step.name}, "
+            f"workflow={instance.agent_name}, step={step.name}, "
             f"rule={rule}, target={target}"
         )
-        failed = storage.fail(str(run.id), terminal_error)
-        if failed is None:
-            return reason
+        self._pending_terminal_denial = (storage, str(run.id), terminal_error)
+        if ambient_transaction(getattr(self, "db", None)) is None:
+            self._flush_pending_terminal_denial()
         return (
             f"{reason}\nThe third identical denial transitioned agent run {run.id} "
             "to a terminal blocked state. The guarded step was not advanced."
         )
 
+    def _flush_pending_terminal_denial(self) -> None:
+        pending = getattr(self, "_pending_terminal_denial", None)
+        if hasattr(self, "_pending_terminal_denial"):
+            delattr(self, "_pending_terminal_denial")
+        if pending is None:
+            return
+        storage, run_id, terminal_error = pending
+        storage.fail(run_id, terminal_error)
+
     def _reset_enforcement_denial_target(
         self,
         session_id: str,
         step: WorkflowStep,
-        instance: WorkflowInstance,
+        instance: AgentStepInstance,
         target: str,
     ) -> None:
         """Clear one target after that previously denied target becomes allowed."""
@@ -244,37 +250,22 @@ class EnforcementCheckMixin:
             state["counts"] = counts
         else:
             instance.variables.pop(_DENIAL_COUNTS_VARIABLE, None)
-        self.instance_manager.save_instance(instance)
+        self.instance_manager.save(instance)
 
     def _get_step_for_session(
         self, session_id: str
-    ) -> tuple[WorkflowStep | None, WorkflowInstance | None, WorkflowDefinition | None]:
-        """Get the current workflow step, instance, and definition for a session.
+    ) -> tuple[WorkflowStep | None, AgentStepInstance | None]:
+        """Get the current step and snapshot instance for a session.
 
-        Returns (step, instance, definition) or (None, None, None) if no active step workflow.
+        Returns (step, instance) or (None, None) if no active step workflow.
         """
         if not session_id:
-            return None, None, None
-        instances = self.instance_manager.get_active_instances(session_id)
-
-        for instance in instances:
-            if not instance.current_step:
-                continue
-            row = self.definition_manager.get_by_name(instance.workflow_name)
-            if not row or row.workflow_type == "pipeline":
-                continue
-            try:
-                data = json.loads(row.definition_json)
-                definition = WorkflowDefinition(**data)
-            except (json.JSONDecodeError, pydantic.ValidationError) as e:
-                logger.warning(
-                    "Skipping malformed workflow definition '%s': %s", instance.workflow_name, e
-                )
-                continue
-            step = definition.get_step(instance.current_step)
-            if step is not None:
-                return step, instance, definition
-        return None, None, None
+            return None, None
+        instance = self.instance_manager.get_for_session(session_id)
+        if instance is None or not instance.enabled or not instance.current_step:
+            return None, None
+        step = instance.snapshot.get_step(instance.current_step)
+        return step, instance
 
     def _check_agent_tool_enforcement(
         self, event: HookEvent, session_id: str, variables: dict[str, Any]
@@ -381,12 +372,27 @@ class EnforcementCheckMixin:
         self, event: HookEvent, session_id: str, variables: dict[str, Any]
     ) -> HookResponse | None:
         """Check step-level tool restrictions. Returns block response or None to continue."""
-        step, instance, _defn = self._get_step_for_session(session_id)
+        from gobby.storage.hub.protocol import AgentStepInstanceMutation
+
+        db = getattr(self, "db", None)
+        lock = AgentStepInstanceMutation(session_id=session_id)
+        try:
+            if db is not None:
+                with db.transaction_immediate(lock):
+                    return self._check_step_tool_enforcement_locked(event, session_id, variables)
+            return self._check_step_tool_enforcement_locked(event, session_id, variables)
+        finally:
+            self._flush_pending_terminal_denial()
+
+    def _check_step_tool_enforcement_locked(
+        self, event: HookEvent, session_id: str, variables: dict[str, Any]
+    ) -> HookResponse | None:
+        step, instance = self._get_step_for_session(session_id)
         if step is None or instance is None:
             return None
 
         tool_name = event.data.get("tool_name", "")
-        wf_name = instance.workflow_name
+        wf_name = instance.agent_name
         allowed_target = f"tool:{tool_name.casefold()}"
 
         # ToolSearch (Claude Code deferred tool loader) is always allowed

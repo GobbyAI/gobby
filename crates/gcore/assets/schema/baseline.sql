@@ -144,6 +144,25 @@ BEGIN
 END;
 $$;
 
+CREATE TABLE IF NOT EXISTS agent_definitions (
+    id uuid PRIMARY KEY,
+    project_id uuid,
+    name text NOT NULL,
+    description text,
+    enabled boolean DEFAULT true NOT NULL,
+    enabled_pinned boolean DEFAULT false NOT NULL,
+    definition_json jsonb NOT NULL,
+    source text DEFAULT 'installed'::text NOT NULL,
+    tags jsonb,
+    deleted_at timestamp with time zone,
+    created_at timestamp with time zone DEFAULT now() NOT NULL,
+    updated_at timestamp with time zone DEFAULT now() NOT NULL,
+    CONSTRAINT agent_definitions_source_check CHECK ((source = ANY (ARRAY['installed'::text, 'custom'::text, 'project'::text])))
+);
+CREATE INDEX IF NOT EXISTS idx_agent_defs_project ON agent_definitions USING btree (project_id);
+CREATE UNIQUE INDEX IF NOT EXISTS uq_agent_defs_live_name
+    ON agent_definitions USING btree (name, project_id) NULLS NOT DISTINCT WHERE (deleted_at IS NULL);
+
 CREATE TABLE agent_runs (
     id uuid NOT NULL,
     machine_id uuid NOT NULL,
@@ -187,6 +206,35 @@ CREATE TABLE agent_runs (
     termination_requested_at timestamp with time zone,
     CONSTRAINT agent_runs_pending_terminal_action_valid CHECK (((pending_terminal_action IS NULL) OR (pending_terminal_action = ANY (ARRAY['complete'::text, 'fail'::text, 'timeout'::text, 'cancel'::text]))))
 );
+
+CREATE TABLE IF NOT EXISTS agent_step_workflows (
+    id uuid PRIMARY KEY,
+    agent_definition_id uuid NOT NULL UNIQUE
+        REFERENCES agent_definitions(id) ON DELETE CASCADE DEFERRABLE INITIALLY IMMEDIATE,
+    steps_json jsonb NOT NULL,
+    variables_json jsonb DEFAULT '{}'::jsonb NOT NULL,
+    exit_condition text,
+    created_at timestamp with time zone DEFAULT now() NOT NULL,
+    updated_at timestamp with time zone DEFAULT now() NOT NULL
+);
+
+CREATE TABLE IF NOT EXISTS agent_step_instances (
+    id uuid PRIMARY KEY,
+    session_id uuid NOT NULL UNIQUE,
+    agent_step_workflow_id uuid REFERENCES agent_step_workflows(id) ON DELETE SET NULL,
+    agent_name text NOT NULL,
+    enabled boolean DEFAULT true NOT NULL,
+    current_step text,
+    step_entered_at timestamp with time zone,
+    step_action_count integer DEFAULT 0 NOT NULL,
+    total_action_count integer DEFAULT 0 NOT NULL,
+    variables jsonb DEFAULT '{}'::jsonb NOT NULL,
+    context_injected boolean DEFAULT false NOT NULL,
+    snapshot_json jsonb NOT NULL,
+    created_at timestamp with time zone DEFAULT now() NOT NULL,
+    updated_at timestamp with time zone DEFAULT now() NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_asi_step_workflow ON agent_step_instances USING btree (agent_step_workflow_id);
 
 CREATE TABLE attention_states (
     entry_id text NOT NULL,
@@ -690,6 +738,12 @@ CREATE TABLE detection_manifests (
     CONSTRAINT detection_manifests_version_check CHECK ((version ~ '^[0-9]+(\.[0-9]+)*$'::text))
 );
 
+CREATE TABLE IF NOT EXISTS definition_revisions (
+    domain text PRIMARY KEY,
+    revision bigint DEFAULT 0 NOT NULL,
+    updated_at timestamp with time zone DEFAULT now() NOT NULL
+);
+
 CREATE TABLE IF NOT EXISTS embedding_generation_acks (
     daemon_instance_id uuid PRIMARY KEY,
     generation text NOT NULL,
@@ -1076,6 +1130,27 @@ CREATE TABLE pending_interactions (
     resolved_at timestamp with time zone
 );
 
+CREATE TABLE IF NOT EXISTS pipeline_definitions (
+    id uuid PRIMARY KEY,
+    project_id uuid,
+    name text NOT NULL,
+    description text,
+    enabled boolean DEFAULT true NOT NULL,
+    enabled_pinned boolean DEFAULT false NOT NULL,
+    version text DEFAULT '1.0'::text NOT NULL,
+    definition_json jsonb NOT NULL,
+    canvas_json jsonb,
+    source text DEFAULT 'installed'::text NOT NULL,
+    tags jsonb,
+    deleted_at timestamp with time zone,
+    created_at timestamp with time zone DEFAULT now() NOT NULL,
+    updated_at timestamp with time zone DEFAULT now() NOT NULL,
+    CONSTRAINT pipeline_definitions_source_check CHECK ((source = ANY (ARRAY['installed'::text, 'custom'::text, 'project'::text])))
+);
+CREATE INDEX IF NOT EXISTS idx_pipeline_defs_project ON pipeline_definitions USING btree (project_id);
+CREATE UNIQUE INDEX IF NOT EXISTS uq_pipeline_defs_live_name
+    ON pipeline_definitions USING btree (name, project_id) NULLS NOT DISTINCT WHERE (deleted_at IS NULL);
+
 CREATE TABLE pipeline_executions (
     id uuid NOT NULL,
     pipeline_name text NOT NULL,
@@ -1429,6 +1504,28 @@ CREATE SEQUENCE recall_usefulness_id_seq
 
 ALTER SEQUENCE recall_usefulness_id_seq OWNED BY recall_usefulness.id;
 
+CREATE TABLE IF NOT EXISTS rule_definitions (
+    id uuid PRIMARY KEY,
+    project_id uuid,
+    name text NOT NULL,
+    description text,
+    enabled boolean DEFAULT true NOT NULL,
+    enabled_pinned boolean DEFAULT false NOT NULL,
+    priority integer DEFAULT 100 NOT NULL,
+    sources jsonb,
+    definition_json jsonb NOT NULL,
+    source text DEFAULT 'installed'::text NOT NULL,
+    tags jsonb,
+    deleted_at timestamp with time zone,
+    created_at timestamp with time zone DEFAULT now() NOT NULL,
+    updated_at timestamp with time zone DEFAULT now() NOT NULL,
+    CONSTRAINT rule_definitions_source_check CHECK ((source = ANY (ARRAY['installed'::text, 'custom'::text, 'project'::text])))
+);
+CREATE INDEX IF NOT EXISTS idx_rule_defs_project ON rule_definitions USING btree (project_id);
+CREATE INDEX IF NOT EXISTS idx_rule_defs_event ON rule_definitions USING btree ((definition_json->>'event')) WHERE (deleted_at IS NULL);
+CREATE UNIQUE INDEX IF NOT EXISTS uq_rule_defs_live_name
+    ON rule_definitions USING btree (name, project_id) NULLS NOT DISTINCT WHERE (deleted_at IS NULL);
+
 CREATE TABLE schema_migrations (
     version integer NOT NULL,
     applied_at timestamp with time zone DEFAULT now() NOT NULL,
@@ -1512,6 +1609,25 @@ ALTER TABLE session_tasks ALTER COLUMN id ADD GENERATED ALWAYS AS IDENTITY (
     NO MAXVALUE
     CACHE 1
 );
+
+CREATE TABLE IF NOT EXISTS session_variable_defaults (
+    id uuid PRIMARY KEY,
+    project_id uuid,
+    name text NOT NULL,
+    description text,
+    enabled boolean DEFAULT true NOT NULL,
+    enabled_pinned boolean DEFAULT false NOT NULL,
+    default_value jsonb,
+    source text DEFAULT 'installed'::text NOT NULL,
+    tags jsonb,
+    deleted_at timestamp with time zone,
+    created_at timestamp with time zone DEFAULT now() NOT NULL,
+    updated_at timestamp with time zone DEFAULT now() NOT NULL,
+    CONSTRAINT session_variable_defaults_source_check CHECK ((source = ANY (ARRAY['installed'::text, 'custom'::text, 'project'::text])))
+);
+CREATE INDEX IF NOT EXISTS idx_session_var_defs_project ON session_variable_defaults USING btree (project_id);
+CREATE UNIQUE INDEX IF NOT EXISTS uq_session_var_defs_live_name
+    ON session_variable_defaults USING btree (name, project_id) NULLS NOT DISTINCT WHERE (deleted_at IS NULL);
 
 CREATE TABLE session_variables (
     session_id uuid NOT NULL,
@@ -2152,42 +2268,6 @@ ALTER TABLE workflow_audit_log ALTER COLUMN id ADD GENERATED ALWAYS AS IDENTITY 
     CACHE 1
 );
 
-CREATE TABLE workflow_definitions (
-    id uuid NOT NULL,
-    project_id uuid,
-    name text NOT NULL,
-    description text,
-    workflow_type text DEFAULT 'workflow'::text NOT NULL,
-    version text DEFAULT '1.0'::text,
-    enabled boolean DEFAULT true,
-    enabled_user_modified boolean DEFAULT false NOT NULL,
-    priority integer DEFAULT 100,
-    sources jsonb,
-    definition_json jsonb NOT NULL,
-    canvas_json jsonb,
-    source text DEFAULT 'installed'::text,
-    tags jsonb,
-    deleted_at timestamp with time zone,
-    created_at timestamp with time zone DEFAULT now() NOT NULL,
-    updated_at timestamp with time zone DEFAULT now() NOT NULL
-);
-
-CREATE TABLE workflow_instances (
-    id uuid NOT NULL,
-    session_id uuid NOT NULL,
-    workflow_name text NOT NULL,
-    enabled boolean DEFAULT true NOT NULL,
-    priority integer DEFAULT 100 NOT NULL,
-    current_step text,
-    step_entered_at timestamp with time zone,
-    step_action_count integer DEFAULT 0,
-    total_action_count integer DEFAULT 0,
-    variables jsonb DEFAULT '{}'::jsonb,
-    context_injected boolean DEFAULT false,
-    created_at timestamp with time zone DEFAULT now() NOT NULL,
-    updated_at timestamp with time zone DEFAULT now() NOT NULL
-);
-
 CREATE TABLE worktrees (
     id uuid NOT NULL,
     project_id uuid NOT NULL,
@@ -2389,9 +2469,6 @@ ALTER TABLE ONLY prompts
 
 ALTER TABLE ONLY skills
     ADD CONSTRAINT idx_skills_name_project_source UNIQUE NULLS NOT DISTINCT (name, project_id, source);
-
-ALTER TABLE ONLY workflow_definitions
-    ADD CONSTRAINT idx_wf_defs_name_project UNIQUE NULLS NOT DISTINCT (name, project_id, source);
 
 ALTER TABLE ONLY integration_workspace_mutex
     ADD CONSTRAINT integration_workspace_mutex_pkey PRIMARY KEY (integration_key);
@@ -2689,15 +2766,6 @@ ALTER TABLE ONLY unmodeled_observations
 
 ALTER TABLE ONLY workflow_audit_log
     ADD CONSTRAINT workflow_audit_log_pkey PRIMARY KEY (id);
-
-ALTER TABLE ONLY workflow_definitions
-    ADD CONSTRAINT workflow_definitions_pkey PRIMARY KEY (id);
-
-ALTER TABLE ONLY workflow_instances
-    ADD CONSTRAINT workflow_instances_pkey PRIMARY KEY (id);
-
-ALTER TABLE ONLY workflow_instances
-    ADD CONSTRAINT workflow_instances_session_id_workflow_name_key UNIQUE (session_id, workflow_name);
 
 ALTER TABLE ONLY worktrees
     ADD CONSTRAINT worktrees_pkey PRIMARY KEY (id);
@@ -3198,18 +3266,6 @@ CREATE INDEX idx_unmodeled_observations_worklist ON unmodeled_observations USING
 
 CREATE INDEX idx_validation_history_task ON task_validation_history USING btree (task_id);
 
-CREATE INDEX idx_wf_defs_enabled ON workflow_definitions USING btree (enabled);
-
-CREATE INDEX idx_wf_defs_name ON workflow_definitions USING btree (name);
-
-CREATE INDEX idx_wf_defs_project ON workflow_definitions USING btree (project_id);
-
-CREATE INDEX idx_wf_defs_type ON workflow_definitions USING btree (workflow_type);
-
-CREATE INDEX idx_workflow_instances_enabled ON workflow_instances USING btree (session_id, enabled);
-
-CREATE INDEX idx_workflow_instances_session ON workflow_instances USING btree (session_id);
-
 CREATE UNIQUE INDEX idx_worktrees_branch ON worktrees USING btree (project_id, branch_name, machine_id);
 
 CREATE UNIQUE INDEX idx_worktrees_path ON worktrees USING btree (machine_id, worktree_path);
@@ -3262,6 +3318,12 @@ ALTER TABLE ONLY agent_runs
 
 ALTER TABLE ONLY agent_runs
     ADD CONSTRAINT agent_runs_task_id_fkey FOREIGN KEY (task_id) REFERENCES tasks(id) ON DELETE SET NULL DEFERRABLE;
+
+ALTER TABLE ONLY agent_definitions
+ADD CONSTRAINT agent_definitions_project_id_fkey FOREIGN KEY (project_id) REFERENCES projects(id) ON DELETE CASCADE DEFERRABLE INITIALLY IMMEDIATE;
+
+ALTER TABLE ONLY agent_step_instances
+ADD CONSTRAINT agent_step_instances_session_id_fkey FOREIGN KEY (session_id) REFERENCES sessions(id) ON DELETE CASCADE DEFERRABLE INITIALLY IMMEDIATE;
 
 ALTER TABLE ONLY auth_sessions
     ADD CONSTRAINT auth_sessions_user_id_fkey FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE;
@@ -3608,11 +3670,14 @@ ALTER TABLE ONLY machines
 ALTER TABLE ONLY workflow_audit_log
     ADD CONSTRAINT workflow_audit_log_session_id_fkey FOREIGN KEY (session_id) REFERENCES sessions(id) DEFERRABLE;
 
-ALTER TABLE ONLY workflow_definitions
-    ADD CONSTRAINT workflow_definitions_project_id_fkey FOREIGN KEY (project_id) REFERENCES projects(id) ON DELETE CASCADE DEFERRABLE;
+ALTER TABLE ONLY pipeline_definitions
+    ADD CONSTRAINT pipeline_definitions_project_id_fkey FOREIGN KEY (project_id) REFERENCES projects(id) ON DELETE CASCADE DEFERRABLE INITIALLY IMMEDIATE;
 
-ALTER TABLE ONLY workflow_instances
-    ADD CONSTRAINT workflow_instances_session_id_fkey FOREIGN KEY (session_id) REFERENCES sessions(id) ON DELETE CASCADE DEFERRABLE;
+ALTER TABLE ONLY rule_definitions
+    ADD CONSTRAINT rule_definitions_project_id_fkey FOREIGN KEY (project_id) REFERENCES projects(id) ON DELETE CASCADE DEFERRABLE INITIALLY IMMEDIATE;
+
+ALTER TABLE ONLY session_variable_defaults
+    ADD CONSTRAINT session_variable_defaults_project_id_fkey FOREIGN KEY (project_id) REFERENCES projects(id) ON DELETE CASCADE DEFERRABLE INITIALLY IMMEDIATE;
 
 ALTER TABLE ONLY worktrees
 ADD CONSTRAINT worktrees_agent_session_id_machine_id_fkey FOREIGN KEY (agent_session_id, machine_id) REFERENCES sessions(id, machine_id) ON DELETE SET NULL (agent_session_id) DEFERRABLE INITIALLY IMMEDIATE;
@@ -3728,11 +3793,17 @@ REVOKE ALL ON FUNCTION touch_chat_attachments_updated_at() FROM PUBLIC;
 
 GRANT ALL ON FUNCTION touch_chat_attachments_updated_at() TO gobby_daemon_runtime;
 
+GRANT SELECT,INSERT,DELETE,UPDATE ON TABLE agent_definitions TO gobby_daemon_runtime;
+
 GRANT SELECT,INSERT,DELETE,UPDATE ON TABLE agent_runs TO gobby_daemon_runtime;
 
 GRANT SELECT(id) ON TABLE agent_runs TO gobby_agent_issuer;
 
 GRANT SELECT(status) ON TABLE agent_runs TO gobby_agent_issuer;
+
+GRANT SELECT,INSERT,DELETE,UPDATE ON TABLE agent_step_instances TO gobby_daemon_runtime;
+
+GRANT SELECT,INSERT,DELETE,UPDATE ON TABLE agent_step_workflows TO gobby_daemon_runtime;
 
 GRANT SELECT,INSERT,DELETE,UPDATE ON TABLE attention_states TO gobby_daemon_runtime;
 
@@ -3830,6 +3901,8 @@ GRANT SELECT,INSERT,DELETE,UPDATE ON TABLE destructive_batches TO gobby_daemon_r
 
 GRANT SELECT,INSERT,DELETE,UPDATE ON TABLE detection_manifests TO gobby_daemon_runtime;
 
+GRANT SELECT,INSERT,DELETE,UPDATE ON TABLE definition_revisions TO gobby_daemon_runtime;
+
 GRANT SELECT,INSERT,DELETE,UPDATE ON TABLE embedding_generation_acks TO gobby_daemon_runtime;
 
 GRANT SELECT,INSERT,DELETE,UPDATE ON TABLE embedding_projection_changes TO gobby_daemon_runtime;
@@ -3892,6 +3965,8 @@ GRANT SELECT,INSERT,DELETE,UPDATE ON TABLE model_metadata TO gobby_daemon_runtim
 
 GRANT SELECT,INSERT,DELETE,UPDATE ON TABLE pending_interactions TO gobby_daemon_runtime;
 
+GRANT SELECT,INSERT,DELETE,UPDATE ON TABLE pipeline_definitions TO gobby_daemon_runtime;
+
 GRANT SELECT,INSERT,DELETE,UPDATE ON TABLE pipeline_executions TO gobby_daemon_runtime;
 
 GRANT SELECT,INSERT,DELETE,UPDATE ON TABLE plan_review_evidence TO gobby_daemon_runtime;
@@ -3950,6 +4025,8 @@ GRANT SELECT,INSERT,DELETE,UPDATE ON TABLE recall_usefulness TO gobby_daemon_run
 
 GRANT ALL ON SEQUENCE recall_usefulness_id_seq TO gobby_daemon_runtime;
 
+GRANT SELECT,INSERT,DELETE,UPDATE ON TABLE rule_definitions TO gobby_daemon_runtime;
+
 GRANT SELECT,INSERT,DELETE,UPDATE ON TABLE schema_migrations TO gobby_daemon_runtime;
 
 GRANT SELECT,INSERT,DELETE,UPDATE ON TABLE secret_key_material TO gobby_daemon_runtime;
@@ -3967,6 +4044,8 @@ GRANT SELECT,INSERT,DELETE,UPDATE ON TABLE session_summary_revisions TO gobby_da
 GRANT SELECT,INSERT,DELETE,UPDATE ON TABLE session_tasks TO gobby_daemon_runtime;
 
 GRANT ALL ON SEQUENCE session_tasks_id_seq TO gobby_daemon_runtime;
+
+GRANT SELECT,INSERT,DELETE,UPDATE ON TABLE session_variable_defaults TO gobby_daemon_runtime;
 
 GRANT SELECT,INSERT,DELETE,UPDATE ON TABLE session_variables TO gobby_daemon_runtime;
 
@@ -4059,10 +4138,6 @@ GRANT SELECT,INSERT,DELETE,UPDATE ON TABLE unmodeled_observations TO gobby_daemo
 GRANT SELECT,INSERT,DELETE,UPDATE ON TABLE workflow_audit_log TO gobby_daemon_runtime;
 
 GRANT ALL ON SEQUENCE workflow_audit_log_id_seq TO gobby_daemon_runtime;
-
-GRANT SELECT,INSERT,DELETE,UPDATE ON TABLE workflow_definitions TO gobby_daemon_runtime;
-
-GRANT SELECT,INSERT,DELETE,UPDATE ON TABLE workflow_instances TO gobby_daemon_runtime;
 
 GRANT SELECT,INSERT,DELETE,UPDATE ON TABLE worktrees TO gobby_daemon_runtime;
 

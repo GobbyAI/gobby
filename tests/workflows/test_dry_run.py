@@ -7,10 +7,12 @@ from unittest.mock import AsyncMock, MagicMock
 import pytest
 
 from gobby.workflows.definitions import WorkflowDefinition, WorkflowStep, WorkflowTransition
+from gobby.workflows.agent_models import AgentDefinitionBody, AgentStepWorkflowBody
 from gobby.workflows.dry_run import (
     EvaluationItem,
     WorkflowEvaluation,
-    evaluate_workflow,
+    evaluate_agent_definition,
+    evaluate_pipeline_definition,
 )
 
 pytestmark = pytest.mark.unit
@@ -64,10 +66,22 @@ def _make_definition(
     )
 
 
+def _as_agent(definition: WorkflowDefinition) -> AgentDefinitionBody:
+    return AgentDefinitionBody(
+        name=definition.name,
+        provider="claude",
+        step_workflow=AgentStepWorkflowBody(
+            steps=definition.steps,
+            variables=definition.variables or {},
+            exit_condition=definition.exit_condition,
+        ),
+    )
+
+
 @pytest.fixture
 def mock_loader() -> MagicMock:
     loader = MagicMock()
-    loader.load_workflow = AsyncMock(return_value=None)
+    loader.load_pipeline = AsyncMock(return_value=None)
     return loader
 
 
@@ -75,9 +89,7 @@ class TestWorkflowNotFound:
     @pytest.mark.asyncio
     async def test_workflow_not_found(self, mock_loader: MagicMock) -> None:
         """Returns valid=False and WORKFLOW_NOT_FOUND error."""
-        mock_loader.load_workflow.return_value = None
-
-        result = await evaluate_workflow("nonexistent", mock_loader)
+        result = await evaluate_pipeline_definition("nonexistent", mock_loader)
 
         assert result.valid is False
         assert len(result.errors) == 1
@@ -86,9 +98,9 @@ class TestWorkflowNotFound:
     @pytest.mark.asyncio
     async def test_workflow_load_error(self, mock_loader: MagicMock) -> None:
         """Returns valid=False and WORKFLOW_LOAD_ERROR on ValueError."""
-        mock_loader.load_workflow.side_effect = ValueError("Circular inheritance")
+        mock_loader.load_pipeline.side_effect = ValueError("Circular inheritance")
 
-        result = await evaluate_workflow("broken", mock_loader)
+        result = await evaluate_pipeline_definition("broken", mock_loader)
 
         assert result.valid is False
         assert result.errors[0].code == "WORKFLOW_LOAD_ERROR"
@@ -96,31 +108,10 @@ class TestWorkflowNotFound:
 
 class TestLifecycleType:
     @pytest.mark.asyncio
-    async def test_step_type_uses_definition_contract(self, mock_loader: MagicMock) -> None:
+    async def test_step_type_uses_definition_contract(self) -> None:
         definition = _make_definition(steps=[_make_step("init")], wf_type="step")
-        mock_loader.load_workflow.return_value = definition
-
-        result = await evaluate_workflow("step-wf", mock_loader)
-
-        assert result.workflow_type == "step"
-
-    @pytest.mark.asyncio
-    async def test_lifecycle_type_info(self, mock_loader: MagicMock) -> None:
-        """Always-on workflows get info-level type notice."""
-        definition = WorkflowDefinition(
-            name="lifecycle-wf",
-            type="lifecycle",
-            enabled=True,
-            steps=[_make_step("init")],
-        )
-        mock_loader.load_workflow.return_value = definition
-
-        result = await evaluate_workflow("lifecycle-wf", mock_loader)
-
-        info_items = [i for i in result.items if i.code == "ALWAYS_ON"]
-        assert result.workflow_type == "lifecycle"
-        assert len(info_items) == 1
-        assert info_items[0].level == "info"
+        result = await evaluate_agent_definition(_as_agent(definition))
+        assert result.valid is True
 
 
 class TestPipelineType:
@@ -133,47 +124,21 @@ class TestPipelineType:
             name="test-pipeline",
             steps=[PipelineStep(id="step1", exec="echo hello")],
         )
-        mock_loader.load_workflow.return_value = pipeline
-
-        result = await evaluate_workflow("test-pipeline", mock_loader)
+        mock_loader.load_pipeline.return_value = pipeline
+        result = await evaluate_pipeline_definition("test-pipeline", mock_loader)
 
         assert result.valid is True
-        assert result.workflow_type == "pipeline"
         assert any(i.code == "PIPELINE_TYPE" for i in result.items)
-
-
-class TestRuntimeResolution:
-    @pytest.mark.asyncio
-    async def test_warns_when_loader_resolution_differs_from_runtime(self) -> None:
-        loader = MagicMock()
-        loader.load_workflow = AsyncMock(return_value=_make_definition(steps=[_make_step("done")]))
-        loader._db_project_scope.return_value = "project-id"
-        loader.def_manager.get_by_name.return_value = MagicMock(
-            project_id="project-id",
-            definition_json='{"name":"child","extends":"base","steps":[]}',
-        )
-
-        result = await evaluate_workflow("child", loader, project_id="project-id")
-
-        findings = [item for item in result.warnings if item.code == "RUNTIME_DEFINITION_MISMATCH"]
-        assert len(findings) == 2
-        assert {item.detail["mismatch"].split(";")[0] for item in findings} == {
-            "project-scoped override",
-            "resolved extends inheritance",
-        }
 
 
 class TestStructuralValidation:
     @pytest.mark.asyncio
-    async def test_no_steps(self, mock_loader: MagicMock) -> None:
-        """NO_STEPS error for empty step list."""
-        definition = _make_definition(steps=[])
-        mock_loader.load_workflow.return_value = definition
+    async def test_no_steps(self) -> None:
+        """Empty agent step_workflow is rejected by the nested body."""
+        from pydantic import ValidationError
 
-        result = await evaluate_workflow("empty", mock_loader)
-
-        assert result.valid is False
-        assert any(i.code == "NO_STEPS" for i in result.errors)
+        with pytest.raises(ValidationError):
+            _as_agent(_make_definition(steps=[]))
 
     @pytest.mark.asyncio
     async def test_undefined_transition_target(self, mock_loader: MagicMock) -> None:
@@ -182,9 +147,7 @@ class TestStructuralValidation:
             _make_step("start", transitions=[{"to": "nonexistent", "when": "true"}]),
         ]
         definition = _make_definition(steps=steps)
-        mock_loader.load_workflow.return_value = definition
-
-        result = await evaluate_workflow("bad-transition", mock_loader)
+        result = await evaluate_agent_definition(_as_agent(definition))
 
         assert result.valid is False
         assert any(i.code == "UNDEFINED_TRANSITION_TARGET" for i in result.errors)
@@ -198,9 +161,7 @@ class TestStructuralValidation:
             _make_step("orphan"),  # Not reachable from start
         ]
         definition = _make_definition(steps=steps)
-        mock_loader.load_workflow.return_value = definition
-
-        result = await evaluate_workflow("unreachable", mock_loader)
+        result = await evaluate_agent_definition(_as_agent(definition))
 
         unreachable_items = [i for i in result.warnings if i.code == "UNREACHABLE_STEP"]
         assert len(unreachable_items) == 1
@@ -224,9 +185,7 @@ class TestStructuralValidation:
             steps=steps,
             exit_condition="current_step == 'complete'",
         )
-        mock_loader.load_workflow.return_value = definition
-
-        result = await evaluate_workflow("dead-end", mock_loader)
+        result = await evaluate_agent_definition(_as_agent(definition))
 
         dead_items = [i for i in result.warnings if i.code == "DEAD_END_STEP"]
         assert len(dead_items) == 1
@@ -241,9 +200,7 @@ class TestStructuralValidation:
                 _make_step("last"),
             ]
         )
-        mock_loader.load_workflow.return_value = definition
-
-        result = await evaluate_workflow("positional-terminal", mock_loader)
+        result = await evaluate_agent_definition(_as_agent(definition))
 
         dead_items = [i for i in result.warnings if i.code == "DEAD_END_STEP"]
         assert [item.detail["step"] for item in dead_items] == ["last"]
@@ -256,9 +213,7 @@ class TestStructuralValidation:
             _make_step("work"),
         ]
         definition = _make_definition(steps=steps)
-        mock_loader.load_workflow.return_value = definition
-
-        result = await evaluate_workflow("duplicates", mock_loader)
+        result = await evaluate_agent_definition(_as_agent(definition))
 
         assert result.valid is False
         assert any(i.code == "DUPLICATE_STEP_NAME" for i in result.errors)
@@ -275,9 +230,7 @@ class TestStructuralValidation:
             ),
         ]
         definition = _make_definition(steps=steps, variables={"known_var": "value"})
-        mock_loader.load_workflow.return_value = definition
-
-        result = await evaluate_workflow("undef-var", mock_loader)
+        result = await evaluate_agent_definition(_as_agent(definition))
 
         undef_items = [i for i in result.warnings if i.code == "UNDEFINED_VARIABLE_REF"]
         assert len(undef_items) == 1
@@ -295,9 +248,7 @@ class TestStructuralValidation:
             ),
         ]
         definition = _make_definition(steps=steps)
-        mock_loader.load_workflow.return_value = definition
-
-        result = await evaluate_workflow("builtin-var", mock_loader)
+        result = await evaluate_agent_definition(_as_agent(definition))
 
         undef_items = [i for i in result.warnings if i.code == "UNDEFINED_VARIABLE_REF"]
         assert len(undef_items) == 0
@@ -313,9 +264,7 @@ class TestStructuralValidation:
             ),
         ]
         definition = _make_definition(steps=steps)
-        mock_loader.load_workflow.return_value = definition
-
-        result = await evaluate_workflow("mcp-conflict", mock_loader)
+        result = await evaluate_agent_definition(_as_agent(definition))
 
         conflict_items = [i for i in result.warnings if i.code == "MCP_TOOL_RESTRICTION_CONFLICT"]
         assert len(conflict_items) == 1
@@ -331,9 +280,7 @@ class TestStructuralValidation:
             ),
         ]
         definition = _make_definition(steps=steps)
-        mock_loader.load_workflow.return_value = definition
-
-        result = await evaluate_workflow("tool-conflict", mock_loader)
+        result = await evaluate_agent_definition(_as_agent(definition))
 
         conflict_items = [i for i in result.warnings if i.code == "TOOL_RESTRICTION_CONFLICT"]
         assert len(conflict_items) == 1
@@ -346,9 +293,7 @@ class TestStructuralValidation:
             _make_step("b", transitions=[{"to": "a", "when": "true"}]),
         ]
         definition = _make_definition(steps=steps)
-        mock_loader.load_workflow.return_value = definition
-
-        result = await evaluate_workflow("circular", mock_loader)
+        result = await evaluate_agent_definition(_as_agent(definition))
 
         circular_items = [i for i in result.warnings if i.code == "CIRCULAR_ONLY_PATH"]
         assert len(circular_items) == 1
@@ -363,9 +308,7 @@ class TestConditionValidation:
             _make_step("start", transitions=[{"to": "done", "when": "variables.ready"}]),
             _make_step("done"),
         ]
-        mock_loader.load_workflow.return_value = _make_definition(steps=steps)
-
-        result = await evaluate_workflow("test", mock_loader)
+        result = await evaluate_agent_definition(_as_agent(_make_definition(steps=steps)))
 
         finding = next(item for item in result.items if item.code == "CONDITION_UNKNOWN_NAME")
         assert finding.detail == {
@@ -377,11 +320,9 @@ class TestConditionValidation:
 
     @pytest.mark.asyncio
     async def test_broken_exit_condition_is_error(self, mock_loader: MagicMock) -> None:
-        mock_loader.load_workflow.return_value = _make_definition(
-            steps=[_make_step("done")], exit_condition="current_step =="
+        result = await evaluate_agent_definition(
+            _as_agent(_make_definition(steps=[_make_step("done")], exit_condition="current_step =="))
         )
-
-        result = await evaluate_workflow("test", mock_loader)
 
         assert not result.valid
         assert [item.code for item in result.errors] == ["INVALID_CONDITION_SYNTAX"]
@@ -392,12 +333,14 @@ class TestConditionValidation:
             _make_step("start", transitions=[{"to": "done", "when": "vars.ready"}]),
             _make_step("done"),
         ]
-        mock_loader.load_workflow.return_value = _make_definition(
-            steps=steps,
-            exit_condition="current_step == 'done' and variables.finished and vars.ready",
+        result = await evaluate_agent_definition(
+            _as_agent(
+                _make_definition(
+                    steps=steps,
+                    exit_condition="current_step == 'done' and variables.finished and vars.ready",
+                )
+            )
         )
-
-        result = await evaluate_workflow("test", mock_loader)
 
         assert not [item for item in result.items if item.code.startswith("CONDITION_")]
 
@@ -408,9 +351,7 @@ class TestSemanticValidation:
         """Info when mcp_manager is None."""
         steps = [_make_step("start")]
         definition = _make_definition(steps=steps)
-        mock_loader.load_workflow.return_value = definition
-
-        result = await evaluate_workflow("test", mock_loader, mcp_manager=None)
+        result = await evaluate_agent_definition(_as_agent(definition), None)
 
         skipped_items = [i for i in result.items if i.code == "SEMANTIC_CHECKS_SKIPPED"]
         assert len(skipped_items) == 1
@@ -425,8 +366,6 @@ class TestSemanticValidation:
             ),
         ]
         definition = _make_definition(steps=steps)
-        mock_loader.load_workflow.return_value = definition
-
         mcp_manager = MagicMock()
         mcp_manager.get_available_servers.return_value = ["gobby-tasks"]
         mcp_manager.list_tools = AsyncMock(
@@ -435,7 +374,7 @@ class TestSemanticValidation:
             }
         )
 
-        result = await evaluate_workflow("test", mock_loader, mcp_manager=mcp_manager)
+        result = await evaluate_agent_definition(_as_agent(definition), mcp_manager=mcp_manager)
 
         unknown_items = [i for i in result.warnings if i.code == "UNKNOWN_MCP_SERVER"]
         assert len(unknown_items) == 1
@@ -450,8 +389,6 @@ class TestSemanticValidation:
             ),
         ]
         definition = _make_definition(steps=steps)
-        mock_loader.load_workflow.return_value = definition
-
         mcp_manager = MagicMock()
         mcp_manager.get_available_servers.return_value = ["gobby-tasks"]
         mcp_manager.list_tools = AsyncMock(
@@ -460,7 +397,7 @@ class TestSemanticValidation:
             }
         )
 
-        result = await evaluate_workflow("test", mock_loader, mcp_manager=mcp_manager)
+        result = await evaluate_agent_definition(_as_agent(definition), mcp_manager=mcp_manager)
 
         unknown_items = [i for i in result.warnings if i.code == "UNKNOWN_MCP_TOOL"]
         assert len(unknown_items) == 1
@@ -482,9 +419,7 @@ class TestSemanticValidation:
             ),
         ]
         definition = _make_definition(steps=steps)
-        mock_loader.load_workflow.return_value = definition
-
-        result = await evaluate_workflow("test", mock_loader)
+        result = await evaluate_agent_definition(_as_agent(definition))
 
         findings = [i for i in result.warnings if i.code == "ACTION_NOT_EXECUTED"]
         assert [item.detail["field"] for item in findings] == ["on_enter"]
@@ -505,8 +440,6 @@ class TestSemanticValidation:
             ),
         ]
         definition = _make_definition(steps=steps)
-        mock_loader.load_workflow.return_value = definition
-
         mcp_manager = MagicMock()
         mcp_manager.get_available_servers.return_value = ["gobby-merge"]
         mcp_manager.list_tools = AsyncMock(
@@ -515,7 +448,7 @@ class TestSemanticValidation:
             }
         )
 
-        result = await evaluate_workflow("test", mock_loader, mcp_manager=mcp_manager)
+        result = await evaluate_agent_definition(_as_agent(definition), mcp_manager=mcp_manager)
 
         unknown_items = [i for i in result.warnings if i.code == "UNKNOWN_MCP_HANDLER_TARGET"]
         assert len(unknown_items) == 1
@@ -530,14 +463,15 @@ class TestSemanticValidation:
                 ],
             )
         ]
-        mock_loader.load_workflow.return_value = _make_definition(steps=steps)
         mcp_manager = MagicMock()
         mcp_manager.get_available_servers.return_value = ["gobby-merge"]
         mcp_manager.list_tools = AsyncMock(
             return_value={"gobby-merge": [{"name": "verify_in_worktree"}]}
         )
 
-        result = await evaluate_workflow("test", mock_loader, mcp_manager=mcp_manager)
+        result = await evaluate_agent_definition(
+            _as_agent(_make_definition(steps=steps)), mcp_manager=mcp_manager
+        )
 
         assert len([i for i in result.warnings if i.code == "UNKNOWN_MCP_HANDLER_TARGET"]) == 1
 
@@ -549,12 +483,13 @@ class TestSemanticValidation:
                 on_mcp_success=[{"server": "gobby-merge", "tool": "*", "action": "set_variable"}],
             )
         ]
-        mock_loader.load_workflow.return_value = _make_definition(steps=steps)
         mcp_manager = MagicMock()
         mcp_manager.get_available_servers.return_value = ["gobby-merge"]
         mcp_manager.list_tools = AsyncMock(return_value={"gobby-merge": [{"name": "merge"}]})
 
-        result = await evaluate_workflow("test", mock_loader, mcp_manager=mcp_manager)
+        result = await evaluate_agent_definition(
+            _as_agent(_make_definition(steps=steps)), mcp_manager=mcp_manager
+        )
 
         assert len([i for i in result.warnings if i.code == "UNKNOWN_MCP_HANDLER_TARGET"]) == 1
 
@@ -575,12 +510,13 @@ class TestSemanticValidation:
                 ],
             )
         ]
-        mock_loader.load_workflow.return_value = _make_definition(steps=steps)
         mcp_manager = MagicMock()
         mcp_manager.get_available_servers.return_value = ["gobby-merge"]
         mcp_manager.list_tools = AsyncMock(return_value={})
 
-        result = await evaluate_workflow("test", mock_loader, mcp_manager=mcp_manager)
+        result = await evaluate_agent_definition(
+            _as_agent(_make_definition(steps=steps)), mcp_manager=mcp_manager
+        )
 
         assert not [
             i for i in result.items if i.code in {"UNKNOWN_MCP_TOOL", "UNKNOWN_MCP_HANDLER_TARGET"}
@@ -605,9 +541,7 @@ class TestUnsupportedLifecycleActions:
             ),
             _make_step("done"),
         ]
-        mock_loader.load_workflow.return_value = _make_definition(steps=steps)
-
-        result = await evaluate_workflow("test", mock_loader)
+        result = await evaluate_agent_definition(_as_agent(_make_definition(steps=steps)))
 
         fields = {
             item.detail["field"] for item in result.warnings if item.code == "ACTION_NOT_EXECUTED"
@@ -650,9 +584,7 @@ class TestStepTrace:
             _make_step("complete", description="Done"),
         ]
         definition = _make_definition(steps=steps)
-        mock_loader.load_workflow.return_value = definition
-
-        result = await evaluate_workflow("traced", mock_loader)
+        result = await evaluate_agent_definition(_as_agent(definition))
 
         assert len(result.step_trace) == 5
         assert result.step_trace[0].name == "claim_task"
@@ -672,9 +604,7 @@ class TestLifecyclePath:
             _make_step("complete"),
         ]
         definition = _make_definition(steps=steps)
-        mock_loader.load_workflow.return_value = definition
-
-        result = await evaluate_workflow("linear", mock_loader)
+        result = await evaluate_agent_definition(_as_agent(definition))
 
         assert result.lifecycle_path == ["claim_task", "work", "report", "shutdown", "complete"]
 
@@ -693,9 +623,7 @@ class TestLifecyclePath:
             _make_step("failure", transitions=[{"to": "done", "when": "true"}]),
             _make_step("done"),
         ]
-        mock_loader.load_workflow.return_value = _make_definition(steps=steps)
-
-        result = await evaluate_workflow("branching", mock_loader)
+        result = await evaluate_agent_definition(_as_agent(_make_definition(steps=steps)))
 
         assert result.lifecycle_path == ["start", "success", "failure", "done"]
 
@@ -710,9 +638,7 @@ class TestHappyPath:
             _make_step("end"),
         ]
         definition = _make_definition(steps=steps, variables={"foo": "bar"})
-        mock_loader.load_workflow.return_value = definition
-
-        result = await evaluate_workflow("happy", mock_loader)
+        result = await evaluate_agent_definition(_as_agent(definition))
 
         assert result.valid is True
         assert len(result.errors) == 0
@@ -740,7 +666,6 @@ class TestToDict:
         result = WorkflowEvaluation(
             valid=True,
             workflow_name="test",
-            workflow_type="step",
         )
         d = result.to_dict()
         assert d["valid"] is True

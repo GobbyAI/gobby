@@ -14,16 +14,20 @@ Gobby has four layers that compose together:
 
 | Layer | Purpose | Where it lives | Runtime surface |
 | --- | --- | --- | --- |
-| Rules | Enforce invariants on hook events | `workflow_definitions` / bundled YAML | `gobby-workflows` + rule engine |
-| Agents | Define persona, restrictions, and step workflows | `workflow_definitions` / bundled YAML | `gobby-workflows` definitions, `gobby-agents` runtime |
-| Pipelines | Run deterministic multi-step automation | `workflow_definitions` / bundled YAML | `gobby-workflows` pipeline tools |
+| Rules | Enforce invariants on hook events | `rule_definitions` / bundled YAML | `gobby-workflows` + rule engine |
+| Agents | Define persona, restrictions, and step workflows | `agent_definitions` + optional `agent_step_workflows` / bundled YAML | `gobby-workflows` definitions, `gobby-agents` runtime |
+| Variables | Default session values | `session_variable_defaults` / bundled YAML | `gobby-workflows` variable tools |
+| Pipelines | Run deterministic multi-step automation | `pipeline_definitions` / bundled YAML | `gobby-workflows` pipeline tools |
 | Dispatch | Coordinate task stages, agents, isolation, and completion | Stage manifests + task/agent tooling | `gobby-tasks`, `gobby-tasks-ops`, `gobby-agents`, `gobby-worktrees`, `gobby-clones`, `gobby-merge` |
 
 The shared state across all four layers is:
 
 - Session variables, which rules and step workflows read and mutate.
-- Workflow definitions, which live in the database and are synced from bundled
-  or project YAML.
+- Domain definitions, which live in the typed tables above and are synced from
+  bundled or project YAML. Names may overlap across domains.
+- Immutable step-workflow snapshots on `agent_step_instances`, taken at spawn
+  or persona activation so a running session is not rewritten by later
+  definition edits.
 - Completion IDs and notifications, which let agents, pipelines, and dispatch
   reconnect long-running work after a daemon restart or parent-session wait.
 
@@ -113,7 +117,7 @@ behavior today:
 
 | Server | What it owns |
 | --- | --- |
-| `gobby-workflows` | Workflow, rule, variable, agent-definition, and pipeline definitions; pipeline execution and pipeline `wait` steps |
+| `gobby-workflows` | Rule, variable, agent-definition, and pipeline definitions; step-status and evaluation tools; pipeline execution and pipeline `wait` steps |
 | `gobby-agents` | Agent spawning, runtime inspection, persona application, inter-agent messaging, and commands |
 | `gobby-tasks` | Task lifecycle, dependencies, readiness, review states, close, and escalation |
 | `gobby-tasks-ops` | Build, artifact, stage-transition, review, expansion-run, and affected-file helpers |
@@ -165,10 +169,13 @@ Two important abstractions here are `turn_start` and `turn_end`:
 Keep this split clear:
 
 - **Definitions** are reusable YAML-backed objects synced into
-  `workflow_definitions`.
-- **Runtime state** is session-specific: variables, active workflow instances,
-  agent runs, pipeline executions, completion subscriptions, task stage
-  manifests, and task claims.
+  `rule_definitions`, `agent_definitions` (with an optional
+  `agent_step_workflows` child), `session_variable_defaults`, and
+  `pipeline_definitions`.
+- **Runtime state** is session-specific: variables, `agent_step_instances`
+  snapshots, agent runs, pipeline executions, completion subscriptions, task
+  stage manifests, and task claims. A definition edit does not rewrite an
+  already-snapshotted run.
 
 When a guide says "enable a rule" or "update an agent definition", that is a
 definition change. When it says "the step transitioned" or "the pipeline is
@@ -182,4 +189,4 @@ waiting for approval", that is runtime state.
 - [Orchestration](./orchestration.md) for the current task/agent coordination model
 - [Rule Authoring Guide](./workflow-rules.md) for engine caveats and safety rules
 
-_Last verified: 2026-06-11_
+_Last verified: 2026-08-14_

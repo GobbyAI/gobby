@@ -96,7 +96,7 @@ def test_qa_reviewer_prompt_builder_registered() -> None:
     assert "#42" in prompt
     assert "Spawn-time auto-claim normally already owns the task" in prompt
     assert "Do not call claim_task unless" in prompt
-    assert "Do not call get_workflow_status" in prompt
+    assert "Do not call get_step_status" in prompt
     assert "Do not run full pytest, Cargo, Vitest, or Jest suites" in prompt
     assert "focused validation" in prompt
     assert "`cargo test -p <package>`" in prompt

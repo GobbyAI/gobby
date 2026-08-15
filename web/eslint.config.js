@@ -52,6 +52,7 @@ const SET_STATE_IN_EFFECT_EXEMPTIONS = [
   "src/hooks/useMcp.ts",
   "src/hooks/useMemory.ts",
   "src/hooks/useMetrics.ts",
+  "src/hooks/usePipelineDefs.ts",
   "src/hooks/usePipelineExecutions.ts",
   "src/hooks/useProjects.ts",
   "src/hooks/useRules.ts",
@@ -64,8 +65,8 @@ const SET_STATE_IN_EFFECT_EXEMPTIONS = [
   "src/hooks/useTokenTimeSeries.ts",
   "src/hooks/useTraces.ts",
   "src/hooks/useUsage.ts",
+  "src/hooks/useVariableDefs.ts",
   "src/hooks/useVoice.ts",
-  "src/hooks/useWorkflows.ts",
 ];
 
 const IMMUTABILITY_EXEMPTIONS = ["src/App.tsx", "src/hooks/useChat.ts"];

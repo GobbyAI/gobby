@@ -187,6 +187,13 @@ def init_storage_and_config(runner: GobbyRunner, config_path: Path | None, verbo
         ),
         managed_resolver=lambda snapshot: managed_embedding_projection(snapshot),
     )
+    from gobby.storage.definitions.notifications import DefinitionRevisionListener
+    from gobby.storage.definitions.revisions import fetch_persistent_revisions
+
+    runner.definition_revision_listener = DefinitionRevisionListener(
+        postgres_database.open_runtime_async_connection,
+        fetch_revisions=lambda: fetch_persistent_revisions(runner.database),
+    )
     from gobby.storage.model_metadata import ModelMetadataStore
 
     try:
@@ -237,7 +244,7 @@ def init_storage_and_config(runner: GobbyRunner, config_path: Path | None, verbo
     runner._dev_mode = is_dev_mode(Path.cwd())
 
     if runner._dev_mode:
-        from gobby.cli.installers.shared import sync_bundled_content_to_db
+        from gobby.sync_registry import sync_bundled_content_to_db
 
         sync_result = sync_bundled_content_to_db(runner.database)
         total = sync_result["total_synced"]

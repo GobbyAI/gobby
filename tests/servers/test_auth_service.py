@@ -374,9 +374,15 @@ def test_agent_capability_matrix(
 
     # Context-bearing routes require the full caller identity.
     assert not service.is_request_authenticated(
-        _request(bearer_only, method="POST", path="/api/workflows/variables/set")
+        _request(bearer_only, method="POST", path="/api/sessions/sess-1/variables/set")
     )
     assert service.is_request_authenticated(
+        _request(identity, method="POST", path="/api/sessions/sess-1/variables/set")
+    )
+    assert service.is_request_authenticated(
+        _request(identity, method="POST", path="/api/sessions/sess-1/variables/get")
+    )
+    assert not service.is_request_authenticated(
         _request(identity, method="POST", path="/api/workflows/variables/set")
     )
     assert service.is_request_authenticated(

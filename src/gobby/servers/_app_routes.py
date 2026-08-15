@@ -38,6 +38,7 @@ def register_routes(app: FastAPI, server: "HTTPServer") -> None:
         create_memory_router,
         create_metrics_router,
         create_observations_router,
+        create_pipeline_definitions_router,
         create_pipelines_router,
         create_profiles_router,
         create_projects_router,
@@ -49,11 +50,11 @@ def register_routes(app: FastAPI, server: "HTTPServer") -> None:
         create_stages_router,
         create_tasks_router,
         create_traces_router,
+        create_variable_definitions_router,
         create_voice_router,
         create_webhooks_router,
         create_wiki_code_router,
         create_wiki_router,
-        create_workflows_router,
     )
     from gobby.servers.routes.auth import create_auth_router
 
@@ -75,6 +76,8 @@ def register_routes(app: FastAPI, server: "HTTPServer") -> None:
     app.include_router(create_mcp_router())
     app.include_router(create_hooks_router(server))
     app.include_router(create_webhooks_router())
+    # Mount definition CRUD before GET /api/pipelines/{execution_id}.
+    app.include_router(create_pipeline_definitions_router(server))
     app.include_router(create_pipelines_router(server))
     app.include_router(create_files_router(server))
     app.include_router(create_github_triage_router(server))
@@ -86,7 +89,7 @@ def register_routes(app: FastAPI, server: "HTTPServer") -> None:
     app.include_router(create_embeddings_router(server))
     app.include_router(create_voice_router(server))
     app.include_router(create_configuration_router(server))
-    app.include_router(create_workflows_router(server))
+    app.include_router(create_variable_definitions_router(server))
     app.include_router(create_rules_router(server))
     app.include_router(create_source_control_router(server))
     app.include_router(create_traces_router(server))

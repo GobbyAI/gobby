@@ -7,8 +7,8 @@ import pytest
 from gobby.mcp_proxy.tools.agents import create_agents_registry
 from gobby.mcp_proxy.tools.internal import InternalRegistryManager, InternalToolRegistry
 from gobby.mcp_proxy.tools.workflows import workflow_mcp_inventory
+from gobby.storage.definitions.agents import AgentDefinitionManager
 from gobby.storage.hub.protocol import HubDatabase
-from gobby.storage.workflow_definitions import LocalWorkflowDefinitionManager
 from gobby.workflows.definitions import AgentDefinitionBody, AgentWorkflows
 
 pytestmark = pytest.mark.unit
@@ -23,18 +23,17 @@ async def test_evaluate_spawn_tool_runs_workflow_validation_with_combined_invent
         provider="claude",
         workflows=AgentWorkflows(pipeline="test-workflow"),
     )
-    LocalWorkflowDefinitionManager(temp_db).create(
+    AgentDefinitionManager(temp_db).create(
         name=agent.name,
-        definition_json=agent.model_dump_json(),
-        workflow_type="agent",
-        source="template",
+        definition_json=agent.model_dump(),
+        source="installed",
     )
 
     workflow_loader = MagicMock()
-    workflow_loader.validate_workflow_for_agent = AsyncMock(
+    workflow_loader.validate_pipeline_for_agent = AsyncMock(
         return_value=(False, "workflow rejected")
     )
-    workflow_loader.load_workflow = AsyncMock(return_value=None)
+    workflow_loader.load_pipeline = AsyncMock(return_value=None)
 
     internal_manager = InternalRegistryManager()
     internal_manager.add_registry(InternalToolRegistry(name="gobby-tasks"))
@@ -58,8 +57,8 @@ async def test_evaluate_spawn_tool_runs_workflow_validation_with_combined_invent
 
     result = await registry._tools["evaluate_spawn"].func(agent="test-agent")
 
-    workflow_loader.validate_workflow_for_agent.assert_awaited_once()
-    assert workflow_loader.validate_workflow_for_agent.await_args.args[0] == "test-workflow"
+    workflow_loader.validate_pipeline_for_agent.assert_awaited_once()
+    assert workflow_loader.validate_pipeline_for_agent.await_args.args[0] == "test-workflow"
     assert result["can_spawn"] is False
     assert {item["code"] for item in result["items"]} >= {
         "WORKFLOW_RESOLVED",

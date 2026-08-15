@@ -8,9 +8,11 @@ from uuid import uuid4
 import pytest
 
 from gobby.sessions.status_events import SessionStatusTransition
+from gobby.storage.hub.protocol import HubDatabase
 from gobby.storage.sessions import SessionManager
-from gobby.workflows.definitions import WorkflowInstance
-from gobby.workflows.state_manager import SessionVariableManager, WorkflowInstanceManager
+from gobby.workflows.state_manager import SessionVariableManager
+from gobby.workflows.step_instances import AgentStepInstanceManager
+from tests.workflows.step_instance_fixtures import make_step_instance
 
 pytestmark = pytest.mark.unit
 
@@ -18,7 +20,11 @@ LOCAL_MACHINE_ID = "20000000-0000-4000-8000-000000000001"
 
 
 @pytest.fixture(autouse=True)
-def _local_machine_identity() -> Iterator[None]:
+def _local_machine_identity(temp_db: HubDatabase) -> Iterator[None]:
+    from gobby.storage.machines import LocalMachineManager
+    from tests.fixtures.postgres import TEST_USER_ID
+
+    LocalMachineManager(temp_db).upsert_seen(LOCAL_MACHINE_ID, TEST_USER_ID)
     with patch("gobby.utils.machine_id._cached_machine_id", LOCAL_MACHINE_ID):
         yield
 
@@ -39,12 +45,11 @@ class TestSessionManagerPruning:
             project_id=sample_project["id"],
         )
         session_manager.update_status(session.id, "handoff_ready")
-        workflow_manager = WorkflowInstanceManager(session_manager.db)
-        workflow_manager.save_instance(
-            WorkflowInstance(
-                id=str(uuid4()),
-                session_id=session.id,
-                workflow_name="developer",
+        workflow_manager = AgentStepInstanceManager(session_manager.db)
+        workflow_manager.save(
+            make_step_instance(
+                session.id,
+                agent_name="developer",
                 current_step="implement",
             )
         )
@@ -59,8 +64,9 @@ class TestSessionManagerPruning:
         updated = session_manager.get(session.id)
         assert updated is not None
         assert updated.status == "expired"
-        instances = workflow_manager.get_active_instances(session.id)
-        assert [instance.workflow_name for instance in instances] == ["developer"]
+        instance = workflow_manager.get_for_session(session.id)
+        assert instance is not None
+        assert instance.agent_name == "developer"
 
     def test_prune_stale_compact_workflow_instances_reclaims_marked_sessions(
         self,
@@ -74,12 +80,11 @@ class TestSessionManagerPruning:
             source="claude",
             project_id=sample_project["id"],
         )
-        workflow_manager = WorkflowInstanceManager(session_manager.db)
-        workflow_manager.save_instance(
-            WorkflowInstance(
-                id=str(uuid4()),
-                session_id=session.id,
-                workflow_name="developer",
+        workflow_manager = AgentStepInstanceManager(session_manager.db)
+        workflow_manager.save(
+            make_step_instance(
+                session.id,
+                agent_name="developer",
                 current_step="implement",
             )
         )
@@ -95,7 +100,7 @@ class TestSessionManagerPruning:
         pruned = session_manager.prune_stale_compact_workflow_instances(retention_hours=24)
 
         assert pruned == 1
-        assert workflow_manager.get_active_instances(session.id) == []
+        assert workflow_manager.get_for_session(session.id) is None
 
     def test_prune_stale_compact_workflow_instances_skips_unmarked_and_fresh(
         self,
@@ -103,7 +108,7 @@ class TestSessionManagerPruning:
         sample_project: dict[str, str],
     ) -> None:
         """Expired daemon-resume sessions (no marker) and fresh markers are untouched."""
-        workflow_manager = WorkflowInstanceManager(session_manager.db)
+        workflow_manager = AgentStepInstanceManager(session_manager.db)
         sv_manager = SessionVariableManager(session_manager.db)
 
         unmarked = session_manager.register(
@@ -119,11 +124,10 @@ class TestSessionManagerPruning:
             project_id=sample_project["id"],
         )
         for session_id in (unmarked.id, fresh.id):
-            workflow_manager.save_instance(
-                WorkflowInstance(
-                    id=str(uuid4()),
-                    session_id=session_id,
-                    workflow_name="developer",
+            workflow_manager.save(
+                make_step_instance(
+                    session_id,
+                    agent_name="developer",
                     current_step="implement",
                 )
             )
@@ -142,8 +146,8 @@ class TestSessionManagerPruning:
         pruned = session_manager.prune_stale_compact_workflow_instances(retention_hours=24)
 
         assert pruned == 0
-        assert len(workflow_manager.get_active_instances(unmarked.id)) == 1
-        assert len(workflow_manager.get_active_instances(fresh.id)) == 1
+        assert workflow_manager.get_for_session(unmarked.id) is not None
+        assert workflow_manager.get_for_session(fresh.id) is not None
 
     def test_cleanup_expired_session_state_uses_revival_horizon_and_terminalizes_pending(
         self,

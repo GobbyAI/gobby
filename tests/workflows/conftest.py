@@ -13,7 +13,7 @@ from gobby.workflows.pipeline_state import ExecutionStatus, StepStatus
 
 if TYPE_CHECKING:
     from gobby.storage.hub.protocol import HubDatabase
-    from gobby.workflows.loader import WorkflowLoader
+    from gobby.workflows.pipeline_loader import PipelineLoader
 
 
 SYNTHETIC_SESSION_IDS = (
@@ -80,11 +80,11 @@ def workflow_db(hub_db: HubDatabase) -> Iterator[HubDatabase]:
 
 
 @pytest.fixture
-def db_loader(workflow_db: HubDatabase) -> WorkflowLoader:
-    """Return a WorkflowLoader backed by a DB with bundled workflows."""
-    from gobby.workflows.loader import WorkflowLoader
+def db_loader(workflow_db: HubDatabase) -> PipelineLoader:
+    """Return a PipelineLoader backed by a DB with bundled workflows."""
+    from gobby.workflows.pipeline_loader import PipelineLoader
 
-    return WorkflowLoader(db=workflow_db)
+    return PipelineLoader(db=workflow_db)
 
 
 # Fixtures shared across the split test_pipeline_executor_*.py modules.

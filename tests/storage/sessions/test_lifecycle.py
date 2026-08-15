@@ -12,6 +12,7 @@ import pytest
 from gobby.sessions.status_events import SessionStatusTransition
 from gobby.storage.agents import LocalAgentRunManager
 from gobby.storage.hub.protocol import HubDatabase
+from gobby.storage.machines import LocalMachineManager
 from gobby.storage.memories import LocalMemoryManager
 from gobby.storage.projects import LocalProjectManager
 from gobby.storage.session_models import Session
@@ -22,9 +23,9 @@ from gobby.terminal_ownership import (
     resolve_pane_ownership,
     terminal_session_identity,
 )
-from gobby.workflows.definitions import WorkflowInstance
-from gobby.workflows.state_manager import WorkflowInstanceManager
+from gobby.workflows.step_instances import AgentStepInstanceManager
 from tests.fixtures.postgres import TEST_USER_ID
+from tests.workflows.step_instance_fixtures import make_step_instance
 
 pytestmark = pytest.mark.unit
 
@@ -40,14 +41,7 @@ _ENROLLED_TEST_MACHINES = (
 @pytest.fixture(autouse=True)
 def _local_machine_identity(temp_db: HubDatabase) -> Iterator[None]:
     for machine_id in _ENROLLED_TEST_MACHINES:
-        temp_db.execute(
-            """
-            INSERT INTO machines (id, owner_user_id)
-            VALUES (%s, %s)
-            ON CONFLICT (id) DO NOTHING
-            """,
-            (machine_id, TEST_USER_ID),
-        )
+        LocalMachineManager(temp_db).upsert_seen(machine_id, TEST_USER_ID)
     with patch("gobby.utils.machine_id._cached_machine_id", LOCAL_MACHINE_ID):
         yield
 
@@ -124,12 +118,11 @@ class TestSessionManagerLifecycle:
             "UPDATE sessions SET agent_run_id = %s WHERE id = %s",
             (run.id, session.id),
         )
-        workflow_manager = WorkflowInstanceManager(session_manager.db)
-        workflow_manager.save_instance(
-            WorkflowInstance(
-                id=str(uuid.uuid4()),
-                session_id=session.id,
-                workflow_name="developer",
+        workflow_manager = AgentStepInstanceManager(session_manager.db)
+        workflow_manager.save(
+            make_step_instance(
+                session.id,
+                agent_name="developer",
                 current_step="implement",
             )
         )
@@ -145,8 +138,9 @@ class TestSessionManagerLifecycle:
         assert reactivated.id == session.id
         assert reactivated.status == "active"
         assert reactivated.agent_run_id == run.id
-        instances = workflow_manager.get_active_instances(session.id)
-        assert [instance.workflow_name for instance in instances] == ["developer"]
+        instance = workflow_manager.get_for_session(session.id)
+        assert instance is not None
+        assert instance.agent_name == "developer"
         preserved_run = run_manager.get(run.id)
         assert preserved_run is not None
         assert preserved_run.child_session_id == session.id

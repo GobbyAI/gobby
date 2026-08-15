@@ -18,7 +18,7 @@ import pytest
 
 from gobby.hooks.events import HookEvent, HookEventType, SessionSource
 from gobby.storage.hub.protocol import HubDatabase
-from gobby.storage.workflow_definitions import LocalWorkflowDefinitionManager
+from gobby.storage.definitions.rules import RuleDefinitionManager
 from gobby.workflows.definitions import RuleDefinitionBody
 from gobby.workflows.engine.core import RuleEngine
 from gobby.workflows.sync_rules import sync_bundled_rules
@@ -38,8 +38,8 @@ def db(temp_db: HubDatabase) -> HubDatabase:
 
 
 @pytest.fixture
-def manager(db: HubDatabase) -> LocalWorkflowDefinitionManager:
-    return LocalWorkflowDefinitionManager(db)
+def manager(db: HubDatabase) -> RuleDefinitionManager:
+    return RuleDefinitionManager(db)
 
 
 def _sync_bundled(db):
@@ -48,7 +48,7 @@ def _sync_bundled(db):
 
     result = sync_bundled_rules(db, get_bundled_rules_path())
     # Mark templates as installed so get_by_name() finds them
-    db.execute("UPDATE workflow_definitions SET source = 'installed' WHERE source = 'template'")
+    db.execute("UPDATE rule_definitions SET source = 'installed' WHERE source = 'template'")
     return result
 
 
@@ -67,12 +67,12 @@ class TestProgressiveDiscoverySync:
     def test_bundled_file_syncs_all_rules(
         self,
         db: HubDatabase,
-        manager: LocalWorkflowDefinitionManager,
+        manager: RuleDefinitionManager,
     ) -> None:
-        """All progressive-discovery rules should sync to workflow_definitions."""
+        """All progressive-discovery rules should sync to rule_definitions."""
         _sync_bundled(db)
 
-        rules = manager.list_all(workflow_type="rule")
+        rules = manager.list_all()
         rule_names = {r.name for r in rules}
 
         assert PROGRESSIVE_DISCOVERY_RULES.issubset(rule_names), (
@@ -82,7 +82,7 @@ class TestProgressiveDiscoverySync:
     def test_require_servers_listed_removed(
         self,
         db: HubDatabase,
-        manager: LocalWorkflowDefinitionManager,
+        manager: RuleDefinitionManager,
     ) -> None:
         """require-servers-listed was removed (replaced by hardcoded auto-discover)."""
         _sync_bundled(db)
@@ -93,7 +93,7 @@ class TestProgressiveDiscoverySync:
     def test_sync_retires_legacy_gates_and_enables_renamed_gate(
         self,
         db: HubDatabase,
-        manager: LocalWorkflowDefinitionManager,
+        manager: RuleDefinitionManager,
     ) -> None:
         """Removed gate rows are retired without carrying a disabled toggle forward."""
         legacy_definition = '{"event":"before_tool","effects":[{"type":"block","reason":"legacy"}]}'
@@ -101,7 +101,6 @@ class TestProgressiveDiscoverySync:
             manager.create(
                 name=name,
                 definition_json=legacy_definition,
-                workflow_type="rule",
                 enabled=False,
                 source="installed",
                 tags=["gobby", "progressive-discovery"],
@@ -121,12 +120,12 @@ class TestProgressiveDiscoverySync:
     def test_all_rules_have_progressive_discovery_tag(
         self,
         db: HubDatabase,
-        manager: LocalWorkflowDefinitionManager,
+        manager: RuleDefinitionManager,
     ) -> None:
         """All rules should be tagged with 'progressive-discovery'."""
         _sync_bundled(db)
 
-        rules = manager.list_all(workflow_type="rule")
+        rules = manager.list_all()
         for row in rules:
             if row.name in PROGRESSIVE_DISCOVERY_RULES:
                 assert row.tags and "progressive-discovery" in row.tags, (
@@ -136,16 +135,16 @@ class TestProgressiveDiscoverySync:
     def test_all_rules_are_valid_pydantic(
         self,
         db: HubDatabase,
-        manager: LocalWorkflowDefinitionManager,
+        manager: RuleDefinitionManager,
     ) -> None:
         """All synced rules should be valid RuleDefinitionBody instances."""
         _sync_bundled(db)
 
         valid_types = {"block", "set_variable", "inject_context", "mcp_call"}
-        rules = manager.list_all(workflow_type="rule")
+        rules = manager.list_all()
         for row in rules:
             if row.name in PROGRESSIVE_DISCOVERY_RULES:
-                body = RuleDefinitionBody.model_validate_json(row.definition_json)
+                body = RuleDefinitionBody.model_validate(row.definition_json)
                 for effect in body.resolved_effects:
                     assert effect.type in valid_types
 
@@ -160,7 +159,7 @@ class TestRequireCurrentContextSchemaBeforeCall:
         row = manager.get_by_name("require-current-context-schema-before-call")
         assert row is not None
 
-        body = RuleDefinitionBody.model_validate_json(row.definition_json)
+        body = RuleDefinitionBody.model_validate(row.definition_json)
         assert body.event.value == "before_tool"
         effects = body.resolved_effects
         block_effects = [e for e in effects if e.type == "block"]
@@ -172,7 +171,7 @@ class TestRequireCurrentContextSchemaBeforeCall:
         _sync_bundled(db)
 
         row = manager.get_by_name("require-current-context-schema-before-call")
-        body = RuleDefinitionBody.model_validate_json(row.definition_json)
+        body = RuleDefinitionBody.model_validate(row.definition_json)
 
         assert body.when is not None
         assert "is_tool_unlocked" in body.when
@@ -191,7 +190,7 @@ class TestTrackSchemaLookup:
         row = manager.get_by_name("track-schema-lookup")
         assert row is not None
 
-        body = RuleDefinitionBody.model_validate_json(row.definition_json)
+        body = RuleDefinitionBody.model_validate(row.definition_json)
         assert body.event.value == "after_tool"
         assert body.effects[0].type == "set_variable"
         assert body.effects[0].variable == "unlocked_tools"
@@ -201,7 +200,7 @@ class TestTrackSchemaLookup:
         _sync_bundled(db)
 
         row = manager.get_by_name("track-schema-lookup")
-        body = RuleDefinitionBody.model_validate_json(row.definition_json)
+        body = RuleDefinitionBody.model_validate(row.definition_json)
 
         assert body.when is not None
         assert "get_tool_schema" in body.when
@@ -217,7 +216,7 @@ class TestTrackServersListed:
         row = manager.get_by_name("track-servers-listed")
         assert row is not None
 
-        body = RuleDefinitionBody.model_validate_json(row.definition_json)
+        body = RuleDefinitionBody.model_validate(row.definition_json)
         assert body.event.value == "after_tool"
         assert body.effects[0].type == "set_variable"
         assert body.effects[0].variable == "servers_listed"
@@ -228,7 +227,7 @@ class TestTrackServersListed:
         _sync_bundled(db)
 
         row = manager.get_by_name("track-servers-listed")
-        body = RuleDefinitionBody.model_validate_json(row.definition_json)
+        body = RuleDefinitionBody.model_validate(row.definition_json)
 
         assert body.when is not None
         assert "list_mcp_servers" in body.when
@@ -244,7 +243,7 @@ class TestTrackListedServers:
         row = manager.get_by_name("track-listed-servers")
         assert row is not None
 
-        body = RuleDefinitionBody.model_validate_json(row.definition_json)
+        body = RuleDefinitionBody.model_validate(row.definition_json)
         assert body.event.value == "after_tool"
         assert body.effects[0].type == "set_variable"
         assert body.effects[0].variable == "listed_servers"
@@ -254,7 +253,7 @@ class TestTrackListedServers:
         _sync_bundled(db)
 
         row = manager.get_by_name("track-listed-servers")
-        body = RuleDefinitionBody.model_validate_json(row.definition_json)
+        body = RuleDefinitionBody.model_validate(row.definition_json)
 
         assert body.when is not None
         assert "list_tools" in body.when
@@ -270,7 +269,7 @@ class TestResetRules:
         row = manager.get_by_name("reset-progressive-discovery")
         assert row is not None
 
-        body = RuleDefinitionBody.model_validate_json(row.definition_json)
+        body = RuleDefinitionBody.model_validate(row.definition_json)
         assert body.event.value == "session_start"
 
         effects = body.resolved_effects
@@ -284,7 +283,7 @@ class TestResetRules:
         _sync_bundled(db)
 
         row = manager.get_by_name("reset-progressive-discovery")
-        body = RuleDefinitionBody.model_validate_json(row.definition_json)
+        body = RuleDefinitionBody.model_validate(row.definition_json)
 
         assert body.when is not None
         assert "clear" in body.when
@@ -295,7 +294,7 @@ class TestPreseedRemoved:
     """Verify preseed-progressive-discovery has been removed."""
 
     def test_preseed_rule_does_not_exist(self, db, manager) -> None:
-        """Preseed rule should not exist in workflow_definitions."""
+        """Preseed rule should not exist in rule_definitions."""
         _sync_bundled(db)
 
         row = manager.get_by_name("preseed-progressive-discovery")
@@ -333,7 +332,7 @@ class TestRuleDefinitionBodyToolsField:
         for rule_name in ["require-current-context-schema-before-call"]:
             row = manager.get_by_name(rule_name)
             assert row is not None, f"{rule_name} not found"
-            body = RuleDefinitionBody.model_validate_json(row.definition_json)
+            body = RuleDefinitionBody.model_validate(row.definition_json)
             block_effects = [e for e in body.resolved_effects if e.type == "block"]
             assert len(block_effects) == 1, f"{rule_name} should have exactly 1 block effect"
             mcp_effects = [e for e in body.resolved_effects if e.type == "mcp_call"]
@@ -372,10 +371,10 @@ class TestRuleEngineIntegration:
     def engine(self, db: HubDatabase) -> RuleEngine:
         _sync_bundled(db)
         # Disable all rules first, then enable only the progressive discovery rules
-        db.execute("UPDATE workflow_definitions SET enabled = FALSE")
+        db.execute("UPDATE rule_definitions SET enabled = FALSE")
         for name in PROGRESSIVE_DISCOVERY_RULES:
             db.execute(
-                "UPDATE workflow_definitions SET enabled = TRUE WHERE name = %s",
+                "UPDATE rule_definitions SET enabled = TRUE WHERE name = %s",
                 (name,),
             )
         return RuleEngine(db)

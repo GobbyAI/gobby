@@ -5,18 +5,17 @@ Contains helpers and a register_pipeline_tools() function that adds all
 pipeline-related MCP tools to a given InternalToolRegistry.
 """
 
+import json
 import logging
 from collections.abc import Callable
-from typing import TYPE_CHECKING, Any
+from pathlib import Path
+from types import SimpleNamespace
+from typing import TYPE_CHECKING, Any, cast
+
+import yaml
+from pydantic import ValidationError
 
 from gobby.mcp_proxy.tools.internal import InternalToolRegistry
-from gobby.mcp_proxy.tools.workflows._definitions import (
-    _resolve_definition,
-    create_workflow_definition,
-    delete_workflow_definition,
-    export_workflow_definition,
-    update_workflow_definition,
-)
 from gobby.mcp_proxy.tools.workflows._pipeline_discovery import list_pipelines
 from gobby.mcp_proxy.tools.workflows._pipeline_execution import (
     approve_pipeline,
@@ -31,10 +30,15 @@ from gobby.mcp_proxy.tools.workflows._pipeline_query import (
     list_pipeline_executions,
     search_pipeline_executions,
 )
+from gobby.storage.definitions.pipelines import (
+    PipelineDefinitionManager,
+    PipelineDefinitionRow,
+)
 from gobby.storage.hub.protocol import HubDatabase
-from gobby.storage.workflow_definitions import LocalWorkflowDefinitionManager
 from gobby.utils.project_context import get_project_context
 from gobby.utils.session_context import get_current_session_id
+from gobby.workflows.definitions import normalize_workflow_definition_enabled
+from gobby.workflows.pipeline_models import PipelineDefinition
 
 if TYPE_CHECKING:
     from gobby.storage.sessions import SessionManager
@@ -42,19 +46,238 @@ if TYPE_CHECKING:
 logger = logging.getLogger(__name__)
 
 
+def _export_row(row: PipelineDefinitionRow) -> SimpleNamespace:
+    return SimpleNamespace(
+        name=row.name,
+        definition_json=json.dumps(row.definition_json),
+        tags=row.tags,
+    )
+
+
+def _resolve_pipeline(
+    def_manager: PipelineDefinitionManager,
+    name: str | None = None,
+    definition_id: str | None = None,
+    include_deleted: bool = False,
+) -> PipelineDefinitionRow:
+    if definition_id:
+        return def_manager.get(definition_id, include_deleted=include_deleted)
+    if name:
+        row = def_manager.get_by_name(name, include_deleted=include_deleted)
+        if row is None:
+            raise ValueError(f"Pipeline '{name}' not found")
+        return row
+    raise ValueError("Either 'name' or 'definition_id' is required")
+
+
 def _require_pipeline(
-    def_manager: LocalWorkflowDefinitionManager,
+    def_manager: PipelineDefinitionManager,
     name: str | None = None,
     definition_id: str | None = None,
 ) -> dict[str, Any] | None:
-    """Resolve a definition and verify it's a pipeline. Returns error dict or None."""
+    """Resolve a typed pipeline row. Returns error dict or None."""
     try:
-        row = _resolve_definition(def_manager, name, definition_id)
+        _resolve_pipeline(def_manager, name, definition_id)
     except ValueError as e:
         return {"success": False, "error": str(e)}
-    if row.workflow_type != "pipeline":
-        return {"success": False, "error": f"'{row.name}' is a workflow, not a pipeline"}
     return None
+
+
+def _parse_pipeline_yaml(yaml_content: str) -> dict[str, Any]:
+    data = yaml.safe_load(yaml_content)
+    if not isinstance(data, dict) or "name" not in data:
+        raise ValueError("Invalid YAML: must be a mapping with a 'name' field")
+    if data.get("type") != "pipeline":
+        raise ValueError("YAML must have 'type: pipeline'")
+    PipelineDefinition(**data)
+    return data
+
+
+def _pipeline_summary(row: PipelineDefinitionRow) -> dict[str, Any]:
+    return {
+        "id": row.id,
+        "name": row.name,
+        "description": row.description,
+        "version": row.version,
+        "enabled": row.enabled,
+        "source": row.source,
+        "tags": row.tags,
+        "project_id": row.project_id,
+    }
+
+
+def create_pipeline_definition(
+    def_manager: PipelineDefinitionManager,
+    loader: Any,
+    yaml_content: str,
+    project_id: str | None = None,
+    *,
+    project_path: Path | None = None,
+    make_global_template: bool = False,
+) -> dict[str, Any]:
+    try:
+        data = _parse_pipeline_yaml(yaml_content)
+    except yaml.YAMLError as e:
+        return {"success": False, "error": f"YAML parse error: {e}"}
+    except (ValueError, TypeError, ValidationError) as e:
+        return {"success": False, "error": f"Validation failed: {e}"}
+
+    name = str(data["name"])
+    existing = def_manager.get_by_name(name, project_id=project_id)
+    if existing:
+        return {
+            "success": False,
+            "error": (
+                f"Definition '{name}' already exists (id={existing.id}). "
+                "Use update_workflow to modify it."
+            ),
+        }
+
+    try:
+        row = def_manager.create(
+            name=name,
+            definition_json=data,
+            project_id=project_id,
+            description=data.get("description", ""),
+            version=str(data.get("version", "1.0")),
+            enabled=normalize_workflow_definition_enabled(data),
+            source="custom",
+            tags=["user"],
+        )
+    except Exception as e:
+        return {"success": False, "error": f"Import failed: {e}"}
+
+    loader.clear_cache()
+    logger.info("Created pipeline definition '%s' (id=%s)", row.name, row.id)
+    try:
+        from gobby.mcp_proxy.tools.workflows._auto_export import auto_export_definition
+
+        auto_export_definition(
+            cast(Any, _export_row(row)),
+            project_path,
+            kind="pipeline",
+            make_global=make_global_template,
+        )
+    except Exception as e:
+        logger.warning("Failed to auto-export definition '%s': %s", row.name, e)
+    return {"success": True, "definition": _pipeline_summary(row)}
+
+
+def update_pipeline_definition(
+    def_manager: PipelineDefinitionManager,
+    loader: Any,
+    name: str | None = None,
+    definition_id: str | None = None,
+    description: str | None = None,
+    enabled: bool | None = None,
+    version: str | None = None,
+    tags: list[str] | None = None,
+    yaml_content: str | None = None,
+    *,
+    project_path: Path | None = None,
+    make_global_template: bool = False,
+) -> dict[str, Any]:
+    try:
+        row = _resolve_pipeline(def_manager, name, definition_id)
+    except ValueError as e:
+        return {"success": False, "error": str(e)}
+
+    fields: dict[str, Any] = {}
+    if yaml_content is not None:
+        try:
+            data = _parse_pipeline_yaml(yaml_content)
+        except Exception as e:
+            return {"success": False, "error": f"YAML validation failed: {e}"}
+        fields["definition_json"] = data
+        if "description" in data:
+            fields["description"] = data["description"]
+        if "version" in data:
+            fields["version"] = str(data["version"])
+        if "enabled" in data:
+            fields["enabled"] = bool(data["enabled"])
+    if description is not None:
+        fields["description"] = description
+    if enabled is not None:
+        fields["enabled"] = enabled
+    if version is not None:
+        fields["version"] = version
+    if tags is not None:
+        fields["tags"] = tags
+    if not fields:
+        return {"success": False, "error": "No fields to update"}
+    try:
+        updated = def_manager.update(row.id, **fields)
+    except Exception as e:
+        return {"success": False, "error": f"Update failed: {e}"}
+    loader.clear_cache()
+    try:
+        from gobby.mcp_proxy.tools.workflows._auto_export import auto_export_definition
+
+        auto_export_definition(
+            cast(Any, _export_row(updated)),
+            project_path,
+            kind="pipeline",
+            make_global=make_global_template,
+        )
+    except Exception as e:
+        logger.warning("Failed to auto-export definition '%s': %s", updated.name, e)
+    return {"success": True, "definition": _pipeline_summary(updated)}
+
+
+def delete_pipeline_definition(
+    def_manager: PipelineDefinitionManager,
+    loader: Any,
+    name: str | None = None,
+    definition_id: str | None = None,
+    force: bool = False,
+) -> dict[str, Any]:
+    try:
+        row = _resolve_pipeline(def_manager, name, definition_id)
+    except ValueError as e:
+        return {"success": False, "error": str(e)}
+    if "gobby" in (row.tags or []) and not force:
+        return {
+            "success": False,
+            "error": (
+                f"Definition '{row.name}' is bundled and will be re-created on restart. "
+                "Use force=True to delete anyway."
+            ),
+        }
+    deleted = def_manager.delete(row.id)
+    if not deleted:
+        return {"success": False, "error": f"Failed to delete definition '{row.name}'"}
+    try:
+        from gobby.mcp_proxy.tools.workflows._auto_export import auto_delete_definition
+
+        is_user = bool(row.tags and "user" in row.tags)
+        auto_delete_definition(row.name, Path.cwd(), kind="pipeline", delete_global=is_user)
+    except Exception as e:
+        logger.warning("Failed to delete template '%s': %s", row.name, e)
+    loader.clear_cache()
+    return {"success": True, "deleted": {"id": row.id, "name": row.name}}
+
+
+def export_pipeline_definition(
+    def_manager: PipelineDefinitionManager,
+    name: str | None = None,
+    definition_id: str | None = None,
+) -> dict[str, Any]:
+    try:
+        row = _resolve_pipeline(def_manager, name, definition_id)
+    except ValueError as e:
+        return {"success": False, "error": str(e)}
+    payload = dict(row.definition_json)
+    payload.setdefault("name", row.name)
+    payload.setdefault("type", "pipeline")
+    payload.setdefault("version", row.version)
+    payload["enabled"] = row.enabled
+    if row.description is not None:
+        payload.setdefault("description", row.description)
+    return {
+        "success": True,
+        "name": row.name,
+        "yaml_content": yaml.safe_dump(payload, sort_keys=False),
+    }
 
 
 def _auto_subscribe_lineage(
@@ -117,27 +340,27 @@ def register_pipeline_tools(
     db: HubDatabase | None = None,
     session_manager: "SessionManager | None" = None,
     completion_registry: Any | None = None,
-    def_manager: LocalWorkflowDefinitionManager | None = None,
+    def_manager: PipelineDefinitionManager | None = None,
 ) -> None:
     """
     Register all pipeline-related tools on an existing registry.
 
     Args:
         registry: The InternalToolRegistry to add pipeline tools to
-        loader: WorkflowLoader instance for discovering pipelines
+        loader: PipelineLoader instance for discovering pipelines
         executor_getter: Callable returning PipelineExecutor (or None) at call time
         execution_manager_getter: Callable returning LocalPipelineExecutionManager
         db: Database instance for definition CRUD operations
         session_manager: Session manager for resolving session references
         completion_registry: CompletionEventRegistry for auto-subscribing callers
-        def_manager: Definition manager for pipeline CRUD (created from db if not provided)
+        def_manager: Typed pipeline manager for CRUD (created from db if not provided)
     """
     _loader = loader
     _get_executor = executor_getter or (lambda: None)
     _get_execution_manager = execution_manager_getter or (lambda: None)
     _def_manager = def_manager
     if _def_manager is None and db is not None:
-        _def_manager = LocalWorkflowDefinitionManager(db)
+        _def_manager = PipelineDefinitionManager(db)
     _completion_registry = completion_registry
 
     # Register dynamic tools for pipelines with expose_as_tool=True
@@ -171,7 +394,7 @@ def register_pipeline_tools(
 
         project_ctx = get_project_context()
         project_id = project_ctx.get("id") if project_ctx else None
-        definition = await _loader.load_workflow(name, project_id)
+        definition = await _loader.load_pipeline(name, project_id)
 
         if not definition:
             return {"success": False, "error": f"Pipeline '{name}' not found"}
@@ -451,15 +674,7 @@ def register_pipeline_tools(
                 "success": False,
                 "error": "Pipeline definition tools require database connection",
             }
-        import yaml as _yaml
-
-        try:
-            data = _yaml.safe_load(yaml_content)
-        except _yaml.YAMLError as e:
-            return {"success": False, "error": f"Invalid YAML: {e}"}
-        if not isinstance(data, dict) or data.get("type") != "pipeline":
-            return {"success": False, "error": "YAML must have 'type: pipeline'"}
-        return create_workflow_definition(_def_manager, _loader, yaml_content, project_id)
+        return create_pipeline_definition(_def_manager, _loader, yaml_content, project_id)
 
     @registry.tool(
         name="update_pipeline",
@@ -470,7 +685,6 @@ def register_pipeline_tools(
         definition_id: str | None = None,
         description: str | None = None,
         enabled: bool | None = None,
-        priority: int | None = None,
         version: str | None = None,
         tags: list[str] | None = None,
         yaml_content: str | None = None,
@@ -483,14 +697,13 @@ def register_pipeline_tools(
         err = _require_pipeline(_def_manager, name, definition_id)
         if err:
             return err
-        return update_workflow_definition(
+        return update_pipeline_definition(
             _def_manager,
             _loader,
             name,
             definition_id,
             description,
             enabled,
-            priority,
             version,
             tags,
             yaml_content,
@@ -513,7 +726,7 @@ def register_pipeline_tools(
         err = _require_pipeline(_def_manager, name, definition_id)
         if err:
             return err
-        return delete_workflow_definition(_def_manager, _loader, name, definition_id, force)
+        return delete_pipeline_definition(_def_manager, _loader, name, definition_id, force)
 
     @registry.tool(
         name="export_pipeline",
@@ -531,7 +744,7 @@ def register_pipeline_tools(
         err = _require_pipeline(_def_manager, name, definition_id)
         if err:
             return err
-        return export_workflow_definition(_def_manager, name, definition_id)
+        return export_pipeline_definition(_def_manager, name, definition_id)
 
 
 def _register_exposed_pipeline_tools(
@@ -552,7 +765,7 @@ def _register_exposed_pipeline_tools(
         return
 
     try:
-        discovered = loader.discover_pipeline_workflows_sync()
+        discovered = loader.discover_pipelines_sync()
     except Exception:
         logger.warning("Failed to discover pipelines for dynamic tools", exc_info=True)
         return

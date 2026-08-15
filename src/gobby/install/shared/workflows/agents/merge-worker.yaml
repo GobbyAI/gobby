@@ -6,7 +6,7 @@ description: |
   Detects isolation type from session variables and calls the appropriate merge tool.
   Uses gobby-merge for AI-powered conflict resolution on worktree merges.
 
-version: "3.1"
+version: "3.2"
 enabled: true
 priority: 20
 provider: claude
@@ -133,245 +133,246 @@ instructions: |
     the terminate step and then calling end_agent_run.
   - Use context-aware progressive discovery: call leased known tools directly; fetch schemas directly for known unleased tools; use list_tools only for unknown tool names and list_mcp_servers only for unknown servers or registries.
 
-step_variables:
-  merge_result_recorded: false
-  merge_worker_ready_to_terminate: false
-  merge_succeeded: false
-  worktree_cleanup_done: false
-  worktree_cleanup_failures: 0
+step_workflow:
+  variables:
+    merge_result_recorded: false
+    merge_worker_ready_to_terminate: false
+    merge_succeeded: false
+    worktree_cleanup_done: false
+    worktree_cleanup_failures: 0
+
+  exit_condition: "current_step == 'terminate'"
+  steps:
+    - name: merge
+      description: "Execute merge with AI-powered conflict resolution"
+      status_message: |
+        Merge your isolation environment back to the target branch.
+
+        FAST PATH (try first):
+        1. Use progressive discovery to find the merge tools
+        2. Check your session variables for worktree_id or clone_id
+        3. WORKTREE: if the prompt asks for preflight or branch metadata, stay
+           inside the merge step MCP surface; then call merge_worktree with
+           worktree_id and target_branch.
+           CLONE: sync_clone first, then merge_clone with clone_id and target_branch
+        4. If merge succeeds with no conflicts and the spawn prompt provides a
+           verification command, call verify_in_worktree before record_merge_result.
+           Preserve required environment guards in the command, including
+           `GOBBY_TEST_PROTECT=1` prefixes or `env GOBBY_TEST_PROTECT=1` wrappers.
+           If verification fails, record_merge_result with failure_reason. If
+           verification passes or no verification command was supplied, record the
+           merge_sha returned by merge_worktree/merge_clone with
+           record_merge_result, then call close_linked_github_issue. Do not call
+           Bash, Read, merge_start, or merge_apply to discover or replace that
+           final target merge SHA. The workflow will transition to cleanup
+           (delete your worktree), then terminate; call end_agent_run only after
+           the terminate transition.
+
+        CONFLICT RESOLUTION (worktree only):
+        If merge_worktree returns has_conflicts: true:
+        1. Call merge_start with worktree_id, source_branch, target_branch
+           using the worktree branch as source_branch and the local delivery
+           branch as target_branch. If merge_start rejects a stale/reused
+           resolution or reports that source_branch does not match the worktree
+           branch, retry once with the corrected source/target pair from the
+           worktree metadata. If the corrected retry fails, call
+           gobby-tasks-ops:record_merge_result with the task_id and the
+           failure_reason reported by merge_start.
+           (this sets merge_resolve_attempts=[])
+        2. Check merge_status for the resolution_id to see conflict details
+        3. Resolve conflicts sequentially: call merge_resolve with use_ai=true
+           for exactly one conflict_id, wait for it to complete, then call
+           merge_status before selecting the next pending conflict. Never issue
+           multiple merge_resolve calls in one assistant turn or parallel tool
+           batch. Track attempts by conflict_id. If one conflict_id reaches
+           MAX_RESOLVE_RETRIES=3, skip that conflict_id and continue with the
+           next pending conflict. Do not call Read, Bash, or file-inspection
+           tools to build manual resolved_content; merge_resolve(use_ai=true) is
+           the conflict content access path in this step.
+        4. Re-check merge_status after each attempt. Call merge_apply with the
+           resolution_id only when all conflicts are resolved. Treat merge_apply
+           as source/worktree branch resolution only; do not record its SHA as
+           the final delivery SHA.
+        5. Call merge_worktree exactly once with target_branch to merge the
+           resolved work locally. Record the merge_sha returned by merge_worktree.
+        6. Call record_merge_result with that merge_sha, then
+           close_linked_github_issue. The workflow will transition to cleanup
+           (delete your worktree), then terminate; call end_agent_run only after
+           the terminate transition.
+
+        CLONE CONFLICTS: record_merge_result with failure_reason (no
+        auto-resolution for clones), then terminate.
+        RESOLUTION FAILURE OR RETRY CAP: do not call merge_abort solely because
+        one conflict_id hit the cap. Continue other conflict_ids, then report the
+        unresolved ids/files and retry counts in record_merge_result before
+        terminating.
+
+        The target branch is in your spawn prompt. Defaults:
+        merge_worktree uses the worktree's base_branch, merge_clone uses "main".
+      allowed_tools:
+        - mcp__gobby__call_tool
+        - mcp__gobby__list_mcp_servers
+        - mcp__gobby__list_tools
+        - mcp__gobby__get_tool_schema
+      allowed_mcp_tools:
+        - "gobby-worktrees:get_worktree"
+        - "gobby-worktrees:get_worktree_by_task"
+        - "gobby-worktrees:merge_worktree"
+        - "gobby-clones:merge_clone"
+        - "gobby-clones:sync_clone"
+        - "gobby-clones:get_clone"
+        - "gobby-merge:inspect_merge_state"
+        - "gobby-merge:merge_start"
+        - "gobby-merge:merge_status"
+        - "gobby-merge:merge_resolve"
+        - "gobby-merge:merge_apply"
+        - "gobby-merge:merge_abort"
+        - "gobby-merge:verify_in_worktree"
+        - "gobby-tasks-ops:record_merge_result"
+        - "gobby-tasks-ops:close_linked_github_issue"
+      mcp_error_policy: stay
+      on_mcp_success:
+        - server: gobby-merge
+          tool: merge_start
+          action: set_variable
+          variable: merge_resolve_attempts
+          value: []
+        - server: gobby-merge
+          tool: merge_resolve
+          action: set_variable
+          variable: merge_resolve_attempts
+          value: "vars.get('merge_resolve_attempts', []) + [tool_input.get('conflict_id', '')]"
+        - server: gobby-tasks-ops
+          tool: record_merge_result
+          action: set_variable
+          variable: merge_result_recorded
+          value: true
+        - server: gobby-tasks-ops
+          tool: record_merge_result
+          when: "not bool(tool_input.get('failure_reason'))"
+          action: set_variable
+          variable: merge_succeeded
+          value: true
+        - server: gobby-tasks-ops
+          tool: record_merge_result
+          when: "bool(tool_input.get('failure_reason'))"
+          action: set_variable
+          variable: merge_worker_ready_to_terminate
+          value: true
+        - server: gobby-tasks-ops
+          tool: close_linked_github_issue
+          action: set_variable
+          variable: merge_worker_ready_to_terminate
+          value: true
+      on_mcp_error:
+        - server: gobby-merge
+          tool: merge_resolve
+          when: "not bool(tool_output.get('retry_later'))"
+          action: set_variable
+          variable: merge_resolve_attempts
+          value: "vars.get('merge_resolve_attempts', []) + [tool_input.get('conflict_id', '')]"
+        - server: gobby-tasks-ops
+          tool: close_linked_github_issue
+          action: set_variable
+          variable: merge_worker_ready_to_terminate
+          value: true
+      on_mcp_before:
+        - server: gobby-merge
+          tool: merge_resolve
+          action: block
+          when: "vars.get('merge_resolve_attempts', []).count(tool_input.get('conflict_id', '')) >= 3"
+          reason: |
+            MAX_RESOLVE_RETRIES reached for this conflict_id. Do not retry this
+            conflict_id. Skip it, continue with the next pending conflict_id, then
+            call merge_status and report any unresolved ids/files with retry
+            counts in gobby-tasks-ops:record_merge_result with failure_reason.
+            The workflow will transition to terminate. Do not call merge_abort
+            solely because one conflict_id hit the retry cap.
+      # Do not set completion directly from merge_worktree — it returns
+      # success:false on conflicts, but handler success fires on any
+      # non-transport-error response. Completion is recorded explicitly through
+      # record_merge_result/close_linked_github_issue.
+      transitions:
+        - to: cleanup
+          when: "vars.merge_result_recorded and vars.merge_worker_ready_to_terminate and vars.merge_succeeded"
+        - to: terminate
+          when: "vars.merge_result_recorded and vars.merge_worker_ready_to_terminate and not vars.merge_succeeded"
+
+    - name: cleanup
+      description: "Delete the merged worktree so no stale registration leaks"
+      status_message: |
+        Your merge succeeded and is recorded. Clean up your isolation before
+        terminating.
+
+        WORKTREE (session variable worktree_id present):
+        1. Call gobby-worktrees:delete_worktree with your worktree_id and
+           default flags (force=false, force_delete_branch=false).
+           merge_worktree already marked the record merged. If delete_worktree
+           reports the branch or record as not merged, call
+           gobby-worktrees:mark_worktree_merged with the worktree_id, then
+           retry delete_worktree once.
+        2. If delete_worktree refuses or fails, do not use force flags. Retry
+           cleanup until three delete_worktree attempts have failed. After the
+           third failure the workflow transitions to terminate; report the last
+           refusal reason in your final output so the stale-worktree detector
+           can surface the leftover.
+
+        CLONE (no worktree_id): clone cleanup is handled by the coordinator.
+        Call mcp__gobby__set_variable with variable="worktree_cleanup_done" and
+        value=true to proceed.
+
+        The workflow transitions to terminate once cleanup is resolved; call
+        end_agent_run only after that transition.
+      allowed_tools:
+        - mcp__gobby__call_tool
+        - mcp__gobby__list_mcp_servers
+        - mcp__gobby__list_tools
+        - mcp__gobby__get_tool_schema
+        - mcp__gobby__set_variable
+      allowed_mcp_tools:
+        - "gobby-worktrees:get_worktree"
+        - "gobby-worktrees:mark_worktree_merged"
+        - "gobby-worktrees:delete_worktree"
+      mcp_error_policy: stay
+      on_mcp_success:
+        - server: gobby-worktrees
+          tool: delete_worktree
+          when: "bool(tool_output.get('success'))"
+          action: set_variable
+          variable: worktree_cleanup_done
+          value: true
+        - server: gobby-worktrees
+          tool: delete_worktree
+          when: "not bool(tool_output.get('success'))"
+          action: set_variable
+          variable: worktree_cleanup_failures
+          value: "vars.get('worktree_cleanup_failures', 0) + 1"
+      on_mcp_error:
+        - server: gobby-worktrees
+          tool: delete_worktree
+          action: set_variable
+          variable: worktree_cleanup_failures
+          value: "vars.get('worktree_cleanup_failures', 0) + 1"
+      transitions:
+        - to: terminate
+          when: "vars.worktree_cleanup_done"
+        - to: terminate
+          when: "vars.get('worktree_cleanup_failures', 0) >= 3"
+
+    - name: terminate
+      description: "Safety net: self-terminate via gobby-agents:end_agent_run"
+      status_message: >-
+        Call mcp__gobby__call_tool with server_name="gobby-agents",
+        tool_name="end_agent_run", and arguments={} to terminate.
+      allowed_tools:
+        - mcp__gobby__call_tool
+        - mcp__gobby__list_mcp_servers
+        - mcp__gobby__list_tools
+        - mcp__gobby__get_tool_schema
+      allowed_mcp_tools:
+        - "gobby-agents:end_agent_run"
 
 workflows:
   rule_selectors:
     include:
       - "tag:default"
-steps:
-  - name: merge
-    description: "Execute merge with AI-powered conflict resolution"
-    status_message: |
-      Merge your isolation environment back to the target branch.
-
-      FAST PATH (try first):
-      1. Use progressive discovery to find the merge tools
-      2. Check your session variables for worktree_id or clone_id
-      3. WORKTREE: if the prompt asks for preflight or branch metadata, stay
-         inside the merge step MCP surface; then call merge_worktree with
-         worktree_id and target_branch.
-         CLONE: sync_clone first, then merge_clone with clone_id and target_branch
-      4. If merge succeeds with no conflicts and the spawn prompt provides a
-         verification command, call verify_in_worktree before record_merge_result.
-         Preserve required environment guards in the command, including
-         `GOBBY_TEST_PROTECT=1` prefixes or `env GOBBY_TEST_PROTECT=1` wrappers.
-         If verification fails, record_merge_result with failure_reason. If
-         verification passes or no verification command was supplied, record the
-         merge_sha returned by merge_worktree/merge_clone with
-         record_merge_result, then call close_linked_github_issue. Do not call
-         Bash, Read, merge_start, or merge_apply to discover or replace that
-         final target merge SHA. The workflow will transition to cleanup
-         (delete your worktree), then terminate; call end_agent_run only after
-         the terminate transition.
-
-      CONFLICT RESOLUTION (worktree only):
-      If merge_worktree returns has_conflicts: true:
-      1. Call merge_start with worktree_id, source_branch, target_branch
-         using the worktree branch as source_branch and the local delivery
-         branch as target_branch. If merge_start rejects a stale/reused
-         resolution or reports that source_branch does not match the worktree
-         branch, retry once with the corrected source/target pair from the
-         worktree metadata. If the corrected retry fails, call
-         gobby-tasks-ops:record_merge_result with the task_id and the
-         failure_reason reported by merge_start.
-         (this sets merge_resolve_attempts=[])
-      2. Check merge_status for the resolution_id to see conflict details
-      3. Resolve conflicts sequentially: call merge_resolve with use_ai=true
-         for exactly one conflict_id, wait for it to complete, then call
-         merge_status before selecting the next pending conflict. Never issue
-         multiple merge_resolve calls in one assistant turn or parallel tool
-         batch. Track attempts by conflict_id. If one conflict_id reaches
-         MAX_RESOLVE_RETRIES=3, skip that conflict_id and continue with the
-         next pending conflict. Do not call Read, Bash, or file-inspection
-         tools to build manual resolved_content; merge_resolve(use_ai=true) is
-         the conflict content access path in this step.
-      4. Re-check merge_status after each attempt. Call merge_apply with the
-         resolution_id only when all conflicts are resolved. Treat merge_apply
-         as source/worktree branch resolution only; do not record its SHA as
-         the final delivery SHA.
-      5. Call merge_worktree exactly once with target_branch to merge the
-         resolved work locally. Record the merge_sha returned by merge_worktree.
-      6. Call record_merge_result with that merge_sha, then
-         close_linked_github_issue. The workflow will transition to cleanup
-         (delete your worktree), then terminate; call end_agent_run only after
-         the terminate transition.
-
-      CLONE CONFLICTS: record_merge_result with failure_reason (no
-      auto-resolution for clones), then terminate.
-      RESOLUTION FAILURE OR RETRY CAP: do not call merge_abort solely because
-      one conflict_id hit the cap. Continue other conflict_ids, then report the
-      unresolved ids/files and retry counts in record_merge_result before
-      terminating.
-
-      The target branch is in your spawn prompt. Defaults:
-      merge_worktree uses the worktree's base_branch, merge_clone uses "main".
-    allowed_tools:
-      - mcp__gobby__call_tool
-      - mcp__gobby__list_mcp_servers
-      - mcp__gobby__list_tools
-      - mcp__gobby__get_tool_schema
-    allowed_mcp_tools:
-      - "gobby-worktrees:get_worktree"
-      - "gobby-worktrees:get_worktree_by_task"
-      - "gobby-worktrees:merge_worktree"
-      - "gobby-clones:merge_clone"
-      - "gobby-clones:sync_clone"
-      - "gobby-clones:get_clone"
-      - "gobby-merge:inspect_merge_state"
-      - "gobby-merge:merge_start"
-      - "gobby-merge:merge_status"
-      - "gobby-merge:merge_resolve"
-      - "gobby-merge:merge_apply"
-      - "gobby-merge:merge_abort"
-      - "gobby-merge:verify_in_worktree"
-      - "gobby-tasks-ops:record_merge_result"
-      - "gobby-tasks-ops:close_linked_github_issue"
-    mcp_error_policy: stay
-    on_mcp_success:
-      - server: gobby-merge
-        tool: merge_start
-        action: set_variable
-        variable: merge_resolve_attempts
-        value: []
-      - server: gobby-merge
-        tool: merge_resolve
-        action: set_variable
-        variable: merge_resolve_attempts
-        value: "vars.get('merge_resolve_attempts', []) + [tool_input.get('conflict_id', '')]"
-      - server: gobby-tasks-ops
-        tool: record_merge_result
-        action: set_variable
-        variable: merge_result_recorded
-        value: true
-      - server: gobby-tasks-ops
-        tool: record_merge_result
-        when: "not bool(tool_input.get('failure_reason'))"
-        action: set_variable
-        variable: merge_succeeded
-        value: true
-      - server: gobby-tasks-ops
-        tool: record_merge_result
-        when: "bool(tool_input.get('failure_reason'))"
-        action: set_variable
-        variable: merge_worker_ready_to_terminate
-        value: true
-      - server: gobby-tasks-ops
-        tool: close_linked_github_issue
-        action: set_variable
-        variable: merge_worker_ready_to_terminate
-        value: true
-    on_mcp_error:
-      - server: gobby-merge
-        tool: merge_resolve
-        when: "not bool(tool_output.get('retry_later'))"
-        action: set_variable
-        variable: merge_resolve_attempts
-        value: "vars.get('merge_resolve_attempts', []) + [tool_input.get('conflict_id', '')]"
-      - server: gobby-tasks-ops
-        tool: close_linked_github_issue
-        action: set_variable
-        variable: merge_worker_ready_to_terminate
-        value: true
-    on_mcp_before:
-      - server: gobby-merge
-        tool: merge_resolve
-        action: block
-        when: "vars.get('merge_resolve_attempts', []).count(tool_input.get('conflict_id', '')) >= 3"
-        reason: |
-          MAX_RESOLVE_RETRIES reached for this conflict_id. Do not retry this
-          conflict_id. Skip it, continue with the next pending conflict_id, then
-          call merge_status and report any unresolved ids/files with retry
-          counts in gobby-tasks-ops:record_merge_result with failure_reason.
-          The workflow will transition to terminate. Do not call merge_abort
-          solely because one conflict_id hit the retry cap.
-    # Do not set completion directly from merge_worktree — it returns
-    # success:false on conflicts, but handler success fires on any
-    # non-transport-error response. Completion is recorded explicitly through
-    # record_merge_result/close_linked_github_issue.
-    transitions:
-      - to: cleanup
-        when: "vars.merge_result_recorded and vars.merge_worker_ready_to_terminate and vars.merge_succeeded"
-      - to: terminate
-        when: "vars.merge_result_recorded and vars.merge_worker_ready_to_terminate and not vars.merge_succeeded"
-
-  - name: cleanup
-    description: "Delete the merged worktree so no stale registration leaks"
-    status_message: |
-      Your merge succeeded and is recorded. Clean up your isolation before
-      terminating.
-
-      WORKTREE (session variable worktree_id present):
-      1. Call gobby-worktrees:delete_worktree with your worktree_id and
-         default flags (force=false, force_delete_branch=false).
-         merge_worktree already marked the record merged. If delete_worktree
-         reports the branch or record as not merged, call
-         gobby-worktrees:mark_worktree_merged with the worktree_id, then
-         retry delete_worktree once.
-      2. If delete_worktree refuses or fails, do not use force flags. Retry
-         cleanup until three delete_worktree attempts have failed. After the
-         third failure the workflow transitions to terminate; report the last
-         refusal reason in your final output so the stale-worktree detector
-         can surface the leftover.
-
-      CLONE (no worktree_id): clone cleanup is handled by the coordinator.
-      Call mcp__gobby__set_variable with variable="worktree_cleanup_done" and
-      value=true to proceed.
-
-      The workflow transitions to terminate once cleanup is resolved; call
-      end_agent_run only after that transition.
-    allowed_tools:
-      - mcp__gobby__call_tool
-      - mcp__gobby__list_mcp_servers
-      - mcp__gobby__list_tools
-      - mcp__gobby__get_tool_schema
-      - mcp__gobby__set_variable
-    allowed_mcp_tools:
-      - "gobby-worktrees:get_worktree"
-      - "gobby-worktrees:mark_worktree_merged"
-      - "gobby-worktrees:delete_worktree"
-    mcp_error_policy: stay
-    on_mcp_success:
-      - server: gobby-worktrees
-        tool: delete_worktree
-        when: "bool(tool_output.get('success'))"
-        action: set_variable
-        variable: worktree_cleanup_done
-        value: true
-      - server: gobby-worktrees
-        tool: delete_worktree
-        when: "not bool(tool_output.get('success'))"
-        action: set_variable
-        variable: worktree_cleanup_failures
-        value: "vars.get('worktree_cleanup_failures', 0) + 1"
-    on_mcp_error:
-      - server: gobby-worktrees
-        tool: delete_worktree
-        action: set_variable
-        variable: worktree_cleanup_failures
-        value: "vars.get('worktree_cleanup_failures', 0) + 1"
-    transitions:
-      - to: terminate
-        when: "vars.worktree_cleanup_done"
-      - to: terminate
-        when: "vars.get('worktree_cleanup_failures', 0) >= 3"
-
-  - name: terminate
-    description: "Safety net: self-terminate via gobby-agents:end_agent_run"
-    status_message: >-
-      Call mcp__gobby__call_tool with server_name="gobby-agents",
-      tool_name="end_agent_run", and arguments={} to terminate.
-    allowed_tools:
-      - mcp__gobby__call_tool
-      - mcp__gobby__list_mcp_servers
-      - mcp__gobby__list_tools
-      - mcp__gobby__get_tool_schema
-    allowed_mcp_tools:
-      - "gobby-agents:end_agent_run"
-
-exit_condition: "current_step == 'terminate'"

@@ -10,7 +10,7 @@ import pytest
 
 from gobby.agents.detection.registry import DetectionManifestRegistry
 from gobby.storage.hub.protocol import HubDatabase
-from gobby.storage.workflow_definitions import LocalWorkflowDefinitionManager
+from gobby.storage.definitions.agents import AgentDefinitionManager
 from gobby.workflows.definitions import AgentDefinitionBody
 from tests.agents.detection_test_support import BundledDetectionRegistry
 
@@ -24,7 +24,7 @@ class TestFallbackAgent:
 
     def _create_agent(
         self,
-        manager: LocalWorkflowDefinitionManager,
+        manager: AgentDefinitionManager,
         name: str,
         provider: str = "claude",
         model: str | None = None,
@@ -39,14 +39,13 @@ class TestFallbackAgent:
         manager.create(
             name=body.name,
             definition_json=body.model_dump_json(),
-            workflow_type="agent",
             enabled=True,
         )
         return body
 
     @pytest.mark.asyncio
     async def test_fallback_triggered_on_provider_failure(
-        self, db: HubDatabase, manager: LocalWorkflowDefinitionManager
+        self, db: HubDatabase, manager: AgentDefinitionManager
     ) -> None:
         """When primary provider has failed, factory loads fallback agent."""
         self._create_agent(manager, "dev-codex", provider="codex", fallback_agent="dev-claude")
@@ -95,7 +94,7 @@ class TestFallbackAgent:
     async def test_inherited_provider_rotation_uses_parent_session_source(
         self,
         db: HubDatabase,
-        manager: LocalWorkflowDefinitionManager,
+        manager: AgentDefinitionManager,
     ) -> None:
         self._create_agent(
             manager,
@@ -147,7 +146,7 @@ class TestFallbackAgent:
 
     @pytest.mark.asyncio
     async def test_no_fallback_when_provider_not_failed(
-        self, db: HubDatabase, manager: LocalWorkflowDefinitionManager
+        self, db: HubDatabase, manager: AgentDefinitionManager
     ) -> None:
         """When primary provider has NOT failed, use primary agent."""
         self._create_agent(manager, "dev-codex2", provider="codex", fallback_agent="dev-claude2")
@@ -193,7 +192,7 @@ class TestFallbackAgent:
 
     @pytest.mark.asyncio
     async def test_no_fallback_when_no_fallback_agent_set(
-        self, db: HubDatabase, manager: LocalWorkflowDefinitionManager
+        self, db: HubDatabase, manager: AgentDefinitionManager
     ) -> None:
         """Agent without fallback_agent doesn't attempt rotation."""
         self._create_agent(manager, "dev-solo", provider="codex")  # no fallback
@@ -232,7 +231,7 @@ class TestFallbackAgent:
 
     @pytest.mark.asyncio
     async def test_no_fallback_when_explicit_provider_override(
-        self, db: HubDatabase, manager: LocalWorkflowDefinitionManager
+        self, db: HubDatabase, manager: AgentDefinitionManager
     ) -> None:
         """Explicit provider= param skips fallback (caller chose the provider)."""
         self._create_agent(manager, "dev-explicit", provider="codex", fallback_agent="dev-fb")
@@ -276,7 +275,7 @@ class TestFallbackAgent:
     async def test_missing_fallback_definition_logs_skip_diagnostics(
         self,
         db: HubDatabase,
-        manager: LocalWorkflowDefinitionManager,
+        manager: AgentDefinitionManager,
         caplog: pytest.LogCaptureFixture,
     ) -> None:
         self._create_agent(

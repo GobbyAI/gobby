@@ -18,7 +18,7 @@ if TYPE_CHECKING:
     from gobby.agents.runner import AgentRunner
     from gobby.storage.hub.protocol import HubDatabase
     from gobby.workflows.dry_run import MCPInventoryProtocol
-    from gobby.workflows.loader import WorkflowLoader
+    from gobby.workflows.pipeline_loader import PipelineLoader
 
 logger = logging.getLogger(__name__)
 
@@ -65,27 +65,6 @@ class SpawnEvaluation:
         return [i for i in self.items if i.level == "warning"]
 
 
-def _load_agent_body(
-    name: str,
-    db: HubDatabase | None,
-    project_id: str | None = None,
-) -> Any:
-    """Load an AgentDefinitionBody from the DB by name."""
-    if db is None:
-        return None
-    try:
-        from gobby.storage.workflow_definitions import LocalWorkflowDefinitionManager
-        from gobby.workflows.definitions import AgentDefinitionBody
-
-        manager = LocalWorkflowDefinitionManager(db)
-        row = manager.get_by_name(name, project_id=project_id)
-        if row is not None and row.workflow_type == "agent":
-            return AgentDefinitionBody.model_validate_json(row.definition_json)
-    except Exception as e:
-        logger.warning("Failed to load agent definition '%s': %s", name, e)
-    return None
-
-
 async def evaluate_spawn(
     agent: str = "default",
     workflow: str | None = None,
@@ -98,7 +77,7 @@ async def evaluate_spawn(
     project_path: str | None = None,
     # Injected dependencies
     db: HubDatabase | None = None,
-    workflow_loader: WorkflowLoader | None = None,
+    workflow_loader: PipelineLoader | None = None,
     runner: AgentRunner | None = None,
     session_manager: Any | None = None,
     git_manager: Any | None = None,
@@ -122,7 +101,11 @@ async def evaluate_spawn(
     workflow_project_id = project_ctx.get("id") if project_ctx else None
 
     # ---- Layer 1: Agent Definition Resolution ----
-    agent_body = _load_agent_body(agent, db, workflow_project_id)
+    agent_body = None
+    if db is not None:
+        from gobby.workflows.agent_resolver import resolve_agent
+
+        agent_body = resolve_agent(agent, db, project_id=workflow_project_id)
 
     if agent_body is None:
         result.agent_found = False
@@ -178,7 +161,7 @@ async def evaluate_spawn(
 
         # Validate workflow for agent usage
         if workflow_loader is not None:
-            is_valid, error_msg = await workflow_loader.validate_workflow_for_agent(
+            is_valid, error_msg = await workflow_loader.validate_pipeline_for_agent(
                 effective_workflow,
                 workflow_project_id,
             )
@@ -322,11 +305,11 @@ async def evaluate_spawn(
     except Exception:
         logger.debug("Failed to check terminal availability", exc_info=True)
 
-    # ---- Layer 5: Workflow Evaluation (delegates to evaluate_workflow) ----
+    # ---- Layer 5: Pipeline Evaluation (delegates to evaluate_pipeline_definition) ----
     if effective_workflow and workflow_loader is not None:
-        from gobby.workflows.dry_run import evaluate_workflow
+        from gobby.workflows.dry_run import evaluate_pipeline_definition
 
-        wf_eval = await evaluate_workflow(
+        wf_eval = await evaluate_pipeline_definition(
             effective_workflow,
             workflow_loader,
             workflow_project_id,

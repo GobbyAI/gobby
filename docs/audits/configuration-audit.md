@@ -2,6 +2,15 @@
 
 Authoring task: #17044. Draft date: 2026-06-14.
 
+**Disposition: historical.** This file is a dated 2026-06-14 snapshot of the
+Configuration page and `/api/config` surface as they existed for P13 overlay
+planning. Do not treat route tables or sidecar rows as current API
+documentation. Live definition routes are in
+[`docs/guides/http-endpoints.md`](../guides/http-endpoints.md): variable
+defaults are `/api/variables`, live session values are
+`/api/sessions/{session_id}/variables/{get,set}`, and there is no
+`/api/workflows` or public `workflow_type`.
+
 This audit inventories the legacy Configuration page and the backend configuration surface so P13 can build a settings overlay from facts instead of copying the current page shape. The matrix status vocabulary is:
 
 - `live`: backend and frontend paths both exist and the control can keep working in the overlay.
@@ -26,7 +35,7 @@ Disposition vocabulary is `keep`, `drop`, and `fix`. Rows with `keep` include th
 | UI settings | `GET/PUT /api/config/ui-settings`, `DELETE /api/config/ui-settings/{key}`; `SaveUISettingsRequest` | Persists `fontSize`, `model`, `theme`, `defaultChatMode`, `planPendingVariant`, `selectedProjectId`, and `selectedProvider` under `ui_settings.*`. |
 | Validation detection preview | `POST /api/config/validation-detection/preview`; `ValidationDetectionPreviewRequest` | Runs matcher preview for a command against current or provided validation-detection config. |
 | Rules enforcement sidecar | `GET/PUT /api/rules` collection route | Not under `/api/config`, but current Configuration tab embeds the global rules-engine toggle. |
-| Variables sidecar | `GET/POST/PUT/DELETE /api/workflows?workflow_type=variable` | Not under `/api/config`, but current Configuration page includes variable defaults. |
+| Variables sidecar | Historical: `GET/POST/PUT/DELETE /api/workflows?workflow_type=variable`. Current: `GET/POST/PUT/DELETE /api/variables`. | Historical 2026-06-14 note: not under `/api/config`, but the then-current Configuration page included variable defaults. |
 | Schema models | `src/gobby/config/*.py`, especially `DaemonConfig` and nested Pydantic models | Flattened schema inventory contains 355 leaf fields. Telemetry fields are included under `telemetry.*`. |
 
 ## Frontend Inventory
@@ -84,7 +93,7 @@ already-created registry continue to use the live per-epoch configuration contra
 | secrets.store.category | POST /api/config/secrets; SaveSecretRequest.category | SecretsTab category select from backend categories | live | keep | secrets-auth |  |
 | secrets.store.description | POST /api/config/secrets; SaveSecretRequest.description | SecretsTab optional description input | live | keep | secrets-auth |  |
 | prompts.override.content | GET/PUT/DELETE /api/config/prompts/{path}; SavePromptOverrideRequest.content | PromptsTab category list + CodeMirror markdown override editor | live | keep | prompts-templates |  |
-| variables.definition | GET/POST/PUT/DELETE /api/workflows?workflow_type=variable | VariablesTab add/toggle/delete table | live | keep | automation-workflows | Not a configuration route; current page mixes workflow variable definitions into Configuration. |
+| variables.definition | Historical: GET/POST/PUT/DELETE /api/workflows?workflow_type=variable. Current: /api/variables | VariablesTab add/toggle/delete table | live | keep | automation-workflows | Historical 2026-06-14 note: not a configuration route; the then-current page mixed variable definitions into Configuration. |
 | template.yaml_content | GET/PUT /api/config/template; SaveTemplateRequest.content | TemplateTab CodeMirror YAML editor + restart banner | live | keep | prompts-templates | Advanced full-template editor; keep as an advanced section, not the primary IA. |
 | import_export.export_bundle | POST /api/config/export | ConfigurationPage toolbar Export JSON download | live | keep | prompts-templates |  |
 | import_export.import_bundle | POST /api/config/import; ImportConfigRequest | ConfigurationPage toolbar file picker + import alert | live | keep | prompts-templates |  |

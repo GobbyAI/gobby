@@ -10,7 +10,7 @@ from typing import Any
 import pytest
 
 from gobby.storage.hub.protocol import HubDatabase
-from gobby.storage.workflow_definitions import LocalWorkflowDefinitionManager
+from gobby.storage.definitions.rules import RuleDefinitionManager
 from gobby.workflows.definitions import RuleDefinitionBody
 from gobby.workflows.monolith_guard import (
     MONOLITH_SOURCE_EXTENSIONS,
@@ -318,10 +318,10 @@ def test_bundled_sync_installs_enabled_rules_and_preserves_the_user_toggle(
     A resync must still preserve whatever the user set, so the toggle is
     flipped the other way here than it was when the templates shipped disabled.
     """
-    manager = LocalWorkflowDefinitionManager(temp_db)
+    manager = RuleDefinitionManager(temp_db)
     sync_bundled_rules(temp_db, get_bundled_rules_path())
 
-    rows = [manager.get_by_name(name, workflow_type="rule") for name in RULE_NAMES]
+    rows = [manager.get_by_name(name) for name in RULE_NAMES]
     assert all(row is not None and row.enabled is True for row in rows)
 
     write_row = rows[0]
@@ -329,7 +329,7 @@ def test_bundled_sync_installs_enabled_rules_and_preserves_the_user_toggle(
     manager.update(write_row.id, enabled=False)
     sync_bundled_rules(temp_db, get_bundled_rules_path())
 
-    refreshed = manager.get_by_name(RULE_NAMES[0], workflow_type="rule")
+    refreshed = manager.get_by_name(RULE_NAMES[0])
     assert refreshed is not None
     assert refreshed.enabled is False
 
@@ -337,13 +337,13 @@ def test_bundled_sync_installs_enabled_rules_and_preserves_the_user_toggle(
 def test_bundled_rules_cover_commit_transitions_turn_end_and_required_guidance(
     temp_db: HubDatabase,
 ) -> None:
-    manager = LocalWorkflowDefinitionManager(temp_db)
+    manager = RuleDefinitionManager(temp_db)
     sync_bundled_rules(temp_db, get_bundled_rules_path())
     bodies: dict[str, RuleDefinitionBody] = {}
     for name in RULE_NAMES:
-        row = manager.get_by_name(name, workflow_type="rule")
+        row = manager.get_by_name(name)
         assert row is not None
-        bodies[name] = RuleDefinitionBody.model_validate(json.loads(row.definition_json))
+        bodies[name] = RuleDefinitionBody.model_validate(row.definition_json)
 
     commit = bodies[RULE_NAMES[1]]
     commit_effect = commit.resolved_effects[0]

@@ -73,8 +73,8 @@ Start it with `gobby start` and check it with `gobby status` or `gobby health`.
 | `ui` | Manage and launch the web UI. | `src/gobby/cli/ui.py` |
 | `uninstall` | Remove installed integrations and hooks. | `src/gobby/cli/install.py` |
 | `unpack` | Unpack project context. | `src/gobby/cli/pack.py` |
+| `variables` | Get or set live session variables. | `src/gobby/cli/variables.py` |
 | `webhooks` | Manage webhook endpoints. | `src/gobby/cli/extensions.py` |
-| `workflows` | Inspect and manage workflow definitions. | `src/gobby/cli/workflows/` |
 | `worktrees` | Manage isolated git worktrees. | `src/gobby/cli/worktrees.py` |
 
 ## Daemon And Setup
@@ -513,6 +513,8 @@ gobby sessions delete SESSION
 gobby agents list [--enabled | --disabled] [--surface SURFACE] [--json]
 gobby agents show NAME [--json]
 gobby agents spawn PROMPT --session SESSION [OPTIONS]
+gobby agents steps [--session SESSION] [--json]
+gobby agents check NAME [--json]
 gobby agents runs list [--session SESSION] [--status STATUS] [--limit N] [--json]
 gobby agents runs show RUN [--json]
 gobby agents status RUN
@@ -557,7 +559,7 @@ gobby clones delete CLONE
 `clones spawn` supports `--workflow`, `--reasoning-effort`,
 `--reasoning-required/--no-reasoning-required`, and `--json`.
 
-## Memory, Skills, Workflows, And Rules
+## Memory, Skills, Variables, And Rules
 
 ### Memory
 
@@ -591,19 +593,11 @@ gobby skills meta set NAME KEY VALUE
 gobby skills meta unset NAME KEY
 ```
 
-### Workflows
+### Variables
 
 ```bash
-gobby workflows list [--all] [--global] [--json]
-gobby workflows show NAME [--json]
-gobby workflows check NAME [--json]
-gobby workflows status [--session SESSION] [--json]
-gobby workflows reload
-gobby workflows import SOURCE [--name NAME] [--global]
-gobby workflows audit [--session SESSION] [--limit N]
-gobby workflows set-var NAME VALUE [--session SESSION] [--json]
-gobby workflows get-var [NAME] [--session SESSION] [--json]
-gobby workflows reinstall [--type TYPE] [--force]
+gobby variables get [NAME] [--session SESSION] [--json]
+gobby variables set NAME VALUE [--session SESSION] [--json]
 ```
 
 ### Rules And Pipelines
@@ -619,6 +613,7 @@ gobby rules audit [--session SESSION] [--limit N] [--json]
 
 gobby pipelines list [--json]
 gobby pipelines show NAME [--json]
+gobby pipelines check NAME [--json]
 gobby pipelines run NAME [-i KEY=VALUE ...] [--json]
 gobby pipelines runs list [--status STATUS] [--name NAME] [--limit N] [--offset N] [--json]
 gobby pipelines runs show RUN [--json]
@@ -716,7 +711,7 @@ is reusable only when its bootstrap user matches the scoped-role format.
 ## Admin And Diagnostics
 
 ```bash
-gobby sync [--force] [--verify-only] [--type TYPE] [--verbose]
+gobby sync [--force] [--verify-only] [--type TYPE] [--verbose] [--reinstall rules|agents|pipelines|variables|all]
 gobby tokens audit [--session SESSION] [--all] [--fix] [--project PROJECT]
 gobby comms status
 gobby comms send CHANNEL MESSAGE
@@ -740,4 +735,4 @@ references where the task tree has a path cache.
 - [rules.md](rules.md) - rule engine guide
 - [worktrees.md](worktrees.md) - worktree guide
 
-_Last verified: 2026-07-20_
+_Last verified: 2026-08-14_

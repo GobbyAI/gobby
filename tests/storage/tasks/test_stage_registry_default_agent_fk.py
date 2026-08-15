@@ -27,9 +27,8 @@ def test_discovery_stage_default_agents_resolve(temp_db: HubDatabase) -> None:
         """
         SELECT r.name AS stage_name, r.default_agent, w.enabled
         FROM task_stages_registry r
-        LEFT JOIN workflow_definitions w
-            ON w.workflow_type = 'agent'
-           AND w.name = r.default_agent
+        LEFT JOIN agent_definitions w
+            ON w.name = r.default_agent
            AND w.deleted_at IS NULL
         WHERE r.name IN ('ideation', 'research', 'architecture', 'prd')
         ORDER BY r.position_hint

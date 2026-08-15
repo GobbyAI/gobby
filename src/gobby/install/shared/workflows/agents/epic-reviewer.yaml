@@ -4,7 +4,7 @@ description: |
   aggregate implementation diff, and child validation evidence before PR or
   merge handoff.
 
-version: "1.0"
+version: "1.1"
 enabled: true
 priority: 20
 surfaces: [spawn, persona]
@@ -98,176 +98,177 @@ workflows:
       - "tag:default"
       - "tag:worker-safety"
       - "tag:task-skill-gates"
-step_variables:
-  task_claimed: false
-  closed_epic: false
-  required_skills:
-    - code-index
-    - epic-review
-    - review-learning
-    - tech-writer
-    - tasks
-    - proportionality
-  required_skills_loaded: false
-  review_complete: false
+step_workflow:
+  variables:
+    task_claimed: false
+    closed_epic: false
+    required_skills:
+      - code-index
+      - epic-review
+      - review-learning
+      - tech-writer
+      - tasks
+      - proportionality
+    required_skills_loaded: false
+    review_complete: false
 
-steps:
-  - name: claim
-    mcp_error_policy: stay
-    description: "Resolve and claim the assigned epic"
-    status_message: |
-      Read assigned_task_id with get_task first. If state.is_closed is true,
-      do not claim it; continue through the CLOSED-EPIC REVIEW path. Otherwise
-      claim it with claim_task(task_id=assigned_task_id).
-    allowed_tools:
-      - mcp__gobby__call_tool
-      - mcp__gobby__list_mcp_servers
-      - mcp__gobby__list_tools
-      - mcp__gobby__get_tool_schema
-    allowed_mcp_tools:
-      - "gobby-tasks:claim_task"
-      - "gobby-tasks:get_task"
-      - "gobby-tasks:list_tasks"
-    on_mcp_success:
-      - server: gobby-tasks
-        tool: get_task
-        when: >-
-          tool_input.get('task_id') == vars.get('assigned_task_id')
-          and tool_output.get('result', {}).get('state', {}).get('is_closed') is True
-        action: set_variable
-        variable: closed_epic
-        value: true
-      - server: gobby-tasks
-        tool: claim_task
-        when: "tool_input.get('task_id') == vars.get('assigned_task_id')"
-        action: set_variable
-        variable: task_claimed
-        value: true
-    transitions:
-      - to: load_skill
-        when: "vars.task_claimed or vars.closed_epic"
+  exit_condition: "current_step == 'terminate'"
+  steps:
+    - name: claim
+      mcp_error_policy: stay
+      description: "Resolve and claim the assigned epic"
+      status_message: |
+        Read assigned_task_id with get_task first. If state.is_closed is true,
+        do not claim it; continue through the CLOSED-EPIC REVIEW path. Otherwise
+        claim it with claim_task(task_id=assigned_task_id).
+      allowed_tools:
+        - mcp__gobby__call_tool
+        - mcp__gobby__list_mcp_servers
+        - mcp__gobby__list_tools
+        - mcp__gobby__get_tool_schema
+      allowed_mcp_tools:
+        - "gobby-tasks:claim_task"
+        - "gobby-tasks:get_task"
+        - "gobby-tasks:list_tasks"
+      on_mcp_success:
+        - server: gobby-tasks
+          tool: get_task
+          when: >-
+            tool_input.get('task_id') == vars.get('assigned_task_id')
+            and tool_output.get('result', {}).get('state', {}).get('is_closed') is True
+          action: set_variable
+          variable: closed_epic
+          value: true
+        - server: gobby-tasks
+          tool: claim_task
+          when: "tool_input.get('task_id') == vars.get('assigned_task_id')"
+          action: set_variable
+          variable: task_claimed
+          value: true
+      transitions:
+        - to: load_skill
+          when: "vars.task_claimed or vars.closed_epic"
 
-  - name: load_skill
-    mcp_error_policy: stay
-    description: "Load required epic review session skills"
-    status_message: |
-      Load skills now before reviewing:
-      1. get_skill(name="code-index") on gobby-skills
-      2. get_skill(name="epic-review") on gobby-skills
-      3. get_skill(name="review-learning") on gobby-skills
-      4. get_skill(name="tech-writer") on gobby-skills
-      5. get_skill(name="tasks") on gobby-skills
-      6. get_skill(name="proportionality") on gobby-skills
-      Use only mcp__gobby__call_tool in this step. Call get_skill directly:
-      call_tool("gobby-skills", "get_skill", {"name": <skill>}).
-      Do not use native Skill, GitHub/app connector, or Computer Use tools.
-    allowed_tools:
-      - mcp__gobby__call_tool
-      - mcp__gobby__list_mcp_servers
-      - mcp__gobby__list_tools
-      - mcp__gobby__get_tool_schema
-    allowed_mcp_tools:
-      - "gobby-skills:get_skill"
-    on_mcp_success:
-      - server: gobby-skills
-        tool: get_skill
-        action: set_variable
-        variable: required_skills_loaded
-        value: >-
-          all(skill in vars.get('loaded_skills', []) for skill in vars.required_skills)
-    transitions:
-      - to: closed_review
-        when: >-
-          vars.closed_epic
-          and all(skill in vars.get('loaded_skills', []) for skill in vars.required_skills)
-      - to: review
-        when: >-
-          not vars.closed_epic
-          and all(skill in vars.get('loaded_skills', []) for skill in vars.required_skills)
+    - name: load_skill
+      mcp_error_policy: stay
+      description: "Load required epic review session skills"
+      status_message: |
+        Load skills now before reviewing:
+        1. get_skill(name="code-index") on gobby-skills
+        2. get_skill(name="epic-review") on gobby-skills
+        3. get_skill(name="review-learning") on gobby-skills
+        4. get_skill(name="tech-writer") on gobby-skills
+        5. get_skill(name="tasks") on gobby-skills
+        6. get_skill(name="proportionality") on gobby-skills
+        Use only mcp__gobby__call_tool in this step. Call get_skill directly:
+        call_tool("gobby-skills", "get_skill", {"name": <skill>}).
+        Do not use native Skill, GitHub/app connector, or Computer Use tools.
+      allowed_tools:
+        - mcp__gobby__call_tool
+        - mcp__gobby__list_mcp_servers
+        - mcp__gobby__list_tools
+        - mcp__gobby__get_tool_schema
+      allowed_mcp_tools:
+        - "gobby-skills:get_skill"
+      on_mcp_success:
+        - server: gobby-skills
+          tool: get_skill
+          action: set_variable
+          variable: required_skills_loaded
+          value: >-
+            all(skill in vars.get('loaded_skills', []) for skill in vars.required_skills)
+      transitions:
+        - to: closed_review
+          when: >-
+            vars.closed_epic
+            and all(skill in vars.get('loaded_skills', []) for skill in vars.required_skills)
+        - to: review
+          when: >-
+            not vars.closed_epic
+            and all(skill in vars.get('loaded_skills', []) for skill in vars.required_skills)
 
-  - name: closed_review
-    mcp_error_policy: stay
-    description: "Review an already-closed epic post hoc"
-    status_message: |
-      Run the CLOSED-EPIC REVIEW methodology against the full subtree and
-      aggregate diff. Deliver the `## Epic Findings` verdict block. For blocking
-      findings, create remediation tasks or call reopen_task when delivered work
-      requires rework. Do not call stage transition tools because the epic has no
-      active review stage. Finish by calling end_agent_run.
-    allowed_tools: "all"
-    blocked_mcp_tools:
-      - "gobby-tasks:close_task"
-      - "gobby-tasks:de_escalate_task"
-      - "gobby-tasks-ops:submit_for_review"
-      - "gobby-tasks-ops:complete_stage"
-      - "gobby-tasks-ops:fail_stage"
-      - "gobby-tasks-ops:approve_review"
-      - "gobby-tasks-ops:reject_review"
-      - "gobby-agents:spawn_agent"
-      - "gobby-agents:kill_agent"
+    - name: closed_review
+      mcp_error_policy: stay
+      description: "Review an already-closed epic post hoc"
+      status_message: |
+        Run the CLOSED-EPIC REVIEW methodology against the full subtree and
+        aggregate diff. Deliver the `## Epic Findings` verdict block. For blocking
+        findings, create remediation tasks or call reopen_task when delivered work
+        requires rework. Do not call stage transition tools because the epic has no
+        active review stage. Finish by calling end_agent_run.
+      allowed_tools: "all"
+      blocked_mcp_tools:
+        - "gobby-tasks:close_task"
+        - "gobby-tasks:de_escalate_task"
+        - "gobby-tasks-ops:submit_for_review"
+        - "gobby-tasks-ops:complete_stage"
+        - "gobby-tasks-ops:fail_stage"
+        - "gobby-tasks-ops:approve_review"
+        - "gobby-tasks-ops:reject_review"
+        - "gobby-agents:spawn_agent"
+        - "gobby-agents:kill_agent"
 
-  - name: review
-    mcp_error_policy: stay
-    description: "Review the implemented epic against the approved plan"
-    status_message: |
-      Read the plan artifact when present. For docs/build epics without one,
-      use the Discovery Brief, validation criteria, and descendant task set as
-      the plan substitute. Read the aggregate diff, changed files, and linked subtasks.
-      Use list_tasks(parent_task_id=assigned_task_id) recursively to enumerate
-      the epic subtree before deciding.
-      For descendants marked `tdd:required` or requesting
-      test-driven-development, confirm red/green/refactor evidence, exact test
-      commands, and supported-language test-quality audit output are present
-      before approval. Missing baseline is not a skip reason; outside Gobby,
-      unsupported-language warnings require focused repo-native validation.
-      When a fix is confirmed on re-review, follow the epic-review lesson
-      schema and record each fully proven class before emitting the verdict.
-      Record the epic-review verdict with complete_stage(stage_name="epic_qa",
-      validation_override_reason="epic_qa approved by epic-reviewer"),
-      fail_stage(stage_name="epic_qa"), or escalate_task.
-      After successful final validation, immediately call one of those verdict tools.
-    allowed_tools: "all"
-    blocked_mcp_tools:
-      - "gobby-tasks:close_task"
-      - "gobby-tasks:de_escalate_task"
-      - "gobby-tasks-ops:submit_for_review"
-      - "gobby-tasks-ops:approve_review"
-      - "gobby-tasks-ops:reject_review"
-      - "gobby-tasks:reopen_task"
-      - "gobby-agents:end_agent_run"
-      - "gobby-agents:spawn_agent"
-      - "gobby-agents:kill_agent"
-    on_mcp_success:
-      - server: gobby-tasks-ops
-        tool: complete_stage
-        action: set_variable
-        variable: review_complete
-        value: true
-      - server: gobby-tasks-ops
-        tool: fail_stage
-        action: set_variable
-        variable: review_complete
-        value: true
-      - server: gobby-tasks
-        tool: escalate_task
-        action: set_variable
-        variable: review_complete
-        value: true
-    transitions:
-      - to: terminate
-        when: "vars.review_complete"
+    - name: review
+      mcp_error_policy: stay
+      description: "Review the implemented epic against the approved plan"
+      status_message: |
+        Read the plan artifact when present. For docs/build epics without one,
+        use the Discovery Brief, validation criteria, and descendant task set as
+        the plan substitute. Read the aggregate diff, changed files, and linked subtasks.
+        Use list_tasks(parent_task_id=assigned_task_id) recursively to enumerate
+        the epic subtree before deciding.
+        For descendants marked `tdd:required` or requesting
+        test-driven-development, confirm red/green/refactor evidence, exact test
+        commands, and supported-language test-quality audit output are present
+        before approval. Missing baseline is not a skip reason; outside Gobby,
+        unsupported-language warnings require focused repo-native validation.
+        When a fix is confirmed on re-review, follow the epic-review lesson
+        schema and record each fully proven class before emitting the verdict.
+        Record the epic-review verdict with complete_stage(stage_name="epic_qa",
+        validation_override_reason="epic_qa approved by epic-reviewer"),
+        fail_stage(stage_name="epic_qa"), or escalate_task.
+        After successful final validation, immediately call one of those verdict tools.
+      allowed_tools: "all"
+      blocked_mcp_tools:
+        - "gobby-tasks:close_task"
+        - "gobby-tasks:de_escalate_task"
+        - "gobby-tasks-ops:submit_for_review"
+        - "gobby-tasks-ops:approve_review"
+        - "gobby-tasks-ops:reject_review"
+        - "gobby-tasks:reopen_task"
+        - "gobby-agents:end_agent_run"
+        - "gobby-agents:spawn_agent"
+        - "gobby-agents:kill_agent"
+      on_mcp_success:
+        - server: gobby-tasks-ops
+          tool: complete_stage
+          action: set_variable
+          variable: review_complete
+          value: true
+        - server: gobby-tasks-ops
+          tool: fail_stage
+          action: set_variable
+          variable: review_complete
+          value: true
+        - server: gobby-tasks
+          tool: escalate_task
+          action: set_variable
+          variable: review_complete
+          value: true
+      transitions:
+        - to: terminate
+          when: "vars.review_complete"
 
-  - name: terminate
-    description: "Self-terminate"
-    status_message: >-
-      Call mcp__gobby__call_tool with server_name="gobby-agents",
-      tool_name="end_agent_run", and arguments={} to finish the run.
-    allowed_tools:
-      - mcp__gobby__call_tool
-      - mcp__gobby__list_mcp_servers
-      - mcp__gobby__list_tools
-      - mcp__gobby__get_tool_schema
-    allowed_mcp_tools:
-      - "gobby-agents:end_agent_run"
+    - name: terminate
+      description: "Self-terminate"
+      status_message: >-
+        Call mcp__gobby__call_tool with server_name="gobby-agents",
+        tool_name="end_agent_run", and arguments={} to finish the run.
+      allowed_tools:
+        - mcp__gobby__call_tool
+        - mcp__gobby__list_mcp_servers
+        - mcp__gobby__list_tools
+        - mcp__gobby__get_tool_schema
+      allowed_mcp_tools:
+        - "gobby-agents:end_agent_run"
 
-exit_condition: "current_step == 'terminate'"

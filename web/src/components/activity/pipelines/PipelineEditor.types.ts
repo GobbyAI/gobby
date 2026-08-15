@@ -1,4 +1,4 @@
-import type { WorkflowDetail } from "../../../hooks/useWorkflows";
+import type { PipelineDefDetail } from "../../../hooks/usePipelineDefs";
 
 export type StepType = "exec" | "prompt" | "mcp" | "invoke_pipeline";
 
@@ -18,11 +18,11 @@ export interface PipelineEditorHandle {
 }
 
 export interface PipelineEditorProps {
-  pipeline: WorkflowDetail;
+  pipeline: PipelineDefDetail;
   updateWorkflow: (
     id: string,
     params: { name?: string; definition_json?: string; description?: string },
-  ) => Promise<WorkflowDetail | null>;
+  ) => Promise<PipelineDefDetail | null>;
   onBack: () => void;
   onExport: () => void;
   inSidebar?: boolean;

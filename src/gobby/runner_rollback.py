@@ -63,6 +63,10 @@ def rollback_runner_resources(runner: Any) -> None:
     http_services = getattr(getattr(runner, "http_server", None), "services", None)
     resources = (
         ("config runtime", getattr(runner, "config_runtime", None)),
+        (
+            "definition revision listener",
+            getattr(runner, "definition_revision_listener", None),
+        ),
         ("web chat runtime", getattr(http_services, "web_chat_runtime_manager", None)),
         ("memory manager", getattr(runner, "memory_manager", None)),
         ("vector store", getattr(runner, "vector_store", None)),

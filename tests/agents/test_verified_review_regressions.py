@@ -13,6 +13,7 @@ from gobby.agents.recovery_state import is_daemon_stop_parked
 from gobby.agents.spawn_executor_support import _session_manager_validation_error
 from gobby.agents.spawn_models import SpawnRequest
 from gobby.agents.terminal_prompt_monitor import _is_expected_prompt_probe_error
+from tests.agents.prepared_spawn import prepared_spawn
 
 pytestmark = pytest.mark.unit
 
@@ -101,7 +102,9 @@ def test_session_manager_requires_sandbox_policy_hash_writer() -> None:
         parent_session_id="parent",
         project_id="project",
         session_manager=cast(Any, manager),
-    )
+    
+    prepared_spawn=prepared_spawn(),
+)
 
     result = _session_manager_validation_error(request, "codex")
 

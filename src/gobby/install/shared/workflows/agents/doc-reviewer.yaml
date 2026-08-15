@@ -3,7 +3,7 @@ description: |
   Documentation reviewer agent: reviews docs-category development work and emits a structured verdict.
   Behavior enforced by inline step workflow.
 
-version: "1.0"
+version: "1.1"
 enabled: true
 surfaces: [spawn, persona]
 provider: claude
@@ -70,7 +70,7 @@ instructions: |
   - A verdict must happen before the workflow may end the turn and terminate.
   - Do NOT terminate or exit the agent process without calling end_agent_run.
   - Use context-aware progressive discovery: call leased known tools directly; fetch schemas directly for known unleased tools; use list_tools only for unknown tool names and list_mcp_servers only for unknown servers or registries.
-  - While in LOAD_SKILLS, do not call claim_task, get_task, get_workflow_status,
+  - While in LOAD_SKILLS, do not call claim_task, get_task, get_step_status,
     or get_agent_definition. Only load skills from gobby-skills until the
     workflow advances to REVIEW.
 
@@ -79,162 +79,163 @@ workflows:
     include:
       - "tag:default"
       - "tag:worker-safety"
-step_variables:
-  task_claimed: false
-  required_skills:
-    - code-index
-    - tech-writer
-    - tasks
-  required_skills_loaded: false
-  review_approved: false
-  review_complete: false
+step_workflow:
+  variables:
+    task_claimed: false
+    required_skills:
+      - code-index
+      - tech-writer
+      - tasks
+    required_skills_loaded: false
+    review_approved: false
+    review_complete: false
 
-steps:
-  - name: claim
-    mcp_error_policy: stay
-    description: "Claim the assigned task"
-    status_message: |
-      Claim your task by calling claim_task with your assigned_task_id,
-      then call get_task to read the full details.
-    allowed_tools:
-      - mcp__gobby__call_tool
-      - mcp__gobby__list_mcp_servers
-      - mcp__gobby__list_tools
-      - mcp__gobby__get_tool_schema
-    allowed_mcp_tools:
-      - "gobby-tasks:claim_task"
-      - "gobby-tasks:get_task"
-    on_mcp_success:
-      - server: gobby-tasks
-        tool: claim_task
-        action: set_variable
-        variable: task_claimed
-        value: true
-    transitions:
-      - to: load_skills
-        when: "vars.task_claimed"
+  exit_condition: "current_step == 'terminate'"
+  steps:
+    - name: claim
+      mcp_error_policy: stay
+      description: "Claim the assigned task"
+      status_message: |
+        Claim your task by calling claim_task with your assigned_task_id,
+        then call get_task to read the full details.
+      allowed_tools:
+        - mcp__gobby__call_tool
+        - mcp__gobby__list_mcp_servers
+        - mcp__gobby__list_tools
+        - mcp__gobby__get_tool_schema
+      allowed_mcp_tools:
+        - "gobby-tasks:claim_task"
+        - "gobby-tasks:get_task"
+      on_mcp_success:
+        - server: gobby-tasks
+          tool: claim_task
+          action: set_variable
+          variable: task_claimed
+          value: true
+      transitions:
+        - to: load_skills
+          when: "vars.task_claimed"
 
-  - name: load_skills
-    mcp_error_policy: stay
-    description: "Load required documentation review skills"
-    status_message: |
-      Load skills now. Do not call claim_task, get_task, get_workflow_status, or
-      get_agent_definition in this step.
+    - name: load_skills
+      mcp_error_policy: stay
+      description: "Load required documentation review skills"
+      status_message: |
+        Load skills now. Do not call claim_task, get_task, get_step_status, or
+        get_agent_definition in this step.
 
-      Call these exact tools before reviewing:
-      1. get_skill(name="code-index") on gobby-skills
-      2. get_skill(name="tech-writer") on gobby-skills
-      3. get_skill(name="tasks") on gobby-skills
-      Use only mcp__gobby__call_tool in this step. Call get_skill directly:
-      call_tool("gobby-skills", "get_skill", {"name": <skill>}).
-      Do not use native Skill, GitHub/app connector, or Computer Use tools.
-    allowed_tools:
-      - mcp__gobby__call_tool
-      - mcp__gobby__list_mcp_servers
-      - mcp__gobby__list_tools
-      - mcp__gobby__get_tool_schema
-    allowed_mcp_tools:
-      - "gobby-skills:get_skill"
-    on_mcp_success:
-      - server: gobby-skills
-        tool: get_skill
-        action: set_variable
-        variable: required_skills_loaded
-        value: >-
-          all(skill in vars.get('loaded_skills', []) for skill in vars.required_skills)
-    transitions:
-      - to: review
-        when: >-
-          all(skill in vars.get('loaded_skills', []) for skill in vars.required_skills)
+        Call these exact tools before reviewing:
+        1. get_skill(name="code-index") on gobby-skills
+        2. get_skill(name="tech-writer") on gobby-skills
+        3. get_skill(name="tasks") on gobby-skills
+        Use only mcp__gobby__call_tool in this step. Call get_skill directly:
+        call_tool("gobby-skills", "get_skill", {"name": <skill>}).
+        Do not use native Skill, GitHub/app connector, or Computer Use tools.
+      allowed_tools:
+        - mcp__gobby__call_tool
+        - mcp__gobby__list_mcp_servers
+        - mcp__gobby__list_tools
+        - mcp__gobby__get_tool_schema
+      allowed_mcp_tools:
+        - "gobby-skills:get_skill"
+      on_mcp_success:
+        - server: gobby-skills
+          tool: get_skill
+          action: set_variable
+          variable: required_skills_loaded
+          value: >-
+            all(skill in vars.get('loaded_skills', []) for skill in vars.required_skills)
+      transitions:
+        - to: review
+          when: >-
+            all(skill in vars.get('loaded_skills', []) for skill in vars.required_skills)
 
-  - name: review
-    mcp_error_policy: stay
-    description: "Review docs compliance first, then docs quality, and emit verdict"
-    status_message: |
-      Review the documentation changes for the assigned task.
-      1. docs_spec_compliance: compare task description, validation criteria,
-         required docs files, audience, scope, and diff. Reject before docs_quality
-         if required documentation is missing, stale, inaccurate, or misleading.
-      2. docs_quality: after docs_spec_compliance passes, review structure,
-         clarity, terminology, examples, links/references, repo voice, and maintainability.
-      3. APPROVE: call approve_review with stage_name="development" only when both pass
-      4. REJECT: call reject_review with stage_name="development" and blocking findings
-      5. ESCALATE: call escalate_task only if your workflow is broken and you
-         cannot approve_review or reject_review
-      After successful final validation, immediately call one of those verdict tools.
-      After deciding, call exactly one verdict tool immediately:
-      - approve_review via gobby-tasks-ops with task_id=assigned_task_id,
-        stage_name="development", and approval_notes containing review evidence
-      - reject_review via gobby-tasks-ops with task_id=assigned_task_id,
-        stage_name="development", and concrete rejection_notes
-      - escalate_task via gobby-tasks with task_id=assigned_task_id and reason
-        only for "my workflow is broken" tooling failures
-      Do not poll artifacts, wait for mutexes, wait for merges, or use the
-      `gobby tasks` CLI. Dispatcher lifecycle owns post-verdict merge/closure.
-      Do not run full pytest, Cargo, Vitest, or Jest suites; use focused
-      validation only. For Rust, use `cargo test -p <package>` or
-      `cargo test <name> -p <package>`. If a worker-safety hook blocks a
-      command, read the block reason, switch to a focused file/filter command,
-      and never retry that blocked command.
-    allowed_tools:
-      - Bash
-      - Read
-      - Grep
-      - Glob
-      - LS
-      - mcp__gobby__call_tool
-      - mcp__gobby__list_mcp_servers
-      - mcp__gobby__list_tools
-      - mcp__gobby__get_tool_schema
-    blocked_mcp_tools:
-      - "gobby-tasks:close_task"
-      - "gobby-tasks:de_escalate_task"
-      - "gobby-tasks-ops:submit_for_review"
-      - "gobby-tasks:reopen_task"
-      - "gobby-agents:spawn_agent"
-      - "gobby-agents:kill_agent"
-    allowed_mcp_tools:
-      - "gobby-tasks:get_task"
-      - "gobby-tasks:get_task_diff"
-      - "gobby-tasks-ops:approve_review"
-      - "gobby-tasks-ops:reject_review"
-      - "gobby-tasks:escalate_task"
-    on_mcp_success:
-      - server: gobby-tasks-ops
-        tool: approve_review
-        action: set_variable
-        variable: review_approved
-        value: true
-      - server: gobby-tasks-ops
-        tool: approve_review
-        action: set_variable
-        variable: review_complete
-        value: true
-      - server: gobby-tasks-ops
-        tool: reject_review
-        action: set_variable
-        variable: review_complete
-        value: true
-      - server: gobby-tasks
-        tool: escalate_task
-        action: set_variable
-        variable: review_complete
-        value: true
-    transitions:
-      - to: terminate
-        when: "vars.review_complete"
+    - name: review
+      mcp_error_policy: stay
+      description: "Review docs compliance first, then docs quality, and emit verdict"
+      status_message: |
+        Review the documentation changes for the assigned task.
+        1. docs_spec_compliance: compare task description, validation criteria,
+           required docs files, audience, scope, and diff. Reject before docs_quality
+           if required documentation is missing, stale, inaccurate, or misleading.
+        2. docs_quality: after docs_spec_compliance passes, review structure,
+           clarity, terminology, examples, links/references, repo voice, and maintainability.
+        3. APPROVE: call approve_review with stage_name="development" only when both pass
+        4. REJECT: call reject_review with stage_name="development" and blocking findings
+        5. ESCALATE: call escalate_task only if your workflow is broken and you
+           cannot approve_review or reject_review
+        After successful final validation, immediately call one of those verdict tools.
+        After deciding, call exactly one verdict tool immediately:
+        - approve_review via gobby-tasks-ops with task_id=assigned_task_id,
+          stage_name="development", and approval_notes containing review evidence
+        - reject_review via gobby-tasks-ops with task_id=assigned_task_id,
+          stage_name="development", and concrete rejection_notes
+        - escalate_task via gobby-tasks with task_id=assigned_task_id and reason
+          only for "my workflow is broken" tooling failures
+        Do not poll artifacts, wait for mutexes, wait for merges, or use the
+        `gobby tasks` CLI. Dispatcher lifecycle owns post-verdict merge/closure.
+        Do not run full pytest, Cargo, Vitest, or Jest suites; use focused
+        validation only. For Rust, use `cargo test -p <package>` or
+        `cargo test <name> -p <package>`. If a worker-safety hook blocks a
+        command, read the block reason, switch to a focused file/filter command,
+        and never retry that blocked command.
+      allowed_tools:
+        - Bash
+        - Read
+        - Grep
+        - Glob
+        - LS
+        - mcp__gobby__call_tool
+        - mcp__gobby__list_mcp_servers
+        - mcp__gobby__list_tools
+        - mcp__gobby__get_tool_schema
+      blocked_mcp_tools:
+        - "gobby-tasks:close_task"
+        - "gobby-tasks:de_escalate_task"
+        - "gobby-tasks-ops:submit_for_review"
+        - "gobby-tasks:reopen_task"
+        - "gobby-agents:spawn_agent"
+        - "gobby-agents:kill_agent"
+      allowed_mcp_tools:
+        - "gobby-tasks:get_task"
+        - "gobby-tasks:get_task_diff"
+        - "gobby-tasks-ops:approve_review"
+        - "gobby-tasks-ops:reject_review"
+        - "gobby-tasks:escalate_task"
+      on_mcp_success:
+        - server: gobby-tasks-ops
+          tool: approve_review
+          action: set_variable
+          variable: review_approved
+          value: true
+        - server: gobby-tasks-ops
+          tool: approve_review
+          action: set_variable
+          variable: review_complete
+          value: true
+        - server: gobby-tasks-ops
+          tool: reject_review
+          action: set_variable
+          variable: review_complete
+          value: true
+        - server: gobby-tasks
+          tool: escalate_task
+          action: set_variable
+          variable: review_complete
+          value: true
+      transitions:
+        - to: terminate
+          when: "vars.review_complete"
 
-  - name: terminate
-    description: "Self-terminate"
-    status_message: >-
-      Call mcp__gobby__call_tool with server_name="gobby-agents",
-      tool_name="end_agent_run", and arguments={} to signal this review agent is complete.
-    allowed_tools:
-      - mcp__gobby__call_tool
-      - mcp__gobby__list_mcp_servers
-      - mcp__gobby__list_tools
-      - mcp__gobby__get_tool_schema
-    allowed_mcp_tools:
-      - "gobby-agents:end_agent_run"
+    - name: terminate
+      description: "Self-terminate"
+      status_message: >-
+        Call mcp__gobby__call_tool with server_name="gobby-agents",
+        tool_name="end_agent_run", and arguments={} to signal this review agent is complete.
+      allowed_tools:
+        - mcp__gobby__call_tool
+        - mcp__gobby__list_mcp_servers
+        - mcp__gobby__list_tools
+        - mcp__gobby__get_tool_schema
+      allowed_mcp_tools:
+        - "gobby-agents:end_agent_run"
 
-exit_condition: "current_step == 'terminate'"

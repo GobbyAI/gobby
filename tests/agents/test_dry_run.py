@@ -4,13 +4,13 @@ from __future__ import annotations
 
 from pathlib import Path
 from unittest.mock import AsyncMock, MagicMock
+from uuid import uuid4
 
 import pytest
 
 from gobby.agents.dry_run import SpawnEvaluation, evaluate_spawn
-from gobby.storage.hub.protocol import HubDatabase
-from gobby.storage.projects import LocalProjectManager
-from gobby.storage.workflow_definitions import LocalWorkflowDefinitionManager
+from gobby.storage.definitions.agents import AgentDefinitionManager
+from gobby.storage.hub.postgres import PostgresHubDatabase
 from gobby.workflows.definitions import (
     AgentDefinitionBody,
     AgentWorkflows,
@@ -23,13 +23,13 @@ from gobby.workflows.dry_run import WorkflowEvaluation
 pytestmark = pytest.mark.unit
 
 
-def _setup_db(db: HubDatabase) -> HubDatabase:
-    """Use the migrated PostgreSQL hub database fixture."""
+def _setup_db(db: PostgresHubDatabase) -> PostgresHubDatabase:
+    """Use the isolated typed-definition schema fixture."""
     return db
 
 
 def _create_agent(
-    db: HubDatabase,
+    db: PostgresHubDatabase,
     name: str = "test-agent",
     provider: str = "claude",
     isolation: str | None = None,
@@ -37,7 +37,7 @@ def _create_agent(
     base_branch: str = "main",
     project_id: str | None = None,
 ) -> None:
-    """Create an agent definition in the DB."""
+    """Create an agent definition in the typed table."""
     body = AgentDefinitionBody(
         name=name,
         provider=provider,
@@ -45,12 +45,10 @@ def _create_agent(
         base_branch=base_branch,
         workflows=AgentWorkflows(pipeline=pipeline),
     )
-    manager = LocalWorkflowDefinitionManager(db)
-    manager.create(
+    AgentDefinitionManager(db).create(
         name=name,
-        definition_json=body.model_dump_json(),
-        workflow_type="agent",
-        source="template",
+        definition_json=body.model_dump(mode="json"),
+        source="installed",
         project_id=project_id,
     )
 
@@ -58,8 +56,8 @@ def _create_agent(
 @pytest.fixture
 def mock_workflow_loader() -> MagicMock:
     loader = MagicMock()
-    loader.load_workflow = AsyncMock(return_value=None)
-    loader.validate_workflow_for_agent = AsyncMock(return_value=(True, None))
+    loader.load_pipeline = AsyncMock(return_value=None)
+    loader.validate_pipeline_for_agent = AsyncMock(return_value=(True, None))
     return loader
 
 
@@ -72,9 +70,9 @@ def mock_runner() -> MagicMock:
 
 class TestAgentNotFound:
     @pytest.mark.asyncio
-    async def test_agent_not_found(self, temp_db: HubDatabase) -> None:
+    async def test_agent_not_found(self, definition_db: PostgresHubDatabase) -> None:
         """AGENT_NOT_FOUND error, can_spawn=False."""
-        db = _setup_db(temp_db)
+        db = _setup_db(definition_db)
 
         result = await evaluate_spawn(
             agent="nonexistent",
@@ -88,13 +86,12 @@ class TestAgentNotFound:
 
     @pytest.mark.asyncio
     async def test_unrelated_project_agent_is_not_visible(
-        self, temp_db: HubDatabase, monkeypatch: pytest.MonkeyPatch
+        self, definition_db: PostgresHubDatabase, monkeypatch: pytest.MonkeyPatch
     ) -> None:
         """A same-name agent from another project must not leak into dry-run resolution."""
-        db = _setup_db(temp_db)
-        project_manager = LocalProjectManager(db)
-        target_id = project_manager.create("dry-run-target").id
-        unrelated_id = project_manager.create("dry-run-unrelated").id
+        db = _setup_db(definition_db)
+        target_id = str(uuid4())
+        unrelated_id = str(uuid4())
         _create_agent(db, project_id=unrelated_id)
         monkeypatch.setattr(
             "gobby.utils.project_context.get_project_context",
@@ -111,9 +108,9 @@ class TestAgentNotFound:
 
 class TestWorkflowResolution:
     @pytest.mark.asyncio
-    async def test_no_workflow(self, temp_db: HubDatabase) -> None:
+    async def test_no_workflow(self, definition_db: PostgresHubDatabase) -> None:
         """NO_WORKFLOW info when no pipeline configured."""
-        db = _setup_db(temp_db)
+        db = _setup_db(definition_db)
         _create_agent(db)
 
         result = await evaluate_spawn(agent="test-agent", db=db)
@@ -123,10 +120,10 @@ class TestWorkflowResolution:
 
     @pytest.mark.asyncio
     async def test_pipeline_resolved(
-        self, temp_db: HubDatabase, mock_workflow_loader: MagicMock
+        self, definition_db: PostgresHubDatabase, mock_workflow_loader: MagicMock
     ) -> None:
         """WORKFLOW_RESOLVED when pipeline is configured."""
-        db = _setup_db(temp_db)
+        db = _setup_db(definition_db)
         _create_agent(db, pipeline="my-pipeline")
 
         result = await evaluate_spawn(
@@ -141,9 +138,9 @@ class TestWorkflowResolution:
 
     @pytest.mark.asyncio
     async def test_pipeline_warns_when_workflow_loader_is_unavailable(
-        self, temp_db: HubDatabase
+        self, definition_db: PostgresHubDatabase
     ) -> None:
-        db = _setup_db(temp_db)
+        db = _setup_db(definition_db)
         _create_agent(db, pipeline="my-pipeline")
 
         result = await evaluate_spawn(agent="test-agent", db=db)
@@ -154,10 +151,10 @@ class TestWorkflowResolution:
 
     @pytest.mark.asyncio
     async def test_explicit_workflow_overrides_pipeline(
-        self, temp_db: HubDatabase, mock_workflow_loader: MagicMock
+        self, definition_db: PostgresHubDatabase, mock_workflow_loader: MagicMock
     ) -> None:
         """Explicit workflow parameter overrides agent's pipeline."""
-        db = _setup_db(temp_db)
+        db = _setup_db(definition_db)
         _create_agent(db, pipeline="my-pipeline")
 
         result = await evaluate_spawn(
@@ -172,9 +169,11 @@ class TestWorkflowResolution:
 
 class TestIsolation:
     @pytest.mark.asyncio
-    async def test_isolation_deps_missing_worktree(self, temp_db: HubDatabase) -> None:
+    async def test_isolation_deps_missing_worktree(
+        self, definition_db: PostgresHubDatabase
+    ) -> None:
         """ISOLATION_DEPS_MISSING for worktree mode without deps."""
-        db = _setup_db(temp_db)
+        db = _setup_db(definition_db)
         _create_agent(db, isolation="worktree")
 
         result = await evaluate_spawn(
@@ -188,9 +187,9 @@ class TestIsolation:
         assert len(dep_items) == 1
 
     @pytest.mark.asyncio
-    async def test_isolation_deps_missing_clone(self, temp_db: HubDatabase) -> None:
+    async def test_isolation_deps_missing_clone(self, definition_db: PostgresHubDatabase) -> None:
         """ISOLATION_DEPS_MISSING for clone mode without deps."""
-        db = _setup_db(temp_db)
+        db = _setup_db(definition_db)
         _create_agent(db, isolation="clone")
 
         result = await evaluate_spawn(
@@ -206,9 +205,11 @@ class TestIsolation:
 
 class TestRuntimeEnvironment:
     @pytest.mark.asyncio
-    async def test_spawn_depth_exceeded(self, temp_db: HubDatabase, mock_runner: MagicMock) -> None:
+    async def test_spawn_depth_exceeded(
+        self, definition_db: PostgresHubDatabase, mock_runner: MagicMock
+    ) -> None:
         """SPAWN_DEPTH_EXCEEDED when can_spawn returns False."""
-        db = _setup_db(temp_db)
+        db = _setup_db(definition_db)
         _create_agent(db)
         mock_runner.can_spawn.return_value = (False, "Max depth 3 exceeded", 4)
 
@@ -228,12 +229,12 @@ class TestWorkflowEvaluation:
     @pytest.mark.asyncio
     async def test_workflow_eval_embedded(
         self,
-        temp_db: HubDatabase,
+        definition_db: PostgresHubDatabase,
         mock_workflow_loader: MagicMock,
         monkeypatch: pytest.MonkeyPatch,
     ) -> None:
         """workflow_evaluation populated with structural results."""
-        db = _setup_db(temp_db)
+        db = _setup_db(definition_db)
         _create_agent(db, pipeline="worker")
 
         wf_definition = WorkflowDefinition(
@@ -246,7 +247,7 @@ class TestWorkflowEvaluation:
                 WorkflowStep(name="done"),
             ],
         )
-        mock_workflow_loader.load_workflow.return_value = wf_definition
+        mock_workflow_loader.load_pipeline.return_value = wf_definition
         project_id = "11111111-1111-4111-8111-111111111111"
         monkeypatch.setattr(
             "gobby.utils.project_context.get_project_context",
@@ -261,28 +262,31 @@ class TestWorkflowEvaluation:
 
         assert result.workflow_evaluation is not None
         assert result.workflow_evaluation.valid is True
-        assert len(result.workflow_evaluation.step_trace) == 2
-        mock_workflow_loader.validate_workflow_for_agent.assert_awaited_once_with(
+        assert result.workflow_evaluation.step_trace == []
+        assert any(
+            item.code == "PIPELINE_TYPE" for item in result.workflow_evaluation.items
+        )
+        mock_workflow_loader.validate_pipeline_for_agent.assert_awaited_once_with(
             "worker", project_id
         )
-        mock_workflow_loader.load_workflow.assert_awaited_once_with("worker", project_id)
+        mock_workflow_loader.load_pipeline.assert_awaited_once_with("worker", project_id)
 
     @pytest.mark.asyncio
     async def test_explicit_project_path_overrides_ambient_workflow_scope(
         self,
-        temp_db: HubDatabase,
+        definition_db: PostgresHubDatabase,
         mock_workflow_loader: MagicMock,
         monkeypatch: pytest.MonkeyPatch,
         tmp_path: Path,
     ) -> None:
         """An explicit target path determines workflow scoping for cross-project dry runs."""
-        db = _setup_db(temp_db)
-        mock_workflow_loader.load_workflow.return_value = WorkflowDefinition(
+        db = _setup_db(definition_db)
+        mock_workflow_loader.load_pipeline.return_value = WorkflowDefinition(
             name="worker",
             steps=[WorkflowStep(name="done")],
         )
         ambient_id = "11111111-1111-4111-8111-111111111111"
-        target_id = LocalProjectManager(db).create("explicit-dry-run-target").id
+        target_id = str(uuid4())
         _create_agent(db, pipeline="wrong-global-workflow")
         _create_agent(db, pipeline="worker", project_id=target_id)
 
@@ -303,20 +307,20 @@ class TestWorkflowEvaluation:
 
         assert result.workflow_evaluation is not None
         assert result.workflow_evaluation.valid is True
-        mock_workflow_loader.validate_workflow_for_agent.assert_awaited_once_with(
+        mock_workflow_loader.validate_pipeline_for_agent.assert_awaited_once_with(
             "worker", target_id
         )
-        mock_workflow_loader.load_workflow.assert_awaited_once_with("worker", target_id)
+        mock_workflow_loader.load_pipeline.assert_awaited_once_with("worker", target_id)
 
     @pytest.mark.asyncio
     async def test_workflow_invalid_for_agent(
-        self, temp_db: HubDatabase, mock_workflow_loader: MagicMock
+        self, definition_db: PostgresHubDatabase, mock_workflow_loader: MagicMock
     ) -> None:
         """WORKFLOW_INVALID_FOR_AGENT when lifecycle workflow used for agent."""
-        db = _setup_db(temp_db)
+        db = _setup_db(definition_db)
         _create_agent(db, pipeline="lifecycle-wf")
 
-        mock_workflow_loader.validate_workflow_for_agent.return_value = (
+        mock_workflow_loader.validate_pipeline_for_agent.return_value = (
             False,
             "Cannot use lifecycle workflow",
         )
@@ -335,10 +339,13 @@ class TestWorkflowEvaluation:
 class TestHappyPath:
     @pytest.mark.asyncio
     async def test_full_happy_path(
-        self, temp_db: HubDatabase, mock_workflow_loader: MagicMock, mock_runner: MagicMock
+        self,
+        definition_db: PostgresHubDatabase,
+        mock_workflow_loader: MagicMock,
+        mock_runner: MagicMock,
     ) -> None:
         """All layers pass, can_spawn=True."""
-        db = _setup_db(temp_db)
+        db = _setup_db(definition_db)
         _create_agent(db, pipeline="worker")
 
         wf_definition = WorkflowDefinition(
@@ -351,7 +358,7 @@ class TestHappyPath:
                 WorkflowStep(name="done"),
             ],
         )
-        mock_workflow_loader.load_workflow.return_value = wf_definition
+        mock_workflow_loader.load_pipeline.return_value = wf_definition
 
         result = await evaluate_spawn(
             agent="test-agent",
@@ -383,7 +390,7 @@ class TestToDict:
 
     def test_spawn_evaluation_with_workflow_eval(self) -> None:
         """SpawnEvaluation with embedded workflow eval serializes correctly."""
-        wf_eval = WorkflowEvaluation(valid=True, workflow_name="test", workflow_type="step")
+        wf_eval = WorkflowEvaluation(valid=True, workflow_name="test")
         result = SpawnEvaluation(
             can_spawn=True,
             agent_name="test",

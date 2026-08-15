@@ -20,8 +20,8 @@ import pytest
 
 from gobby.hooks.events import HookEvent, HookEventType, SessionSource
 from gobby.sessions.compact_markers import COMPACT_SELF_INTERRUPT_WARNING
+from gobby.storage.definitions.rules import RuleDefinitionManager
 from gobby.storage.hub.protocol import HubDatabase
-from gobby.storage.workflow_definitions import LocalWorkflowDefinitionManager
 from gobby.workflows.definitions import RuleDefinitionBody
 from gobby.workflows.engine.core import RuleEngine
 from gobby.workflows.hooks import WorkflowHookHandler
@@ -55,8 +55,8 @@ def db(temp_db: HubDatabase) -> HubDatabase:
 
 
 @pytest.fixture
-def manager(db: HubDatabase) -> LocalWorkflowDefinitionManager:
-    return LocalWorkflowDefinitionManager(db)
+def manager(db: HubDatabase) -> RuleDefinitionManager:
+    return RuleDefinitionManager(db)
 
 
 def _sync_bundled(db: HubDatabase) -> dict[str, Any]:
@@ -65,7 +65,7 @@ def _sync_bundled(db: HubDatabase) -> dict[str, Any]:
 
     result = sync_bundled_rules(db, get_bundled_rules_path())
     # Mark templates as installed so get_by_name() finds them
-    db.execute("UPDATE workflow_definitions SET source = 'installed' WHERE source = 'template'")
+    db.execute("UPDATE rule_definitions SET source = 'installed' WHERE source = 'template'")
     return result
 
 
@@ -90,10 +90,10 @@ class TestContextHandoffSync:
     """Test that context-handoff rules sync correctly."""
 
     def test_bundled_file_syncs_all_rules(self, db, manager) -> None:
-        """All context-handoff rules should sync to workflow_definitions."""
+        """All context-handoff rules should sync to rule_definitions."""
         _sync_bundled(db)
 
-        rules = manager.list_all(workflow_type="rule")
+        rules = manager.list_all()
         rule_names = {r.name for r in rules}
 
         for rule_name in CONTEXT_HANDOFF_RULES:
@@ -103,20 +103,20 @@ class TestContextHandoffSync:
         """All context-handoff rules should have group='context-handoff'."""
         _sync_bundled(db)
 
-        rules = manager.list_all(workflow_type="rule")
+        rules = manager.list_all()
         for row in rules:
             if row.name in CONTEXT_HANDOFF_RULES:
-                body = json.loads(row.definition_json)
+                body = row.definition_json
                 assert body.get("group") == "context-handoff", f"{row.name} missing group"
 
     def test_all_rules_are_valid_pydantic(self, db, manager) -> None:
         """All synced rules should be valid RuleDefinitionBody instances."""
         _sync_bundled(db)
 
-        rules = manager.list_all(workflow_type="rule")
+        rules = manager.list_all()
         for row in rules:
             if row.name in CONTEXT_HANDOFF_RULES:
-                body = RuleDefinitionBody.model_validate_json(row.definition_json)
+                body = RuleDefinitionBody.model_validate(row.definition_json)
                 for effect in body.resolved_effects:
                     assert effect.type in {
                         "set_variable",
@@ -129,8 +129,8 @@ class TestContextHandoffSync:
         _sync_bundled(db)
 
         session_start_rule_names = []
-        for row in manager.list_all(workflow_type="rule", enabled=True):
-            body = RuleDefinitionBody.model_validate_json(row.definition_json)
+        for row in manager.list_all(enabled=True):
+            body = RuleDefinitionBody.model_validate(row.definition_json)
             if body.event.value == "session_start":
                 session_start_rule_names.append(row.name)
 
@@ -149,7 +149,7 @@ class TestClearPendingContextResetOnStart:
         _sync_bundled(db)
         row = manager.get_by_name("clear-pending-context-reset-on-start")
         assert row is not None
-        body = RuleDefinitionBody.model_validate_json(row.definition_json)
+        body = RuleDefinitionBody.model_validate(row.definition_json)
         assert body.event.value == "session_start"
         assert body.effects[0].type == "set_variable"
         assert body.effects[0].variable == "pending_context_reset"
@@ -157,14 +157,14 @@ class TestClearPendingContextResetOnStart:
     def test_has_when_condition(self, db, manager) -> None:
         _sync_bundled(db)
         row = manager.get_by_name("clear-pending-context-reset-on-start")
-        body = RuleDefinitionBody.model_validate_json(row.definition_json)
+        body = RuleDefinitionBody.model_validate(row.definition_json)
         assert body.when is not None
         assert "pending_context_reset" in body.when
 
     def test_cleanup_runs_after_context_reset_consumers(
         self,
         db: HubDatabase,
-        manager: LocalWorkflowDefinitionManager,
+        manager: RuleDefinitionManager,
     ) -> None:
         _sync_bundled(db)
         cleanup = manager.get_by_name("clear-pending-context-reset-on-start")
@@ -193,7 +193,7 @@ class TestInjectPreviousSessionSummary:
         _sync_bundled(db)
         row = manager.get_by_name("inject-previous-session-summary")
         assert row is not None
-        body = RuleDefinitionBody.model_validate_json(row.definition_json)
+        body = RuleDefinitionBody.model_validate(row.definition_json)
         assert body.event.value == "session_start"
         assert body.effects[0].type == "inject_context"
         assert body.effects[0].template is not None
@@ -202,7 +202,7 @@ class TestInjectPreviousSessionSummary:
     def test_has_when_condition(self, db, manager) -> None:
         _sync_bundled(db)
         row = manager.get_by_name("inject-previous-session-summary")
-        body = RuleDefinitionBody.model_validate_json(row.definition_json)
+        body = RuleDefinitionBody.model_validate(row.definition_json)
         assert body.when is not None
         assert "clear" in body.when
 
@@ -219,7 +219,7 @@ class TestInjectCompactHandoff:
         _sync_bundled(db)
         row = manager.get_by_name("inject-compact-handoff")
         assert row is not None
-        body = RuleDefinitionBody.model_validate_json(row.definition_json)
+        body = RuleDefinitionBody.model_validate(row.definition_json)
         assert body.event.value == "session_start"
         assert body.effects[0].type == "inject_context"
         assert body.effects[0].template is not None
@@ -239,7 +239,7 @@ class TestInjectCompactHandoff:
     def test_has_when_condition(self, db, manager) -> None:
         _sync_bundled(db)
         row = manager.get_by_name("inject-compact-handoff")
-        body = RuleDefinitionBody.model_validate_json(row.definition_json)
+        body = RuleDefinitionBody.model_validate(row.definition_json)
         assert body.when is not None
         assert "compact" in body.when
 
@@ -316,7 +316,7 @@ class TestInjectCompactHandoff:
         _sync_bundled(db)
         row = manager.get_by_name("inject-compact-handoff-on-prompt")
         assert row is not None
-        body = RuleDefinitionBody.model_validate_json(row.definition_json)
+        body = RuleDefinitionBody.model_validate(row.definition_json)
         assert body.event.value == "turn_start"
         assert body.when is not None
         assert "compact_handoff_inject_pending" in body.when
@@ -477,7 +477,7 @@ class TestInjectWikiOverview:
         _sync_bundled(db)
         row = manager.get_by_name("inject-wiki-overview")
         assert row is not None
-        body = RuleDefinitionBody.model_validate_json(row.definition_json)
+        body = RuleDefinitionBody.model_validate(row.definition_json)
         assert body.event.value == "session_start"
         assert body.effects is not None
         assert body.effects[0].type == "inject_context"
@@ -488,7 +488,7 @@ class TestInjectWikiOverview:
     def test_has_when_condition(self, db, manager) -> None:
         _sync_bundled(db)
         row = manager.get_by_name("inject-wiki-overview")
-        body = RuleDefinitionBody.model_validate_json(row.definition_json)
+        body = RuleDefinitionBody.model_validate(row.definition_json)
         assert body.when is not None
         assert "wiki_overview" in body.when
 
@@ -529,7 +529,7 @@ class TestInjectTaskContextOnStart:
         _sync_bundled(db)
         row = manager.get_by_name("inject-task-context-on-start")
         assert row is not None
-        body = RuleDefinitionBody.model_validate_json(row.definition_json)
+        body = RuleDefinitionBody.model_validate(row.definition_json)
         assert body.event.value == "session_start"
         assert body.effects is not None
         assert body.effects[0].type == "inject_context"
@@ -538,7 +538,7 @@ class TestInjectTaskContextOnStart:
     def test_has_when_condition(self, db, manager) -> None:
         _sync_bundled(db)
         row = manager.get_by_name("inject-task-context-on-start")
-        body = RuleDefinitionBody.model_validate_json(row.definition_json)
+        body = RuleDefinitionBody.model_validate(row.definition_json)
         assert body.when is not None
         assert "resume" in body.when
 
@@ -559,7 +559,6 @@ def test_authoritative_sync_retires_prepare_clear_handoff(db, manager) -> None:
                 ],
             }
         ),
-        workflow_type="rule",
         enabled=True,
         source="installed",
         tags=["gobby", "context-handoff"],
@@ -587,14 +586,14 @@ class TestPreserveContextOnCompact:
         _sync_bundled(db)
         row = manager.get_by_name("preserve-context-on-compact")
         assert row is not None
-        body = RuleDefinitionBody.model_validate_json(row.definition_json)
+        body = RuleDefinitionBody.model_validate(row.definition_json)
         assert body.event.value == "pre_compact"
 
     def test_has_eight_effects(self, db, manager) -> None:
         """Should have 8 set_variable effects."""
         _sync_bundled(db)
         row = manager.get_by_name("preserve-context-on-compact")
-        body = RuleDefinitionBody.model_validate_json(row.definition_json)
+        body = RuleDefinitionBody.model_validate(row.definition_json)
         effects = body.resolved_effects
         assert len(effects) == 8
         assert all(e.type == "set_variable" for e in effects)
@@ -603,7 +602,7 @@ class TestPreserveContextOnCompact:
         """Should reset injected_memory_ids to empty list."""
         _sync_bundled(db)
         row = manager.get_by_name("preserve-context-on-compact")
-        body = RuleDefinitionBody.model_validate_json(row.definition_json)
+        body = RuleDefinitionBody.model_validate(row.definition_json)
         effects = body.resolved_effects
         memory_reset = [
             e for e in effects if e.type == "set_variable" and e.variable == "injected_memory_ids"
@@ -614,13 +613,13 @@ class TestPreserveContextOnCompact:
     def test_sets_pending_context_reset(
         self,
         db: HubDatabase,
-        manager: LocalWorkflowDefinitionManager,
+        manager: RuleDefinitionManager,
     ) -> None:
         """Should set pending_context_reset to true."""
         _sync_bundled(db)
         row = manager.get_by_name("preserve-context-on-compact")
         assert row is not None
-        body = RuleDefinitionBody.model_validate_json(row.definition_json)
+        body = RuleDefinitionBody.model_validate(row.definition_json)
         effects = body.resolved_effects
         reset_flag = [
             e for e in effects if e.type == "set_variable" and e.variable == "pending_context_reset"
@@ -631,12 +630,12 @@ class TestPreserveContextOnCompact:
     def test_resets_context_guidance_epoch(
         self,
         db: HubDatabase,
-        manager: LocalWorkflowDefinitionManager,
+        manager: RuleDefinitionManager,
     ) -> None:
         _sync_bundled(db)
         row = manager.get_by_name("preserve-context-on-compact")
         assert row is not None
-        body = RuleDefinitionBody.model_validate_json(row.definition_json)
+        body = RuleDefinitionBody.model_validate(row.definition_json)
         effects = body.resolved_effects
         compacted_turn = [
             e
@@ -680,7 +679,7 @@ class TestNudgeCompactOnContextPressure:
         _sync_bundled(db)
         row = manager.get_by_name("nudge-compact-on-context-pressure")
         assert row is not None
-        body = RuleDefinitionBody.model_validate_json(row.definition_json)
+        body = RuleDefinitionBody.model_validate(row.definition_json)
         assert body.event.value == "turn_start"
         assert body.when == "variables.get('context_compact_guidance_message')"
         assert body.effects is not None
@@ -689,7 +688,7 @@ class TestNudgeCompactOnContextPressure:
 
         mid_turn_row = manager.get_by_name("nudge-compact-on-context-pressure-mid-turn")
         assert mid_turn_row is not None
-        mid_turn_body = RuleDefinitionBody.model_validate_json(mid_turn_row.definition_json)
+        mid_turn_body = RuleDefinitionBody.model_validate(mid_turn_row.definition_json)
         assert mid_turn_body.event.value == "after_tool"
         assert mid_turn_body.when == body.when
         assert mid_turn_body.effects == body.effects
@@ -1053,7 +1052,7 @@ class TestAutoCompactAfterTaskClose:
         _sync_bundled(db)
         row = manager.get_by_name("auto-compact-after-task-close")
         assert row is not None
-        body = RuleDefinitionBody.model_validate_json(row.definition_json)
+        body = RuleDefinitionBody.model_validate(row.definition_json)
 
         assert body.event.value == "after_tool"
         effects = body.resolved_effects
@@ -1090,7 +1089,7 @@ class TestAutoCompactAfterTaskClose:
         _sync_bundled(db)
         row = manager.get_by_name("auto-compact-after-task-close")
         assert row is not None
-        body = RuleDefinitionBody.model_validate_json(row.definition_json)
+        body = RuleDefinitionBody.model_validate(row.definition_json)
 
         assert body.when is not None
         assert "gobby-tasks" in body.when

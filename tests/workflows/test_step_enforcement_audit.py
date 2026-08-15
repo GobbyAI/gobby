@@ -2,7 +2,6 @@
 
 import json
 import threading
-import uuid
 from datetime import UTC, datetime
 from typing import TYPE_CHECKING, Any
 from unittest.mock import patch
@@ -10,10 +9,15 @@ from unittest.mock import patch
 import pytest
 
 from gobby.hooks.events import HookEvent, HookEventType, SessionSource
-from gobby.storage.workflow_definitions import LocalWorkflowDefinitionManager
-from gobby.workflows.definitions import WorkflowDefinition, WorkflowInstance
+from gobby.storage.definitions.agents import AgentDefinitionManager
+from gobby.workflows.agent_models import AgentStepWorkflowBody
+from gobby.workflows.definitions import AgentDefinitionBody
 from gobby.workflows.engine.core import RuleEngine
-from gobby.workflows.state_manager import WorkflowInstanceManager
+from gobby.workflows.step_instances import (
+    AgentStepInstance,
+    AgentStepInstanceManager,
+    build_step_instance,
+)
 
 if TYPE_CHECKING:
     from gobby.storage.hub.protocol import HubDatabase
@@ -30,8 +34,8 @@ def db(hub_db: "HubDatabase") -> "HubDatabase":
 
 
 @pytest.fixture
-def manager(db: "HubDatabase") -> LocalWorkflowDefinitionManager:
-    return LocalWorkflowDefinitionManager(db)
+def manager(db: "HubDatabase") -> AgentDefinitionManager:
+    return AgentDefinitionManager(db)
 
 
 @pytest.fixture
@@ -40,8 +44,8 @@ def engine(db: "HubDatabase") -> RuleEngine:
 
 
 @pytest.fixture
-def instance_mgr(db: "HubDatabase") -> WorkflowInstanceManager:
-    return WorkflowInstanceManager(db)
+def instance_mgr(db: "HubDatabase") -> AgentStepInstanceManager:
+    return AgentStepInstanceManager(db)
 
 
 def _make_event(
@@ -76,8 +80,8 @@ def _create_session(db: "HubDatabase") -> None:
 
 def _setup_workflow(
     db: "HubDatabase",
-    manager: LocalWorkflowDefinitionManager,
-    instance_mgr: WorkflowInstanceManager,
+    manager: AgentDefinitionManager,
+    instance_mgr: AgentStepInstanceManager,
 ) -> None:
     _create_session(db)
     workflow_data = {
@@ -105,24 +109,22 @@ def _setup_workflow(
         ],
         "exit_condition": "current_step == 'implement'",
     }
-    definition = WorkflowDefinition(**workflow_data)
+    definition = AgentDefinitionBody(
+        name="audit-workflow",
+        step_workflow=AgentStepWorkflowBody.model_validate(workflow_data),
+    )
     manager.create(
         name=definition.name,
-        definition_json=json.dumps(workflow_data),
-        workflow_type="workflow",
-        priority=100,
+        definition_json=definition.model_dump(mode="json"),
         enabled=True,
     )
-    instance_mgr.save_instance(
-        WorkflowInstance(
-            id=str(uuid.uuid4()),
+    instance_mgr.save(
+        build_step_instance(
+            definition,
             session_id=SESSION_ID,
-            workflow_name=definition.name,
-            enabled=True,
-            priority=100,
+            step_workflow_id=None,
             current_step="claim",
-            step_entered_at=datetime.now(UTC),
-            variables=dict(definition.variables),
+            variables=dict(definition.step_workflow.variables if definition.step_workflow else {}),
         )
     )
 
@@ -150,9 +152,9 @@ def _audit_rows(db: "HubDatabase") -> list[dict[str, Any]]:
 @pytest.mark.asyncio
 async def test_step_success_writes_audit_rows(
     db: "HubDatabase",
-    manager: LocalWorkflowDefinitionManager,
+    manager: AgentDefinitionManager,
     engine: RuleEngine,
-    instance_mgr: WorkflowInstanceManager,
+    instance_mgr: AgentStepInstanceManager,
 ) -> None:
     _setup_workflow(db, manager, instance_mgr)
     event = _make_event(
@@ -196,9 +198,9 @@ async def test_step_success_writes_audit_rows(
 @pytest.mark.asyncio
 async def test_step_transition_writes_run_outside_event_loop_thread(
     db: "HubDatabase",
-    manager: LocalWorkflowDefinitionManager,
+    manager: AgentDefinitionManager,
     engine: RuleEngine,
-    instance_mgr: WorkflowInstanceManager,
+    instance_mgr: AgentStepInstanceManager,
 ) -> None:
     _setup_workflow(db, manager, instance_mgr)
     event = _make_event(
@@ -216,19 +218,23 @@ async def test_step_transition_writes_run_outside_event_loop_thread(
     audit_threads: list[int] = []
     save_threads: list[int] = []
     original_log_transition = engine.workflow_audit.log_transition
-    original_save_instance = engine.instance_manager.save_instance
+    original_save = engine.instance_manager.save
 
     def log_transition(*args: object, **kwargs: object) -> None:
         audit_threads.append(threading.get_ident())
         original_log_transition(*args, **kwargs)
 
-    def save_instance(*args: object, **kwargs: object) -> None:
+    def save(
+        instance: AgentStepInstance,
+        *,
+        if_match: tuple[str, datetime] | None = None,
+    ) -> None:
         save_threads.append(threading.get_ident())
-        original_save_instance(*args, **kwargs)
+        original_save(instance, if_match=if_match)
 
     with (
         patch.object(engine.workflow_audit, "log_transition", side_effect=log_transition),
-        patch.object(engine.instance_manager, "save_instance", side_effect=save_instance),
+        patch.object(engine.instance_manager, "save", side_effect=save),
     ):
         response = await engine.evaluate(event, session_id=SESSION_ID, variables={})
 
@@ -243,9 +249,9 @@ async def test_step_transition_writes_run_outside_event_loop_thread(
 @pytest.mark.asyncio
 async def test_step_mcp_block_writes_audit_row(
     db: "HubDatabase",
-    manager: LocalWorkflowDefinitionManager,
+    manager: AgentDefinitionManager,
     engine: RuleEngine,
-    instance_mgr: WorkflowInstanceManager,
+    instance_mgr: AgentStepInstanceManager,
 ) -> None:
     _setup_workflow(db, manager, instance_mgr)
     event = _make_event(

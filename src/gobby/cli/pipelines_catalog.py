@@ -11,6 +11,7 @@ from typing import Any
 import click
 
 from gobby.utils.json_helpers import json_dumps
+from gobby.workflows.dry_run import evaluate_pipeline_definition
 from gobby.workflows.pipeline_state import ApprovalRequired
 
 _FACADE_MODULE = "gobby.cli.pipelines"
@@ -29,7 +30,7 @@ def list_pipelines(ctx: click.Context, json_format: bool) -> None:
     loader = facade.get_workflow_loader()
     project_id = facade._get_project_id()
 
-    discovered = loader.discover_pipeline_workflows_sync(project_id or None)
+    discovered = loader.discover_pipelines_sync(project_id or None)
 
     if json_format:
         pipeline_list = []
@@ -130,6 +131,41 @@ def show_pipeline(ctx: click.Context, name: str, json_format: bool) -> None:
         click.echo("\nOutputs:")
         for output_name, output_expr in pipeline.outputs.items():
             click.echo(f"  - {output_name}: {output_expr}")
+
+
+@click.command("check")
+@click.argument("name")
+@click.option("--json", "json_format", is_flag=True, help="Output as JSON")
+def check_pipeline(name: str, json_format: bool) -> None:
+    """Validate a pipeline definition without executing it."""
+    import asyncio
+
+    facade = _facade()
+    loader = facade.get_workflow_loader()
+    project_id = facade._get_project_id() or None
+    evaluation = asyncio.run(evaluate_pipeline_definition(name, loader, project_id))
+    result = evaluation.to_dict()
+    if json_format:
+        click.echo(json_dumps(result, indent=2, default=str))
+    else:
+        if evaluation.valid:
+            click.secho("VALID", fg="green", bold=True)
+        else:
+            click.secho("INVALID", fg="red", bold=True)
+        click.echo(f"  Pipeline: {result.get('workflow_name')}")
+        click.echo()
+        for item in result.get("items", []):
+            level = item.get("level", "info")
+            code = item.get("code", "")
+            message = item.get("message", "")
+            if level == "error":
+                click.secho(f"  ERROR {code}: {message}", fg="red")
+            elif level == "warning":
+                click.secho(f"  WARN  {code}: {message}", fg="yellow")
+            else:
+                click.echo(f"  info  {code}: {message}")
+    if not evaluation.valid:
+        raise SystemExit(1)
 
 
 @click.command("run")

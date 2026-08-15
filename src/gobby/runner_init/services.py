@@ -70,6 +70,10 @@ async def init_stateful_services(runner: GobbyRunner) -> None:
     await _register_stateful_services(runner)
     _apply_stateful_services(runner)
     _init_project_context(runner)
+    listener = getattr(runner, "definition_revision_listener", None)
+    start = getattr(listener, "start", None)
+    if callable(start):
+        await start()
 
 
 def init_services(runner: GobbyRunner) -> None:

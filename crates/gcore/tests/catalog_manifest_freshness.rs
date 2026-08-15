@@ -77,7 +77,7 @@ fn embedded_runner_applies_fresh_and_idempotently() -> anyhow::Result<()> {
 
     let first = SchemaRunner::new(&mut client, "public")?.apply()?;
     assert!(first.baseline_applied);
-    assert_eq!(first.migrations_applied, 0);
+    assert_eq!(first.migrations_applied, 6);
 
     let second = SchemaRunner::new(&mut client, "public")?.apply()?;
     assert!(!second.baseline_applied);
@@ -431,7 +431,7 @@ fn guard_test_rejects_a_database_newer_than_the_embedded_runner() -> anyhow::Res
     };
     SchemaRunner::new(&mut client, "public")?.apply()?;
     client.execute(
-        "INSERT INTO schema_migrations(version, filename, checksum) VALUES (377, '377_future.sql', $1)",
+        "INSERT INTO schema_migrations(version, filename, checksum) VALUES (382, '382_future.sql', $1)",
         &[&"f".repeat(64)],
     )?;
 
@@ -481,8 +481,14 @@ fn baseline_supports_machine_owned_attachments_and_prune_rows() -> anyhow::Resul
     SchemaRunner::new(&mut client, "public")?.apply()?;
     client.batch_execute(
         "
-        INSERT INTO machines (id, hostname)
-        VALUES ('aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa', 'migration-test');
+        INSERT INTO users (id, email, name, password_hash)
+        VALUES ('99999999-9999-4999-8999-999999999999', 'schema@test.local', 'schema-test', 'x');
+        INSERT INTO machines (id, hostname, owner_user_id)
+        VALUES (
+            'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa',
+            'migration-test',
+            '99999999-9999-4999-8999-999999999999'
+        );
         INSERT INTO projects (id, name)
         VALUES ('bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb', 'migration-test');
         INSERT INTO sessions (id, external_id, machine_id, source, project_id)
@@ -537,8 +543,12 @@ fn baseline_supports_machine_owned_attachments_and_prune_rows() -> anyhow::Resul
                 'bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb',
                 '/machine-a/project', 'test'
             );
-        INSERT INTO machines (id, hostname)
-        VALUES ('22222222-2222-4222-8222-222222222222', 'migration-test-2');
+        INSERT INTO machines (id, hostname, owner_user_id)
+        VALUES (
+            '22222222-2222-4222-8222-222222222222',
+            'migration-test-2',
+            '99999999-9999-4999-8999-999999999999'
+        );
         INSERT INTO code_index_prune_dirty_projects (
             machine_id, project_id, root_path, reason
         ) VALUES

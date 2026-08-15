@@ -43,10 +43,10 @@ rules:
         reason: "Do not push from worker sessions."
 ```
 
-At sync time, each named entry under `rules:` becomes an individual rule
-definition in `workflow_definitions`. Bundled YAML may still use a single
-`effect` shorthand; sync wraps it into the stored `effects` array. The MCP and
-HTTP authoring APIs validate the stored `effects` shape directly.
+At sync time, each named entry under `rules:` becomes an individual row in
+`rule_definitions`. Bundled YAML may still use a single `effect` shorthand;
+sync wraps it into the stored `effects` array. The MCP and HTTP authoring
+APIs validate the stored `effects` shape directly.
 
 ## Rule Shape
 
@@ -306,7 +306,7 @@ Important runtime semantics:
 
 A rule only affects a session when all of the following are true:
 
-1. The definition exists in `workflow_definitions`.
+1. The definition exists in `rule_definitions`.
 2. The rule is enabled.
 3. Session overrides have not disabled it.
 4. Its `agent_scope`, if present, matches the session's agent type.
@@ -333,4 +333,4 @@ The CLI also exposes operator commands under `gobby rules`, including `list`,
 For authoring caveats and engine behavior that matters when designing rules,
 see [Rule Authoring Guide](./workflow-rules.md).
 
-_Last verified: 2026-06-11_
+_Last verified: 2026-08-14_

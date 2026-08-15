@@ -8,8 +8,8 @@ import pytest
 
 from gobby.agents.runtime_cleanup import cleanup_agent_runtime_state
 from gobby.storage.tasks import LocalTaskManager, TaskDispatchMutexManager
-from gobby.workflows.definitions import WorkflowInstance
-from gobby.workflows.state_manager import WorkflowInstanceManager
+from gobby.workflows.step_instances import AgentStepInstanceManager
+from tests.workflows.step_instance_fixtures import make_step_instance
 
 pytestmark = pytest.mark.unit
 
@@ -58,14 +58,12 @@ def test_cleanup_agent_runtime_state_releases_mutex_and_conditionally_deletes_wo
         run_id="dddddddd-dddd-4ddd-8ddd-dddddddd2004",
         ttl_seconds=300,
     )
-    instance_manager = WorkflowInstanceManager(temp_db)
-    instance_manager.save_instance(
-        WorkflowInstance(
-            id="ffffffff-ffff-4fff-8fff-ffffffff2001",
-            session_id="aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaa2001",
-            workflow_name="tech-writer-steps",
+    instance_manager = AgentStepInstanceManager(temp_db)
+    instance_manager.save(
+        make_step_instance(
+            "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaa2001",
+            agent_name="tech-writer",
             current_step="implement",
-            step_entered_at=datetime.now(UTC),
         )
     )
 
@@ -80,5 +78,9 @@ def test_cleanup_agent_runtime_state_releases_mutex_and_conditionally_deletes_wo
     assert result.workflow_instance_rows == expected_workflow_rows
     assert result.errors == ()
     assert mutex.get_mutex(task.id) is None
-    remaining = instance_manager.get_active_instances("aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaa2001")
-    assert len(remaining) == (1 if terminal_reason == "daemon_stop" else 0)
+    remaining = instance_manager.get_for_session("aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaa2001")
+    if terminal_reason == "daemon_stop":
+        assert remaining is not None
+        assert remaining.current_step == "implement"
+    else:
+        assert remaining is None

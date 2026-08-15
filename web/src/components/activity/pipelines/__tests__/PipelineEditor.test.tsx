@@ -2,7 +2,7 @@ import { render, screen } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { describe, expect, it, vi } from "vitest";
 
-import type { WorkflowDetail } from "../../../../hooks/useWorkflows";
+import type { PipelineDefDetail } from "../../../../hooks/usePipelineDefs";
 import { PipelineEditor } from "../PipelineEditor";
 
 vi.mock("../../../../hooks/useConfirmDialog", () => ({
@@ -12,16 +12,14 @@ vi.mock("../../../../hooks/useConfirmDialog", () => ({
   }),
 }));
 
-const pipeline: WorkflowDetail = {
+const pipeline: PipelineDefDetail = {
   id: "pipeline-1",
   name: "deploy-prod",
   description: "Deploy production services",
-  workflow_type: "pipeline",
+  kind: "pipeline",
   version: "1.0",
   enabled: true,
-  priority: 2,
   source: "installed",
-  sources: null,
   tags: ["release"],
   project_id: "project-1",
   created_at: "2026-07-01T00:00:00Z",

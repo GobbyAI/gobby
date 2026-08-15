@@ -23,8 +23,9 @@ from starlette.testclient import TestClient
 from gobby.config.app import DaemonConfig
 from gobby.config.runtime import ConfigRuntime
 from gobby.config.runtime_models import ConfigSnapshot
+from gobby.storage.definitions.pipelines import PipelineDefinitionManager
+from gobby.storage.definitions.rules import RuleDefinitionManager
 from gobby.storage.hub.protocol import HubDatabase
-from gobby.storage.workflow_definitions import LocalWorkflowDefinitionManager
 from tests.servers.conftest import StubConfigRuntime, create_http_server
 
 pytestmark = pytest.mark.unit
@@ -36,8 +37,8 @@ def db(hub_db: HubDatabase) -> HubDatabase:
 
 
 @pytest.fixture
-def def_manager(db: HubDatabase) -> LocalWorkflowDefinitionManager:
-    return LocalWorkflowDefinitionManager(db)
+def def_manager(db: HubDatabase) -> RuleDefinitionManager:
+    return RuleDefinitionManager(db)
 
 
 @pytest.fixture
@@ -63,12 +64,12 @@ def client(db: HubDatabase) -> TestClient:
 
 
 def _seed_rule(
-    def_manager: LocalWorkflowDefinitionManager,
+    def_manager: RuleDefinitionManager,
     name: str = "test-rule",
     event: str = "before_tool",
     group: str = "test-group",
     enabled: bool = True,
-    source: Literal["installed", "template", "agent", "project", "custom"] = "installed",
+    source: Literal["installed", "custom", "project"] = "installed",
     tags: list[str] | None = None,
 ) -> str:
     """Seed a rule in the database and return its ID."""
@@ -79,8 +80,7 @@ def _seed_rule(
     }
     row = def_manager.create(
         name=name,
-        definition_json=json.dumps(body),
-        workflow_type="rule",
+        definition_json=body,
         enabled=enabled,
         source=source,
         tags=tags,
@@ -88,11 +88,10 @@ def _seed_rule(
     return row.id
 
 
-def _seed_invalid_rule(def_manager: LocalWorkflowDefinitionManager) -> None:
+def _seed_invalid_rule(def_manager: RuleDefinitionManager) -> None:
     def_manager.create(
         name="invalid-rule",
-        definition_json=json.dumps("not-json"),
-        workflow_type="rule",
+        definition_json={"not": "a-rule"},
         tags=["invalid-tag"],
     )
 
@@ -117,9 +116,7 @@ class TestListRules:
         assert response.json()["detail"]["code"] == "runtime_unavailable"
         assert response.json()["detail"]["retryable"] is True
 
-    def test_list_all_rules(
-        self, client: TestClient, def_manager: LocalWorkflowDefinitionManager
-    ) -> None:
+    def test_list_all_rules(self, client: TestClient, def_manager: RuleDefinitionManager) -> None:
         _seed_rule(def_manager, name="rule-a")
         _seed_rule(def_manager, name="rule-b")
 
@@ -133,13 +130,12 @@ class TestListRules:
         assert "rule-b" in names
 
     def test_excludes_workflows(
-        self, client: TestClient, def_manager: LocalWorkflowDefinitionManager
+        self, client: TestClient, def_manager: RuleDefinitionManager
     ) -> None:
         _seed_rule(def_manager, name="my-rule")
-        def_manager.create(
+        PipelineDefinitionManager(def_manager.db).create(
             name="my-workflow",
             definition_json=json.dumps({"name": "my-workflow"}),
-            workflow_type="workflow",
         )
 
         resp = client.get("/api/rules")
@@ -148,9 +144,7 @@ class TestListRules:
         assert "my-rule" in names
         assert "my-workflow" not in names
 
-    def test_filter_by_event(
-        self, client: TestClient, def_manager: LocalWorkflowDefinitionManager
-    ) -> None:
+    def test_filter_by_event(self, client: TestClient, def_manager: RuleDefinitionManager) -> None:
         _seed_rule(def_manager, name="before-rule", event="before_tool")
         _seed_rule(def_manager, name="stop-rule", event="stop")
 
@@ -160,9 +154,7 @@ class TestListRules:
         assert "before-rule" in names
         assert "stop-rule" not in names
 
-    def test_filter_by_group(
-        self, client: TestClient, def_manager: LocalWorkflowDefinitionManager
-    ) -> None:
+    def test_filter_by_group(self, client: TestClient, def_manager: RuleDefinitionManager) -> None:
         _seed_rule(def_manager, name="alpha-rule", group="alpha")
         _seed_rule(def_manager, name="beta-rule", group="beta")
 
@@ -173,7 +165,7 @@ class TestListRules:
         assert "beta-rule" not in names
 
     def test_filter_by_enabled(
-        self, client: TestClient, def_manager: LocalWorkflowDefinitionManager
+        self, client: TestClient, def_manager: RuleDefinitionManager
     ) -> None:
         _seed_rule(def_manager, name="on-rule", enabled=True)
         _seed_rule(def_manager, name="off-rule", enabled=False)
@@ -195,7 +187,7 @@ class TestListRules:
     def test_skips_unparseable_rules(
         self,
         client: TestClient,
-        def_manager: LocalWorkflowDefinitionManager,
+        def_manager: RuleDefinitionManager,
         caplog: pytest.LogCaptureFixture,
     ) -> None:
         _seed_rule(def_manager, name="valid-rule")
@@ -250,7 +242,7 @@ class TestCreateRule:
         assert resp.status_code == 400
 
     def test_rejects_duplicate_name(
-        self, client: TestClient, def_manager: LocalWorkflowDefinitionManager
+        self, client: TestClient, def_manager: RuleDefinitionManager
     ) -> None:
         _seed_rule(def_manager, name="existing-rule")
 
@@ -273,9 +265,7 @@ class TestCreateRule:
 class TestGetRule:
     """GET /api/rules/{name} returns full rule detail."""
 
-    def test_returns_rule(
-        self, client: TestClient, def_manager: LocalWorkflowDefinitionManager
-    ) -> None:
+    def test_returns_rule(self, client: TestClient, def_manager: RuleDefinitionManager) -> None:
         _seed_rule(def_manager, name="my-rule", event="stop", group="test")
 
         resp = client.get("/api/rules/my-rule")
@@ -291,7 +281,7 @@ class TestGetRule:
         assert resp.status_code == 404
 
     def test_includes_enabled_status(
-        self, client: TestClient, def_manager: LocalWorkflowDefinitionManager
+        self, client: TestClient, def_manager: RuleDefinitionManager
     ) -> None:
         _seed_rule(def_manager, name="disabled-rule", enabled=False)
 
@@ -308,9 +298,7 @@ class TestGetRule:
 class TestUpdateRule:
     """PUT /api/rules/{name} updates rule fields."""
 
-    def test_update_priority(
-        self, client: TestClient, def_manager: LocalWorkflowDefinitionManager
-    ) -> None:
+    def test_update_priority(self, client: TestClient, def_manager: RuleDefinitionManager) -> None:
         _seed_rule(def_manager, name="my-rule")
 
         resp = client.put("/api/rules/my-rule", json={"priority": 5})
@@ -320,7 +308,7 @@ class TestUpdateRule:
         assert data["rule"]["priority"] == 5
 
     def test_update_description(
-        self, client: TestClient, def_manager: LocalWorkflowDefinitionManager
+        self, client: TestClient, def_manager: RuleDefinitionManager
     ) -> None:
         _seed_rule(def_manager, name="my-rule")
 
@@ -328,9 +316,7 @@ class TestUpdateRule:
         data = resp.json()
         assert data["rule"]["description"] == "Updated"
 
-    def test_renames_rule(
-        self, client: TestClient, def_manager: LocalWorkflowDefinitionManager
-    ) -> None:
+    def test_renames_rule(self, client: TestClient, def_manager: RuleDefinitionManager) -> None:
         rule_id = _seed_rule(def_manager, name="my-rule")
 
         resp = client.put("/api/rules/my-rule", json={"name": "renamed-rule"})
@@ -343,14 +329,13 @@ class TestUpdateRule:
         assert client.get("/api/rules/renamed-rule").status_code == 200
 
     def test_rename_collision_check_is_rule_scoped(
-        self, client: TestClient, def_manager: LocalWorkflowDefinitionManager
+        self, client: TestClient, def_manager: RuleDefinitionManager
     ) -> None:
         _seed_rule(def_manager, name="my-rule")
-        def_manager.create(
+        PipelineDefinitionManager(def_manager.db).create(
             name="workflow-name",
             definition_json=json.dumps({"steps": []}),
-            workflow_type="workflow",
-            source="template",
+            source="installed",
         )
 
         resp = client.put("/api/rules/my-rule", json={"name": "workflow-name"})
@@ -359,7 +344,7 @@ class TestUpdateRule:
         assert resp.json()["rule"]["name"] == "workflow-name"
 
     def test_rejects_rule_name_collision(
-        self, client: TestClient, def_manager: LocalWorkflowDefinitionManager
+        self, client: TestClient, def_manager: RuleDefinitionManager
     ) -> None:
         _seed_rule(def_manager, name="my-rule")
         _seed_rule(def_manager, name="existing-rule")
@@ -369,9 +354,9 @@ class TestUpdateRule:
         assert resp.status_code == 409
 
     def test_rejects_bundled_rule_rename(
-        self, client: TestClient, def_manager: LocalWorkflowDefinitionManager
+        self, client: TestClient, def_manager: RuleDefinitionManager
     ) -> None:
-        rule_id = _seed_rule(def_manager, name="bundled-rule", source="template")
+        rule_id = _seed_rule(def_manager, name="bundled-rule", tags=["gobby"])
 
         resp = client.put("/api/rules/bundled-rule", json={"name": "custom-name"})
 
@@ -380,7 +365,7 @@ class TestUpdateRule:
         assert def_manager.get(rule_id).name == "bundled-rule"
 
     def test_renames_and_updates_definition(
-        self, client: TestClient, def_manager: LocalWorkflowDefinitionManager
+        self, client: TestClient, def_manager: RuleDefinitionManager
     ) -> None:
         rule_id = _seed_rule(def_manager, name="my-rule")
 
@@ -410,13 +395,13 @@ class TestUpdateRule:
         assert data["rule"]["priority"] == 7
         assert data["rule"]["description"] == "From YAML"
 
-        stored_body = json.loads(def_manager.get(rule_id).definition_json)
+        stored_body = def_manager.get(rule_id).definition_json
         assert "name" not in stored_body
         assert stored_body["event"] == "stop"
         assert stored_body["group"] == "updated-group"
 
     def test_explicit_metadata_overrides_definition_metadata(
-        self, client: TestClient, def_manager: LocalWorkflowDefinitionManager
+        self, client: TestClient, def_manager: RuleDefinitionManager
     ) -> None:
         _seed_rule(def_manager, name="my-rule")
 
@@ -442,9 +427,7 @@ class TestUpdateRule:
         resp = client.put("/api/rules/nonexistent", json={"priority": 5})
         assert resp.status_code == 404
 
-    def test_no_fields(
-        self, client: TestClient, def_manager: LocalWorkflowDefinitionManager
-    ) -> None:
+    def test_no_fields(self, client: TestClient, def_manager: RuleDefinitionManager) -> None:
         _seed_rule(def_manager, name="my-rule")
 
         resp = client.put("/api/rules/my-rule", json={})
@@ -453,20 +436,20 @@ class TestUpdateRule:
     def test_update_failure_logs_rule_context(
         self,
         client: TestClient,
-        def_manager: LocalWorkflowDefinitionManager,
+        def_manager: RuleDefinitionManager,
         monkeypatch: pytest.MonkeyPatch,
         caplog: pytest.LogCaptureFixture,
     ) -> None:
         row_id = _seed_rule(def_manager, name="my-rule")
 
         def fail_update(
-            _self: LocalWorkflowDefinitionManager,
+            _self: RuleDefinitionManager,
             _definition_id: str,
             **_fields: object,
         ) -> object:
             raise RuntimeError("write failed")
 
-        monkeypatch.setattr(LocalWorkflowDefinitionManager, "update", fail_update)
+        monkeypatch.setattr(RuleDefinitionManager, "update", fail_update)
 
         with caplog.at_level(logging.ERROR, logger="gobby.servers.routes.rules"):
             resp = client.put("/api/rules/my-rule", json={"priority": 5})
@@ -486,7 +469,7 @@ class TestDeleteRule:
     """DELETE /api/rules/{name} soft-deletes (bundled protected)."""
 
     def test_deletes_custom_rule(
-        self, client: TestClient, def_manager: LocalWorkflowDefinitionManager
+        self, client: TestClient, def_manager: RuleDefinitionManager
     ) -> None:
         _seed_rule(def_manager, name="custom-rule", tags=["user"])
 
@@ -496,7 +479,7 @@ class TestDeleteRule:
         assert data["status"] == "success"
 
     def test_protects_bundled_rule(
-        self, client: TestClient, def_manager: LocalWorkflowDefinitionManager
+        self, client: TestClient, def_manager: RuleDefinitionManager
     ) -> None:
         _seed_rule(def_manager, name="bundled-rule", tags=["gobby", "default"])
 
@@ -504,7 +487,7 @@ class TestDeleteRule:
         assert resp.status_code == 403
 
     def test_force_deletes_bundled(
-        self, client: TestClient, def_manager: LocalWorkflowDefinitionManager
+        self, client: TestClient, def_manager: RuleDefinitionManager
     ) -> None:
         _seed_rule(def_manager, name="bundled-rule", tags=["gobby", "default"])
 
@@ -524,9 +507,7 @@ class TestDeleteRule:
 class TestToggleRule:
     """PUT /api/rules/{name}/toggle toggles enabled state."""
 
-    def test_disable_rule(
-        self, client: TestClient, def_manager: LocalWorkflowDefinitionManager
-    ) -> None:
+    def test_disable_rule(self, client: TestClient, def_manager: RuleDefinitionManager) -> None:
         _seed_rule(def_manager, name="my-rule", enabled=True)
 
         resp = client.put("/api/rules/my-rule/toggle", json={"enabled": False})
@@ -535,9 +516,7 @@ class TestToggleRule:
         assert data["status"] == "success"
         assert data["rule"]["enabled"] is False
 
-    def test_enable_rule(
-        self, client: TestClient, def_manager: LocalWorkflowDefinitionManager
-    ) -> None:
+    def test_enable_rule(self, client: TestClient, def_manager: RuleDefinitionManager) -> None:
         _seed_rule(def_manager, name="my-rule", enabled=False)
 
         resp = client.put("/api/rules/my-rule/toggle", json={"enabled": True})
@@ -555,16 +534,16 @@ class TestBulkToggleRules:
     def test_continues_after_single_rule_update_failure(
         self,
         client: TestClient,
-        def_manager: LocalWorkflowDefinitionManager,
+        def_manager: RuleDefinitionManager,
         monkeypatch: pytest.MonkeyPatch,
     ) -> None:
         failing_rule_id = _seed_rule(def_manager, name="installed-a", source="installed")
         successful_rule_id = _seed_rule(def_manager, name="installed-b", source="installed")
         project_rule_id = _seed_rule(def_manager, name="project-a", source="project")
-        original_update = LocalWorkflowDefinitionManager.update
+        original_update = RuleDefinitionManager.update
 
         def flaky_update(
-            manager: LocalWorkflowDefinitionManager,
+            manager: RuleDefinitionManager,
             definition_id: str,
             **fields: Any,
         ) -> Any:
@@ -572,7 +551,7 @@ class TestBulkToggleRules:
                 raise RuntimeError("row update failed")
             return original_update(manager, definition_id, **fields)
 
-        monkeypatch.setattr(LocalWorkflowDefinitionManager, "update", flaky_update)
+        monkeypatch.setattr(RuleDefinitionManager, "update", flaky_update)
 
         response = client.put(
             "/api/rules/bulk-toggle",
@@ -606,9 +585,7 @@ class TestBulkToggleRules:
 class TestListGroups:
     """GET /api/rules/groups returns distinct rule groups."""
 
-    def test_returns_groups(
-        self, client: TestClient, def_manager: LocalWorkflowDefinitionManager
-    ) -> None:
+    def test_returns_groups(self, client: TestClient, def_manager: RuleDefinitionManager) -> None:
         _seed_rule(def_manager, name="rule-a", group="alpha")
         _seed_rule(def_manager, name="rule-b", group="beta")
         _seed_rule(def_manager, name="rule-c", group="alpha")
@@ -629,7 +606,7 @@ class TestListGroups:
         self,
         endpoint: str,
         client: TestClient,
-        def_manager: LocalWorkflowDefinitionManager,
+        def_manager: RuleDefinitionManager,
         caplog: pytest.LogCaptureFixture,
     ) -> None:
         _seed_rule(def_manager, name="valid-rule", group="valid-group", tags=["valid-tag"])

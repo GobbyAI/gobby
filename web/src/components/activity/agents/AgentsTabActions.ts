@@ -86,7 +86,11 @@ export function buildAgentDefinitionBody(
     enabled: draft.enabled,
     tags: draft.tags,
     workflows: workflowPayload(draft),
-    steps: draft.steps,
+    step_workflow: {
+      steps: draft.steps,
+      variables: draft.stepVariables,
+      exit_condition: draft.exitCondition || null,
+    },
     blocked_tools: draft.blockedTools,
     blocked_mcp_tools: draft.blockedMcpTools,
   };

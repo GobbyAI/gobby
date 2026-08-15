@@ -346,13 +346,25 @@ class SessionLifecycleManager(TranscriptProcessingMixin):
 
     async def _purge_soft_deleted_definitions(self) -> None:
         """Permanently remove definitions that were soft-deleted more than 30 days ago."""
-        try:
-            from gobby.storage.workflow_definitions import LocalWorkflowDefinitionManager
+        from gobby.storage.definitions.agents import AgentDefinitionManager
+        from gobby.storage.definitions.pipelines import PipelineDefinitionManager
+        from gobby.storage.definitions.rules import RuleDefinitionManager
+        from gobby.storage.definitions.variables import SessionVariableDefaultManager
 
-            wf_mgr = LocalWorkflowDefinitionManager(self.db)
-            wf_mgr.purge_deleted(older_than_days=30)
-        except Exception as e:
-            logger.error("Failed to purge soft-deleted definitions: %s", e)
+        for manager_cls in (
+            RuleDefinitionManager,
+            AgentDefinitionManager,
+            SessionVariableDefaultManager,
+            PipelineDefinitionManager,
+        ):
+            try:
+                manager_cls(self.db).purge_deleted(older_than_days=30)
+            except Exception as e:
+                logger.error(
+                    "Failed to purge soft-deleted %s: %s",
+                    getattr(manager_cls, "__name__", manager_cls),
+                    e,
+                )
 
     async def _purge_dream_hidden_memories(self, config: MemoryDreamConfig) -> None:
         """Hard-purge aged dream-hidden memories and prune dream run/snapshot history.

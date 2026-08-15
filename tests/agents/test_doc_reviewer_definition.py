@@ -20,8 +20,8 @@ def _agent() -> dict:
 
 def test_doc_reviewer_is_read_only() -> None:
     agent = _agent()
-    review_step = next(step for step in agent["steps"] if step["name"] == "review")
-    terminate_step = next(step for step in agent["steps"] if step["name"] == "terminate")
+    review_step = next(step for step in agent["step_workflow"]["steps"] if step["name"] == "review")
+    terminate_step = next(step for step in agent["step_workflow"]["steps"] if step["name"] == "terminate")
 
     allowed_tools = set(review_step.get("allowed_tools", []))
     blocked_mcp_tools = set(review_step.get("blocked_mcp_tools", []))
@@ -38,7 +38,7 @@ def test_doc_reviewer_is_read_only() -> None:
 def test_doc_reviewer_avoids_full_test_suites() -> None:
     agent = _agent()
     instructions = agent["instructions"]
-    status_message = next(step for step in agent["steps"] if step["name"] == "review")[
+    status_message = next(step for step in agent["step_workflow"]["steps"] if step["name"] == "review")[
         "status_message"
     ]
 
@@ -55,15 +55,15 @@ def test_doc_reviewer_avoids_full_test_suites() -> None:
 
 def test_doc_reviewer_loads_required_skills() -> None:
     agent = _agent()
-    load_step = next(step for step in agent["steps"] if step["name"] == "load_skills")
+    load_step = next(step for step in agent["step_workflow"]["steps"] if step["name"] == "load_skills")
 
-    assert agent["step_variables"]["required_skills"] == [
+    assert agent["step_workflow"]["variables"]["required_skills"] == [
         "code-index",
         "tech-writer",
         "tasks",
     ]
     assert load_step["allowed_mcp_tools"] == ["gobby-skills:get_skill"]
-    for skill_name in agent["step_variables"]["required_skills"]:
+    for skill_name in agent["step_workflow"]["variables"]["required_skills"]:
         assert f'get_skill(name="{skill_name}")' in load_step["status_message"]
     assert "Do not call claim_task" in load_step["status_message"]
 
@@ -71,7 +71,7 @@ def test_doc_reviewer_loads_required_skills() -> None:
 def test_doc_reviewer_uses_ordered_docs_review_and_verdict_tools() -> None:
     agent = _agent()
     instructions = agent["instructions"]
-    review_step = next(step for step in agent["steps"] if step["name"] == "review")
+    review_step = next(step for step in agent["step_workflow"]["steps"] if step["name"] == "review")
     status_message = review_step["status_message"]
     allowed_mcp_tools = set(review_step.get("allowed_mcp_tools", []))
     success_tools = {item["tool"] for item in review_step.get("on_mcp_success", [])}

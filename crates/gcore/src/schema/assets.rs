@@ -3,7 +3,7 @@ use sha2::{Digest, Sha256};
 pub const RUNNER_PROTOCOL_VERSION: u32 = 1;
 pub const BASELINE_VERSION: i32 = 375;
 pub const BASELINE_CHECKSUM: &str =
-    "b2e08b119ba08d342cb2729a96ff4a0e42380a1335a5661c89c45fa3f75832b3";
+    "5d598c3609d0bdbcfd10f1c363c60bd38d5625100c3e8719b3ff42d189047117";
 pub const BASELINE_SQL: &str = include_str!("../../assets/schema/baseline.sql");
 pub const SEED_MANIFEST_JSON: &str = include_str!("../../assets/schema/seed.manifest.json");
 pub const CATALOG_MANIFEST_JSON: &str = include_str!("../../assets/schema/catalog.manifest.json");
@@ -16,9 +16,45 @@ pub(crate) struct EmbeddedMigration {
     pub sql: &'static str,
 }
 
-// Pre-0.5.0 schema changes are folded into baseline 375. Numbered migrations
-// resume after the release boundary.
-pub(crate) const MIGRATIONS: &[EmbeddedMigration] = &[];
+pub(crate) const MIGRATIONS: &[EmbeddedMigration] = &[
+    EmbeddedMigration {
+        version: 376,
+        filename: "376_copy_agent_definitions.sql",
+        checksum: "d736ad1aa1f182a7569fcb7aae129cdf2cdaf89b46e898212a3269251295d4f1",
+        sql: include_str!("../../assets/schema/migrations/376_copy_agent_definitions.sql"),
+    },
+    EmbeddedMigration {
+        version: 377,
+        filename: "377_copy_agent_step_instances.sql",
+        checksum: "43b6c25263c1e510f28c540d9cc24e62ffcad67a3a8dddde3645bdb6a5e92821",
+        sql: include_str!("../../assets/schema/migrations/377_copy_agent_step_instances.sql"),
+    },
+    EmbeddedMigration {
+        version: 378,
+        filename: "378_copy_rule_definitions.sql",
+        checksum: "5fe2bcea79afa5876fc12fb1087a764bbe3bb262c23f5abbc3b1b9b83b1ed4e7",
+        sql: include_str!("../../assets/schema/migrations/378_copy_rule_definitions.sql"),
+    },
+    EmbeddedMigration {
+        version: 379,
+        filename: "379_copy_session_variable_defaults.sql",
+        checksum: "ea1ffe7eec95b90901b2818fe734e4128433c8f7e4b05060fee5ac3acbda4896",
+        sql: include_str!("../../assets/schema/migrations/379_copy_session_variable_defaults.sql"),
+    },
+    EmbeddedMigration {
+        version: 380,
+        filename: "380_copy_pipeline_definitions.sql",
+        checksum: "6c4c0b827117c7667b2b1b5b540f56aca81c04304d274bd4d34983947ca9e86c",
+        sql: include_str!("../../assets/schema/migrations/380_copy_pipeline_definitions.sql"),
+    },
+    EmbeddedMigration {
+        version: 381,
+        filename: "381_drop_legacy_workflow_tables.sql",
+        checksum: "029f44aeeaf260d617e981ec77a558f21e2f8cb1af2e49e1d14adbc3458cc2e8",
+        sql: include_str!("../../assets/schema/migrations/381_drop_legacy_workflow_tables.sql"),
+    },
+];
+const _: &str = include_str!("../../assets/schema/migrations/.gitkeep");
 
 pub(crate) fn root_hash() -> String {
     let mut digest = Sha256::new();

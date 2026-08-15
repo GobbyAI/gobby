@@ -98,7 +98,11 @@ def test_create_docker_backup_writes_verified_dump_metadata_and_sha(
     assert f"{metadata['dump_sha256']}  {backup.POSTGRES_DUMP_NAME}" in sums_path.read_text()
     assert result["dump_sha256"] == metadata["dump_sha256"]
     assert result["sha256_verified"] is True
-    assert any(command[:3] == ["docker", "exec", "gobby-postgres"] for command in commands)
+    dump_command = next(
+        command for command in commands if command[:3] == ["docker", "exec", "gobby-postgres"]
+    )
+    assert "--no-owner" in dump_command
+    assert "--no-privileges" not in dump_command
     assert any(command[-2:] == ["pg_restore", "--list"] for command in commands)
 
 
@@ -214,7 +218,8 @@ def test_restore_docker_backup_verifies_checksum_and_runs_restore_probes(
     assert result["database_url"] == "postgresql://gobby:****@localhost:60891/gobby"
     assert commands[0][-2:] == ["pg_restore", "--list"]
     assert commands[1][3:6] == ["-e", "PGOPTIONS=-c event_triggers=off", "gobby-postgres"]
-    assert commands[1][6:9] == ["pg_restore", "--no-owner", "--no-privileges"]
+    assert commands[1][6:8] == ["pg_restore", "--no-owner"]
+    assert "--no-privileges" not in commands[1]
     assert "--clean" not in commands[1]
     assert result["probes"]["pg_search_present"] is True
     assert result["probes"]["pgcrypto_present"] is True
@@ -345,7 +350,8 @@ def test_restore_allows_explicit_unverified_dump_override(
     assert result["sha256_verified"] is False
     assert result["expected_dump_sha256"] is None
     assert commands[0][-2:] == ["pg_restore", "--list"]
-    assert commands[1][6:9] == ["pg_restore", "--no-owner", "--no-privileges"]
+    assert commands[1][6:8] == ["pg_restore", "--no-owner"]
+    assert "--no-privileges" not in commands[1]
 
 
 def test_restore_rejects_unmanaged_dsn(

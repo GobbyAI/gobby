@@ -205,7 +205,6 @@ def _run_pg_dump(*, database_url: str, dump_path: Path) -> None:
         database,
         "-Fc",
         "--no-owner",
-        "--no-privileges",
     ]
     ensure_docker_allowed("PostgreSQL backup dump", runner=subprocess.run)
     try:
@@ -227,7 +226,7 @@ def _run_pg_restore(
     dump_path: Path,
     clean: bool,
 ) -> None:
-    options = ["--no-owner", "--no-privileges"]
+    options = ["--no-owner"]
     if clean:
         options.extend(["--clean", "--if-exists"])
 

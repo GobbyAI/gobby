@@ -2,13 +2,14 @@
 
 Sets the project_context ContextVar from X-Gobby-Project-Id and
 X-Gobby-Session-Id request headers on every request. This ensures all
-routes that call get_project_context() — including workflow variable
+routes that call get_project_context() — including session variable
 endpoints, hooks, and any future routes — have project context available
 for #N session reference resolution.
 
 Previously, only the hooks route set this ContextVar via a local helper.
-Any other route that needed project context (e.g., /api/workflows/variables/set)
-would silently get None, causing #N resolution failures.
+Any other route that needed project context (e.g.,
+/api/sessions/{session_id}/variables/set) would silently get None, causing
+#N resolution failures.
 """
 
 from __future__ import annotations

@@ -15,7 +15,7 @@ import pytest
 from gobby.hooks.events import HookEvent, HookEventType, SessionSource
 from gobby.storage.hub.protocol import HubDatabase
 from gobby.storage.sessions import SessionManager
-from gobby.storage.workflow_definitions import LocalWorkflowDefinitionManager
+from gobby.storage.definitions.rules import RuleDefinitionManager
 from gobby.workflows.definitions import RuleDefinitionBody
 from gobby.workflows.engine.core import RuleEngine
 from gobby.workflows.hooks import WorkflowHookHandler
@@ -50,8 +50,8 @@ def db(temp_db: HubDatabase) -> HubDatabase:
 
 
 @pytest.fixture
-def manager(db: HubDatabase) -> LocalWorkflowDefinitionManager:
-    return LocalWorkflowDefinitionManager(db)
+def manager(db: HubDatabase) -> RuleDefinitionManager:
+    return RuleDefinitionManager(db)
 
 
 def _sync_bundled(db: HubDatabase) -> dict[str, Any]:
@@ -60,7 +60,7 @@ def _sync_bundled(db: HubDatabase) -> dict[str, Any]:
 
     result = sync_bundled_rules(db, get_bundled_rules_path())
     # Mark templates as installed so get_by_name() finds them
-    db.execute("UPDATE workflow_definitions SET source = 'installed' WHERE source = 'template'")
+    db.execute("UPDATE rule_definitions SET source = 'installed' WHERE source = 'template'")
     return result
 
 
@@ -77,10 +77,10 @@ class TestPlanModeSync:
     """Test that plan-mode rules sync correctly."""
 
     def test_bundled_file_syncs_all_rules(self, db, manager) -> None:
-        """All bundled plan-mode rules should sync to workflow_definitions."""
+        """All bundled plan-mode rules should sync to rule_definitions."""
         _sync_bundled(db)
 
-        rules = manager.list_all(workflow_type="rule")
+        rules = manager.list_all()
         rule_names = {r.name for r in rules}
 
         assert PLAN_MODE_RULES.issubset(rule_names), f"Missing: {PLAN_MODE_RULES - rule_names}"
@@ -89,20 +89,20 @@ class TestPlanModeSync:
         """All plan-mode rules should have group='plan-mode'."""
         _sync_bundled(db)
 
-        rules = manager.list_all(workflow_type="rule")
+        rules = manager.list_all()
         for row in rules:
             if row.name in PLAN_MODE_RULES:
-                body = json.loads(row.definition_json)
+                body = row.definition_json
                 assert body.get("group") == "plan-mode", f"{row.name} missing group"
 
     def test_all_rules_are_valid_pydantic(self, db, manager) -> None:
         """All synced rules should be valid RuleDefinitionBody instances."""
         _sync_bundled(db)
 
-        rules = manager.list_all(workflow_type="rule")
+        rules = manager.list_all()
         for row in rules:
             if row.name in PLAN_MODE_RULES:
-                body = RuleDefinitionBody.model_validate_json(row.definition_json)
+                body = RuleDefinitionBody.model_validate(row.definition_json)
                 for effect in body.resolved_effects:
                     assert effect.type in {
                         "block",
@@ -115,7 +115,7 @@ class TestPlanModeSync:
         """inject-plan-skill (redundant duplicate) should not exist after sync."""
         _sync_bundled(db)
 
-        rules = manager.list_all(workflow_type="rule")
+        rules = manager.list_all()
         rule_names = {r.name for r in rules}
         assert "inject-plan-skill" not in rule_names
 
@@ -130,7 +130,7 @@ class TestHandlePlanModeEntry:
         row = manager.get_by_name("handle-plan-mode-entry")
         assert row is not None
 
-        body = RuleDefinitionBody.model_validate_json(row.definition_json)
+        body = RuleDefinitionBody.model_validate(row.definition_json)
         assert body.event.value == "turn_start"
         assert body.agent_scope == ["default"]
         assert body.when is not None
@@ -143,7 +143,7 @@ class TestHandlePlanModeEntry:
         _sync_bundled(db)
 
         row = manager.get_by_name("handle-plan-mode-entry")
-        body = RuleDefinitionBody.model_validate_json(row.definition_json)
+        body = RuleDefinitionBody.model_validate(row.definition_json)
 
         effects = body.resolved_effects
         assert len(effects) == 2
@@ -289,7 +289,7 @@ class TestTeachQwenGcodePlanMode:
         row = manager.get_by_name("teach-qwen-gcode-plan-mode")
         assert row is not None
 
-        body = RuleDefinitionBody.model_validate_json(row.definition_json)
+        body = RuleDefinitionBody.model_validate(row.definition_json)
         assert body.event.value == "turn_start"
         assert body.when is not None
         assert "plan_mode" in body.when
@@ -300,7 +300,7 @@ class TestTeachQwenGcodePlanMode:
         _sync_bundled(db)
 
         row = manager.get_by_name("teach-qwen-gcode-plan-mode")
-        body = RuleDefinitionBody.model_validate_json(row.definition_json)
+        body = RuleDefinitionBody.model_validate(row.definition_json)
 
         effects = body.resolved_effects
         assert len(effects) == 2
@@ -325,7 +325,7 @@ class TestHandlePlanModeExit:
         row = manager.get_by_name("handle-plan-mode-exit")
         assert row is not None
 
-        body = RuleDefinitionBody.model_validate_json(row.definition_json)
+        body = RuleDefinitionBody.model_validate(row.definition_json)
         assert body.event.value == "after_tool"
         assert body.when is not None
         assert "ExitPlanMode" in body.when
@@ -334,13 +334,13 @@ class TestHandlePlanModeExit:
     def test_clears_plan_mode_and_epoch_guards(
         self,
         db: HubDatabase,
-        manager: LocalWorkflowDefinitionManager,
+        manager: RuleDefinitionManager,
     ) -> None:
         """Should clear plan_mode and both Plan Mode epoch guards."""
         _sync_bundled(db)
 
         row = manager.get_by_name("handle-plan-mode-exit")
-        body = RuleDefinitionBody.model_validate_json(row.definition_json)
+        body = RuleDefinitionBody.model_validate(row.definition_json)
 
         effects = body.resolved_effects
         effects_by_variable = {effect.variable: effect for effect in effects}
@@ -352,13 +352,13 @@ class TestHandlePlanModeExit:
     def test_resolved_mode_exit_resets_consider_epoch(
         self,
         db: HubDatabase,
-        manager: LocalWorkflowDefinitionManager,
+        manager: RuleDefinitionManager,
     ) -> None:
         _sync_bundled(db)
 
         row = manager.get_by_name("reset-plan-consider-on-resolved-mode-exit")
         assert row is not None
-        body = RuleDefinitionBody.model_validate_json(row.definition_json)
+        body = RuleDefinitionBody.model_validate(row.definition_json)
 
         assert body.event.value == "turn_start"
         assert body.agent_scope == ["default"]
@@ -376,7 +376,7 @@ class TestResetPlanModeOnSessionStart:
     def test_resets_plan_mode_on_session_start(
         self,
         db: HubDatabase,
-        manager: LocalWorkflowDefinitionManager,
+        manager: RuleDefinitionManager,
     ) -> None:
         """Should set plan_mode to false on session_start."""
         _sync_bundled(db)
@@ -384,7 +384,7 @@ class TestResetPlanModeOnSessionStart:
         row = manager.get_by_name("reset-plan-mode-on-session-start")
         assert row is not None
 
-        body = RuleDefinitionBody.model_validate_json(row.definition_json)
+        body = RuleDefinitionBody.model_validate(row.definition_json)
         assert body.event.value == "session_start"
         effects_by_variable = {effect.variable: effect for effect in body.resolved_effects}
         assert effects_by_variable["plan_mode"].value is False
@@ -394,14 +394,14 @@ class TestResetPlanModeOnSessionStart:
     def test_when_condition_covers_clear_compact_startup(
         self,
         db: HubDatabase,
-        manager: LocalWorkflowDefinitionManager,
+        manager: RuleDefinitionManager,
     ) -> None:
         """Should fire on clear, compact, and startup sources."""
         _sync_bundled(db)
 
         row = manager.get_by_name("reset-plan-mode-on-session-start")
         assert row is not None
-        body = RuleDefinitionBody.model_validate_json(row.definition_json)
+        body = RuleDefinitionBody.model_validate(row.definition_json)
 
         assert body.when is not None
         assert "clear" in body.when

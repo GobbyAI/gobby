@@ -277,9 +277,11 @@ const AGENT_DEFINITION = {
     workflows: { variables: { REVIEW_DEPTH: "high" } },
     lifecycle_variables: {},
     default_variables: {},
-    steps: [],
-    step_variables: null,
-    exit_condition: null,
+    step_workflow: {
+      steps: [],
+      variables: null,
+      exit_condition: null,
+    },
     blocked_tools: [],
     blocked_mcp_tools: [],
   },
@@ -376,35 +378,38 @@ const MEMORY = {
   last_dreamed_at: null,
 };
 
-const WORKFLOW_VARIABLE = {
+const VARIABLE_DEFINITION = {
   id: "var-1",
   name: "max_retries",
   description: "Default retry budget",
-  workflow_type: "variable",
+  kind: "variable",
   version: "1.0",
   enabled: true,
-  priority: 100,
   source: "installed",
-  sources: null,
   tags: null,
   project_id: null,
   created_at: "2026-01-01T00:00:00Z",
   updated_at: "2026-01-01T00:00:00Z",
   deleted_at: null,
-  definition_json: '{"variable":"max_retries","value":3}',
-  canvas_json: null,
+  default_value: 3,
+  value: 3,
 };
 
 const PIPELINE_DEFINITION = {
-  ...WORKFLOW_VARIABLE,
   id: "wf-1",
   name: "nightly-verify",
   description: "Nightly verification",
-  workflow_type: "pipeline",
+  kind: "pipeline",
+  version: "1.0",
+  enabled: true,
   source: "project",
   tags: ["ci"],
   project_id: PROJECT_ID,
+  created_at: "2026-01-01T00:00:00Z",
+  updated_at: "2026-01-01T00:00:00Z",
+  deleted_at: null,
   definition_json: '{"steps":[{"id":"lint"},{"id":"tests"}]}',
+  canvas_json: null,
 };
 
 const CHAT_MESSAGES = [
@@ -1226,16 +1231,18 @@ function baseApi(
       };
     case "/api/agents/definitions":
       return { status: "success", definitions: [AGENT_DEFINITION] };
-    case "/api/workflows": {
-      const kind = url.searchParams.get("workflow_type");
-      const definitions =
-        kind === "pipeline"
-          ? [PIPELINE_DEFINITION]
-          : kind === "variable"
-            ? [WORKFLOW_VARIABLE]
-            : [WORKFLOW_VARIABLE, PIPELINE_DEFINITION];
-      return { workflows: [], definitions };
-    }
+    case "/api/pipelines/definitions":
+      return {
+        status: "success",
+        definitions: [PIPELINE_DEFINITION],
+        count: 1,
+      };
+    case "/api/variables":
+      return {
+        status: "success",
+        variables: [VARIABLE_DEFINITION],
+        count: 1,
+      };
     case "/api/skills":
       return { skills: [SKILL] };
     case `/api/skills/${SKILL.id}/files`:

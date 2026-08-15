@@ -6,16 +6,17 @@ directly. Installed rows are overwritten when the template changes
 when a managed bundled definition reappears with different content.
 """
 
+import json
 import logging
 from pathlib import Path
 from typing import Any
 
 import yaml
 
-from gobby.agents.step_workflow import register_agent_step_workflow
+from gobby.storage.definitions import AgentDefinitionManager, AgentDefinitionRow
+from gobby.storage.definitions.agents import _parent_body
 from gobby.storage.hub.protocol import HubDatabase
 from gobby.storage.sql_dialect import json_array_contains_condition
-from gobby.storage.workflow_definitions import LocalWorkflowDefinitionManager, WorkflowDefinitionRow
 from gobby.utils.json_helpers import json_equal
 from gobby.workflows.definitions import AgentDefinitionBody
 
@@ -40,37 +41,40 @@ def _is_legacy_discovery_placeholder(name: str, definition_json: str, enabled: b
     return "PLACEHOLDER" in definition_json or "placeholder_agent:" in definition_json
 
 
-def _is_sync_managed_bundled_agent(existing: WorkflowDefinitionRow) -> bool:
+def _is_sync_managed_bundled_agent(existing: AgentDefinitionRow) -> bool:
     """Return whether an existing row is safe for bundled agent sync to own."""
     return (
         existing.project_id is None
-        and existing.source in {"installed", "template"}
+        and existing.source == "installed"
         and "gobby" in (existing.tags or [])
     )
 
 
-def _definition_json_equal(existing_json: Any, desired_json: str) -> bool:
+def _definition_json_equal(existing_json: Any, desired_json: Any) -> bool:
     """Compare definition JSON semantically across text and Postgres JSONB formats."""
     return json_equal(existing_json, desired_json)
 
 
 def _build_agent_update_fields(
-    existing: WorkflowDefinitionRow,
+    existing: AgentDefinitionRow,
     *,
     body: AgentDefinitionBody,
-    body_json: str,
+    parent_body: dict[str, Any],
     force_enable: bool = False,
     restore: bool = False,
 ) -> dict[str, Any]:
     """Build changed fields for a managed bundled agent row."""
     fields: dict[str, Any] = {}
-    if not _definition_json_equal(existing.definition_json, body_json):
-        fields["definition_json"] = body_json
+    existing_parent = _parent_body(existing.definition_json)
+    if not _definition_json_equal(existing_parent, parent_body):
+        fields["definition_json"] = parent_body
         fields["description"] = body.description
     if existing.source != "installed":
         fields["tags"] = ["gobby"]
         fields["enabled"] = body.enabled
     elif force_enable or restore:
+        fields["enabled"] = body.enabled
+    elif not existing.enabled_pinned and existing.enabled != body.enabled:
         fields["enabled"] = body.enabled
     return fields
 
@@ -84,12 +88,6 @@ def get_bundled_agents_path() -> Path:
     from gobby.paths import get_install_dir
 
     return get_install_dir() / "shared" / "workflows" / "agents"
-
-
-def _refresh_step_workflow(body: AgentDefinitionBody, db: HubDatabase) -> None:
-    """Refresh the generated step workflow row for agents with inline steps."""
-    if body.steps:
-        register_agent_step_workflow(body, db)
 
 
 def sync_bundled_agents(db: HubDatabase) -> dict[str, Any]:
@@ -122,7 +120,7 @@ def sync_bundled_agents(db: HubDatabase) -> dict[str, Any]:
         result["errors"].append(f"Agents path not found: {agents_path}")
         return result
 
-    manager = LocalWorkflowDefinitionManager(db)
+    manager = AgentDefinitionManager(db)
     on_disk: set[str] = set()
 
     for yaml_file in sorted(agents_path.glob("*.yaml")):
@@ -140,28 +138,21 @@ def sync_bundled_agents(db: HubDatabase) -> dict[str, Any]:
             on_disk.add(name)
             data["name"] = name
 
-            # Parse through Pydantic for validation + consistent serialization
             body = AgentDefinitionBody.model_validate(data)
-            body_json = body.model_dump_json()
-
-            # Check if agent already exists (any source, including soft-deleted)
+            dumped = body.model_dump(mode="json")
+            parent_body = _parent_body(dumped)
+            step_workflow = dumped.get("step_workflow")
             existing = manager.get_by_name(name, include_deleted=True)
+            existing_json = ""
+            if existing is not None:
+                existing_json = (
+                    existing.definition_json
+                    if isinstance(existing.definition_json, str)
+                    else json.dumps(existing.definition_json)
+                )
 
             if existing is not None:
-                if existing.workflow_type != "agent":
-                    logger.debug(
-                        "Agent '%s' conflicts with existing %s definition, skipping",
-                        name,
-                        existing.workflow_type,
-                    )
-                    result["skipped"] += 1
-                    continue
-
                 if not _is_sync_managed_bundled_agent(existing):
-                    # A row sync doesn't own occupies the bundled name, so
-                    # template changes (including step allowlists) can never
-                    # reach the DB. Silent skipping here left stale agent
-                    # definitions live — fail loud instead.
                     state = "soft-deleted " if existing.deleted_at is not None else ""
                     error_msg = (
                         f"Bundled agent '{name}' is shadowed by an unmanaged {state}row "
@@ -177,21 +168,19 @@ def sync_bundled_agents(db: HubDatabase) -> dict[str, Any]:
                     continue
 
                 if existing.deleted_at is not None:
-                    if not _definition_json_equal(existing.definition_json, body_json):
-                        with db.transaction():
-                            manager.restore(existing.id)
-                            if existing.source != "installed":
-                                manager.move_to_global(existing.id)
-                            manager.update_from_sync(
-                                existing.id,
-                                **_build_agent_update_fields(
-                                    existing,
-                                    body=body,
-                                    body_json=body_json,
-                                    restore=True,
-                                ),
-                            )
-                        _refresh_step_workflow(body, db)
+                    if not _definition_json_equal(
+                        _parent_body(existing.definition_json), parent_body
+                    ):
+                        manager.upsert_from_sync(
+                            name,
+                            parent_body,
+                            step_workflow,
+                            source="installed",
+                            enabled=body.enabled,
+                            tags=["gobby"],
+                            description=body.description,
+                            restore=True,
+                        )
                         result["updated"] += 1
                         continue
                     result["skipped"] += 1
@@ -199,21 +188,25 @@ def sync_bundled_agents(db: HubDatabase) -> dict[str, Any]:
 
                 force_enable = _is_legacy_discovery_placeholder(
                     name,
-                    existing.definition_json,
+                    existing_json,
                     existing.enabled,
                 )
                 update_fields = _build_agent_update_fields(
                     existing,
                     body=body,
-                    body_json=body_json,
+                    parent_body=parent_body,
                     force_enable=force_enable,
                 )
                 if update_fields:
-                    with db.transaction():
-                        if existing.source != "installed":
-                            manager.move_to_global(existing.id)
-                        manager.update_from_sync(existing.id, **update_fields)
-                    _refresh_step_workflow(body, db)
+                    manager.upsert_from_sync(
+                        name,
+                        parent_body,
+                        step_workflow,
+                        source="installed",
+                        enabled=update_fields.get("enabled", existing.enabled),
+                        tags=update_fields.get("tags", existing.tags),
+                        description=update_fields.get("description", existing.description),
+                    )
                     result["updated"] += 1
                     logger.debug(
                         "Updated bundled agent definition %s (%s)",
@@ -222,21 +215,20 @@ def sync_bundled_agents(db: HubDatabase) -> dict[str, Any]:
                     )
                     continue
 
-                _refresh_step_workflow(body, db)
+                if step_workflow is not None:
+                    manager.set_step_workflow(existing.id, step_workflow)
                 result["skipped"] += 1
                 continue
 
-            # Create new installed row directly
-            manager.create(
-                name=name,
-                definition_json=body_json,
-                workflow_type="agent",
-                description=body.description,
+            manager.upsert_with_steps(
+                name,
+                parent_body,
+                step_workflow,
                 source="installed",
                 enabled=body.enabled,
                 tags=["gobby"],
+                description=body.description,
             )
-            _refresh_step_workflow(body, db)
             logger.debug("Synced bundled agent definition: %s", name)
             result["synced"] += 1
 
@@ -245,17 +237,15 @@ def sync_bundled_agents(db: HubDatabase) -> dict[str, Any]:
             logger.error(error_msg)
             result["errors"].append(error_msg)
 
-    # Orphan cleanup: soft-delete sync-managed agent rows whose YAML was removed.
     tag_condition, tag_params = json_array_contains_condition(db, "tags", "gobby")
     orphan_rows = db.fetchall(
-        "SELECT * FROM workflow_definitions "
-        "WHERE workflow_type = 'agent' "
-        f"AND {tag_condition} AND deleted_at IS NULL",
+        "SELECT id, project_id, name, source, tags, deleted_at FROM agent_definitions "
+        f"WHERE {tag_condition} AND deleted_at IS NULL",
         tag_params,
     )
     result["orphaned"] = 0
     for row in orphan_rows:
-        existing = WorkflowDefinitionRow.from_row(row)
+        existing = manager.get(str(row["id"]))
         if existing.name not in on_disk and _is_sync_managed_bundled_agent(existing):
             manager.delete(existing.id)
             logger.debug("Soft-deleted orphaned bundled agent: %s", existing.name)

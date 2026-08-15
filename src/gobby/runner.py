@@ -55,6 +55,7 @@ if TYPE_CHECKING:
     from gobby.storage.concurrency import CoverageExecutor, DatabaseConcurrencyResolution
     from gobby.storage.concurrency_watchdog import DatabaseSaturationWatchdog
     from gobby.storage.cron import CronJobStorage
+    from gobby.storage.definitions.notifications import DefinitionRevisionListener
     from gobby.storage.executor import DatabaseExecutor
     from gobby.storage.hub.protocol import HubDatabase
     from gobby.storage.managed_credentials import ManagedCredentialManager
@@ -71,8 +72,8 @@ if TYPE_CHECKING:
     from gobby.sync.memories import MemoryBackupManager
     from gobby.tasks.validation import TaskValidator
     from gobby.wiki.watcher import WikiWatcher
-    from gobby.workflows.loader import WorkflowLoader
     from gobby.workflows.pipeline_executor import PipelineExecutor
+    from gobby.workflows.pipeline_loader import PipelineLoader
     from gobby.worktrees.executor import WorktreeDeleteExecutor
     from gobby.worktrees.git import WorktreeGitManager
 
@@ -152,6 +153,7 @@ class GobbyRunner:
     database_watchdog: DatabaseSaturationWatchdog
     secret_store: SecretStore
     config_runtime: ConfigRuntime
+    definition_revision_listener: DefinitionRevisionListener
     session_manager: SessionManager
     task_manager: LocalTaskManager
     session_task_manager: SessionTaskManager
@@ -189,7 +191,7 @@ class GobbyRunner:
     # Phase 3: orchestration (init_orchestration)
     wake_dispatcher: WakeDispatcher
     completion_registry: CompletionEventRegistry
-    workflow_loader: WorkflowLoader | None
+    workflow_loader: PipelineLoader | None
     pipeline_execution_manager: LocalPipelineExecutionManager | None
     pipeline_executor: PipelineExecutor | None
     agent_runner: AgentRunner | None

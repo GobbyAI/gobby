@@ -14,7 +14,7 @@ async def list_pipelines(
     List available pipeline definitions.
 
     Args:
-        loader: WorkflowLoader instance
+        loader: PipelineLoader instance
         project_id: Optional project UUID for project-specific pipelines
 
     Returns:
@@ -24,7 +24,7 @@ async def list_pipelines(
         return {"success": False, "error": "No loader configured"}
 
     try:
-        discovered = await loader.discover_pipeline_workflows(project_id)
+        discovered = await loader.discover_pipelines(project_id)
 
         pipelines = []
         for workflow in discovered:

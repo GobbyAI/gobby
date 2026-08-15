@@ -25,29 +25,23 @@ class TestRequirePipeline:
     def test_returns_error_for_non_pipeline(self) -> None:
         from gobby.mcp_proxy.tools.workflows._pipelines import _require_pipeline
 
-        mock_row = MagicMock()
-        mock_row.workflow_type = "rule"
-        mock_row.name = "my-rule"
-
         def_manager = MagicMock()
         with patch(
-            "gobby.mcp_proxy.tools.workflows._pipelines._resolve_definition",
-            return_value=mock_row,
+            "gobby.mcp_proxy.tools.workflows._pipelines._resolve_pipeline",
+            side_effect=ValueError("Pipeline 'my-rule' not found"),
         ):
             result = _require_pipeline(def_manager, name="my-rule")
             assert result is not None
             assert result["success"] is False
-            assert "workflow, not a pipeline" in result["error"]
+            assert "not found" in result["error"]
 
     def test_returns_none_for_pipeline(self) -> None:
         from gobby.mcp_proxy.tools.workflows._pipelines import _require_pipeline
 
         mock_row = MagicMock()
-        mock_row.workflow_type = "pipeline"
-
         def_manager = MagicMock()
         with patch(
-            "gobby.mcp_proxy.tools.workflows._pipelines._resolve_definition",
+            "gobby.mcp_proxy.tools.workflows._pipelines._resolve_pipeline",
             return_value=mock_row,
         ):
             result = _require_pipeline(def_manager, name="my-pipeline")
@@ -58,7 +52,7 @@ class TestRequirePipeline:
 
         def_manager = MagicMock()
         with patch(
-            "gobby.mcp_proxy.tools.workflows._pipelines._resolve_definition",
+            "gobby.mcp_proxy.tools.workflows._pipelines._resolve_pipeline",
             side_effect=ValueError("Not found"),
         ):
             result = _require_pipeline(def_manager, name="missing")
@@ -223,9 +217,7 @@ class TestRegisterPipelineTools:
 
         with (
             patch("gobby.mcp_proxy.tools.workflows._pipelines._register_exposed_pipeline_tools"),
-            patch(
-                "gobby.mcp_proxy.tools.workflows._pipelines.LocalWorkflowDefinitionManager"
-            ) as MockDM,
+            patch("gobby.mcp_proxy.tools.workflows._pipelines.PipelineDefinitionManager") as MockDM,
         ):
             register_pipeline_tools(registry, db=db)
             MockDM.assert_called_once_with(db)
@@ -394,7 +386,7 @@ class TestRegisterExposedPipelineTools:
 
         registry = InternalToolRegistry("test")
         loader = MagicMock()
-        loader.discover_pipeline_workflows_sync.side_effect = RuntimeError("discover failed")
+        loader.discover_pipelines_sync.side_effect = RuntimeError("discover failed")
 
         result = _register_exposed_pipeline_tools(registry, loader, lambda: None)
         assert result is None
@@ -410,7 +402,7 @@ class TestRegisterExposedPipelineTools:
 
         mock_wf = MagicMock()
         mock_wf.definition.expose_as_tool = False
-        loader.discover_pipeline_workflows_sync.return_value = [mock_wf]
+        loader.discover_pipelines_sync.return_value = [mock_wf]
 
         _register_exposed_pipeline_tools(registry, loader, lambda: None)
         # Non-exposed pipeline: tool should NOT be registered
@@ -432,7 +424,7 @@ class TestRegisterExposedPipelineTools:
 
         mock_wf = MagicMock()
         mock_wf.definition = mock_pipeline
-        loader.discover_pipeline_workflows_sync.return_value = [mock_wf]
+        loader.discover_pipelines_sync.return_value = [mock_wf]
 
         _register_exposed_pipeline_tools(registry, loader, lambda: None)
         assert registry.get_schema("pipeline:my-exposed") is not None
@@ -450,7 +442,7 @@ class TestRegisterExposedPipelineTools:
             expose_as_tool=True,
         )
         mock_wf = MagicMock(definition=mock_pipeline)
-        loader.discover_pipeline_workflows_sync.return_value = [mock_wf]
+        loader.discover_pipelines_sync.return_value = [mock_wf]
 
         _register_exposed_pipeline_tools(registry, loader, lambda: None)
 

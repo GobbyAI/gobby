@@ -1,6 +1,6 @@
-import type { WorkflowDetail } from "../../../hooks/useWorkflows";
+import type { PipelineDefDetail } from "../../../hooks/usePipelineDefs";
 
-export type PipelineDefinition = WorkflowDetail;
+export type PipelineDefinition = PipelineDefDetail;
 
 export interface PipelineDefinitionUpdate {
   name?: string;
@@ -26,12 +26,13 @@ export async function loadPipelineDefinitions(
   projectId?: string | null,
 ): Promise<PipelineDefinition[]> {
   const params = new URLSearchParams({
-    workflow_type: "pipeline",
     include_deleted: "true",
   });
   if (projectId) params.set("project_id", projectId);
 
-  const response = await fetch(`${getBaseUrl()}/api/workflows?${params}`);
+  const response = await fetch(
+    `${getBaseUrl()}/api/pipelines/definitions?${params}`,
+  );
   if (!response.ok) {
     throw new Error(`Failed to load pipeline definitions (${response.status})`);
   }
@@ -44,7 +45,7 @@ export async function updatePipelineDefinition(
   updates: PipelineDefinitionUpdate,
 ): Promise<PipelineDefinition | null> {
   const response = await fetch(
-    `${getBaseUrl()}/api/workflows/${encodeURIComponent(id)}`,
+    `${getBaseUrl()}/api/pipelines/definitions/${encodeURIComponent(id)}`,
     {
       method: "PUT",
       headers: { "Content-Type": "application/json" },
@@ -58,7 +59,7 @@ export async function togglePipelineDefinition(
   id: string,
 ): Promise<PipelineDefinition | null> {
   const response = await fetch(
-    `${getBaseUrl()}/api/workflows/${encodeURIComponent(id)}/toggle`,
+    `${getBaseUrl()}/api/pipelines/definitions/${encodeURIComponent(id)}/toggle`,
     {
       method: "PUT",
     },
@@ -68,7 +69,7 @@ export async function togglePipelineDefinition(
 
 export async function deletePipelineDefinition(id: string): Promise<boolean> {
   const response = await fetch(
-    `${getBaseUrl()}/api/workflows/${encodeURIComponent(id)}`,
+    `${getBaseUrl()}/api/pipelines/definitions/${encodeURIComponent(id)}`,
     {
       method: "DELETE",
     },
@@ -80,7 +81,7 @@ export async function deletePipelineDefinition(id: string): Promise<boolean> {
 
 export async function exportPipelineYaml(id: string): Promise<string | null> {
   const response = await fetch(
-    `${getBaseUrl()}/api/workflows/${encodeURIComponent(id)}/export`,
+    `${getBaseUrl()}/api/pipelines/definitions/${encodeURIComponent(id)}/export`,
   );
   return response.ok ? response.text() : null;
 }

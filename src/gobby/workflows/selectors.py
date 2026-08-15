@@ -2,8 +2,8 @@ import fnmatch
 import json
 from typing import Any
 
+from gobby.storage.definitions.rules import RuleDefinitionRow
 from gobby.storage.skills import Skill
-from gobby.storage.workflow_definitions import WorkflowDefinitionRow
 from gobby.workflows.definitions import AgentDefinitionBody
 
 
@@ -22,7 +22,7 @@ def parse_selector(s: str) -> tuple[str, str]:
 
 
 def _match_rule(
-    dim: str, val: str, rule: WorkflowDefinitionRow, definition_json: dict[str, Any]
+    dim: str, val: str, rule: RuleDefinitionRow, definition_json: dict[str, Any]
 ) -> bool:
     if dim == "*":
         return True
@@ -40,7 +40,7 @@ def _match_rule(
 
 
 def resolve_rules_for_agent(
-    agent: AgentDefinitionBody, all_rules: list[WorkflowDefinitionRow]
+    agent: AgentDefinitionBody, all_rules: list[RuleDefinitionRow]
 ) -> set[str]:
     """Resolve active rules for an agent, combining explicit rules and selectors.
 
@@ -71,7 +71,7 @@ def resolve_rules_for_agent(
 
 def rule_matches_agent(
     agent: AgentDefinitionBody,
-    rule: WorkflowDefinitionRow,
+    rule: RuleDefinitionRow,
     *,
     definition_json: dict[str, Any] | None = None,
     excluded: bool | None = None,
@@ -109,7 +109,7 @@ def rule_matches_agent(
 
 def _rule_excluded_by_agent(
     agent: AgentDefinitionBody,
-    rule: WorkflowDefinitionRow,
+    rule: RuleDefinitionRow,
     *,
     definition_json: dict[str, Any] | None = None,
 ) -> bool:
@@ -127,11 +127,14 @@ def _rule_excluded_by_agent(
     return False
 
 
-def _rule_definition_json(rule: WorkflowDefinitionRow) -> dict[str, Any]:
-    if not rule.definition_json:
+def _rule_definition_json(rule: RuleDefinitionRow) -> dict[str, Any]:
+    payload = rule.definition_json
+    if isinstance(payload, dict):
+        return payload
+    if not payload:
         return {}
     try:
-        definition_json = json.loads(rule.definition_json)
+        definition_json = json.loads(payload)
     except (json.JSONDecodeError, TypeError):
         return {}
     return definition_json if isinstance(definition_json, dict) else {}
@@ -193,7 +196,7 @@ def resolve_skills_for_agent(
 
 
 def resolve_variables_for_agent(
-    agent: AgentDefinitionBody, all_variables: list[WorkflowDefinitionRow]
+    agent: AgentDefinitionBody, all_variables: list[Any]
 ) -> set[str] | None:
     """Resolve active variable definitions for an agent using variable_selectors.
 
@@ -209,11 +212,14 @@ def resolve_variables_for_agent(
 
     for var in all_variables:
         definition_json: dict[str, Any] = {}
-        if var.definition_json:
+        payload = getattr(var, "definition_json", None)
+        if payload:
             try:
-                definition_json = json.loads(var.definition_json)
+                parsed = json.loads(payload) if isinstance(payload, str) else payload
             except (json.JSONDecodeError, TypeError):
-                pass
+                parsed = {}
+            if isinstance(parsed, dict):
+                definition_json = parsed
 
         for inc in selectors.include:
             dim, val = parse_selector(inc)

@@ -17,7 +17,7 @@ import yaml
 from gobby.hooks.events import HookEvent, HookEventType, SessionSource
 from gobby.hooks.normalization import normalize_tool_fields
 from gobby.storage.hub.protocol import HubDatabase
-from gobby.storage.workflow_definitions import LocalWorkflowDefinitionManager
+from gobby.storage.definitions.rules import RuleDefinitionManager
 from gobby.workflows.definitions import RuleDefinitionBody, RuleEffect
 from gobby.workflows.engine.core import RuleEngine
 from gobby.workflows.sync_rules import sync_bundled_rules
@@ -67,8 +67,8 @@ def db(temp_db: HubDatabase) -> HubDatabase:
 
 
 @pytest.fixture
-def manager(db: HubDatabase) -> LocalWorkflowDefinitionManager:
-    return LocalWorkflowDefinitionManager(db)
+def manager(db: HubDatabase) -> RuleDefinitionManager:
+    return RuleDefinitionManager(db)
 
 
 def _sync_bundled(db: HubDatabase) -> dict[str, object]:
@@ -77,17 +77,17 @@ def _sync_bundled(db: HubDatabase) -> dict[str, object]:
 
     result = sync_bundled_rules(db, get_bundled_rules_path())
     # Mark templates as installed so get_by_name() finds them
-    db.execute("UPDATE workflow_definitions SET source = 'installed' WHERE source = 'template'")
+    db.execute("UPDATE rule_definitions SET source = 'installed' WHERE source = 'template'")
     return result
 
 
 def _get_rule(
-    manager: LocalWorkflowDefinitionManager,
+    manager: RuleDefinitionManager,
     name: str,
 ) -> RuleDefinitionBody:
     row = manager.get_by_name(name)
     assert row is not None, f"Rule {name!r} not found after sync"
-    return RuleDefinitionBody.model_validate_json(row.definition_json)
+    return RuleDefinitionBody.model_validate(row.definition_json)
 
 
 def _rule_matches(body: RuleDefinitionBody, command: str) -> bool:
@@ -135,10 +135,10 @@ class TestWorkerSafetySync:
     """Test that the bundled worker-safety.yaml syncs correctly."""
 
     def test_bundled_file_syncs_all_rules(self, db, manager) -> None:
-        """All worker-safety rules should sync to workflow_definitions."""
+        """All worker-safety rules should sync to rule_definitions."""
         _sync_bundled(db)
 
-        rules = manager.list_all(workflow_type="rule")
+        rules = manager.list_all()
         rule_names = {r.name for r in rules}
 
         expected = EXPECTED_WORKER_SAFETY_RULES
@@ -148,9 +148,9 @@ class TestWorkerSafetySync:
         """All worker-safety rules should have group='worker-safety'."""
         _sync_bundled(db)
 
-        rules = manager.list_all(workflow_type="rule")
+        rules = manager.list_all()
         for row in rules:
-            body = json.loads(row.definition_json)
+            body = row.definition_json
             if row.name in EXPECTED_WORKER_SAFETY_RULES:
                 assert body.get("group") == "worker-safety", f"{row.name} missing group"
 
@@ -161,17 +161,17 @@ class TestWorkerSafetySync:
         row = manager.get_by_name("no-push-for-workers")
         assert row is not None
 
-        body = RuleDefinitionBody.model_validate_json(row.definition_json)
+        body = RuleDefinitionBody.model_validate(row.definition_json)
         assert body.agent_scope == ["developer", "qa-reviewer", "doc-reviewer"]
 
     def test_all_rules_are_valid_pydantic(self, db, manager) -> None:
         """All synced rules should be valid RuleDefinitionBody instances."""
         _sync_bundled(db)
 
-        rules = manager.list_all(workflow_type="rule")
+        rules = manager.list_all()
         for row in rules:
             if row.name in EXPECTED_WORKER_SAFETY_RULES:
-                body = RuleDefinitionBody.model_validate_json(row.definition_json)
+                body = RuleDefinitionBody.model_validate(row.definition_json)
                 assert body.event.value == "before_tool"
                 assert body.effects[0].type == "block"
 
@@ -186,7 +186,7 @@ class TestNoPushRule:
         row = manager.get_by_name("no-push")
         assert row is not None
 
-        body = RuleDefinitionBody.model_validate_json(row.definition_json)
+        body = RuleDefinitionBody.model_validate(row.definition_json)
         assert body.effects[0].tools == ["Bash"]
         assert body.effects[0].command_pattern is not None
         assert "push" in body.effects[0].command_pattern
@@ -202,7 +202,7 @@ class TestNoForcePushRule:
         row = manager.get_by_name("no-force-push")
         assert row is not None
 
-        body = RuleDefinitionBody.model_validate_json(row.definition_json)
+        body = RuleDefinitionBody.model_validate(row.definition_json)
         assert body.effects[0].tools == ["Bash"]
         assert body.effects[0].command_pattern is not None
         assert "--force" in body.effects[0].command_pattern
@@ -218,7 +218,7 @@ class TestNoDestructiveGitRule:
         row = manager.get_by_name("no-destructive-git")
         assert row is not None
 
-        body = RuleDefinitionBody.model_validate_json(row.definition_json)
+        body = RuleDefinitionBody.model_validate(row.definition_json)
         assert body.effects[0].tools == ["Bash"]
         assert body.effects[0].command_pattern is not None
         assert "reset" in body.effects[0].command_pattern
@@ -231,7 +231,7 @@ class TestManagedGitIsolationRules:
     def _load_rules(
         self,
         db: HubDatabase,
-        manager: LocalWorkflowDefinitionManager,
+        manager: RuleDefinitionManager,
     ) -> None:
         _sync_bundled(db)
         self.rules = {name: _get_rule(manager, name) for name in MANAGED_GIT_RULES}
@@ -308,7 +308,7 @@ class TestManagedGitIsolationRules:
     )
     def test_worker_and_interactive_rule_shape(
         self,
-        manager: LocalWorkflowDefinitionManager,
+        manager: RuleDefinitionManager,
         worker_name: str,
         interactive_name: str,
     ) -> None:
@@ -361,7 +361,7 @@ class TestManagedGitIsolationRules:
         spawned: bool,
     ) -> None:
         db.execute(
-            "DELETE FROM workflow_definitions WHERE name NOT IN "
+            "DELETE FROM rule_definitions WHERE name NOT IN "
             "('block-git-clone', 'block-git-clone-interactive', "
             "'block-git-worktree-mutations', "
             "'block-git-worktree-mutations-interactive')"
@@ -395,7 +395,7 @@ class TestDockerPolicyBlockRule:
     @staticmethod
     def _isolated_engine(db: HubDatabase) -> RuleEngine:
         _sync_bundled(db)
-        db.execute("DELETE FROM workflow_definitions WHERE name != 'block-docker-policy-edits'")
+        db.execute("DELETE FROM rule_definitions WHERE name != 'block-docker-policy-edits'")
         return RuleEngine(db)
 
     @staticmethod
@@ -411,14 +411,14 @@ class TestDockerPolicyBlockRule:
     def test_rule_is_one_enabled_plain_block(
         self,
         db: HubDatabase,
-        manager: LocalWorkflowDefinitionManager,
+        manager: RuleDefinitionManager,
     ) -> None:
         self._isolated_engine(db)
 
         row = manager.get_by_name("block-docker-policy-edits")
         assert row is not None
         assert row.enabled is True
-        body = RuleDefinitionBody.model_validate_json(row.definition_json)
+        body = RuleDefinitionBody.model_validate(row.definition_json)
         assert body.event.value == "before_tool"
         assert body.when is not None
         assert "canonical_tool_kind" in body.when
@@ -468,7 +468,7 @@ class TestDockerPolicyBlockRule:
     async def test_toggle_rule_off_allows_write_and_on_blocks_again(
         self,
         db: HubDatabase,
-        manager: LocalWorkflowDefinitionManager,
+        manager: RuleDefinitionManager,
     ) -> None:
         from gobby.mcp_proxy.tools.workflows._rules import toggle_rule
 
@@ -569,14 +569,14 @@ class TestNoFullVitestSuiteRule:
     def _effect(
         self,
         db: HubDatabase,
-        manager: LocalWorkflowDefinitionManager,
+        manager: RuleDefinitionManager,
     ) -> RuleEffect:
         _sync_bundled(db)
 
         row = manager.get_by_name("no-full-vitest-suite")
         assert row is not None
 
-        body = RuleDefinitionBody.model_validate_json(row.definition_json)
+        body = RuleDefinitionBody.model_validate(row.definition_json)
         return _first_effect(body)
 
     @staticmethod
@@ -630,14 +630,14 @@ class TestNoFullCargoSuiteRule:
     def _effect(
         self,
         db: HubDatabase,
-        manager: LocalWorkflowDefinitionManager,
+        manager: RuleDefinitionManager,
     ) -> RuleEffect:
         _sync_bundled(db)
 
         row = manager.get_by_name("no-full-cargo-test")
         assert row is not None
 
-        body = RuleDefinitionBody.model_validate_json(row.definition_json)
+        body = RuleDefinitionBody.model_validate(row.definition_json)
         return _first_effect(body)
 
     @staticmethod
@@ -661,7 +661,7 @@ class TestNoFullCargoSuiteRule:
     def test_blocks_unscoped_cargo_test_runs(
         self,
         db: HubDatabase,
-        manager: LocalWorkflowDefinitionManager,
+        manager: RuleDefinitionManager,
         command: str,
     ) -> None:
         effect = self._effect(db, manager)
@@ -683,7 +683,7 @@ class TestNoFullCargoSuiteRule:
     def test_allows_focused_cargo_test_runs(
         self,
         db: HubDatabase,
-        manager: LocalWorkflowDefinitionManager,
+        manager: RuleDefinitionManager,
         command: str,
     ) -> None:
         effect = self._effect(db, manager)

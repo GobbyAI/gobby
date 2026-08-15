@@ -197,9 +197,9 @@ def init_orchestration(runner: GobbyRunner, config: DaemonConfig) -> None:
     runner.pipeline_execution_manager = None
     runner.pipeline_executor = None
     try:
-        from gobby.workflows.loader import WorkflowLoader
+        from gobby.workflows.pipeline_loader import PipelineLoader
 
-        runner.workflow_loader = WorkflowLoader(db=runner.database)
+        runner.workflow_loader = PipelineLoader(db=runner.database)
     except Exception:
         mark_service_degraded(runner, "workflow_loader")
         logger.warning("Failed to initialize workflow loader", exc_info=True)
@@ -308,7 +308,7 @@ def init_orchestration(runner: GobbyRunner, config: DaemonConfig) -> None:
             logger.warning("Failed to initialize pipeline executor at startup", exc_info=True)
     elif runner.project_id and runner.workflow_loader is None:
         mark_service_degraded(runner, "pipeline_executor")
-        logger.warning("Skipping pipeline executor initialization; WorkflowLoader is unavailable")
+        logger.warning("Skipping pipeline executor initialization; PipelineLoader is unavailable")
 
     runner.agent_runner = None
     try:

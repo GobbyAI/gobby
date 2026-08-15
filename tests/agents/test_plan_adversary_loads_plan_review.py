@@ -41,12 +41,12 @@ def agent() -> AgentDefinitionBody:
 class TestAdversarySkillLoading:
     def test_has_load_skill_step_between_claim_and_review(self, agent: AgentDefinitionBody) -> None:
         """Ordering is load-bearing: skill must be in context before reviewing."""
-        names = [s.name for s in (agent.steps or [])]
+        names = [s.name for s in ((agent.step_workflow.steps if agent.step_workflow else []))]
         assert names[:3] == ["claim", "load_skill", "review"]
         assert names[-1] == "terminate"
 
     def test_load_skill_step_targets_plan_review(self, agent: AgentDefinitionBody) -> None:
-        load_step = find_step(agent.steps or [], "load_skill")
+        load_step = find_step((agent.step_workflow.steps if agent.step_workflow else []), "load_skill")
         assert load_step is not None
         assert load_step.status_message is not None
         assert "plan-review" in load_step.status_message
@@ -64,7 +64,7 @@ class TestAdversarySkillLoading:
     def test_load_skill_only_permits_get_skill_and_snapshot_read(
         self, agent: AgentDefinitionBody
     ) -> None:
-        load_step = find_step(agent.steps or [], "load_skill")
+        load_step = find_step((agent.step_workflow.steps if agent.step_workflow else []), "load_skill")
         assert load_step is not None
         assert load_step.allowed_mcp_tools == [
             "gobby-skills:get_skill",
@@ -75,7 +75,7 @@ class TestAdversarySkillLoading:
         # on_mcp_success entries are dicts in the parsed YAML shape, not typed
         # objects — keep the isinstance-guarded extraction so this works for
         # both dict-valued and (future) model-object entries.
-        load_step = find_step(agent.steps or [], "load_skill")
+        load_step = find_step((agent.step_workflow.steps if agent.step_workflow else []), "load_skill")
         assert load_step is not None
         mcp_success = getattr(load_step, "on_mcp_success", []) or []
 
@@ -86,7 +86,7 @@ class TestAdversarySkillLoading:
         assert ("gobby-skills", "get_skill", "skill_loaded") in triples
 
     def test_transition_gates_on_skill_loaded(self, agent: AgentDefinitionBody) -> None:
-        load_step = find_step(agent.steps or [], "load_skill")
+        load_step = find_step((agent.step_workflow.steps if agent.step_workflow else []), "load_skill")
         assert load_step is not None
         transitions = load_step.transitions or []
         assert any(t.to == "review" and t.when and "skill_loaded" in t.when for t in transitions)
@@ -95,7 +95,7 @@ class TestAdversarySkillLoading:
         # Plan-altitude proportionality (anti-Rube-Goldberg) is loaded alongside
         # plan-review so the over-engineering finding category has its shared
         # criterion available.
-        load_step = find_step(agent.steps or [], "load_skill")
+        load_step = find_step((agent.step_workflow.steps if agent.step_workflow else []), "load_skill")
         assert load_step is not None
         assert load_step.status_message is not None
         assert "proportionality" in load_step.status_message
@@ -110,7 +110,7 @@ class TestAdversarySkillLoading:
         # The load_skill step must set proportionality_loaded (alongside the
         # existing skill_loaded) from a gobby-skills:get_skill success, so the
         # transition can gate on both skills being loaded.
-        load_step = find_step(agent.steps or [], "load_skill")
+        load_step = find_step((agent.step_workflow.steps if agent.step_workflow else []), "load_skill")
         assert load_step is not None
         mcp_success = getattr(load_step, "on_mcp_success", []) or []
         get_skill_variables = {
@@ -122,7 +122,7 @@ class TestAdversarySkillLoading:
         assert "skill_loaded" in get_skill_variables
 
     def test_transition_gates_on_both_skills_loaded(self, agent: AgentDefinitionBody) -> None:
-        load_step = find_step(agent.steps or [], "load_skill")
+        load_step = find_step((agent.step_workflow.steps if agent.step_workflow else []), "load_skill")
         assert load_step is not None
         transitions = load_step.transitions or []
         assert any(
@@ -134,7 +134,7 @@ class TestAdversarySkillLoading:
         )
 
     def test_claim_step_uses_normal_delegated_claim(self, agent: AgentDefinitionBody) -> None:
-        claim_step = find_step(agent.steps or [], "claim")
+        claim_step = find_step((agent.step_workflow.steps if agent.step_workflow else []), "claim")
         assert claim_step is not None
         assert claim_step.status_message is not None
         assert "claim_task(task_id=assigned_task_id)" in claim_step.status_message
@@ -143,7 +143,7 @@ class TestAdversarySkillLoading:
     def test_claim_step_treats_closed_assigned_task_as_claim_complete(
         self, agent: AgentDefinitionBody
     ) -> None:
-        claim_step = find_step(agent.steps or [], "claim")
+        claim_step = find_step((agent.step_workflow.steps if agent.step_workflow else []), "claim")
         assert claim_step is not None
         mcp_error = getattr(claim_step, "on_mcp_error", []) or []
         handlers = [
@@ -209,7 +209,7 @@ class TestAdversaryInstructionsPreserveContracts:
         assert "Round N" in instructions or "display round" in instructions.lower()
 
     def test_review_step_completes_on_review_rejection(self, agent: AgentDefinitionBody) -> None:
-        review_step = find_step(agent.steps or [], "review")
+        review_step = find_step((agent.step_workflow.steps if agent.step_workflow else []), "review")
         assert review_step is not None
         mcp_success = getattr(review_step, "on_mcp_success", None) or []
         triples = [
@@ -221,7 +221,7 @@ class TestAdversaryInstructionsPreserveContracts:
     def test_review_step_completes_on_closed_task_review_error(
         self, agent: AgentDefinitionBody
     ) -> None:
-        review_step = find_step(agent.steps or [], "review")
+        review_step = find_step((agent.step_workflow.steps if agent.step_workflow else []), "review")
         assert review_step is not None
         mcp_error = getattr(review_step, "on_mcp_error", None) or []
         triples = [
@@ -271,12 +271,12 @@ class TestAdversaryInstructionsPreserveContracts:
 
 class TestAdversaryTerminateStep:
     def test_terminate_step_only_allows_end_agent_run(self, agent: AgentDefinitionBody) -> None:
-        terminate = find_step(agent.steps or [], "terminate")
+        terminate = find_step((agent.step_workflow.steps if agent.step_workflow else []), "terminate")
         assert terminate is not None
         assert terminate.allowed_mcp_tools == ["gobby-agents:end_agent_run"]
 
     def test_review_step_blocks_premature_end_agent_run(self, agent: AgentDefinitionBody) -> None:
-        review = find_step(agent.steps or [], "review")
+        review = find_step((agent.step_workflow.steps if agent.step_workflow else []), "review")
         assert review is not None
         blocked = review.blocked_mcp_tools or []
         assert "gobby-agents:end_agent_run" in blocked

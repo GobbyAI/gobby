@@ -7,7 +7,7 @@ from dataclasses import dataclass, field
 
 from gobby.storage.hub.protocol import HubDatabase
 from gobby.storage.tasks._dispatch_mutex import TaskDispatchMutexManager
-from gobby.workflows.state_manager import WorkflowInstanceManager
+from gobby.workflows.step_instances import AgentStepInstanceManager
 
 logger = logging.getLogger(__name__)
 
@@ -51,11 +51,11 @@ def cleanup_agent_runtime_state(
 
     if child_session_id and terminal_reason != "daemon_stop":
         try:
-            workflow_instance_rows = WorkflowInstanceManager(db).delete_instances_for_session(
+            workflow_instance_rows = AgentStepInstanceManager(db).delete_for_session(
                 child_session_id
             )
         except Exception as exc:
-            message = f"workflow instance cleanup failed for session {child_session_id}: {exc}"
+            message = f"agent-step instance cleanup failed for session {child_session_id}: {exc}"
             logger.warning(message)
             errors.append(message)
 

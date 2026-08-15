@@ -17,7 +17,7 @@ from typing import Any
 import pytest
 
 from gobby.storage.hub.protocol import HubDatabase
-from gobby.storage.workflow_definitions import LocalWorkflowDefinitionManager
+from gobby.storage.definitions.rules import RuleDefinitionManager
 from gobby.workflows.definitions import RuleDefinitionBody
 from gobby.workflows.sync_rules import get_bundled_rules_path, sync_bundled_rules
 
@@ -33,18 +33,18 @@ def db(temp_db: HubDatabase) -> HubDatabase:
 
 
 @pytest.fixture
-def manager(db: HubDatabase) -> LocalWorkflowDefinitionManager:
-    return LocalWorkflowDefinitionManager(db)
+def manager(db: HubDatabase) -> RuleDefinitionManager:
+    return RuleDefinitionManager(db)
 
 
 def _sync_bundled(db: HubDatabase) -> None:
     sync_bundled_rules(db, get_bundled_rules_path())
 
 
-def _get_rule(manager: LocalWorkflowDefinitionManager, name: str) -> RuleDefinitionBody:
+def _get_rule(manager: RuleDefinitionManager, name: str) -> RuleDefinitionBody:
     row = manager.get_by_name(name)
     assert row is not None, f"Rule {name!r} not found after sync"
-    return RuleDefinitionBody.model_validate_json(row.definition_json)
+    return RuleDefinitionBody.model_validate(row.definition_json)
 
 
 def _effect_matches(effect: Any, command: str) -> bool:
@@ -68,7 +68,7 @@ def _any_rule_matches(rules: list[RuleDefinitionBody], command: str) -> bool:
 
 class TestDataExfiltrationSync:
     def test_rules_synced_with_worker_safety_group(
-        self, db: HubDatabase, manager: LocalWorkflowDefinitionManager
+        self, db: HubDatabase, manager: RuleDefinitionManager
     ) -> None:
         _sync_bundled(db)
         for name in EXFIL_RULES:
@@ -76,7 +76,7 @@ class TestDataExfiltrationSync:
             assert body.group == "worker-safety", f"{name} missing group"
 
     def test_rules_scoped_to_spawned_agents(
-        self, db: HubDatabase, manager: LocalWorkflowDefinitionManager
+        self, db: HubDatabase, manager: RuleDefinitionManager
     ) -> None:
         _sync_bundled(db)
         for name in EXFIL_RULES:
@@ -85,7 +85,7 @@ class TestDataExfiltrationSync:
             assert "is_spawned_agent" in body.when
 
     def test_rules_not_tagged_default(
-        self, db: HubDatabase, manager: LocalWorkflowDefinitionManager
+        self, db: HubDatabase, manager: RuleDefinitionManager
     ) -> None:
         _sync_bundled(db)
         for name in EXFIL_RULES:
@@ -96,7 +96,7 @@ class TestDataExfiltrationSync:
 
 class TestNoOutboundUpload:
     @pytest.fixture(autouse=True)
-    def _load_rules(self, db: HubDatabase, manager: LocalWorkflowDefinitionManager) -> None:
+    def _load_rules(self, db: HubDatabase, manager: RuleDefinitionManager) -> None:
         _sync_bundled(db)
         self.rules = [_get_rule(manager, name) for name in sorted(UPLOAD_RULES)]
 
@@ -166,7 +166,7 @@ class TestNoOutboundUpload:
 
 class TestNoSecretRead:
     @pytest.fixture(autouse=True)
-    def _load_rule(self, db: HubDatabase, manager: LocalWorkflowDefinitionManager) -> None:
+    def _load_rule(self, db: HubDatabase, manager: RuleDefinitionManager) -> None:
         _sync_bundled(db)
         self.body = _get_rule(manager, "no-secret-read")
 

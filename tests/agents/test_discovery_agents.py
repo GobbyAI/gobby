@@ -74,7 +74,8 @@ def _skill_text(name: str) -> str:
 
 def _allowed_mcp_union(agent: AgentDefinitionBody) -> set[str]:
     tools: set[str] = set()
-    for step in agent.steps or []:
+    assert agent.step_workflow is not None
+    for step in agent.step_workflow.steps:
         allowed = step.allowed_mcp_tools
         assert allowed != "all"
         tools.update(allowed)
@@ -109,10 +110,11 @@ def test_discovery_agent_loads_expected_methodology_skill(
 ) -> None:
     agent = _agent(slug)
 
-    assert [step.name for step in (agent.steps or [])] == ["claim", "load_skill", "draft"]
-    assert agent.exit_condition == "vars.handoff_ready"
+    assert agent.step_workflow is not None
+    assert [step.name for step in agent.step_workflow.steps] == ["claim", "load_skill", "draft"]
+    assert agent.step_workflow.exit_condition == "vars.handoff_ready"
 
-    load_step = find_step(agent.steps or [], "load_skill")
+    load_step = find_step(agent.step_workflow.steps, "load_skill")
     assert load_step is not None
     assert load_step.allowed_mcp_tools == ["gobby-skills:get_skill"]
     assert spec["skill"] in (load_step.status_message or "")
@@ -155,7 +157,7 @@ def test_discovery_agent_marker_and_stage_contract(slug: str, spec: dict[str, An
     assert "close_task" in instructions
     assert "spawn other agents" in instructions
 
-    draft = find_step(agent.steps or [], "draft")
+    draft = find_step((agent.step_workflow.steps if agent.step_workflow else []), "draft")
     assert draft is not None
     assert draft.allowed_mcp_tools == [
         "gobby-tasks:get_task",
