@@ -32,6 +32,7 @@ from gobby.runtime_grants.signing import payload_checksum
 from gobby.storage.managed_credentials import ManagedCredentialManager
 from gobby.storage.secrets import SecretStore
 from gobby.wiki.codewiki_dormant import CODEWIKI_DISABLED_REASON
+from tests._timing import wait_for_condition
 from tests.e2e.conftest import (
     DaemonInstance,
     authenticated_daemon_client,
@@ -140,12 +141,66 @@ def _seed_identity_rows(postgres_db: Any, machine_id: str, user_id: str) -> None
     )
 
 
+_SUMMARY_TEXT = "Returns the provided name."
+
+
+class _SummaryLLMServer(ThreadingHTTPServer):
+    requests: list[dict[str, Any]]
+
+
+class _SummaryLLMHandler(BaseHTTPRequestHandler):
+    def do_POST(self) -> None:
+        server = cast(_SummaryLLMServer, self.server)
+        length = int(self.headers.get("Content-Length", "0") or 0)
+        request = json.loads(self.rfile.read(length) or b"{}")
+        server.requests.append(cast(dict[str, Any], request))
+        response = {
+            "id": "chatcmpl-symbol-summary",
+            "object": "chat.completion",
+            "created": int(time.time()),
+            "model": "e2e-summary",
+            "choices": [
+                {
+                    "index": 0,
+                    "message": {"role": "assistant", "content": _SUMMARY_TEXT},
+                    "finish_reason": "stop",
+                }
+            ],
+        }
+        body = json.dumps(response).encode()
+        self.send_response(200)
+        self.send_header("Content-Type", "application/json")
+        self.send_header("Content-Length", str(len(body)))
+        self.end_headers()
+        self.wfile.write(body)
+
+    def log_message(self, fmt: str, *args: object) -> None:
+        del fmt, args
+
+
+@pytest.fixture
+def summary_llm_server() -> Iterator[_SummaryLLMServer]:
+    server = _SummaryLLMServer(("127.0.0.1", 0), _SummaryLLMHandler)
+    server.requests = []
+    thread = threading.Thread(target=server.serve_forever, daemon=True)
+    thread.start()
+    try:
+        yield server
+    finally:
+        server.shutdown()
+        server.server_close()
+        thread.join(timeout=5)
+
+
 @pytest.fixture
 def e2e_pre_daemon_setup(
     monkeypatch: pytest.MonkeyPatch,
     postgres_db: Any,
     postgres_schema: str,
+    e2e_config: tuple[Path, int, int],
+    summary_llm_server: _SummaryLLMServer,
 ) -> None:
+    del e2e_config
     debug = Path(__file__).resolve().parents[2] / "target" / "debug"
     monkeypatch.setenv("GOBBY_NATIVE_BIN_DIR", str(debug))
     from gobby.storage.config_mutations import ConfigMutations, ConfigPatch
@@ -185,7 +240,23 @@ def e2e_pre_daemon_setup(
     mutations = ConfigMutations(postgres_db)
     mutations.patch_internal(
         expected_revision=mutations.repository.current_revision(),
-        patch=ConfigPatch(values={"code_index.enabled": True}),
+        patch=ConfigPatch(
+            values={
+                "code_index.enabled": True,
+                "code_index.maintenance_interval_seconds": 1,
+                "code_index.symbol_summary.enabled": True,
+                "code_index.symbol_summary.candidates": ["endpoint:e2e-summary/e2e-summary"],
+                "ai.generation.timeout_seconds": 15,
+                "ai.generation.candidate_timeout_seconds": 5,
+                "ai.generation.cli_candidate_timeout_seconds": 5,
+                "ai.generation.endpoints.e2e-summary.protocol": "openai-compatible",
+                "ai.generation.endpoints.e2e-summary.wire_api": "chat-completions",
+                "ai.generation.endpoints.e2e-summary.api_base": (
+                    f"http://127.0.0.1:{summary_llm_server.server_port}/v1"
+                ),
+                "ai.generation.endpoints.e2e-summary.model": "e2e-summary",
+            }
+        ),
         source="e2e-boundary",
     )
 
@@ -330,9 +401,33 @@ def _forward_http(upstream: str, handler: BaseHTTPRequestHandler) -> None:
     handler.wfile.write(payload)
 
 
-def _start_handshake_grant_proxy(upstream: str, grants: list[GrantBundle]) -> _LoopbackProxy:
-    issued = list(grants)
+@dataclass
+class _HandshakeRaceProxy:
+    proxy: _LoopbackProxy
+    older_waiting: threading.Event
+    newer_waiting: threading.Event
+    release_older: threading.Event
+
+    @property
+    def url(self) -> str:
+        return self.proxy.url
+
+    def close(self) -> None:
+        self.release_older.set()
+        self.proxy.close()
+
+
+def _start_handshake_race_proxy(
+    upstream: str,
+    *,
+    older: GrantBundle,
+    newer: GrantBundle,
+) -> _HandshakeRaceProxy:
     lock = threading.Lock()
+    older_waiting = threading.Event()
+    newer_waiting = threading.Event()
+    release_older = threading.Event()
+    arrivals = 0
 
     class Handler(BaseHTTPRequestHandler):
         def log_message(self, fmt: str, *args: object) -> None:
@@ -342,14 +437,25 @@ def _start_handshake_grant_proxy(upstream: str, grants: list[GrantBundle]) -> _L
             _forward_http(upstream, self)
 
         def do_POST(self) -> None:
+            nonlocal arrivals
             if self.path.split("?", 1)[0] != _HANDSHAKE_PATH:
                 _forward_http(upstream, self)
                 return
             with lock:
-                if not issued:
-                    self.send_error(500, "no scripted handshake grants remain")
+                position = arrivals
+                arrivals += 1
+            if position > 1:
+                self.send_error(500, "only two scripted handshakes are allowed")
+                return
+            if position == 0:
+                older_waiting.set()
+                if not release_older.wait(timeout=20):
+                    self.send_error(504, "older handshake was never released")
                     return
-                grant = issued.pop(0)
+                grant = older
+            else:
+                newer_waiting.set()
+                grant = newer
             body = json.dumps({"grant": grant.model_dump(mode="json")}).encode()
             self.send_response(200)
             self.send_header("Content-Type", "application/json")
@@ -357,7 +463,12 @@ def _start_handshake_grant_proxy(upstream: str, grants: list[GrantBundle]) -> _L
             self.end_headers()
             self.wfile.write(body)
 
-    return _start_loopback_proxy(Handler)
+    return _HandshakeRaceProxy(
+        proxy=_start_loopback_proxy(Handler),
+        older_waiting=older_waiting,
+        newer_waiting=newer_waiting,
+        release_older=release_older,
+    )
 
 
 def _start_qdrant_key_proxy(upstream: str, api_key: str) -> _LoopbackProxy:
@@ -448,10 +559,19 @@ def _load_cached_grant(path: Path) -> GrantBundle:
     return GrantBundle.model_validate(payload)
 
 
-def _age_past_half_ttl(grant: GrantBundle, *, now: int | None = None) -> GrantBundle:
-    clock = now if now is not None else int(time.time())
-    return _rechecksum(
-        grant.model_copy(update={"issued_at": clock - 1000, "expires_at": clock + 100})
+def _wait_for_cache_generation(path: Path, generation: int, *, timeout: float = 15.0) -> None:
+    deadline = time.monotonic() + timeout
+    last_generation: int | None = None
+    while time.monotonic() < deadline:
+        try:
+            last_generation = _postgres_generation(_load_cached_grant(path))
+        except (OSError, ValueError):
+            pass
+        if last_generation == generation:
+            return
+        time.sleep(0.05)
+    raise AssertionError(
+        f"cache {path} did not reach generation {generation}; last={last_generation}"
     )
 
 
@@ -766,6 +886,21 @@ class BoundaryHarness:
             timeout=timeout,
         )
 
+    def spawn(
+        self,
+        binary: str,
+        *args: str,
+        env: dict[str, str] | None = None,
+    ) -> subprocess.Popen[str]:
+        return subprocess.Popen(
+            [str(_native_bin(binary)), "--format", "json", *args],
+            cwd=self.project_dir,
+            env=env or self.command_env(),
+            text=True,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+        )
+
     def grant_headers(self) -> dict[str, str]:
         return {
             **daemon_auth_headers(self.home),
@@ -878,29 +1013,43 @@ def test_runtime_boundary_scenarios(boundary: BoundaryHarness) -> None:
     assert stale_code in {"stale_epoch", "invalid_signature", "wrong_deployment"}
 
 
-def test_symbol_summary_regression(boundary: BoundaryHarness, postgres_db: Any) -> None:
+def test_symbol_summary_regression(
+    boundary: BoundaryHarness,
+    postgres_db: Any,
+    summary_llm_server: _SummaryLLMServer,
+) -> None:
     source = boundary.project_dir / "pkg" / "sample.py"
     source.parent.mkdir(parents=True, exist_ok=True)
     source.write_text("def greet(name: str) -> str:\n    return name\n")
     indexed = boundary.run("gcode", "index", "--full", "--quiet")
     assert indexed.returncode == 0, indexed.stderr or indexed.stdout
-    row = postgres_db.fetchone(
-        """
-        SELECT id, summary FROM code_symbols
-        WHERE project_id = %s AND name = %s
-        """,
-        (E2E_PROJECT_ID, "greet"),
-    )
-    assert row is not None
-    stored = row["summary"] if isinstance(row, dict) else row[1]
-    if not stored:
-        stored = "returns the provided name"
-        symbol_id = row["id"] if isinstance(row, dict) else row[0]
-        postgres_db.execute(
-            "UPDATE code_symbols SET summary = %s WHERE id = %s",
-            (stored, symbol_id),
+
+    def stored_summary() -> str | None:
+        row = postgres_db.fetchone(
+            """
+            SELECT summary FROM code_symbols
+            WHERE project_id = %s AND name = %s
+            """,
+            (E2E_PROJECT_ID, "greet"),
         )
-    assert isinstance(stored, str) and stored.strip()
+        if row is None:
+            return None
+        value = row["summary"] if isinstance(row, dict) else row[0]
+        return value if isinstance(value, str) and value else None
+
+    stored = wait_for_condition(
+        stored_summary,
+        timeout=20,
+        interval=0.1,
+        description="daemon-generated symbol summary",
+    )
+    assert stored == _SUMMARY_TEXT, (
+        stored,
+        summary_llm_server.requests,
+        boundary.daemon.read_logs(),
+        boundary.daemon.read_error_logs(),
+    )
+    assert summary_llm_server.requests
     retrieved = boundary.run("gcode", "--allow-stale", "search-symbol", "greet")
     assert retrieved.returncode == 0, retrieved.stderr or retrieved.stdout
     payload = _json_payload(retrieved)
@@ -1005,22 +1154,37 @@ def test_concurrent_renewal_race(boundary: BoundaryHarness, postgres_db: Any) ->
     assert newer_generation > older_generation
     expired = _rechecksum(older.model_copy(update={"expires_at": int(time.time()) - 5}))
     write_grant_file(boundary.grant_path, expired)
-    proxy = _start_handshake_grant_proxy(boundary.daemon.http_url, [newer, older])
+    proxy = _start_handshake_race_proxy(
+        boundary.daemon.http_url,
+        older=older,
+        newer=newer,
+    )
+    processes: list[subprocess.Popen[str]] = []
     try:
-        persist_interactive_grant(boundary.home, proxy.url, expired)
+        assert not _binding_path(boundary.home, proxy.url).exists()
         env = boundary.command_env({"GOBBY_DAEMON_URL": proxy.url})
-        first = boundary.run("gcode", "--allow-stale", "search", "fixture", env=env)
-        assert first.returncode == 0, first.stderr or first.stdout
-        after_newer = _load_cached_grant(boundary.grant_path)
-        assert _postgres_generation(after_newer) == newer_generation
-        write_grant_file(boundary.grant_path, _age_past_half_ttl(after_newer))
-        second = boundary.run("gcode", "--allow-stale", "search", "fixture", env=env)
-        assert second.returncode == 0, second.stderr or second.stdout
+        processes = [
+            boundary.spawn("gcode", "--allow-stale", "search", "fixture", env=env) for _ in range(2)
+        ]
+        assert proxy.older_waiting.wait(timeout=15), "older handshake did not reach its barrier"
+        assert proxy.newer_waiting.wait(timeout=15), "newer handshake did not overlap the older one"
+        _wait_for_cache_generation(boundary.grant_path, newer_generation)
+        assert any(process.poll() is None for process in processes)
+        proxy.release_older.set()
+        outputs = [process.communicate(timeout=30) for process in processes]
     finally:
+        proxy.release_older.set()
+        for process in processes:
+            if process.poll() is None:
+                process.terminate()
+                process.wait(timeout=5)
         proxy.close()
 
+    for process, (stdout, stderr) in zip(processes, outputs, strict=True):
+        assert process.returncode == 0, stderr or stdout
     cached = _load_cached_grant(boundary.grant_path)
-    assert _postgres_generation(cached) == newer_generation
+    issued_generations = {_postgres_generation(grant) for grant in (older, newer)}
+    assert _postgres_generation(cached) == max(issued_generations)
     persist_interactive_grant(boundary.home, boundary.daemon.http_url, cached)
     search = boundary.run("gcode", "--allow-stale", "search", "fixture")
     assert search.returncode == 0, search.stderr or search.stdout
@@ -1203,8 +1367,8 @@ def test_takeover_fencing(
     scoped_url = _postgres_url_for_schema(postgres_database_url, postgres_schema)
     standby = _spawn_same_deployment_standby(boundary, database_url=scoped_url)
     try:
-        deadline = time.monotonic() + 30.0
-        while time.monotonic() < deadline:
+
+        def standby_is_ready() -> bool:
             if standby.process.poll() is not None:
                 pytest.fail(
                     "same-deployment standby exited\n"
@@ -1214,14 +1378,19 @@ def test_takeover_fencing(
             try:
                 health = httpx.get(f"{standby.http_url}/api/admin/health", timeout=1.0)
             except httpx.HTTPError:
-                time.sleep(0.1)
-                continue
-            if health.status_code == 200 and health.json().get("lease_mode") == "standby":
-                break
-        else:
+                return False
+            return health.status_code == 200 and health.json().get("lease_mode") == "standby"
+
+        try:
+            wait_for_condition(
+                standby_is_ready,
+                timeout=30,
+                interval=0.1,
+                description="same-deployment standby lease mode",
+            )
+        except AssertionError as exc:
             pytest.fail(
-                "same-deployment standby did not report lease_mode=standby\n"
-                f"--- log ---\n{standby.read_logs()}\n"
+                f"{exc}\n--- log ---\n{standby.read_logs()}\n"
                 f"--- error ---\n{standby.read_error_logs()}"
             )
 
