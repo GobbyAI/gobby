@@ -1,0 +1,140 @@
+project_id: d45545c5-ded5-4335-b115-0245752edacf
+plan_id: project-checkout-identity
+plan_hash: "375c753cdfa7e01534480e7053d1687bd150a280745ab1337722adb2439a61c2"
+root_task_ref: "19651"
+
+sections:
+  "1.1":
+    acceptance_items:
+      "1.1.1": {expected_leaves: [{title: "Add project_checkouts to baseline 375", owner_agent: backend-developer}]}
+      "1.1.2": {expected_leaves: [{title: "Add project_checkouts to baseline 375", owner_agent: backend-developer}]}
+      "1.1.3": {expected_leaves: [{title: "Add project_checkouts to baseline 375", owner_agent: backend-developer}]}
+      "1.1.4": {expected_leaves: [{title: "Add project_checkouts to baseline 375", owner_agent: backend-developer}]}
+      "1.1.5": {expected_leaves: [{title: "Add project_checkouts to baseline 375", owner_agent: backend-developer}]}
+      "1.1.6": {expected_leaves: [{title: "Add project_checkouts to baseline 375", owner_agent: backend-developer}]}
+      "1.1.7": {expected_leaves: [{title: "Add project_checkouts to baseline 375", owner_agent: backend-developer}]}
+  "1.2":
+    acceptance_items:
+      "1.2.1": {expected_leaves: [{title: "Add checkout storage and typed errors", owner_agent: backend-developer}]}
+      "1.2.2": {expected_leaves: [{title: "Add checkout storage and typed errors", owner_agent: backend-developer}]}
+      "1.2.3": {expected_leaves: [{title: "Add checkout storage and typed errors", owner_agent: backend-developer}]}
+      "1.2.4": {expected_leaves: [{title: "Add checkout storage and typed errors", owner_agent: backend-developer}]}
+      "1.2.5": {expected_leaves: [{title: "Add checkout storage and typed errors", owner_agent: backend-developer}]}
+      "1.2.6": {expected_leaves: [{title: "Add checkout storage and typed errors", owner_agent: backend-developer}]}
+  "1.3":
+    acceptance_items:
+      "1.3.1": {expected_leaves: [{title: "Resolve ordinary roots from project_checkouts", owner_agent: backend-developer}]}
+      "1.3.2": {expected_leaves: [{title: "Resolve ordinary roots from project_checkouts", owner_agent: backend-developer}]}
+      "1.3.3": {expected_leaves: [{title: "Resolve ordinary roots from project_checkouts", owner_agent: backend-developer}]}
+      "1.3.4": {expected_leaves: [{title: "Resolve ordinary roots from project_checkouts", owner_agent: backend-developer}]}
+      "1.3.5": {expected_leaves: [{title: "Resolve ordinary roots from project_checkouts", owner_agent: backend-developer}]}
+      "1.3.6": {expected_leaves: [{title: "Resolve ordinary roots from project_checkouts", owner_agent: backend-developer}]}
+      "1.3.7": {expected_leaves: [{title: "Resolve ordinary roots from project_checkouts", owner_agent: backend-developer}]}
+      "1.3.8": {expected_leaves: [{title: "Resolve ordinary roots from project_checkouts", owner_agent: backend-developer}]}
+  "2.1":
+    acceptance_items:
+      "2.1.1": {expected_leaves: [{title: "Make init marker-authoritative", owner_agent: backend-developer}]}
+      "2.1.2": {expected_leaves: [{title: "Make init marker-authoritative", owner_agent: backend-developer}]}
+      "2.1.3": {expected_leaves: [{title: "Make init marker-authoritative", owner_agent: backend-developer}]}
+      "2.1.4": {expected_leaves: [{title: "Make init marker-authoritative", owner_agent: backend-developer}]}
+      "2.1.5": {expected_leaves: [{title: "Make init marker-authoritative", owner_agent: backend-developer}]}
+      "2.1.6": {expected_leaves: [{title: "Make init marker-authoritative", owner_agent: backend-developer}]}
+      "2.1.7": {expected_leaves: [{title: "Make init marker-authoritative", owner_agent: backend-developer}]}
+      "2.1.8": {expected_leaves: [{title: "Make init marker-authoritative", owner_agent: backend-developer}]}
+      "2.1.9": {expected_leaves: [{title: "Make init marker-authoritative", owner_agent: backend-developer}]}
+      "2.1.10": {expected_leaves: [{title: "Make init marker-authoritative", owner_agent: backend-developer}]}
+      "2.1.11": {expected_leaves: [{title: "Make init marker-authoritative", owner_agent: backend-developer}]}
+      "2.1.12": {expected_leaves: [{title: "Make init marker-authoritative", owner_agent: backend-developer}]}
+      "2.1.13": {expected_leaves: [{title: "Make init marker-authoritative", owner_agent: backend-developer}]}
+      "2.1.14": {expected_leaves: [{title: "Make init marker-authoritative", owner_agent: backend-developer}]}
+      "2.1.15": {expected_leaves: [{title: "Make init marker-authoritative", owner_agent: backend-developer}]}
+  "2.2":
+    acceptance_items:
+      "2.2.1": {expected_leaves: [{title: "Register from hook ingress", owner_agent: backend-developer}]}
+      "2.2.2": {expected_leaves: [{title: "Register from hook ingress", owner_agent: backend-developer}]}
+      "2.2.3": {expected_leaves: [{title: "Register from hook ingress", owner_agent: backend-developer}]}
+      "2.2.4": {expected_leaves: [{title: "Register from hook ingress", owner_agent: backend-developer}]}
+      "2.2.5": {expected_leaves: [{title: "Register from hook ingress", owner_agent: backend-developer}]}
+  "2.3":
+    acceptance_items:
+      "2.3.1": {expected_leaves: [{title: "Add rebind CLI and stop --repo-path", owner_agent: backend-developer}]}
+      "2.3.2": {expected_leaves: [{title: "Add rebind CLI and stop --repo-path", owner_agent: backend-developer}]}
+      "2.3.3": {expected_leaves: [{title: "Add rebind CLI and stop --repo-path", owner_agent: backend-developer}]}
+      "2.3.4": {expected_leaves: [{title: "Add rebind CLI and stop --repo-path", owner_agent: backend-developer}]}
+  "2.4":
+    acceptance_items:
+      "2.4.1": {expected_leaves: [{title: "Expose checkout HTTP and drop repo_path from project JSON", owner_agent: backend-developer}]}
+      "2.4.2": {expected_leaves: [{title: "Expose checkout HTTP and drop repo_path from project JSON", owner_agent: backend-developer}]}
+      "2.4.3": {expected_leaves: [{title: "Expose checkout HTTP and drop repo_path from project JSON", owner_agent: backend-developer}]}
+      "2.4.4": {expected_leaves: [{title: "Expose checkout HTTP and drop repo_path from project JSON", owner_agent: backend-developer}]}
+      "2.4.5": {expected_leaves: [{title: "Expose checkout HTTP and drop repo_path from project JSON", owner_agent: backend-developer}]}
+  "3.1":
+    acceptance_items:
+      "3.1.1": {expected_leaves: [{title: "Cut over build and dispatch roots", owner_agent: backend-developer}]}
+      "3.1.2": {expected_leaves: [{title: "Cut over build and dispatch roots", owner_agent: backend-developer}]}
+      "3.1.3": {expected_leaves: [{title: "Cut over build and dispatch roots", owner_agent: backend-developer}]}
+  "3.2":
+    acceptance_items:
+      "3.2.1": {expected_leaves: [{title: "Cut over agents, sessions, and MCP tool roots", owner_agent: backend-developer}]}
+      "3.2.2": {expected_leaves: [{title: "Cut over agents, sessions, and MCP tool roots", owner_agent: backend-developer}]}
+      "3.2.3": {expected_leaves: [{title: "Cut over agents, sessions, and MCP tool roots", owner_agent: backend-developer}]}
+      "3.2.4": {expected_leaves: [{title: "Cut over agents, sessions, and MCP tool roots", owner_agent: backend-developer}]}
+      "3.2.5": {expected_leaves: [{title: "Cut over agents, sessions, and MCP tool roots", owner_agent: backend-developer}]}
+      "3.2.6": {expected_leaves: [{title: "Cut over agents, sessions, and MCP tool roots", owner_agent: backend-developer}]}
+      "3.2.7": {expected_leaves: [{title: "Cut over agents, sessions, and MCP tool roots", owner_agent: backend-developer}]}
+      "3.2.8": {expected_leaves: [{title: "Cut over agents, sessions, and MCP tool roots", owner_agent: backend-developer}]}
+      "3.2.9": {expected_leaves: [{title: "Cut over agents, sessions, and MCP tool roots", owner_agent: backend-developer}]}
+  "3.3":
+    acceptance_items:
+      "3.3.1": {expected_leaves: [{title: "Cut over files, source control, plans, and workflows", owner_agent: backend-developer}]}
+      "3.3.2": {expected_leaves: [{title: "Cut over files, source control, plans, and workflows", owner_agent: backend-developer}]}
+      "3.3.3": {expected_leaves: [{title: "Cut over files, source control, plans, and workflows", owner_agent: backend-developer}]}
+      "3.3.4": {expected_leaves: [{title: "Cut over files, source control, plans, and workflows", owner_agent: backend-developer}]}
+      "3.3.5": {expected_leaves: [{title: "Cut over files, source control, plans, and workflows", owner_agent: backend-developer}]}
+      "3.3.6": {expected_leaves: [{title: "Cut over files, source control, plans, and workflows", owner_agent: backend-developer}]}
+      "3.3.7": {expected_leaves: [{title: "Cut over files, source control, plans, and workflows", owner_agent: backend-developer}]}
+      "3.3.8": {expected_leaves: [{title: "Cut over files, source control, plans, and workflows", owner_agent: backend-developer}]}
+  "3.4":
+    acceptance_items:
+      "3.4.1": {expected_leaves: [{title: "Cut over isolation reconciliation and runner startup", owner_agent: backend-developer}]}
+      "3.4.2": {expected_leaves: [{title: "Cut over isolation reconciliation and runner startup", owner_agent: backend-developer}]}
+      "3.4.3": {expected_leaves: [{title: "Cut over isolation reconciliation and runner startup", owner_agent: backend-developer}]}
+  "4.1":
+    acceptance_items:
+      "4.1.1": {expected_leaves: [{title: "Resolve gcode projects through project_checkouts", owner_agent: backend-developer}]}
+      "4.1.2": {expected_leaves: [{title: "Resolve gcode projects through project_checkouts", owner_agent: backend-developer}]}
+  "4.2":
+    acceptance_items:
+      "4.2.1": {expected_leaves: [{title: "Invalidate only the rebound machine index view", owner_agent: backend-developer}]}
+      "4.2.2": {expected_leaves: [{title: "Invalidate only the rebound machine index view", owner_agent: backend-developer}]}
+      "4.2.3": {expected_leaves: [{title: "Invalidate only the rebound machine index view", owner_agent: backend-developer}]}
+      "4.2.4": {expected_leaves: [{title: "Invalidate only the rebound machine index view", owner_agent: backend-developer}]}
+      "4.2.5": {expected_leaves: [{title: "Invalidate only the rebound machine index view", owner_agent: backend-developer}]}
+      "4.2.6": {expected_leaves: [{title: "Invalidate only the rebound machine index view", owner_agent: backend-developer}]}
+      "4.2.7": {expected_leaves: [{title: "Invalidate only the rebound machine index view", owner_agent: backend-developer}]}
+      "4.2.8": {expected_leaves: [{title: "Invalidate only the rebound machine index view", owner_agent: backend-developer}]}
+      "4.2.9": {expected_leaves: [{title: "Invalidate only the rebound machine index view", owner_agent: backend-developer}]}
+  "5.1":
+    acceptance_items:
+      "5.1.1": {expected_leaves: [{title: "Replace web repo_path with checkout", owner_agent: frontend-developer}]}
+      "5.1.2": {expected_leaves: [{title: "Replace web repo_path with checkout", owner_agent: frontend-developer}]}
+      "5.1.3": {expected_leaves: [{title: "Replace web repo_path with checkout", owner_agent: frontend-developer}]}
+  "5.2":
+    acceptance_items:
+      "5.2.1": {expected_leaves: [{title: "Pin two-machine checkout identity", owner_agent: backend-developer}]}
+  "6.1":
+    acceptance_items:
+      "6.1.1": {expected_leaves: [{title: "Run the project-checkout-cutover campaign", owner_agent: backend-developer}]}
+      "6.1.2": {expected_leaves: [{title: "Run the project-checkout-cutover campaign", owner_agent: backend-developer}]}
+      "6.1.3": {expected_leaves: [{title: "Run the project-checkout-cutover campaign", owner_agent: backend-developer}]}
+      "6.1.4": {expected_leaves: [{title: "Run the project-checkout-cutover campaign", owner_agent: backend-developer}]}
+      "6.1.5": {expected_leaves: [{title: "Run the project-checkout-cutover campaign", owner_agent: backend-developer}]}
+      "6.1.6": {expected_leaves: [{title: "Run the project-checkout-cutover campaign", owner_agent: backend-developer}]}
+      "6.1.7": {expected_leaves: [{title: "Run the project-checkout-cutover campaign", owner_agent: backend-developer}]}
+      "6.1.8": {expected_leaves: [{title: "Run the project-checkout-cutover campaign", owner_agent: backend-developer}]}
+      "6.1.9": {expected_leaves: [{title: "Run the project-checkout-cutover campaign", owner_agent: backend-developer}]}
+      "6.1.10": {expected_leaves: [{title: "Run the project-checkout-cutover campaign", owner_agent: backend-developer}]}
+      "6.1.11": {expected_leaves: [{title: "Run the project-checkout-cutover campaign", owner_agent: backend-developer}]}
+      "6.1.12": {expected_leaves: [{title: "Run the project-checkout-cutover campaign", owner_agent: backend-developer}]}
+      "6.1.13": {expected_leaves: [{title: "Run the project-checkout-cutover campaign", owner_agent: backend-developer}]}
+      "6.1.14": {expected_leaves: [{title: "Run the project-checkout-cutover campaign", owner_agent: backend-developer}]}
