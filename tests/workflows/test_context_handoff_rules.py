@@ -19,6 +19,7 @@ from typing import Any
 import pytest
 
 from gobby.hooks.events import HookEvent, HookEventType, SessionSource
+from gobby.llm.sdk_utils import ADDITIONAL_CONTEXT_LIMIT, HANDOFF_SUMMARY_INJECT_BUDGET
 from gobby.sessions.compact_markers import COMPACT_SELF_INTERRUPT_WARNING
 from gobby.storage.definitions.rules import RuleDefinitionManager
 from gobby.storage.hub.protocol import HubDatabase
@@ -380,6 +381,46 @@ class TestInjectCompactHandoff:
         assert "Wiki UNIQUE_WIKI" in first.context
         assert "Profile UNIQUE_PROFILE" in first.context
         assert "Task UNIQUE_TASK" in first.context
+
+    @pytest.mark.asyncio
+    async def test_prompt_path_fits_grok_additional_context_budget(self, db: HubDatabase) -> None:
+        """Compact reinjection leaves room for the first-prompt agent preamble."""
+        _sync_bundled(db)
+        engine = RuleEngine(db)
+        event = HookEvent(
+            event_type=HookEventType.BEFORE_AGENT,
+            session_id=SESSION_ID,
+            source=SessionSource.GROK,
+            timestamp=datetime.now(UTC),
+            data={},
+        )
+        result = await engine.evaluate(
+            event,
+            session_id=SESSION_ID,
+            variables={
+                "compact_handoff_inject_pending": True,
+                "handoff_summary_injectable": "s" * HANDOFF_SUMMARY_INJECT_BUDGET,
+                "mcp_calls": {
+                    "gobby-memory": ["create_memory", "search_memories"],
+                    "gobby-sessions": ["compact_self", "get_session"],
+                    "gobby-tasks": ["claim_task", "close_task", "get_task"],
+                },
+                "compact_resume_required_skills": [
+                    "loading-skills",
+                    "tasks",
+                    "development-discipline",
+                    "code-index",
+                ],
+                "compact_resume_advisory_skills": ["brevity"],
+                "wiki_overview": "w" * 300,
+                "task_context": "t" * 150,
+            },
+        )
+
+        assert result.context is not None
+        first_prompt_agent_preamble = "p" * 2_500
+        aggregate = f"{first_prompt_agent_preamble}\n\n{result.context}"
+        assert len(aggregate) <= ADDITIONAL_CONTEXT_LIMIT
 
     @pytest.mark.asyncio
     async def test_prompt_path_omits_profile_for_spawned_agent(self, db: HubDatabase) -> None:

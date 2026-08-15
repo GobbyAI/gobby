@@ -40,12 +40,11 @@ def format_exception_group(eg: ExceptionGroup) -> str:
 ADDITIONAL_CONTEXT_LIMIT = 9_950
 
 # Budget for a single large handoff/summary contributor injected inline via
-# additionalContext. Kept well below ADDITIONAL_CONTEXT_LIMIT so the other
-# contributors (task context, user profile, metadata, system message) and the
-# breadcrumb still fit under the SDK's 10K aggregate ceiling. The full,
-# untruncated summary stays available on demand via the get_handoff_context
-# MCP tool, so this only bounds the inline copy — it never drops content.
-HANDOFF_SUMMARY_INJECT_BUDGET: int = 6_500
+# additionalContext. The remaining 5,450 characters cover the first-prompt
+# agent preamble, task/wiki/skill companions, metadata, and breadcrumb under
+# the SDK's 10K aggregate ceiling. The full summary stays available on demand
+# via get_handoff_context, so this only bounds the inline copy.
+HANDOFF_SUMMARY_INJECT_BUDGET: int = 4_500
 
 
 @dataclass(frozen=True, slots=True)

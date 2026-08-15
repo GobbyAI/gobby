@@ -914,14 +914,20 @@ async def test_merge_worktree_abort_failure_is_surfaced_and_unlocks():
 @pytest.mark.asyncio
 async def test_merge_worktree_timeout_aborts_before_unlock():
     """A merge timeout still aborts any MERGE_HEAD state before unlocking."""
-    from gobby.mcp_proxy.tools.worktrees._sync import create_sync_registry
+    from gobby.mcp_proxy.tools.worktrees._sync import (
+        MERGE_COMMAND_TIMEOUT_SECONDS,
+        create_sync_registry,
+    )
+    from gobby.mcp_proxy.wait_tools import MCP_WRAPPER_WAIT_TOOL_TIMEOUT_SECONDS
 
     ctx = _make_registry_context()
     regular_git = _local_merge_side_effect()
     cleanup_calls: list[str] = []
+    merge_timeouts: list[float] = []
 
     def timeout_merge(args, cwd=None, timeout=30, check=False):
         if args == ["merge", "refs/heads/feat", "--no-ff", "--no-edit"]:
+            merge_timeouts.append(timeout)
             raise subprocess.TimeoutExpired(args, timeout)
         if args == ["rev-parse", "--verify", "-q", "MERGE_HEAD"]:
             cleanup_calls.append("inspect")
@@ -945,6 +951,8 @@ async def test_merge_worktree_timeout_aborts_before_unlock():
         await merge_tool("wt-123")
 
     assert cleanup_calls == ["inspect", "abort"]
+    assert merge_timeouts == [MERGE_COMMAND_TIMEOUT_SECONDS]
+    assert MERGE_COMMAND_TIMEOUT_SECONDS < MCP_WRAPPER_WAIT_TOOL_TIMEOUT_SECONDS
     assert lock.locked() is False
 
 
