@@ -107,3 +107,19 @@ def test_single_revision_per_grant() -> None:
         assert "qdrant-secret-b" not in dumped
 
     assert successive.capture_count == 1
+
+
+@pytest.mark.unit
+def test_local_qdrant_url_without_api_key_is_direct() -> None:
+    snapshot = revision_snapshot(
+        41,
+        host="falkor-a.test",
+        password="falkor-secret-a",
+        qdrant_url="http://127.0.0.1:6333",
+        api_key=None,
+    )
+    grant = _issue(SuccessiveCaptureRuntime(snapshot, snapshot))
+    qdrant = grant.capabilities.qdrant
+    assert isinstance(qdrant, QdrantDirect)
+    assert qdrant.url == "http://127.0.0.1:6333"
+    assert qdrant.api_key == ""

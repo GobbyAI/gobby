@@ -143,9 +143,9 @@ def _qdrant_capability(
         api_key = config.api_key
     if _url_requires_broker(url):
         return BrokeredCapability(operations=QDRANT_OPERATIONS) if url else UnavailableCapability()
-    if api_key and url:
-        return QdrantDirect(url=url, api_key=api_key)
-    return BrokeredCapability(operations=QDRANT_OPERATIONS)
+    if url:
+        return QdrantDirect(url=url, api_key=api_key or "")
+    return UnavailableCapability()
 
 
 def _ai_capability(enabled: bool) -> AIDaemonCapability | AIUnavailableCapability:
