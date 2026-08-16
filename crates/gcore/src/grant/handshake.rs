@@ -32,6 +32,7 @@ pub struct CapabilityClaims {
     pub exp: i64,
     pub agent_run_id: Option<String>,
     pub managed_execution_id: Option<String>,
+    pub kind: Option<PrincipalKind>,
     pub signature: Vec<u8>,
 }
 
@@ -43,6 +44,9 @@ impl CapabilityClaims {
     }
 
     pub fn principal_kind(&self) -> PrincipalKind {
+        if let Some(kind) = self.kind {
+            return kind;
+        }
         if self.agent_run_id.is_some() {
             PrincipalKind::AgentRun
         } else {
@@ -146,6 +150,7 @@ pub fn parse_capability_token(token: &str) -> Result<CapabilityClaims, GrantErro
         exp,
         agent_run_id: optional_str(&value, "agent_run_id"),
         managed_execution_id: optional_str(&value, "managed_execution_id"),
+        kind: optional_principal_kind(&value),
         signature: signature_bytes,
     })
 }
@@ -180,6 +185,7 @@ pub fn challenge_and_handshake(
             "exp": claims.exp,
             "agent_run_id": claims.agent_run_id,
             "managed_execution_id": claims.managed_execution_id,
+            "kind": claims.kind,
         });
     }
     let challenge = http_json(
@@ -433,6 +439,16 @@ fn optional_str(value: &Value, key: &str) -> Option<String> {
         .and_then(Value::as_str)
         .filter(|value| !value.is_empty())
         .map(ToOwned::to_owned)
+}
+
+fn optional_principal_kind(value: &Value) -> Option<PrincipalKind> {
+    match optional_str(value, "kind")?.as_str() {
+        "interactive" => Some(PrincipalKind::Interactive),
+        "agent_run" => Some(PrincipalKind::AgentRun),
+        "tool_chat" => Some(PrincipalKind::ToolChat),
+        "maintenance" => Some(PrincipalKind::Maintenance),
+        _ => None,
+    }
 }
 
 fn constant_time_eq(left: &[u8], right: &[u8]) -> bool {

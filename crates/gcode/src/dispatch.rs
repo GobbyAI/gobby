@@ -173,6 +173,20 @@ fn dispatch_early_command(cli: &Cli, format: output::Format) -> anyhow::Result<b
             commands::graph::clear(&ctx, format)?;
             Ok(true)
         }
+        Command::Vector {
+            command:
+                VectorCommand::Clear {
+                    project_id: Some(project_id),
+                },
+        } => {
+            let ctx = config::Context::resolve_for_project_id_with_services(
+                project_id,
+                cli.quiet,
+                config::ServiceConfigSelection::projection_cleanup(),
+            )?;
+            commands::vector::clear(&ctx, format)?;
+            Ok(true)
+        }
         _ => Ok(false),
     }
 }
@@ -312,8 +326,13 @@ fn run() -> anyhow::Result<()> {
             commands::vector::sync_file(&ctx, &file, allow_missing_indexed_file, format)
         }
         Command::Vector {
-            command: VectorCommand::Clear,
+            command: VectorCommand::Clear { project_id: None },
         } => commands::vector::clear(&ctx, format),
+        Command::Vector {
+            command: VectorCommand::Clear {
+                project_id: Some(_),
+            },
+        } => Ok(()),
         Command::Vector {
             command: VectorCommand::Rebuild,
         } => {

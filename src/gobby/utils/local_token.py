@@ -37,6 +37,7 @@ class AgentApiTokenClaims:
     exp: int
     agent_run_id: str | None = None
     managed_execution_id: str | None = None
+    kind: str | None = None
 
 
 def local_token_path() -> Path:
@@ -79,6 +80,7 @@ def issue_agent_api_token(
         project_id=project_id,
         machine_id=machine_id,
         ttl_seconds=ttl_seconds,
+        kind="agent_run",
     )
 
 
@@ -100,6 +102,28 @@ def issue_tool_api_token(
         project_id=project_id,
         machine_id=machine_id,
         ttl_seconds=max(1, math.ceil(timeout_seconds)),
+        kind="tool_chat",
+    )
+
+
+def issue_maintenance_api_token(
+    operator_token: str,
+    *,
+    execution_id: str,
+    project_id: str,
+    timeout_seconds: float,
+    machine_id: str | None = None,
+) -> str:
+    """Mint a daemon capability bound to one maintenance execution."""
+    return _issue_managed_api_token(
+        operator_token,
+        owner_claim="managed_execution_id",
+        owner_id=execution_id,
+        session_id=execution_id,
+        project_id=project_id,
+        machine_id=machine_id,
+        ttl_seconds=max(1, math.ceil(timeout_seconds)),
+        kind="maintenance",
     )
 
 
@@ -112,21 +136,25 @@ def _issue_managed_api_token(
     project_id: str,
     ttl_seconds: int,
     machine_id: str | None = None,
+    kind: str | None = None,
 ) -> str:
     resolved_machine = machine_id or get_machine_id()
     if not resolved_machine:
         raise ValueError("capability tokens require a machine_id")
     iat = int(time.time())
     exp = iat + ttl_seconds
+    claims: dict[str, object] = {
+        "exp": exp,
+        "iat": iat,
+        "machine_id": resolved_machine,
+        owner_claim: owner_id,
+        "project_id": project_id,
+        "session_id": session_id,
+    }
+    if kind is not None:
+        claims["kind"] = kind
     payload = json.dumps(
-        {
-            "exp": exp,
-            "iat": iat,
-            "machine_id": resolved_machine,
-            owner_claim: owner_id,
-            "project_id": project_id,
-            "session_id": session_id,
-        },
+        claims,
         sort_keys=True,
         separators=(",", ":"),
     ).encode()
@@ -182,14 +210,20 @@ def verify_agent_api_token(
     assert isinstance(exp, int)
     if time.time() >= exp:
         return None
+    kind = raw.get("kind")
+    if kind is not None and (not isinstance(kind, str) or not kind):
+        return None
     return AgentApiTokenClaims(
-        agent_run_id=agent_run_id,
-        managed_execution_id=managed_execution_id,
+        agent_run_id=agent_run_id if isinstance(agent_run_id, str) else None,
+        managed_execution_id=(
+            managed_execution_id if isinstance(managed_execution_id, str) else None
+        ),
         session_id=session_id,
         project_id=project_id,
         machine_id=machine_id,
         iat=iat,
         exp=exp,
+        kind=kind,
     )
 
 

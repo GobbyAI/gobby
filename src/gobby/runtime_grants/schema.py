@@ -110,7 +110,7 @@ class SchemaIdentity(BaseModel):
 class GrantPrincipal(BaseModel):
     model_config = ConfigDict(extra="forbid", frozen=True)
 
-    kind: Literal["interactive", "agent_run", "tool_chat"]
+    kind: Literal["interactive", "agent_run", "tool_chat", "maintenance"]
     machine_id: str
     project_id: str
     execution_id: str | None

@@ -376,7 +376,11 @@ pub(crate) enum VectorCommand {
         allow_missing_indexed_file: bool,
     },
     /// Clear the current project's code-symbol vector projection
-    Clear,
+    Clear {
+        /// Clear vector projection for this project id without resolving cwd project context
+        #[arg(long)]
+        project_id: Option<String>,
+    },
     /// Rebuild the current project's code-symbol vector projection from PostgreSQL facts
     Rebuild,
     /// Remove code-symbol vectors for files no longer indexed in PostgreSQL

@@ -360,8 +360,10 @@ class GcodeGateway:
             ]
         )
 
-    async def graph_clear(self, project_id: str) -> dict[str, Any]:
-        return await self._run_json(["graph", "clear", "--project-id", project_id])
+    async def graph_clear(
+        self, project_id: str, *, env: Mapping[str, str] | None = None
+    ) -> dict[str, Any]:
+        return await self._run_json(["graph", "clear", "--project-id", project_id], env=env)
 
     async def graph_rebuild(self, project_root: Path) -> dict[str, Any]:
         return await self._run_json(
@@ -394,10 +396,23 @@ class GcodeGateway:
             args.append("--allow-missing-indexed-file")
         return await self._run_json(args, timeout=timeout)
 
-    async def vector_clear(self, project_root: Path) -> dict[str, Any]:
+    async def vector_clear(
+        self,
+        project_root: Path | None = None,
+        *,
+        project_id: str | None = None,
+        env: Mapping[str, str] | None = None,
+    ) -> dict[str, Any]:
+        if project_id is not None:
+            args = ["vector", "clear", "--project-id", project_id]
+        elif project_root is not None:
+            args = ["vector", "clear", "--project", str(project_root)]
+        else:
+            raise GcodeInputValidationError("project", "", "project root or project_id is required")
         return await self._run_json(
-            ["vector", "clear", "--project", str(project_root)],
+            args,
             timeout=self._rebuild_timeout_seconds,
+            env=env,
         )
 
     async def vector_rebuild(self, project_root: Path) -> dict[str, Any]:
@@ -417,11 +432,13 @@ class GcodeGateway:
         project_root: Path,
         *,
         timeout: float | None = None,
+        env: Mapping[str, str] | None = None,
     ) -> GcodeCommandResult:
         binary = await self._ensure_version()
         return await self._run_command_result(
             [binary, "index", "--project", str(project_root), "--skip-if-locked"],
             timeout=timeout,
+            env=env,
         )
 
     async def incremental_index(
@@ -430,6 +447,7 @@ class GcodeGateway:
         files: Sequence[str],
         *,
         timeout: float | None = None,
+        env: Mapping[str, str] | None = None,
     ) -> GcodeCommandResult:
         binary = await self._ensure_version()
         return await self._run_command_result(
@@ -444,6 +462,7 @@ class GcodeGateway:
                 "--skip-if-locked",
             ],
             timeout=timeout,
+            env=env,
         )
 
     async def nightly_full_reindex(
@@ -451,6 +470,7 @@ class GcodeGateway:
         project_root: Path,
         *,
         timeout: float | None = None,
+        env: Mapping[str, str] | None = None,
     ) -> GcodeCommandResult:
         binary = await self._ensure_version()
         return await self._run_command_result(
@@ -465,6 +485,7 @@ class GcodeGateway:
                 "json",
             ],
             timeout=timeout,
+            env=env,
         )
 
     async def prune_all_projects(
@@ -472,11 +493,13 @@ class GcodeGateway:
         *,
         retention_days: int,
         timeout: float | None = None,
+        env: Mapping[str, str] | None = None,
     ) -> GcodeCommandResult:
         binary = await self._ensure_version()
         return await self._run_command_result(
             [binary, "prune", "--force", "--retention-days", str(retention_days)],
             timeout=timeout,
+            env=env,
         )
 
     async def prune_project_for_maintenance(
@@ -485,6 +508,7 @@ class GcodeGateway:
         *,
         retention_days: int,
         timeout: float | None = None,
+        env: Mapping[str, str] | None = None,
     ) -> GcodeCommandResult:
         binary = await self._ensure_version()
         return await self._run_command_result(
@@ -498,6 +522,7 @@ class GcodeGateway:
                 str(retention_days),
             ],
             timeout=timeout,
+            env=env,
         )
 
     async def invalidate_project_by_id(
@@ -519,10 +544,11 @@ class GcodeGateway:
         args: Sequence[str],
         *,
         timeout: float | None = None,
+        env: Mapping[str, str] | None = None,
     ) -> dict[str, Any]:
         binary = await self._ensure_version()
         command = [binary, *args, "--format", "json"]
-        stdout, _stderr = await self._run_command(command, timeout=timeout)
+        stdout, _stderr = await self._run_command(command, timeout=timeout, env=env)
         text = stdout.decode(errors="replace").strip()
         try:
             parsed = json.loads(text)
@@ -583,6 +609,7 @@ class GcodeGateway:
         *,
         timeout: float | None = None,
         check_version: bool = True,
+        env: Mapping[str, str] | None = None,
     ) -> tuple[bytes, bytes]:
         proc: asyncio.subprocess.Process | None = None
         try:
@@ -590,7 +617,7 @@ class GcodeGateway:
                 *command,
                 stdout=asyncio.subprocess.PIPE,
                 stderr=asyncio.subprocess.PIPE,
-                env=self._child_env,
+                env=env if env is not None else self._child_env,
             )
             stdout, stderr = await asyncio.wait_for(
                 proc.communicate(),
@@ -635,6 +662,7 @@ class GcodeGateway:
         command: Sequence[str],
         *,
         timeout: float | None = None,
+        env: Mapping[str, str] | None = None,
     ) -> GcodeCommandResult:
         proc: asyncio.subprocess.Process | None = None
         started = datetime.now(UTC)
@@ -646,7 +674,7 @@ class GcodeGateway:
                 *command,
                 stdout=asyncio.subprocess.PIPE,
                 stderr=asyncio.subprocess.PIPE,
-                env=self._child_env,
+                env=env if env is not None else self._child_env,
             )
             stdout, stderr = await asyncio.wait_for(
                 proc.communicate(),

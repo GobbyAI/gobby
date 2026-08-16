@@ -12,12 +12,15 @@ import logging
 from collections.abc import Awaitable, Callable
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 from gobby.code_index.gcode_gateway import GcodeGateway, GcodeGatewayError
 from gobby.code_index.storage import CodeIndexStorage
 from gobby.code_index.sync_breaker import SyncCircuitBreaker
 from gobby.config.code_index import CodeIndexConfig
+
+if TYPE_CHECKING:
+    from gobby.code_index.maintenance_launch import MaintenanceLaunchFactory
 
 logger = logging.getLogger(__name__)
 
@@ -67,6 +70,7 @@ class CodeIndexContext:
         config: CodeIndexConfig | None = None,
         run_db: Callable[..., Awaitable[Any]] | None = None,
         daemon_config_breaker: SyncCircuitBreaker | None = None,
+        launch_factory: MaintenanceLaunchFactory | None = None,
     ) -> None:
         self._storage = storage
         self._config = config or CodeIndexConfig()
@@ -79,6 +83,7 @@ class CodeIndexContext:
             max_backoff_seconds=self._config.sync_worker_breaker_max_backoff_seconds,
         )
         self._gcode_gateway: GcodeGateway | None = gcode_gateway
+        self.launch_factory = launch_factory
         if self._gcode_gateway is None and (
             self._config.graph_enabled or self._config.embedding_enabled
         ):

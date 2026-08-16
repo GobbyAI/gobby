@@ -15,10 +15,10 @@ const GOLDEN_BASELINE_CHECKSUM: &str =
     "ece3754752dbc72aaff4bbd3ebaa91a41305e4899e180012f8429c4f7467b1bf";
 #[cfg(not(feature = "postgres"))]
 const GOLDEN_LATEST_CHECKSUM: &str =
-    "0f7a499e1b7216a7a2426dc5c04064eae97440a1ee1a4d5134a0dd7a8cf6ebef";
+    "2d666ea0917211806be00cde6a854b45c181ea6344b312f729cd8e37a9aa72f6";
 #[cfg(not(feature = "postgres"))]
 const GOLDEN_ASSETS_ROOT_HASH: &str =
-    "e4379de38fdebd8d717438b5146cc9295f876b703b53596d64928f8e2b4b7592";
+    "7bbeaa0d801d8823b7cae7f5845f4e37ff370002cf33f8eb6c66f5c891d31ddd";
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -96,11 +96,12 @@ pub enum PrincipalKind {
     Interactive,
     AgentRun,
     ToolChat,
+    Maintenance,
 }
 
 impl PrincipalKind {
     pub fn is_managed(self) -> bool {
-        matches!(self, Self::AgentRun | Self::ToolChat)
+        matches!(self, Self::AgentRun | Self::ToolChat | Self::Maintenance)
     }
 }
 

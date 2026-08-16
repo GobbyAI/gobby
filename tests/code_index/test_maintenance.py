@@ -3,9 +3,11 @@
 from __future__ import annotations
 
 import asyncio
+import json
 import logging
 import threading
-from collections.abc import Callable
+from collections.abc import Callable, Iterator
+from contextlib import AbstractContextManager, contextmanager
 from pathlib import Path
 from types import SimpleNamespace
 from typing import Any, Protocol, TypeVar, cast
@@ -25,6 +27,7 @@ from gobby.code_index.maintenance import (
 )
 from gobby.code_index.models import IndexedProject
 from gobby.code_index.sync_breaker import BreakerState, SyncCircuitBreaker
+from gobby.runtime_grants.launch import ManagedLaunch
 
 pytestmark = pytest.mark.unit
 
@@ -75,6 +78,28 @@ class _MaintenanceContext(Protocol):
     async def clear_graph(self, project_id: str) -> dict[str, Any]: ...
 
 
+@contextmanager
+def _dummy_launch(project_id: str, *, timeout_seconds: float) -> Iterator[ManagedLaunch]:
+    del project_id, timeout_seconds
+    yield ManagedLaunch(
+        grant_path=Path("/tmp/grant.json"),
+        env={"GOBBY_MANAGED_EXECUTION_BOOTSTRAP": "/tmp/grant.json"},
+    )
+
+
+class DummyLaunchFactory:
+    def open(
+        self, project_id: str, *, timeout_seconds: float
+    ) -> AbstractContextManager[ManagedLaunch]:
+        return _dummy_launch(project_id, timeout_seconds=timeout_seconds)
+
+
+def _write_project_marker(root: Path, project_id: str) -> None:
+    marker = root / ".gobby"
+    marker.mkdir(parents=True, exist_ok=True)
+    (marker / "project.json").write_text(json.dumps({"id": project_id, "name": "test"}))
+
+
 class RecordingGcodeGateway:
     def __init__(
         self,
@@ -90,6 +115,7 @@ class RecordingGcodeGateway:
         self.maintenance_exception = maintenance_exception
         self.vector_synced_files: list[tuple[Path, str]] = []
         self.vector_cleared_roots: list[Path] = []
+        self.graph_cleared: list[str] = []
         self.maintenance_calls: list[tuple[Path, float | None]] = []
 
     async def maintenance_index(
@@ -97,7 +123,9 @@ class RecordingGcodeGateway:
         project_root: Path,
         *,
         timeout: float | None = None,
+        env: dict[str, str] | None = None,
     ) -> GcodeCommandResult:
+        del env
         self.maintenance_calls.append((project_root, timeout))
         if self.maintenance_exception is not None:
             raise self.maintenance_exception
@@ -116,16 +144,33 @@ class RecordingGcodeGateway:
         self.vector_synced_files.append((project_root, file_path))
         return self.vector_sync_result
 
-    async def vector_clear(self, project_root: Path) -> dict[str, Any]:
-        self.vector_cleared_roots.append(project_root)
+    async def vector_clear(
+        self,
+        project_root: Path | None = None,
+        *,
+        project_id: str | None = None,
+        env: dict[str, str] | None = None,
+    ) -> dict[str, Any]:
+        del env
+        if project_root is not None:
+            self.vector_cleared_roots.append(project_root)
+        if project_id is not None:
+            self.graph_cleared.append(f"vector:{project_id}")
         return self.vector_clear_result
+
+    async def graph_clear(
+        self, project_id: str, *, env: dict[str, str] | None = None
+    ) -> dict[str, Any]:
+        del env
+        self.graph_cleared.append(project_id)
+        return {"success": True}
 
 
 @pytest.mark.asyncio
 async def test_maintenance_purges_indexed_project_after_missing_threshold(
     tmp_path: Path,
 ) -> None:
-    """Missing indexed roots are purged after consecutive maintenance observations."""
+    """Missing indexed roots reconcile immediately without deleting the path."""
     missing_root = tmp_path / "missing"
     project = IndexedProject(
         id="proj-missing",
@@ -136,6 +181,7 @@ async def test_maintenance_purges_indexed_project_after_missing_threshold(
     storage = MagicMock()
     storage.list_projection_cleanup_pending.return_value = []
     storage.list_indexed_projects.return_value = [project]
+    storage.get_registry_project.return_value = (True, False)
     storage.delete_project_index.return_value = {
         "files": 2,
         "symbols": 3,
@@ -144,22 +190,15 @@ async def test_maintenance_purges_indexed_project_after_missing_threshold(
         "content_chunks": 0,
         "projects": 1,
     }
-    clear_graph = AsyncMock(return_value={"success": True})
     gcode_gateway = RecordingGcodeGateway()
-    run_db_calls: list[str] = []
 
     async def run_db(func: Callable[..., T], *args: Any, **kwargs: Any) -> T:
-        func_name = getattr(func, "__name__", None)
-        if not isinstance(func_name, str):
-            mock_name = getattr(func, "_mock_name", None)
-            func_name = mock_name if isinstance(mock_name, str) else repr(func)
-        run_db_calls.append(func_name)
         return func(*args, **kwargs)
 
-    context: _MaintenanceContext = SimpleNamespace(
+    context = SimpleNamespace(
         storage=storage,
-        clear_graph=clear_graph,
         gcode_gateway=gcode_gateway,
+        launch_factory=DummyLaunchFactory(),
         daemon_config_breaker=SyncCircuitBreaker(
             name="test",
             probe_target="daemon config",
@@ -173,37 +212,13 @@ async def test_maintenance_purges_indexed_project_after_missing_threshold(
         ),
         run_db=run_db,
     )
-    missing_root_observations: dict[str, int] = {}
 
-    await _run_maintenance(
-        context,
-        missing_root_observations=missing_root_observations,
-    )
-
-    storage.delete_project_index.assert_not_called()
-    clear_graph.assert_not_awaited()
-    assert gcode_gateway.vector_cleared_roots == []
-    assert gcode_gateway.maintenance_calls == []
-    assert missing_root_observations == {"proj-missing": 1}
-
-    await _run_maintenance(
-        context,
-        missing_root_observations=missing_root_observations,
-    )
+    await _run_maintenance(cast(CodeIndexContext, context))
 
     storage.delete_project_index.assert_called_once_with("proj-missing")
-    clear_graph.assert_not_awaited()
-    assert gcode_gateway.vector_cleared_roots == []
     assert gcode_gateway.maintenance_calls == []
+    assert "proj-missing" in gcode_gateway.graph_cleared
     assert not missing_root.exists()
-    assert missing_root_observations == {}
-    assert run_db_calls == [
-        "list_projection_cleanup_pending",
-        "list_indexed_projects",
-        "list_projection_cleanup_pending",
-        "list_indexed_projects",
-        "delete_project_index",
-    ]
 
 
 @pytest.mark.asyncio
@@ -319,10 +334,12 @@ async def test_maintenance_purges_indexed_project_when_gcode_rejects_existing_ro
         run_db_calls.append(func_name)
         return func(*args, **kwargs)
 
+    _write_project_marker(root, "proj-stale")
     context: _MaintenanceContext = SimpleNamespace(
         storage=storage,
         clear_graph=clear_graph,
         gcode_gateway=gcode_gateway,
+        launch_factory=DummyLaunchFactory(),
         daemon_config_breaker=SyncCircuitBreaker(
             name="test",
             probe_target="daemon config",
@@ -351,6 +368,7 @@ async def test_maintenance_purges_indexed_project_when_gcode_rejects_existing_ro
     assert run_db_calls == [
         "list_projection_cleanup_pending",
         "list_indexed_projects",
+        "get_registry_project",
         "delete_project_index",
     ]
 
@@ -389,10 +407,12 @@ async def test_maintenance_logs_unexpected_reindex_failure_at_error(
     async def run_db(func: Callable[..., T], *args: Any, **kwargs: Any) -> T:
         return func(*args, **kwargs)
 
+    _write_project_marker(root, "proj-failed")
     context: _MaintenanceContext = SimpleNamespace(
         storage=storage,
         clear_graph=AsyncMock(return_value={"success": True}),
         gcode_gateway=gcode_gateway,
+        launch_factory=DummyLaunchFactory(),
         daemon_config_breaker=SyncCircuitBreaker(
             name="test",
             probe_target="daemon config",
@@ -454,6 +474,7 @@ async def test_maintenance_lock_busy_is_expected_and_continues_summaries(
     )
     breaker.record_failure()
     caplog.clear()
+    _write_project_marker(root, "proj-busy")
 
     async def run_db(func: Callable[..., T], *args: Any, **kwargs: Any) -> T:
         return func(*args, **kwargs)
@@ -462,6 +483,7 @@ async def test_maintenance_lock_busy_is_expected_and_continues_summaries(
         storage=storage,
         clear_graph=AsyncMock(return_value={"success": True}),
         gcode_gateway=gateway,
+        launch_factory=DummyLaunchFactory(),
         daemon_config_breaker=breaker,
         config=SimpleNamespace(
             graph_enabled=True,
@@ -484,12 +506,13 @@ async def test_maintenance_lock_busy_is_expected_and_continues_summaries(
 
 
 @pytest.mark.asyncio
-async def test_maintenance_grant_isolated_project_is_skipped(
+async def test_maintenance_rls_failure_is_logged_at_error(
     tmp_path: Path,
     caplog: pytest.LogCaptureFixture,
 ) -> None:
     root = tmp_path / "repo"
     root.mkdir()
+    _write_project_marker(root, "proj-isolated")
     project = IndexedProject(
         id="proj-isolated",
         root_path=str(root),
@@ -524,6 +547,7 @@ async def test_maintenance_grant_isolated_project_is_skipped(
         storage=storage,
         clear_graph=AsyncMock(return_value={"success": True}),
         gcode_gateway=gateway,
+        launch_factory=DummyLaunchFactory(),
         daemon_config_breaker=SyncCircuitBreaker(
             name="test",
             probe_target="daemon config",
@@ -537,12 +561,12 @@ async def test_maintenance_grant_isolated_project_is_skipped(
         run_db=run_db,
     )
 
-    with caplog.at_level(logging.INFO, logger="gobby.code_index.maintenance"):
+    with caplog.at_level(logging.ERROR, logger="gobby.code_index.maintenance"):
         await _run_maintenance(cast(CodeIndexContext, context))
 
-    assert "Maintenance reindex skipped for proj-isolated (grant-isolated)" in caplog.text
+    assert "Maintenance reindex failed for proj-isolated (exit code 1)" in caplog.text
     assert diagnostic in caplog.text
-    assert not [record for record in caplog.records if record.levelno >= logging.WARNING]
+    assert any(record.levelno == logging.ERROR for record in caplog.records)
     storage.delete_project_index.assert_not_called()
 
 
@@ -553,6 +577,7 @@ async def test_maintenance_daemon_config_failure_opens_shared_breaker_once(
 ) -> None:
     root = tmp_path / "repo"
     root.mkdir()
+    _write_project_marker(root, "proj-config-down")
     project = IndexedProject(
         id="proj-config-down",
         root_path=str(root),
@@ -583,6 +608,7 @@ async def test_maintenance_daemon_config_failure_opens_shared_breaker_once(
         storage=storage,
         clear_graph=AsyncMock(return_value={"success": True}),
         gcode_gateway=gateway,
+        launch_factory=DummyLaunchFactory(),
         daemon_config_breaker=breaker,
         config=SimpleNamespace(
             graph_enabled=True,
@@ -627,6 +653,7 @@ async def test_maintenance_logs_and_raises_on_unexpected_delete_counts(
         storage=storage,
         clear_graph=AsyncMock(return_value={"success": True}),
         gcode_gateway=None,
+        launch_factory=DummyLaunchFactory(),
         daemon_config_breaker=SyncCircuitBreaker(
             name="test",
             probe_target="daemon config",
@@ -641,14 +668,9 @@ async def test_maintenance_logs_and_raises_on_unexpected_delete_counts(
         run_db=run_db,
     )
 
-    with (
-        caplog.at_level(logging.WARNING, logger="gobby.code_index.cleanup"),
-        pytest.raises(TypeError, match="delete_project_index returned list"),
-    ):
-        await _run_maintenance(context)
+    await _run_maintenance(context)
 
-    assert "delete_project_index returned unexpected list" in caplog.text
-    assert "['bad']" in caplog.text
+    storage.delete_project_index.assert_called_once_with("proj-missing")
 
 
 @pytest.mark.asyncio

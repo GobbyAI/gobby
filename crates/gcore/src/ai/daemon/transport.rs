@@ -51,7 +51,7 @@ pub fn grant_presentation_headers(
     }
     if let Some(execution_id) = &grant.principal.execution_id {
         let name = match grant.principal.kind {
-            PrincipalKind::ToolChat => MANAGED_EXECUTION_HEADER,
+            PrincipalKind::ToolChat | PrincipalKind::Maintenance => MANAGED_EXECUTION_HEADER,
             PrincipalKind::AgentRun | PrincipalKind::Interactive => AGENT_RUN_HEADER,
         };
         headers.push((name, execution_id.clone()));

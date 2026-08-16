@@ -505,7 +505,7 @@ fn baseline_refresh_accepts_exactly_the_predecessor_statement_difference() {
         "each removed prefix must match at most one predecessor statement: {removed_matched:?}"
     );
     assert!(
-        removed_matched.iter().any(|count| *count == 1),
+        removed_matched.contains(&1),
         "removed-statement allowlist must name the dropped predecessor DDL"
     );
 
@@ -1128,7 +1128,7 @@ fn migrations_directory_exists_and_copy_agent_entry_is_registered() {
         migrations_dir.is_dir(),
         "crates/gcore/assets/schema/migrations must exist so later leaves can register include_str entries"
     );
-    assert_eq!(MIGRATIONS.len(), 9);
+    assert_eq!(MIGRATIONS.len(), 10);
     assert_eq!(MIGRATIONS[0].version, 376);
     assert_eq!(MIGRATIONS[0].filename, "376_copy_agent_definitions.sql");
     assert_eq!(MIGRATIONS[1].version, 377);
@@ -1154,6 +1154,11 @@ fn migrations_directory_exists_and_copy_agent_entry_is_registered() {
     assert_eq!(
         MIGRATIONS[8].filename,
         "384_grant_projects_liveness_to_capability.sql"
+    );
+    assert_eq!(MIGRATIONS[9].version, 385);
+    assert_eq!(
+        MIGRATIONS[9].filename,
+        "385_issue_maintenance_principal.sql"
     );
     assert!(MIGRATIONS[5].sql.contains("-- gobby:destructive"));
     for migration in MIGRATIONS {

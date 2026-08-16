@@ -206,7 +206,23 @@ fn parse_projection_lifecycle_commands() {
     assert!(matches!(
         cli.command,
         Command::Vector {
-            command: VectorCommand::Clear
+            command: VectorCommand::Clear { project_id: None }
+        }
+    ));
+    let cli = Cli::try_parse_from([
+        "gcode",
+        "vector",
+        "clear",
+        "--project-id",
+        "11111111-1111-1111-1111-111111111111",
+    ])
+    .expect("vector clear --project-id parses");
+    assert!(matches!(
+        cli.command,
+        Command::Vector {
+            command: VectorCommand::Clear {
+                project_id: Some(_)
+            }
         }
     ));
 

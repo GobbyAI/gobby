@@ -10,7 +10,9 @@ from pathlib import Path
 from typing import TYPE_CHECKING, Any, Literal, Protocol, TypedDict
 from uuid import uuid4
 
+from gobby.code_index.eligibility import resolve_indexed_project
 from gobby.code_index.gcode_gateway import GcodeCommandError, GcodeCommandResult
+from gobby.code_index.maintenance import _reconcile_stale_selector
 from gobby.code_index.maintenance_log import log_gcode_maintenance_event
 from gobby.scheduler.executor import CronHandler
 from gobby.storage.cron import CronJobStorage
@@ -323,6 +325,26 @@ class CodeIndexPruner:
             if pending:
                 return f"{project_id}:deferred_pending_sync"
 
+            lookup = getattr(self._context.storage, "get_registry_project", None)
+            if callable(lookup):
+                raw = await self._context.run_db(lookup, project_id)
+                exists, deleted = (
+                    (bool(raw[0]), bool(raw[1]))
+                    if isinstance(raw, tuple) and len(raw) == 2
+                    else (True, False)
+                )
+                decision = resolve_indexed_project(
+                    project_id,
+                    root_path,
+                    project_exists=exists,
+                    project_deleted=deleted,
+                )
+                if decision.kind != "active":
+                    outcome = await _reconcile_stale_selector(
+                        self._context, project_id, decision.kind
+                    )
+                    return f"{project_id}:{outcome}"
+
             gateway = self._context.gcode_gateway
             if gateway is None:
                 await self._record_failure_if_dirty(
@@ -334,11 +356,24 @@ class CodeIndexPruner:
 
             async with self._global_semaphore:
                 try:
-                    command_result = await gateway.prune_project_for_maintenance(
-                        Path(root_path).expanduser(),
-                        retention_days=self._context.config.content_retention_days,
-                        timeout=CODE_INDEX_PRUNE_TIMEOUT_SECONDS,
-                    )
+                    factory = getattr(self._context, "launch_factory", None)
+                    if factory is None:
+                        command_result = await gateway.prune_project_for_maintenance(
+                            Path(root_path).expanduser(),
+                            retention_days=self._context.config.content_retention_days,
+                            timeout=CODE_INDEX_PRUNE_TIMEOUT_SECONDS,
+                        )
+                    else:
+                        with factory.open(
+                            project_id,
+                            timeout_seconds=CODE_INDEX_PRUNE_TIMEOUT_SECONDS,
+                        ) as launch:
+                            command_result = await gateway.prune_project_for_maintenance(
+                                Path(root_path).expanduser(),
+                                retention_days=self._context.config.content_retention_days,
+                                timeout=CODE_INDEX_PRUNE_TIMEOUT_SECONDS,
+                                env=launch.env,
+                            )
                     if command_result.timed_out:
                         status = "timed_out"
                     elif command_result.success or _is_noop_shutdown_result(command_result):

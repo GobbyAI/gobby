@@ -127,15 +127,40 @@ class HandshakeService:
                 "body machine_id/project_id must equal verified claims",
                 code="claims_mismatch",
             )
-        kind = "agent_run" if claims.agent_run_id is not None else "tool_chat"
+        kind = claims.kind or ("agent_run" if claims.agent_run_id is not None else "tool_chat")
+        if kind not in {"agent_run", "tool_chat", "maintenance"}:
+            raise HandshakeRejection("capability token kind is not managed", code="claims_mismatch")
         principal = GrantPrincipal(
             kind=kind,
             machine_id=claims.machine_id,
             project_id=claims.project_id,
             execution_id=claims.agent_run_id or claims.managed_execution_id,
-            session_id=claims.session_id,
+            session_id=None if kind == "maintenance" else claims.session_id,
         )
         return self._issue(principal, token_exp=claims.exp)
+
+    def issue_for_maintenance(
+        self,
+        *,
+        machine_id: str,
+        project_id: str,
+        execution_id: str,
+    ) -> GrantBundle:
+        if machine_id != self.local_machine_id:
+            raise HandshakeRejection(
+                "maintenance machine_id must match the daemon machine",
+                code="claims_mismatch",
+            )
+        if not self._project_admitted(project_id):
+            raise HandshakeRejection("project is not admitted", code="claims_mismatch")
+        principal = GrantPrincipal(
+            kind="maintenance",
+            machine_id=machine_id,
+            project_id=project_id,
+            execution_id=execution_id,
+            session_id=None,
+        )
+        return self._issue(principal)
 
     def authenticate_managed_refresh(
         self,

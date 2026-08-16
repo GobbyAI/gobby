@@ -77,6 +77,12 @@ pub(crate) const MIGRATIONS: &[EmbeddedMigration] = &[
             "../../assets/schema/migrations/384_grant_projects_liveness_to_capability.sql"
         ),
     },
+    EmbeddedMigration {
+        version: 385,
+        filename: "385_issue_maintenance_principal.sql",
+        checksum: "2d666ea0917211806be00cde6a854b45c181ea6344b312f729cd8e37a9aa72f6",
+        sql: include_str!("../../assets/schema/migrations/385_issue_maintenance_principal.sql"),
+    },
 ];
 const _: &str = include_str!("../../assets/schema/migrations/.gitkeep");
 

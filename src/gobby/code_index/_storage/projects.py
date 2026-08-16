@@ -72,6 +72,16 @@ class CodeIndexProjectStorageMixin:
         )
         return [IndexedProject.from_row(r) for r in rows]
 
+    def get_registry_project(self, project_id: str) -> tuple[bool, bool]:
+        """Return (exists, deleted) for the hub projects row."""
+        row = self.db.fetchone(
+            "SELECT deleted_at FROM projects WHERE id = %s",
+            (project_id,),
+        )
+        if row is None:
+            return False, False
+        return True, row["deleted_at"] is not None
+
     def delete_project_index(self, project_id: str) -> dict[str, int]:
         """Delete this machine's project selector while retaining shared content."""
         counts = {

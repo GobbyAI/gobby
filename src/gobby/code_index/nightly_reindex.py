@@ -73,10 +73,15 @@ class CodeIndexNightlyFullReindexer:
                     return f"{project_id}:skipped_missing_root"
 
                 async with semaphore:
-                    result = await gateway.nightly_full_reindex(
-                        root,
-                        timeout=config.nightly_full_reindex_timeout_seconds,
-                    )
+                    factory = getattr(self._context, "launch_factory", None)
+                    timeout = config.nightly_full_reindex_timeout_seconds
+                    if factory is None:
+                        result = await gateway.nightly_full_reindex(root, timeout=timeout)
+                    else:
+                        with factory.open(project_id, timeout_seconds=timeout) as launch:
+                            result = await gateway.nightly_full_reindex(
+                                root, timeout=timeout, env=launch.env
+                            )
                     if result.timed_out:
                         status = "timed_out"
                     elif result.success:

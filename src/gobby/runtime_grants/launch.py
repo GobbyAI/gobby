@@ -8,7 +8,11 @@ from dataclasses import dataclass
 from pathlib import Path
 
 from gobby.runtime_grants.schema import GrantBundle
-from gobby.utils.local_token import issue_agent_api_token, issue_tool_api_token
+from gobby.utils.local_token import (
+    issue_agent_api_token,
+    issue_maintenance_api_token,
+    issue_tool_api_token,
+)
 
 
 @dataclass(frozen=True)
@@ -57,6 +61,16 @@ def materialize_managed_launch(
             operator_token,
             managed_execution_id=grant.principal.execution_id,
             session_id=grant.principal.session_id,
+            project_id=grant.principal.project_id,
+            machine_id=grant.principal.machine_id,
+            timeout_seconds=ttl,
+        )
+    elif grant.principal.kind == "maintenance":
+        if grant.principal.execution_id is None:
+            raise ValueError("maintenance grant is missing execution identity")
+        token = issue_maintenance_api_token(
+            operator_token,
+            execution_id=grant.principal.execution_id,
             project_id=grant.principal.project_id,
             machine_id=grant.principal.machine_id,
             timeout_seconds=ttl,

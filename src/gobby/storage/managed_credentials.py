@@ -99,6 +99,14 @@ class ManagedToolCredential:
 
 
 @dataclass(frozen=True)
+class MaintenanceCredential:
+    """Project-scoped maintenance role plus the grant DSN for this execution."""
+
+    credential: ManagedCredential
+    dsn: str
+
+
+@dataclass(frozen=True)
 class InteractiveCredential:
     """Issued or reused interactive (machine, project) principal."""
 
@@ -225,6 +233,68 @@ class ManagedCredentialManager:
             if isinstance(error, CredentialIssuanceError):
                 raise
             raise CredentialIssuanceError("managed credential issuance failed") from error
+        finally:
+            password = ""
+
+    def issue_maintenance(
+        self,
+        *,
+        managed_execution_id: UUID,
+        project_id: UUID,
+        expires_at: datetime,
+    ) -> MaintenanceCredential:
+        issued_at = datetime.now(UTC)
+        normalized_expiry = self._validate_expiry(issued_at, expires_at)
+        self.heartbeat()
+        password = secrets.token_urlsafe(32)
+        role_name: str | None = None
+        generation: int | None = None
+        try:
+            row = self._database.fetchone(
+                f"""SELECT * FROM {AUTH_SCHEMA}.issue_maintenance_principal(
+                    %s, %s, %s, %s, %s
+                )""",
+                (
+                    managed_execution_id,
+                    project_id,
+                    self._machine_id,
+                    normalized_expiry,
+                    password,
+                ),
+            )
+            if row is None:
+                raise CredentialIssuanceError("maintenance credential issuance returned no result")
+            role_name = str(_row_value(row, "role_name"))
+            generation = int(_row_value(row, "credential_generation"))
+            scoped_dsn = self._scoped_dsn(role_name, password, managed_execution_id)
+            bootstrap_path = self._materialize_bootstrap(
+                managed_execution_id=managed_execution_id,
+                role_name=role_name,
+                generation=generation,
+                expires_at=normalized_expiry,
+                scoped_dsn=scoped_dsn,
+            )
+            return MaintenanceCredential(
+                credential=ManagedCredential(
+                    managed_execution_id=managed_execution_id,
+                    role_name=role_name,
+                    credential_generation=generation,
+                    issued_at=issued_at,
+                    expires_at=normalized_expiry,
+                    bootstrap_path=bootstrap_path,
+                ),
+                dsn=scoped_dsn,
+            )
+        except Exception as error:
+            if role_name is not None and generation is not None:
+                self.revoke(
+                    managed_execution_id,
+                    generation=generation,
+                    reason="issuance-rollback",
+                )
+            if isinstance(error, CredentialIssuanceError):
+                raise
+            raise CredentialIssuanceError("maintenance credential issuance failed") from error
         finally:
             password = ""
 

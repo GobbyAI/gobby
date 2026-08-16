@@ -36,6 +36,8 @@ class CodeIndexTrigger:
         *,
         gcode_gateway: GcodeGateway,
         daemon_config_breaker: SyncCircuitBreaker,
+        launch_factory: object | None = None,
+        launch_source: object | None = None,
     ) -> None:
         self._loop = loop
         self._retry_base_seconds = retry_base_seconds
@@ -43,6 +45,8 @@ class CodeIndexTrigger:
         self._index_timeout_seconds = index_timeout_seconds
         self._gcode_gateway = gcode_gateway
         self._daemon_config_breaker = daemon_config_breaker
+        self._launch_factory = launch_factory
+        self._launch_source = launch_source
         # Pending files grouped by canonical root path.
         self._pending_by_root: dict[str, set[str]] = {}
         self._project_id_by_root: dict[str, str] = {}
@@ -193,11 +197,24 @@ class CodeIndexTrigger:
             return
 
         try:
-            result = await self._gcode_gateway.incremental_index(
-                Path(root_key),
-                sorted(files),
-                timeout=self._index_timeout_seconds,
-            )
+            factory = getattr(getattr(self, "_launch_source", None), "launch_factory", None)
+            if factory is None:
+                factory = getattr(self, "_launch_factory", None)
+            timeout = self._index_timeout_seconds
+            if factory is None:
+                result = await self._gcode_gateway.incremental_index(
+                    Path(root_key),
+                    sorted(files),
+                    timeout=timeout,
+                )
+            else:
+                with factory.open(project_id, timeout_seconds=timeout) as launch:
+                    result = await self._gcode_gateway.incremental_index(
+                        Path(root_key),
+                        sorted(files),
+                        timeout=timeout,
+                        env=launch.env,
+                    )
             self._daemon_config_breaker.record_success()
             if result.success:
                 self._clear_retry_backoff(root_key)

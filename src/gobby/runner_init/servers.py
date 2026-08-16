@@ -332,8 +332,10 @@ def init_servers(runner: GobbyRunner) -> None:
 
 
 def _bind_runtime_grants(server: HTTPServer, runner: GobbyRunner) -> None:
+    import json
     import time
     from datetime import UTC, datetime, timedelta
+    from pathlib import Path
     from uuid import UUID
 
     from gobby.runtime_grants.handshake import HandshakeRejection, HandshakeService
@@ -389,33 +391,81 @@ def _bind_runtime_grants(server: HTTPServer, runner: GobbyRunner) -> None:
 
     def _project_admitted(project_id: str) -> bool:
         try:
-            row = database.fetchone("SELECT 1 FROM projects WHERE id = %s", (project_id,))
+            row = database.fetchone(
+                "SELECT 1 FROM projects WHERE id = %s AND deleted_at IS NULL",
+                (project_id,),
+            )
         except Exception:
             return False
         return row is not None
 
+    def _managed_bootstrap_dsn(bootstrap_path: object) -> str:
+        payload = json.loads(Path(str(bootstrap_path)).read_text())
+        return str(payload["database_url"])
+
     def _issue_postgres(principal: GrantPrincipal) -> PostgresDirect:
-        session_id = principal.session_id or str(principal.project_id)
+        expires_at = datetime.now(UTC) + timedelta(hours=1)
         try:
-            issued = credentials.issue_interactive(
-                deployment_token=str(lease.deployment_token),
-                project_id=UUID(principal.project_id),
-                session_id=UUID(session_id),
-                expires_at=datetime.now(UTC) + timedelta(hours=1),
-                secret_store=secrets,
+            if principal.kind == "interactive":
+                session_id = principal.session_id or str(principal.project_id)
+                issued = credentials.issue_interactive(
+                    deployment_token=str(lease.deployment_token),
+                    project_id=UUID(principal.project_id),
+                    session_id=UUID(session_id),
+                    expires_at=expires_at,
+                    secret_store=secrets,
+                )
+                return PostgresDirect(
+                    dsn=issued.dsn,
+                    role_name=issued.role_name,
+                    credential_generation=issued.credential_generation,
+                    valid_until=int(issued.expires_at.timestamp()),
+                )
+            if principal.kind == "maintenance":
+                if principal.execution_id is None:
+                    raise HandshakeRejection(
+                        "maintenance grant requires execution_id",
+                        code="claims_mismatch",
+                    )
+                issued = credentials.issue_maintenance(
+                    managed_execution_id=UUID(principal.execution_id),
+                    project_id=UUID(principal.project_id),
+                    expires_at=expires_at,
+                )
+                return PostgresDirect(
+                    dsn=issued.dsn,
+                    role_name=issued.credential.role_name,
+                    credential_generation=issued.credential.credential_generation,
+                    valid_until=int(issued.credential.expires_at.timestamp()),
+                )
+            if principal.execution_id is None or principal.session_id is None:
+                raise HandshakeRejection(
+                    "managed grant requires execution and session identity",
+                    code="claims_mismatch",
+                )
+            issued = credentials.issue(
+                managed_execution_id=UUID(principal.execution_id),
+                owner_kind="tool_chat" if principal.kind == "tool_chat" else "agent_run",
+                session_id=UUID(principal.session_id),
+                agent_run_id=(
+                    UUID(principal.execution_id) if principal.kind == "agent_run" else None
+                ),
+                expires_at=expires_at,
             )
+            return PostgresDirect(
+                dsn=_managed_bootstrap_dsn(issued.bootstrap_path),
+                role_name=issued.role_name,
+                credential_generation=issued.credential_generation,
+                valid_until=int(issued.expires_at.timestamp()),
+            )
+        except HandshakeRejection:
+            raise
         except Exception as error:
-            logger.exception("interactive grant credential issuance failed")
+            logger.exception("%s grant credential issuance failed", principal.kind)
             raise HandshakeRejection(
-                f"interactive credential issuance failed: {error}",
+                f"{principal.kind} credential issuance failed: {error}",
                 code="managed_source",
             ) from error
-        return PostgresDirect(
-            dsn=issued.dsn,
-            role_name=issued.role_name,
-            credential_generation=issued.credential_generation,
-            valid_until=int(issued.expires_at.timestamp()),
-        )
 
     def _handshake_factory() -> HandshakeService:
         token = getattr(lease, "deployment_token", None)
@@ -446,5 +496,15 @@ def _bind_runtime_grants(server: HTTPServer, runner: GobbyRunner) -> None:
     server.handshake_factory = _handshake_factory
     try:
         server.handshake_service = _handshake_factory()
+        indexer = getattr(runner, "code_indexer", None)
+        if indexer is not None:
+            from gobby.runtime_grants.maintenance import HandshakeMaintenanceLaunchFactory
+
+            indexer.launch_factory = HandshakeMaintenanceLaunchFactory(
+                handshake=server.handshake_service,
+                credentials=credentials,
+                operator_token=server.auth_service.local_token() or "",
+                machine_id=str(lease.machine_id),
+            )
     except Exception:
         logger.exception("runtime handshake factory is not ready")

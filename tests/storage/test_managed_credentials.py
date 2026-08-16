@@ -136,6 +136,45 @@ def test_issue_materializes_private_bootstrap_and_revoke_terminates_sessions(
         manager.close()
 
 
+def test_issue_maintenance_creates_mnt_role_and_revokes(
+    authorization_fixture: AuthorizationFixture,
+    tmp_path: Path,
+) -> None:
+    fixture = authorization_fixture
+    execution_id = uuid4()
+    manager = _manager(fixture, tmp_path / "managed")
+    try:
+        issued = manager.issue_maintenance(
+            managed_execution_id=execution_id,
+            project_id=fixture.project_id,
+            expires_at=datetime.now(UTC) + timedelta(minutes=30),
+        )
+
+        assert re.fullmatch(rf"gobby_mnt_{execution_id.hex}_1", issued.credential.role_name)
+        assert issued.dsn
+        parsed = conninfo_to_dict(issued.dsn)
+        assert parsed["user"] == issued.credential.role_name
+        assert not issued.credential.role_name.startswith("gobby_ix_")
+
+        with psycopg.connect(fixture.database_url, autocommit=True) as admin:
+            owner = admin.execute(
+                """SELECT owner_kind FROM gobby_agent_auth.principal_bindings
+                   WHERE managed_execution_id = %s""",
+                (execution_id,),
+            ).fetchone()
+        assert owner == ("maintenance",)
+
+        connection = psycopg.connect(issued.dsn, autocommit=True)
+        connection.execute("SELECT 1")
+        outcome = manager.revoke(execution_id, reason="test-maintenance")
+        assert outcome.completed is True
+        with pytest.raises(psycopg.OperationalError):
+            connection.execute("SELECT 1")
+        connection.close()
+    finally:
+        manager.close()
+
+
 def test_bootstrap_failure_rolls_back_the_partially_created_role(
     authorization_fixture: AuthorizationFixture,
     tmp_path: Path,

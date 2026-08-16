@@ -12,6 +12,7 @@ from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
 from gobby.code_index.cleanup import purge_missing_project
+from gobby.code_index.eligibility import resolve_indexed_project
 from gobby.code_index.gcode_gateway import (
     GcodeDaemonConfigUnavailableError,
     GcodeProjectNotFoundError,
@@ -25,17 +26,6 @@ if TYPE_CHECKING:
 logger = logging.getLogger(__name__)
 
 _SUMMARY_DB_WRITE_CONCURRENCY = 4
-_GRANT_ISOLATED_SIGNATURES = (
-    "row-level security policy",
-    "malformed grant",
-    "gcode.json",
-    "project_required",
-)
-
-
-def _is_grant_isolated_project(detail: str) -> bool:
-    lowered = detail.lower()
-    return any(signature in lowered for signature in _GRANT_ISOLATED_SIGNATURES)
 
 
 async def code_index_maintenance_loop(
@@ -110,80 +100,79 @@ async def _run_maintenance(
 
     for project in projects:
         project_id = str(project.id)
-        if not project.root_path:
+        exists, deleted = await _registry_state(context, project_id)
+        decision = resolve_indexed_project(
+            project_id,
+            project.root_path,
+            project_exists=exists,
+            project_deleted=deleted,
+        )
+        if decision.kind != "active":
             missing_root_observations.pop(project_id, None)
-            continue
-
-        root = Path(project.root_path).expanduser()
-        if not await asyncio.to_thread(root.is_dir):
-            observations = missing_root_observations.get(project_id, 0) + 1
-            missing_root_observations[project_id] = observations
-            threshold = context.config.missing_root_purge_observations
-            if observations >= threshold:
-                await purge_missing_project(
-                    project=project,
-                    storage=context.storage,
-                    run_db=context.run_db,
-                )
-                missing_root_observations.pop(project_id, None)
+            await _reconcile_stale_selector(context, project_id, decision.kind)
             continue
 
         missing_root_observations.pop(project_id, None)
+        root = decision.root
+        assert root is not None
 
         if gcode_gateway is not None and daemon_config_breaker.should_attempt():
-            purge_project = False
-            try:
-                result = await gcode_gateway.maintenance_index(root, timeout=index_timeout)
-                daemon_config_breaker.record_success()
-                if result.returncode == 3:
-                    logger.debug(
-                        "Maintenance reindex skipped for %s (index lock busy)",
-                        project.id,
-                    )
-                elif not result.success:
-                    detail = result.stderr.strip() or result.stdout.strip() or "<no output>"
-                    if result.timed_out:
-                        logger.error(
-                            "Maintenance reindex timed out for %s: %s",
+            factory = context.launch_factory
+            if factory is None:
+                logger.error(
+                    "Maintenance reindex failed for %s: launch factory is not configured",
+                    project_id,
+                )
+            else:
+                purge_project = False
+                try:
+                    with factory.open(project_id, timeout_seconds=index_timeout) as launch:
+                        result = await gcode_gateway.maintenance_index(
+                            root, timeout=index_timeout, env=launch.env
+                        )
+                    daemon_config_breaker.record_success()
+                    if result.returncode == 3:
+                        logger.debug(
+                            "Maintenance reindex skipped for %s (index lock busy)",
                             project.id,
-                            detail,
                         )
-                    else:
-                        error = _classify_gcode_command_error(
-                            result.command,
-                            result.returncode or 1,
-                            detail,
-                        )
-                        if isinstance(error, GcodeProjectNotFoundError):
-                            purge_project = True
-                        elif _is_grant_isolated_project(detail):
-                            logger.info(
-                                "Maintenance reindex skipped for %s (grant-isolated): %s",
+                    elif not result.success:
+                        detail = result.stderr.strip() or result.stdout.strip() or "<no output>"
+                        if result.timed_out:
+                            logger.error(
+                                "Maintenance reindex timed out for %s: %s",
                                 project.id,
                                 detail,
                             )
                         else:
-                            logger.error(
-                                "Maintenance reindex failed for %s (exit code %s): %s",
-                                project.id,
-                                result.returncode,
+                            error = _classify_gcode_command_error(
+                                result.command,
+                                result.returncode or 1,
                                 detail,
                             )
-            except GcodeDaemonConfigUnavailableError:
-                daemon_config_breaker.record_failure()
-            except Exception:
-                daemon_config_breaker.record_inconclusive()
-                logger.exception("Maintenance reindex failed for %s", project.id)
+                            if isinstance(error, GcodeProjectNotFoundError):
+                                purge_project = True
+                            else:
+                                logger.error(
+                                    "Maintenance reindex failed for %s (exit code %s): %s",
+                                    project.id,
+                                    result.returncode,
+                                    detail,
+                                )
+                except GcodeDaemonConfigUnavailableError:
+                    daemon_config_breaker.record_failure()
+                except Exception:
+                    daemon_config_breaker.record_inconclusive()
+                    logger.exception("Maintenance reindex failed for %s", project.id)
 
-            if purge_project:
-                await purge_missing_project(
-                    project=project,
-                    storage=context.storage,
-                    run_db=context.run_db,
-                )
-                continue
+                if purge_project:
+                    await purge_missing_project(
+                        project=project,
+                        storage=context.storage,
+                        run_db=context.run_db,
+                    )
+                    continue
 
-        # Generate summaries for unsummarized symbols
         if summarizer:
             await _summarize_unsummarized(
                 context,
@@ -191,6 +180,44 @@ async def _run_maintenance(
                 summarizer,
                 symbol_summary_batch_size,
             )
+
+
+async def _registry_state(context: CodeIndexContext, project_id: str) -> tuple[bool, bool]:
+    lookup = getattr(context.storage, "get_registry_project", None)
+    if not callable(lookup):
+        return True, False
+    raw = await context.run_db(lookup, project_id)
+    if not isinstance(raw, tuple) or len(raw) != 2:
+        return True, False
+    return bool(raw[0]), bool(raw[1])
+
+
+async def _reconcile_stale_selector(context: CodeIndexContext, project_id: str, reason: str) -> str:
+    """Clear projections then the machine-local selector. Leave directories alone."""
+    gateway = context.gcode_gateway
+    factory = getattr(context, "launch_factory", None)
+    exists, _deleted = await _registry_state(context, project_id)
+    if exists and factory is not None and gateway is not None:
+        try:
+            with factory.open(project_id, timeout_seconds=60) as launch:
+                await gateway.graph_clear(project_id, env=launch.env)
+                await gateway.vector_clear(project_id=project_id, env=launch.env)
+        except Exception:
+            logger.exception(
+                "Code index reconcile failed for %s (%s); retaining selector",
+                project_id,
+                reason,
+            )
+            await context.run_db(
+                context.storage.record_projection_cleanup_failure,
+                project_id,
+                "graph",
+                f"reconcile:{reason}",
+            )
+            return "failed"
+    await context.run_db(context.storage.delete_project_index, project_id)
+    logger.warning("Reconciled stale code-index selector %s (%s)", project_id, reason)
+    return "reconciled"
 
 
 async def _retry_pending_projection_cleanups(

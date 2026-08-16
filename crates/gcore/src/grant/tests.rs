@@ -8,6 +8,7 @@ use std::time::{Duration, Instant};
 
 use serde_json::{Value, json};
 
+use super::handshake::CapabilityClaims;
 use super::*;
 use crate::local_token::{AUTHORIZATION_HEADER, LOCAL_CLI_TOKEN_FILENAME};
 
@@ -1407,4 +1408,38 @@ fn handshake_persist_does_not_leave_settings_sibling() {
         super::cache::inspect_cache_pair(&path).expect("pair"),
         Some(super::cache::CachePair::Coherent(_, _))
     ));
+}
+
+#[test]
+fn maintenance_principal_is_managed_and_serializes() {
+    assert!(PrincipalKind::Maintenance.is_managed());
+    let grant = fixture_grant(PrincipalKind::Maintenance);
+    assert_eq!(grant.principal.kind, PrincipalKind::Maintenance);
+    assert_eq!(grant.principal.execution_id.as_deref(), Some("exec-1"));
+    let value = serde_json::to_value(&grant.principal).expect("serialize");
+    assert_eq!(value["kind"], "maintenance");
+    let claims = CapabilityClaims {
+        session_id: "exec-1".into(),
+        project_id: PROJECT.into(),
+        machine_id: MACHINE.into(),
+        iat: NOW,
+        exp: NOW + 60,
+        agent_run_id: None,
+        managed_execution_id: Some("exec-1".into()),
+        kind: Some(PrincipalKind::Maintenance),
+        signature: vec![0; 32],
+    };
+    assert!(claims.matches_principal(&grant.principal));
+    let tool_claims = CapabilityClaims {
+        session_id: "exec-1".into(),
+        project_id: PROJECT.into(),
+        machine_id: MACHINE.into(),
+        iat: NOW,
+        exp: NOW + 60,
+        agent_run_id: None,
+        managed_execution_id: Some("exec-1".into()),
+        kind: Some(PrincipalKind::ToolChat),
+        signature: vec![0; 32],
+    };
+    assert!(!tool_claims.matches_principal(&grant.principal));
 }
