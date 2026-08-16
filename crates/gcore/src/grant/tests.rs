@@ -412,6 +412,52 @@ fn schema_mismatch_refuses_construction() {
 }
 
 #[test]
+fn stale_cached_schema_rehandshakes_when_reachable() {
+    let harness = Harness::new();
+    let mut cached = fixture_grant(PrincipalKind::Interactive);
+    cached.deployment.token = deployment_token(&harness.home);
+    cached.schema_identity.latest_version -= 1;
+    cached = cached.with_checksum();
+    write_cache(&harness, &cached, None);
+    write_binding_for(&harness, "http://127.0.0.1:1", &cached.deployment.token);
+
+    let mut fresh = fixture_grant(PrincipalKind::Interactive);
+    fresh.deployment.token = cached.deployment.token.clone();
+    fresh = fresh.with_checksum();
+    let scripted = spawn_scripted(vec![
+        Step::Challenge {
+            valid: true,
+            token: TOKEN.into(),
+        },
+        Step::Handshake {
+            grant: Box::new(fresh.clone()),
+        },
+        Step::Config {
+            revision: fresh.config_revision,
+        },
+    ]);
+    write_binding_for(&harness, &scripted.url, &fresh.deployment.token);
+    let acquired = acquire_with(&harness.request(Some(scripted.url.clone()))).expect("rehandshake");
+    let _ = join(scripted);
+    assert_eq!(acquired.source, GrantSource::Handshake);
+    assert_eq!(acquired.bundle.schema_identity, expected_schema_identity());
+}
+
+#[test]
+fn stale_cached_schema_stays_mismatch_offline() {
+    let harness = Harness::new();
+    let mut grant = fixture_grant(PrincipalKind::Interactive);
+    grant.deployment.token = deployment_token(&harness.home);
+    grant.schema_identity.latest_version -= 1;
+    grant = grant.with_checksum();
+    write_cache(&harness, &grant, None);
+    write_binding_for(&harness, "http://127.0.0.1:1", &grant.deployment.token);
+    let error =
+        acquire_with(&harness.request(Some("http://127.0.0.1:1".into()))).expect_err("offline");
+    assert_eq!(error, GrantError::SchemaMismatch);
+}
+
+#[test]
 fn corrupt_grant_refused_offline() {
     let harness = Harness::new();
     let grant = fixture_grant(PrincipalKind::Interactive);

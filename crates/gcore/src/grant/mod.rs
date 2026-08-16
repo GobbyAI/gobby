@@ -432,50 +432,74 @@ fn acquire_managed(ctx: &AcquireCtx, path: &Path) -> Result<AcquiredGrant, Grant
     }
 }
 
+fn accept_cached_or_rehandshake(
+    ctx: &AcquireCtx,
+    grant: GrantBundle,
+    expected_deployment: Option<&str>,
+    persist_binding: bool,
+    cached: impl FnOnce(GrantBundle) -> Result<AcquiredGrant, GrantError>,
+) -> Result<AcquiredGrant, GrantError> {
+    match validate_grant(
+        &grant,
+        &ctx.project_id,
+        &ctx.machine_id,
+        expected_deployment,
+        false,
+    ) {
+        Ok(()) => cached(grant),
+        Err(GrantError::SchemaMismatch) if ctx.reachable() => {
+            handshake_interactive(ctx, expected_deployment, persist_binding)
+        }
+        Err(error) => Err(error),
+    }
+}
+
 fn acquire_interactive(ctx: &AcquireCtx) -> Result<AcquiredGrant, GrantError> {
     let binding = load_binding(&ctx.home, &ctx.daemon_url);
     if let Some(binding) = binding {
         let path = interactive_cache_path(&ctx.home, &binding.deployment_token, &ctx.project_id);
         match inspect_cache_pair(&path)? {
             Some(CachePair::Coherent(grant, settings)) => {
-                validate_grant(
-                    &grant,
-                    &ctx.project_id,
-                    &ctx.machine_id,
-                    Some(&binding.deployment_token),
-                    false,
-                )?;
-                return finish_loaded_with_settings(
+                return accept_cached_or_rehandshake(
                     ctx,
                     grant,
-                    settings,
-                    GrantSource::Cache,
-                    path,
+                    Some(&binding.deployment_token),
                     false,
+                    |grant| {
+                        finish_loaded_with_settings(
+                            ctx,
+                            grant,
+                            settings,
+                            GrantSource::Cache,
+                            path,
+                            false,
+                        )
+                    },
                 );
             }
             Some(CachePair::Incoherent(grant)) => {
-                validate_grant(
-                    &grant,
-                    &ctx.project_id,
-                    &ctx.machine_id,
+                return accept_cached_or_rehandshake(
+                    ctx,
+                    grant,
                     Some(&binding.deployment_token),
                     false,
-                )?;
-                if ctx.reachable() {
-                    return handshake_interactive(ctx, Some(&binding.deployment_token), false);
-                }
-                return finish_loaded(ctx, grant, GrantSource::Cache, path, false);
+                    |grant| {
+                        if ctx.reachable() {
+                            handshake_interactive(ctx, Some(&binding.deployment_token), false)
+                        } else {
+                            finish_loaded(ctx, grant, GrantSource::Cache, path, false)
+                        }
+                    },
+                );
             }
             Some(CachePair::GrantOnly(grant)) => {
-                validate_grant(
-                    &grant,
-                    &ctx.project_id,
-                    &ctx.machine_id,
+                return accept_cached_or_rehandshake(
+                    ctx,
+                    grant,
                     Some(&binding.deployment_token),
                     false,
-                )?;
-                return finish_loaded(ctx, grant, GrantSource::Cache, path, false);
+                    |grant| finish_loaded(ctx, grant, GrantSource::Cache, path, false),
+                );
             }
             None => {
                 if ctx.reachable() {
