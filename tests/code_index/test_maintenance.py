@@ -484,6 +484,69 @@ async def test_maintenance_lock_busy_is_expected_and_continues_summaries(
 
 
 @pytest.mark.asyncio
+async def test_maintenance_grant_isolated_project_is_skipped(
+    tmp_path: Path,
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    root = tmp_path / "repo"
+    root.mkdir()
+    project = IndexedProject(
+        id="proj-isolated",
+        root_path=str(root),
+        total_files=1,
+        total_symbols=1,
+    )
+    storage = MagicMock()
+    storage.list_projection_cleanup_pending.return_value = []
+    storage.list_indexed_projects.return_value = [project]
+    storage.get_unsummarized_symbols.return_value = []
+    diagnostic = (
+        'ERROR: new row violates row-level security policy for table "code_indexed_projects"'
+    )
+    gateway = RecordingGcodeGateway(
+        maintenance_result=_gcode_result(
+            (
+                "/tmp/gcode",
+                "index",
+                "--project",
+                str(root),
+                "--skip-if-locked",
+            ),
+            returncode=1,
+            stderr=diagnostic,
+        )
+    )
+
+    async def run_db(func: Callable[..., T], *args: Any, **kwargs: Any) -> T:
+        return func(*args, **kwargs)
+
+    context: _MaintenanceContext = SimpleNamespace(
+        storage=storage,
+        clear_graph=AsyncMock(return_value={"success": True}),
+        gcode_gateway=gateway,
+        daemon_config_breaker=SyncCircuitBreaker(
+            name="test",
+            probe_target="daemon config",
+            operation="maintenance",
+        ),
+        config=SimpleNamespace(
+            graph_enabled=True,
+            embedding_enabled=True,
+            maintenance_index_timeout_seconds=30,
+        ),
+        run_db=run_db,
+    )
+
+    with caplog.at_level(logging.INFO, logger="gobby.code_index.maintenance"):
+        await _run_maintenance(cast(CodeIndexContext, context))
+
+    assert "Maintenance reindex skipped for proj-isolated (grant-isolated)" in caplog.text
+    assert diagnostic in caplog.text
+    assert not [record for record in caplog.records if record.levelno >= logging.WARNING]
+    storage.delete_project_index.assert_not_called()
+
+
+@pytest.mark.asyncio
 async def test_maintenance_daemon_config_failure_opens_shared_breaker_once(
     tmp_path: Path,
     caplog: pytest.LogCaptureFixture,

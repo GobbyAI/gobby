@@ -25,6 +25,17 @@ if TYPE_CHECKING:
 logger = logging.getLogger(__name__)
 
 _SUMMARY_DB_WRITE_CONCURRENCY = 4
+_GRANT_ISOLATED_SIGNATURES = (
+    "row-level security policy",
+    "malformed grant",
+    "gcode.json",
+    "project_required",
+)
+
+
+def _is_grant_isolated_project(detail: str) -> bool:
+    lowered = detail.lower()
+    return any(signature in lowered for signature in _GRANT_ISOLATED_SIGNATURES)
 
 
 async def code_index_maintenance_loop(
@@ -145,6 +156,12 @@ async def _run_maintenance(
                         )
                         if isinstance(error, GcodeProjectNotFoundError):
                             purge_project = True
+                        elif _is_grant_isolated_project(detail):
+                            logger.info(
+                                "Maintenance reindex skipped for %s (grant-isolated): %s",
+                                project.id,
+                                detail,
+                            )
                         else:
                             logger.error(
                                 "Maintenance reindex failed for %s (exit code %s): %s",
