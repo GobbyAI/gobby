@@ -18,7 +18,6 @@ import pytest
 
 from gobby.agents.lifecycle_monitor import AgentLifecycleMonitor
 from gobby.agents.prompt_detector import PromptDetector
-from gobby.agents.step_workflow import register_agent_step_workflow
 from gobby.agents.tmux import configure_tmux
 from gobby.build.options import BuildOptions
 from gobby.build.stage_manifest import resolve_stage_manifest_specs
@@ -37,11 +36,11 @@ from gobby.utils.session_context import session_context_for_test
 from gobby.workflows.agent_resolver import resolve_agent
 from gobby.workflows.state_manager import SessionVariableManager
 from gobby.workflows.step_instances import AgentStepInstanceManager
-from tests.workflows.step_instance_fixtures import make_step_instance
 from tests._timing import wait_for_async_condition
 from tests.agents.detection_test_support import BundledDetectionRegistry
 from tests.config_runtime_helpers import static_runtime_capture
 from tests.storage.tasks._stage_test_helpers import stage_row
+from tests.workflows.step_instance_fixtures import make_step_instance
 
 DETECTION_REGISTRY = BundledDetectionRegistry()
 
@@ -915,7 +914,6 @@ async def test_idle_planner_stage_agent_keeps_periodic_enter_and_gets_handoff_re
     sync_bundled_agents(temp_db)
     planner = resolve_agent("planner", temp_db, project_id=sample_project["id"])
     assert planner is not None
-    workflow_name = register_agent_step_workflow(planner, temp_db)
 
     task_manager = LocalTaskManager(temp_db)
     session_manager = SessionManager(temp_db)
@@ -963,12 +961,11 @@ async def test_idle_planner_stage_agent_keeps_periodic_enter_and_gets_handoff_re
     run_manager.update_runtime(run.id, tmux_session_name="gobby-idle-planner", pid=12345)
     stored_run = run_manager.get(run.id)
     assert stored_run is not None
-    workflow_instance_id = str(uuid5(NAMESPACE_URL, "gobby-e2e:idle-planner-workflow"))
 
     AgentStepInstanceManager(temp_db).save(
         make_step_instance(
             child.id,
-            agent_name=workflow_name.removesuffix("-steps"),
+            agent_name=planner.name,
             current_step="plan",
             variables={"task_claimed": True},
         )
@@ -1019,7 +1016,6 @@ async def test_idle_planner_stage_agent_keeps_periodic_enter_and_gets_handoff_re
         call("gobby-idle-planner", PromptDetector.ENTER_KEY, literal=False),
     ]
     assert all(call_args.args[1] != "Up" for call_args in mock_tmux.send_keys.call_args_list)
-    assert "Workflow: planner-steps. Current step: plan." in sent_prompt
-    assert 'submit_for_review(stage_name="planning")' in sent_prompt
-    assert "end_agent_run" in sent_prompt
+    assert "Workflow: planner. Current step: plan." in sent_prompt
+    assert "Finish the required Gobby lifecycle MCP transition, then call end_agent_run." in sent_prompt
     assert stage_row(temp_db, task.id, "planning")["state"] == "in_progress"
