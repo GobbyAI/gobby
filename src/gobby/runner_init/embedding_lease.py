@@ -40,11 +40,13 @@ class _ManagedEmbeddingLease:
         *,
         read_completed_record: Callable[[], CompletedSwitchRecord | None],
         request_rebuild: Callable[[CompletedSwitchRecord | None], None],
+        request_projection_repair: Callable[[], None] | None = None,
     ) -> None:
         self.lease = lease
         self.loop = loop
         self.read_completed_record = read_completed_record
         self.request_rebuild = request_rebuild
+        self.request_projection_repair = request_projection_repair
         self.renewal_stop = threading.Event()
         self.renewal: Future[None] | None = None
 
@@ -219,6 +221,8 @@ async def _reacquire_lease(handle: _ManagedEmbeddingLease) -> bool:
             successor.generation,
             successor.revision,
         )
+        if handle.request_projection_repair is not None:
+            handle.request_projection_repair()
         return True
 
 

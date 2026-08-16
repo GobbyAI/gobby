@@ -252,6 +252,7 @@ def _build_memory_services(
         loop,
         read_completed_record=lambda: _read_completed_switch_record(runner),
         request_rebuild=lambda record: _request_memory_services_rebuild(runner, loop, record),
+        request_projection_repair=lambda: _request_memory_projection_repair(runner, loop),
     )
     raw_vector_store = VectorStore(
         url=db_cfg.qdrant.url,
@@ -370,6 +371,32 @@ def _read_completed_switch_record(runner: GobbyRunner) -> CompletedSwitchRecord 
 _background_runtime_tasks: set[asyncio.Task[None]] = set()
 
 
+def _request_memory_projection_repair(
+    runner: GobbyRunner,
+    loop: asyncio.AbstractEventLoop,
+) -> None:
+    """Schedule store reconcile against the live memory bundle after serving resumes."""
+
+    async def _repair() -> None:
+        try:
+            bundle = runner.config_runtime.capture().services.get("memory_services")
+            if not isinstance(bundle, MemoryServiceBundle):
+                return
+            await bundle.memory_manager.reconcile_stores(dry_run=False)
+        except Exception:
+            logger.warning("Embedding projection repair failed", exc_info=True)
+
+    def _schedule() -> None:
+        task = loop.create_task(_repair())
+        _background_runtime_tasks.add(task)
+        task.add_done_callback(_background_runtime_tasks.discard)
+
+    try:
+        loop.call_soon_threadsafe(_schedule)
+    except RuntimeError:
+        logger.debug("Embedding projection repair skipped; event loop is closed")
+
+
 def _request_memory_services_rebuild(
     runner: GobbyRunner,
     loop: asyncio.AbstractEventLoop,
@@ -397,6 +424,7 @@ def _request_memory_services_rebuild(
                     failure.subscriber == "memory_services"
                     for failure in snapshot.failed_live_keys.values()
                 ):
+                    _request_memory_projection_repair(runner, loop)
                     return
                 await asyncio.sleep(_EMBEDDING_REACQUIRE_POLL_SECONDS)
         except Exception:

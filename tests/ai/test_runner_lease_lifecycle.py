@@ -349,6 +349,34 @@ async def test_reacquire_matching_record_reacknowledges_fresh_lease(
 
 
 @pytest.mark.asyncio
+async def test_reacquire_matching_record_schedules_projection_repair(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(embedding_lease, "_EMBEDDING_REACQUIRE_POLL_SECONDS", 0.01)
+    db = _StubHubDatabase()
+    state = EmbeddingGenerationState(cast(Any, db))
+    lease = _lease(state, generation="run-1", revision=7, watermark=3)
+    lease.activate()
+    lease.fence()
+    rebuilds: list[CompletedSwitchRecord | None] = []
+    repairs: list[str] = []
+    handle = embedding_lease._ManagedEmbeddingLease(
+        lease,
+        asyncio.get_running_loop(),
+        read_completed_record=lambda: _completed_record(run_id="run-1", committed_revision=7),
+        request_rebuild=rebuilds.append,
+        request_projection_repair=lambda: repairs.append("repair"),
+    )
+
+    assert await embedding_lease._reacquire_lease(handle) is True
+
+    assert handle.lease is not lease
+    handle.assert_serving()
+    assert rebuilds == []
+    assert repairs == ["repair"]
+
+
+@pytest.mark.asyncio
 async def test_reacquire_mismatch_requests_rebuild_and_stays_fenced(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -360,16 +388,19 @@ async def test_reacquire_mismatch_requests_rebuild_and_stays_fenced(
     lease.fence()
     newer = _completed_record(run_id="run-2", committed_revision=9)
     rebuilds: list[CompletedSwitchRecord | None] = []
+    repairs: list[str] = []
     handle = embedding_lease._ManagedEmbeddingLease(
         lease,
         asyncio.get_running_loop(),
         read_completed_record=lambda: newer,
         request_rebuild=rebuilds.append,
+        request_projection_repair=lambda: repairs.append("repair"),
     )
 
     assert await embedding_lease._reacquire_lease(handle) is False
 
     assert rebuilds == [newer]
+    assert repairs == []
     with pytest.raises(EmbeddingGenerationLeaseLost, match="fenced"):
         handle.assert_serving()
     assert db.ack_insert_count() == 1
@@ -535,6 +566,47 @@ async def test_rebuild_request_reconciles_and_reprepares_current_revision() -> N
 
     assert revisions == [7]
     assert subscribers == ["memory_services"]
+
+
+@pytest.mark.asyncio
+async def test_rebuild_request_schedules_projection_repair_when_healthy() -> None:
+    repaired = asyncio.Event()
+    dry_runs: list[bool] = []
+
+    class Manager:
+        async def reconcile_stores(self, dry_run: bool = False) -> dict[str, object]:
+            dry_runs.append(dry_run)
+            repaired.set()
+            return {}
+
+    bundle = services.MemoryServiceBundle(
+        vector_store=cast(Any, object()),
+        _memory_manager=cast(Any, Manager()),
+        memory_backup_manager=None,
+        semantic_search=cast(Any, object()),
+        _repair_started=True,
+    )
+    snapshot = SimpleNamespace(revision=7, failed_live_keys={})
+
+    class Runtime:
+        def capture(self) -> object:
+            return SimpleNamespace(
+                snapshot=snapshot,
+                services={"memory_services": bundle},
+            )
+
+        async def reconcile_revision(self, revision: int) -> None:
+            assert revision == 7
+
+        async def reprepare_subscriber(self, name: str) -> object:
+            return snapshot
+
+    runner = cast(Any, SimpleNamespace(config_runtime=Runtime()))
+
+    services._request_memory_services_rebuild(runner, asyncio.get_running_loop(), None)
+    await asyncio.wait_for(repaired.wait(), timeout=1.0)
+
+    assert dry_runs == [False]
 
 
 @pytest.mark.asyncio
