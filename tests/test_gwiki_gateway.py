@@ -323,45 +323,11 @@ async def test_delete_page_builds_argv(monkeypatch: pytest.MonkeyPatch) -> None:
     ]
 
 
-async def test_ask_uses_read_only_cli_args(monkeypatch: pytest.MonkeyPatch) -> None:
-    payload = {
-        "command": "ask",
-        "query": "How do hooks work?",
-        "status": "retrieved",
-        "hits": [],
-        "sources": [],
-        "code_citations": [],
-        "evidence": [],
-        "prompt_token_budget": 12000,
-        "prompt_tokens_estimated": 16,
-        "warnings": [],
-    }
-    calls = _patch_subprocess(monkeypatch, [FakeProcess(stdout=_json_bytes(payload))])
-
-    result = await GwikiGateway(
-        binary="/bin/gwiki",
-        project_root="/repo",
-        timeout_seconds=1.0,
-    ).ask("How do hooks work?", llm=True, ai="direct", require_ai=True, token_budget=2048)
-
-    assert result["payload"] == payload
-    assert calls == [
-        (
-            "/bin/gwiki",
-            "ask",
-            "How do hooks work?",
-            "--llm",
-            "--ai",
-            "direct",
-            "--require-ai",
-            "--token-budget",
-            "2048",
-            "--project",
-            "/repo",
-            "--format",
-            "json",
-        )
-    ]
+async def test_gwiki_gateway_does_not_expose_ask() -> None:
+    """Daemon-native GwikiGateway has no ask surface; wiki_ask stays deleted."""
+    assert not hasattr(GwikiGateway, "ask")
+    gateway = GwikiGateway(binary="/bin/gwiki", project_root="/repo", timeout_seconds=1.0)
+    assert not hasattr(gateway, "ask")
 
 
 async def test_search_passes_token_budget(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -490,26 +456,6 @@ async def test_sync_sessions_passes_archive_dir_and_limit(
             "json",
         )
     ]
-
-
-@pytest.mark.parametrize(
-    ("kwargs", "message"),
-    [
-        ({"ai": "direct"}, "ai require llm=True"),
-        ({"require_ai": True}, "require_ai require llm=True"),
-        ({"ai": "direct", "require_ai": True}, "ai and require_ai require llm=True"),
-    ],
-)
-async def test_ask_rejects_ai_flags_without_llm(
-    kwargs: dict[str, object],
-    message: str,
-) -> None:
-    with pytest.raises(ValueError, match=message):
-        await GwikiGateway(
-            binary="/bin/gwiki",
-            project_root="/repo",
-            timeout_seconds=1.0,
-        ).ask("How do hooks work?", **kwargs)
 
 
 async def test_resolve_binary_serializes_concurrent_resolution(
