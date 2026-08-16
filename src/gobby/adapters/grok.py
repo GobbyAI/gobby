@@ -6,7 +6,12 @@ from copy import deepcopy
 from typing import Any
 
 from gobby.adapters.acp_hook_adapter import ACPHookAdapter
-from gobby.adapters.capabilities import GROK_EVENT_MAP, GROK_HOOK_ALIASES
+from gobby.adapters.capabilities import (
+    GROK_EVENT_MAP,
+    GROK_HOOK_ALIASES,
+    ContextChannel,
+)
+from gobby.adapters.degradation import truncate_context_for_adapter
 from gobby.hooks.events import HookEvent, HookEventType, HookResponse, SessionSource
 from gobby.hooks.normalization import normalize_tool_outcome
 
@@ -118,7 +123,14 @@ class GrokAdapter(ACPHookAdapter):
             if response.context:
                 result["hookSpecificOutput"] = {
                     "hookEventName": "SubagentStop",
-                    "additionalContext": response.context,
+                    "additionalContext": truncate_context_for_adapter(
+                        response.context,
+                        provider=self.source,
+                        hook_type=hook_type,
+                        destination_channel=ContextChannel.ADDITIONAL_CONTEXT,
+                        contributor_sizes={"response.context": len(response.context)},
+                        event_logger=self._event_logger(),
+                    ),
                 }
             return result
 

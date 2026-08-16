@@ -10,8 +10,8 @@ import pytest
 
 from gobby.hooks.events import HookEvent, HookEventType, HookResponse, SessionSource
 from gobby.hooks.memory_recall_delivery import MEMORY_RECALL_DELIVERIES_VARIABLE
-from gobby.storage.hub.protocol import HubDatabase
 from gobby.storage.definitions.rules import RuleDefinitionManager
+from gobby.storage.hub.protocol import HubDatabase
 from gobby.workflows.definitions import RuleDefinitionBody, RuleEffect, RuleTriggerEvent
 from gobby.workflows.engine.core import RuleEngine
 from gobby.workflows.engine.delivery_formatting import finalize_staged_memory_delivery
@@ -311,6 +311,171 @@ def test_claude_overflow_queues_body_and_injects_exact_instruction(
     assert queued["status"] == "pending"
     assert queued["memories"][0]["content"] == "x" * 1_000
     assert variables.get("injected_memory_ids", []) == []
+
+
+def test_grok_overflow_queues_same_budget_as_claude(
+    engine: RuleEngine,
+    db: HubDatabase,
+) -> None:
+    event = _event()
+    event.source = SessionSource.GROK
+    engine._format_memory_backed_result(
+        server="gobby-memory",
+        tool="recall_memories_for_prompt",
+        result={
+            "success": True,
+            "recall_request_id": "request-grok-overflow",
+            "origin_turn_seq": 5,
+            "project_id": PROJECT_ID,
+            "memories": [
+                {
+                    "id": "memory-grok-overflow",
+                    "content": "x" * 1_000,
+                    "memory_type": "context",
+                }
+            ],
+        },
+        event=event,
+        platform_session_id=PLATFORM_SESSION_ID,
+        variables=_variables(),
+    )
+    response = HookResponse(context="r" * 9_400)
+
+    finalize_staged_memory_delivery(
+        event, response, database=db, logger=logging.getLogger(__name__)
+    )
+
+    instruction = (
+        'call_tool("gobby-memory", "get_recall_memories", '
+        '{"recall_request_id":"request-grok-overflow"})'
+    )
+    assert response.context is not None
+    assert instruction in response.context
+    assert "<project-memory>" not in response.context
+    queued = _vars(db, PLATFORM_SESSION_ID)[MEMORY_RECALL_DELIVERIES_VARIABLE][0]
+    assert queued["status"] == "pending"
+    assert queued["memories"][0]["content"] == "x" * 1_000
+
+
+def test_grok_handoff_sized_join_queues_instead_of_inlining(
+    engine: RuleEngine,
+    db: HubDatabase,
+) -> None:
+    event = _event()
+    event.source = SessionSource.GROK
+    engine._format_memory_backed_result(
+        server="gobby-memory",
+        tool="recall_memories_for_prompt",
+        result={
+            "success": True,
+            "recall_request_id": "request-grok-join",
+            "origin_turn_seq": 5,
+            "project_id": PROJECT_ID,
+            "memories": [
+                {
+                    "id": "memory-grok-join",
+                    "content": "m" * 3_600,
+                    "memory_type": "context",
+                }
+            ],
+        },
+        event=event,
+        platform_session_id=PLATFORM_SESSION_ID,
+        variables=_variables(),
+    )
+    response = HookResponse(context="h" * 8_000)
+
+    finalize_staged_memory_delivery(
+        event, response, database=db, logger=logging.getLogger(__name__)
+    )
+
+    assert response.context is not None
+    assert "<project-memory>" not in response.context
+    assert "get_recall_memories" in response.context
+    queued = _vars(db, PLATFORM_SESSION_ID)[MEMORY_RECALL_DELIVERIES_VARIABLE][0]
+    assert queued["status"] == "pending"
+
+
+def test_grok_raised_limit_inlines_handoff_sized_join(
+    engine: RuleEngine,
+    db: HubDatabase,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from gobby.workflows.engine import delivery_formatting
+
+    monkeypatch.setattr(
+        delivery_formatting, "additional_context_limit_for", lambda _provider: 20_000
+    )
+    monkeypatch.setattr(delivery_formatting, "inline_context_budget_for", lambda _provider: 19_550)
+    event = _event()
+    event.source = SessionSource.GROK
+    engine._format_memory_backed_result(
+        server="gobby-memory",
+        tool="recall_memories_for_prompt",
+        result={
+            "success": True,
+            "recall_request_id": "request-grok-raised",
+            "origin_turn_seq": 5,
+            "project_id": PROJECT_ID,
+            "memories": [
+                {
+                    "id": "memory-grok-raised",
+                    "content": "m" * 3_600,
+                    "memory_type": "context",
+                }
+            ],
+        },
+        event=event,
+        platform_session_id=PLATFORM_SESSION_ID,
+        variables=_variables(),
+    )
+    response = HookResponse(context="h" * 8_000)
+
+    finalize_staged_memory_delivery(
+        event, response, database=db, logger=logging.getLogger(__name__)
+    )
+
+    assert response.context is not None
+    assert "m" * 3_600 in response.context
+    assert MEMORY_RECALL_DELIVERIES_VARIABLE not in _vars(db, PLATFORM_SESSION_ID)
+
+
+def test_existing_over_budget_does_not_grow_past_ship_limit(
+    engine: RuleEngine,
+    db: HubDatabase,
+) -> None:
+    event = _event()
+    event.source = SessionSource.GROK
+    engine._format_memory_backed_result(
+        server="gobby-memory",
+        tool="recall_memories_for_prompt",
+        result={
+            "success": True,
+            "recall_request_id": "request-already-full",
+            "origin_turn_seq": 5,
+            "project_id": PROJECT_ID,
+            "memories": [
+                {
+                    "id": "memory-already-full",
+                    "content": "x" * 500,
+                    "memory_type": "context",
+                }
+            ],
+        },
+        event=event,
+        platform_session_id=PLATFORM_SESSION_ID,
+        variables=_variables(),
+    )
+    existing = "e" * 9_900
+    response = HookResponse(context=existing)
+
+    finalize_staged_memory_delivery(
+        event, response, database=db, logger=logging.getLogger(__name__)
+    )
+
+    assert response.context == existing
+    queued = _vars(db, PLATFORM_SESSION_ID)[MEMORY_RECALL_DELIVERIES_VARIABLE][0]
+    assert queued["status"] == "pending"
 
 
 @pytest.mark.asyncio

@@ -469,6 +469,8 @@ class TestDaemonConfig:
         assert config.workflow.timeout == 90
         assert config.hooks.adapter_timeout == 105
         assert config.hooks.provider_timeout == 120
+        assert config.hooks.additional_context_limit == 9_950
+        assert config.hooks.additional_context_limits == {}
 
     @pytest.mark.parametrize(
         ("overrides", "message"),

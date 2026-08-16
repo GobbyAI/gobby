@@ -27,8 +27,8 @@ from gobby.adapters.degradation import (
     record_unsupported_response_fields,
     truncate_context_for_adapter,
 )
+from gobby.hooks.context_limits import additional_context_limit_for
 from gobby.hooks.events import HookEvent, HookEventType, HookResponse, SessionSource
-from gobby.llm.sdk_utils import ADDITIONAL_CONTEXT_LIMIT
 
 if TYPE_CHECKING:
     from gobby.hooks.hook_manager import HookManager
@@ -41,6 +41,8 @@ _TRUNCATION_MARKER = "\n... [truncated]"
 
 def _bound_context_parts(
     context_parts: list[tuple[str, str]],
+    *,
+    limit: int,
 ) -> tuple[str, dict[str, int], list[tuple[str, int, int]]]:
     """Join context parts without letting one oversized part erase later context."""
     bounded_parts: list[tuple[str, str]] = []
@@ -50,7 +52,7 @@ def _bound_context_parts(
 
     for label, part in context_parts:
         separator_len = len(_CONTEXT_SEPARATOR) if bounded_parts else 0
-        remaining = ADDITIONAL_CONTEXT_LIMIT - used - separator_len
+        remaining = limit - used - separator_len
         if remaining <= 0:
             trimmed_parts.append((label, len(part), 0))
             continue
@@ -302,7 +304,11 @@ class CodexHooksAdapter(BaseAdapter):
 
         # Build hookSpecificOutput or systemMessage based on event type.
         if context_parts:
-            bounded_context, contributor_sizes, trimmed_parts = _bound_context_parts(context_parts)
+            ship_limit = additional_context_limit_for(self.source)
+            bounded_context, contributor_sizes, trimmed_parts = _bound_context_parts(
+                context_parts,
+                limit=ship_limit,
+            )
             for label, original_len, bounded_len in trimmed_parts:
                 record_adapter_degradation(
                     provider=self.source,
@@ -312,7 +318,7 @@ class CodexHooksAdapter(BaseAdapter):
                     destination_channel=context_channel,
                     detail=(
                         f"bounded_part original_len={original_len} "
-                        f"bounded_len={bounded_len} limit={ADDITIONAL_CONTEXT_LIMIT}"
+                        f"bounded_len={bounded_len} limit={ship_limit}"
                     ),
                     event_logger=logger,
                 )

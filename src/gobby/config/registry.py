@@ -713,6 +713,7 @@ _MAPPING_PATTERNS = MappingProxyType(
         "skills.hubs": "skills.hubs.{hub}.{field}",
         "verification_defaults.custom": "verification_defaults.custom.{command}",
         "context_window_overrides": "context_window_overrides.{model_match}",
+        "hooks.additional_context_limits": "hooks.additional_context_limits.{provider}",
         "wiki.codewiki_project_scopes_by_name": (
             "wiki.codewiki_project_scopes_by_name.{project_name}"
         ),

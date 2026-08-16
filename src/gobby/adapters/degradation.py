@@ -11,8 +11,9 @@ from gobby.adapters.capabilities import (
     HookCapability,
     present_unsupported_response_fields,
 )
+from gobby.hooks.context_limits import additional_context_limit_for
 from gobby.hooks.events import HookResponse, SessionSource
-from gobby.llm.sdk_utils import ADDITIONAL_CONTEXT_LIMIT, truncate_additional_context
+from gobby.llm.sdk_utils import truncate_additional_context
 from gobby.telemetry.instruments import inc_counter
 
 logger = logging.getLogger(__name__)
@@ -101,18 +102,20 @@ def truncate_context_for_adapter(
     event_logger: logging.Logger | None = None,
 ) -> str:
     """Truncate context and record telemetry if the adapter must shorten it."""
-    if len(text) > ADDITIONAL_CONTEXT_LIMIT:
+    ship_limit = additional_context_limit_for(provider)
+    if len(text) > ship_limit:
         record_adapter_degradation(
             provider=provider,
             hook_type=hook_type,
             kind=AdapterDegradationKind.CONTEXT_TRUNCATED,
             response_field="context",
             destination_channel=destination_channel,
-            detail=f"aggregate_len={len(text)} limit={ADDITIONAL_CONTEXT_LIMIT}",
+            detail=f"aggregate_len={len(text)} limit={ship_limit}",
             event_logger=event_logger,
         )
     return truncate_additional_context(
         text,
         contributor_sizes=contributor_sizes,
         logger=event_logger,
+        limit=ship_limit,
     )

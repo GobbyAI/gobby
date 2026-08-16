@@ -6,8 +6,8 @@ from dataclasses import dataclass
 from datetime import UTC, datetime
 from typing import Any
 
+from gobby.hooks.context_limits import handoff_summary_inject_budget_for
 from gobby.llm.sdk_utils import (
-    HANDOFF_SUMMARY_INJECT_BUDGET,
     MANDATORY_HANDOFF_SECTION_TITLES,
     allocate_section_budget,
     head_with_breadcrumb,
@@ -394,7 +394,8 @@ def _bound_handoff_summary(summary: str, session: Any) -> str:
     only caps the copy injected into provider context. Returns the summary
     unchanged when it already fits within the budget.
     """
-    if len(summary) <= HANDOFF_SUMMARY_INJECT_BUDGET:
+    budget = handoff_summary_inject_budget_for(getattr(session, "source", None))
+    if len(summary) <= budget:
         return summary
 
     seq_num = getattr(session, "seq_num", None)
@@ -414,7 +415,7 @@ def _bound_handoff_summary(summary: str, session: Any) -> str:
     if not real_sections or not has_mandatory_section:
         return head_with_breadcrumb(
             summary,
-            budget=HANDOFF_SUMMARY_INJECT_BUDGET,
+            budget=budget,
             breadcrumb=breadcrumb,
         )
 
@@ -423,7 +424,7 @@ def _bound_handoff_summary(summary: str, session: Any) -> str:
         for section in sections
     )
     worst_case_suffix = f"\n\n{breadcrumb}\n{_omission_line(worst_case_titles)}"
-    available = max(0, HANDOFF_SUMMARY_INJECT_BUDGET - len(worst_case_suffix))
+    available = max(0, budget - len(worst_case_suffix))
     allocation = allocate_section_budget(sections, _SECTION_PRIORITIES, available)
 
     suffix = f"\n\n{breadcrumb}"

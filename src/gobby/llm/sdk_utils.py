@@ -37,14 +37,20 @@ def format_exception_group(eg: ExceptionGroup) -> str:
 
 # Claude Code / Agent SDK hard-truncates additionalContext at 10K chars.
 # We cap slightly below to avoid the ugly "... [output truncated]" suffix.
+# Live overrides live in hooks.additional_context_limit / additional_context_limits.
 ADDITIONAL_CONTEXT_LIMIT = 9_950
 
+# Reserved under the ship limit for overflow instruction + adapter metadata.
+INLINE_CONTEXT_HEADROOM = 450
+
+# Reserved under the ship limit for first-prompt preamble, task/wiki/skill
+# companions, metadata, and the handoff breadcrumb.
+HANDOFF_COMPANION_RESERVE = 5_450
+
 # Budget for a single large handoff/summary contributor injected inline via
-# additionalContext. The remaining 5,450 characters cover the first-prompt
-# agent preamble, task/wiki/skill companions, metadata, and breadcrumb under
-# the SDK's 10K aggregate ceiling. The full summary stays available on demand
-# via get_handoff_context, so this only bounds the inline copy.
-HANDOFF_SUMMARY_INJECT_BUDGET: int = 4_500
+# additionalContext. Derived from the default ship limit minus companion reserve.
+# The full summary stays available on demand via get_handoff_context.
+HANDOFF_SUMMARY_INJECT_BUDGET: int = ADDITIONAL_CONTEXT_LIMIT - HANDOFF_COMPANION_RESERVE
 
 
 @dataclass(frozen=True, slots=True)
@@ -385,13 +391,18 @@ def _split_contributors(text: str, contributor_sizes: Mapping[str, int]) -> list
     return parts if cursor == len(text) else None
 
 
-def _truncate_contributors(text: str, contributor_sizes: Mapping[str, int]) -> str | None:
+def _truncate_contributors(
+    text: str,
+    contributor_sizes: Mapping[str, int],
+    *,
+    limit: int,
+) -> str | None:
     parts = _split_contributors(text, contributor_sizes)
     if not parts:
         return None
     marker = "\n... [truncated]"
     separator_budget = 2 * (len(parts) - 1)
-    content_budget = ADDITIONAL_CONTEXT_LIMIT - len(marker) - separator_budget
+    content_budget = limit - len(marker) - separator_budget
     if content_budget < 0:
         return None
     allocations = [len(part) for part in parts]
@@ -411,25 +422,29 @@ def truncate_additional_context(
     *,
     contributor_sizes: Mapping[str, int] | None = None,
     logger: logging.Logger | None = None,
+    limit: int | None = None,
 ) -> str:
-    """Truncate text to fit within the SDK's additionalContext limit.
+    """Truncate text to fit within the additionalContext ship limit.
 
     Truncation only — no compression, no mutation. Contributors (skills,
     memory, inject_context effects, metadata lines) are expected to emit
     payloads that fit within the aggregate limit; this function is the
     final safety net.
     """
-    if len(text) <= ADDITIONAL_CONTEXT_LIMIT:
+    ship_limit = ADDITIONAL_CONTEXT_LIMIT if limit is None else limit
+    if len(text) <= ship_limit:
         return text
     if logger:
         logger.warning(
             "additionalContext truncated aggregate_len=%d limit=%d contributors=%s",
             len(text),
-            ADDITIONAL_CONTEXT_LIMIT,
+            ship_limit,
             dict(contributor_sizes or {}),
         )
     if contributor_sizes:
-        truncated = _truncate_contributors(text, contributor_sizes)
+        truncated = _truncate_contributors(text, contributor_sizes, limit=ship_limit)
         if truncated is not None:
             return truncated
-    return text[: ADDITIONAL_CONTEXT_LIMIT - 16] + "\n... [truncated]"
+    marker = "\n... [truncated]"
+    keep = max(0, ship_limit - len(marker))
+    return text[:keep] + marker

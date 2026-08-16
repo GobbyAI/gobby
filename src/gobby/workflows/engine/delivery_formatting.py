@@ -5,15 +5,17 @@ from __future__ import annotations
 import logging
 from typing import Any
 
-from gobby.hooks.events import HookEvent, HookResponse, SessionSource
+from gobby.hooks.context_limits import (
+    additional_context_limit_for,
+    inline_context_budget_for,
+)
+from gobby.hooks.events import HookEvent, HookResponse
 from gobby.hooks.memory_recall_delivery import MemoryRecallDeliveryQueue
 from gobby.memory.context import format_memory_metadata_suffix
 from gobby.workflows.engine.injection_tracking import InjectionTrackingMixin
 from gobby.workflows.state_manager import SessionVariableManager
 
 _STAGED_MEMORY_RECALLS = "_staged_memory_recalls"
-_CLAUDE_CONTEXT_BUDGET = 9_500
-_DEFAULT_CONTEXT_BUDGET = 12_000
 _MEMORY_RESULT_FORMATTERS = {
     ("gobby-review-learning", "recall_review_lessons_for_files"): "review_file",
     ("gobby-review-learning", "recall_review_lessons_by_class"): "review_class",
@@ -111,9 +113,8 @@ def finalize_staged_memory_delivery(
     if session_id is None or database is None:
         return
 
-    budget = (
-        _CLAUDE_CONTEXT_BUDGET if event.source == SessionSource.CLAUDE else _DEFAULT_CONTEXT_BUDGET
-    )
+    budget = inline_context_budget_for(event.source)
+    ship_limit = additional_context_limit_for(event.source)
     queue = MemoryRecallDeliveryQueue(database)
     injected_ids: list[str] = []
 
@@ -159,10 +160,16 @@ def finalize_staged_memory_delivery(
             ),
             memories=overflow_memories,
         ):
-            response.context = _joined_context(
+            candidate = _joined_context(
                 response.context,
                 [*bodies[:inline_count], instruction],
             )
+            if len(candidate) <= ship_limit:
+                response.context = candidate
+            else:
+                instruction_only = _joined_context(response.context, [instruction])
+                if len(instruction_only) <= ship_limit:
+                    response.context = instruction_only
             injected_ids.extend(memory["id"] for memory in inline_memories)
         else:
             logger.warning(

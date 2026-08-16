@@ -9,7 +9,8 @@ from claude_agent_sdk import HookContext, HookMatcher, PermissionResultDeny
 from claude_agent_sdk.types import HookInput as SDKHookInput
 from claude_agent_sdk.types import SyncHookJSONOutput, UserPromptSubmitHookSpecificOutput
 
-from gobby.llm.sdk_utils import ADDITIONAL_CONTEXT_LIMIT as _ADDITIONAL_CONTEXT_LIMIT
+from gobby.hooks.context_limits import additional_context_limit_for
+from gobby.hooks.events import SessionSource
 from gobby.servers.chat_session_helpers import (
     _PLAN_FILE_PATTERN,
     _response_to_compact_output,
@@ -107,7 +108,9 @@ class ChatSessionHooksMixin:
                     hook_specific = output.get("hookSpecificOutput")
                     if hook_specific and isinstance(hook_specific, dict):
                         existing = str(hook_specific.get("additionalContext", "") or "")
-                    history_budget = _ADDITIONAL_CONTEXT_LIMIT - len(existing) - 4
+                    history_budget = (
+                        additional_context_limit_for(SessionSource.CLAUDE) - len(existing) - 4
+                    )
                     if history_budget > 500:
                         history_ctx = await cast(Any, self)._load_history_context(
                             max_total_chars=history_budget
