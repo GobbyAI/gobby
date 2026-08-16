@@ -256,7 +256,7 @@ where
     match present(grant) {
         Ok(value) => Ok(value),
         Err(error) if error.is_retryable_presentation() => {
-            let refreshed = force_rehandshake(request)?;
+            let refreshed = rehandshake(request)?;
             present(&refreshed.bundle)
         }
         Err(error) => Err(error),
@@ -519,7 +519,8 @@ fn acquire_interactive(ctx: &AcquireCtx) -> Result<AcquiredGrant, GrantError> {
     Err(GrantError::DaemonRequired)
 }
 
-fn force_rehandshake(request: &AcquireRequest<'_>) -> Result<AcquiredGrant, GrantError> {
+/// Re-run the interactive or managed handshake and replace the on-disk cache.
+pub fn rehandshake(request: &AcquireRequest<'_>) -> Result<AcquiredGrant, GrantError> {
     let ctx = AcquireCtx::from_request(request)?;
     handshake::reject_remote_endpoint(&ctx.daemon_url)?;
     if !ctx.reachable() {

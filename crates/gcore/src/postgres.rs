@@ -125,7 +125,42 @@ fn connection_config(database_url: &str) -> anyhow::Result<postgres::Config> {
     Ok(config)
 }
 
+fn is_password_authentication_failure(error: &anyhow::Error) -> bool {
+    format!("{error:#}").contains("password authentication failed")
+}
+
+fn connect_after_grant_rehandshake(original: anyhow::Error) -> anyhow::Result<Client> {
+    let cwd = match std::env::current_dir() {
+        Ok(cwd) => cwd,
+        Err(_) => return Err(original),
+    };
+    let Some(root) = crate::project::find_project_root(&cwd) else {
+        return Err(original);
+    };
+    let Ok(acquired) =
+        crate::grant::rehandshake(&crate::grant::AcquireRequest::from_process(&root))
+    else {
+        return Err(original);
+    };
+    let crate::grant::PostgresCapability::Direct { dsn, .. } =
+        &acquired.bundle.capabilities.postgres
+    else {
+        return Err(original);
+    };
+    connect_once(dsn)
+}
+
 fn connect(database_url: &str) -> anyhow::Result<Client> {
+    match connect_once(database_url) {
+        Ok(client) => Ok(client),
+        Err(error) if is_password_authentication_failure(&error) => {
+            connect_after_grant_rehandshake(error)
+        }
+        Err(error) => Err(error),
+    }
+}
+
+fn connect_once(database_url: &str) -> anyhow::Result<Client> {
     let requested_ssl_mode = requested_ssl_mode(database_url);
     let config = connection_config(database_url)?;
     match requested_ssl_mode.unwrap_or_else(|| requested_ssl_mode_from_config(&config)) {
