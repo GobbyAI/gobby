@@ -5553,126 +5553,6 @@
       "definition": "text|text|YES||NEVER"
     },
     {
-      "name": "workflow_definitions.canvas_json",
-      "definition": "jsonb|jsonb|YES||NEVER"
-    },
-    {
-      "name": "workflow_definitions.created_at",
-      "definition": "timestamp with time zone|timestamptz|NO|now()|NEVER"
-    },
-    {
-      "name": "workflow_definitions.definition_json",
-      "definition": "jsonb|jsonb|NO||NEVER"
-    },
-    {
-      "name": "workflow_definitions.deleted_at",
-      "definition": "timestamp with time zone|timestamptz|YES||NEVER"
-    },
-    {
-      "name": "workflow_definitions.description",
-      "definition": "text|text|YES||NEVER"
-    },
-    {
-      "name": "workflow_definitions.enabled",
-      "definition": "boolean|bool|YES|true|NEVER"
-    },
-    {
-      "name": "workflow_definitions.enabled_user_modified",
-      "definition": "boolean|bool|NO|false|NEVER"
-    },
-    {
-      "name": "workflow_definitions.id",
-      "definition": "uuid|uuid|NO||NEVER"
-    },
-    {
-      "name": "workflow_definitions.name",
-      "definition": "text|text|NO||NEVER"
-    },
-    {
-      "name": "workflow_definitions.priority",
-      "definition": "integer|int4|YES|100|NEVER"
-    },
-    {
-      "name": "workflow_definitions.project_id",
-      "definition": "uuid|uuid|YES||NEVER"
-    },
-    {
-      "name": "workflow_definitions.source",
-      "definition": "text|text|YES|'installed'::text|NEVER"
-    },
-    {
-      "name": "workflow_definitions.sources",
-      "definition": "jsonb|jsonb|YES||NEVER"
-    },
-    {
-      "name": "workflow_definitions.tags",
-      "definition": "jsonb|jsonb|YES||NEVER"
-    },
-    {
-      "name": "workflow_definitions.updated_at",
-      "definition": "timestamp with time zone|timestamptz|NO|now()|NEVER"
-    },
-    {
-      "name": "workflow_definitions.version",
-      "definition": "text|text|YES|'1.0'::text|NEVER"
-    },
-    {
-      "name": "workflow_definitions.workflow_type",
-      "definition": "text|text|NO|'workflow'::text|NEVER"
-    },
-    {
-      "name": "workflow_instances.context_injected",
-      "definition": "boolean|bool|YES|false|NEVER"
-    },
-    {
-      "name": "workflow_instances.created_at",
-      "definition": "timestamp with time zone|timestamptz|NO|now()|NEVER"
-    },
-    {
-      "name": "workflow_instances.current_step",
-      "definition": "text|text|YES||NEVER"
-    },
-    {
-      "name": "workflow_instances.enabled",
-      "definition": "boolean|bool|NO|true|NEVER"
-    },
-    {
-      "name": "workflow_instances.id",
-      "definition": "uuid|uuid|NO||NEVER"
-    },
-    {
-      "name": "workflow_instances.priority",
-      "definition": "integer|int4|NO|100|NEVER"
-    },
-    {
-      "name": "workflow_instances.session_id",
-      "definition": "uuid|uuid|NO||NEVER"
-    },
-    {
-      "name": "workflow_instances.step_action_count",
-      "definition": "integer|int4|YES|0|NEVER"
-    },
-    {
-      "name": "workflow_instances.step_entered_at",
-      "definition": "timestamp with time zone|timestamptz|YES||NEVER"
-    },
-    {
-      "name": "workflow_instances.total_action_count",
-      "definition": "integer|int4|YES|0|NEVER"
-    },
-    {
-      "name": "workflow_instances.updated_at",
-      "definition": "timestamp with time zone|timestamptz|NO|now()|NEVER"
-    },
-    {
-      "name": "workflow_instances.variables",
-      "definition": "jsonb|jsonb|YES|'{}'::jsonb|NEVER"
-    },
-    {
-      "name": "workflow_instances.workflow_name",
-      "definition": "text|text|NO||NEVER"
-    },
-    {
       "name": "worktrees.agent_session_id",
       "definition": "uuid|uuid|YES||NEVER"
     },
@@ -7379,30 +7259,6 @@
       "definition": "FOREIGN KEY (session_id) REFERENCES sessions(id) DEFERRABLE"
     },
     {
-      "name": "workflow_definitions.idx_wf_defs_name_project",
-      "definition": "UNIQUE NULLS NOT DISTINCT (name, project_id, source)"
-    },
-    {
-      "name": "workflow_definitions.workflow_definitions_pkey",
-      "definition": "PRIMARY KEY (id)"
-    },
-    {
-      "name": "workflow_definitions.workflow_definitions_project_id_fkey",
-      "definition": "FOREIGN KEY (project_id) REFERENCES projects(id) ON DELETE CASCADE DEFERRABLE"
-    },
-    {
-      "name": "workflow_instances.workflow_instances_pkey",
-      "definition": "PRIMARY KEY (id)"
-    },
-    {
-      "name": "workflow_instances.workflow_instances_session_id_fkey",
-      "definition": "FOREIGN KEY (session_id) REFERENCES sessions(id) ON DELETE CASCADE DEFERRABLE"
-    },
-    {
-      "name": "workflow_instances.workflow_instances_session_id_workflow_name_key",
-      "definition": "UNIQUE (session_id, workflow_name)"
-    },
-    {
       "name": "worktrees.worktrees_agent_session_id_machine_id_fkey",
       "definition": "FOREIGN KEY (agent_session_id, machine_id) REFERENCES sessions(id, machine_id) ON DELETE SET NULL (agent_session_id) DEFERRABLE"
     },
@@ -8715,34 +8571,6 @@
       "definition": "CREATE INDEX idx_validation_history_task ON $schema.task_validation_history USING btree (task_id)"
     },
     {
-      "name": "idx_wf_defs_enabled",
-      "definition": "CREATE INDEX idx_wf_defs_enabled ON $schema.workflow_definitions USING btree (enabled)"
-    },
-    {
-      "name": "idx_wf_defs_name",
-      "definition": "CREATE INDEX idx_wf_defs_name ON $schema.workflow_definitions USING btree (name)"
-    },
-    {
-      "name": "idx_wf_defs_name_project",
-      "definition": "CREATE UNIQUE INDEX idx_wf_defs_name_project ON $schema.workflow_definitions USING btree (name, project_id, source) NULLS NOT DISTINCT"
-    },
-    {
-      "name": "idx_wf_defs_project",
-      "definition": "CREATE INDEX idx_wf_defs_project ON $schema.workflow_definitions USING btree (project_id)"
-    },
-    {
-      "name": "idx_wf_defs_type",
-      "definition": "CREATE INDEX idx_wf_defs_type ON $schema.workflow_definitions USING btree (workflow_type)"
-    },
-    {
-      "name": "idx_workflow_instances_enabled",
-      "definition": "CREATE INDEX idx_workflow_instances_enabled ON $schema.workflow_instances USING btree (session_id, enabled)"
-    },
-    {
-      "name": "idx_workflow_instances_session",
-      "definition": "CREATE INDEX idx_workflow_instances_session ON $schema.workflow_instances USING btree (session_id)"
-    },
-    {
       "name": "idx_worktrees_branch",
       "definition": "CREATE UNIQUE INDEX idx_worktrees_branch ON $schema.worktrees USING btree (project_id, branch_name, machine_id)"
     },
@@ -9213,18 +9041,6 @@
     {
       "name": "workflow_audit_log_pkey",
       "definition": "CREATE UNIQUE INDEX workflow_audit_log_pkey ON $schema.workflow_audit_log USING btree (id)"
-    },
-    {
-      "name": "workflow_definitions_pkey",
-      "definition": "CREATE UNIQUE INDEX workflow_definitions_pkey ON $schema.workflow_definitions USING btree (id)"
-    },
-    {
-      "name": "workflow_instances_pkey",
-      "definition": "CREATE UNIQUE INDEX workflow_instances_pkey ON $schema.workflow_instances USING btree (id)"
-    },
-    {
-      "name": "workflow_instances_session_id_workflow_name_key",
-      "definition": "CREATE UNIQUE INDEX workflow_instances_session_id_workflow_name_key ON $schema.workflow_instances USING btree (session_id, workflow_name)"
     },
     {
       "name": "worktrees_pkey",

@@ -625,33 +625,13 @@ fn receipt_chain_advances_from_19645_and_lineage_checksums() -> anyhow::Result<(
             .to_string()
             .contains("run 'gobby hub-maintenance run account-identity-cutover'")
     );
-
-    for predecessor in [
-        PREDECESSOR_BASELINE_CHECKSUM,
-        PARENT_BASELINE_CHECKSUM,
-        WORKTREE_BASELINE_CHECKSUM,
-    ] {
-        client.execute(
-            "UPDATE schema_migrations SET checksum = $1 WHERE version = $2",
-            &[&predecessor, &BASELINE_VERSION],
-        )?;
-        let upgraded = SchemaRunner::new(&mut client, "public")?.apply()?;
-        assert!(upgraded.baseline_applied, "{predecessor}");
-        let after_upgrade: String = client
-            .query_one(
-                "SELECT checksum FROM schema_migrations WHERE version = $1",
-                &[&BASELINE_VERSION],
-            )?
-            .get(0);
-        assert_eq!(after_upgrade, BASELINE_CHECKSUM);
-        let later: i64 = client
-            .query_one(
-                "SELECT COUNT(*) FROM schema_migrations WHERE version > $1",
-                &[&BASELINE_VERSION],
-            )?
-            .get(0);
-        assert_eq!(later, i64::try_from(MIGRATIONS.len())?, "{predecessor}");
-    }
+    let after_reject: String = client
+        .query_one(
+            "SELECT checksum FROM schema_migrations WHERE version = $1",
+            &[&BASELINE_VERSION],
+        )?
+        .get(0);
+    assert_eq!(after_reject, ACCOUNT_IDENTITY_PREDECESSOR_CHECKSUM);
 
     client.execute(
         "UPDATE schema_migrations SET checksum = 'unrecognized' WHERE version = $1",
@@ -1447,7 +1427,7 @@ fn drop_migration_refused_on_predecessor_until_verified_backup() -> anyhow::Resu
     let verified = VerifiedBackupManifest::verify(manifest, &context)?;
 
     let report = SchemaRunner::new(&mut client, "public")?.apply_with_backup(&verified)?;
-    assert_eq!(report.migrations_applied, 1);
+    assert_eq!(report.migrations_applied, MIGRATIONS.len());
     let defs_after: bool = client
         .query_one(
             "SELECT to_regclass('workflow_definitions') IS NOT NULL",

@@ -28,7 +28,7 @@ fn embedded_assets_publish_a_complete_schema_identity() {
     );
     assert_eq!(
         identity.root_hash,
-        "0eef10b78413def5d5d0d0a974a6a311d608c0ddfde36178971b0a99ad2d160d"
+        "5c02ca59ce27c22edfe8fef9dc858a5ce7992035407ba7a27c91b985837a3abf"
     );
 
     let _public_runner_type = std::any::type_name::<SchemaRunner<'static>>();
