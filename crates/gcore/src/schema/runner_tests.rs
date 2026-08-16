@@ -1128,7 +1128,7 @@ fn migrations_directory_exists_and_copy_agent_entry_is_registered() {
         migrations_dir.is_dir(),
         "crates/gcore/assets/schema/migrations must exist so later leaves can register include_str entries"
     );
-    assert_eq!(MIGRATIONS.len(), 8);
+    assert_eq!(MIGRATIONS.len(), 9);
     assert_eq!(MIGRATIONS[0].version, 376);
     assert_eq!(MIGRATIONS[0].filename, "376_copy_agent_definitions.sql");
     assert_eq!(MIGRATIONS[1].version, 377);
@@ -1149,6 +1149,11 @@ fn migrations_directory_exists_and_copy_agent_entry_is_registered() {
     assert_eq!(
         MIGRATIONS[7].filename,
         "383_refresh_reused_interactive_principal.sql"
+    );
+    assert_eq!(MIGRATIONS[8].version, 384);
+    assert_eq!(
+        MIGRATIONS[8].filename,
+        "384_grant_projects_liveness_to_capability.sql"
     );
     assert!(MIGRATIONS[5].sql.contains("-- gobby:destructive"));
     for migration in MIGRATIONS {

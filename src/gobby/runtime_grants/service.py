@@ -128,9 +128,7 @@ def _falkor_capability(
         password = config.password
     if _unresolved(host) or not host:
         return UnavailableCapability()
-    if password:
-        return FalkorDirect(host=host, port=config.port, password=password)
-    return BrokeredCapability(operations=FALKOR_OPERATIONS)
+    return FalkorDirect(host=host, port=config.port, password=password or "")
 
 
 def _qdrant_capability(

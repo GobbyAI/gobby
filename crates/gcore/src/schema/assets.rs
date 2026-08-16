@@ -69,6 +69,14 @@ pub(crate) const MIGRATIONS: &[EmbeddedMigration] = &[
             "../../assets/schema/migrations/383_refresh_reused_interactive_principal.sql"
         ),
     },
+    EmbeddedMigration {
+        version: 384,
+        filename: "384_grant_projects_liveness_to_capability.sql",
+        checksum: "0f7a499e1b7216a7a2426dc5c04064eae97440a1ee1a4d5134a0dd7a8cf6ebef",
+        sql: include_str!(
+            "../../assets/schema/migrations/384_grant_projects_liveness_to_capability.sql"
+        ),
+    },
 ];
 const _: &str = include_str!("../../assets/schema/migrations/.gitkeep");
 

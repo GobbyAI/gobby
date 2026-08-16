@@ -110,6 +110,22 @@ def test_single_revision_per_grant() -> None:
 
 
 @pytest.mark.unit
+def test_local_falkor_host_without_password_is_direct() -> None:
+    snapshot = revision_snapshot(
+        41,
+        host="127.0.0.1",
+        password=None,
+        qdrant_url="http://127.0.0.1:6333",
+        api_key=None,
+    )
+    grant = _issue(SuccessiveCaptureRuntime(snapshot, snapshot))
+    falkordb = grant.capabilities.falkordb
+    assert isinstance(falkordb, FalkorDirect)
+    assert falkordb.host == "127.0.0.1"
+    assert falkordb.password == ""
+
+
+@pytest.mark.unit
 def test_local_qdrant_url_without_api_key_is_direct() -> None:
     snapshot = revision_snapshot(
         41,
