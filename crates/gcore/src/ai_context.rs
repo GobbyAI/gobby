@@ -398,7 +398,7 @@ where
         }
         match crate::postgres::read_config_value(self.conn, key) {
             Ok(raw) => raw.and_then(|raw| crate::config::decode_config_value(&raw)),
-            Err(error) if config_store_missing(&error) => {
+            Err(error) if config_store_unreadable(&error) => {
                 self.config_store_available = false;
                 None
             }
@@ -416,13 +416,19 @@ where
 }
 
 #[cfg(feature = "postgres")]
-fn config_store_missing(error: &anyhow::Error) -> bool {
+fn config_store_unreadable(error: &anyhow::Error) -> bool {
     error.chain().any(|source| {
         source
             .downcast_ref::<postgres::Error>()
             .and_then(postgres::Error::as_db_error)
-            .is_some_and(|db_error| *db_error.code() == postgres::error::SqlState::UNDEFINED_TABLE)
+            .is_some_and(|db_error| config_store_unreadable_sqlstate(db_error.code()))
     })
+}
+
+#[cfg(feature = "postgres")]
+fn config_store_unreadable_sqlstate(code: &postgres::error::SqlState) -> bool {
+    *code == postgres::error::SqlState::UNDEFINED_TABLE
+        || *code == postgres::error::SqlState::INSUFFICIENT_PRIVILEGE
 }
 
 #[cfg(test)]
@@ -430,6 +436,20 @@ mod tests {
     use super::*;
     use crate::config::{AiCapability, AiRouting, ConfigSource, ai_keys};
     use std::collections::HashMap;
+
+    #[cfg(feature = "postgres")]
+    #[test]
+    fn grant_roles_without_config_store_are_not_warnings() {
+        use postgres::error::SqlState;
+
+        assert!(config_store_unreadable_sqlstate(&SqlState::UNDEFINED_TABLE));
+        assert!(config_store_unreadable_sqlstate(
+            &SqlState::INSUFFICIENT_PRIVILEGE
+        ));
+        assert!(!config_store_unreadable_sqlstate(
+            &SqlState::UNIQUE_VIOLATION
+        ));
+    }
 
     struct TestSource {
         values: HashMap<&'static str, String>,
