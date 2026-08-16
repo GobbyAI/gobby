@@ -1,6 +1,6 @@
 """Factory for creating the spawn_agent MCP tool registry.
 
-Loads agent definitions from workflow_definitions (DB-backed AgentDefinitionBody)
+Loads agent definitions from agent_definitions (DB-backed AgentDefinitionBody)
 and delegates to spawn_agent_impl for execution.
 """
 
@@ -234,7 +234,7 @@ def _load_agent_body(
     project_id: str | None = None,
     cli_source: str | None = None,
 ) -> AgentDefinitionBody | None:
-    """Load an agent definition from workflow_definitions via direct lookup.
+    """Load an agent definition from agent_definitions via direct lookup.
 
     Args:
         name: Agent name to look up.
@@ -251,22 +251,6 @@ def _load_agent_body(
     from gobby.workflows.agent_resolver import resolve_agent
 
     return resolve_agent(name, db, cli_source=cli_source, project_id=project_id)
-
-
-def _register_agent_step_workflow(
-    agent_body: AgentDefinitionBody,
-    db: HubDatabase,
-) -> str:
-    """Register a synthetic WorkflowDefinition from agent's inline steps.
-
-    Creates or updates a workflow definition in the DB that the step enforcement
-    engine can look up via WorkflowInstance.workflow_name.
-
-    Returns the workflow name.
-    """
-    from gobby.agents.step_workflow import register_agent_step_workflow
-
-    return register_agent_step_workflow(agent_body, db)
 
 
 def create_spawn_agent_registry(
@@ -426,18 +410,12 @@ def create_spawn_agent_registry(
             if agent_body.workflows.variables:
                 initial_variables.update(agent_body.workflows.variables)
 
-        # Auto-register inline step workflow when the spawn has task-shaped work.
-        has_assigned_task = bool(task_id or initial_variables.get("assigned_task_id"))
-        if agent_body and agent_body.steps and db and has_assigned_task:
-            step_wf_name = _register_agent_step_workflow(agent_body, db)
-            initial_variables["_step_workflow_name"] = step_wf_name
-
         # Inject _assigned_pipeline if the workflow is a PipelineDefinition
         if effective_workflow:
-            from gobby.workflows.loader import WorkflowLoader
+            from gobby.workflows.pipeline_loader import PipelineLoader
 
-            wf_loader = WorkflowLoader(db=db)
-            wf_def = await wf_loader.load_workflow(
+            wf_loader = PipelineLoader(db=db)
+            wf_def = await wf_loader.load_pipeline(
                 effective_workflow,
                 project_path=effective_project_path,
             )

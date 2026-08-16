@@ -1,6 +1,6 @@
 # Gobby Architecture Documentation
 
-> Updated: 2026-07-31 | Version: 0.5.0
+> Updated: 2026-08-14 | Version: 0.5.0
 
 ## Overview
 
@@ -50,8 +50,8 @@ Gobby is a **local-first daemon** that unifies AI coding assistants (Claude Code
 │  └────────┬────────┘  └────────┬────────┘  └────────┬────────┘        │
 │           │                    │                     │                  │
 │  ┌─────────────────┐  ┌─────────────────┐  ┌─────────────────┐        │
-│  │ WorkflowInstance│  │   AgentRunner   │  │  MemoryManager  │        │
-│  │ Manager (state) │  │ (spawn/monitor) │  │  (recall/store) │        │
+│  │ AgentStepInst.  │  │   AgentRunner   │  │  MemoryManager  │        │
+│  │ Manager (snap)  │  │ (spawn/monitor) │  │  (recall/store) │        │
 │  └─────────────────┘  └─────────────────┘  └─────────────────┘        │
 │                                                                        │
 │  ┌─────────────────┐  ┌─────────────────┐  ┌─────────────────┐        │
@@ -98,7 +98,7 @@ Gobby is a **local-first daemon** that unifies AI coding assistants (Claude Code
 | **RuleEngine** | `workflows/engine/core.py` | Declarative rule evaluation and enforcement |
 | **HookManager** | `hooks/hook_manager.py` | Central coordinator for all hook events |
 | **SessionManager** | `storage/sessions/_manager.py` | Session registration, lookup, status updates |
-| **WorkflowInstanceManager** | `workflows/state_manager.py` | Per-session workflow instance state |
+| **AgentStepInstanceManager** | `workflows/step_instances.py` | Per-session agent-step snapshot and progress |
 | **AgentRunner** | `agents/runner.py` | Agent process spawning and lifecycle |
 | **MemoryManager** | `memory/manager.py` | Persistent fact storage and recall |
 | **LLMService** | `llm/service.py` | Multi-provider LLM management |
@@ -125,6 +125,10 @@ Gobby is a **local-first daemon** that unifies AI coding assistants (Claude Code
 | **LocalTaskManager** | `storage/tasks/_manager.py` | Task CRUD with dependency graphs |
 | **LocalProjectManager** | `storage/projects.py` | Project CRUD operations |
 | **LocalMCPManager** | `storage/mcp.py` | MCP server and tool caching |
+| **RuleDefinitionManager** | `storage/definitions/rules.py` | Typed `rule_definitions` CRUD |
+| **AgentDefinitionManager** | `storage/definitions/agents.py` | Typed `agent_definitions` plus `agent_step_workflows` |
+| **SessionVariableDefaultManager** | `storage/definitions/variables.py` | Typed `session_variable_defaults` CRUD |
+| **PipelineDefinitionManager** | `storage/definitions/pipelines.py` | Typed `pipeline_definitions` CRUD |
 
 ## Data Flows
 
@@ -200,4 +204,4 @@ Hook event fired (e.g., before_tool)
 7. **P2P Agent Messaging**: Agents communicate via target-based `send_message` without parent relay
 8. **Thread-Safe Storage**: Bounded database execution and PostgreSQL transactions for concurrent access
 
-_Last verified: 2026-07-31_
+_Last verified: 2026-08-14_

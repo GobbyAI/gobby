@@ -1,6 +1,6 @@
 # Agents
 
-Agents are workflow definitions that describe either a current-session persona or
+Agents are typed definitions that describe either a current-session persona or
 a spawned worker session. The same definition model works across supported CLIs;
 provider-specific hooks are normalized before workflow rules evaluate.
 
@@ -25,8 +25,11 @@ publish completion state back to waiting parents.
 
 ## Definition Storage
 
-Agent definitions are stored in `workflow_definitions` with
-`workflow_type='agent'` and are managed through `gobby-workflows`.
+Agent definitions are stored in `agent_definitions`. An optional one-to-one
+`agent_step_workflows` child holds the nested `step_workflow` payload
+(`steps`, `variables`, `exit_condition`). Runtime sessions snapshot that
+child onto `agent_step_instances` at spawn or persona activation. Definitions
+are managed through `gobby-workflows`.
 
 Bundled definitions live in:
 
@@ -48,7 +51,7 @@ Use these tools to inspect or change definitions:
 - `gobby-workflows:delete_agent_definition`
 - `gobby-workflows:update_agent_rules`
 - `gobby-workflows:update_agent_variables`
-- `gobby-workflows:update_agent_steps`
+- `gobby-workflows:update_agent_step_workflow`
 
 ## Definition Shape
 
@@ -73,9 +76,7 @@ The current `AgentDefinitionBody` schema accepts these primary fields:
 | `workflows` | Rule, skill, variable, and pipeline selectors |
 | `skills` | Metadata for baseline and allow-listed skill families |
 | `blocked_tools` / `blocked_mcp_tools` | Definition-level restrictions |
-| `steps` | Optional inline step workflow |
-| `step_variables` | Initial variables for inline steps |
-| `exit_condition` | Workflow-level completion condition |
+| `step_workflow` | Optional nested object with `steps`, `variables`, and `exit_condition` |
 | `enabled` | Whether the definition is active |
 
 Older YAML may contain a `mode` field. The schema ignores extra fields for
@@ -143,57 +144,58 @@ workflows:
   variables:
     assigned_task_id: "#123"
 
-step_variables:
-  task_claimed: false
-  review_submitted: false
+step_workflow:
+  variables:
+    task_claimed: false
+    review_submitted: false
+  steps:
+    - name: claim
+      allowed_tools:
+        - mcp__gobby__call_tool
+        - mcp__gobby__list_mcp_servers
+        - mcp__gobby__list_tools
+        - mcp__gobby__get_tool_schema
+      allowed_mcp_tools:
+        - "gobby-tasks:claim_task"
+        - "gobby-tasks:get_task"
+      on_mcp_success:
+        - server: gobby-tasks
+          tool: claim_task
+          action: set_variable
+          variable: task_claimed
+          value: true
+      transitions:
+        - to: implement
+          when: "vars.task_claimed"
 
-steps:
-  - name: claim
-    allowed_tools:
-      - mcp__gobby__call_tool
-      - mcp__gobby__list_mcp_servers
-      - mcp__gobby__list_tools
-      - mcp__gobby__get_tool_schema
-    allowed_mcp_tools:
-      - "gobby-tasks:claim_task"
-      - "gobby-tasks:get_task"
-    on_mcp_success:
-      - server: gobby-tasks
-        tool: claim_task
-        action: set_variable
-        variable: task_claimed
-        value: true
-    transitions:
-      - to: implement
-        when: "vars.task_claimed"
+    - name: implement
+      allowed_tools: "all"
+      blocked_mcp_tools:
+        - "gobby-tasks:reopen_task"
+      on_mcp_success:
+        - server: gobby-tasks-ops
+          tool: submit_for_review
+          action: set_variable
+          variable: review_submitted
+          value: true
+      transitions:
+        - to: finish
+          when: "vars.review_submitted"
 
-  - name: implement
-    allowed_tools: "all"
-    blocked_mcp_tools:
-      - "gobby-tasks:reopen_task"
-    on_mcp_success:
-      - server: gobby-tasks-ops
-        tool: submit_for_review
-        action: set_variable
-        variable: review_submitted
-        value: true
-    transitions:
-      - to: finish
-        when: "vars.review_submitted"
-
-  - name: finish
-    allowed_tools:
-      - mcp__gobby__call_tool
-      - mcp__gobby__list_mcp_servers
-      - mcp__gobby__list_tools
-      - mcp__gobby__get_tool_schema
-    allowed_mcp_tools:
-      - "gobby-agents:end_agent_run"
+    - name: finish
+      allowed_tools:
+        - mcp__gobby__call_tool
+        - mcp__gobby__list_mcp_servers
+        - mcp__gobby__list_tools
+        - mcp__gobby__get_tool_schema
+      allowed_mcp_tools:
+        - "gobby-agents:end_agent_run"
 ```
 
 ## Inline Step Workflows
 
-Inline `steps` constrain phased behavior for spawned runs. Each step can define:
+A nested `step_workflow.steps` list constrains phased behavior for spawned
+runs. Each step can define:
 
 | Field | Purpose |
 | --- | --- |
@@ -304,4 +306,4 @@ provides the concrete worktree or clone context.
 - [Pipelines](./pipelines.md) for deterministic automation
 - [Orchestration](./orchestration.md) for stage dispatch and review flow
 
-_Last verified: 2026-05-07_
+_Last verified: 2026-08-14_

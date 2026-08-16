@@ -433,11 +433,13 @@ def test_renew_loop_routes_local_deadline_lapse_to_reacquisition(
 ) -> None:
     monkeypatch.setattr(embedding_lease, "_EMBEDDING_LEASE_RENEW_SECONDS", 0.0)
     events: list[str] = []
+    reacquired: list[object] = []
 
     def deadline_lapsed(_lease: object, *, stop_event: threading.Event) -> bool:
         raise EmbeddingGenerationLeaseExpired("Embedding generation serving lease expired")
 
     def stop_after_reacquire(handle: object) -> bool:
+        reacquired.append(handle)
         events.append("reacquire")
         return False
 
@@ -446,13 +448,61 @@ def test_renew_loop_routes_local_deadline_lapse_to_reacquisition(
         embedding_lease, "_reacquire_lease_from_renewal_thread", stop_after_reacquire
     )
     lease = MagicMock()
+    lease.generation = "run-1"
+    lease.revision = 7
     lease.fence.side_effect = lambda: events.append("fence")
     handle = cast(Any, SimpleNamespace(lease=lease, renewal_stop=threading.Event()))
 
     embedding_lease._renew_embedding_lease(handle)
 
     assert events == ["fence", "reacquire"]
+    assert reacquired == [handle]
     lease.fence.assert_called_once_with()
+
+
+def test_renew_loop_routes_rowcount_mismatch_to_reacquisition(
+    monkeypatch: pytest.MonkeyPatch,
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    monkeypatch.setattr(embedding_lease, "_EMBEDDING_LEASE_RENEW_SECONDS", 0.0)
+    db = _StubHubDatabase()
+    state = EmbeddingGenerationState(cast(Any, db))
+    lease = _lease(state, generation="run-1", revision=7)
+    lease.activate()
+    db.renew_rowcount = 0
+    reacquisitions: list[object] = []
+
+    def stop_after_reacquire(handle: object) -> bool:
+        reacquisitions.append(handle)
+        return False
+
+    monkeypatch.setattr(
+        embedding_lease, "_reacquire_lease_from_renewal_thread", stop_after_reacquire
+    )
+    loop = asyncio.new_event_loop()
+    handle = embedding_lease._ManagedEmbeddingLease(
+        lease,
+        loop,
+        read_completed_record=lambda: _completed_record(),
+        request_rebuild=lambda _record: None,
+    )
+
+    try:
+        with caplog.at_level(logging.WARNING, logger=embedding_lease.__name__):
+            embedding_lease._renew_embedding_lease(handle)
+    finally:
+        loop.close()
+
+    assert reacquisitions == [handle]
+    with pytest.raises(EmbeddingGenerationLeaseLost, match="fenced"):
+        handle.assert_serving()
+    recovery_records = [
+        record for record in caplog.records if "attempting re-acquisition" in record.message
+    ]
+    assert len(recovery_records) == 1
+    recovery_context = vars(recovery_records[0])
+    assert recovery_context["expected_generation"] == "run-1"
+    assert recovery_context["expected_revision"] == 7
 
 
 @pytest.mark.asyncio
@@ -632,6 +682,39 @@ async def test_reacquire_polls_until_storage_reachable(
 
 
 @pytest.mark.asyncio
+async def test_reacquire_disposal_during_probe_does_not_reacknowledge(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(embedding_lease, "_EMBEDDING_REACQUIRE_POLL_SECONDS", 0.01)
+    db = _StubHubDatabase()
+    state = EmbeddingGenerationState(cast(Any, db))
+    lease = _lease(state, generation="run-1", revision=7)
+    lease.activate()
+    lease.fence()
+    probe_started = threading.Event()
+    release_probe = threading.Event()
+
+    def read_record() -> CompletedSwitchRecord | None:
+        probe_started.set()
+        release_probe.wait()
+        return _completed_record(run_id="run-1", committed_revision=7)
+
+    handle = embedding_lease._ManagedEmbeddingLease(
+        lease,
+        asyncio.get_running_loop(),
+        read_completed_record=read_record,
+        request_rebuild=lambda _record: pytest.fail("unexpected rebuild request"),
+    )
+    recovery = asyncio.create_task(embedding_lease._reacquire_lease(handle))
+    await asyncio.wait_for(asyncio.to_thread(probe_started.wait), timeout=1.0)
+    handle.dispose()
+    release_probe.set()
+
+    assert await asyncio.wait_for(recovery, timeout=1.0) is False
+    assert db.ack_insert_count() == 1
+
+
+@pytest.mark.asyncio
 async def test_renew_loop_fences_reacquires_and_resumes(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -645,8 +728,14 @@ async def test_renew_loop_fences_reacquires_and_resumes(
     lease.activate()
     db.ack_inserted.clear()
 
+    reacquisition_count = 0
+
     def read_record() -> CompletedSwitchRecord | None:
+        nonlocal reacquisition_count
+        reacquisition_count += 1
         db.fail_execute = None
+        if reacquisition_count == 2:
+            db.renew_rowcount = 1
         return _completed_record(run_id="run-1", committed_revision=7)
 
     handle = embedding_lease._ManagedEmbeddingLease(
@@ -665,8 +754,19 @@ async def test_renew_loop_fences_reacquires_and_resumes(
         assert handle.lease is not lease
         handle.assert_serving()
 
+        first_successor = handle.lease
+        db.ack_inserted.clear()
         db.renew_rowcount = 0
+        acknowledged = await asyncio.wait_for(asyncio.to_thread(db.ack_inserted.wait), timeout=5.0)
+        assert acknowledged
+        assert handle.lease is not first_successor
+        db.renewed.clear()
+        renewed = await asyncio.wait_for(asyncio.to_thread(db.renewed.wait), timeout=5.0)
+        assert renewed
+        handle.dispose()
         await asyncio.wait_for(loop_task, timeout=5.0)
+        assert reacquisition_count == 2
+        assert db.ack_insert_count() == 3
         with pytest.raises(EmbeddingGenerationLeaseLost):
             handle.assert_serving()
     finally:

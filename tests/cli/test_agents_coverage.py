@@ -8,7 +8,7 @@ Lines targeted: 48, 142-143, 230-231, 293-294, 341-342, 375-376, 405-562, 574-57
 from __future__ import annotations
 
 from typing import Any
-from unittest.mock import MagicMock, patch
+from unittest.mock import AsyncMock, MagicMock, patch
 
 import click
 import httpx
@@ -241,92 +241,64 @@ class TestResolveAgentRunId:
 
 
 class TestCheckAgent:
-    @patch("gobby.utils.daemon_client.DaemonClient")
-    def test_check_agent_json_output(self, mock_client_cls: MagicMock, runner: CliRunner) -> None:
-        client = mock_client_cls.return_value
-        client.call_mcp_tool.return_value = {"can_spawn": True, "agent_found": True}
+    def test_check_agent_json_output(self, runner: CliRunner) -> None:
+        from gobby.workflows.dry_run import WorkflowEvaluation
 
-        result = runner.invoke(agents, ["check", "default", "--json"])
-
-        assert result.exit_code == 0
-        assert '"can_spawn": true' in result.output
-        client.call_mcp_tool.assert_called_once_with(
-            server_name="gobby-agents",
-            tool_name="evaluate_spawn",
-            arguments={"agent": "default"},
-            timeout=15.0,
-        )
-
-    @patch("gobby.utils.daemon_client.DaemonClient")
-    def test_check_agent_formatted_output_with_errors(
-        self, mock_client_cls: MagicMock, runner: CliRunner
-    ) -> None:
-        client = mock_client_cls.return_value
-        client.call_mcp_tool.return_value = {
-            "can_spawn": False,
-            "agent_found": True,
-            "agent_name": "worker",
-            "effective_provider": "claude",
-            "effective_isolation": "worktree",
-            "effective_workflow": "worker",
-            "branch_name": "gobby/test",
-            "items": [
-                {
-                    "layer": "environment",
-                    "level": "error",
-                    "code": "NO_CLI",
-                    "message": "Claude CLI missing",
-                }
-            ],
-        }
-
-        result = runner.invoke(
-            agents,
-            [
-                "check",
-                "worker",
-                "--workflow",
-                "worker",
-                "--task",
-                "#14567",
-                "--session",
-                "#4981",
-                "--isolation",
-                "worktree",
-                "--provider",
-                "claude",
-            ],
-        )
+        evaluation = WorkflowEvaluation(valid=True, workflow_name="default")
+        agent = MagicMock()
+        agent.name = "default"
+        with (
+            patch("gobby.cli.agents_steps.require_cli_database", return_value=MagicMock()),
+            patch("gobby.cli.agents_steps.resolve_agent", return_value=agent),
+            patch(
+                "gobby.cli.agents_steps.evaluate_agent_definition",
+                new_callable=AsyncMock,
+                return_value=evaluation,
+            ),
+        ):
+            result = runner.invoke(agents, ["check", "default", "--json"])
 
         assert result.exit_code == 0
-        assert "CANNOT SPAWN" in result.output
-        assert "ERROR NO_CLI: Claude CLI missing" in result.output
-        client.call_mcp_tool.assert_called_once_with(
-            server_name="gobby-agents",
-            tool_name="evaluate_spawn",
-            arguments={
-                "agent": "worker",
-                "workflow": "worker",
-                "task_id": "#14567",
-                "parent_session_id": "#4981",
-                "isolation": "worktree",
-                "provider": "claude",
-            },
-            timeout=15.0,
+        assert '"valid": true' in result.output
+
+    def test_check_agent_formatted_output_with_errors(self, runner: CliRunner) -> None:
+        from gobby.workflows.dry_run import EvaluationItem, WorkflowEvaluation
+
+        evaluation = WorkflowEvaluation(valid=False, workflow_name="worker")
+        evaluation.items.append(
+            EvaluationItem(
+                layer="structure",
+                level="error",
+                code="NO_CLI",
+                message="Claude CLI missing",
+            )
         )
-
-    @patch("gobby.utils.daemon_client.DaemonClient")
-    def test_check_agent_handles_daemon_error(
-        self, mock_client_cls: MagicMock, runner: CliRunner
-    ) -> None:
-        client = mock_client_cls.return_value
-        client.call_mcp_tool.side_effect = RuntimeError("connection refused")
-
-        result = runner.invoke(agents, ["check", "default"])
+        agent = MagicMock()
+        agent.name = "worker"
+        with (
+            patch("gobby.cli.agents_steps.require_cli_database", return_value=MagicMock()),
+            patch("gobby.cli.agents_steps.resolve_agent", return_value=agent),
+            patch(
+                "gobby.cli.agents_steps.evaluate_agent_definition",
+                new_callable=AsyncMock,
+                return_value=evaluation,
+            ),
+        ):
+            result = runner.invoke(agents, ["check", "worker"])
 
         assert result.exit_code != 0
-        assert "Error: connection refused" in result.output
-        assert "Start with: gobby start" in result.output
+        assert "INVALID" in result.output
+        assert "ERROR NO_CLI: Claude CLI missing" in result.output
+
+    def test_check_agent_handles_missing_agent(self, runner: CliRunner) -> None:
+        with (
+            patch("gobby.cli.agents_steps.require_cli_database", return_value=MagicMock()),
+            patch("gobby.cli.agents_steps.resolve_agent", return_value=None),
+        ):
+            result = runner.invoke(agents, ["check", "missing"])
+
+        assert result.exit_code != 0
+        assert "AGENT_NOT_FOUND" in result.output
 
 
 # =============================================================================

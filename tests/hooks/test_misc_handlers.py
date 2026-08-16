@@ -13,7 +13,13 @@ import pytest
 
 from gobby.hooks.event_handlers import EventHandlers
 from gobby.hooks.events import HookEventType
+from gobby.sessions.compact_continuation import COMPACT_HANDOFF_MARKER_VARIABLE
+from gobby.sessions.compact_markers import COMPACT_HANDOFF_INJECT_PENDING_VARIABLE
+from gobby.storage.hub.protocol import HubDatabase
+from gobby.storage.projects import LocalProjectManager
+from gobby.storage.sessions import SessionManager
 from gobby.workflows.observer_context_usage import detect_context_compact_guidance
+from gobby.workflows.state_manager import SessionVariableManager
 
 from ._event_handler_helpers import make_event
 
@@ -189,6 +195,53 @@ class TestPostCompactHandler:
 
         assert response.decision == "allow"
         assert "failed to reset context usage for session session-1" in caplog.text
+
+    def test_non_grok_post_compact_does_not_apply_in_place_closeout(
+        self,
+        hub_db: HubDatabase,
+        mock_dependencies: dict[str, Any],
+    ) -> None:
+        project = LocalProjectManager(hub_db).create(
+            name="post-compact-claude",
+            repo_path="/some/dir",
+        )
+        with patch(
+            "gobby.utils.machine_id._cached_machine_id", "21000000-0000-4000-8000-000000000001"
+        ):
+            session = SessionManager(hub_db).register(
+                external_id="cccccccc-0000-4000-8000-000000000001",
+                machine_id="21000000-0000-4000-8000-000000000001",
+                source="claude",
+                project_id=project.id,
+                terminal_context={"tmux_pane": "%12", "tmux_socket_path": "/tmp/tmux"},
+            )
+        sv_mgr = SessionVariableManager(hub_db)
+        sv_mgr.merge_variables(
+            session.id,
+            {
+                COMPACT_HANDOFF_MARKER_VARIABLE: "compact",
+                "unlocked_tools": ["call_tool"],
+                "plan_mode": True,
+            },
+        )
+        mock_dependencies["session_manager"].db = hub_db
+        mock_dependencies["session_manager"].get.return_value = session
+        mock_dependencies["session_manager"].update_context_usage.return_value = True
+        handlers = EventHandlers(**mock_dependencies)
+        event = make_event(
+            HookEventType.POST_COMPACT,
+            source="claude",
+            metadata={"_platform_session_id": session.id},
+        )
+
+        response = handlers.handle_post_compact(event)
+
+        assert response.decision == "allow"
+        variables = sv_mgr.get_variables(session.id)
+        assert variables[COMPACT_HANDOFF_MARKER_VARIABLE] == "compact"
+        assert COMPACT_HANDOFF_INJECT_PENDING_VARIABLE not in variables
+        assert variables["unlocked_tools"] == ["call_tool"]
+        assert variables["plan_mode"] is True
 
 
 class TestAcpOnlyHandlers:

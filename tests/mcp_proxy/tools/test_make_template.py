@@ -4,13 +4,13 @@ import json
 
 import pytest
 
-from gobby.storage.workflow_definitions import LocalWorkflowDefinitionManager
+from gobby.storage.definitions.rules import RuleDefinitionManager
 from gobby.workflows.template_writer import read_template
 
 
 @pytest.fixture()
 def manager(temp_db):
-    return LocalWorkflowDefinitionManager(temp_db)
+    return RuleDefinitionManager(temp_db)
 
 
 def _create_rule_row(manager, name, *, tags=None, project_id=None):
@@ -22,7 +22,6 @@ def _create_rule_row(manager, name, *, tags=None, project_id=None):
     return manager.create(
         name=name,
         definition_json=json.dumps(definition),
-        workflow_type="rule",
         source="installed",
         tags=tags,
         project_id=project_id,
@@ -36,7 +35,7 @@ class TestAutoExportProjectRule:
         from gobby.workflows.template_writer import write_rule_template
 
         row = _create_rule_row(manager, "my-custom-rule")
-        definition = json.loads(row.definition_json)
+        definition = row.definition_json
 
         path = write_rule_template(
             name=row.name,
@@ -65,7 +64,7 @@ class TestAutoExportProjectRule:
         from gobby.workflows.template_writer import write_rule_template
 
         row = _create_rule_row(manager, "global-rule")
-        definition = json.loads(row.definition_json)
+        definition = row.definition_json
 
         path = write_rule_template(
             name=row.name,
@@ -82,26 +81,24 @@ class TestAutoExportProjectRule:
 class TestNameCollisionOnExport:
     """User exports should not overwrite gobby templates."""
 
-    def test_rejects_gobby_named_export(self, manager, temp_db):
+    def test_rejects_gobby_named_export(self, temp_db):
         """Cannot create user rule with name matching a gobby template."""
-        # Create a gobby template
-        manager.create(
+        from gobby.storage.definitions.rules import RuleDefinitionManager
+
+        RuleDefinitionManager(temp_db).create(
             name="protected-rule",
-            definition_json=json.dumps(
-                {
-                    "event": "before_tool",
-                    "effects": [{"type": "inject_context", "content": "x"}],
-                }
-            ),
-            workflow_type="rule",
-            source="template",
+            definition_json={
+                "event": "before_tool",
+                "effects": [{"type": "inject_context", "content": "x"}],
+            },
+            source="installed",
             tags=["gobby"],
         )
 
         from gobby.mcp_proxy.tools.workflows._auto_export import has_gobby_name_collision
 
-        assert has_gobby_name_collision(temp_db, "protected-rule") is True
-        assert has_gobby_name_collision(temp_db, "unique-user-rule") is False
+        assert has_gobby_name_collision(temp_db, "protected-rule", kind="rule") is True
+        assert has_gobby_name_collision(temp_db, "unique-user-rule", kind="rule") is False
 
 
 class TestDeleteSyncsToDisk:

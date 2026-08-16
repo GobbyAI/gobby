@@ -7,8 +7,8 @@ from unittest.mock import MagicMock
 
 import pytest
 
+from gobby.storage.definitions.agents import AgentDefinitionManager
 from gobby.storage.tasks import LocalTaskManager, Task
-from gobby.storage.workflow_definitions import LocalWorkflowDefinitionManager
 from gobby.tasks import expansion_service as expansion_module
 from gobby.tasks.expansion_service import ExpansionService
 from gobby.workflows.definitions import AgentDefinitionBody
@@ -38,10 +38,9 @@ def _parent(
 
 def _store_agent(service: ExpansionService, name: str, description: str) -> None:
     body = AgentDefinitionBody(name=name, description=description, surfaces=["spawn"])
-    LocalWorkflowDefinitionManager(service.db).create(
+    AgentDefinitionManager(service.db).create(
         name=name,
-        definition_json=body.model_dump_json(),
-        workflow_type="agent",
+        definition_json=body.model_dump(mode="json"),
         description=description,
         enabled=True,
     )

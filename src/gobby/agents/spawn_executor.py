@@ -5,12 +5,11 @@ This module consolidates the spawn dispatch logic from agents.py, worktrees.py,
 and clones.py into a single executor. All agents spawn via tmux.
 """
 
-import asyncio
 import logging
 import shutil
 from dataclasses import replace
 from pathlib import Path
-from typing import TYPE_CHECKING, cast
+from typing import TYPE_CHECKING
 
 from gobby.agents.constants import (
     GOBBY_AGENT_API_TOKEN,
@@ -20,7 +19,13 @@ from gobby.agents.constants import (
 )
 from gobby.agents.isolation_code_index import ensure_isolation_code_index
 from gobby.agents.sandbox import get_sandbox_resolver
-from gobby.agents.spawn import PreparedSpawn, build_cli_command, prepare_terminal_spawn
+from gobby.agents.spawn import (
+    PreparedSpawn,
+    build_cli_command,
+)
+from gobby.agents.spawn import (
+    prepare_terminal_spawn as prepare_terminal_spawn,
+)
 from gobby.agents.spawn_cache_policy import (
     sandbox_config_for_spawn as _sandbox_config_for_spawn,
 )
@@ -47,7 +52,7 @@ from gobby.providers import AGY_UNAVAILABLE_REASON
 from gobby.providers.capabilities.apply import speed_result
 
 if TYPE_CHECKING:
-    from gobby.agents.session import ChildSessionManager
+    pass
 from gobby.agents.tmux.spawner import TmuxSpawner
 from gobby.config.tmux import TmuxConfig
 
@@ -260,42 +265,13 @@ async def _spawn_claude_terminal(request: SpawnRequest) -> SpawnResult:
     """
     Spawn Claude agent in terminal with proper session/workflow setup.
 
-    Uses prepare_terminal_spawn to:
-    1. Create child session with parent linkage
-    2. Pass initial_variables for workflow activation (e.g., assigned_task_id)
-    3. Set up environment variables for session matching
+    Uses the caller-prepared spawn so the child session already exists.
     """
     if validation_error := _session_manager_validation_error(request, "Claude"):
         return validation_error
 
     # Prepare spawn context (creates child session, builds env vars)
-    spawn_context = await asyncio.to_thread(
-        prepare_terminal_spawn,
-        session_manager=cast("ChildSessionManager", request.session_manager),
-        parent_session_id=request.parent_session_id,
-        project_id=request.project_id,
-        machine_id=request.machine_id,
-        source="claude",
-        workflow_name=request.workflow,
-        initial_variables=request.initial_variables,
-        prompt=request.prompt,
-        max_agent_depth=request.max_agent_depth,
-        git_branch=request.branch_name,
-        agent_run_id=request.agent_run_id,
-        task_id=request.task_id,
-        claimed_session_id=request.claimed_session_id,
-        agent_name=request.agent_name,
-        model=request.model,
-        is_local=request.is_local,
-        timeout_seconds=request.timeout_seconds,
-        sandbox_enabled=False,
-        requested_reasoning_effort=request.requested_reasoning_effort,
-        effective_reasoning_effort=request.effective_reasoning_effort,
-        reasoning_required=request.reasoning_required,
-        reasoning_status=request.reasoning_status,
-        reasoning_message=request.reasoning_message,
-        resume_metadata_json=request.resume_metadata_json,
-    )
+    spawn_context = request.prepared_spawn
 
     gobby_session_id = spawn_context.session_id
 
@@ -408,33 +384,7 @@ async def _spawn_qwen_terminal(request: SpawnRequest) -> SpawnResult:
     if validation_error := _session_manager_validation_error(request, "Qwen"):
         return validation_error
 
-    spawn_context = await asyncio.to_thread(
-        prepare_terminal_spawn,
-        session_manager=cast("ChildSessionManager", request.session_manager),
-        parent_session_id=request.parent_session_id,
-        project_id=request.project_id,
-        machine_id=request.machine_id,
-        source="qwen",
-        workflow_name=request.workflow,
-        initial_variables=request.initial_variables,
-        prompt=request.prompt,
-        max_agent_depth=request.max_agent_depth,
-        git_branch=request.branch_name,
-        agent_run_id=request.agent_run_id,
-        task_id=request.task_id,
-        claimed_session_id=request.claimed_session_id,
-        agent_name=request.agent_name,
-        model=request.model,
-        is_local=request.is_local,
-        timeout_seconds=request.timeout_seconds,
-        sandbox_enabled=False,
-        requested_reasoning_effort=request.requested_reasoning_effort,
-        effective_reasoning_effort=request.effective_reasoning_effort,
-        reasoning_required=request.reasoning_required,
-        reasoning_status=request.reasoning_status,
-        reasoning_message=request.reasoning_message,
-        resume_metadata_json=request.resume_metadata_json,
-    )
+    spawn_context = request.prepared_spawn
 
     gobby_session_id = spawn_context.session_id
 
@@ -512,33 +462,7 @@ async def _spawn_grok_terminal(request: SpawnRequest) -> SpawnResult:
     if validation_error := _session_manager_validation_error(request, "Grok"):
         return validation_error
 
-    spawn_context = await asyncio.to_thread(
-        prepare_terminal_spawn,
-        session_manager=cast("ChildSessionManager", request.session_manager),
-        parent_session_id=request.parent_session_id,
-        project_id=request.project_id,
-        machine_id=request.machine_id,
-        source="grok",
-        workflow_name=request.workflow,
-        initial_variables=request.initial_variables,
-        prompt=request.prompt,
-        max_agent_depth=request.max_agent_depth,
-        git_branch=request.branch_name,
-        agent_run_id=request.agent_run_id,
-        task_id=request.task_id,
-        claimed_session_id=request.claimed_session_id,
-        agent_name=request.agent_name,
-        model=request.model,
-        is_local=request.is_local,
-        timeout_seconds=request.timeout_seconds,
-        sandbox_enabled=False,
-        requested_reasoning_effort=request.requested_reasoning_effort,
-        effective_reasoning_effort=request.effective_reasoning_effort,
-        reasoning_required=request.reasoning_required,
-        reasoning_status=request.reasoning_status,
-        reasoning_message=request.reasoning_message,
-        resume_metadata_json=request.resume_metadata_json,
-    )
+    spawn_context = request.prepared_spawn
 
     gobby_session_id = spawn_context.session_id
     if preflight_error := await _prepare_managed_code_index(request, spawn_context):
@@ -628,33 +552,7 @@ async def _spawn_codex_terminal(request: SpawnRequest) -> SpawnResult:
     if validation_error := _session_manager_validation_error(request, "Codex"):
         return validation_error
 
-    spawn_context = await asyncio.to_thread(
-        prepare_terminal_spawn,
-        session_manager=cast("ChildSessionManager", request.session_manager),
-        parent_session_id=request.parent_session_id,
-        project_id=request.project_id,
-        machine_id=request.machine_id,
-        source="codex",
-        workflow_name=request.workflow,
-        initial_variables=request.initial_variables,
-        prompt=request.prompt,
-        max_agent_depth=request.max_agent_depth,
-        git_branch=request.branch_name,
-        agent_run_id=request.agent_run_id,
-        task_id=request.task_id,
-        claimed_session_id=request.claimed_session_id,
-        agent_name=request.agent_name,
-        model=request.model,
-        is_local=request.is_local,
-        timeout_seconds=request.timeout_seconds,
-        sandbox_enabled=False,
-        requested_reasoning_effort=request.requested_reasoning_effort,
-        effective_reasoning_effort=request.effective_reasoning_effort,
-        reasoning_required=request.reasoning_required,
-        reasoning_status=request.reasoning_status,
-        reasoning_message=request.reasoning_message,
-        resume_metadata_json=request.resume_metadata_json,
-    )
+    spawn_context = request.prepared_spawn
 
     gobby_session_id = spawn_context.session_id
     if preflight_error := await _prepare_managed_code_index(request, spawn_context):
@@ -768,33 +666,7 @@ async def _spawn_droid_terminal(request: SpawnRequest) -> SpawnResult:
             error="droid CLI not found in PATH. Install droid first: see docs/cli-integrations/droid.md",
         )
 
-    spawn_context = await asyncio.to_thread(
-        prepare_terminal_spawn,
-        session_manager=cast("ChildSessionManager", request.session_manager),
-        parent_session_id=request.parent_session_id,
-        project_id=request.project_id,
-        machine_id=request.machine_id,
-        source="droid",
-        workflow_name=request.workflow,
-        initial_variables=request.initial_variables,
-        prompt=request.prompt,
-        max_agent_depth=request.max_agent_depth,
-        git_branch=request.branch_name,
-        agent_run_id=request.agent_run_id,
-        task_id=request.task_id,
-        claimed_session_id=request.claimed_session_id,
-        agent_name=request.agent_name,
-        model=request.model,
-        is_local=request.is_local,
-        timeout_seconds=request.timeout_seconds,
-        sandbox_enabled=False,
-        requested_reasoning_effort=request.requested_reasoning_effort,
-        effective_reasoning_effort=request.effective_reasoning_effort,
-        reasoning_required=request.reasoning_required,
-        reasoning_status=request.reasoning_status,
-        reasoning_message=request.reasoning_message,
-        resume_metadata_json=request.resume_metadata_json,
-    )
+    spawn_context = request.prepared_spawn
 
     gobby_session_id = spawn_context.session_id
     if preflight_error := await _prepare_managed_code_index(request, spawn_context):

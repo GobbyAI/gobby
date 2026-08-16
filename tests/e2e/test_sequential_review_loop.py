@@ -686,7 +686,7 @@ class TestWorkflowToolsAvailability:
         tool_names = [t["name"] for t in tools]
 
         expected_tools = [
-            "get_workflow_status",
+            "get_step_status",
         ]
 
         for tool in expected_tools:

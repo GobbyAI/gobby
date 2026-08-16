@@ -13,7 +13,7 @@ import json
 import pytest
 
 from gobby.storage.hub.protocol import HubDatabase
-from gobby.storage.workflow_definitions import LocalWorkflowDefinitionManager
+from gobby.storage.definitions.rules import RuleDefinitionManager
 from gobby.workflows.definitions import RuleDefinitionBody
 from gobby.workflows.sync_rules import sync_bundled_rules
 
@@ -33,8 +33,8 @@ def db(temp_db: HubDatabase) -> HubDatabase:
 
 
 @pytest.fixture
-def manager(db: HubDatabase) -> LocalWorkflowDefinitionManager:
-    return LocalWorkflowDefinitionManager(db)
+def manager(db: HubDatabase) -> RuleDefinitionManager:
+    return RuleDefinitionManager(db)
 
 
 def _sync_bundled(db):
@@ -43,7 +43,7 @@ def _sync_bundled(db):
 
     result = sync_bundled_rules(db, get_bundled_rules_path())
     # Mark templates as installed so get_by_name() finds them
-    db.execute("UPDATE workflow_definitions SET source = 'installed' WHERE source = 'template'")
+    db.execute("UPDATE rule_definitions SET source = 'installed' WHERE source = 'template'")
     return result
 
 
@@ -51,10 +51,10 @@ class TestAutoTaskSync:
     """Test that auto-task.yaml syncs correctly."""
 
     def test_bundled_file_syncs_all_rules(self, db, manager) -> None:
-        """All 3 auto-task rules should sync to workflow_definitions."""
+        """All 3 auto-task rules should sync to rule_definitions."""
         _sync_bundled(db)
 
-        rules = manager.list_all(workflow_type="rule")
+        rules = manager.list_all()
         rule_names = {r.name for r in rules}
 
         for rule_name in AUTO_TASK_RULES:
@@ -64,20 +64,20 @@ class TestAutoTaskSync:
         """All auto-task rules should have group='auto-task'."""
         _sync_bundled(db)
 
-        rules = manager.list_all(workflow_type="rule")
+        rules = manager.list_all()
         for row in rules:
             if row.name in AUTO_TASK_RULES:
-                body = json.loads(row.definition_json)
+                body = row.definition_json
                 assert body.get("group") == "auto-task", f"{row.name} missing group"
 
     def test_all_rules_are_valid_pydantic(self, db, manager) -> None:
         """All synced rules should be valid RuleDefinitionBody instances."""
         _sync_bundled(db)
 
-        rules = manager.list_all(workflow_type="rule")
+        rules = manager.list_all()
         for row in rules:
             if row.name in AUTO_TASK_RULES:
-                body = RuleDefinitionBody.model_validate_json(row.definition_json)
+                body = RuleDefinitionBody.model_validate(row.definition_json)
                 assert body.effects[0].type in {
                     "block",
                     "inject_context",
@@ -96,7 +96,7 @@ class TestInjectAutoTaskContext:
         _sync_bundled(db)
         row = manager.get_by_name("inject-autonomous-mode")
         assert row is not None
-        body = RuleDefinitionBody.model_validate_json(row.definition_json)
+        body = RuleDefinitionBody.model_validate(row.definition_json)
         assert body.event.value == "turn_start"
         assert body.effects[0].type == "inject_context"
         assert body.effects[0].template is not None
@@ -109,7 +109,7 @@ class TestInjectAutoTaskContext:
         """Only inject when auto_task_ref is set."""
         _sync_bundled(db)
         row = manager.get_by_name("inject-autonomous-mode")
-        body = RuleDefinitionBody.model_validate_json(row.definition_json)
+        body = RuleDefinitionBody.model_validate(row.definition_json)
         assert body.when is not None
         assert "auto_task_ref" in body.when
 
@@ -117,7 +117,7 @@ class TestInjectAutoTaskContext:
         """Template should guide agent to use suggest_next_task."""
         _sync_bundled(db)
         row = manager.get_by_name("inject-autonomous-mode")
-        body = RuleDefinitionBody.model_validate_json(row.definition_json)
+        body = RuleDefinitionBody.model_validate(row.definition_json)
         assert "suggest_next_task" in body.effects[0].template
 
 
@@ -133,7 +133,7 @@ class TestGuideTaskContinuation:
         _sync_bundled(db)
         row = manager.get_by_name("guide-task-continuation")
         assert row is not None
-        body = RuleDefinitionBody.model_validate_json(row.definition_json)
+        body = RuleDefinitionBody.model_validate(row.definition_json)
         assert body.event.value == "turn_end"
         assert body.effects[0].type == "block"
         assert body.effects[0].reason is not None
@@ -142,7 +142,7 @@ class TestGuideTaskContinuation:
         """Should check task_tree_complete and auto_task_ref."""
         _sync_bundled(db)
         row = manager.get_by_name("guide-task-continuation")
-        body = RuleDefinitionBody.model_validate_json(row.definition_json)
+        body = RuleDefinitionBody.model_validate(row.definition_json)
         assert body.when is not None
         assert "auto_task_ref" in body.when
         assert "task_tree_complete" in body.when
@@ -151,7 +151,7 @@ class TestGuideTaskContinuation:
         """Should respect max stop attempts for escape hatch."""
         _sync_bundled(db)
         row = manager.get_by_name("guide-task-continuation")
-        body = RuleDefinitionBody.model_validate_json(row.definition_json)
+        body = RuleDefinitionBody.model_validate(row.definition_json)
         assert body.when is not None
         assert "stop_attempts" in body.when
 
@@ -159,7 +159,7 @@ class TestGuideTaskContinuation:
         """Block reason should guide agent to continue working."""
         _sync_bundled(db)
         row = manager.get_by_name("guide-task-continuation")
-        body = RuleDefinitionBody.model_validate_json(row.definition_json)
+        body = RuleDefinitionBody.model_validate(row.definition_json)
         assert "suggest_next_task" in body.effects[0].reason
 
 
@@ -175,7 +175,7 @@ class TestNotifyTaskTreeComplete:
         _sync_bundled(db)
         row = manager.get_by_name("notify-task-tree-complete")
         assert row is not None
-        body = RuleDefinitionBody.model_validate_json(row.definition_json)
+        body = RuleDefinitionBody.model_validate(row.definition_json)
         assert body.event.value == "turn_end"
         assert body.effects[0].type == "inject_context"
         assert body.effects[0].template is not None
@@ -184,7 +184,7 @@ class TestNotifyTaskTreeComplete:
         """Should check both auto_task_ref set and task_tree_complete."""
         _sync_bundled(db)
         row = manager.get_by_name("notify-task-tree-complete")
-        body = RuleDefinitionBody.model_validate_json(row.definition_json)
+        body = RuleDefinitionBody.model_validate(row.definition_json)
         assert body.when is not None
         assert "auto_task_ref" in body.when
         assert "task_tree_complete" in body.when
@@ -193,5 +193,5 @@ class TestNotifyTaskTreeComplete:
         """Template should indicate tasks are complete."""
         _sync_bundled(db)
         row = manager.get_by_name("notify-task-tree-complete")
-        body = RuleDefinitionBody.model_validate_json(row.definition_json)
+        body = RuleDefinitionBody.model_validate(row.definition_json)
         assert "complete" in body.effects[0].template.lower()

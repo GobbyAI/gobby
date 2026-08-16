@@ -20,10 +20,7 @@ import pytest
 from gobby.hooks.events import HookEvent, HookEventType, SessionSource
 from gobby.storage.hub.protocol import HubDatabase
 from gobby.storage.tasks import Task
-from gobby.storage.workflow_definitions import (
-    LocalWorkflowDefinitionManager,
-    WorkflowDefinitionRow,
-)
+from gobby.storage.definitions.rules import RuleDefinitionManager, RuleDefinitionRow
 from gobby.tasks.state_semantics import ACTIVE_STAGE_STATES
 from gobby.workflows.definitions import RuleDefinitionBody, RuleEffect, RuleTriggerEvent
 from gobby.workflows.engine.core import RuleEngine
@@ -44,8 +41,8 @@ def db(temp_db: HubDatabase) -> HubDatabase:
 
 
 @pytest.fixture
-def manager(db: HubDatabase) -> LocalWorkflowDefinitionManager:
-    return LocalWorkflowDefinitionManager(db)
+def manager(db: HubDatabase) -> RuleDefinitionManager:
+    return RuleDefinitionManager(db)
 
 
 def _sync_bundled(db: HubDatabase) -> dict[str, Any]:
@@ -56,9 +53,9 @@ def _sync_bundled(db: HubDatabase) -> dict[str, Any]:
 
 
 def _get_rule(
-    manager: LocalWorkflowDefinitionManager,
+    manager: RuleDefinitionManager,
     name: str,
-) -> WorkflowDefinitionRow:
+) -> RuleDefinitionRow:
     """Get a bundled rule by name."""
     row = manager.get_by_name(name)
     assert row is not None
@@ -66,7 +63,7 @@ def _get_rule(
 
 
 def _insert_rule(
-    manager: LocalWorkflowDefinitionManager,
+    manager: RuleDefinitionManager,
     name: str,
     body: RuleDefinitionBody,
     priority: int = 100,
@@ -75,7 +72,6 @@ def _insert_rule(
     row = manager.create(
         name=name,
         definition_json=body.model_dump_json(),
-        workflow_type="rule",
         priority=priority,
         enabled=True,
     )
@@ -105,38 +101,38 @@ class TestStopGatesSync:
     """Test that stop-gates rules sync correctly."""
 
     def test_bundled_file_syncs_all_rules(
-        self, db: HubDatabase, manager: LocalWorkflowDefinitionManager
+        self, db: HubDatabase, manager: RuleDefinitionManager
     ) -> None:
-        """All stop-gates rules should sync to workflow_definitions."""
+        """All stop-gates rules should sync to rule_definitions."""
         _sync_bundled(db)
 
-        rules = manager.list_all(workflow_type="rule")
+        rules = manager.list_all()
         rule_names = {r.name for r in rules}
 
         assert STOP_GATES_RULES.issubset(rule_names), f"Missing: {STOP_GATES_RULES - rule_names}"
 
     def test_all_rules_have_group(
-        self, db: HubDatabase, manager: LocalWorkflowDefinitionManager
+        self, db: HubDatabase, manager: RuleDefinitionManager
     ) -> None:
         """All rules should have group='stop-gates'."""
         _sync_bundled(db)
 
-        rules = manager.list_all(workflow_type="rule")
+        rules = manager.list_all()
         for row in rules:
             if row.name in STOP_GATES_RULES:
-                body = json.loads(row.definition_json)
+                body = row.definition_json
                 assert body.get("group") == "stop-gates", f"{row.name} missing group"
 
     def test_all_rules_are_valid_pydantic(
-        self, db: HubDatabase, manager: LocalWorkflowDefinitionManager
+        self, db: HubDatabase, manager: RuleDefinitionManager
     ) -> None:
         """All synced rules should be valid RuleDefinitionBody instances."""
         _sync_bundled(db)
 
-        rules = manager.list_all(workflow_type="rule")
+        rules = manager.list_all()
         for row in rules:
             if row.name in STOP_GATES_RULES:
-                body = RuleDefinitionBody.model_validate_json(row.definition_json)
+                body = RuleDefinitionBody.model_validate(row.definition_json)
                 for effect in body.resolved_effects:
                     assert effect.type in {"block", "set_variable"}
 
@@ -278,7 +274,7 @@ class TestManualCompactionTurnEndBypass:
     async def test_manual_pre_compact_after_agent_allows_but_keeps_raw_event(
         self,
         db: HubDatabase,
-        manager: LocalWorkflowDefinitionManager,
+        manager: RuleDefinitionManager,
     ) -> None:
         _sync_bundled(db)
         _insert_rule(
@@ -369,39 +365,39 @@ class TestManualCompactionTurnEndBypass:
 class TestRequireTaskClose:
     """Verify require-task-close blocks stop if task in_progress."""
 
-    def test_blocks_on_stop(self, db: HubDatabase, manager: LocalWorkflowDefinitionManager) -> None:
+    def test_blocks_on_stop(self, db: HubDatabase, manager: RuleDefinitionManager) -> None:
         """Should be a block effect on semantic turn_end."""
         _sync_bundled(db)
 
         row = _get_rule(manager, "require-task-close")
         assert row is not None
 
-        body = RuleDefinitionBody.model_validate_json(row.definition_json)
+        body = RuleDefinitionBody.model_validate(row.definition_json)
         assert body.event.value == "turn_end"
         assert body.effects is not None
         assert body.effects[0].type == "block"
 
     def test_when_checks_mode_level_and_task(
-        self, db: HubDatabase, manager: LocalWorkflowDefinitionManager
+        self, db: HubDatabase, manager: RuleDefinitionManager
     ) -> None:
         """Should check mode_level and task_claimed."""
         _sync_bundled(db)
 
         row = _get_rule(manager, "require-task-close")
-        body = RuleDefinitionBody.model_validate_json(row.definition_json)
+        body = RuleDefinitionBody.model_validate(row.definition_json)
 
         assert body.when is not None
         assert "mode_level" in body.when
         assert "task_claimed" in body.when
 
     def test_does_not_block_when_task_claimed_unset(
-        self, db: HubDatabase, manager: LocalWorkflowDefinitionManager
+        self, db: HubDatabase, manager: RuleDefinitionManager
     ) -> None:
         """Should NOT block when task_claimed was never set (no false positive)."""
         _sync_bundled(db)
 
         row = _get_rule(manager, "require-task-close")
-        body = RuleDefinitionBody.model_validate_json(row.definition_json)
+        body = RuleDefinitionBody.model_validate(row.definition_json)
 
         variables: dict[str, object] = {"mode_level": 2, "stop_attempts": 1}
         evaluator = SafeExpressionEvaluator(
@@ -420,13 +416,13 @@ class TestRequireTaskClose:
         assert not evaluator.evaluate(body.when), "Rule should not fire when task_claimed is unset"
 
     def test_blocks_when_task_claimed_is_set(
-        self, db: HubDatabase, manager: LocalWorkflowDefinitionManager
+        self, db: HubDatabase, manager: RuleDefinitionManager
     ) -> None:
         """Should block when task_claimed is set and conditions met."""
         _sync_bundled(db)
 
         row = _get_rule(manager, "require-task-close")
-        body = RuleDefinitionBody.model_validate_json(row.definition_json)
+        body = RuleDefinitionBody.model_validate(row.definition_json)
 
         variables: dict[str, object] = {
             "mode_level": 2,
@@ -451,7 +447,7 @@ class TestRequireTaskClose:
 
     @pytest.mark.asyncio
     async def test_blocks_on_after_agent_turn_end(
-        self, db: HubDatabase, manager: LocalWorkflowDefinitionManager
+        self, db: HubDatabase, manager: RuleDefinitionManager
     ) -> None:
         """Bundled turn_end gate should also fire for Qwen/Codex after-agent hooks."""
         _sync_bundled(db)
@@ -479,12 +475,12 @@ class TestLegitimateWaitConditions:
     def test_active_agent_wait_yields_stop_gate(
         self,
         db: HubDatabase,
-        manager: LocalWorkflowDefinitionManager,
+        manager: RuleDefinitionManager,
         rule_name: str,
     ) -> None:
         _sync_bundled(db)
         row = _get_rule(manager, rule_name)
-        body = RuleDefinitionBody.model_validate_json(row.definition_json)
+        body = RuleDefinitionBody.model_validate(row.definition_json)
         variables = {
             **_claimed_task_variables(),
             "waiting_on_user_input": True,
@@ -506,12 +502,12 @@ class TestLegitimateWaitConditions:
     def test_stale_human_wait_state_does_not_yield_stop_gate(
         self,
         db: HubDatabase,
-        manager: LocalWorkflowDefinitionManager,
+        manager: RuleDefinitionManager,
         rule_name: str,
     ) -> None:
         _sync_bundled(db)
         row = _get_rule(manager, rule_name)
-        body = RuleDefinitionBody.model_validate_json(row.definition_json)
+        body = RuleDefinitionBody.model_validate(row.definition_json)
         evaluator = SafeExpressionEvaluator(
             context={
                 "variables": {
@@ -535,7 +531,7 @@ class TestRequireStepCompletion:
     """Verify spawned-agent step completion gates only apply to active step workflows."""
 
     def test_blocks_on_turn_end(
-        self, db: HubDatabase, manager: LocalWorkflowDefinitionManager
+        self, db: HubDatabase, manager: RuleDefinitionManager
     ) -> None:
         """Should be a block effect on semantic turn_end."""
         _sync_bundled(db)
@@ -543,31 +539,31 @@ class TestRequireStepCompletion:
         row = _get_rule(manager, "require-step-completion")
         assert row is not None
 
-        body = RuleDefinitionBody.model_validate_json(row.definition_json)
+        body = RuleDefinitionBody.model_validate(row.definition_json)
         assert body.event.value == "turn_end"
         assert body.effects is not None
         assert body.effects[0].type == "block"
 
     def test_when_requires_current_step(
-        self, db: HubDatabase, manager: LocalWorkflowDefinitionManager
+        self, db: HubDatabase, manager: RuleDefinitionManager
     ) -> None:
         """Default/no-step spawned agents should not be trapped at stop."""
         _sync_bundled(db)
 
         row = _get_rule(manager, "require-step-completion")
-        body = RuleDefinitionBody.model_validate_json(row.definition_json)
+        body = RuleDefinitionBody.model_validate(row.definition_json)
 
         assert body.when is not None
         assert "current_step" in body.when
 
     def test_does_not_block_spawned_agent_without_current_step(
-        self, db: HubDatabase, manager: LocalWorkflowDefinitionManager
+        self, db: HubDatabase, manager: RuleDefinitionManager
     ) -> None:
         """A spawned agent without a step instance may terminate normally."""
         _sync_bundled(db)
 
         row = _get_rule(manager, "require-step-completion")
-        body = RuleDefinitionBody.model_validate_json(row.definition_json)
+        body = RuleDefinitionBody.model_validate(row.definition_json)
 
         variables: dict[str, object] = {
             "is_spawned_agent": True,
@@ -582,13 +578,13 @@ class TestRequireStepCompletion:
         assert not evaluator.evaluate(body.when)
 
     def test_blocks_spawned_agent_with_incomplete_current_step(
-        self, db: HubDatabase, manager: LocalWorkflowDefinitionManager
+        self, db: HubDatabase, manager: RuleDefinitionManager
     ) -> None:
         """A real active step workflow still blocks termination until complete."""
         _sync_bundled(db)
 
         row = _get_rule(manager, "require-step-completion")
-        body = RuleDefinitionBody.model_validate_json(row.definition_json)
+        body = RuleDefinitionBody.model_validate(row.definition_json)
 
         variables: dict[str, object] = {
             "is_spawned_agent": True,
@@ -1241,9 +1237,9 @@ class TestConsecutiveBlockScoping:
     async def test_rule_block_records_tool_name(self, db: HubDatabase) -> None:
         """When a rule blocks a BEFORE_TOOL, _last_blocked_tool should be set."""
         # Install a rule that blocks TodoWrite
-        from gobby.storage.workflow_definitions import LocalWorkflowDefinitionManager
+        from gobby.storage.definitions.rules import RuleDefinitionManager
 
-        mgr = LocalWorkflowDefinitionManager(db)
+        mgr = RuleDefinitionManager(db)
         rule_body = {
             "event": "before_tool",
             "effects": [
@@ -1256,7 +1252,6 @@ class TestConsecutiveBlockScoping:
         }
         mgr.create(
             name="block-todowrite-test",
-            workflow_type="rule",
             definition_json=json.dumps(rule_body),
             source="installed",
             enabled=True,
@@ -1285,9 +1280,9 @@ class TestConsecutiveBlockScoping:
         self, db: HubDatabase
     ) -> None:
         """A BEFORE_TOOL gate block should not make the next STOP look like a tool failure."""
-        from gobby.storage.workflow_definitions import LocalWorkflowDefinitionManager
+        from gobby.storage.definitions.rules import RuleDefinitionManager
 
-        mgr = LocalWorkflowDefinitionManager(db)
+        mgr = RuleDefinitionManager(db)
         rule_body = {
             "event": "before_tool",
             "effects": [
@@ -1300,7 +1295,6 @@ class TestConsecutiveBlockScoping:
         }
         mgr.create(
             name="block-todowrite-stop-test",
-            workflow_type="rule",
             definition_json=json.dumps(rule_body),
             source="installed",
             enabled=True,
@@ -1338,9 +1332,9 @@ class TestConsecutiveBlockScoping:
         3. Read attempted → still works
         4. Agent can recover instead of being stuck
         """
-        from gobby.storage.workflow_definitions import LocalWorkflowDefinitionManager
+        from gobby.storage.definitions.rules import RuleDefinitionManager
 
-        mgr = LocalWorkflowDefinitionManager(db)
+        mgr = RuleDefinitionManager(db)
         rule_body = {
             "event": "before_tool",
             "effects": [
@@ -1353,7 +1347,6 @@ class TestConsecutiveBlockScoping:
         }
         mgr.create(
             name="block-todowrite-test",
-            workflow_type="rule",
             definition_json=json.dumps(rule_body),
             source="installed",
             enabled=True,

@@ -37,6 +37,7 @@ from gobby.agents.spawn_executor_support import (
     schedule_codex_prompt_delivery,
 )
 from gobby.mcp_proxy.server import GobbyDaemonTools
+from tests.agents.prepared_spawn import prepared_spawn
 
 pytestmark = pytest.mark.unit
 
@@ -96,6 +97,7 @@ async def test_managed_code_index_preflight_uses_issued_credential(
         project_id="project",
         code_index_preflight_mode="required",
         code_index_api_token="probe-token",
+        prepared_spawn=prepared_spawn(),
     )
 
     async def preflight(
@@ -146,6 +148,7 @@ async def test_required_managed_code_index_preflight_fails_closed(
         parent_session_id="parent",
         project_id="project",
         code_index_preflight_mode="required",
+        prepared_spawn=prepared_spawn(),
     )
 
     async def fail_preflight(*_args: object, **_kwargs: object) -> None:
@@ -189,6 +192,7 @@ async def test_best_effort_preflight_records_warning_without_operator_credential
         session_manager=session_manager,
         initial_variables={"additional_skills": ["code-index", "python"]},
         code_index_preflight_mode="best_effort",
+        prepared_spawn=prepared_spawn(),
     )
 
     async def fail_preflight(*_args: object, **kwargs: object) -> None:
@@ -233,6 +237,7 @@ async def test_native_subagent_strip_warns(caplog: pytest.LogCaptureFixture) -> 
         parent_session_id="parent",
         project_id="proj",
         agent_name="plan-adversary",
+        prepared_spawn=prepared_spawn(),
     )
 
     with caplog.at_level(logging.WARNING, logger="gobby.agents.spawn_executor"):
@@ -272,6 +277,7 @@ def test_record_resume_launch_details_uses_resolved_agent_run_id(
             "provider": "codex",
             "env": {CARGO_HOME: "/persisted/cargo", "PERSISTED": "old"},
         },
+        prepared_spawn=prepared_spawn(),
     )
     calls: list[tuple[object, str, dict[str, object]]] = []
 
@@ -326,6 +332,7 @@ class TestSpawnRequest:
             run_id="run-456",
             parent_session_id="parent-789",
             project_id="proj-abc",
+            prepared_spawn=prepared_spawn(),
         )
 
         assert request.prompt == "Test prompt"
@@ -346,6 +353,7 @@ class TestSpawnRequest:
             run_id="run",
             parent_session_id="parent",
             project_id="proj",
+            prepared_spawn=prepared_spawn(),
         )
 
         assert request.workflow is None
@@ -364,6 +372,7 @@ class TestSpawnRequest:
             run_id="run",
             parent_session_id="parent",
             project_id="proj",
+            prepared_spawn=prepared_spawn(),
         )
 
         assert request.sandbox_config is None
@@ -384,6 +393,7 @@ class TestSpawnRequest:
             sandbox_config=sandbox_config,
             sandbox_args=["--settings", '{"sandbox":{"enabled":true}}'],
             sandbox_env={"SEATBELT_PROFILE": "restrictive-closed"},
+            prepared_spawn=prepared_spawn(),
         )
 
         assert request.sandbox_config is not None
@@ -402,6 +412,7 @@ class TestSpawnRequest:
             run_id="run",
             parent_session_id="parent",
             project_id="proj",
+            prepared_spawn=prepared_spawn(),
         )
 
         assert request.api_base is None
@@ -419,6 +430,7 @@ class TestSpawnRequest:
             project_id="proj",
             api_base="http://localhost:1234/v1",
             api_token="sk-local",
+            prepared_spawn=prepared_spawn(),
         )
 
         assert request.api_base == "http://localhost:1234/v1"
@@ -491,6 +503,7 @@ class TestExecuteSpawn:
             project_id="proj",
             session_manager=mock_session_manager,
             machine_id="21000000-0000-4000-8000-000000000002",
+            prepared_spawn=prepared_spawn(),
         )
 
         # Mock prepare_terminal_spawn
@@ -520,6 +533,7 @@ class TestExecuteSpawn:
                 return_value=mock_spawner,
             ),
         ):
+            request.prepared_spawn = mock_spawn_context
             result = await execute_spawn(request)
 
             mock_spawner.spawn.assert_called_once()
@@ -541,6 +555,7 @@ class TestExecuteSpawn:
             project_id="proj",
             session_manager=mock_session_manager,
             machine_id="21000000-0000-4000-8000-000000000002",
+            prepared_spawn=prepared_spawn(),
         )
 
         mock_spawn_context = MagicMock()
@@ -568,6 +583,7 @@ class TestExecuteSpawn:
                 return_value=mock_spawner,
             ),
         ):
+            request.prepared_spawn = mock_spawn_context
             result = await execute_spawn(request)
 
             assert result.success is False
@@ -588,6 +604,7 @@ class TestExecuteSpawn:
             workflow="auto-task",
             session_manager=mock_session_manager,
             machine_id="21000000-0000-4000-8000-000000000002",
+            prepared_spawn=prepared_spawn(),
         )
 
         mock_spawn_context = MagicMock()
@@ -615,14 +632,12 @@ class TestExecuteSpawn:
                 return_value=mock_spawner,
             ),
         ):
+            request.prepared_spawn = mock_spawn_context
             await execute_spawn(request)
 
-            # Workflow is passed to prepare_terminal_spawn, not directly to spawner
-            mock_prepare.assert_called_once()
-            assert mock_prepare.call_count == 1
-            assert mock_prepare.call_args is not None
-            call_kwargs = mock_prepare.call_args.kwargs
-            assert call_kwargs.get("workflow_name") == "auto-task"
+            mock_prepare.assert_not_called()
+            assert request.workflow == "auto-task"
+            assert request.prepared_spawn is not None
 
     @pytest.mark.asyncio
     async def test_qwen_terminal_calls_prepare_terminal_spawn(self):
@@ -637,6 +652,7 @@ class TestExecuteSpawn:
             parent_session_id="parent",
             project_id="proj",
             session_manager=mock_session_manager,
+            prepared_spawn=prepared_spawn(),
         )
 
         mock_prepare = MagicMock(
@@ -670,9 +686,10 @@ class TestExecuteSpawn:
                 return_value=mock_spawner,
             ),
         ):
+            request.prepared_spawn = mock_prepare.return_value
             result = await execute_spawn(request)
 
-            mock_prepare.assert_called_once()
+            mock_prepare.assert_not_called()
             mock_spawner.spawn.assert_called_once()
             # Env vars ARE passed to spawn now (for hook dispatcher to read)
             call_kwargs = mock_spawner.spawn.call_args.kwargs
@@ -692,27 +709,16 @@ class TestExecuteSpawn:
             parent_session_id="parent",
             project_id="proj",
             session_manager=MagicMock(),
+            prepared_spawn=prepared_spawn(),
         )
-        loop = asyncio.get_running_loop()
-        prepare_started = asyncio.Event()
-        release_prepare = threading.Event()
-
-        def blocking_prepare(**_kwargs: object) -> MagicMock:
-            loop.call_soon_threadsafe(prepare_started.set)
-            release_prepare.wait(timeout=2.0)
-            return MagicMock(
-                session_id="gobby-sess-123",
-                agent_run_id="run-abc123",
-                env_vars={"GOBBY_SESSION_ID": "gobby-sess-123"},
-            )
-
+        request.prepared_spawn = prepared_spawn(
+            session_id="gobby-sess-123",
+            agent_run_id="run-abc123",
+            env_vars={"GOBBY_SESSION_ID": "gobby-sess-123"},
+        )
         mock_spawner = MagicMock()
         mock_spawner.spawn.return_value = MagicMock(success=True, pid=12345)
         with (
-            patch(
-                "gobby.agents.spawn_executor.prepare_terminal_spawn",
-                side_effect=blocking_prepare,
-            ),
             patch(
                 "gobby.agents.spawn_executor.build_cli_command",
                 return_value=(["qwen"], {}),
@@ -722,14 +728,8 @@ class TestExecuteSpawn:
                 return_value=mock_spawner,
             ),
         ):
-            started_at = loop.time()
-            spawn_task = asyncio.create_task(execute_spawn(request))
-            await asyncio.wait_for(prepare_started.wait(), timeout=1.0)
-            elapsed = loop.time() - started_at
-            release_prepare.set()
-            result = await asyncio.wait_for(spawn_task, timeout=2.0)
+            result = await execute_spawn(request)
 
-        assert elapsed < 0.5
         assert result.success is True
 
     @pytest.mark.asyncio
@@ -747,6 +747,7 @@ class TestExecuteSpawn:
             project_path="/main/repo",
             agent_run_id="run-abc123def456",
             session_manager=mock_session_manager,
+            prepared_spawn=prepared_spawn(),
         )
 
         call_order: list[str] = []
@@ -760,6 +761,7 @@ class TestExecuteSpawn:
                 "GOBBY_AGENT_API_TOKEN": "scoped-token",
             },
         )
+        request.prepared_spawn = spawn_context
         mock_prepare = MagicMock(
             side_effect=lambda **_kwargs: call_order.append("prepare") or spawn_context
         )
@@ -789,11 +791,10 @@ class TestExecuteSpawn:
             # prepare_terminal_spawn must be called with source='codex' and the
             # caller's agent_run_id threaded through unchanged.
             mock_preapprove.assert_called_once_with("codex", "/path")
-            mock_prepare.assert_called_once()
-            assert call_order == ["prepare", "preapprove"]
-            call_kwargs = mock_prepare.call_args.kwargs
-            assert call_kwargs["source"] == "codex"
-            assert call_kwargs["agent_run_id"] == "run-abc123def456"
+            mock_prepare.assert_not_called()
+            assert call_order == ["preapprove"]
+            assert request.provider == "codex"
+            assert request.agent_run_id == "run-abc123def456"
 
             # Command starts with `codex` and never invokes `resume`.
             spawn_kwargs = mock_spawner.spawn.call_args.kwargs
@@ -864,6 +865,7 @@ class TestExecuteSpawn:
             model="ollama/qwen3-coder",
             is_local=True,
             codex_oss_provider="ollama",
+            prepared_spawn=prepared_spawn(),
         )
         spawn_context = MagicMock(
             session_id="gobby-sess-local",
@@ -891,8 +893,8 @@ class TestExecuteSpawn:
         ):
             result = await execute_spawn(request)
 
-        mock_prepare.assert_called_once()
-        assert mock_prepare.call_args.kwargs["is_local"] is True
+        mock_prepare.assert_not_called()
+        assert request.is_local is True
         command = mock_spawner.spawn.call_args.kwargs["command"]
         assert command[:6] == [
             "codex",
@@ -917,6 +919,7 @@ class TestExecuteSpawn:
             project_id="proj",
             agent_run_id="run-abc123def456",
             session_manager=MagicMock(),
+            prepared_spawn=prepared_spawn(),
         )
         call_order: list[str] = []
         spawn_context = MagicMock(
@@ -924,6 +927,7 @@ class TestExecuteSpawn:
             agent_run_id="run-abc123def456",
             env_vars={"GOBBY_SESSION_ID": "gobby-sess-123"},
         )
+        request.prepared_spawn = spawn_context
         mock_spawner = MagicMock()
         mock_spawner.spawn.side_effect = lambda **_kwargs: call_order.append("spawn") or MagicMock(
             success=True, pid=12345, terminal_type="tmux"
@@ -952,7 +956,7 @@ class TestExecuteSpawn:
             result = await execute_spawn(request)
 
         assert result.success is True
-        assert call_order == ["prepare", "env", "command", "preapprove", "spawn"]
+        assert call_order == ["env", "command", "preapprove", "spawn"]
 
     @pytest.mark.asyncio
     async def test_codex_terminal_spawn_with_sandbox_config(self) -> None:
@@ -969,6 +973,7 @@ class TestExecuteSpawn:
             project_id="proj",
             session_manager=mock_session_manager,
             sandbox_config=sandbox_config,
+            prepared_spawn=prepared_spawn(),
         )
 
         mock_prepare = MagicMock(
@@ -1001,6 +1006,7 @@ class TestExecuteSpawn:
             ),
             patch("gobby.agents.spawn_executor.pre_approve_directory") as mock_preapprove,
         ):
+            request.prepared_spawn = mock_prepare.return_value
             result = await execute_spawn(request)
 
         mock_preapprove.assert_not_called()
@@ -1019,7 +1025,8 @@ class TestExecuteSpawn:
             run_id="run",
             parent_session_id="parent",
             project_id="proj",
-            # No session_manager provided
+            # No session_manager provided,
+            prepared_spawn=prepared_spawn(),
         )
 
         result = await execute_spawn(request)
@@ -1038,7 +1045,8 @@ class TestExecuteSpawn:
             run_id="run",
             parent_session_id="parent",
             project_id="proj",
-            # No session_manager provided
+            # No session_manager provided,
+            prepared_spawn=prepared_spawn(),
         )
 
         result = await execute_spawn(request)
@@ -1059,6 +1067,7 @@ class TestExecuteSpawn:
             parent_session_id="parent",
             project_id="proj",
             session_manager=mock_session_manager,
+            prepared_spawn=prepared_spawn(),
         )
 
         mock_prepare = MagicMock(
@@ -1093,6 +1102,7 @@ class TestExecuteSpawn:
                 return_value=mock_spawner,
             ),
         ):
+            request.prepared_spawn = mock_prepare.return_value
             result = await execute_spawn(request)
 
             assert result.success is False
@@ -1113,6 +1123,7 @@ class TestExecuteSpawn:
             session_manager=mock_session_manager,
             model="grok-build",
             effective_reasoning_effort="high",
+            prepared_spawn=prepared_spawn(),
         )
 
         mock_prepare = MagicMock(
@@ -1135,11 +1146,11 @@ class TestExecuteSpawn:
             patch("gobby.agents.spawn_executor.TmuxSpawner", return_value=mock_spawner),
             patch("gobby.agents.spawn_executor.pre_approve_directory") as mock_preapprove,
         ):
+            request.prepared_spawn = mock_prepare.return_value
             result = await execute_spawn(request)
 
-        mock_prepare.assert_called_once()
-        call_kwargs = mock_prepare.call_args.kwargs
-        assert call_kwargs["source"] == "grok"
+        mock_prepare.assert_not_called()
+        assert request.provider == "grok"
         mock_preapprove.assert_called_once_with("grok", "/path")
 
         spawn_kwargs = mock_spawner.spawn.call_args.kwargs
@@ -1176,6 +1187,7 @@ class TestExecuteSpawn:
             project_id="proj",
             session_manager=mock_session_manager,
             sandbox_config=SandboxConfig(enabled=True, mode="restrictive"),
+            prepared_spawn=prepared_spawn(),
         )
         mock_prepare = MagicMock(
             return_value=MagicMock(
@@ -1192,6 +1204,7 @@ class TestExecuteSpawn:
             patch("gobby.agents.spawn_executor.TmuxSpawner", return_value=mock_spawner),
             patch("gobby.agents.spawn_executor.pre_approve_directory"),
         ):
+            request.prepared_spawn = mock_prepare.return_value
             result = await execute_spawn(request)
 
         mock_spawner.spawn.assert_not_called()
@@ -1209,6 +1222,7 @@ class TestExecuteSpawn:
             run_id="run",
             parent_session_id="parent",
             project_id="proj",
+            prepared_spawn=prepared_spawn(),
         )
 
         result = await execute_spawn(request)
@@ -1237,6 +1251,7 @@ class TestExecuteSpawnSandbox:
             sandbox_config=sandbox_config,
             session_manager=mock_session_manager,
             machine_id="21000000-0000-4000-8000-000000000002",
+            prepared_spawn=prepared_spawn(),
         )
 
         mock_spawn_context = MagicMock()
@@ -1287,6 +1302,7 @@ class TestExecuteSpawnSandbox:
             patch("gobby.agents.spawn_executor.get_sandbox_resolver", return_value=mock_resolver),
             patch("gobby.agents.spawn_executor.pre_approve_directory"),
         ):
+            request.prepared_spawn = mock_spawn_context
             result = await execute_spawn(request)
 
         # Verify sandbox was resolved and env vars passed to spawn
@@ -1368,7 +1384,8 @@ class TestExecuteSpawnSandbox:
             project_id="proj",
             session_manager=mock_session_manager,
             machine_id="21000000-0000-4000-8000-000000000002",
-            # No sandbox_config specified
+            # No sandbox_config specified,
+            prepared_spawn=prepared_spawn(),
         )
 
         mock_spawn_context = MagicMock()
@@ -1393,6 +1410,7 @@ class TestExecuteSpawnSandbox:
                 return_value=mock_spawner,
             ),
         ):
+            request.prepared_spawn = mock_spawn_context
             result = await execute_spawn(request)
 
         mock_spawner.spawn.assert_called_once()
@@ -1421,6 +1439,7 @@ class TestExecuteSpawnSandbox:
             sandbox_config=sandbox_config,
             session_manager=mock_session_manager,
             machine_id="21000000-0000-4000-8000-000000000002",
+            prepared_spawn=prepared_spawn(),
         )
 
         mock_spawn_context = MagicMock()
@@ -1445,6 +1464,7 @@ class TestExecuteSpawnSandbox:
                 return_value=mock_spawner,
             ),
         ):
+            request.prepared_spawn = mock_spawn_context
             result = await execute_spawn(request)
 
         mock_spawner.spawn.assert_called_once()
@@ -1488,6 +1508,7 @@ class TestExecuteSpawnSandbox:
             project_id="proj",
             session_manager=mock_session_manager,
             sandbox_config=sandbox_config,
+            prepared_spawn=prepared_spawn(),
         )
 
         mock_prepare = MagicMock(
@@ -1517,6 +1538,7 @@ class TestExecuteSpawnSandbox:
                 return_value=mock_spawner,
             ),
         ):
+            request.prepared_spawn = mock_prepare.return_value
             result = await execute_spawn(request)
 
         mock_spawner.spawn.assert_not_called()
@@ -1538,6 +1560,7 @@ class TestExecuteSpawnSandbox:
             project_id="proj",
             session_manager=mock_session_manager,
             sandbox_config=sandbox_config,
+            prepared_spawn=prepared_spawn(),
         )
 
         mock_prepare = MagicMock(
@@ -1565,6 +1588,7 @@ class TestExecuteSpawnSandbox:
                 return_value=mock_spawner,
             ),
         ):
+            request.prepared_spawn = mock_prepare.return_value
             result = await execute_spawn(request)
 
         mock_get_resolver.assert_called_once_with("qwen")
@@ -1588,7 +1612,8 @@ class TestExecuteSpawnErrorPaths:
             run_id="run",
             parent_session_id="parent",
             project_id="proj",
-            # No session_manager
+            # No session_manager,
+            prepared_spawn=prepared_spawn(),
         )
 
         result = await execute_spawn(request)
@@ -1609,6 +1634,7 @@ class TestExecuteSpawnErrorPaths:
             parent_session_id="parent",
             project_id="proj",
             session_manager=mock_session_manager,
+            prepared_spawn=prepared_spawn(),
         )
 
         mock_prepare = MagicMock(
@@ -1637,6 +1663,7 @@ class TestExecuteSpawnErrorPaths:
             ),
             patch("gobby.agents.spawn_executor.pre_approve_directory") as mock_preapprove,
         ):
+            request.prepared_spawn = mock_prepare.return_value
             result = await execute_spawn(request)
 
         mock_preapprove.assert_called_once_with("codex", "/path")
@@ -1657,6 +1684,7 @@ class TestExecuteSpawnErrorPaths:
             project_id="proj",
             session_manager=mock_session_manager,
             machine_id="21000000-0000-4000-8000-00000000000e",
+            prepared_spawn=prepared_spawn(),
         )
 
         mock_spawn_context = MagicMock()
@@ -1682,6 +1710,7 @@ class TestExecuteSpawnErrorPaths:
                 return_value=mock_spawner,
             ),
         ):
+            request.prepared_spawn = mock_spawn_context
             result = await execute_spawn(request)
 
         assert result.success is True
@@ -1704,6 +1733,7 @@ class TestExecuteSpawnErrorPaths:
             project_id="proj",
             session_manager=MagicMock(),
             machine_id="21000000-0000-4000-8000-000000000022",
+            prepared_spawn=prepared_spawn(),
         )
 
         mock_spawn_context = MagicMock()
@@ -1728,6 +1758,7 @@ class TestExecuteSpawnErrorPaths:
                 return_value=mock_spawner,
             ),
         ):
+            request.prepared_spawn = mock_spawn_context
             result = await execute_spawn(request)
 
         command = mock_spawner.spawn.call_args.kwargs["command"]
@@ -1752,6 +1783,7 @@ class TestExecuteSpawnErrorPaths:
             project_id="proj",
             session_manager=MagicMock(),
             machine_id="21000000-0000-4000-8000-000000000022",
+            prepared_spawn=prepared_spawn(),
         )
 
         mock_spawn_context = MagicMock()
@@ -1776,6 +1808,7 @@ class TestExecuteSpawnErrorPaths:
                 return_value=mock_spawner,
             ),
         ):
+            request.prepared_spawn = mock_spawn_context
             result = await execute_spawn(request)
 
         command = mock_spawner.spawn.call_args.kwargs["command"]
@@ -1801,6 +1834,7 @@ class TestExecuteSpawnErrorPaths:
             project_id="proj",
             session_manager=mock_session_manager,
             machine_id="21000000-0000-4000-8000-000000000022",
+            prepared_spawn=prepared_spawn(),
         )
 
         mock_spawn_context = MagicMock()
@@ -1826,6 +1860,7 @@ class TestExecuteSpawnErrorPaths:
                 return_value=mock_spawner,
             ),
         ):
+            request.prepared_spawn = mock_spawn_context
             result = await execute_spawn(request)
 
         assert result.tmux_session_name == "gobby-abc"
@@ -1847,6 +1882,7 @@ class TestApplyExtraEnv:
             parent_session_id="parent",
             project_id="proj",
             extra_env={PATH_ENV_VAR: os.pathsep.join(("/work/.gobby/bin", "/usr/bin"))},
+            prepared_spawn=prepared_spawn(),
         )
         env = {PATH_ENV_VAR: "/bin"}
 
@@ -1874,6 +1910,7 @@ class TestApplyExtraEnv:
                 CARGO_HOME: "/bad/cargo-home",
                 "CUSTOM_FLAG": "1",
             },
+            prepared_spawn=prepared_spawn(),
         )
         env = {
             "GOBBY_SESSION_ID": "gobby-sess-123",
@@ -1978,6 +2015,7 @@ def test_capability_token_never_in_argv_or_metadata(
         agent_run_id="run-uuid",
         session_manager=cast("ChildSessionManager", session_manager),
         resume_metadata_json={"provider": "codex"},
+        prepared_spawn=prepared_spawn(),
     )
     persisted: list[dict[str, object]] = []
 

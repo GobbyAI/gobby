@@ -8,6 +8,9 @@ from typing import Any
 
 from gobby.app_context import get_app_context
 from gobby.hooks.event_handlers._base import EventHandlersBase
+from gobby.hooks.event_handlers._session_start.in_place_compact import (
+    apply_in_place_compact_context_loss,
+)
 from gobby.hooks.events import HookEvent, HookResponse, SessionSource
 from gobby.hooks.normalization import notification_type_from_payload
 from gobby.mcp_proxy.tools.worktrees._helpers import (
@@ -246,6 +249,14 @@ class MiscEventHandlerMixin(EventHandlersBase):
             )
 
         if source == "grok" and event.source is SessionSource.GROK:
+            try:
+                apply_in_place_compact_context_loss(self, session_id)
+            except Exception:
+                self.logger.warning(
+                    "POST_COMPACT: failed in-place compact context-loss closeout for session %s",
+                    session_id,
+                    exc_info=True,
+                )
             try:
                 consume_and_schedule_compact_self_continuation(
                     self._session_manager.db,

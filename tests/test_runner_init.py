@@ -1176,3 +1176,50 @@ class TestGobbyRunnerInitEdgeCases:
             runner = GobbyRunner()
 
             assert runner._shutdown_requested is False
+
+
+class TestDefinitionRevisionListenerLifecycle:
+    def test_sync_construct_builds_listener_without_event_loop(
+        self,
+        mock_config_with_websocket: MagicMock,
+    ) -> None:
+        patches = create_base_patches(mock_config=mock_config_with_websocket)
+
+        with ExitStack() as stack:
+            for patch_context in patches:
+                stack.enter_context(patch_context)
+            runner = GobbyRunner()
+
+        listener = runner.definition_revision_listener
+        assert listener is not None
+        assert listener.listen_task is None
+        assert listener.poll_task is None
+
+    def test_construction_failure_after_listener_rolls_back_listener(
+        self,
+        mock_config_with_websocket: MagicMock,
+    ) -> None:
+        from gobby.storage.definitions.notifications import DefinitionRevisionListener
+
+        patches = create_base_patches(mock_config=mock_config_with_websocket)
+        closed: list[str] = []
+        real_close = DefinitionRevisionListener.close
+
+        async def tracking_close(self: DefinitionRevisionListener) -> None:
+            closed.append("close")
+            await real_close(self)
+
+        with ExitStack() as stack:
+            for patch_context in patches:
+                stack.enter_context(patch_context)
+            stack.enter_context(
+                patch(
+                    "gobby.runner_init.init_runtime_capacity",
+                    side_effect=RuntimeError("post-storage boom"),
+                )
+            )
+            stack.enter_context(patch.object(DefinitionRevisionListener, "close", tracking_close))
+            with pytest.raises(RuntimeError, match="post-storage boom"):
+                GobbyRunner()
+
+        assert closed == ["close"]

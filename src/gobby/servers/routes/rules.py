@@ -1,9 +1,8 @@
 """
 Rule routes for Gobby HTTP server.
 
-Provides CRUD endpoints for standalone rules stored as workflow_definitions
-with workflow_type='rule'. Wraps LocalWorkflowDefinitionManager with
-rule-specific filtering and validation.
+Provides CRUD endpoints for standalone rules stored in rule_definitions.
+Wraps RuleDefinitionManager with rule-specific filtering and validation.
 """
 
 import json
@@ -22,11 +21,11 @@ from gobby.mcp_proxy.tools.workflows._rules import (
 )
 from gobby.servers.routes.configuration_context import require_config_snapshot
 from gobby.workflows.definitions import split_rule_definition_data
-from gobby.workflows.loader import _is_bundled_template
+from gobby.workflows.pipeline_loader import _is_bundled_template
 
 if TYPE_CHECKING:
     from gobby.servers.http import HTTPServer
-    from gobby.storage.workflow_definitions import LocalWorkflowDefinitionManager
+    from gobby.storage.definitions.rules import RuleDefinitionManager
 
 logger = logging.getLogger(__name__)
 
@@ -80,10 +79,23 @@ def create_rules_router(server: "HTTPServer") -> APIRouter:
     """Create rules router with endpoints bound to server instance."""
     router = APIRouter(prefix="/api/rules", tags=["rules"])
 
-    def _get_manager() -> "LocalWorkflowDefinitionManager":
-        from gobby.storage.workflow_definitions import LocalWorkflowDefinitionManager
+    def _get_manager() -> "RuleDefinitionManager":
+        from gobby.storage.definitions.rules import RuleDefinitionManager
 
-        return LocalWorkflowDefinitionManager(server.services.database)
+        return RuleDefinitionManager(server.services.database)
+
+    def _rule_body(row: Any) -> dict[str, Any]:
+        payload = row.definition_json
+        if isinstance(payload, dict):
+            body = payload
+        else:
+            parsed = json.loads(payload)
+            if not isinstance(parsed, dict):
+                raise TypeError("rule definition must be a JSON object")
+            body = parsed
+        if "event" not in body:
+            raise TypeError("rule definition missing event")
+        return body
 
     async def _broadcast_rule(event: str, definition_id: str, **kwargs: Any) -> None:
         """Broadcast a rule event via WebSocket if available."""
@@ -103,13 +115,11 @@ def create_rules_router(server: "HTTPServer") -> APIRouter:
         """List distinct rule groups."""
         try:
             manager = _get_manager()
-            rows = await server.run_db(manager.list_all, workflow_type="rule")
+            rows = await server.run_db(manager.list_all)
             groups: set[str] = set()
             for row in rows:
                 try:
-                    body = json.loads(row.definition_json)
-                    if not isinstance(body, dict):
-                        raise TypeError("rule definition must be a JSON object")
+                    body = _rule_body(row)
                 except (json.JSONDecodeError, TypeError) as e:
                     logger.warning("Skipping unparseable rule '%s': %s", row.name, e)
                     continue
@@ -129,13 +139,11 @@ def create_rules_router(server: "HTTPServer") -> APIRouter:
         """List distinct rule tags."""
         try:
             manager = _get_manager()
-            rows = await server.run_db(manager.list_all, workflow_type="rule")
+            rows = await server.run_db(manager.list_all)
             tags: set[str] = set()
             for row in rows:
                 try:
-                    body = json.loads(row.definition_json)
-                    if not isinstance(body, dict):
-                        raise TypeError("rule definition must be a JSON object")
+                    _rule_body(row)
                 except (json.JSONDecodeError, TypeError) as e:
                     logger.warning("Skipping unparseable rule '%s': %s", row.name, e)
                     continue
@@ -221,9 +229,7 @@ def create_rules_router(server: "HTTPServer") -> APIRouter:
             raise HTTPException(status_code=400, detail="source must be 'installed' or 'project'")
         try:
             manager = _get_manager()
-            rows = await server.run_db(
-                manager.list_all, workflow_type="rule", include_deleted=False
-            )
+            rows = await server.run_db(manager.list_all, include_deleted=False)
             count = 0
             failures: list[dict[str, str]] = []
             for row in rows:
@@ -285,7 +291,7 @@ def create_rules_router(server: "HTTPServer") -> APIRouter:
         manager = _get_manager()
 
         row = await server.run_db(manager.get_by_name, name)
-        if row is None or row.workflow_type != "rule":
+        if row is None:
             raise HTTPException(status_code=404, detail=f"Rule '{name}' not found")
 
         fields = request.model_dump(exclude_unset=True)
@@ -314,7 +320,7 @@ def create_rules_router(server: "HTTPServer") -> APIRouter:
             existing_rule = next(
                 (
                     candidate
-                    for candidate in await server.run_db(manager.list_all, workflow_type="rule")
+                    for candidate in await server.run_db(manager.list_all)
                     if candidate.name == new_name and candidate.id != row.id
                 ),
                 None,
@@ -339,7 +345,7 @@ def create_rules_router(server: "HTTPServer") -> APIRouter:
             )
             raise HTTPException(status_code=500, detail="Internal server error") from e
 
-        body = json.loads(updated.definition_json)
+        body = _rule_body(updated)
         return {
             "status": "success",
             "rule": {

@@ -22,7 +22,7 @@ def _agent(name: str) -> dict[str, Any]:
 
 
 def _step(agent: dict[str, Any], name: str) -> dict[str, Any]:
-    steps = cast(list[dict[str, Any]], agent["steps"])
+    steps = cast(list[dict[str, Any]], agent["step_workflow"]["steps"])
     matches = [step for step in steps if step["name"] == name]
     assert len(matches) == 1
     return matches[0]

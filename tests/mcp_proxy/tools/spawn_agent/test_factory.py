@@ -13,15 +13,29 @@ import pytest
 from gobby.agents.isolation import IsolationContext
 from gobby.storage.hub.protocol import HubDatabase
 from gobby.storage.projects import LocalProjectManager
-from gobby.storage.workflow_definitions import LocalWorkflowDefinitionManager
 from gobby.workflows.definitions import (
     AgentDefinitionBody,
+    AgentStepWorkflowBody,
     PipelineDefinition,
     PipelineStep,
     WorkflowStep,
 )
+from tests.agents.prepared_spawn import prepared_spawn
 
 pytestmark = pytest.mark.unit
+
+
+@pytest.fixture(autouse=True)
+def _stub_prelaunch_prepare(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Factory tests mock execute_spawn; preparation now happens first."""
+    monkeypatch.setattr(
+        "gobby.mcp_proxy.tools.spawn_agent._implementation.prepare_terminal_spawn",
+        lambda *args, **kwargs: prepared_spawn(),
+    )
+    monkeypatch.setattr(
+        "gobby.mcp_proxy.tools.spawn_agent._implementation.persist_initial_step_instance",
+        lambda *args, **kwargs: None,
+    )
 
 
 class TestCreateSpawnAgentRegistry:
@@ -131,14 +145,14 @@ class TestSpawnAgentDefaults:
                 "gobby.mcp_proxy.tools.spawn_agent._factory._load_agent_body",
                 return_value=AgentDefinitionBody(name="default", provider="claude"),
             ),
-            patch("gobby.workflows.loader.WorkflowLoader") as loader_class,
+            patch("gobby.workflows.pipeline_loader.PipelineLoader") as loader_class,
             patch(
                 "gobby.mcp_proxy.tools.spawn_agent._factory.spawn_agent_impl",
                 new_callable=AsyncMock,
                 return_value={"success": True},
             ) as mock_spawn_impl,
         ):
-            loader_class.return_value.load_workflow = AsyncMock(return_value=pipeline)
+            loader_class.return_value.load_pipeline = AsyncMock(return_value=pipeline)
 
             result = await registry.call(
                 "spawn_agent",
@@ -150,7 +164,7 @@ class TestSpawnAgentDefaults:
             )
 
         assert result["success"] is True
-        loader_class.return_value.load_workflow.assert_awaited_once_with(
+        loader_class.return_value.load_pipeline.assert_awaited_once_with(
             "review-pipeline",
             project_path="/path/to/project",
         )
@@ -970,46 +984,39 @@ class TestSpawnAgentPromptPreamble:
             assert spawn_request.agent_name == "default"
 
 
-class TestRegisterAgentStepWorkflow:
-    """Regression tests for _register_agent_step_workflow self-healing behavior."""
+class TestPreparedSnapshotCreation:
+    """Registration is gone; spawn persists a typed snapshot instead."""
 
-    @pytest.fixture
-    def db(self, temp_db: HubDatabase) -> HubDatabase:
-        database = temp_db
-        return database
+    def test_register_symbol_is_deleted(self) -> None:
+        import gobby.mcp_proxy.tools.spawn_agent._factory as factory
 
-    def test_self_heals_workflow_type_when_existing_row_is_corrupted(self, db: HubDatabase) -> None:
-        """A pre-existing `<agent>-steps` row with workflow_type='pipeline' must be
-        repaired to 'workflow' on the next spawn. Without this, a single corrupted
-        row stays corrupted forever and breaks the loader on every restart.
-        """
-        from gobby.mcp_proxy.tools.spawn_agent._factory import (
-            _register_agent_step_workflow,
-        )
+        assert not hasattr(factory, "_register_agent_step_workflow")
 
-        mgr = LocalWorkflowDefinitionManager(db)
-        # Seed a corrupted row exactly matching the live failure mode:
-        # workflow_type='pipeline' but JSON body is a step workflow.
-        mgr.create(
-            name="rogue-agent-steps",
-            definition_json=json.dumps({"name": "rogue-agent-steps", "type": "step"}),
-            workflow_type="pipeline",
-            source="agent",
-            enabled=False,
-        )
+    def test_persist_initial_step_instance_creates_snapshot(self) -> None:
+        from gobby.mcp_proxy.tools.spawn_agent._step_state import persist_initial_step_instance
 
-        body = AgentDefinitionBody(
-            name="rogue-agent",
-            steps=[WorkflowStep(name="claim")],
-        )
-        returned_name = _register_agent_step_workflow(body, db)
+        db = MagicMock()
+        saved: list[Any] = []
 
-        assert returned_name == "rogue-agent-steps"
-        repaired = mgr.get_by_name("rogue-agent-steps")
-        assert repaired is not None
-        assert repaired.workflow_type == "workflow"
-        assert repaired.source == "agent"
-        # Body now matches what the factory writes, not the seeded stub.
-        body_json = json.loads(repaired.definition_json)
-        assert body_json["type"] == "step"
-        assert body_json["steps"][0]["name"] == "claim"
+        class _Manager:
+            def save(self, instance: Any) -> None:
+                saved.append(instance)
+
+        with patch(
+            "gobby.mcp_proxy.tools.spawn_agent._step_state.AgentStepInstanceManager",
+            return_value=_Manager(),
+        ):
+            body = AgentDefinitionBody(
+                name="rogue-agent",
+                step_workflow=AgentStepWorkflowBody(steps=[WorkflowStep(name="claim")]),
+            )
+            persist_initial_step_instance(
+                db,
+                body,
+                session_id="11111111-1111-4111-8111-111111111111",
+                step_workflow_id="aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa",
+            )
+        assert len(saved) == 1
+        assert saved[0].agent_name == "rogue-agent"
+        assert saved[0].current_step == "claim"
+        assert saved[0].snapshot.steps[0].name == "claim"

@@ -96,7 +96,7 @@ class TestManifestEmissionOnApproval:
 
     def test_review_step_does_not_block_review_approval(self, agent: AgentDefinitionBody) -> None:
         """Sanity: the existing review approval wiring stays intact."""
-        review = find_step(agent.steps or [], "review")
+        review = find_step((agent.step_workflow.steps if agent.step_workflow else []), "review")
         assert review is not None
         blocked = review.blocked_mcp_tools or []
         assert "gobby-tasks-ops:approve_review" not in blocked
@@ -107,11 +107,11 @@ class TestTerminalCleanupOwnership:
         self,
         agent: AgentDefinitionBody,
     ) -> None:
-        review = find_step(agent.steps or [], "review")
+        review = find_step((agent.step_workflow.steps if agent.step_workflow else []), "review")
         assert review is not None
-        assert find_step(agent.steps or [], "backfill_lessons") is None
-        assert find_step(agent.steps or [], "relay_backfill_failure") is None
-        assert find_step(agent.steps or [], "deliver_result") is None
+        assert find_step((agent.step_workflow.steps if agent.step_workflow else []), "backfill_lessons") is None
+        assert find_step((agent.step_workflow.steps if agent.step_workflow else []), "relay_backfill_failure") is None
+        assert find_step((agent.step_workflow.steps if agent.step_workflow else []), "deliver_result") is None
         assert any(
             transition.to == "terminate" and transition.when == "vars.review_complete"
             for transition in review.transitions
@@ -141,7 +141,7 @@ class TestCoordinatorOwnedWrites:
         self,
         agent: AgentDefinitionBody,
     ) -> None:
-        review = find_step(agent.steps or [], "review")
+        review = find_step((agent.step_workflow.steps if agent.step_workflow else []), "review")
         assert review is not None
         assert {
             "gobby-plans:apply_plan_review_manifest",

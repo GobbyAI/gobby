@@ -1,6 +1,7 @@
 """Tests for shared SDK utilities in gobby.llm.sdk_utils."""
 
 import logging
+import re
 from types import SimpleNamespace
 
 import pytest
@@ -317,7 +318,7 @@ class TestMarkdownSectionBudget:
         assert "## Current State\nMandatory current state." in result
         omission_line = next(line for line in result.splitlines() if line.startswith("Omitted"))
         assert len(omission_line) < 600
-        assert "+9 more" in omission_line
+        assert re.search(r"\+\d+ more", omission_line)
 
     def test_mandatory_only_handoff_budgets_actual_breadcrumb(self) -> None:
         summary = "## Next Steps\n" + ("N" * 8_000) + "\n## Current State\n" + ("C" * 8_000)

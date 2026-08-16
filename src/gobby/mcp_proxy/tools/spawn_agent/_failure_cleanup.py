@@ -31,12 +31,27 @@ async def cleanup_failed_spawn(
     cleanup_isolation: bool,
     task_manager: Any | None,
     child_session_id: str | None = None,
+    pid: int | None = None,
+    tmux_session_name: str | None = None,
+    tmux_socket_name: str | None = None,
+    tmux_socket_path: str | None = None,
 ) -> None:
     run_storage = getattr(runner, "run_storage", None)
+    run = run_storage.get(run_id) if run_storage is not None else None
+    if child_session_id is None:
+        child_session_id = _string_attr(run, "child_session_id")
+    if pid is None:
+        raw_pid = getattr(run, "pid", None)
+        pid = raw_pid if isinstance(raw_pid, int) else None
+    if tmux_session_name is None:
+        tmux_session_name = _string_attr(run, "tmux_session_name")
+    await _terminate_spawn_process(
+        pid=pid,
+        tmux_session_name=tmux_session_name,
+        tmux_socket_name=tmux_socket_name,
+        tmux_socket_path=tmux_socket_path,
+    )
     if run_storage is not None:
-        run = run_storage.get(run_id)
-        if child_session_id is None:
-            child_session_id = _string_attr(run, "child_session_id")
         from gobby.mcp_proxy.tools.agent_cancellation import (
             terminalize_cancelled_agent_run,
         )
@@ -50,6 +65,16 @@ async def cleanup_failed_spawn(
             task_manager=task_manager,
             message=error,
         )
+        db = getattr(run_storage, "db", None)
+        if db is not None:
+            from gobby.agents.runtime_cleanup import cleanup_agent_runtime_state
+
+            cleanup_agent_runtime_state(
+                db,
+                run_id=run_id,
+                child_session_id=child_session_id,
+                terminal_reason="spawn_rollback",
+            )
     await cleanup_created_isolation(handler, spawn_config, cleanup=cleanup_isolation)
     _delete_child_session(runner, run_storage, run_id, child_session_id)
 
@@ -161,6 +186,45 @@ def _delete_child_session(
             child_session_id,
             exc,
         )
+
+
+async def _terminate_spawn_process(
+    *,
+    pid: int | None,
+    tmux_session_name: str | None,
+    tmux_socket_name: str | None,
+    tmux_socket_path: str | None,
+) -> None:
+    if pid is not None:
+        import os
+        import signal
+
+        try:
+            os.kill(pid, signal.SIGTERM)
+        except ProcessLookupError:
+            pass
+        except Exception as exc:
+            logging.getLogger(__name__).warning("Failed to terminate spawn pid %s: %s", pid, exc)
+        try:
+            os.kill(pid, signal.SIGKILL)
+        except ProcessLookupError:
+            pass
+        except Exception as exc:
+            logging.getLogger(__name__).warning("Failed to kill spawn pid %s: %s", pid, exc)
+    if tmux_session_name:
+        try:
+            from gobby.agents.tmux import get_tmux_session_manager
+
+            manager = get_tmux_session_manager()
+            await manager.kill_session(tmux_session_name, missing_ok=True)
+        except Exception as exc:
+            logging.getLogger(__name__).warning(
+                "Failed to kill tmux session %s (socket=%s path=%s): %s",
+                tmux_session_name,
+                tmux_socket_name,
+                tmux_socket_path,
+                exc,
+            )
 
 
 def _string_attr(obj: Any, name: str) -> str | None:

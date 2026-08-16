@@ -27,7 +27,7 @@ if TYPE_CHECKING:
     from gobby.storage.tasks import LocalTaskManager
     from gobby.storage.worktrees import LocalWorktreeManager
     from gobby.workflows.dry_run import MCPInventoryProtocol
-    from gobby.workflows.loader import WorkflowLoader
+    from gobby.workflows.pipeline_loader import PipelineLoader
     from gobby.worktrees.git import WorktreeGitManager
 
 
@@ -42,7 +42,7 @@ def create_agents_registry(
     clone_manager: CloneGitManager | None = None,
     # For mode=self (workflow activation on caller session)
     db: HubDatabase | None = None,
-    workflow_loader: WorkflowLoader | None = None,
+    workflow_loader: PipelineLoader | None = None,
     mcp_inventory: MCPInventoryProtocol | None = None,
     completion_registry: CompletionEventRegistry | None = None,
     lifecycle_monitor: AgentLifecycleMonitor | None = None,

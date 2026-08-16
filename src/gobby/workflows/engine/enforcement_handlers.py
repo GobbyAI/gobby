@@ -8,7 +8,7 @@ from typing import TYPE_CHECKING, Any
 from gobby.hooks.events import HookEvent, HookResponse
 from gobby.workflows.definitions import WorkflowStep
 from gobby.workflows.safe_evaluator import SafeExpressionEvaluator
-from gobby.workflows.state_manager import WorkflowInstanceManager
+from gobby.workflows.step_instances import AgentStepInstanceManager
 
 if TYPE_CHECKING:
     from gobby.storage.workflow_audit import WorkflowAuditManager
@@ -19,7 +19,7 @@ logger = logging.getLogger("gobby.workflows.engine.enforcement")
 class EnforcementHandlerMixin:
     """Evaluate workflow on_mcp_before/on_mcp_success handler values."""
 
-    instance_manager: WorkflowInstanceManager
+    instance_manager: AgentStepInstanceManager
 
     if TYPE_CHECKING:
         workflow_audit: WorkflowAuditManager
@@ -162,7 +162,7 @@ class EnforcementHandlerMixin:
                     vars_changed = True
                     self._audit_step_set_variable(
                         session_id,
-                        instance.workflow_name,
+                        instance.agent_name,
                         step.name,
                         mcp_key,
                         str(var_name),
@@ -172,19 +172,19 @@ class EnforcementHandlerMixin:
 
             if action == "block":
                 if vars_changed:
-                    instance_mgr.save_instance(instance)
+                    instance_mgr.save(instance)
                 raw_reason = str(
                     handler.get("reason")
                     or (f"MCP tool '{mcp_key}' is blocked by a workflow on_mcp_before handler.")
                 )
                 reason = (
                     f"Rule enforced by Gobby: "
-                    f"[step-enforcement:{instance.workflow_name}/{step.name}]\n"
+                    f"[step-enforcement:{instance.agent_name}/{step.name}]\n"
                     f"{raw_reason}"
                 )
                 self._audit_step_tool_call(
                     session_id,
-                    instance.workflow_name,
+                    instance.agent_name,
                     step.name,
                     tool_name,
                     "block",
@@ -194,5 +194,5 @@ class EnforcementHandlerMixin:
                 return HookResponse(decision="block", reason=reason)
 
         if vars_changed:
-            instance_mgr.save_instance(instance)
+            instance_mgr.save(instance)
         return None

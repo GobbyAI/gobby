@@ -5,7 +5,7 @@ from __future__ import annotations
 import asyncio
 import logging
 from collections.abc import Awaitable, Callable
-from typing import TYPE_CHECKING, Any, Protocol
+from typing import TYPE_CHECKING, Any, Protocol, cast
 
 from gobby.memory.services._search_models import _Candidates
 from gobby.memory.services._search_rrf import rrf_scores
@@ -17,6 +17,51 @@ if TYPE_CHECKING:
     from gobby.memory.vectorstore import VectorStore
 
 logger = logging.getLogger(__name__)
+_HYBRID_QDRANT_TIMEOUT_SECONDS = 10.0
+
+
+def _qdrant_hits_or_empty(
+    result: object,
+    *,
+    service: SearchPathHost,
+    caller: str,
+    project_id: str | None,
+    candidate_limit: int,
+    path: str,
+    recoverable_message: str,
+) -> list[tuple[str, float]]:
+    """Normalize a gathered Qdrant result without taking the store down on timeout."""
+    if not isinstance(result, BaseException):
+        return cast(list[tuple[str, float]], result)
+    if isinstance(result, asyncio.CancelledError):
+        raise result
+    if isinstance(result, TimeoutError):
+        logger.info(
+            "Qdrant search timed out; falling back to non-vector results",
+            extra={
+                "caller": caller,
+                "project_id": project_id,
+                "limit": candidate_limit,
+                "path": path,
+                "error": str(result),
+            },
+        )
+        return []
+    if is_recoverable_vector_store_error(result):
+        service._log_vector_store_failure(recoverable_message, result)
+        return []
+    logger.warning(
+        "Qdrant search failed",
+        extra={
+            "caller": caller,
+            "project_id": project_id,
+            "limit": candidate_limit,
+            "path": path,
+            "error": str(result),
+        },
+        exc_info=result,
+    )
+    return []
 
 
 class SearchPathHost(Protocol):
@@ -118,6 +163,7 @@ async def search_with_graph(
             query_embedding,
             limit=candidate_limit,
             filters=filters or None,
+            timeout=_HYBRID_QDRANT_TIMEOUT_SECONDS,
         )
         graph_coro = service._search_graph_scored(
             query_embedding=query_embedding,
@@ -136,29 +182,15 @@ async def search_with_graph(
             qdrant_coro, graph_coro, keyword_coro, return_exceptions=True
         )
 
-        if isinstance(qdrant_result, BaseException):
-            if isinstance(qdrant_result, asyncio.CancelledError):
-                raise qdrant_result
-            if is_recoverable_vector_store_error(qdrant_result):
-                service._log_vector_store_failure(
-                    "Qdrant search unavailable; falling back to non-vector results",
-                    qdrant_result,
-                )
-            else:
-                logger.warning(
-                    "Qdrant search failed",
-                    extra={
-                        "caller": caller,
-                        "project_id": project_id,
-                        "limit": candidate_limit,
-                        "path": "qdrant_graph_keyword",
-                        "error": str(qdrant_result),
-                    },
-                    exc_info=qdrant_result,
-                )
-            qdrant_results: list[tuple[str, float]] = []
-        else:
-            qdrant_results = qdrant_result
+        qdrant_results = _qdrant_hits_or_empty(
+            qdrant_result,
+            service=service,
+            caller=caller,
+            project_id=project_id,
+            candidate_limit=candidate_limit,
+            path="qdrant_graph_keyword",
+            recoverable_message=("Qdrant search unavailable; falling back to non-vector results"),
+        )
 
         if isinstance(graph_result, BaseException):
             if isinstance(graph_result, asyncio.CancelledError):
@@ -309,6 +341,7 @@ async def search_qdrant_keyword(
             query_embedding,
             limit=candidate_limit,
             filters=filters or None,
+            timeout=_HYBRID_QDRANT_TIMEOUT_SECONDS,
         )
         keyword_coro = service._keyword_ranked(
             query,
@@ -320,29 +353,15 @@ async def search_qdrant_keyword(
             qdrant_coro, keyword_coro, return_exceptions=True
         )
 
-        if isinstance(qdrant_result, BaseException):
-            if isinstance(qdrant_result, asyncio.CancelledError):
-                raise qdrant_result
-            if is_recoverable_vector_store_error(qdrant_result):
-                service._log_vector_store_failure(
-                    "Qdrant search unavailable; falling back to keyword results",
-                    qdrant_result,
-                )
-            else:
-                logger.warning(
-                    "Qdrant search failed",
-                    extra={
-                        "caller": caller,
-                        "project_id": project_id,
-                        "limit": candidate_limit,
-                        "path": "qdrant_keyword",
-                        "error": str(qdrant_result),
-                    },
-                    exc_info=qdrant_result,
-                )
-            qdrant_results: list[tuple[str, float]] = []
-        else:
-            qdrant_results = qdrant_result
+        qdrant_results = _qdrant_hits_or_empty(
+            qdrant_result,
+            service=service,
+            caller=caller,
+            project_id=project_id,
+            candidate_limit=candidate_limit,
+            path="qdrant_keyword",
+            recoverable_message="Qdrant search unavailable; falling back to keyword results",
+        )
 
         if isinstance(keyword_result, BaseException):
             if isinstance(keyword_result, asyncio.CancelledError):

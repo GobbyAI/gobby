@@ -13,7 +13,7 @@ from gobby.config.app import DaemonConfig
 from gobby.config.runtime_models import ConfigSnapshot
 from gobby.hooks.events import HookEvent, HookEventType, SessionSource
 from gobby.storage.hub.protocol import HubDatabase
-from gobby.storage.workflow_definitions import LocalWorkflowDefinitionManager
+from gobby.storage.definitions.rules import RuleDefinitionManager
 from gobby.workflows.definitions import RuleDefinitionBody, RuleEffect, RuleTriggerEvent
 from gobby.workflows.engine.blocked_tool_recovery import format_aggregated_block_reason
 from gobby.workflows.engine.core import RuleEngine
@@ -31,8 +31,8 @@ def db(temp_db: HubDatabase) -> HubDatabase:
 
 
 @pytest.fixture
-def manager(db: HubDatabase) -> LocalWorkflowDefinitionManager:
-    return LocalWorkflowDefinitionManager(db)
+def manager(db: HubDatabase) -> RuleDefinitionManager:
+    return RuleDefinitionManager(db)
 
 
 def _runtime_with(values: dict[str, object]) -> Any:
@@ -65,7 +65,7 @@ def _make_event() -> HookEvent:
 
 
 def _insert_rule(
-    manager: LocalWorkflowDefinitionManager,
+    manager: RuleDefinitionManager,
     name: str,
     effects: list[RuleEffect],
     *,
@@ -80,7 +80,6 @@ def _insert_rule(
     manager.create(
         name=name,
         definition_json=json.dumps(body.model_dump(mode="json")),
-        workflow_type="rule",
         priority=priority,
         enabled=True,
     )
@@ -89,7 +88,7 @@ def _insert_rule(
 class TestAggregateBlocks:
     @pytest.mark.asyncio
     async def test_matching_blocks_aggregate_in_priority_order(
-        self, db: HubDatabase, manager: LocalWorkflowDefinitionManager
+        self, db: HubDatabase, manager: RuleDefinitionManager
     ) -> None:
         _insert_rule(
             manager,
@@ -126,7 +125,7 @@ class TestAggregateBlocks:
 
     @pytest.mark.asyncio
     async def test_single_block_output_is_unchanged(
-        self, db: HubDatabase, manager: LocalWorkflowDefinitionManager
+        self, db: HubDatabase, manager: RuleDefinitionManager
     ) -> None:
         _insert_rule(
             manager,
@@ -141,7 +140,7 @@ class TestAggregateBlocks:
 
     @pytest.mark.asyncio
     async def test_aggregate_blocks_false_restores_first_block_behavior(
-        self, db: HubDatabase, manager: LocalWorkflowDefinitionManager
+        self, db: HubDatabase, manager: RuleDefinitionManager
     ) -> None:
         _insert_rule(
             manager,
@@ -168,7 +167,7 @@ class TestAggregateBlocks:
 
     @pytest.mark.asyncio
     async def test_first_blocker_side_effects_run_and_lookahead_side_effects_do_not(
-        self, db: HubDatabase, manager: LocalWorkflowDefinitionManager
+        self, db: HubDatabase, manager: RuleDefinitionManager
     ) -> None:
         _insert_rule(
             manager,
@@ -207,7 +206,7 @@ class TestAggregateBlocks:
 
     @pytest.mark.asyncio
     async def test_aggregate_acknowledges_first_and_lookahead_block_gates(
-        self, db: HubDatabase, manager: LocalWorkflowDefinitionManager
+        self, db: HubDatabase, manager: RuleDefinitionManager
     ) -> None:
         _insert_rule(
             manager,
@@ -247,7 +246,7 @@ class TestAggregateBlocks:
 
     @pytest.mark.asyncio
     async def test_single_acknowledged_block_only_fires_once(
-        self, db: HubDatabase, manager: LocalWorkflowDefinitionManager
+        self, db: HubDatabase, manager: RuleDefinitionManager
     ) -> None:
         _insert_rule(
             manager,
@@ -274,7 +273,7 @@ class TestAggregateBlocks:
 
     @pytest.mark.asyncio
     async def test_repeated_identical_aggregate_uses_verbose_once(
-        self, db: HubDatabase, manager: LocalWorkflowDefinitionManager
+        self, db: HubDatabase, manager: RuleDefinitionManager
     ) -> None:
         _insert_rule(
             manager,
@@ -301,7 +300,7 @@ class TestAggregateBlocks:
 
     @pytest.mark.asyncio
     async def test_reduced_remaining_gate_set_renders_fully(
-        self, db: HubDatabase, manager: LocalWorkflowDefinitionManager
+        self, db: HubDatabase, manager: RuleDefinitionManager
     ) -> None:
         _insert_rule(
             manager,

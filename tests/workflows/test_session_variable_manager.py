@@ -4,12 +4,10 @@ from __future__ import annotations
 
 import json
 import threading
-import uuid
 from concurrent.futures import ThreadPoolExecutor
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from typing import Any
-from unittest.mock import MagicMock
 
 import pytest
 
@@ -55,13 +53,9 @@ def _ensure_session(db: HubDatabase, session_id: str) -> None:
 
 
 def _install_variable_default(db: HubDatabase, name: str, value: Any) -> None:
-    from gobby.storage.workflow_definitions import LocalWorkflowDefinitionManager
+    from gobby.storage.definitions import SessionVariableDefaultManager
 
-    LocalWorkflowDefinitionManager(db).create(
-        name=name,
-        definition_json=json.dumps({"variable": name, "value": value}),
-        workflow_type="variable",
-    )
+    SessionVariableDefaultManager(db).create(name=name, default_value=value)
 
 
 def _stored_variables(db: HubDatabase, session_id: str) -> dict[str, Any]:
@@ -101,8 +95,11 @@ class _DictVariablesDB:
     def transaction_immediate(self, _mutation: object) -> _DictVariablesConnection:
         return self.connection
 
-    def fetchall(self, _query: str, _params: tuple[Any, ...]) -> list[dict[str, Any]]:
+    def fetchall(self, _query: str, _params: tuple[Any, ...] = ()) -> list[dict[str, Any]]:
         return []
+
+    def fetchone(self, _query: str, _params: tuple[Any, ...] = ()) -> None:
+        return None
 
 
 def test_get_variables_empty(db: Any) -> None:
@@ -116,14 +113,10 @@ def test_get_variables_empty(db: Any) -> None:
 
 def test_container_defaults_are_isolated_across_sessions_and_cache_hits(db: Any) -> None:
     """Mutating one returned default must not mutate the cached value or another session."""
-    from gobby.storage.workflow_definitions import LocalWorkflowDefinitionManager
+    from gobby.storage.definitions import SessionVariableDefaultManager
     from gobby.workflows.state_manager import SessionVariableManager
 
-    LocalWorkflowDefinitionManager(db).create(
-        name="loaded-skills",
-        definition_json=json.dumps({"variable": "loaded_skills", "value": []}),
-        workflow_type="variable",
-    )
+    SessionVariableDefaultManager(db).create(name="loaded_skills", default_value=[])
     mgr = SessionVariableManager(db)
 
     session_a = mgr.get_variables(S1)
@@ -131,21 +124,19 @@ def test_container_defaults_are_isolated_across_sessions_and_cache_hits(db: Any)
     session_b = mgr.get_variables(S2)
 
     assert session_b["loaded_skills"] == []
-    assert mgr._defaults_cache is not None
-    assert session_a["loaded_skills"] is not mgr._defaults_cache["loaded_skills"]
-    assert session_b["loaded_skills"] is not mgr._defaults_cache["loaded_skills"]
+    assert mgr._defaults_cache
+    cached = next(iter(mgr._defaults_cache.values()))
+    assert session_a["loaded_skills"] is not cached["loaded_skills"]
+    assert session_b["loaded_skills"] is not cached["loaded_skills"]
 
 
-@pytest.mark.parametrize("definition_json", [None, json.dumps("scalar")])
-def test_get_variables_skips_malformed_variable_defaults(
-    definition_json: str | None,
-) -> None:
+def test_get_variables_skips_disabled_variable_defaults(db: Any) -> None:
+    from gobby.storage.definitions import SessionVariableDefaultManager
     from gobby.workflows.state_manager import SessionVariableManager
 
-    db = MagicMock()
-    db.fetchall.return_value = [{"name": "malformed-default", "definition_json": definition_json}]
-    db.fetchone.return_value = None
-
+    SessionVariableDefaultManager(db).create(
+        name="disabled-default", default_value="hidden", enabled=False
+    )
     assert SessionVariableManager(db).get_variables(S1) == {}
 
 
@@ -301,26 +292,27 @@ def test_variables_persist_across_workflow_changes(db: Any) -> None:
     Session variables live in their own table, independent of workflow instances.
     Creating/removing workflow instances should not affect session variables.
     """
-    from gobby.workflows.definitions import WorkflowInstance
-    from gobby.workflows.state_manager import SessionVariableManager, WorkflowInstanceManager
+    from gobby.workflows.state_manager import SessionVariableManager
+    from gobby.workflows.step_instances import AgentStepInstanceManager
+    from tests.workflows.step_instance_fixtures import make_step_instance
 
     _ensure_session(db, S1)
     sv_mgr = SessionVariableManager(db)
-    wi_mgr = WorkflowInstanceManager(db)
+    wi_mgr = AgentStepInstanceManager(db)
 
     # Set session variables
     sv_mgr.set_variable(S1, "task_claimed", True)
     sv_mgr.set_variable(S1, "unlocked_tools", ["Read", "Write"])
 
     # Create and then delete a workflow instance
-    wi_mgr.save_instance(
-        WorkflowInstance(
-            id=str(uuid.uuid4()),
-            session_id=S1,
-            workflow_name="auto-task",
+    wi_mgr.save(
+        make_step_instance(
+            S1,
+            agent_name="auto-task",
+            current_step="claim",
         )
     )
-    wi_mgr.delete_instances_for_session(S1)
+    wi_mgr.delete_for_session(S1)
 
     # Session variables should be unaffected
     result = sv_mgr.get_variables(S1)

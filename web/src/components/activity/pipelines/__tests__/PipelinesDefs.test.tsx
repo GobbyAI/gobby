@@ -70,17 +70,16 @@ describe("Pipelines defs segment", () => {
         steps: [],
       },
     });
-    mockFetch.mockJsonResponse(/\/api\/workflows\?/, {
+    mockFetch.mockJsonResponse(/\/api\/pipelines\/definitions/, {
       definitions: [
         {
           id: "wf-1",
           name: "deploy-prod",
-          workflow_type: "pipeline",
+          kind: "pipeline",
           description: "Deploy production services with staged approvals.",
           definition_json: JSON.stringify({ name: "deploy-prod", steps: [] }),
           enabled: true,
           source: "installed",
-          priority: 2,
           version: "1.0",
           tags: ["release"],
         },
@@ -136,21 +135,22 @@ describe("Pipelines defs segment", () => {
       "defs",
     );
 
-    const workflowCall = mockFetch.fn.mock.calls
+    const pipelineCall = mockFetch.fn.mock.calls
       .map(([url]) => String(url))
-      .find((url) => url.includes("/api/workflows?"));
+      .find((url) => url.includes("/api/pipelines/definitions"));
 
-    expect(workflowCall).toContain("workflow_type=pipeline");
-    expect(workflowCall).toContain("include_deleted=true");
-    expect(workflowCall).toContain("project_id=project-1");
+    expect(pipelineCall).toBeDefined();
+    expect(pipelineCall).not.toContain(["workflow", "type"].join("_"));
+    expect(pipelineCall).toContain("include_deleted=true");
+    expect(pipelineCall).toContain("project_id=project-1");
   });
 
   it("adds and saves a pipeline editor step", async () => {
-    mockFetch.mockJsonResponse("/api/workflows/wf-1", {
+    mockFetch.mockJsonResponse("/api/pipelines/definitions/wf-1", {
       definition: {
         id: "wf-1",
         name: "deploy-prod",
-        workflow_type: "pipeline",
+        kind: "pipeline",
         description: "Deploy production services with staged approvals.",
         definition_json: JSON.stringify({
           name: "deploy-prod",
@@ -159,7 +159,6 @@ describe("Pipelines defs segment", () => {
         }),
         enabled: true,
         source: "installed",
-        priority: 2,
         version: "1.0",
         tags: ["release"],
       },
@@ -179,7 +178,7 @@ describe("Pipelines defs segment", () => {
     await waitFor(() => {
       const saveCall = mockFetch.fn.mock.calls.find(
         ([url, init]) =>
-          String(url).includes("/api/workflows/wf-1") &&
+          String(url).includes("/api/pipelines/definitions/wf-1") &&
           (init as RequestInit | undefined)?.method === "PUT",
       );
       expect(saveCall).toBeDefined();
@@ -187,7 +186,7 @@ describe("Pipelines defs segment", () => {
 
     const saveCall = mockFetch.fn.mock.calls.find(
       ([url, init]) =>
-        String(url).includes("/api/workflows/wf-1") &&
+        String(url).includes("/api/pipelines/definitions/wf-1") &&
         (init as RequestInit | undefined)?.method === "PUT",
     );
     const requestBody = JSON.parse(

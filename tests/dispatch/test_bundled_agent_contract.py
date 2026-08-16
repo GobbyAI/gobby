@@ -101,7 +101,8 @@ def test_bundled_agent_mcp_references_match_registered_tool_inventory(
 
     for path in _agent_yaml_files():
         data = yaml.safe_load(path.read_text(encoding="utf-8")) or {}
-        for step in data.get("steps") or []:
+        nested = data.get("step_workflow") or {}
+        for step in nested.get("steps") or []:
             step_name = step.get("name", "<unnamed>")
             if "allowed_tools" in step and not _valid_allowed_tools(step.get("allowed_tools")):
                 malformed_allowed_tools.append(f"{path.name}:{step_name}:allowed_tools")
@@ -159,7 +160,8 @@ def test_bundled_agents_use_end_agent_run_for_self_termination() -> None:
             text=str(data.get("instructions") or ""),
         )
 
-        for step in data.get("steps") or []:
+        nested = data.get("step_workflow") or {}
+        for step in nested.get("steps") or []:
             if not isinstance(step, dict) or step.get("name") != "terminate":
                 continue
 

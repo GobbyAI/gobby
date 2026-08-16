@@ -89,37 +89,56 @@ def _bind_registered_plan(
         for ancestor in ancestry
         if _plan_root_matches_task(plan, ancestor)
     ]
-    if not matches:
-        return requested_task.id, plan_file
-    if len(matches) > 1:
-        registered_paths = ", ".join(repr(plan.plan_path) for plan, _root in matches)
-        raise ValueError(
-            f"Task {_task_ref(requested_task)} is covered by multiple active registered plans: "
-            f"{registered_paths}. Archive the conflicting registration before expansion."
-        )
-
-    plan, root_task = matches[0]
-    if plan_file is None:
-        return root_task.id, plan.plan_path
-
-    repo_path = ctx.get_project_repo_path(requested_task.project_id)
-    if _same_plan_path(plan_file, plan.plan_path, repo_path):
-        return root_task.id, plan.plan_path
-    if reset_output:
-        logger.warning(
-            "Overriding registered expansion plan %s at %s for root %s via audited reset",
-            plan.plan_id,
-            plan.plan_path,
-            _task_ref(root_task),
-        )
-        return root_task.id, plan_file
-
-    raise ValueError(
-        f"Task {_task_ref(requested_task)} is bound to registered plan {plan.plan_id!r} at "
-        f"{plan.plan_path!r} on root {_task_ref(root_task)}; received conflicting plan path "
-        f"{plan_file!r}. Pass reset_output=true to reset the registered root output and audit "
-        "the override."
+    repo_path = (
+        ctx.get_project_repo_path(requested_task.project_id) if plan_file is not None else None
     )
+    if plan_file is not None:
+        path_matches = [
+            (plan, ancestor)
+            for plan, ancestor in matches
+            if _same_plan_path(plan_file, plan.plan_path, repo_path)
+        ]
+        if len(path_matches) == 1:
+            plan, root_task = path_matches[0]
+            return root_task.id, plan.plan_path
+        if len(path_matches) > 1:
+            registered_paths = ", ".join(repr(plan.plan_path) for plan, _root in path_matches)
+            raise ValueError(
+                f"Task {_task_ref(requested_task)} is covered by multiple active registered "
+                f"plans: {registered_paths}. Archive the conflicting registration before "
+                "expansion."
+            )
+
+    for ancestor in ancestry:
+        covering = [plan for plan, root in matches if root.id == ancestor.id]
+        if not covering:
+            continue
+        if len(covering) > 1:
+            registered_paths = ", ".join(repr(plan.plan_path) for plan in covering)
+            raise ValueError(
+                f"Task {_task_ref(requested_task)} is covered by multiple active registered "
+                f"plans: {registered_paths}. Archive the conflicting registration before "
+                "expansion."
+            )
+        plan = covering[0]
+        if plan_file is None or _same_plan_path(plan_file, plan.plan_path, repo_path):
+            return ancestor.id, plan.plan_path
+        if reset_output:
+            logger.warning(
+                "Overriding registered expansion plan %s at %s for root %s via audited reset",
+                plan.plan_id,
+                plan.plan_path,
+                _task_ref(ancestor),
+            )
+            return ancestor.id, plan_file
+        raise ValueError(
+            f"Task {_task_ref(requested_task)} is bound to registered plan {plan.plan_id!r} at "
+            f"{plan.plan_path!r} on root {_task_ref(ancestor)}; received conflicting plan path "
+            f"{plan_file!r}. Pass reset_output=true to reset the registered root output and "
+            "audit the override."
+        )
+
+    return requested_task.id, plan_file
 
 
 def _subscribe_completion(ctx: RegistryContext, run_id: str, resolved_session_id: str) -> None:

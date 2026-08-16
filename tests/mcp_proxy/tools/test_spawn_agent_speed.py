@@ -14,6 +14,7 @@ from gobby.mcp_proxy.tools.spawn_agent import create_spawn_agent_registry
 from gobby.providers.capabilities.models import ActivationDescriptor, SpeedMode
 from gobby.providers.capabilities.resolve import SpeedResolution, SpeedStatus
 from gobby.workflows.definitions import AgentDefinitionBody
+from tests.agents.prepared_spawn import prepared_spawn
 
 pytestmark = pytest.mark.unit
 
@@ -133,7 +134,9 @@ async def test_execute_spawn_attaches_speed_result() -> None:
         parent_session_id="parent-session-xyz",
         project_id="proj-abc",
         speed_resolution=_fast_resolution(),
-    )
+    
+    prepared_spawn=prepared_spawn(),
+)
     provider_result = SpawnResult(
         success=True,
         run_id="run-abc",

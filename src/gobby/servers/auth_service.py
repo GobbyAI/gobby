@@ -74,9 +74,9 @@ _AGENT_CAPABILITY_MATRIX: tuple[_AgentRoute, ...] = (
     _AgentRoute("POST", "/api/mcp/tools/recommend", True),
     _AgentRoute("POST", "/api/mcp/tools/search", True),
     _AgentRoute("POST", "/api/mcp/*/tools/*", True),
-    # Session-scoped workflow variables (stdio proxy get/set_variable).
-    _AgentRoute("POST", "/api/workflows/variables/get", True),
-    _AgentRoute("POST", "/api/workflows/variables/set", True),
+    # Session-scoped variables (stdio proxy get/set_variable).
+    _AgentRoute("POST", "/api/sessions/*/variables/get", True),
+    _AgentRoute("POST", "/api/sessions/*/variables/set", True),
     # Hook execution (ghook).
     _AgentRoute("POST", _HOOKS_EXECUTE_PATH, True),
     # Dormant wiki code status and code-index graph lifecycle.

@@ -11,7 +11,7 @@ import yaml
 
 from gobby.hooks.events import HookEvent, HookEventType, SessionSource
 from gobby.storage.hub.protocol import HubDatabase
-from gobby.storage.workflow_definitions import LocalWorkflowDefinitionManager
+from gobby.storage.definitions.rules import RuleDefinitionManager
 from gobby.workflows.definitions import RuleDefinitionBody, RuleEffect, RuleTriggerEvent
 from gobby.workflows.engine.core import RuleEngine
 from gobby.workflows.sync_rules import get_bundled_rules_path, sync_bundled_rules
@@ -58,9 +58,9 @@ def test_class_injection_rule_source_uses_canonical_schema(
     assert "effects" not in rule
     assert rule["effect"]["type"] == "mcp_call"
     _sync_bundled(temp_db)
-    row = LocalWorkflowDefinitionManager(temp_db).get_by_name(rule_name)
+    row = RuleDefinitionManager(temp_db).get_by_name(rule_name)
     assert row is not None
-    body = RuleDefinitionBody.model_validate_json(row.definition_json)
+    body = RuleDefinitionBody.model_validate(row.definition_json)
     assert body.when == "True"
     assert len(body.resolved_effects) == 1
     assert body.resolved_effects[0].type == "mcp_call"
@@ -73,9 +73,9 @@ def _sync_bundled(db: HubDatabase) -> None:
 def _sync_file_recall_rule(db: HubDatabase) -> None:
     _sync_bundled(db)
     with db.transaction() as conn:
-        conn.execute("UPDATE workflow_definitions SET enabled = FALSE")
+        conn.execute("UPDATE rule_definitions SET enabled = FALSE")
         conn.execute(
-            "UPDATE workflow_definitions SET enabled = TRUE WHERE name = %s",
+            "UPDATE rule_definitions SET enabled = TRUE WHERE name = %s",
             ("inject-review-lessons-for-touched-files",),
         )
 
@@ -114,11 +114,11 @@ def _lesson(memory_id: str = "lesson-1") -> dict[str, Any]:
 class TestReviewLearningRule:
     def test_rule_structure(self, temp_db: HubDatabase) -> None:
         _sync_file_recall_rule(temp_db)
-        manager = LocalWorkflowDefinitionManager(temp_db)
+        manager = RuleDefinitionManager(temp_db)
 
         row = manager.get_by_name("inject-review-lessons-for-touched-files")
         assert row is not None
-        body = RuleDefinitionBody.model_validate_json(row.definition_json)
+        body = RuleDefinitionBody.model_validate(row.definition_json)
 
         assert body.event.value == "before_tool"
         assert body.group == "review-learning"
@@ -312,10 +312,9 @@ async def test_class_recall_formatter_routing(temp_db: HubDatabase) -> None:
             )
         ],
     )
-    LocalWorkflowDefinitionManager(temp_db).create(
+    RuleDefinitionManager(temp_db).create(
         name="test-class-recall-routing",
         definition_json=body.model_dump_json(),
-        workflow_type="rule",
         enabled=True,
     )
 
@@ -353,7 +352,7 @@ async def test_class_recall_formatter_routing(temp_db: HubDatabase) -> None:
 @pytest.mark.asyncio
 async def test_class_injection_agent_scoping(temp_db: HubDatabase) -> None:
     _sync_bundled(temp_db)
-    manager = LocalWorkflowDefinitionManager(temp_db)
+    manager = RuleDefinitionManager(temp_db)
     expected_rules = {
         "inject-plan-reviewer-lessons": (
             ["plan-adversary", "plan-adversary-taskless"],
@@ -373,7 +372,7 @@ async def test_class_injection_agent_scoping(temp_db: HubDatabase) -> None:
     for rule_name, (agent_scope, lesson_domain, lesson_types) in expected_rules.items():
         row = manager.get_by_name(rule_name)
         assert row is not None
-        body = RuleDefinitionBody.model_validate_json(row.definition_json)
+        body = RuleDefinitionBody.model_validate(row.definition_json)
         assert body.event == RuleTriggerEvent.TURN_START
         assert body.group == "review-learning"
         assert body.agent_scope == agent_scope

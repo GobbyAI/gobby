@@ -16,7 +16,7 @@ from gobby.install.manifest import (
     load_bundled_content_manifest,
     write_bundled_content_manifest,
 )
-from gobby.storage.workflow_definitions import compute_definition_hash
+from gobby.storage.definitions._shared import compute_definition_hash
 from gobby.sync.integrity import (
     BUNDLED_SYNC_CONTENT_TYPES,
     CONTENT_TYPE_DIRS,

@@ -11,7 +11,7 @@ from gobby.hooks.events import HookEvent, HookEventType, SessionSource
 from gobby.hooks.normalization import normalize_tool_fields
 from gobby.skills.formatting import skill_fetch_directive
 from gobby.storage.hub.protocol import HubDatabase
-from gobby.storage.workflow_definitions import LocalWorkflowDefinitionManager
+from gobby.storage.definitions.rules import RuleDefinitionManager
 from gobby.workflows.definitions import RuleDefinitionBody
 from gobby.workflows.engine.core import RuleEngine
 from gobby.workflows.sync_rules import sync_bundled_rules
@@ -24,15 +24,15 @@ SESSION_ID = "11111111-1111-4111-8111-111111111111"
 
 
 @pytest.fixture
-def manager(temp_db: HubDatabase) -> LocalWorkflowDefinitionManager:
-    return LocalWorkflowDefinitionManager(temp_db)
+def manager(temp_db: HubDatabase) -> RuleDefinitionManager:
+    return RuleDefinitionManager(temp_db)
 
 
 def _sync_bundled(db: HubDatabase) -> None:
     from gobby.workflows.sync_rules import get_bundled_rules_path
 
     sync_bundled_rules(db, get_bundled_rules_path())
-    db.execute("UPDATE workflow_definitions SET source = 'installed' WHERE source = 'template'")
+    db.execute("UPDATE rule_definitions SET source = 'installed' WHERE source = 'template'")
 
 
 def _skill_fetch_template(name: str) -> str:
@@ -59,12 +59,11 @@ class TestRemovedBuildCoordinatorMonitoringSkillRule:
     def test_removed_rule_is_not_synced(
         self,
         temp_db: HubDatabase,
-        manager: LocalWorkflowDefinitionManager,
+        manager: RuleDefinitionManager,
     ) -> None:
         """Deprecated monitoring-skill gate should stay removed after sync."""
         manager.create(
             name="require-build-coordinator-monitoring-skill",
-            workflow_type="rule",
             definition_json=json.dumps(
                 {
                     "event": "before_tool",
@@ -111,14 +110,14 @@ class TestRequireBuildCoordinatorForGobbyBuild:
     def test_rule_structure(
         self,
         temp_db: HubDatabase,
-        manager: LocalWorkflowDefinitionManager,
+        manager: RuleDefinitionManager,
     ) -> None:
         """Build command gate should retain the expected rule condition and guidance."""
         _sync_bundled(temp_db)
         row = manager.get_by_name("require-build-coordinator-for-gobby-build")
         assert row is not None
 
-        body = RuleDefinitionBody.model_validate_json(row.definition_json)
+        body = RuleDefinitionBody.model_validate(row.definition_json)
 
         assert body.event.value == "before_tool"
         assert body.when is not None

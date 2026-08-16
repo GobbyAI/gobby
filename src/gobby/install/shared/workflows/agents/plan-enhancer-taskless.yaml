@@ -5,7 +5,7 @@ description: |
   and never claims or mutates Gobby tasks, never edits the plan, and never
   approves or rejects. Runs before the adversary gate.
 
-version: "1.0"
+version: "1.1"
 enabled: true
 priority: 20
 surfaces: [spawn, persona]
@@ -75,77 +75,78 @@ workflows:
     exclude:
       - "tag:task-skill-gates"
 
-step_variables:
-  skill_loaded: false
-  proportionality_loaded: false
-  enhance_complete: false
+step_workflow:
+  variables:
+    skill_loaded: false
+    proportionality_loaded: false
+    enhance_complete: false
 
-steps:
-  - name: load_skill
-    mcp_error_policy: stay
-    description: "Load the plan-enhance and proportionality methodology skills"
-    status_message: |
-      Load BOTH methodology skills before enhancing: call get_skill(name="plan-enhance")
-      AND get_skill(name="proportionality") on gobby-skills.
-      Use only mcp__gobby__call_tool in this step. Call get_skill directly:
-      call_tool("gobby-skills", "get_skill", {"name": "plan-enhance"}) and
-      call_tool("gobby-skills", "get_skill", {"name": "proportionality"}).
-      Do not use native Skill, GitHub/app connector, or Computer Use tools.
-    allowed_tools:
-      - mcp__gobby__call_tool
-      - mcp__gobby__list_mcp_servers
-      - mcp__gobby__list_tools
-      - mcp__gobby__get_tool_schema
-    allowed_mcp_tools:
-      - "gobby-skills:get_skill"
-    on_mcp_success:
-      - server: gobby-skills
-        tool: get_skill
-        when: "tool_input.name == 'plan-enhance'"
-        action: set_variable
-        variable: skill_loaded
-        value: true
-      - server: gobby-skills
-        tool: get_skill
-        when: "tool_input.name == 'proportionality'"
-        action: set_variable
-        variable: proportionality_loaded
-        value: true
-    transitions:
-      - to: enhance
-        when: "vars.skill_loaded and vars.proportionality_loaded"
+  exit_condition: "vars.enhance_complete"
+  steps:
+    - name: load_skill
+      mcp_error_policy: stay
+      description: "Load the plan-enhance and proportionality methodology skills"
+      status_message: |
+        Load BOTH methodology skills before enhancing: call get_skill(name="plan-enhance")
+        AND get_skill(name="proportionality") on gobby-skills.
+        Use only mcp__gobby__call_tool in this step. Call get_skill directly:
+        call_tool("gobby-skills", "get_skill", {"name": "plan-enhance"}) and
+        call_tool("gobby-skills", "get_skill", {"name": "proportionality"}).
+        Do not use native Skill, GitHub/app connector, or Computer Use tools.
+      allowed_tools:
+        - mcp__gobby__call_tool
+        - mcp__gobby__list_mcp_servers
+        - mcp__gobby__list_tools
+        - mcp__gobby__get_tool_schema
+      allowed_mcp_tools:
+        - "gobby-skills:get_skill"
+      on_mcp_success:
+        - server: gobby-skills
+          tool: get_skill
+          when: "tool_input.name == 'plan-enhance'"
+          action: set_variable
+          variable: skill_loaded
+          value: true
+        - server: gobby-skills
+          tool: get_skill
+          when: "tool_input.name == 'proportionality'"
+          action: set_variable
+          variable: proportionality_loaded
+          value: true
+      transitions:
+        - to: enhance
+          when: "vars.skill_loaded and vars.proportionality_loaded"
 
-  - name: enhance
-    mcp_error_policy: stay
-    description: "Read the plan artifact and return ranked enhancement suggestions"
-    status_message: |
-      Read artifact_path and the parent context. Walk both lenses (Better,
-      Bigger), run the proportionality test on each suggestion, and emit the
-      structured `plan-enhance` result (converged + ranked suggestions) to the
-      parent via send_message, then call end_agent_run. Never edit the plan;
-      never approve or reject.
-    allowed_tools: "all"
-    blocked_mcp_tools:
-      - "gobby-tasks:create_task"
-      - "gobby-tasks:claim_task"
-      - "gobby-tasks:close_task"
-      - "gobby-tasks:reopen_task"
-      - "gobby-tasks:escalate_task"
-      - "gobby-tasks-ops:submit_for_review"
-      - "gobby-tasks-ops:approve_review"
-      - "gobby-tasks-ops:reject_review"
-      - "gobby-tasks-ops:record_plan_enhancement"
-      - "gobby-agents:spawn_agent"
-      - "gobby-agents:kill_agent"
-    allowed_mcp_tools:
-      - "gobby-agents:end_agent_run"
-      - "gobby-agents:send_message"
-      - "gobby-skills:get_skill"
-    on_mcp_success:
-      - server: gobby-agents
-        tool: end_agent_run
-        action: set_variable
-        variable: enhance_complete
-        value: true
+    - name: enhance
+      mcp_error_policy: stay
+      description: "Read the plan artifact and return ranked enhancement suggestions"
+      status_message: |
+        Read artifact_path and the parent context. Walk both lenses (Better,
+        Bigger), run the proportionality test on each suggestion, and emit the
+        structured `plan-enhance` result (converged + ranked suggestions) to the
+        parent via send_message, then call end_agent_run. Never edit the plan;
+        never approve or reject.
+      allowed_tools: "all"
+      blocked_mcp_tools:
+        - "gobby-tasks:create_task"
+        - "gobby-tasks:claim_task"
+        - "gobby-tasks:close_task"
+        - "gobby-tasks:reopen_task"
+        - "gobby-tasks:escalate_task"
+        - "gobby-tasks-ops:submit_for_review"
+        - "gobby-tasks-ops:approve_review"
+        - "gobby-tasks-ops:reject_review"
+        - "gobby-tasks-ops:record_plan_enhancement"
+        - "gobby-agents:spawn_agent"
+        - "gobby-agents:kill_agent"
+      allowed_mcp_tools:
+        - "gobby-agents:end_agent_run"
+        - "gobby-agents:send_message"
+        - "gobby-skills:get_skill"
+      on_mcp_success:
+        - server: gobby-agents
+          tool: end_agent_run
+          action: set_variable
+          variable: enhance_complete
+          value: true
 
-exit_condition: "vars.enhance_complete"

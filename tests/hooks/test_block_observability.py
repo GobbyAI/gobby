@@ -15,13 +15,10 @@ from gobby.hooks.dispatchers.webhook import evaluate_blocking_webhooks
 from gobby.hooks.events import HookEvent, HookEventType, SessionSource
 from gobby.servers.chat_session import ChatSession
 from gobby.servers.websocket.chat import ChatMixin
+from gobby.storage.definitions.rules import RuleDefinitionManager, RuleDefinitionRow
 from gobby.storage.hub.protocol import HubDatabase
-from gobby.storage.workflow_definitions import (
-    LocalWorkflowDefinitionManager,
-    WorkflowDefinitionRow,
-)
 from gobby.workflows.engine.core import RuleEngine
-from gobby.workflows.state_manager import WorkflowInstanceManager
+from gobby.workflows.step_instances import AgentStepInstanceManager
 
 pytestmark = pytest.mark.unit
 
@@ -37,8 +34,8 @@ def db(hub_db: HubDatabase) -> HubDatabase:
 
 
 @pytest.fixture
-def manager(db: HubDatabase) -> LocalWorkflowDefinitionManager:
-    return LocalWorkflowDefinitionManager(db)
+def manager(db: HubDatabase) -> RuleDefinitionManager:
+    return RuleDefinitionManager(db)
 
 
 @pytest.fixture
@@ -47,8 +44,8 @@ def engine(db: HubDatabase) -> RuleEngine:
 
 
 @pytest.fixture
-def instance_mgr(db: HubDatabase) -> WorkflowInstanceManager:
-    return WorkflowInstanceManager(db)
+def instance_mgr(db: HubDatabase) -> AgentStepInstanceManager:
+    return AgentStepInstanceManager(db)
 
 
 def _make_event(
@@ -92,7 +89,7 @@ def _insert_block_rule(
     name: str,
     event: str,
     reason: str = "",
-) -> WorkflowDefinitionRow:
+) -> RuleDefinitionRow:
     definition: dict[str, Any] = {
         "event": event,
         "effects": [
@@ -102,18 +99,17 @@ def _insert_block_rule(
             }
         ],
     }
-    return LocalWorkflowDefinitionManager(db).create(
+    return RuleDefinitionManager(db).create(
         name=name,
         definition_json=json.dumps(definition),
-        workflow_type="rule",
         priority=10,
     )
 
 
 def _setup_step_workflow(
     db: HubDatabase,
-    manager: LocalWorkflowDefinitionManager,
-    instance_mgr: WorkflowInstanceManager,
+    manager: RuleDefinitionManager,
+    instance_mgr: AgentStepInstanceManager,
     *,
     session_id: str = SESSION_ID,
 ) -> None:
@@ -132,24 +128,27 @@ def _setup_step_workflow(
     manager.create(
         name=definition["name"],
         definition_json=json.dumps(definition),
-        workflow_type="workflow",
         priority=100,
         enabled=True,
     )
 
-    from gobby.workflows.definitions import WorkflowInstance
+    from gobby.workflows.agent_models import AgentDefinitionBody, AgentStepWorkflowBody
+    from gobby.workflows.step_instances import build_step_instance
 
-    instance = WorkflowInstance(
-        id=INSTANCE_ID,
-        session_id=session_id,
-        workflow_name="step-observability",
-        enabled=True,
-        priority=100,
-        current_step="implement",
-        step_entered_at=datetime.now(UTC),
-        variables={},
+    instance_mgr.save(
+        build_step_instance(
+            AgentDefinitionBody(
+                name="step-observability",
+                surfaces=["spawn"],
+                step_workflow=AgentStepWorkflowBody.model_validate(
+                    {"steps": [{"name": "implement", "allowed_tools": ["Read"]}]}
+                ),
+            ),
+            session_id=session_id,
+            step_workflow_id=None,
+            current_step="implement",
+        )
     )
-    instance_mgr.save_instance(instance)
 
 
 def _assert_block_records(
@@ -215,7 +214,7 @@ async def test_rule_block_reason_and_log_are_structured(
 ) -> None:
     rule = _insert_block_rule(db, name="test-empty-block-reason", event="stop", reason="")
     assert rule.priority == 10
-    assert "priority" not in json.loads(rule.definition_json)
+    assert "priority" not in rule.definition_json
     event = _make_event(event_type=HookEventType.STOP)
 
     with caplog.at_level(logging.DEBUG):
@@ -241,9 +240,9 @@ async def test_rule_block_reason_and_log_are_structured(
 @pytest.mark.asyncio
 async def test_step_enforcement_block_logs_structured_reason(
     db: HubDatabase,
-    manager: LocalWorkflowDefinitionManager,
+    manager: RuleDefinitionManager,
     engine: RuleEngine,
-    instance_mgr: WorkflowInstanceManager,
+    instance_mgr: AgentStepInstanceManager,
     caplog: pytest.LogCaptureFixture,
 ) -> None:
     _setup_step_workflow(db, manager, instance_mgr)

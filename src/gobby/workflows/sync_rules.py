@@ -15,9 +15,8 @@ from typing import Any
 import yaml
 from pydantic import ValidationError
 
+from gobby.storage.definitions.rules import RuleDefinitionManager
 from gobby.storage.hub.protocol import HubDatabase
-from gobby.storage.sql_dialect import json_array_contains_condition, json_text_expr
-from gobby.storage.workflow_definitions import LocalWorkflowDefinitionManager
 from gobby.workflows.definitions import split_rule_definition_data
 
 logger = logging.getLogger(__name__)
@@ -67,7 +66,7 @@ def sync_rule_file(
         logger.debug("Rule file not found", extra={"file": str(rule_file)})
         return result
 
-    manager = LocalWorkflowDefinitionManager(db)
+    manager = RuleDefinitionManager(db)
     _sync_rule_file(
         manager=manager,
         current_rules_path=rule_file.parent,
@@ -84,7 +83,7 @@ def sync_bundled_rules(
     rules_path: Path | list[Path] | None = None,
     tag: str = "gobby",
 ) -> dict[str, Any]:
-    """Sync rule YAML files to workflow_definitions table with workflow_type='rule'.
+    """Sync rule YAML files to rule_definitions.
 
     Creates installed rows directly from template files. Existing bundled
     ``gobby`` rows are refreshed when the YAML changes, preserving the
@@ -110,22 +109,6 @@ def sync_bundled_rules(
         rules_paths = rules_path
         scan_is_authoritative = True
 
-    # Repair rows where workflow_type was silently changed from 'rule'
-    event_expr = json_text_expr(db, "definition_json", "event")
-    effect_expr = json_text_expr(db, "definition_json", "effect")
-    effects_expr = json_text_expr(db, "definition_json", "effects")
-    # Dialect fragments use constant identifiers; query values remain parameterized.
-    repaired = db.execute(
-        "UPDATE workflow_definitions "  # nosec B608
-        "SET workflow_type = 'rule', updated_at = CURRENT_TIMESTAMP "
-        "WHERE workflow_type != 'rule' "
-        f"  AND {event_expr} IS NOT NULL "
-        f"  AND ({effect_expr} IS NOT NULL "
-        f"       OR {effects_expr} IS NOT NULL)",
-    ).rowcount
-    if repaired:
-        logger.debug("Repaired %s rows with incorrect workflow_type (should be 'rule')", repaired)
-
     result = _new_rules_sync_result()
 
     existing_paths = [path for path in rules_paths if path.exists()]
@@ -133,7 +116,7 @@ def sync_bundled_rules(
         logger.debug("Rules path not found", extra={"paths": [str(path) for path in rules_paths]})
         return result
 
-    manager = LocalWorkflowDefinitionManager(db)
+    manager = RuleDefinitionManager(db)
     on_disk: set[str] = set()
 
     rule_files = _iter_active_rule_files(existing_paths)
@@ -149,18 +132,10 @@ def sync_bundled_rules(
 
     result["orphaned"] = 0
     if scan_is_authoritative and rule_files and not result["errors"]:
-        tag_condition, tag_params = json_array_contains_condition(db, "tags", tag)
-        # The dialect fragment uses a constant identifier and a parameterized value.
-        orphan_rows = db.fetchall(
-            "SELECT id, name FROM workflow_definitions "  # nosec B608
-            "WHERE workflow_type = 'rule' "
-            f"AND {tag_condition} AND source = 'installed' AND deleted_at IS NULL",
-            tag_params,
-        )
-        for row in orphan_rows:
-            if row["name"] not in on_disk:
-                manager.delete(row["id"])
-                logger.debug("Soft-deleted orphaned rule", extra={"rule": row["name"], "tag": tag})
+        for row in manager.list_all():
+            if row.source == "installed" and tag in (row.tags or []) and row.name not in on_disk:
+                manager.delete(row.id)
+                logger.debug("Soft-deleted orphaned rule", extra={"rule": row.name, "tag": tag})
                 result["orphaned"] += 1
 
     result["success"] = not result["errors"]
@@ -192,7 +167,7 @@ def _new_rules_sync_result() -> dict[str, Any]:
 
 def _sync_rule_file(
     *,
-    manager: LocalWorkflowDefinitionManager,
+    manager: RuleDefinitionManager,
     current_rules_path: Path,
     yaml_file: Path,
     tag: str,
@@ -263,26 +238,14 @@ def _sync_rule_file(
 
 
 def _has_gobby_rule_name_collision(
-    manager: LocalWorkflowDefinitionManager,
+    manager: RuleDefinitionManager,
     rule_name: str,
     tag: str,
 ) -> bool:
     if tag == "gobby":
         return False
-
-    gobby_tag_condition, gobby_tag_params = json_array_contains_condition(
-        manager.db, "tags", "gobby"
-    )
-    # The dialect fragment uses a constant identifier and a parameterized value.
-    return (
-        manager.db.fetchone(
-            "SELECT id FROM workflow_definitions "  # nosec B608
-            f"WHERE name = %s AND {gobby_tag_condition} "
-            "AND deleted_at IS NULL",
-            (rule_name, *gobby_tag_params),
-        )
-        is not None
-    )
+    existing = manager.get_by_name(rule_name)
+    return existing is not None and "gobby" in (existing.tags or [])
 
 
 def resolve_sync_placeholders(definition_json: str) -> str:
@@ -306,7 +269,7 @@ def resolve_sync_placeholders(definition_json: str) -> str:
 
 
 def _sync_single_rule(
-    manager: LocalWorkflowDefinitionManager,
+    manager: RuleDefinitionManager,
     rule_name: str,
     rule_data: dict[str, Any],
     file_group: str | None,
@@ -316,7 +279,7 @@ def _sync_single_rule(
     sync_tag: str,
     result: dict[str, Any],
 ) -> None:
-    """Sync a single rule to workflow_definitions.
+    """Sync a single rule to rule_definitions.
 
     Creates an installed row if none exists. Existing sync-managed rows are
     refreshed when the YAML changes, applying enabled defaults until the user
@@ -358,7 +321,9 @@ def _sync_single_rule(
     except ValidationError as ve:
         raise ValueError(f"Invalid rule definition: {ve}") from ve
 
-    definition_json = resolve_sync_placeholders(json.dumps(body_dict))
+    definition_json = json.loads(resolve_sync_placeholders(json.dumps(body_dict)))
+    if not isinstance(definition_json, dict):
+        raise ValueError("Resolved rule definition must be a JSON object")
     priority = metadata["priority"]
     description = metadata["description"]
     enabled = metadata["enabled"]
@@ -409,7 +374,6 @@ def _sync_single_rule(
     manager.create(
         name=rule_name,
         definition_json=definition_json,
-        workflow_type="rule",
         project_id=None,
         description=description,
         enabled=enabled,
@@ -433,7 +397,7 @@ def _is_sync_managed_rule(existing: Any, sync_tag: str) -> bool:
 def _build_rule_update_fields(
     *,
     existing: Any,
-    definition_json: str,
+    definition_json: dict[str, Any],
     description: str | None,
     enabled: bool,
     priority: int,
@@ -447,7 +411,7 @@ def _build_rule_update_fields(
         update_fields["definition_json"] = definition_json
     if existing.description != description:
         update_fields["description"] = description
-    if not existing.enabled_user_modified and existing.enabled != enabled:
+    if not existing.enabled_pinned and existing.enabled != enabled:
         update_fields["enabled"] = enabled
     if existing.priority != priority:
         update_fields["priority"] = priority
@@ -459,10 +423,10 @@ def _build_rule_update_fields(
     return update_fields
 
 
-def _json_payloads_equal(left: str, right: str) -> bool:
+def _json_payloads_equal(left: Any, right: Any) -> bool:
     try:
-        left_payload: object = json.loads(left)
-        right_payload: object = json.loads(right)
+        left_payload: object = json.loads(left) if isinstance(left, str) else left
+        right_payload: object = json.loads(right) if isinstance(right, str) else right
         return left_payload == right_payload
     except (TypeError, ValueError, json.JSONDecodeError):
-        return left == right
+        return bool(left == right)

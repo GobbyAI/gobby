@@ -11,25 +11,23 @@ from __future__ import annotations
 import json
 import logging
 from pathlib import Path
-from typing import Any
+from typing import Any, Literal
 
 from gobby.mcp_proxy.tools.workflows._resolution import (
     resolve_session_id,
     resolve_session_task_value,
 )
 from gobby.sessions.compact_markers import SKILL_LIST_VARIABLE_NAMES
+from gobby.storage.definitions.variables import (
+    SessionVariableDefaultManager,
+    SessionVariableDefaultRow,
+)
 from gobby.storage.hub.protocol import HubDatabase
 from gobby.storage.sessions import SessionManager
-from gobby.storage.workflow_definitions import (
-    LocalWorkflowDefinitionManager,
-    WorkflowDefinitionRow,
-)
 from gobby.workflows.definitions import VariableDefinitionBody
 from gobby.workflows.reserved_variables import is_reserved_workflow_variable
-from gobby.workflows.state_manager import (
-    SessionVariableManager,
-    WorkflowInstanceManager,
-)
+from gobby.workflows.state_manager import SessionVariableManager
+from gobby.workflows.step_instances import AgentStepInstanceManager
 
 logger = logging.getLogger(__name__)
 
@@ -75,29 +73,16 @@ def set_variable(
     name: str,
     value: str | int | float | bool | list[Any] | dict[str, Any] | None,
     session_id: str,
-    workflow: str | None = None,
-    instance_manager: WorkflowInstanceManager | None = None,
+    scope: Literal["session", "step"] = "session",
+    instance_manager: AgentStepInstanceManager | None = None,
     session_var_manager: SessionVariableManager | None = None,
 ) -> dict[str, Any]:
     """
-    Set a variable scoped to a workflow instance or session.
+    Set a variable scoped to the session or the session's agent-step instance.
 
-    When `workflow` is provided, writes to that workflow instance's variables.
-    When `workflow` is not provided, writes to session-scoped shared variables
-    (via SessionVariableManager).
-
-    Args:
-        session_manager: SessionManager instance
-        db: Hub database adapter
-        name: Variable name (e.g., "session_epic", "is_worktree")
-        value: JSON-compatible variable value
-        session_id: Session reference (accepts #N, N, UUID, or prefix). Required to prevent cross-session variable bleed.
-        workflow: Optional workflow name to scope the variable to
-        instance_manager: Optional WorkflowInstanceManager for workflow-scoped writes
-        session_var_manager: Optional SessionVariableManager for session-scoped writes
-
-    Returns:
-        Success status and updated variables
+    When `scope` is ``step``, writes to the single typed instance via
+    ``merge_variables``. When `scope` is ``session``, writes to session-scoped
+    shared variables (via SessionVariableManager).
     """
 
     # Resolve session_id to UUID (accepts #N, N, UUID, or prefix)
@@ -137,20 +122,15 @@ def set_variable(
                 "error": f"Failed to resolve session_task value '{value}': {e}",
             }
 
-    # Workflow-scoped: write to workflow_instances.variables
-    if workflow:
-        if not instance_manager:
-            return {"success": False, "error": "Workflow-scoped variables require instance_manager"}
-        if not instance_manager.merge_instance_variables(
-            resolved_session_id,
-            workflow,
-            {name: value},
-        ):
+    if scope == "step":
+        if instance_manager is None:
+            instance_manager = AgentStepInstanceManager(db)
+        if instance_manager.merge_variables(resolved_session_id, {name: value}) is None:
             return {
                 "success": False,
-                "error": f"No workflow instance '{workflow}' found for session",
+                "error": "No agent-step instance found for session",
             }
-        return {"success": True, "value": value, "scope": "workflow", "workflow": workflow}
+        return {"success": True, "value": value, "scope": "step"}
 
     # Session-scoped: write to session_variables table
     if not session_var_manager:
@@ -167,27 +147,15 @@ def get_variable(
     db: HubDatabase,
     name: str | None = None,
     session_id: str = "",
-    workflow: str | None = None,
-    instance_manager: WorkflowInstanceManager | None = None,
+    scope: Literal["session", "step"] = "session",
+    instance_manager: AgentStepInstanceManager | None = None,
     session_var_manager: SessionVariableManager | None = None,
 ) -> dict[str, Any]:
     """
-    Get variable(s) scoped to a workflow instance or session.
+    Get variable(s) scoped to the session or the session's agent-step instance.
 
-    When `workflow` is provided, reads from that workflow instance's variables.
-    When `workflow` is not provided, reads from session-scoped shared variables.
-
-    Args:
-        session_manager: SessionManager instance
-        db: Hub database adapter
-        name: Variable name to get (if None, returns all variables)
-        session_id: Session reference (accepts #N, N, UUID, or prefix). Required to prevent cross-session variable bleed.
-        workflow: Optional workflow name to scope the read to
-        instance_manager: Optional WorkflowInstanceManager for workflow-scoped reads
-        session_var_manager: Optional SessionVariableManager for session-scoped reads
-
-    Returns:
-        Variable value(s) and session info
+    When `scope` is ``step``, reads from the single typed instance. When
+    `scope` is ``session``, reads from session-scoped shared variables.
     """
     # Require explicit session_id to prevent cross-session bleed
     if not session_id:
@@ -202,15 +170,14 @@ def get_variable(
     except ValueError as e:
         return {"success": False, "error": str(e)}
 
-    # Workflow-scoped: read from workflow_instances.variables
-    if workflow:
-        if not instance_manager:
-            return {"success": False, "error": "Workflow-scoped variables require instance_manager"}
-        instance = instance_manager.get_instance(resolved_session_id, workflow)
-        if not instance:
+    if scope == "step":
+        if instance_manager is None:
+            instance_manager = AgentStepInstanceManager(db)
+        instance = instance_manager.get_for_session(resolved_session_id)
+        if instance is None:
             return {
                 "success": False,
-                "error": f"No workflow instance '{workflow}' found for session",
+                "error": "No agent-step instance found for session",
             }
         variables = instance.variables
         if name:
@@ -220,15 +187,13 @@ def get_variable(
                 "variable": name,
                 "value": variables.get(name),
                 "exists": name in variables,
-                "scope": "workflow",
-                "workflow": workflow,
+                "scope": "step",
             }
         return {
             "success": True,
             "session_id": resolved_session_id,
             "variables": variables,
-            "scope": "workflow",
-            "workflow": workflow,
+            "scope": "step",
         }
 
     # Session-scoped: read from session_variables table
@@ -307,19 +272,18 @@ def save_variable_template(
 
 
 # ═══════════════════════════════════════════════════════════════════════════
-# Variable definition CRUD (DB-backed, workflow_type='variable')
+# Variable definition CRUD (DB-backed, session_variable_defaults)
 # ═══════════════════════════════════════════════════════════════════════════
 
 
-def _variable_summary(row: WorkflowDefinitionRow) -> dict[str, Any]:
+def _variable_summary(row: SessionVariableDefaultRow) -> dict[str, Any]:
     """Build a summary dict for a variable definition row."""
-    body = json.loads(row.definition_json)
     return {
         "id": row.id,
         "name": row.name,
-        "variable": body.get("variable"),
-        "value": body.get("value"),
-        "description": body.get("description") or row.description,
+        "variable": row.name,
+        "value": row.default_value,
+        "description": row.description,
         "enabled": row.enabled,
         "source": row.source,
         "tags": row.tags,
@@ -327,8 +291,24 @@ def _variable_summary(row: WorkflowDefinitionRow) -> dict[str, Any]:
     }
 
 
+def _export_row(row: SessionVariableDefaultRow) -> Any:
+    from types import SimpleNamespace
+
+    return SimpleNamespace(
+        name=row.name,
+        definition_json=json.dumps(
+            {
+                "variable": row.name,
+                "value": row.default_value,
+                "description": row.description,
+            }
+        ),
+        tags=row.tags,
+    )
+
+
 def list_variables(
-    def_manager: LocalWorkflowDefinitionManager,
+    def_manager: SessionVariableDefaultManager,
     enabled: bool | None = None,
     project_id: str | None = None,
 ) -> dict[str, Any]:
@@ -342,13 +322,13 @@ def list_variables(
     Returns:
         Dict with success, variables list, and count
     """
-    rows = def_manager.list_all(workflow_type="variable", enabled=enabled, project_id=project_id)
+    rows = def_manager.list_all(enabled=enabled, project_id=project_id)
     variables = [_variable_summary(r) for r in rows]
     return {"success": True, "variables": variables, "count": len(variables)}
 
 
 def get_variable_definition(
-    def_manager: LocalWorkflowDefinitionManager,
+    def_manager: SessionVariableDefaultManager,
     name: str,
 ) -> dict[str, Any]:
     """Get a variable definition by name.
@@ -361,14 +341,14 @@ def get_variable_definition(
         Dict with success and variable detail, or error if not found
     """
     row = def_manager.get_by_name(name)
-    if row is None or row.workflow_type != "variable":
+    if row is None:
         return {"success": False, "error": f"Variable '{name}' not found"}
 
     return {"success": True, "variable": _variable_summary(row)}
 
 
 def create_variable(
-    def_manager: LocalWorkflowDefinitionManager,
+    def_manager: SessionVariableDefaultManager,
     name: str,
     value: Any,
     description: str | None = None,
@@ -392,39 +372,30 @@ def create_variable(
     Returns:
         Dict with success and created variable, or error
     """
-    # Validate with Pydantic
     try:
-        body = VariableDefinitionBody(variable=name, value=value, description=description)
+        VariableDefinitionBody(variable=name, value=value, description=description)
     except Exception as e:
         return {"success": False, "error": f"Validation failed: {e}"}
 
-    # Name collision check
-    from gobby.mcp_proxy.tools.workflows._auto_export import has_gobby_name_collision
-
-    if has_gobby_name_collision(def_manager.db, name):
-        return {
-            "success": False,
-            "error": f"Variable '{name}' conflicts with a bundled gobby template. Choose a different name.",
-        }
-
-    # Check for duplicate name
     existing = def_manager.get_by_name(name)
     if existing is not None:
+        if "gobby" in (existing.tags or []):
+            return {
+                "success": False,
+                "error": (
+                    f"Variable '{name}' conflicts with a bundled gobby template. "
+                    "Choose a different name."
+                ),
+            }
         return {"success": False, "error": f"Variable '{name}' already exists"}
 
-    # Hard-delete any soft-deleted variable that would block the UNIQUE constraint
     deleted_row = def_manager.get_by_name(name, include_deleted=True)
-    if (
-        deleted_row is not None
-        and deleted_row.deleted_at
-        and deleted_row.workflow_type == "variable"
-    ):
+    if deleted_row is not None and deleted_row.deleted_at:
         def_manager.hard_delete(deleted_row.id)
 
     row = def_manager.create(
         name=name,
-        definition_json=body.model_dump_json(),
-        workflow_type="variable",
+        default_value=value,
         description=description,
         enabled=True,
         source="installed",
@@ -432,11 +403,12 @@ def create_variable(
     )
     logger.info("Created variable '%s' (id=%s)", name, row.id)
 
-    # Auto-export to YAML
     try:
         from gobby.mcp_proxy.tools.workflows._auto_export import auto_export_definition
 
-        auto_export_definition(row, project_path, make_global=make_global_template)
+        auto_export_definition(
+            _export_row(row), project_path, kind="variable", make_global=make_global_template
+        )
     except Exception as e:
         logger.warning("Failed to auto-export variable '%s': %s", name, e)
 
@@ -444,7 +416,7 @@ def create_variable(
 
 
 def update_variable(
-    def_manager: LocalWorkflowDefinitionManager,
+    def_manager: SessionVariableDefaultManager,
     name: str,
     value: Any = None,
     description: str | None = None,
@@ -454,7 +426,7 @@ def update_variable(
 ) -> dict[str, Any]:
     """Update a variable definition by name.
 
-    Merges changed fields into the existing definition_json.
+    Writes typed columns through SessionVariableDefaultManager.update.
 
     Args:
         def_manager: Definition storage manager
@@ -468,27 +440,26 @@ def update_variable(
         Dict with success and updated variable, or error
     """
     row = def_manager.get_by_name(name)
-    if row is None or row.workflow_type != "variable":
+    if row is None:
         return {"success": False, "error": f"Variable '{name}' not found"}
 
-    body = json.loads(row.definition_json)
     fields: dict[str, Any] = {}
-
     if value is not None:
-        body["value"] = value
+        fields["default_value"] = value
     if description is not None:
-        body["description"] = description
         fields["description"] = description
+    if not fields:
+        return {"success": True, "variable": _variable_summary(row)}
 
-    fields["definition_json"] = json.dumps(body)
     updated = def_manager.update(row.id, **fields)
     logger.info("Updated variable '%s'", name)
 
-    # Auto-export updated YAML
     try:
         from gobby.mcp_proxy.tools.workflows._auto_export import auto_export_definition
 
-        auto_export_definition(updated, project_path, make_global=make_global_template)
+        auto_export_definition(
+            _export_row(updated), project_path, kind="variable", make_global=make_global_template
+        )
     except Exception as e:
         logger.warning("Failed to auto-export variable '%s': %s", name, e)
 
@@ -496,7 +467,7 @@ def update_variable(
 
 
 def delete_variable(
-    def_manager: LocalWorkflowDefinitionManager,
+    def_manager: SessionVariableDefaultManager,
     name: str,
     force: bool = False,
     *,
@@ -516,7 +487,7 @@ def delete_variable(
         Dict with success, or error if not found/protected
     """
     row = def_manager.get_by_name(name)
-    if row is None or row.workflow_type != "variable":
+    if row is None:
         return {"success": False, "error": f"Variable '{name}' not found"}
 
     if "gobby" in (row.tags or []) and not force:
@@ -532,15 +503,14 @@ def delete_variable(
     if not deleted:
         return {"success": False, "error": f"Failed to delete variable '{name}'"}
 
-    # Remove YAML template file
     try:
         from gobby.mcp_proxy.tools.workflows._auto_export import auto_delete_definition
 
         is_user = bool(row.tags and "user" in row.tags)
         auto_delete_definition(
             name,
-            "variable",
             project_path,
+            kind="variable",
             delete_global=is_user,
         )
     except Exception as e:
@@ -551,7 +521,7 @@ def delete_variable(
 
 
 def export_variable(
-    def_manager: LocalWorkflowDefinitionManager,
+    def_manager: SessionVariableDefaultManager,
     name: str,
 ) -> dict[str, Any]:
     """Export a variable definition as YAML.
@@ -566,18 +536,17 @@ def export_variable(
     import yaml
 
     row = def_manager.get_by_name(name)
-    if row is None or row.workflow_type != "variable":
+    if row is None:
         return {"success": False, "error": f"Variable '{name}' not found"}
 
-    body = json.loads(row.definition_json)
     doc = {
         "name": row.name,
         "type": "variable",
-        "variable": body.get("variable", row.name),
-        "value": body.get("value"),
+        "variable": row.name,
+        "value": row.default_value,
     }
-    if body.get("description"):
-        doc["description"] = body["description"]
+    if row.description:
+        doc["description"] = row.description
 
     yaml_content = yaml.dump(doc, default_flow_style=False, sort_keys=False)
     return {"success": True, "yaml_content": yaml_content}

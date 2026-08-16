@@ -8,7 +8,7 @@ import pytest
 import yaml
 
 from gobby.storage.hub.protocol import HubDatabase
-from gobby.storage.workflow_definitions import LocalWorkflowDefinitionManager
+from gobby.storage.definitions.rules import RuleDefinitionManager
 from gobby.workflows.definitions import RuleDefinitionBody
 from gobby.workflows.sync_rules import get_bundled_rules_path, sync_bundled_rules
 
@@ -37,9 +37,9 @@ def test_source_rule_parses_to_canonical_installed_definition(temp_db: HubDataba
 
     result = sync_bundled_rules(temp_db, get_bundled_rules_path())
     assert result["errors"] == []
-    row = LocalWorkflowDefinitionManager(temp_db).get_by_name(RULE_NAME)
+    row = RuleDefinitionManager(temp_db).get_by_name(RULE_NAME)
     assert row is not None
-    installed = RuleDefinitionBody.model_validate_json(row.definition_json)
+    installed = RuleDefinitionBody.model_validate(row.definition_json)
 
     assert installed.when == source_rule["when"]
     assert row.description == source_rule["description"]

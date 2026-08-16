@@ -12,11 +12,11 @@ import {
   type SettingsSectionContextValue,
 } from "../SettingsSectionContext";
 
-// The workflow-variables editor drives its own live API (useWorkflows); the
+// The variable-defaults editor drives its own live API (useVariableDefs); the
 // section test only needs to prove the group is mounted, so stub it to a
 // deterministic sentinel. The editor has its own dedicated test.
-vi.mock("../../WorkflowVariablesEditor", () => ({
-  WorkflowVariablesEditor: () => <div>variables-editor-sentinel</div>,
+vi.mock("../../VariableDefaultsEditor", () => ({
+  VariableDefaultsEditor: () => <div>variables-editor-sentinel</div>,
 }));
 
 // Schema covering the rows the assertions touch. The `gobby-tasks` key (with a

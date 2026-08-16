@@ -5,8 +5,8 @@ import {
   createMockFetch,
   type MockFetchInstance,
 } from "../../test/mocks/fetch";
+import { usePipelineDefs } from "../usePipelineDefs";
 import { useRules } from "../useRules";
-import { useWorkflows } from "../useWorkflows";
 
 vi.mock("../useWebSocketEvent", () => ({
   useWebSocketEvent: vi.fn(),
@@ -24,22 +24,22 @@ afterEach(() => {
 });
 
 describe("filtered hook refetches", () => {
-  it("preserves workflow filters when a mutation refetches the list", async () => {
-    const filteredUrl =
-      "/api/workflows?workflow_type=pipeline&include_deleted=true";
-    mockFetch.mockJsonResponse(/\/api\/workflows$/, { definitions: [] });
+  it("preserves pipeline filters when a mutation refetches the list", async () => {
+    const filteredUrl = "/api/pipelines/definitions?include_deleted=true";
+    mockFetch.mockJsonResponse(/\/api\/pipelines\/definitions$/, {
+      definitions: [],
+    });
     mockFetch.mockJsonResponse(filteredUrl, { definitions: [] });
-    mockFetch.mockJsonResponse("/api/workflows/pipeline-1/toggle", {
+    mockFetch.mockJsonResponse("/api/pipelines/definitions/pipeline-1/toggle", {
       status: "success",
       definition: { id: "pipeline-1" },
     });
 
-    const { result } = renderHook(() => useWorkflows());
+    const { result } = renderHook(() => usePipelineDefs());
     await waitFor(() => expect(result.current.isLoading).toBe(false));
 
     await act(() =>
-      result.current.fetchWorkflows({
-        workflow_type: "pipeline",
+      result.current.fetchPipelines({
         include_deleted: true,
       }),
     );

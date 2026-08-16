@@ -33,6 +33,7 @@ from gobby.memory.dream.related import (
 )
 from gobby.memory.services.keyword import MemoryKeywordSearchService
 from gobby.memory.vectorstore import VectorStore
+from gobby.storage.embedding_generation_state import EmbeddingGenerationLeaseLost
 from gobby.storage.memories import LocalMemoryManager
 from gobby.storage.memories_crud import render_get_memories_statement
 from gobby.storage.memories_models import Memory, MemoryType
@@ -223,6 +224,33 @@ async def test_all_channels_failing_raises_typed_failure() -> None:
 
 
 @pytest.mark.unit
+async def test_fenced_vector_exhaustion_chains_original_lease_error() -> None:
+    lease_error = EmbeddingGenerationLeaseLost("Embedding generation serving is fenced")
+    session = RelatedEvidenceSession()
+    with (
+        _fast_retries(),
+        patch("gobby.memory.dream.related._keyword_hits_bulk", AsyncMock(return_value={})),
+        patch(
+            "gobby.memory.dream.related._vector_hits",
+            AsyncMock(side_effect=lease_error),
+        ),
+    ):
+        with pytest.raises(RelatedEvidenceChannelError) as excinfo:
+            await gather_related_evidence(
+                [_candidate()],
+                db=MagicMock(),
+                vector_store=MagicMock(),
+                dream_config=SimpleNamespace(),
+                session=session,
+                scope=RetrievalScope.project_only("project-a"),
+            )
+    await session.aclose()
+
+    assert excinfo.value.channel == "vector"
+    assert excinfo.value.__cause__ is lease_error
+
+
+@pytest.mark.unit
 async def test_evidence_retry_attempts_config_bounds_channel_attempts() -> None:
     candidate = _candidate()
     session = RelatedEvidenceSession()
@@ -286,6 +314,30 @@ async def test_failed_channel_retries_while_success_preserved(
     assert vector.await_count == 3
     assert "channel=vector attempt=1/3" in caplog.text
     assert "outcome=error" in caplog.text
+
+
+@pytest.mark.unit
+async def test_fenced_vector_attempt_succeeds_after_lease_recovery() -> None:
+    lease_error = EmbeddingGenerationLeaseLost("Embedding generation serving is fenced")
+    vector = AsyncMock(side_effect=[lease_error, {}])
+    session = RelatedEvidenceSession()
+    with (
+        _fast_retries(),
+        patch("gobby.memory.dream.related._keyword_hits_bulk", AsyncMock(return_value={})),
+        patch("gobby.memory.dream.related._vector_hits", vector),
+    ):
+        result = await gather_related_evidence(
+            [_candidate()],
+            db=MagicMock(),
+            vector_store=MagicMock(),
+            dream_config=SimpleNamespace(),
+            session=session,
+            scope=RetrievalScope.project_only("project-a"),
+        )
+    await session.aclose()
+
+    assert result[0].related == ()
+    assert vector.await_count == 2
 
 
 @pytest.mark.unit
@@ -766,6 +818,8 @@ def test_bulk_keyword_statement_shape() -> None:
     assert sql.count("UNION ALL") == 1
     assert sql.count("ROW_NUMBER() OVER ()") == 2
     assert sql.count(single_sql) >= 1
+    assert "ORDER BY score DESC, id ASC" in single_sql
+    assert "created_at" not in single_sql
     assert params[0] == "cand-1"
     assert params[1 : 1 + len(single_params)] == single_params
     assert "cand-3" in params
@@ -823,6 +877,32 @@ async def test_bulk_keyword_and_hydration_against_postgres(postgres_db: Any) -> 
     assert "cand-empty" not in keyword_hits
     assert [memory.id for memory in hydrated] == [first_memory.id]
     assert hydrated[0].project_id == _PROJECT_A
+
+
+@pytest.mark.integration
+async def test_bulk_keyword_25_candidates_finish_under_channel_budget(
+    postgres_db: Any,
+) -> None:
+    postgres_db.execute(
+        "INSERT INTO projects (id, name) VALUES (%s, %s)",
+        (_PROJECT_A, "Budget Project A"),
+    )
+    storage = LocalMemoryManager(postgres_db)
+    tokens = [f"budgetlexeme{index:02d}" for index in range(25)]
+    for token in tokens:
+        storage.create_memory(token, project_id=_PROJECT_A)
+    loop = asyncio.get_running_loop()
+    started = loop.time()
+    hits = await _keyword_hits_bulk(
+        [_candidate(f"cand-{index}", content=token) for index, token in enumerate(tokens)],
+        db=postgres_db,
+        scope=RetrievalScope.project_only(_PROJECT_A),
+        fetch_limit=5,
+    )
+    elapsed = loop.time() - started
+
+    assert elapsed < 10.0
+    assert len(hits) == 25
 
 
 @pytest.mark.unit

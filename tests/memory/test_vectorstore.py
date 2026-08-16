@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+import logging
 import uuid
 from collections.abc import AsyncGenerator
 from pathlib import Path
@@ -17,6 +18,7 @@ from qdrant_client.models import Distance, VectorParams
 
 from gobby.config.persistence import MemoryConfig
 from gobby.memory import vectorstore as vectorstore_module
+from gobby.memory.services._search_paths import _qdrant_hits_or_empty
 from gobby.memory.services.crossref import CrossrefService
 from gobby.memory.vectorstore import (
     VectorStore,
@@ -25,6 +27,7 @@ from gobby.memory.vectorstore import (
     is_recoverable_vector_store_error,
     memory_scope_filter,
 )
+from gobby.storage.embedding_generation_state import EmbeddingGenerationLeaseLost
 from gobby.storage.memories import LocalMemoryManager
 from gobby.storage.memories_scope import MemoryScope
 
@@ -231,10 +234,37 @@ def test_count_sync_surface_removed() -> None:
         ResponseHandlingException(Exception("down")),
         UnexpectedResponse(503, "Service Unavailable", b"down", httpx.Headers()),
         httpx.ConnectTimeout("timeout"),
+        EmbeddingGenerationLeaseLost("Embedding generation serving is fenced"),
     ],
 )
 def test_recoverable_vector_store_errors(error: BaseException) -> None:
     assert is_recoverable_vector_store_error(error) is True
+
+
+def test_timeout_error_is_not_recoverable_vector_store_error() -> None:
+    assert is_recoverable_vector_store_error(TimeoutError("deadline")) is False
+
+
+def test_fenced_lease_search_uses_availability_fallback_without_qdrant_traceback(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    error = EmbeddingGenerationLeaseLost("Embedding generation serving is fenced")
+    service = MagicMock()
+
+    with caplog.at_level(logging.WARNING):
+        result = _qdrant_hits_or_empty(
+            error,
+            service=service,
+            caller="test",
+            project_id="project-a",
+            candidate_limit=5,
+            path="vector",
+            recoverable_message="Vector search unavailable",
+        )
+
+    assert result == []
+    service._log_vector_store_failure.assert_called_once_with("Vector search unavailable", error)
+    assert "Qdrant search failed" not in caplog.text
 
 
 @pytest.mark.asyncio

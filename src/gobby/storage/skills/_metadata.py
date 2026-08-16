@@ -304,8 +304,8 @@ class SkillMetadataMixin:
         """Get a skill by name within a project scope.
 
         By default returns only non-deleted skills, matching the
-        workflow_definitions pattern. When an installed copy exists
-        it shadows the template.
+        installed-copy precedence of typed definition managers. When an
+        installed copy exists it shadows the template.
 
         Args:
             name: The skill name

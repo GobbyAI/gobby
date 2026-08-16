@@ -1,89 +1,73 @@
-"""Tests for workflow loader override conflict handling."""
+"""Tests for pipeline loader override conflict handling."""
 
 from __future__ import annotations
 
-import json
-
 import pytest
 
+from gobby.storage.definitions.pipelines import PipelineDefinitionManager
 from gobby.storage.hub.protocol import HubDatabase
 from gobby.storage.projects import LocalProjectManager
-from gobby.storage.workflow_definitions import LocalWorkflowDefinitionManager
-from gobby.workflows.loader import WorkflowLoader
+from gobby.workflows.pipeline_loader import PipelineLoader
 
 pytestmark = pytest.mark.unit
 
 
-@pytest.fixture
-def db(temp_db: HubDatabase) -> HubDatabase:
-    database = temp_db
-    return database
-
-
-@pytest.fixture
-def def_manager(db: HubDatabase) -> LocalWorkflowDefinitionManager:
-    return LocalWorkflowDefinitionManager(db)
-
-
-def _workflow_json(name: str, *, override: bool = False) -> str:
+def _pipeline_body(name: str, *, override: bool = False) -> dict[str, object]:
     data: dict[str, object] = {
         "name": name,
-        "steps": [{"name": "work", "allowed_tools": "all"}],
+        "type": "pipeline",
+        "steps": [{"id": "work", "exec": "echo hi"}],
     }
     if override:
         data["override"] = True
-    return json.dumps(data)
+    return data
 
 
 @pytest.mark.asyncio
-async def test_conflict_without_override_label_fails_loud(
-    db: HubDatabase,
-    def_manager: LocalWorkflowDefinitionManager,
-) -> None:
-    project = LocalProjectManager(db).create(name="test-project", repo_path="/tmp/test-project")
-    def_manager.create(
-        name="shared-workflow",
-        definition_json=_workflow_json("shared-workflow"),
-        workflow_type="workflow",
+async def test_conflict_without_override_label_fails_loud(temp_db: HubDatabase) -> None:
+    project = LocalProjectManager(temp_db).create(
+        name="test-project", repo_path="/tmp/test-project"
+    )
+    manager = PipelineDefinitionManager(temp_db)
+    manager.create(
+        name="shared-pipeline",
+        definition_json=_pipeline_body("shared-pipeline"),
         tags=["gobby"],
     )
-    def_manager.create(
-        name="shared-workflow",
-        definition_json=_workflow_json("shared-workflow"),
-        workflow_type="workflow",
+    manager.create(
+        name="shared-pipeline",
+        definition_json=_pipeline_body("shared-pipeline"),
         project_id=project.id,
         source="project",
         tags=["user"],
     )
 
-    loader = WorkflowLoader(db=db)
-
+    loader = PipelineLoader(db=temp_db)
     with pytest.raises(ValueError, match="override: true"):
-        await loader.load_workflow("shared-workflow", project_path=project.id)
+        await loader.load_pipeline("shared-pipeline", project_path=project.id)
 
 
 @pytest.mark.asyncio
-async def test_conflict_with_override_label_loads_project_copy(
-    db: HubDatabase,
-    def_manager: LocalWorkflowDefinitionManager,
-) -> None:
-    project = LocalProjectManager(db).create(name="test-project", repo_path="/tmp/test-project")
-    def_manager.create(
-        name="shared-workflow",
-        definition_json=_workflow_json("shared-workflow"),
-        workflow_type="workflow",
+async def test_conflict_with_override_label_loads_project_copy(temp_db: HubDatabase) -> None:
+    project = LocalProjectManager(temp_db).create(
+        name="test-project", repo_path="/tmp/test-project"
+    )
+    manager = PipelineDefinitionManager(temp_db)
+    manager.create(
+        name="shared-pipeline",
+        definition_json=_pipeline_body("shared-pipeline"),
         tags=["gobby"],
     )
-    def_manager.create(
-        name="shared-workflow",
-        definition_json=_workflow_json("shared-workflow", override=True),
-        workflow_type="workflow",
+    manager.create(
+        name="shared-pipeline",
+        definition_json=_pipeline_body("shared-pipeline", override=True),
         project_id=project.id,
         source="project",
         tags=["user"],
     )
 
-    workflow = await WorkflowLoader(db=db).load_workflow("shared-workflow", project_path=project.id)
-
-    assert workflow is not None
-    assert workflow.name == "shared-workflow"
+    pipeline = await PipelineLoader(db=temp_db).load_pipeline(
+        "shared-pipeline", project_path=project.id
+    )
+    assert pipeline is not None
+    assert pipeline.name == "shared-pipeline"

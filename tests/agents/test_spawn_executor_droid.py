@@ -20,6 +20,7 @@ from gobby.agents.isolation import _copy_cli_hooks
 from gobby.agents.sandbox import SandboxConfig
 from gobby.agents.spawn_executor import SpawnRequest, SpawnResult, execute_spawn
 from gobby.utils.daemon_client import DaemonClient
+from tests.agents.prepared_spawn import prepared_spawn
 
 pytestmark = pytest.mark.unit
 
@@ -35,6 +36,7 @@ def _droid_request(**overrides: Any) -> SpawnRequest:
         "project_id": "proj",
     }
     values.update(overrides)
+    values.setdefault("prepared_spawn", prepared_spawn())
     return SpawnRequest(**values)
 
 
@@ -137,13 +139,13 @@ class TestExecuteSpawnDroid:
             patch("gobby.agents.spawn_executor.pre_approve_directory") as mock_pre_approve,
             patch("gobby.agents.spawn_executor.TmuxSpawner", return_value=mock_spawner),
         ):
+            request.prepared_spawn = mock_prepare.return_value
             result = await execute_spawn(request)
 
-        mock_prepare.assert_called_once()
-        prepare_kwargs = mock_prepare.call_args.kwargs
-        assert prepare_kwargs["source"] == "droid"
-        assert prepare_kwargs["agent_run_id"] == "run-droid"
-        assert prepare_kwargs["prompt"] == "Fix it"
+        mock_prepare.assert_not_called()
+        assert request.provider == "droid"
+        assert request.agent_run_id == "run-droid"
+        assert request.prompt == "Fix it"
         mock_session_manager.update_sandbox_enabled.assert_called_once_with(
             "gobby-sess-123",
             False,
@@ -199,6 +201,7 @@ class TestExecuteSpawnDroid:
             patch("gobby.agents.spawn_executor.pre_approve_directory"),
             patch("gobby.agents.spawn_executor.TmuxSpawner", return_value=mock_spawner),
         ):
+            request.prepared_spawn = mock_prepare.return_value
             result = await execute_spawn(request)
 
         assert result.success is False

@@ -203,3 +203,80 @@ class TestPrepareTerminalSpawnMetadata:
             managed_tool_bin_dir(),
             "/usr/bin",
         ]
+
+
+class TestPrepareTerminalSpawnCleanup:
+    """Fault injection at each pre-launch acquisition tears down partial state."""
+
+    @pytest.fixture(autouse=True)
+    def _stub_agent_run_storage(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        monkeypatch.setattr("gobby.storage.agents.LocalAgentRunManager", MagicMock())
+
+    def test_fault_after_child_session_is_cleaned_up(self) -> None:
+        sm = _make_session_manager(child_session_id="aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa")
+        with (
+            patch(
+                "gobby.workflows.state_manager.SessionVariableManager.merge_variables",
+                side_effect=RuntimeError("vars failed"),
+            ),
+            patch("gobby.agents.spawn.cleanup_unlaunched_spawn") as cleanup,
+            pytest.raises(RuntimeError, match="vars failed"),
+        ):
+            prepare_terminal_spawn(
+                session_manager=sm,
+                parent_session_id="parent-1",
+                project_id="proj-1",
+                machine_id="21000000-0000-4000-8000-000000000001",
+                initial_variables={"k": "v"},
+            )
+        cleanup.assert_called_once()
+        assert cleanup.call_args.kwargs["session_id"] == "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa"
+
+    def test_fault_after_run_prepare_is_cleaned_up(self) -> None:
+        sm = _make_session_manager(child_session_id="aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa")
+        with (
+            patch(
+                "gobby.agents.spawn._prepare_run_for_session",
+                side_effect=RuntimeError("run failed"),
+            ),
+            patch("gobby.agents.spawn.cleanup_unlaunched_spawn") as cleanup,
+            pytest.raises(RuntimeError, match="run failed"),
+        ):
+            prepare_terminal_spawn(
+                session_manager=sm,
+                parent_session_id="parent-1",
+                project_id="proj-1",
+                machine_id="21000000-0000-4000-8000-000000000001",
+            )
+        cleanup.assert_called_once()
+        assert cleanup.call_args.kwargs["session_id"] == "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa"
+
+    def test_fault_after_credential_is_cleaned_up(self) -> None:
+        sm = _make_session_manager(child_session_id="aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa")
+        prepared = PreparedSpawn(
+            session_id="aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa",
+            agent_run_id="bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb",
+            parent_session_id="parent-1",
+            project_id="proj-1",
+            workflow_name=None,
+            agent_depth=1,
+            env_vars={},
+        )
+        with (
+            patch("gobby.agents.spawn._prepare_run_for_session", return_value=prepared),
+            patch(
+                "gobby.agents.spawn._issue_prelaunch_credential",
+                side_effect=RuntimeError("cred failed"),
+            ),
+            patch("gobby.agents.spawn.cleanup_unlaunched_spawn") as cleanup,
+            pytest.raises(RuntimeError, match="cred failed"),
+        ):
+            prepare_terminal_spawn(
+                session_manager=sm,
+                parent_session_id="parent-1",
+                project_id="proj-1",
+                machine_id="21000000-0000-4000-8000-000000000001",
+            )
+        cleanup.assert_called_once()
+        assert cleanup.call_args.kwargs["session_id"] == prepared.session_id
+        assert cleanup.call_args.kwargs["agent_run_id"] == prepared.agent_run_id

@@ -18,8 +18,8 @@ from gobby.plans.parser import (
     strip_section_dependencies,
 )
 from gobby.prompts.models import parse_frontmatter
+from gobby.storage.definitions.agents import AgentDefinitionManager
 from gobby.storage.tasks import Task
-from gobby.storage.workflow_definitions import LocalWorkflowDefinitionManager
 from gobby.tasks.categories import DEVELOPMENT_FORWARD_LEAF_CATEGORIES
 
 _DEFAULT_AGENT = "backend-developer"
@@ -144,18 +144,22 @@ def _available_agent_names(agent_definitions: list[dict[str, Any]]) -> set[str]:
 
 
 def list_agent_definitions(
-    def_manager: LocalWorkflowDefinitionManager,
+    def_manager: AgentDefinitionManager,
     enabled: bool | None = None,
     project_id: str | None = None,
     surface_filter: str | None = None,
 ) -> dict[str, Any]:
     """List agent definitions for expansion without importing the MCP tool layer."""
-    rows = def_manager.list_all(workflow_type="agent", enabled=enabled, project_id=project_id)
+    rows = def_manager.list_all(enabled=enabled, project_id=project_id)
     agents: list[dict[str, Any]] = []
     for row in rows:
-        try:
-            body = json.loads(row.definition_json)
-        except json.JSONDecodeError:
+        body = row.definition_json
+        if isinstance(body, str):
+            try:
+                body = json.loads(body)
+            except json.JSONDecodeError:
+                continue
+        if not isinstance(body, dict):
             continue
         surfaces = body.get("surfaces", ["spawn"])
         agent = {

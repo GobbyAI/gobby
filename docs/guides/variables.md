@@ -42,7 +42,7 @@ sequenceDiagram
 ## Initialization
 
 Bundled variables are defined in YAML and synced into
-`workflow_definitions` rows where `workflow_type = 'variable'`:
+`session_variable_defaults`:
 
 ```yaml
 # src/gobby/install/shared/workflows/variables/gobby-default-variables.yaml
@@ -407,6 +407,7 @@ These are set during execution, not initialized from definitions:
 | `full_session_summary` | string | Previous session summary (for handoff), full untruncated text |
 | `handoff_summary_injectable` | string | Budget-bounded copy of the handoff summary for inline `additionalContext` injection; carries a `get_handoff_context` breadcrumb when truncated. Rules inject this rather than `full_session_summary` to avoid Claude Code's ~10K char hard truncation. |
 | `session_summary` | string | Session summary set alongside `full_session_summary` on handoff/compact |
+| `compact_handoff_inject_pending` | bool | One-shot Grok compact rehydrate flag. `apply_in_place_compact_context_loss` sets it on Grok `post_compact` when `auto_inject_handoff` is on. `inject-compact-handoff-on-prompt` injects the marked continuation on the next `turn_start` and clears it. |
 
 ---
 
@@ -415,14 +416,11 @@ These are set during execution, not initialized from definitions:
 ### CLI
 
 ```bash
-# View all variables for a session
-gobby workflows status --session <ID> --json
-
 # Get one variable, or omit the name to print all variables
-gobby workflows get-var <name> --session <ID> --json
+gobby variables get [NAME] --session <ID> --json
 
 # Set a variable
-gobby workflows set-var <name> <value> --session <ID>
+gobby variables set <name> <value> --session <ID>
 ```
 
 ### MCP Tools
@@ -431,7 +429,7 @@ gobby workflows set-var <name> <value> --session <ID>
 |------|-------------|
 | `set_variable` | Set a session variable (top-level MCP tool) |
 | `get_variable` | Get a session variable value |
-| `get_workflow_status` | Show workflow instances and live session variables (`gobby-workflows`) |
+| `get_step_status` | Show the session's agent-step snapshot and live session variables (`gobby-workflows`) |
 | `list_variables` | List variable definitions, not live session values (`gobby-workflows`) |
 | `get_variable_definition` | Read one variable definition (`gobby-workflows`) |
 
@@ -443,12 +441,13 @@ gobby workflows set-var <name> <value> --session <ID>
 |------|---------|
 | `src/gobby/install/shared/workflows/variables/` | Bundled variable definitions |
 | `src/gobby/workflows/state_manager.py` | Session variable persistence |
+| `src/gobby/storage/definitions/variables.py` | `session_variable_defaults` manager |
 | `src/gobby/workflows/sync_variables.py` | Sync bundled variable YAML into DB definitions |
 | `src/gobby/workflows/safe_evaluator.py` | SafeExpressionEvaluator + LazyBool |
 | `src/gobby/workflows/condition_helpers.py` | Built-in condition helper functions |
 | `src/gobby/workflows/definitions.py` | VariableDefinitionBody model |
 | `src/gobby/mcp_proxy/tools/workflows/_variables.py` | Runtime and definition MCP variable tools |
-| `src/gobby/cli/workflows/variables.py` | `gobby workflows get-var` and `set-var` |
+| `src/gobby/cli/variables.py` | `gobby variables get` and `gobby variables set` |
 
 ## See Also
 
@@ -456,4 +455,4 @@ gobby workflows set-var <name> <value> --session <ID>
 - [Rules](./rules.md) — Rules that read and write variables
 - [Agents](./agents.md) — Agent selectors that control variable loading
 
-_Last verified: 2026-06-11_
+_Last verified: 2026-08-14_

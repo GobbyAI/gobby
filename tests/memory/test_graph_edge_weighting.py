@@ -437,9 +437,16 @@ def _reader(
 
 def _neighbor_responder(rows: list[dict[str, Any]]) -> Responder:
     def respond(cypher: str, params: dict[str, Any] | None) -> list[dict[str, Any]]:
-        if "related_entity_key" in cypher:
+        if "related_entity_key" not in cypher:
+            return []
+        source_keys = list((params or {}).get("source_keys") or [])
+        if not source_keys:
             return rows
-        return []
+        stamped: list[dict[str, Any]] = []
+        for source_key in source_keys:
+            for row in rows:
+                stamped.append({**row, "source_key": row.get("source_key") or source_key})
+        return stamped
 
     return respond
 
@@ -461,12 +468,16 @@ async def test_traversal_orders_neighbors_by_weight_in_python() -> None:
     assert related_keys == ["high", "mid", "low"]
     assert set(components_by_key) == {"high", "mid", "low"}
     assert admission_scores["high"] > admission_scores["mid"] > admission_scores["low"]
-    neighbor_cypher = falkor.find("related_entity_key")[0][0]
+    neighbor_queries = falkor.find("related_entity_key")
+    assert len(neighbor_queries) == 1
+    neighbor_cypher, neighbor_params = neighbor_queries[0]
+    assert "UNWIND $source_keys AS source_key" in neighbor_cypher
     assert "coalesce(r.weight, 1.0) AS edge_weight" in neighbor_cypher
     assert "r.weight AS raw_weight" in neighbor_cypher
     assert "r.support AS edge_support" in neighbor_cypher
     assert "r.updated_at AS updated_at" in neighbor_cypher
-    assert "ORDER BY coalesce(r.weight, 1.0) DESC" in neighbor_cypher
+    assert neighbor_params is not None
+    assert neighbor_params["source_keys"] == ["seed"]
 
 
 async def test_traversal_unweighted_edges_use_neutral_weight() -> None:
@@ -486,6 +497,42 @@ async def test_traversal_unweighted_edges_use_neutral_weight() -> None:
     assert related_keys == ["alpha", "beta"]
 
 
+async def test_traversal_batches_one_neighbor_query_per_hop() -> None:
+    falkor = RecordingFalkor(
+        _neighbor_responder(
+            [
+                {
+                    "source_key": "seed-a",
+                    "related_entity_key": "neighbor-a",
+                    "edge_weight": 0.8,
+                    "updated_at": None,
+                },
+                {
+                    "source_key": "seed-b",
+                    "related_entity_key": "neighbor-b",
+                    "edge_weight": 0.6,
+                    "updated_at": None,
+                },
+            ]
+        )
+    )
+    reader = _reader(falkor)
+
+    related_keys, _, _ = await reader._find_related_entity_keys(
+        ["seed-a", "seed-b"],
+        max_hops=1,
+        limit=20,
+        project_id=None,
+        include_global=True,
+    )
+
+    assert related_keys == ["neighbor-a", "neighbor-b"]
+    neighbor_queries = falkor.find("related_entity_key")
+    assert len(neighbor_queries) == 1
+    assert neighbor_queries[0][1] is not None
+    assert neighbor_queries[0][1]["source_keys"] == ["seed-a", "seed-b"]
+
+
 async def test_find_related_memory_ids_attributes_edge_components() -> None:
     """Traversal-admitted memories carry the #17096 component breakdown (§3.2)."""
 
@@ -493,6 +540,7 @@ async def test_find_related_memory_ids_attributes_edge_components() -> None:
         if "related_entity_key" in cypher:
             return [
                 {
+                    "source_key": "seed",
                     "related_entity_key": "neighbor",
                     "edge_weight": 0.7,
                     "raw_weight": 0.7,
@@ -530,6 +578,7 @@ async def test_find_related_memory_ids_unweighted_edges_skip_attribution() -> No
         if "related_entity_key" in cypher:
             return [
                 {
+                    "source_key": "seed",
                     "related_entity_key": "neighbor",
                     "edge_weight": 1.0,
                     "raw_weight": None,

@@ -28,7 +28,7 @@ from gobby.mcp_proxy.services.result_handling import (
 from gobby.storage.hub.protocol import HubDatabase
 from gobby.storage.projects import LocalProjectManager
 from gobby.storage.sessions import SessionManager
-from gobby.storage.workflow_definitions import LocalWorkflowDefinitionManager
+from gobby.storage.definitions.rules import RuleDefinitionManager
 from gobby.workflows.definitions import split_rule_definition_data
 from gobby.workflows.engine.core import RuleEngine
 from gobby.workflows.hooks import WorkflowHookHandler
@@ -53,10 +53,9 @@ def _load_interactive_review_block_rule(db: HubDatabase) -> None:
     data = yaml.safe_load(yaml_path.read_text(encoding="utf-8"))
     rule_data = data["rules"]["block-needs-review-interactive"]
     body, metadata = split_rule_definition_data(rule_data)
-    LocalWorkflowDefinitionManager(db).create(
+    RuleDefinitionManager(db).create(
         name="block-needs-review-interactive",
         definition_json=json.dumps(body),
-        workflow_type="rule",
         description=metadata.get("description"),
         priority=metadata.get("priority", 32),
         enabled=metadata.get("enabled", True),

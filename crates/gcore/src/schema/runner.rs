@@ -6,6 +6,7 @@ use postgres::{Client, GenericClient};
 use super::assets::{
     BASELINE_CHECKSUM, BASELINE_SQL, BASELINE_VERSION, EmbeddedMigration, MIGRATIONS, sha256_hex,
 };
+use super::baseline_refresh::{RefreshMode, baseline_refresh_statement_for_mode};
 use super::error::SchemaError;
 use super::gate::{SourceIdentity, VerifiedBackupManifest};
 use super::sql_splitter::split_sql_statements;
@@ -15,6 +16,10 @@ pub(crate) const ACCOUNT_IDENTITY_PREDECESSOR_CHECKSUM: &str =
     "855576453641152d2ef9199dc418fcc3dd2ad69e78eff924b05a7b3b122cf398";
 pub(crate) const PREDECESSOR_BASELINE_CHECKSUM: &str =
     "b2e08b119ba08d342cb2729a96ff4a0e42380a1335a5661c89c45fa3f75832b3";
+pub(crate) const PARENT_BASELINE_CHECKSUM: &str =
+    "5d598c3609d0bdbcfd10f1c363c60bd38d5625100c3e8719b3ff42d189047117";
+pub(crate) const WORKTREE_BASELINE_CHECKSUM: &str =
+    "86ad53076df7527fa0b832dd62b91037954a62d301957ef09b0c9f0f69331b33";
 
 #[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
 pub struct ApplyReport {
@@ -146,7 +151,9 @@ impl<'a> SchemaRunner<'a> {
             | BaselineState::FreshWithInstallInfra
             | BaselineState::GcoreCodeIndex
             | BaselineState::GwikiStandalone
-            | BaselineState::PredecessorBaseline => {
+            | BaselineState::PredecessorBaseline
+            | BaselineState::ParentBaseline
+            | BaselineState::WorktreeBaseline => {
                 require_pg_search(self.client)?;
                 verify_adopted_columns(self.client, &self.schema, state)?;
                 apply_baseline(self.client, &self.schema, state)?;
@@ -165,8 +172,13 @@ impl<'a> SchemaRunner<'a> {
                 ));
             }
         };
-        let migrations_applied =
-            apply_pending_migrations(self.client, &self.schema, self.migrations, backup.is_some())?;
+        let migrations_applied = apply_pending_migrations(
+            self.client,
+            &self.schema,
+            self.migrations,
+            state,
+            backup.is_some(),
+        )?;
         Ok(ApplyReport {
             baseline_applied,
             migrations_applied,
@@ -183,7 +195,41 @@ enum BaselineState {
     AlreadyBaselined,
     AccountIdentityPredecessor,
     PredecessorBaseline,
+    ParentBaseline,
+    WorktreeBaseline,
     CorruptPartial,
+}
+
+impl BaselineState {
+    fn is_fresh_lineage(self) -> bool {
+        matches!(
+            self,
+            Self::Fresh
+                | Self::FreshWithInstallInfra
+                | Self::GcoreCodeIndex
+                | Self::GwikiStandalone
+        )
+    }
+
+    fn stamps_destructive_migrations(self) -> bool {
+        self.is_fresh_lineage() || matches!(self, Self::ParentBaseline)
+    }
+
+    fn updates_baseline_receipt(self) -> bool {
+        matches!(
+            self,
+            Self::PredecessorBaseline | Self::ParentBaseline | Self::WorktreeBaseline
+        )
+    }
+
+    fn refresh_mode(self) -> Option<RefreshMode> {
+        match self {
+            Self::PredecessorBaseline => Some(RefreshMode::TypedDomainAndRuntime),
+            Self::ParentBaseline => Some(RefreshMode::RuntimeOnly),
+            Self::WorktreeBaseline => Some(RefreshMode::TypedDomainOnly),
+            _ => None,
+        }
+    }
 }
 
 const GCORE_CODE_INDEX_TABLES: [&str; 8] = [
@@ -318,6 +364,8 @@ fn recognized_baseline_receipt(
     Ok(match checksum.as_deref() {
         Some(BASELINE_CHECKSUM) => Some(BaselineState::AlreadyBaselined),
         Some(PREDECESSOR_BASELINE_CHECKSUM) => Some(BaselineState::PredecessorBaseline),
+        Some(PARENT_BASELINE_CHECKSUM) => Some(BaselineState::ParentBaseline),
+        Some(WORKTREE_BASELINE_CHECKSUM) => Some(BaselineState::WorktreeBaseline),
         Some(ACCOUNT_IDENTITY_PREDECESSOR_CHECKSUM) => {
             Some(BaselineState::AccountIdentityPredecessor)
         }
@@ -381,7 +429,7 @@ fn apply_baseline(
         }
     }
     let filename = format!("baseline@{BASELINE_VERSION}");
-    if state == BaselineState::PredecessorBaseline {
+    if state.updates_baseline_receipt() {
         transaction.execute(
             &format!(
                 "UPDATE {receipt_table} SET filename = $1, checksum = $2, applied_at = NOW() \
@@ -417,9 +465,8 @@ pub(super) fn render_sql_for_schema<'a>(sql: &'a str, schema: &str) -> Cow<'a, s
 }
 
 fn baseline_statement_for_state(statement: &str, state: BaselineState) -> Option<String> {
-    if state == BaselineState::PredecessorBaseline {
-        return super::baseline_refresh::baseline_refresh_statement(statement)
-            .then(|| statement.to_owned());
+    if let Some(mode) = state.refresh_mode() {
+        return baseline_refresh_statement_for_mode(statement, mode).then(|| statement.to_owned());
     }
     if !matches!(
         state,
@@ -694,6 +741,7 @@ fn apply_pending_migrations(
     client: &mut Client,
     schema: &str,
     migrations: &[EmbeddedMigration],
+    lineage: BaselineState,
     destructive_authorized: bool,
 ) -> Result<usize, SchemaError> {
     let table = qualified_name(schema, "schema_migrations")?;
@@ -727,28 +775,35 @@ fn apply_pending_migrations(
         applied.insert(version);
     }
 
-    let mut count = 0;
-    for migration in migrations {
-        if applied.contains(&migration.version) {
-            continue;
-        }
-        if has_directive(migration.sql, "-- gobby:destructive") && !destructive_authorized {
+    let pending: Vec<&EmbeddedMigration> = migrations
+        .iter()
+        .filter(|migration| !applied.contains(&migration.version))
+        .collect();
+    let stamp_destructive = lineage.stamps_destructive_migrations();
+    for migration in &pending {
+        let destructive = has_directive(migration.sql, "-- gobby:destructive");
+        let non_transactional = has_directive(migration.sql, "-- gobby:non-transactional");
+        if destructive && !destructive_authorized && !stamp_destructive {
             return Err(SchemaError::Unsupported(format!(
                 "migration {} is destructive; a verified hub backup is required",
                 migration.filename
             )));
         }
-        let non_transactional = has_directive(migration.sql, "-- gobby:non-transactional");
-        if non_transactional
-            && destructive_authorized
-            && has_directive(migration.sql, "-- gobby:destructive")
-        {
+        if non_transactional && destructive {
             return Err(SchemaError::Unsupported(format!(
                 "destructive migration {} cannot be non-transactional",
                 migration.filename
             )));
         }
-        if non_transactional {
+    }
+
+    let mut count = 0;
+    for migration in pending {
+        let destructive = has_directive(migration.sql, "-- gobby:destructive");
+        let non_transactional = has_directive(migration.sql, "-- gobby:non-transactional");
+        if destructive && stamp_destructive {
+            stamp_receipt_only(client, &table, migration)?;
+        } else if non_transactional {
             apply_non_transactional(client, &table, migration)?;
         } else {
             apply_transactional(client, &table, migration)?;
@@ -756,6 +811,17 @@ fn apply_pending_migrations(
         count += 1;
     }
     Ok(count)
+}
+
+fn stamp_receipt_only(
+    client: &mut Client,
+    receipt_table: &str,
+    migration: &EmbeddedMigration,
+) -> Result<(), SchemaError> {
+    let mut transaction = client.transaction()?;
+    insert_receipt(&mut transaction, receipt_table, migration)?;
+    transaction.commit()?;
+    Ok(())
 }
 
 fn apply_transactional(

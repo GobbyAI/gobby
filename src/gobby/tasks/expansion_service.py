@@ -7,12 +7,12 @@ from typing import Any
 from gobby.config.app import DaemonConfig
 from gobby.plans.parser import PlanDocument
 from gobby.prompts.loader import PromptLoader
+from gobby.storage.definitions.agents import AgentDefinitionManager
 from gobby.storage.expansion_runs import LocalExpansionRunManager
 from gobby.storage.projects import LocalProjectManager
 from gobby.storage.task_affected_files import TaskAffectedFileManager
 from gobby.storage.task_dependencies import TaskDependencyManager
 from gobby.storage.tasks import LocalTaskManager, Task
-from gobby.storage.workflow_definitions import LocalWorkflowDefinitionManager
 from gobby.tasks.categories import AUTOMATED_LEAF_CATEGORIES, DEVELOPMENT_FORWARD_LEAF_CATEGORIES
 from gobby.tasks.expansion import _apply, _compile, _contract, _reset, _validate
 from gobby.tasks.expansion._common import (
@@ -49,7 +49,7 @@ class ExpansionService:
         self.dep_manager = TaskDependencyManager(self.db)
         self.af_manager = TaskAffectedFileManager(self.db)
         self.project_manager = LocalProjectManager(self.db)
-        self.definition_manager = LocalWorkflowDefinitionManager(self.db)
+        self.definition_manager = AgentDefinitionManager(self.db)
         self.prompt_loader = PromptLoader(db=self.db)
         self._agent_definition_cache: dict[str | None, list[dict[str, Any]]] = {}
 

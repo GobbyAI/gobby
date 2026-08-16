@@ -79,8 +79,8 @@ function installFetch(definitions = [agentDefinition()]): MockFetchInstance {
     status: "success",
     definitions,
   });
-  mockFetch.mockJsonResponse("/api/workflows?workflow_type=pipeline", {
-    workflows: [],
+  mockFetch.mockJsonResponse("/api/pipelines/definitions", {
+    definitions: [{ id: "pipe-1", name: "nightly-verify" }],
   });
   mockFetch.mockJsonResponse("/api/rules/tags", { tags: [] });
   mockFetch.mockJsonResponse("/api/rules/groups", { groups: [] });
@@ -108,6 +108,16 @@ describe("AgentsTab", () => {
     await user.click(
       await screen.findByRole("button", { name: "Select reviewer" }),
     );
+    const pipelineSelect = screen.getByLabelText("Pipeline");
+    expect(pipelineSelect).toBeInTheDocument();
+    expect(
+      within(pipelineSelect).getByRole("option", { name: "nightly-verify" }),
+    ).toBeInTheDocument();
+    const pipelineCall = mockFetch.fn.mock.calls
+      .map(([url]) => String(url))
+      .find((url) => url.includes("/api/pipelines/definitions"));
+    expect(pipelineCall).toBeDefined();
+    expect(pipelineCall).not.toContain(["workflow", "type"].join("_"));
     await user.clear(screen.getByRole("textbox", { name: "Description" }));
     await user.type(
       screen.getByRole("textbox", { name: "Description" }),

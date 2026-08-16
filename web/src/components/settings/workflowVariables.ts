@@ -1,7 +1,7 @@
 /**
- * Pure helpers for the workflow-variables editor, kept out of the component
+ * Pure helpers for the variable-defaults editor, kept out of the component
  * file so it can export only components (react-refresh). Shared by
- * WorkflowVariablesEditor and its tests.
+ * VariableDefaultsEditor and its tests.
  */
 
 /** Coerce a free-text default into the closest JSON-ish primitive, else string. */
@@ -15,15 +15,9 @@ export function parseVariableInput(raw: string): unknown {
   return raw;
 }
 
-/** Render a stored variable definition's `value` for the list display. */
-export function variableDisplayValue(definitionJson: string): string {
-  try {
-    const parsed = JSON.parse(definitionJson) as { value?: unknown };
-    const value = parsed.value;
-    if (value === null || value === undefined) return "null";
-    if (Array.isArray(value)) return JSON.stringify(value);
-    return String(value);
-  } catch {
-    return "-";
-  }
+/** Render a stored variable default_value for the list display. */
+export function variableDisplayValue(defaultValue: unknown): string {
+  if (defaultValue === null || defaultValue === undefined) return "null";
+  if (typeof defaultValue === "object") return JSON.stringify(defaultValue);
+  return String(defaultValue);
 }

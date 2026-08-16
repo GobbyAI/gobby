@@ -13,9 +13,12 @@ from gobby.hooks.tool_outcomes import tool_outcome_from_data
 from gobby.storage.agents import LocalAgentRunManager
 from gobby.storage.hub.protocol import HubDatabase
 from gobby.storage.workflow_audit import WorkflowAuditManager
-from gobby.workflows.definitions import WorkflowDefinition, WorkflowStep
+from gobby.workflows.definitions import WorkflowStep
 from gobby.workflows.engine._offload import offload
-from gobby.workflows.state_manager import WorkflowInstanceManager
+from gobby.workflows.step_instances import (
+    AgentStepInstanceManager,
+    StaleStepInstanceWriteError,
+)
 
 if TYPE_CHECKING:
     from gobby.agents.runner import AgentRunner
@@ -34,7 +37,7 @@ class EnforcementCompletionMixin:
     """Complete agent workflows and process post-tool transitions."""
 
     db: HubDatabase
-    instance_manager: WorkflowInstanceManager
+    instance_manager: AgentStepInstanceManager
     workflow_audit: WorkflowAuditManager
 
     if TYPE_CHECKING:
@@ -47,7 +50,7 @@ class EnforcementCompletionMixin:
 
         def _get_step_for_session(
             self, session_id: str
-        ) -> tuple[WorkflowStep | None, Any | None, WorkflowDefinition | None]: ...
+        ) -> tuple[WorkflowStep | None, Any | None]: ...
 
         def _is_native_set_variable_tool(self, tool_name: str) -> bool: ...
 
@@ -175,7 +178,7 @@ class EnforcementCompletionMixin:
             cleanup_session_id = session_id
         cleanup_agent_runtime_state = _facade_attr("cleanup_agent_runtime_state")
         if terminal_reason == "daemon_stop":
-            # The run was parked by a daemon stop: its workflow_instances rows
+            # The run was parked by a daemon stop: its agent_step_instances
             # are retained for resume and waiting subscribers must not receive
             # a false success. Forward the parked reason so cleanup keeps the
             # workflow rows, and skip completion delivery entirely.
@@ -247,12 +250,14 @@ class EnforcementCompletionMixin:
             or None if no transition happened. The notification includes the
             new step's status_message for injection into AfterTool additionalContext.
         """
-        step, instance, definition = await offload(
+        step, instance = await offload(
             self._get_step_for_session,
             session_id,
         )
-        if step is None or instance is None or definition is None:
+        if step is None or instance is None:
             return None
+        definition = instance.snapshot
+        cas_token = (str(instance.id), instance.updated_at)
 
         tool_name = event.data.get("tool_name", "")
         tool_input = event.data.get("tool_input") or {}
@@ -283,7 +288,7 @@ class EnforcementCompletionMixin:
             await offload(
                 self._audit_step_tool_call,
                 session_id,
-                instance.workflow_name,
+                instance.agent_name,
                 step.name,
                 tool_name,
                 "allow",
@@ -350,7 +355,7 @@ class EnforcementCompletionMixin:
                         await offload(
                             self._audit_step_set_variable,
                             session_id,
-                            instance.workflow_name,
+                            instance.agent_name,
                             step.name,
                             mcp_key,
                             str(var_name),
@@ -393,7 +398,7 @@ class EnforcementCompletionMixin:
                     logger.warning(
                         "Transition to unknown step '%s' in workflow '%s'",
                         new_step,
-                        instance.workflow_name,
+                        instance.agent_name,
                     )
                     continue
 
@@ -404,7 +409,7 @@ class EnforcementCompletionMixin:
                     to_step=new_step,
                     reason="Transition condition met",
                     context=self._step_audit_context(
-                        instance.workflow_name,
+                        instance.agent_name,
                         old_step,
                         condition=transition.when,
                         result=True,
@@ -415,7 +420,15 @@ class EnforcementCompletionMixin:
                 instance.current_step = new_step
                 instance.step_action_count = 0
                 instance.step_entered_at = datetime.now(UTC)
-                await offload(instance_mgr.save_instance, instance)
+                try:
+                    await offload(
+                        instance_mgr.save,
+                        instance,
+                        if_match=cas_token,
+                    )
+                except StaleStepInstanceWriteError:
+                    return None
+                cas_token = (str(instance.id), instance.updated_at)
 
                 # Reset consecutive-tool-block counters so failures from the
                 # previous step don't bleed into the new one
@@ -427,7 +440,7 @@ class EnforcementCompletionMixin:
                     "Step transition: %s -> %s (workflow=%s, session=%s)",
                     old_step,
                     new_step,
-                    instance.workflow_name,
+                    instance.agent_name,
                     session_id,
                 )
 
@@ -457,7 +470,7 @@ class EnforcementCompletionMixin:
                         result="met" if exit_met else "unmet",
                         reason=("Exit condition met" if exit_met else "Exit condition was not met"),
                         context=self._step_audit_context(
-                            instance.workflow_name,
+                            instance.agent_name,
                             instance.current_step,
                             condition=definition.exit_condition,
                             result=exit_met,
@@ -467,13 +480,13 @@ class EnforcementCompletionMixin:
                         variables["step_workflow_complete"] = True
                         logger.info(
                             "Exit condition met for workflow %s (session=%s, step=%s)",
-                            instance.workflow_name,
+                            instance.agent_name,
                             session_id,
                             instance.current_step,
                         )
                         await self._complete_agent_workflow_run(
                             session_id,
-                            instance.workflow_name,
+                            instance.agent_name,
                         )
 
                 break
@@ -483,7 +496,7 @@ class EnforcementCompletionMixin:
         else:
             logger.warning(
                 "Stopped step transition chain for workflow %s (session=%s) after %d transitions",
-                instance.workflow_name,
+                instance.agent_name,
                 session_id,
                 max_transitions,
             )
@@ -498,6 +511,9 @@ class EnforcementCompletionMixin:
 
         # Save if variables changed without transition
         if vars_changed:
-            await offload(instance_mgr.save_instance, instance)
+            try:
+                await offload(instance_mgr.save, instance, if_match=cas_token)
+            except StaleStepInstanceWriteError:
+                return None
 
         return None

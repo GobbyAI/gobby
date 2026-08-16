@@ -126,7 +126,6 @@ fn apply_schema(schema: Option<&str>, destructive: bool) -> Result<()> {
         validate_schema_name(schema)?;
     }
     enforce_expected_identity()?;
-    let backup = destructive.then(load_newest_backup_manifest).transpose()?;
     let database_url = resolve_database_url()?;
     let mut client = connect_readwrite(&database_url).map_err(|_| {
         anyhow::anyhow!(
@@ -134,6 +133,49 @@ fn apply_schema(schema: Option<&str>, destructive: bool) -> Result<()> {
             redact_database_url(&database_url)
         )
     })?;
+    if destructive {
+        let setting: String = client
+            .query_one(
+                "SELECT current_setting('gobby.maintenance_epoch', true)",
+                &[],
+            )
+            .context("failed to read gobby.maintenance_epoch")?
+            .get::<_, Option<String>>(0)
+            .unwrap_or_default();
+        if setting.trim().is_empty() {
+            anyhow::bail!(
+                "destructive schema apply requires an open maintenance epoch; \
+                 run `gobby hub-maintenance run schema-apply`"
+            );
+        }
+        let table_exists: bool = client
+            .query_one("SELECT to_regclass('maintenance_epochs') IS NOT NULL", &[])
+            .context("failed to inspect maintenance_epochs")?
+            .get(0);
+        if !table_exists {
+            anyhow::bail!(
+                "destructive schema apply requires an open maintenance epoch; \
+                 run `gobby hub-maintenance run schema-apply`"
+            );
+        }
+        let open: bool = client
+            .query_one(
+                "SELECT EXISTS (\
+                    SELECT 1 FROM maintenance_epochs \
+                    WHERE id::text = $1 AND released_at IS NULL\
+                 )",
+                &[&setting],
+            )
+            .context("failed to verify the open maintenance epoch")?
+            .get(0);
+        if !open {
+            anyhow::bail!(
+                "gobby.maintenance_epoch={setting} is not an open maintenance epoch; \
+                 run `gobby hub-maintenance run schema-apply`"
+            );
+        }
+    }
+    let backup = destructive.then(load_newest_backup_manifest).transpose()?;
     let schema = match schema {
         Some(schema) => schema.to_owned(),
         None => client

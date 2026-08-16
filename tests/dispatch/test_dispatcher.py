@@ -2224,7 +2224,7 @@ async def test_spawn_action_uses_services_and_records_agent_run(
     assert run.agent_name == "backend-developer"
     assert run.task_id == task.id
     assert spawn_kwargs["task_id"] == task.id
-    assert spawn_kwargs["initial_variables"]["_step_workflow_name"] == "backend-developer-steps"
+    assert "_step_workflow_name" not in spawn_kwargs["initial_variables"]
     assert launcher.source == "dispatcher_launcher"
     assert _required(storage.get_mutex(task.id)).run_id == "2d6f8387-ee3f-5abb-98f4-70ace5661263"
 
@@ -4439,13 +4439,12 @@ def test_build_context_project_disabled_agent_override_wins(
     """Build context project disabled agent override wins."""
     from gobby.agents.sync import sync_bundled_agents
     from gobby.dispatch import dispatcher
-    from gobby.storage.workflow_definitions import LocalWorkflowDefinitionManager
+    from gobby.storage.definitions.agents import AgentDefinitionManager
     from gobby.workflows.definitions import AgentDefinitionBody
 
     sync_bundled_agents(temp_db)
-    LocalWorkflowDefinitionManager(temp_db).create(
+    AgentDefinitionManager(temp_db).create(
         name="merge-orchestrator",
-        workflow_type="agent",
         project_id=sample_project["id"],
         source="project",
         enabled=False,

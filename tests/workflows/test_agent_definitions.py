@@ -26,7 +26,7 @@ def _agent(name: str) -> dict[str, Any]:
 
 
 def _step(agent: dict[str, Any], name: str) -> dict[str, Any]:
-    matches = [step for step in agent["steps"] if step["name"] == name]
+    matches = [step for step in agent["step_workflow"]["steps"] if step["name"] == name]
     assert len(matches) == 1
     return cast(dict[str, Any], matches[0])
 
@@ -53,7 +53,7 @@ def test_close_task_success_handlers_require_closed_output() -> None:
     close_handlers: list[tuple[str, str, dict[str, Any]]] = []
     for path in sorted(AGENTS_DIR.glob("*.yaml")):
         agent = _load_yaml(path)
-        for step in agent.get("steps", []):
+        for step in agent.get("step_workflow", {}).get("steps", []):
             for handler in step.get("on_mcp_success", []) or []:
                 if handler.get("server") == "gobby-tasks" and handler.get("tool") == "close_task":
                     close_handlers.append((path.name, str(step.get("name")), handler))
@@ -106,7 +106,7 @@ def test_restricted_skill_load_steps_use_gobby_proxy_guidance() -> None:
     """Restricted load-skill steps should instruct agents to use the Gobby proxy."""
     for path in AGENTS_DIR.glob("*.yaml"):
         agent = _load_yaml(path)
-        for step in agent.get("steps") or []:
+        for step in agent.get("step_workflow", {}).get("steps") or []:
             allowed_mcp_tools = step.get("allowed_mcp_tools")
             allowed_tools = step.get("allowed_tools")
             if not (
@@ -176,8 +176,8 @@ def test_epic_reviewer_loads_skill_reads_files_and_terminates_cleanly() -> None:
         "epic-review",
         "tech-writer",
         "tasks",
-    }.issubset(set(agent["step_variables"]["required_skills"]))
-    for skill_name in agent["step_variables"]["required_skills"]:
+    }.issubset(set(agent["step_workflow"]["variables"]["required_skills"]))
+    for skill_name in agent["step_workflow"]["variables"]["required_skills"]:
         assert f'get_skill(name="{skill_name}")' in load_skill["status_message"]
     assert "Discovery Brief" in agent["instructions"]
     assert "descendant task set" in agent["instructions"]
@@ -262,20 +262,20 @@ def test_developer_agents_support_toolchain_allowlists_and_additional_skills(
 
     tool_allowlist = set(agent["skills"]["tool_allowlist"])
     assert tool_words.issubset(tool_allowlist)
-    assert agent["step_variables"]["required_skills"] == [
+    assert agent["step_workflow"]["variables"]["required_skills"] == [
         "development-discipline",
         "restraint",
         "tasks",
     ]
     assert "gobby-skills:get_skill" in _allowed_mcp_tools(load_required)
-    for skill_name in agent["step_variables"]["required_skills"]:
+    for skill_name in agent["step_workflow"]["variables"]["required_skills"]:
         assert f'get_skill(name="{skill_name}")' in load_required["status_message"]
     assert "development-discipline" in agent["instructions"]
     assert "tasks" in agent["instructions"]
     assert "test-driven-development" in agent["instructions"]
     assert "gobby-skills:get_skill" in _allowed_mcp_tools(load_skills)
     assert "additional_skills" in load_skills["status_message"]
-    assert "additional_skills_loaded" in agent["step_variables"]
+    assert "additional_skills_loaded" in agent["step_workflow"]["variables"]
     assert "loaded_skills" in str(load_skills["transitions"])
     assert "gobby-agents:end_agent_run" in _blocked_mcp_tools(implement)
     assert "_skipped_stages" not in implement["status_message"]
@@ -395,7 +395,9 @@ def test_tech_writer_loads_methodology_skill_after_claim() -> None:
 
     assert claim["transitions"] == [{"to": "load_skills", "when": "vars.task_claimed"}]
     assert "gobby-skills:get_skill" in _allowed_mcp_tools(load_skill)
-    assert {"tech-writer", "tasks"}.issubset(set(agent["step_variables"]["required_skills"]))
+    assert {"tech-writer", "tasks"}.issubset(
+        set(agent["step_workflow"]["variables"]["required_skills"])
+    )
     assert 'get_skill(name="tech-writer")' in load_skill["status_message"]
     assert "submit_for_review" in implement["status_message"]
 

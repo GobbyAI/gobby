@@ -42,10 +42,13 @@ async def test_set_variable_delegates_correctly() -> None:
             name="flag",
             value=True,
             session_id="#1",
-            workflow="plan-execute",
+            scope="step",
         )
 
-    mock_set.assert_called_once_with(sm, sm.db, "flag", True, "#1", workflow="plan-execute")
+    mock_set.assert_called_once()
+    args, kwargs = mock_set.call_args
+    assert args[:5] == (sm, sm.db, "flag", True, "#1")
+    assert kwargs["scope"] == "step"
     assert result["success"] is True
 
 
@@ -69,10 +72,13 @@ async def test_get_variable_delegates_correctly() -> None:
         result = await handler.get_variable(
             name="flag",
             session_id="#1",
-            workflow="plan-execute",
+            scope="step",
         )
 
-    mock_get.assert_called_once_with(sm, sm.db, "flag", "#1", workflow="plan-execute")
+    mock_get.assert_called_once()
+    args, kwargs = mock_get.call_args
+    assert args[:4] == (sm, sm.db, "flag", "#1")
+    assert kwargs["scope"] == "step"
     assert result["success"] is True
     assert result["value"] is True
 
@@ -100,5 +106,5 @@ def test_tools_registered() -> None:
 
     for tool_name in ("set_variable", "get_variable"):
         assert tool_name in tools
-        workflow_schema = tools[tool_name].parameters["properties"]["workflow"]
-        assert workflow_schema["default"] is None
+        scope_schema = tools[tool_name].parameters["properties"]["scope"]
+        assert scope_schema["default"] == "session"

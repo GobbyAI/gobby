@@ -50,8 +50,8 @@ when it finishes.
 - `delete_pipeline`
 - `export_pipeline`
 
-Definition tools store pipeline YAML as workflow definitions with
-`workflow_type='pipeline'`.
+Definition tools store pipeline YAML in `pipeline_definitions`. Validate a
+definition without executing it with `evaluate_pipeline`.
 
 ### Pipeline Helper Tools
 
@@ -378,4 +378,4 @@ step through `gobby-agents:end_agent_run`.
 - [Workflows Overview](./workflows-overview.md) for the complete workflow model
 - [MCP Tools](./mcp-tools.md) for current server and tool signatures
 
-_Last verified: 2026-06-11_
+_Last verified: 2026-08-14_

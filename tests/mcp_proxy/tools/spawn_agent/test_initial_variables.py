@@ -10,13 +10,19 @@ from unittest.mock import AsyncMock, MagicMock, patch
 import pytest
 import yaml
 
-from gobby.workflows.definitions import AgentDefinitionBody, AgentWorkflows
+from gobby.workflows.definitions import (
+    AgentDefinitionBody,
+    AgentStepWorkflowBody,
+    AgentWorkflows,
+)
 from gobby.workflows.safe_evaluator import SafeExpressionEvaluator
+from gobby.workflows.step_instances import AgentStepInstance
 
 if TYPE_CHECKING:
     from gobby.agents.spawn_models import SpawnRequest
     from gobby.storage.tasks import LocalTaskManager, Task
-    from gobby.workflows.definitions import WorkflowInstance
+
+from tests.agents.prepared_spawn import prepared_spawn
 
 pytestmark = pytest.mark.unit
 
@@ -24,7 +30,21 @@ LOCAL_MACHINE_ID = "21000000-0000-4000-8000-000000000003"
 
 
 @pytest.fixture(autouse=True)
-def _local_machine_identity() -> Iterator[None]:
+def _stub_prelaunch_prepare(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr(
+        "gobby.mcp_proxy.tools.spawn_agent._implementation.prepare_terminal_spawn",
+        lambda *args, **kwargs: prepared_spawn(),
+    )
+
+
+@pytest.fixture(autouse=True)
+def _local_machine_identity(request: pytest.FixtureRequest) -> Iterator[None]:
+    db = request.getfixturevalue("db") if "db" in request.fixturenames else None
+    if db is not None:
+        from gobby.storage.machines import LocalMachineManager
+        from tests.fixtures.postgres import TEST_USER_ID
+
+        LocalMachineManager(db).upsert_seen(LOCAL_MACHINE_ID, TEST_USER_ID)
     with patch("gobby.utils.machine_id._cached_machine_id", LOCAL_MACHINE_ID):
         yield
 
@@ -38,7 +58,7 @@ def _bundled_agent_body(name: str, repo_root: Path) -> AgentDefinitionBody:
 def test_initial_transition_condition_value_error_fails_closed(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    from gobby.mcp_proxy.tools.spawn_agent import _implementation
+    from gobby.mcp_proxy.tools.spawn_agent import _step_state
 
     monkeypatch.setattr(
         SafeExpressionEvaluator,
@@ -46,13 +66,13 @@ def test_initial_transition_condition_value_error_fails_closed(
         lambda *_args, **_kwargs: (_ for _ in ()).throw(ValueError("bad condition")),
     )
 
-    assert _implementation._transition_condition_met("bad()", {}) is False
+    assert _step_state._transition_condition_met("bad()", {}) is False
 
 
 def test_initial_transition_condition_unexpected_error_propagates(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    from gobby.mcp_proxy.tools.spawn_agent import _implementation
+    from gobby.mcp_proxy.tools.spawn_agent import _step_state
 
     monkeypatch.setattr(
         SafeExpressionEvaluator,
@@ -61,7 +81,7 @@ def test_initial_transition_condition_unexpected_error_propagates(
     )
 
     with pytest.raises(RuntimeError, match="boom"):
-        _implementation._transition_condition_met("boom()", {})
+        _step_state._transition_condition_met("boom()", {})
 
 
 def test_resolve_spawn_project_context_prefers_parent_session_project() -> None:
@@ -152,12 +172,12 @@ class TestSpawnAgentPipelineInjection:
                 "gobby.mcp_proxy.tools.spawn_agent._factory._load_agent_body",
                 return_value=agent_body,
             ),
-            patch("gobby.workflows.loader.WorkflowLoader") as mock_wf_loader_cls,
+            patch("gobby.workflows.pipeline_loader.PipelineLoader") as mock_wf_loader_cls,
             patch("gobby.mcp_proxy.tools.spawn_agent._factory.get_project_context") as mock_ctx,
             patch("gobby.mcp_proxy.tools.spawn_agent._factory.spawn_agent_impl") as mock_spawn_impl,
         ):
             mock_loader_instance = MagicMock()
-            mock_loader_instance.load_workflow = AsyncMock(return_value=pipeline_def)
+            mock_loader_instance.load_pipeline = AsyncMock(return_value=pipeline_def)
             mock_wf_loader_cls.return_value = mock_loader_instance
 
             mock_ctx.return_value = {
@@ -180,7 +200,7 @@ class TestSpawnAgentPipelineInjection:
             )
 
             assert result["success"] is True
-            mock_loader_instance.load_workflow.assert_awaited_once_with(
+            mock_loader_instance.load_pipeline.assert_awaited_once_with(
                 "my-pipeline",
                 project_path="/path/to/project",
             )
@@ -214,12 +234,12 @@ class TestSpawnAgentPipelineInjection:
                 "gobby.mcp_proxy.tools.spawn_agent._factory._load_agent_body",
                 return_value=agent_body,
             ),
-            patch("gobby.workflows.loader.WorkflowLoader") as mock_wf_loader_cls,
+            patch("gobby.workflows.pipeline_loader.PipelineLoader") as mock_wf_loader_cls,
             patch("gobby.mcp_proxy.tools.spawn_agent._factory.get_project_context") as mock_ctx,
             patch("gobby.mcp_proxy.tools.spawn_agent._factory.spawn_agent_impl") as mock_spawn_impl,
         ):
             mock_loader_instance = MagicMock()
-            mock_loader_instance.load_workflow = AsyncMock(return_value=workflow_def)
+            mock_loader_instance.load_pipeline = AsyncMock(return_value=workflow_def)
             mock_wf_loader_cls.return_value = mock_loader_instance
 
             mock_ctx.return_value = {
@@ -242,7 +262,7 @@ class TestSpawnAgentPipelineInjection:
             )
 
             assert result["success"] is True
-            mock_loader_instance.load_workflow.assert_awaited_once_with(
+            mock_loader_instance.load_pipeline.assert_awaited_once_with(
                 "my-workflow",
                 project_path="/path/to/project",
             )
@@ -310,7 +330,7 @@ class TestSpawnAgentStepVariables:
         from gobby.storage.projects import LocalProjectManager
         from gobby.storage.sessions import SessionManager
         from gobby.storage.tasks import LocalTaskManager
-        from gobby.workflows.state_manager import WorkflowInstanceManager
+        from gobby.workflows.step_instances import AgentStepInstanceManager
 
         project = LocalProjectManager(db).create(name="spawn-step-project", repo_path="/tmp/gobby")
         task_manager = LocalTaskManager(db)
@@ -336,25 +356,39 @@ class TestSpawnAgentStepVariables:
         agent_body = AgentDefinitionBody(
             name="plan-adversary",
             provider="codex",
-            step_variables={
-                "task_claimed": False,
-                "skill_loaded": False,
-                "review_complete": False,
-            },
-            steps=[
-                {
-                    "name": "claim",
-                    "allowed_tools": ["mcp__gobby__call_tool"],
-                    "allowed_mcp_tools": ["gobby-tasks:claim_task", "gobby-tasks:get_task"],
-                    "transitions": [{"to": "load_skill", "when": "vars.task_claimed"}],
+            step_workflow=AgentStepWorkflowBody(
+                variables={
+                    "task_claimed": False,
+                    "skill_loaded": False,
+                    "review_complete": False,
                 },
-                {
-                    "name": "load_skill",
-                    "allowed_tools": ["mcp__gobby__call_tool"],
-                    "allowed_mcp_tools": ["gobby-skills:get_skill"],
-                },
-            ],
+                steps=[
+                    {
+                        "name": "claim",
+                        "allowed_tools": ["mcp__gobby__call_tool"],
+                        "allowed_mcp_tools": ["gobby-tasks:claim_task", "gobby-tasks:get_task"],
+                        "transitions": [{"to": "load_skill", "when": "vars.task_claimed"}],
+                    },
+                    {
+                        "name": "load_skill",
+                        "allowed_tools": ["mcp__gobby__call_tool"],
+                        "allowed_mcp_tools": ["gobby-skills:get_skill"],
+                    },
+                ],
+            ),
         )
+
+        from gobby.mcp_proxy.tools.spawn_agent._step_state import (
+            persist_initial_step_instance as real_persist,
+        )
+
+        def _persist(db: Any, agent_body: Any, **kwargs: Any) -> None:
+            real_persist(
+                db,
+                agent_body,
+                session_id=child.id,
+                **{key: value for key, value in kwargs.items() if key != "session_id"},
+            )
 
         registry = create_spawn_agent_registry(
             mock_runner,
@@ -364,6 +398,10 @@ class TestSpawnAgentStepVariables:
         )
 
         with (
+            patch(
+                "gobby.mcp_proxy.tools.spawn_agent._implementation.persist_initial_step_instance",
+                _persist,
+            ),
             patch(
                 "gobby.mcp_proxy.tools.spawn_agent._factory._load_agent_body",
                 return_value=agent_body,
@@ -407,10 +445,9 @@ class TestSpawnAgentStepVariables:
                 },
             )
 
-        assert result["success"] is True
+        assert result["success"] is True, result
         assert task_manager.get_task(task.id).claimed_by_session_id == child.id
-
-        instance = WorkflowInstanceManager(db).get_instance(child.id, "plan-adversary-steps")
+        instance = AgentStepInstanceManager(db).get_for_session(child.id)
         assert instance is not None
         assert instance.current_step == "load_skill"
         assert instance.variables["task_claimed"] is True
@@ -429,14 +466,14 @@ class TestSpawnAgentStepVariables:
         dict[str, Any],
         LocalTaskManager,
         Task,
-        WorkflowInstance | None,
+        AgentStepInstance | None,
         SpawnRequest,
     ]:
         from gobby.mcp_proxy.tools.spawn_agent import create_spawn_agent_registry
         from gobby.storage.projects import LocalProjectManager
         from gobby.storage.sessions import SessionManager
         from gobby.storage.tasks import LocalTaskManager
-        from gobby.workflows.state_manager import WorkflowInstanceManager
+        from gobby.workflows.step_instances import AgentStepInstanceManager
 
         project = LocalProjectManager(db).create(
             name=f"{agent_name}-project", repo_path="/tmp/gobby"
@@ -464,6 +501,20 @@ class TestSpawnAgentStepVariables:
             parent_session_id=parent.id,
         )
 
+        from gobby.mcp_proxy.tools.spawn_agent._step_state import (
+            persist_initial_step_instance as real_persist,
+        )
+
+        def _persist(db: Any, agent_body: Any, **kwargs: Any) -> None:
+            if task_assignment == "none":
+                return
+            real_persist(
+                db,
+                agent_body,
+                session_id=child.id,
+                **{key: value for key, value in kwargs.items() if key != "session_id"},
+            )
+
         registry = create_spawn_agent_registry(
             mock_runner,
             task_manager=task_manager,
@@ -475,6 +526,10 @@ class TestSpawnAgentStepVariables:
             agent_body.workflows.variables["assigned_task_id"] = f"#{task.seq_num}"
 
         with (
+            patch(
+                "gobby.mcp_proxy.tools.spawn_agent._implementation.persist_initial_step_instance",
+                _persist,
+            ),
             patch(
                 "gobby.mcp_proxy.tools.spawn_agent._factory._load_agent_body",
                 return_value=agent_body,
@@ -517,8 +572,8 @@ class TestSpawnAgentStepVariables:
                 arguments["task_id"] = f"#{task.seq_num}"
             result = await registry.call("spawn_agent", arguments)
 
-        instance = WorkflowInstanceManager(db).get_instance(child.id, f"{agent_name}-steps")
         spawn_request = mock_execute.call_args.args[0]
+        instance = AgentStepInstanceManager(db).get_for_session(child.id)
         return result, task_manager, task, instance, spawn_request
 
     @pytest.mark.asyncio

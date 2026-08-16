@@ -11,7 +11,7 @@ import pytest
 from gobby.hooks.events import HookEvent, HookEventType, HookResponse, SessionSource
 from gobby.hooks.memory_recall_delivery import MEMORY_RECALL_DELIVERIES_VARIABLE
 from gobby.storage.hub.protocol import HubDatabase
-from gobby.storage.workflow_definitions import LocalWorkflowDefinitionManager
+from gobby.storage.definitions.rules import RuleDefinitionManager
 from gobby.workflows.definitions import RuleDefinitionBody, RuleEffect, RuleTriggerEvent
 from gobby.workflows.engine.core import RuleEngine
 from gobby.workflows.engine.delivery_formatting import finalize_staged_memory_delivery
@@ -67,13 +67,12 @@ def _event(
 
 
 def _insert_rule(
-    manager: LocalWorkflowDefinitionManager,
+    manager: RuleDefinitionManager,
     name: str,
     effect: RuleEffect,
 ) -> None:
     manager.create(
         name=name,
-        workflow_type="rule",
         definition_json=RuleDefinitionBody(
             event=RuleTriggerEvent.BEFORE_TOOL,
             effects=[effect],
@@ -204,7 +203,7 @@ async def test_apply_effect_dispatch_switch_cancel_stale_helpers_no_op(
     async def dispatcher(server: str, tool: str, args: dict[str, Any], event: Any) -> dict:
         return {"success": True, "result": {"success": True, "cancelled": 2, "count": 2}}
 
-    manager = LocalWorkflowDefinitionManager(db)
+    manager = RuleDefinitionManager(db)
     _insert_rule(
         manager,
         "cancel-stale-inline",

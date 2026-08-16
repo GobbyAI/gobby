@@ -8,6 +8,7 @@ from dataclasses import dataclass
 from gobby.storage.hub.protocol import HubDatabase
 from gobby.storage.projects import LocalProjectManager
 from gobby.storage.sessions import SessionManager
+from gobby.storage.sessions._constants import LIVE_SESSION_STATUSES
 from gobby.storage.tasks._manager import LocalTaskManager
 from gobby.storage.tasks._transitions import (
     escalate_task_if_owned,
@@ -21,7 +22,7 @@ from gobby.workflows.task_dirty_state import task_dirty_paths
 logger = logging.getLogger(__name__)
 
 _LIVE_SESSION_LABEL = "live-session"
-_LIVE_OWNER_STATUSES = frozenset({"active", "paused", "handoff_ready"})
+_LIVE_OWNER_STATUSES = LIVE_SESSION_STATUSES
 
 
 @dataclass(frozen=True)

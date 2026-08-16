@@ -28,7 +28,7 @@ import pytest
 from gobby.adapters.codex_impl.hooks_adapter import CodexHooksAdapter
 from gobby.hooks.events import HookEventType
 from gobby.storage.hub.protocol import HubDatabase
-from gobby.storage.workflow_definitions import LocalWorkflowDefinitionManager
+from gobby.storage.definitions.rules import RuleDefinitionManager
 from gobby.workflows.definitions import RuleDefinitionBody
 from gobby.workflows.safe_evaluator import SafeExpressionEvaluator
 from gobby.workflows.sync_rules import sync_bundled_rules
@@ -62,8 +62,8 @@ def db(temp_db: HubDatabase) -> HubDatabase:
 
 
 @pytest.fixture
-def manager(db: HubDatabase) -> LocalWorkflowDefinitionManager:
-    return LocalWorkflowDefinitionManager(db)
+def manager(db: HubDatabase) -> RuleDefinitionManager:
+    return RuleDefinitionManager(db)
 
 
 def _sync_bundled(db: HubDatabase) -> dict[str, Any]:
@@ -77,10 +77,10 @@ class TestMemoryLifecycleSync:
     """Test that memory-lifecycle rules sync correctly."""
 
     def test_bundled_file_syncs_all_rules(self, db, manager) -> None:
-        """All memory-lifecycle rules should sync to workflow_definitions."""
+        """All memory-lifecycle rules should sync to rule_definitions."""
         _sync_bundled(db)
 
-        rules = manager.list_all(workflow_type="rule")
+        rules = manager.list_all()
         rule_names = {r.name for r in rules}
 
         for rule_name in MEMORY_RULES:
@@ -92,20 +92,20 @@ class TestMemoryLifecycleSync:
         """All memory-lifecycle rules should have group='memory-lifecycle'."""
         _sync_bundled(db)
 
-        rules = manager.list_all(workflow_type="rule")
+        rules = manager.list_all()
         for row in rules:
             if row.name in MEMORY_RULES:
-                body = json.loads(row.definition_json)
+                body = row.definition_json
                 assert body.get("group") == "memory-lifecycle", f"{row.name} missing group"
 
     def test_all_rules_are_valid_pydantic(self, db, manager) -> None:
         """All synced rules should be valid RuleDefinitionBody instances."""
         _sync_bundled(db)
 
-        rules = manager.list_all(workflow_type="rule")
+        rules = manager.list_all()
         for row in rules:
             if row.name in MEMORY_RULES:
-                body = RuleDefinitionBody.model_validate_json(row.definition_json)
+                body = RuleDefinitionBody.model_validate(row.definition_json)
                 for effect in body.resolved_effects:
                     assert effect.type in {
                         "set_variable",
@@ -123,7 +123,6 @@ class TestMemoryLifecycleSync:
                     "effects": [{"type": "set_variable", "variable": "obsolete", "value": True}],
                 }
             ),
-            workflow_type="rule",
             source="installed",
             tags=["gobby"],
         )
@@ -146,12 +145,12 @@ class TestDigestOnPlanTurnEnd:
     def test_event_and_effect(
         self,
         db: HubDatabase,
-        manager: LocalWorkflowDefinitionManager,
+        manager: RuleDefinitionManager,
     ) -> None:
         _sync_bundled(db)
         row = manager.get_by_name("digest-on-plan-turn-end")
         assert row is not None
-        body = RuleDefinitionBody.model_validate_json(row.definition_json)
+        body = RuleDefinitionBody.model_validate(row.definition_json)
         assert body.event.value == "after_tool"
         assert body.effects[0].type == "mcp_call"
         assert body.effects[0].server == "gobby-memory"
@@ -172,14 +171,14 @@ class TestDigestOnPlanTurnEnd:
     def test_matches_plan_boundaries(
         self,
         db: HubDatabase,
-        manager: LocalWorkflowDefinitionManager,
+        manager: RuleDefinitionManager,
         tool_name: str,
         matches: bool,
     ) -> None:
         _sync_bundled(db)
         row = manager.get_by_name("digest-on-plan-turn-end")
         assert row is not None
-        body = RuleDefinitionBody.model_validate_json(row.definition_json)
+        body = RuleDefinitionBody.model_validate(row.definition_json)
         assert body.when is not None
 
         native_event = {
@@ -210,12 +209,12 @@ class TestDigestCatchUpOnTurnStart:
     def test_event_and_effect(
         self,
         db: HubDatabase,
-        manager: LocalWorkflowDefinitionManager,
+        manager: RuleDefinitionManager,
     ) -> None:
         _sync_bundled(db)
         row = manager.get_by_name("digest-catch-up-on-turn-start")
         assert row is not None
-        body = RuleDefinitionBody.model_validate_json(row.definition_json)
+        body = RuleDefinitionBody.model_validate(row.definition_json)
         assert body.effects is not None
         effect = body.effects[0]
 
@@ -240,7 +239,7 @@ class TestResetMemoryTrackingOnStart:
         _sync_bundled(db)
         row = manager.get_by_name("reset-memory-tracking-on-start")
         assert row is not None
-        body = RuleDefinitionBody.model_validate_json(row.definition_json)
+        body = RuleDefinitionBody.model_validate(row.definition_json)
         assert body.event.value == "session_start"
         assert body.effects[0].type == "set_variable"
         assert body.effects[0].variable == "injected_memory_ids"
@@ -248,7 +247,7 @@ class TestResetMemoryTrackingOnStart:
     def test_has_when_condition(self, db, manager) -> None:
         _sync_bundled(db)
         row = manager.get_by_name("reset-memory-tracking-on-start")
-        body = RuleDefinitionBody.model_validate_json(row.definition_json)
+        body = RuleDefinitionBody.model_validate(row.definition_json)
         assert body.when is not None
         assert "clear" in body.when
         assert "compact" in body.when
@@ -265,7 +264,7 @@ class TestMemoryRecallOnPrompt:
         _sync_bundled(db)
         row = manager.get_by_name("memory-recall-on-prompt")
         assert row is not None
-        body = RuleDefinitionBody.model_validate_json(row.definition_json)
+        body = RuleDefinitionBody.model_validate(row.definition_json)
         assert body.event.value == "turn_start"
         assert body.when is not None
         assert "is_spawned_agent" in body.when
@@ -283,7 +282,7 @@ class TestMemoryRecallOnPrompt:
     def test_duplicate_hook_for_same_parent_turn_is_rejected(self, db, manager) -> None:
         _sync_bundled(db)
         row = manager.get_by_name("memory-recall-on-prompt")
-        body = RuleDefinitionBody.model_validate_json(row.definition_json)
+        body = RuleDefinitionBody.model_validate(row.definition_json)
         assert body.when is not None
 
         first = SafeExpressionEvaluator(
@@ -325,7 +324,7 @@ class TestIncrementParentTurnSeq:
         assert row.enabled is True
         assert row.priority == 1
 
-        body = RuleDefinitionBody.model_validate_json(row.definition_json)
+        body = RuleDefinitionBody.model_validate(row.definition_json)
         assert body.event.value == "turn_start"
         assert body.effects[0].type == "set_variable"
         assert body.effects[0].variable == "parent_turn_seq"
@@ -336,7 +335,7 @@ class TestIncrementParentTurnSeq:
         row = manager.get_by_name("increment-parent-turn-seq")
         assert row is not None
 
-        body = RuleDefinitionBody.model_validate_json(row.definition_json)
+        body = RuleDefinitionBody.model_validate(row.definition_json)
         assert body.when is not None
         assert "is_spawned_agent" in body.when
         assert "variables.get('parent_turn_seq') is not none" in body.when
@@ -356,7 +355,7 @@ class TestMemoryCaptureNudge:
         _sync_bundled(db)
         row = manager.get_by_name("memory-capture-nudge")
         assert row is not None
-        body = RuleDefinitionBody.model_validate_json(row.definition_json)
+        body = RuleDefinitionBody.model_validate(row.definition_json)
         assert body.event.value == "turn_start"
         assert body.effects[0].type == "inject_context"
         assert body.effects[0].template is not None
@@ -370,7 +369,7 @@ class TestMemoryCaptureNudge:
         """Only nudge on substantial prompts (not slash commands)."""
         _sync_bundled(db)
         row = manager.get_by_name("memory-capture-nudge")
-        body = RuleDefinitionBody.model_validate_json(row.definition_json)
+        body = RuleDefinitionBody.model_validate(row.definition_json)
         assert body.when is not None
         assert "prompt" in body.when
 
@@ -391,7 +390,7 @@ class TestGuardPlanMemoryWrites:
     def test_rule_contract(
         self,
         db: HubDatabase,
-        manager: LocalWorkflowDefinitionManager,
+        manager: RuleDefinitionManager,
     ) -> None:
         _sync_bundled(db)
         row = manager.get_by_name("guard-plan-memory-writes")
@@ -399,7 +398,7 @@ class TestGuardPlanMemoryWrites:
         assert row.enabled is True
         assert row.priority == 11
 
-        body = RuleDefinitionBody.model_validate_json(row.definition_json)
+        body = RuleDefinitionBody.model_validate(row.definition_json)
         assert body.event.value == "before_tool"
         assert body.agent_scope is None
         assert body.effects is not None
@@ -420,13 +419,13 @@ class TestGuardPlanMemoryWrites:
     def test_condition_covers_planning_contexts_and_recall_precedence(
         self,
         db: HubDatabase,
-        manager: LocalWorkflowDefinitionManager,
+        manager: RuleDefinitionManager,
     ) -> None:
         _sync_bundled(db)
         row = manager.get_by_name("guard-plan-memory-writes")
         assert row is not None
 
-        body = RuleDefinitionBody.model_validate_json(row.definition_json)
+        body = RuleDefinitionBody.model_validate(row.definition_json)
         assert body.when is not None
         assert "variables.get('plan_mode')" in body.when
         assert "not pending_memory_recall_request_id()" in body.when

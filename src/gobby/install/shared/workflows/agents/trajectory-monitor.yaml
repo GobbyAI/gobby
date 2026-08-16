@@ -2,7 +2,7 @@ name: trajectory-monitor
 description: |
   Read-only PR-stage reviewer that audits the full implementation trajectory.
   Behavior is enforced by an inline step workflow.
-version: "1.0"
+version: "1.1"
 enabled: true
 surfaces: [spawn, persona]
 provider: claude
@@ -50,181 +50,182 @@ workflows:
     include:
       - "tag:default"
       - "tag:worker-safety"
-step_variables:
-  task_claimed: false
-  required_skills:
-    - code-index
-    - tasks
-    - review-learning
-    - proportionality
-  required_skills_loaded: false
-  verdict_emitted: false
-  review_stale: false
+step_workflow:
+  variables:
+    task_claimed: false
+    required_skills:
+      - code-index
+      - tasks
+      - review-learning
+      - proportionality
+    required_skills_loaded: false
+    verdict_emitted: false
+    review_stale: false
 
-steps:
-  - name: claim
-    mcp_error_policy: stay
-    description: "Claim the assigned task"
-    status_message: |
-      Claim assigned_task_id with claim_task. Spawn-time auto-claim may already
-      satisfy this step, so do not repeat the call after the workflow advances.
-    allowed_tools:
-      - mcp__gobby__call_tool
-      - mcp__gobby__list_mcp_servers
-      - mcp__gobby__list_tools
-      - mcp__gobby__get_tool_schema
-    allowed_mcp_tools:
-      - "gobby-tasks:claim_task"
-    on_mcp_success:
-      - server: gobby-tasks
-        tool: claim_task
-        action: set_variable
-        variable: task_claimed
-        value: true
-    transitions:
-      - to: load_skills
-        when: "vars.task_claimed"
+  exit_condition: "current_step == 'terminate'"
+  steps:
+    - name: claim
+      mcp_error_policy: stay
+      description: "Claim the assigned task"
+      status_message: |
+        Claim assigned_task_id with claim_task. Spawn-time auto-claim may already
+        satisfy this step, so do not repeat the call after the workflow advances.
+      allowed_tools:
+        - mcp__gobby__call_tool
+        - mcp__gobby__list_mcp_servers
+        - mcp__gobby__list_tools
+        - mcp__gobby__get_tool_schema
+      allowed_mcp_tools:
+        - "gobby-tasks:claim_task"
+      on_mcp_success:
+        - server: gobby-tasks
+          tool: claim_task
+          action: set_variable
+          variable: task_claimed
+          value: true
+      transitions:
+        - to: load_skills
+          when: "vars.task_claimed"
 
-  - name: load_skills
-    mcp_error_policy: stay
-    description: "Load required trajectory-review skills"
-    status_message: |
-      Load these exact skills from gobby-skills: code-index, tasks,
-      review-learning, and proportionality. Do not inspect the task until all
-      required skills are loaded. Use only mcp__gobby__call_tool. For each
-      skill, call call_tool("gobby-skills", "get_skill", {"name": <skill>}). Do not use
-      native Skill, GitHub/app connector, or Computer Use tools.
-    allowed_tools:
-      - mcp__gobby__call_tool
-      - mcp__gobby__list_mcp_servers
-      - mcp__gobby__list_tools
-      - mcp__gobby__get_tool_schema
-    allowed_mcp_tools:
-      - "gobby-skills:get_skill"
-    on_mcp_success:
-      - server: gobby-skills
-        tool: get_skill
-        action: set_variable
-        variable: required_skills_loaded
-        value: >-
-          all(skill in vars.get('loaded_skills', []) for skill in vars.required_skills)
-    transitions:
-      - to: review
-        when: >-
-          all(skill in vars.get('loaded_skills', []) for skill in vars.required_skills)
+    - name: load_skills
+      mcp_error_policy: stay
+      description: "Load required trajectory-review skills"
+      status_message: |
+        Load these exact skills from gobby-skills: code-index, tasks,
+        review-learning, and proportionality. Do not inspect the task until all
+        required skills are loaded. Use only mcp__gobby__call_tool. For each
+        skill, call call_tool("gobby-skills", "get_skill", {"name": <skill>}). Do not use
+        native Skill, GitHub/app connector, or Computer Use tools.
+      allowed_tools:
+        - mcp__gobby__call_tool
+        - mcp__gobby__list_mcp_servers
+        - mcp__gobby__list_tools
+        - mcp__gobby__get_tool_schema
+      allowed_mcp_tools:
+        - "gobby-skills:get_skill"
+      on_mcp_success:
+        - server: gobby-skills
+          tool: get_skill
+          action: set_variable
+          variable: required_skills_loaded
+          value: >-
+            all(skill in vars.get('loaded_skills', []) for skill in vars.required_skills)
+      transitions:
+        - to: review
+          when: >-
+            all(skill in vars.get('loaded_skills', []) for skill in vars.required_skills)
 
-  - name: review
-    mcp_error_policy: stay
-    description: "Audit task trajectory and emit one PR-stage verdict"
-    status_message: |
-      Audit the assigned task without changing repository or task content.
+    - name: review
+      mcp_error_policy: stay
+      description: "Audit task trajectory and emit one PR-stage verdict"
+      status_message: |
+        Audit the assigned task without changing repository or task content.
 
-      1. Read get_task, get_task_stages, get_artifacts, and get_delivery_state.
-         Resolve the exact worktree or clone and authoritative target_branch from
-         those records. Never assume main and never audit an unrelated workspace.
-      2. Page through the complete get_task_diff history. Inspect every linked
-         commit diff and build the complete linked commit set.
-      3. In the resolved workspace, compute git merge-base target_branch HEAD,
-         list every commit in merge-base..HEAD, inspect the cumulative branch
-         diff, and inspect any uncommitted state. Flag branch commits absent from
-         the linked commit set and explain whether they are expected.
-      4. Find the latest completed development or epic approval commit from
-         stage/artifact evidence and inspect the post-approval delta through HEAD.
-      5. Compare all accumulated changes with the task description and plan scope.
-         Reject missing requirements, unreviewed changes, scope drift, quality
-         defects, or insufficient evidence. Use review-learning for reusable
-         rejection context and apply proportionality to needless mechanisms.
-      6. Emit exactly one verdict immediately:
-         - approve_review(task_id=assigned_task_id, stage_name="pr") when clean;
-         - reject_review(task_id=assigned_task_id, stage_name="pr") for ordinary
-           quality, scope, evidence, or implementation failures;
-         - escalate_task with a reason starting `trajectory_suspicious:` only for
-           suspected covert behavior, unexplained suspicious commits, or deliberate
-           concealment. Escalation is not a substitute for an ordinary rejection.
+        1. Read get_task, get_task_stages, get_artifacts, and get_delivery_state.
+           Resolve the exact worktree or clone and authoritative target_branch from
+           those records. Never assume main and never audit an unrelated workspace.
+        2. Page through the complete get_task_diff history. Inspect every linked
+           commit diff and build the complete linked commit set.
+        3. In the resolved workspace, compute git merge-base target_branch HEAD,
+           list every commit in merge-base..HEAD, inspect the cumulative branch
+           diff, and inspect any uncommitted state. Flag branch commits absent from
+           the linked commit set and explain whether they are expected.
+        4. Find the latest completed development or epic approval commit from
+           stage/artifact evidence and inspect the post-approval delta through HEAD.
+        5. Compare all accumulated changes with the task description and plan scope.
+           Reject missing requirements, unreviewed changes, scope drift, quality
+           defects, or insufficient evidence. Use review-learning for reusable
+           rejection context and apply proportionality to needless mechanisms.
+        6. Emit exactly one verdict immediately:
+           - approve_review(task_id=assigned_task_id, stage_name="pr") when clean;
+           - reject_review(task_id=assigned_task_id, stage_name="pr") for ordinary
+             quality, scope, evidence, or implementation failures;
+           - escalate_task with a reason starting `trajectory_suspicious:` only for
+             suspected covert behavior, unexplained suspicious commits, or deliberate
+             concealment. Escalation is not a substitute for an ordinary rejection.
 
-      If get_task proves the task is no longer at pr:needs_review, this run is
-      stale. Do not emit a second verdict; call end_agent_run after transitioning.
-      After any verdict succeeds, do not poll, wait, or perform more review work.
-    allowed_tools:
-      - Bash
-      - Read
-      - Grep
-      - Glob
-      - LS
-      - mcp__gobby__call_tool
-      - mcp__gobby__list_mcp_servers
-      - mcp__gobby__list_tools
-      - mcp__gobby__get_tool_schema
-    blocked_mcp_tools:
-      - "gobby-tasks:close_task"
-      - "gobby-tasks:de_escalate_task"
-      - "gobby-tasks-ops:submit_for_review"
-      - "gobby-tasks:reopen_task"
-      - "gobby-agents:spawn_agent"
-      - "gobby-agents:kill_agent"
-    allowed_mcp_tools:
-      - "gobby-tasks:get_task"
-      - "gobby-tasks:get_task_diff"
-      - "gobby-tasks:get_task_stages"
-      - "gobby-tasks-ops:get_artifacts"
-      - "gobby-tasks-ops:get_delivery_state"
-      - "gobby-worktrees:get_worktree_by_task"
-      - "gobby-worktrees:get_worktree"
-      - "gobby-clones:get_clone_by_task"
-      - "gobby-clones:get_clone"
-      - "gobby-tasks-ops:approve_review"
-      - "gobby-tasks-ops:reject_review"
-      - "gobby-tasks:escalate_task"
-    on_mcp_success:
-      - server: gobby-tasks
-        tool: get_task
-        when: >-
-          tool_output.get('success') is not False
-          and bool(tool_output.get('result'))
-          and (
-            (((tool_output.get('result') or {}).get('state') or {}).get('is_closed'))
-            or (
-              ((((tool_output.get('result') or {}).get('state') or {}).get('current_stage') or {}).get('name'))
-              != 'pr'
+        If get_task proves the task is no longer at pr:needs_review, this run is
+        stale. Do not emit a second verdict; call end_agent_run after transitioning.
+        After any verdict succeeds, do not poll, wait, or perform more review work.
+      allowed_tools:
+        - Bash
+        - Read
+        - Grep
+        - Glob
+        - LS
+        - mcp__gobby__call_tool
+        - mcp__gobby__list_mcp_servers
+        - mcp__gobby__list_tools
+        - mcp__gobby__get_tool_schema
+      blocked_mcp_tools:
+        - "gobby-tasks:close_task"
+        - "gobby-tasks:de_escalate_task"
+        - "gobby-tasks-ops:submit_for_review"
+        - "gobby-tasks:reopen_task"
+        - "gobby-agents:spawn_agent"
+        - "gobby-agents:kill_agent"
+      allowed_mcp_tools:
+        - "gobby-tasks:get_task"
+        - "gobby-tasks:get_task_diff"
+        - "gobby-tasks:get_task_stages"
+        - "gobby-tasks-ops:get_artifacts"
+        - "gobby-tasks-ops:get_delivery_state"
+        - "gobby-worktrees:get_worktree_by_task"
+        - "gobby-worktrees:get_worktree"
+        - "gobby-clones:get_clone_by_task"
+        - "gobby-clones:get_clone"
+        - "gobby-tasks-ops:approve_review"
+        - "gobby-tasks-ops:reject_review"
+        - "gobby-tasks:escalate_task"
+      on_mcp_success:
+        - server: gobby-tasks
+          tool: get_task
+          when: >-
+            tool_output.get('success') is not False
+            and bool(tool_output.get('result'))
+            and (
+              (((tool_output.get('result') or {}).get('state') or {}).get('is_closed'))
+              or (
+                ((((tool_output.get('result') or {}).get('state') or {}).get('current_stage') or {}).get('name'))
+                != 'pr'
+              )
+              or (
+                ((((tool_output.get('result') or {}).get('state') or {}).get('current_stage') or {}).get('state'))
+                != 'needs_review'
+              )
             )
-            or (
-              ((((tool_output.get('result') or {}).get('state') or {}).get('current_stage') or {}).get('state'))
-              != 'needs_review'
-            )
-          )
-        action: set_variable
-        variable: review_stale
-        value: true
-      - server: gobby-tasks-ops
-        tool: approve_review
-        action: set_variable
-        variable: verdict_emitted
-        value: true
-      - server: gobby-tasks-ops
-        tool: reject_review
-        action: set_variable
-        variable: verdict_emitted
-        value: true
-      - server: gobby-tasks
-        tool: escalate_task
-        action: set_variable
-        variable: verdict_emitted
-        value: true
-    transitions:
-      - to: terminate
-        when: "vars.verdict_emitted or vars.review_stale"
+          action: set_variable
+          variable: review_stale
+          value: true
+        - server: gobby-tasks-ops
+          tool: approve_review
+          action: set_variable
+          variable: verdict_emitted
+          value: true
+        - server: gobby-tasks-ops
+          tool: reject_review
+          action: set_variable
+          variable: verdict_emitted
+          value: true
+        - server: gobby-tasks
+          tool: escalate_task
+          action: set_variable
+          variable: verdict_emitted
+          value: true
+      transitions:
+        - to: terminate
+          when: "vars.verdict_emitted or vars.review_stale"
 
-  - name: terminate
-    description: "Self-terminate"
-    status_message: >-
-      Call mcp__gobby__call_tool with server_name="gobby-agents",
-      tool_name="end_agent_run", and arguments={} to finish this review run.
-    allowed_tools:
-      - mcp__gobby__call_tool
-      - mcp__gobby__list_mcp_servers
-      - mcp__gobby__list_tools
-      - mcp__gobby__get_tool_schema
-    allowed_mcp_tools:
-      - "gobby-agents:end_agent_run"
+    - name: terminate
+      description: "Self-terminate"
+      status_message: >-
+        Call mcp__gobby__call_tool with server_name="gobby-agents",
+        tool_name="end_agent_run", and arguments={} to finish this review run.
+      allowed_tools:
+        - mcp__gobby__call_tool
+        - mcp__gobby__list_mcp_servers
+        - mcp__gobby__list_tools
+        - mcp__gobby__get_tool_schema
+      allowed_mcp_tools:
+        - "gobby-agents:end_agent_run"
 
-exit_condition: "current_step == 'terminate'"

@@ -89,7 +89,7 @@ def test_hook_manager_integration() -> None:
         patch("gobby.hooks.factory.SessionManager") as MockSessionManagerClass,
         patch("gobby.hooks.factory.SessionTaskManager"),
         patch("gobby.hooks.factory.DaemonClient") as MockDaemonClientClass,
-        patch("gobby.hooks.factory.WorkflowLoader"),
+        patch("gobby.hooks.factory.PipelineLoader"),
         patch("gobby.hooks.factory.WorkflowHookHandler") as MockHandlerClass,
     ):
         mock_handler_instance = MockHandlerClass.return_value
@@ -134,7 +134,7 @@ def test_hook_manager_blocks_on_workflow() -> None:
         patch("gobby.hooks.factory.SessionManager") as MockSessionManagerClass,
         patch("gobby.hooks.factory.SessionTaskManager"),
         patch("gobby.hooks.factory.DaemonClient") as MockDaemonClientClass,
-        patch("gobby.hooks.factory.WorkflowLoader"),
+        patch("gobby.hooks.factory.PipelineLoader"),
         patch("gobby.hooks.factory.WorkflowHookHandler") as MockHandlerClass,
     ):
         mock_handler_instance = MockHandlerClass.return_value

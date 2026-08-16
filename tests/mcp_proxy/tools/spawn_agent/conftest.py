@@ -9,7 +9,7 @@ import pytest
 
 from gobby.agents.isolation import IsolationContext
 from gobby.storage.hub.protocol import HubDatabase
-from gobby.storage.workflow_definitions import LocalWorkflowDefinitionManager
+from gobby.storage.definitions.agents import AgentDefinitionManager
 from gobby.workflows.definitions import AgentDefinitionBody
 
 
@@ -29,8 +29,8 @@ def db(temp_db: HubDatabase) -> HubDatabase:
 
 
 @pytest.fixture
-def manager(db: HubDatabase) -> LocalWorkflowDefinitionManager:
-    return LocalWorkflowDefinitionManager(db)
+def manager(db: HubDatabase) -> AgentDefinitionManager:
+    return AgentDefinitionManager(db)
 
 
 @pytest.fixture

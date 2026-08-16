@@ -7,6 +7,7 @@ COMPACT_NOTIFICATION_STARTED_AT_VARIABLE = "compact_notification_started_at"
 COMPACT_RESUME_REQUIRED_SKILLS_VARIABLE = "compact_resume_required_skills"
 COMPACT_RESUME_ADVISORY_SKILLS_VARIABLE = "compact_resume_advisory_skills"
 COMPACT_HANDOFF_MARKER_VARIABLE = "handoff_source"
+COMPACT_HANDOFF_INJECT_PENDING_VARIABLE = "compact_handoff_inject_pending"
 COMPACT_SELF_INTERRUPT_WARNING = (
     "In a terminal session that call comes back as a rejected or cancelled tool use "
     "attributed to the user. That is the daemon interrupting the turn to deliver the "

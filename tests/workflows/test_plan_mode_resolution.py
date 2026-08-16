@@ -14,7 +14,7 @@ import pytest
 from gobby.hooks.events import HookEvent, HookEventType, SessionSource
 from gobby.hooks.normalization import normalize_tool_fields
 from gobby.storage.hub.protocol import HubDatabase
-from gobby.storage.workflow_definitions import LocalWorkflowDefinitionManager
+from gobby.storage.definitions.rules import RuleDefinitionManager
 from gobby.workflows.definitions import RuleDefinitionBody
 from gobby.workflows.engine.core import RuleEngine
 from gobby.workflows.hooks import WorkflowHookHandler
@@ -394,9 +394,9 @@ def _stale_plan_variables() -> dict[str, Any]:
 
 def _block_edits_when(db: HubDatabase) -> tuple[RuleEngine, str]:
     sync_bundled_rules(db, get_bundled_rules_path())
-    row = LocalWorkflowDefinitionManager(db).get_by_name("block-edits-plan-mode")
+    row = RuleDefinitionManager(db).get_by_name("block-edits-plan-mode")
     assert row is not None
-    body = RuleDefinitionBody.model_validate_json(row.definition_json)
+    body = RuleDefinitionBody.model_validate(row.definition_json)
     assert body.when is not None
     return RuleEngine(db), body.when
 

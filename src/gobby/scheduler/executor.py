@@ -372,7 +372,7 @@ class CronExecutor:
 
         inputs = config.get("inputs", {})
 
-        # Use pipeline_executor's loader (has DB context) instead of bare WorkflowLoader()
+        # Use pipeline_executor's loader (has DB context) instead of bare PipelineLoader()
         loader = pipeline_executor.loader
         if not loader:
             raise RuntimeError("pipeline_executor has no loader configured")

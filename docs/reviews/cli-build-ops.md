@@ -55,8 +55,9 @@
 
 ### [IMPORTANT] `workflows reinstall --type rule|agent|variable` deletes from the wrong table
 - **Where:** `src/gobby/cli/workflows/manage.py:46-49` + sync map `:86-92`
-- **Failure mode:** For `--type rule`, the delete runs `DELETE FROM workflow_definitions WHERE workflow_type='rule'`, but rules live in `rule_definitions` (agents in `agent_definitions`, variables in `variable_definitions` — the sync map dispatches `sync_bundled_rules`/`_agents`/`_variables` accordingly). So the delete removes 0 rows from `workflow_definitions` for these types (always prints "Deleted 0"), then sync upserts into the correct table — the advertised clean wipe never happens, and stale rows in those tables aren't cleared.
-- **Minimal fix:** Map each type to its real table for the delete (or delegate deletion to the type-specific reinstall helper).
+- **Historical failure (review @ 3f5bccfb0):** For `--type rule`, the delete ran `DELETE FROM workflow_definitions WHERE workflow_type='rule'`. At review time every definition kind still lived in `workflow_definitions`; the typed tables named in the original write-up (`rule_definitions`, `agent_definitions`, `variable_definitions`) did **not** exist yet. The wipe therefore targeted the same table the copy still used, but with a type filter that missed user-authored rows the later split moved. The original claim that those typed tables were already live is false.
+- **Current state (epic #18879):** `gobby workflows` is gone. Reinstall is `gobby sync --reinstall [rules|agents|pipelines|variables|all]`, which deletes only bundled `source='installed'` rows from `rule_definitions`, `agent_definitions`, `session_variable_defaults`, and `pipeline_definitions` and re-syncs those domains. User and project rows are preserved.
+- **Minimal fix (historical):** Map each type to its real table for the delete (or delegate deletion to the type-specific reinstall helper).
 - **Confidence:** high
 
 ### [IMPORTANT] `workflows reload` reports success and exits 0 even when the daemon reload fails

@@ -16,7 +16,7 @@ def cli_runner():
 
 @pytest.fixture
 def mock_manager():
-    """Mock LocalWorkflowDefinitionManager."""
+    """Mock RuleDefinitionManager."""
     return MagicMock()
 
 
@@ -30,7 +30,7 @@ def _make_rule_row(
     definition_json: str | None = None,
     workflow_type: str = "rule",
 ):
-    """Create a mock WorkflowDefinitionRow for rules."""
+    """Create a mock RuleDefinitionRow for rules."""
     row = MagicMock()
     row.id = f"id-{name}"
     row.name = name
@@ -101,7 +101,7 @@ class TestListRules:
     def test_list_filter_by_event(self, cli_runner, mock_manager) -> None:
         from gobby.cli.rules import rules
 
-        mock_manager.list_rules_by_event.return_value = [
+        mock_manager.list_by_event.return_value = [
             _make_rule_row("event-rule"),
         ]
 
@@ -109,12 +109,12 @@ class TestListRules:
             result = cli_runner.invoke(rules, ["list", "--event", "before_tool"])
             assert result.exit_code == 0
             assert "event-rule" in result.output
-            mock_manager.list_rules_by_event.assert_called_once_with("before_tool", enabled=None)
+            mock_manager.list_by_event.assert_called_once_with("before_tool", enabled=None)
 
     def test_list_filter_by_group(self, cli_runner, mock_manager) -> None:
         from gobby.cli.rules import rules
 
-        mock_manager.list_rules_by_group.return_value = [
+        mock_manager.list_by_group.return_value = [
             _make_rule_row("group-rule"),
         ]
 
@@ -122,7 +122,7 @@ class TestListRules:
             result = cli_runner.invoke(rules, ["list", "--group", "worker-safety"])
             assert result.exit_code == 0
             assert "group-rule" in result.output
-            mock_manager.list_rules_by_group.assert_called_once_with("worker-safety", enabled=None)
+            mock_manager.list_by_group.assert_called_once_with("worker-safety", enabled=None)
 
     def test_list_filter_enabled(self, cli_runner, mock_manager) -> None:
         from gobby.cli.rules import rules
@@ -132,7 +132,7 @@ class TestListRules:
         with patch("gobby.cli.rules._get_manager", return_value=mock_manager):
             result = cli_runner.invoke(rules, ["list", "--enabled"])
             assert result.exit_code == 0
-            mock_manager.list_all.assert_called_once_with(workflow_type="rule", enabled=True)
+            mock_manager.list_all.assert_called_once_with(enabled=True)
 
     def test_list_filter_disabled(self, cli_runner, mock_manager) -> None:
         from gobby.cli.rules import rules
@@ -142,7 +142,7 @@ class TestListRules:
         with patch("gobby.cli.rules._get_manager", return_value=mock_manager):
             result = cli_runner.invoke(rules, ["list", "--disabled"])
             assert result.exit_code == 0
-            mock_manager.list_all.assert_called_once_with(workflow_type="rule", enabled=False)
+            mock_manager.list_all.assert_called_once_with(enabled=False)
 
     def test_list_json(self, cli_runner, mock_manager) -> None:
         from gobby.cli.rules import rules
@@ -184,18 +184,6 @@ class TestShowRule:
 
         with patch("gobby.cli.rules._get_manager", return_value=mock_manager):
             result = cli_runner.invoke(rules, ["show", "missing"])
-            assert result.exit_code == 1
-            assert "not found" in result.output
-
-    def test_show_not_a_rule(self, cli_runner, mock_manager) -> None:
-        from gobby.cli.rules import rules
-
-        row = _make_rule_row("not-a-rule")
-        row.workflow_type = "workflow"
-        mock_manager.get_by_name.return_value = row
-
-        with patch("gobby.cli.rules._get_manager", return_value=mock_manager):
-            result = cli_runner.invoke(rules, ["show", "not-a-rule"])
             assert result.exit_code == 1
             assert "not found" in result.output
 
@@ -379,7 +367,7 @@ class TestExportRules:
     def test_export_by_group(self, cli_runner, mock_manager) -> None:
         from gobby.cli.rules import rules
 
-        mock_manager.list_rules_by_group.return_value = [
+        mock_manager.list_by_group.return_value = [
             _make_rule_row("group-rule"),
         ]
 
@@ -387,7 +375,7 @@ class TestExportRules:
             result = cli_runner.invoke(rules, ["export", "--group", "test-group"])
             assert result.exit_code == 0
             assert "group-rule" in result.output
-            mock_manager.list_rules_by_group.assert_called_once_with("test-group", enabled=None)
+            mock_manager.list_by_group.assert_called_once_with("test-group", enabled=None)
 
     def test_export_empty(self, cli_runner, mock_manager) -> None:
         from gobby.cli.rules import rules

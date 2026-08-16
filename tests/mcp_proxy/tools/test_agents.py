@@ -746,6 +746,8 @@ class TestStopAgent:
         assert result["success"] is True
         assert "stopped" in result["message"]
         assert result["terminal_reason"] == "user_cancelled"
+        assert result["agent_step_instances_deleted"] == 1
+        assert "workflow_instances_deleted" not in result
         runner.cancel_run.assert_called_once_with("run-123")
         cleanup.assert_called_once_with(
             runtime_db,

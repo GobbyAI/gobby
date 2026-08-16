@@ -67,19 +67,23 @@ def _renew_embedding_lease(handle: _ManagedEmbeddingLease) -> None:
     while not handle.renewal_stop.wait(_EMBEDDING_LEASE_RENEW_SECONDS):
         try:
             renewed = _renew_with_backoff(handle.lease, stop_event=handle.renewal_stop)
-        except EmbeddingGenerationLeaseExpired:
+        except EmbeddingGenerationLeaseLost:
+            handle.lease.fence()
+            logger.warning(
+                "Managed embedding generation lease was lost; attempting re-acquisition "
+                "expected_generation=%s expected_revision=%d",
+                handle.lease.generation,
+                handle.lease.revision,
+                extra={
+                    "expected_generation": handle.lease.generation,
+                    "expected_revision": handle.lease.revision,
+                },
+            )
             if handle.renewal_stop.is_set():
                 return
-            handle.lease.fence()
-            logger.warning("Managed embedding generation lease was lost; attempting re-acquisition")
             if not _reacquire_lease_from_renewal_thread(handle):
                 return
             continue
-        except EmbeddingGenerationLeaseLost:
-            if handle.renewal_stop.is_set():
-                return
-            logger.error("Managed embedding generation lease no longer matches; serving fenced")
-            return
         if handle.renewal_stop.is_set():
             return
         if renewed:
@@ -166,6 +170,8 @@ async def _reacquire_lease(handle: _ManagedEmbeddingLease) -> bool:
     """Re-acknowledge a matching lease after connectivity returns, or rebuild."""
     while True:
         await asyncio.sleep(_EMBEDDING_REACQUIRE_POLL_SECONDS)
+        if handle.renewal_stop.is_set():
+            return False
         try:
             record = await asyncio.to_thread(handle.read_completed_record)
         except Exception:
@@ -174,10 +180,17 @@ async def _reacquire_lease(handle: _ManagedEmbeddingLease) -> bool:
                 exc_info=True,
             )
             continue
+        if handle.renewal_stop.is_set():
+            return False
         if not _lease_matches_record(handle.lease, record):
             logger.warning(
-                "Embedding generation changed while serving was fenced; "
-                "requesting memory services rebuild"
+                "Embedding generation changed while serving was fenced; requesting memory "
+                "services rebuild expected_generation=%s expected_revision=%d "
+                "observed_generation=%s observed_revision=%s decision=rebuild",
+                handle.lease.generation,
+                handle.lease.revision,
+                record.run_id if record is not None else None,
+                record.committed_revision if record is not None else None,
             )
             handle.request_rebuild(record)
             return False
@@ -186,16 +199,26 @@ async def _reacquire_lease(handle: _ManagedEmbeddingLease) -> bool:
             await asyncio.to_thread(successor.activate)
         except EmbeddingGenerationLeaseLost:
             logger.warning(
-                "Embedding lease re-acknowledgement lost to a newer serving lease",
-                exc_info=True,
+                "Embedding lease re-acknowledgement lost to a newer serving lease "
+                "expected_generation=%s expected_revision=%d decision=rebuild",
+                handle.lease.generation,
+                handle.lease.revision,
             )
             handle.request_rebuild(record)
             return False
         except Exception:
             logger.debug("Embedding lease re-acknowledgement failed", exc_info=True)
             continue
+        if handle.renewal_stop.is_set():
+            successor.fence()
+            return False
         handle.lease = successor
-        logger.info("Embedding generation serving lease re-acknowledged")
+        logger.info(
+            "Embedding generation serving lease re-acknowledged generation=%s revision=%d "
+            "decision=resume",
+            successor.generation,
+            successor.revision,
+        )
         return True
 
 

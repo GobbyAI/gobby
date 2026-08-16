@@ -7,7 +7,7 @@ description: |
   Operates within a single coordinating task — does not spawn cross-task
   campaigns. Loads merge-expert and build-coordinator skills on start.
 
-version: "1.0"
+version: "1.1"
 enabled: true
 priority: 20
 surfaces: [spawn, persona]
@@ -192,492 +192,493 @@ workflows:
     exclude:
       - "tag:task-skill-gates"
 
-step_variables:
-  task_claimed: false
-  skill_loaded: false
-  build_coordinator_skill_loaded: false
-  survey_complete: false
-  execution_complete: false
-  report_complete: false
-  merge_worker_completed: false
-  post_worker_merge_status_checked: false
-  last_merge_status_signature: ""
-  no_progress_merge_status_count: 0
-  new_status_signature: ""
-  pending_count_int: 0
-  merge_status_made_no_progress: false
-  current_batch_run_ids: []
-  last_worker_run_id: ""
+step_workflow:
+  variables:
+    task_claimed: false
+    skill_loaded: false
+    build_coordinator_skill_loaded: false
+    survey_complete: false
+    execution_complete: false
+    report_complete: false
+    merge_worker_completed: false
+    post_worker_merge_status_checked: false
+    last_merge_status_signature: ""
+    no_progress_merge_status_count: 0
+    new_status_signature: ""
+    pending_count_int: 0
+    merge_status_made_no_progress: false
+    current_batch_run_ids: []
+    last_worker_run_id: ""
 
-steps:
-  - name: claim
-    mcp_error_policy: stay
-    description: "Claim the assigned campaign task"
-    status_message: |
-      Claim the assigned campaign task with claim_task(task_id=assigned_task_id),
-      then read it with get_task to load worktree IDs and target branch.
-    allowed_tools:
-      - mcp__gobby__call_tool
-      - mcp__gobby__list_mcp_servers
-      - mcp__gobby__list_tools
-      - mcp__gobby__get_tool_schema
-    allowed_mcp_tools:
-      - "gobby-tasks:claim_task"
-      - "gobby-tasks:get_task"
-    on_mcp_success:
-      - server: gobby-tasks
-        tool: claim_task
-        action: set_variable
-        variable: task_claimed
-        value: true
-    transitions:
-      - to: load_skill
-        when: "vars.task_claimed"
+  exit_condition: "current_step == 'terminate'"
+  steps:
+    - name: claim
+      mcp_error_policy: stay
+      description: "Claim the assigned campaign task"
+      status_message: |
+        Claim the assigned campaign task with claim_task(task_id=assigned_task_id),
+        then read it with get_task to load worktree IDs and target branch.
+      allowed_tools:
+        - mcp__gobby__call_tool
+        - mcp__gobby__list_mcp_servers
+        - mcp__gobby__list_tools
+        - mcp__gobby__get_tool_schema
+      allowed_mcp_tools:
+        - "gobby-tasks:claim_task"
+        - "gobby-tasks:get_task"
+      on_mcp_success:
+        - server: gobby-tasks
+          tool: claim_task
+          action: set_variable
+          variable: task_claimed
+          value: true
+      transitions:
+        - to: load_skill
+          when: "vars.task_claimed"
 
-  - name: load_skill
-    mcp_error_policy: stay
-    description: "Load required merge and build coordinator skills"
-    status_message: |
-      Call get_skill(name="merge-expert") and
-      get_skill(name="build-coordinator") on gobby-skills, then continue.
-      Use only mcp__gobby__call_tool in this step. Call get_skill directly:
-      call_tool("gobby-skills", "get_skill", {"name": <skill>}).
-      Do not use native Skill, GitHub/app connector, or Computer Use tools.
-    allowed_tools:
-      - mcp__gobby__call_tool
-      - mcp__gobby__list_mcp_servers
-      - mcp__gobby__list_tools
-      - mcp__gobby__get_tool_schema
-    allowed_mcp_tools:
-      - "gobby-skills:get_skill"
-    on_mcp_success:
-      - server: gobby-skills
-        tool: get_skill
-        when: "tool_input.name == 'merge-expert'"
-        action: set_variable
-        variable: skill_loaded
-        value: true
-      - server: gobby-skills
-        tool: get_skill
-        when: "tool_input.name == 'build-coordinator'"
-        action: set_variable
-        variable: build_coordinator_skill_loaded
-        value: true
-    transitions:
-      - to: survey
-        when: "vars.skill_loaded and vars.build_coordinator_skill_loaded"
+    - name: load_skill
+      mcp_error_policy: stay
+      description: "Load required merge and build coordinator skills"
+      status_message: |
+        Call get_skill(name="merge-expert") and
+        get_skill(name="build-coordinator") on gobby-skills, then continue.
+        Use only mcp__gobby__call_tool in this step. Call get_skill directly:
+        call_tool("gobby-skills", "get_skill", {"name": <skill>}).
+        Do not use native Skill, GitHub/app connector, or Computer Use tools.
+      allowed_tools:
+        - mcp__gobby__call_tool
+        - mcp__gobby__list_mcp_servers
+        - mcp__gobby__list_tools
+        - mcp__gobby__get_tool_schema
+      allowed_mcp_tools:
+        - "gobby-skills:get_skill"
+      on_mcp_success:
+        - server: gobby-skills
+          tool: get_skill
+          when: "tool_input.name == 'merge-expert'"
+          action: set_variable
+          variable: skill_loaded
+          value: true
+        - server: gobby-skills
+          tool: get_skill
+          when: "tool_input.name == 'build-coordinator'"
+          action: set_variable
+          variable: build_coordinator_skill_loaded
+          value: true
+      transitions:
+        - to: survey
+          when: "vars.skill_loaded and vars.build_coordinator_skill_loaded"
 
-  - name: survey
-    mcp_error_policy: stay
-    description: "Survey unmerged worktrees and predict conflicts"
-    status_message: |
-      Run analyze_merge_landscape, predict_conflicts, and inspect_merge_state
-      to build a complete picture. Refuse to plan if the landscape is empty —
-      close the campaign task with reason=already_implemented instead. Do not
-      default target_branch to main; use each worktree's base_branch unless the
-      task explicitly specifies another target.
-    allowed_tools:
-      - mcp__gobby__call_tool
-      - mcp__gobby__list_mcp_servers
-      - mcp__gobby__list_tools
-      - mcp__gobby__get_tool_schema
-      - mcp__gobby__set_variable
-      - mcp__gobby__get_variable
-    allowed_mcp_tools:
-      - "gobby-merge:analyze_merge_landscape"
-      - "gobby-merge:predict_conflicts"
-      - "gobby-merge:inspect_merge_state"
-      - "gobby-merge:probe_branch_protection"
-      - "gobby-worktrees:list_worktrees"
-      - "gobby-worktrees:get_worktree"
-      - "gobby-tasks:get_task"
-      - "gobby-tasks:close_task"
-      - "gobby-tasks-ops:get_artifacts"
-      - "gobby-tasks-ops:get_delivery_state"
-    on_mcp_success:
-      - server: gobby-merge
-        tool: predict_conflicts
-        action: set_variable
-        variable: survey_complete
-        value: true
-      - server: gobby-tasks
-        tool: close_task
-        when: >-
-            (
-              tool_output.get('closed') is True
-              or tool_output.get('result', {}).get('closed') is True
-            )
-            and tool_input.get('reason') == 'already_implemented'
-        action: set_variable
-        variable: report_complete
-        value: true
-    transitions:
-      - to: terminate
-        when: "vars.report_complete"
-      - to: plan
-        when: "vars.survey_complete"
+    - name: survey
+      mcp_error_policy: stay
+      description: "Survey unmerged worktrees and predict conflicts"
+      status_message: |
+        Run analyze_merge_landscape, predict_conflicts, and inspect_merge_state
+        to build a complete picture. Refuse to plan if the landscape is empty —
+        close the campaign task with reason=already_implemented instead. Do not
+        default target_branch to main; use each worktree's base_branch unless the
+        task explicitly specifies another target.
+      allowed_tools:
+        - mcp__gobby__call_tool
+        - mcp__gobby__list_mcp_servers
+        - mcp__gobby__list_tools
+        - mcp__gobby__get_tool_schema
+        - mcp__gobby__set_variable
+        - mcp__gobby__get_variable
+      allowed_mcp_tools:
+        - "gobby-merge:analyze_merge_landscape"
+        - "gobby-merge:predict_conflicts"
+        - "gobby-merge:inspect_merge_state"
+        - "gobby-merge:probe_branch_protection"
+        - "gobby-worktrees:list_worktrees"
+        - "gobby-worktrees:get_worktree"
+        - "gobby-tasks:get_task"
+        - "gobby-tasks:close_task"
+        - "gobby-tasks-ops:get_artifacts"
+        - "gobby-tasks-ops:get_delivery_state"
+      on_mcp_success:
+        - server: gobby-merge
+          tool: predict_conflicts
+          action: set_variable
+          variable: survey_complete
+          value: true
+        - server: gobby-tasks
+          tool: close_task
+          when: >-
+              (
+                tool_output.get('closed') is True
+                or tool_output.get('result', {}).get('closed') is True
+              )
+              and tool_input.get('reason') == 'already_implemented'
+          action: set_variable
+          variable: report_complete
+          value: true
+      transitions:
+        - to: terminate
+          when: "vars.report_complete"
+        - to: plan
+          when: "vars.survey_complete"
 
-  - name: plan
-    mcp_error_policy: stay
-    description: "Emit an ordered merge_plan based on the survey"
-    status_message: |
-      Apply the merge-expert ordering rubric (recover orphans -> toposort by
-      task deps -> fewest predicted conflicts -> smallest diff -> freshness).
-      Pick an action per step (merge | cherry-pick | merge_subset | abort).
-      Store the plan as session variable merge_plan, then transition. If a
-      provider emits merge_plan_json instead, treat it as the same plan.
-    allowed_tools:
-      - mcp__gobby__call_tool
-      - mcp__gobby__list_mcp_servers
-      - mcp__gobby__list_tools
-      - mcp__gobby__get_tool_schema
-      - mcp__gobby__set_variable
-      - mcp__gobby__get_variable
-    allowed_mcp_tools:
-      - "gobby-merge:analyze_merge_landscape"
-      - "gobby-merge:predict_conflicts"
-      - "gobby-merge:inspect_merge_state"
-      - "gobby-merge:probe_branch_protection"
-      - "gobby-worktrees:list_worktrees"
-      - "gobby-worktrees:get_worktree"
-      - "gobby-tasks:get_task"
-      - "gobby-tasks:list_tasks"
-      - "gobby-tasks:close_task"
-      - "gobby-tasks-ops:get_artifacts"
-      - "gobby-tasks-ops:get_delivery_state"
-      - "gobby-agents:list_agent_runs"
-      - "gobby-agents:list_running_agents"
-      - "gobby-agents:get_running_agent"
-    on_mcp_success:
-      - server: gobby-tasks
-        tool: close_task
-        when: >-
-            (
-              tool_output.get('closed') is True
-              or tool_output.get('result', {}).get('closed') is True
-            )
-            and tool_input.get('reason') == 'already_implemented'
-        action: set_variable
-        variable: report_complete
-        value: true
-    transitions:
-      - to: terminate
-        when: "vars.report_complete"
-      - to: execute
-        when: "vars.get('merge_plan') or vars.get('merge_plan_json')"
+    - name: plan
+      mcp_error_policy: stay
+      description: "Emit an ordered merge_plan based on the survey"
+      status_message: |
+        Apply the merge-expert ordering rubric (recover orphans -> toposort by
+        task deps -> fewest predicted conflicts -> smallest diff -> freshness).
+        Pick an action per step (merge | cherry-pick | merge_subset | abort).
+        Store the plan as session variable merge_plan, then transition. If a
+        provider emits merge_plan_json instead, treat it as the same plan.
+      allowed_tools:
+        - mcp__gobby__call_tool
+        - mcp__gobby__list_mcp_servers
+        - mcp__gobby__list_tools
+        - mcp__gobby__get_tool_schema
+        - mcp__gobby__set_variable
+        - mcp__gobby__get_variable
+      allowed_mcp_tools:
+        - "gobby-merge:analyze_merge_landscape"
+        - "gobby-merge:predict_conflicts"
+        - "gobby-merge:inspect_merge_state"
+        - "gobby-merge:probe_branch_protection"
+        - "gobby-worktrees:list_worktrees"
+        - "gobby-worktrees:get_worktree"
+        - "gobby-tasks:get_task"
+        - "gobby-tasks:list_tasks"
+        - "gobby-tasks:close_task"
+        - "gobby-tasks-ops:get_artifacts"
+        - "gobby-tasks-ops:get_delivery_state"
+        - "gobby-agents:list_agent_runs"
+        - "gobby-agents:list_running_agents"
+        - "gobby-agents:get_running_agent"
+      on_mcp_success:
+        - server: gobby-tasks
+          tool: close_task
+          when: >-
+              (
+                tool_output.get('closed') is True
+                or tool_output.get('result', {}).get('closed') is True
+              )
+              and tool_input.get('reason') == 'already_implemented'
+          action: set_variable
+          variable: report_complete
+          value: true
+      transitions:
+        - to: terminate
+          when: "vars.report_complete"
+        - to: execute
+          when: "vars.get('merge_plan') or vars.get('merge_plan_json')"
 
-  - name: execute
-    mcp_error_policy: stay
-    description: "Execute PR gating or direct merge steps"
-    status_message: |
-      If stage_name is pr, call open_delivery_pr, post COMMENT
-      review summaries, poll CI/review/mergeability, update stale PRs once,
-      record delivery state, and submit/approve the pr stage only when gates
-      are ready. If stage_name is merge, land ready PRs via GitHub or run the
-      direct merge-worker campaign, then verify before reporting.
-    allowed_tools: "all"
-    allowed_mcp_tools:
-      - "gobby-tasks-ops:get_delivery_state"
-      - "gobby-tasks-ops:record_pr_state"
-      - "gobby-tasks-ops:record_pr_opened"
-      - "gobby-tasks-ops:open_delivery_pr"
-      - "gobby-tasks-ops:submit_for_review"
-      - "gobby-tasks-ops:record_pr_verdict"
-      - "gobby-tasks-ops:record_merge_result"
-      - "gobby-tasks-ops:close_linked_github_issue"
-      - "gobby-tasks-ops:append_description_section"
-      - "gobby-tasks:close_task"
-      - "gobby-tasks:escalate_task"
-      - "gobby-skills:get_skill"
-      - "gobby-worktrees:push_branch"
-      - "gobby-worktrees:merge_worktree"
-      - "gobby-worktrees:mark_worktree_merged"
-      - "gobby-worktrees:delete_worktree"
-      - "gobby-worktrees:list_worktrees"
-      - "gobby-merge:analyze_merge_landscape"
-      - "gobby-merge:predict_conflicts"
-      - "gobby-merge:inspect_merge_state"
-      - "gobby-merge:merge_start"
-      - "gobby-merge:merge_status"
-      - "gobby-merge:merge_resolve"
-      - "gobby-merge:merge_apply"
-      - "gobby-merge:merge_abort"
-      - "gobby-merge:cherry_pick_into_worktree"
-      - "gobby-merge:merge_subset"
-      - "gobby-merge:verify_in_worktree"
-      - "gobby-agents:can_spawn_agent"
-      - "gobby-agents:evaluate_spawn"
-      - "gobby-agents:spawn_agent"
-      - "gobby-agents:dispatch_batch"
-      - "gobby-agents:wait_for_agent"
-      - "gobby-agents:list_agent_runs"
-      - "gobby-agents:get_agent_result"
-      - "gobby-agents:get_agent_capture"
-      - "gobby-agents:list_running_agents"
-      - "gobby-agents:get_running_agent"
-      - "gobby-agents:running_agent_stats"
-      - "github:create_pull_request_review"
-      - "github:get_pull_request"
-      - "github:get_pull_request_status"
-      - "github:get_pull_request_reviews"
-      - "github:update_pull_request_branch"
-      - "github:merge_pull_request"
-    blocked_mcp_tools:
-      - "gobby-tasks:reopen_task"
-      - "gobby-agents:kill_agent"
-    on_mcp_success:
-      - server: gobby-agents
-        tool: spawn_agent
-        action: set_variable
-        variable: merge_worker_completed
-        value: false
-      - server: gobby-agents
-        tool: spawn_agent
-        action: set_variable
-        variable: post_worker_merge_status_checked
-        value: false
-      - server: gobby-agents
-        tool: spawn_agent
-        when: "bool(tool_output.get('run_id') or tool_output.get('result', {}).get('run_id'))"
-        action: set_variable
-        variable: last_worker_run_id
-        value: "str(tool_output.get('run_id') or tool_output.get('result', {}).get('run_id'))"
-      - server: gobby-agents
-        tool: dispatch_batch
-        action: set_variable
-        variable: merge_worker_completed
-        value: false
-      - server: gobby-agents
-        tool: dispatch_batch
-        action: set_variable
-        variable: post_worker_merge_status_checked
-        value: false
-      - server: gobby-agents
-        tool: dispatch_batch
-        action: set_variable
-        variable: current_batch_run_ids
-        value: "(vars.get('current_batch_run_ids') or []) + [r.get('run_id') for r in ((tool_output.get('result') or tool_output).get('results') or []) if r.get('success') and r.get('run_id') and r.get('run_id') not in (vars.get('current_batch_run_ids') or [])]"
-      - server: gobby-agents
-        tool: wait_for_agent
-        when: "tool_output.get('completed') is True or (tool_output.get('completed') is None and tool_output.get('result', {}).get('completed') is True)"
-        action: set_variable
-        variable: merge_worker_completed
-        value: true
-      - server: gobby-agents
-        tool: wait_for_agent
-        when: "tool_output.get('completed') is True or (tool_output.get('completed') is None and tool_output.get('result', {}).get('completed') is True)"
-        action: set_variable
-        variable: post_worker_merge_status_checked
-        value: false
-      - server: gobby-agents
-        tool: wait_for_agent
-        when: "tool_output.get('completed') is True or (tool_output.get('completed') is None and tool_output.get('result', {}).get('completed') is True)"
-        action: set_variable
-        variable: last_worker_run_id
-        value: "str(tool_output.get('run_id') or tool_output.get('result', {}).get('run_id'))"
-      - server: gobby-agents
-        tool: wait_for_agent
-        when: "tool_output.get('completed') is True or (tool_output.get('completed') is None and tool_output.get('result', {}).get('completed') is True)"
-        action: set_variable
-        variable: current_batch_run_ids
-        value: "[r for r in (vars.get('current_batch_run_ids') or []) if r != str(tool_output.get('run_id') or tool_output.get('result', {}).get('run_id'))]"
-      - server: gobby-merge
-        tool: inspect_merge_state
-        when: "vars.get('merge_worker_completed') is True and not vars.get('current_batch_run_ids') and not tool_output.get('active_resolution_id')"
-        action: set_variable
-        variable: post_worker_merge_status_checked
-        value: true
-      - server: gobby-merge
-        tool: inspect_merge_state
-        when: "vars.get('merge_worker_completed') is True and not vars.get('current_batch_run_ids') and not tool_output.get('active_resolution_id')"
-        action: set_variable
-        variable: last_merge_status_signature
-        value: "'no-active-resolution:' + str(tool_output.get('state')) + ':' + str(tool_output.get('conflicted_files'))"
-      - server: gobby-merge
-        tool: inspect_merge_state
-        when: "vars.get('merge_worker_completed') is True and not vars.get('current_batch_run_ids') and not tool_output.get('active_resolution_id') and tool_output.get('can_resume')"
-        action: set_variable
-        variable: no_progress_merge_status_count
-        value: 1
-      - server: gobby-merge
-        tool: merge_status
-        action: set_variable
-        variable: new_status_signature
-        value: "str(tool_input.get('resolution_id', '')) + ':' + str((tool_output.get('result') or tool_output).get('resolved_count')) + '/' + str((tool_output.get('result') or tool_output).get('pending_count'))"
-      - server: gobby-merge
-        tool: merge_status
-        action: set_variable
-        variable: pending_count_int
-        value: "int((tool_output.get('result') or tool_output).get('pending_count', 0))"
-      - server: gobby-merge
-        tool: merge_status
-        action: set_variable
-        variable: merge_status_made_no_progress
-        value: "not vars.get('current_batch_run_ids') and vars.get('merge_worker_completed') is True and vars.get('last_merge_status_signature') == vars.get('new_status_signature') and vars.get('pending_count_int', 0) > 0"
-      - server: gobby-merge
-        tool: merge_status
-        when: "vars.get('merge_status_made_no_progress') is True"
-        action: set_variable
-        variable: no_progress_merge_status_count
-        value: "vars.get('no_progress_merge_status_count', 0) + 1"
-      - server: gobby-merge
-        tool: merge_status
-        when: "vars.get('merge_status_made_no_progress') is not True"
-        action: set_variable
-        variable: no_progress_merge_status_count
-        value: 0
-      - server: gobby-merge
-        tool: merge_status
-        action: set_variable
-        variable: last_merge_status_signature
-        value: "vars.get('new_status_signature', '')"
-      - server: gobby-merge
-        tool: merge_status
-        action: set_variable
-        variable: post_worker_merge_status_checked
-        value: true
-      - server: gobby-merge
-        tool: verify_in_worktree
-        when: "tool_input.final is True"
-        action: set_variable
-        variable: execution_complete
-        value: true
-      - server: gobby-tasks-ops
-        tool: record_merge_result
-        action: set_variable
-        variable: execution_complete
-        value: true
-      - server: gobby-tasks-ops
-        tool: record_merge_result
-        action: set_variable
-        variable: report_complete
-        value: true
-      - server: gobby-tasks
-        tool: close_task
-        when: >-
-            (
-              tool_output.get('closed') is True
-              or tool_output.get('result', {}).get('closed') is True
-            )
-            and tool_input.get('reason') == 'already_implemented'
-        action: set_variable
-        variable: execution_complete
-        value: true
-      - server: gobby-tasks
-        tool: close_task
-        when: >-
-            (
-              tool_output.get('closed') is True
-              or tool_output.get('result', {}).get('closed') is True
-            )
-            and tool_input.get('reason') == 'already_implemented'
-        action: set_variable
-        variable: report_complete
-        value: true
-      - server: gobby-tasks
-        tool: escalate_task
-        action: set_variable
-        variable: execution_complete
-        value: true
-      - server: gobby-tasks
-        tool: escalate_task
-        action: set_variable
-        variable: report_complete
-        value: true
-    on_mcp_before:
-      - server: gobby-agents
-        tool: spawn_agent
-        action: block
-        when: "bool(vars.get('current_batch_run_ids')) or (vars.get('merge_worker_completed') is True and not vars.get('post_worker_merge_status_checked', False))"
-        reason: |
-          A merge-worker batch is still outstanding, or
-          merge_status has not been checked for a completed worker. For an
-          outstanding batch,
-          re-call wait_for_agent for the woken run first and sweep every run id
-          still in current_batch_run_ids; do not spawn until the list is empty.
-          Otherwise, call gobby-merge:inspect_merge_state before spawning. If it
-          returns active_resolution_id, call gobby-merge:merge_status for that
-          resolution and compare resolved_count/pending_count. If it returns no
-          active_resolution_id, do not call merge_status with an empty id;
-          verify clean state, record a failed merge result, or escalate instead
-          of redispatching blindly.
-      - server: gobby-agents
-        tool: spawn_agent
-        action: block
-        when: "vars.get('no_progress_merge_status_count', 0) >= 1"
-        reason: |
-          NO_PROGRESS_MERGE_WORKER_REDISPATCH_CAP reached. The last completed
-          merge-worker in this orchestrator run did not change the active
-          merge_status resolved_count/pending_count signature, and conflicts
-          remain pending. Historical failed campaign state alone does not trip
-          this cap. Do not spawn another merge-worker for the same resolution.
-          Call gobby-tasks-ops:record_merge_result with failure_reason,
-          including last_worker_run_id, unchanged counts, and unresolved
-          conflict ids/files.
-    transitions:
-      - to: report
-        when: "vars.execution_complete"
+    - name: execute
+      mcp_error_policy: stay
+      description: "Execute PR gating or direct merge steps"
+      status_message: |
+        If stage_name is pr, call open_delivery_pr, post COMMENT
+        review summaries, poll CI/review/mergeability, update stale PRs once,
+        record delivery state, and submit/approve the pr stage only when gates
+        are ready. If stage_name is merge, land ready PRs via GitHub or run the
+        direct merge-worker campaign, then verify before reporting.
+      allowed_tools: "all"
+      allowed_mcp_tools:
+        - "gobby-tasks-ops:get_delivery_state"
+        - "gobby-tasks-ops:record_pr_state"
+        - "gobby-tasks-ops:record_pr_opened"
+        - "gobby-tasks-ops:open_delivery_pr"
+        - "gobby-tasks-ops:submit_for_review"
+        - "gobby-tasks-ops:record_pr_verdict"
+        - "gobby-tasks-ops:record_merge_result"
+        - "gobby-tasks-ops:close_linked_github_issue"
+        - "gobby-tasks-ops:append_description_section"
+        - "gobby-tasks:close_task"
+        - "gobby-tasks:escalate_task"
+        - "gobby-skills:get_skill"
+        - "gobby-worktrees:push_branch"
+        - "gobby-worktrees:merge_worktree"
+        - "gobby-worktrees:mark_worktree_merged"
+        - "gobby-worktrees:delete_worktree"
+        - "gobby-worktrees:list_worktrees"
+        - "gobby-merge:analyze_merge_landscape"
+        - "gobby-merge:predict_conflicts"
+        - "gobby-merge:inspect_merge_state"
+        - "gobby-merge:merge_start"
+        - "gobby-merge:merge_status"
+        - "gobby-merge:merge_resolve"
+        - "gobby-merge:merge_apply"
+        - "gobby-merge:merge_abort"
+        - "gobby-merge:cherry_pick_into_worktree"
+        - "gobby-merge:merge_subset"
+        - "gobby-merge:verify_in_worktree"
+        - "gobby-agents:can_spawn_agent"
+        - "gobby-agents:evaluate_spawn"
+        - "gobby-agents:spawn_agent"
+        - "gobby-agents:dispatch_batch"
+        - "gobby-agents:wait_for_agent"
+        - "gobby-agents:list_agent_runs"
+        - "gobby-agents:get_agent_result"
+        - "gobby-agents:get_agent_capture"
+        - "gobby-agents:list_running_agents"
+        - "gobby-agents:get_running_agent"
+        - "gobby-agents:running_agent_stats"
+        - "github:create_pull_request_review"
+        - "github:get_pull_request"
+        - "github:get_pull_request_status"
+        - "github:get_pull_request_reviews"
+        - "github:update_pull_request_branch"
+        - "github:merge_pull_request"
+      blocked_mcp_tools:
+        - "gobby-tasks:reopen_task"
+        - "gobby-agents:kill_agent"
+      on_mcp_success:
+        - server: gobby-agents
+          tool: spawn_agent
+          action: set_variable
+          variable: merge_worker_completed
+          value: false
+        - server: gobby-agents
+          tool: spawn_agent
+          action: set_variable
+          variable: post_worker_merge_status_checked
+          value: false
+        - server: gobby-agents
+          tool: spawn_agent
+          when: "bool(tool_output.get('run_id') or tool_output.get('result', {}).get('run_id'))"
+          action: set_variable
+          variable: last_worker_run_id
+          value: "str(tool_output.get('run_id') or tool_output.get('result', {}).get('run_id'))"
+        - server: gobby-agents
+          tool: dispatch_batch
+          action: set_variable
+          variable: merge_worker_completed
+          value: false
+        - server: gobby-agents
+          tool: dispatch_batch
+          action: set_variable
+          variable: post_worker_merge_status_checked
+          value: false
+        - server: gobby-agents
+          tool: dispatch_batch
+          action: set_variable
+          variable: current_batch_run_ids
+          value: "(vars.get('current_batch_run_ids') or []) + [r.get('run_id') for r in ((tool_output.get('result') or tool_output).get('results') or []) if r.get('success') and r.get('run_id') and r.get('run_id') not in (vars.get('current_batch_run_ids') or [])]"
+        - server: gobby-agents
+          tool: wait_for_agent
+          when: "tool_output.get('completed') is True or (tool_output.get('completed') is None and tool_output.get('result', {}).get('completed') is True)"
+          action: set_variable
+          variable: merge_worker_completed
+          value: true
+        - server: gobby-agents
+          tool: wait_for_agent
+          when: "tool_output.get('completed') is True or (tool_output.get('completed') is None and tool_output.get('result', {}).get('completed') is True)"
+          action: set_variable
+          variable: post_worker_merge_status_checked
+          value: false
+        - server: gobby-agents
+          tool: wait_for_agent
+          when: "tool_output.get('completed') is True or (tool_output.get('completed') is None and tool_output.get('result', {}).get('completed') is True)"
+          action: set_variable
+          variable: last_worker_run_id
+          value: "str(tool_output.get('run_id') or tool_output.get('result', {}).get('run_id'))"
+        - server: gobby-agents
+          tool: wait_for_agent
+          when: "tool_output.get('completed') is True or (tool_output.get('completed') is None and tool_output.get('result', {}).get('completed') is True)"
+          action: set_variable
+          variable: current_batch_run_ids
+          value: "[r for r in (vars.get('current_batch_run_ids') or []) if r != str(tool_output.get('run_id') or tool_output.get('result', {}).get('run_id'))]"
+        - server: gobby-merge
+          tool: inspect_merge_state
+          when: "vars.get('merge_worker_completed') is True and not vars.get('current_batch_run_ids') and not tool_output.get('active_resolution_id')"
+          action: set_variable
+          variable: post_worker_merge_status_checked
+          value: true
+        - server: gobby-merge
+          tool: inspect_merge_state
+          when: "vars.get('merge_worker_completed') is True and not vars.get('current_batch_run_ids') and not tool_output.get('active_resolution_id')"
+          action: set_variable
+          variable: last_merge_status_signature
+          value: "'no-active-resolution:' + str(tool_output.get('state')) + ':' + str(tool_output.get('conflicted_files'))"
+        - server: gobby-merge
+          tool: inspect_merge_state
+          when: "vars.get('merge_worker_completed') is True and not vars.get('current_batch_run_ids') and not tool_output.get('active_resolution_id') and tool_output.get('can_resume')"
+          action: set_variable
+          variable: no_progress_merge_status_count
+          value: 1
+        - server: gobby-merge
+          tool: merge_status
+          action: set_variable
+          variable: new_status_signature
+          value: "str(tool_input.get('resolution_id', '')) + ':' + str((tool_output.get('result') or tool_output).get('resolved_count')) + '/' + str((tool_output.get('result') or tool_output).get('pending_count'))"
+        - server: gobby-merge
+          tool: merge_status
+          action: set_variable
+          variable: pending_count_int
+          value: "int((tool_output.get('result') or tool_output).get('pending_count', 0))"
+        - server: gobby-merge
+          tool: merge_status
+          action: set_variable
+          variable: merge_status_made_no_progress
+          value: "not vars.get('current_batch_run_ids') and vars.get('merge_worker_completed') is True and vars.get('last_merge_status_signature') == vars.get('new_status_signature') and vars.get('pending_count_int', 0) > 0"
+        - server: gobby-merge
+          tool: merge_status
+          when: "vars.get('merge_status_made_no_progress') is True"
+          action: set_variable
+          variable: no_progress_merge_status_count
+          value: "vars.get('no_progress_merge_status_count', 0) + 1"
+        - server: gobby-merge
+          tool: merge_status
+          when: "vars.get('merge_status_made_no_progress') is not True"
+          action: set_variable
+          variable: no_progress_merge_status_count
+          value: 0
+        - server: gobby-merge
+          tool: merge_status
+          action: set_variable
+          variable: last_merge_status_signature
+          value: "vars.get('new_status_signature', '')"
+        - server: gobby-merge
+          tool: merge_status
+          action: set_variable
+          variable: post_worker_merge_status_checked
+          value: true
+        - server: gobby-merge
+          tool: verify_in_worktree
+          when: "tool_input.final is True"
+          action: set_variable
+          variable: execution_complete
+          value: true
+        - server: gobby-tasks-ops
+          tool: record_merge_result
+          action: set_variable
+          variable: execution_complete
+          value: true
+        - server: gobby-tasks-ops
+          tool: record_merge_result
+          action: set_variable
+          variable: report_complete
+          value: true
+        - server: gobby-tasks
+          tool: close_task
+          when: >-
+              (
+                tool_output.get('closed') is True
+                or tool_output.get('result', {}).get('closed') is True
+              )
+              and tool_input.get('reason') == 'already_implemented'
+          action: set_variable
+          variable: execution_complete
+          value: true
+        - server: gobby-tasks
+          tool: close_task
+          when: >-
+              (
+                tool_output.get('closed') is True
+                or tool_output.get('result', {}).get('closed') is True
+              )
+              and tool_input.get('reason') == 'already_implemented'
+          action: set_variable
+          variable: report_complete
+          value: true
+        - server: gobby-tasks
+          tool: escalate_task
+          action: set_variable
+          variable: execution_complete
+          value: true
+        - server: gobby-tasks
+          tool: escalate_task
+          action: set_variable
+          variable: report_complete
+          value: true
+      on_mcp_before:
+        - server: gobby-agents
+          tool: spawn_agent
+          action: block
+          when: "bool(vars.get('current_batch_run_ids')) or (vars.get('merge_worker_completed') is True and not vars.get('post_worker_merge_status_checked', False))"
+          reason: |
+            A merge-worker batch is still outstanding, or
+            merge_status has not been checked for a completed worker. For an
+            outstanding batch,
+            re-call wait_for_agent for the woken run first and sweep every run id
+            still in current_batch_run_ids; do not spawn until the list is empty.
+            Otherwise, call gobby-merge:inspect_merge_state before spawning. If it
+            returns active_resolution_id, call gobby-merge:merge_status for that
+            resolution and compare resolved_count/pending_count. If it returns no
+            active_resolution_id, do not call merge_status with an empty id;
+            verify clean state, record a failed merge result, or escalate instead
+            of redispatching blindly.
+        - server: gobby-agents
+          tool: spawn_agent
+          action: block
+          when: "vars.get('no_progress_merge_status_count', 0) >= 1"
+          reason: |
+            NO_PROGRESS_MERGE_WORKER_REDISPATCH_CAP reached. The last completed
+            merge-worker in this orchestrator run did not change the active
+            merge_status resolved_count/pending_count signature, and conflicts
+            remain pending. Historical failed campaign state alone does not trip
+            this cap. Do not spawn another merge-worker for the same resolution.
+            Call gobby-tasks-ops:record_merge_result with failure_reason,
+            including last_worker_run_id, unchanged counts, and unresolved
+            conflict ids/files.
+      transitions:
+        - to: report
+          when: "vars.execution_complete"
 
-  - name: report
-    mcp_error_policy: stay
-    description: "Write the campaign report and transition the campaign task"
-    status_message: |
-      Call gobby-tasks-ops:record_merge_result with report_ref and either
-      merge_sha for clean success or failure_reason for unresolved failures.
-      Use escalate_task only when human intervention is required.
-    allowed_tools:
-      - mcp__gobby__call_tool
-      - mcp__gobby__list_mcp_servers
-      - mcp__gobby__list_tools
-      - mcp__gobby__get_tool_schema
-    allowed_mcp_tools:
-      - "gobby-tasks-ops:record_merge_result"
-      - "gobby-tasks-ops:close_linked_github_issue"
-      - "gobby-tasks:close_task"
-      - "gobby-tasks:escalate_task"
-      - "gobby-tasks-ops:append_description_section"
-    on_mcp_success:
-      - server: gobby-tasks-ops
-        tool: record_merge_result
-        action: set_variable
-        variable: report_complete
-        value: true
-      - server: gobby-tasks-ops
-        tool: close_linked_github_issue
-        action: set_variable
-        variable: report_complete
-        value: true
-      - server: gobby-tasks
-        tool: close_task
-        when: >-
-            (
-              tool_output.get('closed') is True
-              or tool_output.get('result', {}).get('closed') is True
-            )
-            and tool_input.get('reason') == 'already_implemented'
-        action: set_variable
-        variable: report_complete
-        value: true
-      - server: gobby-tasks
-        tool: escalate_task
-        action: set_variable
-        variable: report_complete
-        value: true
-    transitions:
-      - to: terminate
-        when: "vars.report_complete"
+    - name: report
+      mcp_error_policy: stay
+      description: "Write the campaign report and transition the campaign task"
+      status_message: |
+        Call gobby-tasks-ops:record_merge_result with report_ref and either
+        merge_sha for clean success or failure_reason for unresolved failures.
+        Use escalate_task only when human intervention is required.
+      allowed_tools:
+        - mcp__gobby__call_tool
+        - mcp__gobby__list_mcp_servers
+        - mcp__gobby__list_tools
+        - mcp__gobby__get_tool_schema
+      allowed_mcp_tools:
+        - "gobby-tasks-ops:record_merge_result"
+        - "gobby-tasks-ops:close_linked_github_issue"
+        - "gobby-tasks:close_task"
+        - "gobby-tasks:escalate_task"
+        - "gobby-tasks-ops:append_description_section"
+      on_mcp_success:
+        - server: gobby-tasks-ops
+          tool: record_merge_result
+          action: set_variable
+          variable: report_complete
+          value: true
+        - server: gobby-tasks-ops
+          tool: close_linked_github_issue
+          action: set_variable
+          variable: report_complete
+          value: true
+        - server: gobby-tasks
+          tool: close_task
+          when: >-
+              (
+                tool_output.get('closed') is True
+                or tool_output.get('result', {}).get('closed') is True
+              )
+              and tool_input.get('reason') == 'already_implemented'
+          action: set_variable
+          variable: report_complete
+          value: true
+        - server: gobby-tasks
+          tool: escalate_task
+          action: set_variable
+          variable: report_complete
+          value: true
+      transitions:
+        - to: terminate
+          when: "vars.report_complete"
 
-  - name: terminate
-    description: "Self-terminate"
-    status_message: >-
-      Call mcp__gobby__call_tool with server_name="gobby-agents",
-      tool_name="end_agent_run", and arguments={} to finish the run.
-    allowed_tools:
-      - mcp__gobby__call_tool
-      - mcp__gobby__list_mcp_servers
-      - mcp__gobby__list_tools
-      - mcp__gobby__get_tool_schema
-    allowed_mcp_tools:
-      - "gobby-agents:end_agent_run"
+    - name: terminate
+      description: "Self-terminate"
+      status_message: >-
+        Call mcp__gobby__call_tool with server_name="gobby-agents",
+        tool_name="end_agent_run", and arguments={} to finish the run.
+      allowed_tools:
+        - mcp__gobby__call_tool
+        - mcp__gobby__list_mcp_servers
+        - mcp__gobby__list_tools
+        - mcp__gobby__get_tool_schema
+      allowed_mcp_tools:
+        - "gobby-agents:end_agent_run"
 
-exit_condition: "current_step == 'terminate'"

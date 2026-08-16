@@ -37,8 +37,8 @@ def _session_and_project_context() -> Iterator[None]:
 def mock_loader() -> MagicMock:
     """Create a mock workflow loader."""
     loader = MagicMock()
-    loader.discover_pipeline_workflows = AsyncMock(return_value=[])
-    loader.discover_pipeline_workflows_sync.return_value = []
+    loader.discover_pipelines = AsyncMock(return_value=[])
+    loader.discover_pipelines_sync.return_value = []
     loader.load_pipeline = AsyncMock()
     return loader
 
@@ -174,10 +174,10 @@ class TestListPipelinesTool:
     async def test_list_pipelines_calls_discover(
         self, mock_loader: MagicMock, mock_executor: MagicMock, mock_execution_manager: MagicMock
     ) -> None:
-        """Test that list_pipelines calls loader.discover_pipeline_workflows()."""
+        """Test that list_pipelines calls loader.discover_pipelines()."""
         from gobby.mcp_proxy.tools.workflows import create_workflows_registry
 
-        mock_loader.discover_pipeline_workflows.return_value = []
+        mock_loader.discover_pipelines.return_value = []
 
         registry = create_workflows_registry(
             loader=mock_loader,
@@ -186,14 +186,14 @@ class TestListPipelinesTool:
         )
 
         # Reset mock after registry creation (which also calls discover for dynamic tools)
-        mock_loader.discover_pipeline_workflows.reset_mock()
+        mock_loader.discover_pipelines.reset_mock()
 
         # Call the tool
         await registry.call("list_pipelines", {})
 
-        mock_loader.discover_pipeline_workflows.assert_called_once()
-        assert mock_loader.discover_pipeline_workflows.call_count == 1
-        assert mock_loader.discover_pipeline_workflows.call_args is not None
+        mock_loader.discover_pipelines.assert_called_once()
+        assert mock_loader.discover_pipelines.call_count == 1
+        assert mock_loader.discover_pipelines.call_args is not None
 
     @pytest.mark.asyncio
     async def test_list_pipelines_returns_pipeline_info(
@@ -216,7 +216,7 @@ class TestListPipelinesTool:
             steps=[PipelineStep(id="step1", exec="pytest")],
         )
 
-        mock_loader.discover_pipeline_workflows.return_value = [
+        mock_loader.discover_pipelines.return_value = [
             DiscoveredWorkflow(
                 name="deploy",
                 definition=pipeline1,
@@ -268,7 +268,7 @@ class TestListPipelinesTool:
             steps=[PipelineStep(id="step1", exec="echo local")],
         )
 
-        mock_loader.discover_pipeline_workflows.return_value = [
+        mock_loader.discover_pipelines.return_value = [
             DiscoveredWorkflow(
                 name="local",
                 definition=pipeline,
@@ -295,7 +295,7 @@ class TestListPipelinesTool:
         """Test that list_pipelines passes the ambient project UUID to discovery."""
         from gobby.mcp_proxy.tools.workflows import create_workflows_registry
 
-        mock_loader.discover_pipeline_workflows.return_value = []
+        mock_loader.discover_pipelines.return_value = []
 
         registry = create_workflows_registry(
             loader=mock_loader,
@@ -304,15 +304,15 @@ class TestListPipelinesTool:
         )
 
         # Reset mock after registry creation (which also calls discover for dynamic tools)
-        mock_loader.discover_pipeline_workflows.reset_mock()
+        mock_loader.discover_pipelines.reset_mock()
 
         await registry.call("list_pipelines", {})
 
-        mock_loader.discover_pipeline_workflows.assert_called_once_with(
+        mock_loader.discover_pipelines.assert_called_once_with(
             "11111111-1111-4111-8111-111111110001"
         )
-        assert mock_loader.discover_pipeline_workflows.call_count == 1
-        assert mock_loader.discover_pipeline_workflows.call_args is not None
+        assert mock_loader.discover_pipelines.call_count == 1
+        assert mock_loader.discover_pipelines.call_args is not None
 
     @pytest.mark.asyncio
     async def test_list_pipelines_empty_result(
@@ -321,7 +321,7 @@ class TestListPipelinesTool:
         """Test that list_pipelines handles no pipelines found."""
         from gobby.mcp_proxy.tools.workflows import create_workflows_registry
 
-        mock_loader.discover_pipeline_workflows.return_value = []
+        mock_loader.discover_pipelines.return_value = []
 
         registry = create_workflows_registry(
             loader=mock_loader,
@@ -1090,8 +1090,8 @@ class TestDynamicPipelineTools:
                 path=Path("/project/.gobby/workflows/run-tests.yaml"),
             ),
         ]
-        mock_loader.discover_pipeline_workflows.return_value = discovered
-        mock_loader.discover_pipeline_workflows_sync.return_value = discovered
+        mock_loader.discover_pipelines.return_value = discovered
+        mock_loader.discover_pipelines_sync.return_value = discovered
 
         registry = create_workflows_registry(
             loader=mock_loader,
@@ -1129,8 +1129,8 @@ class TestDynamicPipelineTools:
                 path=Path("/project/.gobby/workflows/internal.yaml"),
             ),
         ]
-        mock_loader.discover_pipeline_workflows.return_value = discovered
-        mock_loader.discover_pipeline_workflows_sync.return_value = discovered
+        mock_loader.discover_pipelines.return_value = discovered
+        mock_loader.discover_pipelines_sync.return_value = discovered
 
         registry = create_workflows_registry(
             loader=mock_loader,
@@ -1166,7 +1166,7 @@ class TestDynamicPipelineTools:
                 path=Path("db://disabled-tool"),
             )
         ]
-        mock_loader.discover_pipeline_workflows_sync.return_value = discovered
+        mock_loader.discover_pipelines_sync.return_value = discovered
 
         registry = create_workflows_registry(
             loader=mock_loader,
@@ -1201,8 +1201,8 @@ class TestDynamicPipelineTools:
                 path=Path("/project/.gobby/workflows/deploy.yaml"),
             ),
         ]
-        mock_loader.discover_pipeline_workflows.return_value = discovered
-        mock_loader.discover_pipeline_workflows_sync.return_value = discovered
+        mock_loader.discover_pipelines.return_value = discovered
+        mock_loader.discover_pipelines_sync.return_value = discovered
 
         registry = create_workflows_registry(
             loader=mock_loader,
@@ -1244,8 +1244,8 @@ class TestDynamicPipelineTools:
                 path=Path("/project/.gobby/workflows/deploy.yaml"),
             ),
         ]
-        mock_loader.discover_pipeline_workflows.return_value = discovered
-        mock_loader.discover_pipeline_workflows_sync.return_value = discovered
+        mock_loader.discover_pipelines.return_value = discovered
+        mock_loader.discover_pipelines_sync.return_value = discovered
 
         registry = create_workflows_registry(
             loader=mock_loader,
@@ -1290,8 +1290,8 @@ class TestDynamicPipelineTools:
                 path=Path("/project/.gobby/workflows/run-tests.yaml"),
             ),
         ]
-        mock_loader.discover_pipeline_workflows.return_value = discovered
-        mock_loader.discover_pipeline_workflows_sync.return_value = discovered
+        mock_loader.discover_pipelines.return_value = discovered
+        mock_loader.discover_pipelines_sync.return_value = discovered
         mock_loader.load_pipeline.return_value = pipeline
 
         execution = PipelineExecution(
@@ -1371,8 +1371,8 @@ class TestDynamicPipelineTools:
                 path=Path("/project/.gobby/workflows/internal.yaml"),
             ),
         ]
-        mock_loader.discover_pipeline_workflows.return_value = discovered
-        mock_loader.discover_pipeline_workflows_sync.return_value = discovered
+        mock_loader.discover_pipelines.return_value = discovered
+        mock_loader.discover_pipelines_sync.return_value = discovered
 
         registry = create_workflows_registry(
             loader=mock_loader,

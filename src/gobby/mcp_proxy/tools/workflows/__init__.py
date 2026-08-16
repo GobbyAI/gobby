@@ -10,7 +10,7 @@ via the downstream proxy pattern (call_tool, list_tools, get_tool_schema).
 import logging
 from collections.abc import Callable, Mapping, Sequence
 from pathlib import Path
-from typing import Any, Literal, Protocol
+from typing import Any, Protocol
 
 from gobby.agents.detection.registry import DetectionManifestRegistry
 from gobby.mcp_proxy.tools.internal import InternalToolRegistry
@@ -21,23 +21,12 @@ from gobby.mcp_proxy.tools.workflows._agents import (
     list_agent_definitions,
     toggle_agent_definition,
     update_agent_rules,
-    update_agent_steps,
+    update_agent_step_workflow,
     update_agent_variables,
 )
-from gobby.mcp_proxy.tools.workflows._definitions import (
-    create_workflow_definition,
-    delete_workflow_definition,
-    export_workflow_definition,
-    restore_workflow_definition,
-    update_workflow_definition,
-)
-from gobby.mcp_proxy.tools.workflows._import import import_workflow, reload_cache
+from gobby.mcp_proxy.tools.workflows._import import reload_cache
 from gobby.mcp_proxy.tools.workflows._pipelines import register_pipeline_tools
-from gobby.mcp_proxy.tools.workflows._query import (
-    get_workflow,
-    get_workflow_status,
-    list_workflows,
-)
+from gobby.mcp_proxy.tools.workflows._query import get_step_status
 from gobby.mcp_proxy.tools.workflows._rules import (
     create_rule,
     delete_rule,
@@ -54,15 +43,15 @@ from gobby.mcp_proxy.tools.workflows._variables import (
     list_variables,
     update_variable,
 )
+from gobby.storage.definitions import AgentDefinitionManager
+from gobby.storage.definitions.rules import RuleDefinitionManager
+from gobby.storage.definitions.variables import SessionVariableDefaultManager
 from gobby.storage.hub.protocol import HubDatabase
 from gobby.storage.sessions import SessionManager
-from gobby.storage.workflow_definitions import LocalWorkflowDefinitionManager
 from gobby.utils.project_context import get_project_context, get_workflow_project_path
-from gobby.workflows.loader import WorkflowLoader
-from gobby.workflows.state_manager import (
-    SessionVariableManager,
-    WorkflowInstanceManager,
-)
+from gobby.workflows.pipeline_loader import PipelineLoader
+from gobby.workflows.state_manager import SessionVariableManager
+from gobby.workflows.step_instances import AgentStepInstanceManager
 
 __all__ = [
     "create_workflows_registry",
@@ -101,7 +90,7 @@ class _ExternalMCPInventory(Protocol):
 
 
 def create_workflows_registry(
-    loader: WorkflowLoader | None = None,
+    loader: PipelineLoader | None = None,
     session_manager: SessionManager | None = None,
     db: HubDatabase | None = None,
     internal_manager: _InternalRegistryInventory | None = None,
@@ -119,7 +108,7 @@ def create_workflows_registry(
     variables, and agent definitions.
 
     Args:
-        loader: WorkflowLoader instance
+        loader: PipelineLoader instance
         session_manager: SessionManager instance (created from db if not provided)
         db: Database instance for creating default managers
         internal_manager: Internal registry inventory for semantic MCP checks
@@ -132,7 +121,7 @@ def create_workflows_registry(
         InternalToolRegistry with workflow, pipeline, rule, and agent definition tools
     """
     _db = db
-    _loader = loader or WorkflowLoader(db=_db)
+    _loader = loader or PipelineLoader(db=_db)
 
     if session_manager is not None:
         _session_manager = session_manager
@@ -142,9 +131,11 @@ def create_workflows_registry(
         _session_manager = None
 
     # Create multi-workflow managers
-    _instance_manager = WorkflowInstanceManager(_db) if _db is not None else None
+    _instance_manager = AgentStepInstanceManager(_db) if _db is not None else None
     _session_var_manager = SessionVariableManager(_db) if _db is not None else None
-    _def_manager = LocalWorkflowDefinitionManager(_db) if _db is not None else None
+    _rule_manager = RuleDefinitionManager(_db) if _db is not None else None
+    _variable_manager = SessionVariableDefaultManager(_db) if _db is not None else None
+    _agent_manager = AgentDefinitionManager(_db) if _db is not None else None
 
     registry = InternalToolRegistry(
         name="gobby-workflows",
@@ -152,49 +143,19 @@ def create_workflows_registry(
     )
 
     @registry.tool(
-        name="get_workflow",
-        description="Get details about a specific workflow definition.",
-    )
-    async def _get_workflow(name: str) -> dict[str, Any]:
-        project_ctx = get_project_context()
-        project_id = project_ctx.get("id") if project_ctx else None
-        return await get_workflow(_loader, name, project_id)
-
-    @registry.tool(
-        name="list_workflows",
+        name="get_step_status",
         description=(
-            "List visible step or lifecycle workflow definitions for the current project."
+            "Get agent-step status for the current session. "
+            "Shows the snapshot step list and session variables."
         ),
     )
-    def _list_workflows(
-        workflow_type: Literal["step", "lifecycle"] | None = None,
-        global_only: bool = False,
-    ) -> dict[str, Any]:
-        project_ctx = get_project_context()
-        project_id = project_ctx.get("id") if project_ctx else None
-        project_path = None
-        if project_ctx:
-            project_path = project_ctx.get("project_path") or project_ctx.get("path")
-        return list_workflows(
-            _loader,
-            project_path,
-            workflow_type,
-            global_only,
-            db=_db,
-            project_id=project_id,
-        )
-
-    @registry.tool(
-        name="get_workflow_status",
-        description="Get workflow status for the current session. Shows all active workflow instances and session variables.",
-    )
-    def _get_workflow_status(session_id: str | None = None) -> dict[str, Any]:
+    def _get_step_status(session_id: str | None = None) -> dict[str, Any]:
         if _session_manager is None:
             return {"error": "Workflow tools require database connection"}
         from gobby.utils.session_context import get_current_session_id
 
         effective_session_id = session_id or get_current_session_id()
-        return get_workflow_status(
+        return get_step_status(
             _session_manager,
             effective_session_id,
             instance_manager=_instance_manager,
@@ -202,91 +163,63 @@ def create_workflows_registry(
         )
 
     @registry.tool(
-        name="evaluate_workflow",
-        description="Validate a workflow definition — structural and semantic checks without executing.",
+        name="evaluate_pipeline",
+        description="Validate a pipeline definition — structural checks without executing.",
     )
-    async def _evaluate_workflow(name: str) -> dict[str, Any]:
-        """
-        Validate a workflow definition for structural and semantic issues.
-
-        Checks for unreachable steps, dead-end steps, undefined transition targets,
-        undefined variable references, MCP tool conflicts, and unknown MCP servers/tools.
-        Names that resolve to an agent definition instead of a workflow are
-        evaluated as agents (top-level tool gates plus inline steps).
-
-        Args:
-            name: Workflow name to evaluate.
-        Returns:
-            Dict with valid bool, items list, step_trace, and lifecycle_path.
-        """
-        from gobby.workflows.dry_run import evaluate_agent_definition, evaluate_workflow
+    async def _evaluate_pipeline(name: str) -> dict[str, Any]:
+        from gobby.workflows.dry_run import evaluate_pipeline_definition
 
         mcp_inventory = workflow_mcp_inventory(internal_manager, mcp_manager_resolver)
-
         project_ctx = get_project_context()
         project_id = project_ctx.get("id") if project_ctx else None
-
-        eval_result = await evaluate_workflow(
+        eval_result = await evaluate_pipeline_definition(
             name,
             _loader,
             project_id,
             mcp_inventory,
         )
-
-        # Fall back to agent-definition evaluation when the name is an agent,
-        # so `gobby workflows check <agent>` lints agent-level tool gates.
-        if not eval_result.valid and any(i.code == "WORKFLOW_NOT_FOUND" for i in eval_result.items):
-            agent_row = (
-                _def_manager.get_by_name(name, project_id=project_id)
-                if _def_manager is not None
-                else None
-            )
-            if agent_row is not None and agent_row.workflow_type == "agent":
-                import json as _json
-
-                from gobby.workflows.definitions import AgentDefinitionBody
-
-                try:
-                    body = _json.loads(agent_row.definition_json)
-                    body.setdefault("name", agent_row.name)
-                    agent = AgentDefinitionBody.model_validate(body)
-                except ValueError as e:
-                    logger.warning("Agent definition '%s' failed to parse: %s", name, e)
-                else:
-                    agent_result = await evaluate_agent_definition(agent, mcp_inventory)
-                    return agent_result.to_dict()
-
         return eval_result.to_dict()
 
     @registry.tool(
-        name="import_workflow",
-        description="Import a workflow from a file path into the project or global directory.",
+        name="evaluate_agent",
+        description=(
+            "Validate an agent definition — tool gates plus inline step workflow, "
+            "without executing."
+        ),
     )
-    def _import_workflow(
-        source_path: str,
-        workflow_name: str | None = None,
-        is_global: bool = False,
-    ) -> dict[str, Any]:
+    async def _evaluate_agent(name: str) -> dict[str, Any]:
+        from gobby.workflows.agent_resolver import resolve_agent
+        from gobby.workflows.dry_run import (
+            EvaluationItem,
+            WorkflowEvaluation,
+            evaluate_agent_definition,
+        )
+
+        if _db is None:
+            return {"error": "Agent evaluation requires a database connection"}
+        mcp_inventory = workflow_mcp_inventory(internal_manager, mcp_manager_resolver)
         project_ctx = get_project_context()
         project_id = project_ctx.get("id") if project_ctx else None
-        project_path = None
-        if project_ctx:
-            project_path = project_ctx.get("project_path") or project_ctx.get("path")
-        return import_workflow(
-            _loader,
-            source_path,
-            workflow_name,
-            is_global,
-            project_path,
-            db=_db,
-            project_id=project_id,
-        )
+        agent = resolve_agent(name, _db, project_id=project_id)
+        if agent is None:
+            missing = WorkflowEvaluation(valid=False, workflow_name=name)
+            missing.items.append(
+                EvaluationItem(
+                    layer="structure",
+                    level="error",
+                    code="AGENT_NOT_FOUND",
+                    message=f"Agent '{name}' not found",
+                )
+            )
+            return missing.to_dict()
+        result = await evaluate_agent_definition(agent, mcp_inventory)
+        return result.to_dict()
 
     @registry.tool(
         name="reload_cache",
         description=(
-            "Clear the workflow cache and re-sync imported and bundled workflows to DB. "
-            "Use this after modifying workflow YAML files."
+            "Clear the pipeline cache and re-sync imported and bundled definitions to DB. "
+            "Use this after modifying YAML files."
         ),
     )
     def _reload_cache(
@@ -301,102 +234,6 @@ def create_workflows_registry(
             detection_registry=detection_registry,
         )
 
-    @registry.tool(
-        name="create_workflow",
-        description=(
-            "Create a rule, variable, agent, or pipeline definition from YAML content. "
-            "The YAML must declare one of those four types and pass its type-specific validation."
-        ),
-    )
-    def _create_workflow(
-        yaml_content: str,
-        project_id: str | None = None,
-        project_path: str | None = None,
-        make_template: bool = False,
-    ) -> dict[str, Any]:
-        if _def_manager is None:
-            return {"error": "Definition tools require database connection"}
-        pp = Path(project_path) if project_path else None
-        return create_workflow_definition(
-            _def_manager,
-            _loader,
-            yaml_content,
-            project_id,
-            project_path=pp,
-            make_global_template=make_template,
-        )
-
-    @registry.tool(
-        name="update_workflow",
-        description="Update a workflow or pipeline definition by name or ID. Accepts individual field updates and/or full YAML replacement.",
-    )
-    def _update_workflow(
-        name: str | None = None,
-        definition_id: str | None = None,
-        description: str | None = None,
-        enabled: bool | None = None,
-        priority: int | None = None,
-        version: str | None = None,
-        tags: list[str] | None = None,
-        yaml_content: str | None = None,
-        project_path: str | None = None,
-        make_template: bool = False,
-    ) -> dict[str, Any]:
-        if _def_manager is None:
-            return {"error": "Definition tools require database connection"}
-        pp = Path(project_path) if project_path else None
-        return update_workflow_definition(
-            _def_manager,
-            _loader,
-            name,
-            definition_id,
-            description,
-            enabled,
-            priority,
-            version,
-            tags,
-            yaml_content,
-            project_path=pp,
-            make_global_template=make_template,
-        )
-
-    @registry.tool(
-        name="delete_workflow",
-        description="Delete a workflow or pipeline definition by name or ID. Bundled definitions are protected unless force=True.",
-    )
-    def _delete_workflow(
-        name: str | None = None,
-        definition_id: str | None = None,
-        force: bool = False,
-    ) -> dict[str, Any]:
-        if _def_manager is None:
-            return {"error": "Definition tools require database connection"}
-        return delete_workflow_definition(_def_manager, _loader, name, definition_id, force)
-
-    @registry.tool(
-        name="export_workflow",
-        description="Export a workflow or pipeline definition as YAML content.",
-    )
-    def _export_workflow(
-        name: str | None = None,
-        definition_id: str | None = None,
-    ) -> dict[str, Any]:
-        if _def_manager is None:
-            return {"error": "Definition tools require database connection"}
-        return export_workflow_definition(_def_manager, name, definition_id)
-
-    @registry.tool(
-        name="restore_workflow",
-        description="Restore a soft-deleted workflow or pipeline definition by name or ID.",
-    )
-    def _restore_workflow(
-        name: str | None = None,
-        definition_id: str | None = None,
-    ) -> dict[str, Any]:
-        if _def_manager is None:
-            return {"error": "Definition tools require database connection"}
-        return restore_workflow_definition(_def_manager, _loader, name, definition_id)
-
     # ── Rule tools ──
 
     @registry.tool(
@@ -409,27 +246,27 @@ def create_workflows_registry(
         enabled: bool | None = None,
         brief: bool = False,
     ) -> dict[str, Any]:
-        if _def_manager is None:
+        if _rule_manager is None:
             return {"error": "Rule tools require database connection"}
-        return list_rules(_def_manager, event, group, enabled, brief=brief)
+        return list_rules(_rule_manager, event, group, enabled, brief=brief)
 
     @registry.tool(
         name="get_rule",
         description="Get full details of a standalone rule by name.",
     )
     def _get_rule(name: str) -> dict[str, Any]:
-        if _def_manager is None:
+        if _rule_manager is None:
             return {"error": "Rule tools require database connection"}
-        return get_rule(_def_manager, name)
+        return get_rule(_rule_manager, name)
 
     @registry.tool(
         name="toggle_rule",
         description="Enable or disable a standalone rule by name.",
     )
     def _toggle_rule(name: str, enabled: bool) -> dict[str, Any]:
-        if _def_manager is None:
+        if _rule_manager is None:
             return {"error": "Rule tools require database connection"}
-        return toggle_rule(_def_manager, name, enabled)
+        return toggle_rule(_rule_manager, name, enabled)
 
     @registry.tool(
         name="create_rule",
@@ -441,11 +278,11 @@ def create_workflows_registry(
         project_path: str | None = None,
         make_template: bool = False,
     ) -> dict[str, Any]:
-        if _def_manager is None:
+        if _rule_manager is None:
             return {"error": "Rule tools require database connection"}
         pp = Path(project_path) if project_path else None
         return create_rule(
-            _def_manager, name, definition, project_path=pp, make_global_template=make_template
+            _rule_manager, name, definition, project_path=pp, make_global_template=make_template
         )
 
     @registry.tool(
@@ -456,9 +293,9 @@ def create_workflows_registry(
         name: str,
         force: bool = False,
     ) -> dict[str, Any]:
-        if _def_manager is None:
+        if _rule_manager is None:
             return {"error": "Rule tools require database connection"}
-        return delete_rule(_def_manager, name, force)
+        return delete_rule(_rule_manager, name, force)
 
     @registry.tool(
         name="update_rule",
@@ -479,11 +316,11 @@ def create_workflows_registry(
         project_path: str | None = None,
         make_template: bool = False,
     ) -> dict[str, Any]:
-        if _def_manager is None:
+        if _rule_manager is None:
             return {"error": "Rule tools require database connection"}
         pp = Path(project_path) if project_path else None
         return update_rule(
-            _def_manager,
+            _rule_manager,
             name,
             definition=definition,
             description=description,
@@ -503,18 +340,18 @@ def create_workflows_registry(
     def _list_variables(
         enabled: bool | None = None,
     ) -> dict[str, Any]:
-        if _def_manager is None:
+        if _variable_manager is None:
             return {"error": "Variable tools require database connection"}
-        return list_variables(_def_manager, enabled)
+        return list_variables(_variable_manager, enabled)
 
     @registry.tool(
         name="get_variable_definition",
         description="Get a variable definition by name. Returns the definition details including default value.",
     )
     def _get_variable_definition(name: str) -> dict[str, Any]:
-        if _def_manager is None:
+        if _variable_manager is None:
             return {"error": "Variable tools require database connection"}
-        return get_variable_definition(_def_manager, name)
+        return get_variable_definition(_variable_manager, name)
 
     @registry.tool(
         name="create_variable",
@@ -527,11 +364,11 @@ def create_workflows_registry(
         project_path: str | None = None,
         make_template: bool = False,
     ) -> dict[str, Any]:
-        if _def_manager is None:
+        if _variable_manager is None:
             return {"error": "Variable tools require database connection"}
         pp = Path(project_path) if project_path else None
         return create_variable(
-            _def_manager,
+            _variable_manager,
             name,
             value,
             description,
@@ -550,11 +387,11 @@ def create_workflows_registry(
         project_path: str | None = None,
         make_template: bool = False,
     ) -> dict[str, Any]:
-        if _def_manager is None:
+        if _variable_manager is None:
             return {"error": "Variable tools require database connection"}
         pp = Path(project_path) if project_path else None
         return update_variable(
-            _def_manager,
+            _variable_manager,
             name,
             value,
             description,
@@ -570,18 +407,18 @@ def create_workflows_registry(
         name: str,
         force: bool = False,
     ) -> dict[str, Any]:
-        if _def_manager is None:
+        if _variable_manager is None:
             return {"error": "Variable tools require database connection"}
-        return delete_variable(_def_manager, name, force)
+        return delete_variable(_variable_manager, name, force)
 
     @registry.tool(
         name="export_variable",
         description="Export a variable definition as YAML content.",
     )
     def _export_variable(name: str) -> dict[str, Any]:
-        if _def_manager is None:
+        if _variable_manager is None:
             return {"error": "Variable tools require database connection"}
-        return export_variable(_def_manager, name)
+        return export_variable(_variable_manager, name)
 
     # ── Agent definition CRUD tools ──
 
@@ -594,18 +431,18 @@ def create_workflows_registry(
         project_id: str | None = None,
         surface_filter: str | None = None,
     ) -> dict[str, Any]:
-        if _def_manager is None:
+        if _agent_manager is None:
             return {"error": "Agent definition tools require database connection"}
-        return list_agent_definitions(_def_manager, enabled, project_id, surface_filter)
+        return list_agent_definitions(_agent_manager, enabled, project_id, surface_filter)
 
     @registry.tool(
         name="get_agent_definition",
         description="Get full details of an agent definition by name.",
     )
     def _get_agent_definition(name: str) -> dict[str, Any]:
-        if _def_manager is None:
+        if _agent_manager is None:
             return {"error": "Agent definition tools require database connection"}
-        return get_agent_definition(_def_manager, name)
+        return get_agent_definition(_agent_manager, name)
 
     @registry.tool(
         name="create_agent_definition",
@@ -617,11 +454,11 @@ def create_workflows_registry(
         project_path: str | None = None,
         make_template: bool = False,
     ) -> dict[str, Any]:
-        if _def_manager is None:
+        if _agent_manager is None:
             return {"error": "Agent definition tools require database connection"}
         pp = Path(project_path) if project_path else None
         return create_agent_definition(
-            _def_manager, name, definition, project_path=pp, make_global_template=make_template
+            _agent_manager, name, definition, project_path=pp, make_global_template=make_template
         )
 
     @registry.tool(
@@ -629,9 +466,9 @@ def create_workflows_registry(
         description="Enable or disable an agent definition by name.",
     )
     def _toggle_agent_definition(name: str, enabled: bool) -> dict[str, Any]:
-        if _def_manager is None:
+        if _agent_manager is None:
             return {"error": "Agent definition tools require database connection"}
-        return toggle_agent_definition(_def_manager, name, enabled)
+        return toggle_agent_definition(_agent_manager, name, enabled)
 
     @registry.tool(
         name="delete_agent_definition",
@@ -641,9 +478,9 @@ def create_workflows_registry(
         name: str,
         force: bool = False,
     ) -> dict[str, Any]:
-        if _def_manager is None:
+        if _agent_manager is None:
             return {"error": "Agent definition tools require database connection"}
-        return delete_agent_definition(_def_manager, name, force)
+        return delete_agent_definition(_agent_manager, name, force)
 
     @registry.tool(
         name="update_agent_rules",
@@ -656,11 +493,11 @@ def create_workflows_registry(
         project_path: str | None = None,
         make_template: bool = False,
     ) -> dict[str, Any]:
-        if _def_manager is None:
+        if _agent_manager is None:
             return {"error": "Agent definition tools require database connection"}
         pp = Path(project_path) if project_path else None
         return update_agent_rules(
-            _def_manager, name, add, remove, project_path=pp, make_global_template=make_template
+            _agent_manager, name, add, remove, project_path=pp, make_global_template=make_template
         )
 
     @registry.tool(
@@ -674,11 +511,11 @@ def create_workflows_registry(
         project_path: str | None = None,
         make_template: bool = False,
     ) -> dict[str, Any]:
-        if _def_manager is None:
+        if _agent_manager is None:
             return {"error": "Agent definition tools require database connection"}
         pp = Path(project_path) if project_path else None
         return update_agent_variables(
-            _def_manager,
+            _agent_manager,
             name,
             set_vars,
             remove,
@@ -687,20 +524,24 @@ def create_workflows_registry(
         )
 
     @registry.tool(
-        name="update_agent_steps",
-        description="Replace an agent's inline step workflow steps. Pass steps list or None to clear.",
+        name="update_agent_step_workflow",
+        description="Replace an agent's nested step_workflow. Pass the object or None to clear.",
     )
-    def _update_agent_steps(
+    def _update_agent_step_workflow(
         name: str,
-        steps: list[dict[str, Any]] | None = None,
+        step_workflow: dict[str, Any] | None = None,
         project_path: str | None = None,
         make_template: bool = False,
     ) -> dict[str, Any]:
-        if _def_manager is None:
+        if _agent_manager is None:
             return {"error": "Agent definition tools require database connection"}
         pp = Path(project_path) if project_path else None
-        return update_agent_steps(
-            _def_manager, name, steps, project_path=pp, make_global_template=make_template
+        return update_agent_step_workflow(
+            _agent_manager,
+            name,
+            step_workflow,
+            project_path=pp,
+            make_global_template=make_template,
         )
 
     # ── Pipeline utility tools ──
@@ -747,7 +588,6 @@ def create_workflows_registry(
         db=_db,
         session_manager=_session_manager,
         completion_registry=completion_registry,
-        def_manager=_def_manager,
     )
 
     return registry

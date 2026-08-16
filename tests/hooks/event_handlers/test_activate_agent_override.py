@@ -43,6 +43,7 @@ def _make_agent_body(name: str = "test-agent") -> MagicMock:
     body.variables = None
     body.steps = None
     body.step_variables = {}
+    body.step_workflow = None
     return body
 
 

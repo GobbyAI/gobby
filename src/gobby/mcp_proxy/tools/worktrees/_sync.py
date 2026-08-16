@@ -23,6 +23,8 @@ from gobby.utils.git import (
 
 logger = logging.getLogger(__name__)
 
+MERGE_COMMAND_TIMEOUT_SECONDS = 240
+
 
 def _status_path_is_gobby_only(pathspec: str) -> bool:
     paths = [part.strip() for part in pathspec.split(" -> ")]
@@ -655,7 +657,7 @@ def create_sync_registry(ctx: RegistryContext) -> InternalToolRegistry:
                 resolved_git_mgr.run_git_command,
                 ["merge", source_ref, "--no-ff", "--no-edit"],
                 cwd=merge_cwd,
-                timeout=60,
+                timeout=MERGE_COMMAND_TIMEOUT_SECONDS,
                 env=merge_env,
             )
             if merge_result.returncode == 0:

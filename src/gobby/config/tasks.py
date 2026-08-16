@@ -608,7 +608,7 @@ def merge_workflow_variables(
 
     Args:
         yaml_defaults: Variable defaults from workflow YAML definition.
-        db_overrides: Session-specific overrides from DB workflow_states.variables.
+        db_overrides: Session-specific overrides from persisted session variables.
             Can be None if no session state exists.
         validate: If True, validate merged result through WorkflowVariablesConfig.
             Invalid values will raise ValidationError.

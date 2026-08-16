@@ -21,7 +21,7 @@ def _agent() -> dict[str, Any]:
 
 
 def _step(agent: dict[str, Any], name: str) -> dict[str, Any]:
-    return cast(dict[str, Any], next(step for step in agent["steps"] if step["name"] == name))
+    return cast(dict[str, Any], next(step for step in agent["step_workflow"]["steps"] if step["name"] == name))
 
 
 def test_trajectory_monitor_is_read_only_and_terminates_explicitly() -> None:
@@ -30,11 +30,11 @@ def test_trajectory_monitor_is_read_only_and_terminates_explicitly() -> None:
     terminate = _step(agent, "terminate")
 
     assert agent["name"] == "trajectory-monitor"
-    assert agent["step_variables"]["verdict_emitted"] is False
+    assert agent["step_workflow"]["variables"]["verdict_emitted"] is False
     assert {"Edit", "Write", "NotebookEdit"}.isdisjoint(review["allowed_tools"])
     assert "gobby-tasks:close_task" in review["blocked_mcp_tools"]
     assert terminate["allowed_mcp_tools"] == ["gobby-agents:end_agent_run"]
-    assert agent["exit_condition"] == "current_step == 'terminate'"
+    assert agent["step_workflow"]["exit_condition"] == "current_step == 'terminate'"
 
 
 def test_trajectory_monitor_reviews_linked_and_cumulative_branch_history() -> None:

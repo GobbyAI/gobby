@@ -3,7 +3,7 @@ description: |
   Frontend implementation agent for lifecycle dispatch leaves. Builds UI,
   client-side behavior, frontend tests, and frontend configuration.
 
-version: "1.0"
+version: "1.1"
 enabled: true
 priority: 30
 surfaces: [spawn, persona]
@@ -70,151 +70,152 @@ workflows:
     include:
       - "tag:default"
       - "tag:worker-safety"
-step_variables:
-  task_claimed: false
-  required_skills:
-    - development-discipline
-    - restraint
-    - tasks
-  required_skills_loaded: false
-  additional_skills: []
-  additional_skills_loaded: false
-  implementation_complete: false
+step_workflow:
+  variables:
+    task_claimed: false
+    required_skills:
+      - development-discipline
+      - restraint
+      - tasks
+    required_skills_loaded: false
+    additional_skills: []
+    additional_skills_loaded: false
+    implementation_complete: false
 
-steps:
-  - name: claim
-    mcp_error_policy: stay
-    description: "Claim the assigned frontend leaf"
-    status_message: |
-      Claim assigned_task_id with claim_task, then read it with get_task.
-    allowed_tools:
-      - mcp__gobby__call_tool
-      - mcp__gobby__list_mcp_servers
-      - mcp__gobby__list_tools
-      - mcp__gobby__get_tool_schema
-    allowed_mcp_tools:
-      - "gobby-tasks:claim_task"
-      - "gobby-tasks:get_task"
-    on_mcp_success:
-      - server: gobby-tasks
-        tool: claim_task
-        action: set_variable
-        variable: task_claimed
-        value: true
-    transitions:
-      - to: load_required_skills
-        when: "vars.task_claimed"
+  exit_condition: "current_step == 'terminate'"
+  steps:
+    - name: claim
+      mcp_error_policy: stay
+      description: "Claim the assigned frontend leaf"
+      status_message: |
+        Claim assigned_task_id with claim_task, then read it with get_task.
+      allowed_tools:
+        - mcp__gobby__call_tool
+        - mcp__gobby__list_mcp_servers
+        - mcp__gobby__list_tools
+        - mcp__gobby__get_tool_schema
+      allowed_mcp_tools:
+        - "gobby-tasks:claim_task"
+        - "gobby-tasks:get_task"
+      on_mcp_success:
+        - server: gobby-tasks
+          tool: claim_task
+          action: set_variable
+          variable: task_claimed
+          value: true
+      transitions:
+        - to: load_required_skills
+          when: "vars.task_claimed"
 
-  - name: load_required_skills
-    mcp_error_policy: stay
-    description: "Load required developer discipline skills"
-    status_message: |
-      Load required developer skills before loading optional task skills or
-      implementing:
-      1. get_skill(name="development-discipline") on gobby-skills
-      2. get_skill(name="restraint") on gobby-skills
-      3. get_skill(name="tasks") on gobby-skills
-      Use only mcp__gobby__call_tool in this step. Call get_skill directly:
-      call_tool("gobby-skills", "get_skill", {"name": <skill>}).
-      Do not use native Skill, GitHub/app connector, or Computer Use tools.
-    allowed_tools:
-      - mcp__gobby__call_tool
-      - mcp__gobby__list_mcp_servers
-      - mcp__gobby__list_tools
-      - mcp__gobby__get_tool_schema
-    allowed_mcp_tools:
-      - "gobby-skills:get_skill"
-    on_mcp_success:
-      - server: gobby-skills
-        tool: get_skill
-        action: set_variable
-        variable: required_skills_loaded
-        value: >-
-          all(skill in vars.get('loaded_skills', []) for skill in vars.required_skills)
-    transitions:
-      - to: load_additional_skills
-        when: >-
-          all(skill in vars.get('loaded_skills', []) for skill in vars.required_skills)
+    - name: load_required_skills
+      mcp_error_policy: stay
+      description: "Load required developer discipline skills"
+      status_message: |
+        Load required developer skills before loading optional task skills or
+        implementing:
+        1. get_skill(name="development-discipline") on gobby-skills
+        2. get_skill(name="restraint") on gobby-skills
+        3. get_skill(name="tasks") on gobby-skills
+        Use only mcp__gobby__call_tool in this step. Call get_skill directly:
+        call_tool("gobby-skills", "get_skill", {"name": <skill>}).
+        Do not use native Skill, GitHub/app connector, or Computer Use tools.
+      allowed_tools:
+        - mcp__gobby__call_tool
+        - mcp__gobby__list_mcp_servers
+        - mcp__gobby__list_tools
+        - mcp__gobby__get_tool_schema
+      allowed_mcp_tools:
+        - "gobby-skills:get_skill"
+      on_mcp_success:
+        - server: gobby-skills
+          tool: get_skill
+          action: set_variable
+          variable: required_skills_loaded
+          value: >-
+            all(skill in vars.get('loaded_skills', []) for skill in vars.required_skills)
+      transitions:
+        - to: load_additional_skills
+          when: >-
+            all(skill in vars.get('loaded_skills', []) for skill in vars.required_skills)
 
-  - name: load_additional_skills
-    mcp_error_policy: stay
-    description: "Load optional task-specific skills"
-    status_message: |
-      For each prompt additional_skills entry, call get_skill(name=<skill>) on
-      gobby-skills. If the list is empty, proceed to implementation.
-      Use only mcp__gobby__call_tool in this step. Call get_skill directly:
-      call_tool("gobby-skills", "get_skill", {"name": <skill>}).
-      Do not use native Skill, GitHub/app connector, or Computer Use tools.
-    allowed_tools:
-      - mcp__gobby__call_tool
-      - mcp__gobby__list_mcp_servers
-      - mcp__gobby__list_tools
-      - mcp__gobby__get_tool_schema
-    allowed_mcp_tools:
-      - "gobby-skills:get_skill"
-    on_mcp_success:
-      - server: gobby-skills
-        tool: get_skill
-        action: set_variable
-        variable: additional_skills_loaded
-        value: >-
-          not vars.additional_skills
-          or all(skill in vars.get('loaded_skills', []) for skill in vars.additional_skills)
-    transitions:
-      - to: implement
-        when: >-
-          not vars.additional_skills
-          or all(skill in vars.get('loaded_skills', []) for skill in vars.additional_skills)
+    - name: load_additional_skills
+      mcp_error_policy: stay
+      description: "Load optional task-specific skills"
+      status_message: |
+        For each prompt additional_skills entry, call get_skill(name=<skill>) on
+        gobby-skills. If the list is empty, proceed to implementation.
+        Use only mcp__gobby__call_tool in this step. Call get_skill directly:
+        call_tool("gobby-skills", "get_skill", {"name": <skill>}).
+        Do not use native Skill, GitHub/app connector, or Computer Use tools.
+      allowed_tools:
+        - mcp__gobby__call_tool
+        - mcp__gobby__list_mcp_servers
+        - mcp__gobby__list_tools
+        - mcp__gobby__get_tool_schema
+      allowed_mcp_tools:
+        - "gobby-skills:get_skill"
+      on_mcp_success:
+        - server: gobby-skills
+          tool: get_skill
+          action: set_variable
+          variable: additional_skills_loaded
+          value: >-
+            not vars.additional_skills
+            or all(skill in vars.get('loaded_skills', []) for skill in vars.additional_skills)
+      transitions:
+        - to: implement
+          when: >-
+            not vars.additional_skills
+            or all(skill in vars.get('loaded_skills', []) for skill in vars.additional_skills)
 
-  - name: implement
-    mcp_error_policy: stay
-    description: "Implement, validate, and hand off or close"
-    status_message: |
-      Implement the frontend leaf. Commit changes, then inspect the assigned
-      task manifest. If development review is disabled, call close_task with
-      preview=true and commit_sha, then repair every blocker until it closes;
-      otherwise submit_for_review(stage_name="development") for QA.
-    allowed_tools: "all"
-    blocked_mcp_tools:
-      - "gobby-tasks:de_escalate_task"
-      - "gobby-tasks:reopen_task"
-      - "gobby-agents:spawn_agent"
-      - "gobby-agents:kill_agent"
-      - "gobby-agents:end_agent_run"
-    on_mcp_success:
-      - server: gobby-tasks
-        tool: close_task
-        when: >-
-            tool_output.get('closed') is True
-            or tool_output.get('result', {}).get('closed') is True
-        action: set_variable
-        variable: implementation_complete
-        value: true
-      - server: gobby-tasks-ops
-        tool: submit_for_review
-        action: set_variable
-        variable: implementation_complete
-        value: true
-      - server: gobby-tasks
-        tool: escalate_task
-        action: set_variable
-        variable: implementation_complete
-        value: true
-    transitions:
-      - to: terminate
-        when: "vars.implementation_complete"
+    - name: implement
+      mcp_error_policy: stay
+      description: "Implement, validate, and hand off or close"
+      status_message: |
+        Implement the frontend leaf. Commit changes, then inspect the assigned
+        task manifest. If development review is disabled, call close_task with
+        preview=true and commit_sha, then repair every blocker until it closes;
+        otherwise submit_for_review(stage_name="development") for QA.
+      allowed_tools: "all"
+      blocked_mcp_tools:
+        - "gobby-tasks:de_escalate_task"
+        - "gobby-tasks:reopen_task"
+        - "gobby-agents:spawn_agent"
+        - "gobby-agents:kill_agent"
+        - "gobby-agents:end_agent_run"
+      on_mcp_success:
+        - server: gobby-tasks
+          tool: close_task
+          when: >-
+              tool_output.get('closed') is True
+              or tool_output.get('result', {}).get('closed') is True
+          action: set_variable
+          variable: implementation_complete
+          value: true
+        - server: gobby-tasks-ops
+          tool: submit_for_review
+          action: set_variable
+          variable: implementation_complete
+          value: true
+        - server: gobby-tasks
+          tool: escalate_task
+          action: set_variable
+          variable: implementation_complete
+          value: true
+      transitions:
+        - to: terminate
+          when: "vars.implementation_complete"
 
-  - name: terminate
-    description: "Self-terminate"
-    status_message: >-
-      Call mcp__gobby__call_tool with server_name="gobby-agents",
-      tool_name="end_agent_run", and arguments={} to finish this agent run.
-    allowed_tools:
-      - mcp__gobby__call_tool
-      - mcp__gobby__list_mcp_servers
-      - mcp__gobby__list_tools
-      - mcp__gobby__get_tool_schema
-    allowed_mcp_tools:
-      - "gobby-agents:end_agent_run"
+    - name: terminate
+      description: "Self-terminate"
+      status_message: >-
+        Call mcp__gobby__call_tool with server_name="gobby-agents",
+        tool_name="end_agent_run", and arguments={} to finish this agent run.
+      allowed_tools:
+        - mcp__gobby__call_tool
+        - mcp__gobby__list_mcp_servers
+        - mcp__gobby__list_tools
+        - mcp__gobby__get_tool_schema
+      allowed_mcp_tools:
+        - "gobby-agents:end_agent_run"
 
-exit_condition: "current_step == 'terminate'"

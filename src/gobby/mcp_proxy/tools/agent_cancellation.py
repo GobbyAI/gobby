@@ -257,6 +257,7 @@ async def stop_agent_run(
                 "run_id": run_id,
                 "status": "cancelled",
                 "terminal_reason": "user_cancelled",
+                "agent_step_instances_deleted": result.get("agent_step_instances_deleted"),
             }
         finally:
             await deliver_existing_terminal_run_in_scope(

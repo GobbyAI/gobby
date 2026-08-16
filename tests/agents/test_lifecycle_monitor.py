@@ -40,9 +40,9 @@ from gobby.storage.sessions import SessionManager
 from gobby.storage.tasks import LocalTaskManager
 from gobby.storage.tasks._dispatch_mutex import TaskDispatchMutexManager
 from gobby.storage.tasks._stage_states import StageManifestSpec
-from gobby.storage.workflow_definitions import LocalWorkflowDefinitionManager
-from gobby.workflows.definitions import WorkflowInstance
-from gobby.workflows.state_manager import WorkflowInstanceManager
+from gobby.storage.definitions.agents import AgentDefinitionManager
+from gobby.workflows.step_instances import AgentStepInstanceManager
+from tests.workflows.step_instance_fixtures import make_step_instance
 
 from .detection_test_support import BundledDetectionRegistry
 
@@ -1937,7 +1937,7 @@ class TestCheckIdleAgents:
             "UPDATE sessions SET updated_at = %s WHERE id = %s",
             ((datetime.now(UTC) - timedelta(seconds=120)).isoformat(), child.id),
         )
-        LocalWorkflowDefinitionManager(temp_db).create(
+        AgentDefinitionManager(temp_db).create(
             name="planner-steps",
             definition_json=json.dumps(
                 {
@@ -1956,14 +1956,12 @@ class TestCheckIdleAgents:
                     "exit_condition": "current_step == 'terminate'",
                 }
             ),
-            workflow_type="workflow",
             enabled=True,
         )
-        WorkflowInstanceManager(temp_db).save_instance(
-            WorkflowInstance(
-                id="ffffffff-ffff-4fff-8fff-ffffffff0001",
-                session_id=child.id,
-                workflow_name="planner-steps",
+        AgentStepInstanceManager(temp_db).save(
+            make_step_instance(
+                child.id,
+                agent_name="planner",
                 current_step="plan",
             )
         )

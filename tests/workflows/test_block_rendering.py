@@ -12,7 +12,7 @@ import yaml
 
 from gobby.hooks.events import HookEvent, HookEventType, SessionSource
 from gobby.storage.hub.protocol import HubDatabase
-from gobby.storage.workflow_definitions import LocalWorkflowDefinitionManager
+from gobby.storage.definitions.rules import RuleDefinitionManager
 from gobby.workflows.definitions import RuleDefinitionBody, RuleEffect, RuleTriggerEvent
 from gobby.workflows.engine.blocked_tool_recovery import (
     _ACTION_WORD_RE as ACTION_WORD_RE,
@@ -41,8 +41,8 @@ def db(temp_db: HubDatabase) -> HubDatabase:
 
 
 @pytest.fixture
-def manager(db: HubDatabase) -> LocalWorkflowDefinitionManager:
-    return LocalWorkflowDefinitionManager(db)
+def manager(db: HubDatabase) -> RuleDefinitionManager:
+    return RuleDefinitionManager(db)
 
 
 def _make_event() -> HookEvent:
@@ -56,7 +56,7 @@ def _make_event() -> HookEvent:
 
 
 def _insert_block_rule(
-    manager: LocalWorkflowDefinitionManager,
+    manager: RuleDefinitionManager,
     reason: str,
 ) -> None:
     manager.create(
@@ -65,7 +65,6 @@ def _insert_block_rule(
             event=RuleTriggerEvent.BEFORE_TOOL,
             effects=[RuleEffect(type="block", reason=reason)],
         ).model_dump_json(),
-        workflow_type="rule",
         priority=100,
         enabled=True,
     )
@@ -73,7 +72,7 @@ def _insert_block_rule(
 
 async def _evaluate_twice(
     db: HubDatabase,
-    manager: LocalWorkflowDefinitionManager,
+    manager: RuleDefinitionManager,
     reason: str,
 ) -> str:
     _insert_block_rule(manager, reason)
@@ -92,7 +91,7 @@ async def _evaluate_twice(
 @pytest.mark.asyncio
 async def test_collapsed_reason_keeps_directive(
     db: HubDatabase,
-    manager: LocalWorkflowDefinitionManager,
+    manager: RuleDefinitionManager,
 ) -> None:
     command = (
         'call_tool("gobby-memory", "get_recall_memories", {"recall_request_id":"request-123"})'
@@ -112,7 +111,7 @@ async def test_collapsed_reason_keeps_directive(
 @pytest.mark.asyncio
 async def test_no_directive_collapses_clean(
     db: HubDatabase,
-    manager: LocalWorkflowDefinitionManager,
+    manager: RuleDefinitionManager,
 ) -> None:
     collapsed = await _evaluate_twice(
         db,

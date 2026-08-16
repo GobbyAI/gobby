@@ -1,4 +1,4 @@
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 use std::env;
 use std::fs;
 use std::sync::{Mutex, mpsc};
@@ -9,14 +9,22 @@ use time::format_description::well_known::Rfc3339;
 use time::{Duration, OffsetDateTime};
 use uuid::Uuid;
 
+use super::assets::BASELINE_SQL;
 use super::assets::{BASELINE_CHECKSUM, BASELINE_VERSION, EmbeddedMigration, MIGRATIONS};
+use super::baseline_refresh::{
+    REFRESH_STATEMENT_PREFIXES, REMOVED_STATEMENT_PREFIXES, RUNTIME_BOUNDARY_REFRESH_PREFIXES,
+    RefreshMode, TYPED_DOMAIN_REFRESH_PREFIXES, baseline_refresh_statement,
+    baseline_refresh_statement_for_mode, baseline_removed_statement,
+};
 use super::error::SchemaError;
 use super::gate::{
     BackupGateContext, SourceIdentity, VerifiedBackupManifest, parse_backup_manifest,
 };
 use super::runner::{
-    ACCOUNT_IDENTITY_PREDECESSOR_CHECKSUM, PREDECESSOR_BASELINE_CHECKSUM, SchemaRunner,
+    ACCOUNT_IDENTITY_PREDECESSOR_CHECKSUM, PARENT_BASELINE_CHECKSUM, PREDECESSOR_BASELINE_CHECKSUM,
+    SchemaRunner, WORKTREE_BASELINE_CHECKSUM,
 };
+use super::sql_splitter::split_sql_statements;
 
 static RECOVERY_MIGRATION: EmbeddedMigration = EmbeddedMigration {
     version: 376,
@@ -33,6 +41,28 @@ static DESTRUCTIVE_MIGRATION: EmbeddedMigration = EmbeddedMigration {
     sql: "-- gobby:destructive\nCREATE TABLE gate_probe (id integer);\n",
 };
 static DESTRUCTIVE_MIGRATIONS: &[EmbeddedMigration] = &[DESTRUCTIVE_MIGRATION];
+
+static GUARDED_MIGRATION: EmbeddedMigration = EmbeddedMigration {
+    version: 376,
+    filename: "376_guarded_probe.sql",
+    checksum: "8d86f80f785ac4f918ce34ea7f0dca860266e91dbba95d8a2be0965a9cdd147a",
+    sql: "DO $guard$\nBEGIN\n  IF to_regclass('legacy_probe_source') IS NOT NULL THEN\n    CREATE TABLE IF NOT EXISTS guarded_probe_copied (id integer);\n  END IF;\nEND\n$guard$;\n",
+};
+static GUARDED_MIGRATIONS: &[EmbeddedMigration] = &[GUARDED_MIGRATION];
+
+static COPY_THEN_FENCE: EmbeddedMigration = EmbeddedMigration {
+    version: 376,
+    filename: "376_copy_probe.sql",
+    checksum: "7ec5f3b7cf557fcee6903676bc89a7ff89ed0c1100e44775e5df1a01d3c38689",
+    sql: "CREATE TABLE copy_probe (id integer);\n",
+};
+static DESTRUCTIVE_AFTER_COPY: EmbeddedMigration = EmbeddedMigration {
+    version: 377,
+    filename: "377_destructive_probe.sql",
+    checksum: "c5824af6e3aa4151609e330dca97948d7ba3a22293248883d5fc4d335165638e",
+    sql: "-- gobby:destructive\nCREATE TABLE drop_probe (id integer);\n",
+};
+static COPY_THEN_DESTRUCTIVE: &[EmbeddedMigration] = &[COPY_THEN_FENCE, DESTRUCTIVE_AFTER_COPY];
 
 static DATABASE_TEST_LOCK: Mutex<()> = Mutex::new(());
 
@@ -113,6 +143,46 @@ fn test_database() -> anyhow::Result<Option<(ScratchDatabase, Client)>> {
 
 fn install_baseline(client: &mut Client) -> anyhow::Result<()> {
     SchemaRunner::new(client, "public")?.apply()?;
+    Ok(())
+}
+
+fn install_predecessor(client: &mut Client) -> anyhow::Result<()> {
+    install_lineage_fixture(
+        client,
+        include_str!("../../tests/fixtures/schema/predecessor_baseline.sql"),
+        PREDECESSOR_BASELINE_CHECKSUM,
+    )
+}
+
+fn install_parent_baseline(client: &mut Client) -> anyhow::Result<()> {
+    install_lineage_fixture(
+        client,
+        include_str!("../../tests/fixtures/schema/parent_baseline.sql"),
+        PARENT_BASELINE_CHECKSUM,
+    )
+}
+
+fn install_worktree_baseline(client: &mut Client) -> anyhow::Result<()> {
+    install_lineage_fixture(
+        client,
+        include_str!("../../tests/fixtures/schema/worktree_baseline.sql"),
+        WORKTREE_BASELINE_CHECKSUM,
+    )
+}
+
+fn install_lineage_fixture(client: &mut Client, sql: &str, checksum: &str) -> anyhow::Result<()> {
+    for statement in split_sql_statements(sql)? {
+        client.batch_execute(&statement)?;
+    }
+    client.execute(
+        "INSERT INTO schema_migrations(version, filename, checksum, applied_at) \
+         VALUES ($1, $2, $3, NOW())",
+        &[
+            &BASELINE_VERSION,
+            &format!("baseline@{BASELINE_VERSION}"),
+            &checksum,
+        ],
+    )?;
     Ok(())
 }
 
@@ -199,12 +269,6 @@ fn assert_gcode_rls_policies(client: &mut Client) -> anyhow::Result<()> {
         "unexpected gcode RLS policies: {actual:?}"
     );
     Ok(())
-}
-
-fn current_schema_head() -> i32 {
-    MIGRATIONS
-        .last()
-        .map_or(BASELINE_VERSION, |migration| migration.version)
 }
 
 fn source_identity(client: &mut Client) -> anyhow::Result<SourceIdentity> {
@@ -364,7 +428,171 @@ fn predecessor_checksum_matches_python_cutover_contract() {
 }
 
 #[test]
-fn receipt_chain_advances_from_19645_baseline() -> anyhow::Result<()> {
+fn predecessor_fixture_matches_pinned_checksum() {
+    const PREDECESSOR_BASELINE_SQL: &str =
+        include_str!("../../tests/fixtures/schema/predecessor_baseline.sql");
+    assert_eq!(
+        super::assets::sha256_hex(PREDECESSOR_BASELINE_SQL.as_bytes()),
+        PREDECESSOR_BASELINE_CHECKSUM
+    );
+}
+
+#[test]
+fn baseline_refresh_accepts_exactly_the_predecessor_statement_difference() {
+    const PREDECESSOR_BASELINE_SQL: &str =
+        include_str!("../../tests/fixtures/schema/predecessor_baseline.sql");
+    let current = split_sql_statements(BASELINE_SQL).expect("current baseline splits");
+    let predecessor =
+        split_sql_statements(PREDECESSOR_BASELINE_SQL).expect("predecessor baseline splits");
+    let predecessor_set = predecessor.iter().cloned().collect::<BTreeSet<_>>();
+    let current_set = current.iter().cloned().collect::<BTreeSet<_>>();
+    let added = current
+        .iter()
+        .filter(|statement| !predecessor_set.contains(*statement))
+        .cloned()
+        .collect::<Vec<_>>();
+    let removed = predecessor
+        .iter()
+        .filter(|statement| !current_set.contains(*statement))
+        .cloned()
+        .collect::<Vec<_>>();
+
+    let unexpected = added
+        .iter()
+        .filter(|statement| !baseline_refresh_statement(statement))
+        .cloned()
+        .collect::<Vec<_>>();
+    assert!(
+        unexpected.is_empty(),
+        "refresh acceptance missed added statements: {unexpected:?}"
+    );
+
+    let matched = REFRESH_STATEMENT_PREFIXES
+        .iter()
+        .map(|prefix| {
+            added
+                .iter()
+                .filter(|statement| statement.trim_start().starts_with(prefix))
+                .count()
+        })
+        .collect::<Vec<_>>();
+    assert!(
+        matched.iter().all(|count| *count == 1),
+        "each refresh prefix must match exactly one added statement: {matched:?}"
+    );
+
+    let unexpected_removed = removed
+        .iter()
+        .filter(|statement| !baseline_removed_statement(statement))
+        .cloned()
+        .collect::<Vec<_>>();
+    assert!(
+        unexpected_removed.is_empty(),
+        "refresh removal allowlist missed predecessor statements: {unexpected_removed:?}"
+    );
+
+    let removed_matched = REMOVED_STATEMENT_PREFIXES
+        .iter()
+        .map(|prefix| {
+            removed
+                .iter()
+                .filter(|statement| statement.trim_start().starts_with(prefix))
+                .count()
+        })
+        .collect::<Vec<_>>();
+    assert!(
+        removed_matched.iter().all(|count| *count <= 1),
+        "each removed prefix must match at most one predecessor statement: {removed_matched:?}"
+    );
+    assert!(
+        removed_matched.iter().any(|count| *count == 1),
+        "removed-statement allowlist must name the dropped predecessor DDL"
+    );
+
+    let lingering = current
+        .iter()
+        .filter(|statement| baseline_removed_statement(statement))
+        .cloned()
+        .collect::<Vec<_>>();
+    assert!(
+        lingering.is_empty(),
+        "current baseline still contains removed legacy statements: {lingering:?}"
+    );
+}
+
+#[test]
+fn parent_and_worktree_fixtures_match_pinned_checksums() {
+    assert_eq!(
+        super::assets::sha256_hex(
+            include_str!("../../tests/fixtures/schema/parent_baseline.sql").as_bytes()
+        ),
+        PARENT_BASELINE_CHECKSUM
+    );
+    assert_eq!(
+        super::assets::sha256_hex(
+            include_str!("../../tests/fixtures/schema/worktree_baseline.sql").as_bytes()
+        ),
+        WORKTREE_BASELINE_CHECKSUM
+    );
+}
+
+fn assert_mode_covers_added_statements(
+    predecessor_sql: &str,
+    mode: RefreshMode,
+    prefixes: &[&str],
+) {
+    let current = split_sql_statements(BASELINE_SQL).expect("current baseline splits");
+    let predecessor = split_sql_statements(predecessor_sql).expect("lineage baseline splits");
+    let predecessor_set = predecessor.iter().cloned().collect::<BTreeSet<_>>();
+    let added = current
+        .iter()
+        .filter(|statement| !predecessor_set.contains(*statement))
+        .cloned()
+        .collect::<Vec<_>>();
+    let unexpected = added
+        .iter()
+        .filter(|statement| !baseline_refresh_statement_for_mode(statement, mode))
+        .cloned()
+        .collect::<Vec<_>>();
+    assert!(
+        unexpected.is_empty(),
+        "refresh mode {mode:?} missed added statements: {unexpected:?}"
+    );
+    let matched = prefixes
+        .iter()
+        .map(|prefix| {
+            added
+                .iter()
+                .filter(|statement| statement.trim_start().starts_with(prefix))
+                .count()
+        })
+        .collect::<Vec<_>>();
+    assert!(
+        matched.iter().all(|count| *count == 1),
+        "each {mode:?} prefix must match exactly one added statement: {matched:?}"
+    );
+}
+
+#[test]
+fn parent_baseline_refresh_is_runtime_boundary_only() {
+    assert_mode_covers_added_statements(
+        include_str!("../../tests/fixtures/schema/parent_baseline.sql"),
+        RefreshMode::RuntimeOnly,
+        RUNTIME_BOUNDARY_REFRESH_PREFIXES,
+    );
+}
+
+#[test]
+fn worktree_baseline_refresh_is_typed_domain_only() {
+    assert_mode_covers_added_statements(
+        include_str!("../../tests/fixtures/schema/worktree_baseline.sql"),
+        RefreshMode::TypedDomainOnly,
+        TYPED_DOMAIN_REFRESH_PREFIXES,
+    );
+}
+
+#[test]
+fn receipt_chain_advances_from_19645_and_lineage_checksums() -> anyhow::Result<()> {
     let _serial = DATABASE_TEST_LOCK
         .lock()
         .unwrap_or_else(std::sync::PoisonError::into_inner);
@@ -398,19 +626,32 @@ fn receipt_chain_advances_from_19645_baseline() -> anyhow::Result<()> {
             .contains("run 'gobby hub-maintenance run account-identity-cutover'")
     );
 
-    client.execute(
-        "UPDATE schema_migrations SET checksum = $1 WHERE version = $2",
-        &[&PREDECESSOR_BASELINE_CHECKSUM, &BASELINE_VERSION],
-    )?;
-    let upgraded = SchemaRunner::new(&mut client, "public")?.apply()?;
-    assert!(upgraded.baseline_applied);
-    let after_upgrade: String = client
-        .query_one(
-            "SELECT checksum FROM schema_migrations WHERE version = $1",
-            &[&BASELINE_VERSION],
-        )?
-        .get(0);
-    assert_eq!(after_upgrade, BASELINE_CHECKSUM);
+    for predecessor in [
+        PREDECESSOR_BASELINE_CHECKSUM,
+        PARENT_BASELINE_CHECKSUM,
+        WORKTREE_BASELINE_CHECKSUM,
+    ] {
+        client.execute(
+            "UPDATE schema_migrations SET checksum = $1 WHERE version = $2",
+            &[&predecessor, &BASELINE_VERSION],
+        )?;
+        let upgraded = SchemaRunner::new(&mut client, "public")?.apply()?;
+        assert!(upgraded.baseline_applied, "{predecessor}");
+        let after_upgrade: String = client
+            .query_one(
+                "SELECT checksum FROM schema_migrations WHERE version = $1",
+                &[&BASELINE_VERSION],
+            )?
+            .get(0);
+        assert_eq!(after_upgrade, BASELINE_CHECKSUM);
+        let later: i64 = client
+            .query_one(
+                "SELECT COUNT(*) FROM schema_migrations WHERE version > $1",
+                &[&BASELINE_VERSION],
+            )?
+            .get(0);
+        assert_eq!(later, i64::try_from(MIGRATIONS.len())?, "{predecessor}");
+    }
 
     client.execute(
         "UPDATE schema_migrations SET checksum = 'unrecognized' WHERE version = $1",
@@ -423,6 +664,62 @@ fn receipt_chain_advances_from_19645_baseline() -> anyhow::Result<()> {
         mismatch
             .to_string()
             .contains("recreate from a verified backup")
+    );
+    Ok(())
+}
+
+#[test]
+fn parent_only_lineage_refreshes_runtime_objects() -> anyhow::Result<()> {
+    let _serial = DATABASE_TEST_LOCK
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner);
+    let Some((_database, mut client)) = test_database()? else {
+        return Ok(());
+    };
+    install_parent_baseline(&mut client)?;
+    let before: bool = client
+        .query_one("SELECT to_regclass('deployment_runtime') IS NOT NULL", &[])?
+        .get(0);
+    assert!(!before);
+    let report = SchemaRunner::new(&mut client, "public")?.apply()?;
+    assert!(report.baseline_applied);
+    let after: bool = client
+        .query_one("SELECT to_regclass('deployment_runtime') IS NOT NULL", &[])?
+        .get(0);
+    assert!(after);
+    let checksum: String = client
+        .query_one(
+            "SELECT checksum FROM schema_migrations WHERE version = $1",
+            &[&BASELINE_VERSION],
+        )?
+        .get(0);
+    assert_eq!(checksum, BASELINE_CHECKSUM);
+    Ok(())
+}
+
+#[test]
+fn worktree_only_lineage_adds_typed_domain_then_copy_migrations() -> anyhow::Result<()> {
+    let _serial = DATABASE_TEST_LOCK
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner);
+    let Some((_database, mut client)) = test_database()? else {
+        return Ok(());
+    };
+    install_worktree_baseline(&mut client)?;
+    let agents_before: bool = client
+        .query_one("SELECT to_regclass('agent_definitions') IS NOT NULL", &[])?
+        .get(0);
+    assert!(!agents_before);
+    let error = SchemaRunner::new(&mut client, "public")?
+        .apply()
+        .expect_err("worktree lineage must refuse the destructive drop without a backup");
+    assert!(error.to_string().contains("verified hub backup"));
+    let agents_after_refresh: bool = client
+        .query_one("SELECT to_regclass('agent_definitions') IS NOT NULL", &[])?
+        .get(0);
+    assert!(
+        agents_after_refresh,
+        "typed-domain refresh must land before the destructive drop is refused"
     );
     Ok(())
 }
@@ -702,7 +999,7 @@ fn lock_and_recovery_tests_repair_an_invalid_concurrent_index() -> anyhow::Resul
     let Some((_database, mut client)) = test_database()? else {
         return Ok(());
     };
-    install_baseline(&mut client)?;
+    SchemaRunner::with_migrations_for_test(&mut client, "public", &[])?.apply()?;
     client.batch_execute(
         "CREATE TABLE recovery_values(id integer); INSERT INTO recovery_values VALUES (1), (1)",
     )?;
@@ -782,7 +1079,7 @@ fn gate_tests_destructive_apply_requires_a_verified_v2_backup() -> anyhow::Resul
     let Some((_database, mut client)) = test_database()? else {
         return Ok(());
     };
-    install_baseline(&mut client)?;
+    SchemaRunner::with_migrations_for_test(&mut client, "public", &[])?.apply()?;
     let error =
         SchemaRunner::with_migrations_for_test(&mut client, "public", DESTRUCTIVE_MIGRATIONS)?
             .apply()
@@ -791,7 +1088,13 @@ fn gate_tests_destructive_apply_requires_a_verified_v2_backup() -> anyhow::Resul
 
     let fixture = include_str!("../../tests/fixtures/hub_backup_manifest/v2_roundtrip.json");
     let mut manifest = parse_backup_manifest(fixture)?;
-    manifest.backup_starting_head = current_schema_head();
+    let database_head: i32 = client
+        .query_one(
+            "SELECT COALESCE(MAX(version), 0)::int FROM schema_migrations",
+            &[],
+        )?
+        .get(0);
+    manifest.backup_starting_head = database_head;
     let root = env::temp_dir().join(format!("gcore-backup-gate-{}", Uuid::new_v4()));
     let _scratch_path = ScratchPath(root.clone());
     fs::create_dir_all(root.join("postgres"))?;
@@ -803,7 +1106,7 @@ fn gate_tests_destructive_apply_requires_a_verified_v2_backup() -> anyhow::Resul
     let mut context = BackupGateContext::new(
         &root,
         &fixture_identity,
-        current_schema_head(),
+        database_head,
         created_at + Duration::hours(1),
     );
     context.max_age = Duration::hours(2);
@@ -820,7 +1123,7 @@ fn gate_tests_destructive_apply_requires_a_verified_v2_backup() -> anyhow::Resul
     let mut context = BackupGateContext::new(
         &root,
         &identity,
-        current_schema_head(),
+        database_head,
         created_at + Duration::hours(1),
     );
     context.max_age = Duration::hours(2);
@@ -835,4 +1138,340 @@ fn gate_tests_destructive_apply_requires_a_verified_v2_backup() -> anyhow::Resul
         .get(0);
     assert!(table_exists);
     Ok(())
+}
+
+#[test]
+fn migrations_directory_exists_and_copy_agent_entry_is_registered() {
+    let migrations_dir =
+        std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("assets/schema/migrations");
+    assert!(
+        migrations_dir.is_dir(),
+        "crates/gcore/assets/schema/migrations must exist so later leaves can register include_str entries"
+    );
+    assert_eq!(MIGRATIONS.len(), 6);
+    assert_eq!(MIGRATIONS[0].version, 376);
+    assert_eq!(MIGRATIONS[0].filename, "376_copy_agent_definitions.sql");
+    assert_eq!(MIGRATIONS[1].version, 377);
+    assert_eq!(MIGRATIONS[1].filename, "377_copy_agent_step_instances.sql");
+    assert_eq!(MIGRATIONS[4].version, 380);
+    assert_eq!(MIGRATIONS[4].filename, "380_copy_pipeline_definitions.sql");
+    assert_eq!(MIGRATIONS[5].version, 381);
+    assert_eq!(
+        MIGRATIONS[5].filename,
+        "381_drop_legacy_workflow_tables.sql"
+    );
+    assert!(MIGRATIONS[5].sql.contains("-- gobby:destructive"));
+    for migration in MIGRATIONS {
+        assert_eq!(
+            super::assets::sha256_hex(migration.sql.as_bytes()),
+            migration.checksum
+        );
+    }
+    assert!(
+        DESTRUCTIVE_MIGRATION.version > BASELINE_VERSION
+            && GUARDED_MIGRATION.version > BASELINE_VERSION,
+        "injected probe versions must sit above baseline {BASELINE_VERSION}"
+    );
+    assert_eq!(
+        super::assets::sha256_hex(DESTRUCTIVE_MIGRATION.sql.as_bytes()),
+        DESTRUCTIVE_MIGRATION.checksum
+    );
+    assert_eq!(
+        super::assets::sha256_hex(GUARDED_MIGRATION.sql.as_bytes()),
+        GUARDED_MIGRATION.checksum
+    );
+}
+
+#[test]
+fn fresh_destructive_migration_is_receipt_stamped_without_executing() -> anyhow::Result<()> {
+    let _serial = DATABASE_TEST_LOCK
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner);
+    let Some((_database, mut client)) = test_database()? else {
+        return Ok(());
+    };
+
+    let report =
+        SchemaRunner::with_migrations_for_test(&mut client, "public", DESTRUCTIVE_MIGRATIONS)?
+            .apply()?;
+    assert!(report.baseline_applied);
+    assert_eq!(report.migrations_applied, 1);
+
+    let table_exists: bool = client
+        .query_one("SELECT to_regclass('gate_probe') IS NOT NULL", &[])?
+        .get(0);
+    assert!(
+        !table_exists,
+        "fresh lineages must stamp destructive receipts without executing them"
+    );
+    let receipt_count: i64 = client
+        .query_one(
+            "SELECT COUNT(*) FROM schema_migrations WHERE version = 376 AND filename = $1 AND checksum = $2",
+            &[&DESTRUCTIVE_MIGRATION.filename, &DESTRUCTIVE_MIGRATION.checksum],
+        )?
+        .get(0);
+    assert_eq!(receipt_count, 1);
+
+    let second =
+        SchemaRunner::with_migrations_for_test(&mut client, "public", DESTRUCTIVE_MIGRATIONS)?
+            .apply()?;
+    assert!(!second.baseline_applied);
+    assert_eq!(second.migrations_applied, 0);
+    Ok(())
+}
+
+#[test]
+fn existing_lineage_still_refuses_unauthorized_destructive_migration() -> anyhow::Result<()> {
+    let _serial = DATABASE_TEST_LOCK
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner);
+    let Some((_database, mut client)) = test_database()? else {
+        return Ok(());
+    };
+    SchemaRunner::with_migrations_for_test(&mut client, "public", &[])?.apply()?;
+
+    let error =
+        SchemaRunner::with_migrations_for_test(&mut client, "public", DESTRUCTIVE_MIGRATIONS)?
+            .apply()
+            .expect_err("existing lineages must still refuse unauthorized destructive migrations");
+    assert!(error.to_string().contains("verified hub backup"));
+    let table_exists: bool = client
+        .query_one("SELECT to_regclass('gate_probe') IS NOT NULL", &[])?
+        .get(0);
+    assert!(!table_exists);
+    Ok(())
+}
+
+#[test]
+fn unauthorized_destructive_in_pending_batch_applies_nothing() -> anyhow::Result<()> {
+    let _serial = DATABASE_TEST_LOCK
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner);
+    let Some((_database, mut client)) = test_database()? else {
+        return Ok(());
+    };
+    SchemaRunner::with_migrations_for_test(&mut client, "public", &[])?.apply()?;
+
+    assert_eq!(
+        super::assets::sha256_hex(COPY_THEN_FENCE.sql.as_bytes()),
+        COPY_THEN_FENCE.checksum
+    );
+    assert_eq!(
+        super::assets::sha256_hex(DESTRUCTIVE_AFTER_COPY.sql.as_bytes()),
+        DESTRUCTIVE_AFTER_COPY.checksum
+    );
+
+    let error =
+        SchemaRunner::with_migrations_for_test(&mut client, "public", COPY_THEN_DESTRUCTIVE)?
+            .apply()
+            .expect_err("pending destructive must preflight-fail before any copy applies");
+    assert!(error.to_string().contains("verified hub backup"));
+
+    let copy_exists: bool = client
+        .query_one("SELECT to_regclass('copy_probe') IS NOT NULL", &[])?
+        .get(0);
+    let drop_exists: bool = client
+        .query_one("SELECT to_regclass('drop_probe') IS NOT NULL", &[])?
+        .get(0);
+    assert!(
+        !copy_exists,
+        "copy migration must not commit before the rejected destructive"
+    );
+    assert!(!drop_exists);
+    assert_eq!(migration_receipt_count(&mut client, &COPY_THEN_FENCE)?, 0);
+    assert_eq!(
+        migration_receipt_count(&mut client, &DESTRUCTIVE_AFTER_COPY)?,
+        0
+    );
+    Ok(())
+}
+
+#[test]
+fn guarded_nondestructive_migration_applies_on_fresh_and_predecessor() -> anyhow::Result<()> {
+    let _serial = DATABASE_TEST_LOCK
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner);
+    let Some((_database, mut client)) = test_database()? else {
+        return Ok(());
+    };
+
+    let fresh = SchemaRunner::with_migrations_for_test(&mut client, "public", GUARDED_MIGRATIONS)?
+        .apply()?;
+    assert!(fresh.baseline_applied);
+    assert_eq!(fresh.migrations_applied, 1);
+    let copied: bool = client
+        .query_one(
+            "SELECT to_regclass('guarded_probe_copied') IS NOT NULL",
+            &[],
+        )?
+        .get(0);
+    assert!(!copied, "absent source must keep the guarded body a no-op");
+    assert_eq!(migration_receipt_count(&mut client, &GUARDED_MIGRATION)?, 1);
+
+    let fresh_replay =
+        SchemaRunner::with_migrations_for_test(&mut client, "public", GUARDED_MIGRATIONS)?
+            .apply()?;
+    assert!(!fresh_replay.baseline_applied);
+    assert_eq!(fresh_replay.migrations_applied, 0);
+
+    let Some((_predecessor_database, mut predecessor_client)) = test_database()? else {
+        return Ok(());
+    };
+    install_predecessor(&mut predecessor_client)?;
+    let predecessor = SchemaRunner::with_migrations_for_test(
+        &mut predecessor_client,
+        "public",
+        GUARDED_MIGRATIONS,
+    )?
+    .apply()?;
+    assert!(predecessor.baseline_applied);
+    assert_eq!(predecessor.migrations_applied, 1);
+    let copied_after_predecessor: bool = predecessor_client
+        .query_one(
+            "SELECT to_regclass('guarded_probe_copied') IS NOT NULL",
+            &[],
+        )?
+        .get(0);
+    assert!(!copied_after_predecessor);
+    assert_eq!(
+        migration_receipt_count(&mut predecessor_client, &GUARDED_MIGRATION)?,
+        1
+    );
+
+    let predecessor_replay = SchemaRunner::with_migrations_for_test(
+        &mut predecessor_client,
+        "public",
+        GUARDED_MIGRATIONS,
+    )?
+    .apply()?;
+    assert!(!predecessor_replay.baseline_applied);
+    assert_eq!(predecessor_replay.migrations_applied, 0);
+    Ok(())
+}
+
+#[test]
+fn copy_migrations_receipt_noop_on_fresh_final_baseline() -> anyhow::Result<()> {
+    let _serial = DATABASE_TEST_LOCK
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner);
+    let Some((_database, mut client)) = test_database()? else {
+        return Ok(());
+    };
+
+    let first = SchemaRunner::new(&mut client, "public")?.apply()?;
+    assert!(first.baseline_applied);
+    assert_eq!(first.migrations_applied, MIGRATIONS.len());
+    let defs: bool = client
+        .query_one(
+            "SELECT to_regclass('workflow_definitions') IS NOT NULL",
+            &[],
+        )?
+        .get(0);
+    let inst: bool = client
+        .query_one("SELECT to_regclass('workflow_instances') IS NOT NULL", &[])?
+        .get(0);
+    let ledger: bool = client
+        .query_one("SELECT to_regclass('legacy_copy_ledger') IS NOT NULL", &[])?
+        .get(0);
+    assert!(!defs && !inst && !ledger);
+    let agents: i64 = client
+        .query_one("SELECT COUNT(*) FROM agent_definitions", &[])?
+        .get(0);
+    let rules: i64 = client
+        .query_one("SELECT COUNT(*) FROM rule_definitions", &[])?
+        .get(0);
+    let variables: i64 = client
+        .query_one("SELECT COUNT(*) FROM session_variable_defaults", &[])?
+        .get(0);
+    let pipelines: i64 = client
+        .query_one("SELECT COUNT(*) FROM pipeline_definitions", &[])?
+        .get(0);
+    assert_eq!((agents, rules, variables, pipelines), (0, 0, 0, 0));
+    for migration in MIGRATIONS {
+        assert_eq!(migration_receipt_count(&mut client, migration)?, 1);
+    }
+
+    let replay = SchemaRunner::new(&mut client, "public")?.apply()?;
+    assert!(!replay.baseline_applied);
+    assert_eq!(replay.migrations_applied, 0);
+    Ok(())
+}
+
+#[test]
+fn drop_migration_refused_on_predecessor_until_verified_backup() -> anyhow::Result<()> {
+    let _serial = DATABASE_TEST_LOCK
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner);
+    let Some((_database, mut client)) = test_database()? else {
+        return Ok(());
+    };
+    install_predecessor(&mut client)?;
+
+    let error = SchemaRunner::new(&mut client, "public")?
+        .apply()
+        .expect_err("existing predecessor lineage must refuse the destructive drop");
+    assert!(error.to_string().contains("verified hub backup"));
+    let defs_before: bool = client
+        .query_one(
+            "SELECT to_regclass('workflow_definitions') IS NOT NULL",
+            &[],
+        )?
+        .get(0);
+    assert!(defs_before);
+
+    let fixture = include_str!("../../tests/fixtures/hub_backup_manifest/v2_roundtrip.json");
+    let mut manifest = parse_backup_manifest(fixture)?;
+    let database_head: i32 = client
+        .query_one(
+            "SELECT COALESCE(MAX(version), 0)::int FROM schema_migrations",
+            &[],
+        )?
+        .get(0);
+    manifest.backup_starting_head = database_head;
+    let root = env::temp_dir().join(format!("gcore-drop-gate-{}", Uuid::new_v4()));
+    let _scratch_path = ScratchPath(root.clone());
+    fs::create_dir_all(root.join("postgres"))?;
+    fs::write(root.join("postgres/fixture.dump"), [])?;
+    manifest.artifacts[0].sha256 =
+        "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855".to_owned();
+    let identity = source_identity(&mut client)?;
+    manifest.source_identity = identity.clone();
+    let created_at = OffsetDateTime::parse(&manifest.created_at, &Rfc3339)?;
+    let mut context = BackupGateContext::new(
+        &root,
+        &identity,
+        database_head,
+        created_at + Duration::hours(1),
+    );
+    context.max_age = Duration::hours(2);
+    let verified = VerifiedBackupManifest::verify(manifest, &context)?;
+
+    let report = SchemaRunner::new(&mut client, "public")?.apply_with_backup(&verified)?;
+    assert_eq!(report.migrations_applied, 1);
+    let defs_after: bool = client
+        .query_one(
+            "SELECT to_regclass('workflow_definitions') IS NOT NULL",
+            &[],
+        )?
+        .get(0);
+    let inst_after: bool = client
+        .query_one("SELECT to_regclass('workflow_instances') IS NOT NULL", &[])?
+        .get(0);
+    let ledger_after: bool = client
+        .query_one("SELECT to_regclass('legacy_copy_ledger') IS NOT NULL", &[])?
+        .get(0);
+    assert!(!defs_after && !inst_after && !ledger_after);
+    Ok(())
+}
+
+fn migration_receipt_count(
+    client: &mut Client,
+    migration: &EmbeddedMigration,
+) -> anyhow::Result<i64> {
+    Ok(client
+        .query_one(
+            "SELECT COUNT(*) FROM schema_migrations WHERE version = $1 AND filename = $2 AND checksum = $3",
+            &[&migration.version, &migration.filename, &migration.checksum],
+        )?
+        .get(0))
 }

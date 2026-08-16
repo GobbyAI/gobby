@@ -17,6 +17,7 @@ from gobby.agents.spawn_executor import execute_spawn
 from gobby.agents.spawn_models import SpawnRequest
 from gobby.agents.srt_runtime import SandboxLaunch, SrtRuntimeError
 from gobby.agents.tmux.spawner import _infer_auth_cli
+from tests.agents.prepared_spawn import prepared_spawn
 
 pytestmark = pytest.mark.unit
 
@@ -119,6 +120,7 @@ async def test_droid_command_is_wrapped_once_after_srt_preflight() -> None:
         session_manager=session_manager,
         run_manager=run_manager,
         sandbox_config=SandboxConfig(enabled=True, backend="srt", allow_network=False),
+        prepared_spawn=prepared_spawn(),
     )
     spawn_context = SimpleNamespace(
         session_id="child",
@@ -195,6 +197,11 @@ async def test_srt_preflight_failure_prevents_tmux_spawn() -> None:
         session_manager=session_manager,
         run_manager=run_manager,
         sandbox_config=SandboxConfig(enabled=True, backend="srt", allow_network=False),
+        prepared_spawn=prepared_spawn(
+            session_id="child",
+            agent_run_id="actual-run",
+            env_vars={"GOBBY_SESSION_ID": "child"},
+        ),
     )
     spawn_context = SimpleNamespace(
         session_id="child",

@@ -1,6 +1,6 @@
-"""Pipeline reference validation helpers for WorkflowLoader.
+"""Pipeline reference validation helpers for PipelineLoader.
 
-Extracted from loader.py as part of Strangler Fig decomposition (Wave 2).
+Self-contained validation logic used by PipelineLoader.
 """
 
 import re

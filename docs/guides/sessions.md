@@ -349,6 +349,22 @@ laptop slept mid-compact), the restart revives the same row; if the row is
 missing entirely, the start degrades to a normal `startup` registration with a
 structured warning in the daemon log.
 
+Claude and Codex emit `SessionStart(source=compact)` after compact. That
+restart consumes `handoff_source` and injects the continuation through
+`inject-compact-handoff`.
+
+Grok `/compact` is the same context loss but never emits SessionStart. Grok
+`post_compact` runs `apply_in_place_compact_context_loss` on the live row:
+the same summary prep and `handoff_source` consume as compact SessionStart,
+plus compact context-loss tracking resets (`unlocked_tools`, skill-load
+lists, memory injection ids) and agent-preamble rehydrate. It does not
+reset `plan_mode` and does not fire pipelines. When `auto_inject_handoff`
+is on, it arms `compact_handoff_inject_pending`. The next `turn_start` /
+`user_prompt_submit` (`BEFORE_AGENT`) fires `inject-compact-handoff-on-prompt`,
+which injects the marked continuation block plus wiki, profile, and task
+via `additionalContext`, then clears the one-shot. If that injected block
+is absent, `wait_for_summary` remains the continuation-prompt fallback.
+
 ### Handoff Boundaries
 
 The successor model receives the generated or agent-authored `summary_markdown`

@@ -22,7 +22,7 @@ from gobby.skills.materialization import (
     PreparationResult,
     SkillMaterializationResult,
 )
-from gobby.storage.workflow_definitions import WorkflowDefinitionRow
+from gobby.storage.definitions.rules import RuleDefinitionRow
 from gobby.workflows.definitions import RuleEffect
 from gobby.workflows.engine.effects import EffectsMixin
 from gobby.workflows.engine.run_command import (
@@ -37,7 +37,7 @@ from gobby.workflows.engine.run_command import (
 
 pytestmark = pytest.mark.unit
 
-_ROW = cast(WorkflowDefinitionRow, SimpleNamespace(id="rule-id", name="test-rule"))
+_ROW = cast(RuleDefinitionRow, SimpleNamespace(id="rule-id", name="test-rule"))
 
 # Reads the hook event JSON from stdin and echoes its tool name back through
 # the Claude hook response shape — proves both stdin fidelity and extraction.

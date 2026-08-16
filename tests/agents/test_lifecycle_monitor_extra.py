@@ -21,8 +21,9 @@ from gobby.storage.hub.protocol import HubDatabase
 from gobby.storage.sessions import SessionManager
 from gobby.storage.tasks import LocalTaskManager
 from gobby.storage.tasks._models import Task
-from gobby.workflows.definitions import WorkflowInstance
-from gobby.workflows.state_manager import SessionVariableManager, WorkflowInstanceManager
+from gobby.workflows.state_manager import SessionVariableManager
+from gobby.workflows.step_instances import AgentStepInstanceManager
+from tests.workflows.step_instance_fixtures import make_step_instance
 from gobby.workflows.task_claim_state import add_claimed_task
 
 from .detection_test_support import BundledDetectionRegistry
@@ -947,7 +948,7 @@ class TestPeriodicAgentTerminalEnter:
         session_manager: SessionManager,
         sample_project: dict[str, object],
     ) -> None:
-        from gobby.storage.workflow_definitions import LocalWorkflowDefinitionManager
+        from gobby.storage.definitions.agents import AgentDefinitionManager
 
         child = session_manager.register(
             external_id="child-step-workflow",
@@ -955,7 +956,7 @@ class TestPeriodicAgentTerminalEnter:
             source="codex",
             project_id=str(sample_project["id"]),
         )
-        LocalWorkflowDefinitionManager(temp_db).create(
+        AgentDefinitionManager(temp_db).create(
             name="planner-steps",
             definition_json=json.dumps(
                 {
@@ -966,14 +967,12 @@ class TestPeriodicAgentTerminalEnter:
                     "exit_condition": "current_step == 'terminate'",
                 }
             ),
-            workflow_type="workflow",
             enabled=True,
         )
-        WorkflowInstanceManager(temp_db).save_instance(
-            WorkflowInstance(
-                id="ffffffff-ffff-4fff-8fff-ffffffff3001",
-                session_id=child.id,
-                workflow_name="planner-steps",
+        AgentStepInstanceManager(temp_db).save(
+            make_step_instance(
+                child.id,
+                agent_name="planner",
                 current_step="plan",
             )
         )
@@ -1337,16 +1336,12 @@ class TestTerminalizeCancelledRun:
             child.id,
             add_claimed_task({}, claimed.id, f"#{claimed.seq_num}"),
         )
-        workflow_instances = WorkflowInstanceManager(temp_db)
-        workflow_instances.save_instance(
-            WorkflowInstance(
-                id="ffffffff-ffff-4fff-8fff-ffffffff3002",
-                session_id=child.id,
-                workflow_name="developer-workflow",
-                enabled=True,
-                priority=100,
+        workflow_instances = AgentStepInstanceManager(temp_db)
+        workflow_instances.save(
+            make_step_instance(
+                child.id,
+                agent_name="developer-workflow",
                 current_step="implement",
-                step_entered_at=datetime.now(UTC),
                 variables={"task_claimed": True},
             )
         )
@@ -1383,7 +1378,7 @@ class TestTerminalizeCancelledRun:
         assert updated_task.claimed_by_session_id is None
         assert child_vars["task_claimed"] is False
         assert child_vars["claimed_tasks"] == {}
-        assert workflow_instances.get_instance(child.id, "developer-workflow") is None
+        assert workflow_instances.get_for_session(child.id) is None
 
     @pytest.mark.asyncio
     async def test_cancelled_run_preserves_replacement_claim_and_cleans_old_child_state(
@@ -1431,15 +1426,11 @@ class TestTerminalizeCancelledRun:
             replacement.id,
             add_claimed_task({}, claimed.id, f"#{claimed.seq_num}"),
         )
-        WorkflowInstanceManager(temp_db).save_instance(
-            WorkflowInstance(
-                id="ffffffff-ffff-4fff-8fff-ffffffff3003",
-                session_id=old_child.id,
-                workflow_name="developer-workflow",
-                enabled=True,
-                priority=100,
+        AgentStepInstanceManager(temp_db).save(
+            make_step_instance(
+                old_child.id,
+                agent_name="developer-workflow",
                 current_step="implement",
-                step_entered_at=datetime.now(UTC),
                 variables={"task_claimed": True},
             )
         )
@@ -1479,10 +1470,7 @@ class TestTerminalizeCancelledRun:
         assert old_vars["claimed_tasks"] == {}
         assert replacement_vars["task_claimed"] is True
         assert replacement_vars["claimed_tasks"] == {claimed.id: f"#{claimed.seq_num}"}
-        assert (
-            WorkflowInstanceManager(temp_db).get_instance(old_child.id, "developer-workflow")
-            is None
-        )
+        assert AgentStepInstanceManager(temp_db).get_for_session(old_child.id) is None
 
     @pytest.mark.asyncio
     async def test_no_second_notification_when_run_already_terminal(self) -> None:

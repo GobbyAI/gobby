@@ -1,7 +1,7 @@
 """Tests for agent definition API routes - real coverage, minimal mocking.
 
 Exercises src/gobby/servers/routes/agents.py endpoints using
-create_http_server() with a real LocalWorkflowDefinitionManager backed by temp_db.
+create_http_server() with a real AgentDefinitionManager backed by temp_db.
 """
 
 from __future__ import annotations
@@ -20,9 +20,9 @@ from starlette.testclient import TestClient
 
 from gobby.config.app import DaemonConfig
 from gobby.storage.agents import AgentRun, LocalAgentRunManager
+from gobby.storage.definitions import AgentDefinitionManager
 from gobby.storage.sessions import SessionManager
 from gobby.storage.tasks import LocalTaskManager
-from gobby.storage.workflow_definitions import LocalWorkflowDefinitionManager
 from gobby.workflows.definitions import AgentDefinitionBody
 from tests.servers.conftest import create_http_server
 
@@ -47,14 +47,14 @@ def _local_machine_identity() -> Iterator[None]:
 
 
 def _create_agent_row(
-    manager: LocalWorkflowDefinitionManager,
+    manager: AgentDefinitionManager,
     name: str,
     description: str | None = None,
     provider: str = "claude",
     mode: str = "autonomous",
     surfaces: list[str] | None = None,
     project_id: str | None = None,
-    source: str = "template",
+    source: str = "installed",
     enabled: bool = True,
 ) -> Any:
     """Create an agent definition row in the DB."""
@@ -66,13 +66,14 @@ def _create_agent_row(
         surfaces=surfaces or ["spawn"],
         enabled=enabled,
     )
-    return manager.create(
-        name=name,
-        definition_json=body.model_dump_json(),
-        workflow_type="agent",
+    dumped = body.model_dump(mode="json")
+    return manager.upsert_with_steps(
+        name,
+        dumped,
+        dumped.get("step_workflow"),
         project_id=project_id,
         description=body.description,
-        source=source,
+        source=source,  # type: ignore[arg-type]
         enabled=enabled,
     )
 
@@ -88,8 +89,8 @@ def task_manager(temp_db) -> LocalTaskManager:
 
 
 @pytest.fixture
-def agent_manager(temp_db) -> LocalWorkflowDefinitionManager:
-    return LocalWorkflowDefinitionManager(temp_db)
+def agent_manager(temp_db) -> AgentDefinitionManager:
+    return AgentDefinitionManager(temp_db)
 
 
 @pytest.fixture
@@ -138,7 +139,7 @@ class TestListDefinitions:
         assert data["definitions"] == []
 
     def test_list_with_definitions(
-        self, client: TestClient, agent_manager: LocalWorkflowDefinitionManager
+        self, client: TestClient, agent_manager: AgentDefinitionManager
     ) -> None:
         _create_agent_row(agent_manager, "list-worker-1")
         _create_agent_row(agent_manager, "list-worker-2")
@@ -151,7 +152,7 @@ class TestListDefinitions:
         assert "list-worker-2" in names
 
     def test_list_with_project_filter(
-        self, client: TestClient, agent_manager: LocalWorkflowDefinitionManager, project_manager
+        self, client: TestClient, agent_manager: AgentDefinitionManager, project_manager
     ) -> None:
         project = project_manager.create(name="proj-1", repo_path="/tmp/proj-1")
         _create_agent_row(agent_manager, "scoped", project_id=project.id)
@@ -165,14 +166,14 @@ class TestListDefinitions:
     def test_list_error(self, client: TestClient) -> None:
         """Error during listing returns 500."""
         with patch(
-            "gobby.storage.workflow_definitions.LocalWorkflowDefinitionManager.list_all",
+            "gobby.storage.definitions.AgentDefinitionManager.list_all",
             side_effect=RuntimeError("DB error"),
         ):
             response = client.get("/api/agents/definitions")
         assert response.status_code == 500
 
     def test_list_with_surface_filter(
-        self, client: TestClient, agent_manager: LocalWorkflowDefinitionManager
+        self, client: TestClient, agent_manager: AgentDefinitionManager
     ) -> None:
         _create_agent_row(agent_manager, "spawn-agent", surfaces=["spawn"])
         _create_agent_row(agent_manager, "persona-agent", surfaces=["spawn", "persona"])
@@ -192,9 +193,7 @@ class TestListDefinitions:
 
 
 class TestGetDefinition:
-    def test_get_existing(
-        self, client: TestClient, agent_manager: LocalWorkflowDefinitionManager
-    ) -> None:
+    def test_get_existing(self, client: TestClient, agent_manager: AgentDefinitionManager) -> None:
         _create_agent_row(agent_manager, "worker", description="A worker agent")
         response = client.get("/api/agents/definitions/worker")
         assert response.status_code == 200
@@ -207,7 +206,7 @@ class TestGetDefinition:
         assert response.status_code == 404
 
     def test_get_with_project_id(
-        self, client: TestClient, agent_manager: LocalWorkflowDefinitionManager, project_manager
+        self, client: TestClient, agent_manager: AgentDefinitionManager, project_manager
     ) -> None:
         project = project_manager.create(name="proj-1", repo_path="/tmp/proj-1")
         _create_agent_row(agent_manager, "scoped", project_id=project.id)
@@ -215,7 +214,7 @@ class TestGetDefinition:
         assert response.status_code == 200
 
     def test_get_selects_correct_name(
-        self, client: TestClient, agent_manager: LocalWorkflowDefinitionManager
+        self, client: TestClient, agent_manager: AgentDefinitionManager
     ) -> None:
         """When multiple definitions exist, get returns the one matching name."""
         _create_agent_row(agent_manager, "alpha")
@@ -236,7 +235,7 @@ class TestGetDefinition:
 
 class TestExportDefinition:
     def test_export_existing(
-        self, client: TestClient, agent_manager: LocalWorkflowDefinitionManager
+        self, client: TestClient, agent_manager: AgentDefinitionManager
     ) -> None:
         """Export serializes agent definition as YAML."""
         _create_agent_row(agent_manager, "worker", provider="claude")
@@ -249,7 +248,7 @@ class TestExportDefinition:
         assert "provider: claude" in response.text
 
     def test_export_db_backed(
-        self, client: TestClient, agent_manager: LocalWorkflowDefinitionManager
+        self, client: TestClient, agent_manager: AgentDefinitionManager
     ) -> None:
         """DB-backed definitions serialize correctly."""
         _create_agent_row(agent_manager, "db-agent", source="installed")
@@ -319,7 +318,7 @@ class TestCreateDefinition:
     def test_create_duplicate_name_fails(self, client: TestClient) -> None:
         client.post("/api/agents/definitions", json={"name": "dup"})
         response = client.post("/api/agents/definitions", json={"name": "dup"})
-        assert response.status_code == 500
+        assert response.status_code == 409
 
     def test_create_with_tags_and_enabled(self, client: TestClient) -> None:
         response = client.post(
@@ -331,6 +330,47 @@ class TestCreateDefinition:
         definition = response.json()["definition"]
         assert definition["tags"] == ["review", "qa"]
         assert definition["enabled"] is False
+
+    def test_create_with_steps_persists_parent_and_child(self, client: TestClient) -> None:
+        response = client.post(
+            "/api/agents/definitions",
+            json={
+                "name": "steppy",
+                "step_workflow": {
+                    "variables": {"goal": "ship"},
+                    "exit_condition": "done",
+                    "steps": [{"name": "claim"}],
+                },
+            },
+        )
+        assert response.status_code == 200
+        definition = response.json()["definition"]
+        assert definition["step_workflow_id"] is not None
+        body = AgentDefinitionBody.model_validate_json(definition["definition_json"])
+        assert body.step_workflow is not None
+        assert body.step_workflow.steps[0].name == "claim"
+
+    def test_create_with_steps_rolls_back_when_child_write_fails(
+        self, client: TestClient, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        def _boom(*_args: object, **_kwargs: object) -> bool:
+            raise RuntimeError("child write failed")
+
+        monkeypatch.setattr("gobby.storage.definitions.agents._write_child", _boom)
+        response = client.post(
+            "/api/agents/definitions",
+            json={
+                "name": "atomic-agent",
+                "step_workflow": {
+                    "steps": [{"name": "claim"}],
+                },
+            },
+        )
+        assert response.status_code == 500
+        listed = client.get("/api/agents/definitions")
+        assert listed.status_code == 200
+        names = {row["name"] for row in listed.json()["definitions"]}
+        assert "atomic-agent" not in names
 
 
 # ---------------------------------------------------------------------------
@@ -401,14 +441,13 @@ class TestUpdateDefinition:
         assert definition.surfaces == ["spawn", "persona"]
 
     def test_update_scrubs_stale_max_turns(
-        self, client: TestClient, agent_manager: LocalWorkflowDefinitionManager
+        self, client: TestClient, agent_manager: AgentDefinitionManager
     ) -> None:
         row = agent_manager.create(
             name="stale-limit",
             definition_json=json.dumps(
                 {"name": "stale-limit", "description": "Old row", "max_turns": 20}
             ),
-            workflow_type="agent",
             description="Old row",
         )
 
@@ -470,6 +509,33 @@ class TestImportDefinition:
         data = response.json()
         assert data["status"] == "success"
         assert data["definition"]["name"] == "importable"
+
+    def test_import_with_steps_is_atomic(self, client: TestClient, tmp_path: Path) -> None:
+        agents_dir = tmp_path / "agents"
+        agents_dir.mkdir()
+        (agents_dir / "stepped.yaml").write_text(
+            "name: stepped\n"
+            "provider: claude\n"
+            "mode: autonomous\n"
+            "step_workflow:\n"
+            "  exit_condition: done\n"
+            "  steps:\n"
+            "    - name: claim\n"
+        )
+
+        with patch(
+            "gobby.agents.sync.get_bundled_agents_path",
+            return_value=agents_dir,
+        ):
+            response = client.post("/api/agents/definitions/import/stepped")
+
+        assert response.status_code == 200
+        definition = response.json()["definition"]
+        assert definition["name"] == "stepped"
+        assert definition["step_workflow_id"] is not None
+        body = AgentDefinitionBody.model_validate_json(definition["definition_json"])
+        assert body.step_workflow is not None
+        assert body.step_workflow.steps[0].name == "claim"
 
     def test_import_not_found(self, client: TestClient, tmp_path: Path) -> None:
         agents_dir = tmp_path / "agents"
@@ -803,7 +869,7 @@ class TestPatchVariables:
     def test_concurrent_patches_preserve_both_updates(
         self,
         client: TestClient,
-        agent_manager: LocalWorkflowDefinitionManager,
+        agent_manager: AgentDefinitionManager,
         monkeypatch: pytest.MonkeyPatch,
     ) -> None:
         """Concurrent read-modify-write patches serialize without losing an update."""
@@ -812,13 +878,13 @@ class TestPatchVariables:
         ).json()["definition"]
         definition_id = created["id"]
 
-        original_get = LocalWorkflowDefinitionManager.get
+        original_get = AgentDefinitionManager.get
         read_count = 0
         read_count_lock = threading.Lock()
         second_read = threading.Event()
 
         def coordinate_initial_reads(
-            manager: LocalWorkflowDefinitionManager,
+            manager: AgentDefinitionManager,
             requested_id: str,
             include_deleted: bool = False,
         ) -> Any:
@@ -835,7 +901,7 @@ class TestPatchVariables:
                 second_read.set()
             return row
 
-        monkeypatch.setattr(LocalWorkflowDefinitionManager, "get", coordinate_initial_reads)
+        monkeypatch.setattr(AgentDefinitionManager, "get", coordinate_initial_reads)
         start = threading.Barrier(2)
 
         def patch_value(item: tuple[str, int]) -> int:
@@ -851,7 +917,8 @@ class TestPatchVariables:
             statuses = list(executor.map(patch_value, [("first", 1), ("second", 2)]))
 
         assert statuses == [200, 200]
-        body = json.loads(agent_manager.get(definition_id).definition_json)
+        persisted = agent_manager.get(definition_id).definition_json
+        body = json.loads(persisted) if isinstance(persisted, str) else persisted
         assert body["workflows"]["variables"] == {"first": 1, "second": 2}
 
 
@@ -861,9 +928,7 @@ class TestPatchVariables:
 
 
 class TestListDefinitionsSourceFilter:
-    def test_source_filter(
-        self, client: TestClient, agent_manager: LocalWorkflowDefinitionManager
-    ) -> None:
+    def test_source_filter(self, client: TestClient, agent_manager: AgentDefinitionManager) -> None:
         """Listing with source_filter only returns matching sources."""
         body1 = AgentDefinitionBody(
             name="src-a", sources=["claude"], provider="claude", mode="autonomous"
@@ -871,7 +936,6 @@ class TestListDefinitionsSourceFilter:
         agent_manager.create(
             name="src-a",
             definition_json=body1.model_dump_json(),
-            workflow_type="agent",
             source="installed",
             enabled=True,
         )
@@ -881,7 +945,6 @@ class TestListDefinitionsSourceFilter:
         agent_manager.create(
             name="src-b",
             definition_json=body2.model_dump_json(),
-            workflow_type="agent",
             source="installed",
             enabled=True,
         )
@@ -943,16 +1006,36 @@ class TestUpdateDefinitionNestedFields:
         )
         assert response.status_code == 200
 
-    def test_update_steps(self, client: TestClient) -> None:
-        """Update steps field."""
+    def test_update_step_workflow(self, client: TestClient) -> None:
         created = client.post("/api/agents/definitions", json={"name": "steps-update"}).json()[
+            "definition"
+        ]
+        response = client.put(
+            f"/api/agents/definitions/{created['id']}",
+            json={
+                "step_workflow": {
+                    "variables": {},
+                    "steps": [{"name": "step1", "prompt": "Do something"}],
+                }
+            },
+        )
+        assert response.status_code == 200
+        body = AgentDefinitionBody.model_validate_json(
+            response.json()["definition"]["definition_json"]
+        )
+        assert body.step_workflow is not None
+        assert body.step_workflow.steps[0].name == "step1"
+
+    def test_update_rejects_legacy_step_keys(self, client: TestClient) -> None:
+        created = client.post("/api/agents/definitions", json={"name": "legacy-steps"}).json()[
             "definition"
         ]
         response = client.put(
             f"/api/agents/definitions/{created['id']}",
             json={"steps": [{"name": "step1", "prompt": "Do something"}]},
         )
-        assert response.status_code == 200
+        assert response.status_code == 422
+        assert "step_workflow.steps" in response.text
 
     def test_update_blocked_tools(self, client: TestClient) -> None:
         """Update blocked_tools and blocked_mcp_tools."""
@@ -985,7 +1068,7 @@ class TestUpdateDefinitionNestedFields:
 
 class TestListDefinitionsIncludeDeleted:
     def test_include_deleted_true(
-        self, client: TestClient, agent_manager: LocalWorkflowDefinitionManager
+        self, client: TestClient, agent_manager: AgentDefinitionManager
     ) -> None:
         """include_deleted=true shows soft-deleted definitions."""
         row = _create_agent_row(agent_manager, "del-show")
@@ -996,7 +1079,7 @@ class TestListDefinitionsIncludeDeleted:
         assert "del-show" in names
 
     def test_include_deleted_false_hides(
-        self, client: TestClient, agent_manager: LocalWorkflowDefinitionManager
+        self, client: TestClient, agent_manager: AgentDefinitionManager
     ) -> None:
         """include_deleted=false hides soft-deleted definitions."""
         row = _create_agent_row(agent_manager, "del-hide")
@@ -1046,7 +1129,7 @@ class TestExportDefinitionErrors:
     def test_export_generic_error(self, client: TestClient) -> None:
         """Export returns 500 on generic exceptions."""
         with patch(
-            "gobby.storage.workflow_definitions.LocalWorkflowDefinitionManager.list_all",
+            "gobby.storage.definitions.AgentDefinitionManager.list_all",
             side_effect=RuntimeError("unexpected"),
         ):
             response = client.get("/api/agents/definitions/any-name/export")
@@ -1062,7 +1145,7 @@ class TestDeleteDefinitionErrors:
     def test_delete_generic_error(self, client: TestClient) -> None:
         """Delete returns 500 on generic exceptions."""
         with patch(
-            "gobby.storage.workflow_definitions.LocalWorkflowDefinitionManager.delete",
+            "gobby.storage.definitions.AgentDefinitionManager.delete",
             side_effect=RuntimeError("boom"),
         ):
             response = client.delete("/api/agents/definitions/any-id")

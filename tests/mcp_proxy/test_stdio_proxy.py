@@ -47,7 +47,7 @@ async def test_request_auth_retry() -> None:
 
         with patch("gobby.mcp_proxy.stdio_proxy.httpx.AsyncClient") as client_cls:
             client_cls.return_value = client
-            result = await proxy._request("POST", "/api/workflows/variables/set", json={})
+            result = await proxy._request("POST", "/api/sessions/sess-1/variables/set", json={})
 
     assert result == {"success": True}
     assert client.request.await_count == 2
@@ -316,3 +316,36 @@ async def test_list_tools_strips_explicit_nulls_from_schemas() -> None:
             }
         ],
     }
+
+
+@pytest.mark.asyncio
+async def test_set_variable_calls_relocated_session_path_with_scope() -> None:
+    proxy = DaemonProxy(60887)
+    with patch.object(proxy, "_request", new=AsyncMock(return_value={"success": True})) as req:
+        await proxy.set_variable("foo", "bar", session_id="sess-1")
+    req.assert_awaited_once_with(
+        "POST",
+        "/api/sessions/sess-1/variables/set",
+        json={"name": "foo", "value": "bar", "scope": "session"},
+        session_id="sess-1",
+    )
+
+
+@pytest.mark.asyncio
+async def test_get_variable_calls_relocated_session_path_with_scope() -> None:
+    proxy = DaemonProxy(60887)
+    with patch.object(proxy, "_request", new=AsyncMock(return_value={"success": True})) as req:
+        await proxy.get_variable("foo", session_id="sess-1")
+    req.assert_awaited_once_with(
+        "POST",
+        "/api/sessions/sess-1/variables/get",
+        json={"name": "foo", "scope": "session"},
+        session_id="sess-1",
+    )
+
+
+def test_stdio_proxy_has_no_workflows_variable_literal() -> None:
+    from pathlib import Path
+
+    source = Path("src/gobby/mcp_proxy/stdio_proxy.py").read_text(encoding="utf-8")
+    assert "/api/workflows" not in source

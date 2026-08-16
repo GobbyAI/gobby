@@ -2,8 +2,6 @@
 
 from __future__ import annotations
 
-import json
-import uuid
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any, cast
@@ -12,11 +10,11 @@ import pytest
 import yaml
 
 from gobby.hooks.events import HookEvent, HookEventType, SessionSource
+from gobby.storage.definitions.agents import AgentDefinitionManager
 from gobby.storage.hub.protocol import HubDatabase
-from gobby.storage.workflow_definitions import LocalWorkflowDefinitionManager
-from gobby.workflows.definitions import WorkflowInstance
+from gobby.workflows.agent_models import AgentDefinitionBody
 from gobby.workflows.engine.core import RuleEngine
-from gobby.workflows.state_manager import WorkflowInstanceManager
+from gobby.workflows.step_instances import AgentStepInstanceManager, build_step_instance
 
 pytestmark = pytest.mark.unit
 
@@ -115,18 +113,14 @@ def _create_contract_schema(db: HubDatabase) -> None:
         )
         """,
         """
-        CREATE TABLE workflow_definitions (
+        CREATE TABLE agent_definitions (
             id TEXT PRIMARY KEY,
             project_id TEXT,
             name TEXT NOT NULL,
             description TEXT,
-            workflow_type TEXT NOT NULL DEFAULT 'workflow',
-            version TEXT DEFAULT '1.0',
             enabled INTEGER DEFAULT 1,
-            priority INTEGER DEFAULT 100,
-            sources TEXT,
+            enabled_pinned INTEGER DEFAULT 0,
             definition_json TEXT NOT NULL,
-            canvas_json TEXT,
             source TEXT DEFAULT 'installed',
             tags TEXT,
             deleted_at TEXT,
@@ -135,21 +129,32 @@ def _create_contract_schema(db: HubDatabase) -> None:
         )
         """,
         """
-        CREATE TABLE workflow_instances (
+        CREATE TABLE agent_step_workflows (
+            id TEXT PRIMARY KEY,
+            agent_definition_id TEXT NOT NULL UNIQUE,
+            steps_json TEXT NOT NULL,
+            variables_json TEXT DEFAULT '{}',
+            exit_condition TEXT,
+            created_at TEXT,
+            updated_at TEXT
+        )
+        """,
+        """
+        CREATE TABLE agent_step_instances (
             id TEXT PRIMARY KEY,
             session_id TEXT NOT NULL,
-            workflow_name TEXT NOT NULL,
+            agent_step_workflow_id TEXT,
+            agent_name TEXT NOT NULL,
             enabled INTEGER NOT NULL DEFAULT 1,
-            priority INTEGER NOT NULL DEFAULT 100,
             current_step TEXT,
             step_entered_at TEXT,
             step_action_count INTEGER DEFAULT 0,
             total_action_count INTEGER DEFAULT 0,
             variables TEXT DEFAULT '{}',
             context_injected INTEGER DEFAULT 0,
+            snapshot_json TEXT NOT NULL,
             created_at TEXT,
-            updated_at TEXT,
-            UNIQUE(session_id, workflow_name)
+            updated_at TEXT
         )
         """,
         """
@@ -195,7 +200,7 @@ def _agent() -> dict[str, Any]:
 
 
 def _step(agent: dict[str, Any], name: str) -> dict[str, Any]:
-    matches = [step for step in agent["steps"] if step["name"] == name]
+    matches = [step for step in agent["step_workflow"]["steps"] if step["name"] == name]
     assert len(matches) == 1
     return cast(dict[str, Any], matches[0])
 
@@ -227,46 +232,26 @@ def _install_workflow(
     *,
     current_step: str,
     session_id: str = "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaa3001",
-) -> WorkflowInstanceManager:
+) -> AgentStepInstanceManager:
     agent = _agent()
     _create_session(db, session_id=session_id)
-    definition = {
-        "name": agent["name"],
-        "version": agent["version"],
-        "enabled": True,
-        "variables": agent["step_variables"],
-        "steps": agent["steps"],
-        "exit_condition": agent["exit_condition"],
-    }
-    definition_manager = LocalWorkflowDefinitionManager(db)
-    existing = definition_manager.get_by_name(agent["name"])
-    if existing is None:
-        definition_manager.create(
-            name=agent["name"],
-            definition_json=json.dumps(definition),
-            workflow_type="workflow",
-            priority=100,
-            enabled=True,
+    body = AgentDefinitionBody.model_validate(agent)
+    definition_manager = AgentDefinitionManager(db)
+    row = definition_manager.get_by_name(body.name)
+    if row is None:
+        step_workflow = (
+            body.step_workflow.model_dump(mode="json") if body.step_workflow is not None else None
         )
-    else:
-        definition_manager.update(
-            existing.id,
-            definition_json=json.dumps(definition),
-            workflow_type="workflow",
-            priority=100,
-            enabled=True,
-        )
-    manager = WorkflowInstanceManager(db)
-    manager.save_instance(
-        WorkflowInstance(
-            id=str(uuid.uuid5(uuid.NAMESPACE_URL, f"inst-{session_id}-merge-orchestrator")),
+        parent = body.model_dump(mode="json", exclude={"step_workflow"})
+        row = definition_manager.upsert_with_steps(body.name, parent, step_workflow)
+    manager = AgentStepInstanceManager(db)
+    manager.save(
+        build_step_instance(
+            body,
             session_id=session_id,
-            workflow_name=agent["name"],
-            enabled=True,
-            priority=100,
+            step_workflow_id=row.step_workflow_id,
             current_step=current_step,
-            step_entered_at=datetime.now(UTC),
-            variables=dict(agent["step_variables"]),
+            variables=dict(agent["step_workflow"]["variables"]),
         )
     )
     return manager
@@ -365,8 +350,8 @@ def test_merge_orchestrator_uses_wake_driven_agent_waits() -> None:
     assert "waited for" in instructions
     assert "historical delivery campaign failures" in instructions
     assert "continue the active resolution" in instructions
-    assert "no_progress_merge_status_count" in agent["step_variables"]
-    assert agent["step_variables"]["current_batch_run_ids"] == []
+    assert "no_progress_merge_status_count" in agent["step_workflow"]["variables"]
+    assert agent["step_workflow"]["variables"]["current_batch_run_ids"] == []
 
 
 def test_merge_orchestrator_allows_already_implemented_close_path() -> None:
@@ -415,7 +400,7 @@ def test_merge_orchestrator_loads_build_coordinator_skill_before_agent_queries()
     assert "vars.skill_loaded and vars.build_coordinator_skill_loaded" in {
         transition["when"] for transition in load_skill["transitions"]
     }
-    assert agent["step_variables"]["build_coordinator_skill_loaded"] is False
+    assert agent["step_workflow"]["variables"]["build_coordinator_skill_loaded"] is False
 
 
 @pytest.mark.asyncio
@@ -474,7 +459,7 @@ async def test_survey_empty_campaign_can_close_already_implemented(
         session_id="aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaa3001",
         variables=variables,
     )
-    instance = manager.get_instance("aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaa3001", "merge-orchestrator")
+    instance = manager.get_for_session("aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaa3001")
     assert instance is not None
     assert instance.current_step == "terminate"
     assert instance.variables["report_complete"] is True
@@ -509,9 +494,8 @@ async def test_survey_blocked_conditional_close_does_not_advance(
         variables=variables,
     )
 
-    instance = manager.get_instance(
+    instance = manager.get_for_session(
         "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaa3001",
-        "merge-orchestrator",
     )
     assert instance is not None
     assert instance.current_step == "survey"
@@ -547,7 +531,7 @@ async def test_plan_empty_campaign_can_close_already_implemented(
         session_id="aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaa3001",
         variables=variables,
     )
-    instance = manager.get_instance("aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaa3001", "merge-orchestrator")
+    instance = manager.get_for_session("aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaa3001")
     assert instance is not None
     assert instance.current_step == "terminate"
     assert instance.variables["report_complete"] is True
@@ -582,7 +566,7 @@ async def test_report_can_close_already_implemented_and_terminate(
         session_id="aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaa3001",
         variables=variables,
     )
-    instance = manager.get_instance("aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaa3001", "merge-orchestrator")
+    instance = manager.get_for_session("aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaa3001")
     assert instance is not None
     assert instance.current_step == "terminate"
     assert instance.variables["report_complete"] is True
@@ -604,7 +588,7 @@ async def test_load_skill_step_waits_for_merge_and_build_coordinator_skills(
         session_id="aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaa3001",
         variables=variables,
     )
-    instance = manager.get_instance("aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaa3001", "merge-orchestrator")
+    instance = manager.get_for_session("aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaa3001")
     assert instance is not None
     assert instance.current_step == "load_skill"
     assert instance.variables["skill_loaded"] is True
@@ -618,7 +602,7 @@ async def test_load_skill_step_waits_for_merge_and_build_coordinator_skills(
         session_id="aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaa3001",
         variables=variables,
     )
-    instance = manager.get_instance("aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaa3001", "merge-orchestrator")
+    instance = manager.get_for_session("aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaa3001")
     assert instance is not None
     assert instance.current_step == "survey"
     assert instance.variables["build_coordinator_skill_loaded"] is True
@@ -635,7 +619,7 @@ async def test_merge_orchestrator_survey_plan_execute_report_path(db: HubDatabas
         session_id="aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaa3001",
         variables=variables,
     )
-    instance = manager.get_instance("aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaa3001", "merge-orchestrator")
+    instance = manager.get_for_session("aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaa3001")
     assert instance is not None
     assert instance.current_step == "plan"
 
@@ -652,7 +636,7 @@ async def test_merge_orchestrator_survey_plan_execute_report_path(db: HubDatabas
         session_id="aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaa3001",
         variables=variables,
     )
-    instance = manager.get_instance("aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaa3001", "merge-orchestrator")
+    instance = manager.get_for_session("aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaa3001")
     assert instance is not None
     assert instance.current_step == "execute"
 
@@ -664,9 +648,7 @@ async def test_merge_orchestrator_survey_plan_execute_report_path(db: HubDatabas
         session_id="aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaa3003",
         variables={},
     )
-    json_instance = manager.get_instance(
-        "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaa3003", "merge-orchestrator"
-    )
+    json_instance = manager.get_for_session("aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaa3003")
     assert json_instance is not None
     assert json_instance.current_step == "execute"
 
@@ -687,7 +669,7 @@ async def test_merge_orchestrator_survey_plan_execute_report_path(db: HubDatabas
         session_id="aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaa3001",
         variables=variables,
     )
-    instance = manager.get_instance("aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaa3001", "merge-orchestrator")
+    instance = manager.get_for_session("aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaa3001")
     assert instance is not None
     assert instance.current_step == "report"
 
@@ -715,7 +697,7 @@ async def test_report_success_record_merge_result_can_terminate(db: HubDatabase)
         session_id="aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaa3001",
         variables=variables,
     )
-    instance = manager.get_instance("aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaa3001", "merge-orchestrator")
+    instance = manager.get_for_session("aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaa3001")
     assert instance is not None
     assert instance.current_step == "terminate"
     assert instance.variables["report_complete"] is True
@@ -750,7 +732,7 @@ async def test_execute_failure_report_can_record_merge_result_and_terminate(
         session_id="aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaa3001",
         variables=variables,
     )
-    instance = manager.get_instance("aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaa3001", "merge-orchestrator")
+    instance = manager.get_for_session("aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaa3001")
     assert instance is not None
     assert instance.current_step == "terminate"
     assert instance.variables["execution_complete"] is True
@@ -772,7 +754,7 @@ async def test_execute_blocks_no_progress_worker_redispatch(db: HubDatabase) -> 
         session_id="aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaa3001",
         variables=variables,
     )
-    instance = manager.get_instance("aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaa3001", "merge-orchestrator")
+    instance = manager.get_for_session("aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaa3001")
     assert instance is not None
     assert instance.variables["last_merge_status_signature"] == "mr-1:5/12"
     assert instance.variables["no_progress_merge_status_count"] == 0
@@ -823,7 +805,7 @@ async def test_execute_blocks_no_progress_worker_redispatch(db: HubDatabase) -> 
         session_id="aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaa3001",
         variables=variables,
     )
-    instance = manager.get_instance("aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaa3001", "merge-orchestrator")
+    instance = manager.get_for_session("aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaa3001")
     assert instance is not None
     assert instance.variables["post_worker_merge_status_checked"] is True
     assert instance.variables["no_progress_merge_status_count"] == 1
@@ -865,7 +847,7 @@ async def test_execute_rechecks_agent_status_after_wake(db: HubDatabase) -> None
         session_id="aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaa3001",
         variables=variables,
     )
-    instance = manager.get_instance("aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaa3001", "merge-orchestrator")
+    instance = manager.get_for_session("aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaa3001")
     assert instance is not None
     assert instance.variables["merge_worker_completed"] is False
     assert instance.variables["post_worker_merge_status_checked"] is False
@@ -884,7 +866,7 @@ async def test_execute_rechecks_agent_status_after_wake(db: HubDatabase) -> None
         session_id="aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaa3001",
         variables=variables,
     )
-    instance = manager.get_instance("aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaa3001", "merge-orchestrator")
+    instance = manager.get_for_session("aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaa3001")
     assert instance is not None
     assert instance.variables["merge_worker_completed"] is False
     assert instance.variables["post_worker_merge_status_checked"] is False
@@ -909,7 +891,7 @@ async def test_execute_rechecks_agent_status_after_wake(db: HubDatabase) -> None
         variables=variables,
     )
 
-    instance = manager.get_instance("aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaa3001", "merge-orchestrator")
+    instance = manager.get_for_session("aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaa3001")
     assert instance is not None
     assert instance.variables["merge_worker_completed"] is True
     assert instance.variables["post_worker_merge_status_checked"] is False
@@ -974,7 +956,7 @@ async def test_execute_tracks_batch_waits_across_wakes(
         session_id=session_id,
         variables=variables,
     )
-    instance = manager.get_instance(session_id, "merge-orchestrator")
+    instance = manager.get_for_session(session_id)
     assert instance is not None
     assert instance.variables["merge_worker_completed"] is True
     assert instance.variables["post_worker_merge_status_checked"] is True
@@ -985,7 +967,7 @@ async def test_execute_tracks_batch_waits_across_wakes(
         session_id=session_id,
         variables=variables,
     )
-    instance = manager.get_instance(session_id, "merge-orchestrator")
+    instance = manager.get_for_session(session_id)
     assert instance is not None
     assert instance.variables["merge_worker_completed"] is False
     assert instance.variables["post_worker_merge_status_checked"] is False
@@ -1000,7 +982,7 @@ async def test_execute_tracks_batch_waits_across_wakes(
             session_id=session_id,
             variables=variables,
         )
-    instance = manager.get_instance(session_id, "merge-orchestrator")
+    instance = manager.get_for_session(session_id)
     assert instance is not None
     assert instance.variables["merge_worker_completed"] is False
     assert instance.variables["current_batch_run_ids"] == ["run-one", "run-two"]
@@ -1018,7 +1000,7 @@ async def test_execute_tracks_batch_waits_across_wakes(
         session_id=session_id,
         variables=variables,
     )
-    instance = manager.get_instance(session_id, "merge-orchestrator")
+    instance = manager.get_for_session(session_id)
     assert instance is not None
     assert instance.variables["merge_worker_completed"] is True
     assert instance.variables["last_worker_run_id"] == "run-one"
@@ -1040,7 +1022,7 @@ async def test_execute_tracks_batch_waits_across_wakes(
         session_id=session_id,
         variables=variables,
     )
-    instance = manager.get_instance(session_id, "merge-orchestrator")
+    instance = manager.get_for_session(session_id)
     assert instance is not None
     assert instance.variables["post_worker_merge_status_checked"] is False
     assert instance.variables["last_merge_status_signature"] == "mr-1:5/12"
@@ -1054,7 +1036,7 @@ async def test_execute_tracks_batch_waits_across_wakes(
         session_id=session_id,
         variables=variables,
     )
-    instance = manager.get_instance(session_id, "merge-orchestrator")
+    instance = manager.get_for_session(session_id)
     assert instance is not None
     assert instance.variables["last_worker_run_id"] == "run-one"
     assert instance.variables["current_batch_run_ids"] == ["run-two"]
@@ -1078,7 +1060,7 @@ async def test_execute_tracks_batch_waits_across_wakes(
         session_id=session_id,
         variables=variables,
     )
-    instance = manager.get_instance(session_id, "merge-orchestrator")
+    instance = manager.get_for_session(session_id)
     assert instance is not None
     assert instance.variables["last_worker_run_id"] == "run-two"
     assert instance.variables["current_batch_run_ids"] == []
@@ -1091,7 +1073,7 @@ async def test_execute_tracks_batch_waits_across_wakes(
         session_id=session_id,
         variables=variables,
     )
-    instance = manager.get_instance(session_id, "merge-orchestrator")
+    instance = manager.get_for_session(session_id)
     assert instance is not None
     assert instance.variables["post_worker_merge_status_checked"] is True
     assert instance.variables["last_merge_status_signature"] == "no-active-resolution:clean:[]"
@@ -1121,7 +1103,7 @@ async def test_execute_allows_fresh_dispatch_with_historical_no_progress_state(
         session_id="aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaa3001",
         variables=variables,
     )
-    instance = manager.get_instance("aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaa3001", "merge-orchestrator")
+    instance = manager.get_for_session("aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaa3001")
     assert instance is not None
     assert instance.variables["last_merge_status_signature"] == "mr-1:5/12"
     assert instance.variables["no_progress_merge_status_count"] == 0

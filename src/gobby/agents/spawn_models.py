@@ -2,13 +2,14 @@
 
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import KW_ONLY, dataclass
 from typing import TYPE_CHECKING, Any
 
 from gobby.agents.sandbox import SandboxConfig
 
 if TYPE_CHECKING:
     from gobby.agents.session import ChildSessionManager
+    from gobby.agents.spawn import PreparedSpawn
     from gobby.config.app import DaemonConfig
     from gobby.providers.capabilities.apply import SpeedResultData
     from gobby.providers.capabilities.resolve import SpeedResolution
@@ -26,6 +27,7 @@ class SpawnRequest:
     run_id: str
     parent_session_id: str
     project_id: str
+    _: KW_ONLY
     project_path: str | None = None
     agent_run_id: str | None = None
     workflow: str | None = None
@@ -63,6 +65,7 @@ class SpawnRequest:
     code_index_preflight_mode: str | None = None
     code_index_api_token: str | None = None
     code_index_preflight_warning: dict[str, str] | None = None
+    prepared_spawn: PreparedSpawn
 
 
 @dataclass

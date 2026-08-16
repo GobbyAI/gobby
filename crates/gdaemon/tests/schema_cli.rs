@@ -158,3 +158,128 @@ fn sweep_drops_only_aged_unlocked_test_schemas() -> Result<()> {
     assert!(live_exists);
     Ok(())
 }
+
+#[test]
+fn destructive_apply_refuses_without_open_maintenance_epoch() -> Result<()> {
+    let Ok(database_url) = env::var(DATABASE_URL_ENV) else {
+        eprintln!("skipped: {DATABASE_URL_ENV} is not set");
+        return Ok(());
+    };
+    let identity = Command::cargo_bin("gdaemon")?
+        .args(["schema", "version", "--json"])
+        .output()?;
+    assert!(identity.status.success());
+    let output = Command::cargo_bin("gdaemon")?
+        .args([
+            "schema",
+            "apply",
+            "--destructive",
+            "--schema",
+            "gdaemon_epoch_refuse",
+        ])
+        .env(EXPECTED_IDENTITY_ENV, String::from_utf8(identity.stdout)?)
+        .env("GOBBY_DATABASE_URL", &database_url)
+        .output()?;
+    assert!(!output.status.success());
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(
+        stderr.contains("gobby hub-maintenance run schema-apply"),
+        "refusal must name the orchestrated apply: {stderr}"
+    );
+    Ok(())
+}
+
+#[test]
+fn destructive_apply_succeeds_with_epoch_bound_dsn_and_verified_backup() -> Result<()> {
+    let Ok(database_url) = env::var(DATABASE_URL_ENV) else {
+        eprintln!("skipped: {DATABASE_URL_ENV} is not set");
+        return Ok(());
+    };
+    let scratch = ScratchSchema {
+        database_url: database_url.clone(),
+        name: format!("gdaemon_epoch_{}", std::process::id()),
+    };
+    let mut admin = connect_readwrite(&database_url).context("connect to test PostgreSQL")?;
+    admin.batch_execute(&format!(
+        "DROP SCHEMA IF EXISTS \"{}\" CASCADE; CREATE SCHEMA \"{}\"",
+        scratch.name, scratch.name
+    ))?;
+
+    let identity = Command::cargo_bin("gdaemon")?
+        .args(["schema", "version", "--json"])
+        .output()?;
+    assert!(identity.status.success());
+    let identity_json = String::from_utf8(identity.stdout)?;
+
+    let first = Command::cargo_bin("gdaemon")?
+        .args(["schema", "apply", "--schema", &scratch.name])
+        .env(EXPECTED_IDENTITY_ENV, &identity_json)
+        .env("GOBBY_DATABASE_URL", &database_url)
+        .output()?;
+    assert!(
+        first.status.success(),
+        "initial apply failed: {}",
+        String::from_utf8_lossy(&first.stderr)
+    );
+
+    admin.batch_execute(&format!(
+        "SET search_path TO \"{}\"; \
+         INSERT INTO maintenance_epochs (id, campaign, opened_by, scope_note) \
+         VALUES ('aaaaaaaa-bbbb-4ccc-8ddd-eeeeeeeeeee1', 'schema-apply', 'test', 'epoch fence')",
+        scratch.name
+    ))?;
+
+    let row = admin.query_one(
+        "SELECT (pg_control_system()).system_identifier::text, current_database(), oid \
+         FROM pg_database WHERE datname = current_database()",
+        &[],
+    )?;
+    let mut manifest: serde_json::Value = serde_json::from_str(include_str!(
+        "../../gcore/tests/fixtures/hub_backup_manifest/v2_roundtrip.json"
+    ))?;
+    manifest["source_identity"]["pg_system_identifier"] =
+        serde_json::json!(row.get::<_, String>(0));
+    manifest["source_identity"]["database_name"] = serde_json::json!(row.get::<_, String>(1));
+    manifest["source_identity"]["database_oid"] = serde_json::json!(row.get::<_, u32>(2));
+    manifest["backup_starting_head"] = serde_json::json!(381);
+    manifest["created_at"] = serde_json::json!("2026-08-14T06:00:00+00:00");
+    manifest["artifacts"][0]["sha256"] =
+        serde_json::json!("e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855");
+    manifest["artifacts"][0]["size_bytes"] = serde_json::json!(0);
+
+    let home = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+        .join("../../target/gdaemon-schema-cli-home");
+    let _ = std::fs::remove_dir_all(&home);
+    std::fs::create_dir_all(&home)?;
+    let backup_dir = home.join("backups/hub/epoch-fence");
+    std::fs::create_dir_all(backup_dir.join("postgres"))?;
+    std::fs::write(backup_dir.join("postgres/fixture.dump"), [])?;
+    std::fs::write(
+        backup_dir.join("manifest.json"),
+        serde_json::to_vec_pretty(&manifest)?,
+    )?;
+
+    let separator = if database_url.contains('?') { '&' } else { '?' };
+    let bound_url = format!(
+        "{database_url}{separator}options=-csearch_path%3D{}%20-cgobby.maintenance_epoch%3Daaaaaaaa-bbbb-4ccc-8ddd-eeeeeeeeeee1",
+        scratch.name
+    );
+    let output = Command::cargo_bin("gdaemon")?
+        .args([
+            "schema",
+            "apply",
+            "--destructive",
+            "--schema",
+            &scratch.name,
+        ])
+        .env(EXPECTED_IDENTITY_ENV, identity_json)
+        .env("GOBBY_DATABASE_URL", bound_url)
+        .env("GOBBY_HOME", &home)
+        .output()?;
+    assert!(
+        output.status.success(),
+        "epoch-bound destructive apply failed: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    Ok(())
+}

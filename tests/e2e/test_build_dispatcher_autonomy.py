@@ -35,8 +35,9 @@ from gobby.storage.tasks._stage_types import StageManifestSpec
 from gobby.system_automation import SystemAutomationLoop
 from gobby.utils.session_context import session_context_for_test
 from gobby.workflows.agent_resolver import resolve_agent
-from gobby.workflows.definitions import WorkflowInstance
-from gobby.workflows.state_manager import SessionVariableManager, WorkflowInstanceManager
+from gobby.workflows.state_manager import SessionVariableManager
+from gobby.workflows.step_instances import AgentStepInstanceManager
+from tests.workflows.step_instance_fixtures import make_step_instance
 from tests._timing import wait_for_async_condition
 from tests.agents.detection_test_support import BundledDetectionRegistry
 from tests.config_runtime_helpers import static_runtime_capture
@@ -964,17 +965,12 @@ async def test_idle_planner_stage_agent_keeps_periodic_enter_and_gets_handoff_re
     assert stored_run is not None
     workflow_instance_id = str(uuid5(NAMESPACE_URL, "gobby-e2e:idle-planner-workflow"))
 
-    WorkflowInstanceManager(temp_db).save_instance(
-        WorkflowInstance(
-            id=workflow_instance_id,
-            session_id=child.id,
-            workflow_name=workflow_name,
+    AgentStepInstanceManager(temp_db).save(
+        make_step_instance(
+            child.id,
+            agent_name=workflow_name.removesuffix("-steps"),
             current_step="plan",
-            variables={
-                "task_claimed": True,
-                "skill_loaded": True,
-                "plan_handoff_complete": False,
-            },
+            variables={"task_claimed": True},
         )
     )
     SessionVariableManager(temp_db).set_variable(child.id, "step_workflow_complete", False)

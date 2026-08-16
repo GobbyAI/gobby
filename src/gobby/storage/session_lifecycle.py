@@ -173,7 +173,7 @@ def expire_orphaned_handoff_sessions(
     Expire handoff_ready sessions whose compact restart never arrived.
 
     Compaction is an in-place handoff: the handoff_ready row IS the live
-    session, so this sweep only flips status. Workflow instances are kept for
+    session, so this sweep only flips status. Typed instances are kept for
     revival; prune_stale_compact_workflow_instances reclaims them once the
     revival horizon has passed.
 
@@ -211,7 +211,7 @@ def prune_stale_compact_workflow_instances(
     retention_hours: int = SESSION_REVIVAL_HORIZON_HOURS,
 ) -> int:
     """
-    Delete workflow instances for compact handoffs that never resumed.
+    Delete typed agent-step instances for compact handoffs that never resumed.
 
     Targets only sessions expired beyond the revival horizon that still carry
     an unconsumed compact marker (the handoff_source session variable, cleared
@@ -228,7 +228,7 @@ def prune_stale_compact_workflow_instances(
     updated_stale_sql = older_than_now_expr(db, "s.updated_at", "%s", "hour")
     cursor = db.execute(
         f"""
-        DELETE FROM workflow_instances wi
+        DELETE FROM agent_step_instances wi
         USING sessions s, session_variables sv
         WHERE wi.session_id = s.id
           AND sv.session_id = s.id
@@ -242,7 +242,7 @@ def prune_stale_compact_workflow_instances(
     count = cursor.rowcount or 0
     if count > 0:
         logger.info(
-            "Pruned %s workflow instances from unresumed compact sessions (>%sh expired)",
+            "Pruned %s agent-step instances from unresumed compact sessions (>%sh expired)",
             count,
             retention_hours,
         )

@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import json
 from collections.abc import Iterator
 from contextlib import contextmanager
 from types import SimpleNamespace
@@ -11,12 +10,15 @@ from unittest.mock import AsyncMock
 import pytest
 
 from gobby.mcp_proxy.tools.workflows import create_workflows_registry
+from gobby.storage.definitions import AgentDefinitionManager
+from gobby.storage.definitions.pipelines import PipelineDefinitionManager
+from gobby.storage.definitions.rules import RuleDefinitionManager
+from gobby.storage.definitions.variables import SessionVariableDefaultManager
 from gobby.storage.hub.protocol import HubDatabase
 from gobby.storage.pipelines import LocalPipelineExecutionManager
-from gobby.storage.workflow_definitions import LocalWorkflowDefinitionManager
 from gobby.utils.project_context import reset_project_context, set_project_context
 from gobby.utils.session_context import session_context_for_test
-from gobby.workflows.loader import WorkflowLoader
+from gobby.workflows.pipeline_loader import PipelineLoader
 from tests._timing import drain_asyncio_tasks
 
 pytestmark = pytest.mark.integration
@@ -68,23 +70,20 @@ async def test_project_scoped_workflow_is_retrievable_from_context(
     temp_db: HubDatabase,
 ) -> None:
     _create_project(temp_db)
-    definitions = LocalWorkflowDefinitionManager(temp_db)
-    definitions.create(
+    PipelineDefinitionManager(temp_db).create(
         name="scoped-workflow",
-        workflow_type="workflow",
         project_id=PROJECT_ID,
-        definition_json=json.dumps(
-            {
-                "name": "scoped-workflow",
-                "version": "1.0.0",
-                "steps": [{"name": "work", "allowed_tools": "all"}],
-            }
-        ),
+        definition_json={
+            "name": "scoped-workflow",
+            "type": "pipeline",
+            "version": "1.0.0",
+            "steps": [{"id": "work", "exec": "echo work"}],
+        },
     )
-    registry = create_workflows_registry(db=temp_db, loader=WorkflowLoader(db=temp_db))
+    registry = create_workflows_registry(db=temp_db, loader=PipelineLoader(db=temp_db))
 
     with _project_tool_context():
-        result = await registry.call("get_workflow", {"name": "scoped-workflow"})
+        result = await registry.call("get_pipeline", {"name": "scoped-workflow"})
 
     assert result["success"] is True
     assert result["name"] == "scoped-workflow"
@@ -95,26 +94,22 @@ async def test_project_scoped_pipeline_is_retrievable_and_runnable_from_context(
     temp_db: HubDatabase,
 ) -> None:
     _create_project(temp_db)
-    definitions = LocalWorkflowDefinitionManager(temp_db)
-    definitions.create(
+    PipelineDefinitionManager(temp_db).create(
         name="scoped-pipeline",
-        workflow_type="pipeline",
         project_id=PROJECT_ID,
-        definition_json=json.dumps(
-            {
-                "name": "scoped-pipeline",
-                "type": "pipeline",
-                "version": "1.0.0",
-                "steps": [{"id": "work", "exec": "echo scoped"}],
-            }
-        ),
+        definition_json={
+            "name": "scoped-pipeline",
+            "type": "pipeline",
+            "version": "1.0.0",
+            "steps": [{"id": "work", "exec": "echo scoped"}],
+        },
     )
     execution_manager = LocalPipelineExecutionManager(temp_db, project_id=PROJECT_ID)
     execute = AsyncMock(return_value=None)
     executor = SimpleNamespace(execution_manager=execution_manager, execute=execute)
     registry = create_workflows_registry(
         db=temp_db,
-        loader=WorkflowLoader(db=temp_db),
+        loader=PipelineLoader(db=temp_db),
         executor_getter=lambda: executor,
         execution_manager_getter=lambda: execution_manager,
     )
@@ -139,33 +134,27 @@ async def test_project_scoped_pipeline_is_listed_and_shadows_global(
     temp_db: HubDatabase,
 ) -> None:
     _create_project(temp_db)
-    definitions = LocalWorkflowDefinitionManager(temp_db)
-    definitions.create(
+    manager = PipelineDefinitionManager(temp_db)
+    manager.create(
         name="scoped-pipeline",
-        workflow_type="pipeline",
-        definition_json=json.dumps(
-            {
-                "name": "scoped-pipeline",
-                "type": "pipeline",
-                "description": "global pipeline",
-                "steps": [{"id": "global", "exec": "echo global"}],
-            }
-        ),
+        definition_json={
+            "name": "scoped-pipeline",
+            "type": "pipeline",
+            "description": "global pipeline",
+            "steps": [{"id": "global", "exec": "echo global"}],
+        },
     )
-    project_row = definitions.create(
+    project_row = manager.create(
         name="scoped-pipeline",
-        workflow_type="pipeline",
         project_id=PROJECT_ID,
-        definition_json=json.dumps(
-            {
-                "name": "scoped-pipeline",
-                "type": "pipeline",
-                "description": "project pipeline",
-                "steps": [{"id": "project", "exec": "echo project"}],
-            }
-        ),
+        definition_json={
+            "name": "scoped-pipeline",
+            "type": "pipeline",
+            "description": "project pipeline",
+            "steps": [{"id": "project", "exec": "echo project"}],
+        },
     )
-    registry = create_workflows_registry(db=temp_db, loader=WorkflowLoader(db=temp_db))
+    registry = create_workflows_registry(db=temp_db, loader=PipelineLoader(db=temp_db))
 
     with _project_tool_context():
         result = await registry.call("list_pipelines", {})
@@ -182,7 +171,7 @@ async def test_project_scoped_pipeline_is_listed_and_shadows_global(
 
 
 @pytest.mark.asyncio
-async def test_list_workflows_returns_only_visible_workflow_kinds(
+async def test_domain_lists_are_project_scoped(
     temp_db: HubDatabase,
 ) -> None:
     _create_project(temp_db)
@@ -191,60 +180,76 @@ async def test_list_workflows_returns_only_visible_workflow_kinds(
         "VALUES (%s, %s, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)",
         (OTHER_PROJECT_ID, "Other Project"),
     )
-    definitions = LocalWorkflowDefinitionManager(temp_db)
-
-    def create_definition(
-        name: str,
-        *,
-        workflow_type: str = "workflow",
-        definition_type: str = "step",
-        project_id: str | None = PROJECT_ID,
-    ) -> None:
-        definitions.create(
-            name=name,
-            workflow_type=workflow_type,
-            project_id=project_id,
-            definition_json=json.dumps({"name": name, "type": definition_type, "version": "1.0.0"}),
-        )
-
-    create_definition("global-step", project_id=None)
-    create_definition("shadowed", project_id=None)
-    create_definition("shadowed", definition_type="lifecycle")
-    create_definition("project-lifecycle", definition_type="lifecycle")
-    create_definition("other-project-step", project_id=OTHER_PROJECT_ID)
-    for definition_type in ("agent", "pipeline", "rule", "variable"):
-        create_definition(
-            f"project-{definition_type}",
-            workflow_type=definition_type,
-            definition_type=definition_type,
-        )
-
-    loader = WorkflowLoader(db=temp_db)
+    PipelineDefinitionManager(temp_db).create(
+        name="visible-pipe",
+        project_id=PROJECT_ID,
+        definition_json={
+            "name": "visible-pipe",
+            "type": "pipeline",
+            "steps": [{"id": "work", "exec": "echo work"}],
+        },
+    )
+    PipelineDefinitionManager(temp_db).create(
+        name="other-pipe",
+        project_id=OTHER_PROJECT_ID,
+        definition_json={
+            "name": "other-pipe",
+            "type": "pipeline",
+            "steps": [{"id": "work", "exec": "echo other"}],
+        },
+    )
+    RuleDefinitionManager(temp_db).create(
+        name="visible-rule",
+        project_id=PROJECT_ID,
+        definition_json={
+            "event": "before_tool",
+            "effects": [{"type": "inject_context", "content": "x"}],
+        },
+    )
+    RuleDefinitionManager(temp_db).create(
+        name="other-rule",
+        project_id=OTHER_PROJECT_ID,
+        definition_json={
+            "event": "before_tool",
+            "effects": [{"type": "inject_context", "content": "y"}],
+        },
+    )
+    AgentDefinitionManager(temp_db).create(
+        name="visible-agent",
+        project_id=PROJECT_ID,
+        definition_json={"name": "visible-agent"},
+    )
+    AgentDefinitionManager(temp_db).create(
+        name="other-agent",
+        project_id=OTHER_PROJECT_ID,
+        definition_json={"name": "other-agent"},
+    )
+    SessionVariableDefaultManager(temp_db).create(
+        name="visible-var",
+        project_id=PROJECT_ID,
+        default_value="here",
+    )
+    SessionVariableDefaultManager(temp_db).create(
+        name="other-var",
+        project_id=OTHER_PROJECT_ID,
+        default_value="there",
+    )
+    loader = PipelineLoader(db=temp_db)
     loader.global_dirs = []
     registry = create_workflows_registry(db=temp_db, loader=loader)
 
     with _project_tool_context():
-        all_workflows = await registry.call("list_workflows", {})
-        lifecycle_workflows = await registry.call("list_workflows", {"workflow_type": "lifecycle"})
-        global_workflows = await registry.call("list_workflows", {"global_only": True})
-        invalid_filter = await registry.call("list_workflows", {"workflow_type": "pipeline"})
+        pipelines = await registry.call("list_pipelines", {})
+        rules = await registry.call("list_rules", {})
+        agents = await registry.call(
+            "list_agent_definitions",
+            {"project_id": PROJECT_ID},
+        )
+        variables = await registry.call("list_variables", {})
 
-    assert {item["name"] for item in all_workflows["workflows"]} == {
-        "global-step",
-        "project-lifecycle",
-        "shadowed",
-    }
-    shadowed = next(item for item in all_workflows["workflows"] if item["name"] == "shadowed")
-    assert shadowed["type"] == "lifecycle"
-    assert {item["name"] for item in lifecycle_workflows["workflows"]} == {
-        "project-lifecycle",
-        "shadowed",
-    }
-    assert {item["name"] for item in global_workflows["workflows"]} == {
-        "global-step",
-        "shadowed",
-    }
-    assert invalid_filter == {
-        "success": False,
-        "error": "workflow_type must be 'step' or 'lifecycle'",
-    }
+    tool_names = {str(tool["name"]) for tool in registry.list_tools()}
+    assert "list_workflows" not in tool_names
+    assert {item["name"] for item in pipelines["pipelines"]} == {"visible-pipe"}
+    assert {item["name"] for item in agents["agents"]} == {"visible-agent"}
+    assert "visible-rule" in {item["name"] for item in rules["rules"]}
+    assert "visible-var" in {item["name"] for item in variables["variables"]}

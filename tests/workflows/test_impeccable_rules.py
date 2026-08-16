@@ -20,8 +20,8 @@ from gobby.skills.materialization import (
     SkillMaterializationResult,
     SkillScriptMaterializer,
 )
+from gobby.storage.definitions.rules import RuleDefinitionManager
 from gobby.storage.hub.protocol import HubDatabase
-from gobby.storage.workflow_definitions import LocalWorkflowDefinitionManager
 from gobby.workflows.definitions import RuleDefinitionBody
 from gobby.workflows.engine.core import RuleEngine
 from gobby.workflows.engine.run_command import RunCommandResult
@@ -64,7 +64,7 @@ def _event(source: SessionSource, event_type: HookEventType) -> HookEvent:
 
 
 def test_impeccable_templates_sync_enabled(impeccable_db: HubDatabase) -> None:
-    manager = LocalWorkflowDefinitionManager(impeccable_db)
+    manager = RuleDefinitionManager(impeccable_db)
 
     edit = manager.get_by_name("impeccable-edit-pass")
     deep = manager.get_by_name("impeccable-deep-pass")
@@ -74,8 +74,8 @@ def test_impeccable_templates_sync_enabled(impeccable_db: HubDatabase) -> None:
     assert "enforcement" in (edit.tags or [])
     assert "enforcement" in (deep.tags or [])
 
-    edit_definition = RuleDefinitionBody.model_validate_json(edit.definition_json)
-    deep_definition = RuleDefinitionBody.model_validate_json(deep.definition_json)
+    edit_definition = RuleDefinitionBody.model_validate(edit.definition_json)
+    deep_definition = RuleDefinitionBody.model_validate(deep.definition_json)
     assert [effect.type for effect in edit_definition.resolved_effects] == [
         "set_variable",
         "run_command",

@@ -139,6 +139,60 @@ def test_expired_and_deleted_rows_cannot_displace_valid_owner() -> None:
     assert decision.validated_session_ids == frozenset({"active"})
 
 
+def test_same_pid_active_owner_beats_newer_handoff_ready() -> None:
+    older = _session("older", 10, created_at="2026-01-01T00:00:00+00:00")
+    newer = _session(
+        "newer",
+        10,
+        status="handoff_ready",
+        created_at="2026-01-01T00:01:00+00:00",
+    )
+
+    decision = _resolve(
+        [older, newer],
+        _ProcessFactory(_FakeProcess(10, 10.0)),
+        {10: 100},
+        requested_session_id="older",
+    )
+
+    assert decision.owner_session_id == "older"
+    assert decision.validated_session_ids == frozenset({"older", "newer"})
+
+
+def test_same_pid_expired_request_cannot_displace_active_owner() -> None:
+    older = _session("older", 10, created_at="2026-01-01T00:00:00+00:00")
+    newer = _session(
+        "newer",
+        10,
+        status="expired",
+        created_at="2026-01-01T00:01:00+00:00",
+    )
+
+    decision = _resolve(
+        [older, newer],
+        _ProcessFactory(_FakeProcess(10, 10.0)),
+        {10: 100},
+        requested_session_id="newer",
+    )
+
+    assert decision.owner_session_id == "older"
+    assert decision.validated_session_ids == frozenset({"older", "newer"})
+
+
+def test_same_pid_requested_active_beats_older_active_sibling() -> None:
+    older = _session("older", 10, created_at="2026-01-01T00:00:00+00:00")
+    newer = _session("newer", 10, created_at="2026-01-01T00:01:00+00:00")
+
+    decision = _resolve(
+        [older, newer],
+        _ProcessFactory(_FakeProcess(10, 10.0)),
+        {10: 100},
+        requested_session_id="newer",
+    )
+
+    assert decision.owner_session_id == "newer"
+
+
 @pytest.mark.parametrize("status", ["expired", "deleted"])
 def test_inactive_row_is_ownerless(status: str) -> None:
     session = _session(status, 10, status=status)

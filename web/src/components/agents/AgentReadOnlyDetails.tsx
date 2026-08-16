@@ -300,33 +300,34 @@ export function AgentReadOnlyDetails({ agentItem }: AgentReadOnlyDetailsProps) {
         </div>
       )}
 
-      {definition.steps && definition.steps.length > 0 && (
-        <div className="flex flex-col gap-1.5 border-b border-border px-5 py-3">
-          <Heading
-            level={4}
-            className="mt-0 mb-1 text-sm font-semibold tracking-wider text-[var(--text-muted)] uppercase"
-          >
-            Steps ({definition.steps.length})
-          </Heading>
-          <div className="flex flex-col gap-1">
-            {definition.steps.map((step, index) => (
-              <Card
-                key={index}
-                padding="sm"
-                className="flex items-center gap-2 text-sm"
-              >
-                <Chip tone="accent">{step.name}</Chip>
-                <span className="text-xs text-[var(--text-muted)]">
-                  {step.description || ""}
-                  {step.transitions && step.transitions.length > 0
-                    ? ` → ${step.transitions.map((transition) => transition.to).join(", ")}`
-                    : ""}
-                </span>
-              </Card>
-            ))}
+      {definition.step_workflow?.steps &&
+        definition.step_workflow.steps.length > 0 && (
+          <div className="flex flex-col gap-1.5 border-b border-border px-5 py-3">
+            <Heading
+              level={4}
+              className="mt-0 mb-1 text-sm font-semibold tracking-wider text-[var(--text-muted)] uppercase"
+            >
+              Steps ({definition.step_workflow.steps.length})
+            </Heading>
+            <div className="flex flex-col gap-1">
+              {definition.step_workflow.steps.map((step, index) => (
+                <Card
+                  key={index}
+                  padding="sm"
+                  className="flex items-center gap-2 text-sm"
+                >
+                  <Chip tone="accent">{step.name}</Chip>
+                  <span className="text-xs text-[var(--text-muted)]">
+                    {step.description || ""}
+                    {step.transitions && step.transitions.length > 0
+                      ? ` → ${step.transitions.map((transition) => transition.to).join(", ")}`
+                      : ""}
+                  </span>
+                </Card>
+              ))}
+            </div>
           </div>
-        </div>
-      )}
+        )}
 
       {definition.sandbox && (
         <div className="flex flex-col gap-1.5 border-b border-border px-5 py-3">

@@ -24,12 +24,12 @@ def _agent() -> dict[str, Any]:
 
 def test_taskless_adversary_has_no_task_lifecycle_claim() -> None:
     agent = _agent()
-    step_names = [step["name"] for step in agent["steps"]]
+    step_names = [step["name"] for step in agent["step_workflow"]["steps"]]
     text = yaml.safe_dump(agent)
 
     assert "claim" not in step_names
     assert "assigned_task_id" not in text
-    review_step = next(step for step in agent["steps"] if step["name"] == "review")
+    review_step = next(step for step in agent["step_workflow"]["steps"] if step["name"] == "review")
     blocked = set(review_step["blocked_mcp_tools"])
     assert "gobby-tasks:claim_task" in blocked
     assert "gobby-tasks:claim_task" not in set(review_step.get("allowed_mcp_tools") or [])
@@ -41,7 +41,7 @@ def test_taskless_adversary_has_no_task_lifecycle_claim() -> None:
 
 def test_taskless_adversary_loads_plan_review_and_reports_structured_result() -> None:
     agent = _agent()
-    steps = {step["name"]: step for step in agent["steps"]}
+    steps = {step["name"]: step for step in agent["step_workflow"]["steps"]}
 
     assert steps["load_skill"]["allowed_mcp_tools"] == [
         "gobby-skills:get_skill",
@@ -74,7 +74,7 @@ def test_taskless_adversary_loads_proportionality() -> None:
     # plan-review so the taskless interactive adversary applies the same
     # over-engineering criterion as the stage-native agent.
     agent = _agent()
-    steps = {step["name"]: step for step in agent["steps"]}
+    steps = {step["name"]: step for step in agent["step_workflow"]["steps"]}
 
     status = steps["load_skill"]["status_message"]
     assert "proportionality" in status
@@ -108,7 +108,7 @@ def test_taskless_adversary_review_step_allows_send_message_to_parent() -> None:
     delivering any verdict).
     """
     agent = _agent()
-    review_step = next(step for step in agent["steps"] if step["name"] == "review")
+    review_step = next(step for step in agent["step_workflow"]["steps"] if step["name"] == "review")
     allowed = set(review_step["allowed_mcp_tools"])
     assert "gobby-agents:send_message" in allowed, (
         "send_message must be in the review step's allowed_mcp_tools whitelist "
@@ -118,7 +118,7 @@ def test_taskless_adversary_review_step_allows_send_message_to_parent() -> None:
 
 def test_taskless_adversary_returns_exact_result_for_coordinator_persistence() -> None:
     agent = _agent()
-    review_step = next(step for step in agent["steps"] if step["name"] == "review")
+    review_step = next(step for step in agent["step_workflow"]["steps"] if step["name"] == "review")
 
     assert "gobby-memory:create_memory" not in review_step["allowed_mcp_tools"]
     assert "gobby-agents:send_message" in review_step["allowed_mcp_tools"]

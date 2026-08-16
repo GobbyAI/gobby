@@ -1,6 +1,54 @@
 {
   "columns": [
     {
+      "name": "agent_definitions.created_at",
+      "definition": "timestamp with time zone|timestamptz|NO|now()|NEVER"
+    },
+    {
+      "name": "agent_definitions.definition_json",
+      "definition": "jsonb|jsonb|NO||NEVER"
+    },
+    {
+      "name": "agent_definitions.deleted_at",
+      "definition": "timestamp with time zone|timestamptz|YES||NEVER"
+    },
+    {
+      "name": "agent_definitions.description",
+      "definition": "text|text|YES||NEVER"
+    },
+    {
+      "name": "agent_definitions.enabled",
+      "definition": "boolean|bool|NO|true|NEVER"
+    },
+    {
+      "name": "agent_definitions.enabled_pinned",
+      "definition": "boolean|bool|NO|false|NEVER"
+    },
+    {
+      "name": "agent_definitions.id",
+      "definition": "uuid|uuid|NO||NEVER"
+    },
+    {
+      "name": "agent_definitions.name",
+      "definition": "text|text|NO||NEVER"
+    },
+    {
+      "name": "agent_definitions.project_id",
+      "definition": "uuid|uuid|YES||NEVER"
+    },
+    {
+      "name": "agent_definitions.source",
+      "definition": "text|text|NO|'installed'::text|NEVER"
+    },
+    {
+      "name": "agent_definitions.tags",
+      "definition": "jsonb|jsonb|YES||NEVER"
+    },
+    {
+      "name": "agent_definitions.updated_at",
+      "definition": "timestamp with time zone|timestamptz|NO|now()|NEVER"
+    },
+    {
       "name": "agent_runs.agent_name",
       "definition": "text|text|YES||NEVER"
     },
@@ -159,6 +207,90 @@
     {
       "name": "agent_runs.worktree_id",
       "definition": "uuid|uuid|YES||NEVER"
+    },
+    {
+      "name": "agent_step_instances.agent_name",
+      "definition": "text|text|NO||NEVER"
+    },
+    {
+      "name": "agent_step_instances.agent_step_workflow_id",
+      "definition": "uuid|uuid|YES||NEVER"
+    },
+    {
+      "name": "agent_step_instances.context_injected",
+      "definition": "boolean|bool|NO|false|NEVER"
+    },
+    {
+      "name": "agent_step_instances.created_at",
+      "definition": "timestamp with time zone|timestamptz|NO|now()|NEVER"
+    },
+    {
+      "name": "agent_step_instances.current_step",
+      "definition": "text|text|YES||NEVER"
+    },
+    {
+      "name": "agent_step_instances.enabled",
+      "definition": "boolean|bool|NO|true|NEVER"
+    },
+    {
+      "name": "agent_step_instances.id",
+      "definition": "uuid|uuid|NO||NEVER"
+    },
+    {
+      "name": "agent_step_instances.session_id",
+      "definition": "uuid|uuid|NO||NEVER"
+    },
+    {
+      "name": "agent_step_instances.snapshot_json",
+      "definition": "jsonb|jsonb|NO||NEVER"
+    },
+    {
+      "name": "agent_step_instances.step_action_count",
+      "definition": "integer|int4|NO|0|NEVER"
+    },
+    {
+      "name": "agent_step_instances.step_entered_at",
+      "definition": "timestamp with time zone|timestamptz|YES||NEVER"
+    },
+    {
+      "name": "agent_step_instances.total_action_count",
+      "definition": "integer|int4|NO|0|NEVER"
+    },
+    {
+      "name": "agent_step_instances.updated_at",
+      "definition": "timestamp with time zone|timestamptz|NO|now()|NEVER"
+    },
+    {
+      "name": "agent_step_instances.variables",
+      "definition": "jsonb|jsonb|NO|'{}'::jsonb|NEVER"
+    },
+    {
+      "name": "agent_step_workflows.agent_definition_id",
+      "definition": "uuid|uuid|NO||NEVER"
+    },
+    {
+      "name": "agent_step_workflows.created_at",
+      "definition": "timestamp with time zone|timestamptz|NO|now()|NEVER"
+    },
+    {
+      "name": "agent_step_workflows.exit_condition",
+      "definition": "text|text|YES||NEVER"
+    },
+    {
+      "name": "agent_step_workflows.id",
+      "definition": "uuid|uuid|NO||NEVER"
+    },
+    {
+      "name": "agent_step_workflows.steps_json",
+      "definition": "jsonb|jsonb|NO||NEVER"
+    },
+    {
+      "name": "agent_step_workflows.updated_at",
+      "definition": "timestamp with time zone|timestamptz|NO|now()|NEVER"
+    },
+    {
+      "name": "agent_step_workflows.variables_json",
+      "definition": "jsonb|jsonb|NO|'{}'::jsonb|NEVER"
     },
     {
       "name": "attention_states.attention_id",
@@ -1369,6 +1501,18 @@
       "definition": "timestamp with time zone|timestamptz|NO||NEVER"
     },
     {
+      "name": "definition_revisions.domain",
+      "definition": "text|text|NO||NEVER"
+    },
+    {
+      "name": "definition_revisions.revision",
+      "definition": "bigint|int8|NO|0|NEVER"
+    },
+    {
+      "name": "definition_revisions.updated_at",
+      "definition": "timestamp with time zone|timestamptz|NO|now()|NEVER"
+    },
+    {
       "name": "deployment_runtime.deployment_token",
       "definition": "text|text|NO||NEVER"
     },
@@ -2453,6 +2597,62 @@
       "definition": "text|text|YES||NEVER"
     },
     {
+      "name": "pipeline_definitions.canvas_json",
+      "definition": "jsonb|jsonb|YES||NEVER"
+    },
+    {
+      "name": "pipeline_definitions.created_at",
+      "definition": "timestamp with time zone|timestamptz|NO|now()|NEVER"
+    },
+    {
+      "name": "pipeline_definitions.definition_json",
+      "definition": "jsonb|jsonb|NO||NEVER"
+    },
+    {
+      "name": "pipeline_definitions.deleted_at",
+      "definition": "timestamp with time zone|timestamptz|YES||NEVER"
+    },
+    {
+      "name": "pipeline_definitions.description",
+      "definition": "text|text|YES||NEVER"
+    },
+    {
+      "name": "pipeline_definitions.enabled",
+      "definition": "boolean|bool|NO|true|NEVER"
+    },
+    {
+      "name": "pipeline_definitions.enabled_pinned",
+      "definition": "boolean|bool|NO|false|NEVER"
+    },
+    {
+      "name": "pipeline_definitions.id",
+      "definition": "uuid|uuid|NO||NEVER"
+    },
+    {
+      "name": "pipeline_definitions.name",
+      "definition": "text|text|NO||NEVER"
+    },
+    {
+      "name": "pipeline_definitions.project_id",
+      "definition": "uuid|uuid|YES||NEVER"
+    },
+    {
+      "name": "pipeline_definitions.source",
+      "definition": "text|text|NO|'installed'::text|NEVER"
+    },
+    {
+      "name": "pipeline_definitions.tags",
+      "definition": "jsonb|jsonb|YES||NEVER"
+    },
+    {
+      "name": "pipeline_definitions.updated_at",
+      "definition": "timestamp with time zone|timestamptz|NO|now()|NEVER"
+    },
+    {
+      "name": "pipeline_definitions.version",
+      "definition": "text|text|NO|'1.0'::text|NEVER"
+    },
+    {
       "name": "pipeline_executions.completed_at",
       "definition": "timestamp with time zone|timestamptz|YES||NEVER"
     },
@@ -3389,6 +3589,62 @@
       "definition": "text|text|NO||NEVER"
     },
     {
+      "name": "rule_definitions.created_at",
+      "definition": "timestamp with time zone|timestamptz|NO|now()|NEVER"
+    },
+    {
+      "name": "rule_definitions.definition_json",
+      "definition": "jsonb|jsonb|NO||NEVER"
+    },
+    {
+      "name": "rule_definitions.deleted_at",
+      "definition": "timestamp with time zone|timestamptz|YES||NEVER"
+    },
+    {
+      "name": "rule_definitions.description",
+      "definition": "text|text|YES||NEVER"
+    },
+    {
+      "name": "rule_definitions.enabled",
+      "definition": "boolean|bool|NO|true|NEVER"
+    },
+    {
+      "name": "rule_definitions.enabled_pinned",
+      "definition": "boolean|bool|NO|false|NEVER"
+    },
+    {
+      "name": "rule_definitions.id",
+      "definition": "uuid|uuid|NO||NEVER"
+    },
+    {
+      "name": "rule_definitions.name",
+      "definition": "text|text|NO||NEVER"
+    },
+    {
+      "name": "rule_definitions.priority",
+      "definition": "integer|int4|NO|100|NEVER"
+    },
+    {
+      "name": "rule_definitions.project_id",
+      "definition": "uuid|uuid|YES||NEVER"
+    },
+    {
+      "name": "rule_definitions.source",
+      "definition": "text|text|NO|'installed'::text|NEVER"
+    },
+    {
+      "name": "rule_definitions.sources",
+      "definition": "jsonb|jsonb|YES||NEVER"
+    },
+    {
+      "name": "rule_definitions.tags",
+      "definition": "jsonb|jsonb|YES||NEVER"
+    },
+    {
+      "name": "rule_definitions.updated_at",
+      "definition": "timestamp with time zone|timestamptz|NO|now()|NEVER"
+    },
+    {
       "name": "schema_migrations.applied_at",
       "definition": "timestamp with time zone|timestamptz|NO|now()|NEVER"
     },
@@ -3559,6 +3815,54 @@
     {
       "name": "session_tasks.task_id",
       "definition": "uuid|uuid|NO||NEVER"
+    },
+    {
+      "name": "session_variable_defaults.created_at",
+      "definition": "timestamp with time zone|timestamptz|NO|now()|NEVER"
+    },
+    {
+      "name": "session_variable_defaults.default_value",
+      "definition": "jsonb|jsonb|YES||NEVER"
+    },
+    {
+      "name": "session_variable_defaults.deleted_at",
+      "definition": "timestamp with time zone|timestamptz|YES||NEVER"
+    },
+    {
+      "name": "session_variable_defaults.description",
+      "definition": "text|text|YES||NEVER"
+    },
+    {
+      "name": "session_variable_defaults.enabled",
+      "definition": "boolean|bool|NO|true|NEVER"
+    },
+    {
+      "name": "session_variable_defaults.enabled_pinned",
+      "definition": "boolean|bool|NO|false|NEVER"
+    },
+    {
+      "name": "session_variable_defaults.id",
+      "definition": "uuid|uuid|NO||NEVER"
+    },
+    {
+      "name": "session_variable_defaults.name",
+      "definition": "text|text|NO||NEVER"
+    },
+    {
+      "name": "session_variable_defaults.project_id",
+      "definition": "uuid|uuid|YES||NEVER"
+    },
+    {
+      "name": "session_variable_defaults.source",
+      "definition": "text|text|NO|'installed'::text|NEVER"
+    },
+    {
+      "name": "session_variable_defaults.tags",
+      "definition": "jsonb|jsonb|YES||NEVER"
+    },
+    {
+      "name": "session_variable_defaults.updated_at",
+      "definition": "timestamp with time zone|timestamptz|NO|now()|NEVER"
     },
     {
       "name": "session_variables.session_id",
@@ -5435,6 +5739,18 @@
   ],
   "constraints": [
     {
+      "name": "agent_definitions.agent_definitions_pkey",
+      "definition": "PRIMARY KEY (id)"
+    },
+    {
+      "name": "agent_definitions.agent_definitions_project_id_fkey",
+      "definition": "FOREIGN KEY (project_id) REFERENCES projects(id) ON DELETE CASCADE DEFERRABLE"
+    },
+    {
+      "name": "agent_definitions.agent_definitions_source_check",
+      "definition": "CHECK (source = ANY (ARRAY['installed'::text, 'custom'::text, 'project'::text]))"
+    },
+    {
       "name": "agent_runs.agent_runs_child_session_id_fkey",
       "definition": "FOREIGN KEY (child_session_id) REFERENCES sessions(id) DEFERRABLE"
     },
@@ -5461,6 +5777,34 @@
     {
       "name": "agent_runs.agent_runs_task_id_fkey",
       "definition": "FOREIGN KEY (task_id) REFERENCES tasks(id) ON DELETE SET NULL DEFERRABLE"
+    },
+    {
+      "name": "agent_step_instances.agent_step_instances_agent_step_workflow_id_fkey",
+      "definition": "FOREIGN KEY (agent_step_workflow_id) REFERENCES agent_step_workflows(id) ON DELETE SET NULL"
+    },
+    {
+      "name": "agent_step_instances.agent_step_instances_pkey",
+      "definition": "PRIMARY KEY (id)"
+    },
+    {
+      "name": "agent_step_instances.agent_step_instances_session_id_fkey",
+      "definition": "FOREIGN KEY (session_id) REFERENCES sessions(id) ON DELETE CASCADE DEFERRABLE"
+    },
+    {
+      "name": "agent_step_instances.agent_step_instances_session_id_key",
+      "definition": "UNIQUE (session_id)"
+    },
+    {
+      "name": "agent_step_workflows.agent_step_workflows_agent_definition_id_fkey",
+      "definition": "FOREIGN KEY (agent_definition_id) REFERENCES agent_definitions(id) ON DELETE CASCADE DEFERRABLE"
+    },
+    {
+      "name": "agent_step_workflows.agent_step_workflows_agent_definition_id_key",
+      "definition": "UNIQUE (agent_definition_id)"
+    },
+    {
+      "name": "agent_step_workflows.agent_step_workflows_pkey",
+      "definition": "PRIMARY KEY (id)"
     },
     {
       "name": "attention_states.attention_states_check",
@@ -5867,6 +6211,10 @@
       "definition": "PRIMARY KEY (id)"
     },
     {
+      "name": "definition_revisions.definition_revisions_pkey",
+      "definition": "PRIMARY KEY (domain)"
+    },
+    {
       "name": "deployment_runtime.deployment_runtime_pkey",
       "definition": "PRIMARY KEY (deployment_token)"
     },
@@ -6215,6 +6563,18 @@
       "definition": "FOREIGN KEY (session_id) REFERENCES sessions(id) ON DELETE CASCADE DEFERRABLE"
     },
     {
+      "name": "pipeline_definitions.pipeline_definitions_pkey",
+      "definition": "PRIMARY KEY (id)"
+    },
+    {
+      "name": "pipeline_definitions.pipeline_definitions_project_id_fkey",
+      "definition": "FOREIGN KEY (project_id) REFERENCES projects(id) ON DELETE CASCADE DEFERRABLE"
+    },
+    {
+      "name": "pipeline_definitions.pipeline_definitions_source_check",
+      "definition": "CHECK (source = ANY (ARRAY['installed'::text, 'custom'::text, 'project'::text]))"
+    },
+    {
       "name": "pipeline_executions.pipeline_executions_parent_execution_id_fkey",
       "definition": "FOREIGN KEY (parent_execution_id) REFERENCES pipeline_executions(id) ON DELETE CASCADE DEFERRABLE"
     },
@@ -6463,6 +6823,18 @@
       "definition": "UNIQUE (recall_request_id, memory_id, label_source, judge_protocol_version)"
     },
     {
+      "name": "rule_definitions.rule_definitions_pkey",
+      "definition": "PRIMARY KEY (id)"
+    },
+    {
+      "name": "rule_definitions.rule_definitions_project_id_fkey",
+      "definition": "FOREIGN KEY (project_id) REFERENCES projects(id) ON DELETE CASCADE DEFERRABLE"
+    },
+    {
+      "name": "rule_definitions.rule_definitions_source_check",
+      "definition": "CHECK (source = ANY (ARRAY['installed'::text, 'custom'::text, 'project'::text]))"
+    },
+    {
       "name": "schema_migrations.schema_migrations_pkey",
       "definition": "PRIMARY KEY (version)"
     },
@@ -6533,6 +6905,18 @@
     {
       "name": "session_tasks.session_tasks_task_id_fkey",
       "definition": "FOREIGN KEY (task_id) REFERENCES tasks(id) ON DELETE CASCADE DEFERRABLE"
+    },
+    {
+      "name": "session_variable_defaults.session_variable_defaults_pkey",
+      "definition": "PRIMARY KEY (id)"
+    },
+    {
+      "name": "session_variable_defaults.session_variable_defaults_project_id_fkey",
+      "definition": "FOREIGN KEY (project_id) REFERENCES projects(id) ON DELETE CASCADE DEFERRABLE"
+    },
+    {
+      "name": "session_variable_defaults.session_variable_defaults_source_check",
+      "definition": "CHECK (source = ANY (ARRAY['installed'::text, 'custom'::text, 'project'::text]))"
     },
     {
       "name": "session_variables.session_variables_pkey",
@@ -7075,8 +7459,28 @@
   ],
   "indexes": [
     {
+      "name": "agent_definitions_pkey",
+      "definition": "CREATE UNIQUE INDEX agent_definitions_pkey ON $schema.agent_definitions USING btree (id)"
+    },
+    {
       "name": "agent_runs_pkey",
       "definition": "CREATE UNIQUE INDEX agent_runs_pkey ON $schema.agent_runs USING btree (id)"
+    },
+    {
+      "name": "agent_step_instances_pkey",
+      "definition": "CREATE UNIQUE INDEX agent_step_instances_pkey ON $schema.agent_step_instances USING btree (id)"
+    },
+    {
+      "name": "agent_step_instances_session_id_key",
+      "definition": "CREATE UNIQUE INDEX agent_step_instances_session_id_key ON $schema.agent_step_instances USING btree (session_id)"
+    },
+    {
+      "name": "agent_step_workflows_agent_definition_id_key",
+      "definition": "CREATE UNIQUE INDEX agent_step_workflows_agent_definition_id_key ON $schema.agent_step_workflows USING btree (agent_definition_id)"
+    },
+    {
+      "name": "agent_step_workflows_pkey",
+      "definition": "CREATE UNIQUE INDEX agent_step_workflows_pkey ON $schema.agent_step_workflows USING btree (id)"
     },
     {
       "name": "attention_states_pkey",
@@ -7243,6 +7647,10 @@
       "definition": "CREATE UNIQUE INDEX cron_runs_pkey ON $schema.cron_runs USING btree (id)"
     },
     {
+      "name": "definition_revisions_pkey",
+      "definition": "CREATE UNIQUE INDEX definition_revisions_pkey ON $schema.definition_revisions USING btree (domain)"
+    },
+    {
       "name": "deployment_runtime_pkey",
       "definition": "CREATE UNIQUE INDEX deployment_runtime_pkey ON $schema.deployment_runtime USING btree (deployment_token)"
     },
@@ -7299,6 +7707,10 @@
       "definition": "CREATE UNIQUE INDEX gh_triage_deliveries_project_id_delivery_id_key ON $schema.gh_triage_deliveries USING btree (project_id, delivery_id)"
     },
     {
+      "name": "idx_agent_defs_project",
+      "definition": "CREATE INDEX idx_agent_defs_project ON $schema.agent_definitions USING btree (project_id)"
+    },
+    {
       "name": "idx_agent_runs_child_session",
       "definition": "CREATE INDEX idx_agent_runs_child_session ON $schema.agent_runs USING btree (child_session_id)"
     },
@@ -7325,6 +7737,10 @@
     {
       "name": "idx_agent_runs_task_id",
       "definition": "CREATE INDEX idx_agent_runs_task_id ON $schema.agent_runs USING btree (task_id)"
+    },
+    {
+      "name": "idx_asi_step_workflow",
+      "definition": "CREATE INDEX idx_asi_step_workflow ON $schema.agent_step_instances USING btree (agent_step_workflow_id)"
     },
     {
       "name": "idx_attention_states_blocked",
@@ -7851,6 +8267,10 @@
       "definition": "CREATE INDEX idx_pending_interactions_session ON $schema.pending_interactions USING btree (session_id, status)"
     },
     {
+      "name": "idx_pipeline_defs_project",
+      "definition": "CREATE INDEX idx_pipeline_defs_project ON $schema.pipeline_definitions USING btree (project_id)"
+    },
+    {
       "name": "idx_pipeline_executions_created_at",
       "definition": "CREATE INDEX idx_pipeline_executions_created_at ON $schema.pipeline_executions USING btree (created_at DESC)"
     },
@@ -7963,6 +8383,14 @@
       "definition": "CREATE INDEX idx_recall_usefulness_session ON $schema.recall_usefulness USING btree (session_id)"
     },
     {
+      "name": "idx_rule_defs_event",
+      "definition": "CREATE INDEX idx_rule_defs_event ON $schema.rule_definitions USING btree (((definition_json ->> 'event'::text))) WHERE (deleted_at IS NULL)"
+    },
+    {
+      "name": "idx_rule_defs_project",
+      "definition": "CREATE INDEX idx_rule_defs_project ON $schema.rule_definitions USING btree (project_id)"
+    },
+    {
       "name": "idx_schema_hashes_project",
       "definition": "CREATE INDEX idx_schema_hashes_project ON $schema.tool_schema_hashes USING btree (project_id)"
     },
@@ -8001,6 +8429,10 @@
     {
       "name": "idx_session_tasks_task",
       "definition": "CREATE INDEX idx_session_tasks_task ON $schema.session_tasks USING btree (task_id)"
+    },
+    {
+      "name": "idx_session_var_defs_project",
+      "definition": "CREATE INDEX idx_session_var_defs_project ON $schema.session_variable_defaults USING btree (project_id)"
     },
     {
       "name": "idx_sessions_agent_depth",
@@ -8423,6 +8855,10 @@
       "definition": "CREATE UNIQUE INDEX pending_interactions_pkey ON $schema.pending_interactions USING btree (id)"
     },
     {
+      "name": "pipeline_definitions_pkey",
+      "definition": "CREATE UNIQUE INDEX pipeline_definitions_pkey ON $schema.pipeline_definitions USING btree (id)"
+    },
+    {
       "name": "pipeline_executions_pkey",
       "definition": "CREATE UNIQUE INDEX pipeline_executions_pkey ON $schema.pipeline_executions USING btree (id)"
     },
@@ -8519,6 +8955,10 @@
       "definition": "CREATE UNIQUE INDEX recall_usefulness_recall_request_id_memory_id_label_source__key ON $schema.recall_usefulness USING btree (recall_request_id, memory_id, label_source, judge_protocol_version)"
     },
     {
+      "name": "rule_definitions_pkey",
+      "definition": "CREATE UNIQUE INDEX rule_definitions_pkey ON $schema.rule_definitions USING btree (id)"
+    },
+    {
       "name": "schema_migrations_pkey",
       "definition": "CREATE UNIQUE INDEX schema_migrations_pkey ON $schema.schema_migrations USING btree (version)"
     },
@@ -8557,6 +8997,10 @@
     {
       "name": "session_tasks_session_id_task_id_action_key",
       "definition": "CREATE UNIQUE INDEX session_tasks_session_id_task_id_action_key ON $schema.session_tasks USING btree (session_id, task_id, action)"
+    },
+    {
+      "name": "session_variable_defaults_pkey",
+      "definition": "CREATE UNIQUE INDEX session_variable_defaults_pkey ON $schema.session_variable_defaults USING btree (id)"
     },
     {
       "name": "session_variables_pkey",
@@ -8741,6 +9185,22 @@
     {
       "name": "unmodeled_observations_pkey",
       "definition": "CREATE UNIQUE INDEX unmodeled_observations_pkey ON $schema.unmodeled_observations USING btree (source, kind, name, server_name, tool_type)"
+    },
+    {
+      "name": "uq_agent_defs_live_name",
+      "definition": "CREATE UNIQUE INDEX uq_agent_defs_live_name ON $schema.agent_definitions USING btree (name, project_id) NULLS NOT DISTINCT WHERE (deleted_at IS NULL)"
+    },
+    {
+      "name": "uq_pipeline_defs_live_name",
+      "definition": "CREATE UNIQUE INDEX uq_pipeline_defs_live_name ON $schema.pipeline_definitions USING btree (name, project_id) NULLS NOT DISTINCT WHERE (deleted_at IS NULL)"
+    },
+    {
+      "name": "uq_rule_defs_live_name",
+      "definition": "CREATE UNIQUE INDEX uq_rule_defs_live_name ON $schema.rule_definitions USING btree (name, project_id) NULLS NOT DISTINCT WHERE (deleted_at IS NULL)"
+    },
+    {
+      "name": "uq_session_var_defs_live_name",
+      "definition": "CREATE UNIQUE INDEX uq_session_var_defs_live_name ON $schema.session_variable_defaults USING btree (name, project_id) NULLS NOT DISTINCT WHERE (deleted_at IS NULL)"
     },
     {
       "name": "users_email_lower_key",

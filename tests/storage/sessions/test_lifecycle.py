@@ -12,6 +12,7 @@ import pytest
 from gobby.sessions.status_events import SessionStatusTransition
 from gobby.storage.agents import LocalAgentRunManager
 from gobby.storage.hub.protocol import HubDatabase
+from gobby.storage.machines import LocalMachineManager
 from gobby.storage.memories import LocalMemoryManager
 from gobby.storage.projects import LocalProjectManager
 from gobby.storage.session_models import Session
@@ -19,19 +20,28 @@ from gobby.storage.sessions import SessionManager
 from gobby.terminal_ownership import (
     OwnershipReason,
     PaneOwnershipDecision,
+    resolve_pane_ownership,
     terminal_session_identity,
 )
-from gobby.workflows.definitions import WorkflowInstance
-from gobby.workflows.state_manager import WorkflowInstanceManager
+from gobby.workflows.step_instances import AgentStepInstanceManager
 from tests.fixtures.postgres import TEST_USER_ID
+from tests.workflows.step_instance_fixtures import make_step_instance
 
 pytestmark = pytest.mark.unit
 
 LOCAL_MACHINE_ID = "20000000-0000-4000-8000-000000000001"
 
 
+_ENROLLED_TEST_MACHINES = (
+    LOCAL_MACHINE_ID,
+    "20000000-0000-4000-8000-000000000012",
+)
+
+
 @pytest.fixture(autouse=True)
-def _local_machine_identity() -> Iterator[None]:
+def _local_machine_identity(temp_db: HubDatabase) -> Iterator[None]:
+    for machine_id in _ENROLLED_TEST_MACHINES:
+        LocalMachineManager(temp_db).upsert_seen(machine_id, TEST_USER_ID)
     with patch("gobby.utils.machine_id._cached_machine_id", LOCAL_MACHINE_ID):
         yield
 
@@ -43,8 +53,7 @@ def _validated_owner(owner_id: str) -> Callable[..., PaneOwnershipDecision]:
         requested_session_id: str | None = None,
     ) -> PaneOwnershipDecision:
         candidates = [session for session in sessions if isinstance(session, Session)]
-        requested = next(session for session in candidates if session.id == requested_session_id)
-        assert requested.status == "active"
+        assert any(session.id == requested_session_id for session in candidates)
         owner = next(session for session in candidates if session.id == owner_id)
         return PaneOwnershipDecision(
             terminal_session_identity(owner),
@@ -55,6 +64,32 @@ def _validated_owner(owner_id: str) -> Callable[..., PaneOwnershipDecision]:
         )
 
     return resolve
+
+
+class _OwnedPid:
+    def __init__(self, pid: int, created: float) -> None:
+        self.pid = pid
+        self._created = created
+
+    def create_time(self) -> float:
+        return self._created
+
+    def parents(self) -> list[object]:
+        return []
+
+
+def _same_pid_process_resolve(
+    sessions: list[object],
+    *,
+    requested_session_id: str | None = None,
+) -> PaneOwnershipDecision:
+    return resolve_pane_ownership(
+        sessions,
+        requested_session_id=requested_session_id,
+        process_factory=lambda pid: _OwnedPid(pid, 100.0),
+        process_group_factory=lambda _pid: 100,
+        foreground_group_factory=lambda _pid: 100,
+    )
 
 
 class TestSessionManagerLifecycle:
@@ -83,12 +118,11 @@ class TestSessionManagerLifecycle:
             "UPDATE sessions SET agent_run_id = %s WHERE id = %s",
             (run.id, session.id),
         )
-        workflow_manager = WorkflowInstanceManager(session_manager.db)
-        workflow_manager.save_instance(
-            WorkflowInstance(
-                id=str(uuid.uuid4()),
-                session_id=session.id,
-                workflow_name="developer",
+        workflow_manager = AgentStepInstanceManager(session_manager.db)
+        workflow_manager.save(
+            make_step_instance(
+                session.id,
+                agent_name="developer",
                 current_step="implement",
             )
         )
@@ -104,8 +138,9 @@ class TestSessionManagerLifecycle:
         assert reactivated.id == session.id
         assert reactivated.status == "active"
         assert reactivated.agent_run_id == run.id
-        instances = workflow_manager.get_active_instances(session.id)
-        assert [instance.workflow_name for instance in instances] == ["developer"]
+        instance = workflow_manager.get_for_session(session.id)
+        assert instance is not None
+        assert instance.agent_name == "developer"
         preserved_run = run_manager.get(run.id)
         assert preserved_run is not None
         assert preserved_run.child_session_id == session.id
@@ -767,6 +802,127 @@ class TestSessionManagerLifecycle:
         assert getattr(ownership_changes[0], "terminal_owner_session_id", None) == newer.id
         assert ("session_expired", older.id) in notifications
 
+    def test_revive_keeps_older_live_session_over_newer_handoff_ghost(
+        self,
+        session_manager: SessionManager,
+        sample_project: dict[str, str],
+        caplog: pytest.LogCaptureFixture,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        terminal_context = {
+            "tmux_pane": "%201",
+            "tmux_socket_path": "/tmp/tmux-501/default",
+            "parent_pid": 4242,
+            "parent_create_time": 100.0,
+        }
+        older = session_manager.register(
+            external_id="live-older-session",
+            machine_id=LOCAL_MACHINE_ID,
+            source="grok",
+            project_id=sample_project["id"],
+            terminal_context=terminal_context,
+        )
+        newer = session_manager.register(
+            external_id="handoff-compact-ghost",
+            machine_id=LOCAL_MACHINE_ID,
+            source="grok",
+            project_id=sample_project["id"],
+            terminal_context=terminal_context,
+        )
+        session_manager.update_status(newer.id, "handoff_ready")
+        caplog.set_level("INFO", logger="gobby.storage.sessions")
+        notifications: list[tuple[str, str]] = []
+        monkeypatch.setattr(
+            session_manager,
+            "_notify_session_change",
+            lambda event, session_id: notifications.append((event, session_id)),
+        )
+        monkeypatch.setattr(
+            "gobby.storage.sessions._field_update.resolve_pane_ownership",
+            _same_pid_process_resolve,
+        )
+
+        first = session_manager.revive_expired_terminal_session(older.id)
+
+        assert first is not None
+        assert first.status == "active"
+        ghost = session_manager.get(newer.id)
+        assert ghost is not None
+        assert ghost.status == "expired"
+        ownership_changes = [
+            record
+            for record in caplog.records
+            if getattr(record, "event", None) == "terminal_session_owner_superseded"
+        ]
+        assert len(ownership_changes) == 1
+        assert getattr(ownership_changes[0], "session_id", None) == newer.id
+        assert getattr(ownership_changes[0], "terminal_owner_session_id", None) == older.id
+        assert ("session_expired", newer.id) in notifications
+        first_rows = session_manager.db.fetchall(
+            "SELECT id, status, transcript_processed, updated_at FROM sessions "
+            "WHERE id IN (%s, %s) ORDER BY id",
+            (older.id, newer.id),
+        )
+        notifications.clear()
+        caplog.clear()
+
+        second = session_manager.revive_expired_terminal_session(older.id)
+
+        second_rows = session_manager.db.fetchall(
+            "SELECT id, status, transcript_processed, updated_at FROM sessions "
+            "WHERE id IN (%s, %s) ORDER BY id",
+            (older.id, newer.id),
+        )
+        assert second is not None
+        assert second.status == "active"
+        assert second_rows == first_rows
+        assert notifications == []
+        assert [
+            record
+            for record in caplog.records
+            if getattr(record, "event", None) == "terminal_session_owner_superseded"
+        ] == []
+
+    def test_revive_on_newer_ghost_does_not_steal_from_active_sibling(
+        self,
+        session_manager: SessionManager,
+        sample_project: dict[str, str],
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        terminal_context = {
+            "tmux_pane": "%202",
+            "tmux_socket_path": "/tmp/tmux-501/default",
+            "parent_pid": 4242,
+            "parent_create_time": 100.0,
+        }
+        older = session_manager.register(
+            external_id="still-live-older",
+            machine_id=LOCAL_MACHINE_ID,
+            source="grok",
+            project_id=sample_project["id"],
+            terminal_context=terminal_context,
+        )
+        newer = session_manager.register(
+            external_id="expired-compact-ghost",
+            machine_id=LOCAL_MACHINE_ID,
+            source="grok",
+            project_id=sample_project["id"],
+            terminal_context=terminal_context,
+        )
+        session_manager.update_status(newer.id, "expired")
+        monkeypatch.setattr(
+            "gobby.storage.sessions._field_update.resolve_pane_ownership",
+            _same_pid_process_resolve,
+        )
+
+        result = session_manager.revive_expired_terminal_session(newer.id)
+
+        assert result is not None
+        assert result.status == "expired"
+        live = session_manager.get(older.id)
+        assert live is not None
+        assert live.status == "active"
+
     @pytest.mark.parametrize("owner_status", ["active", "paused", "handoff_ready"])
     def test_validated_existing_interactive_owner_preserves_status(
         self,
@@ -1024,7 +1180,7 @@ class TestSessionManagerLifecycle:
         ) -> PaneOwnershipDecision:
             candidates = [session for session in sessions if isinstance(session, Session)]
             assert [candidate.id for candidate in candidates] == [requested.id]
-            assert candidates[0].status == "active"
+            assert candidates[0].status == "expired"
             return PaneOwnershipDecision(
                 terminal_session_identity(candidates[0]),
                 requested_session_id,

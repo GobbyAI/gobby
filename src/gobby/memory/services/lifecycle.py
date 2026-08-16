@@ -12,6 +12,7 @@ from psycopg.rows import dict_row
 
 from gobby.memory.dream.candidates import memory_to_candidate
 from gobby.memory.dream.related import (
+    RelatedEvidenceChannelError,
     RelatedEvidenceError,
     RelatedEvidenceSession,
     RetrievalScope,
@@ -243,9 +244,18 @@ class MemoryLifecycleService:
                         )
             except asyncio.CancelledError:
                 raise
+            except RelatedEvidenceChannelError as exc:
+                logger.warning(
+                    "Background related-memory mark-due failed for %s: channel=%s attempts=%d "
+                    "detail=%s",
+                    memory.id,
+                    exc.channel,
+                    exc.attempts,
+                    exc.detail,
+                )
             except RelatedEvidenceError as exc:
-                logger.info(
-                    "Background related-memory mark-due skipped for %s: %s",
+                logger.warning(
+                    "Background related-memory mark-due failed for %s: %s",
                     memory.id,
                     exc,
                 )
@@ -424,7 +434,12 @@ class MemoryLifecycleService:
                 try:
                     await self._vector_store.delete(memory_id)
                 except Exception as exc:
-                    logger.warning("VectorStore purge failed for %s: %s", memory_id, exc)
+                    if is_recoverable_vector_store_error(exc):
+                        self._log_vector_store_failure(
+                            f"VectorStore purge unavailable for {memory_id}", exc
+                        )
+                    else:
+                        logger.warning("VectorStore purge failed for %s: %s", memory_id, exc)
             kg_service = self._kg_service_provider()
             if kg_service:
                 try:

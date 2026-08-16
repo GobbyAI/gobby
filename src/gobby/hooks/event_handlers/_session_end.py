@@ -13,7 +13,7 @@ class SessionEndMixin(EventHandlersBase):
 
     def handle_session_end(self, event: HookEvent) -> HookResponse:
         """Handle SESSION_END event."""
-        from gobby.workflows.state_manager import WorkflowInstanceManager
+        from gobby.workflows.step_instances import AgentStepInstanceManager
 
         external_id = event.session_id
         session_id = event.metadata.get("_platform_session_id")
@@ -113,18 +113,18 @@ class SessionEndMixin(EventHandlersBase):
             and self._workflow_handler.rule_engine
         ):
             try:
-                deleted_count = WorkflowInstanceManager(
+                deleted_count = AgentStepInstanceManager(
                     self._workflow_handler.rule_engine.db
-                ).delete_instances_for_session(session_id)
+                ).delete_for_session(session_id)
                 if deleted_count > 0:
                     self.logger.info(
-                        "SESSION_END: deleted %s workflow instances for session %s",
+                        "SESSION_END: deleted %s agent-step instances for session %s",
                         deleted_count,
                         session_id,
                     )
             except Exception as e:
                 self.logger.warning(
-                    "SESSION_END: failed to delete workflow instances for session %s: %s",
+                    "SESSION_END: failed to delete agent-step instances for session %s: %s",
                     session_id,
                     e,
                 )

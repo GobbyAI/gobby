@@ -75,7 +75,7 @@ class TestSharedEnhancerContract:
         self, fixture: str, request: pytest.FixtureRequest
     ) -> None:
         agent: AgentDefinitionBody = request.getfixturevalue(fixture)
-        load_step = find_step(agent.steps or [], "load_skill")
+        load_step = find_step((agent.step_workflow.steps if agent.step_workflow else []), "load_skill")
         assert load_step is not None
         assert load_step.status_message is not None
         assert "plan-enhance" in load_step.status_message
@@ -92,7 +92,7 @@ class TestSharedEnhancerContract:
         self, fixture: str, request: pytest.FixtureRequest
     ) -> None:
         agent: AgentDefinitionBody = request.getfixturevalue(fixture)
-        load_step = find_step(agent.steps or [], "load_skill")
+        load_step = find_step((agent.step_workflow.steps if agent.step_workflow else []), "load_skill")
         assert load_step is not None
         transitions = getattr(load_step, "transitions", []) or []
         gate = [_field(t, "when") for t in transitions if _field(t, "to") == "enhance"]
@@ -127,19 +127,19 @@ class TestTasklessEnhancer:
 
     def test_has_no_claim_step(self, taskless: AgentDefinitionBody) -> None:
         # Taskless reviewers never claim or mutate Gobby tasks.
-        assert find_step(taskless.steps or [], "claim") is None
+        assert find_step((taskless.step_workflow.steps if taskless.step_workflow else []), "claim") is None
 
     def test_enhance_step_emits_via_send_message_and_end_run(
         self, taskless: AgentDefinitionBody
     ) -> None:
-        enhance = find_step(taskless.steps or [], "enhance")
+        enhance = find_step((taskless.step_workflow.steps if taskless.step_workflow else []), "enhance")
         assert enhance is not None
         allowed = enhance.allowed_mcp_tools or []
         assert "gobby-agents:send_message" in allowed
         assert "gobby-agents:end_agent_run" in allowed
 
     def test_enhance_completes_on_end_agent_run(self, taskless: AgentDefinitionBody) -> None:
-        enhance = find_step(taskless.steps or [], "enhance")
+        enhance = find_step((taskless.step_workflow.steps if taskless.step_workflow else []), "enhance")
         assert enhance is not None
         mcp_success = getattr(enhance, "on_mcp_success", []) or []
         triples = [
@@ -150,7 +150,7 @@ class TestTasklessEnhancer:
     def test_enhance_step_blocks_review_and_record_verbs(
         self, taskless: AgentDefinitionBody
     ) -> None:
-        enhance = find_step(taskless.steps or [], "enhance")
+        enhance = find_step((taskless.step_workflow.steps if taskless.step_workflow else []), "enhance")
         assert enhance is not None
         blocked = enhance.blocked_mcp_tools or []
         for tool in (
@@ -162,7 +162,7 @@ class TestTasklessEnhancer:
             assert tool in blocked, f"{tool} should be blocked for taskless enhancer"
 
     def test_exit_condition_on_enhance_complete(self, taskless: AgentDefinitionBody) -> None:
-        assert taskless.exit_condition == "vars.enhance_complete"
+        assert taskless.step_workflow.exit_condition if taskless.step_workflow else None == "vars.enhance_complete"
 
 
 class TestStageNativeEnhancer:
@@ -171,7 +171,7 @@ class TestStageNativeEnhancer:
     def test_has_claim_step_with_delegated_close_tolerance(
         self, stage_native: AgentDefinitionBody
     ) -> None:
-        claim = find_step(stage_native.steps or [], "claim")
+        claim = find_step((stage_native.step_workflow.steps if stage_native.step_workflow else []), "claim")
         assert claim is not None
         mcp_error = getattr(claim, "on_mcp_error", []) or []
         closed = [
@@ -184,7 +184,7 @@ class TestStageNativeEnhancer:
     def test_enhance_completes_on_record_plan_enhancement(
         self, stage_native: AgentDefinitionBody
     ) -> None:
-        enhance = find_step(stage_native.steps or [], "enhance")
+        enhance = find_step((stage_native.step_workflow.steps if stage_native.step_workflow else []), "enhance")
         assert enhance is not None
         mcp_success = getattr(enhance, "on_mcp_success", []) or []
         triples = [
@@ -199,7 +199,7 @@ class TestStageNativeEnhancer:
     def test_enhance_step_blocks_gate_verbs_and_premature_end(
         self, stage_native: AgentDefinitionBody
     ) -> None:
-        enhance = find_step(stage_native.steps or [], "enhance")
+        enhance = find_step((stage_native.step_workflow.steps if stage_native.step_workflow else []), "enhance")
         assert enhance is not None
         blocked = enhance.blocked_mcp_tools or []
         for tool in (
@@ -223,9 +223,9 @@ class TestStageNativeEnhancer:
     def test_terminate_step_only_allows_end_agent_run(
         self, stage_native: AgentDefinitionBody
     ) -> None:
-        terminate = find_step(stage_native.steps or [], "terminate")
+        terminate = find_step((stage_native.step_workflow.steps if stage_native.step_workflow else []), "terminate")
         assert terminate is not None
         assert terminate.allowed_mcp_tools == ["gobby-agents:end_agent_run"]
 
     def test_exit_condition_on_terminate_step(self, stage_native: AgentDefinitionBody) -> None:
-        assert stage_native.exit_condition == "current_step == 'terminate'"
+        assert stage_native.step_workflow.exit_condition if stage_native.step_workflow else None == "current_step == 'terminate'"

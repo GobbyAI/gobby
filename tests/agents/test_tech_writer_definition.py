@@ -20,10 +20,10 @@ def _agent() -> dict:
 
 def test_loads_required_skills_before_implementation() -> None:
     agent = _agent()
-    steps = {step["name"]: step for step in agent["steps"]}
+    steps = {step["name"]: step for step in agent["step_workflow"]["steps"]}
     load_step = steps["load_skills"]
 
-    assert agent["step_variables"]["required_skills"] == [
+    assert agent["step_workflow"]["variables"]["required_skills"] == [
         "tech-writer",
         "tasks",
     ]
@@ -53,7 +53,7 @@ def test_excludes_late_task_skill_injection() -> None:
 
 def test_handoff_transitions_to_end_agent_run_termination() -> None:
     agent = _agent()
-    steps = {step["name"]: step for step in agent["steps"]}
+    steps = {step["name"]: step for step in agent["step_workflow"]["steps"]}
     implement = steps["implement"]
     terminate = steps["terminate"]
     success_tools = {

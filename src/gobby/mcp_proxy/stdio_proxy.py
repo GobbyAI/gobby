@@ -495,10 +495,12 @@ class DaemonProxy:
         session_id: str,
     ) -> dict[str, Any]:
         """Set a session-scoped variable."""
+        from urllib.parse import quote
+
         return await self._request(
             "POST",
-            "/api/workflows/variables/set",
-            json={"name": name, "value": value, "session_id": session_id},
+            f"/api/sessions/{quote(session_id, safe='')}/variables/set",
+            json={"name": name, "value": value, "scope": "session"},
             session_id=session_id,
         )
 
@@ -509,10 +511,12 @@ class DaemonProxy:
         session_id: str,
     ) -> dict[str, Any]:
         """Get session-scoped variable(s)."""
+        from urllib.parse import quote
+
         return await self._request(
             "POST",
-            "/api/workflows/variables/get",
-            json={"name": name, "session_id": session_id},
+            f"/api/sessions/{quote(session_id, safe='')}/variables/get",
+            json={"name": name, "scope": "session"},
             session_id=session_id,
         )
 

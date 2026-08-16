@@ -30,6 +30,7 @@ ALLOWED_SESSION_STATUSES = frozenset(
         "deleted",
     }
 )
+LIVE_SESSION_STATUSES = frozenset({"active", "paused", "handoff_ready"})
 TERMINAL_SESSION_STATUSES = frozenset({"expired", "deleted"})
 
 

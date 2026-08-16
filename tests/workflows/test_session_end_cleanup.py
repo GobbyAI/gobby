@@ -13,9 +13,9 @@ import pytest
 from gobby.hooks.event_handlers._session_end import SessionEndMixin
 from gobby.hooks.events import HookEvent, HookEventType, SessionSource
 from gobby.storage.hub.protocol import HubDatabase
-from gobby.workflows.definitions import WorkflowInstance
 from gobby.workflows.engine.core import RuleEngine
-from gobby.workflows.state_manager import WorkflowInstanceManager
+from gobby.workflows.step_instances import AgentStepInstanceManager
+from tests.workflows.step_instance_fixtures import make_step_instance
 
 pytestmark = pytest.mark.unit
 
@@ -78,6 +78,7 @@ class _SessionEndHandler(SessionEndMixin):
         self._session_coordinator = None
         self._session_end_auto_link_worker = None
         self._message_processor = None
+        self._session_message_processors: dict[str, Any] = {}
         self._task_manager = None
         self._worktree_manager = None
         self._skill_manager = None
@@ -90,18 +91,17 @@ class _SessionEndHandler(SessionEndMixin):
         self._handler_map = {}
 
 
-def _save_instance(
-    manager: WorkflowInstanceManager,
+def _save(
+    manager: AgentStepInstanceManager,
     *,
     instance_id: str,
     session_id: str,
     workflow_name: str,
 ) -> None:
-    manager.save_instance(
-        WorkflowInstance(
-            id=instance_id,
-            session_id=session_id,
-            workflow_name=workflow_name,
+    manager.save(
+        make_step_instance(
+            session_id,
+            agent_name=workflow_name.removesuffix("-steps"),
             current_step="terminate",
         )
     )
@@ -109,8 +109,8 @@ def _save_instance(
 
 def test_session_end_deletes_workflow_instances_for_ending_session(db: HubDatabase) -> None:
     _ensure_session(db, S1)
-    instance_manager = WorkflowInstanceManager(db)
-    _save_instance(
+    instance_manager = AgentStepInstanceManager(db)
+    _save(
         instance_manager,
         instance_id=INST_1,
         session_id=S1,
@@ -123,20 +123,20 @@ def test_session_end_deletes_workflow_instances_for_ending_session(db: HubDataba
         response = handler.handle_session_end(_make_event(S1))
 
     assert response.decision == "allow"
-    assert instance_manager.get_active_instances(S1) == []
+    assert instance_manager.get_for_session(S1) is None
 
 
 def test_session_end_only_deletes_instances_for_target_session(db: HubDatabase) -> None:
     _ensure_session(db, S1)
     _ensure_session(db, S2)
-    instance_manager = WorkflowInstanceManager(db)
-    _save_instance(
+    instance_manager = AgentStepInstanceManager(db)
+    _save(
         instance_manager,
         instance_id=INST_1,
         session_id=S1,
         workflow_name="plan-adversary-steps",
     )
-    _save_instance(
+    _save(
         instance_manager,
         instance_id=INST_2,
         session_id=S2,
@@ -149,8 +149,8 @@ def test_session_end_only_deletes_instances_for_target_session(db: HubDatabase) 
         response = handler.handle_session_end(_make_event(S1))
 
     assert response.decision == "allow"
-    assert instance_manager.get_active_instances(S1) == []
+    assert instance_manager.get_for_session(S1) is None
 
-    remaining = instance_manager.get_active_instances(S2)
-    assert len(remaining) == 1
-    assert remaining[0].workflow_name == "developer"
+    remaining = instance_manager.get_for_session(S2)
+    assert remaining is not None
+    assert remaining.agent_name == "developer"

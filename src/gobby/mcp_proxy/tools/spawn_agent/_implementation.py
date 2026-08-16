@@ -24,6 +24,7 @@ from gobby.agents.isolation import (
 from gobby.agents.reasoning import resolve_spawn_reasoning, resolve_spawn_speed
 from gobby.agents.resume_metadata import build_resume_metadata
 from gobby.agents.sandbox import SandboxConfig, agent_sandbox_config
+from gobby.agents.spawn import cleanup_unlaunched_spawn, prepare_terminal_spawn
 from gobby.agents.spawn_executor import execute_spawn
 from gobby.agents.spawn_models import SpawnRequest
 from gobby.mcp_proxy.tools.tasks import resolve_task_id_for_mcp
@@ -37,7 +38,6 @@ from gobby.utils.local_token import read_local_api_token
 from gobby.utils.machine_id import get_machine_id
 from gobby.utils.project_context import get_project_context
 from gobby.workflows.definitions import AgentDefinitionBody
-from gobby.workflows.safe_evaluator import SafeExpressionEvaluator
 
 from ._code_index import code_index_preflight_mode
 from ._failure_cleanup import cleanup_created_isolation, cleanup_failed_spawn, start_run_or_cleanup
@@ -60,6 +60,7 @@ from ._spawn_guards import (
     active_task_response_if_blocked,
     reserve_agent_slot,
 )
+from ._step_state import apply_claimed_step_update, persist_initial_step_instance
 from ._worktree_reuse import prepare_reused_worktree
 
 if TYPE_CHECKING:
@@ -67,97 +68,6 @@ if TYPE_CHECKING:
     from gobby.storage.tasks import LocalTaskManager
 
 logger = logging.getLogger(__name__)
-
-
-def _transition_condition_met(condition: str | None, variables: dict[str, Any]) -> bool:
-    if not condition:
-        return True
-    try:
-        evaluator = SafeExpressionEvaluator(
-            context={"vars": variables, "variables": variables},
-            allowed_funcs={
-                "len": len,
-                "bool": bool,
-                "str": str,
-                "int": int,
-                "list": list,
-                "dict": dict,
-                "any": any,
-                "all": all,
-            },
-        )
-        return evaluator.evaluate(condition)
-    except ValueError as exc:
-        logger.warning("Failed to evaluate initial step transition %r: %s", condition, exc)
-        return False
-
-
-def _advance_initial_step(
-    agent_body: AgentDefinitionBody,
-    current_step: str,
-    variables: dict[str, Any],
-) -> str:
-    steps = {step.name: step for step in (agent_body.steps or [])}
-    max_transitions = len(steps) + 1
-
-    for _ in range(max_transitions):
-        step = steps.get(current_step)
-        if step is None:
-            return current_step
-
-        for transition in step.transitions:
-            if not _transition_condition_met(transition.when, variables):
-                continue
-            if transition.to not in steps:
-                logger.warning(
-                    "Initial step transition to unknown step %r in agent %r",
-                    transition.to,
-                    agent_body.name,
-                )
-                continue
-            current_step = transition.to
-            break
-        else:
-            return current_step
-
-    logger.warning(
-        "Stopped initial step transition chain for agent %r after %d transitions",
-        agent_body.name,
-        max_transitions,
-    )
-    return current_step
-
-
-def _initial_step_state_for_spawn(
-    agent_body: AgentDefinitionBody,
-    *,
-    task_owned_by_child: bool,
-    initial_variables: dict[str, Any] | None = None,
-) -> tuple[str, dict[str, Any]]:
-    """Return the initial step workflow state for a spawned agent."""
-    step_variables = dict(agent_body.step_variables)
-    if initial_variables and "additional_skills" in initial_variables:
-        step_variables["additional_skills"] = initial_variables["additional_skills"]
-
-    additional_skills = _normalize_string_list(step_variables.get("additional_skills"))
-    step_variables["additional_skills"] = additional_skills
-    step_variables["additional_skills_loaded"] = not additional_skills or all(
-        skill in _normalize_string_list(step_variables.get("loaded_skills"))
-        for skill in additional_skills
-    )
-
-    steps = agent_body.steps or []
-    if not steps:
-        raise ValueError("Cannot initialize step state for an agent with no steps")
-    first_step = steps[0]
-    current_step = first_step.name
-
-    if task_owned_by_child and first_step.name == "claim":
-        step_variables["task_claimed"] = True
-
-    current_step = _advance_initial_step(agent_body, current_step, step_variables)
-
-    return current_step, step_variables
 
 
 async def spawn_agent_impl(
@@ -536,9 +446,9 @@ async def spawn_agent_impl(
     # 8. Build enhanced prompt with isolation context
     enhanced_prompt = context_handler.build_context_prompt(prompt, isolation_ctx)
 
-    # 9. Generate session and run IDs
-    session_id = str(uuid.uuid4())
     run_id = str(uuid.uuid4())
+    prepared_spawn = None
+    spawn_request = None
 
     # 10. Build initial_variables (merge factory's with impl's own)
     effective_initial_variables: dict[str, Any] = {}
@@ -610,56 +520,6 @@ async def spawn_agent_impl(
         initial_variables=effective_initial_variables,
     )
 
-    # 11a. Execute spawn via SpawnExecutor
-    spawn_request = SpawnRequest(
-        prompt=enhanced_prompt,
-        cwd=isolation_ctx.cwd,
-        provider=effective_provider,
-        session_id=session_id,
-        run_id=run_id,
-        agent_run_id=run_id,
-        parent_session_id=parent_session_id,
-        project_id=project_id,
-        project_path=resolved_project_path,
-        workflow=effective_workflow,
-        initial_variables=effective_initial_variables,
-        worktree_id=isolation_ctx.worktree_id,
-        clone_id=isolation_ctx.clone_id,
-        branch_name=isolation_ctx.branch_name,
-        task_id=resolved_task_id,
-        claimed_session_id=claimed_session_id,
-        agent_name=agent_display_name,
-        session_manager=runner.child_session_manager,
-        run_manager=runner.run_storage,
-        machine_id=get_machine_id(),
-        model=effective_model,
-        is_local=is_local_run,
-        codex_oss_provider=endpoint_resolution.codex_oss_provider,
-        codex_config_overrides=speed_application.codex_config_overrides,
-        api_base=effective_api_base,
-        api_token=effective_api_token,
-        requested_reasoning_effort=reasoning.requested_effort,
-        effective_reasoning_effort=reasoning.effective_effort,
-        reasoning_required=reasoning.reasoning_required,
-        reasoning_status=reasoning.status,
-        reasoning_message=reasoning.message,
-        speed_resolution=speed,
-        sandbox_config=effective_sandbox_config,
-        extra_env={
-            **(endpoint_resolution.child_env or {}),
-        }
-        or None,
-        timeout_seconds=effective_timeout,
-        daemon_config=daemon_config,
-        resume_metadata_json=resume_metadata,
-        code_index_preflight_mode=code_index_mode,
-        code_index_api_token=read_local_api_token(),
-    )
-
-    # run_id is minted above and threaded through SpawnRequest.agent_run_id.
-    # prepare_terminal_spawn (called inside execute_spawn) inserts the
-    # agent_runs row using that exact id. It is the single source of truth.
-
     task_spawn_lease = TaskSpawnLease(
         db=db,
         task_id=resolved_task_id,
@@ -708,9 +568,137 @@ async def spawn_agent_impl(
                 handler, spawn_config, cleanup=cleanup_isolation_on_failure
             )
             return slot_response
+        session_manager = runner.child_session_manager
+        if session_manager is None:
+            task_spawn_lease.release_unattached()
+            return {"success": False, "error": "Session manager is required to spawn an agent"}
+        try:
+            prepared_spawn = prepare_terminal_spawn(
+                session_manager=session_manager,
+                parent_session_id=parent_session_id,
+                project_id=project_id,
+                machine_id=get_machine_id(),
+                source=effective_provider,
+                workflow_name=effective_workflow,
+                initial_variables=effective_initial_variables,
+                prompt=enhanced_prompt,
+                max_agent_depth=5,
+                git_branch=isolation_ctx.branch_name,
+                agent_run_id=run_id,
+                task_id=resolved_task_id,
+                claimed_session_id=claimed_session_id,
+                agent_name=agent_display_name,
+                model=effective_model,
+                is_local=is_local_run,
+                timeout_seconds=effective_timeout,
+                sandbox_enabled=False,
+                requested_reasoning_effort=reasoning.requested_effort,
+                effective_reasoning_effort=reasoning.effective_effort,
+                reasoning_required=reasoning.reasoning_required,
+                reasoning_status=reasoning.status,
+                reasoning_message=reasoning.message,
+                resume_metadata_json=resume_metadata,
+            )
+        except Exception as exc:
+            task_spawn_lease.release_unattached()
+            await cleanup_created_isolation(
+                handler, spawn_config, cleanup=cleanup_isolation_on_failure
+            )
+            return {
+                "success": False,
+                "error": str(exc),
+                "reasoning": reasoning.to_dict(),
+                "speed": speed_payload,
+            }
+        if db is not None and agent_body is not None and agent_body.step_workflow is not None:
+            try:
+                from gobby.workflows.agent_resolver import resolve_agent_with_row
+
+                resolved = resolve_agent_with_row(
+                    agent_body.name,
+                    db,
+                    project_id=project_id,
+                )
+                persist_initial_step_instance(
+                    db,
+                    agent_body,
+                    session_id=prepared_spawn.session_id,
+                    step_workflow_id=resolved[1].step_workflow_id if resolved else None,
+                    initial_variables=effective_initial_variables,
+                )
+            except Exception as exc:
+                cleanup_unlaunched_spawn(
+                    session_manager,
+                    session_id=prepared_spawn.session_id,
+                    agent_run_id=prepared_spawn.agent_run_id,
+                    prompt_file=prepared_spawn.prompt_file,
+                    managed_credential=prepared_spawn.managed_credential,
+                )
+                task_spawn_lease.release_unattached()
+                await cleanup_created_isolation(
+                    handler, spawn_config, cleanup=cleanup_isolation_on_failure
+                )
+                return {
+                    "success": False,
+                    "error": str(exc),
+                    "reasoning": reasoning.to_dict(),
+                    "speed": speed_payload,
+                }
+        spawn_request = SpawnRequest(
+            prompt=enhanced_prompt,
+            cwd=isolation_ctx.cwd,
+            provider=effective_provider,
+            session_id=prepared_spawn.session_id,
+            run_id=run_id,
+            agent_run_id=run_id,
+            parent_session_id=parent_session_id,
+            project_id=project_id,
+            project_path=resolved_project_path,
+            workflow=effective_workflow,
+            initial_variables=effective_initial_variables,
+            worktree_id=isolation_ctx.worktree_id,
+            clone_id=isolation_ctx.clone_id,
+            branch_name=isolation_ctx.branch_name,
+            task_id=resolved_task_id,
+            claimed_session_id=claimed_session_id,
+            agent_name=agent_display_name,
+            session_manager=session_manager,
+            run_manager=runner.run_storage,
+            machine_id=get_machine_id(),
+            model=effective_model,
+            is_local=is_local_run,
+            codex_oss_provider=endpoint_resolution.codex_oss_provider,
+            codex_config_overrides=speed_application.codex_config_overrides,
+            api_base=effective_api_base,
+            api_token=effective_api_token,
+            requested_reasoning_effort=reasoning.requested_effort,
+            effective_reasoning_effort=reasoning.effective_effort,
+            reasoning_required=reasoning.reasoning_required,
+            reasoning_status=reasoning.status,
+            reasoning_message=reasoning.message,
+            speed_resolution=speed,
+            sandbox_config=effective_sandbox_config,
+            extra_env={
+                **(endpoint_resolution.child_env or {}),
+            }
+            or None,
+            timeout_seconds=effective_timeout,
+            daemon_config=daemon_config,
+            resume_metadata_json=resume_metadata,
+            code_index_preflight_mode=code_index_mode,
+            code_index_api_token=read_local_api_token(),
+            prepared_spawn=prepared_spawn,
+        )
         try:
             spawn_result = await execute_spawn(spawn_request)
         except Exception as exc:
+            cleanup_unlaunched_spawn(
+                session_manager,
+                session_id=prepared_spawn.session_id,
+                agent_run_id=prepared_spawn.agent_run_id,
+                prompt_file=prepared_spawn.prompt_file,
+                managed_credential=prepared_spawn.managed_credential,
+            )
             task_spawn_lease.release_unattached()
             await cleanup_failed_spawn(
                 runner,
@@ -721,6 +709,7 @@ async def spawn_agent_impl(
                 completion_registry=completion_registry,
                 cleanup_isolation=cleanup_isolation_on_failure,
                 task_manager=task_manager,
+                child_session_id=prepared_spawn.session_id,
             )
             return {
                 "success": False,
@@ -728,6 +717,15 @@ async def spawn_agent_impl(
                 "reasoning": reasoning.to_dict(),
                 "speed": speed_payload,
             }
+        tmux_session_name, tmux_socket_name, tmux_socket_path = _tmux_runtime_metadata(spawn_result)
+        _persist_spawn_runtime(
+            runner,
+            run_id,
+            spawn_result,
+            tmux_session_name=tmux_session_name,
+            worktree_id=isolation_ctx.worktree_id,
+            clone_id=isolation_ctx.clone_id,
+        )
         if spawn_result.success:
             attach_error = task_spawn_lease.attach(run_id)
             if attach_error is not None:
@@ -743,6 +741,10 @@ async def spawn_agent_impl(
                     cleanup_isolation=cleanup_isolation_on_failure,
                     task_manager=task_manager,
                     child_session_id=spawn_result.child_session_id,
+                    pid=spawn_result.pid,
+                    tmux_session_name=tmux_session_name,
+                    tmux_socket_name=tmux_socket_name,
+                    tmux_socket_path=tmux_socket_path,
                 )
                 return {
                     "success": False,
@@ -755,7 +757,6 @@ async def spawn_agent_impl(
     tmux_spawn = bool(
         spawn_result.success and spawn_result.terminal_type == "tmux" and tmux_session_name
     )
-    runtime_persisted = False
     if tmux_spawn and tmux_session_name:
         alive, pane_output = await _check_tmux_session_alive(
             tmux_session_name,
@@ -768,57 +769,41 @@ async def spawn_agent_impl(
             spawn_result.error = f"tmux session '{tmux_session_name}' failed live-pane verification"
             if pane_output:
                 spawn_result.error = f"{spawn_result.error}\nPane output:\n{pane_output}"
-            tmux_spawn = False
-
-    if tmux_spawn and tmux_session_name:
-        if spawn_result.child_session_id is not None:
-            _persist_spawn_runtime(
+            await cleanup_failed_spawn(
                 runner,
                 run_id,
-                spawn_result,
-                tmux_session_name=tmux_session_name,
-                worktree_id=isolation_ctx.worktree_id,
-                clone_id=isolation_ctx.clone_id,
-            )
-            runtime_persisted = True
-            start_error = await start_run_or_cleanup(
-                runner,
-                run_id,
+                spawn_result.error,
                 handler,
                 spawn_config,
                 completion_registry=completion_registry,
                 cleanup_isolation=cleanup_isolation_on_failure,
                 task_manager=task_manager,
                 child_session_id=spawn_result.child_session_id,
+                pid=spawn_result.pid,
+                tmux_session_name=tmux_session_name,
+                tmux_socket_name=tmux_socket_name,
+                tmux_socket_path=tmux_socket_path,
             )
-            if start_error is not None:
-                return start_error
+            return {
+                "success": False,
+                "error": spawn_result.error,
+                "run_id": run_id,
+                "speed": speed_payload,
+            }
 
-    # 12. Update DB and handle post-spawn setup based on spawn result
     if spawn_result.success and spawn_result.child_session_id is not None:
-        if not runtime_persisted:
-            _persist_spawn_runtime(
-                runner,
-                run_id,
-                spawn_result,
-                tmux_session_name=tmux_session_name,
-                worktree_id=isolation_ctx.worktree_id,
-                clone_id=isolation_ctx.clone_id,
-            )
-
-        if not tmux_spawn:
-            start_error = await start_run_or_cleanup(
-                runner,
-                run_id,
-                handler,
-                spawn_config,
-                completion_registry=completion_registry,
-                cleanup_isolation=cleanup_isolation_on_failure,
-                task_manager=task_manager,
-                child_session_id=spawn_result.child_session_id,
-            )
-            if start_error is not None:
-                return start_error
+        start_error = await start_run_or_cleanup(
+            runner,
+            run_id,
+            handler,
+            spawn_config,
+            completion_registry=completion_registry,
+            cleanup_isolation=cleanup_isolation_on_failure,
+            task_manager=task_manager,
+            child_session_id=spawn_result.child_session_id,
+        )
+        if start_error is not None:
+            return start_error
 
         # Fire agent_started event for WebSocket broadcasting
         try:
@@ -871,57 +856,42 @@ async def spawn_agent_impl(
                         run_id,
                         spawn_result.child_session_id,
                     )
+                    if (
+                        task_owned_by_child
+                        and db is not None
+                        and agent_body is not None
+                        and agent_body.step_workflow is not None
+                    ):
+                        apply_claimed_step_update(
+                            db,
+                            agent_body,
+                            session_id=spawn_result.child_session_id,
+                            initial_variables=effective_initial_variables,
+                        )
             except Exception as e:
-                logger.warning("Failed to auto-claim task %s: %s", resolved_task_id, e)
-
-        # 12b. Create WorkflowInstance for agent step workflow (post-spawn).
-        # Must happen AFTER execute_spawn creates the child session record,
-        # because workflow_instances.session_id has a FK to sessions(id).
-        # Uses spawn_result.child_session_id (the real session) instead of
-        # the pre-generated session_id which is not the actual child session
-        # for terminal mode.
-        step_wf_name = (initial_variables or {}).get("_step_workflow_name")
-        has_assigned_task = bool(
-            resolved_task_id or effective_initial_variables.get("assigned_task_id")
-        )
-        if has_assigned_task and step_wf_name and agent_body and agent_body.steps and db:
-            try:
-                from gobby.workflows.definitions import WorkflowInstance
-                from gobby.workflows.state_manager import WorkflowInstanceManager
-
-                current_step, step_variables = _initial_step_state_for_spawn(
-                    agent_body,
-                    task_owned_by_child=task_owned_by_child,
-                    initial_variables=effective_initial_variables,
+                error = f"Failed to auto-claim task {resolved_task_id}: {e}"
+                logger.warning(error)
+                await cleanup_failed_spawn(
+                    runner,
+                    run_id,
+                    error,
+                    handler,
+                    spawn_config,
+                    completion_registry=completion_registry,
+                    cleanup_isolation=cleanup_isolation_on_failure,
+                    task_manager=task_manager,
+                    child_session_id=spawn_result.child_session_id,
+                    pid=spawn_result.pid,
+                    tmux_session_name=tmux_session_name,
+                    tmux_socket_name=tmux_socket_name,
+                    tmux_socket_path=tmux_socket_path,
                 )
-                step_instance = WorkflowInstance(
-                    id=str(uuid.uuid4()),
-                    session_id=spawn_result.child_session_id,
-                    workflow_name=step_wf_name,
-                    enabled=True,
-                    priority=10,
-                    current_step=current_step,
-                    variables=step_variables,
-                )
-                WorkflowInstanceManager(db).save_instance(step_instance)
-
-                # Initialize step_workflow_complete so the require-step-completion
-                # rule can gate agent stop until the exit_condition is met.
-                from gobby.workflows.state_manager import SessionVariableManager
-
-                SessionVariableManager(db).set_variable(
-                    spawn_result.child_session_id, "step_workflow_complete", False
-                )
-
-                logger.info(
-                    "Created step workflow instance %s for session %s (agent=%s, step=%s)",
-                    step_wf_name,
-                    spawn_result.child_session_id,
-                    agent_body.name,
-                    agent_body.steps[0].name,
-                )
-            except Exception as e:
-                logger.exception("Failed to create step workflow instance: %s", e)
+                return {
+                    "success": False,
+                    "error": error,
+                    "run_id": run_id,
+                    "speed": speed_payload,
+                }
 
         # Post-spawn health check: verify tmux session is still alive.
         if spawn_result.terminal_type == "tmux" and tmux_session_name:
@@ -945,6 +915,10 @@ async def spawn_agent_impl(
             cleanup_isolation=cleanup_isolation_on_failure,
             task_manager=task_manager,
             child_session_id=spawn_result.child_session_id,
+            pid=spawn_result.pid,
+            tmux_session_name=tmux_session_name,
+            tmux_socket_name=tmux_socket_name,
+            tmux_socket_path=tmux_socket_path,
         )
 
     # 13. Return response with isolation metadata
@@ -965,7 +939,9 @@ async def spawn_agent_impl(
         tmux_session_name=tmux_session_name,
         tmux_socket_name=tmux_socket_name,
         tmux_socket_path=tmux_socket_path,
-        code_index_preflight_warning=spawn_request.code_index_preflight_warning,
+        code_index_preflight_warning=(
+            spawn_request.code_index_preflight_warning if spawn_request is not None else None
+        ),
         reasoning=reasoning,
     )
     response["speed"] = speed_payload

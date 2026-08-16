@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+import logging
 import uuid
 from concurrent.futures import ThreadPoolExecutor
 from dataclasses import replace
@@ -18,11 +19,13 @@ from gobby.memory.backends.storage_adapter import StorageAdapter
 from gobby.memory.dream.apply import apply_dream_plan, revert_dream_run
 from gobby.memory.dream.candidates import memory_to_candidate
 from gobby.memory.dream.models import DreamAction, RelatedMemoryEvidence
+from gobby.memory.dream.related import RelatedEvidenceChannelError
 from gobby.memory.dream.storage import MemoryDreamStore
 from gobby.memory.manager import MemoryManager
 from gobby.memory.protocol import MemoryBackendProtocol
 from gobby.memory.services import lifecycle as lifecycle_module
 from gobby.memory.write_result import MemoryWriteResult
+from gobby.storage.hub.protocol import HubDatabase
 from gobby.storage.memories import LocalMemoryManager
 from gobby.storage.memories_crud import MAX_SUPERSEDES_IDS
 from gobby.storage.memories_models import PERSONAL_PROJECT_ID
@@ -93,6 +96,45 @@ async def test_auto_mark_due(temp_db, monkeypatch) -> None:
     monkeypatch.setattr(lifecycle_module, "gather_related_evidence", should_not_run)
     await disabled.create_memory("Disabled mark due", project_id=PERSONAL_PROJECT_ID)
     assert called is False
+
+
+@pytest.mark.asyncio
+async def test_background_mark_due_exhaustion_emits_terminal_warning(
+    temp_db: HubDatabase,
+    monkeypatch: pytest.MonkeyPatch,
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    manager = MemoryManager(db=temp_db, config=MemoryConfig(enabled=True))
+    memory = manager.storage.create_memory(
+        content="background retry exhaustion",
+        project_id=PERSONAL_PROJECT_ID,
+    )
+
+    async def fail_related(*_args: object, **_kwargs: object) -> list[object]:
+        raise RelatedEvidenceChannelError(
+            "vector",
+            attempts=3,
+            detail="EmbeddingGenerationLeaseLost: serving fenced",
+        )
+
+    monkeypatch.setattr(lifecycle_module, "gather_related_evidence", fail_related)
+    with caplog.at_level(logging.WARNING, logger=lifecycle_module.__name__):
+        task = manager.schedule_write_mark_due(memory, "created")
+        assert task is not None
+        await task
+
+    records = [
+        record
+        for record in caplog.records
+        if "Background related-memory mark-due failed" in record.message
+    ]
+    assert len(records) == 1
+    assert "channel=vector" in records[0].message
+    assert "attempts=3" in records[0].message
+    assert "EmbeddingGenerationLeaseLost: serving fenced" in records[0].message
+    assert records[0].levelno == logging.WARNING
+    assert records[0].exc_info is None
+    assert "mark-due skipped" not in caplog.text
 
 
 @pytest.mark.slow
