@@ -6,6 +6,7 @@ import json
 import os
 import re
 import stat
+import time
 from collections.abc import Mapping, Sequence
 from concurrent.futures import ThreadPoolExecutor
 from datetime import UTC, datetime, timedelta
@@ -567,6 +568,47 @@ def test_interactive_binding_uniqueness(
         )
         manager.revoke_interactive(
             deployment_token=token_b,
+            project_id=fixture.project_id,
+            reason="test-cleanup",
+        )
+        manager.close()
+        store.db.close()
+
+
+def test_interactive_reuse_refreshes_expired_role(
+    authorization_fixture: AuthorizationFixture,
+    tmp_path: Path,
+) -> None:
+    fixture = authorization_fixture
+    manager = _manager(fixture, tmp_path / "managed-expired")
+    store = _secret_store(fixture, tmp_path)
+    token = "dddddddddddddddd"
+    try:
+        first = manager.issue_interactive(
+            deployment_token=token,
+            project_id=fixture.project_id,
+            session_id=fixture.session_id,
+            expires_at=datetime.now(UTC) + timedelta(seconds=2),
+            secret_store=store,
+        )
+        time.sleep(2.2)
+        with pytest.raises(psycopg.OperationalError):
+            with psycopg.connect(first.dsn) as conn:
+                conn.execute("SELECT 1")
+        refreshed = manager.issue_interactive(
+            deployment_token=token,
+            project_id=fixture.project_id,
+            session_id=fixture.session_id,
+            expires_at=datetime.now(UTC) + timedelta(hours=1),
+            secret_store=store,
+        )
+        assert refreshed.reused is True
+        assert refreshed.role_name == first.role_name
+        with psycopg.connect(refreshed.dsn) as conn:
+            assert conn.execute("SELECT 1").fetchone() == (1,)
+    finally:
+        manager.revoke_interactive(
+            deployment_token=token,
             project_id=fixture.project_id,
             reason="test-cleanup",
         )

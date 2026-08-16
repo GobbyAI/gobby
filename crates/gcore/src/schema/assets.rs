@@ -61,6 +61,14 @@ pub(crate) const MIGRATIONS: &[EmbeddedMigration] = &[
             "../../assets/schema/migrations/382_grant_gwiki_tables_to_capability.sql"
         ),
     },
+    EmbeddedMigration {
+        version: 383,
+        filename: "383_refresh_reused_interactive_principal.sql",
+        checksum: "6a9b479e68847bc240e54ace9d4a4c80e1acf79b1d7568dc8e3eb4fe84477696",
+        sql: include_str!(
+            "../../assets/schema/migrations/383_refresh_reused_interactive_principal.sql"
+        ),
+    },
 ];
 const _: &str = include_str!("../../assets/schema/migrations/.gitkeep");
 

@@ -431,7 +431,7 @@ fn guard_test_rejects_a_database_newer_than_the_embedded_runner() -> anyhow::Res
     };
     SchemaRunner::new(&mut client, "public")?.apply()?;
     client.execute(
-        "INSERT INTO schema_migrations(version, filename, checksum) VALUES (383, '383_future.sql', $1)",
+        "INSERT INTO schema_migrations(version, filename, checksum) VALUES (384, '384_future.sql', $1)",
         &[&"f".repeat(64)],
     )?;
 
