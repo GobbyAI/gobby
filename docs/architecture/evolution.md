@@ -191,4 +191,5 @@ the public API surface exist; Gobby Pro fleet surfaces per `ROADMAP.md`
 | `.gobby/plans/two-daemon-hub.md`, `.gobby/plans/m0-shared-datastores-bridge.md`, `.gobby/plans/hub-pc-datastore-move.md` | Shared-datastore / lease groundwork |
 | `.gobby/plans/daemon-native-runtime-boundary.md`, `.gobby/plans/reactive-config-store.md` | Rust-daemon boundary foundations |
 | `.gobby/plans/account-identity-machine-ownership.md`, `.gobby/plans/machine-scoped-worktrees-clones.md`, `.gobby/plans/shared-remote-stack.md` | Stage 3 identity/machine/remote groundwork |
+| `docs/architecture/hub-owned-files-home.md`, #20238 | Hub-owned `USER.md`, wiki home, and `_personal` files; not per-machine daemon-home copies |
 | `ROADMAP.md` | Release-line what/when; the 0.6.0 sidecar on `:60890` is the transition vehicle; destination daemon is `gdaemon` |

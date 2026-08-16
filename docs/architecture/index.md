@@ -40,6 +40,7 @@
 | [MCP Tools](../guides/mcp-tools.md) | MCP tool documentation |
 | [Hook Schemas](../guides/hook-schemas.md) | Provider hook payload schemas |
 | [Repository History Scrub](./repository-history-scrub.md) | Decision and coordinated rewrite runbook for machine-local state history |
+| [Hub-owned files home](./hub-owned-files-home.md) | One hub-host tree for wiki vaults, `_personal`, and `USER.md` |
 
 ## Quick Start
 
