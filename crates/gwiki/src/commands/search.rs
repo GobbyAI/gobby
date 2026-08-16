@@ -2,7 +2,7 @@ use gobby_core::ai::effective_config::ai_source_for_conn;
 use gobby_core::ai_context::AiContext;
 #[cfg(test)]
 use gobby_core::config::QdrantConfig;
-use gobby_core::config::{resolve_falkordb_config, resolve_qdrant_config};
+use gobby_core::config::resolve_qdrant_config;
 use gobby_core::markdown::frontmatter_body_start;
 use gobby_core::token_budget;
 
@@ -85,7 +85,7 @@ fn run_search_attached(
     let mut source = ai_source_for_conn(&mut conn).map_err(|error| WikiError::Config {
         detail: format!("failed to resolve AI config for gwiki search: {error}"),
     })?;
-    let falkor = resolve_falkordb_config(&mut source);
+    let falkor = crate::support::env::falkordb_config()?;
     let semantic_config = if include_semantic {
         let embedding = {
             let ai_context = AiContext::resolve(None, &mut source);

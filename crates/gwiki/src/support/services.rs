@@ -13,7 +13,7 @@ use gobby_core::ai::resolve_route_observed;
 use gobby_core::ai_context::{AiContext, AiContextOptions};
 use gobby_core::config::{
     AiCapability, AiRouting, EmbeddingConfig, FalkorConfig, QdrantConfig, resolve_embedding_config,
-    resolve_falkordb_config, resolve_qdrant_config,
+    resolve_qdrant_config,
 };
 
 use crate::WikiError;
@@ -72,7 +72,7 @@ pub(crate) fn probe_runtime_services(command: &'static str) -> Result<RuntimeSer
     let mut source = ai_source_for_conn(&mut conn).map_err(|error| WikiError::Config {
         detail: format!("failed to resolve runtime config for {command}: {error}"),
     })?;
-    let falkor = resolve_falkordb_config(&mut source);
+    let falkor = crate::support::env::falkordb_config()?;
     let qdrant =
         resolve_qdrant_config(&mut source).filter(crate::support::config::qdrant_config_has_url);
     let embedding = resolve_embedding_config(&mut source);

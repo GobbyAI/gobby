@@ -1,7 +1,6 @@
 use std::collections::{BTreeMap, BTreeSet, HashSet};
 use std::path::{Path, PathBuf};
 
-use gobby_core::ai::effective_config::ai_source_for_conn;
 use gobby_core::config::FalkorConfig;
 use gobby_core::degradation::DegradationKind;
 use gobby_core::graph_analytics::{
@@ -609,11 +608,8 @@ fn is_graph_blocking_degraded_source(source: &str) -> bool {
     )
 }
 
-fn optional_falkor_config(conn: &mut postgres::Client) -> Result<Option<FalkorConfig>, WikiError> {
-    let mut source = ai_source_for_conn(conn).map_err(|error| WikiError::Config {
-        detail: format!("failed to resolve optional review-report config: {error}"),
-    })?;
-    Ok(gobby_core::config::resolve_falkordb_config(&mut source))
+fn optional_falkor_config(_conn: &mut postgres::Client) -> Result<Option<FalkorConfig>, WikiError> {
+    crate::support::env::falkordb_config()
 }
 
 #[cfg(test)]

@@ -1,4 +1,3 @@
-use gobby_core::ai::effective_config::ai_source_for_conn;
 use gobby_core::config::FalkorConfig;
 
 use crate::graph::context::{GraphContextOptions, build_context_pack};
@@ -80,10 +79,6 @@ pub(crate) fn execute(selection: ScopeSelection) -> Result<CommandOutcome, WikiE
     ))
 }
 
-fn optional_falkor_config(conn: &mut postgres::Client) -> Result<Option<FalkorConfig>, WikiError> {
-    let mut source = ai_source_for_conn(conn).map_err(|error| WikiError::Config {
-        detail: format!("failed to resolve optional graph-context config: {error}"),
-    })?;
-
-    Ok(gobby_core::config::resolve_falkordb_config(&mut source))
+fn optional_falkor_config(_conn: &mut postgres::Client) -> Result<Option<FalkorConfig>, WikiError> {
+    crate::support::env::falkordb_config()
 }

@@ -4,7 +4,10 @@
 const DEFAULT_MAX_INBOX_ITEM_BYTES: u64 = 500_000_000;
 
 use crate::error::WikiError;
-use gobby_core::grant::{AcquiredGrant, GrantError, PostgresCapability, acquire};
+use gobby_core::config::FalkorConfig;
+use gobby_core::grant::{
+    AcquiredGrant, FalkorCapability, GrantBundle, GrantError, PostgresCapability, acquire,
+};
 use std::cell::RefCell;
 use std::path::PathBuf;
 
@@ -63,6 +66,31 @@ fn postgres_dsn_from_grant(grant: &AcquiredGrant) -> Result<String, GrantError> 
     }
 }
 
+/// Resolve FalkorDB from the acquired v2 grant capability, not hub settings.
+///
+/// `ai_source_for_conn` rejects secret-reference keys, so
+/// `databases.falkordb.password` never appears on that source even when the
+/// grant's Direct capability carries AUTH material.
+pub(crate) fn falkordb_config() -> Result<Option<FalkorConfig>, WikiError> {
+    let grant = acquire_runtime_grant().map_err(WikiError::from)?;
+    Ok(falkor_from_grant(&grant.bundle))
+}
+
+pub(crate) fn falkor_from_grant(grant: &GrantBundle) -> Option<FalkorConfig> {
+    match &grant.capabilities.falkordb {
+        FalkorCapability::Direct {
+            host,
+            port,
+            password,
+        } => Some(FalkorConfig {
+            host: host.clone(),
+            port: u16::try_from(*port).unwrap_or(6379),
+            password: (!password.is_empty()).then(|| password.clone()),
+        }),
+        FalkorCapability::Brokered { .. } | FalkorCapability::Unavailable {} => None,
+    }
+}
+
 pub(crate) fn max_inbox_item_bytes_from_env() -> u64 {
     match std::env::var("GWIKI_MAX_INBOX_ITEM_BYTES") {
         Ok(raw) => parse_positive_u64(&raw).unwrap_or_else(|| {
@@ -110,5 +138,47 @@ mod tests {
             );
         }
         assert!(source.contains("acquire("));
+    }
+
+    #[test]
+    fn falkor_from_grant_keeps_direct_capability_password() {
+        let grant = gobby_core::grant::managed_direct_grant(
+            "proj",
+            "machine",
+            &gobby_core::grant::DirectConnections::postgres("postgres://x").with_falkor(
+                "127.0.0.1",
+                16379,
+                Some("grant-pass"),
+            ),
+        );
+        let config = falkor_from_grant(&grant).expect("direct capability");
+        assert_eq!(config.host, "127.0.0.1");
+        assert_eq!(config.port, 16379);
+        assert_eq!(config.password.as_deref(), Some("grant-pass"));
+    }
+
+    #[test]
+    fn falkor_from_grant_empty_direct_password_is_absent() {
+        let grant = gobby_core::grant::managed_direct_grant(
+            "proj",
+            "machine",
+            &gobby_core::grant::DirectConnections::postgres("postgres://x").with_falkor(
+                "127.0.0.1",
+                16379,
+                None,
+            ),
+        );
+        let config = falkor_from_grant(&grant).expect("direct capability");
+        assert_eq!(config.password, None);
+    }
+
+    #[test]
+    fn falkor_from_grant_unavailable_is_none() {
+        let grant = gobby_core::grant::managed_direct_grant(
+            "proj",
+            "machine",
+            &gobby_core::grant::DirectConnections::postgres("postgres://x"),
+        );
+        assert!(falkor_from_grant(&grant).is_none());
     }
 }

@@ -1,7 +1,5 @@
 use gobby_core::ai::effective_config::ai_source_for_conn;
-use gobby_core::config::{
-    FalkorConfig, QdrantConfig, resolve_falkordb_config, resolve_qdrant_config,
-};
+use gobby_core::config::{FalkorConfig, QdrantConfig, resolve_qdrant_config};
 use postgres::Client;
 use serde::Serialize;
 
@@ -189,12 +187,7 @@ pub(crate) fn optional_backend_configs(
         })?;
         resolve_qdrant_config(&mut source)
     };
-    let falkor = {
-        let mut source = ai_source_for_conn(&mut *conn).map_err(|error| WikiError::Config {
-            detail: format!("failed to resolve optional FalkorDB config for {command}: {error}"),
-        })?;
-        resolve_falkordb_config(&mut source)
-    };
+    let falkor = crate::support::env::falkordb_config()?;
 
     Ok(BackendConfigs { qdrant, falkor })
 }

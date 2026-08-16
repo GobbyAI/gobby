@@ -96,8 +96,12 @@ fn degraded_optional_sources(conn: &mut postgres::Client) -> Result<Vec<String>,
     let mut source = ai_source_for_conn(conn).map_err(|error| WikiError::Config {
         detail: format!("failed to resolve optional graph export config: {error}"),
     })?;
-
-    Ok(degraded_optional_sources_from_config(&mut source))
+    let mut degraded = degraded_optional_sources_from_config(&mut source);
+    degraded.retain(|marker| marker != "falkordb_unavailable");
+    if crate::support::env::falkordb_config()?.is_none() {
+        degraded.insert(0, "falkordb_unavailable".to_string());
+    }
+    Ok(degraded)
 }
 
 fn degraded_optional_sources_from_config(source: &mut impl ConfigSource) -> Vec<String> {

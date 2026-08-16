@@ -4,9 +4,7 @@ use gobby_core::ai::effective_config::ai_source_for_conn;
 #[cfg(feature = "ai")]
 use gobby_core::ai::effective_route;
 use gobby_core::ai_context::AiContext;
-use gobby_core::config::{
-    AiCapability, AiRouting, ConfigSource, resolve_falkordb_config, resolve_qdrant_config,
-};
+use gobby_core::config::{AiCapability, AiRouting, ConfigSource, resolve_qdrant_config};
 use gobby_core::degradation::{DegradationKind, ServiceState};
 use gobby_core::progress::ProgressBar;
 use postgres::Client;
@@ -366,10 +364,7 @@ pub(crate) fn sync_falkor_graph(
     command: &'static str,
     progress: &mut ProgressOptions<'_>,
 ) -> Result<Option<DegradationKind>, WikiError> {
-    let mut source = ai_source_for_conn(conn).map_err(|error| WikiError::Config {
-        detail: format!("failed to resolve FalkorDB config for {command}: {error}"),
-    })?;
-    let Some(falkor) = resolve_falkordb_config(&mut source) else {
+    let Some(falkor) = crate::support::env::falkordb_config()? else {
         log::warn!("{command}: FalkorDB config not found; skipping gwiki graph sync");
         return Ok(Some(not_configured_degradation(FALKORDB_SERVICE)));
     };
