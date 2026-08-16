@@ -12,7 +12,7 @@ from gobby.storage.hub.protocol import HubDatabase
 from gobby.utils.local_token import AgentApiTokenClaims
 from tests.servers.conftest import create_http_server
 
-pytestmark = pytest.mark.unit
+pytestmark = [pytest.mark.unit, pytest.mark.usefixtures("authenticated_http_requests")]
 
 
 @pytest.fixture
@@ -167,6 +167,7 @@ def _client_with_agent_claims(
     claims = AgentApiTokenClaims(
         session_id=session_id,
         project_id=_PROJECT,
+        machine_id="machine-test",
         iat=1,
         exp=4_102_444_800,
     )

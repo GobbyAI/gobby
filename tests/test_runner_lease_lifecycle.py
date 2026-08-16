@@ -96,6 +96,7 @@ async def test_active_constructs_runner_only_after_verify_and_acquire(
     class FakeRunner:
         def __init__(self, *_args: object, **_kwargs: object) -> None:
             events.append("construct")
+            self.http_server = type("HTTP", (), {"effect_fence": None})()
 
         @classmethod
         async def create(cls, *_args: object, **_kwargs: object) -> FakeRunner:

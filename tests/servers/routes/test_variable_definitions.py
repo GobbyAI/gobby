@@ -17,7 +17,7 @@ from gobby.storage.projects import LocalProjectManager
 from gobby.workflows.template_hashes import TemplateHashCache
 from tests.servers.conftest import create_http_server
 
-pytestmark = pytest.mark.unit
+pytestmark = [pytest.mark.unit, pytest.mark.usefixtures("authenticated_http_requests")]
 
 UNKNOWN_ID = "99999999-9999-4999-8999-999999999999"
 

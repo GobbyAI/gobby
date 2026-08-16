@@ -16,6 +16,7 @@ from gobby.config.runtime import ConfigRuntime, RuntimeActiveBundle
 from gobby.config.runtime_models import ConfigSnapshot
 from gobby.hooks.factory import HookManagerFactory
 from gobby.servers.auth_service import AuthService
+from gobby.servers.grant_auth import AuthDecision
 from gobby.servers.http import HTTPServer
 from gobby.storage.auth import AuthStore, hash_token
 from gobby.storage.hub.protocol import HubDatabase
@@ -53,6 +54,9 @@ class StubConfigRuntime(ConfigRuntime):
 def authenticate_test_server(server: HTTPServer) -> HTTPServer:
     """Mark requests authenticated for tests outside the authentication contract."""
     cast(Any, server.auth_service).is_request_authenticated = MagicMock(return_value=True)
+    cast(Any, server.auth_service).authenticate = MagicMock(
+        return_value=AuthDecision(allowed=True)
+    )
     return server
 
 
@@ -63,6 +67,11 @@ def authenticated_http_requests(monkeypatch: pytest.MonkeyPatch) -> None:
         AuthService,
         "is_request_authenticated",
         lambda _service, _request: True,
+    )
+    monkeypatch.setattr(
+        AuthService,
+        "authenticate",
+        lambda _service, _request: AuthDecision(allowed=True),
     )
 
 

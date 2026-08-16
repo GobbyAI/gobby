@@ -28,7 +28,7 @@ from gobby.storage.definitions.rules import RuleDefinitionManager
 from gobby.storage.hub.protocol import HubDatabase
 from tests.servers.conftest import StubConfigRuntime, create_http_server
 
-pytestmark = pytest.mark.unit
+pytestmark = [pytest.mark.unit, pytest.mark.usefixtures("authenticated_http_requests")]
 
 
 @pytest.fixture
