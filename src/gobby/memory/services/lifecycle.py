@@ -8,8 +8,6 @@ import time
 from collections.abc import Awaitable, Callable
 from typing import TYPE_CHECKING, Any, cast
 
-from psycopg.rows import dict_row
-
 from gobby.memory.dream.candidates import memory_to_candidate
 from gobby.memory.dream.related import (
     RelatedEvidenceChannelError,
@@ -20,10 +18,18 @@ from gobby.memory.dream.related import (
 )
 from gobby.memory.protocol import MemoryBackendProtocol, MemoryRecord
 from gobby.memory.services.crossref import CrossrefService
+from gobby.memory.services.secondary_reconciliation import (
+    purge_secondary_indices as purge_secondary_indices_impl,
+)
+from gobby.memory.services.secondary_reconciliation import (
+    rebuild_crossrefs_for_memory as rebuild_crossrefs_for_memory_impl,
+)
+from gobby.memory.services.secondary_reconciliation import (
+    reconcile_active_snapshot as reconcile_active_snapshot_impl,
+)
 from gobby.memory.vectorstore import is_recoverable_vector_store_error
 from gobby.memory.write_result import MemoryWriteOutcome
 from gobby.projects.fenced_vector_store import global_write_context, project_write_context
-from gobby.storage.hub.async_ops import run_bounded_db
 from gobby.storage.memories import (
     LocalMemoryManager,
     Memory,
@@ -31,7 +37,6 @@ from gobby.storage.memories import (
     MemoryType,
     validate_memory_type,
 )
-from gobby.storage.memories_crud import _memory_lock_key
 
 if TYPE_CHECKING:
     from gobby.config.persistence import MemoryConfig
@@ -418,123 +423,14 @@ class MemoryLifecycleService:
         *,
         require_hidden: bool = False,
     ) -> None:
-        """Drop a removed memory's VectorStore vector and FalkorDB graph artifacts.
-
-        Used both when a memory is deleted and when the dream GC purge hard-removes an
-        aged soft-hidden row, reconciling the secondary stores that retained the row
-        until purge. Best-effort: secondary-store faults are logged, not raised, so a
-        single unreachable store cannot block reconciliation of the rest.
-        """
-
-        async def delete_artifacts(
-            resolved_project_id: str | None,
-            resolved_is_global: bool | None,
-        ) -> None:
-            if self._vector_store:
-                try:
-                    await self._vector_store.delete(memory_id)
-                except Exception as exc:
-                    if is_recoverable_vector_store_error(exc):
-                        self._log_vector_store_failure(
-                            f"VectorStore purge unavailable for {memory_id}", exc
-                        )
-                    else:
-                        logger.warning("VectorStore purge failed for %s: %s", memory_id, exc)
-            kg_service = self._kg_service_provider()
-            if kg_service:
-                try:
-                    await kg_service.remove_memory_from_graph(
-                        memory_id,
-                        project_id=resolved_project_id,
-                        is_global=resolved_is_global,
-                    )
-                except Exception as exc:
-                    logger.warning("Graph purge failed for %s: %s", memory_id, exc)
-
-        async def stamp_recreated_row() -> None:
-            async def stamp(connection: Any, _remaining: float) -> bool:
-                async with connection.cursor(row_factory=dict_row) as cursor:
-                    await cursor.execute(
-                        """
-                        SELECT deleted_at
-                        FROM memories
-                        WHERE id = %s
-                        FOR UPDATE
-                        """,
-                        (memory_id,),
-                    )
-                    row = await cursor.fetchone()
-                    if row is None or row["deleted_at"] is not None:
-                        return False
-                    await cursor.execute(
-                        """
-                        UPDATE memories
-                        SET vector_needs_reindex = TRUE,
-                            graph_processed = FALSE,
-                            graph_attempts = 0,
-                            graph_status = 'pending'
-                        WHERE id = %s
-                        """,
-                        (memory_id,),
-                    )
-                    return True
-
-            try:
-                recreated = await run_bounded_db(
-                    stamp,
-                    conninfo=self.storage.db.conninfo,
-                    deadline_seconds=SUPERSESSION_CLEANUP_BUDGET_SECONDS,
-                    lock_timeout=True,
-                )
-            except Exception as exc:
-                logger.warning("Recreated-row repair stamp failed for %s: %s", memory_id, exc)
-                return
-            if recreated:
-                self.storage.notify_changed()
-
-        if require_hidden:
-
-            async def delete_hidden(connection: Any, _remaining: float) -> bool:
-                async with connection.cursor(row_factory=dict_row) as cursor:
-                    await cursor.execute(
-                        "SELECT pg_advisory_xact_lock(%s)",
-                        (_memory_lock_key(memory_id),),
-                    )
-                    await cursor.execute(
-                        """
-                        SELECT project_id, is_global, deleted_at
-                        FROM memories
-                        WHERE id = %s
-                        FOR UPDATE
-                        """,
-                        (memory_id,),
-                    )
-                    row = await cursor.fetchone()
-                if row is None or row["deleted_at"] is None:
-                    return False
-                await delete_artifacts(str(row["project_id"]), bool(row["is_global"]))
-                return True
-
-            try:
-                await run_bounded_db(
-                    delete_hidden,
-                    conninfo=self.storage.db.conninfo,
-                    deadline_seconds=SUPERSESSION_CLEANUP_BUDGET_SECONDS,
-                    lock_timeout=True,
-                )
-            except Exception as e:
-                logger.warning(
-                    "Visibility-locked secondary purge failed for %s: %s",
-                    memory_id,
-                    e,
-                )
-            return
-
-        try:
-            await delete_artifacts(project_id, is_global)
-            await stamp_recreated_row()
-        except Exception as e:
-            logger.warning("Secondary-store purge failed for %s: %s", memory_id, e)
+        """Drop a removed memory's VectorStore vector and FalkorDB graph artifacts."""
+        await purge_secondary_indices_impl(
+            self,
+            memory_id,
+            project_id,
+            is_global,
+            require_hidden=require_hidden,
+        )
 
     async def _reconcile_active_snapshot(
         self,
@@ -546,150 +442,14 @@ class MemoryLifecycleService:
         notify_changed: bool = True,
     ) -> bool:
         """Rebuild secondaries only while the scheduled active row remains locked."""
-
-        async def reconcile(connection: Any, _remaining: float) -> bool:
-            async with connection.cursor(row_factory=dict_row) as cursor:
-                await cursor.execute(
-                    "SELECT pg_advisory_xact_lock(%s)",
-                    (_memory_lock_key(memory.id),),
-                )
-                await cursor.execute(
-                    """
-                    SELECT *
-                    FROM memories
-                    WHERE id = %s
-                    FOR SHARE
-                    """,
-                    (memory.id,),
-                )
-                row = await cursor.fetchone()
-                if (
-                    row is None
-                    or row["deleted_at"] is not None
-                    or row["content"] != memory.content
-                    or str(row["project_id"]) != memory.project_id
-                    or bool(row["is_global"]) != memory.is_global
-                    or row["memory_type"] != memory.memory_type.value
-                ):
-                    return False
-
-                current = Memory.from_row(row)
-                payload = {
-                    "project_id": current.project_id,
-                    "is_global": current.is_global,
-                    "memory_type": current.memory_type.value,
-                }
-                if payload_only:
-                    indexed = self._vector_store is not None
-                    if self._vector_store is not None:
-                        try:
-                            await self._vector_store.set_payload(current.id, payload)
-                        except Exception as exc:
-                            indexed = False
-                            self._log_vector_store_failure(
-                                f"VectorStore payload update failed for {current.id}",
-                                exc,
-                            )
-                else:
-                    indexed = await self._embed_and_upsert(
-                        current.id,
-                        current.content,
-                        payload=payload,
-                    )
-
-                kg_service = self._kg_service_provider()
-                if (
-                    not payload_only
-                    and kg_service is not None
-                    and (
-                        graph_cleanup_project_id is not None or graph_cleanup_is_global is not None
-                    )
-                ):
-                    await kg_service.remove_memory_from_graph(
-                        current.id,
-                        project_id=graph_cleanup_project_id,
-                        is_global=graph_cleanup_is_global,
-                    )
-                if not payload_only:
-                    await cursor.execute(
-                        """
-                        UPDATE memories
-                        SET graph_processed = FALSE,
-                            graph_attempts = 0,
-                            graph_status = 'pending'
-                        WHERE id = %s
-                        """,
-                        (current.id,),
-                    )
-
-                crossrefs_converged = True
-                if payload_only:
-                    pass
-                elif getattr(self._config, "auto_crossref", False):
-                    if self._vector_store is None or self._embed_fn is None:
-                        crossrefs_converged = False
-                        await cursor.execute(
-                            """
-                            DELETE FROM memory_crossrefs
-                            WHERE source_id = %s OR target_id = %s
-                            """,
-                            (current.id, current.id),
-                        )
-                    else:
-                        await self._crossref_service.rebuild_for_memory(
-                            current,
-                            connection=connection,
-                        )
-                else:
-                    await cursor.execute(
-                        """
-                        DELETE FROM memory_crossrefs
-                        WHERE source_id = %s OR target_id = %s
-                        """,
-                        (current.id, current.id),
-                    )
-
-                if not indexed or not crossrefs_converged:
-                    return False
-                await cursor.execute(
-                    """
-                    UPDATE memories
-                    SET vector_needs_reindex = FALSE
-                    WHERE id = %s
-                      AND content = %s
-                      AND project_id = %s
-                      AND is_global = %s
-                      AND memory_type = %s
-                      AND deleted_at IS NULL
-                    """,
-                    (
-                        current.id,
-                        current.content,
-                        current.project_id,
-                        current.is_global,
-                        current.memory_type.value,
-                    ),
-                )
-                return int(cursor.rowcount) == 1
-
-        try:
-            converged = cast(
-                bool,
-                await run_bounded_db(
-                    reconcile,
-                    conninfo=self.storage.db.conninfo,
-                    deadline_seconds=MUTATOR_RECONCILIATION_BUDGET_SECONDS,
-                    lock_timeout=True,
-                ),
-            )
-        except Exception as exc:
-            logger.warning("Fenced secondary reconciliation failed for %s: %s", memory.id, exc)
-            return False
-        if converged:
-            memory.vector_needs_reindex = False
-            if notify_changed:
-                self.storage.notify_changed()
-        return converged
+        return await reconcile_active_snapshot_impl(
+            self,
+            memory,
+            graph_cleanup_project_id=graph_cleanup_project_id,
+            graph_cleanup_is_global=graph_cleanup_is_global,
+            payload_only=payload_only,
+            notify_changed=notify_changed,
+        )
 
     async def sync_memory_scope_indices(
         self,
@@ -769,22 +529,11 @@ class MemoryLifecycleService:
         max_links: int | None = None,
     ) -> int:
         """Rebuild one memory's links on the shared active-snapshot fence."""
-
-        async def rebuild(connection: Any, _remaining: float) -> int:
-            return await self._crossref_service.rebuild_for_memory(
-                memory,
-                threshold,
-                max_links,
-                connection=connection,
-            )
-
-        return int(
-            await run_bounded_db(
-                rebuild,
-                conninfo=self.storage.db.conninfo,
-                deadline_seconds=MUTATOR_RECONCILIATION_BUDGET_SECONDS,
-                lock_timeout=True,
-            )
+        return await rebuild_crossrefs_for_memory_impl(
+            self,
+            memory,
+            threshold,
+            max_links,
         )
 
     async def move_memory(self, memory_id: str, new_project_id: str) -> Memory:
