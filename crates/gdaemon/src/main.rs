@@ -356,8 +356,11 @@ fn enforce_expected_identity() -> Result<()> {
         .with_context(|| format!("{EXPECTED_IDENTITY_ENV} is required for schema apply"))?;
     let expected: SchemaIdentityContract = serde_json::from_str(&payload)
         .context("expected schema identity is not valid six-field JSON")?;
-    if expected != SchemaIdentityContract::embedded() {
-        anyhow::bail!("expected schema identity does not match embedded identity");
+    let embedded = SchemaIdentityContract::embedded();
+    if expected != embedded {
+        anyhow::bail!(
+            "expected schema identity does not match embedded identity (expected={expected:?}, embedded={embedded:?})"
+        );
     }
     Ok(())
 }

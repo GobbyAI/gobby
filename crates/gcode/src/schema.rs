@@ -1,4 +1,4 @@
-use anyhow::{bail, Context as _};
+use anyhow::{Context as _, bail};
 use gobby_core::search::BM25_SCORE_REGPROCEDURE;
 use postgres::Client;
 
@@ -271,16 +271,20 @@ mod tests {
             .iter()
             .find(|contract| contract.name == "code_indexed_files")
             .expect("code_indexed_files contract");
-        assert!(indexed_files
-            .required_columns
-            .contains(&"vector_sync_attempted_at"));
+        assert!(
+            indexed_files
+                .required_columns
+                .contains(&"vector_sync_attempted_at")
+        );
         let code_symbols = TABLE_CONTRACTS
             .iter()
             .find(|contract| contract.name == "code_symbols")
             .expect("code_symbols contract");
-        assert!(code_symbols
-            .required_columns
-            .contains(&"summary_attempted_at"));
+        assert!(
+            code_symbols
+                .required_columns
+                .contains(&"summary_attempted_at")
+        );
         assert!(REQUIRED_BM25_INDEXES.contains(&"code_symbols_search_bm25"));
         assert!(REQUIRED_BM25_INDEXES.contains(&"code_content_search_bm25"));
         assert_eq!(BM25_SCORE_REGPROCEDURE, "pdb.score(anyelement)");

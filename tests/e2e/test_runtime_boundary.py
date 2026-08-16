@@ -1475,13 +1475,19 @@ def test_takeover_fencing(
                 (E2E_MACHINE_ID, E2E_PROJECT_ID),
             )
             assert gone is None
-            with httpx.Client(base_url=boundary.daemon.http_url, timeout=5.0) as displaced:
-                refused = displaced.post(
-                    "/api/code-index/invalidate",
-                    headers=boundary.grant_headers(),
-                    json={"project_id": E2E_PROJECT_ID},
-                )
-            assert refused.status_code == 409, refused.text
+            try:
+                with httpx.Client(base_url=boundary.daemon.http_url, timeout=5.0) as displaced:
+                    refused = displaced.post(
+                        "/api/code-index/invalidate",
+                        headers=boundary.grant_headers(),
+                        json={"project_id": E2E_PROJECT_ID},
+                    )
+            except httpx.ConnectError:
+                # Lease-loss drain also shuts the displaced listener down.
+                # Either 409 or a closed socket proves it cannot mutate.
+                refused = None
+            else:
+                assert refused.status_code == 409, refused.text
         finally:
             release_path.write_text("1")
             flag.unlink(missing_ok=True)
