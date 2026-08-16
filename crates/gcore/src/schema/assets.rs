@@ -53,6 +53,14 @@ pub(crate) const MIGRATIONS: &[EmbeddedMigration] = &[
         checksum: "029f44aeeaf260d617e981ec77a558f21e2f8cb1af2e49e1d14adbc3458cc2e8",
         sql: include_str!("../../assets/schema/migrations/381_drop_legacy_workflow_tables.sql"),
     },
+    EmbeddedMigration {
+        version: 382,
+        filename: "382_grant_gwiki_tables_to_capability.sql",
+        checksum: "658527b69d99dfc0c2de99e0d3c9c47d6b5f1172e784fd7980f5c9f76d7cec4e",
+        sql: include_str!(
+            "../../assets/schema/migrations/382_grant_gwiki_tables_to_capability.sql"
+        ),
+    },
 ];
 const _: &str = include_str!("../../assets/schema/migrations/.gitkeep");
 
