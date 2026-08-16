@@ -1482,12 +1482,11 @@ def test_takeover_fencing(
                         headers=boundary.grant_headers(),
                         json={"project_id": E2E_PROJECT_ID},
                     )
+                assert refused.status_code == 409, refused.text
             except httpx.ConnectError:
                 # Lease-loss drain also shuts the displaced listener down.
                 # Either 409 or a closed socket proves it cannot mutate.
-                refused = None
-            else:
-                assert refused.status_code == 409, refused.text
+                pass
         finally:
             release_path.write_text("1")
             flag.unlink(missing_ok=True)
