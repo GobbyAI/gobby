@@ -216,7 +216,7 @@ async def _reconcile_stale_selector(context: CodeIndexContext, project_id: str, 
             )
             return "failed"
     await context.run_db(context.storage.delete_project_index, project_id)
-    logger.warning("Reconciled stale code-index selector %s (%s)", project_id, reason)
+    logger.info("Reconciled stale code-index selector %s (%s)", project_id, reason)
     return "reconciled"
 
 
