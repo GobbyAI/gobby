@@ -663,6 +663,99 @@ async def test_send_attachment_uses_send_photo_for_images(
 
 
 @pytest.mark.asyncio
+async def test_send_attachment_sends_remaining_caption_chunks(
+    adapter: TelegramAdapter,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    image_path = tmp_path / "photo.jpg"
+    image_path.write_bytes(b"image bytes")
+    response = httpx.Response(
+        200,
+        request=httpx.Request("POST", "https://api.telegram.org/bottest-token/sendPhoto"),
+        json={"ok": True, "result": {"message_id": 42}},
+    )
+    mock_client = MagicMock()
+    mock_client.post = AsyncMock(return_value=response)
+    adapter._client = mock_client
+    adapter._api_base = "https://api.telegram.org/bottest-token"
+    post_json = AsyncMock(return_value={"ok": True, "result": {"message_id": 43}})
+    monkeypatch.setattr(adapter, "_post_json", post_json)
+    long_caption = "a" * 1500
+    message = CommsMessage(
+        id="msg1",
+        channel_id="channel1",
+        direction="outbound",
+        content=long_caption,
+        metadata_json={"platform_destination": "chat999"},
+        created_at=datetime.now(UTC),
+    )
+    attachment = CommsAttachment(
+        id="attachment1",
+        message_id=message.id,
+        filename=image_path.name,
+        content_type="image/jpeg",
+        size_bytes=image_path.stat().st_size,
+    )
+
+    result = await adapter.send_attachment(message, attachment, image_path)
+
+    assert result == "42"
+    posted = mock_client.post.await_args
+    assert posted is not None
+    caption = posted.kwargs["data"]["caption"]
+    assert caption != long_caption
+    post_json.assert_awaited_once()
+    follow_call = post_json.await_args
+    assert follow_call is not None
+    follow = follow_call.args[1]
+    assert follow["chat_id"] == "chat999"
+    assert follow["parse_mode"] == "HTML"
+    assert follow["text"]
+    assert follow["text"] != caption
+
+
+@pytest.mark.asyncio
+async def test_send_attachment_reports_partial_caption_when_follow_up_fails(
+    adapter: TelegramAdapter,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    image_path = tmp_path / "photo.jpg"
+    image_path.write_bytes(b"image bytes")
+    response = httpx.Response(
+        200,
+        request=httpx.Request("POST", "https://api.telegram.org/bottest-token/sendPhoto"),
+        json={"ok": True, "result": {"message_id": 42}},
+    )
+    mock_client = MagicMock()
+    mock_client.post = AsyncMock(return_value=response)
+    adapter._client = mock_client
+    adapter._api_base = "https://api.telegram.org/bottest-token"
+    monkeypatch.setattr(
+        adapter, "_post_json", AsyncMock(return_value={"ok": False, "description": "fail"})
+    )
+    message = CommsMessage(
+        id="msg1",
+        channel_id="channel1",
+        direction="outbound",
+        content="a" * 1500,
+        metadata_json={"platform_destination": "chat999"},
+        created_at=datetime.now(UTC),
+    )
+    attachment = CommsAttachment(
+        id="attachment1",
+        message_id=message.id,
+        filename=image_path.name,
+        content_type="image/jpeg",
+        size_bytes=image_path.stat().st_size,
+    )
+
+    with pytest.raises(RuntimeError, match="caption continuation failed after media message 42"):
+        await adapter.send_attachment(message, attachment, image_path)
+
+
+@pytest.mark.asyncio
 async def test_send_attachment_uses_send_voice_for_voice_notes(
     adapter: TelegramAdapter,
     tmp_path: Path,

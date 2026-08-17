@@ -443,8 +443,10 @@ class TelegramAdapter(BaseChannelAdapter):
         method = "sendVoice" if is_voice_note else "sendPhoto" if is_image else "sendDocument"
         files = {file_field: (attachment.filename, file_bytes, attachment.content_type)}
         data: dict[str, Any] = {"chat_id": chat_id}
+        caption_chunks: list[str] = []
         if message.content and not is_voice_note:
-            data["caption"] = markdown_to_telegram_html_chunks(message.content, 1024)[0]
+            caption_chunks = markdown_to_telegram_html_chunks(message.content, 1024)
+            data["caption"] = caption_chunks[0]
             data["parse_mode"] = "HTML"
         if message.platform_thread_id:
             data["message_thread_id"] = _outbound_message_thread_id(message.platform_thread_id)
@@ -457,9 +459,30 @@ class TelegramAdapter(BaseChannelAdapter):
         except httpx.HTTPStatusError as exc:
             raise self._redacted_status_error(exc) from None
         result = response.json()
-        if result.get("ok"):
-            return str(result["result"]["message_id"])
-        return None
+        if not result.get("ok"):
+            return None
+        media_id = str(result["result"]["message_id"])
+        for chunk in caption_chunks[1:]:
+            payload: dict[str, Any] = {
+                "chat_id": chat_id,
+                "text": chunk,
+                "parse_mode": "HTML",
+            }
+            if message.platform_thread_id:
+                payload["message_thread_id"] = _outbound_message_thread_id(
+                    message.platform_thread_id
+                )
+            try:
+                follow = await self._post_json("sendMessage", payload)
+            except Exception as exc:
+                raise RuntimeError(
+                    f"Telegram caption continuation failed after media message {media_id}"
+                ) from exc
+            if not follow.get("ok"):
+                raise RuntimeError(
+                    f"Telegram caption continuation failed after media message {media_id}"
+                )
+        return media_id
 
     async def download_inbound_attachments(
         self,
