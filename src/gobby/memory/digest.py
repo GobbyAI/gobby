@@ -417,6 +417,17 @@ async def _resolve_undigested_pairs(
     return undigested_pairs, input_hash, next_pair_index
 
 
+def _turn_record_source_texts(pairs: list[tuple[str, str]]) -> tuple[str, str]:
+    """Return complete turn texts for the turn-record prompt."""
+    if len(pairs) == 1:
+        return pairs[0]
+    parts = [
+        f"## Exchange {index}\nUser: {prompt}\nAgent: {response}"
+        for index, (prompt, response) in enumerate(pairs, 1)
+    ]
+    return "\n\n".join(parts), ""
+
+
 async def _build_turn_record(
     llm_service: Any,
     digest_config: Any,
@@ -425,30 +436,17 @@ async def _build_turn_record(
 ) -> _TurnRecord:
     """Build and validate turn record JSON via LLM from undigested pairs."""
     max_attempts = 3
-    max_prompt_chars = 4000
-    max_response_chars = 8000
-
-    if len(undigested_pairs) == 1:
-        truncated_prompt = undigested_pairs[0][0][:max_prompt_chars]
-        truncated_response = undigested_pairs[0][1][:max_response_chars]
-    else:
-        per_prompt = max_prompt_chars // len(undigested_pairs)
-        per_response = max_response_chars // len(undigested_pairs)
-        parts = []
-        for i, (p, r) in enumerate(undigested_pairs, 1):
-            parts.append(f"## Exchange {i}\nUser: {p[:per_prompt]}\nAgent: {r[:per_response]}")
-        truncated_prompt = "\n\n".join(parts)
-        truncated_response = ""
+    prompt_text, response_text = _turn_record_source_texts(undigested_pairs)
 
     try:
         turn_prompt = await _run_sync_io(
             _render_prompt_template,
             "memory/turn_record",
-            {"prompt_text": truncated_prompt, "response_text": truncated_response},
+            {"prompt_text": prompt_text, "response_text": response_text},
             db,
         )
     except Exception:
-        turn_prompt = _build_turn_record_prompt(truncated_prompt, truncated_response)
+        turn_prompt = _build_turn_record_prompt(prompt_text, response_text)
 
     last_error: ValueError | None = None
     for attempt in range(1, max_attempts + 1):

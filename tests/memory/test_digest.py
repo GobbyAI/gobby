@@ -25,6 +25,7 @@ from gobby.memory.digest import (
     _read_last_turn_from_transcript,
     _read_undigested_turns,
     _should_update_digest_title,
+    _turn_record_source_texts,
     _validate_turn_record_payload,
     build_turn_and_digest,
 )
@@ -417,6 +418,17 @@ class TestBuildTurnAndDigest:
             ]
         )
         return service
+
+    def test_turn_record_source_texts_keep_complete_pairs(self) -> None:
+        prompt = "p" * 4500
+        response = "r" * 8500
+
+        assert _turn_record_source_texts([(prompt, response)]) == (prompt, response)
+        combined, empty = _turn_record_source_texts([(prompt, response), ("next", "ok")])
+        assert empty == ""
+        assert prompt in combined
+        assert response in combined
+        assert "next" in combined
 
     def test_turn_prompt_instructs_titles_to_ignore_router_commands(self) -> None:
         turn_prompt = _build_turn_record_prompt("$gobby coderabbit fix comments", "Done")

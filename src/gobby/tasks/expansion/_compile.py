@@ -531,12 +531,12 @@ def _build_file_context(self: Any, task: Task, repo_path: Path | None) -> str:
 
     sections: list[str] = []
     for file_path, absolute in unique_files:
-        content = _read_text_if_exists(absolute, max_chars=3500)
+        content = _read_text_if_exists(absolute)
         if content:
             sections.append(f"### {file_path}\n{content}")
     related_sections: list[str] = []
     for file_path, absolute in related_files:
-        content = _read_text_if_exists(absolute, max_chars=1500)
+        content = _read_text_if_exists(absolute)
         if content:
             related_sections.append(f"### {file_path}\n{content}")
     if related_sections:

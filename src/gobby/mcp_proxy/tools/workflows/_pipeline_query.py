@@ -44,7 +44,8 @@ def _step_summary(step: StepExecution) -> dict[str, Any]:
         "status": step.status.value,
     }
     if step.error:
-        result["error"] = step.error[:200]
+        result["error_present"] = True
+        result["error_chars"] = len(step.error)
     return result
 
 

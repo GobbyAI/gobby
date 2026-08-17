@@ -17,9 +17,6 @@ from gobby.tasks.validation_evidence import ValidationEvidenceTooLarge, build_cl
 
 logger = logging.getLogger(__name__)
 
-CHANGES_SUMMARY_MAX_CHARS = 2_000
-CHECKLIST_FACTS_MAX_CHARS = 500
-
 # Closure reasons that require no repository change: the criteria review judges
 # the disposition justification instead of literal criterion satisfaction.
 NO_WORK_CLOSE_REASONS: frozenset[str] = frozenset(
@@ -73,9 +70,8 @@ class TaskValidator:
         criteria_text = "\n".join(
             f"{index}. {criterion}" for index, criterion in enumerate(criteria, start=1)
         )
-        facts_text = _bound_text(
-            json.dumps(checklist_facts, sort_keys=True, separators=(",", ":"), default=str),
-            CHECKLIST_FACTS_MAX_CHARS,
+        facts_text = json.dumps(
+            checklist_facts, sort_keys=True, separators=(",", ":"), default=str
         )
         prompt = self._loader.render(
             self.config.prompt_path or "validation/validate",
@@ -83,10 +79,7 @@ class TaskValidator:
                 "title": title,
                 "closure_reason": closure_reason.strip() or "completed",
                 "criteria_text": criteria_text,
-                "changes_summary": _bound_text(
-                    changes_summary.strip(),
-                    CHANGES_SUMMARY_MAX_CHARS,
-                ),
+                "changes_summary": changes_summary.strip(),
                 "diff_evidence": diff_evidence.text,
                 "checklist_facts": facts_text,
             },
@@ -119,15 +112,7 @@ class TaskValidator:
         return parse_close_verdict(payload, criteria)
 
 
-def _bound_text(value: str, max_chars: int) -> str:
-    if len(value) <= max_chars:
-        return value
-    return value[: max_chars - 3].rstrip() + "..."
-
-
 __all__ = [
-    "CHANGES_SUMMARY_MAX_CHARS",
-    "CHECKLIST_FACTS_MAX_CHARS",
     "TaskValidator",
     "ValidationPromptTooLarge",
 ]

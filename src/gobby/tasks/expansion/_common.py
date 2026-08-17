@@ -350,17 +350,14 @@ def _strip_frontmatter(markdown: str) -> str:
     return body
 
 
-def _read_text_if_exists(path: Path, *, max_chars: int | None = None) -> str | None:
+def _read_text_if_exists(path: Path) -> str | None:
     """Read UTF-8 text from a file when it exists."""
     if not path.exists() or not path.is_file():
         return None
     try:
-        text = path.read_text(encoding="utf-8")
+        return path.read_text(encoding="utf-8")
     except OSError:
         return None
-    if max_chars is not None:
-        return text[:max_chars]
-    return text
 
 
 def _find_test_files(files: Iterable[str]) -> list[str]:

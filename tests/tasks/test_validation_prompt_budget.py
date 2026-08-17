@@ -84,6 +84,27 @@ async def test_prompt_between_legacy_and_default_limits_reaches_llm_intact(
 
 
 @pytest.mark.asyncio
+async def test_long_changes_summary_reaches_llm_intact(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    validator, llm_service = _validator(TaskValidationConfig())
+    monkeypatch.setattr(validator._loader, "render", _render_context)
+    summary = "changed " + ("token " * 800).strip()
+
+    await validator.validate_task(
+        task_id="task-1",
+        title="Keep summary",
+        changes_summary=summary,
+        validation_criteria="- Prove the close review sees the full summary.",
+        diff_text="diff --git a/a.py b/a.py\n--- a/a.py\n+++ b/a.py\n@@ -0,0 +1 @@\n+ok\n",
+        checklist_facts={"validation_commands": "focused tests passed"},
+    )
+
+    prompt = llm_service.call_json_feature.await_args.args[1]
+    assert summary in prompt
+
+
+@pytest.mark.asyncio
 @pytest.mark.parametrize("configured_limit", [None, 8_000])
 async def test_prompt_at_exact_limit_reaches_llm(
     monkeypatch: pytest.MonkeyPatch,
