@@ -18,6 +18,7 @@ from gobby.code_index.gcode_gateway import (
     GcodeProjectNotFoundError,
     _classify_gcode_command_error,
 )
+from gobby.code_index.maintenance_launch import open_launch_async
 
 if TYPE_CHECKING:
     from gobby.code_index.context import CodeIndexContext
@@ -126,7 +127,9 @@ async def _run_maintenance(
             else:
                 purge_project = False
                 try:
-                    with factory.open(project_id, timeout_seconds=index_timeout) as launch:
+                    async with open_launch_async(
+                        factory, project_id, timeout_seconds=index_timeout
+                    ) as launch:
                         result = await gcode_gateway.maintenance_index(
                             root, timeout=index_timeout, env=launch.env
                         )
@@ -199,7 +202,7 @@ async def _reconcile_stale_selector(context: CodeIndexContext, project_id: str, 
     exists, _deleted = await _registry_state(context, project_id)
     if exists and factory is not None and gateway is not None:
         try:
-            with factory.open(project_id, timeout_seconds=60) as launch:
+            async with open_launch_async(factory, project_id, timeout_seconds=60) as launch:
                 await gateway.graph_clear(project_id, env=launch.env)
                 await gateway.vector_clear(project_id=project_id, env=launch.env)
         except Exception:

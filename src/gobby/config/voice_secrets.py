@@ -73,19 +73,15 @@ def restore_masked_structured_references(
         raise ValueError(f"{key} must be a list")
 
     references: dict[tuple[str, str], str] = {}
-    persisted_identities: set[str] = set()
     if isinstance(persisted_value, list):
         for index, item in enumerate(persisted_value):
             if not isinstance(item, dict):
                 continue
             identity = _structured_identity(key, index, item, identity_field)
-            if identity in persisted_identities:
-                continue
-            persisted_identities.add(identity)
             for field in reference_fields:
                 field_value = item.get(field)
                 if isinstance(field_value, str) and is_secret_reference(field_value):
-                    references[(identity, field)] = field_value
+                    references.setdefault((identity, field), field_value)
 
     incoming_identities: set[str] = set()
     for index, item in enumerate(restored):

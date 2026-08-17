@@ -13,6 +13,7 @@ from uuid import uuid4
 from gobby.code_index.eligibility import resolve_indexed_project
 from gobby.code_index.gcode_gateway import GcodeCommandError, GcodeCommandResult
 from gobby.code_index.maintenance import _reconcile_stale_selector
+from gobby.code_index.maintenance_launch import open_launch_async
 from gobby.code_index.maintenance_log import log_gcode_maintenance_event
 from gobby.scheduler.executor import CronHandler
 from gobby.storage.cron import CronJobStorage
@@ -378,7 +379,8 @@ class CodeIndexPruner:
                             timeout=CODE_INDEX_PRUNE_TIMEOUT_SECONDS,
                         )
                     else:
-                        with factory.open(
+                        async with open_launch_async(
+                            factory,
                             project_id,
                             timeout_seconds=CODE_INDEX_PRUNE_TIMEOUT_SECONDS,
                         ) as launch:

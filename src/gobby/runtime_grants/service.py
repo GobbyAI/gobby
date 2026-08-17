@@ -24,6 +24,7 @@ from gobby.runtime_grants.schema import (
     GrantDeployment,
     GrantPrincipal,
     PostgresCapability,
+    PostgresDirect,
     QdrantDirect,
     SchemaIdentity,
     UnavailableCapability,
@@ -128,6 +129,8 @@ def _falkor_capability(
         password = config.password
     if _unresolved(host) or not host:
         return UnavailableCapability()
+    if _unresolved(password) or (password is None and _unresolved(config.password)):
+        return BrokeredCapability(operations=FALKOR_OPERATIONS)
     return FalkorDirect(host=host, port=config.port, password=password or "")
 
 
@@ -148,6 +151,19 @@ def _qdrant_capability(
 
 def _ai_capability(enabled: bool) -> AIDaemonCapability | AIUnavailableCapability:
     return AIDaemonCapability() if enabled else AIUnavailableCapability()
+
+
+def _vision_extract_enabled(snapshot: ConfigSnapshot) -> bool:
+    return any(
+        endpoint.vision_extract for endpoint in snapshot.active.ai.generation.endpoints.values()
+    )
+
+
+def _audio_transcribe_enabled(snapshot: ConfigSnapshot) -> bool:
+    voice = snapshot.active.voice
+    if voice.enabled and voice.stt_enabled:
+        return True
+    return any(binding.transcription_enabled for binding in voice.openai_compatible_audio)
 
 
 def capabilities_from_snapshot(
@@ -174,8 +190,8 @@ def capabilities_from_snapshot(
         embed=embed,
         text_generate=AIDaemonCapability(),
         tool_chat=AIDaemonCapability(),
-        vision_extract=AIUnavailableCapability(),
-        audio_transcribe=AIUnavailableCapability(),
+        vision_extract=_ai_capability(_vision_extract_enabled(snapshot)),
+        audio_transcribe=_ai_capability(_audio_transcribe_enabled(snapshot)),
         broker_operations=tuple(operations),
     )
 
@@ -218,6 +234,9 @@ class GrantService:
         bundle = self.runtime.capture()
         snapshot = bundle.snapshot
         issued_at = self._now(now)
+        expires_at = issued_at + ttl_seconds
+        if isinstance(postgres, PostgresDirect):
+            expires_at = min(expires_at, postgres.valid_until)
         unsigned = GrantBundle(
             version=GRANT_VERSION,
             api_contract=API_CONTRACT,
@@ -230,7 +249,7 @@ class GrantService:
             principal=principal,
             capabilities=capabilities_from_snapshot(snapshot, postgres),
             issued_at=issued_at,
-            expires_at=issued_at + ttl_seconds,
+            expires_at=expires_at,
         )
         return sign_grant(unsigned, self.context.signing_secret)
 

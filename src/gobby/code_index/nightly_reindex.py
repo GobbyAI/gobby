@@ -9,6 +9,7 @@ from pathlib import Path
 from typing import TYPE_CHECKING, Any, Protocol
 from uuid import uuid4
 
+from gobby.code_index.maintenance_launch import open_launch_async
 from gobby.code_index.maintenance_log import log_gcode_maintenance_event
 from gobby.scheduler.executor import CronHandler
 from gobby.storage.cron import CronJobStorage, compute_next_run
@@ -78,7 +79,9 @@ class CodeIndexNightlyFullReindexer:
                     if factory is None:
                         result = await gateway.nightly_full_reindex(root, timeout=timeout)
                     else:
-                        with factory.open(project_id, timeout_seconds=timeout) as launch:
+                        async with open_launch_async(
+                            factory, project_id, timeout_seconds=timeout
+                        ) as launch:
                             result = await gateway.nightly_full_reindex(
                                 root, timeout=timeout, env=launch.env
                             )

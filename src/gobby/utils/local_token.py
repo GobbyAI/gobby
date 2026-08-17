@@ -7,6 +7,7 @@ import json
 import math
 import os
 import time
+from collections.abc import Mapping
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -154,7 +155,7 @@ def _issue_managed_api_token(
     if kind is not None:
         claims["kind"] = kind
     payload = json.dumps(
-        claims,
+        managed_token_signing_payload(claims),
         sort_keys=True,
         separators=(",", ":"),
     ).encode()
@@ -225,6 +226,22 @@ def verify_agent_api_token(
         exp=exp,
         kind=kind,
     )
+
+
+def managed_token_signing_payload(claims: Mapping[str, object]) -> dict[str, object]:
+    """Return the HMAC payload for a managed capability token."""
+    payload: dict[str, object] = {
+        "exp": claims["exp"],
+        "iat": claims["iat"],
+        "machine_id": claims["machine_id"],
+        "project_id": claims["project_id"],
+        "session_id": claims["session_id"],
+    }
+    for key in ("agent_run_id", "managed_execution_id", "kind"):
+        value = claims.get(key)
+        if value is not None:
+            payload[key] = value
+    return payload
 
 
 def _urlsafe_encode(value: bytes) -> str:
