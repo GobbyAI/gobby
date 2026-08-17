@@ -6,7 +6,10 @@ import pytest
 
 from gobby.agents import code_index
 from gobby.agents.code_index import (
+    GcodeCommandError,
     IndexInventoryError,
+    _preview_process_detail,
+    _process_detail,
     repository_source_digest,
     settle_indexed_value,
 )
@@ -30,6 +33,20 @@ def test_repository_digest_does_not_read_regular_file_bodies(
 
     assert digest.source_files == ("service.py",)
     assert len(digest.digest) == 64
+
+
+def test_process_detail_keeps_full_redacted_output() -> None:
+    body = b"postgres://user:hunter2@localhost/db " + (b"x" * 600)
+    detail = _process_detail(b"", body)
+
+    assert "hunter2" not in detail
+    assert "<redacted>" in detail
+    assert "x" * 600 in detail
+    preview = _preview_process_detail(detail)
+    assert preview.startswith("[truncated]\n")
+    assert len(preview) < len(detail)
+    error = GcodeCommandError("gcode_index_failed:1:preview", output=detail)
+    assert error.output == detail
 
 
 def test_settle_reenumerates_unpinned_repository_inventory(

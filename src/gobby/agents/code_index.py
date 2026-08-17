@@ -686,7 +686,19 @@ async def _run_gcode(
 
     if proc.returncode != 0:
         detail = _process_detail(stdout, stderr)
-        raise RuntimeError(f"{failure_code}:{proc.returncode}:{detail}")
+        preview = _preview_process_detail(detail)
+        raise GcodeCommandError(
+            f"{failure_code}:{proc.returncode}:{preview}",
+            output=detail,
+        )
+
+
+class GcodeCommandError(RuntimeError):
+    """gcode subprocess failed; ``output`` is the full redacted detail."""
+
+    def __init__(self, message: str, *, output: str) -> None:
+        super().__init__(message)
+        self.output = output
 
 
 def _process_detail(stdout: bytes, stderr: bytes) -> str:
@@ -696,4 +708,10 @@ def _process_detail(stdout: bytes, stderr: bytes) -> str:
     detail = raw.decode(errors="replace").strip()
     detail = _POSTGRES_URL_RE.sub(r"\1<redacted>@", detail)
     detail = " ".join(detail.split())
-    return detail[:500] or "<empty output>"
+    return detail or "<empty output>"
+
+
+def _preview_process_detail(detail: str, *, max_chars: int = 500) -> str:
+    if len(detail) <= max_chars:
+        return detail
+    return f"[truncated]\n{detail[-max_chars:]}"

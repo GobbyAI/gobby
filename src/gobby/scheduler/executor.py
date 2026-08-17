@@ -26,6 +26,15 @@ CronHandler = Callable[[CronJob], Awaitable[object]]
 DEFAULT_DISPATCHER_HEARTBEAT_TICKS = 3
 OVERLAP_POLICIES = frozenset({"skip_if_active", "allow"})
 FAILURE_RESULT_STATUSES = frozenset({"failed", "failure", "error", "cancelled", "canceled"})
+_SHELL_ERROR_TAIL_CHARS = 2000
+
+
+class CronShellError(RuntimeError):
+    """Shell action failed; ``output`` is the complete captured stdout."""
+
+    def __init__(self, message: str, *, output: str) -> None:
+        super().__init__(message)
+        self.output = output
 
 
 @dataclass(frozen=True)
@@ -172,7 +181,12 @@ class CronExecutor:
             outcome = self._coerce_action_result(raw_output)
         except Exception as e:
             logger.exception("Cron job %s (%s) failed", job.id, job.name)
-            outcome = ActionOutcome(status="failed", error=str(e))
+            captured = getattr(e, "output", None)
+            outcome = ActionOutcome(
+                status="failed",
+                output=captured if isinstance(captured, str) else None,
+                error=str(e),
+            )
 
         completed_at = datetime.now(UTC).isoformat()
         updated = await self._run_db(
@@ -638,9 +652,16 @@ class CronExecutor:
             output = stdout.decode("utf-8", errors="replace") if stdout else ""
 
             if process.returncode != 0:
-                raise RuntimeError(
-                    f"Command exited with code {process.returncode}: {output[:2000]}"
-                )
+                if len(output) <= _SHELL_ERROR_TAIL_CHARS:
+                    preview = output
+                    message = f"Command exited with code {process.returncode}: {preview}"
+                else:
+                    preview = output[-_SHELL_ERROR_TAIL_CHARS:]
+                    message = (
+                        f"Command exited with code {process.returncode}: [truncated]\n"
+                        f"{preview} full output stored on cron run ({len(output)} chars)"
+                    )
+                raise CronShellError(message, output=output)
 
             return output
 
