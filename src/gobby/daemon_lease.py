@@ -17,6 +17,27 @@ from gobby.deployment import deployment_token as derive_deployment_token
 _LEASE_PURPOSE = "single-active-daemon"
 _APPLICATION_PREFIX = "gobby-lease-v1:"
 _RECOVERY_TIMEOUT_SECONDS = 5.0
+_active_lease: ActiveDaemonLease | None = None
+_active_lease_lock = threading.Lock()
+
+
+def current_lease() -> ActiveDaemonLease | None:
+    """Return the process-wide lease acquired by this daemon, if any."""
+    with _active_lease_lock:
+        return _active_lease
+
+
+def _set_current_lease(lease: ActiveDaemonLease) -> None:
+    global _active_lease
+    with _active_lease_lock:
+        _active_lease = lease
+
+
+def _clear_current_lease(lease: ActiveDaemonLease) -> None:
+    global _active_lease
+    with _active_lease_lock:
+        if _active_lease is lease:
+            _active_lease = None
 
 
 class DaemonLeaseError(RuntimeError):
@@ -145,6 +166,7 @@ class ActiveDaemonLease:
                 self._key = key
                 self._fencing_epoch = int(bumped[0])
                 self._grant_signing_secret = str(bumped[1])
+                _set_current_lease(self)
                 return True
             except BaseException:
                 connection.close()
@@ -207,6 +229,7 @@ class ActiveDaemonLease:
             self._key = None
             self._fencing_epoch = None
             self._grant_signing_secret = None
+            _clear_current_lease(self)
             if connection is None:
                 return
             try:
@@ -332,6 +355,7 @@ class ActiveDaemonLease:
         self._key = None
         self._fencing_epoch = None
         self._grant_signing_secret = None
+        _clear_current_lease(self)
         try:
             connection.close()
         except (psycopg.Error, OSError):
@@ -346,4 +370,5 @@ __all__ = [
     "LeaseConnectionLostError",
     "RecoveredLeaseOwner",
     "UnverifiedLeaseOwnerError",
+    "current_lease",
 ]

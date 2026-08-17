@@ -15,6 +15,7 @@ from gobby.daemon_lease import (
     ActiveDaemonLease,
     FreshLeaseOwnerError,
     LeaseConnectionLostError,
+    current_lease,
 )
 from gobby.deployment import deployment_advisory_key
 
@@ -192,6 +193,7 @@ def test_signing_secret_rotates_on_acquisition() -> None:
     )
     try:
         assert lease.try_acquire() is True
+        assert current_lease() is lease
         first_epoch, first_secret = _runtime_row(database_url, token)
         archived_mac = hmac.new(
             first_secret.encode(),
@@ -199,6 +201,7 @@ def test_signing_secret_rotates_on_acquisition() -> None:
             hashlib.sha256,
         ).hexdigest()
         lease.release()
+        assert current_lease() is None
 
         with psycopg.connect(database_url, autocommit=True) as connection:
             connection.execute(

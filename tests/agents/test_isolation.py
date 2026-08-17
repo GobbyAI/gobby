@@ -7,15 +7,20 @@ Tests the isolation abstraction layer for spawn_agent unified API.
 import asyncio
 import json
 import subprocess
-from datetime import UTC, datetime, timedelta
+from datetime import UTC, datetime, timedelta, tzinfo
 from pathlib import Path
 from types import SimpleNamespace
+from typing import Any
 from unittest.mock import AsyncMock, MagicMock, patch
 from uuid import uuid4
 
 import pytest
 
-from gobby.agents.code_index import _reap_stale_gcode_runtime_tokens
+from gobby.agents.code_index import (
+    IndexInventoryError,
+    _active_deployment_grant_context,
+    _reap_stale_gcode_runtime_tokens,
+)
 from gobby.agents.isolation import (
     CloneIsolationHandler,
     IsolationContext,
@@ -30,6 +35,7 @@ from gobby.agents.isolation import (
     provider_mcp_config_error,
     repair_isolation_environment,
 )
+from gobby.runtime_grants.service import DeploymentGrantContext
 from gobby.storage.managed_credentials import ManagedCredential
 from gobby.worktrees.git import WorktreeGitManager
 
@@ -79,6 +85,12 @@ class TestIsolationContext:
 class TestEnsureIsolationCodeIndex:
     """Tests for pre-spawn gcode indexing in isolated workspaces."""
 
+    _PROJECT_ID = "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa"
+    _SESSION_ID = "bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb"
+    _LEASE_TOKEN = "0123456789abcdef"
+    _LEASE_EPOCH = 3
+    _LEASE_SECRET = "lease-signing-secret"
+
     @staticmethod
     def _proc(returncode: int = 0, stderr: bytes = b"") -> AsyncMock:
         proc = AsyncMock()
@@ -108,6 +120,28 @@ class TestEnsureIsolationCodeIndex:
             expires_at=datetime.now(UTC) + timedelta(minutes=30),
             bootstrap_path=bootstrap_path,
         )
+
+    def _stub_grant_context(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        monkeypatch.setattr(
+            "gobby.agents.code_index._active_deployment_grant_context",
+            lambda: DeploymentGrantContext(
+                token=self._LEASE_TOKEN,
+                fencing_epoch=self._LEASE_EPOCH,
+                signing_secret=self._LEASE_SECRET,
+            ),
+        )
+
+    @staticmethod
+    def _write_operator_token(source_home: Path, token: str = "isolated-agent-token") -> None:
+        source_token = source_home / "local_cli_token"
+        source_token.write_text(f"{token}\n")
+        source_token.chmod(0o600)
+
+    def _identity_env(self) -> dict[str, str]:
+        return {
+            "GOBBY_PROJECT_ID": self._PROJECT_ID,
+            "GOBBY_SESSION_ID": self._SESSION_ID,
+        }
 
     @pytest.mark.asyncio
     async def test_runs_gcode_index_in_workspace(self, tmp_path: Path) -> None:
@@ -145,9 +179,8 @@ class TestEnsureIsolationCodeIndex:
         monkeypatch.setenv("GOBBY_HOME", str(source_home))
         workspace.mkdir()
         source_home.mkdir()
-        source_token = source_home / "local_cli_token"
-        source_token.write_text("isolated-agent-token\n")
-        source_token.chmod(0o600)
+        self._write_operator_token(source_home)
+        self._stub_grant_context(monkeypatch)
         subprocess.run(["git", "init"], cwd=workspace, check=True, capture_output=True)
 
         with (
@@ -161,6 +194,7 @@ class TestEnsureIsolationCodeIndex:
                 str(workspace),
                 credential=credential,
                 runtime_root=runtime_root,
+                identity_env=self._identity_env(),
             )
 
         wrapper = workspace / ".gobby" / "bin" / "gcode"
@@ -202,6 +236,8 @@ class TestEnsureIsolationCodeIndex:
         monkeypatch.setenv("GOBBY_HOME", str(source_home))
         workspace.mkdir()
         source_home.mkdir()
+        self._write_operator_token(source_home)
+        self._stub_grant_context(monkeypatch)
         subprocess.run(["git", "init"], cwd=workspace, check=True, capture_output=True)
 
         with (
@@ -215,6 +251,7 @@ class TestEnsureIsolationCodeIndex:
                 str(workspace),
                 credential=credential,
                 runtime_root=runtime_root,
+                identity_env=self._identity_env(),
             )
 
         grant_path = Path(result.env["GOBBY_MANAGED_EXECUTION_BOOTSTRAP"])
@@ -223,6 +260,9 @@ class TestEnsureIsolationCodeIndex:
         payload = json.loads(grant_path.read_text(encoding="utf-8"))
         assert payload["principal"]["kind"] in {"agent_run", "tool_chat"}
         assert payload["principal"]["execution_id"] == str(credential.managed_execution_id)
+        assert payload["principal"]["project_id"] == self._PROJECT_ID
+        assert payload["deployment"]["token"] == self._LEASE_TOKEN
+        assert payload["deployment"]["fencing_epoch"] == self._LEASE_EPOCH
         assert not (Path(result.runtime_home or "") / "bootstrap.yaml").exists()
         assert "database_url" not in result.env
         assert "GOBBY_AGENT_API_TOKEN" not in result.env
@@ -240,6 +280,127 @@ class TestEnsureIsolationCodeIndex:
             grant_path.unlink()
         assert not grant_path.exists()
 
+    def test_active_deployment_context_reads_current_lease(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        lease = SimpleNamespace(
+            deployment_token="tok-live",
+            fencing_epoch=9,
+            grant_signing_secret="sec-live",
+        )
+        monkeypatch.setattr("gobby.daemon_lease.current_lease", lambda: lease)
+        context = _active_deployment_grant_context()
+        assert context.token == "tok-live"
+        assert context.fencing_epoch == 9
+        assert context.signing_secret == "sec-live"
+
+    def test_missing_operator_token_fails_before_grant_write(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        from gobby.agents.code_index import _prepare_gcode_runtime
+
+        workspace = tmp_path / "workspace"
+        source_home = tmp_path / "home"
+        runtime_root = tmp_path / "runtime"
+        workspace.mkdir()
+        source_home.mkdir()
+        monkeypatch.setenv("GOBBY_HOME", str(source_home))
+        self._stub_grant_context(monkeypatch)
+        signed = MagicMock(side_effect=AssertionError("grant must not be signed"))
+        materialized = MagicMock(side_effect=AssertionError("grant must not be written"))
+        monkeypatch.setattr("gobby.agents.code_index._signed_grant_from_credential", signed)
+        monkeypatch.setattr("gobby.agents.code_index.materialize_managed_launch", materialized)
+
+        with pytest.raises(IndexInventoryError, match="operator token unavailable") as exc_info:
+            _prepare_gcode_runtime(
+                workspace=workspace,
+                gcode_bin=Path("/tmp/gcode"),
+                credential=self._credential(tmp_path),
+                runtime_root=runtime_root,
+                project_id=self._PROJECT_ID,
+            )
+
+        assert exc_info.value.code == "operator_token_unavailable"
+        signed.assert_not_called()
+        materialized.assert_not_called()
+        assert not any(runtime_root.rglob("grant.json"))
+
+    def test_missing_project_id_fails_before_grant_write(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        from gobby.agents.code_index import _prepare_gcode_runtime
+
+        workspace = tmp_path / "workspace"
+        source_home = tmp_path / "home"
+        runtime_root = tmp_path / "runtime"
+        workspace.mkdir()
+        source_home.mkdir()
+        monkeypatch.setenv("GOBBY_HOME", str(source_home))
+        self._write_operator_token(source_home)
+        self._stub_grant_context(monkeypatch)
+        signed = MagicMock(side_effect=AssertionError("grant must not be signed"))
+        monkeypatch.setattr("gobby.agents.code_index._signed_grant_from_credential", signed)
+
+        with pytest.raises(
+            IndexInventoryError, match="isolation grant requires project_id"
+        ) as exc_info:
+            _prepare_gcode_runtime(
+                workspace=workspace,
+                gcode_bin=Path("/tmp/gcode"),
+                credential=self._credential(tmp_path),
+                runtime_root=runtime_root,
+            )
+
+        assert exc_info.value.code == "project_required"
+        signed.assert_not_called()
+
+    def test_deadline_uses_remaining_lifetime(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        from gobby.agents.code_index import _prepare_gcode_runtime
+        from gobby.runtime_grants.launch import materialize_managed_launch as real_launch
+
+        frozen = datetime(2026, 6, 1, 12, 0, tzinfo=UTC)
+
+        class FrozenDateTime:
+            @staticmethod
+            def now(tz: tzinfo | None = None) -> datetime:
+                if tz is None:
+                    return frozen.replace(tzinfo=None)
+                return frozen.astimezone(tz)
+
+        workspace = tmp_path / "workspace"
+        source_home = tmp_path / "home"
+        runtime_root = tmp_path / "runtime"
+        workspace.mkdir()
+        source_home.mkdir()
+        monkeypatch.setenv("GOBBY_HOME", str(source_home))
+        self._write_operator_token(source_home)
+        self._stub_grant_context(monkeypatch)
+        monkeypatch.setattr("gobby.agents.code_index.datetime", FrozenDateTime)
+        credential = self._credential(tmp_path)
+        object.__setattr__(credential, "issued_at", datetime(2026, 6, 1, 11, 0, tzinfo=UTC))
+        object.__setattr__(credential, "expires_at", datetime(2026, 6, 1, 12, 10, tzinfo=UTC))
+        deadlines: list[float] = []
+
+        def _capture_launch(*args: Any, **kwargs: Any) -> Any:
+            deadline = kwargs["deadline_seconds"]
+            assert isinstance(deadline, float)
+            deadlines.append(deadline)
+            return real_launch(*args, **kwargs)
+
+        monkeypatch.setattr("gobby.agents.code_index.materialize_managed_launch", _capture_launch)
+
+        _prepare_gcode_runtime(
+            workspace=workspace,
+            gcode_bin=Path("/tmp/gcode"),
+            credential=credential,
+            runtime_root=runtime_root,
+            project_id=self._PROJECT_ID,
+        )
+
+        assert deadlines == [600.0]
+
     @pytest.mark.asyncio
     async def test_runtime_home_excludes_kek_and_links_non_secret_assets(
         self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
@@ -252,6 +413,8 @@ class TestEnsureIsolationCodeIndex:
         workspace.mkdir()
         subprocess.run(["git", "init"], cwd=workspace, check=True, capture_output=True)
         source_home.mkdir()
+        self._write_operator_token(source_home)
+        self._stub_grant_context(monkeypatch)
         (source_home / "machine_id").write_text("machine-id\n")
         kek = source_home / ".secret_kek"
         kek.write_text("kek-key\n")
@@ -270,6 +433,7 @@ class TestEnsureIsolationCodeIndex:
                 str(workspace),
                 credential=self._credential(tmp_path),
                 runtime_root=runtime_root,
+                identity_env=self._identity_env(),
             )
 
         assert result.runtime_home is not None
@@ -376,6 +540,8 @@ class TestEnsureIsolationCodeIndex:
         monkeypatch.setenv("GOBBY_HOME", str(source_home))
         workspace.mkdir()
         source_home.mkdir()
+        self._write_operator_token(source_home)
+        self._stub_grant_context(monkeypatch)
         subprocess.run(["git", "init"], cwd=workspace, check=True, capture_output=True)
 
         with (
@@ -390,6 +556,7 @@ class TestEnsureIsolationCodeIndex:
                 credential=self._credential(tmp_path),
                 runtime_root=runtime_root,
                 api_token="operator-token-value",
+                identity_env=self._identity_env(),
             )
 
         assert create_proc.await_count == 3
