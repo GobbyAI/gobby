@@ -202,12 +202,22 @@ for every supported project-local AI CLI target:
 Gobby-managed projects skip these project-local writes because Gobby owns CLI
 wiring.
 
-## Daemon-Independent Runtime
+## Runtime modes
 
-gcode is standalone in the important CLI sense: `gcode index`, `gcode search`,
-`gcode status`, and symbol retrieval do not require the Gobby daemon process.
-They do require the migrated PostgreSQL hub schema because that hub is the
-source of truth for code-index rows.
+Production indexing and search are daemon-backed. Start the Gobby daemon and
+run `gcode` in a project the daemon has granted. The signed grant is the only
+supported source for the PostgreSQL hub DSN, FalkorDB, Qdrant, and embedding
+routing. gcode does not read operator DSN environment variables or local
+credential files at runtime.
+
+`gcode index`, `gcode search`, and `gcode status` still execute as a local
+CLI: they talk to the granted hub and optional graph/vector backends without
+keeping a long-lived daemon RPC for each query. Schema application belongs to
+`gdaemon apply`.
+
+`GCODE_TEST_DATABASE_URL` and `GOBBY_TEST_POSTGRES_DSN` are test-only harness
+overrides. They are not operator-supported and are ignored by production
+resolution.
 
 ### With Gobby
 
@@ -216,21 +226,16 @@ codebase → tree-sitter → PostgreSQL hub + pg_search BM25
 FalkorDB              → call graphs, blast radius, imports
 Qdrant + embeddings   → semantic vector search
 gcode projection sync → code graph/vector projection writes
-Gobby daemon          → auto-indexing triggers, config/secrets, sessions, agents
+Gobby daemon          → grants, auto-indexing triggers, config/secrets, sessions, agents
 ```
 
 Gobby adds scheduling, shared runtime config, semantic services, and infrastructure that makes gcode better at its core job. Rust still owns code graph/vector projection writes; daemon and UI callers delegate that work to gcode APIs or commands.
 
 **Search quality improves.** With FalkorDB, `gcode search` blends BM25 text matching with call-graph relevance. With Qdrant plus a configured embeddings API, conceptual queries like "database connection pooling" can find semantically similar code even when the exact words don't match.
 
-**Config and secrets are managed.** FalkorDB connection settings, Qdrant API keys, and auth credentials are stored in the shared database and encrypted with Fernet. No env vars to juggle.
+**Config and secrets are managed.** FalkorDB connection settings, Qdrant API keys, and auth credentials come from the daemon grant and served config. No env vars to juggle.
 
-**PostgreSQL DSNs can stay out of plaintext files.** Isolated gcode runtimes
-ask the daemon broker first. Operators who need daemonless access can opt into
-`GCODE_TEST_DATABASE_URL`, `GOBBY_TEST_POSTGRES_DSN`, the grant-backed daemon config, or inline
-bootstrap `database_url`.
-
-**Indexing happens automatically.** The Gobby daemon watches for file changes and re-indexes in the background. Without the daemon, run `gcode index` manually.
+**Indexing happens automatically.** The Gobby daemon watches for file changes and re-indexes in the background. After a grant is available, you can also run `gcode index` manually.
 
 | Capability | gcode CLI | With Gobby daemon/services |
 |-----------|-----------|-----------|

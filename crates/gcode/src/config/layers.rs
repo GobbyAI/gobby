@@ -48,7 +48,7 @@ pub(crate) fn read_config_layers() -> anyhow::Result<ConfigLayers> {
         Ok(ConfigLayers {
             daemon: None,
             mode: ConfigMode::Hub,
-            hub_fallback_reason: Some("gcode built without the ai feature".to_string()),
+            hub_fallback_reason: None,
         })
     }
 }

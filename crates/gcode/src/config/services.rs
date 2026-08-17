@@ -10,7 +10,7 @@ use super::{
 };
 use crate::config::context::{
     FALKORDB_HOST_CONFIG_KEY, FALKORDB_PASSWORD_CONFIG_KEY, FALKORDB_PORT_CONFIG_KEY,
-    IndexingSettings,
+    IndexingSettings, ServiceConfigSelection,
 };
 use crate::config::layers::{ConfigLayers, HubConfigCapture, ServiceSource};
 
@@ -369,6 +369,50 @@ fn embedding_binding_uses_openai_http(binding: &CapabilityBinding) -> bool {
         .as_deref()
         .map(str::trim)
         .is_none_or(|transport| transport.is_empty() || transport == "openai_compatible_http")
+}
+
+struct GrantSettingsSource<'a> {
+    settings: &'a std::collections::BTreeMap<String, String>,
+}
+
+impl ServiceConfigSource for GrantSettingsSource<'_> {
+    fn config_value(&mut self, key: &str) -> anyhow::Result<Option<String>> {
+        if let Some(value) = service_env_value(key) {
+            return Ok(Some(value));
+        }
+        Ok(self
+            .settings
+            .get(key)
+            .cloned()
+            .and_then(|raw| gobby_core::config::decode_config_value(&raw)))
+    }
+
+    fn resolve_value(&mut self, value: &str) -> anyhow::Result<String> {
+        Ok(value.to_string())
+    }
+}
+
+pub(super) fn resolve_from_grant_settings(
+    settings: &std::collections::BTreeMap<String, String>,
+    services: ServiceConfigSelection,
+) -> anyhow::Result<(
+    Option<super::EmbeddingConfig>,
+    IndexingSettings,
+    CodeVectorSettings,
+)> {
+    let mut source = GrantSettingsSource { settings };
+    let embedding = if services.embedding {
+        resolve_embedding_config_from_service_source(None, &mut source)?
+    } else {
+        None
+    };
+    let indexing = resolve_indexing_settings_from_source(&mut source)?;
+    let code_vectors = if services.code_vectors {
+        resolve_code_vector_settings_from_source(&mut source)?
+    } else {
+        CodeVectorSettings::default()
+    };
+    Ok((embedding, indexing, code_vectors))
 }
 
 pub(super) fn resolve_indexing_settings_from_source(

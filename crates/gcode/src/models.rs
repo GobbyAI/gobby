@@ -463,12 +463,24 @@ const LOCAL_IMPORT_DEFAULT_EXPORT_MARKER: &str = "__gcode_local_import_default_e
 pub struct IndexedProject {
     pub id: String,
     pub root_path: String,
+    #[serde(default, skip_serializing_if = "is_zero_usize")]
     pub total_files: usize,
+    #[serde(default, skip_serializing_if = "is_zero_usize")]
     pub total_symbols: usize,
+    #[serde(default, skip_serializing_if = "String::is_empty")]
     pub last_indexed_at: String,
+    #[serde(default, skip_serializing_if = "is_zero_u64")]
     pub index_duration_ms: u64,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub total_eligible_files: Option<usize>,
+}
+
+fn is_zero_usize(value: &usize) -> bool {
+    *value == 0
+}
+
+fn is_zero_u64(value: &u64) -> bool {
+    *value == 0
 }
 
 /// Search result with score.
@@ -544,11 +556,25 @@ pub struct PagedResponse<T: Serialize> {
     pub warnings: Vec<SearchWarning>,
 }
 
+/// Hybrid-search lane that emitted a degradation warning.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum SearchWarningLane {
+    Semantic,
+}
+
+/// Why a hybrid-search lane degraded.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum SearchWarningCause {
+    DaemonUnreachable,
+}
+
 /// Structured hybrid-search degradation notice.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
 pub struct SearchWarning {
-    pub lane: String,
-    pub cause: String,
+    pub lane: SearchWarningLane,
+    pub cause: SearchWarningCause,
     pub message: String,
 }
 

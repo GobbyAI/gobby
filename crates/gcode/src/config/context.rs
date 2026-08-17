@@ -333,16 +333,19 @@ impl Context {
     ) -> anyhow::Result<Self> {
         let project_root = match project_override {
             Some(value) => resolve_override_root(value)?,
-            None => detect_project_root().map_err(|_| CliError::project_required())?,
+            None => detect_project_root()
+                .map_err(|error| error.context(CliError::project_required()))?,
         };
+        Self::resolve_from_root(project_root, project_override.is_some(), quiet, services)
+    }
 
-        let identity = match resolve_project_identity(&project_root, MissingIdentity::Error) {
-            Ok(identity) => identity,
-            Err(_) if project_override.is_none() => {
-                return Err(CliError::project_required().into());
-            }
-            Err(error) => return Err(error),
-        };
+    fn resolve_from_root(
+        project_root: PathBuf,
+        explicit_root: bool,
+        quiet: bool,
+        services: ServiceConfigSelection,
+    ) -> anyhow::Result<Self> {
+        let identity = identity_for_resolved_root(&project_root, explicit_root)?;
         warn_project_identity(&identity, quiet);
         let project_id = identity.project_id;
         let index_scope = identity.index_scope;
@@ -360,10 +363,8 @@ impl Context {
 
         let mut conn = db::connect_readonly(&database_url)?;
         validate_parent_code_index(&mut conn, &index_scope)?;
-        let embedding = None;
-        let indexing = IndexingSettings::default();
-        let code_vectors = CodeVectorSettings::default();
-        let _ = services.embedding;
+        let (embedding, indexing, code_vectors) =
+            services_from_acquired_settings(&acquired, services)?;
         let grant_ai = Some(GrantAiRuntime {
             capabilities: acquired.bundle.capabilities.clone(),
             daemon_reachable: acquired.daemon_reachable,
@@ -396,8 +397,43 @@ impl Context {
     ) -> anyhow::Result<Self> {
         let project_id = normalize_project_id(project_id)?;
         let looked_up = daemon::lookup_project_by_id(&project_id)?;
-        Self::resolve_with_services(looked_up.root.to_str(), quiet, services)
+        Self::resolve_from_root(looked_up.root, true, quiet, services)
     }
+}
+
+pub(super) fn identity_for_resolved_root(
+    project_root: &Path,
+    explicit_root: bool,
+) -> anyhow::Result<ProjectIdentity> {
+    match resolve_project_identity(project_root, MissingIdentity::Error) {
+        Ok(identity) => Ok(identity),
+        Err(error) if !explicit_root && is_missing_project_identity(&error) => {
+            Err(error.context(CliError::project_required()))
+        }
+        Err(error) => Err(error),
+    }
+}
+
+fn is_missing_project_identity(error: &anyhow::Error) -> bool {
+    error.to_string().starts_with("No gcode project found")
+}
+
+fn services_from_acquired_settings(
+    acquired: &grant::AcquiredGrant,
+    services: ServiceConfigSelection,
+) -> anyhow::Result<(
+    Option<EmbeddingConfig>,
+    IndexingSettings,
+    CodeVectorSettings,
+)> {
+    let Some(cached) = acquired.settings.as_ref() else {
+        return Ok((
+            None,
+            IndexingSettings::default(),
+            CodeVectorSettings::default(),
+        ));
+    };
+    super::services::resolve_from_grant_settings(&cached.settings, services)
 }
 
 fn resolve_override_root(project_override: &str) -> anyhow::Result<PathBuf> {

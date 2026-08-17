@@ -1,170 +1,61 @@
+use std::collections::HashSet;
 use std::time::{SystemTime, UNIX_EPOCH};
 
+use super::inventory::classify_collection_inventory;
 use super::reconcile::{bounded_project_id_summary, optional_reconcile_totals_lines};
 use super::*;
 
 #[test]
-fn global_prune_discovery_uses_local_roots_and_24_hour_grace() {
-    let local_machine = "local";
-    let temp = tempfile::tempdir().expect("tempdir");
-    let active_root = temp.path().canonicalize().expect("canonical root");
-    let gobby_dir = active_root.join(".gobby");
-    std::fs::create_dir(&gobby_dir).expect("create .gobby");
-    std::fs::write(
-        gobby_dir.join("project.json"),
-        serde_json::json!({
-            "id": crate::project::code_index_id_for_root(&active_root),
-            "name": "test-project"
-        })
-        .to_string(),
-    )
-    .expect("write project identity");
-    let active_project_id =
-        config::resolve_project_identity(&active_root, config::MissingIdentity::Error)
-            .expect("current project identity")
-            .project_id;
-    let duplicate_project_id = "11111111-1111-4111-8111-111111111111";
-    let sentinel_project_id = "00000000-0000-4000-8000-000000000000";
-    let registry = [
-        (active_project_id.as_str(), false),
-        ("missing-old", false),
-        ("missing-recent", false),
-        ("remote", false),
-        ("registry-old", true),
-        ("registry-recent", false),
-        (duplicate_project_id, false),
-        (sentinel_project_id, false),
-    ]
-    .map(|(id, eligible)| RegistryProjectState {
-        id: id.to_string(),
-        eligible,
-    });
-    let states = vec![
-        MachineProjectState {
-            machine_id: local_machine.to_string(),
-            project_id: active_project_id.clone(),
-            root_path: active_root.to_string_lossy().into_owned(),
-            eligible: true,
-        },
-        MachineProjectState {
-            machine_id: local_machine.to_string(),
-            project_id: "missing-old".to_string(),
-            root_path: "/missing/local-old".to_string(),
-            eligible: true,
-        },
-        MachineProjectState {
-            machine_id: local_machine.to_string(),
-            project_id: "missing-recent".to_string(),
-            root_path: "/missing/local-recent".to_string(),
-            eligible: false,
-        },
-        MachineProjectState {
-            machine_id: "remote".to_string(),
-            project_id: "remote".to_string(),
-            root_path: "/missing/on-remote-machine".to_string(),
-            eligible: true,
-        },
-        MachineProjectState {
-            machine_id: local_machine.to_string(),
-            project_id: sentinel_project_id.to_string(),
-            root_path: active_root.to_string_lossy().into_owned(),
-            eligible: true,
-        },
-        MachineProjectState {
-            machine_id: local_machine.to_string(),
-            project_id: duplicate_project_id.to_string(),
-            root_path: active_root.to_string_lossy().into_owned(),
-            eligible: true,
-        },
-    ];
-
-    let discovery = classify_global_project_prune(local_machine, &registry, &states);
-
-    assert_eq!(
-        discovery
-            .machine_states
-            .iter()
-            .map(|project| project.id.as_str())
-            .collect::<Vec<_>>(),
-        vec!["missing-old", sentinel_project_id, duplicate_project_id]
-    );
-    assert_eq!(
-        discovery
-            .machine_states
-            .iter()
-            .map(|project| (project.id.clone(), project.reason.clone()))
-            .collect::<BTreeMap<_, _>>(),
-        BTreeMap::from([
-            ("missing-old".to_string(), "path does not exist".to_string()),
-            (
-                sentinel_project_id.to_string(),
-                "sentinel project (not a code project)".to_string(),
-            ),
-            (
-                duplicate_project_id.to_string(),
-                format!(
-                    "duplicate root superseded by current project id {}",
-                    crate::utils::short_id(&active_project_id)
-                ),
-            ),
-        ])
-    );
-    assert_eq!(
-        discovery
-            .registry_projects
-            .iter()
-            .map(|project| project.id.as_str())
-            .collect::<Vec<_>>(),
-        vec!["registry-old"]
-    );
-    assert_eq!(
-        discovery.machine_state_counts,
-        DiscoveryCounts {
-            scanned: 6,
-            active: 3,
-        }
-    );
-    assert_eq!(
-        discovery.registry_project_counts,
-        DiscoveryCounts {
-            scanned: 8,
-            active: 7,
-        }
-    );
-    assert!(discovery.authority.contains("remote"));
-    assert_eq!(
-        discovery.stale_project_ids,
-        HashSet::from([
-            "missing-old".to_string(),
-            "registry-old".to_string(),
-            sentinel_project_id.to_string(),
-            duplicate_project_id.to_string(),
-        ])
-    );
-}
-
-#[test]
 fn global_prune_uses_daemon_client() {
-    let prune = include_str!("../prune.rs");
     let shared = include_str!("../shared.rs");
     let projects = include_str!("../projects.rs");
     assert!(
-        prune.contains("post_code_index_prune") || prune.contains("/api/code-index/prune"),
-        "global prune must dispatch through the operator-only daemon route"
-    );
-    assert!(
-        !prune.contains("discover_global_prune")
-            || prune.contains("post_code_index_prune")
-            || prune.contains("request_global_prune"),
-        "global prune must not keep a local discovery/mutation datastore path"
-    );
-    assert!(
         !shared.contains("fn collect_projects(") && !shared.contains("db::resolve_database_url"),
-        "shared direct-DSN helper must be deleted"
+        "shared listing helper must not grow a second direct-DSN entry point"
     );
     assert!(
         !projects.contains("collect_projects(") && !projects.contains("db::resolve_database_url"),
         "gcode projects must not construct a direct datastore context"
+    );
+
+    let mut seen = None;
+    prune_global_with(true, true, 14, |force, retention_days| {
+        seen = Some((force, retention_days));
+        Ok(crate::daemon::GlobalPruneOutcome {
+            completed: vec!["ok".to_string()],
+            failed: Vec::new(),
+            skipped: vec![serde_json::json!({"reason": "busy"})],
+        })
+    })
+    .expect("completed prune");
+    assert_eq!(seen, Some((true, 14)));
+
+    let failed = prune_global_with(false, true, 7, |_, _| {
+        Ok(crate::daemon::GlobalPruneOutcome {
+            completed: Vec::new(),
+            failed: vec![serde_json::json!({"reason": "boom"})],
+            skipped: Vec::new(),
+        })
+    })
+    .expect_err("failed prune");
+    assert!(
+        failed
+            .to_string()
+            .contains("gcode prune completed with 1 reconciliation failure"),
+        "{failed}"
+    );
+
+    let exit = prune_global_with(false, true, 7, |_, _| {
+        Err(crate::cli_error::CliError::grant(
+            gobby_core::grant::GrantError::DaemonRequired,
+        ))
+    })
+    .expect_err("daemon required");
+    assert_eq!(
+        exit.downcast_ref::<crate::cli_error::CliError>()
+            .expect("cli error")
+            .code,
+        "daemon_required"
     );
 }
 
@@ -354,184 +245,7 @@ fn global_prune_sweep_rechecks_and_continues_after_failures() {
 
 mod serial_db {
     use super::*;
-
-    #[test]
-    #[cfg_attr(
-        not(gcode_postgres_tests),
-        ignore = "requires a PostgreSQL test database URL"
-    )]
-    #[serial_test::serial(serial_db)]
-    fn global_prune_collection_recheck_retains_row_inserted_after_discovery() {
-        let (mut conn, database_url) = connect_test_db();
-        let project_id = unique_test_project_id("gcode-prune-recheck");
-        cleanup_project(&mut conn, &project_id).expect("pre-clean project rows");
-        let _cleanup = ProjectCleanup {
-            database_url: database_url.clone(),
-            project_id: project_id.clone(),
-        };
-        let authority = HashSet::new();
-        let inventory = classify_collection_inventory(
-            &[format!("code_symbols_{project_id}")],
-            &authority,
-            &HashSet::new(),
-        );
-        assert_eq!(inventory.existing_orphan_ids, vec![project_id.clone()]);
-
-        seed_project_with_child_rows(&mut conn, &project_id, true);
-        let ctx = prune_test_context(database_url, &project_id, true);
-
-        assert_eq!(
-            reconcile_orphan_collection(&ctx, &project_id).expect("recheck collection"),
-            SweepOutcome::Active
-        );
-        assert!(db::indexed_project_exists(&mut conn, &project_id).expect("project exists"));
-    }
-
-    #[test]
-    #[cfg_attr(
-        not(gcode_postgres_tests),
-        ignore = "requires a PostgreSQL test database URL"
-    )]
-    #[serial_test::serial(serial_db)]
-    fn global_prune_busy_lock_defers_entire_stale_project() {
-        let (mut conn, database_url) = connect_test_db();
-        let project_id = unique_test_project_id("gcode-prune-stale-busy");
-        cleanup_project(&mut conn, &project_id).expect("pre-clean project rows");
-        let _cleanup = ProjectCleanup {
-            database_url: database_url.clone(),
-            project_id: project_id.clone(),
-        };
-        seed_project_with_child_rows(&mut conn, &project_id, true);
-        let lock_key = crate::index_lock::project_lock_key(&project_id);
-        conn.query_one("SELECT pg_advisory_lock($1)", &[&lock_key])
-            .expect("hold project lock");
-
-        let discovery = GlobalPruneDiscovery {
-            services: prune_test_context(database_url, &project_id, true),
-            machine_states: vec![StaleProjectPlan {
-                id: project_id.clone(),
-                label: project_id.clone(),
-                reason: "test stale project".to_string(),
-            }],
-            machine_state_counts: DiscoveryCounts {
-                scanned: 1,
-                active: 0,
-            },
-            registry_projects: Vec::new(),
-            registry_project_counts: DiscoveryCounts::default(),
-            collections: None,
-            graph_scopes: None,
-            content_gc_candidates: Vec::new(),
-        };
-        let totals = mutate_machine_states(&discovery);
-
-        conn.query_one("SELECT pg_advisory_unlock($1)", &[&lock_key])
-            .expect("release project lock");
-        assert_eq!(totals.busy, 1);
-        assert_eq!(totals.deleted, 0);
-        assert_eq!(totals.failed, 0);
-        assert!(db::indexed_project_exists(&mut conn, &project_id).expect("project exists"));
-        assert_eq!(project_child_row_count(&mut conn, &project_id), 5);
-    }
-
-    #[test]
-    #[cfg_attr(
-        not(gcode_postgres_tests),
-        ignore = "requires a PostgreSQL test database URL"
-    )]
-    #[serial_test::serial(serial_db)]
-    fn stale_local_state_keeps_global_project_when_remote_state_remains() {
-        let (mut conn, database_url) = connect_test_db();
-        let project_id = unique_test_project_id("gcode-prune-remote-owner");
-        cleanup_project(&mut conn, &project_id).expect("pre-clean project rows");
-        let _cleanup = ProjectCleanup {
-            database_url: database_url.clone(),
-            project_id: project_id.clone(),
-        };
-        seed_project_with_child_rows(&mut conn, &project_id, true);
-        age_local_machine_state(&mut conn, &project_id, "/missing/local-root");
-        let remote_machine_id = test_uuid(&project_id, "remote-machine");
-        let project_uuid = db::id_param(&project_id).expect("project id");
-        conn.execute(
-            "INSERT INTO code_indexed_project_states
-            (machine_id, project_id, root_path, total_files, total_symbols,
-             last_indexed_at, index_duration_ms)
-         VALUES ($1, $2, '/missing/on-remote', 1, 1, NOW(), 0)",
-            &[&remote_machine_id, &project_uuid],
-        )
-        .expect("insert remote state");
-
-        assert_eq!(
-            reconcile_machine_state_locked(&database_url, &project_id)
-                .expect("reconcile local state"),
-            SweepOutcome::Deleted
-        );
-
-        assert!(db::indexed_project_exists(&mut conn, &project_id).expect("project exists"));
-        assert_eq!(project_child_row_count(&mut conn, &project_id), 5);
-        let remaining: i64 = conn
-            .query_one(
-                "SELECT COUNT(*)::BIGINT FROM code_indexed_project_states WHERE project_id = $1",
-                &[&project_uuid],
-            )
-            .expect("count states")
-            .get(0);
-        assert_eq!(remaining, 1);
-    }
-
-    #[test]
-    #[cfg_attr(
-        not(gcode_postgres_tests),
-        ignore = "requires a PostgreSQL test database URL"
-    )]
-    #[serial_test::serial(serial_db)]
-    fn stale_last_machine_state_invalidates_global_project() {
-        let (mut conn, database_url) = connect_test_db();
-        let project_id = unique_test_project_id("gcode-prune-last-state");
-        cleanup_project(&mut conn, &project_id).expect("pre-clean project rows");
-        let _cleanup = ProjectCleanup {
-            database_url: database_url.clone(),
-            project_id: project_id.clone(),
-        };
-        seed_project_with_child_rows(&mut conn, &project_id, true);
-        age_local_machine_state(&mut conn, &project_id, "/missing/last-root");
-
-        assert_eq!(
-            reconcile_machine_state_locked(&database_url, &project_id)
-                .expect("reconcile last state"),
-            SweepOutcome::Deleted
-        );
-
-        assert!(!db::indexed_project_exists(&mut conn, &project_id).expect("project missing"));
-        assert_eq!(project_child_row_count(&mut conn, &project_id), 0);
-    }
-
-    #[test]
-    #[cfg_attr(
-        not(gcode_postgres_tests),
-        ignore = "requires a PostgreSQL test database URL"
-    )]
-    #[serial_test::serial(serial_db)]
-    fn final_recheck_retains_recovered_root() {
-        let (mut conn, database_url) = connect_test_db();
-        let project_id = unique_test_project_id("gcode-prune-root-recovery");
-        cleanup_project(&mut conn, &project_id).expect("pre-clean project rows");
-        let _cleanup = ProjectCleanup {
-            database_url: database_url.clone(),
-            project_id: project_id.clone(),
-        };
-        seed_project_with_child_rows(&mut conn, &project_id, true);
-        let recovered_root = std::env::current_dir().expect("current directory");
-        age_local_machine_state(&mut conn, &project_id, &recovered_root.to_string_lossy());
-
-        assert_eq!(
-            reconcile_machine_state_locked(&database_url, &project_id)
-                .expect("recheck recovered root"),
-            SweepOutcome::Active
-        );
-        assert!(db::indexed_project_exists(&mut conn, &project_id).expect("project exists"));
-        assert_eq!(project_child_row_count(&mut conn, &project_id), 5);
-    }
+    use crate::db;
 
     #[test]
     #[cfg_attr(
@@ -639,21 +353,6 @@ mod serial_db {
             &crate::models::CODE_INDEX_UUID_NAMESPACE,
             format!("{conn_id}:{label}").as_bytes(),
         )
-    }
-
-    fn age_local_machine_state(conn: &mut postgres::Client, project_id: &str, root_path: &str) {
-        let project_uuid = db::id_param(project_id).expect("project id");
-        let machine_id = db::id_param(
-            &gobby_core::machine::read_local_machine_id().expect("read local machine id"),
-        )
-        .expect("local machine id");
-        conn.execute(
-            "UPDATE code_indexed_project_states
-             SET root_path = $3, updated_at = NOW() - INTERVAL '25 hours'
-             WHERE machine_id = $1 AND project_id = $2",
-            &[&machine_id, &project_uuid, &root_path],
-        )
-        .expect("age local machine state");
     }
 
     fn seed_project_with_child_rows(
@@ -770,23 +469,5 @@ mod serial_db {
             &[&project_id],
         )?;
         Ok(())
-    }
-
-    fn project_child_row_count(conn: &mut postgres::Client, project_id: &str) -> i64 {
-        let files = count_rows(conn, "code_indexed_files", project_id);
-        let symbols = count_rows(conn, "code_symbols", project_id);
-        let chunks = count_rows(conn, "code_content_chunks", project_id);
-        let imports = count_rows(conn, "code_imports", project_id);
-        let calls = count_rows(conn, "code_calls", project_id);
-        files + symbols + chunks + imports + calls
-    }
-
-    fn count_rows(conn: &mut postgres::Client, table: &str, project_id: &str) -> i64 {
-        conn.query_one(
-            &format!("SELECT COUNT(*)::BIGINT FROM {table} WHERE project_id = $1"),
-            &[&db::id_param(project_id).expect("test project id is a uuid")],
-        )
-        .expect("count rows")
-        .get(0)
     }
 }

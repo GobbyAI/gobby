@@ -292,6 +292,7 @@ pub fn clear_project(ctx: &Context) -> anyhow::Result<()> {
     })
 }
 
+#[allow(dead_code)]
 pub fn list_project_scopes(config: &crate::config::FalkorConfig) -> anyhow::Result<Vec<String>> {
     let connection_config = config.connection_config();
     match gobby_core::falkor::with_graph(
@@ -330,6 +331,7 @@ pub fn list_project_scopes(config: &crate::config::FalkorConfig) -> anyhow::Resu
     }
 }
 
+#[allow(dead_code)]
 pub fn clear_all_code_index(config: &crate::config::FalkorConfig) -> anyhow::Result<()> {
     let connection_config = config.connection_config();
     match gobby_core::falkor::with_graph(

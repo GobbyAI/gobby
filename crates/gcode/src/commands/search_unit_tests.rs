@@ -31,11 +31,60 @@ fn symbol_filter_rejects_language_kind_path_and_missing_disk_file() {
     std::fs::create_dir_all(&src).expect("create src");
     std::fs::write(src.join("lib.rs"), "fn outline() {}").expect("write file");
     let pattern = glob::Pattern::new("src/*.rs").expect("glob");
-    let sym = symbol("src/lib.rs", "function", "rust");
+    let rust_fn = symbol("src/lib.rs", "function", "rust");
+    let ctx = Context {
+        database_url: "postgresql://localhost/gobby-test".to_string(),
+        project_root: tmp.path().to_path_buf(),
+        project_id: "proj".to_string(),
+        quiet: true,
+        falkordb: None,
+        qdrant: None,
+        embedding: None,
+        code_vectors: crate::config::CodeVectorSettings::default(),
+        runtime_config_capture_degraded: false,
+        indexing: gobby_core::config::IndexingConfig::default(),
+        daemon_url: None,
+        grant_ai: None,
+        index_scope: crate::config::ProjectIndexScope::Single,
+    };
 
-    assert!(Some("function").is_none_or(|k| sym.kind == k));
-    assert!(Some("rust").is_none_or(|lang| sym.language == lang));
-    assert!(Some(&pattern).is_none_or(|pat| pat.matches(&sym.file_path)));
+    let rust_glob = std::slice::from_ref(&pattern);
+    assert!(symbol_matches_local_filters(
+        &ctx,
+        &rust_fn,
+        Some("function"),
+        Some("rust"),
+        rust_glob,
+    ));
+    assert!(!symbol_matches_local_filters(
+        &ctx,
+        &rust_fn,
+        Some("class"),
+        Some("rust"),
+        rust_glob,
+    ));
+    assert!(!symbol_matches_local_filters(
+        &ctx,
+        &rust_fn,
+        Some("function"),
+        Some("python"),
+        rust_glob,
+    ));
+    let py_pattern = glob::Pattern::new("src/*.py").expect("glob");
+    assert!(!symbol_matches_local_filters(
+        &ctx,
+        &rust_fn,
+        Some("function"),
+        Some("rust"),
+        std::slice::from_ref(&py_pattern),
+    ));
+    assert!(!symbol_matches_local_filters(
+        &ctx,
+        &symbol("src/missing.rs", "function", "rust"),
+        Some("function"),
+        Some("rust"),
+        rust_glob,
+    ));
 }
 
 #[test]
@@ -135,8 +184,11 @@ fn outage_degrades_with_warning() {
     let SemanticLane::Degraded(warning) = &semantic else {
         panic!("daemon outage must degrade the semantic lane, got {semantic:?}");
     };
-    assert_eq!(warning.lane, "semantic");
-    assert_eq!(warning.cause, "daemon_unreachable");
+    assert_eq!(warning.lane, crate::models::SearchWarningLane::Semantic);
+    assert_eq!(
+        warning.cause,
+        crate::models::SearchWarningCause::DaemonUnreachable
+    );
 
     let assembled = assemble_hybrid_sources(
         vec!["exact-1".to_string()],
@@ -159,7 +211,10 @@ fn outage_degrades_with_warning() {
         "silent empty semantic source is forbidden: {names:?}"
     );
     assert_eq!(assembled.warnings.len(), 1);
-    assert_eq!(assembled.warnings[0].lane, "semantic");
+    assert_eq!(
+        assembled.warnings[0].lane,
+        crate::models::SearchWarningLane::Semantic
+    );
 
     let payload = serde_json::to_value(&crate::models::PagedResponse {
         project_id: "proj".to_string(),

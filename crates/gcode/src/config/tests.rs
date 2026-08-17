@@ -563,4 +563,57 @@ fn project_id_context_with_services_rejects_empty_id_before_runtime_resolution()
     assert!(err.to_string().contains("--project-id must not be empty"));
 }
 
+#[test]
+fn identity_for_cwd_preserves_isolation_errors() {
+    let tmp = tempfile::tempdir().expect("tempdir");
+    write_project_json(
+        tmp.path(),
+        serde_json::json!({
+            "id": "parent-id",
+            "parent_project_path": "/parent"
+        }),
+    );
+    let err = super::context::identity_for_resolved_root(tmp.path(), false)
+        .expect_err("invalid isolation marker");
+    let message = err.to_string();
+    assert!(message.contains("invalid isolation marker"), "{message}");
+    assert!(
+        err.downcast_ref::<crate::cli_error::CliError>().is_none(),
+        "specific identity errors must not collapse to project_required"
+    );
+}
+
+#[test]
+fn identity_for_cwd_maps_missing_project_to_project_required() {
+    let tmp = tempfile::tempdir().expect("tempdir");
+    let err =
+        super::context::identity_for_resolved_root(tmp.path(), false).expect_err("missing project");
+    let cli = err
+        .downcast_ref::<crate::cli_error::CliError>()
+        .expect("project_required");
+    assert_eq!(cli.code, "project_required");
+    assert!(
+        err.source()
+            .is_some_and(|source| source.to_string().starts_with("No gcode project found")),
+        "{err:?}"
+    );
+}
+
+#[test]
+fn grant_settings_supply_indexing_and_vector_dim() {
+    let settings = std::collections::BTreeMap::from([
+        (
+            gobby_core::config::INDEXING_RESPECT_GITIGNORE_KEY.to_string(),
+            "false".to_string(),
+        ),
+        (embedding_keys::AI_DIM.to_string(), "768".to_string()),
+    ]);
+    let (embedding, indexing, code_vectors) =
+        super::services::resolve_from_grant_settings(&settings, ServiceConfigSelection::all())
+            .expect("grant settings");
+    assert!(embedding.is_none());
+    assert!(!indexing.respect_gitignore);
+    assert_eq!(code_vectors.vector_dim, Some(768));
+}
+
 mod runtime_contract;

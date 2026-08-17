@@ -29,6 +29,14 @@ impl CliError {
         }
     }
 
+    pub fn capability_unavailable(capability: &str) -> Self {
+        Self {
+            code: "capability_unavailable",
+            message: format!("{capability} capability is unavailable"),
+            exit_status: 2,
+        }
+    }
+
     pub fn print(&self) -> anyhow::Result<()> {
         let payload = json!({
             "error": self.code,

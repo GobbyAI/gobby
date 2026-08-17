@@ -128,14 +128,23 @@ pub(super) fn run_gcode_with_format(
 }
 
 fn project_id_for(cwd: &std::path::Path) -> String {
-    let path = cwd.join(".gobby").join("gcode.json");
-    let Ok(raw) = fs::read_to_string(path) else {
-        return TEST_PROJECT_ID.to_string();
-    };
-    serde_json::from_str::<Value>(&raw)
-        .ok()
-        .and_then(|value| value.get("id")?.as_str().map(str::to_string))
-        .unwrap_or_else(|| TEST_PROJECT_ID.to_string())
+    gobby_core::project::read_project_id(cwd).unwrap_or_else(|_| TEST_PROJECT_ID.to_string())
+}
+
+#[test]
+fn project_id_for_reads_project_json_before_fallback() {
+    let tmp = tempfile::tempdir().expect("tempdir");
+    let gobby = tmp.path().join(".gobby");
+    fs::create_dir_all(&gobby).expect("create .gobby");
+    fs::write(
+        gobby.join("project.json"),
+        r#"{"id":"11111111-1111-4111-8111-111111111111","name":"only-project"}"#,
+    )
+    .expect("write project.json");
+    assert_eq!(
+        project_id_for(tmp.path()),
+        "11111111-1111-4111-8111-111111111111"
+    );
 }
 
 pub(super) fn json_command(env: &StandaloneEnv, cwd: &std::path::Path, args: &[&str]) -> Value {

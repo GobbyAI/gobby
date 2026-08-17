@@ -8,8 +8,11 @@ mod types;
 pub use embedding::{EmbeddingSource, embedding_source_from_context, probe_embedding_dim};
 pub use lifecycle::CodeSymbolVectorLifecycle;
 pub use qdrant::{
-    VectorOrphanCleanup, cleanup_orphan_file_vectors, collection_name,
-    delete_code_symbol_collections_with_prefix, delete_project_collection, delete_symbol_vectors,
+    VectorOrphanCleanup, cleanup_orphan_file_vectors, collection_name, delete_symbol_vectors,
+};
+#[cfg(test)]
+pub use qdrant::{
+    delete_code_symbol_collections_with_prefix, delete_project_collection,
     list_code_symbol_collections,
 };
 pub use repository::{fetch_symbols_for_file, fetch_symbols_for_project};

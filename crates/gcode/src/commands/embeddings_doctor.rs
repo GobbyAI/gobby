@@ -534,4 +534,63 @@ mod tests {
             "Bearer local-test-token"
         );
     }
+
+    #[test]
+    fn daemon_doctor_request_sends_managed_grant_headers() {
+        let connections =
+            gobby_core::grant::DirectConnections::postgres("postgresql://unused/gobby");
+        let mut grant =
+            gobby_core::grant::managed_direct_grant("caller-project", "machine-1", &connections);
+        grant.principal.session_id = Some("session-1".to_string());
+        let expected_header = gobby_core::grant::encode_grant_header(&grant).expect("encode grant");
+
+        let request = daemon_doctor_request(
+            &reqwest::blocking::Client::new(),
+            "http://127.0.0.1:60887/api/embeddings/doctor",
+            "local-test-token",
+            Some(&grant),
+        )
+        .build()
+        .expect("doctor request builds");
+        let headers = request.headers();
+
+        assert_eq!(
+            headers
+                .get(AUTHORIZATION_HEADER)
+                .expect("authorization header"),
+            "Bearer local-test-token"
+        );
+        assert_eq!(
+            headers
+                .get(gobby_core::grant::GRANT_HEADER)
+                .expect("grant header")
+                .to_str()
+                .expect("grant header utf8"),
+            expected_header
+        );
+        assert_eq!(
+            headers
+                .get(gobby_core::grant::MACHINE_HEADER)
+                .expect("machine header"),
+            "machine-1"
+        );
+        assert_eq!(
+            headers
+                .get(gobby_core::grant::CALLER_PROJECT_HEADER)
+                .expect("caller project header"),
+            "caller-project"
+        );
+        assert_eq!(
+            headers
+                .get(gobby_core::grant::TARGET_PROJECT_HEADER)
+                .expect("target project header"),
+            "caller-project"
+        );
+        assert_eq!(
+            headers
+                .get(gobby_core::grant::SESSION_HEADER)
+                .expect("session header"),
+            "session-1"
+        );
+    }
 }

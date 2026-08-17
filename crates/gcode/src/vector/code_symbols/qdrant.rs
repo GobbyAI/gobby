@@ -38,6 +38,7 @@ pub(super) fn collection_path(collection: &str) -> String {
     format!("/collections/{}", urlencoding::encode(collection))
 }
 
+#[allow(dead_code)]
 pub fn delete_project_collection(
     qdrant: &QdrantConfig,
     project_id: &str,
@@ -191,6 +192,7 @@ fn collect_file_paths_from_scroll_page(
     Ok(())
 }
 
+#[allow(dead_code)]
 pub fn delete_code_symbol_collections_with_prefix(
     qdrant: &QdrantConfig,
 ) -> Result<Vec<String>, VectorLifecycleError> {
@@ -206,6 +208,7 @@ pub fn delete_code_symbol_collections_with_prefix(
     Ok(deleted)
 }
 
+#[allow(dead_code)]
 pub fn list_code_symbol_collections(
     qdrant: &QdrantConfig,
 ) -> Result<Vec<String>, VectorLifecycleError> {
