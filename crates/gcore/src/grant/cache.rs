@@ -191,7 +191,9 @@ pub fn newer_generation(existing: Option<&GrantBundle>, incoming: &GrantBundle) 
         incoming.credential_generation(),
     ) {
         (Some(old), Some(new)) => new >= old,
-        _ => true,
+        _ => existing.is_none_or(|grant| {
+            incoming.deployment.fencing_epoch >= grant.deployment.fencing_epoch
+        }),
     }
 }
 
@@ -268,7 +270,8 @@ fn write_bytes_atomic(path: &Path, bytes: &[u8]) -> Result<(), GrantError> {
     #[cfg(unix)]
     {
         use std::os::unix::fs::PermissionsExt;
-        let _ = fs::set_permissions(parent, fs::Permissions::from_mode(0o700));
+        fs::set_permissions(parent, fs::Permissions::from_mode(0o700))
+            .map_err(|error| GrantError::Io(error.to_string()))?;
     }
     let tmp = parent.join(format!(
         ".grant-{}-{}-{}.tmp",
@@ -277,16 +280,10 @@ fn write_bytes_atomic(path: &Path, bytes: &[u8]) -> Result<(), GrantError> {
         unix_now()
     ));
     {
-        let mut file = File::create(&tmp).map_err(|error| GrantError::Io(error.to_string()))?;
+        let mut file = create_temp_file(&tmp)?;
         file.write_all(bytes)
             .map_err(|error| GrantError::Io(error.to_string()))?;
         file.sync_all()
-            .map_err(|error| GrantError::Io(error.to_string()))?;
-    }
-    #[cfg(unix)]
-    {
-        use std::os::unix::fs::PermissionsExt;
-        fs::set_permissions(&tmp, fs::Permissions::from_mode(0o600))
             .map_err(|error| GrantError::Io(error.to_string()))?;
     }
     fs::rename(&tmp, path).map_err(|error| {
@@ -296,9 +293,26 @@ fn write_bytes_atomic(path: &Path, bytes: &[u8]) -> Result<(), GrantError> {
     #[cfg(unix)]
     {
         use std::os::unix::fs::PermissionsExt;
-        let _ = fs::set_permissions(path, fs::Permissions::from_mode(0o600));
+        fs::set_permissions(path, fs::Permissions::from_mode(0o600))
+            .map_err(|error| GrantError::Io(error.to_string()))?;
     }
     Ok(())
+}
+
+#[cfg(unix)]
+fn create_temp_file(path: &Path) -> Result<File, GrantError> {
+    use std::os::unix::fs::OpenOptionsExt;
+    OpenOptions::new()
+        .write(true)
+        .create_new(true)
+        .mode(0o600)
+        .open(path)
+        .map_err(|error| GrantError::Io(error.to_string()))
+}
+
+#[cfg(not(unix))]
+fn create_temp_file(path: &Path) -> Result<File, GrantError> {
+    File::create(path).map_err(|error| GrantError::Io(error.to_string()))
 }
 
 fn unix_now() -> u64 {

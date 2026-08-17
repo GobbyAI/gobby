@@ -1,7 +1,9 @@
+use std::ffi::OsString;
 use std::fs;
 use std::io::{Read, Write};
 use std::net::TcpListener;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
+use std::sync::MutexGuard;
 
 use std::thread;
 use std::time::{Duration, Instant};
@@ -73,26 +75,7 @@ fn acquire_with_ignores_process_environment() {
     let poison_path = poison_dir.path().join("poison.json");
     write_grant_file(&poison_path, &poison_grant).expect("poison grant");
 
-    let _lock = crate::config::TEST_ENV_LOCK
-        .lock()
-        .unwrap_or_else(|poisoned| poisoned.into_inner());
-    let saved: [(&str, Option<std::ffi::OsString>); 5] = [
-        "GOBBY_MANAGED_EXECUTION_BOOTSTRAP",
-        "GOBBY_AGENT_RUN_ID",
-        "GOBBY_MANAGED_EXECUTION_ID",
-        crate::local_token::AGENT_API_TOKEN_ENV,
-        "GOBBY_DAEMON_URL",
-    ]
-    .map(|name| (name, std::env::var_os(name)));
-    // SAFETY: env mutation is serialized through TEST_ENV_LOCK and restored
-    // before the lock is released.
-    unsafe {
-        std::env::set_var("GOBBY_MANAGED_EXECUTION_BOOTSTRAP", &poison_path);
-        std::env::set_var("GOBBY_AGENT_RUN_ID", "not-this-test");
-        std::env::set_var("GOBBY_MANAGED_EXECUTION_ID", "not-this-test");
-        std::env::set_var(crate::local_token::AGENT_API_TOKEN_ENV, "poison-token");
-        std::env::set_var("GOBBY_DAEMON_URL", "http://127.0.0.1:9");
-    }
+    let _env = PoisonedEnv::apply(&poison_path);
 
     let acquired = acquire_with(&harness.request(Some("http://127.0.0.1:1".into())))
         .expect("isolated acquire_with");
@@ -109,12 +92,48 @@ fn acquire_with_ignores_process_environment() {
         Some("not-this-test")
     );
     assert_eq!(process.daemon_url.as_deref(), Some("http://127.0.0.1:9"));
+}
 
-    for (name, value) in saved {
+struct PoisonedEnv {
+    _lock: MutexGuard<'static, ()>,
+    saved: [(&'static str, Option<OsString>); 5],
+}
+
+impl PoisonedEnv {
+    fn apply(poison_path: &Path) -> Self {
+        let lock = crate::config::TEST_ENV_LOCK
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner());
+        let saved = [
+            "GOBBY_MANAGED_EXECUTION_BOOTSTRAP",
+            "GOBBY_AGENT_RUN_ID",
+            "GOBBY_MANAGED_EXECUTION_ID",
+            crate::local_token::AGENT_API_TOKEN_ENV,
+            "GOBBY_DAEMON_URL",
+        ]
+        .map(|name| (name, std::env::var_os(name)));
+        // SAFETY: TEST_ENV_LOCK serializes env mutation; Drop restores every
+        // saved value, including during unwinding, while the lock is held.
         unsafe {
-            match value {
-                Some(value) => std::env::set_var(name, value),
-                None => std::env::remove_var(name),
+            std::env::set_var("GOBBY_MANAGED_EXECUTION_BOOTSTRAP", poison_path);
+            std::env::set_var("GOBBY_AGENT_RUN_ID", "not-this-test");
+            std::env::set_var("GOBBY_MANAGED_EXECUTION_ID", "not-this-test");
+            std::env::set_var(crate::local_token::AGENT_API_TOKEN_ENV, "poison-token");
+            std::env::set_var("GOBBY_DAEMON_URL", "http://127.0.0.1:9");
+        }
+        Self { _lock: lock, saved }
+    }
+}
+
+impl Drop for PoisonedEnv {
+    fn drop(&mut self) {
+        // SAFETY: the lock remains held until after restoration completes.
+        unsafe {
+            for (name, value) in &self.saved {
+                match value {
+                    Some(value) => std::env::set_var(name, value),
+                    None => std::env::remove_var(name),
+                }
             }
         }
     }
@@ -767,6 +786,46 @@ fn presentation_http_classifies_retryable_restart_errors() {
             .is_some_and(|error| error.is_retryable_presentation())
     );
     assert!(GrantError::from_presentation_http(401, "expired").is_none());
+    assert!(
+        GrantError::from_presentation_http(200, "revoked invalid_signature stale_epoch").is_none()
+    );
+}
+
+#[test]
+fn hmac_sha256_rejects_empty_key() {
+    let error = super::handshake::hmac_sha256(b"", b"nonce").expect_err("empty key");
+    assert!(matches!(error, GrantError::Malformed(_)));
+}
+
+#[test]
+fn expected_schema_identity_tracks_catalog_head() {
+    assert_eq!(expected_schema_identity().latest_version, 385);
+}
+
+#[test]
+fn newer_generation_falls_back_to_fencing_epoch() {
+    let mut existing = fixture_grant(PrincipalKind::Interactive);
+    existing.capabilities.postgres = PostgresCapability::Unavailable {};
+    existing.deployment.fencing_epoch = 4;
+    let mut incoming = existing.clone();
+    incoming.deployment.fencing_epoch = 3;
+    assert!(!super::cache::newer_generation(Some(&existing), &incoming));
+    incoming.deployment.fencing_epoch = 4;
+    assert!(super::cache::newer_generation(Some(&existing), &incoming));
+    incoming.deployment.fencing_epoch = 5;
+    assert!(super::cache::newer_generation(Some(&existing), &incoming));
+    assert!(super::cache::newer_generation(None, &incoming));
+}
+
+#[cfg(unix)]
+#[test]
+fn write_grant_file_creates_owner_only_mode() {
+    use std::os::unix::fs::PermissionsExt;
+    let dir = tempfile::tempdir().expect("dir");
+    let path = dir.path().join("grant.json");
+    write_grant_file(&path, &fixture_grant(PrincipalKind::Interactive)).expect("write");
+    let mode = fs::metadata(&path).expect("meta").permissions().mode() & 0o777;
+    assert_eq!(mode, 0o600);
 }
 
 #[test]
@@ -888,41 +947,6 @@ fn endpoint_deployment_binding() {
     let acquired =
         acquire_with(&harness.request(Some("http://127.0.0.1:1".into()))).expect("outage binding");
     assert_eq!(acquired.bundle.deployment.token, "0123456789abcdef");
-}
-
-#[test]
-fn refresh_destination_by_source() {
-    let harness = Harness::new();
-    let interactive = fixture_grant(PrincipalKind::Interactive);
-    write_binding_for(
-        &harness,
-        "http://127.0.0.1:1",
-        &interactive.deployment.token,
-    );
-    write_cache(&harness, &interactive, None);
-    let cache_path = interactive_cache_path(&harness.home, &interactive.deployment.token, PROJECT);
-    let cache_before = fs::read(&cache_path).unwrap();
-
-    let mut managed = fixture_grant(PrincipalKind::AgentRun);
-    managed.expires_at = NOW - 1;
-    managed = managed.with_checksum();
-    let managed_path = harness.home.join("run.json");
-    write_grant_file(&managed_path, &managed).unwrap();
-    let mut renewed = managed.clone();
-    renewed.expires_at = NOW + 3_000;
-    if let PostgresCapability::Direct {
-        credential_generation,
-        ..
-    } = &mut renewed.capabilities.postgres
-    {
-        *credential_generation += 1;
-    }
-    renewed = renewed.with_checksum();
-    assert_ne!(
-        renewed.credential_generation(),
-        managed.credential_generation()
-    );
-    assert_eq!(fs::read(&cache_path).unwrap(), cache_before);
 }
 
 #[test]

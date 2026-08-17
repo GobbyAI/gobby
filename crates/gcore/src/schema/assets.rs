@@ -26,7 +26,7 @@ pub(crate) const MIGRATIONS: &[EmbeddedMigration] = &[
     EmbeddedMigration {
         version: 377,
         filename: "377_copy_agent_step_instances.sql",
-        checksum: "43b6c25263c1e510f28c540d9cc24e62ffcad67a3a8dddde3645bdb6a5e92821",
+        checksum: "bdcd4738d51cf4a099825fa43dcd1509ce6e6be5330abded423b679d1fc3cc14",
         sql: include_str!("../../assets/schema/migrations/377_copy_agent_step_instances.sql"),
     },
     EmbeddedMigration {
@@ -56,7 +56,7 @@ pub(crate) const MIGRATIONS: &[EmbeddedMigration] = &[
     EmbeddedMigration {
         version: 382,
         filename: "382_grant_gwiki_tables_to_capability.sql",
-        checksum: "658527b69d99dfc0c2de99e0d3c9c47d6b5f1172e784fd7980f5c9f76d7cec4e",
+        checksum: "4845a2541ff64c93055ba556c5513919dd8bf77a63939f8373ee527284957249",
         sql: include_str!(
             "../../assets/schema/migrations/382_grant_gwiki_tables_to_capability.sql"
         ),
@@ -64,7 +64,7 @@ pub(crate) const MIGRATIONS: &[EmbeddedMigration] = &[
     EmbeddedMigration {
         version: 383,
         filename: "383_refresh_reused_interactive_principal.sql",
-        checksum: "6a9b479e68847bc240e54ace9d4a4c80e1acf79b1d7568dc8e3eb4fe84477696",
+        checksum: "3cca9a67d97c3f328432c58329736cd2e3814c09f6ccea4e7644f1a6ee24f0b0",
         sql: include_str!(
             "../../assets/schema/migrations/383_refresh_reused_interactive_principal.sql"
         ),

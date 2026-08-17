@@ -1,4 +1,4 @@
--- Grant interactive/gcode capability roles access to attached wiki tables.
+-- Grant the gobby_gcode_capability role access to attached wiki tables.
 -- Wiki tables are created by gwiki, not the gcore baseline. Absent tables are
 -- a no-op so fresh lineages and hubs without wiki stay valid.
 DO $grant_gwiki$

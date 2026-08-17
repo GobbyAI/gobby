@@ -45,18 +45,17 @@ BEGIN
         wi.updated_at,
         regexp_replace(wi.workflow_name, '-steps$', '') AS agent_name,
         s.project_id AS session_project_id,
-        NULLIF(sv.variables ->> '_agent_type', '') AS agent_type,
-        sv.variables AS session_vars
+        NULLIF(sv.variables ->> '_agent_type', '') AS agent_type
     FROM workflow_instances wi
     JOIN sessions s ON s.id = wi.session_id
     LEFT JOIN session_variables sv ON sv.session_id = wi.session_id
     WHERE s.status IN ('active', 'paused', 'handoff_ready')
       AND wi.workflow_name ~ '-steps$';
 
-    SELECT string_agg(format('%s vars=%s', session_id, session_vars), ', ')
+    SELECT string_agg(format('%s %s', session_id, '_agent_type'), ', ')
     INTO bad
     FROM (
-        SELECT DISTINCT session_id, session_vars
+        SELECT DISTINCT session_id
         FROM _inst_live
         WHERE agent_type IS NULL
     ) missing;
@@ -156,6 +155,16 @@ BEGIN
         WHERE to_regclass('workflow_definitions') IS NOT NULL
           AND d.name = sel.workflow_name
           AND d.deleted_at IS NULL
+          AND (
+              d.project_id IS NOT DISTINCT FROM sel.session_project_id
+              OR d.project_id IS NULL
+          )
+        ORDER BY
+            CASE
+                WHEN d.project_id IS NOT DISTINCT FROM sel.session_project_id THEN 0
+                ELSE 1
+            END,
+            d.id ASC
         LIMIT 1
     ) gen ON TRUE
     LEFT JOIN LATERAL (
@@ -196,7 +205,8 @@ BEGIN
     SELECT string_agg(format('%s current_step=%s', session_id, current_step), ', ')
     INTO bad
     FROM _inst_resolved r
-    WHERE NOT EXISTS (
+    WHERE r.current_step IS NOT NULL
+      AND NOT EXISTS (
         SELECT 1
         FROM jsonb_array_elements(r.snapshot_json -> 'steps') elem
         WHERE elem ->> 'name' IS NOT DISTINCT FROM r.current_step
@@ -258,10 +268,13 @@ BEGIN
        OR t.agent_step_workflow_id IS DISTINCT FROM r.agent_step_workflow_id
        OR t.snapshot_json IS DISTINCT FROM r.expected_snapshot
        OR t.snapshot_json IS DISTINCT FROM r.snapshot_json
-       OR NOT EXISTS (
-            SELECT 1
-            FROM jsonb_array_elements(t.snapshot_json -> 'steps') elem
-            WHERE elem ->> 'name' IS NOT DISTINCT FROM t.current_step
+       OR (
+            t.current_step IS NOT NULL
+            AND NOT EXISTS (
+                SELECT 1
+                FROM jsonb_array_elements(t.snapshot_json -> 'steps') elem
+                WHERE elem ->> 'name' IS NOT DISTINCT FROM t.current_step
+            )
        );
     IF bad IS NOT NULL THEN
         RAISE EXCEPTION 'instance copy payload mismatch: %', bad;

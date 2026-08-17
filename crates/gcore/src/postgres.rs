@@ -126,7 +126,12 @@ fn connection_config(database_url: &str) -> anyhow::Result<postgres::Config> {
 }
 
 fn is_password_authentication_failure(error: &anyhow::Error) -> bool {
-    format!("{error:#}").contains("password authentication failed")
+    error.chain().any(|source| {
+        source
+            .downcast_ref::<postgres::Error>()
+            .and_then(postgres::Error::as_db_error)
+            .is_some_and(|db_error| db_error.code() == &postgres::error::SqlState::INVALID_PASSWORD)
+    })
 }
 
 fn connect_after_grant_rehandshake(original: anyhow::Error) -> anyhow::Result<Client> {
@@ -374,6 +379,12 @@ fn run_schema_validator<C>(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn password_authentication_failure_requires_sqlstate() {
+        let error = anyhow::anyhow!("password authentication failed for user \"gobby\"");
+        assert!(!is_password_authentication_failure(&error));
+    }
 
     #[test]
     fn connection_config_enforces_gobby_application_name() -> anyhow::Result<()> {

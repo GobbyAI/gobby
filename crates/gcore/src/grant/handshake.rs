@@ -9,7 +9,7 @@ use serde_json::{Value, json};
 
 use super::bundle::{GrantBundle, GrantPrincipal, PrincipalKind, parse_grant_json};
 use super::cache::normalize_endpoint;
-use super::{GrantError, hex_encode, hmac_sha256, sha256};
+use super::{GrantError, hex_encode, sha256};
 
 pub const GRANT_HEADER: &str = "X-Gobby-Runtime-Grant";
 pub const MACHINE_HEADER: &str = "X-Gobby-Machine-Id";
@@ -196,6 +196,9 @@ pub fn challenge_and_handshake(
         None,
         remaining,
     )?;
+    if let Some(error) = GrantError::from_presentation_http(challenge.status, &challenge.body) {
+        return Err(error);
+    }
     if challenge.status == 401 {
         if challenge.body.contains("credential_before_proof") {
             return Err(GrantError::Malformed(
@@ -212,7 +215,7 @@ pub fn challenge_and_handshake(
     let expected_key = managed
         .map(|claims| claims.signature.as_slice())
         .unwrap_or(bearer.as_bytes());
-    let expected = hex_encode(&hmac_sha256(expected_key, &nonce));
+    let expected = hex_encode(&hmac_sha256(expected_key, &nonce)?);
     if !constant_time_eq(expected.as_bytes(), envelope.proof.as_bytes()) {
         return Err(GrantError::Malformed(
             "challenge proof did not match the local credential secret".to_string(),
@@ -474,4 +477,22 @@ fn transport_is_timeout(transport: &ureq::Transport) -> bool {
         source = error.source();
     }
     false
+}
+
+pub(super) fn hmac_sha256(key: &[u8], data: &[u8]) -> Result<Vec<u8>, GrantError> {
+    if key.is_empty() {
+        return Err(GrantError::Malformed(
+            "hmac key must not be empty".to_string(),
+        ));
+    }
+    let pkey =
+        openssl::pkey::PKey::hmac(key).map_err(|error| GrantError::Malformed(error.to_string()))?;
+    let mut signer = openssl::sign::Signer::new(openssl::hash::MessageDigest::sha256(), &pkey)
+        .map_err(|error| GrantError::Malformed(error.to_string()))?;
+    signer
+        .update(data)
+        .map_err(|error| GrantError::Malformed(error.to_string()))?;
+    signer
+        .sign_to_vec()
+        .map_err(|error| GrantError::Malformed(error.to_string()))
 }
