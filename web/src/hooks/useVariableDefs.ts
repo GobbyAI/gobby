@@ -16,10 +16,26 @@ export interface VariableDef {
   has_template_update?: boolean;
 }
 
-interface VariableFilters {
+export interface VariableFilters {
   enabled?: boolean;
   project_id?: string;
   include_deleted?: boolean;
+}
+
+export interface UseVariableDefsResult {
+  variables: VariableDef[];
+  isLoading: boolean;
+  fetchVariables: (params?: VariableFilters) => Promise<boolean>;
+  createVariable: (params: {
+    name: string;
+    value?: unknown;
+    description?: string;
+    enabled?: boolean;
+    project_id?: string;
+    tags?: string[];
+  }) => Promise<VariableDef | null>;
+  toggleEnabled: (id: string) => Promise<VariableDef | null>;
+  deleteVariable: (id: string) => Promise<boolean>;
 }
 
 interface VariableRow {
@@ -73,7 +89,7 @@ function toVariableDef(row: VariableRow): VariableDef {
   };
 }
 
-export function useVariableDefs() {
+export function useVariableDefs(): UseVariableDefsResult {
   const [variables, setVariables] = useState<VariableDef[]>([]);
   const [isLoading, setIsLoading] = useState(true);
   const listRequestGenerationRef = useRef(0);
