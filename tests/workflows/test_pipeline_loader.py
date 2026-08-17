@@ -184,3 +184,22 @@ async def test_revision_aware_cache_refetches_on_drift(temp_db: HubDatabase) -> 
     fresh = await loader.load_pipeline("cached-pipe")
     assert fresh is not None
     assert fresh.description == "after-drift"
+
+
+@pytest.mark.asyncio
+async def test_validate_pipeline_for_agent_missing_is_invalid(temp_db: HubDatabase) -> None:
+    loader = PipelineLoader(db=temp_db)
+    ok, error = await loader.validate_pipeline_for_agent("missing-pipe")
+    assert ok is False
+    assert error is not None
+    assert "missing-pipe" in error
+    assert "not found" in error.lower()
+
+
+@pytest.mark.asyncio
+async def test_validate_pipeline_for_agent_existing_is_valid(temp_db: HubDatabase) -> None:
+    _seed_pipeline(temp_db, "review")
+    loader = PipelineLoader(db=temp_db)
+    ok, error = await loader.validate_pipeline_for_agent("review")
+    assert ok is True
+    assert error is None

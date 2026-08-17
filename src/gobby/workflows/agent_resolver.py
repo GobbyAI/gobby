@@ -68,5 +68,5 @@ def resolve_agent(
     if found is not None:
         return found[0]
     if name == "default":
-        return AgentDefinitionBody(name="default", mode="inherit")
+        return _resolve_inherit(AgentDefinitionBody(name="default"), cli_source)
     return None

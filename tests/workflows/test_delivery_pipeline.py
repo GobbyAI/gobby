@@ -476,6 +476,66 @@ def test_existing_over_budget_does_not_grow_past_ship_limit(
     assert response.context == existing
     queued = _vars(db, PLATFORM_SESSION_ID)[MEMORY_RECALL_DELIVERIES_VARIABLE][0]
     assert queued["status"] == "pending"
+    assert queued["recall_request_id"] == "request-already-full"
+    assert "injected_memory_ids" not in _vars(db, PLATFORM_SESSION_ID) or _vars(
+        db, PLATFORM_SESSION_ID
+    ).get("injected_memory_ids") in (None, [], set())
+
+
+def test_instruction_only_delivery_does_not_ack_undelivered_ids(
+    engine: RuleEngine,
+    db: HubDatabase,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from gobby.workflows.engine import delivery_formatting
+
+    monkeypatch.setattr(delivery_formatting, "inline_context_budget_for", lambda _provider: 800)
+    monkeypatch.setattr(delivery_formatting, "additional_context_limit_for", lambda _provider: 280)
+    event = _event()
+    event.source = SessionSource.GROK
+    engine._format_memory_backed_result(
+        server="gobby-memory",
+        tool="recall_memories_for_prompt",
+        result={
+            "success": True,
+            "recall_request_id": "request-instruction-only",
+            "origin_turn_seq": 5,
+            "project_id": PROJECT_ID,
+            "memories": [
+                {
+                    "id": "memory-small",
+                    "content": "tiny",
+                    "memory_type": "context",
+                },
+                {
+                    "id": "memory-huge",
+                    "content": "x" * 2_000,
+                    "memory_type": "context",
+                },
+            ],
+        },
+        event=event,
+        platform_session_id=PLATFORM_SESSION_ID,
+        variables=_variables(),
+    )
+    response = HookResponse(context="e" * 180)
+
+    finalize_staged_memory_delivery(
+        event, response, database=db, logger=logging.getLogger(__name__)
+    )
+
+    assert response.context is not None
+    assert "get_recall_memories" in response.context
+    assert "tiny" not in response.context
+    assert "x" * 2_000 not in response.context
+    variables = _vars(db, PLATFORM_SESSION_ID)
+    queued = variables[MEMORY_RECALL_DELIVERIES_VARIABLE][0]
+    assert queued["status"] == "pending"
+    assert {memory["id"] for memory in queued["memories"]} == {
+        "memory-small",
+        "memory-huge",
+    }
+    assert variables.get("injected_memory_ids", []) == []
 
 
 @pytest.mark.asyncio

@@ -1161,6 +1161,32 @@ variables:
         deleted = manager.get(obsolete.id, include_deleted=True)
         assert deleted.deleted_at is not None
 
+    def test_project_scoped_installed_variable_is_not_orphan_pruned(self, db: HubDatabase) -> None:
+        from gobby.storage.definitions import SessionVariableDefaultManager
+        from gobby.workflows.sync_variables import sync_bundled_variables
+
+        project_id = "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa"
+        db.execute(
+            "INSERT INTO projects (id, name) VALUES (%s, %s) ON CONFLICT (id) DO NOTHING",
+            (project_id, "orphan-scope"),
+        )
+        manager = SessionVariableDefaultManager(db)
+        scoped = manager.create(
+            name="project_only_orphan_guard",
+            default_value=True,
+            source="installed",
+            tags=["gobby"],
+            project_id=project_id,
+        )
+
+        result = sync_bundled_variables(db)
+
+        kept = manager.get_by_name("project_only_orphan_guard", project_id=project_id)
+        assert kept is not None
+        assert kept.id == scoped.id
+        assert kept.deleted_at is None
+        assert result["success"] is True
+
     def test_empty_directory_does_not_orphan_existing_variable(
         self, db: HubDatabase, tmp_path: Path
     ) -> None:

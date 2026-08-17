@@ -99,7 +99,8 @@ class SessionVariableManager:
         self.db = db
         self._defaults_cache: dict[tuple[str | None, int], dict[str, Any]] = {}
         self._defaults_cache_times: dict[tuple[str | None, int], float] = {}
-        _LIVE_VARIABLE_MANAGERS.add(self)
+        with _VARIABLE_CACHE_LOCK:
+            _LIVE_VARIABLE_MANAGERS.add(self)
 
     def get_variables(self, session_id: str) -> dict[str, Any]:
         """Get all session variables with definition defaults applied.

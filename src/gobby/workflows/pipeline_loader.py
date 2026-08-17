@@ -343,7 +343,7 @@ class PipelineLoader(PipelineLoaderSyncMixin):
         except ValueError as e:
             return False, f"Failed to load pipeline '{pipeline_name}': {e}"
         if pipeline is None:
-            return True, None
+            return False, f"Pipeline '{pipeline_name}' not found"
         return True, None
 
     def _validate_pipeline_references(self, data: dict[str, Any]) -> None:
