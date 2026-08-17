@@ -97,6 +97,12 @@ pub(crate) const MIGRATIONS: &[EmbeddedMigration] = &[
             "../../assets/schema/migrations/387_interactive_principal_role_helper.sql"
         ),
     },
+    EmbeddedMigration {
+        version: 388,
+        filename: "388_grant_interactive_role_name.sql",
+        checksum: "bb45c887073a2a2a7b77077ff5cc96b30c9476030883111a083e54f1dbc72502",
+        sql: include_str!("../../assets/schema/migrations/388_grant_interactive_role_name.sql"),
+    },
 ];
 const _: &str = include_str!("../../assets/schema/migrations/.gitkeep");
 

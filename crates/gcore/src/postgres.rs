@@ -137,20 +137,31 @@ fn is_password_authentication_failure(error: &anyhow::Error) -> bool {
 fn connect_after_grant_rehandshake(original: anyhow::Error) -> anyhow::Result<Client> {
     let cwd = match std::env::current_dir() {
         Ok(cwd) => cwd,
-        Err(_) => return Err(original),
+        Err(error) => {
+            return Err(original.context(format!(
+                "grant rehandshake skipped: cannot resolve working directory: {error}"
+            )));
+        }
     };
     let Some(root) = crate::project::find_project_root(&cwd) else {
-        return Err(original);
+        return Err(original.context(format!(
+            "grant rehandshake skipped: no project root above {}",
+            cwd.display()
+        )));
     };
-    let Ok(acquired) =
-        crate::grant::rehandshake(&crate::grant::AcquireRequest::from_process(&root))
-    else {
-        return Err(original);
-    };
+    let acquired =
+        match crate::grant::rehandshake(&crate::grant::AcquireRequest::from_process(&root)) {
+            Ok(acquired) => acquired,
+            Err(error) => {
+                return Err(original.context(format!("grant rehandshake failed: {error}")));
+            }
+        };
     let crate::grant::PostgresCapability::Direct { dsn, .. } =
         &acquired.bundle.capabilities.postgres
     else {
-        return Err(original);
+        return Err(original.context(
+            "grant rehandshake succeeded but the refreshed grant has no direct postgres capability",
+        ));
     };
     connect_once(dsn)
 }

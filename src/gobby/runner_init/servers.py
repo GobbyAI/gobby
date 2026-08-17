@@ -421,10 +421,10 @@ def issue_grant_postgres(
     except HandshakeRejection:
         raise
     except Exception:
-        logger.error("grant credential issuance failed", extra={"kind": typed.kind})
+        logger.exception("grant credential issuance failed", extra={"kind": typed.kind})
         raise HandshakeRejection(
             _CREDENTIAL_ISSUANCE_FAILED,
-            code="managed_source",
+            code="credential_issuance_failed",
         ) from None
 
 
@@ -512,7 +512,7 @@ def _bind_runtime_grants(server: HTTPServer, runner: GobbyRunner) -> None:
             managed_bootstrap_dsn=_managed_bootstrap_dsn,
         )
         if not isinstance(issued, PostgresDirect):
-            raise HandshakeRejection(_CREDENTIAL_ISSUANCE_FAILED, code="managed_source")
+            raise HandshakeRejection(_CREDENTIAL_ISSUANCE_FAILED, code="credential_issuance_failed")
         return issued
 
     def _handshake_factory() -> HandshakeService:

@@ -49,7 +49,7 @@ def test_issuance_errors_are_generic() -> None:
             secrets=object(),
             managed_bootstrap_dsn=lambda _path: "x",
         )
-    assert rejected.value.code == "managed_source"
+    assert rejected.value.code == "credential_issuance_failed"
     assert rejected.value.message == "credential issuance failed"
     assert "secret" not in rejected.value.message
     assert "postgres://" not in rejected.value.message

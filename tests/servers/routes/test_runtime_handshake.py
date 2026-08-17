@@ -264,12 +264,12 @@ def test_bearer_claim_binding_matrix() -> None:
             local_machine_id=LOCAL_MACHINE_ID,
             operator_token=OPERATOR_TOKEN,
             issue_postgres=lambda _principal: (_ for _ in ()).throw(
-                HandshakeRejection("managed source failed", code="managed_source")
+                HandshakeRejection("credential issuance failed", code="credential_issuance_failed")
             ),
             admitted_projects=frozenset({PROJECT_ID}),
             clock=lambda: 1_700_000_000,
         ).issue_for_agent(claims, machine_id=LOCAL_MACHINE_ID, project_id=PROJECT_ID)
-    assert managed_fail.value.code == "managed_source"
+    assert managed_fail.value.code == "credential_issuance_failed"
 
 
 def test_expiry_bounded_and_serialized() -> None:
