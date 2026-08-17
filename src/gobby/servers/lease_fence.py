@@ -2,13 +2,11 @@
 
 from __future__ import annotations
 
-import asyncio
 import logging
-import os
 import threading
 import time
-from collections.abc import Callable
-from pathlib import Path
+import weakref
+from collections.abc import Awaitable, Callable
 from typing import TYPE_CHECKING, cast
 from weakref import WeakKeyDictionary
 
@@ -51,6 +49,7 @@ class EffectFence:
         self._idle = threading.Condition(self._lock)
         self._in_flight = 0
         self._serving = True
+        self.admit_hook: Callable[[], Awaitable[None]] | None = None
 
     @property
     def in_flight(self) -> int:
@@ -98,27 +97,6 @@ class _Admission:
                 self._fence._idle.notify_all()
 
 
-async def await_test_admit_barrier() -> None:
-    """Yield after admission when an isolated e2e barrier file is present."""
-    if os.environ.get("GOBBY_TEST_PROTECT") != "1":
-        return
-    home = os.environ.get("GOBBY_HOME")
-    if not home:
-        return
-    flag = Path(home) / "runtime" / "e2e-admit-barrier"
-    if not flag.is_file():
-        return
-    admitted = flag.with_name("e2e-admit-barrier.admitted")
-    release = flag.with_name("e2e-admit-barrier.release")
-    admitted.write_text("1")
-    deadline = time.monotonic() + 30.0
-    while time.monotonic() < deadline:
-        if release.is_file():
-            return
-        await asyncio.sleep(0.01)
-    raise TimeoutError("e2e admit barrier was not released")
-
-
 def owns_live_lease(lease: object | None) -> bool:
     """In-memory ownership check: lease session alive and cached epoch present."""
     if lease is None:
@@ -159,14 +137,18 @@ def fenced_hub_write(
 
 def bind_fenced_writer(db: object, lease: object) -> None:
     """Register a production fenced writer that reads the live lease epoch."""
+    db_ref = weakref.ref(db)
 
     def run_fenced_write(writer: Callable[[Transaction], None]) -> None:
+        bound_db = db_ref()
+        if bound_db is None:
+            raise StaleEpochFence("fenced writer database is no longer bound")
         epoch = getattr(lease, "fencing_epoch", None)
         token = getattr(lease, "deployment_token", None)
         if epoch is None or not token:
             raise StaleEpochFence("active-daemon lease has no fencing epoch")
         fenced_hub_write(
-            cast("HubDatabase", db),
+            cast("HubDatabase", bound_db),
             deployment_token=str(token),
             owned_epoch=int(epoch),
             writer=writer,
@@ -175,12 +157,19 @@ def bind_fenced_writer(db: object, lease: object) -> None:
     _bound_writers[db] = run_fenced_write
 
 
-def run_hub_mutation(db: HubDatabase, writer: Callable[[Transaction], None]) -> None:
+def run_hub_mutation(
+    db: HubDatabase,
+    writer: Callable[[Transaction], None],
+    *,
+    allow_unfenced: bool = False,
+) -> None:
     """Run ``writer`` inside a fenced hub transaction when a writer is bound."""
     fenced = _bound_writers.get(db)
     if fenced is not None:
         fenced(writer)
         return
+    if not allow_unfenced:
+        raise StaleEpochFence("no fenced writer is bound")
     with db.transaction() as txn:
         writer(txn)
 

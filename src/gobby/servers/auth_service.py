@@ -346,12 +346,11 @@ class AuthService:
         return self._effect_fence
 
     def _effectful_allowed(self) -> bool:
-        if self._lease_live is not None and not self._lease_live():
+        if self._lease_live is None or self._effect_fence is None:
             return False
-        fence = self._effect_fence
-        if fence is None:
-            return True
-        return fence.serving
+        if not self._lease_live():
+            return False
+        return self._effect_fence.serving
 
     def verified_agent_claims(self, request: HTTPConnection) -> AgentApiTokenClaims | None:
         """Return identity claims only for a valid run-scoped agent request."""

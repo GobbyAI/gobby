@@ -168,6 +168,16 @@ def test_challenge_proof_before_bearer() -> None:
         assert allowed.json()["proof"] == expected
 
 
+def test_challenge_rejects_oversized_nonce() -> None:
+    server = create_http_server(config=DaemonConfig(), authenticated_requests=False)
+    client = TestClient(server.app)
+    rejected = client.post(
+        "/api/runtime/handshake/challenge",
+        json={"nonce": "A" * 45, "kind": "interactive"},
+    )
+    assert rejected.status_code == 422
+
+
 def test_machine_claim_binding() -> None:
     handshake = _handshake()
     missing = issue_agent_api_token(

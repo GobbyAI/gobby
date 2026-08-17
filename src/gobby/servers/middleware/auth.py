@@ -14,7 +14,7 @@ from starlette.responses import Response
 
 from gobby.config.ui import is_loopback_bind_host
 from gobby.servers.grant_auth import admission_required
-from gobby.servers.lease_fence import LeaseNotHeld, await_test_admit_barrier
+from gobby.servers.lease_fence import LeaseNotHeld
 from gobby.servers.responses import JSONResponse
 
 if TYPE_CHECKING:
@@ -48,6 +48,13 @@ _PROTECTED_PREFIXES = (
     "/mcp",
     "/memory",
 )
+
+_LOGIN_GUIDANCE = (
+    "Authentication required. CLI clients need ~/.gobby/local_cli_token "
+    "(run 'gobby install' or 'gobby auth token --rotate'). Browsers: log in."
+)
+_MISSING_AUTH_CODES = frozenset({None, "missing_auth"})
+_GRANT_REJECTION_MESSAGE = "Request rejected"
 
 
 def _remote_hook_requires_auth(server: "HTTPServer", path: str) -> bool:
@@ -89,10 +96,11 @@ class AuthMiddleware(BaseHTTPMiddleware):
         if path.startswith(_PROTECTED_PREFIXES):
             code = getattr(decision, "code", None)
             status = int(getattr(decision, "status_code", 401) or 401)
-            message = getattr(decision, "message", None) or (
-                "Authentication required. CLI clients need ~/.gobby/local_cli_token "
-                "(run 'gobby install' or 'gobby auth token --rotate'). Browsers: log in."
-            )
+            message = getattr(decision, "message", None)
+            if not message:
+                message = (
+                    _LOGIN_GUIDANCE if code in _MISSING_AUTH_CODES else _GRANT_REJECTION_MESSAGE
+                )
             content: dict[str, object] = {"error": message}
             if code:
                 content["code"] = code
@@ -113,7 +121,9 @@ class AuthMiddleware(BaseHTTPMiddleware):
             return await call_next(request)
         try:
             with fence.admit():
-                await await_test_admit_barrier()
+                hook = getattr(fence, "admit_hook", None)
+                if hook is not None:
+                    await hook()
                 return await call_next(request)
         except LeaseNotHeld as exc:
             return JSONResponse(

@@ -6,12 +6,15 @@ import base64
 from typing import Any
 
 from fastapi import APIRouter, HTTPException, Request
-from pydantic import BaseModel, ConfigDict
+from pydantic import BaseModel, ConfigDict, Field
 
 from gobby.runtime_grants.handshake import HandshakeRejection, challenge_proof
 from gobby.runtime_grants.service import GrantRejection
 from gobby.servers.responses import JSONResponse
 from gobby.utils.local_token import AgentApiTokenClaims
+
+# 32-byte challenge nonce, urlsafe base64 with padding.
+_CHALLENGE_NONCE_MAX_CHARS = 44
 
 
 class ChallengeCaller(BaseModel):
@@ -24,7 +27,7 @@ class ChallengeCaller(BaseModel):
 class ChallengeRequest(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
-    nonce: str
+    nonce: str = Field(max_length=_CHALLENGE_NONCE_MAX_CHARS)
     kind: str = "interactive"
     claims: dict[str, object] | None = None
     caller: ChallengeCaller | None = None

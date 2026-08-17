@@ -3,12 +3,14 @@
 from __future__ import annotations
 
 import uuid
+from types import SimpleNamespace
 from typing import TYPE_CHECKING
 
 import pytest
 
 from gobby.code_index.models import Symbol
 from gobby.code_index.storage import CodeIndexStorage
+from gobby.servers.lease_fence import bind_fenced_writer
 
 pytestmark = pytest.mark.unit
 
@@ -32,6 +34,17 @@ def code_db(postgres_db: HubDatabase) -> HubDatabase:
 @pytest.fixture
 def code_storage(code_db: HubDatabase) -> CodeIndexStorage:
     """CodeIndexStorage wired to the test database."""
+    token = "c0de1ndexfenced"
+    code_db.execute(
+        """
+        INSERT INTO deployment_runtime (deployment_token, fencing_epoch, grant_signing_secret)
+        VALUES (%s, 1, 'secret')
+        ON CONFLICT (deployment_token) DO UPDATE
+           SET fencing_epoch = 1, grant_signing_secret = EXCLUDED.grant_signing_secret
+        """,
+        (token,),
+    )
+    bind_fenced_writer(code_db, SimpleNamespace(deployment_token=token, fencing_epoch=1))
     return CodeIndexStorage(code_db)
 
 
