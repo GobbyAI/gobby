@@ -18,6 +18,8 @@ from gobby.storage.definitions.revisions import (
 
 logger = logging.getLogger(__name__)
 
+_RECONNECT_BACKOFF_MAX_SECONDS = 30.0
+
 
 class DefinitionRevisionListener:
     """Own one autocommit LISTEN connection and a poll-healing loop."""
@@ -58,7 +60,7 @@ class DefinitionRevisionListener:
             raise RuntimeError("DefinitionRevisionListener is closed")
         if self._started:
             return
-        self._seed_observed()
+        await self._seed_observed()
         await self._connect()
         self._reconnect_lock = asyncio.Lock()
         self._started = True
@@ -72,9 +74,12 @@ class DefinitionRevisionListener:
             name="definition-revision-poll",
         )
 
-    def _seed_observed(self) -> None:
+    async def _load_persistent_revisions(self) -> Mapping[DefinitionDomain, int]:
+        return await asyncio.to_thread(self._fetch_revisions)
+
+    async def _seed_observed(self) -> None:
         seeded = dict.fromkeys(DEFINITION_DOMAINS, 0)
-        for domain, revision in self._fetch_revisions().items():
+        for domain, revision in (await self._load_persistent_revisions()).items():
             if domain in DEFINITION_DOMAINS:
                 seeded[domain] = int(revision)
         self._observed = seeded
@@ -149,7 +154,7 @@ class DefinitionRevisionListener:
             if self._closed:
                 return
             try:
-                persistent = self._fetch_revisions()
+                persistent = await self._load_persistent_revisions()
             except asyncio.CancelledError:
                 raise
             except Exception:
@@ -165,11 +170,16 @@ class DefinitionRevisionListener:
         async with lock:
             if self._healthy or self._closed:
                 return
+            delay = self._reconnect_backoff
+            max_delay = max(delay, _RECONNECT_BACKOFF_MAX_SECONDS)
             while not self._closed:
                 await self._close_connection()
-                await asyncio.sleep(self._reconnect_backoff)
+                await asyncio.sleep(delay)
                 try:
                     await self._connect()
+                    persistent = await self._load_persistent_revisions()
+                    for domain, revision in persistent.items():
+                        self._apply_observed(str(domain), int(revision))
                     self._healthy = True
                     return
                 except asyncio.CancelledError:
@@ -179,6 +189,7 @@ class DefinitionRevisionListener:
                         "Definition revision listener reconnect failed",
                         exc_info=True,
                     )
+                    delay = min(delay * 2.0, max_delay)
 
     async def close(self) -> None:
         if self._closed:
