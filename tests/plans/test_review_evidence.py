@@ -15,6 +15,7 @@ from gobby.plans.review_evidence_io import (
     build_section_manifest,
     ensure_checkpoint,
     manifest_key,
+    parse_checkpoints,
     render_checkpoint,
 )
 from gobby.plans.review_evidence_models import ReviewEvidenceError
@@ -1052,6 +1053,18 @@ def test_append_round_entry_rejects_conflicting_checkpoint(tmp_path: Path) -> No
     assert plan_path.read_bytes() == snapshot
 
 
+def test_append_round_entry_rejects_checkpoint_fence_in_prose(tmp_path: Path) -> None:
+    plan_path = _round_entry_plan(tmp_path)
+    checkpoint = _round_checkpoint()
+    original = plan_path.read_bytes()
+    smuggled = _round_checkpoint(evidence_id="evidence-smuggled", round_number=9)
+    prose = f"{_ROUND_PROSE}\n\n{smuggled.decode('utf-8')}"
+
+    with pytest.raises(ReviewEvidenceError, match="checkpoint list"):
+        append_round_entry(plan_path, prose, checkpoint)
+    assert plan_path.read_bytes() == original
+
+
 def test_append_plan_changelog_round_needs_review_end_to_end(
     review_setup: tuple[PlanReviewEvidenceService, str, str, Path],
 ) -> None:
@@ -1102,6 +1115,27 @@ def test_append_plan_changelog_round_needs_review_end_to_end(
     )
     assert replay["applied"] is False
     assert plan_path.read_text(encoding="utf-8") == text
+
+
+def test_append_plan_changelog_round_writes_normalized_payload(
+    review_setup: tuple[PlanReviewEvidenceService, str, str, Path],
+) -> None:
+    service, project_id, session_id, plan_path = review_setup
+    evidence_id = _bind_interactive_review(service, project_id, session_id, plan_path)
+    round_result = _needs_review_result(evidence_id)
+
+    result = service.append_plan_changelog_round(
+        evidence_id,
+        _ROUND_PROSE,
+        round_result,
+    )
+
+    assert result["applied"] is True
+    normalized = service._round_result_for_evidence(evidence_id, round_result)
+    durable = parse_checkpoints(plan_path.read_bytes())[-1]
+    assert durable["round_result"] == normalized
+    rendered = service.render_plan_changelog_round(evidence_id, normalized)
+    assert result["checkpoint"] == rendered.decode("utf-8")
 
 
 def _bind_interactive_review(
