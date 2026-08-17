@@ -867,6 +867,18 @@ def test_operator_prune_requires_live_lease(temp_db: HubDatabase, tmp_path: Path
     assert lost.status_code == 409
 
 
+def test_unbound_auth_service_denies_effectful(temp_db: HubDatabase, tmp_path: Path) -> None:
+    token_file = tmp_path / "local_cli_token"
+    token_file.write_text("operator-token")
+    _set_api_token(temp_db, "operator-token")
+    service = AuthService(lambda: temp_db, token_file=token_file)
+    operator = {"Authorization": "Bearer operator-token"}
+    lost = service.authenticate(_request(operator, method="POST", path="/api/code-index/prune"))
+    assert lost.allowed is False
+    assert lost.code == "lease_not_held"
+    assert lost.status_code == 409
+
+
 def test_in_transaction_epoch_fencing(temp_db: HubDatabase) -> None:
     from gobby.servers.lease_fence import (
         EffectFence,

@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import logging
 from collections.abc import Callable
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, cast
@@ -20,6 +21,9 @@ from gobby.utils.local_token import AgentApiTokenClaims
 
 if TYPE_CHECKING:
     from starlette.requests import HTTPConnection
+
+logger = logging.getLogger(__name__)
+_INVALID_GRANT_MESSAGE = "invalid grant"
 
 GRANT_HEADER = "X-Gobby-Runtime-Grant"
 MACHINE_HEADER = "X-Gobby-Machine-Id"
@@ -181,11 +185,12 @@ def present_or_reject(
 ) -> AuthDecision | GrantBundle:
     try:
         grant = decode_grant_header(raw_header)
-    except Exception as exc:
+    except Exception:
+        logger.exception("failed to decode runtime grant header")
         return AuthDecision(
             allowed=False,
             code="invalid_signature",
-            message=str(exc),
+            message=_INVALID_GRANT_MESSAGE,
             status_code=401,
         )
     present = getattr(grant_service, "present", None)

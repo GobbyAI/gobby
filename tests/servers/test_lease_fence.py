@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import gc
+import weakref
 from types import SimpleNamespace
 from typing import Any
 
@@ -104,6 +106,43 @@ def test_bound_writer_is_production_fenced_hub_write(temp_db: HubDatabase) -> No
     row = temp_db.fetchone("SELECT value FROM lease_fence_probe WHERE id = %s", ("probe",))
     assert row is not None
     assert row["value"] == "owned"
+
+
+def test_run_hub_mutation_rejects_unbound_writer(temp_db: HubDatabase) -> None:
+    _seed_runtime(temp_db, "unbound", 1)
+    with pytest.raises(StaleEpochFence, match="no fenced writer is bound"):
+        run_hub_mutation(temp_db, lambda _txn: None)
+
+
+def test_run_hub_mutation_allow_unfenced_for_tests(temp_db: HubDatabase) -> None:
+    _seed_runtime(temp_db, "unfenced", 1)
+
+    def _write(txn: Any) -> None:
+        txn.execute(
+            """
+            INSERT INTO lease_fence_probe (id, value) VALUES (%s, %s)
+            ON CONFLICT (id) DO UPDATE SET value = EXCLUDED.value
+            """,
+            ("probe", "unfenced"),
+        )
+
+    run_hub_mutation(temp_db, _write, allow_unfenced=True)
+    row = temp_db.fetchone("SELECT value FROM lease_fence_probe WHERE id = %s", ("probe",))
+    assert row is not None
+    assert row["value"] == "unfenced"
+
+
+def test_bind_fenced_writer_does_not_retain_database() -> None:
+    class _Probe:
+        pass
+
+    db = _Probe()
+    lease = SimpleNamespace(deployment_token="token", fencing_epoch=1)
+    handle = weakref.ref(db)
+    bind_fenced_writer(db, lease)
+    del db
+    gc.collect()
+    assert handle() is None
 
 
 def test_fenced_hub_write_rejects_missing_runtime(temp_db: HubDatabase) -> None:

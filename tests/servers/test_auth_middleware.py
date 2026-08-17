@@ -17,6 +17,7 @@ import pytest
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
 
+import gobby.servers.middleware.auth as auth_middleware
 from gobby.servers.auth_service import AuthService
 from gobby.servers.grant_auth import AuthDecision
 from gobby.servers.lease_fence import EffectFence
@@ -57,6 +58,12 @@ def auth_client() -> tuple[TestClient, MagicMock]:
         return {"path": path}
 
     return TestClient(app), auth_service
+
+
+def test_production_middleware_does_not_import_test_admit_barrier() -> None:
+    source = Path(auth_middleware.__file__).read_text(encoding="utf-8")
+    assert "await_test_admit_barrier" not in source
+    assert "GOBBY_TEST_PROTECT" not in source
 
 
 PROTECTED_PATHS = [
@@ -130,6 +137,36 @@ def test_protected_routes_require_auth_when_enabled(
             "(run 'gobby install' or 'gobby auth token --rotate'). Browsers: log in."
         )
     }
+
+
+@pytest.mark.parametrize(
+    "code",
+    ("stale_epoch", "revoked", "missing_grant", "forged_identity", "lease_not_held"),
+)
+def test_grant_rejection_omits_login_guidance(
+    auth_client: tuple[TestClient, MagicMock], code: str
+) -> None:
+    client, auth_service = auth_client
+    auth_service.authenticate.return_value = AuthDecision(allowed=False, code=code, status_code=401)
+    response = client.get("/api/tasks")
+    body = response.json()
+    assert "local_cli_token" not in body["error"]
+    assert "log in" not in body["error"].casefold()
+    assert body["error"] == "Request rejected"
+    assert body["code"] == code
+
+
+def test_missing_auth_keeps_login_guidance(
+    auth_client: tuple[TestClient, MagicMock],
+) -> None:
+    client, auth_service = auth_client
+    auth_service.authenticate.return_value = AuthDecision(
+        allowed=False, code="missing_auth", status_code=401
+    )
+    response = client.get("/api/tasks")
+    body = response.json()
+    assert "local_cli_token" in body["error"]
+    assert body["code"] == "missing_auth"
 
 
 @pytest.mark.asyncio
