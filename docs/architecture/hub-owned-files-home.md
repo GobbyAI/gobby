@@ -139,7 +139,10 @@ local tree:
 ## Migration
 
 One-shot, hub-local, no dual-write. The operator provisions an existing
-`files_home` root; writers never create that root.
+`files_home` root; writers never create that root. Remotes must be
+upgraded or stopped first. Leftover node-local profile, wiki, or
+attachment bytes are copied onto the hub's legacy sources before
+migrate. This campaign does not collect files from other machines.
 
 1. Complete graph preflight of every present source/destination pair.
 2. Publish every present source into an absent destination (profile,
