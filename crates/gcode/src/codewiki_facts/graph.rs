@@ -1,24 +1,19 @@
-use std::collections::HashMap;
-
 use anyhow::Result;
 use gobby_core::degradation::ServiceState;
 use gobby_core::falkor::Row;
 
-use crate::graph::{code_graph, typed_query};
+use crate::graph::code_graph;
 use crate::models::GraphResult;
 
+use super::graph_query::{self, EdgeQueryPlan, ScopeKeys, plans_for};
 use super::{CodewikiFacts, ScopeSelector};
+
+pub use super::graph_query::{GraphBounds, GraphDirection, GraphEdgeKind, GraphScopeMode};
 
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub enum GraphAvailability {
     Available,
     Unavailable { reason: String },
-}
-
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
-pub enum GraphEdgeKind {
-    Call,
-    Import,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -61,6 +56,13 @@ pub enum GraphOutcome<T> {
     Unavailable { reason: String },
 }
 
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct ScopedGraph {
+    pub outcome: GraphOutcome<GraphEdge>,
+    pub incoming_truncated: bool,
+    pub outgoing_truncated: bool,
+}
+
 impl CodewikiFacts {
     pub fn graph_availability(&self) -> GraphAvailability {
         let Some(config) = &self.context().falkordb else {
@@ -97,32 +99,76 @@ impl CodewikiFacts {
         kind: GraphEdgeKind,
         limit: usize,
     ) -> Result<GraphOutcome<GraphEdge>> {
-        if limit == 0 {
-            return Ok(GraphOutcome::Empty);
+        let mode = match kind {
+            GraphEdgeKind::Import => GraphScopeMode::Incident,
+            GraphEdgeKind::Call | GraphEdgeKind::Inheritance => GraphScopeMode::Closed,
+        };
+        Ok(self
+            .scoped_edges(seed, kind, GraphBounds::outgoing(limit), mode)?
+            .outcome)
+    }
+
+    pub fn scoped_edges(
+        &self,
+        seed: &ScopeSelector,
+        kind: GraphEdgeKind,
+        bounds: GraphBounds,
+        mode: GraphScopeMode,
+    ) -> Result<ScopedGraph> {
+        if bounds.incoming_limit == 0 && bounds.outgoing_limit == 0 {
+            return Ok(ScopedGraph {
+                outcome: GraphOutcome::Empty,
+                incoming_truncated: false,
+                outgoing_truncated: false,
+            });
         }
-        let files = self.scoped_files(seed)?;
-        let file_paths = files
-            .iter()
-            .map(|file| file.path.clone())
-            .collect::<Vec<_>>();
-        let symbol_ids = self
-            .symbols_in(&files.iter().map(|file| file.id.clone()).collect::<Vec<_>>())?
-            .into_iter()
-            .map(|symbol| symbol.id)
-            .collect::<Vec<_>>();
-        let scope = match kind {
-            GraphEdgeKind::Call => &symbol_ids,
-            GraphEdgeKind::Import => &file_paths,
-        };
-        let query = self.query_edge_rows(kind, scope, limit);
-        let (rows, truncated) = match classify_query(query, limit)? {
-            GraphOutcome::Available(rows) => (rows, false),
-            GraphOutcome::Truncated(rows) => (rows, true),
-            GraphOutcome::Empty => return Ok(GraphOutcome::Empty),
-            GraphOutcome::Unavailable { reason } => {
-                return Ok(GraphOutcome::Unavailable { reason });
+        let keys = self.resolve_scope_keys(seed)?;
+        if keys.is_empty() {
+            return Ok(ScopedGraph {
+                outcome: GraphOutcome::Empty,
+                incoming_truncated: false,
+                outgoing_truncated: false,
+            });
+        }
+        let mut incoming_rows = Vec::new();
+        let mut outgoing_rows = Vec::new();
+        let mut incoming_truncated = false;
+        let mut outgoing_truncated = false;
+        for plan in plans_for(kind, bounds, mode, keys) {
+            match self.query_plan_rows(&plan)? {
+                GraphOutcome::Unavailable { reason } => {
+                    return Ok(ScopedGraph {
+                        outcome: GraphOutcome::Unavailable { reason },
+                        incoming_truncated: false,
+                        outgoing_truncated: false,
+                    });
+                }
+                GraphOutcome::Empty => {}
+                GraphOutcome::Available(rows) => match plan.direction {
+                    GraphDirection::Incoming => incoming_rows.extend(rows),
+                    GraphDirection::Outgoing => outgoing_rows.extend(rows),
+                },
+                GraphOutcome::Truncated(rows) => match plan.direction {
+                    GraphDirection::Incoming => {
+                        incoming_truncated = true;
+                        incoming_rows.extend(rows);
+                    }
+                    GraphDirection::Outgoing => {
+                        outgoing_truncated = true;
+                        outgoing_rows.extend(rows);
+                    }
+                },
             }
-        };
+        }
+        let incoming_limit = graph_query::clamp_declared_limit(bounds.incoming_limit);
+        let outgoing_limit = graph_query::clamp_declared_limit(bounds.outgoing_limit);
+        incoming_truncated |= take_bounded(&mut incoming_rows, incoming_limit);
+        outgoing_truncated |= take_bounded(&mut outgoing_rows, outgoing_limit);
+        let mut rows = outgoing_rows;
+        rows.extend(incoming_rows);
+        rows.sort();
+        rows.dedup();
+        let truncated = incoming_truncated || outgoing_truncated;
         let edges = rows
             .into_iter()
             .map(|(source, target)| GraphEdge {
@@ -131,13 +177,18 @@ impl CodewikiFacts {
                 kind,
             })
             .collect::<Vec<_>>();
-        if truncated {
-            Ok(GraphOutcome::Truncated(edges))
-        } else if edges.is_empty() {
-            Ok(GraphOutcome::Empty)
+        let outcome = if edges.is_empty() {
+            GraphOutcome::Empty
+        } else if truncated {
+            GraphOutcome::Truncated(edges)
         } else {
-            Ok(GraphOutcome::Available(edges))
-        }
+            GraphOutcome::Available(edges)
+        };
+        Ok(ScopedGraph {
+            outcome,
+            incoming_truncated,
+            outgoing_truncated,
+        })
     }
 
     pub fn callers(&self, symbol_id: &str, limit: usize) -> Result<GraphOutcome<GraphNodeFact>> {
@@ -180,18 +231,35 @@ impl CodewikiFacts {
         })
     }
 
-    fn query_edge_rows(
-        &self,
-        kind: GraphEdgeKind,
-        scope: &[String],
-        limit: usize,
-    ) -> Result<Vec<(String, String)>> {
+    fn resolve_scope_keys(&self, seed: &ScopeSelector) -> Result<ScopeKeys> {
+        if !seed.symbol_ids().is_empty() {
+            return Ok(ScopeKeys::Symbols(seed.symbol_ids().to_vec()));
+        }
+        if seed.is_all() {
+            return Ok(ScopeKeys::All);
+        }
+        let files = self
+            .scoped_files(seed)?
+            .into_iter()
+            .map(|file| file.path)
+            .collect::<Vec<_>>();
+        Ok(ScopeKeys::Files(files))
+    }
+
+    fn query_plan_rows(&self, plan: &EdgeQueryPlan) -> Result<GraphOutcome<(String, String)>> {
+        if plan.limit == 0 || plan.keys.is_empty() {
+            return Ok(GraphOutcome::Empty);
+        }
+        classify_overfetch(self.query_edge_rows(plan), plan.limit)
+    }
+
+    fn query_edge_rows(&self, plan: &EdgeQueryPlan) -> Result<Vec<(String, String)>> {
         let Some(config) = &self.context().falkordb else {
             return Err(anyhow::Error::new(
                 code_graph::GraphReadError::NotConfigured,
             ));
         };
-        let (query, params) = edge_query(&self.context().project_id, kind, scope, limit);
+        let (query, params) = plan.render(&self.context().project_id);
         let connection_config = config.connection_config();
         match gobby_core::falkor::with_graph(
             Some(&connection_config),
@@ -237,36 +305,31 @@ pub(super) fn classify_query<T>(result: Result<Vec<T>>, limit: usize) -> Result<
     }
 }
 
-fn edge_query(
-    project_id: &str,
-    kind: GraphEdgeKind,
-    scope: &[String],
+pub(super) fn classify_overfetch<T>(
+    result: Result<Vec<T>>,
     limit: usize,
-) -> (String, HashMap<String, String>) {
-    let scope = typed_query::id_list_literal(scope);
-    let query = match kind {
-        GraphEdgeKind::Call => format!(
-            "MATCH (source:CodeSymbol {{project: $project}})-[:CALLS]->\
-             (target:CodeSymbol {{project: $project}}) \
-             WHERE source.id IN [{scope}] AND target.id IN [{scope}] \
-             RETURN source.id AS source, target.id AS target \
-             ORDER BY source, target LIMIT {limit}"
-        ),
-        GraphEdgeKind::Import => format!(
-            "MATCH (source:CodeFile {{project: $project}})-[:IMPORTS]->\
-             (target:CodeModule {{project: $project}}) \
-             WHERE source.path IN [{scope}] \
-             RETURN source.path AS source, target.name AS target \
-             ORDER BY source, target LIMIT {limit}"
-        ),
-    };
-    (
-        query,
-        HashMap::from([(
-            "project".to_string(),
-            typed_query::cypher_string_literal(project_id),
-        )]),
-    )
+) -> Result<GraphOutcome<T>> {
+    match result {
+        Ok(rows) if rows.is_empty() => Ok(GraphOutcome::Empty),
+        Ok(mut rows) if rows.len() > limit => {
+            rows.truncate(limit);
+            Ok(GraphOutcome::Truncated(rows))
+        }
+        Ok(rows) => Ok(GraphOutcome::Available(rows)),
+        Err(error) => classify_query::<T>(Err(error), limit),
+    }
+}
+
+fn take_bounded<T: Ord>(rows: &mut Vec<T>, limit: usize) -> bool {
+    rows.sort();
+    rows.dedup();
+    let truncated = limit > 0 && rows.len() > limit;
+    if limit == 0 {
+        rows.clear();
+        return false;
+    }
+    rows.truncate(limit);
+    truncated
 }
 
 fn rows_to_pairs(rows: &[Row]) -> Vec<(String, String)> {
@@ -285,24 +348,20 @@ mod tests {
 
     #[test]
     fn edge_queries_apply_scope_before_ordered_limit() {
-        let cases = [
-            (
-                GraphEdgeKind::Call,
-                vec!["symbol-a".to_string(), "symbol-b".to_string()],
-            ),
-            (
-                GraphEdgeKind::Import,
-                vec!["src/a.rs".to_string(), "src/b.rs".to_string()],
-            ),
-        ];
-
-        for (kind, scope) in cases {
-            let (query, params) = edge_query("project-id", kind, &scope, 7);
-            let where_position = query.find("WHERE").expect("query has scope predicate");
-            let limit_position = query.find("LIMIT 7").expect("query has requested limit");
-            assert!(where_position < limit_position);
-            assert!(query.contains(&format!("'{}', '{}'", scope[0], scope[1])));
-            assert_eq!(params.len(), 1);
-        }
+        let plan = EdgeQueryPlan::new(
+            GraphEdgeKind::Call,
+            GraphDirection::Outgoing,
+            GraphScopeMode::Closed,
+            ScopeKeys::Files(vec!["src/a.rs".to_string(), "src/b.rs".to_string()]),
+            7,
+        );
+        let (query, params) = plan.render("project-id");
+        let where_position = query.find("WHERE").expect("query has scope predicate");
+        let limit_position = query
+            .find("LIMIT 8")
+            .expect("query uses the sentinel fetch limit");
+        assert!(where_position < limit_position);
+        assert!(query.contains("'src/a.rs', 'src/b.rs'"));
+        assert_eq!(params.len(), 1);
     }
 }

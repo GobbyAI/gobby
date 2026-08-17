@@ -66,6 +66,15 @@ fn graph_query_marks_exact_limit_as_truncated() -> Result<()> {
 }
 
 #[test]
+fn scoped_edge_overfetch_marks_only_additional_rows_as_truncated() -> Result<()> {
+    let complete = graph::classify_overfetch(Ok(vec!["one", "two"]), 2)?;
+    assert_eq!(complete, GraphOutcome::Available(vec!["one", "two"]));
+    let truncated = graph::classify_overfetch(Ok(vec!["one", "two", "three"]), 2)?;
+    assert_eq!(truncated, GraphOutcome::Truncated(vec!["one", "two"]));
+    Ok(())
+}
+
+#[test]
 fn graph_query_reports_successful_empty() -> Result<()> {
     let outcome = graph::classify_query::<String>(Ok(Vec::new()), 10)?;
     assert_eq!(outcome, GraphOutcome::Empty);

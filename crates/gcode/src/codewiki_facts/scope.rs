@@ -29,6 +29,7 @@ impl fmt::Display for FileId {
 #[derive(Clone, Debug, Default, Eq, PartialEq)]
 pub struct ScopeSelector {
     paths: Vec<String>,
+    symbols: Vec<String>,
 }
 
 impl ScopeSelector {
@@ -39,11 +40,23 @@ impl ScopeSelector {
     pub fn paths(paths: impl IntoIterator<Item = impl Into<String>>) -> Self {
         Self {
             paths: paths.into_iter().map(Into::into).collect(),
+            symbols: Vec::new(),
+        }
+    }
+
+    pub fn symbols(ids: impl IntoIterator<Item = impl Into<String>>) -> Self {
+        Self {
+            paths: Vec::new(),
+            symbols: ids.into_iter().map(Into::into).collect(),
         }
     }
 
     pub fn is_all(&self) -> bool {
-        self.paths.is_empty()
+        self.paths.is_empty() && self.symbols.is_empty()
+    }
+
+    pub fn symbol_ids(&self) -> &[String] {
+        &self.symbols
     }
 
     pub(crate) fn normalized(&self, facts: &CodewikiFacts) -> Vec<String> {

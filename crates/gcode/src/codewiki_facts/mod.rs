@@ -36,13 +36,17 @@ use postgres::Client;
 use crate::config::Context;
 
 mod graph;
+mod graph_query;
 mod scope;
 mod search;
 mod symbols;
 mod text;
 
 pub use crate::freshness::FreshnessStatus;
-pub use graph::{GraphAvailability, GraphEdge, GraphEdgeKind, GraphNodeFact, GraphOutcome};
+pub use graph::{
+    GraphAvailability, GraphBounds, GraphDirection, GraphEdge, GraphEdgeKind, GraphNodeFact,
+    GraphOutcome, GraphScopeMode, ScopedGraph,
+};
 pub use scope::{FileFact, FileId, ScopeSelector};
 pub use search::{SearchHit, SearchQuery};
 pub use symbols::SymbolFact;

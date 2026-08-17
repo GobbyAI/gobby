@@ -1,8 +1,5 @@
 use std::collections::{BTreeMap, HashSet};
 
-#[cfg(test)]
-use std::collections::HashMap;
-
 use gobby_code::codewiki_facts::{GraphEdgeKind, GraphOutcome, ScopeSelector};
 
 use super::runtime::CodeEngineRuntime;
@@ -114,79 +111,4 @@ pub(crate) fn import_edges_from_pairs(
         }
     }
     edges
-}
-
-#[cfg(test)]
-pub(crate) fn codewiki_call_edges_query(
-    project_id: &str,
-    edge_limit: usize,
-) -> (String, HashMap<String, String>) {
-    edge_query(
-        project_id,
-        edge_limit,
-        "CodeSymbol",
-        "CALLS",
-        "CodeSymbol",
-        "source.id",
-        "target.id",
-    )
-}
-
-#[cfg(test)]
-pub(crate) fn codewiki_import_edges_query(
-    project_id: &str,
-    edge_limit: usize,
-) -> (String, HashMap<String, String>) {
-    edge_query(
-        project_id,
-        edge_limit,
-        "CodeFile",
-        "IMPORTS",
-        "CodeModule",
-        "source.path",
-        "target.name",
-    )
-}
-
-#[cfg(test)]
-fn edge_query(
-    project_id: &str,
-    edge_limit: usize,
-    source_label: &str,
-    relation: &str,
-    target_label: &str,
-    source_field: &str,
-    target_field: &str,
-) -> (String, HashMap<String, String>) {
-    (
-        format!(
-            "MATCH (source:{source_label} {{project: $project}})-[:{relation}]->(target:{target_label} {{project: $project}}) \
-             RETURN {source_field} AS source, {target_field} AS target \
-             ORDER BY source, target \
-             LIMIT {edge_limit}"
-        ),
-        HashMap::from([("project".to_string(), cypher_string_literal(project_id))]),
-    )
-}
-
-#[cfg(test)]
-fn cypher_string_literal(value: &str) -> String {
-    let mut escaped = String::with_capacity(value.len());
-    for character in value.chars() {
-        match character {
-            '\\' => escaped.push_str("\\\\"),
-            '\'' => escaped.push_str("\\'"),
-            '"' => escaped.push_str("\\\""),
-            '\n' => escaped.push_str("\\n"),
-            '\r' => escaped.push_str("\\r"),
-            '\t' => escaped.push_str("\\t"),
-            '\u{0008}' => escaped.push_str("\\b"),
-            '\u{000C}' => escaped.push_str("\\f"),
-            character if character.is_control() => {
-                escaped.push_str(&format!("\\u{:04X}", character as u32));
-            }
-            character => escaped.push(character),
-        }
-    }
-    format!("'{escaped}'")
 }
