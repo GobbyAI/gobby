@@ -395,6 +395,89 @@ async def test_close_cancels_tasks_and_closes_connection() -> None:
 
 
 @pytest.mark.asyncio
+async def test_seed_and_poll_fetch_revisions_off_event_loop() -> None:
+    events: asyncio.Queue[FakeNotification | BaseException] = asyncio.Queue()
+    persistent = dict.fromkeys(DEFINITION_DOMAINS, 0)
+    fetch_loops: list[asyncio.AbstractEventLoop | None] = []
+    main_loop = asyncio.get_running_loop()
+
+    async def factory() -> FakeRevisionConnection:
+        return FakeRevisionConnection(events)
+
+    def fetch() -> dict[DefinitionDomain, int]:
+        try:
+            running: asyncio.AbstractEventLoop | None = asyncio.get_running_loop()
+        except RuntimeError:
+            running = None
+        fetch_loops.append(running)
+        return dict(persistent)
+
+    listener = DefinitionRevisionListener(
+        factory,
+        fetch_revisions=fetch,
+        poll_interval=0.01,
+    )
+    await listener.start()
+    try:
+        await wait_until(lambda: len(fetch_loops) >= 2)
+        assert fetch_loops
+        assert all(loop is not main_loop for loop in fetch_loops)
+    finally:
+        await listener.close()
+
+
+@pytest.mark.asyncio
+async def test_reconnect_backoff_increases_and_heals_from_persistent(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    events: asyncio.Queue[FakeNotification | BaseException] = asyncio.Queue()
+    persistent = dict.fromkeys(DEFINITION_DOMAINS, 0)
+    factory_calls = {"n": 0}
+    sleeps: list[float] = []
+    real_sleep = asyncio.sleep
+
+    async def factory() -> FakeRevisionConnection:
+        factory_calls["n"] += 1
+        if factory_calls["n"] == 1:
+            return FakeRevisionConnection(events)
+        if factory_calls["n"] < 4:
+            raise ConnectionError("connect failed")
+        return FakeRevisionConnection(events)
+
+    async def tracking_sleep(delay: float) -> None:
+        if delay >= 10.0:
+            await real_sleep(3600)
+            return
+        if delay >= 0.1:
+            sleeps.append(delay)
+        await real_sleep(0)
+
+    monkeypatch.setattr(
+        "gobby.storage.definitions.notifications.asyncio.sleep",
+        tracking_sleep,
+    )
+
+    listener = DefinitionRevisionListener(
+        factory,
+        fetch_revisions=lambda: dict(persistent),
+        poll_interval=30.0,
+        reconnect_backoff=0.1,
+    )
+    await listener.start()
+    try:
+        persistent["agents"] = 3
+        await events.put(ConnectionError("listen socket died"))
+        await wait_until(lambda: get_definitions_revision("agents") == 1)
+        assert factory_calls["n"] >= 4
+        assert sleeps[:3] == [0.1, 0.2, 0.4]
+        assert sleeps[1] > sleeps[0]
+        assert get_definitions_revision("agents") == 1
+        assert get_definitions_revision("rules") == 0
+    finally:
+        await listener.close()
+
+
+@pytest.mark.asyncio
 async def test_init_stateful_services_starts_listener(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
