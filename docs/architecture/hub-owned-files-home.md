@@ -114,10 +114,12 @@ fixture vaults keep using explicit `gwiki --out` paths.
 - `personal_project_path()` on the hub owner is `<hub-files>/_personal`.
   Nodes do not resolve a personal filesystem root. `_personal` is not a git
   checkout and is not registered in `project_checkouts`.
-- gwiki `wiki.hub_path` / `GOBBY_WIKI_HUB` on the hub owner is
-  `<hub-files>/wiki`. Topic resolution is `<hub-files>/wiki/<topic>`
-  (today’s `topics/` prefix is removed). Personal scope is
-  `<hub-files>/wiki/personal`, not `_personal/wiki`.
+- A present local bootstrap resolves wiki to `<hub-files>/wiki`.
+  `wiki.hub_path` / `GOBBY_WIKI_HUB` may match that path exactly after
+  normalization; any other override is a typed refusal. Topic resolution
+  is `<hub-files>/wiki/<topic>` (today’s `topics/` prefix is removed).
+  Personal scope is `<hub-files>/wiki/personal`, not `_personal/wiki`.
+  Arbitrary overrides are missing-bootstrap fixture contexts only.
 - Chat attachment bytes reconstruct as
   `<hub-files>/_personal/attachments/<project_id>/<id[:2]>/<id>/<filename>`.
   Absolute `local_path` is not canonical. Nodes upload and download through
@@ -139,19 +141,17 @@ local tree:
 One-shot, hub-local, no dual-write. The operator provisions an existing
 `files_home` root; writers never create that root.
 
-1. Seed still-missing children `<hub-files>/{USER.md,_personal/{notes,reminders,attachments},wiki}` under the pre-provisioned root.
-2. Move `~/.gobby/personal/USER.md` → `<hub-files>/USER.md` if present.
-3. Move `~/.gobby/personal/.gobby` → `<hub-files>/_personal/.gobby`.
-4. Move `~/.gobby/personal/wiki` → `<hub-files>/wiki/personal`; rewrite
-   `scope.json` `root`.
-5. Move each `~/wiki/topics/<name>` → `<hub-files>/wiki/<name>`; rewrite
-   `wikis.json` to relative child paths.
-6. Move `$GOBBY_HOME/projects/<id>/attachments/**` →
-   `<hub-files>/_personal/attachments/<id>/...`; store the reconstructed
-   form, not a machine-absolute path.
-7. Leave `<checkout>/wiki` for #18779.
-8. Leave `~/.gobby/comms_attachments` for Stage 3.
-9. After a successful move, ignore the old locations. No compatibility
+1. Complete graph preflight of every present source/destination pair.
+2. Publish every present source into an absent destination (profile,
+   personal marker, leftover personal children, topic vaults, attachments,
+   wiki registry).
+3. Seed only still-missing baseline children
+   `<hub-files>/{USER.md,_personal/{notes,reminders,attachments},wiki}`.
+4. Rewrite published vault metadata and `wikis.json` to wiki-home-relative
+   children.
+5. Leave `<checkout>/wiki` for #18779.
+6. Leave `~/.gobby/comms_attachments` for Stage 3.
+7. After a successful move, ignore the old locations. No compatibility
    reader.
 
 ## Implementation owner
