@@ -260,9 +260,9 @@ step_workflow:
             tool_output.get('success') is not False
             and bool(tool_output.get('result'))
             and (
-              tool_output.get('result', {}).get('state', {}).get('is_closed')
-              or tool_output.get('result', {}).get('state', {}).get('current_stage', {}).get('name') != 'development'
-              or tool_output.get('result', {}).get('state', {}).get('current_stage', {}).get('state') != 'needs_review'
+              ((tool_output.get('result') or {}).get('state') or {}).get('is_closed')
+              or (((tool_output.get('result') or {}).get('state') or {}).get('current_stage') or {}).get('name') != 'development'
+              or (((tool_output.get('result') or {}).get('state') or {}).get('current_stage') or {}).get('state') != 'needs_review'
             )
           action: set_variable
           variable: review_complete

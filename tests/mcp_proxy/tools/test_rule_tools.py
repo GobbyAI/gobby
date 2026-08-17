@@ -10,6 +10,8 @@ Verifies that rule tools wrap RuleDefinitionManager:
 
 from __future__ import annotations
 
+from typing import Any
+
 import pytest
 
 from gobby.storage.definitions.pipelines import PipelineDefinitionManager
@@ -188,6 +190,18 @@ class TestGetRule:
         result = rule_tools["get_rule"](name="disabled-rule")
         assert result["success"] is True
         assert result["rule"]["enabled"] is False
+
+    def test_malformed_stored_body_returns_structured_error(self, def_manager, rule_tools) -> None:
+        rule_id = _create_test_rule(def_manager, name="broken-rule")
+        def_manager.update(rule_id, definition_json="[]")
+
+        result = rule_tools["get_rule"](name="broken-rule")
+
+        assert result["success"] is False
+        assert "invalid stored definition" in result["error"]
+        listed = rule_tools["list_rules"]()
+        assert listed["success"] is True
+        assert all(rule["name"] != "broken-rule" for rule in listed["rules"])
 
 
 # ═══════════════════════════════════════════════════════════════════════
@@ -431,6 +445,6 @@ class TestDeleteRule:
         result = rule_tools["delete_rule"](name="bundled-rule", force=True)
         assert result["success"] is True
 
-    def test_not_found(self, rule_tools) -> None:
+    def test_not_found(self, rule_tools: dict[str, Any]) -> None:
         result = rule_tools["delete_rule"](name="nonexistent")
         assert result["success"] is False

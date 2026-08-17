@@ -154,7 +154,7 @@ step_workflow:
             and tool_input.get('task_id') == vars.get('assigned_task_id')
             and (
               tool_output.get('closed') is True
-              or tool_output.get('result', {}).get('closed') is True
+              or (tool_output.get('result') or {}).get('closed') is True
             )
           action: set_variable
           variable: implementation_complete

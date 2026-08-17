@@ -52,6 +52,8 @@ def reload_cache(
             total_synced += synced
             if synced > 0:
                 logger.info("Re-synced %s bundled %s to DB", synced, content_type)
+        if sync_result["errors"]:
+            result["bundled_sync_errors"] = list(sync_result["errors"])
         for error in sync_result["errors"]:
             logger.warning("%s", error)
         if total_synced > 0:

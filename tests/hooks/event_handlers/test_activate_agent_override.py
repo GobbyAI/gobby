@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import logging
+from typing import cast
 from unittest.mock import MagicMock, patch
 
 import pytest
@@ -155,6 +156,87 @@ class TestAgentNameOverride:
         changes = call_args[0][1]
         assert changes["_agent_type"] == "my-agent"
 
+    @patch("gobby.workflows.state_manager.SessionVariableManager")
+    @patch("gobby.storage.definitions.variables.SessionVariableDefaultManager")
+    @patch("gobby.storage.definitions.rules.RuleDefinitionManager")
+    @patch("gobby.workflows.variable_defaults.resolve_session_project_id")
+    @patch("gobby.workflows.agent_resolver.resolve_agent")
+    def test_resolves_session_project_once_for_agent_rules_and_variables(
+        self,
+        mock_resolve: MagicMock,
+        mock_session_project: MagicMock,
+        mock_rules_cls: MagicMock,
+        mock_vars_cls: MagicMock,
+        _mock_svm: MagicMock,
+    ) -> None:
+        handlers = _make_event_handlers()
+        mock_resolve.return_value = _make_agent_body("scoped-agent")
+        mock_session_project.return_value = "proj-from-session"
+        mock_rules_cls.return_value.list_all.return_value = []
+        mock_vars_cls.return_value.list_all.return_value = []
+
+        result = handlers._activate_default_agent(
+            session_id="sess-1",
+            cli_source="claude",
+            project_id=None,
+            agent_name_override="scoped-agent",
+        )
+
+        assert result is not None
+        assert result.agent_name == "scoped-agent"
+        mock_session_project.assert_called_once_with(handlers._session_manager.db, "sess-1")
+        mock_resolve.assert_called_once_with(
+            "scoped-agent",
+            handlers._session_manager.db,
+            project_id="proj-from-session",
+        )
+        mock_rules_cls.return_value.list_all.assert_called_once_with(
+            enabled=True,
+            project_id="proj-from-session",
+        )
+        mock_vars_cls.return_value.list_all.assert_called_once_with(
+            project_id="proj-from-session",
+            enabled=True,
+        )
+
+    @patch("gobby.workflows.state_manager.SessionVariableManager")
+    @patch("gobby.storage.definitions.variables.SessionVariableDefaultManager")
+    @patch("gobby.storage.definitions.rules.RuleDefinitionManager")
+    @patch("gobby.workflows.variable_defaults.resolve_session_project_id")
+    @patch("gobby.workflows.agent_resolver.resolve_agent")
+    def test_caller_project_id_is_not_re_resolved(
+        self,
+        mock_resolve: MagicMock,
+        mock_session_project: MagicMock,
+        mock_rules_cls: MagicMock,
+        mock_vars_cls: MagicMock,
+        _mock_svm: MagicMock,
+    ) -> None:
+        handlers = _make_event_handlers()
+        mock_resolve.return_value = _make_agent_body("scoped-agent")
+        mock_rules_cls.return_value.list_all.return_value = []
+        mock_vars_cls.return_value.list_all.return_value = []
+
+        result = handlers._activate_default_agent(
+            session_id="sess-1",
+            cli_source="claude",
+            project_id="proj-1",
+            agent_name_override="scoped-agent",
+        )
+
+        assert result is not None
+        assert result.agent_name == "scoped-agent"
+        mock_session_project.assert_not_called()
+        mock_resolve.assert_called_once_with(
+            "scoped-agent",
+            handlers._session_manager.db,
+            project_id="proj-1",
+        )
+        mock_rules_cls.return_value.list_all.assert_called_once_with(
+            enabled=True,
+            project_id="proj-1",
+        )
+
 
 class TestActivateDefaultAgentEdgeCases:
     """Edge cases for _activate_default_agent."""
@@ -232,5 +314,8 @@ class TestActivateDefaultAgentEdgeCases:
             agent_name_override="missing-agent",
         )
 
-        handlers._session_manager.update.assert_not_called()
-        assert handlers._session_manager.update.call_count == 0
+        session_manager = handlers._session_manager
+        assert session_manager is not None
+        update = cast(MagicMock, session_manager.update)
+        update.assert_not_called()
+        assert update.call_count == 0

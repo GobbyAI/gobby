@@ -7,6 +7,8 @@ from pathlib import Path
 import pytest
 import yaml
 
+from gobby.workflows.safe_evaluator import SafeExpressionEvaluator
+
 pytestmark = pytest.mark.unit
 
 
@@ -82,6 +84,29 @@ def test_stale_reviewers_can_terminate_after_task_already_advanced() -> None:
     assert "needs_review" in stale_get_task_handlers[0]["when"]
     assert "no longer at development:needs_review" in status_message
     assert review_step["transitions"] == [{"to": "terminate", "when": "vars.review_complete"}]
+
+
+@pytest.mark.parametrize("state", [None, {"is_closed": False, "current_stage": None}])
+def test_get_task_when_tolerates_null_state(state: object) -> None:
+    review_step = next(
+        step for step in _agent()["step_workflow"]["steps"] if step["name"] == "review"
+    )
+    get_task_handler = next(
+        item
+        for item in review_step["on_mcp_success"]
+        if item.get("server") == "gobby-tasks" and item.get("tool") == "get_task"
+    )
+    evaluator = SafeExpressionEvaluator(
+        {
+            "tool_output": {
+                "success": True,
+                "result": {"state": state},
+            }
+        },
+        {"bool": bool},
+    )
+
+    assert evaluator.evaluate(get_task_handler["when"]) is True
 
 
 def test_escalation_is_limited_to_broken_workflow() -> None:

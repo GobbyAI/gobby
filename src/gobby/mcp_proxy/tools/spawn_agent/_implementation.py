@@ -60,7 +60,7 @@ from ._spawn_guards import (
     active_task_response_if_blocked,
     reserve_agent_slot,
 )
-from ._step_state import apply_claimed_step_update, persist_initial_step_instance
+from ._step_state import apply_claimed_step_update, persist_initial_step_instance_if_resolved
 from ._worktree_reuse import prepare_reused_worktree
 
 if TYPE_CHECKING:
@@ -612,18 +612,11 @@ async def spawn_agent_impl(
             }
         if db is not None and agent_body is not None and agent_body.step_workflow is not None:
             try:
-                from gobby.workflows.agent_resolver import resolve_agent_with_row
-
-                resolved = resolve_agent_with_row(
-                    agent_body.name,
-                    db,
-                    project_id=project_id,
-                )
-                persist_initial_step_instance(
+                persist_initial_step_instance_if_resolved(
                     db,
                     agent_body,
                     session_id=prepared_spawn.session_id,
-                    step_workflow_id=resolved[1].step_workflow_id if resolved else None,
+                    project_id=project_id,
                     initial_variables=effective_initial_variables,
                 )
             except Exception as exc:

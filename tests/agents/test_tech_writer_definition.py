@@ -7,6 +7,8 @@ from pathlib import Path
 import pytest
 import yaml
 
+from gobby.workflows.safe_evaluator import SafeExpressionEvaluator
+
 pytestmark = pytest.mark.unit
 
 
@@ -74,3 +76,33 @@ def test_handoff_transitions_to_end_agent_run_termination() -> None:
     assert implement["transitions"] == [{"to": "terminate", "when": "vars.implementation_complete"}]
     assert "gobby-agents:end_agent_run" in implement["blocked_mcp_tools"]
     assert terminate["allowed_mcp_tools"] == ["gobby-agents:end_agent_run"]
+
+
+def test_close_task_when_tolerates_null_result() -> None:
+    implement = next(
+        step for step in _agent()["step_workflow"]["steps"] if step["name"] == "implement"
+    )
+    close_hook = next(
+        item
+        for item in implement["on_mcp_success"]
+        if item["server"] == "gobby-tasks" and item["tool"] == "close_task"
+    )
+    evaluator = SafeExpressionEvaluator(
+        {
+            "tool_input": {"task_id": "#1", "preview": False},
+            "vars": {"assigned_task_id": "#1"},
+            "tool_output": {"closed": False, "result": None},
+        },
+        {},
+    )
+    assert evaluator.evaluate(close_hook["when"]) is False
+
+    closed_evaluator = SafeExpressionEvaluator(
+        {
+            "tool_input": {"task_id": "#1", "preview": False},
+            "vars": {"assigned_task_id": "#1"},
+            "tool_output": {"result": {"closed": True}},
+        },
+        {},
+    )
+    assert closed_evaluator.evaluate(close_hook["when"]) is True

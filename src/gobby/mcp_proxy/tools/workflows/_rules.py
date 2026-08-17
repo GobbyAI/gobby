@@ -104,6 +104,17 @@ def _rule_detail(row: RuleDefinitionRow) -> dict[str, Any]:
     }
 
 
+def _rule_or_parse_error(row: RuleDefinitionRow) -> dict[str, Any]:
+    try:
+        return {"success": True, "rule": _rule_detail(row)}
+    except (json.JSONDecodeError, TypeError) as exc:
+        logger.warning("Rule '%s' has an invalid stored definition: %s", row.name, exc)
+        return {
+            "success": False,
+            "error": f"Rule '{row.name}' has an invalid stored definition",
+        }
+
+
 def list_rules(
     def_manager: RuleDefinitionManager,
     event: str | None = None,
@@ -164,7 +175,7 @@ def get_rule(
     if row is None:
         return {"success": False, "error": f"Rule '{name}' not found"}
 
-    return {"success": True, "rule": _rule_detail(row)}
+    return _rule_or_parse_error(row)
 
 
 def toggle_rule(
@@ -190,7 +201,7 @@ def toggle_rule(
     updated = def_manager.update(row.id, enabled=enabled)
     logger.info("Toggled rule '%s' enabled=%s", name, enabled)
 
-    return {"success": True, "rule": _rule_detail(updated)}
+    return _rule_or_parse_error(updated)
 
 
 def update_rule(
@@ -268,7 +279,7 @@ def update_rule(
     except Exception as e:
         logger.warning("Failed to auto-export updated rule '%s': %s", name, e)
 
-    return {"success": True, "rule": _rule_detail(updated)}
+    return _rule_or_parse_error(updated)
 
 
 def create_rule(
@@ -338,7 +349,7 @@ def create_rule(
     except Exception as e:
         logger.warning("Failed to auto-export rule '%s': %s", name, e)
 
-    return {"success": True, "rule": _rule_detail(row)}
+    return _rule_or_parse_error(row)
 
 
 def delete_rule(
