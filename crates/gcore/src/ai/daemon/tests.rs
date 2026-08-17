@@ -9,6 +9,7 @@ use std::sync::MutexGuard;
 
 mod embeddings;
 mod environment;
+mod grants;
 mod multipart;
 mod text;
 

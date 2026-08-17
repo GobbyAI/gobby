@@ -278,7 +278,8 @@ fn is_retryable(error: &AiError) -> bool {
         AiError::HttpStatus { status, .. } => *status == 429 || *status >= 500,
         AiError::CapabilityUnavailable { .. }
         | AiError::NotConfigured { .. }
-        | AiError::ParseFailure { .. } => false,
+        | AiError::ParseFailure { .. }
+        | AiError::Grant { .. } => false,
     }
 }
 

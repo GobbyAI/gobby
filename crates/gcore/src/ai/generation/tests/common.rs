@@ -15,7 +15,7 @@ pub(super) use super::super::tool_loop::{
     MAX_FORCED_INVESTIGATION_RETRIES, run_tool_loop_with_clock,
 };
 pub(super) use super::super::transport::{
-    ToolPolicy, build_request_body, daemon_agentic_chat, parse_completion, parse_daemon_agentic,
+    ToolPolicy, build_request_body, daemon_agentic_chat, parse_daemon_agentic,
 };
 pub(super) use super::super::{
     ChatCompletion, ChatCompletionRequest, ChatMessage, ChatRole, ChatTransport,

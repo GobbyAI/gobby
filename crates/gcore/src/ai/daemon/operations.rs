@@ -49,16 +49,19 @@ impl GenerationBudget {
 }
 const EMBEDDINGS_PATH: &str = "/api/embeddings";
 
-fn presented_grant(cfg: &AiContext) -> Result<GrantBundle, AiError> {
+pub(super) fn presented_grant(
+    cfg: &AiContext,
+    root: Option<&std::path::Path>,
+) -> Result<GrantBundle, AiError> {
     if let Some(state) = &cfg.grant {
         return Ok(state.bundle.clone());
     }
-    let root = project_root_for_grant().ok_or_else(|| {
+    let root = root.ok_or_else(|| {
         AiError::not_configured(None, "daemon AI requests require a presented runtime grant")
     })?;
     crate::grant::acquire(root)
         .map(|acquired| acquired.bundle)
-        .map_err(|error| AiError::not_configured(None, error.to_string()))
+        .map_err(AiError::from)
 }
 
 fn project_root_for_grant() -> Option<std::path::PathBuf> {
@@ -67,8 +70,9 @@ fn project_root_for_grant() -> Option<std::path::PathBuf> {
         .and_then(|cwd| crate::project::find_project_root(&cwd))
 }
 
-fn grant_error_from_ai(error: &AiError) -> Option<GrantError> {
+pub(super) fn grant_error_from_ai(error: &AiError) -> Option<GrantError> {
     match error {
+        AiError::Grant { source } => Some(source.clone()),
         AiError::HttpStatus { status, body } => {
             GrantError::from_presentation_http(*status, body.as_deref().unwrap_or(""))
         }
@@ -76,17 +80,28 @@ fn grant_error_from_ai(error: &AiError) -> Option<GrantError> {
     }
 }
 
+fn require_acquired_grant(grant: &GrantBundle, capability: AiCapability) -> Result<(), AiError> {
+    crate::ai::require_modality(&grant.capabilities, capability)
+}
+
 fn present_via_daemon<T>(
     cfg: &AiContext,
+    capability: AiCapability,
     mut send: impl FnMut(&GrantBundle) -> Result<T, AiError>,
 ) -> Result<T, AiError> {
-    let grant = presented_grant(cfg)?;
-    let Some(root) = project_root_for_grant() else {
+    let root = project_root_for_grant();
+    let grant = presented_grant(cfg, root.as_deref())?;
+    let Some(root) = root else {
+        require_acquired_grant(&grant, capability)?;
         return send(&grant);
     };
     let request = AcquireRequest::from_process(&root);
     let mut last_ai = None;
     match crate::grant::present_bundle_with_single_retry(&request, &grant, |bundle| {
+        if let Err(error) = require_acquired_grant(bundle, capability) {
+            last_ai = Some(error);
+            return Err(GrantError::Io("non-retryable presentation".to_string()));
+        }
         match send(bundle) {
             Ok(value) => Ok(value),
             Err(error) => {
@@ -103,7 +118,7 @@ fn present_via_daemon<T>(
     }) {
         Ok(value) => Ok(value),
         Err(_) if last_ai.is_some() => Err(last_ai.take().expect("stashed AI error")),
-        Err(error) => Err(AiError::not_configured(None, error.to_string())),
+        Err(error) => Err(AiError::from(error)),
     }
 }
 
@@ -137,7 +152,7 @@ pub fn transcribe_via_daemon(
     let bytes = Bytes::from(bytes);
     let _permit = cfg.limiter.acquire();
 
-    let value = present_via_daemon(cfg, |grant| {
+    let value = present_via_daemon(cfg, capability, |grant| {
         super::super::retry_with_backoff(
             || {
                 let form = multipart_form_with_file(bytes.clone(), &file_name, &mime, capability)?
@@ -187,7 +202,7 @@ pub fn describe_image_via_daemon(
     let bytes = Bytes::from(bytes);
     let _permit = cfg.limiter.acquire();
 
-    let value = present_via_daemon(cfg, |grant| {
+    let value = present_via_daemon(cfg, capability, |grant| {
         super::super::retry_with_backoff(
             || {
                 let form = multipart_form_with_file(bytes.clone(), &file_name, &mime, capability)?;
@@ -314,7 +329,7 @@ fn generate_text_via_daemon(
     let body = text_request_body(prompt, system, options);
     let _permit = cfg.limiter.acquire();
 
-    let value = present_via_daemon(cfg, |grant| {
+    let value = present_via_daemon(cfg, capability, |grant| {
         super::super::retry_with_backoff(
             || {
                 let request = with_grant_presentation(
@@ -356,7 +371,7 @@ pub fn embed_via_daemon(
     );
     let _permit = cfg.limiter.acquire();
 
-    let value = present_via_daemon(cfg, |grant| {
+    let value = present_via_daemon(cfg, capability, |grant| {
         super::super::retry_with_backoff(
             || {
                 let request = with_grant_presentation(
