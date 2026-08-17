@@ -104,7 +104,6 @@ class ChatSessionMessagesMixin:
             if not text_messages:
                 return None
 
-            max_msg_chars = self._max_history_message_chars
             effective_max = (
                 max_total_chars if max_total_chars is not None else self._max_history_total_chars
             )
@@ -114,17 +113,37 @@ class ChatSessionMessagesMixin:
 
             parts: list[str] = []
             total = 0
+            session_ref = str(target_id)
 
-            for m in text_messages:
-                role_label = "**User:**" if m["role"] == "user" else "**Assistant:**"
-                content = m["content"]
-                if len(content) > max_msg_chars:
-                    content = content[:max_msg_chars] + "..."
+            for index, message in enumerate(text_messages):
+                role_label = "**User:**" if message["role"] == "user" else "**Assistant:**"
+                content = str(message["content"])
                 entry = f"{role_label} {content}"
-                if total + len(entry) > content_budget:
-                    break
-                parts.append(entry)
-                total += len(entry)
+                separator = 2 if parts else 0
+                if total + separator + len(entry) <= content_budget:
+                    parts.append(entry)
+                    total += separator + len(entry)
+                    continue
+
+                if not parts:
+                    pointer_entry = (
+                        f"{role_label} [omitted {len(content)} chars; "
+                        f"get_session_messages session_id={session_ref}]"
+                    )
+                    if len(pointer_entry) <= content_budget:
+                        parts.append(pointer_entry)
+                        total += len(pointer_entry)
+                        continue
+                    return None
+
+                omitted = len(text_messages) - index
+                omit_line = (
+                    f"[omitted {omitted} messages to fit history budget; "
+                    f"get_session_messages session_id={session_ref}]"
+                )
+                if total + separator + len(omit_line) <= content_budget:
+                    parts.append(omit_line)
+                break
 
             if not parts:
                 return None

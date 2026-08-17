@@ -584,8 +584,10 @@ class TestHistoryInjection:
         assert "**User:** Tell me about Python" in result
 
     @pytest.mark.asyncio
-    async def test_load_history_context_truncates_long_messages(self, session: ChatSession) -> None:
-        """Messages longer than 2000 chars should be truncated."""
+    async def test_load_history_context_keeps_long_messages_that_fit(
+        self, session: ChatSession
+    ) -> None:
+        """A long message that fits the total budget is forwarded whole."""
         long_text = "x" * 3000
         mock_manager = AsyncMock()
         mock_manager.get_messages.return_value = [
@@ -596,9 +598,8 @@ class TestHistoryInjection:
 
         result = await session._load_history_context()
         assert result is not None
-        # 2000 chars + "..." = truncated
-        assert "x" * 2000 + "..." in result
-        assert "x" * 2001 not in result
+        assert long_text in result
+        assert "..." not in result
 
     @pytest.mark.asyncio
     async def test_load_history_context_filters_non_text(self, session: ChatSession) -> None:
@@ -650,22 +651,40 @@ class TestHistoryInjection:
         assert count > 0
 
     @pytest.mark.asyncio
-    async def test_load_history_context_respects_custom_message_limit(
+    async def test_load_history_context_does_not_slice_bodies_for_message_cap(
         self, session: ChatSession
     ) -> None:
-        """Per-message truncation should respect _max_history_message_chars."""
+        """Per-message char caps no longer prefix-slice a body that fits the total."""
         session._max_history_message_chars = 50
+        body = "a" * 200
         mock_manager = AsyncMock()
         mock_manager.get_messages.return_value = [
-            {"role": "user", "content_type": "text", "content": "a" * 200},
+            {"role": "user", "content_type": "text", "content": body},
         ]
         session.db_session_id = "test-db-id"
         session._message_manager = mock_manager
 
         result = await session._load_history_context()
         assert result is not None
-        assert "a" * 50 + "..." in result
-        assert "a" * 51 not in result
+        assert body in result
+        assert "a" * 50 + "..." not in result
+
+    async def test_load_history_context_omits_whole_message_when_over_budget(
+        self, session: ChatSession
+    ) -> None:
+        """A single message larger than the remaining budget is omitted whole."""
+        mock_manager = AsyncMock()
+        mock_manager.get_messages.return_value = [
+            {"role": "user", "content_type": "text", "content": "z" * 4000},
+        ]
+        session.db_session_id = "hist-session"
+        session._message_manager = mock_manager
+
+        result = await session._load_history_context(max_total_chars=300)
+        assert result is not None
+        assert "z" * 20 not in result
+        assert "omitted 4000 chars" in result
+        assert "get_session_messages session_id=hist-session" in result
 
     @pytest.mark.asyncio
     async def test_load_history_context_respects_custom_total_limit(
