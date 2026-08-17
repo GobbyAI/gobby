@@ -1,6 +1,6 @@
 # AI Daemon Capability Contract
 
-This contract defines the daemon AI routes consumed by the Rust CLIs. It aligns the CLI capability names in `crates/gcore/src/config.rs`, the probe routes in `crates/gcore/src/ai/probe.rs`, and the daemon-side provider registry.
+This contract defines the daemon AI routes consumed by the Rust CLIs. It aligns the CLI capability names in `crates/gcore/src/config.rs` with the daemon-side provider registry. Grant-backed capability flags are the CLI availability source of truth; the CLIs do not probe daemon status endpoints to choose a route.
 
 ## Capability/Transport Model (A2)
 
@@ -14,24 +14,22 @@ AI work is routed per capability. The shared capability names are stable wire va
 | Text generation | `text_generate` | Prompted text generation | `/api/llm/*` |
 | Embeddings | `embed` | Semantic vectors | No daemon status route in this contract |
 
-Routing is selected per capability with `auto`, `daemon`, `direct`, or `off`.
+Routing is selected per capability as `daemon` or `off`.
 
-- `daemon` sends requests to the daemon URL resolved from `~/.gobby/bootstrap.yaml` and includes the local CLI token.
-- `direct` uses the configured local or OpenAI-compatible endpoint from the CLI process.
-- `auto` probes daemon capability status first, then uses configured direct fallback if the capability is not advertised.
+- `daemon` sends requests to the daemon URL resolved from `~/.gobby/bootstrap.yaml` and includes the local CLI token and presented grant.
 - `off` reports the capability unavailable.
 
-CLI AI capability config resolves from daemon-served grant-backed keys. There is no client credential file and no `GOBBY_*` environment layer for AI capability config. Use `--no-ai` to force every capability off for one invocation.
+CLI AI capability config resolves from daemon-served grant-backed keys. There is no client credential file and no `GOBBY_*` environment layer for AI capability config. There is no Auto or Direct route and no probe of daemon status endpoints to decide availability. Use `--no-ai` to force every capability off for one invocation.
 
-`ai.text_generate.*` is the CLI standalone/direct namespace. The daemon does not accept `ai.text_generate.*` writes in `config_store`; daemon text generation resolves providers from the daemon runtime config instead. Named local daemon endpoints live under `ai.generation.local.endpoints.<name>` and are selected with providers such as `local:lm-studio`.
+The daemon does not accept `ai.text_generate.*` writes in `config_store`; daemon text generation resolves providers from the daemon runtime config instead. Named local daemon endpoints live under `ai.generation.local.endpoints.<name>` and are selected with providers such as `local:lm-studio`.
 
 Daemon-side transports are implementation details behind a capability binding. `openai_compatible_http` means the daemon proxies to an OpenAI-compatible endpoint. `daemon_native` is reserved for daemon-native implementations. For audio, the daemon binding is `voice.openai_compatible_audio` with `provider`, `url`, `model`, optional `api_key`, `timeout_seconds`, `transcription_enabled`, and `translation_enabled`.
 
-## Probe Routes Match The Contract
+## Capability Status Routes
 
-The status route is the availability source of truth. `GET /api/providers/models` is used only to enumerate provider and model choices; it must never make a capability routable by itself.
+The grant is the CLI availability source of truth. `GET /api/providers/models` is used only to enumerate provider and model choices; it must never make a capability routable by itself.
 
-`crates/gcore/src/ai/probe.rs` probes these routes:
+The daemon advertises capability support on these status routes:
 
 | Capability | Probe method | Probe path | Required advertisement |
 |---|---:|---|---|
@@ -41,7 +39,7 @@ The status route is the availability source of truth. `GET /api/providers/models
 | `text_generate` | `GET` | `/api/llm/status` | `text_generate: true` or equivalent capability flag |
 | `embed` | none | none | unavailable for daemon routing |
 
-The daemon should return the canonical fields above. The CLI probe accepts these current status shapes:
+The daemon should return the canonical fields above. Status bodies may advertise these field names:
 
 - Audio transcription: `transcription_enabled`, `openai_compatible_audio.transcription_enabled`, or `voice.openai_compatible_audio.transcription_enabled`.
 - Audio translation: `translation_enabled`, `openai_compatible_audio.translation_enabled`, or `voice.openai_compatible_audio.translation_enabled`.
@@ -165,9 +163,8 @@ Named local daemon generation endpoints use `local:<endpoint>` as the provider.
 Candidate strings use `local:<endpoint>/<model>`. Bare `local` is reserved for
 the daemon-owned local provider family and is unavailable for text generation.
 Endpoint config is daemon-owned and shaped as
-`ai.generation.local.endpoints.<name> = { api_base, model, api_key? }`; the
-CLIs keep `ai.text_generate.*` for standalone/direct operation and pass
-`provider`, `model`, `profile`, or `candidates` to daemon requests.
+`ai.generation.local.endpoints.<name> = { api_base, model, api_key? }`. CLIs
+pass `provider`, `model`, `profile`, or `candidates` to daemon requests.
 
 Response:
 
@@ -235,8 +232,8 @@ ordered activations, and field provenance. Refresh source states are `pending`,
 `ok`, `stale`, or `error`; collection failure preserves the prior generation's
 models. Collectors refresh at daemon startup and every 24 hours. Bundled Claude
 and Droid rows seed an empty store with stale health until a live refresh
-succeeds. The CLI may use this response to populate choices. It must still probe
-the per-capability status route before routing any AI request to the daemon.
+succeeds. The CLI may use this response to populate choices. Capability availability
+still comes from the grant, not from this enumeration route.
 
 ## Per-Request Resolution
 
@@ -244,8 +241,7 @@ Each request resolves capability, provider, and model in this order:
 
 1. Explicit request override from the CLI command or request options.
 2. Daemon feature default for that capability.
-3. Configured local or OpenAI-compatible fallback.
-4. Off, with a capability-unavailable degradation.
+3. Off, with a capability-unavailable degradation.
 
 When `routing=daemon`, the CLI forwards the requested capability where the route requires it, any resolved provider/model values, and `project_id` when available. The daemon owns final provider selection for daemon-routed work.
 
@@ -322,4 +318,4 @@ The embedding-config migration removes the same-window co-release requirement. I
 
 The daemon should serialize model loads or honor keep-alive settings so Whisper, multimodal generation, and embeddings are not all resident at once unless explicitly configured.
 
-_Last verified: 2026-06-23_
+_Last verified: 2026-08-17_

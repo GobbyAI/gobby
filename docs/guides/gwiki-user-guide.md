@@ -1,16 +1,15 @@
 # gwiki User Guide
 
 A complete guide to using `gwiki` to capture, search, upkeep, and synthesize a
-local-first knowledge vault: install → vault → ingest → search/ask →
+local-first knowledge vault: install → vault → ingest → search →
 maintenance.
 
 `gwiki` ingests multimodal sources (documents, PDFs, URLs, MediaWiki, git,
 audio/image/video) into a Markdown vault, indexes them for hybrid search, and
 turns accepted research notes into cited articles. `search` is the retrieval
 primitive — for humans and for agents composing `search` + `read` research
-loops — and `ask` layers one bounded-evidence completion on top of it. It
-shares gcode's hybrid BM25 + semantic + graph search stack and the shared
-Gobby AI routing layer.
+loops. It shares gcode's hybrid BM25 + semantic + graph search stack and the
+shared Gobby AI routing layer.
 
 ## Getting Started
 
@@ -153,16 +152,13 @@ frame extraction) when AI routing is enabled.
 to bring into the vault.
 
 **Options:**
-- `--no-ai` — Disable AI-backed media extraction for this ingest (the privacy path). The source is still stored as a raw asset, with degraded derived output where applicable.
+- `--no-ai` — Intentionally disable AI-backed media extraction for this ingest. The source is still stored as a raw asset, with degraded derived output where applicable.
 - `--translate` — Prefer audio translation over transcription where a backend is available.
 - `--target-lang <LANG>` — Target language for audio translation.
 - `--video-frame-interval <SECONDS>` — Seconds between sampled video frames; `0` disables frames.
-- `--transcription-routing <auto|daemon|direct|off>` — Routing override for audio transcription and translation.
-- `--vision-routing <auto|daemon|direct|off>` — Routing override for vision extraction.
-- `--text-routing <auto|daemon|direct|off>` — Routing override for text generation.
 
-The three `--*-routing` flags and `--no-ai` override the configured AI routing
-for a single ingest. See [AI Routing & Configuration](#ai-routing--configuration).
+`--no-ai` is an intentional degraded-ingest choice, not a recovery step. See
+[AI Routing & Configuration](#ai-routing--configuration).
 
 ### Fetch URLs (`ingest-url`)
 
@@ -294,7 +290,7 @@ or topic scope.
 - `--yes` — Confirm destructive purge. Without it, `gwiki` reports what would be
   purged and exits with an input error.
 
-## Search & Ask
+## Search
 
 ### Index (`index`)
 
@@ -333,45 +329,6 @@ contributing `sources` with per-source `explanations`, and the output includes
 - `--limit <N>` — Max results (default: `10`).
 - `--no-semantic` — Disable semantic vector ranking for this query (BM25 + graph only). This is a query-time ranking control; Qdrant and embeddings are still required runtime infrastructure.
 - `--token-budget <N>` — Trim results to fit an approximate token budget. When hits are dropped to stay inside the budget, the output emits a narrowing hint so an agent can refine the query rather than silently lose context.
-
-### Ask (`ask`)
-
-```bash
-gwiki --topic rust-async ask "How does the borrow checker handle reborrows?"
-gwiki --topic rust-async ask "..." --llm
-gwiki --topic rust-async ask "..." --llm --ai direct --require-ai
-```
-
-`ask` is a thin RAG layer over `search`: it retrieves the top-k hits, builds a
-bounded evidence prompt from query-centered excerpts (capped at
-`prompt_token_budget`, ~12K estimated tokens; actual usage is reported as
-`prompt_tokens_estimated`), and — with `--llm` — runs a single completion to
-synthesize a written answer with grounded citations. When evidence has to be
-dropped to stay inside the budget, `truncated` is set and
-`truncated_components` lists `evidence`.
-
-**When to use:** You want an answer assembled from the vault, not just a ranked
-list of pages.
-
-**Options:**
-- `--llm` — Synthesize an answer from retrieved wiki hits.
-- `--ai <auto|daemon|direct|off>` — AI routing override for synthesis (default: `auto`). Inert unless `--llm` is set. `daemon` routes through the Gobby daemon; `direct` hits any OpenAI-compatible endpoint (`ai.text_generate.api_base`/`api_key`), including LM Studio locally.
-- `--require-ai` — Fail if synthesis is requested but no AI route succeeds.
-- `--token-budget <N>` — Trim retrieval hits to fit an approximate token budget before the evidence prompt is built, emitting a narrowing hint when hits are dropped. This applies on top of the `prompt_token_budget` evidence cap described above.
-
-Without `--llm`, `ask` is a pure retrieval command and runs without any AI route.
-
-**Citation check.** Synthesized answers are checked after generation against the
-retrieved evidence (hit titles, snippets, paths, the prompt's evidence
-excerpts, and code citations). The JSON output carries the verdict in
-`synthesis.citation_check` — `status` is `supported` when every extracted claim
-overlaps the evidence, or `unsupported_claims` with the offending claims listed
-in `unsupported_claims[]`; each ungrounded claim also adds a `warnings[]` entry.
-Text output appends an `[unverified]` note when any claim fails the check. The
-check is a deterministic token-overlap heuristic, not a semantic proof — treat
-flagged claims as unverified rather than wrong, and verify them against the
-cited pages. (Persisted prose is validated separately: research-note linting
-rejects uncited claims and `audit` checks pages against provenance.)
 
 ## Navigate the Vault
 
@@ -708,7 +665,7 @@ use the daemon or stay off (`--no-ai`):
 | Audio transcription (`ai.audio_transcribe`) | Speech-to-text for audio/video |
 | Audio translation (`ai.audio_translate`) | Translating audio segments |
 | Vision extraction (`ai.vision_extract`) | Image/frame understanding |
-| Text generation (`ai.text_generate`) | `ask --llm` synthesis, derived text |
+| Text generation (`ai.text_generate`) | Derived ingest text |
 | Embeddings (`ai.embeddings`) | Semantic vectors for hybrid search |
 
 Routing values are `daemon` and `off`. Use `--no-ai` to force every capability
@@ -796,9 +753,10 @@ daemon is running, then re-run `gwiki index`.
 
 The relevant AI capability was routed `off` or was unavailable, so ingest stored
 the raw asset with degradation markers instead of derived text. Check the
-`degradations` array, then re-run with an explicit routing override (for example
-`--no-ai`) once the backend is reachable. `--no-ai`
-always produces degraded output by design.
+`degradations` array. After the backend recovers, re-run the ingest without
+`--no-ai` so derived text can be generated. Use `--no-ai` only when you
+intentionally want degraded ingest that stores the raw asset and records
+degraded derived output.
 
 ### `compile` refuses to overwrite a page
 
@@ -813,3 +771,5 @@ closed regardless of write intent or machine-owned synthesis metadata.
 See also: [gwiki Development Guide](./gwiki-development-guide.md) (internals),
 [gwiki README](../../crates/gwiki/README.md) (source refresh contract), and
 [gwiki CLI Contract](../contracts/gwiki-cli.md).
+
+_Last verified: 2026-08-17_

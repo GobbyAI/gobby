@@ -4,7 +4,7 @@ Technical internals for developers and agents working in the `gobby-core` crate 
 
 ## What gobby-core Is
 
-`gobby-core` is the shared Rust foundation crate for Gobby CLI crates and future Rust daemon work. It holds the boring, reusable platform layer: project discovery, bootstrap and daemon addressing, shared context/config contracts, setup boundaries, degradation vocabulary, feature-gated datastore adapters, and generic indexing/search primitives.
+`gobby-core` is the shared Rust foundation crate for Gobby CLI crates and future Rust daemon work. It holds the boring, reusable platform layer: project discovery, bootstrap and daemon addressing, shared context/config contracts, grant handshake, degradation vocabulary, feature-gated datastore adapters, and generic indexing/search primitives.
 
 Domain behavior stays out of this crate. Code graph facts, symbol IDs, language parsing policy, wiki vault layout, task behavior, memory behavior, and CLI output formatting belong to consumer crates.
 
@@ -24,7 +24,7 @@ The baseline crate remains dependency-light. Consumers that only need project di
 | `config` | always | Shared configuration-resolution contracts. Environment variables, `config_store`, and defaults are represented here as the foundation expands. |
 | `context` | always | Shared runtime context contracts for project identity, daemon URL, and service configuration. Consumer-specific CLI state stays outside. |
 | `degradation` | always | Shared vocabulary for configured-service unavailability, explicit degraded paths, partial search, stale indexes, skipped artifacts, and fatal core errors. |
-| `ai` | `ai` | Shared AI routing, direct/daemon transports, profile tiers, embeddings, and agentic/tool-loop generation primitives. |
+| `ai` | `ai` | Shared AI routing, daemon transports, profile tiers, embeddings, and agentic/tool-loop generation primitives. |
 | `schema` | `postgres` | Hub schema apply/verify authority. Runtime commands validate externally managed resources and do not implicitly migrate them. |
 | `token_budget` | always | Shared token-budget trimming helpers — bounds prompt/context payloads to a token ceiling so consumers (`gwiki search`, `gwiki code`) reuse one budgeting primitive. |
 | `postgres` | `postgres` | PostgreSQL hub adapter boundary. Validates Gobby-owned schema and BM25 requirements without creating, altering, or dropping managed objects. |
@@ -148,16 +148,7 @@ pub enum DegradationKind;
 
 `gobby-wiki` should use the same contracts for wiki search and indexing. Missing vector search, stale vault index data, or skipped files should be reported as degradation metadata alongside partial results. A required store or write path failure should become `CoreError` only when the command cannot complete.
 
-`Guidance` and `SetupIssue` carry structured setup remediation for attached and standalone validation. Consumer CLIs render the `problem`, `action`, and optional `command_hint` fields in their own output style; `gobby-core` only provides the serializable contract.
-
-### `setup`
-
-`setup` defines the shared contracts for two separate workflows:
-
-- **Attached mode** uses `AttachedValidator` and `RequiredObject` declarations to check that externally managed resources already exist. It returns a `ValidationReport` containing present objects and missing objects with typed `SetupIssue` guidance. `gobby-core` does not create, alter, drop, or migrate Gobby-owned schema in attached mode.
-- **Standalone mode** uses `StandaloneSetup` and `OwnedObject` declarations for explicit setup commands that create consumer-owned resources. Consumers must declare a namespace such as `gcode` or `gwiki` so owned tables, graph labels, and vector collections stay domain-scoped.
-
-`ValidationContext` and `SetupContext` pass nullable datastore handles/configuration into callbacks so diagnostics and explicitly degraded paths can represent absence. PostgreSQL handles are mutable because `postgres::Client::query` and `postgres::Client::execute` both require `&mut self`; the callbacks borrow the supplied context and do not take ownership from later validators or creators.
+`Guidance` and `SetupIssue` carry structured remediation. Consumer CLIs render the `problem`, `action`, and optional `command_hint` fields in their own output style; `gobby-core` only provides the serializable contract.
 
 ## Boundary Rules
 
@@ -166,11 +157,11 @@ Each module exists because multiple Rust consumers need the same infrastructure 
 | Boundary | Consumers | What stays out |
 |----------|-----------|----------------|
 | Project/bootstrap/daemon helpers | `gcode`, `ghook`, future Rust consumers | CLI rendering, command dispatch, daemon workflow semantics. |
-| Context/config/setup/degradation contracts | `gcode`, `gobby-wiki`, future daemon work | Domain-specific flags, output formats, setup UX, and task/memory behavior. |
+| Context/config/degradation contracts | `gcode`, `gobby-wiki`, future daemon work | Domain-specific flags, output formats, and task/memory behavior. |
 | Datastore adapters | Consumers that opt in to `postgres`, `falkor`, or `qdrant` | Schema ownership, migrations, code graph facts, vector content policy. |
 | Indexing/search primitives | Consumers that opt in to `indexing` or `search` | Code symbol IDs, language parsing policy, wiki document models, ranking UX. |
 
-`gobby-core` can validate attached-mode resources, but it must not create, alter, drop, or migrate Gobby-owned resources during normal runtime commands.
+`gobby-core` can validate externally managed resources, but it must not create, alter, drop, or migrate Gobby-owned resources during normal runtime commands.
 
 ## Feature Gates
 
@@ -206,7 +197,7 @@ Feature rationale:
 | `indexing` | `ignore`, `sha2` | File walking and content hashing are useful for indexing consumers only. |
 | `search` | no extra dependency today | Search fusion contracts are lightweight, but still opt-in so the public surface remains explicit. |
 | `graph-analytics` | no extra dependency today | In-memory graph analytics remain opt-in so the public surface stays explicit. |
-| `ai` | `reqwest`, `ureq`, and AI payload helpers | AI transport, daemon probing, routing helpers, direct/daemon chat transports, profile tiers, agentic/tool-loop generation, and the shared blocking OpenAI-compatible embeddings client (`ai::embeddings`, consumed by gcode and gwiki for direct embedding requests) need HTTP clients and multipart payload support. |
+| `ai` | `reqwest`, `ureq`, and AI payload helpers | AI transport, daemon routing helpers, profile tiers, agentic/tool-loop generation, and the shared blocking OpenAI-compatible embeddings client (`ai::embeddings`, consumed by gcode and gwiki for grant-backed embedding requests) need HTTP clients and multipart payload support. |
 | `full` | all feature modules | Convenience feature for development and consumers that need the whole foundation layer. |
 
 Every individual feature must compile in isolation. Do not rely on `--all-features` to hide missing feature dependencies.
@@ -270,7 +261,7 @@ Before adding a module or function to `gobby-core`, check:
 1. **Do at least two binaries need it?** If only one does, keep it in that binary.
 2. **Does it belong in an existing boundary?** Prefer `config`, `context`, `degradation`, `grant`, `schema`, `postgres`, `falkor`, `qdrant`, `indexing`, or `search` before adding a new top-level module.
 3. **Is it dependency-light, or properly feature-gated?** New baseline deps propagate to *every* binary. Heavy deps belong behind a narrowly named feature.
-4. **Does it respect setup mode?** Attached-mode helpers validate externally managed state. Standalone setup helpers run only through explicit setup flows.
+4. **Does it stay daemon-granted?** Runtime helpers consume grant-backed configuration and do not create, alter, drop, or migrate Gobby-owned schema or datastore objects.
 5. **Is it stateless or near-stateless?** `gobby-core` functions are pure or do narrow I/O (read one file, return result). A module that holds connection pools or background workers belongs elsewhere.
 6. **Is the public surface small?** A few focused functions and structs per module is the right order of magnitude. If you find yourself adding a builder, a config object, and an `init()` function, reconsider.
 
@@ -319,3 +310,5 @@ Baseline tests are fast, perform no network I/O, and keep filesystem writes insi
 ### Why Not Re-Export from a Prelude
 
 There's no `gobby_core::prelude`. The crate is small enough that explicit imports (`use gobby_core::project::find_project_root`) are clearer than a glob. Keep it that way until the public surface grows past ~10 items.
+
+_Last verified: 2026-08-17_
