@@ -1,6 +1,6 @@
 project_id: d45545c5-ded5-4335-b115-0245752edacf
 plan_id: hub-owned-files-home
-plan_hash: "a4d7073d9d15a9cc2456893a368b2b26648ddef925ace8920a4af1f1aa7e2d13"
+plan_hash: "c13086d38d76853e74da00815beecd87ae3f748f1499182479dde59d15e8a118"
 root_task_ref: "20330"
 
 sections:
@@ -46,6 +46,7 @@ sections:
       "1.2.12": {expected_leaves: [{title: Add role-bearing singleton and service reservation, owner_agent: backend-developer}]}
       "1.2.13": {expected_leaves: [{title: Add role-bearing singleton and service reservation, owner_agent: backend-developer}]}
       "1.2.14": {expected_leaves: [{title: Add role-bearing singleton and service reservation, owner_agent: backend-developer}]}
+      "1.2.15": {expected_leaves: [{title: Add role-bearing singleton and service reservation, owner_agent: backend-developer}]}
   "2.1":
     acceptance_items:
       "2.1.1": {expected_leaves: [{title: Retarget personal identity and USER.md, owner_agent: backend-developer}]}
@@ -97,6 +98,9 @@ sections:
       "3.1.28": {expected_leaves: [{title: Reconstruct chat attachment paths, owner_agent: backend-developer}]}
       "3.1.29": {expected_leaves: [{title: Reconstruct chat attachment paths, owner_agent: backend-developer}]}
       "3.1.30": {expected_leaves: [{title: Reconstruct chat attachment paths, owner_agent: backend-developer}]}
+      "3.1.31": {expected_leaves: [{title: Reconstruct chat attachment paths, owner_agent: backend-developer}]}
+      "3.1.32": {expected_leaves: [{title: Reconstruct chat attachment paths, owner_agent: backend-developer}]}
+      "3.1.33": {expected_leaves: [{title: Reconstruct chat attachment paths, owner_agent: backend-developer}]}
   "4.1":
     acceptance_items:
       "4.1.1": {expected_leaves: [{title: Point gwiki and daemon wiki scope at files_home/wiki, owner_agent: backend-developer}]}
@@ -216,6 +220,7 @@ sections:
       "6.2.28": {expected_leaves: [{title: Inventory bind dir in pack and hub-backup, owner_agent: backend-developer}]}
       "6.2.29": {expected_leaves: [{title: Inventory bind dir in pack and hub-backup, owner_agent: backend-developer}]}
       "6.2.30": {expected_leaves: [{title: Inventory bind dir in pack and hub-backup, owner_agent: backend-developer}]}
+      "6.2.31": {expected_leaves: [{title: Inventory bind dir in pack and hub-backup, owner_agent: backend-developer}]}
   "6.3":
     acceptance_items:
       "6.3.1": {expected_leaves: [{title: Update operator docs for files_home, owner_agent: tech-writer}]}
