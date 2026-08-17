@@ -4,7 +4,8 @@ use postgres::Client;
 use serde::{Deserialize, Serialize};
 
 use super::assets::{
-    BASELINE_CHECKSUM, BASELINE_VERSION, CATALOG_MANIFEST_JSON, MIGRATIONS, SEED_MANIFEST_JSON,
+    BASELINE_CHECKSUM, BASELINE_VERSION, CATALOG_MANIFEST_JSON, MIGRATIONS,
+    PRIOR_RECEIPT_CHECKSUMS, SEED_MANIFEST_JSON,
 };
 use super::error::SchemaError;
 
@@ -246,7 +247,26 @@ fn verify_receipts(client: &mut Client, schema: &str) -> Result<usize, SchemaErr
             )
         })
         .collect::<BTreeMap<_, _>>();
-    if observed != expected {
+    let normalized = observed
+        .iter()
+        .map(|(version, (filename, checksum))| {
+            let checksum = expected
+                .get(version)
+                .filter(|(expected_filename, expected_checksum)| {
+                    filename == expected_filename
+                        && (checksum == expected_checksum
+                            || PRIOR_RECEIPT_CHECKSUMS.iter().any(
+                                |(prior_version, prior_checksum)| {
+                                    prior_version == version && prior_checksum == checksum
+                                },
+                            ))
+                })
+                .map(|(_, expected_checksum)| expected_checksum.clone())
+                .unwrap_or_else(|| checksum.clone());
+            (*version, (filename.clone(), checksum))
+        })
+        .collect::<BTreeMap<_, _>>();
+    if normalized != expected {
         return Err(SchemaError::Verification(format!(
             "schema receipt drift: expected {expected:?}, observed {observed:?}"
         )));
