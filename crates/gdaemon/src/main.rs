@@ -127,13 +127,14 @@ fn apply_schema(schema: Option<&str>, destructive: bool) -> Result<()> {
     }
     enforce_expected_identity()?;
     let database_url = resolve_database_url()?;
+    let backup = destructive.then(load_newest_backup_manifest).transpose()?;
     let mut client = connect_readwrite(&database_url).map_err(|_| {
         anyhow::anyhow!(
             "failed to connect to the Gobby PostgreSQL hub at {}",
             redact_database_url(&database_url)
         )
     })?;
-    if destructive {
+    let _epoch_lease = if destructive {
         let setting: String = client
             .query_one(
                 "SELECT current_setting('gobby.maintenance_epoch', true)",
@@ -158,24 +159,10 @@ fn apply_schema(schema: Option<&str>, destructive: bool) -> Result<()> {
                  run `gobby hub-maintenance run schema-apply`"
             );
         }
-        let open: bool = client
-            .query_one(
-                "SELECT EXISTS (\
-                    SELECT 1 FROM maintenance_epochs \
-                    WHERE id::text = $1 AND released_at IS NULL\
-                 )",
-                &[&setting],
-            )
-            .context("failed to verify the open maintenance epoch")?
-            .get(0);
-        if !open {
-            anyhow::bail!(
-                "gobby.maintenance_epoch={setting} is not an open maintenance epoch; \
-                 run `gobby hub-maintenance run schema-apply`"
-            );
-        }
-    }
-    let backup = destructive.then(load_newest_backup_manifest).transpose()?;
+        Some(hold_open_maintenance_epoch_lease(&database_url, &setting)?)
+    } else {
+        None
+    };
     let schema = match schema {
         Some(schema) => schema.to_owned(),
         None => client
@@ -238,6 +225,43 @@ fn apply_schema(schema: Option<&str>, destructive: bool) -> Result<()> {
         report.baseline_applied, report.migrations_applied
     );
     Ok(())
+}
+
+fn hold_open_maintenance_epoch_lease(
+    database_url: &str,
+    epoch_id: &str,
+) -> Result<impl Drop + use<>> {
+    // Apply commits per migration on the runner connection. Hold FOR UPDATE
+    // here so release_maintenance_epoch waits until apply returns.
+    let mut lease = connect_readwrite(database_url).map_err(|_| {
+        anyhow::anyhow!(
+            "failed to connect to the Gobby PostgreSQL hub at {}",
+            redact_database_url(database_url)
+        )
+    })?;
+    lease
+        .batch_execute("BEGIN; SET LOCAL idle_in_transaction_session_timeout = 0")
+        .context("failed to open a maintenance-epoch lease")?;
+    let locked = match lease.query(
+        "SELECT 1 FROM maintenance_epochs \
+         WHERE id::text = $1 AND released_at IS NULL \
+         FOR UPDATE",
+        &[&epoch_id],
+    ) {
+        Ok(rows) => rows,
+        Err(error) => {
+            let _ = lease.batch_execute("ROLLBACK");
+            return Err(error).context("failed to acquire the open maintenance epoch");
+        }
+    };
+    if locked.is_empty() {
+        let _ = lease.batch_execute("ROLLBACK");
+        anyhow::bail!(
+            "gobby.maintenance_epoch={epoch_id} is not an open maintenance epoch; \
+             run `gobby hub-maintenance run schema-apply`"
+        );
+    }
+    Ok(lease)
 }
 
 fn load_newest_backup_manifest() -> Result<(PathBuf, HubBackupManifest)> {
