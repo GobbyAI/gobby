@@ -156,9 +156,11 @@ pub(crate) fn qdrant_config_has_url(config: &QdrantConfig) -> bool {
 }
 
 fn read_effective_config_layers() -> Result<Option<EffectiveConfigLayers>, WikiError> {
-    daemon_mode_layers().map_err(|error| WikiError::Config {
-        detail: format!("failed to read daemon effective config for gwiki: {error}"),
-    })
+    daemon_mode_layers()
+        .map(Some)
+        .map_err(|error| WikiError::Config {
+            detail: format!("failed to read daemon effective config for gwiki: {error}"),
+        })
 }
 
 fn resolve_index_options_from_layers<P: ConfigSource>(

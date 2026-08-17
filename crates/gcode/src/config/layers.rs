@@ -41,7 +41,7 @@ pub(super) enum HubConfigCaptureStatus {
 pub(crate) fn read_config_layers() -> anyhow::Result<ConfigLayers> {
     #[cfg(feature = "ai")]
     {
-        Ok(layers_from_daemon_result(daemon_mode_layers()))
+        Ok(layers_from_daemon_result(daemon_mode_layers().map(Some)))
     }
     #[cfg(not(feature = "ai"))]
     {
