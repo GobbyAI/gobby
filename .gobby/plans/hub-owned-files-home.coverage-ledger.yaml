@@ -1,6 +1,6 @@
 project_id: d45545c5-ded5-4335-b115-0245752edacf
 plan_id: hub-owned-files-home
-plan_hash: "99d3b3b16cd3f5a5ae36d56d2b42e8aeb74bfe9862fbac79d5aeca2f178142d4"
+plan_hash: "2d29251d7a07ab146561ca8568b0d3f4fbb434a8ebc2bb062865a02bdaa47283"
 root_task_ref: "20330"
 
 sections:
@@ -41,6 +41,7 @@ sections:
       "2.1.10": {expected_leaves: [{title: Retarget personal identity and USER.md, owner_agent: backend-developer}]}
       "2.1.11": {expected_leaves: [{title: Retarget personal identity and USER.md, owner_agent: backend-developer}]}
       "2.1.12": {expected_leaves: [{title: Retarget personal identity and USER.md, owner_agent: backend-developer}]}
+      "2.1.13": {expected_leaves: [{title: Retarget personal identity and USER.md, owner_agent: backend-developer}]}
   "3.1":
     acceptance_items:
       "3.1.1": {expected_leaves: [{title: Reconstruct chat attachment paths, owner_agent: backend-developer}]}
@@ -58,6 +59,8 @@ sections:
       "3.1.13": {expected_leaves: [{title: Reconstruct chat attachment paths, owner_agent: backend-developer}]}
       "3.1.14": {expected_leaves: [{title: Reconstruct chat attachment paths, owner_agent: backend-developer}]}
       "3.1.15": {expected_leaves: [{title: Reconstruct chat attachment paths, owner_agent: backend-developer}]}
+      "3.1.16": {expected_leaves: [{title: Reconstruct chat attachment paths, owner_agent: backend-developer}]}
+      "3.1.17": {expected_leaves: [{title: Reconstruct chat attachment paths, owner_agent: backend-developer}]}
   "4.1":
     acceptance_items:
       "4.1.1": {expected_leaves: [{title: Point gwiki and daemon wiki scope at files_home/wiki, owner_agent: backend-developer}]}
@@ -76,6 +79,7 @@ sections:
       "4.1.14": {expected_leaves: [{title: Point gwiki and daemon wiki scope at files_home/wiki, owner_agent: backend-developer}]}
       "4.1.15": {expected_leaves: [{title: Point gwiki and daemon wiki scope at files_home/wiki, owner_agent: backend-developer}]}
       "4.1.16": {expected_leaves: [{title: Point gwiki and daemon wiki scope at files_home/wiki, owner_agent: backend-developer}]}
+      "4.1.17": {expected_leaves: [{title: Point gwiki and daemon wiki scope at files_home/wiki, owner_agent: backend-developer}]}
   "5.1":
     acceptance_items:
       "5.1.1": {expected_leaves: [{title: Proxy file HTTP to hub_daemon_url, owner_agent: backend-developer}]}
@@ -106,6 +110,7 @@ sections:
       "5.1.26": {expected_leaves: [{title: Proxy file HTTP to hub_daemon_url, owner_agent: backend-developer}]}
       "5.1.27": {expected_leaves: [{title: Proxy file HTTP to hub_daemon_url, owner_agent: backend-developer}]}
       "5.1.28": {expected_leaves: [{title: Proxy file HTTP to hub_daemon_url, owner_agent: backend-developer}]}
+      "5.1.29": {expected_leaves: [{title: Proxy file HTTP to hub_daemon_url, owner_agent: backend-developer}]}
   "6.1":
     acceptance_items:
       "6.1.1": {expected_leaves: [{title: Add hub-local files migrate, owner_agent: backend-developer}]}
@@ -157,6 +162,11 @@ sections:
       "6.2.23": {expected_leaves: [{title: Inventory bind dir in pack and hub-backup, owner_agent: backend-developer}]}
       "6.2.24": {expected_leaves: [{title: Inventory bind dir in pack and hub-backup, owner_agent: backend-developer}]}
       "6.2.25": {expected_leaves: [{title: Inventory bind dir in pack and hub-backup, owner_agent: backend-developer}]}
+      "6.2.26": {expected_leaves: [{title: Inventory bind dir in pack and hub-backup, owner_agent: backend-developer}]}
+      "6.2.27": {expected_leaves: [{title: Inventory bind dir in pack and hub-backup, owner_agent: backend-developer}]}
+      "6.2.28": {expected_leaves: [{title: Inventory bind dir in pack and hub-backup, owner_agent: backend-developer}]}
+      "6.2.29": {expected_leaves: [{title: Inventory bind dir in pack and hub-backup, owner_agent: backend-developer}]}
+      "6.2.30": {expected_leaves: [{title: Inventory bind dir in pack and hub-backup, owner_agent: backend-developer}]}
   "6.3":
     acceptance_items:
       "6.3.1": {expected_leaves: [{title: Update operator docs for files_home, owner_agent: tech-writer}]}
