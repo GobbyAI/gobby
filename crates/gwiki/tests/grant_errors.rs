@@ -30,9 +30,6 @@ fn run_gwiki(home: &Path, cwd: &Path, extra: &[(&str, &str)]) -> Output {
         .env("HOME", home)
         .env("GOBBY_HOME", home)
         .env("GOBBY_DAEMON_URL", unused_loopback())
-        .env_remove("GWIKI_DATABASE_URL")
-        .env_remove("GCODE_DATABASE_URL")
-        .env_remove("GOBBY_POSTGRES_DSN")
         .env_remove("GOBBY_MANAGED_EXECUTION_BOOTSTRAP")
         .stdout(Stdio::piped())
         .stderr(Stdio::piped());
