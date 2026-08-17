@@ -358,7 +358,10 @@ class SessionLifecycleManager(TranscriptProcessingMixin):
             PipelineDefinitionManager,
         ):
             try:
-                manager_cls(self.db).purge_deleted(older_than_days=30)
+                await asyncio.to_thread(
+                    manager_cls(self.db).purge_deleted,
+                    older_than_days=30,
+                )
             except Exception as e:
                 logger.error(
                     "Failed to purge soft-deleted %s: %s",

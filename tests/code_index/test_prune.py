@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 import json
 import signal
 from datetime import UTC, datetime
@@ -100,7 +101,9 @@ class PruneStorage:
 
     def delete_stale_project_records(self, project_id: str) -> None:
         self.deleted_hub.append(project_id)
-        self.projects = [project for project in self.projects if getattr(project, "id", "") != project_id]
+        self.projects = [
+            project for project in self.projects if getattr(project, "id", "") != project_id
+        ]
 
 
 class PruneGateway:
@@ -406,6 +409,45 @@ async def test_global_prune_held_lock_returns_successful_skip(tmp_path: Path) ->
         "stderr": "",
         "retried_projects": 0,
     }
+
+
+@pytest.mark.asyncio
+async def test_operator_prune_forwards_retention_days(tmp_path: Path) -> None:
+    live_root = tmp_path / "live"
+    live_root.mkdir()
+    storage = PruneStorage()
+    storage.projects = [SimpleNamespace(id="proj-live", root_path=str(live_root))]
+    gateway = PruneGateway()
+    context = PruneContext(storage, gateway, tmp_path / "maintenance.log")
+    pruner = CodeIndexPruner(context)  # type: ignore[arg-type]
+
+    outcome = await pruner.run_operator_global_prune(force=True, retention_days=9)
+
+    assert outcome["completed"] == ["proj-live"]
+    assert gateway.retention_days == [9]
+
+
+@pytest.mark.asyncio
+async def test_operator_prune_skips_locked_unless_forced(tmp_path: Path) -> None:
+    live_root = tmp_path / "live"
+    live_root.mkdir()
+    storage = PruneStorage()
+    storage.projects = [SimpleNamespace(id="proj-live", root_path=str(live_root))]
+    gateway = PruneGateway()
+    context = PruneContext(storage, gateway, tmp_path / "maintenance.log")
+    pruner = CodeIndexPruner(context)  # type: ignore[arg-type]
+    lock = pruner._project_locks.setdefault("proj-live", asyncio.Lock())
+    await lock.acquire()
+    try:
+        skipped = await pruner.run_operator_global_prune(force=False)
+        assert skipped["skipped"] == [{"project_id": "proj-live", "reason": "skipped_locked"}]
+        assert gateway.targeted_roots == []
+    finally:
+        lock.release()
+
+    forced = await pruner.run_operator_global_prune(force=True)
+    assert forced["completed"] == ["proj-live"]
+    assert gateway.targeted_roots == [live_root]
 
 
 @pytest.mark.asyncio

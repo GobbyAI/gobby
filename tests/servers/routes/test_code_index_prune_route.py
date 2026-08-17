@@ -38,7 +38,72 @@ def test_global_prune_operator_only() -> None:
     response = client.post("/api/code-index/prune", json={"force": True})
     assert response.status_code == 200
     assert set(response.json()) >= {"completed", "failed", "skipped"}
-    pruner.run_operator_global_prune.assert_awaited()
+    pruner.run_operator_global_prune.assert_awaited_once_with(
+        force=True,
+        retention_days=None,
+    )
+
+
+def test_global_prune_forwards_retention_days() -> None:
+    server = MagicMock()
+    pruner = MagicMock()
+    pruner.run_operator_global_prune = AsyncMock(
+        return_value={"completed": [], "failed": [], "skipped": []}
+    )
+    server.services = SimpleNamespace(code_index_pruner=pruner)
+    app = FastAPI()
+    app.include_router(create_code_index_router(server))
+    client = TestClient(app)
+    response = client.post(
+        "/api/code-index/prune",
+        json={"force": False, "retention_days": 14},
+    )
+    assert response.status_code == 200
+    pruner.run_operator_global_prune.assert_awaited_once_with(
+        force=False,
+        retention_days=14,
+    )
+
+
+def test_global_prune_maps_timeout_to_504() -> None:
+    from gobby.code_index.gcode_gateway import GcodeTimeoutError
+
+    server = MagicMock()
+    pruner = MagicMock()
+    pruner.run_operator_global_prune = AsyncMock(
+        side_effect=GcodeTimeoutError("gcode timed out: prune")
+    )
+    server.services = SimpleNamespace(code_index_pruner=pruner)
+    app = FastAPI()
+    app.include_router(create_code_index_router(server))
+    client = TestClient(app)
+    response = client.post("/api/code-index/prune", json={"force": True})
+    assert response.status_code == 504
+    assert response.json()["detail"] == "Code index prune timed out"
+
+
+def test_global_prune_maps_unexpected_exception_to_500() -> None:
+    server = MagicMock()
+    pruner = MagicMock()
+    pruner.run_operator_global_prune = AsyncMock(side_effect=RuntimeError("hub snapshot failed"))
+    server.services = SimpleNamespace(code_index_pruner=pruner)
+    app = FastAPI()
+    app.include_router(create_code_index_router(server))
+    client = TestClient(app)
+    response = client.post("/api/code-index/prune", json={"force": True})
+    assert response.status_code == 500
+    assert response.json()["detail"] == "Code index prune failed"
+
+
+def test_global_prune_unavailable_pruner_is_503() -> None:
+    server = MagicMock()
+    server.services = SimpleNamespace(code_index_pruner=None)
+    app = FastAPI()
+    app.include_router(create_code_index_router(server))
+    client = TestClient(app)
+    response = client.post("/api/code-index/prune")
+    assert response.status_code == 503
+    assert response.json()["detail"] == "Code index pruner not available"
 
 
 @pytest.mark.asyncio

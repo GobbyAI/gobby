@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import logging
-from typing import TYPE_CHECKING, Any, Literal
+from typing import TYPE_CHECKING, Any, Literal, cast
 
 from fastapi import APIRouter, HTTPException, Request
 from pydantic import BaseModel
@@ -72,15 +72,21 @@ def register_session_variable_routes(router: APIRouter, server: HTTPServer) -> N
                 if payload.scope == "step"
                 else None
             )
-            return _set_var(
-                server.session_manager,
-                server.session_manager.db,
-                name=payload.name,
-                value=payload.value,
-                session_id=bound_session_id,
-                scope=payload.scope,
-                instance_manager=instance_manager,
+            return cast(
+                dict[str, Any],
+                await server.run_db(
+                    _set_var,
+                    server.session_manager,
+                    server.session_manager.db,
+                    name=payload.name,
+                    value=payload.value,
+                    session_id=bound_session_id,
+                    scope=payload.scope,
+                    instance_manager=instance_manager,
+                ),
             )
+        except HTTPException:
+            raise
         except Exception as e:
             logger.exception("Error setting variable: %s", e)
             raise HTTPException(status_code=500, detail="Internal server error") from e
@@ -101,14 +107,20 @@ def register_session_variable_routes(router: APIRouter, server: HTTPServer) -> N
                 if payload.scope == "step"
                 else None
             )
-            return _get_var(
-                server.session_manager,
-                server.session_manager.db,
-                name=payload.name,
-                session_id=bound_session_id,
-                scope=payload.scope,
-                instance_manager=instance_manager,
+            return cast(
+                dict[str, Any],
+                await server.run_db(
+                    _get_var,
+                    server.session_manager,
+                    server.session_manager.db,
+                    name=payload.name,
+                    session_id=bound_session_id,
+                    scope=payload.scope,
+                    instance_manager=instance_manager,
+                ),
             )
+        except HTTPException:
+            raise
         except Exception as e:
             logger.exception("Error getting variable: %s", e)
             raise HTTPException(status_code=500, detail="Internal server error") from e

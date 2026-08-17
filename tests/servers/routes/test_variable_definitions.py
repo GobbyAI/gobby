@@ -127,3 +127,26 @@ def test_unknown_variable_is_404(client: TestClient) -> None:
     assert client.put(f"/api/variables/{UNKNOWN_ID}", json={"value": 1}).status_code == 404
     assert client.delete(f"/api/variables/{UNKNOWN_ID}").status_code == 404
     assert client.post(f"/api/variables/{UNKNOWN_ID}/restore-from-template").status_code == 404
+
+
+def test_create_variable_validation_error_is_400(client: TestClient) -> None:
+    from pydantic import ValidationError
+
+    with patch(
+        "gobby.servers.routes.variable_definitions.VariableDefinitionBody",
+        side_effect=ValidationError.from_exception_data("VariableDefinitionBody", []),
+    ):
+        resp = client.post("/api/variables", json={"name": "bad_var", "value": "x"})
+    assert resp.status_code == 400
+    assert "Invalid variable" in resp.json()["detail"]
+
+
+def test_create_variable_unexpected_error_is_not_400(client: TestClient) -> None:
+    with (
+        patch(
+            "gobby.servers.routes.variable_definitions.VariableDefinitionBody",
+            side_effect=RuntimeError("constructor exploded"),
+        ),
+        pytest.raises(RuntimeError, match="constructor exploded"),
+    ):
+        client.post("/api/variables", json={"name": "boom_var", "value": "x"})

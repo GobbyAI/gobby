@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+import time
 from dataclasses import dataclass
 
 from fastapi.testclient import TestClient
@@ -140,3 +141,48 @@ async def test_lease_connection_loss_requests_active_shutdown() -> None:
     )
 
     assert shutdown_requested.is_set()
+
+
+@dataclass
+class SlowLease(FakeLease):
+    def heartbeat(self) -> None:
+        time.sleep(0.2)
+
+
+async def test_lease_heartbeat_timeout_requests_active_shutdown() -> None:
+    lease = SlowLease()
+    stop = asyncio.Event()
+    shutdown_requested = asyncio.Event()
+
+    await asyncio.wait_for(
+        monitor_active_lease(
+            lease,
+            stop=stop,
+            on_loss=shutdown_requested.set,
+            heartbeat_interval_seconds=0.001,
+            heartbeat_timeout_seconds=0.05,
+        ),
+        timeout=1.0,
+    )
+
+    assert shutdown_requested.is_set()
+
+
+async def test_lease_monitor_stop_returns_before_heartbeat() -> None:
+    lease = SlowLease()
+    stop = asyncio.Event()
+    stop.set()
+    shutdown_requested = asyncio.Event()
+
+    await asyncio.wait_for(
+        monitor_active_lease(
+            lease,
+            stop=stop,
+            on_loss=shutdown_requested.set,
+            heartbeat_interval_seconds=0.001,
+            heartbeat_timeout_seconds=0.05,
+        ),
+        timeout=1.0,
+    )
+
+    assert not shutdown_requested.is_set()

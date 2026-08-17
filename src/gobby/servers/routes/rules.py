@@ -345,7 +345,15 @@ def create_rules_router(server: "HTTPServer") -> APIRouter:
             )
             raise HTTPException(status_code=500, detail="Internal server error") from e
 
-        body = _rule_body(updated)
+        try:
+            body = _rule_body(updated)
+        except TypeError:
+            logger.warning(
+                "Updated rule %s (%s) has an unparseable definition; returning metadata only",
+                updated.id,
+                updated.name,
+            )
+            body = {}
         return {
             "status": "success",
             "rule": {

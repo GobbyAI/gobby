@@ -316,6 +316,21 @@ class TestUpdateRule:
         data = resp.json()
         assert data["rule"]["description"] == "Updated"
 
+    def test_update_unparseable_definition_returns_metadata(
+        self, client: TestClient, def_manager: RuleDefinitionManager
+    ) -> None:
+        _seed_invalid_rule(def_manager)
+
+        resp = client.put("/api/rules/invalid-rule", json={"priority": 9})
+
+        assert resp.status_code == 200
+        data = resp.json()
+        assert data["status"] == "success"
+        assert data["rule"]["name"] == "invalid-rule"
+        assert data["rule"]["priority"] == 9
+        assert data["rule"]["event"] is None
+        assert data["rule"]["effects"] is None
+
     def test_renames_rule(self, client: TestClient, def_manager: RuleDefinitionManager) -> None:
         rule_id = _seed_rule(def_manager, name="my-rule")
 

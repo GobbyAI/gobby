@@ -130,7 +130,12 @@ class CodeIndexPruner:
             return "Code index prune skipped: dirty=0"
         return "Code index prune completed: " + ", ".join(outcomes)
 
-    async def run_operator_global_prune(self) -> OperatorPruneOutcome:
+    async def run_operator_global_prune(
+        self,
+        *,
+        force: bool = False,
+        retention_days: int | None = None,
+    ) -> OperatorPruneOutcome:
         """Snapshot indexed projects, reconcile projections, then delete stale hub rows."""
         snapshot = list(await self._context.run_db(self._context.storage.list_indexed_projects))
         completed: list[str] = []
@@ -152,6 +157,8 @@ class CodeIndexPruner:
                 root_path=str(root),
                 dirty=True,
                 reason="operator_global_prune",
+                force=force,
+                retention_days=retention_days,
             )
             if outcome.endswith(":pruned") or outcome.endswith(":deferred_pending_sync"):
                 if not root.exists():
@@ -309,10 +316,17 @@ class CodeIndexPruner:
         dirty: bool,
         reason: str,
         run_id: str | None = None,
+        force: bool = False,
+        retention_days: int | None = None,
     ) -> str:
         lock = self._project_locks.setdefault(project_id, asyncio.Lock())
-        if lock.locked():
+        if lock.locked() and not force:
             return f"{project_id}:skipped_locked"
+        resolved_retention = (
+            retention_days
+            if retention_days is not None
+            else self._context.config.content_retention_days
+        )
 
         async with lock:
             pending = await self._context.run_db(
@@ -360,7 +374,7 @@ class CodeIndexPruner:
                     if factory is None:
                         command_result = await gateway.prune_project_for_maintenance(
                             Path(root_path).expanduser(),
-                            retention_days=self._context.config.content_retention_days,
+                            retention_days=resolved_retention,
                             timeout=CODE_INDEX_PRUNE_TIMEOUT_SECONDS,
                         )
                     else:
@@ -370,7 +384,7 @@ class CodeIndexPruner:
                         ) as launch:
                             command_result = await gateway.prune_project_for_maintenance(
                                 Path(root_path).expanduser(),
-                                retention_days=self._context.config.content_retention_days,
+                                retention_days=resolved_retention,
                                 timeout=CODE_INDEX_PRUNE_TIMEOUT_SECONDS,
                                 env=launch.env,
                             )

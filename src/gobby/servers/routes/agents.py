@@ -44,9 +44,12 @@ def _row_body(row: Any) -> dict[str, Any]:
     if isinstance(raw, str):
         import json as _json
 
-        parsed = _json.loads(raw)
-        return parsed if isinstance(parsed, dict) else {}
-    return dict(raw)
+        parsed: object = _json.loads(raw)
+    else:
+        parsed = raw
+    if not isinstance(parsed, dict):
+        raise TypeError("agent definition must be a JSON object")
+    return parsed if isinstance(raw, str) else dict(parsed)
 
 
 def _bundled_definition_path(agents_path: Path, name: str) -> Path:
@@ -314,8 +317,7 @@ def create_agents_router(server: "HTTPServer") -> APIRouter:
 
             def load_definition_json() -> str:
                 manager = _get_manager()
-                rows = manager.list_all(project_id=project_id)
-                row = next((r for r in rows if r.name == name), None)
+                row = manager.get_by_name(name, project_id=project_id)
                 if not row:
                     raise HTTPException(
                         status_code=404,
@@ -337,6 +339,8 @@ def create_agents_router(server: "HTTPServer") -> APIRouter:
             )
         except HTTPException:
             raise
+        except TypeError as e:
+            raise HTTPException(status_code=400, detail=str(e)) from e
         except Exception as e:
             logger.exception("Error exporting agent definition '%s': %s", name, e)
             raise HTTPException(status_code=500, detail="Internal server error") from e
@@ -348,14 +352,18 @@ def create_agents_router(server: "HTTPServer") -> APIRouter:
     ) -> dict[str, Any]:
         """Get a single agent definition by name."""
         try:
-            manager = _get_manager()
-            rows = manager.list_all(project_id=project_id)
-            row = next((r for r in rows if r.name == name), None)
+            row = await server.run_db(
+                _get_manager().get_by_name,
+                name,
+                project_id=project_id,
+            )
             if not row:
                 raise HTTPException(status_code=404, detail=f"Agent definition '{name}' not found")
             return {"status": "success", "definition": _row_to_api_dict(row)}
         except HTTPException:
             raise
+        except TypeError as e:
+            raise HTTPException(status_code=400, detail=str(e)) from e
         except Exception as e:
             logger.exception("Error getting agent definition '%s': %s", name, e)
             raise HTTPException(status_code=500, detail="Internal server error") from e
@@ -510,6 +518,8 @@ def create_agents_router(server: "HTTPServer") -> APIRouter:
             return {"status": "success", "definition": row.to_dict()}
         except (DefinitionNotFoundError, ValueError) as e:
             raise HTTPException(status_code=404, detail=str(e)) from e
+        except TypeError as e:
+            raise HTTPException(status_code=400, detail=str(e)) from e
         except HTTPException:
             raise
         except Exception as e:
@@ -596,6 +606,8 @@ def create_agents_router(server: "HTTPServer") -> APIRouter:
             return {"status": "success", "rules": rules}
         except (DefinitionNotFoundError, ValueError) as e:
             raise HTTPException(status_code=404, detail=str(e)) from e
+        except TypeError as e:
+            raise HTTPException(status_code=400, detail=str(e)) from e
         except Exception as e:
             logger.exception("Error patching rules: %s", e)
             raise HTTPException(status_code=500, detail="Internal server error") from e
@@ -639,6 +651,8 @@ def create_agents_router(server: "HTTPServer") -> APIRouter:
             return {"status": "success", "rule_selectors": rule_selectors}
         except (DefinitionNotFoundError, ValueError) as e:
             raise HTTPException(status_code=404, detail=str(e)) from e
+        except TypeError as e:
+            raise HTTPException(status_code=400, detail=str(e)) from e
         except Exception as e:
             logger.exception("Error patching rule selectors: %s", e)
             raise HTTPException(status_code=500, detail="Internal server error") from e
@@ -670,6 +684,8 @@ def create_agents_router(server: "HTTPServer") -> APIRouter:
             return {"status": "success", "variables": variables}
         except (DefinitionNotFoundError, ValueError) as e:
             raise HTTPException(status_code=404, detail=str(e)) from e
+        except TypeError as e:
+            raise HTTPException(status_code=400, detail=str(e)) from e
         except Exception as e:
             logger.exception("Error patching variables: %s", e)
             raise HTTPException(status_code=500, detail="Internal server error") from e

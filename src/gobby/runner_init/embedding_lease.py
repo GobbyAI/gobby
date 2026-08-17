@@ -222,7 +222,16 @@ async def _reacquire_lease(handle: _ManagedEmbeddingLease) -> bool:
             successor.revision,
         )
         if handle.request_projection_repair is not None:
-            handle.request_projection_repair()
+            try:
+                handle.request_projection_repair()
+            except Exception:
+                logger.warning(
+                    "Embedding projection repair failed after lease re-acknowledgement "
+                    "generation=%s revision=%d; successor lease remains serving",
+                    successor.generation,
+                    successor.revision,
+                    exc_info=True,
+                )
         return True
 
 
