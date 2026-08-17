@@ -4,7 +4,8 @@ use std::collections::{BTreeMap, BTreeSet};
 use postgres::{Client, GenericClient};
 
 use super::assets::{
-    BASELINE_CHECKSUM, BASELINE_SQL, BASELINE_VERSION, EmbeddedMigration, MIGRATIONS, sha256_hex,
+    BASELINE_CHECKSUM, BASELINE_SQL, BASELINE_VERSION, EmbeddedMigration, MIGRATIONS,
+    PRIOR_RECEIPT_CHECKSUMS, sha256_hex,
 };
 use super::baseline_refresh::{RefreshMode, baseline_refresh_statement_for_mode};
 use super::error::SchemaError;
@@ -767,7 +768,12 @@ fn apply_pending_migrations(
                 "receipt v{version} has no matching embedded schema asset"
             )));
         };
-        if filename != expected_filename || checksum != expected_checksum {
+        let prior_ok = PRIOR_RECEIPT_CHECKSUMS
+            .iter()
+            .any(|(prior_version, prior_checksum)| {
+                *prior_version == version && *prior_checksum == checksum
+            });
+        if filename != expected_filename || (checksum != expected_checksum && !prior_ok) {
             return Err(SchemaError::Unsupported(format!(
                 "receipt mismatch for schema asset v{version}"
             )));
