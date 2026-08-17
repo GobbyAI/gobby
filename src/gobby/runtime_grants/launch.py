@@ -30,15 +30,25 @@ def write_grant_file(path: Path, grant: GrantBundle) -> Path:
         dir=path.parent,
     )
     temporary_path = Path(temporary_name)
+    stream = None
     try:
         os.fchmod(descriptor, 0o600)
-        with os.fdopen(descriptor, "wb") as stream:
-            stream.write(grant.model_dump_canonical())
-            stream.flush()
-            os.fsync(stream.fileno())
+        stream = os.fdopen(descriptor, "wb")
+        stream.write(grant.model_dump_canonical())
+        stream.flush()
+        os.fsync(stream.fileno())
+        stream.close()
+        stream = None
         os.replace(temporary_path, path)
         os.chmod(path, 0o600)
     except Exception:
+        if stream is not None:
+            stream.close()
+        else:
+            try:
+                os.close(descriptor)
+            except OSError:
+                pass
         temporary_path.unlink(missing_ok=True)
         raise
     return path
@@ -95,8 +105,44 @@ def materialize_managed_launch(
     )
 
 
+_CHILD_ENV_BASE_KEYS = (
+    "PATH",
+    "HOME",
+    "USER",
+    "LOGNAME",
+    "SHELL",
+    "TMPDIR",
+    "TMP",
+    "TEMP",
+    "LANG",
+    "LC_ALL",
+    "LC_CTYPE",
+    "LC_MESSAGES",
+    "TZ",
+    "TERM",
+    "SSL_CERT_FILE",
+    "SSL_CERT_DIR",
+    "REQUESTS_CA_BUNDLE",
+    "CURL_CA_BUNDLE",
+    "XDG_CACHE_HOME",
+    "XDG_CONFIG_HOME",
+    "XDG_DATA_HOME",
+    "XDG_RUNTIME_DIR",
+    "XDG_STATE_HOME",
+)
+_CHILD_ENV_OVERLAY_KEYS = (
+    "GOBBY_MANAGED_EXECUTION_BOOTSTRAP",
+    "GOBBY_AGENT_API_TOKEN",
+)
+
+
 def merge_child_env(extra: dict[str, str] | None) -> dict[str, str] | None:
-    """Return a subprocess env that overlays `extra` onto the current process."""
+    """Return an isolated subprocess env for a managed child."""
     if extra is None:
         return None
-    return {**os.environ, **extra}
+    env = {key: value for key in _CHILD_ENV_BASE_KEYS if (value := os.environ.get(key))}
+    for key in _CHILD_ENV_OVERLAY_KEYS:
+        value = extra.get(key)
+        if value is not None:
+            env[key] = value
+    return env

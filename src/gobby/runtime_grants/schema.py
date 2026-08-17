@@ -149,5 +149,11 @@ class GrantBundle(BaseModel):
     def model_dump_canonical(self) -> bytes:
         """Serialize the full wire grant as sorted compact JSON with a trailing newline."""
         return (
-            json.dumps(self.model_dump(mode="json"), separators=(",", ":"), sort_keys=True) + "\n"
+            json.dumps(
+                self.model_dump(mode="json"),
+                separators=(",", ":"),
+                sort_keys=True,
+                ensure_ascii=False,
+            )
+            + "\n"
         ).encode()

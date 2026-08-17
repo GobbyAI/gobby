@@ -6,14 +6,25 @@ import threading
 
 import pytest
 
+from gobby.config.ai import GenerationEndpointConfig
 from gobby.runtime_grants import DeploymentGrantContext, GrantBundle, GrantService
-from gobby.runtime_grants.schema import FalkorDirect, GrantPrincipal, PostgresDirect, QdrantDirect
+from gobby.runtime_grants.schema import (
+    AIDaemonCapability,
+    AIUnavailableCapability,
+    BrokeredCapability,
+    FalkorDirect,
+    GrantPrincipal,
+    PostgresDirect,
+    QdrantDirect,
+)
 from tests.runtime_grants.support import (
     DEPLOYMENT_TOKEN,
     FENCING_EPOCH,
     GOLDEN_SECRET,
     SnapshotAfterCaptureRuntime,
     SuccessiveCaptureRuntime,
+    config_snapshot,
+    daemon_config,
     revision_snapshot,
 )
 
@@ -139,3 +150,89 @@ def test_local_qdrant_url_without_api_key_is_direct() -> None:
     assert isinstance(qdrant, QdrantDirect)
     assert qdrant.url == "http://127.0.0.1:6333"
     assert qdrant.api_key == ""
+
+
+@pytest.mark.unit
+def test_unresolved_falkor_password_is_brokered() -> None:
+    snapshot = revision_snapshot(
+        41,
+        host="falkor-a.test",
+        password=None,
+        qdrant_url="http://127.0.0.1:6333",
+        api_key=None,
+        failed_rotation=True,
+    )
+    grant = _issue(SuccessiveCaptureRuntime(snapshot, snapshot))
+    falkordb = grant.capabilities.falkordb
+    assert isinstance(falkordb, BrokeredCapability)
+    assert falkordb.operations
+
+
+@pytest.mark.unit
+def test_issue_expires_at_never_exceeds_postgres_valid_until() -> None:
+    now = 1_700_000_000
+    snapshot = revision_snapshot(
+        41,
+        host="127.0.0.1",
+        password=None,
+        qdrant_url="http://127.0.0.1:6333",
+        api_key=None,
+    )
+    service = GrantService(
+        runtime=SuccessiveCaptureRuntime(snapshot, snapshot),
+        context=DeploymentGrantContext(
+            token=DEPLOYMENT_TOKEN,
+            fencing_epoch=FENCING_EPOCH,
+            signing_secret=GOLDEN_SECRET,
+        ),
+    )
+    postgres = PostgresDirect(
+        mode="direct",
+        dsn="postgresql://role:secret@127.0.0.1:5432/gobby",
+        role_name="gobby_interactive_1",
+        credential_generation=3,
+        valid_until=now + 10,
+    )
+    grant = service.issue(principal=_principal(), postgres=postgres, now=now, ttl_seconds=3_600)
+    assert grant.expires_at == now + 10
+
+
+@pytest.mark.unit
+def test_vision_and_audio_follow_configured_bindings() -> None:
+    now = 1_700_000_000
+    config = daemon_config()
+    config = config.model_copy(
+        update={
+            "ai": config.ai.model_copy(
+                update={
+                    "generation": config.ai.generation.model_copy(
+                        update={
+                            "endpoints": {
+                                "vision": GenerationEndpointConfig(
+                                    api_base="http://127.0.0.1:9/v1",
+                                    model="vision-model",
+                                    vision_extract=True,
+                                )
+                            }
+                        }
+                    )
+                }
+            ),
+            "voice": config.voice.model_copy(update={"enabled": True, "stt_enabled": True}),
+        }
+    )
+    snapshot = config_snapshot(config, revision=41)
+    grant = _issue(SuccessiveCaptureRuntime(snapshot, snapshot), now=now)
+    assert isinstance(grant.capabilities.vision_extract, AIDaemonCapability)
+    assert isinstance(grant.capabilities.audio_transcribe, AIDaemonCapability)
+    assert isinstance(grant.capabilities.text_generate, AIDaemonCapability)
+
+
+@pytest.mark.unit
+def test_text_generate_stays_daemon_when_embeddings_model_missing() -> None:
+    now = 1_700_000_000
+    config = daemon_config(embedding_model="")
+    snapshot = config_snapshot(config, revision=41)
+    grant = _issue(SuccessiveCaptureRuntime(snapshot, snapshot), now=now)
+    assert isinstance(grant.capabilities.embed, AIUnavailableCapability)
+    assert isinstance(grant.capabilities.text_generate, AIDaemonCapability)

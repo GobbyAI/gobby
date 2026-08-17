@@ -37,6 +37,32 @@ def test_masked_structured_references_follow_registry_identity_when_reordered() 
     ]
 
 
+def test_masked_duplicate_persisted_items_fill_missing_fields() -> None:
+    persisted = [
+        {"provider": "openai", "api_key": "$secret:FIRST"},
+        {"provider": "openai", "token": "$secret:TOKEN"},
+    ]
+    submitted = [
+        {"provider": "openai", "api_key": MASKED_SECRET, "token": MASKED_SECRET},
+    ]
+
+    restored = restore_masked_structured_references(
+        "voice.providers",
+        submitted,
+        persisted,
+        ("api_key", "token"),
+        "provider",
+    )
+
+    assert restored == [
+        {
+            "provider": "openai",
+            "api_key": "$secret:FIRST",
+            "token": "$secret:TOKEN",
+        },
+    ]
+
+
 def test_masked_duplicate_persisted_provider_references_keep_first() -> None:
     persisted = [
         {"provider": "openai", "label": "first", "api_key": "$secret:FIRST"},

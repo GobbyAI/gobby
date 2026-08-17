@@ -15,6 +15,7 @@ from gobby.code_index.gcode_gateway import (
     GcodeDaemonConfigUnavailableError,
     GcodeGateway,
 )
+from gobby.code_index.maintenance_launch import open_launch_async
 from gobby.code_index.sync_breaker import SyncCircuitBreaker
 
 logger = logging.getLogger(__name__)
@@ -208,7 +209,9 @@ class CodeIndexTrigger:
                     timeout=timeout,
                 )
             else:
-                with factory.open(project_id, timeout_seconds=timeout) as launch:
+                async with open_launch_async(
+                    factory, project_id, timeout_seconds=timeout
+                ) as launch:
                     result = await self._gcode_gateway.incremental_index(
                         Path(root_key),
                         sorted(files),

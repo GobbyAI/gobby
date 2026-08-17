@@ -12,7 +12,7 @@ from gobby.runtime_grants.schema import GrantBundle
 def canonical_payload_bytes(grant: GrantBundle) -> bytes:
     """Return the canonical JSON bytes covered by checksum and signature."""
     payload = grant.model_dump(mode="json", exclude={"payload_checksum", "signature"})
-    return json.dumps(payload, separators=(",", ":"), sort_keys=True, ensure_ascii=True).encode()
+    return json.dumps(payload, separators=(",", ":"), sort_keys=True, ensure_ascii=False).encode()
 
 
 def payload_checksum(grant: GrantBundle) -> str:
@@ -31,4 +31,8 @@ def sign_grant(grant: GrantBundle, secret: str) -> GrantBundle:
 def signature_matches(grant: GrantBundle, secret: str) -> bool:
     """Return whether `grant.signature` matches the deployment secret."""
     expected = hmac.new(secret.encode(), canonical_payload_bytes(grant), hashlib.sha256).hexdigest()
-    return hmac.compare_digest(grant.signature, expected)
+    try:
+        actual = grant.signature.encode("ascii")
+    except UnicodeEncodeError:
+        return False
+    return hmac.compare_digest(actual, expected.encode("ascii"))

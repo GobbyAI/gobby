@@ -15,6 +15,7 @@ from gobby.runtime_grants.service import GrantService
 from gobby.utils.local_token import (
     AgentApiTokenClaims,
     _urlsafe_encode,
+    managed_token_signing_payload,
     verify_agent_api_token,
 )
 
@@ -62,17 +63,18 @@ def challenge_proof(
 
 
 def _recompute_capability_signature(operator_token: str, claims: AgentApiTokenClaims) -> bytes:
-    payload: dict[str, object] = {
-        "exp": claims.exp,
-        "iat": claims.iat,
-        "machine_id": claims.machine_id,
-        "project_id": claims.project_id,
-        "session_id": claims.session_id,
-    }
-    if claims.agent_run_id is not None:
-        payload["agent_run_id"] = claims.agent_run_id
-    if claims.managed_execution_id is not None:
-        payload["managed_execution_id"] = claims.managed_execution_id
+    payload = managed_token_signing_payload(
+        {
+            "exp": claims.exp,
+            "iat": claims.iat,
+            "machine_id": claims.machine_id,
+            "project_id": claims.project_id,
+            "session_id": claims.session_id,
+            "agent_run_id": claims.agent_run_id,
+            "managed_execution_id": claims.managed_execution_id,
+            "kind": claims.kind,
+        }
+    )
     encoded = _urlsafe_encode(json.dumps(payload, sort_keys=True, separators=(",", ":")).encode())
     signed = f"{_AGENT_TOKEN_VERSION}.{encoded}"
     return hmac.new(operator_token.encode(), signed.encode(), hashlib.sha256).digest()
