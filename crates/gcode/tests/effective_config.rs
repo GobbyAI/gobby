@@ -1,4 +1,3 @@
-use std::cell::Cell;
 use std::ffi::OsString;
 use std::io::{Read, Write};
 use std::net::TcpListener;
@@ -6,8 +5,7 @@ use std::path::Path;
 use std::thread;
 use std::time::Duration;
 
-use gobby_core::ai::effective_config::ai_source_with_primary;
-use gobby_core::ai_context::NoPrimaryAiConfigSource;
+use gobby_core::ai::effective_config::ai_source_from_daemon;
 use gobby_core::config::{
     AiCapability, resolve_capability_binding, resolve_embedding_config_from_binding,
 };
@@ -84,7 +82,7 @@ fn spawn_effective_config_server() -> (String, thread::JoinHandle<String>) {
                 break;
             }
         }
-        let body = r#"{"config":{"ai.embeddings.provider":"openai","ai.embeddings.api_base":"https://daemon.example/v1","ai.embeddings.model":"served-embed","ai.embeddings.query_prefix":"search:"}}"#;
+        let body = r#"{"revision":7,"config":{"ai.embeddings.provider":"openai","ai.embeddings.api_base":"https://daemon.example/v1","ai.embeddings.model":"served-embed","ai.embeddings.query_prefix":"search:"}}"#;
         let response = format!(
             "HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{}",
             body.len(),
@@ -103,14 +101,8 @@ fn reachable_daemon_resolves_ai_without_opening_primary_database() {
     let home = tempfile::tempdir().expect("temp gobby home");
     let (daemon_url, request) = spawn_effective_config_server();
     let _env = EnvGuard::set(home.path(), &daemon_url);
-    let primary_called = Cell::new(false);
-
-    let mut source = ai_source_with_primary(|| {
-        primary_called.set(true);
-        Err::<NoPrimaryAiConfigSource, _>(anyhow::anyhow!("unreachable PostgreSQL"))
-    })
-    .expect("daemon source");
-    assert!(!primary_called.get());
+    let mut source = ai_source_from_daemon::<gobby_core::ai_context::NoPrimaryAiConfigSource>()
+        .expect("daemon source");
 
     let binding = resolve_capability_binding(&mut source, AiCapability::Embed);
     let embedding =

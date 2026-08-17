@@ -240,7 +240,10 @@ fn hold_open_maintenance_epoch_lease(
         )
     })?;
     lease
-        .batch_execute("BEGIN; SET LOCAL idle_in_transaction_session_timeout = 0")
+        .batch_execute(
+            "BEGIN; SET LOCAL idle_in_transaction_session_timeout = 0; \
+             SET LOCAL lock_timeout = '5s'",
+        )
         .context("failed to open a maintenance-epoch lease")?;
     let locked = match lease.query(
         "SELECT 1 FROM maintenance_epochs \
@@ -251,6 +254,10 @@ fn hold_open_maintenance_epoch_lease(
         Ok(rows) => rows,
         Err(error) => {
             let _ = lease.batch_execute("ROLLBACK");
+            if error.to_string().contains("lock timeout") {
+                return Err(error)
+                    .context("timed out acquiring a lock on the open maintenance epoch");
+            }
             return Err(error).context("failed to acquire the open maintenance epoch");
         }
     };

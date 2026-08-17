@@ -181,6 +181,7 @@ async def test_maintenance_purges_indexed_project_after_missing_threshold(
         total_symbols=3,
     )
     storage = MagicMock()
+    storage.get_registry_project.return_value = (True, False)
     storage.list_projection_cleanup_pending.return_value = []
     storage.list_indexed_projects.return_value = [project]
     storage.get_registry_project.return_value = (True, False)
@@ -237,6 +238,7 @@ async def test_run_maintenance_offloads_resolve_indexed_project(
         total_symbols=1,
     )
     storage = MagicMock()
+    storage.get_registry_project.return_value = (True, False)
     storage.list_projection_cleanup_pending.return_value = []
     storage.list_indexed_projects.return_value = [project]
     storage.get_registry_project.return_value = (True, False)
@@ -332,6 +334,7 @@ async def test_maintenance_retries_pending_vector_projection_cleanup(tmp_path: P
         storage=storage,
         clear_graph=AsyncMock(return_value={"success": True}),
         gcode_gateway=gcode_gateway,
+        launch_factory=DummyLaunchFactory(),
         daemon_config_breaker=SyncCircuitBreaker(
             name="test",
             probe_target="daemon config",
@@ -366,6 +369,7 @@ async def test_maintenance_purges_indexed_project_when_gcode_rejects_existing_ro
         total_symbols=3,
     )
     storage = MagicMock()
+    storage.get_registry_project.return_value = (True, False)
     storage.list_projection_cleanup_pending.return_value = []
     storage.list_indexed_projects.return_value = [project]
     storage.delete_project_index.return_value = {
@@ -454,6 +458,7 @@ async def test_maintenance_logs_unexpected_reindex_failure_at_error(
         total_symbols=3,
     )
     storage = MagicMock()
+    storage.get_registry_project.return_value = (True, False)
     storage.list_projection_cleanup_pending.return_value = []
     storage.list_indexed_projects.return_value = [project]
     diagnostic = 'ERROR: invalid byte sequence for encoding "UTF8": 0x00'
@@ -516,6 +521,7 @@ async def test_maintenance_lock_busy_is_expected_and_continues_summaries(
         total_symbols=1,
     )
     storage = MagicMock()
+    storage.get_registry_project.return_value = (True, False)
     storage.list_projection_cleanup_pending.return_value = []
     storage.list_indexed_projects.return_value = [project]
     storage.get_unsummarized_symbols.return_value = []
@@ -587,6 +593,7 @@ async def test_maintenance_rls_failure_is_logged_at_error(
         total_symbols=1,
     )
     storage = MagicMock()
+    storage.get_registry_project.return_value = (True, False)
     storage.list_projection_cleanup_pending.return_value = []
     storage.list_indexed_projects.return_value = [project]
     storage.get_unsummarized_symbols.return_value = []
@@ -652,6 +659,7 @@ async def test_maintenance_daemon_config_failure_opens_shared_breaker_once(
         total_symbols=1,
     )
     storage = MagicMock()
+    storage.get_registry_project.return_value = (True, False)
     storage.list_projection_cleanup_pending.return_value = []
     storage.list_indexed_projects.return_value = [project]
     gateway = RecordingGcodeGateway(
@@ -709,6 +717,7 @@ async def test_maintenance_logs_and_raises_on_unexpected_delete_counts(
         total_symbols=3,
     )
     storage = MagicMock()
+    storage.get_registry_project.return_value = (True, False)
     storage.list_projection_cleanup_pending.return_value = []
     storage.list_indexed_projects.return_value = [project]
     storage.delete_project_index.return_value = ["bad"]

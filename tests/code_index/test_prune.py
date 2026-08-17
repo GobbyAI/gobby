@@ -140,7 +140,9 @@ class PruneGateway:
         *,
         retention_days: int,
         timeout: float | None = None,
+        env: dict[str, str] | None = None,
     ) -> GcodeCommandResult:
+        del env
         self.retention_days.append(retention_days)
         self.targeted_roots.append(project_root)
         return self.targeted_result or _gcode_result(

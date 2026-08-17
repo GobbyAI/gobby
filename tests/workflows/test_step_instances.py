@@ -418,7 +418,8 @@ def test_corrupt_snapshot_is_absent_on_read_paths(instance_db: PostgresHubDataba
     )
 
     assert manager.get_for_session(S1) is None
-    assert manager.merge_variables(S1, {"flag": True}) is None
+    with pytest.raises(CorruptStepSnapshotError, match="session_id="):
+        manager.merge_variables(S1, {"flag": True})
     assert has_active_step_workflow(instance_db, S1) is False
 
     rebuilt = build_step_instance(

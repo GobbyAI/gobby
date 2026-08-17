@@ -11,7 +11,7 @@ import threading
 from collections.abc import Iterator
 from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
-from typing import Any
+from typing import Any, cast
 from unittest.mock import patch
 
 import pytest
@@ -461,7 +461,12 @@ def _config_server(grants: GrantService, token_file: Path) -> Any:
     )
     server.grant_service = grants
     server.handshake_service = _handshake(grants)
-    server.auth_service.is_request_authenticated = lambda _request: True
-    server.auth_service._legacy_authenticated = lambda _request: True
-    server.auth_service._credential_accepted = lambda _request: True
+
+    def _accept(_request: object) -> bool:
+        return True
+
+    auth = cast(Any, server.auth_service)
+    auth.is_request_authenticated = _accept
+    auth._legacy_authenticated = _accept
+    auth._credential_accepted = _accept
     return server

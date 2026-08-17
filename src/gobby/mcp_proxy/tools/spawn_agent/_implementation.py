@@ -40,7 +40,12 @@ from gobby.utils.project_context import get_project_context
 from gobby.workflows.definitions import AgentDefinitionBody
 
 from ._code_index import code_index_preflight_mode
-from ._failure_cleanup import cleanup_created_isolation, cleanup_failed_spawn, start_run_or_cleanup
+from ._failure_cleanup import (
+    cleanup_created_isolation,
+    cleanup_failed_spawn,
+    remember_spawn_pid,
+    start_run_or_cleanup,
+)
 from ._health import _check_tmux_session_alive, schedule_tmux_health_check
 from ._idempotency import non_actionable_task_spawn_response
 from ._provider_resolution import (
@@ -684,6 +689,7 @@ async def spawn_agent_impl(
         )
         try:
             spawn_result = await execute_spawn(spawn_request)
+            remember_spawn_pid(spawn_result.pid)
         except Exception as exc:
             cleanup_unlaunched_spawn(
                 child_session_manager,

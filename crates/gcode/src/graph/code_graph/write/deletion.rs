@@ -271,6 +271,7 @@ pub(crate) fn clear_project_query(project_id: &str) -> anyhow::Result<TypedQuery
     )
 }
 
+#[cfg(test)]
 pub(crate) fn project_scopes_query() -> TypedQuery {
     TypedQuery::new(format!(
         "MATCH (n)
@@ -281,6 +282,7 @@ pub(crate) fn project_scopes_query() -> TypedQuery {
     ))
 }
 
+#[cfg(test)]
 pub(crate) fn clear_all_code_index_query() -> anyhow::Result<TypedQuery> {
     typed_query(
         format!(

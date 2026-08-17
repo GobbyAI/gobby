@@ -217,10 +217,6 @@ class _InstalledDefinitionManager(Protocol):
     def hard_delete(self, definition_id: str) -> bool: ...
 
 
-class _ReinstallSyncFailed(Exception):
-    """Replacement failed; the surrounding reinstall transaction must roll back."""
-
-
 def _reinstall_bundled_definitions(
     db: HubDatabase,
     kinds: set[str],
@@ -242,12 +238,10 @@ def _reinstall_bundled_definitions(
                 result = sync_bundled_content_to_db(db, only={kind}, skip_types=skip_types)
                 errors = result.get("errors") or []
                 if errors:
-                    raise _ReinstallSyncFailed("; ".join(str(item) for item in errors))
+                    raise RuntimeError("; ".join(str(item) for item in errors))
                 deleted += kind_deleted
                 merged["total_synced"] += int(result.get("total_synced") or 0)
                 merged["details"].update(result.get("details") or {})
-        except _ReinstallSyncFailed as exc:
-            merged["errors"].append(f"Failed to reinstall bundled {kind}: {exc}")
         except Exception as exc:
             merged["errors"].append(f"Failed to reinstall bundled {kind}: {exc}")
     return deleted, merged

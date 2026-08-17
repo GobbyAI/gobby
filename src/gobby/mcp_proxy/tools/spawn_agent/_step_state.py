@@ -146,7 +146,7 @@ def persist_initial_step_instance_if_resolved(
         return False
     persist_initial_step_instance(
         db,
-        agent_body,
+        resolved[0],
         session_id=session_id,
         step_workflow_id=resolved[1].step_workflow_id,
         initial_variables=initial_variables,

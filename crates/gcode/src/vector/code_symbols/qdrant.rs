@@ -38,7 +38,7 @@ pub(super) fn collection_path(collection: &str) -> String {
     format!("/collections/{}", urlencoding::encode(collection))
 }
 
-#[allow(dead_code)]
+#[cfg(test)]
 pub fn delete_project_collection(
     qdrant: &QdrantConfig,
     project_id: &str,
@@ -192,7 +192,7 @@ fn collect_file_paths_from_scroll_page(
     Ok(())
 }
 
-#[allow(dead_code)]
+#[cfg(test)]
 pub fn delete_code_symbol_collections_with_prefix(
     qdrant: &QdrantConfig,
 ) -> Result<Vec<String>, VectorLifecycleError> {
@@ -208,7 +208,7 @@ pub fn delete_code_symbol_collections_with_prefix(
     Ok(deleted)
 }
 
-#[allow(dead_code)]
+#[cfg(test)]
 pub fn list_code_symbol_collections(
     qdrant: &QdrantConfig,
 ) -> Result<Vec<String>, VectorLifecycleError> {
@@ -278,6 +278,7 @@ pub(super) fn parse_collection_schema(data: &Value) -> Option<ExistingVectorColl
     Some(ExistingVectorCollectionSchema { size, distance })
 }
 
+#[cfg(test)]
 fn parse_collection_names(data: &Value) -> Vec<String> {
     data.pointer("/result/collections")
         .and_then(Value::as_array)
@@ -348,6 +349,7 @@ pub(super) fn qdrant_request_for_config(
     Ok(req)
 }
 
+#[cfg(test)]
 fn delete_qdrant_collection(
     client: &reqwest::blocking::Client,
     qdrant: &QdrantConfig,

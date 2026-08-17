@@ -601,19 +601,21 @@ fn identity_for_cwd_maps_missing_project_to_project_required() {
 
 #[test]
 fn grant_settings_supply_indexing_and_vector_dim() {
-    let settings = std::collections::BTreeMap::from([
-        (
-            gobby_core::config::INDEXING_RESPECT_GITIGNORE_KEY.to_string(),
-            "false".to_string(),
-        ),
-        (embedding_keys::AI_DIM.to_string(), "768".to_string()),
-    ]);
-    let (embedding, indexing, code_vectors) =
-        super::services::resolve_from_grant_settings(&settings, ServiceConfigSelection::all())
-            .expect("grant settings");
-    assert!(embedding.is_none());
-    assert!(!indexing.respect_gitignore);
-    assert_eq!(code_vectors.vector_dim, Some(768));
+    with_service_env(&[], || {
+        let settings = std::collections::BTreeMap::from([
+            (
+                gobby_core::config::INDEXING_RESPECT_GITIGNORE_KEY.to_string(),
+                "false".to_string(),
+            ),
+            (embedding_keys::AI_DIM.to_string(), "768".to_string()),
+        ]);
+        let (embedding, indexing, code_vectors) =
+            super::services::resolve_from_grant_settings(&settings, ServiceConfigSelection::all())
+                .expect("grant settings");
+        assert!(embedding.is_none());
+        assert!(!indexing.respect_gitignore);
+        assert_eq!(code_vectors.vector_dim, Some(768));
+    });
 }
 
 mod runtime_contract;

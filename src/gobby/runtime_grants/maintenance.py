@@ -59,8 +59,8 @@ class HandshakeMaintenanceLaunchFactory:
                     self._credentials.revoke(execution_id, reason="maintenance-complete")
                 except Exception:
                     logger.warning(
-                        "failed to revoke maintenance credential %s",
-                        execution_id,
+                        "failed to revoke maintenance credential",
+                        extra={"execution_id": str(execution_id)},
                         exc_info=True,
                     )
             shutil.rmtree(dest, ignore_errors=True)
@@ -70,11 +70,21 @@ class HandshakeMaintenanceLaunchFactory:
         self, project_id: str, *, timeout_seconds: float
     ) -> AsyncIterator[ManagedLaunch]:
         cm = self.open(project_id, timeout_seconds=timeout_seconds)
-        launch = await asyncio.to_thread(cm.__enter__)
+        enter_task = asyncio.create_task(asyncio.to_thread(cm.__enter__))
+        try:
+            launch = await asyncio.shield(enter_task)
+        except asyncio.CancelledError as cancel:
+            try:
+                await enter_task
+            except BaseException as exc:
+                await asyncio.to_thread(cm.__exit__, type(exc), exc, exc.__traceback__)
+                raise cancel from exc
+            await asyncio.to_thread(cm.__exit__, type(cancel), cancel, cancel.__traceback__)
+            raise
         try:
             yield launch
         except BaseException as exc:
-            await asyncio.to_thread(cm.__exit__, type(exc), exc, exc.__traceback__)
+            await asyncio.shield(asyncio.to_thread(cm.__exit__, type(exc), exc, exc.__traceback__))
             raise
         else:
-            await asyncio.to_thread(cm.__exit__, None, None, None)
+            await asyncio.shield(asyncio.to_thread(cm.__exit__, None, None, None))

@@ -87,7 +87,7 @@ def test_stale_reviewers_can_terminate_after_task_already_advanced() -> None:
 
 
 @pytest.mark.parametrize("state", [None, {"is_closed": False, "current_stage": None}])
-def test_get_task_when_tolerates_null_state(state: object) -> None:
+def test_get_task_when_keeps_review_path_when_stage_missing(state: object) -> None:
     review_step = next(
         step for step in _agent()["step_workflow"]["steps"] if step["name"] == "review"
     )
@@ -106,7 +106,7 @@ def test_get_task_when_tolerates_null_state(state: object) -> None:
         {"bool": bool},
     )
 
-    assert evaluator.evaluate(get_task_handler["when"]) is True
+    assert evaluator.evaluate(get_task_handler["when"]) is False
 
 
 def test_escalation_is_limited_to_broken_workflow() -> None:

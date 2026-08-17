@@ -74,9 +74,13 @@ def test_open_revokes_only_after_issue(monkeypatch: pytest.MonkeyPatch, tmp_path
     credentials = _RecordingCredentials()
     factory = _factory(handshake, credentials)
     launch = ManagedLaunch(grant_path=tmp_path / "grant.json", env={})
+
+    def _return_launch(*_args: object, **_kwargs: object) -> ManagedLaunch:
+        return launch
+
     monkeypatch.setattr(
         "gobby.runtime_grants.maintenance.materialize_managed_launch",
-        lambda *_args, **_kwargs: launch,
+        _return_launch,
     )
 
     with factory.open("project-1", timeout_seconds=1) as opened:
@@ -93,9 +97,13 @@ def test_open_preserves_body_error_when_revoke_fails(
     credentials = _RecordingCredentials(fail=True)
     factory = _factory(handshake, credentials)
     launch = ManagedLaunch(grant_path=tmp_path / "grant.json", env={})
+
+    def _return_launch(*_args: object, **_kwargs: object) -> ManagedLaunch:
+        return launch
+
     monkeypatch.setattr(
         "gobby.runtime_grants.maintenance.materialize_managed_launch",
-        lambda *_args, **_kwargs: launch,
+        _return_launch,
     )
 
     with (
@@ -113,9 +121,13 @@ async def test_open_async_yields_launch(monkeypatch: pytest.MonkeyPatch, tmp_pat
     credentials = _RecordingCredentials()
     factory = _factory(handshake, credentials)
     launch = ManagedLaunch(grant_path=tmp_path / "grant.json", env={})
+
+    def _return_launch(*_args: object, **_kwargs: object) -> ManagedLaunch:
+        return launch
+
     monkeypatch.setattr(
         "gobby.runtime_grants.maintenance.materialize_managed_launch",
-        lambda *_args, **_kwargs: launch,
+        _return_launch,
     )
 
     async with factory.open_async("project-1", timeout_seconds=1) as opened:

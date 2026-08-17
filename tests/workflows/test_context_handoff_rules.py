@@ -56,7 +56,7 @@ def test_bundled_session_rules_do_not_advertise_wiki_ask() -> None:
     for path in sorted(_BUNDLED_RULES.rglob("*")):
         if path.suffix not in {".yaml", ".yml"}:
             continue
-        if "deprecated" in path.parts:
+        if "deprecated" in path.relative_to(_BUNDLED_RULES).parts:
             continue
         text = path.read_text()
         if "wiki_ask" in text:

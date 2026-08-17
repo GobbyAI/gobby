@@ -133,7 +133,15 @@ def _stored_instance(row: Any) -> AgentStepInstance | None:
     try:
         return _row_to_instance(row)
     except CorruptStepSnapshotError as exc:
-        logger.warning("%s", exc)
+        session_id = None
+        try:
+            session_id = row["session_id"]
+        except Exception:
+            session_id = getattr(row, "session_id", None)
+        logger.warning(
+            "corrupt agent-step snapshot",
+            extra={"session_id": session_id, "error": exc},
+        )
         return None
 
 
@@ -242,7 +250,7 @@ class AgentStepInstanceManager:
             ).fetchone()
             if row is None:
                 return None
-            return _stored_instance(row)
+            return _row_to_instance(row)
 
     def delete_for_session(self, session_id: str) -> int:
         """Delete the instance for a session and return the deleted row count."""

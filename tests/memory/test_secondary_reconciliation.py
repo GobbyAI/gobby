@@ -283,4 +283,4 @@ async def test_purge_hidden_splits_supersession_budget(
     await manager._lifecycle_service.purge_secondary_indices(memory.id, require_hidden=True)
     assert sql_deadlines == [2.0]
     assert io_timeouts
-    assert 0 < io_timeouts[0] <= 4.0
+    assert 0 < io_timeouts[0] <= 2.0

@@ -286,7 +286,7 @@ async def test_nightly_reindex_does_not_call_gateway_without_launch_factory(
 
     result = await reindexer.run_once()
 
-    assert "completed=0 failed=1 skipped=0" in result
+    assert "skipped: launch factory is not configured" in result
     assert gateway.calls == []
 
 

@@ -90,7 +90,7 @@ pub fn daemon_mode_layers_at(
             EFFECTIVE_CONFIG_TIMEOUT,
         )
         .map_err(|error| {
-            log::warn!("managed runtime config fetch failed: {error}");
+            log::warn!("managed runtime config fetch failed: {}", error.cli_code());
             match error {
                 crate::grant::GrantError::Timeout => EffectiveConfigError::Transport {
                     kind: EffectiveConfigTransportKind::Timeout,
@@ -213,10 +213,8 @@ pub fn daemon_dsn() -> Result<Option<String>, EffectiveConfigError> {
     daemon_dsn_from_state(effective_config_state())
 }
 
-pub fn ai_source_with_primary<P: ConfigSource>(
-    _primary: impl FnOnce() -> anyhow::Result<P>,
-) -> anyhow::Result<AiConfigSource<DaemonOrPrimary<P>>> {
-    let _ = _primary;
+pub fn ai_source_from_daemon<P: ConfigSource>() -> anyhow::Result<AiConfigSource<DaemonOrPrimary<P>>>
+{
     let daemon = daemon_mode_layers()?;
     Ok(AiConfigSource::with_primary(DaemonOrPrimary::Daemon(
         daemon,
@@ -224,10 +222,10 @@ pub fn ai_source_with_primary<P: ConfigSource>(
 }
 
 pub fn ai_source_without_primary() -> anyhow::Result<EffectiveLocalAiSource> {
-    ai_source_with_primary(|| Ok(NoPrimaryAiConfigSource))
+    ai_source_from_daemon()
 }
 
-/// Like [`ai_source_with_primary`], but keeps the primary attached in daemon
+/// Like [`ai_source_from_daemon`], but keeps the primary attached in daemon
 /// mode for keys the daemon never serves. Unresolved secret markers fail typed
 /// as grant-issuance bugs instead of unwrapping client-side.
 pub fn ai_source_with_secret_primary<P: ConfigSource>(
@@ -316,12 +314,9 @@ fn validate_served_values(values: &BTreeMap<String, String>) -> Result<(), Effec
 }
 
 #[cfg(test)]
-fn ai_source_with_primary_from_layers<P: ConfigSource>(
+fn ai_source_from_daemon_layers<P: ConfigSource>(
     layers: Result<EffectiveConfigLayers, EffectiveConfigError>,
-    _gobby_home: &Path,
-    _primary: impl FnOnce() -> anyhow::Result<P>,
 ) -> anyhow::Result<AiConfigSource<DaemonOrPrimary<P>>> {
-    let _ = _primary;
     Ok(AiConfigSource::with_primary(DaemonOrPrimary::Daemon(
         layers?,
     )))

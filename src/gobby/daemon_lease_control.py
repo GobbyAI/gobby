@@ -190,7 +190,10 @@ async def monitor_active_lease(
                 timeout=heartbeat_timeout_seconds,
             )
         except TimeoutError:
-            logger.error("Active-daemon lease heartbeat timed out; requesting shutdown")
+            logger.error(
+                "Active-daemon lease heartbeat timed out; requesting shutdown",
+                extra={"heartbeat_timeout_seconds": heartbeat_timeout_seconds},
+            )
             await asyncio.to_thread(on_loss)
             return
         except LeaseConnectionLostError:

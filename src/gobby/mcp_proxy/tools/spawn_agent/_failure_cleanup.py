@@ -6,21 +6,44 @@ import asyncio
 import logging
 import os
 import signal
+import subprocess
 from typing import Any
 
 _SPAWN_TERM_GRACE_SECONDS = 0.2
+_PID_STARTTIMES: dict[int, str] = {}
 
 
-def _pid_is_alive(pid: int) -> bool:
+def remember_spawn_pid(pid: int | None) -> None:
+    if pid is None:
+        return
+    stamp = _pid_starttime(pid)
+    if stamp is not None:
+        _PID_STARTTIMES[pid] = stamp
+
+
+def _pid_starttime(pid: int) -> str | None:
     try:
-        os.kill(pid, 0)
-    except ProcessLookupError:
-        return False
-    except PermissionError:
-        return True
+        completed = subprocess.run(
+            ["ps", "-p", str(pid), "-o", "lstart="],
+            check=False,
+            capture_output=True,
+            text=True,
+        )
     except OSError:
+        return None
+    stamp = completed.stdout.strip()
+    return stamp or None
+
+
+def _pid_matches_remembered(pid: int) -> bool:
+    remembered = _PID_STARTTIMES.get(pid)
+    if remembered is None:
         return False
-    return True
+    return _pid_starttime(pid) == remembered
+
+
+def _forget_spawn_pid(pid: int) -> None:
+    _PID_STARTTIMES.pop(pid, None)
 
 
 async def cleanup_created_isolation(
@@ -212,21 +235,6 @@ async def _terminate_spawn_process(
     tmux_socket_name: str | None,
     tmux_socket_path: str | None,
 ) -> None:
-    if pid is not None:
-        try:
-            os.kill(pid, signal.SIGTERM)
-        except ProcessLookupError:
-            pass
-        except Exception as exc:
-            logging.getLogger(__name__).warning("Failed to terminate spawn pid %s: %s", pid, exc)
-        await asyncio.sleep(_SPAWN_TERM_GRACE_SECONDS)
-        if _pid_is_alive(pid):
-            try:
-                os.kill(pid, signal.SIGKILL)
-            except ProcessLookupError:
-                pass
-            except Exception as exc:
-                logging.getLogger(__name__).warning("Failed to kill spawn pid %s: %s", pid, exc)
     if tmux_session_name:
         try:
             from gobby.agents.tmux import get_tmux_session_manager
@@ -241,6 +249,24 @@ async def _terminate_spawn_process(
                 tmux_socket_path,
                 exc,
             )
+    if pid is not None:
+        remember_spawn_pid(pid)
+        try:
+            os.kill(pid, signal.SIGTERM)
+        except ProcessLookupError:
+            _forget_spawn_pid(pid)
+            return
+        except Exception as exc:
+            logging.getLogger(__name__).warning("Failed to terminate spawn pid %s: %s", pid, exc)
+        await asyncio.sleep(_SPAWN_TERM_GRACE_SECONDS)
+        if _pid_matches_remembered(pid):
+            try:
+                os.kill(pid, signal.SIGKILL)
+            except ProcessLookupError:
+                pass
+            except Exception as exc:
+                logging.getLogger(__name__).warning("Failed to kill spawn pid %s: %s", pid, exc)
+        _forget_spawn_pid(pid)
 
 
 def _string_attr(obj: Any, name: str) -> str | None:

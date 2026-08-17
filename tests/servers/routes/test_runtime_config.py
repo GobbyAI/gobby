@@ -4,11 +4,12 @@ from __future__ import annotations
 
 from collections.abc import Iterator
 from pathlib import Path
-from typing import Any
+from typing import Any, cast
 from unittest.mock import MagicMock, patch
 
 import pytest
 from fastapi.testclient import TestClient
+from starlette.requests import HTTPConnection
 
 from gobby.config.app import DaemonConfig
 from gobby.config.runtime import ConfigRuntime
@@ -81,15 +82,14 @@ def _client(
     token_file = tmp_path / "local_cli_token"
     token_file.write_text(OPERATOR_TOKEN)
     server.auth_service = AuthService(lambda: server.services.database, token_file=token_file)
-    server.auth_service.is_request_authenticated = lambda request: bool(
-        request.headers.get("Authorization")
-    )
-    server.auth_service._legacy_authenticated = lambda request: bool(
-        request.headers.get("Authorization")
-    )
-    server.auth_service._credential_accepted = lambda request: bool(
-        request.headers.get("Authorization")
-    )
+
+    def _header_authenticated(request: HTTPConnection) -> bool:
+        return bool(request.headers.get("Authorization"))
+
+    auth = cast(Any, server.auth_service)
+    auth.is_request_authenticated = _header_authenticated
+    auth._legacy_authenticated = _header_authenticated
+    auth._credential_accepted = _header_authenticated
     server.grant_service = grants
     server.handshake_service = handshake
     runtime = MagicMock(spec=ConfigRuntime)

@@ -63,6 +63,8 @@ REQUIRED_DOMAIN_TOOLS = frozenset(
     }
 )
 
+pytestmark = pytest.mark.unit
+
 _REPO_ROOT = Path(__file__).resolve().parents[4]
 _CALLER_MODULES = (
     _REPO_ROOT / "src/gobby/mcp_proxy/tools/workflows/_agents.py",
@@ -93,6 +95,7 @@ def test_get_step_status_is_registered_under_new_name() -> None:
     assert "get_workflow_status" not in names
 
 
+@pytest.mark.integration
 @pytest.mark.asyncio
 async def test_evaluate_tools_cover_pipeline_and_agent(temp_db: HubDatabase) -> None:
     PipelineDefinitionManager(temp_db).create(

@@ -90,7 +90,6 @@ impl ConfigSource for HubPrimary {
         // references; the daemon grant issuer substitutes them before they reach
         // the client. Plain values are returned unchanged.
         gobby_core::config::reject_secret_marker(value)?;
-        let _ = self.state();
         Ok(value.to_string())
     }
 }
@@ -403,6 +402,19 @@ mod tests {
                 .resolve_value("plain-value")
                 .expect("non-secret resolution"),
             "plain-value"
+        );
+    }
+
+    #[test]
+    fn plain_value_resolution_does_not_initialize_hub_connection() {
+        let mut primary = HubPrimary::new("test");
+        assert_eq!(
+            primary.resolve_value("plain-value").expect("plain value"),
+            "plain-value"
+        );
+        assert!(
+            primary.conn.is_none(),
+            "plain-value resolution must not open a hub connection"
         );
     }
 

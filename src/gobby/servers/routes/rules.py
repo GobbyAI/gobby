@@ -347,7 +347,7 @@ def create_rules_router(server: "HTTPServer") -> APIRouter:
 
         try:
             body = _rule_body(updated)
-        except TypeError:
+        except (TypeError, json.JSONDecodeError):
             logger.warning(
                 "Updated rule %s (%s) has an unparseable definition; returning metadata only",
                 updated.id,

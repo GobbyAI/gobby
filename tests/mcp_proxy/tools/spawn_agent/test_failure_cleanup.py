@@ -205,6 +205,7 @@ async def test_terminate_sigkills_only_when_pid_still_alive() -> None:
     with (
         patch.object(cleanup_module, "os") as mock_os,
         patch.object(cleanup_module, "asyncio") as mock_asyncio,
+        patch.object(cleanup_module, "_pid_starttime", return_value="Mon Jan  1 00:00:00 2026"),
     ):
         mock_os.kill.side_effect = fake_kill
         mock_asyncio.sleep = AsyncMock()
@@ -215,7 +216,7 @@ async def test_terminate_sigkills_only_when_pid_still_alive() -> None:
             tmux_socket_path=None,
         )
 
-    assert sent == [signal.SIGTERM, 0, signal.SIGKILL]
+    assert sent == [signal.SIGTERM, signal.SIGKILL]
 
 
 async def test_get_after_lost_start_race_cleans_up_on_storage_error() -> None:

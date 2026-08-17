@@ -56,6 +56,10 @@ class CodeIndexNightlyFullReindexer:
         gateway = self._context.gcode_gateway
         if gateway is None:
             return "Code index nightly full reindex skipped: gcode gateway unavailable"
+        factory = self._context.launch_factory
+        if factory is None:
+            logger.error("Nightly full reindex skipped: launch factory is not configured")
+            return "Code index nightly full reindex skipped: launch factory is not configured"
 
         projects = await self._context.run_db(self._context.storage.list_indexed_projects)
         concurrency = max(1, int(config.nightly_full_reindex_concurrency))
@@ -74,14 +78,7 @@ class CodeIndexNightlyFullReindexer:
                     return f"{project_id}:skipped_missing_root"
 
                 async with semaphore:
-                    factory = self._context.launch_factory
                     timeout = config.nightly_full_reindex_timeout_seconds
-                    if factory is None:
-                        logger.error(
-                            "Nightly full reindex failed for %s: launch factory is not configured",
-                            project_id,
-                        )
-                        return f"{project_id}:failed"
                     async with open_launch_async(
                         factory, project_id, timeout_seconds=timeout
                     ) as launch:

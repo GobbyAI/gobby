@@ -351,6 +351,8 @@ def list_agent_definitions(
         try:
             summaries.append(_agent_definition_summary(row))
         except ValueError:
+            name = getattr(row, "name", None) or getattr(row, "id", "<unknown>")
+            click.echo(f"Skipping invalid agent definition {name}", err=True)
             continue
     if surface:
         summaries = [agent for agent in summaries if surface in agent.get("surfaces", ["spawn"])]

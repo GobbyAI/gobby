@@ -369,19 +369,13 @@ fn daemon_dsn_trims_available_value_and_propagates_failed_state() {
 }
 
 #[test]
-fn primary_factory_is_unused_in_daemon_mode() {
-    let home = temp_home();
-    let daemon_calls = Cell::new(0);
-    let mut daemon_source = ai_source_with_primary_from_layers(
-        Ok(served([("ai.embeddings.model", "daemon-model")])),
-        home.path(),
-        || {
-            daemon_calls.set(daemon_calls.get() + 1);
-            Ok(NoPrimaryAiConfigSource)
-        },
-    )
-    .expect("daemon source");
-    assert_eq!(daemon_calls.get(), 0);
+fn daemon_source_from_layers_does_not_need_a_primary() {
+    let mut daemon_source =
+        ai_source_from_daemon_layers::<NoPrimaryAiConfigSource>(Ok(served([(
+            "ai.embeddings.model",
+            "daemon-model",
+        )])))
+        .expect("daemon source");
     assert_eq!(
         daemon_source.config_value("ai.embeddings.model").as_deref(),
         Some("daemon-model")

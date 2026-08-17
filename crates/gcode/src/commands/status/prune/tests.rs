@@ -5,19 +5,29 @@ use super::inventory::classify_collection_inventory;
 use super::reconcile::{bounded_project_id_summary, optional_reconcile_totals_lines};
 use super::*;
 
-#[test]
-fn global_prune_uses_daemon_client() {
-    let shared = include_str!("../shared.rs");
-    let projects = include_str!("../projects.rs");
-    assert!(
-        !shared.contains("fn collect_projects(") && !shared.contains("db::resolve_database_url"),
-        "shared listing helper must not grow a second direct-DSN entry point"
-    );
-    assert!(
-        !projects.contains("collect_projects(") && !projects.contains("db::resolve_database_url"),
-        "gcode projects must not construct a direct datastore context"
-    );
+fn uncommented_source(src: &str) -> String {
+    src.lines()
+        .filter(|line| !line.trim_start().starts_with("//"))
+        .collect::<Vec<_>>()
+        .join("\n")
+}
 
+#[test]
+fn no_direct_dsn_entry_points_in_status_listing() {
+    let shared = uncommented_source(include_str!("../shared.rs"));
+    let projects = uncommented_source(include_str!("../projects.rs"));
+    assert!(
+        !shared.contains("db::resolve_database_url("),
+        "shared listing must not call db::resolve_database_url"
+    );
+    assert!(
+        !projects.contains("db::resolve_database_url("),
+        "gcode projects must not call db::resolve_database_url"
+    );
+}
+
+#[test]
+fn global_prune_forwards_force_and_retention_to_daemon_client() {
     let mut seen = None;
     prune_global_with(true, true, 14, |force, retention_days| {
         seen = Some((force, retention_days));
@@ -29,7 +39,10 @@ fn global_prune_uses_daemon_client() {
     })
     .expect("completed prune");
     assert_eq!(seen, Some((true, 14)));
+}
 
+#[test]
+fn global_prune_reports_reconciliation_failure() {
     let failed = prune_global_with(false, true, 7, |_, _| {
         Ok(crate::daemon::GlobalPruneOutcome {
             completed: Vec::new(),
@@ -44,7 +57,10 @@ fn global_prune_uses_daemon_client() {
             .contains("gcode prune completed with 1 reconciliation failure"),
         "{failed}"
     );
+}
 
+#[test]
+fn global_prune_converts_daemon_required() {
     let exit = prune_global_with(false, true, 7, |_, _| {
         Err(crate::cli_error::CliError::grant(
             gobby_core::grant::GrantError::DaemonRequired,

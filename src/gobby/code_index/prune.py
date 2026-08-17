@@ -6,6 +6,8 @@ import asyncio
 import json
 import logging
 import signal
+from collections.abc import AsyncIterator, Mapping
+from contextlib import asynccontextmanager
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, Literal, Protocol, TypedDict
 from uuid import uuid4
@@ -29,6 +31,7 @@ CODE_INDEX_PRUNE_JOB_NAME = "gobby:code-index-prune"
 CODE_INDEX_PRUNE_HANDLER = "code-index:prune"
 CODE_INDEX_PRUNE_INTERVAL_SECONDS = 3600
 CODE_INDEX_PRUNE_TIMEOUT_SECONDS = 120
+CODE_INDEX_PRUNE_LOCK_TIMEOUT_SECONDS = 5.0
 CODE_INDEX_PRUNE_DESCRIPTION = (
     "Prune stale code-index projections and perform orphan Qdrant collection cleanup"
 )
@@ -37,6 +40,32 @@ _DEFAULT_MAINTENANCE_LOG_FILE = "~/.gobby/logs/code-index-maintenance.log"
 _OPERATOR_COMPLETED_SUFFIXES = frozenset({"pruned", "deferred_pending_sync", "reconciled"})
 _OPERATOR_SKIPPED_SUFFIXES = frozenset({"skipped_locked", "skipped_missing_root"})
 _OPERATOR_HUB_DELETE_SUFFIXES = frozenset({"pruned"})
+
+
+@asynccontextmanager
+async def _held_project_lock(
+    lock: asyncio.Lock, *, force: bool, timeout: float
+) -> AsyncIterator[bool]:
+    if lock.locked() and not force:
+        yield False
+        return
+    acquired = False
+    if force:
+        try:
+            await asyncio.wait_for(lock.acquire(), timeout=timeout)
+        except TimeoutError:
+            yield False
+            return
+        acquired = True
+    try:
+        if not acquired:
+            async with lock:
+                yield True
+                return
+        yield True
+    finally:
+        if acquired:
+            lock.release()
 
 
 def _is_noop_shutdown_prune(exc: Exception) -> bool:
@@ -179,7 +208,9 @@ class CodeIndexPruner:
                 )
                 suffix = outcome.rsplit(":", 1)[-1]
                 if suffix in _OPERATOR_COMPLETED_SUFFIXES:
-                    if suffix in _OPERATOR_HUB_DELETE_SUFFIXES and not root.exists():
+                    if suffix in _OPERATOR_HUB_DELETE_SUFFIXES and not await asyncio.to_thread(
+                        root.exists
+                    ):
                         await self._context.run_db(
                             self._context.storage.delete_project_index,
                             project_id,
@@ -337,15 +368,17 @@ class CodeIndexPruner:
         retention_days: int | None = None,
     ) -> str:
         lock = self._project_locks.setdefault(project_id, asyncio.Lock())
-        if lock.locked() and not force:
-            return f"{project_id}:skipped_locked"
         resolved_retention = (
             retention_days
             if retention_days is not None
             else self._context.config.content_retention_days
         )
 
-        async with lock:
+        async with _held_project_lock(
+            lock, force=force, timeout=CODE_INDEX_PRUNE_LOCK_TIMEOUT_SECONDS
+        ) as acquired:
+            if not acquired:
+                return f"{project_id}:skipped_locked"
             pending = await self._context.run_db(
                 self._context.storage.get_pending_sync_files,
                 project_id,
@@ -359,11 +392,7 @@ class CodeIndexPruner:
             lookup = getattr(self._context.storage, "get_registry_project", None)
             if callable(lookup):
                 raw = await self._context.run_db(lookup, project_id)
-                exists, deleted = (
-                    (bool(raw[0]), bool(raw[1]))
-                    if isinstance(raw, tuple) and len(raw) == 2
-                    else (True, False)
-                )
+                exists, deleted = bool(raw[0]), bool(raw[1])
                 decision = resolve_indexed_project(
                     project_id,
                     root_path,
@@ -387,24 +416,24 @@ class CodeIndexPruner:
 
             try:
                 factory = self._context.launch_factory
-                if factory is None:
-                    command_result = await gateway.prune_project_for_maintenance(
+
+                async def _prune(env: Mapping[str, str] | None) -> GcodeCommandResult:
+                    return await gateway.prune_project_for_maintenance(
                         Path(root_path).expanduser(),
                         retention_days=resolved_retention,
                         timeout=CODE_INDEX_PRUNE_TIMEOUT_SECONDS,
+                        env=env,
                     )
+
+                if factory is None:
+                    command_result = await _prune(None)
                 else:
                     async with open_launch_async(
                         factory,
                         project_id,
                         timeout_seconds=CODE_INDEX_PRUNE_TIMEOUT_SECONDS,
                     ) as launch:
-                        command_result = await gateway.prune_project_for_maintenance(
-                            Path(root_path).expanduser(),
-                            retention_days=resolved_retention,
-                            timeout=CODE_INDEX_PRUNE_TIMEOUT_SECONDS,
-                            env=launch.env,
-                        )
+                        command_result = await _prune(launch.env)
                 if command_result.timed_out:
                     status = "timed_out"
                 elif command_result.success or _is_noop_shutdown_result(command_result):

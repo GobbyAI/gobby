@@ -122,13 +122,15 @@ impl EmbeddingBackend {
     }
 }
 
+const INDEXING_EMBED_QUERY_MODE: bool = false;
+
 fn embed_via_daemon_or_err(
     context: &AiContext,
     texts: &[String],
 ) -> Result<Vec<Vec<f32>>, VectorLifecycleError> {
     #[cfg(feature = "ai")]
     {
-        daemon::embed_via_daemon(context, texts, false)
+        daemon::embed_via_daemon(context, texts, INDEXING_EMBED_QUERY_MODE)
             .map(|result| result.embeddings)
             .map_err(|error| VectorLifecycleError::EmbeddingResponse(error.to_string()))
     }
@@ -462,12 +464,8 @@ mod tests {
 
     #[test]
     fn embed_via_daemon_or_err_uses_document_mode_for_indexing() {
-        let production = include_str!("embedding.rs")
-            .split("#[cfg(test)]")
-            .next()
-            .expect("production source");
         assert!(
-            production.contains("embed_via_daemon(context, texts, false)"),
+            !super::INDEXING_EMBED_QUERY_MODE,
             "indexing embeddings must use document mode"
         );
     }

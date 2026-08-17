@@ -5,6 +5,7 @@ from __future__ import annotations
 import asyncio
 from collections.abc import AsyncIterator, Iterator
 from contextlib import AbstractContextManager, asynccontextmanager, contextmanager
+from types import TracebackType
 from typing import Protocol
 
 from gobby.runtime_grants.launch import ManagedLaunch
@@ -31,13 +32,22 @@ async def open_launch_async(
         return
     cm = factory.open(project_id, timeout_seconds=timeout_seconds)
     launch = await asyncio.to_thread(cm.__enter__)
+
+    async def _exit(
+        exc_type: type[BaseException] | None,
+        exc: BaseException | None,
+        tb: TracebackType | None,
+    ) -> object:
+        return await asyncio.shield(asyncio.to_thread(cm.__exit__, exc_type, exc, tb))
+
     try:
         yield launch
     except BaseException as exc:
-        await asyncio.to_thread(cm.__exit__, type(exc), exc, exc.__traceback__)
+        if await _exit(type(exc), exc, exc.__traceback__):
+            return
         raise
     else:
-        await asyncio.to_thread(cm.__exit__, None, None, None)
+        await _exit(None, None, None)
 
 
 @contextmanager

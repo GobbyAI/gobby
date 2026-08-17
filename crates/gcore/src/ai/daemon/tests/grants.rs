@@ -34,6 +34,11 @@ fn isolated_home() -> (tempfile::TempDir, EnvGuard) {
     let home = temp_home();
     let env = EnvGuard::set_home(home.path());
     write_daemon_files(home.path(), 9, "unused-token");
+    // SAFETY: EnvGuard holds TEST_ENV_LOCK and restores GOBBY_DAEMON_URL on drop.
+    // An unroutable URL beats cwd-based resolution of a developer daemon.
+    unsafe {
+        std::env::set_var("GOBBY_DAEMON_URL", "http://127.0.0.1:1");
+    }
     (home, env)
 }
 

@@ -196,7 +196,7 @@ def present_or_reject(
     try:
         grant = decode_grant_header(raw_header)
     except Exception:
-        logger.exception("failed to decode runtime grant header")
+        logger.warning("failed to decode runtime grant header")
         return AuthDecision(
             allowed=False,
             code="invalid_signature",

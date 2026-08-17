@@ -95,7 +95,7 @@ async def _run_maintenance(
     if gcode_gateway is None:
         logger.warning("gcode unavailable — skipping maintenance index. Run `gobby install`.")
 
-    factory = getattr(context, "launch_factory", None)
+    factory = context.launch_factory
     if gcode_gateway is not None and factory is None:
         logger.error("Maintenance reindex skipped: launch factory is not configured")
 
@@ -195,15 +195,13 @@ async def _run_maintenance(
 
 async def _registry_state(context: CodeIndexContext, project_id: str) -> tuple[bool, bool]:
     raw = await context.run_db(context.storage.get_registry_project, project_id)
-    if not isinstance(raw, tuple) or len(raw) != 2:
-        return True, False
     return bool(raw[0]), bool(raw[1])
 
 
 async def _reconcile_stale_selector(context: CodeIndexContext, project_id: str, reason: str) -> str:
     """Clear projections then the machine-local selector. Leave directories alone."""
     gateway = context.gcode_gateway
-    factory = getattr(context, "launch_factory", None)
+    factory = context.launch_factory
     exists, _deleted = await _registry_state(context, project_id)
     if exists and factory is not None and gateway is not None:
         try:

@@ -421,7 +421,7 @@ def issue_grant_postgres(
     except HandshakeRejection:
         raise
     except Exception:
-        logger.exception("%s grant credential issuance failed", typed.kind)
+        logger.error("grant credential issuance failed", extra={"kind": typed.kind})
         raise HandshakeRejection(
             _CREDENTIAL_ISSUANCE_FAILED,
             code="managed_source",

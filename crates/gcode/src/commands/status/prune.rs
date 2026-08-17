@@ -11,7 +11,6 @@ use super::shared::{collect_projects_from, display_name};
 mod inventory;
 mod reconcile;
 
-use inventory::{all_collection_orphan_ids, all_scope_orphan_ids};
 use reconcile::{ReconcileTotals, SweepOutcome, print_reconcile_totals, sweep_discovered_ids_with};
 
 #[derive(Debug, Default, PartialEq, Eq)]
@@ -38,22 +37,9 @@ struct StaleProjectPlan {
     reason: String,
 }
 
-#[derive(Debug, Default, Clone, Copy, PartialEq, Eq)]
-struct DiscoveryCounts {
-    scanned: usize,
-    active: usize,
-}
-
 struct GlobalPruneDiscovery {
     services: Context,
     machine_states: Vec<StaleProjectPlan>,
-    #[allow(dead_code)]
-    machine_state_counts: DiscoveryCounts,
-    registry_projects: Vec<StaleProjectPlan>,
-    #[allow(dead_code)]
-    registry_project_counts: DiscoveryCounts,
-    collections: Option<inventory::CollectionInventory>,
-    graph_scopes: Option<inventory::ScopeInventory>,
     content_gc_candidates: Vec<ContentGcCandidate>,
 }
 
@@ -63,19 +49,10 @@ impl GlobalPruneDiscovery {
             stale_project_ids: self
                 .machine_states
                 .iter()
-                .chain(&self.registry_projects)
                 .map(|project| project.id.clone())
                 .collect(),
-            orphan_collection_ids: self
-                .collections
-                .as_ref()
-                .map(all_collection_orphan_ids)
-                .unwrap_or_default(),
-            orphan_graph_scope_ids: self
-                .graph_scopes
-                .as_ref()
-                .map(all_scope_orphan_ids)
-                .unwrap_or_default(),
+            orphan_collection_ids: Vec::new(),
+            orphan_graph_scope_ids: Vec::new(),
             content_version_ids: self
                 .content_gc_candidates
                 .iter()
@@ -218,30 +195,14 @@ fn discover_project_scoped_records(
     Ok(GlobalPruneDiscovery {
         services: ctx.clone(),
         machine_states: stale_projects,
-        machine_state_counts: DiscoveryCounts::default(),
-        registry_projects: Vec::new(),
-        registry_project_counts: DiscoveryCounts::default(),
-        collections: None,
-        graph_scopes: None,
         content_gc_candidates,
     })
 }
 
 fn confirm_global_prune(discovery: &GlobalPruneDiscovery) -> anyhow::Result<bool> {
     eprintln!(
-        "Pending gcode prune: {} stale machine state(s), {} stale registry project(s), {} orphan collection(s), {} orphan graph scope(s), {} expired content version(s).",
+        "Pending gcode prune: {} stale machine state(s), {} expired content version(s).",
         discovery.machine_states.len(),
-        discovery.registry_projects.len(),
-        discovery
-            .collections
-            .as_ref()
-            .map(all_collection_orphan_ids)
-            .map_or(0, |ids| ids.len()),
-        discovery
-            .graph_scopes
-            .as_ref()
-            .map(all_scope_orphan_ids)
-            .map_or(0, |ids| ids.len()),
         discovery.content_gc_candidates.len(),
     );
     for project in &discovery.machine_states {
@@ -249,22 +210,6 @@ fn confirm_global_prune(discovery: &GlobalPruneDiscovery) -> anyhow::Result<bool
             "  machine state: {} ({}) — {}",
             project.label, project.id, project.reason
         );
-    }
-    for project in &discovery.registry_projects {
-        eprintln!(
-            "  registry project: {} ({}) — {}",
-            project.label, project.id, project.reason
-        );
-    }
-    if let Some(collections) = &discovery.collections {
-        for project_id in all_collection_orphan_ids(collections) {
-            eprintln!("  Qdrant: {project_id}");
-        }
-    }
-    if let Some(scopes) = &discovery.graph_scopes {
-        for project_id in all_scope_orphan_ids(scopes) {
-            eprintln!("  Falkor: {project_id}");
-        }
     }
     for candidate in &discovery.content_gc_candidates {
         eprintln!(

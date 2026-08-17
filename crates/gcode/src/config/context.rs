@@ -291,6 +291,20 @@ pub enum MissingIdentity {
     Generate,
 }
 
+#[derive(Debug)]
+struct MissingProjectIdentity;
+
+impl fmt::Display for MissingProjectIdentity {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.write_str(
+            "No gcode project found. Run `gcode init` to initialize, \
+             or use `--project <path>` to specify a project directory.",
+        )
+    }
+}
+
+impl std::error::Error for MissingProjectIdentity {}
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum ProjectIdentitySource {
     ProjectJson,
@@ -415,7 +429,7 @@ pub(super) fn identity_for_resolved_root(
 }
 
 fn is_missing_project_identity(error: &anyhow::Error) -> bool {
-    error.to_string().starts_with("No gcode project found")
+    error.downcast_ref::<MissingProjectIdentity>().is_some()
 }
 
 fn services_from_acquired_settings(
@@ -548,10 +562,7 @@ fn resolve_non_isolated_project_identity(
             should_write_gcode_json: true,
             index_scope: ProjectIndexScope::Single,
         }),
-        MissingIdentity::Error => anyhow::bail!(
-            "No gcode project found. Run `gcode init` to initialize, \
-             or use `--project <path>` to specify a project directory."
-        ),
+        MissingIdentity::Error => Err(MissingProjectIdentity.into()),
     }
 }
 

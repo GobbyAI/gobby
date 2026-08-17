@@ -89,6 +89,14 @@ pub(crate) const MIGRATIONS: &[EmbeddedMigration] = &[
         checksum: "8570f08f0f90b1c17bf14f45a4d4cfd4b7b85a56a5aa5ce430442fb03f160799",
         sql: include_str!("../../assets/schema/migrations/386_interactive_principal_role_hash.sql"),
     },
+    EmbeddedMigration {
+        version: 387,
+        filename: "387_interactive_principal_role_helper.sql",
+        checksum: "0831490e4169d0e778575761a3463d19bb2ac68b1f73940c00f716447adfed0b",
+        sql: include_str!(
+            "../../assets/schema/migrations/387_interactive_principal_role_helper.sql"
+        ),
+    },
 ];
 const _: &str = include_str!("../../assets/schema/migrations/.gitkeep");
 

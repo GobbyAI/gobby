@@ -168,18 +168,19 @@ fn looked_up_project(project: ProjectListing) -> Option<LookedUpProject> {
 }
 
 pub fn list_projects() -> Result<Vec<IndexedProject>, CliError> {
-    Ok(fetch_projects()?
-        .into_iter()
-        .map(|project| IndexedProject {
-            id: project.id.clone(),
-            root_path: project.root_path(),
-            total_files: project.total_files.unwrap_or(0),
-            total_symbols: project.total_symbols.unwrap_or(0),
-            last_indexed_at: project.last_indexed_at.unwrap_or_default(),
-            index_duration_ms: project.index_duration_ms.unwrap_or(0),
-            total_eligible_files: project.total_eligible_files,
-        })
-        .collect())
+    Ok(fetch_projects()?.into_iter().map(indexed_project).collect())
+}
+
+fn indexed_project(project: ProjectListing) -> IndexedProject {
+    IndexedProject {
+        id: project.id.clone(),
+        root_path: project.root_path(),
+        total_files: project.total_files.unwrap_or(0),
+        total_symbols: project.total_symbols.unwrap_or(0),
+        last_indexed_at: project.last_indexed_at.unwrap_or_default(),
+        index_duration_ms: project.index_duration_ms.unwrap_or(0),
+        total_eligible_files: project.total_eligible_files,
+    }
 }
 
 pub fn post_code_index_prune(
@@ -352,7 +353,7 @@ mod tests {
     }
 
     #[test]
-    fn list_projects_omits_zeroed_index_fields() {
+    fn indexed_project_json_omits_zeroed_index_fields() {
         let payload = serde_json::to_value(&IndexedProject {
             id: "proj".to_string(),
             root_path: "/tmp/proj".to_string(),
@@ -369,5 +370,17 @@ mod tests {
         assert!(payload.get("total_symbols").is_none());
         assert!(payload.get("last_indexed_at").is_none());
         assert!(payload.get("index_duration_ms").is_none());
+    }
+
+    #[test]
+    fn indexed_project_maps_missing_listing_stats_to_defaults() {
+        let mapped = indexed_project(listing("proj", "proj", "/tmp/proj"));
+        assert_eq!(mapped.id, "proj");
+        assert_eq!(mapped.root_path, "/tmp/proj");
+        assert_eq!(mapped.total_files, 0);
+        assert_eq!(mapped.total_symbols, 0);
+        assert_eq!(mapped.last_indexed_at, "");
+        assert_eq!(mapped.index_duration_ms, 0);
+        assert_eq!(mapped.total_eligible_files, None);
     }
 }

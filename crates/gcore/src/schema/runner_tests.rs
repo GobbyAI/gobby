@@ -1177,6 +1177,11 @@ fn migrations_directory_exists_and_copy_agent_entry_is_registered() {
         MIGRATIONS[10].filename,
         "386_interactive_principal_role_hash.sql"
     );
+    assert_eq!(MIGRATIONS[11].version, 387);
+    assert_eq!(
+        MIGRATIONS[11].filename,
+        "387_interactive_principal_role_helper.sql"
+    );
     assert!(MIGRATIONS[5].sql.contains("-- gobby:destructive"));
     for migration in MIGRATIONS {
         assert_eq!(

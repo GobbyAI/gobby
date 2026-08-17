@@ -246,7 +246,7 @@ Gobby adds scheduling, shared runtime config, semantic services, and infrastruct
 | Import graph | When FalkorDB is configured | Yes |
 | Graph clear / rebuild lifecycle | When FalkorDB is configured | Yes |
 | Auto-indexing on file change | Manual `gcode index` | Yes (daemon file watcher) |
-| Centralized config + secrets | Reads PostgreSQL `config_store` + secrets | Yes |
+| Centralized config + secrets | Grant-served settings only (no local DSN/secret files) | Yes |
 | Shared index (daemon + CLI) | PostgreSQL hub | PostgreSQL hub |
 | AI agent orchestration | — | Yes |
 | Persistent sessions + memory | — | Yes |
