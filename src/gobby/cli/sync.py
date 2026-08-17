@@ -156,17 +156,27 @@ def sync(
 
     if reinstall:
         type_label = reinstall
+        selected = only or set()
+        blocked = set() if force else selected & (skip_types or set())
+        if blocked:
+            click.echo(
+                "Cannot reinstall types blocked by integrity check: "
+                f"{', '.join(sorted(blocked))}. Use --force to override.",
+                err=True,
+            )
+            sys.exit(1)
         if not force:
             click.confirm(
                 f"This will delete and reinstall only bundled {type_label} definitions. "
                 "User and project definitions will be preserved. Continue?",
                 abort=True,
             )
-        deleted = _delete_installed_definitions(db, only or set())
+        click.echo("Syncing bundled content to database...")
+        deleted, sync_result = _reinstall_bundled_definitions(db, selected, skip_types=skip_types)
         click.echo(f"Deleted {deleted} existing definitions")
-
-    click.echo("Syncing bundled content to database...")
-    sync_result = sync_bundled_content_to_db(db, only=only, skip_types=skip_types)
+    else:
+        click.echo("Syncing bundled content to database...")
+        sync_result = sync_bundled_content_to_db(db, only=only, skip_types=skip_types)
 
     total = sync_result["total_synced"]
     errors = sync_result["errors"]
@@ -205,6 +215,42 @@ def _sync_targets_for_cli_types(types: set[str]) -> set[str]:
 class _InstalledDefinitionManager(Protocol):
     def list_all(self) -> list[Any]: ...
     def hard_delete(self, definition_id: str) -> bool: ...
+
+
+class _ReinstallSyncFailed(Exception):
+    """Replacement failed; the surrounding reinstall transaction must roll back."""
+
+
+def _reinstall_bundled_definitions(
+    db: HubDatabase,
+    kinds: set[str],
+    *,
+    skip_types: set[str] | None,
+) -> tuple[int, dict[str, Any]]:
+    """Delete and replace one selected domain per transaction.
+
+    A failed replacement rolls back that domain so prior bundled rows remain.
+    """
+    from gobby.sync_registry import sync_bundled_content_to_db
+
+    deleted = 0
+    merged: dict[str, Any] = {"total_synced": 0, "errors": [], "details": {}}
+    for kind in sorted(kinds):
+        try:
+            with db.transaction():
+                kind_deleted = _delete_installed_definitions(db, {kind})
+                result = sync_bundled_content_to_db(db, only={kind}, skip_types=skip_types)
+                errors = result.get("errors") or []
+                if errors:
+                    raise _ReinstallSyncFailed("; ".join(str(item) for item in errors))
+                deleted += kind_deleted
+                merged["total_synced"] += int(result.get("total_synced") or 0)
+                merged["details"].update(result.get("details") or {})
+        except _ReinstallSyncFailed as exc:
+            merged["errors"].append(f"Failed to reinstall bundled {kind}: {exc}")
+        except Exception as exc:
+            merged["errors"].append(f"Failed to reinstall bundled {kind}: {exc}")
+    return deleted, merged
 
 
 def _delete_installed_definitions(db: HubDatabase, kinds: set[str]) -> int:
