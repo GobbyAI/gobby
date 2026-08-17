@@ -128,6 +128,11 @@ pub enum AiError {
     ParseFailure {
         source: String,
     },
+    /// Typed grant failure. Distinct from [`Self::NotConfigured`] so callers
+    /// can tell daemon unavailability from expiry and other validation failures.
+    Grant {
+        source: crate::grant::GrantError,
+    },
 }
 
 impl AiError {
@@ -192,13 +197,18 @@ impl AiError {
         }
     }
 
+    pub fn grant(source: crate::grant::GrantError) -> Self {
+        Self::Grant { source }
+    }
+
     pub fn status(&self) -> Option<u16> {
         match self {
             Self::TransportFailure { status, .. } | Self::RateLimited { status, .. } => *status,
             Self::HttpStatus { status, .. } => Some(*status),
             Self::CapabilityUnavailable { .. }
             | Self::NotConfigured { .. }
-            | Self::ParseFailure { .. } => None,
+            | Self::ParseFailure { .. }
+            | Self::Grant { .. } => None,
         }
     }
 
@@ -243,7 +253,14 @@ impl fmt::Display for AiError {
                 }
             }
             Self::ParseFailure { source } => write!(f, "AI response parse failed: {source}"),
+            Self::Grant { source } => write!(f, "AI grant failed: {source}"),
         }
+    }
+}
+
+impl From<crate::grant::GrantError> for AiError {
+    fn from(source: crate::grant::GrantError) -> Self {
+        Self::grant(source)
     }
 }
 

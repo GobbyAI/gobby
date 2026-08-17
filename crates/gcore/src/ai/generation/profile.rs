@@ -45,8 +45,7 @@ impl DirectGenerationTarget {
 /// Each field prefers `ai.text_generate.profiles.<profile>.<field>` and falls
 /// back to the base `ai.text_generate.<field>` value. The base fallback keeps a
 /// single-endpoint standalone config working without per-profile blocks: all
-/// tiers then resolve to the same target. When no API key is configured, known
-/// providers fall back to their conventional API-key environment variable.
+/// tiers then resolve to the same target.
 pub fn resolve_direct_generation_target(
     source: &mut impl ConfigSource,
     profile: &str,

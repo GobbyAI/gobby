@@ -11,8 +11,7 @@ use serde_json::{Map, Value, json};
 
 use super::profile::DirectGenerationTarget;
 use super::tool_loop::{
-    ChatCompletion, ChatCompletionRequest, ChatMessage, ChatRole, ToolCall, ToolLoopLimits,
-    ToolSchema,
+    ChatCompletionRequest, ChatMessage, ChatRole, ToolCall, ToolLoopLimits, ToolSchema,
 };
 use crate::ai::daemon::{daemon_client, daemon_url, read_local_cli_token, with_grant_presentation};
 use crate::ai::{
@@ -383,67 +382,5 @@ fn tool_to_json(tool: &ToolSchema) -> Value {
             "description": tool.description,
             "parameters": tool.parameters,
         }
-    })
-}
-
-/// Parse an OpenAI-compatible chat-completion response into a [`ChatCompletion`].
-#[allow(dead_code)]
-pub(crate) fn parse_completion(value: &Value) -> Result<ChatCompletion, AiError> {
-    let choice = value
-        .get("choices")
-        .and_then(Value::as_array)
-        .and_then(|choices| choices.first());
-    let message = choice.and_then(|choice| choice.get("message"));
-
-    let content = message
-        .and_then(|message| message.get("content"))
-        .and_then(Value::as_str)
-        .filter(|content| !content.is_empty())
-        .map(str::to_string);
-
-    let tool_calls: Vec<ToolCall> = message
-        .and_then(|message| message.get("tool_calls"))
-        .and_then(Value::as_array)
-        .map(|calls| calls.iter().filter_map(parse_tool_call).collect())
-        .unwrap_or_default();
-
-    if content.is_none() && tool_calls.is_empty() {
-        return Err(AiError::parse_failure(
-            "chat completion response missing assistant content or tool calls",
-        ));
-    }
-
-    let finish_reason = choice
-        .and_then(|choice| choice.get("finish_reason"))
-        .and_then(Value::as_str)
-        .map(str::to_string);
-
-    Ok(ChatCompletion {
-        content,
-        tool_calls,
-        finish_reason,
-        model: chat_completion_model(value),
-        usage: chat_completion_usage(value),
-    })
-}
-
-#[allow(dead_code)]
-fn parse_tool_call(value: &Value) -> Option<ToolCall> {
-    let function = value.get("function")?;
-    let name = function.get("name").and_then(Value::as_str)?.to_string();
-    let id = value
-        .get("id")
-        .and_then(Value::as_str)
-        .map(str::to_string)
-        .unwrap_or_else(|| format!("call_{name}"));
-    let arguments = match function.get("arguments") {
-        Some(Value::String(raw)) => serde_json::from_str::<Value>(raw).unwrap_or(Value::Null),
-        Some(other) => other.clone(),
-        None => Value::Null,
-    };
-    Some(ToolCall {
-        id,
-        name,
-        arguments,
     })
 }
