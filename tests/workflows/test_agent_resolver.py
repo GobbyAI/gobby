@@ -69,7 +69,15 @@ class TestResolveAgentDefault:
         assert result is not None
         assert isinstance(result, AgentDefinitionBody)
         assert result.name == "default"
-        assert result.provider == "inherit"
+        assert result.provider == "claude"
+
+    def test_default_resolves_inherit_from_cli_source(
+        self, definition_db: PostgresHubDatabase
+    ) -> None:
+        result = resolve_agent("default", definition_db, cli_source="codex")
+        assert result is not None
+        assert result.name == "default"
+        assert result.provider == "codex"
 
     def test_default_uses_db_record_when_present(self, definition_db: PostgresHubDatabase) -> None:
         _create_agent(

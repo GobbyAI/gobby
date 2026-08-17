@@ -394,3 +394,36 @@ def test_save_rejects_agent_identity_change(instance_db: PostgresHubDatabase) ->
     assert final.agent_step_workflow_id == LINEAGE_A
     assert final.snapshot.model_dump() == original_dump
     assert final.current_step == "implement"
+
+
+def test_corrupt_snapshot_is_absent_on_read_paths(instance_db: PostgresHubDatabase) -> None:
+    from gobby.workflows.step_context import has_active_step_workflow
+    from gobby.workflows.step_instances import (
+        CorruptStepSnapshotError,
+        build_step_instance,
+    )
+
+    manager = _mgr(instance_db)
+    manager.save(
+        build_step_instance(
+            _agent("coder", ["implement"]),
+            session_id=S1,
+            step_workflow_id=LINEAGE_A,
+        )
+    )
+    instance_db.execute(
+        "UPDATE agent_step_instances SET snapshot_json = %s::jsonb WHERE session_id = %s",
+        ("[]", S1),
+    )
+
+    assert manager.get_for_session(S1) is None
+    assert manager.merge_variables(S1, {"flag": True}) is None
+    assert has_active_step_workflow(instance_db, S1) is False
+
+    rebuilt = build_step_instance(
+        _agent("coder", ["implement"]),
+        session_id=S1,
+        step_workflow_id=LINEAGE_A,
+    )
+    with pytest.raises(CorruptStepSnapshotError, match="session_id="):
+        manager.save(rebuilt)

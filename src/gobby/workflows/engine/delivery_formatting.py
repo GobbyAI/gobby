@@ -149,35 +149,44 @@ def finalize_staged_memory_delivery(
             instruction,
             budget,
         )
-        inline_memories = memories[:inline_count]
-        overflow_memories = memories[inline_count:]
-        if queue.queue(
+        candidate = _joined_context(
+            response.context,
+            [*bodies[:inline_count], instruction],
+        )
+        instruction_only = _joined_context(response.context, [instruction])
+        shipped_context: str | None
+        if len(candidate) <= ship_limit:
+            queued_memories = memories[inline_count:]
+            shipped_ids = [memory["id"] for memory in memories[:inline_count]]
+            shipped_context = candidate
+        elif len(instruction_only) <= ship_limit:
+            queued_memories = memories
+            shipped_ids = []
+            shipped_context = instruction_only
+        else:
+            queued_memories = memories
+            shipped_ids = []
+            shipped_context = response.context
+
+        if queued_memories and not queue.queue(
             session_id,
             recall_request_id=recall_request_id,
             origin_turn_seq=origin_turn_seq,
             project_id=(
                 delivery.get("project_id") if isinstance(delivery.get("project_id"), str) else None
             ),
-            memories=overflow_memories,
+            memories=queued_memories,
         ):
-            candidate = _joined_context(
-                response.context,
-                [*bodies[:inline_count], instruction],
-            )
-            if len(candidate) <= ship_limit:
-                response.context = candidate
-            else:
-                instruction_only = _joined_context(response.context, [instruction])
-                if len(instruction_only) <= ship_limit:
-                    response.context = instruction_only
-            injected_ids.extend(memory["id"] for memory in inline_memories)
-        else:
             logger.warning(
                 "Memory recall overflow queue failed; delivering full context inline: request=%s",
                 recall_request_id,
             )
             response.context = complete_context
             injected_ids.extend(memory["id"] for memory in memories)
+            continue
+
+        response.context = shipped_context
+        injected_ids.extend(shipped_ids)
 
     if injected_ids:
         SessionVariableManager(database).append_to_set_variable(

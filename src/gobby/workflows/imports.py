@@ -9,7 +9,7 @@ from typing import Any
 import yaml
 
 from gobby.paths import get_global_workflows_dir
-from gobby.storage.definitions.agents import AgentDefinitionManager
+from gobby.storage.definitions.agents import AgentDefinitionManager, _parent_body
 from gobby.storage.definitions.pipelines import PipelineDefinitionManager
 from gobby.storage.definitions.rules import RuleDefinitionManager
 from gobby.storage.definitions.variables import SessionVariableDefaultManager
@@ -48,19 +48,40 @@ def _refuse_kind_change(name: str, existing: str | None, declared: str) -> None:
         )
 
 
+def _imported_definition_name(data: dict[str, Any], declared_type: str) -> str:
+    """Return the logical name used for kind lookup and upsert."""
+    if declared_type == "variable":
+        return str(data.get("variable") or data["name"])
+    return str(data["name"])
+
+
 def _upsert_agent(db: Any, data: dict[str, Any], project_id: str | None) -> Any:
-    AgentDefinitionBody.model_validate(data)
+    body = AgentDefinitionBody.model_validate(data)
+    dumped = body.model_dump(mode="json")
+    parent_body = _parent_body(dumped)
+    step_workflow = dumped.get("step_workflow")
     manager = AgentDefinitionManager(db)
     name = str(data["name"])
     existing = manager.get_by_name(name, project_id=project_id)
-    fields = {
-        "definition_json": data,
-        "description": data.get("description", ""),
-        "enabled": normalize_workflow_definition_enabled(data),
-    }
+    description = data.get("description", "")
+    enabled = normalize_workflow_definition_enabled(data)
     if existing is not None:
-        return manager.update(existing.id, **fields)
-    return manager.create(name=name, project_id=project_id, source="installed", **fields)
+        manager.update(
+            existing.id,
+            definition_json=parent_body,
+            description=description,
+            enabled=enabled,
+        )
+        return manager.set_step_workflow(existing.id, step_workflow)
+    return manager.upsert_with_steps(
+        name,
+        parent_body,
+        step_workflow,
+        source="installed",
+        project_id=project_id,
+        enabled=enabled,
+        description=description,
+    )
 
 
 def _upsert_rule(db: Any, data: dict[str, Any], project_id: str | None) -> Any:
@@ -84,7 +105,7 @@ def _upsert_rule(db: Any, data: dict[str, Any], project_id: str | None) -> Any:
 
 
 def _upsert_variable(db: Any, data: dict[str, Any], project_id: str | None) -> Any:
-    name = str(data.get("variable") or data["name"])
+    name = _imported_definition_name(data, "variable")
     value = data.get("value")
     description = data.get("description")
     VariableDefinitionBody(variable=name, value=value, description=description)
@@ -144,7 +165,7 @@ def sync_imported_definition(
             f"type {declared_type!r}; expected one of {sorted(_KIND_TABLES)}"
         )
 
-    name = str(data.get("variable") if declared_type == "variable" else data["name"])
+    name = _imported_definition_name(data, declared_type)
     _refuse_kind_change(name, _lookup_existing_kind(db, name, project_id), declared_type)
 
     if declared_type == "agent":

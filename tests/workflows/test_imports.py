@@ -1,6 +1,10 @@
 """Runtime synchronization coverage for imported workflow YAML files."""
 
+from __future__ import annotations
+
+import json
 from pathlib import Path
+from typing import Any
 
 import pytest
 
@@ -123,5 +127,77 @@ def test_sync_imported_definition_refuses_kind_change_by_table(temp_db: HubDatab
                 "type": "pipeline",
                 "steps": [{"id": "s1", "exec": "echo hi"}],
             },
+            None,
+        )
+
+
+_STEP_WORKFLOW: dict[str, Any] = {
+    "variables": {"required_skills": ["tdd"], "goal": "ship"},
+    "exit_condition": "done",
+    "steps": [
+        {"name": "implement", "prompt": "write the code"},
+        {"name": "review", "prompt": "check the diff"},
+    ],
+}
+
+
+def test_sync_imported_agent_persists_nested_step_workflow(temp_db: HubDatabase) -> None:
+    created = sync_imported_definition(
+        temp_db,
+        {
+            "name": "imported-step-agent",
+            "type": "agent",
+            "provider": "claude",
+            "step_workflow": _STEP_WORKFLOW,
+        },
+        None,
+    )
+    manager = AgentDefinitionManager(temp_db)
+    row = manager.get(created.id)
+    assert row.step_workflow_id is not None
+    stored = row.definition_json["step_workflow"]
+    assert stored["exit_condition"] == "done"
+    assert [step["name"] for step in stored["steps"]] == ["implement", "review"]
+
+    raw = temp_db.fetchone(
+        "SELECT definition_json FROM agent_definitions WHERE id = %s",
+        (created.id,),
+    )
+    assert raw is not None
+    payload = raw["definition_json"]
+    if isinstance(payload, str):
+        payload = json.loads(payload)
+    assert "step_workflow" not in payload
+    assert "steps" not in payload
+
+
+def test_sync_imported_variable_uses_one_name_for_kind_and_upsert(temp_db: HubDatabase) -> None:
+    created = sync_imported_definition(
+        temp_db,
+        {"name": "name-only-var", "type": "variable", "value": 1},
+        None,
+    )
+    assert created.name == "name-only-var"
+    updated = sync_imported_definition(
+        temp_db,
+        {"name": "name-only-var", "type": "variable", "value": 2},
+        None,
+    )
+    assert updated.id == created.id
+    stored = SessionVariableDefaultManager(temp_db).get_by_name("name-only-var")
+    assert stored is not None
+    assert stored.default_value == 2
+
+    preferred = sync_imported_definition(
+        temp_db,
+        {"variable": "pref-var", "name": "other-name", "type": "variable", "value": 3},
+        None,
+    )
+    assert preferred.name == "pref-var"
+    assert SessionVariableDefaultManager(temp_db).get_by_name("other-name") is None
+    with pytest.raises(ValueError, match="from 'variable' to 'agent'"):
+        sync_imported_definition(
+            temp_db,
+            {"name": "pref-var", "type": "agent", "provider": "claude"},
             None,
         )

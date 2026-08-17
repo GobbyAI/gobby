@@ -8,7 +8,7 @@ from datetime import datetime
 from typing import Any
 from uuid import uuid4
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, ValidationError
 
 from gobby.storage.hub.protocol import AgentStepInstanceMutation, HubDatabase, Transaction
 from gobby.storage.session_resolution import is_session_uuid
@@ -25,6 +25,10 @@ logger = logging.getLogger(__name__)
 
 class StaleStepInstanceWriteError(Exception):
     """Raised when save is rejected as a stale identity or CAS write."""
+
+
+class CorruptStepSnapshotError(ValueError):
+    """Raised when a stored step snapshot is not a valid workflow body."""
 
 
 class AgentStepInstance(BaseModel):
@@ -91,20 +95,27 @@ def _encode_json(value: Any) -> str:
     return json.dumps(value)
 
 
-def _decode_snapshot(value: Any) -> AgentStepWorkflowBody:
-    payload: Any = value
-    if isinstance(value, str | bytes | bytearray):
-        payload = json.loads(value)
-    return AgentStepWorkflowBody.model_validate(payload)
+def _decode_snapshot(value: Any, *, session_id: str | None = None) -> AgentStepWorkflowBody:
+    try:
+        payload: Any = value
+        if isinstance(value, str | bytes | bytearray):
+            payload = json.loads(value)
+        return AgentStepWorkflowBody.model_validate(payload)
+    except (json.JSONDecodeError, ValidationError, TypeError, ValueError) as exc:
+        if isinstance(exc, CorruptStepSnapshotError):
+            raise
+        context = f" session_id={session_id}" if session_id else ""
+        raise CorruptStepSnapshotError(f"Malformed agent step snapshot{context}: {exc}") from exc
 
 
 def _row_to_instance(row: Any) -> AgentStepInstance:
+    session_id = str(row["session_id"])
     return AgentStepInstance(
         id=row["id"],
         session_id=row["session_id"],
         agent_name=row["agent_name"],
         agent_step_workflow_id=row["agent_step_workflow_id"],
-        snapshot=_decode_snapshot(row["snapshot_json"]),
+        snapshot=_decode_snapshot(row["snapshot_json"], session_id=session_id),
         enabled=bool(row["enabled"]),
         current_step=row["current_step"],
         step_entered_at=parse_stored_datetime(row["step_entered_at"]),
@@ -115,6 +126,15 @@ def _row_to_instance(row: Any) -> AgentStepInstance:
         created_at=require_stored_datetime(row["created_at"], "created_at"),
         updated_at=require_stored_datetime(row["updated_at"], "updated_at"),
     )
+
+
+def _stored_instance(row: Any) -> AgentStepInstance | None:
+    """Decode a stored row, treating a corrupt snapshot as absent."""
+    try:
+        return _row_to_instance(row)
+    except CorruptStepSnapshotError as exc:
+        logger.warning("%s", exc)
+        return None
 
 
 def _cas_matches(
@@ -143,7 +163,7 @@ class AgentStepInstanceManager:
         )
         if row is None:
             return None
-        return _row_to_instance(row)
+        return _stored_instance(row)
 
     def save(
         self,
@@ -222,7 +242,7 @@ class AgentStepInstanceManager:
             ).fetchone()
             if row is None:
                 return None
-            return _row_to_instance(row)
+            return _stored_instance(row)
 
     def delete_for_session(self, session_id: str) -> int:
         """Delete the instance for a session and return the deleted row count."""

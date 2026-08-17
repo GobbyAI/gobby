@@ -88,7 +88,8 @@ class PipelineStep(BaseModel):
             raise ValueError("activate_workflow is not a supported pipeline step type")
         return data
 
-    def model_post_init(self, __context: Any) -> None:
+    @model_validator(mode="after")
+    def validate_exactly_one_execution_type(self) -> PipelineStep:
         """Validate that exactly one execution type is specified."""
         exec_types = [
             self.exec,
@@ -109,6 +110,7 @@ class PipelineStep(BaseModel):
                 "PipelineStep exec, prompt, invoke_pipeline, mcp, and wait are mutually "
                 "exclusive - only one allowed"
             )
+        return self
 
 
 class PipelineDefinition(BaseModel):
