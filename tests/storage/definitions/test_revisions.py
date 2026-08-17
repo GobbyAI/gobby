@@ -32,6 +32,7 @@ from gobby.storage.definitions.revisions import (
     reset_definition_revision_state,
 )
 from gobby.storage.hub.postgres import PostgresHubDatabase
+from tests.storage.definitions.conftest import scoped_postgres_dsn
 
 _CREATE_REVISIONS_TABLE = """
 CREATE TABLE definition_revisions (
@@ -99,7 +100,7 @@ def revision_schema_url(postgres_database_url: str) -> Iterator[str]:
         conn.execute(sql.SQL("CREATE SCHEMA {}").format(sql.Identifier(schema)))
         conn.execute(sql.SQL("SET search_path TO {}").format(sql.Identifier(schema)))
         conn.execute(_CREATE_REVISIONS_TABLE)
-    scoped = f"{postgres_database_url}?options=-csearch_path%3D{schema}"
+    scoped = scoped_postgres_dsn(postgres_database_url, schema)
     try:
         yield scoped
     finally:

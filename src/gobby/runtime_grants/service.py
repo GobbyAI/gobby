@@ -104,6 +104,12 @@ def _unresolved(value: object) -> bool:
     return isinstance(value, str) and ("$secret:" in value or "${" in value)
 
 
+def _is_loopback_host(host: str | None) -> bool:
+    if not host:
+        return False
+    return host.strip().strip("[]").lower() in {"127.0.0.1", "localhost", "::1"}
+
+
 def _url_requires_broker(value: str | None) -> bool:
     if not value or _unresolved(value):
         return True
@@ -131,6 +137,8 @@ def _falkor_capability(
         return UnavailableCapability()
     if _unresolved(password) or (password is None and _unresolved(config.password)):
         return BrokeredCapability(operations=FALKOR_OPERATIONS)
+    if not password and not _is_loopback_host(host):
+        return BrokeredCapability(operations=FALKOR_OPERATIONS)
     return FalkorDirect(host=host, port=config.port, password=password or "")
 
 
@@ -145,6 +153,9 @@ def _qdrant_capability(
     if _url_requires_broker(url):
         return BrokeredCapability(operations=QDRANT_OPERATIONS) if url else UnavailableCapability()
     if url:
+        hostname = urlsplit(url).hostname
+        if not api_key and not _is_loopback_host(hostname):
+            return BrokeredCapability(operations=QDRANT_OPERATIONS)
         return QdrantDirect(url=url, api_key=api_key or "")
     return UnavailableCapability()
 

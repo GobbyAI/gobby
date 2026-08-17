@@ -17,7 +17,6 @@ from gobby.agents.tmux import TmuxConfig
 from gobby.events.completion_registry import CompletionEventRegistry
 from gobby.hooks.events import HookEvent, HookEventType, SessionSource
 from gobby.storage.agents import LocalAgentRunManager
-from gobby.storage.definitions.agents import AgentDefinitionManager
 from gobby.storage.hub.protocol import HubDatabase
 from gobby.storage.pipeline_subscribers import CompletionSubscriberManager
 from gobby.storage.sessions import SessionManager
@@ -83,7 +82,6 @@ def _register_agent_workflow(
     review_error_handlers: list[dict[str, object]] | None = None,
 ) -> AgentStepInstanceManager:
     _create_session(db, session_id)
-    manager = AgentDefinitionManager(db)
     instance_manager = AgentStepInstanceManager(db)
 
     workflow_data = {
@@ -122,11 +120,6 @@ def _register_agent_workflow(
         "exit_condition": "current_step == 'terminate'",
     }
 
-    manager.create(
-        name=workflow_name,
-        definition_json=json.dumps(workflow_data),
-        enabled=True,
-    )
     instance_manager.save(
         build_step_instance(
             AgentDefinitionBody(
@@ -154,7 +147,6 @@ def _register_qa_reviewer_workflow(
     session_id: str = AGENT_SESSION_ID,
 ) -> AgentStepInstanceManager:
     _create_session(db, session_id)
-    manager = AgentDefinitionManager(db)
     instance_manager = AgentStepInstanceManager(db)
     agent_path = (
         Path(__file__).resolve().parents[2]
@@ -162,20 +154,6 @@ def _register_qa_reviewer_workflow(
     )
     agent = yaml.safe_load(agent_path.read_text(encoding="utf-8"))
     workflow_name = "qa-reviewer-steps"
-    workflow_data = {
-        "name": workflow_name,
-        "version": "1.0",
-        "enabled": True,
-        "variables": agent["step_workflow"]["variables"],
-        "steps": agent["step_workflow"]["steps"],
-        "exit_condition": "current_step == 'terminate'",
-    }
-
-    manager.create(
-        name=workflow_name,
-        definition_json=json.dumps(workflow_data),
-        enabled=True,
-    )
     variables = dict(agent["step_workflow"]["variables"])
     variables.update(
         {

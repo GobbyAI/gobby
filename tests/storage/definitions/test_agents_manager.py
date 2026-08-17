@@ -176,6 +176,8 @@ def test_soft_delete_restore_preserves_child(definition_db: PostgresHubDatabase)
     after_restore = _revisions(definition_db)
     assert after_restore[0] == after_delete[0] + 1
     assert after_restore[1] == after_delete[1]
+    assert after_restore[2] == (0 if after_delete[2] is None else after_delete[2]) + 1
+    assert after_restore[3] == after_delete[3]
     assert restored.step_workflow_id == child_before.id
     assert restored.definition_json["step_workflow"] == _STEPS
     child_after = manager.get_step_workflow(created.id)

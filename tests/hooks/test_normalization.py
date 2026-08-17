@@ -1976,6 +1976,7 @@ class TestUnexpandedShellReferencePaths:
 
         assert data["canonical_tool_kind"] == "execute"
         assert data["canonical_repo_mutation"] is True
+        assert data["_canonical_repo_mutation_scope_unknown"] is True
         assert "canonical_file_path" not in data
         assert "canonical_file_paths" not in data
 

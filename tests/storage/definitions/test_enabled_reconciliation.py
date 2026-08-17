@@ -66,6 +66,7 @@ def _wait_for_row_lock_waiter(
     postgres_database_url: str,
     finished: Event,
     table: str,
+    writer_application_name: str,
     *,
     timeout: float = 5.0,
 ) -> None:
@@ -78,10 +79,12 @@ def _wait_for_row_lock_waiter(
                 """
                 SELECT count(*)
                 FROM pg_stat_activity
-                WHERE wait_event_type = 'Lock'
-                  AND query ILIKE %s
+                WHERE datname = current_database()
+                  AND pid <> pg_backend_pid()
+                  AND application_name = %s
+                  AND wait_event_type = 'Lock'
                 """,
-                (f"%{table}%",),
+                (writer_application_name,),
             ).fetchone()
             if row is not None and int(row[0]) >= 1:
                 return
@@ -222,7 +225,12 @@ def test_sync_does_not_override_concurrent_user_pin(
                 ).fetchone()
                 assert locked is not None
                 writer.start()
-                _wait_for_row_lock_waiter(postgres_database_url, finished, table)
+                _wait_for_row_lock_waiter(
+                    postgres_database_url,
+                    finished,
+                    table,
+                    writer_db.application_name,
+                )
                 holder.execute(
                     sql.SQL(
                         """

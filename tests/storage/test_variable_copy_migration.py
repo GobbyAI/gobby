@@ -13,6 +13,8 @@ from psycopg import sql
 from psycopg.rows import dict_row
 from psycopg.types.json import Jsonb
 
+pytestmark = pytest.mark.integration
+
 _REPO = Path(__file__).resolve().parents[2]
 _MIGRATION = _REPO / "crates/gcore/assets/schema/migrations/379_copy_session_variable_defaults.sql"
 
@@ -140,6 +142,7 @@ def test_first_run_copies_variables_including_soft_deleted(
     live_ids = [str(uuid.uuid4()) for _ in range(40)]
     gobby_id = str(uuid.uuid4())
     aliased_id = str(uuid.uuid4())
+    deleted_id = str(uuid.uuid4())
     skipped_id = str(uuid.uuid4())
     with _connect(url, schema) as conn:
         for index, row_id in enumerate(live_ids):
@@ -166,6 +169,13 @@ def test_first_run_copies_variables_including_soft_deleted(
         )
         _insert_legacy(
             conn,
+            row_id=deleted_id,
+            name="deleted-legacy-var",
+            value="gone",
+            deleted=True,
+        )
+        _insert_legacy(
+            conn,
             row_id=skipped_id,
             name="not-a-variable",
             workflow_type="rule",
@@ -177,8 +187,8 @@ def test_first_run_copies_variables_including_soft_deleted(
             "FROM session_variable_defaults"
         ).fetchall()
         copied_ids = {str(row["id"]) for row in copied}
-        expected = set(live_ids) | {gobby_id, aliased_id}
-        assert len(copied) == 42
+        expected = set(live_ids) | {gobby_id, aliased_id, deleted_id}
+        assert len(copied) == 43
         assert copied_ids == expected
         assert skipped_id not in copied_ids
 
@@ -188,6 +198,7 @@ def test_first_run_copies_variables_including_soft_deleted(
         assert by_id[gobby_id]["name"] == "legacy-gobby-var"
         assert by_id[aliased_id]["name"] == "canonical_name"
         assert by_id[aliased_id]["default_value"] == {"nested": True}
+        assert by_id[deleted_id]["deleted_at"] is not None
 
         ledger = conn.execute(
             "SELECT legacy_id, domain, source_hash FROM legacy_copy_ledger"

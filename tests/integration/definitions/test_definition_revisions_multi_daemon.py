@@ -18,6 +18,7 @@ from gobby.storage.definitions.revisions import (
     advance_persistent_revision,
 )
 from gobby.storage.hub.postgres import PostgresHubDatabase
+from tests.storage.definitions.conftest import scoped_postgres_dsn
 
 _CREATE_REVISIONS_TABLE = """
 CREATE TABLE definition_revisions (
@@ -30,7 +31,7 @@ _COMMAND_TIMEOUT = 15.0
 
 
 def _scoped_url(database_url: str, schema: str) -> str:
-    return f"{database_url}?options=-csearch_path%3D{schema}"
+    return scoped_postgres_dsn(database_url, schema)
 
 
 async def _serve_observer(connection: Connection, dsn: str) -> None:
@@ -101,7 +102,11 @@ class _ObserverWorker:
         child.close()
         self._process = process
         self._connection = parent
-        startup = self._receive()
+        try:
+            startup = self._receive()
+        except Exception:
+            self.stop()
+            raise
         if not cast(bool, startup.get("ready")):
             self.stop()
             raise RuntimeError("observer worker failed to start")
@@ -136,7 +141,8 @@ class _ObserverWorker:
     def stop(self) -> None:
         try:
             self._connection.send({"operation": "stop"})
-            self._connection.poll(2.0)
+            if self._connection.poll(2.0):
+                self._connection.recv()
         except (BrokenPipeError, EOFError, OSError):
             pass
         self._process.join(timeout=5.0)

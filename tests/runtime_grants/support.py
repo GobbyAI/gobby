@@ -52,21 +52,32 @@ class SuccessiveCaptureRuntime:
 class SnapshotAfterCaptureRuntime:
     """capture() stays on the first snapshot; snapshot property flips afterward."""
 
-    def __init__(self, first: ConfigSnapshot, second: ConfigSnapshot) -> None:
+    def __init__(
+        self,
+        first: ConfigSnapshot,
+        second: ConfigSnapshot,
+        *,
+        publish_during_capture: bool = False,
+    ) -> None:
         self._first = first
         self._second = second
         self._captured = False
+        self._published = False
+        self._publish_during_capture = publish_during_capture
 
     def capture(self) -> RuntimeActiveBundle:
         self._captured = True
-        return RuntimeActiveBundle(snapshot=self._first, services=MappingProxyType({}))
+        bundle = RuntimeActiveBundle(snapshot=self._first, services=MappingProxyType({}))
+        if self._publish_during_capture:
+            self.publish_second()
+        return bundle
 
     def publish_second(self) -> None:
-        self._captured = True
+        self._published = True
 
     @property
     def snapshot(self) -> ConfigSnapshot:
-        return self._second if self._captured else self._first
+        return self._second if self._published else self._first
 
 
 def daemon_config(
