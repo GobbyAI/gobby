@@ -104,10 +104,10 @@ fn parse_error_payload(output: &Output) -> Value {
     panic!("expected JSON error payload\nstdout:\n{stdout}\nstderr:\n{stderr}");
 }
 
-fn spawn_accept_counter(listener: TcpListener) -> Arc<Mutex<usize>> {
+fn spawn_accept_counter(listener: TcpListener) -> (Arc<Mutex<usize>>, thread::JoinHandle<()>) {
     let hits = Arc::new(Mutex::new(0usize));
     let hits_clone = Arc::clone(&hits);
-    thread::spawn(move || {
+    let handle = thread::spawn(move || {
         listener.set_nonblocking(true).ok();
         let deadline = std::time::Instant::now() + Duration::from_secs(3);
         while std::time::Instant::now() < deadline {
@@ -120,7 +120,7 @@ fn spawn_accept_counter(listener: TcpListener) -> Arc<Mutex<usize>> {
             }
         }
     });
-    hits
+    (hits, handle)
 }
 
 #[test]
@@ -221,7 +221,7 @@ fn no_pregrant_datastore_access() {
     let listener = TcpListener::bind("127.0.0.1:0").expect("dsn listener");
     let port = listener.local_addr().expect("addr").port();
     let dsn = format!("postgresql://gcode:gcode@127.0.0.1:{port}/gobby");
-    let hits = spawn_accept_counter(listener);
+    let (hits, hits_done) = spawn_accept_counter(listener);
 
     let output = isolated_gcode_with_env(
         home.path(),
@@ -234,6 +234,7 @@ fn no_pregrant_datastore_access() {
     );
     let payload = parse_error_payload(&output);
     assert_eq!(payload["error"], "daemon_required");
+    hits_done.join().expect("accept counter finished");
     assert_eq!(
         *hits.lock().expect("hits"),
         0,
@@ -252,13 +253,13 @@ fn projectless_rejection() {
         "http://127.0.0.1:{}",
         listener.local_addr().expect("addr").port()
     );
-    let daemon_hits = spawn_accept_counter(listener);
+    let (daemon_hits, daemon_done) = spawn_accept_counter(listener);
     let dsn_listener = TcpListener::bind("127.0.0.1:0").expect("dsn listener");
     let dsn = format!(
         "postgresql://gcode:gcode@127.0.0.1:{}/gobby",
         dsn_listener.local_addr().expect("addr").port()
     );
-    let dsn_hits = spawn_accept_counter(dsn_listener);
+    let (dsn_hits, dsn_done) = spawn_accept_counter(dsn_listener);
 
     let output = isolated_gcode_with_env(
         home.path(),
@@ -272,6 +273,8 @@ fn projectless_rejection() {
     let payload = parse_error_payload(&output);
     assert_eq!(payload["error"], "project_required");
     assert_eq!(output.status.code(), Some(2));
+    daemon_done.join().expect("daemon accept counter finished");
+    dsn_done.join().expect("dsn accept counter finished");
     assert_eq!(
         *daemon_hits.lock().expect("hits"),
         0,
@@ -338,7 +341,7 @@ fn project_name_lookup_authenticated() {
         "postgresql://gcode:gcode@127.0.0.1:{}/gobby",
         dsn_listener.local_addr().expect("addr").port()
     );
-    let dsn_hits = spawn_accept_counter(dsn_listener);
+    let (dsn_hits, dsn_done) = spawn_accept_counter(dsn_listener);
     let output = isolated_gcode_with_env(
         home.path(),
         cwd.path(),
@@ -364,6 +367,7 @@ fn project_name_lookup_authenticated() {
         auth.to_ascii_lowercase().starts_with("bearer "),
         "project name lookup must send a bearer token, got {auth:?}"
     );
+    dsn_done.join().expect("dsn accept counter finished");
     assert_eq!(
         *dsn_hits.lock().expect("hits"),
         0,

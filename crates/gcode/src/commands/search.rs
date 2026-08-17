@@ -4,7 +4,9 @@ use std::collections::HashSet;
 use crate::commands::{scope, token_budget};
 use crate::config::Context;
 use crate::db;
-use crate::models::{PagedResponse, SearchResult, SearchWarning, Symbol};
+use crate::models::{
+    PagedResponse, SearchResult, SearchWarning, SearchWarningCause, SearchWarningLane, Symbol,
+};
 use crate::output::{self, Format};
 use crate::search::{fts, graph_boost, rrf};
 use crate::vector::code_symbols;
@@ -39,8 +41,8 @@ pub(crate) struct HybridSources {
 
 pub(crate) fn semantic_lane_from_grant_outage() -> SemanticLane {
     SemanticLane::Degraded(SearchWarning {
-        lane: "semantic".to_string(),
-        cause: "daemon_unreachable".to_string(),
+        lane: SearchWarningLane::Semantic,
+        cause: SearchWarningCause::DaemonUnreachable,
         message: "semantic search degraded: daemon unreachable; lexical and graph results only"
             .to_string(),
     })
@@ -666,10 +668,21 @@ fn symbol_matches_filters(
     language: Option<&str>,
     path_patterns: &[glob::Pattern],
 ) -> bool {
+    symbol_matches_local_filters(ctx, symbol, kind, language, path_patterns)
+        && visibility::indexed_file_exists(conn, ctx, &symbol.file_path)
+}
+
+fn symbol_matches_local_filters(
+    ctx: &Context,
+    symbol: &Symbol,
+    kind: Option<&str>,
+    language: Option<&str>,
+    path_patterns: &[glob::Pattern],
+) -> bool {
     kind.is_none_or(|k| symbol.kind == k)
         && language.is_none_or(|lang| symbol.language == lang)
         && path_matches_filters(path_patterns, &symbol.file_path)
-        && scope::current_indexed_path_is_valid(conn, ctx, &symbol.file_path)
+        && scope::path_exists_in_current_project(ctx, &symbol.file_path)
 }
 
 fn resolve_hybrid_symbols(

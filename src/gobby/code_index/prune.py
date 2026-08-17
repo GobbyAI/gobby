@@ -138,6 +138,18 @@ class CodeIndexPruner:
         retention_days: int | None = None,
     ) -> OperatorPruneOutcome:
         """Snapshot indexed projects, reconcile projections, then delete stale hub rows."""
+        async with self._global_lock:
+            return await self._run_operator_global_prune_locked(
+                force=force,
+                retention_days=retention_days,
+            )
+
+    async def _run_operator_global_prune_locked(
+        self,
+        *,
+        force: bool,
+        retention_days: int | None,
+    ) -> OperatorPruneOutcome:
         snapshot = list(await self._context.run_db(self._context.storage.list_indexed_projects))
         completed: list[str] = []
         failed: list[OperatorPruneItem] = []

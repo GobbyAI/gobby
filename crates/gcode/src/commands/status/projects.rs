@@ -20,6 +20,9 @@ pub fn projects(format: Format) -> anyhow::Result<()> {
                 let mut text = String::new();
                 for p in &all_projects {
                     text.push_str(&format!("{} — {}\n", display_name(p), p.root_path));
+                    if p.total_files == 0 && p.total_symbols == 0 && p.last_indexed_at.is_empty() {
+                        continue;
+                    }
                     text.push_str(&format!(
                         "  {} files, {} symbols | Last indexed: {}\n",
                         format_coverage(p.total_files, p.total_eligible_files),

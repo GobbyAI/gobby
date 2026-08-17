@@ -20,8 +20,8 @@ pub use read::{
 };
 pub(crate) use write::delete_content_version;
 pub use write::{
-    CodeGraph, GraphOrphanCleanup, cleanup_deleted_files, cleanup_orphans, clear_all_code_index,
-    clear_project, list_project_scopes, sync_file_graph, sync_no_fact_file, with_code_graph,
+    CodeGraph, GraphOrphanCleanup, cleanup_deleted_files, cleanup_orphans, clear_project,
+    sync_file_graph, sync_no_fact_file, with_code_graph,
 };
 
 pub(crate) use lifecycle::extract_summary_text;
