@@ -320,8 +320,9 @@ mod tests {
         std::fs::create_dir_all(&wiki_dir).expect("wiki dir");
         std::fs::create_dir_all(&archive_dir).expect("archive dir");
 
-        // Injecting no database selects the in-memory store path.
-        // GOBBY_WIKI_HUB keeps topic vault initialization inside the tempdir.
+        // Injecting no database is fail-closed: sync-sessions no longer degrades
+        // to an in-memory store. GOBBY_WIKI_HUB keeps topic vault initialization
+        // inside the tempdir.
         let _env = EnvGuard::set("GOBBY_WIKI_HUB", hub.as_os_str());
 
         let options = SyncSessionsOptions {
@@ -330,14 +331,18 @@ mod tests {
             ..Default::default()
         };
 
-        let outcome = execute_with_database_url(
+        let error = execute_with_database_url(
             ScopeSelection::Detect,
             options,
             RunOptions { quiet: true },
             || Ok(None),
         )
-        .expect("execute sync-sessions");
-        assert_eq!(outcome.result.payload["scope"]["kind"], "topic");
-        assert_eq!(outcome.result.payload["scope"]["id"], SESSIONS_TOPIC);
+        .expect_err("sync-sessions requires a grant-resolved database");
+        assert!(matches!(
+            error,
+            WikiError::Grant {
+                source: gobby_core::grant::GrantError::DaemonRequired
+            }
+        ));
     }
 }

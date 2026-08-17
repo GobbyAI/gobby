@@ -88,6 +88,12 @@ fn unused_loopback() -> (String, TcpListener) {
     (format!("http://127.0.0.1:{port}"), listener)
 }
 
+fn unreachable_daemon_url() -> &'static str {
+    // TEST-NET-1 / discard: reserved documentation address that never accepts
+    // connections, so the reachability probe cannot race a bind-then-drop port.
+    "http://192.0.2.1:9"
+}
+
 #[test]
 fn status_reports_grant_state() {
     let home = tempfile::tempdir().expect("home");
@@ -130,18 +136,13 @@ fn expired_grant_reports_not_fails() {
     let home = tempfile::tempdir().expect("home");
     let project = tempfile::tempdir().expect("project");
     write_project(project.path());
-    let daemon_url = {
-        let listener = TcpListener::bind("127.0.0.1:0").expect("bind");
-        let port = listener.local_addr().expect("addr").port();
-        drop(listener);
-        format!("http://127.0.0.1:{port}")
-    };
-    let grant = write_cached_grant(home.path(), &daemon_url, now_unix() - 30);
+    let daemon_url = unreachable_daemon_url();
+    let grant = write_cached_grant(home.path(), daemon_url, now_unix() - 30);
 
     let status = run_gwiki(
         home.path(),
         project.path(),
-        &daemon_url,
+        daemon_url,
         &["--format", "json", "status", "--topic", "rust"],
     );
     assert!(
@@ -163,7 +164,7 @@ fn expired_grant_reports_not_fails() {
     assert_eq!(payload["daemon"]["reachable"].as_bool(), Some(false));
     assert!(!String::from_utf8_lossy(&status.stdout).contains("shell-ready"));
 
-    let help = run_gwiki(home.path(), project.path(), &daemon_url, &["--help"]);
+    let help = run_gwiki(home.path(), project.path(), daemon_url, &["--help"]);
     assert!(
         help.status.success(),
         "help must work with an expired grant\nstderr:\n{}",
@@ -173,7 +174,7 @@ fn expired_grant_reports_not_fails() {
     let contract = run_gwiki(
         home.path(),
         project.path(),
-        &daemon_url,
+        daemon_url,
         &["contract", "--format", "json"],
     );
     assert!(
@@ -186,7 +187,7 @@ fn expired_grant_reports_not_fails() {
     let absent = run_gwiki(
         absent_home.path(),
         project.path(),
-        &daemon_url,
+        daemon_url,
         &["--format", "json", "status", "--topic", "rust"],
     );
     assert!(

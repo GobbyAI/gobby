@@ -220,6 +220,20 @@ fn english_target_uses_primary_language_subtag() {
 
 #[cfg(feature = "ai")]
 #[test]
+fn translate_endpoint_uses_transcribe_plus_text_when_translate_is_off() {
+    let mut context = test_context(AiRouting::Daemon, None);
+    context.bindings.audio_translate.routing = AiRouting::Off;
+
+    let endpoint = production_transcription_endpoint(&context, true);
+
+    assert!(matches!(
+        endpoint,
+        TranscriptionEndpoint::Translating { .. }
+    ));
+}
+
+#[cfg(feature = "ai")]
+#[test]
 fn off_routing_skips_production_transcription() {
     let context = test_context(AiRouting::Off, None);
     let temp = tempfile::tempdir().expect("tempdir");

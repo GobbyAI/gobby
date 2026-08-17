@@ -447,13 +447,13 @@ fn ai_route_outcomes_render_frontmatter_body_notes_and_meta() {
             note: None,
         },
         Case {
-            name: "auto_fallback_direct",
+            name: "generated_with_stale_fallback_flag",
             outcome: CodewikiAiOutcome::generated(AiRouting::Daemon, true),
             degraded: false,
-            route: "direct",
+            route: "daemon",
             fallback: true,
             status: "generated",
-            note: Some("Direct route"),
+            note: None,
         },
         Case {
             name: "auto_fallback_off",
@@ -465,10 +465,10 @@ fn ai_route_outcomes_render_frontmatter_body_notes_and_meta() {
             note: Some("structural documentation only"),
         },
         Case {
-            name: "direct_no_generator",
+            name: "daemon_no_generator",
             outcome: CodewikiAiOutcome::skipped(AiRouting::Daemon, false),
             degraded: false,
-            route: "direct",
+            route: "daemon",
             fallback: false,
             status: "skipped",
             note: Some("structural documentation only"),
@@ -831,20 +831,10 @@ fn direct_route_candidate_error_gates_pinned_runs() {
     assert!(
         direct_route_candidate_error(&[], AiRouting::Daemon, Some(AiRouting::Daemon)).is_none()
     );
-    // Pinned + daemon everywhere: proceeds (tool loop absent or daemon).
+    // Pinned + daemon everywhere: proceeds. There is no Direct route left.
     assert!(direct_route_candidate_error(&pinned, AiRouting::Daemon, None).is_none());
     assert!(
         direct_route_candidate_error(&pinned, AiRouting::Daemon, Some(AiRouting::Daemon)).is_none()
     );
-    // Pinned + a Direct-resolved lane fails the run with an actionable message.
-    for (text_route, tool_loop_route) in [
-        (AiRouting::Daemon, None),
-        (AiRouting::Daemon, Some(AiRouting::Daemon)),
-        (AiRouting::Daemon, Some(AiRouting::Daemon)),
-    ] {
-        let error = direct_route_candidate_error(&pinned, text_route, tool_loop_route)
-            .expect("direct route rejected");
-        assert!(error.contains("--ai-aggregate-candidate"), "{error}");
-        assert!(error.contains("daemon route"), "{error}");
-    }
+    assert!(direct_route_candidate_error(&pinned, AiRouting::Off, None).is_none());
 }

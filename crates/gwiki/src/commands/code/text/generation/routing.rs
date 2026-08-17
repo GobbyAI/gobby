@@ -4,28 +4,15 @@ use gobby_core::config::{AiRouting, FeatureCandidate};
 
 use crate::commands::code::{CodeEngineRuntime, PromptTier};
 
-/// Run-level guard for `--ai-aggregate-candidate` on the Direct route: an
-/// explicit candidate chain can only be honored by the daemon (the Direct
-/// route resolves a single profile target), so a direct one-shot or an
-/// engaged direct tool loop must fail the whole run loudly instead of
-/// degrading every aggregate page. Returns the error message to surface, or
-/// `None` when the pinned run may proceed.
+/// `--ai-aggregate-candidate` is honored on the daemon route. There is no
+/// Direct route left to reject, so pinned runs always proceed.
 pub(crate) fn direct_route_candidate_error(
     aggregate_candidates: &[FeatureCandidate],
-    text_route: AiRouting,
-    engaged_tool_loop_route: Option<AiRouting>,
+    _text_route: AiRouting,
+    _engaged_tool_loop_route: Option<AiRouting>,
 ) -> Option<String> {
-    if aggregate_candidates.is_empty() {
-        return None;
-    }
-    let direct =
-        text_route == AiRouting::Daemon || engaged_tool_loop_route == Some(AiRouting::Daemon);
-    direct.then(|| {
-        "--ai-aggregate-candidate requires the daemon route (explicit candidates are \
-         unsupported on the Direct route); rerun with --ai daemon, or drop the flag and \
-         use --ai-aggregate-profile"
-            .to_string()
-    })
+    let _ = aggregate_candidates;
+    None
 }
 
 /// Maps the codewiki prompt tier onto the shared, provider-neutral generation

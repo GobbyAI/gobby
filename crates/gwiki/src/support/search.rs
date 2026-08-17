@@ -57,8 +57,9 @@ impl ConfigSource for PostgresConfigSource<'_> {
     }
 
     fn resolve_value(&mut self, value: &str) -> anyhow::Result<String> {
-        // Leading and embedded `secret-marker ` references both resolve through the
-        // shared resolver (CLI-side Fernet decryption, same as gcode).
+        // This source rejects `${secret}:` markers and returns the input
+        // unchanged. Valid secret-store references are resolved by the daemon
+        // grant issuer before they reach the client.
         gobby_core::config::reject_secret_marker(value)?;
         Ok(value.to_string())
     }

@@ -1,15 +1,12 @@
-use std::sync::Arc;
-
 use gobby_core::ai::generation::{
-    ChatMessage, ChatTransport, GenerationTier, ToolExecutor, ToolLoopLimits, ToolPolicy,
-    daemon_agentic_chat, profile_for_tier, run_tool_loop,
+    ChatMessage, GenerationTier, ToolPolicy, daemon_agentic_chat, profile_for_tier,
 };
 use gobby_core::ai::resolve_route_observed;
 use gobby_core::config::{AiCapability, AiRouting};
 
 use crate::commands::code::CodeEngineRuntime;
 use crate::commands::code::{
-    CodewikiAiOptions, CodewikiAiOutcome, CodewikiGraphAvailability, CodewikiToolExecutor, prompts,
+    CodewikiAiOptions, CodewikiAiOutcome, CodewikiGraphAvailability, prompts,
 };
 
 use super::outcome::GenerationOutcome;
@@ -98,25 +95,6 @@ fn bound_seed_prompt(prompt: &str) -> String {
     )
 }
 
-const TOOL_LOOP_SYSTEM_DIRECTIVE: &str = "Investigation mode: you have tools \
-(search_code, outline_file, read_symbol, read_file, grep_repo, find_callers, \
-find_usages, imports). The user message is a bounded seed for orientation, not \
-the full evidence. Before answering, call these tools to read the actual source \
-so your output is grounded in the real code; treat tool results as authoritative \
-repository source, cite the file:line anchors they reveal alongside any in the \
-seed, and never invent files, symbols, or line numbers. If the task instructions \
-require specific section headings, your final answer must include every one of \
-them verbatim and in the given order; when a section's evidence is thin, state \
-that briefly under its heading rather than dropping the heading. When you have \
-gathered enough, write the complete response in a single final message and \
-return only that answer in exactly the format the task instructions require — no \
-tool-call narration, no preamble, and no extra commentary or code fences \
-wrapping a required JSON object.";
-
-fn tool_loop_system_prompt(page_system: &str) -> String {
-    format!("{page_system}\n\n{TOOL_LOOP_SYSTEM_DIRECTIVE}")
-}
-
 const TOOL_LOOP_DAEMON_DIRECTIVE: &str = "Investigation mode: investigate the \
 modules and files named in this task by reading the actual source in the \
 repository before writing, so every claim is grounded in real code. Cite the \
@@ -127,43 +105,6 @@ response as a single final message in exactly the format the task requires.";
 
 fn tool_loop_daemon_system_prompt(page_system: &str) -> String {
     format!("{page_system}\n\n{TOOL_LOOP_DAEMON_DIRECTIVE}")
-}
-
-#[allow(dead_code)]
-fn run_direct_tool_loop(
-    transport: &dyn ChatTransport,
-    ctx: &CodeEngineRuntime,
-    graph_availability: CodewikiGraphAvailability,
-    system: &str,
-    prompt: &str,
-    limits: &ToolLoopLimits,
-    max_tokens: Option<usize>,
-) -> ToolLoopResult {
-    let executor = match CodewikiToolExecutor::new(ctx, graph_availability) {
-        Ok(executor) => executor,
-        Err(error) => {
-            log_tool_loop_error(ctx, "executor initialization", &error);
-            return ToolLoopResult::unavailable();
-        }
-    };
-    let executor = Arc::new(executor);
-    let prompt = bound_seed_prompt(prompt);
-    let messages = vec![
-        ChatMessage::system(tool_loop_system_prompt(system)),
-        ChatMessage::user(prompt.clone()),
-    ];
-    let loop_executor: Arc<dyn ToolExecutor> = executor.clone();
-    let outcome = match run_tool_loop(transport, loop_executor, messages, limits, max_tokens) {
-        Ok(outcome) => GenerationOutcome::from_tool_loop(outcome, &prompt),
-        Err(error) => {
-            log_tool_loop_error(ctx, "execution", &error);
-            GenerationOutcome::unavailable()
-        }
-    };
-    ToolLoopResult {
-        outcome,
-        data_source_degraded: executor.data_source_degraded(),
-    }
 }
 
 pub(crate) fn resolve_tool_loop_generator(
@@ -271,18 +212,6 @@ mod tests {
                 "read-only policy must not expose the mutating `{forbidden}` subcommand",
             );
         }
-    }
-
-    #[test]
-    fn tool_loop_system_prompt_appends_investigation_directive() {
-        let composed = tool_loop_system_prompt(prompts::CONCEPT_PAGE_SYSTEM);
-        assert!(composed.starts_with(prompts::CONCEPT_PAGE_SYSTEM));
-        assert!(composed.contains("Investigation mode"));
-        assert!(composed.contains("search_code"));
-        assert!(composed.contains("authoritative repository source"));
-        assert!(composed.contains("in exactly the format the task"));
-        assert!(!composed.contains("write the page"));
-        assert!(composed.contains("verbatim and in the given order"));
     }
 
     #[test]

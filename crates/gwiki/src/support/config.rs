@@ -16,13 +16,13 @@ type HubPrimaryFactory<'a> = Box<dyn FnOnce() -> anyhow::Result<HubPrimary> + 'a
 
 /// Hub-backed primary AI config layer with a lazily-opened connection.
 ///
-/// Commands that synthesize daemon-independently still need `secret-marker `
-/// references (the canonical api_key pattern) to resolve through the
-/// PostgreSQL hub when it is reachable; without a hub, plain values resolve
-/// and secrets degrade explicitly. Construction is I/O-free — the connection
-/// opens on first hub-needing read — so daemon mode can keep this primary
-/// attached for secret-reference fall-through without every command paying
-/// for (or failing on) a hub connection it never uses.
+/// Commands that synthesize daemon-independently still see `${secret}:`
+/// references (the canonical api_key marker). `resolve_value` rejects those
+/// markers rather than resolving them; the daemon grant issuer substitutes
+/// valid secret-store references. Without a hub, plain values pass through.
+/// Construction is I/O-free — the connection opens on first hub-needing
+/// read — so daemon mode can keep this primary attached without every command
+/// paying for (or failing on) a hub connection it never uses.
 pub(crate) struct HubPrimary {
     command: String,
     conn: Option<HubConnState>,
@@ -86,6 +86,9 @@ impl ConfigSource for HubPrimary {
     }
 
     fn resolve_value(&mut self, value: &str) -> anyhow::Result<String> {
+        // Reject `${secret}:` markers. This layer does not resolve secret-store
+        // references; the daemon grant issuer substitutes them before they reach
+        // the client. Plain values are returned unchanged.
         gobby_core::config::reject_secret_marker(value)?;
         let _ = self.state();
         Ok(value.to_string())

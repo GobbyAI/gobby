@@ -8,7 +8,6 @@
 //! config plumbing.
 
 use gobby_core::ai::effective_config::ai_source_for_conn;
-use gobby_core::ai::generation::GenerationTier;
 use gobby_core::ai::resolve_route_observed;
 use gobby_core::ai_context::{AiContext, AiContextOptions};
 use gobby_core::config::{
@@ -78,7 +77,7 @@ pub(crate) fn probe_runtime_services(command: &'static str) -> Result<RuntimeSer
     let embedding = resolve_embedding_config(&mut source);
     let semantic_embedding = {
         let context = AiContext::resolve(None, &mut source);
-        resolve_semantic_embedding(&context, &mut source)
+        resolve_semantic_embedding(&context)
     };
     Ok(RuntimeServices {
         postgres_configured: true,
@@ -90,13 +89,9 @@ pub(crate) fn probe_runtime_services(command: &'static str) -> Result<RuntimeSer
 }
 
 /// Whether a text-generation model provider is reachable for `requested`
-/// routing at `tier`. Mirrors the route observation the compile and ask
-/// transports perform before generating.
-pub(crate) fn text_generation_available(
-    command: &'static str,
-    requested: AiRouting,
-    _tier: GenerationTier,
-) -> bool {
+/// routing. Mirrors the route observation compile and librarian perform
+/// before generating.
+pub(crate) fn text_generation_available(command: &'static str, requested: AiRouting) -> bool {
     if matches!(requested, AiRouting::Off) {
         return false;
     }
@@ -118,10 +113,7 @@ pub(crate) fn text_generation_available(
     }
 }
 
-pub(crate) fn resolve_semantic_embedding(
-    context: &AiContext,
-    _source: &mut impl gobby_core::config::ConfigSource,
-) -> Option<SemanticEmbedding> {
+pub(crate) fn resolve_semantic_embedding(context: &AiContext) -> Option<SemanticEmbedding> {
     match effective_embedding_route(context) {
         AiRouting::Off => None,
         AiRouting::Daemon => {

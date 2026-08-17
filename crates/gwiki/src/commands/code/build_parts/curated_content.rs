@@ -211,7 +211,7 @@ pub(crate) fn curated_page_body(
 
 /// Renders the "Start here — guided tour" block shared by the front page and
 /// the concept index: a "new to this codebase" callout, the dependency-ordered
-/// narrative chapters numbered 1..N, and a one-line pointer to ask/search the
+/// narrative chapters numbered 1..N, and a one-line pointer to search the
 /// same vault. Navigation only — no new generation. Takes `(slug, title)`
 /// pairs so it stays decoupled from the `NarrativePage` struct.
 pub(crate) fn append_guided_tour(doc: &mut String, chapters: &[(&str, &str)]) {

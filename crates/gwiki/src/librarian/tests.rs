@@ -7,6 +7,7 @@ use crate::frontmatter::parse_frontmatter;
 use crate::markdown::parse_markdown;
 use crate::search::semantic::SemanticSearchRequest;
 use crate::sources::{SourceDraft, SourceManifest};
+use crate::support::test_env::EnvGuard;
 
 use super::semantic::{
     DISTINCT_PAIRS_RELATIVE_PATH, NearDuplicatePair, UnresolvedLinkCluster,
@@ -864,7 +865,12 @@ fn link_issue(path: &str, target: &str) -> lint::LinkIssue {
 #[serial_test::serial]
 fn librarian_requires_configured_postgres_index() {
     let temp = tempfile::tempdir().expect("tempdir");
+    let home = tempfile::tempdir().expect("home");
     let root = temp.path();
+    let _env = EnvGuard::unset("GOBBY_MANAGED_EXECUTION_BOOTSTRAP")
+        .and_set("GOBBY_HOME", home.path().as_os_str())
+        .and_set("GOBBY_DAEMON_URL", "http://192.0.2.1:9");
+    crate::support::env::set_active_project_root(None);
     write_page(
         root,
         "knowledge/topics/page.md",

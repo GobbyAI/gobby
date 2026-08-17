@@ -802,11 +802,11 @@ mod tests {
             .expect("write managed grant");
         let _grant_env = EnvGuard::set("GOBBY_MANAGED_EXECUTION_BOOTSTRAP", grant_path.as_os_str())
             .and_set("GOBBY_HOME", home.as_os_str());
+        let _clear_root = ClearActiveProjectRoot;
         crate::support::env::set_active_project_root(Some(temp.path().to_path_buf()));
 
         let error =
             execute(ScopeSelection::project(temp.path())).expect_err("PostgreSQL is required");
-        crate::support::env::set_active_project_root(None);
 
         assert!(
             error
@@ -814,6 +814,14 @@ mod tests {
                 .contains("failed to connect to PostgreSQL for gwiki citation-quality"),
             "{error}"
         );
+    }
+
+    struct ClearActiveProjectRoot;
+
+    impl Drop for ClearActiveProjectRoot {
+        fn drop(&mut self) {
+            crate::support::env::set_active_project_root(None);
+        }
     }
 
     fn write_page(root: &std::path::Path, relative: &str, markdown: &str) {

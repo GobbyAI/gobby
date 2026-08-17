@@ -272,6 +272,7 @@ mod tests {
     use std::collections::VecDeque;
     use std::fs;
 
+    use crate::support::test_env::EnvGuard;
     use gobby_core::ai::generation::{
         ChatCompletion, ChatCompletionRequest, ChatMessage, ChatTransport, ToolCall,
         ToolLoopLimits, run_tool_loop,
@@ -358,13 +359,18 @@ mod tests {
             "# Source\n\nSee [[knowledge/concepts/target.md]].\n",
         )
         .expect("write source");
+        let home = tempfile::tempdir().expect("home");
+        let _env = EnvGuard::unset("GOBBY_MANAGED_EXECUTION_BOOTSTRAP")
+            .and_set("GOBBY_HOME", home.path().as_os_str())
+            .and_set("GOBBY_DAEMON_URL", "http://192.0.2.1:9");
+        crate::support::env::set_active_project_root(Some(temp.path().to_path_buf()));
         let executor = VaultToolExecutor::new(
             ScopeSelection::project(temp.path()),
             vault,
             ScopeIdentity::project("00000000-0000-4000-8000-000000000001"),
         );
 
-        let output = executor
+        let error = executor
             .execute(&ToolCall {
                 id: "call-backlinks".to_string(),
                 name: "backlinks".to_string(),
@@ -373,10 +379,14 @@ mod tests {
                     "limit": 1,
                 }),
             })
-            .expect("backlinks tool executes");
-        let records: Vec<Value> = serde_json::from_str(&output).expect("backlinks JSON");
-        assert_eq!(records.len(), 1);
-        assert_eq!(records[0]["source_path"], "knowledge/concepts/source.md");
+            .expect_err("backlinks require a grant-resolved graph");
+        assert!(
+            error.message.contains("daemon required")
+                || error.message.contains("malformed grant")
+                || error.message.contains("handshake"),
+            "{error:?}"
+        );
+        crate::support::env::set_active_project_root(None);
     }
 
     fn write_vault_doc(root: &std::path::Path, body: &str) -> &'static str {

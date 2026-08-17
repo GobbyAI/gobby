@@ -89,7 +89,7 @@ fn relocation_inventory_and_composer_decomposition() {
     );
     assert_eq!(
         destination_files.len(),
-        119,
+        118,
         "moved inventory must match the plan"
     );
     for relative in [
@@ -220,74 +220,16 @@ fn ownership_identities_moved() {
 }
 
 #[test]
-fn tool_executor_uses_only_facade() {
-    let executor = fs::read_to_string(
-        Path::new(env!("CARGO_MANIFEST_DIR")).join("src/commands/code/tool_executor.rs"),
-    )
-    .expect("executor source is readable");
-    for dependency in [
-        "CodewikiFacts::search_with",
-        "CodewikiFacts::symbols_for_file",
-        "CodewikiFacts::symbol_by_id",
-        "CodewikiFacts::grep_with",
-        "CodewikiFacts::callers",
-        "CodewikiFacts::usages",
-        "CodewikiFacts::imports",
-    ] {
-        assert!(
-            executor.contains(dependency),
-            "dependency table missing `{dependency}`"
-        );
-    }
-    for tool in [
-        "search_code",
-        "outline_file",
-        "read_symbol",
-        "grep_repo",
-        "read_file",
-        "find_callers",
-        "find_usages",
-        "imports",
-    ] {
-        assert!(executor.contains(tool), "dependency table missing `{tool}`");
-    }
-    for forbidden in [
-        "crate::config::Context",
-        "postgres::",
-        "fn connection(",
-        "connect_readonly",
-        "Mutex",
-    ] {
-        assert!(
-            !executor.contains(forbidden),
-            "executor contains `{forbidden}`"
-        );
-    }
-}
-
-#[test]
 fn graph_outcomes_match_legacy_mapping() {
     let root = Path::new(env!("CARGO_MANIFEST_DIR")).join("src/commands/code");
-    let executor =
-        fs::read_to_string(root.join("tool_executor.rs")).expect("executor source is readable");
     let graph = fs::read_to_string(root.join("graph.rs")).expect("graph source is readable");
     let frontmatter = fs::read_to_string(root.join("text/frontmatter.rs"))
         .expect("frontmatter source is readable");
     let diagrams = fs::read_to_string(root.join("render/diagrams.rs"))
         .expect("diagram renderer source is readable");
 
-    for outcome in [
-        "GraphOutcome::Available",
-        "GraphOutcome::Truncated",
-        "GraphOutcome::Empty",
-        "GraphOutcome::Unavailable",
-    ] {
-        assert!(executor.contains(outcome), "executor omits `{outcome}`");
-    }
     assert!(graph.contains("CodewikiGraph::truncated"));
     assert!(graph.contains("CodewikiGraph::unavailable"));
-    assert!(!executor.contains("GRAPH_TRUNCATED"));
-    assert!(executor.contains("Err(error) => Err(tool_err"));
     assert!(graph.contains("GraphOutcome::Unavailable { .. } => None"));
     assert!(frontmatter.contains("code != GRAPH_UNAVAILABLE"));
     assert!(diagrams.contains("source graph was truncated"));

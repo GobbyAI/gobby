@@ -56,10 +56,7 @@ impl ResolvedTextGenerator {
     }
 
     pub(crate) fn notice_kind(&self) -> Option<AiNoticeKind> {
-        self.no_generator_reason.or_else(|| {
-            (self.ai_fallback && self.ai_route == AiRouting::Daemon)
-                .then_some(AiNoticeKind::AutoFallbackToDirect)
-        })
+        self.no_generator_reason
     }
 }
 
@@ -243,7 +240,8 @@ fn retryable_generation_error(error: &AiError) -> bool {
         AiError::HttpStatus { status, .. } => *status >= 500,
         AiError::CapabilityUnavailable { .. }
         | AiError::NotConfigured { .. }
-        | AiError::ParseFailure { .. } => false,
+        | AiError::ParseFailure { .. }
+        | AiError::Grant { .. } => false,
     }
 }
 
@@ -320,20 +318,21 @@ mod tests {
             AiGenerationStatus::Skipped
         );
 
-        let fallback_direct = ResolvedTextGenerator {
+        let daemon_with_stale_fallback_flag = ResolvedTextGenerator {
             generator: Some(Box::new(|_, _, _| Some("generated".to_string()))),
             ai_route: AiRouting::Daemon,
             ai_fallback: true,
             no_generator_reason: None,
         };
 
+        assert_eq!(daemon_with_stale_fallback_flag.notice_kind(), None);
         assert_eq!(
-            fallback_direct.notice_kind(),
-            Some(AiNoticeKind::AutoFallbackToDirect)
+            daemon_with_stale_fallback_flag.ai_outcome().status,
+            AiGenerationStatus::Generated
         );
         assert_eq!(
-            fallback_direct.ai_outcome().status,
-            AiGenerationStatus::Generated
+            daemon_with_stale_fallback_flag.ai_outcome().route,
+            AiRouting::Daemon
         );
     }
 
@@ -494,16 +493,23 @@ mod tests {
 
     #[test]
     fn bounded_retry_fails_fast_on_non_transient_errors() {
-        let mut calls = 0_usize;
-        let result: Result<String, AiError> = generate_with_bounded_retry(|| {
-            calls += 1;
-            Err(AiError::NotConfigured {
+        for error in [
+            AiError::NotConfigured {
                 capability: None,
                 message: "no provider".to_string(),
-            })
-        });
+            },
+            AiError::Grant {
+                source: gobby_core::grant::GrantError::DaemonRequired,
+            },
+        ] {
+            let mut calls = 0_usize;
+            let result: Result<String, AiError> = generate_with_bounded_retry(|| {
+                calls += 1;
+                Err(error.clone())
+            });
 
-        assert!(result.is_err());
-        assert_eq!(calls, 1);
+            assert!(result.is_err(), "{error}");
+            assert_eq!(calls, 1, "{error}");
+        }
     }
 }
