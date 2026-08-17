@@ -47,9 +47,11 @@ template. These files are story B / Stage 3 semantics, not M0 execution.
 - Compose may *declare* that path as `gobby_files` so pack / hub-backup /
   restore inventory it beside datastore volumes. That is a lifecycle entry,
   not “put Markdown inside `gobby_postgres_data`.”
-- The only process that touches the POSIX tree is the hub-local owner:
-  today’s `datastore_mode: local` daemon on Hub-PC; later `gdaemon` in
-  `hub` mode.
+- The only POSIX writers are hub-host processes that hold the singleton:
+  the live `datastore_mode: local` daemon (`role=daemon`; later `gdaemon`
+  in `hub` mode) or an authorized stopped-daemon campaign
+  (`role=maintenance`), including direct `gwiki` mutators. Nodes never
+  write the tree.
 - Node / remote-mode daemons never create `~/.gobby/personal`, never default
   `~/wiki`, and never cache a canonical copy. They read and write through
   the hub owner’s HTTP surfaces, proxied if the UI still talks to a local
@@ -104,7 +106,7 @@ fixture vaults keep using explicit `gwiki --out` paths.
 - Bootstrap on the hub-local daemon: `files_home: <absolute path>`. Required
   when `datastore_mode: local`. Never default to `$GOBBY_HOME/...`.
 - Remote-mode / node bootstrap has no `files_home` and must not mkdir one.
-  File routes proxy to the hub owner (`daemon_url` / successor hub base URL)
+  File routes proxy to the hub owner (`hub_daemon_url`)
   or the client talks to the hub daemon directly.
 - `read_user_profile_content` on the hub owner reads `<hub-files>/USER.md`.
   On a node it fetches that file from the hub owner. Absent file → empty
@@ -134,9 +136,10 @@ local tree:
 
 ## Migration
 
-One-shot, hub-local, no dual-write:
+One-shot, hub-local, no dual-write. The operator provisions an existing
+`files_home` root; writers never create that root.
 
-1. Create `<hub-files>/{USER.md,_personal/{notes,reminders,attachments},wiki}`.
+1. Seed still-missing children `<hub-files>/{USER.md,_personal/{notes,reminders,attachments},wiki}` under the pre-provisioned root.
 2. Move `~/.gobby/personal/USER.md` → `<hub-files>/USER.md` if present.
 3. Move `~/.gobby/personal/.gobby` → `<hub-files>/_personal/.gobby`.
 4. Move `~/.gobby/personal/wiki` → `<hub-files>/wiki/personal`; rewrite
