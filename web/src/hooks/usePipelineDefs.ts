@@ -19,17 +19,58 @@ export interface PipelineDefDetail {
   has_template_update?: boolean;
 }
 
-interface PipelineFilters {
+export interface PipelineFilters {
   enabled?: boolean;
   project_id?: string;
   include_deleted?: boolean;
+}
+
+export interface UsePipelineDefsResult {
+  pipelines: PipelineDefDetail[];
+  isLoading: boolean;
+  selectedId: string | null;
+  selectedPipeline: PipelineDefDetail | null;
+  activeCount: number;
+  fetchPipelines: (params?: PipelineFilters) => Promise<boolean>;
+  fetchPipeline: (id: string) => Promise<PipelineDefDetail | null>;
+  createPipeline: (params: {
+    name: string;
+    definition_json: string;
+    description?: string;
+    enabled?: boolean;
+    tags?: string[];
+  }) => Promise<PipelineDefDetail | null>;
+  updatePipeline: (
+    id: string,
+    params: {
+      name?: string;
+      definition_json?: string;
+      description?: string;
+      enabled?: boolean;
+      tags?: string[];
+      canvas_json?: string;
+    },
+  ) => Promise<PipelineDefDetail | null>;
+  deletePipeline: (id: string) => Promise<boolean>;
+  duplicatePipeline: (
+    id: string,
+    newName: string,
+  ) => Promise<PipelineDefDetail | null>;
+  toggleEnabled: (id: string) => Promise<PipelineDefDetail | null>;
+  importYaml: (
+    yamlContent: string,
+    projectId?: string,
+  ) => Promise<PipelineDefDetail | null>;
+  exportYaml: (id: string) => Promise<string | null>;
+  restorePipeline: (id: string) => Promise<boolean>;
+  selectPipeline: (id: string | null) => Promise<void>;
 }
 
 function getBaseUrl(): string {
   return "";
 }
 
-export function usePipelineDefs() {
+export function usePipelineDefs(): UsePipelineDefsResult {
   const [pipelines, setPipelines] = useState<PipelineDefDetail[]>([]);
   const [isLoading, setIsLoading] = useState(true);
   const [selectedId, setSelectedId] = useState<string | null>(null);
@@ -37,6 +78,7 @@ export function usePipelineDefs() {
     useState<PipelineDefDetail | null>(null);
   const listRequestGenerationRef = useRef(0);
   const selectionRequestGenerationRef = useRef(0);
+  const selectedIdRef = useRef<string | null>(null);
   const filtersRef = useRef<PipelineFilters | undefined>(undefined);
 
   const fetchPipelines = useCallback(
@@ -177,7 +219,9 @@ export function usePipelineDefs() {
         if (response.ok) {
           const data = await response.json();
           if (data.deleted) {
-            if (selectedId === id) {
+            if (selectedIdRef.current === id) {
+              selectionRequestGenerationRef.current += 1;
+              selectedIdRef.current = null;
               setSelectedId(null);
               setSelectedPipeline(null);
             }
@@ -190,7 +234,7 @@ export function usePipelineDefs() {
       }
       return false;
     },
-    [refetchPipelines, selectedId],
+    [refetchPipelines],
   );
 
   const duplicatePipeline = useCallback(
@@ -314,8 +358,9 @@ export function usePipelineDefs() {
   );
 
   const selectPipeline = useCallback(
-    async (id: string | null) => {
+    async (id: string | null): Promise<void> => {
       const requestGeneration = ++selectionRequestGenerationRef.current;
+      selectedIdRef.current = id;
       setSelectedId(id);
       if (id) {
         const detail = await fetchPipeline(id);

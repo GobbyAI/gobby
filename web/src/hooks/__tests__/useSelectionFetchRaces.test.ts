@@ -170,4 +170,121 @@ describe("selection fetch race protection", () => {
     expect(result.current.selectedId).toBe("pipeline-b");
     expect(result.current.selectedPipeline?.id).toBe("pipeline-b");
   });
+
+  it("does not clear a newer pipeline selection when an earlier delete completes", async () => {
+    const initialList = deferredResponse();
+    const detailA = deferredResponse();
+    const detailB = deferredResponse();
+    const deleteA = deferredResponse();
+    const refetchList = deferredResponse();
+    let listCalls = 0;
+    vi.stubGlobal(
+      "fetch",
+      vi.fn((url: string, init?: RequestInit) => {
+        const method = init?.method ?? "GET";
+        if (method === "DELETE" && url.endsWith("/pipeline-a")) {
+          return deleteA.promise;
+        }
+        if (url.endsWith("/api/pipelines/definitions")) {
+          listCalls += 1;
+          return listCalls === 1 ? initialList.promise : refetchList.promise;
+        }
+        if (url.endsWith("/pipeline-a")) return detailA.promise;
+        if (url.endsWith("/pipeline-b")) return detailB.promise;
+        return Promise.resolve(jsonResponse({}));
+      }),
+    );
+
+    const { result } = renderHook(() => usePipelineDefs());
+    await act(async () => {
+      initialList.resolve(
+        jsonResponse({
+          definitions: [{ id: "pipeline-a" }, { id: "pipeline-b" }],
+        }),
+      );
+    });
+    await waitFor(() => expect(result.current.isLoading).toBe(false));
+
+    act(() => {
+      void result.current.selectPipeline("pipeline-a");
+    });
+    await act(async () => {
+      detailA.resolve(jsonResponse({ definition: { id: "pipeline-a" } }));
+    });
+    expect(result.current.selectedId).toBe("pipeline-a");
+
+    let pendingDelete!: Promise<boolean>;
+    act(() => {
+      pendingDelete = result.current.deletePipeline("pipeline-a");
+    });
+
+    act(() => {
+      void result.current.selectPipeline("pipeline-b");
+    });
+    await act(async () => {
+      detailB.resolve(jsonResponse({ definition: { id: "pipeline-b" } }));
+    });
+    expect(result.current.selectedId).toBe("pipeline-b");
+
+    await act(async () => {
+      deleteA.resolve(jsonResponse({ deleted: true }));
+      refetchList.resolve(
+        jsonResponse({ definitions: [{ id: "pipeline-b" }] }),
+      );
+      await pendingDelete;
+    });
+
+    expect(result.current.selectedId).toBe("pipeline-b");
+    expect(result.current.selectedPipeline?.id).toBe("pipeline-b");
+  });
+
+  it("invalidates an in-flight detail fetch when the selected pipeline is deleted", async () => {
+    const initialList = deferredResponse();
+    const detailA = deferredResponse();
+    const deleteA = deferredResponse();
+    const refetchList = deferredResponse();
+    let listCalls = 0;
+    vi.stubGlobal(
+      "fetch",
+      vi.fn((url: string, init?: RequestInit) => {
+        const method = init?.method ?? "GET";
+        if (method === "DELETE" && url.endsWith("/pipeline-a")) {
+          return deleteA.promise;
+        }
+        if (url.endsWith("/api/pipelines/definitions")) {
+          listCalls += 1;
+          return listCalls === 1 ? initialList.promise : refetchList.promise;
+        }
+        if (url.endsWith("/pipeline-a")) return detailA.promise;
+        return Promise.resolve(jsonResponse({}));
+      }),
+    );
+
+    const { result } = renderHook(() => usePipelineDefs());
+    await act(async () => {
+      initialList.resolve(
+        jsonResponse({ definitions: [{ id: "pipeline-a" }] }),
+      );
+    });
+    await waitFor(() => expect(result.current.isLoading).toBe(false));
+
+    act(() => {
+      void result.current.selectPipeline("pipeline-a");
+    });
+
+    await act(async () => {
+      const pending = result.current.deletePipeline("pipeline-a");
+      deleteA.resolve(jsonResponse({ deleted: true }));
+      refetchList.resolve(jsonResponse({ definitions: [] }));
+      await pending;
+    });
+    expect(result.current.selectedId).toBeNull();
+    expect(result.current.selectedPipeline).toBeNull();
+
+    await act(async () => {
+      detailA.resolve(jsonResponse({ definition: { id: "pipeline-a" } }));
+    });
+    expect(result.current.selectedId).toBeNull();
+    expect(result.current.selectedPipeline).toBeNull();
+  });
 });

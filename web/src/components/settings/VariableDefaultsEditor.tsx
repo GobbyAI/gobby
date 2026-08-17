@@ -11,7 +11,7 @@ import { parseVariableInput, variableDisplayValue } from "./workflowVariables";
  * variables are read-only; variables you add can be toggled or deleted.
  */
 
-export function VariableDefaultsEditor() {
+export function VariableDefaultsEditor(): JSX.Element {
   const {
     variables,
     isLoading,
@@ -36,14 +36,14 @@ export function VariableDefaultsEditor() {
     };
   }, [fetchVariables]);
 
-  function resetForm() {
+  function resetForm(): void {
     setName("");
     setValue("");
     setDescription("");
     setShowForm(false);
   }
 
-  async function handleCreate() {
+  async function handleCreate(): Promise<void> {
     const trimmedName = name.trim();
     if (!trimmedName) return;
     const trimmedDescription = description.trim();
@@ -61,13 +61,13 @@ export function VariableDefaultsEditor() {
     }
   }
 
-  async function handleToggle(variable: VariableDef) {
+  async function handleToggle(variable: VariableDef): Promise<void> {
     setError(null);
     const updated = await toggleEnabled(variable.id);
     if (!updated) setError(`Could not update "${variable.name}".`);
   }
 
-  async function handleDelete(variable: VariableDef) {
+  async function handleDelete(variable: VariableDef): Promise<void> {
     if (!window.confirm(`Delete variable "${variable.name}"?`)) return;
     setError(null);
     const deleted = await deleteVariable(variable.id);
@@ -160,21 +160,23 @@ export function VariableDefaultsEditor() {
                   <span className="rounded-md border border-border bg-surface-secondary px-2 py-0.5 text-sm leading-[1.6] text-muted-foreground lowercase">
                     {variable.source}
                   </span>
-                  <Switch
-                    checked={variable.enabled}
-                    aria-label={`Toggle ${variable.name}`}
-                    onChange={() => void handleToggle(variable)}
-                  />
                   {variable.source !== "template" ? (
-                    <Button
-                      type="button"
-                      variant="ghost"
-                      size="sm"
-                      aria-label={`Delete ${variable.name}`}
-                      onClick={() => void handleDelete(variable)}
-                    >
-                      Delete
-                    </Button>
+                    <>
+                      <Switch
+                        checked={variable.enabled}
+                        aria-label={`Toggle ${variable.name}`}
+                        onChange={() => void handleToggle(variable)}
+                      />
+                      <Button
+                        type="button"
+                        variant="ghost"
+                        size="sm"
+                        aria-label={`Delete ${variable.name}`}
+                        onClick={() => void handleDelete(variable)}
+                      >
+                        Delete
+                      </Button>
+                    </>
                   ) : null}
                 </div>
               </div>

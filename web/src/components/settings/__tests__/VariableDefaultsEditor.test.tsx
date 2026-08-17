@@ -163,6 +163,14 @@ describe("VariableDefaultsEditor", () => {
     ).toBeNull();
   });
 
+  it("does not render an enabled switch for bundled template variables", () => {
+    mocks.variables = [makeVariable({ source: "template", enabled: true })];
+    render(<VariableDefaultsEditor />);
+    expect(
+      screen.queryByRole("switch", { name: "Toggle max_retries" }),
+    ).toBeNull();
+  });
+
   it("distinguishes a failed fetch from an empty variable list", async () => {
     mocks.fetchVariables.mockResolvedValue(false);
 
