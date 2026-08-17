@@ -138,9 +138,7 @@ pub(crate) use generation::{
 };
 pub(crate) use graph::fetch_codewiki_graph_edges;
 #[cfg(test)]
-pub(crate) use graph::{
-    codewiki_call_edges_query, codewiki_import_edges_query, import_edges_from_pairs,
-};
+pub(crate) use graph::import_edges_from_pairs;
 pub(crate) use ownership::{OwnershipMeta, OwnershipOptions, build_ownership_doc};
 pub(crate) use progress::CodewikiProgress;
 // Markdown path and wikilink helpers.

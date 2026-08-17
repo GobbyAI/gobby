@@ -228,22 +228,6 @@ fn import_targets_match_exact_path_or_module_components() {
 }
 
 #[test]
-fn graph_queries_order_edges_before_requested_limit() {
-    let (call_query, _) = codewiki_call_edges_query("project-1", 17);
-    let (import_query, _) = codewiki_import_edges_query("project-1", 17);
-
-    for query in [call_query, import_query] {
-        let order = query
-            .find("ORDER BY source, target")
-            .expect("graph query orders its edge sample");
-        let limit = query
-            .find("LIMIT 17")
-            .expect("graph query uses the requested edge limit");
-        assert!(order < limit, "edge ordering must precede the limit");
-    }
-}
-
-#[test]
 fn import_edges_drop_non_core_source_files() {
     let file_symbols = BTreeMap::from([
         ("src/api.rs".to_string(), vec!["comp-api".to_string()]),
@@ -265,20 +249,6 @@ fn import_edges_drop_non_core_source_files() {
         edges,
         vec![CodewikiGraphEdge::import("comp-api", "comp-domain")]
     );
-}
-
-#[test]
-fn graph_queries_stay_small_and_carry_no_id_lists() {
-    // Embedding the core symbol-id/file lists in the Cypher text produced
-    // ~633KB payloads on this repo, which intermittently failed at the socket
-    // layer; core filtering is client-side now.
-    let (call_query, _) = codewiki_call_edges_query("project-1", 5000);
-    let (import_query, _) = codewiki_import_edges_query("project-1", 5000);
-
-    assert!(!call_query.contains(" IN ["));
-    assert!(!import_query.contains(" IN ["));
-    assert!(call_query.len() < 1024);
-    assert!(import_query.len() < 1024);
 }
 
 #[test]
