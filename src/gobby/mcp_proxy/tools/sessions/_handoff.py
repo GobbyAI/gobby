@@ -322,8 +322,14 @@ def register_handoff_tools(
                 },
             }
 
-        # Get handoff context
-        context = strip_injected_context(parent_session.summary_markdown or "")
+        from gobby.sessions.summary_refresh import live_handoff_context, summary_is_stale
+
+        summary = strip_injected_context(parent_session.summary_markdown or "")
+        stale = summary_is_stale(parent_session)
+        if stale:
+            context, context_type = live_handoff_context(parent_session)
+        else:
+            context, context_type = summary, "summary_markdown"
 
         if not context:
             return {
@@ -370,17 +376,20 @@ def register_handoff_tools(
                     "context": context,
                 }
 
-        return {
+        result = {
             "success": True,
             "found": True,
             "session_id": parent_session.id,
             "has_context": True,
             "context": context,
-            "context_type": "summary_markdown",
+            "context_type": context_type,
             "parent_title": getattr(parent_session, "title", None),
             "parent_status": parent_session.status,
             "linked_child": resolved_child_id or link_child_session_id,
         }
+        if stale:
+            result["stale"] = True
+        return result
 
     @registry.tool(
         name="wait_for_summary",
@@ -432,14 +441,28 @@ def register_handoff_tools(
                     "error": f"Session {session_id} not found",
                 }
 
-            context = getattr(session, "summary_markdown", None)
-            if isinstance(context, str) and context.strip():
+            from gobby.sessions.summary_refresh import live_handoff_context, summary_is_stale
+
+            summary = getattr(session, "summary_markdown", None)
+            if isinstance(summary, str) and summary.strip():
+                if summary_is_stale(session):
+                    live, live_type = live_handoff_context(session)
+                    if live:
+                        return {
+                            "success": True,
+                            "completed": True,
+                            "session_id": resolved_id,
+                            "has_context": True,
+                            "context": live,
+                            "context_type": live_type,
+                            "stale": True,
+                        }
                 return {
                     "success": True,
                     "completed": True,
                     "session_id": resolved_id,
                     "has_context": True,
-                    "context": context,
+                    "context": summary,
                     "context_type": "summary_markdown",
                 }
 

@@ -27,6 +27,7 @@ from gobby.memory.title_heuristics import (
     is_template_placeholder,
     normalize_title_candidate,
 )
+from gobby.sessions.summary_refresh import coerce_digest_turn_count, digest_turn_count
 from gobby.storage.hub.protocol import HubDatabase
 from gobby.storage.sessions._title_defaults import DIGEST_TITLE_SOURCE, MANUAL_TITLE_SOURCE
 from gobby.utils.injected_context import strip_injected_context
@@ -539,6 +540,40 @@ def _raise_turn_record_contract_error(
     raise ValueError(f"memory.turn_record returned invalid JSON contract: {reason}")
 
 
+def _schedule_summary_refresh_if_stale(
+    *,
+    memory_manager: Any,
+    session_manager: Any,
+    session: Any,
+    updated_digest: str,
+    session_id: str,
+    llm_service: Any,
+    db: HubDatabase,
+    config: Any,
+) -> None:
+    """Refresh archival summary after digest grows past its watermark."""
+    session_summary_config = getattr(config, "session_summary", None) if config else None
+    if session_summary_config is None or llm_service is None:
+        return
+    current = digest_turn_count(updated_digest)
+    watermark = coerce_digest_turn_count(getattr(session, "summary_digest_turn_count", None)) or 0
+    if current <= watermark:
+        return
+    from gobby.sessions.summarize import generate_session_summaries
+
+    memory_manager.schedule_background_task(
+        generate_session_summaries(
+            session_id=session_id,
+            session_manager=session_manager,
+            llm_service=llm_service,
+            session_summary_config=session_summary_config,
+            db=db,
+            set_handoff_ready=False,
+        ),
+        name=f"session-summary-refresh-{session_id}",
+    )
+
+
 async def _build_turn_and_digest_serialized(
     memory_manager: Any,
     session_manager: Any,
@@ -676,6 +711,16 @@ async def _build_turn_and_digest_serialized(
             turn_num,
             len(last_turn),
             session_id,
+        )
+        _schedule_summary_refresh_if_stale(
+            memory_manager=memory_manager,
+            session_manager=session_manager,
+            session=updated_session,
+            updated_digest=updated_digest,
+            session_id=session_id,
+            llm_service=llm_service,
+            db=db,
+            config=config,
         )
 
         result: dict[str, Any] = {

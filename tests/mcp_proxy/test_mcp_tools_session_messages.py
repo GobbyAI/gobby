@@ -417,6 +417,30 @@ async def test_get_handoff_context_by_session_id(mock_session_manager, full_sess
     assert result["has_context"] is True
     assert "Test handoff content" in result["context"]
     assert result["context_type"] == "summary_markdown"
+    assert "stale" not in result
+
+
+async def test_get_handoff_context_returns_last_turn_when_summary_lags_digest(
+    mock_session_manager, full_sessions_registry
+):
+    mock_session = _make_mock_session("sess-abc")
+    mock_session.summary_markdown = "## Current State\nRound 13 repairs"
+    mock_session.digest_markdown = "### Turn 1\nRound 13\n\n### Turn 2\nRound 14 wait"
+    mock_session.summary_digest_turn_count = 1
+    mock_session.last_turn_markdown = "Round 14 is still active and the child summary is stale."
+    mock_session.last_assistant_content = None
+    mock_session.title = "Round Fourteen Review Monitoring"
+    mock_session.status = "handoff_ready"
+    mock_session_manager.resolve_session_reference.return_value = "sess-abc"
+    mock_session_manager.get.return_value = mock_session
+
+    result = await full_sessions_registry.call("get_handoff_context", {"session_id": "sess-abc"})
+
+    assert result["success"] is True
+    assert result["stale"] is True
+    assert result["context_type"] == "last_turn_markdown"
+    assert "Round 14 is still active" in result["context"]
+    assert "Round 13 repairs" not in result["context"]
 
 
 @pytest.mark.asyncio
@@ -576,6 +600,38 @@ async def test_wait_for_summary_returns_ready_context(mock_session_manager, full
         "has_context": True,
         "context": "## Summary\n\nReady now",
         "context_type": "summary_markdown",
+    }
+
+
+async def test_wait_for_summary_returns_last_turn_when_summary_lags_digest(
+    mock_session_manager, full_sessions_registry
+):
+    stale_session = _make_mock_session("sess-wait")
+    stale_session.summary_markdown = "## Current State\nRound 13 repairs"
+    stale_session.digest_markdown = "### Turn 1\nRound 13\n\n### Turn 2\nRound 14 wait"
+    stale_session.summary_digest_turn_count = 1
+    stale_session.last_turn_markdown = "Round 14 is still active and the child summary is stale."
+    stale_session.last_assistant_content = None
+    mock_session_manager.resolve_session_reference.return_value = "sess-wait"
+    mock_session_manager.get.return_value = stale_session
+
+    result = await full_sessions_registry.call(
+        "wait_for_summary",
+        {
+            "session_id": "sess-wait",
+            "timeout_seconds": 0.05,
+            "poll_interval_seconds": 0.001,
+        },
+    )
+
+    assert result == {
+        "success": True,
+        "completed": True,
+        "session_id": "sess-wait",
+        "has_context": True,
+        "context": "Round 14 is still active and the child summary is stale.",
+        "context_type": "last_turn_markdown",
+        "stale": True,
     }
 
 

@@ -8,6 +8,8 @@ import re
 from dataclasses import dataclass
 from typing import Any
 
+from gobby.utils.injected_context import strip_injected_context
+
 DIGEST_TURN_PATTERN = re.compile(r"^### Turn \d+.*$", re.MULTILINE)
 FULL_REBUILD_DIGEST_TURN_THRESHOLD = 20
 
@@ -74,6 +76,40 @@ def coerce_digest_turn_count(value: Any) -> int | None:
     if isinstance(value, int) and value >= 0:
         return value
     return None
+
+
+def _plain_markdown(value: Any) -> str:
+    if not isinstance(value, str):
+        return ""
+    return strip_injected_context(value).strip()
+
+
+def summary_is_stale(session: Any) -> bool:
+    """True when digest turns have advanced past the last summary watermark."""
+    current = digest_turn_count(getattr(session, "digest_markdown", None))
+    watermark = coerce_digest_turn_count(getattr(session, "summary_digest_turn_count", None))
+    if watermark is None:
+        return current > 0
+    return current > watermark
+
+
+def live_handoff_context(session: Any) -> tuple[str, str]:
+    """Return the freshest observer markdown and its context type."""
+    last_turn = _plain_markdown(getattr(session, "last_turn_markdown", None))
+    if last_turn:
+        return last_turn, "last_turn_markdown"
+    watermark = coerce_digest_turn_count(getattr(session, "summary_digest_turn_count", None)) or 0
+    digest_value = getattr(session, "digest_markdown", None)
+    digest_tail = digest_turns_since(
+        digest_value if isinstance(digest_value, str) else None,
+        watermark,
+    ).strip()
+    if digest_tail:
+        return digest_tail, "digest_tail"
+    last_assistant = _plain_markdown(getattr(session, "last_assistant_content", None))
+    if last_assistant:
+        return last_assistant, "last_assistant_content"
+    return _plain_markdown(getattr(session, "summary_markdown", None)), "summary_markdown"
 
 
 def choose_summary_refresh(
