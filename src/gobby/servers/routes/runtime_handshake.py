@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import base64
+import logging
 from typing import Any
 
 from fastapi import APIRouter, HTTPException, Request
@@ -12,6 +13,8 @@ from gobby.runtime_grants.handshake import HandshakeRejection, challenge_proof
 from gobby.runtime_grants.service import GrantRejection
 from gobby.servers.responses import JSONResponse
 from gobby.utils.local_token import AgentApiTokenClaims
+
+logger = logging.getLogger(__name__)
 
 # 32-byte challenge nonce, urlsafe base64 with padding.
 _CHALLENGE_NONCE_MAX_CHARS = 44
@@ -129,6 +132,10 @@ def create_runtime_handshake_router(server: Any) -> APIRouter:
                 claims=_challenge_claims(body),
             )
         except HandshakeRejection as error:
+            logger.warning(
+                "handshake challenge rejected",
+                extra={"code": error.code},
+            )
             return grant_error_response(error)
         return JSONResponse(content={"proof": proof}, headers={"Cache-Control": "no-store"})
 
@@ -158,6 +165,14 @@ def create_runtime_handshake_router(server: Any) -> APIRouter:
                     session_id=session_id,
                 )
         except HandshakeRejection as error:
+            logger.warning(
+                "handshake rejected",
+                extra={
+                    "code": error.code,
+                    "machine_id": body.machine_id,
+                    "project_id": body.project_id,
+                },
+            )
             return grant_error_response(error)
         return JSONResponse(
             content={

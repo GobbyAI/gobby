@@ -7,7 +7,7 @@ use serde::Deserialize;
 
 use crate::grant::{GrantBundle, GrantError};
 
-pub const RUNTIME_CONFIG_PATH: &str = "/api/runtime/config";
+pub use crate::grant::RUNTIME_CONFIG_PATH;
 
 #[derive(Clone, Debug, PartialEq, Eq, Deserialize)]
 pub struct MachineConfig {

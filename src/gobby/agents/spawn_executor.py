@@ -147,8 +147,8 @@ async def _prepare_managed_code_index(
             for name, value in spawn_context.env_vars.items()
             if name in (GOBBY_AGENT_RUN_ID, GOBBY_PROJECT_ID, GOBBY_SESSION_ID) and value
         }
-        # The service-capabilities route only accepts the run-scoped capability
-        # minted for this spawn; the operator token is a tokenless-dev fallback.
+        # Isolation gcode uses the run-scoped managed credential; the operator
+        # token is only a tokenless-dev fallback when no run token was minted.
         run_api_token = spawn_context.env_vars.get(GOBBY_AGENT_API_TOKEN)
         preflight = await ensure_isolation_code_index(
             request.cwd,
@@ -270,7 +270,6 @@ async def _spawn_claude_terminal(request: SpawnRequest) -> SpawnResult:
     if validation_error := _session_manager_validation_error(request, "Claude"):
         return validation_error
 
-    # Prepare spawn context (creates child session, builds env vars)
     spawn_context = request.prepared_spawn
 
     gobby_session_id = spawn_context.session_id

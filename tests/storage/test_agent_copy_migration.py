@@ -79,7 +79,7 @@ _FLAT_STEPS = [{"name": "implement", "prompt": "write it"}]
 _NESTED_STEPS = [{"name": "review", "prompt": "check it"}]
 
 
-def _now_ids() -> dict[str, str]:
+def _fresh_ids() -> dict[str, str]:
     return {
         "flat": str(uuid.uuid4()),
         "nested": str(uuid.uuid4()),
@@ -240,7 +240,7 @@ def test_first_run_copies_mixed_shapes_and_skips_generated(
     copy_schema: tuple[str, str],
 ) -> None:
     url, schema = copy_schema
-    ids = _now_ids()
+    ids = _fresh_ids()
     with _connect(url, schema) as conn:
         _seed_mixed(conn, ids)
         _apply_copy(conn)
@@ -300,7 +300,7 @@ def test_first_run_copies_mixed_shapes_and_skips_generated(
 
 def test_nested_and_flat_source_shapes(copy_schema: tuple[str, str]) -> None:
     url, schema = copy_schema
-    ids = _now_ids()
+    ids = _fresh_ids()
     with _connect(url, schema) as conn:
         _seed_mixed(conn, ids)
         _apply_copy(conn)
@@ -316,7 +316,7 @@ def test_nested_and_flat_source_shapes(copy_schema: tuple[str, str]) -> None:
 
 def test_rerun_over_live_rows_is_idempotent(copy_schema: tuple[str, str]) -> None:
     url, schema = copy_schema
-    ids = _now_ids()
+    ids = _fresh_ids()
     with _connect(url, schema) as conn:
         _seed_mixed(conn, ids)
         _apply_copy(conn)

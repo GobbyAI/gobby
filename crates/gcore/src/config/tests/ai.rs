@@ -487,9 +487,12 @@ fn feature_candidate_rejects_provider_api_base_forms() {
     ] {
         let error = FeatureCandidate::parse_cli_label(label)
             .expect_err("provider/api_base candidate form rejected");
-        assert!(
-            error.contains("provider/model") || error.contains("api_base") || error.contains("url"),
-            "{label}: {error}"
+        assert_eq!(
+            error,
+            format!(
+                "invalid candidate `{label}`: expected provider/model[@effort], \
+                 not a provider/api_base URL"
+            ),
         );
     }
 }

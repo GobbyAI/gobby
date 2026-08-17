@@ -5,7 +5,7 @@ from __future__ import annotations
 import logging
 from collections.abc import Callable
 from dataclasses import dataclass
-from typing import TYPE_CHECKING, cast
+from typing import TYPE_CHECKING, Protocol
 
 from gobby.runtime_grants import (
     DeploymentGrantContext,
@@ -51,6 +51,16 @@ class AuthDecision:
     principal: GrantPrincipal | None = None
     grant: GrantBundle | None = None
     bearer_claims: AgentApiTokenClaims | None = None
+
+
+class GrantPresenter(Protocol):
+    def present(
+        self,
+        grant: GrantBundle,
+        *,
+        now: int | None = None,
+        required: RequiredCapability | None = None,
+    ) -> GrantBundle: ...
 
 
 _GRANT_ROUTES: tuple[GrantRoute, ...] = (
@@ -177,7 +187,7 @@ def admission_required(method: str, path: str) -> bool:
 
 
 def present_or_reject(
-    grant_service: object,
+    grant_service: GrantPresenter,
     raw_header: str,
     *,
     now: int | None,
@@ -193,11 +203,8 @@ def present_or_reject(
             message=_INVALID_GRANT_MESSAGE,
             status_code=401,
         )
-    present = getattr(grant_service, "present", None)
-    if not callable(present):
-        return AuthDecision(allowed=False, code="missing_grant", status_code=401)
     try:
-        return cast(GrantBundle, present(grant, now=now, required=required))
+        return grant_service.present(grant, now=now, required=required)
     except GrantRejection as exc:
         status = 409 if exc.code == "stale_epoch" else 401
         return AuthDecision(

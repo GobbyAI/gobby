@@ -4,6 +4,7 @@ Pipeline definition CLI commands.
 
 from __future__ import annotations
 
+import asyncio
 import sys
 from importlib import import_module
 from typing import Any
@@ -138,8 +139,6 @@ def show_pipeline(ctx: click.Context, name: str, json_format: bool) -> None:
 @click.option("--json", "json_format", is_flag=True, help="Output as JSON")
 def check_pipeline(name: str, json_format: bool) -> None:
     """Validate a pipeline definition without executing it."""
-    import asyncio
-
     facade = _facade()
     loader = facade.get_workflow_loader()
     project_id = facade._get_project_id() or None

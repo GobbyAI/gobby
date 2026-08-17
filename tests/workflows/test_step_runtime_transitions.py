@@ -11,12 +11,11 @@ from typing import Any
 import pytest
 
 from gobby.hooks.events import HookEvent, HookEventType, SessionSource
-from gobby.storage.hub.protocol import HubDatabase
 from gobby.storage.definitions.agents import AgentDefinitionManager
-from gobby.workflows.step_instances import AgentStepInstance
-from gobby.workflows.engine.core import RuleEngine
+from gobby.storage.hub.protocol import HubDatabase
 from gobby.workflows.agent_models import AgentStepWorkflowBody
 from gobby.workflows.definitions import WorkflowStep
+from gobby.workflows.engine.core import RuleEngine
 from gobby.workflows.step_instances import AgentStepInstance, AgentStepInstanceManager
 
 pytestmark = pytest.mark.unit

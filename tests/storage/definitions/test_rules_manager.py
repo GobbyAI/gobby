@@ -11,11 +11,11 @@ from gobby.storage.definitions import (
     DefinitionNotFoundError,
     RuleDefinitionManager,
     RuleDefinitionRow,
+    SessionVariableDefaultManager,
     bump_definitions_revision,
     get_definitions_revision,
     register_revision_listener,
 )
-from gobby.storage.definitions.variables import SessionVariableDefaultManager
 from gobby.storage.hub.postgres import PostgresHubDatabase
 
 _PROJECT = str(uuid4())

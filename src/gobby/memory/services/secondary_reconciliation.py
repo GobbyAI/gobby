@@ -237,8 +237,8 @@ async def _apply_reconcile_sql(
     if current is None:
         return False
 
-    async with connection.cursor(row_factory=dict_row) as cursor:
-        if not payload_only:
+    if not payload_only:
+        async with connection.cursor(row_factory=dict_row) as cursor:
             await cursor.execute(
                 """
                 UPDATE memories

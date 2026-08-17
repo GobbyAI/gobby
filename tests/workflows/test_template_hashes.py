@@ -5,9 +5,13 @@ from __future__ import annotations
 from pathlib import Path
 from types import SimpleNamespace
 
+import pytest
+
 from gobby.storage.definitions._shared import compute_definition_hash
 from gobby.workflows.definitions import AgentDefinitionBody
 from gobby.workflows.template_hashes import TemplateHashCache
+
+pytestmark = pytest.mark.unit
 
 
 def test_load_agents_hashes_nested_step_workflow(tmp_path: Path) -> None:

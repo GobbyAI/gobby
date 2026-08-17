@@ -45,6 +45,9 @@ if TYPE_CHECKING:
     from gobby.mcp_proxy.metrics import ToolMetricsManager
     from gobby.mcp_proxy.tools.internal import InternalRegistryManager
     from gobby.runner import GobbyRunner
+    from gobby.runtime_grants.handshake import HandshakeService
+    from gobby.servers.grant_auth import GrantPresenter
+    from gobby.servers.lease_fence import EffectFence
     from gobby.servers.websocket.server import WebSocketServer
 
 logger = logging.getLogger(__name__)
@@ -97,10 +100,10 @@ class HTTPServer:
         self.bootstrap_config = bootstrap_config or BootstrapConfig()
         self.startup_config = startup_config.model_copy(deep=True) if startup_config else None
         self.auth_service = AuthService(lambda: self.services.database)
-        self.grant_service: Any = None
-        self.handshake_service: Any = None
-        self.handshake_factory: Any = None
-        self.effect_fence: Any = None
+        self.grant_service: GrantPresenter | None = None
+        self.handshake_service: HandshakeService | None = None
+        self.handshake_factory: Callable[[], HandshakeService] | None = None
+        self.effect_fence: EffectFence | None = None
 
         # WebSocket server reference (set by GobbyRunner after construction)
         self.websocket_server: WebSocketServer | None = None

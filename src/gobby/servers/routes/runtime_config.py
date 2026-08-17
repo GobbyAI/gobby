@@ -32,9 +32,9 @@ def create_runtime_config_router(server: Any) -> APIRouter:
         try:
             grant = decode_grant_header(encoded)
             grants.present(grant)
-        except (GrantRejection, HandshakeRejection, ValueError) as error:
-            if isinstance(error, GrantRejection | HandshakeRejection):
-                return grant_error_response(error)
+        except (GrantRejection, HandshakeRejection) as error:
+            return grant_error_response(error)
+        except ValueError as error:
             raise HTTPException(status_code=400, detail="malformed grant") from error
         runtime = getattr(server.services, "config_runtime", None)
         if runtime is None:

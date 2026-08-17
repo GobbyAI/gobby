@@ -608,13 +608,10 @@ fn remote_endpoint_refused_before_auth() {
     let harness = Harness::new();
     let listener = TcpListener::bind("127.0.0.1:0").expect("bind");
     let port = listener.local_addr().unwrap().port();
-    let handle = thread::spawn(move || {
-        let _ = listener.accept();
-    });
+    drop(listener);
     let error = acquire_with(&harness.request(Some(format!("http://example.com:{port}"))))
         .expect_err("remote");
     assert_eq!(error, GrantError::RemoteEndpoint);
-    drop(handle);
 }
 
 #[test]

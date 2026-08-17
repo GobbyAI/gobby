@@ -14,7 +14,7 @@ from typing import Any
 import yaml
 
 from gobby.storage.definitions import AgentDefinitionManager, AgentDefinitionRow
-from gobby.storage.definitions.agents import _parent_body
+from gobby.storage.definitions.agents import parent_body as agent_parent_body
 from gobby.storage.hub.protocol import HubDatabase
 from gobby.storage.sql_dialect import json_array_contains_condition
 from gobby.utils.json_helpers import json_equal
@@ -65,7 +65,7 @@ def _build_agent_update_fields(
 ) -> dict[str, Any]:
     """Build changed fields for a managed bundled agent row."""
     fields: dict[str, Any] = {}
-    existing_parent = _parent_body(existing.definition_json)
+    existing_parent = agent_parent_body(existing.definition_json)
     if not _definition_json_equal(existing_parent, parent_body):
         fields["definition_json"] = parent_body
         fields["description"] = body.description
@@ -140,7 +140,7 @@ def sync_bundled_agents(db: HubDatabase) -> dict[str, Any]:
 
             body = AgentDefinitionBody.model_validate(data)
             dumped = body.model_dump(mode="json")
-            parent_body = _parent_body(dumped)
+            parent_body = agent_parent_body(dumped)
             step_workflow = dumped.get("step_workflow")
             existing = manager.get_by_name(name, include_deleted=True)
             existing_json = ""
@@ -169,7 +169,7 @@ def sync_bundled_agents(db: HubDatabase) -> dict[str, Any]:
 
                 if existing.deleted_at is not None:
                     if not _definition_json_equal(
-                        _parent_body(existing.definition_json), parent_body
+                        agent_parent_body(existing.definition_json), parent_body
                     ):
                         manager.upsert_from_sync(
                             name,

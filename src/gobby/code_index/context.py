@@ -83,7 +83,7 @@ class CodeIndexContext:
             max_backoff_seconds=self._config.sync_worker_breaker_max_backoff_seconds,
         )
         self._gcode_gateway: GcodeGateway | None = gcode_gateway
-        self.launch_factory = launch_factory
+        self.launch_factory: MaintenanceLaunchFactory | None = launch_factory
         if self._gcode_gateway is None and (
             self._config.graph_enabled or self._config.embedding_enabled
         ):

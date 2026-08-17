@@ -67,5 +67,5 @@ def _active_hooks_config() -> Any | None:
         return None
     try:
         return runtime.snapshot.active.hooks
-    except Exception:
+    except RuntimeError:
         return None

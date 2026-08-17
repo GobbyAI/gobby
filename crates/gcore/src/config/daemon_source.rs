@@ -43,9 +43,10 @@ impl ConfigSource for DaemonServedConfig {
 #[derive(Debug, Clone)]
 pub enum DaemonOrPrimary<P> {
     Daemon(DaemonServedConfig),
-    /// Daemon-served values plus a revision-coherent primary for keys the
-    /// daemon never serves. Unresolved secret markers are grant-issuance bugs
-    /// and fail typed instead of unwrapping client-side.
+    /// Daemon-served values plus a revision-coherent primary used only by
+    /// `config_value` for secret-reference keys. `resolve_value` still uses the
+    /// daemon source; unresolved secret markers fail typed instead of falling
+    /// back to the primary.
     DaemonWithSecrets(DaemonServedConfig, P),
     Primary(P),
 }

@@ -123,11 +123,11 @@ def _wait_for_row_lock_waiter(
     raise AssertionError("timed out waiting for a pipeline row lock waiter")
 
 
-@pytest.mark.parametrize("first", ("content", "rename"))
+@pytest.mark.parametrize("holder_change", ("content", "rename"))
 def test_concurrent_rename_and_content_update_both_orderings(
     definition_db: PostgresHubDatabase,
     postgres_database_url: str,
-    first: str,
+    holder_change: str,
 ) -> None:
     created = _mgr(definition_db).create(
         name="lint",
@@ -140,15 +140,17 @@ def test_concurrent_rename_and_content_update_both_orderings(
     writer_db.open()
     assert _mgr(writer_db).get(created.id).name == "lint"
     writer_fields: dict[str, Any] = (
-        {"name": "lint-v2"} if first == "content" else {"definition_json": {"steps": _NEW_STEPS}}
+        {"name": "lint-v2"}
+        if holder_change == "content"
+        else {"definition_json": {"steps": _NEW_STEPS}}
     )
     finished = Event()
-    errors: list[BaseException] = []
+    errors: list[Exception] = []
 
     def run_writer() -> None:
         try:
             _mgr(writer_db).update(created.id, **writer_fields)
-        except BaseException as exc:
+        except Exception as exc:
             errors.append(exc)
         finally:
             finished.set()
@@ -170,7 +172,7 @@ def test_concurrent_rename_and_content_update_both_orderings(
                     finished,
                     writer_db.application_name,
                 )
-                if first == "content":
+                if holder_change == "content":
                     holder.execute(
                         """
                         UPDATE pipeline_definitions
@@ -193,7 +195,7 @@ def test_concurrent_rename_and_content_update_both_orderings(
                         ),
                     )
                 holder.execute("COMMIT")
-            except BaseException:
+            except Exception:
                 holder.execute("ROLLBACK")
                 raise
         assert finished.wait(timeout=5)
@@ -226,7 +228,7 @@ def test_sync_does_not_override_concurrent_user_pin(
     writer_db.open()
     assert _mgr(writer_db).get(created.id).enabled is True
     finished = Event()
-    errors: list[BaseException] = []
+    errors: list[Exception] = []
 
     def run_sync() -> None:
         try:
@@ -235,7 +237,7 @@ def test_sync_does_not_override_concurrent_user_pin(
                 enabled=False,
                 description="from-template",
             )
-        except BaseException as exc:
+        except Exception as exc:
             errors.append(exc)
         finally:
             finished.set()
@@ -266,7 +268,7 @@ def test_sync_does_not_override_concurrent_user_pin(
                     (created.id,),
                 )
                 holder.execute("COMMIT")
-            except BaseException:
+            except Exception:
                 holder.execute("ROLLBACK")
                 raise
         assert finished.wait(timeout=5)

@@ -699,15 +699,15 @@ def _ensure_step_instance(
             )
         )
         recovered_ids = (row.id, row.step_workflow_id)
-    logger.warning(
-        "Recovered missing agent-step instance for session %s agent %s "
-        "definition_id=%s step_workflow_id=%s marker=%s",
-        session_id,
-        agent_name,
-        recovered_ids[0],
-        recovered_ids[1],
-        FRESH_SNAPSHOT_RECOVERY_MARKER,
-    )
+        logger.warning(
+            "Recovered missing agent-step instance for session %s agent %s "
+            "definition_id=%s step_workflow_id=%s marker=%s",
+            session_id,
+            agent_name,
+            recovered_ids[0],
+            recovered_ids[1],
+            FRESH_SNAPSHOT_RECOVERY_MARKER,
+        )
     return True
 
 

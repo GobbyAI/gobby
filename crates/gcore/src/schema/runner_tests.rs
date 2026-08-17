@@ -521,6 +521,13 @@ fn baseline_refresh_accepts_exactly_the_predecessor_statement_difference() {
 }
 
 #[test]
+fn combined_refresh_prefixes_are_the_union_of_the_mode_lists() {
+    let mut expected = TYPED_DOMAIN_REFRESH_PREFIXES.to_vec();
+    expected.extend_from_slice(RUNTIME_BOUNDARY_REFRESH_PREFIXES);
+    assert_eq!(REFRESH_STATEMENT_PREFIXES, expected.as_slice());
+}
+
+#[test]
 fn parent_and_worktree_fixtures_match_pinned_checksums() {
     assert_eq!(
         super::assets::sha256_hex(

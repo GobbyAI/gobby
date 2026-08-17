@@ -369,17 +369,11 @@ fn daemon_dsn_trims_available_value_and_propagates_failed_state() {
 }
 
 #[test]
-fn primary_factory_is_lazy_in_daemon_mode_and_once_in_standalone_mode() {
+fn primary_factory_is_unused_in_daemon_mode() {
     let home = temp_home();
-    fs::write(
-        home.path().join("grant-backed config"),
-        "ai.embeddings.model: standalone-model\n",
-    )
-    .expect("write standalone config");
-
     let daemon_calls = Cell::new(0);
     let mut daemon_source = ai_source_with_primary_from_layers(
-        Ok(Some(served([("ai.embeddings.model", "daemon-model")]))),
+        Ok(served([("ai.embeddings.model", "daemon-model")])),
         home.path(),
         || {
             daemon_calls.set(daemon_calls.get() + 1);
@@ -391,20 +385,6 @@ fn primary_factory_is_lazy_in_daemon_mode_and_once_in_standalone_mode() {
     assert_eq!(
         daemon_source.config_value("ai.embeddings.model").as_deref(),
         Some("daemon-model")
-    );
-
-    let standalone_calls = Cell::new(0);
-    let mut standalone_source = ai_source_with_primary_from_layers(Ok(None), home.path(), || {
-        standalone_calls.set(standalone_calls.get() + 1);
-        Ok(NoPrimaryAiConfigSource)
-    })
-    .expect("standalone source");
-    assert_eq!(standalone_calls.get(), 1);
-    assert_eq!(
-        standalone_source
-            .config_value("ai.embeddings.model")
-            .as_deref(),
-        Some("standalone-model")
     );
 }
 

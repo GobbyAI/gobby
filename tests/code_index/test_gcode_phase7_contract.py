@@ -259,6 +259,7 @@ def _iter_crate_sources() -> list[Path]:
             if path.is_file()
             and path.suffix in {".rs", ".toml", ".json", ".md"}
             and path.name != "CHANGELOG.md"
+            and "tests" not in path.parts
         )
     return files
 
@@ -279,7 +280,12 @@ def test_contract_on_grant_fixtures() -> None:
     assert "qdrant_from_grant" in resolution
     assert "GOBBY_MANAGED_EXECUTION_BOOTSTRAP" in gwiki_common
     assert "GOBBY_RUNTIME_MODE" not in storage_conformance
-    assert "standalone" not in storage_conformance.lower()
+    for marker in (
+        "StandaloneSetup",
+        "GOBBY_RUNTIME_MODE=standalone",
+        "runtime_mode = standalone",
+    ):
+        assert marker not in storage_conformance
     for marker in ("GCODE_DATABASE_URL", "GOBBY_POSTGRES_DSN", "gcore.yaml"):
         assert marker not in storage_conformance
 

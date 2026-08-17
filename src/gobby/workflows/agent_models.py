@@ -168,7 +168,7 @@ class AgentDefinitionBody(BaseModel):
 
     def build_prompt_preamble(self) -> str | None:
         """Build structured prompt preamble from role/goal/personality/instructions."""
-        parts = []
+        parts: list[str] = []
         if self.role:
             parts.append(f"## Role\n{self.role}")
         if self.goal:

@@ -5,11 +5,12 @@ import json
 import pytest
 
 from gobby.storage.definitions.rules import RuleDefinitionManager
+from gobby.storage.hub.protocol import HubDatabase
 from gobby.workflows.template_writer import read_template
 
 
 @pytest.fixture()
-def manager(temp_db):
+def manager(temp_db: HubDatabase) -> RuleDefinitionManager:
     return RuleDefinitionManager(temp_db)
 
 

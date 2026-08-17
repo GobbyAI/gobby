@@ -19,6 +19,7 @@ from dataclasses import dataclass
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import TYPE_CHECKING
+from uuid import uuid4
 
 from psycopg.conninfo import conninfo_to_dict
 
@@ -414,11 +415,15 @@ def _prepare_gcode_runtime(
     )
     wrapper_path.chmod(0o755)
 
+    bootstrap_path = launch.env.get(MANAGED_EXECUTION_BOOTSTRAP_ENV)
+    if not bootstrap_path:
+        raise RuntimeError("gcode_managed_execution_bootstrap_missing")
+
     return CodeIndexPreflightResult(
         env={
             "PATH": _prepend_path(wrapper_path.parent),
             _RUNTIME_HOME_ENV: str(runtime_home),
-            MANAGED_EXECUTION_BOOTSTRAP_ENV: launch.env[MANAGED_EXECUTION_BOOTSTRAP_ENV],
+            MANAGED_EXECUTION_BOOTSTRAP_ENV: bootstrap_path,
         },
         wrapper_path=str(wrapper_path),
         runtime_home=str(runtime_home),
@@ -454,8 +459,6 @@ def _signed_grant_from_credential(
     session_id: str | None,
     context: DeploymentGrantContext,
 ) -> GrantBundle:
-    from uuid import uuid4
-
     postgres = PostgresDirect(
         dsn=_scoped_database_url(credential),
         role_name=credential.role_name,

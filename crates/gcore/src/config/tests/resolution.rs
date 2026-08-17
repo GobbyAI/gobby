@@ -64,16 +64,14 @@ fn falkordb_password_resolves_current_config_key() {
 }
 
 #[test]
-fn config_source_uses_grant_backed_plaintext() {
+fn config_source_resolves_falkordb_when_password_key_absent() {
     let _env = EnvGuard::new();
-    let mut source = TestSource::with_values([
-        ("databases.falkordb.host", "falkor.local"),
-        ("databases.falkordb.password", "grant-pass"),
-    ]);
+    let mut source = TestSource::with_values([("databases.falkordb.host", "falkor.local")]);
 
     let config = resolve_falkordb_config(&mut source).expect("falkordb config");
 
-    assert_eq!(config.password.as_deref(), Some("grant-pass"));
+    assert_eq!(config.host, "falkor.local");
+    assert_eq!(config.password, None);
 }
 
 #[test]

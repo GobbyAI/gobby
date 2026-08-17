@@ -74,7 +74,7 @@ def _decode_json_array(value: Any) -> list[Any]:
     return []
 
 
-def _parent_body(body_json: Mapping[str, Any] | str) -> dict[str, Any]:
+def parent_body(body_json: Mapping[str, Any] | str) -> dict[str, Any]:
     if isinstance(body_json, str):
         parsed = json.loads(body_json)
         if not isinstance(parsed, dict):
@@ -85,6 +85,9 @@ def _parent_body(body_json: Mapping[str, Any] | str) -> dict[str, Any]:
     for key in _STEP_BODY_KEYS:
         body.pop(key, None)
     return body
+
+
+_parent_body = parent_body
 
 
 def _child_columns(

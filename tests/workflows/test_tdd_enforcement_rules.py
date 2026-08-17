@@ -6,15 +6,14 @@ sync correctly, have valid structure, and evaluate conditions properly.
 
 from __future__ import annotations
 
-import json
 from datetime import UTC, datetime
 
 import pytest
 
 from gobby.hooks.events import HookEvent, HookEventType, SessionSource
 from gobby.hooks.normalization import normalize_tool_fields
-from gobby.storage.hub.protocol import HubDatabase
 from gobby.storage.definitions.rules import RuleDefinitionManager
+from gobby.storage.hub.protocol import HubDatabase
 from gobby.workflows.definitions import RuleDefinitionBody
 from gobby.workflows.safe_evaluator import SafeExpressionEvaluator, build_condition_helpers
 from gobby.workflows.sync_rules import sync_bundled_rules
@@ -66,7 +65,9 @@ TDD_ENFORCEMENT_RULES = {
 class TestTddEnforcementSync:
     """Test that tdd-enforcement rules sync correctly."""
 
-    def test_bundled_file_syncs_all_rules(self, db, manager) -> None:
+    def test_bundled_file_syncs_all_rules(
+        self, db: HubDatabase, manager: RuleDefinitionManager
+    ) -> None:
         """Both TDD enforcement rules should sync to rule_definitions."""
         _sync_bundled(db)
 
@@ -77,7 +78,7 @@ class TestTddEnforcementSync:
             f"Missing: {TDD_ENFORCEMENT_RULES - rule_names}"
         )
 
-    def test_all_rules_have_group(self, db, manager) -> None:
+    def test_all_rules_have_group(self, db: HubDatabase, manager: RuleDefinitionManager) -> None:
         """All rules should have group='tdd-enforcement'."""
         _sync_bundled(db)
 
@@ -87,7 +88,9 @@ class TestTddEnforcementSync:
                 body = row.definition_json
                 assert body.get("group") == "tdd-enforcement", f"{row.name} missing group"
 
-    def test_all_rules_are_valid_pydantic(self, db, manager) -> None:
+    def test_all_rules_are_valid_pydantic(
+        self, db: HubDatabase, manager: RuleDefinitionManager
+    ) -> None:
         """All synced rules should be valid RuleDefinitionBody instances."""
         _sync_bundled(db)
 
@@ -104,7 +107,7 @@ class TestTddEnforcementSync:
 class TestEnforceTddBlockStructure:
     """Verify enforce-tdd-block rule structure."""
 
-    def test_is_before_tool_event(self, db, manager) -> None:
+    def test_is_before_tool_event(self, db: HubDatabase, manager: RuleDefinitionManager) -> None:
         _sync_bundled(db)
         row = manager.get_by_name("enforce-tdd-block")
         assert row is not None
@@ -112,7 +115,7 @@ class TestEnforceTddBlockStructure:
         body = RuleDefinitionBody.model_validate(row.definition_json)
         assert body.event.value == "before_tool"
 
-    def test_has_three_effects(self, db, manager) -> None:
+    def test_has_three_effects(self, db: HubDatabase, manager: RuleDefinitionManager) -> None:
         """Should have set_variable + mcp_call + block effects."""
         _sync_bundled(db)
         row = manager.get_by_name("enforce-tdd-block")
@@ -124,7 +127,9 @@ class TestEnforceTddBlockStructure:
         assert effects[1].type == "mcp_call"
         assert effects[2].type == "block"
 
-    def test_set_variable_appends_to_tdd_nudged_files(self, db, manager) -> None:
+    def test_set_variable_appends_to_tdd_nudged_files(
+        self, db: HubDatabase, manager: RuleDefinitionManager
+    ) -> None:
         _sync_bundled(db)
         row = manager.get_by_name("enforce-tdd-block")
         body = RuleDefinitionBody.model_validate(row.definition_json)
@@ -134,7 +139,7 @@ class TestEnforceTddBlockStructure:
         assert "tdd_nudged_files" in sv_effect.value
         assert "first_tdd_code_path" in sv_effect.value
 
-    def test_mcp_call_updates_task(self, db, manager) -> None:
+    def test_mcp_call_updates_task(self, db: HubDatabase, manager: RuleDefinitionManager) -> None:
         _sync_bundled(db)
         row = manager.get_by_name("enforce-tdd-block")
         body = RuleDefinitionBody.model_validate(row.definition_json)
@@ -145,7 +150,9 @@ class TestEnforceTddBlockStructure:
         assert "task_id" in mcp_effect.arguments
         assert "validation_criteria" in mcp_effect.arguments
 
-    def test_mcp_call_gated_by_task_claimed(self, db, manager) -> None:
+    def test_mcp_call_gated_by_task_claimed(
+        self, db: HubDatabase, manager: RuleDefinitionManager
+    ) -> None:
         _sync_bundled(db)
         row = manager.get_by_name("enforce-tdd-block")
         body = RuleDefinitionBody.model_validate(row.definition_json)
@@ -154,7 +161,9 @@ class TestEnforceTddBlockStructure:
         assert mcp_effect.when is not None
         assert "task_claimed" in mcp_effect.when
 
-    def test_block_targets_write_and_bash(self, db, manager) -> None:
+    def test_block_targets_write_and_bash(
+        self, db: HubDatabase, manager: RuleDefinitionManager
+    ) -> None:
         _sync_bundled(db)
         row = manager.get_by_name("enforce-tdd-block")
         body = RuleDefinitionBody.model_validate(row.definition_json)
@@ -162,7 +171,7 @@ class TestEnforceTddBlockStructure:
         block_effect = body.resolved_effects[2]
         assert block_effect.tools == ["Write", "Bash"]
 
-    def test_when_checks_enforce_tdd(self, db, manager) -> None:
+    def test_when_checks_enforce_tdd(self, db: HubDatabase, manager: RuleDefinitionManager) -> None:
         _sync_bundled(db)
         row = manager.get_by_name("enforce-tdd-block")
         body = RuleDefinitionBody.model_validate(row.definition_json)
@@ -258,7 +267,7 @@ class TestEnforceTddBlockCondition:
 class TestEnforceTddTrackTestsStructure:
     """Verify enforce-tdd-track-tests rule structure."""
 
-    def test_is_after_tool_event(self, db, manager) -> None:
+    def test_is_after_tool_event(self, db: HubDatabase, manager: RuleDefinitionManager) -> None:
         _sync_bundled(db)
         row = manager.get_by_name("enforce-tdd-track-tests")
         assert row is not None
@@ -266,7 +275,7 @@ class TestEnforceTddTrackTestsStructure:
         body = RuleDefinitionBody.model_validate(row.definition_json)
         assert body.event.value == "after_tool"
 
-    def test_has_set_variable_effect(self, db, manager) -> None:
+    def test_has_set_variable_effect(self, db: HubDatabase, manager: RuleDefinitionManager) -> None:
         _sync_bundled(db)
         row = manager.get_by_name("enforce-tdd-track-tests")
         body = RuleDefinitionBody.model_validate(row.definition_json)
@@ -276,7 +285,9 @@ class TestEnforceTddTrackTestsStructure:
         assert "tdd_tests_written" in body.effects[0].value
         assert "first_tdd_test_path" in body.effects[0].value
 
-    def test_when_checks_enforce_tdd_and_tool(self, db, manager) -> None:
+    def test_when_checks_enforce_tdd_and_tool(
+        self, db: HubDatabase, manager: RuleDefinitionManager
+    ) -> None:
         _sync_bundled(db)
         row = manager.get_by_name("enforce-tdd-track-tests")
         body = RuleDefinitionBody.model_validate(row.definition_json)

@@ -67,8 +67,8 @@ struct EffectiveConfigEnvelope {
 
 static EFFECTIVE_CONFIG_STATE: OnceLock<EffectiveConfigState> = OnceLock::new();
 
-pub fn daemon_mode_layers() -> Result<Option<EffectiveConfigLayers>, EffectiveConfigError> {
-    daemon_mode_layers_for(|| layers_from_state(effective_config_state()))
+pub fn daemon_mode_layers() -> Result<EffectiveConfigLayers, EffectiveConfigError> {
+    layers_from_state(effective_config_state())
 }
 
 pub fn daemon_mode_layers_at(
@@ -77,7 +77,8 @@ pub fn daemon_mode_layers_at(
 ) -> Result<EffectiveConfigLayers, EffectiveConfigError> {
     let token = crate::local_token::read_local_cli_token_for(gobby_home).ok();
     if let Some(path) = std::env::var_os(MANAGED_EXECUTION_BOOTSTRAP_ENV) {
-        let grant = crate::grant::load_grant_file(Path::new(&path)).map_err(|_| {
+        let grant = crate::grant::load_grant_file(Path::new(&path)).map_err(|error| {
+            log::warn!("managed grant file could not be loaded: {error}");
             EffectiveConfigError::LocalConfiguration {
                 reason: "managed grant file could not be loaded",
             }
@@ -88,16 +89,19 @@ pub fn daemon_mode_layers_at(
             token.as_deref(),
             EFFECTIVE_CONFIG_TIMEOUT,
         )
-        .map_err(|error| match error {
-            crate::grant::GrantError::Timeout => EffectiveConfigError::Transport {
-                kind: EffectiveConfigTransportKind::Timeout,
-            },
-            crate::grant::GrantError::DaemonRequired => EffectiveConfigError::Transport {
-                kind: EffectiveConfigTransportKind::Unreachable,
-            },
-            _ => EffectiveConfigError::LocalConfiguration {
-                reason: "managed runtime config fetch failed",
-            },
+        .map_err(|error| {
+            log::warn!("managed runtime config fetch failed: {error}");
+            match error {
+                crate::grant::GrantError::Timeout => EffectiveConfigError::Transport {
+                    kind: EffectiveConfigTransportKind::Timeout,
+                },
+                crate::grant::GrantError::DaemonRequired => EffectiveConfigError::Transport {
+                    kind: EffectiveConfigTransportKind::Unreachable,
+                },
+                _ => EffectiveConfigError::LocalConfiguration {
+                    reason: "managed runtime config fetch failed",
+                },
+            }
         })?;
         validate_served_values(&settings.settings)?;
         return Ok(DaemonServedConfig::new(
@@ -210,16 +214,13 @@ pub fn daemon_dsn() -> Result<Option<String>, EffectiveConfigError> {
 }
 
 pub fn ai_source_with_primary<P: ConfigSource>(
-    primary: impl FnOnce() -> anyhow::Result<P>,
+    _primary: impl FnOnce() -> anyhow::Result<P>,
 ) -> anyhow::Result<AiConfigSource<DaemonOrPrimary<P>>> {
-    match daemon_mode_layers()? {
-        Some(daemon) => Ok(AiConfigSource::with_primary(DaemonOrPrimary::Daemon(
-            daemon,
-        ))),
-        None => Ok(AiConfigSource::with_primary(DaemonOrPrimary::Primary(
-            primary()?,
-        ))),
-    }
+    let _ = _primary;
+    let daemon = daemon_mode_layers()?;
+    Ok(AiConfigSource::with_primary(DaemonOrPrimary::Daemon(
+        daemon,
+    )))
 }
 
 pub fn ai_source_without_primary() -> anyhow::Result<EffectiveLocalAiSource> {
@@ -232,14 +233,10 @@ pub fn ai_source_without_primary() -> anyhow::Result<EffectiveLocalAiSource> {
 pub fn ai_source_with_secret_primary<P: ConfigSource>(
     primary: impl FnOnce() -> anyhow::Result<P>,
 ) -> anyhow::Result<AiConfigSource<DaemonOrPrimary<P>>> {
-    match daemon_mode_layers()? {
-        Some(daemon) => Ok(AiConfigSource::with_primary(
-            DaemonOrPrimary::DaemonWithSecrets(daemon, primary()?),
-        )),
-        None => Ok(AiConfigSource::with_primary(DaemonOrPrimary::Primary(
-            primary()?,
-        ))),
-    }
+    let daemon = daemon_mode_layers()?;
+    Ok(AiConfigSource::with_primary(
+        DaemonOrPrimary::DaemonWithSecrets(daemon, primary()?),
+    ))
 }
 
 #[cfg(feature = "postgres")]
@@ -283,10 +280,11 @@ fn layers_from_state(
     }
 }
 
+#[cfg(test)]
 fn daemon_mode_layers_for(
     daemon_layers: impl FnOnce() -> Result<EffectiveConfigLayers, EffectiveConfigError>,
-) -> Result<Option<EffectiveConfigLayers>, EffectiveConfigError> {
-    daemon_layers().map(Some)
+) -> Result<EffectiveConfigLayers, EffectiveConfigError> {
+    daemon_layers()
 }
 
 fn daemon_dsn_from_state(
@@ -319,18 +317,14 @@ fn validate_served_values(values: &BTreeMap<String, String>) -> Result<(), Effec
 
 #[cfg(test)]
 fn ai_source_with_primary_from_layers<P: ConfigSource>(
-    layers: Result<Option<EffectiveConfigLayers>, EffectiveConfigError>,
+    layers: Result<EffectiveConfigLayers, EffectiveConfigError>,
     _gobby_home: &Path,
-    primary: impl FnOnce() -> anyhow::Result<P>,
+    _primary: impl FnOnce() -> anyhow::Result<P>,
 ) -> anyhow::Result<AiConfigSource<DaemonOrPrimary<P>>> {
-    match layers? {
-        Some(daemon) => Ok(AiConfigSource::with_primary(DaemonOrPrimary::Daemon(
-            daemon,
-        ))),
-        None => Ok(AiConfigSource::with_primary(DaemonOrPrimary::Primary(
-            primary()?,
-        ))),
-    }
+    let _ = _primary;
+    Ok(AiConfigSource::with_primary(DaemonOrPrimary::Daemon(
+        layers?,
+    )))
 }
 
 #[cfg(test)]
