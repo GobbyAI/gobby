@@ -733,6 +733,11 @@ def test_rotation_drains_predecessor_generations(
             expires_at=datetime.now(UTC) + timedelta(hours=1),
             secret_store=store,
         )
+        assert (
+            token,
+            fixture.project_id,
+            first.credential_generation,
+        ) not in manager._interactive_grant_expiry
         with psycopg.connect(first.dsn) as conn:
             assert conn.execute("SELECT 1").fetchone() == (1,)
         with psycopg.connect(rotated.dsn) as conn:

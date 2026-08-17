@@ -44,5 +44,7 @@ class HookTimeoutConfig(BaseModel):
                 raise ValueError("provider key must be non-empty")
             if raw_limit < 256:
                 raise ValueError("additional context limit must be >= 256")
+            if key in normalized:
+                raise ValueError(f"duplicate provider key after normalization: {key}")
             normalized[key] = raw_limit
         return normalized
