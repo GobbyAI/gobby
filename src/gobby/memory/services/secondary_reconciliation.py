@@ -10,6 +10,7 @@ from __future__ import annotations
 import asyncio
 import logging
 import math
+import time
 from collections.abc import AsyncIterator, Awaitable, Callable
 from contextlib import asynccontextmanager
 from typing import TYPE_CHECKING, Any, Protocol
@@ -76,12 +77,23 @@ def _timeout_milliseconds(remaining: float) -> int:
 async def memory_row_session(
     conninfo: str,
     memory_id: str,
+    *,
+    timeout_seconds: float | None = None,
 ) -> AsyncIterator[psycopg.AsyncConnection[Any]]:
     """Hold ``pg_advisory_lock(_memory_lock_key)`` with no idle transaction."""
     lock_key = _memory_lock_key(memory_id)
-    connection = await psycopg.AsyncConnection.connect(conninfo, prepare_threshold=None)
+    deadline = _mutator_budget_seconds() if timeout_seconds is None else timeout_seconds
+    timeout_ms = _timeout_milliseconds(deadline)
+    connection = await psycopg.AsyncConnection.connect(
+        conninfo,
+        connect_timeout=max(1, math.ceil(deadline)),
+        prepare_threshold=None,
+    )
     locked = False
     try:
+        await connection.execute(
+            sql.SQL("SET LOCAL statement_timeout = {}").format(sql.Literal(timeout_ms))
+        )
         await connection.execute("SELECT pg_advisory_lock(%s)", (lock_key,))
         locked = True
         await connection.commit()
@@ -308,7 +320,11 @@ async def reconcile_active_snapshot(
 ) -> bool:
     """Rebuild secondaries only while the scheduled active row remains locked."""
     try:
-        async with memory_row_session(host.storage.db.conninfo, memory.id) as connection:
+        async with memory_row_session(
+            host.storage.db.conninfo,
+            memory.id,
+            timeout_seconds=_mutator_budget_seconds(),
+        ) as connection:
 
             async def verify(conn: psycopg.AsyncConnection[Any]) -> Memory | None:
                 return await _load_active_snapshot(conn, memory)
@@ -461,24 +477,24 @@ async def purge_secondary_indices(
             return str(row["project_id"]), bool(row["is_global"])
 
         try:
-            async with memory_row_session(host.storage.db.conninfo, memory_id) as connection:
-                budget = _supersession_budget_seconds()
-                timeout_ms = _timeout_milliseconds(budget)
-                await connection.execute(
-                    sql.SQL("SET LOCAL statement_timeout = {}").format(sql.Literal(timeout_ms))
-                )
-                await connection.execute(
-                    sql.SQL("SET LOCAL lock_timeout = {}").format(sql.Literal(timeout_ms))
-                )
-                hidden = await load_hidden(connection)
+            budget = _supersession_budget_seconds()
+            async with memory_row_session(
+                host.storage.db.conninfo,
+                memory_id,
+                timeout_seconds=budget,
+            ) as connection:
+                started = time.monotonic()
+                sql_budget = budget / 2.0
+                hidden = await _run_sql_slice(connection, sql_budget, load_hidden)
                 if hidden is None:
-                    await connection.commit()
                     return
+                remaining = budget - (time.monotonic() - started)
+                if remaining <= 0:
+                    raise TimeoutError
                 await asyncio.wait_for(
                     _delete_artifacts(host, memory_id, hidden[0], hidden[1]),
-                    timeout=budget,
+                    timeout=remaining,
                 )
-                await connection.commit()
         except TimeoutError:
             logger.warning(
                 "Visibility-locked secondary purge failed for %s: %s",
@@ -509,7 +525,11 @@ async def rebuild_crossrefs_for_memory(
     max_links: int | None = None,
 ) -> int:
     """Rebuild one memory's links on the shared active-snapshot fence."""
-    async with memory_row_session(host.storage.db.conninfo, memory.id) as connection:
+    async with memory_row_session(
+        host.storage.db.conninfo,
+        memory.id,
+        timeout_seconds=_mutator_budget_seconds(),
+    ) as connection:
         try:
             async with asyncio.timeout(SECONDARY_RECONCILIATION_IO_SECONDS):
                 created = await host._crossref_service.rebuild_for_memory(

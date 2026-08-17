@@ -4,6 +4,10 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import uuid
+from collections.abc import Awaitable, Callable
+from datetime import UTC, datetime
+from typing import Any, cast
 from unittest.mock import AsyncMock
 
 import psycopg
@@ -161,3 +165,122 @@ async def test_rebuild_crossrefs_slow_embed_does_not_use_bounded_db(
         timeout=5,
     )
     assert created == 0
+
+
+@pytest.mark.asyncio
+async def test_memory_row_session_sets_timeout_before_advisory_lock(
+    hub_db: HubDatabase,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    recorded: list[str] = []
+    real_connect = psycopg.AsyncConnection.connect
+
+    async def tracking_connect(*args: Any, **kwargs: Any) -> psycopg.AsyncConnection[Any]:
+        recorded.append(f"connect:{kwargs.get('connect_timeout')}")
+        connection = await real_connect(*args, **kwargs)
+        real_execute = connection.execute
+
+        async def tracking_execute(query: Any, *exec_args: Any, **exec_kwargs: Any) -> Any:
+            recorded.append(str(query))
+            return await real_execute(query, *exec_args, **exec_kwargs)
+
+        cast(Any, connection).execute = tracking_execute
+        return connection
+
+    monkeypatch.setattr(psycopg.AsyncConnection, "connect", tracking_connect)
+
+    async with recon_module.memory_row_session(hub_db.conninfo, str(uuid.uuid4())):
+        pass
+
+    connect_timeouts = [item for item in recorded if item.startswith("connect:")]
+    assert connect_timeouts
+    assert connect_timeouts[0] != "connect:None"
+    timeout_idx = next(i for i, item in enumerate(recorded) if "statement_timeout" in item)
+    lock_idx = next(i for i, item in enumerate(recorded) if "pg_advisory_lock" in item)
+    assert timeout_idx < lock_idx
+
+
+@pytest.mark.asyncio
+async def test_purge_hidden_commits_before_external_deletes(
+    hub_db: HubDatabase,
+    vector_store: AsyncMock,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    manager = _manager(hub_db, AsyncMock(return_value=list(_VECTOR)), vector_store)
+    memory = await manager.create_memory("hidden for purge", project_id=PERSONAL_PROJECT_ID)
+    with hub_db.transaction() as txn:
+        txn.execute(
+            "UPDATE memories SET deleted_at = %s WHERE id = %s",
+            (datetime.now(UTC), memory.id),
+        )
+
+    order: list[str] = []
+    real_slice = recon_module._run_sql_slice
+
+    async def tracking_slice[T](
+        connection: psycopg.AsyncConnection[Any],
+        deadline_seconds: float,
+        work: Callable[[psycopg.AsyncConnection[Any]], Awaitable[T]],
+    ) -> T:
+        result = await real_slice(connection, deadline_seconds, work)
+        order.append("sql_committed")
+        async with await psycopg.AsyncConnection.connect(hub_db.conninfo) as probe:
+            async with probe.cursor() as cursor:
+                await cursor.execute(
+                    "SELECT id FROM memories WHERE id = %s FOR UPDATE NOWAIT",
+                    (memory.id,),
+                )
+                row = await cursor.fetchone()
+        assert row is not None
+        return result
+
+    async def tracking_delete(*_args: object, **_kwargs: object) -> None:
+        order.append("external_delete")
+
+    monkeypatch.setattr(recon_module, "_run_sql_slice", tracking_slice)
+    monkeypatch.setattr(recon_module, "_delete_artifacts", tracking_delete)
+
+    await manager._lifecycle_service.purge_secondary_indices(memory.id, require_hidden=True)
+    assert order == ["sql_committed", "external_delete"]
+
+
+@pytest.mark.asyncio
+async def test_purge_hidden_splits_supersession_budget(
+    hub_db: HubDatabase,
+    vector_store: AsyncMock,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(lifecycle_module, "SUPERSESSION_CLEANUP_BUDGET_SECONDS", 4.0)
+    manager = _manager(hub_db, AsyncMock(return_value=list(_VECTOR)), vector_store)
+    memory = await manager.create_memory("budget split", project_id=PERSONAL_PROJECT_ID)
+    with hub_db.transaction() as txn:
+        txn.execute(
+            "UPDATE memories SET deleted_at = %s WHERE id = %s",
+            (datetime.now(UTC), memory.id),
+        )
+
+    sql_deadlines: list[float] = []
+    io_timeouts: list[float] = []
+    real_slice = recon_module._run_sql_slice
+    real_wait_for = asyncio.wait_for
+
+    async def tracking_slice[T](
+        connection: psycopg.AsyncConnection[Any],
+        deadline_seconds: float,
+        work: Callable[[psycopg.AsyncConnection[Any]], Awaitable[T]],
+    ) -> T:
+        sql_deadlines.append(deadline_seconds)
+        return await real_slice(connection, deadline_seconds, work)
+
+    async def tracking_wait_for(awaitable: Awaitable[Any], *, timeout: float | None = None) -> Any:
+        if timeout is not None:
+            io_timeouts.append(timeout)
+        return await real_wait_for(awaitable, timeout=timeout)
+
+    monkeypatch.setattr(recon_module, "_run_sql_slice", tracking_slice)
+    monkeypatch.setattr(asyncio, "wait_for", tracking_wait_for)
+
+    await manager._lifecycle_service.purge_secondary_indices(memory.id, require_hidden=True)
+    assert sql_deadlines == [2.0]
+    assert io_timeouts
+    assert 0 < io_timeouts[0] <= 4.0
