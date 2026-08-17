@@ -18,6 +18,9 @@ from pathlib import Path
 from typing import Any
 
 from cryptography.fernet import Fernet, InvalidToken
+from cryptography.hazmat.primitives import hashes
+from cryptography.hazmat.primitives.ciphers.aead import AESGCM
+from cryptography.hazmat.primitives.kdf.hkdf import HKDF
 from cryptography.hazmat.primitives.kdf.scrypt import Scrypt
 
 from gobby.paths import get_gobby_home
@@ -49,6 +52,9 @@ SECRET_KEK_PASSPHRASE_ENV = "GOBBY_SECRET_KEK_PASSPHRASE"  # nosec B105
 SCRYPT_N = 2**14
 SCRYPT_R = 8
 SCRYPT_P = 1
+_SEAL_HKDF_INFO = b"gobby.secret-store.seal.v1"
+_AES_GCM_NONCE_LEN = 12
+_AES_GCM_MIN_TOKEN_LEN = 28
 
 VALID_CATEGORIES = {"general", "llm", "mcp_server", "memory", "integration"}
 
@@ -245,6 +251,7 @@ class SecretStore:
         self.gobby_home = _secret_material_home(gobby_home)
         self.kek_passphrase = kek_passphrase
         self._fernet: Fernet | None = None
+        self._dek: bytes | None = None
 
     @staticmethod
     def _normalize_name(name: str) -> str:
@@ -447,11 +454,30 @@ class SecretStore:
                     "Concurrent secret envelope initialization did not publish a key"
                 )
             winner_dek = self._unwrap_dek(winner, passphrase=passphrase)
-            self._fernet = Fernet(winner_dek)
+            self._bind_cipher(winner_dek)
             return winner_dek
 
-        self._fernet = Fernet(dek)
+        self._bind_cipher(dek)
         return dek
+
+    def _bind_cipher(self, dek: bytes) -> Fernet:
+        self._dek = dek
+        cipher = Fernet(dek)
+        self._fernet = cipher
+        return cipher
+
+    def _cached_dek(self) -> bytes:
+        if self._dek is None:
+            self._dek = self._get_dek()
+        return self._dek
+
+    def _seal_aes_key(self) -> bytes:
+        return HKDF(
+            algorithm=hashes.SHA256(),
+            length=32,
+            salt=None,
+            info=_SEAL_HKDF_INFO,
+        ).derive(base64.urlsafe_b64decode(self._cached_dek()))
 
     def _get_dek(self) -> bytes:
         row = self._load_key_material()
@@ -468,7 +494,7 @@ class SecretStore:
     def _get_fernet(self) -> Fernet:
         """Lazy-initialize the DEK Fernet cipher."""
         if self._fernet is None:
-            self._fernet = Fernet(self._get_dek())
+            return self._bind_cipher(self._cached_dek())
         return self._fernet
 
     def ensure_ready(self) -> None:
@@ -496,7 +522,7 @@ class SecretStore:
         else:
             dek = self._unwrap_dek(row)
             self._upsert_key_material(dek, posture=posture, passphrase=passphrase)
-        self._fernet = Fernet(dek)
+        self._bind_cipher(dek)
 
     def set(
         self,
@@ -613,19 +639,15 @@ class SecretStore:
 
     def seal(self, plaintext: bytes, *, aad: bytes) -> str:
         """Encrypt ``plaintext`` under the daemon envelope with AAD binding."""
-        from cryptography.hazmat.primitives.ciphers.aead import AESGCM
-
-        key = base64.urlsafe_b64decode(self._get_dek())
-        nonce = os.urandom(12)
-        token = nonce + AESGCM(key).encrypt(nonce, plaintext, aad)
+        nonce = os.urandom(_AES_GCM_NONCE_LEN)
+        token = nonce + AESGCM(self._seal_aes_key()).encrypt(nonce, plaintext, aad)
         return base64.b64encode(token).decode("ascii")
 
     def open_sealed(self, token: str, *, aad: bytes) -> bytes:
         """Decrypt a token produced by ``seal``, verifying the AAD binding."""
-        from cryptography.hazmat.primitives.ciphers.aead import AESGCM
-
         raw = base64.b64decode(token)
-        if len(raw) < 13:
+        if len(raw) < _AES_GCM_MIN_TOKEN_LEN:
             raise InvalidToken("sealed credential material is truncated")
-        key = base64.urlsafe_b64decode(self._get_dek())
-        return AESGCM(key).decrypt(raw[:12], raw[12:], aad)
+        return AESGCM(self._seal_aes_key()).decrypt(
+            raw[:_AES_GCM_NONCE_LEN], raw[_AES_GCM_NONCE_LEN:], aad
+        )

@@ -63,6 +63,11 @@ def test_daemon_config_rejects_tiny_provider_limit() -> None:
         DaemonConfig(hooks={"additional_context_limits": {"grok": 10}})
 
 
+def test_daemon_config_rejects_colliding_provider_keys() -> None:
+    with pytest.raises(ValidationError, match="duplicate provider key"):
+        DaemonConfig(hooks={"additional_context_limits": {"Grok": 16_000, "grok": 20_000}})
+
+
 def test_truncate_honors_explicit_limit() -> None:
     text = "x" * 600
     result = truncate_additional_context(text, limit=500)
