@@ -16,11 +16,13 @@ from unittest.mock import AsyncMock, MagicMock
 import pytest
 
 from gobby.code_index.context import CodeIndexContext
+from gobby.code_index.eligibility import resolve_indexed_project
 from gobby.code_index.gcode_gateway import (
     GcodeCommandResult,
     GcodeDaemonConfigUnavailableError,
 )
 from gobby.code_index.maintenance import (
+    _registry_state,
     _run_maintenance,
     _summarize_unsummarized,
     _update_symbol_summaries,
@@ -219,6 +221,71 @@ async def test_maintenance_purges_indexed_project_after_missing_threshold(
     assert gcode_gateway.maintenance_calls == []
     assert "proj-missing" in gcode_gateway.graph_cleared
     assert not missing_root.exists()
+
+
+@pytest.mark.asyncio
+async def test_run_maintenance_offloads_resolve_indexed_project(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    root = tmp_path / "repo"
+    root.mkdir()
+    _write_project_marker(root, "proj-offload")
+    project = IndexedProject(
+        id="proj-offload",
+        root_path=str(root),
+        total_files=1,
+        total_symbols=1,
+    )
+    storage = MagicMock()
+    storage.list_projection_cleanup_pending.return_value = []
+    storage.list_indexed_projects.return_value = [project]
+    storage.get_registry_project.return_value = (True, False)
+    seen: list[object] = []
+
+    async def fake_to_thread(func: Callable[..., T], *args: Any, **kwargs: Any) -> T:
+        seen.append(func)
+        return func(*args, **kwargs)
+
+    monkeypatch.setattr(asyncio, "to_thread", fake_to_thread)
+
+    async def run_db(func: Callable[..., T], *args: Any, **kwargs: Any) -> T:
+        return func(*args, **kwargs)
+
+    context = SimpleNamespace(
+        storage=storage,
+        gcode_gateway=None,
+        launch_factory=DummyLaunchFactory(),
+        daemon_config_breaker=SyncCircuitBreaker(
+            name="test",
+            probe_target="daemon config",
+            operation="maintenance",
+        ),
+        config=SimpleNamespace(
+            graph_enabled=False,
+            embedding_enabled=False,
+            missing_root_purge_observations=2,
+            maintenance_index_timeout_seconds=900,
+        ),
+        run_db=run_db,
+    )
+
+    await _run_maintenance(cast(CodeIndexContext, context))
+
+    assert seen == [resolve_indexed_project]
+
+
+@pytest.mark.asyncio
+async def test_registry_state_requires_get_registry_project() -> None:
+    class Storage:
+        pass
+
+    async def run_db(func: Callable[..., T], *args: Any, **kwargs: Any) -> T:
+        return func(*args, **kwargs)
+
+    context = SimpleNamespace(storage=Storage(), run_db=run_db)
+
+    with pytest.raises(AttributeError, match="get_registry_project"):
+        await _registry_state(cast(CodeIndexContext, context), "proj-x")
 
 
 @pytest.mark.asyncio

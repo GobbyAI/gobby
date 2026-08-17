@@ -363,6 +363,7 @@ class GcodeGateway:
     async def graph_clear(
         self, project_id: str, *, env: Mapping[str, str] | None = None
     ) -> dict[str, Any]:
+        project_id = _validate_user_gcode_value("project_id", project_id)
         return await self._run_json(["graph", "clear", "--project-id", project_id], env=env)
 
     async def graph_rebuild(self, project_root: Path) -> dict[str, Any]:
@@ -404,6 +405,7 @@ class GcodeGateway:
         env: Mapping[str, str] | None = None,
     ) -> dict[str, Any]:
         if project_id is not None:
+            project_id = _validate_user_gcode_value("project_id", project_id)
             args = ["vector", "clear", "--project-id", project_id]
         elif project_root is not None:
             args = ["vector", "clear", "--project", str(project_root)]

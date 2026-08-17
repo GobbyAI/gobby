@@ -69,6 +69,23 @@ def test_identity_mismatch_for_unregistered_vault(tmp_path: Path) -> None:
     assert (tmp_path / "wiki").is_dir()
 
 
+def test_invalid_utf8_marker_is_identity_mismatch(tmp_path: Path) -> None:
+    root = tmp_path / "repo"
+    marker = root / ".gobby"
+    marker.mkdir(parents=True)
+    (marker / "project.json").write_bytes(b"\xff\xfe not utf-8")
+
+    decision = resolve_indexed_project(
+        project_id="aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa",
+        root_path=str(root),
+        project_exists=True,
+        project_deleted=False,
+    )
+
+    assert decision.kind == "identity_mismatch"
+    assert decision.root == root
+
+
 def test_identity_mismatch_when_marker_id_differs(tmp_path: Path) -> None:
     root = tmp_path / "worktree"
     root.mkdir()

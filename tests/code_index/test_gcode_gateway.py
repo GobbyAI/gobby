@@ -229,6 +229,20 @@ async def test_gateway_builds_clear_and_rebuild_args(
     ]
 
 
+async def test_gateway_rejects_option_like_project_id_on_clear(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    calls = _patch_subprocess(monkeypatch, [])
+    gateway = GcodeGateway(binary="/tmp/gcode")
+
+    with pytest.raises(GcodeInputValidationError, match="value must not start with '-'"):
+        await gateway.graph_clear("--help")
+    with pytest.raises(GcodeInputValidationError, match="value must not start with '-'"):
+        await gateway.vector_clear(project_id="--help")
+
+    assert calls == []
+
+
 async def test_gateway_builds_incremental_index_args(
     monkeypatch: pytest.MonkeyPatch,
     tmp_path: Path,

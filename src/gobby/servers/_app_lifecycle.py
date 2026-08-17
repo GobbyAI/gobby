@@ -72,7 +72,6 @@ def create_lifespan(
                         loop=asyncio.get_running_loop(),
                         gcode_gateway=gcode_gateway,
                         daemon_config_breaker=code_indexer.daemon_config_breaker,
-                        launch_factory=getattr(code_indexer, "launch_factory", None),
                         launch_source=code_indexer,
                     )
                 else:

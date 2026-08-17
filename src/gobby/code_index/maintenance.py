@@ -102,7 +102,8 @@ async def _run_maintenance(
     for project in projects:
         project_id = str(project.id)
         exists, deleted = await _registry_state(context, project_id)
-        decision = resolve_indexed_project(
+        decision = await asyncio.to_thread(
+            resolve_indexed_project,
             project_id,
             project.root_path,
             project_exists=exists,
@@ -186,10 +187,7 @@ async def _run_maintenance(
 
 
 async def _registry_state(context: CodeIndexContext, project_id: str) -> tuple[bool, bool]:
-    lookup = getattr(context.storage, "get_registry_project", None)
-    if not callable(lookup):
-        return True, False
-    raw = await context.run_db(lookup, project_id)
+    raw = await context.run_db(context.storage.get_registry_project, project_id)
     if not isinstance(raw, tuple) or len(raw) != 2:
         return True, False
     return bool(raw[0]), bool(raw[1])
