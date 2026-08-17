@@ -378,17 +378,17 @@ class TestSpawnAgentStepVariables:
             ),
         )
 
-        from gobby.mcp_proxy.tools.spawn_agent._step_state import (
-            persist_initial_step_instance as real_persist,
-        )
+        from gobby.mcp_proxy.tools.spawn_agent._step_state import persist_initial_step_instance
 
-        def _persist(db: Any, agent_body: Any, **kwargs: Any) -> None:
-            real_persist(
+        def _persist(db: Any, agent_body: Any, **kwargs: Any) -> bool:
+            persist_initial_step_instance(
                 db,
                 agent_body,
                 session_id=child.id,
-                **{key: value for key, value in kwargs.items() if key != "session_id"},
+                step_workflow_id=None,
+                initial_variables=kwargs.get("initial_variables"),
             )
+            return True
 
         registry = create_spawn_agent_registry(
             mock_runner,
@@ -399,7 +399,7 @@ class TestSpawnAgentStepVariables:
 
         with (
             patch(
-                "gobby.mcp_proxy.tools.spawn_agent._implementation.persist_initial_step_instance",
+                "gobby.mcp_proxy.tools.spawn_agent._implementation.persist_initial_step_instance_if_resolved",
                 _persist,
             ),
             patch(
@@ -501,19 +501,19 @@ class TestSpawnAgentStepVariables:
             parent_session_id=parent.id,
         )
 
-        from gobby.mcp_proxy.tools.spawn_agent._step_state import (
-            persist_initial_step_instance as real_persist,
-        )
+        from gobby.mcp_proxy.tools.spawn_agent._step_state import persist_initial_step_instance
 
-        def _persist(db: Any, agent_body: Any, **kwargs: Any) -> None:
+        def _persist(db: Any, agent_body: Any, **kwargs: Any) -> bool:
             if task_assignment == "none":
-                return
-            real_persist(
+                return False
+            persist_initial_step_instance(
                 db,
                 agent_body,
                 session_id=child.id,
-                **{key: value for key, value in kwargs.items() if key != "session_id"},
+                step_workflow_id=None,
+                initial_variables=kwargs.get("initial_variables"),
             )
+            return True
 
         registry = create_spawn_agent_registry(
             mock_runner,
@@ -527,7 +527,7 @@ class TestSpawnAgentStepVariables:
 
         with (
             patch(
-                "gobby.mcp_proxy.tools.spawn_agent._implementation.persist_initial_step_instance",
+                "gobby.mcp_proxy.tools.spawn_agent._implementation.persist_initial_step_instance_if_resolved",
                 _persist,
             ),
             patch(

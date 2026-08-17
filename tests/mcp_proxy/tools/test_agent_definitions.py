@@ -3,9 +3,12 @@
 from __future__ import annotations
 
 import json
+from types import SimpleNamespace
+from typing import cast
 
 import pytest
 
+from gobby.mcp_proxy.tools.workflows import create_workflows_registry
 from gobby.mcp_proxy.tools.workflows._agents import (
     create_agent_definition,
     delete_agent_definition,
@@ -92,6 +95,60 @@ class TestListAgentDefinitions:
 
         assert result["count"] == 1
         assert result["agents"][0]["name"] == "persona-ready"
+
+    def test_malformed_json_does_not_abort_list(self) -> None:
+        class _Manager:
+            def list_all(self, **_kwargs: object) -> list[SimpleNamespace]:
+                return [
+                    SimpleNamespace(
+                        id="1",
+                        name="good-a",
+                        description="ok",
+                        definition_json={"provider": "claude"},
+                        enabled=True,
+                        source="installed",
+                        project_id=None,
+                    ),
+                    SimpleNamespace(
+                        id="2",
+                        name="bad",
+                        description="broken",
+                        definition_json="not-json{",
+                        enabled=True,
+                        source="installed",
+                        project_id=None,
+                    ),
+                    SimpleNamespace(
+                        id="3",
+                        name="good-b",
+                        description="ok",
+                        definition_json={"provider": "codex"},
+                        enabled=True,
+                        source="installed",
+                        project_id=None,
+                    ),
+                ]
+
+        result = list_agent_definitions(cast(AgentDefinitionManager, _Manager()))
+
+        names = [agent["name"] for agent in result["agents"]]
+        assert result["success"] is True
+        assert result["count"] == 3
+        assert set(names) == {"good-a", "bad", "good-b"}
+
+    def test_non_list_steps_do_not_abort_list(self, definition_db: PostgresHubDatabase) -> None:
+        mgr = _setup(definition_db)
+        _insert_agent(mgr, "odd-steps")
+        row = mgr.get_by_name("odd-steps")
+        assert row is not None
+        mgr.update(row.id, definition_json=json.dumps({"step_workflow": {"steps": 3}}))
+
+        result = list_agent_definitions(mgr)
+
+        assert result["success"] is True
+        assert result["count"] == 1
+        assert result["agents"][0]["step_count"] == 0
+        assert result["agents"][0]["has_steps"] is False
 
 
 class TestGetAgentDefinition:
@@ -188,9 +245,7 @@ class TestCreateAgentDefinition:
         assert "max_turns" not in result["agent"]
         assert row is not None
         persisted = (
-            row.definition_json
-            if isinstance(row.definition_json, str)
-            else row.definition_json
+            row.definition_json if isinstance(row.definition_json, str) else row.definition_json
         )
         assert "max_turns" not in persisted
 
@@ -290,5 +345,36 @@ class TestUpdateAgentStepWorkflow:
         detail = get_agent_definition(mgr, "coder")["agent"]
         assert detail["step_workflow"]["steps"][0]["name"] == "implement"
         cleared = update_agent_step_workflow(mgr, "coder", None)
+        assert cleared["success"] is True
+        assert get_agent_definition(mgr, "coder")["agent"]["step_workflow"] is None
+
+    @pytest.mark.asyncio
+    async def test_omit_step_workflow_preserves_stored_workflow(
+        self, definition_db: PostgresHubDatabase
+    ) -> None:
+        mgr = _setup(definition_db)
+        _insert_agent(mgr, "coder")
+        update_agent_step_workflow(
+            mgr,
+            "coder",
+            {
+                "variables": {"goal": "ship"},
+                "exit_condition": "done",
+                "steps": [{"name": "implement"}],
+            },
+        )
+        registry = create_workflows_registry(db=definition_db)
+
+        omitted = await registry.call("update_agent_step_workflow", {"name": "coder"})
+        stored = get_agent_definition(mgr, "coder")["agent"]["step_workflow"]
+
+        assert omitted["success"] is True
+        assert stored is not None
+        assert stored["steps"][0]["name"] == "implement"
+
+        cleared = await registry.call(
+            "update_agent_step_workflow",
+            {"name": "coder", "clear_step_workflow": True},
+        )
         assert cleared["success"] is True
         assert get_agent_definition(mgr, "coder")["agent"]["step_workflow"] is None

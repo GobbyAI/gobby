@@ -2,8 +2,25 @@
 
 from __future__ import annotations
 
+import asyncio
 import logging
+import os
+import signal
 from typing import Any
+
+_SPAWN_TERM_GRACE_SECONDS = 0.2
+
+
+def _pid_is_alive(pid: int) -> bool:
+    try:
+        os.kill(pid, 0)
+    except ProcessLookupError:
+        return False
+    except PermissionError:
+        return True
+    except OSError:
+        return False
+    return True
 
 
 async def cleanup_created_isolation(
@@ -196,21 +213,20 @@ async def _terminate_spawn_process(
     tmux_socket_path: str | None,
 ) -> None:
     if pid is not None:
-        import os
-        import signal
-
         try:
             os.kill(pid, signal.SIGTERM)
         except ProcessLookupError:
             pass
         except Exception as exc:
             logging.getLogger(__name__).warning("Failed to terminate spawn pid %s: %s", pid, exc)
-        try:
-            os.kill(pid, signal.SIGKILL)
-        except ProcessLookupError:
-            pass
-        except Exception as exc:
-            logging.getLogger(__name__).warning("Failed to kill spawn pid %s: %s", pid, exc)
+        await asyncio.sleep(_SPAWN_TERM_GRACE_SECONDS)
+        if _pid_is_alive(pid):
+            try:
+                os.kill(pid, signal.SIGKILL)
+            except ProcessLookupError:
+                pass
+            except Exception as exc:
+                logging.getLogger(__name__).warning("Failed to kill spawn pid %s: %s", pid, exc)
     if tmux_session_name:
         try:
             from gobby.agents.tmux import get_tmux_session_manager

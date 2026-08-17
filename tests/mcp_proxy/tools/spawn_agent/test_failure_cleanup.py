@@ -2,8 +2,9 @@
 
 from __future__ import annotations
 
+import signal
 from types import SimpleNamespace
-from typing import Any
+from typing import Any, cast
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
@@ -165,6 +166,56 @@ async def test_start_raising_cleans_up_and_reports_error() -> None:
     }
     cleanup.assert_awaited_once()
     runner.run_storage.get.assert_not_called()
+
+
+@pytest.mark.asyncio
+async def test_terminate_does_not_sigkill_after_process_exits() -> None:
+    sent: list[int] = []
+
+    def fake_kill(_pid: int, sig: int) -> None:
+        if sig == 0:
+            raise ProcessLookupError
+        sent.append(sig)
+
+    cleanup_module = cast(Any, _failure_cleanup)
+    with (
+        patch.object(cleanup_module, "os") as mock_os,
+        patch.object(cleanup_module, "asyncio") as mock_asyncio,
+    ):
+        mock_os.kill.side_effect = fake_kill
+        mock_asyncio.sleep = AsyncMock()
+        await _failure_cleanup._terminate_spawn_process(
+            pid=4242,
+            tmux_session_name=None,
+            tmux_socket_name=None,
+            tmux_socket_path=None,
+        )
+
+    assert sent == [signal.SIGTERM]
+
+
+@pytest.mark.asyncio
+async def test_terminate_sigkills_only_when_pid_still_alive() -> None:
+    sent: list[int] = []
+
+    def fake_kill(_pid: int, sig: int) -> None:
+        sent.append(sig)
+
+    cleanup_module = cast(Any, _failure_cleanup)
+    with (
+        patch.object(cleanup_module, "os") as mock_os,
+        patch.object(cleanup_module, "asyncio") as mock_asyncio,
+    ):
+        mock_os.kill.side_effect = fake_kill
+        mock_asyncio.sleep = AsyncMock()
+        await _failure_cleanup._terminate_spawn_process(
+            pid=4242,
+            tmux_session_name=None,
+            tmux_socket_name=None,
+            tmux_socket_path=None,
+        )
+
+    assert sent == [signal.SIGTERM, 0, signal.SIGKILL]
 
 
 async def test_get_after_lost_start_race_cleans_up_on_storage_error() -> None:

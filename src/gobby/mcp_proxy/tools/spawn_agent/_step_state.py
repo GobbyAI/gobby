@@ -125,6 +125,35 @@ def initial_step_state_for_spawn(
     return current_step, step_variables
 
 
+def persist_initial_step_instance_if_resolved(
+    db: HubDatabase,
+    agent_body: AgentDefinitionBody,
+    *,
+    session_id: str,
+    project_id: str | None,
+    initial_variables: dict[str, Any] | None = None,
+) -> bool:
+    """Persist the initial snapshot only when the agent definition still exists."""
+    from gobby.workflows.agent_resolver import resolve_agent_with_row
+
+    resolved = resolve_agent_with_row(agent_body.name, db, project_id=project_id)
+    if resolved is None:
+        logger.warning(
+            "Skipping initial step instance persist; agent definition %s not found",
+            agent_body.name,
+            extra={"agent_name": agent_body.name, "project_id": project_id},
+        )
+        return False
+    persist_initial_step_instance(
+        db,
+        agent_body,
+        session_id=session_id,
+        step_workflow_id=resolved[1].step_workflow_id,
+        initial_variables=initial_variables,
+    )
+    return True
+
+
 def persist_initial_step_instance(
     db: HubDatabase,
     agent_body: AgentDefinitionBody,

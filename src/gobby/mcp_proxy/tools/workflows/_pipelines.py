@@ -129,7 +129,7 @@ def create_pipeline_definition(
             "success": False,
             "error": (
                 f"Definition '{name}' already exists (id={existing.id}). "
-                "Use update_workflow to modify it."
+                "Use update_pipeline to modify it."
             ),
         }
 
@@ -230,6 +230,8 @@ def delete_pipeline_definition(
     name: str | None = None,
     definition_id: str | None = None,
     force: bool = False,
+    *,
+    project_path: Path | None = None,
 ) -> dict[str, Any]:
     try:
         row = _resolve_pipeline(def_manager, name, definition_id)
@@ -250,7 +252,7 @@ def delete_pipeline_definition(
         from gobby.mcp_proxy.tools.workflows._auto_export import auto_delete_definition
 
         is_user = bool(row.tags and "user" in row.tags)
-        auto_delete_definition(row.name, Path.cwd(), kind="pipeline", delete_global=is_user)
+        auto_delete_definition(row.name, project_path, kind="pipeline", delete_global=is_user)
     except Exception as e:
         logger.warning("Failed to delete template '%s': %s", row.name, e)
     loader.clear_cache()
@@ -717,6 +719,7 @@ def register_pipeline_tools(
         name: str | None = None,
         definition_id: str | None = None,
         force: bool = False,
+        project_path: str | None = None,
     ) -> dict[str, Any]:
         if _def_manager is None or _loader is None:
             return {
@@ -726,7 +729,14 @@ def register_pipeline_tools(
         err = _require_pipeline(_def_manager, name, definition_id)
         if err:
             return err
-        return delete_pipeline_definition(_def_manager, _loader, name, definition_id, force)
+        return delete_pipeline_definition(
+            _def_manager,
+            _loader,
+            name,
+            definition_id,
+            force,
+            project_path=Path(project_path) if project_path else None,
+        )
 
     @registry.tool(
         name="export_pipeline",

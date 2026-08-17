@@ -525,17 +525,32 @@ def create_workflows_registry(
 
     @registry.tool(
         name="update_agent_step_workflow",
-        description="Replace an agent's nested step_workflow. Pass the object or None to clear.",
+        description=(
+            "Replace an agent's nested step_workflow. "
+            "Omitting step_workflow leaves the stored workflow unchanged. "
+            "Pass clear_step_workflow=true to remove it."
+        ),
     )
     def _update_agent_step_workflow(
         name: str,
         step_workflow: dict[str, Any] | None = None,
+        clear_step_workflow: bool = False,
         project_path: str | None = None,
         make_template: bool = False,
     ) -> dict[str, Any]:
         if _agent_manager is None:
             return {"error": "Agent definition tools require database connection"}
         pp = Path(project_path) if project_path else None
+        if clear_step_workflow:
+            return update_agent_step_workflow(
+                _agent_manager,
+                name,
+                None,
+                project_path=pp,
+                make_global_template=make_template,
+            )
+        if step_workflow is None:
+            return get_agent_definition(_agent_manager, name)
         return update_agent_step_workflow(
             _agent_manager,
             name,

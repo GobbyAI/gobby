@@ -33,7 +33,7 @@ def _stub_prelaunch_prepare(monkeypatch: pytest.MonkeyPatch) -> None:
         lambda *args, **kwargs: prepared_spawn(),
     )
     monkeypatch.setattr(
-        "gobby.mcp_proxy.tools.spawn_agent._implementation.persist_initial_step_instance",
+        "gobby.mcp_proxy.tools.spawn_agent._implementation.persist_initial_step_instance_if_resolved",
         lambda *args, **kwargs: None,
     )
 
@@ -1020,3 +1020,68 @@ class TestPreparedSnapshotCreation:
         assert saved[0].agent_name == "rogue-agent"
         assert saved[0].current_step == "claim"
         assert saved[0].snapshot.steps[0].name == "claim"
+
+    def test_persist_if_resolved_skips_missing_agent_definition(self) -> None:
+        from gobby.mcp_proxy.tools.spawn_agent._step_state import (
+            persist_initial_step_instance_if_resolved,
+        )
+
+        db = MagicMock()
+        body = AgentDefinitionBody(
+            name="missing-agent",
+            step_workflow=AgentStepWorkflowBody(steps=[WorkflowStep(name="claim")]),
+        )
+        with (
+            patch(
+                "gobby.workflows.agent_resolver.resolve_agent_with_row",
+                return_value=None,
+            ),
+            patch(
+                "gobby.mcp_proxy.tools.spawn_agent._step_state.persist_initial_step_instance"
+            ) as persist,
+        ):
+            persisted = persist_initial_step_instance_if_resolved(
+                db,
+                body,
+                session_id="11111111-1111-4111-8111-111111111111",
+                project_id="proj-1",
+            )
+
+        assert persisted is False
+        persist.assert_not_called()
+
+    def test_persist_if_resolved_writes_when_definition_exists(self) -> None:
+        from gobby.mcp_proxy.tools.spawn_agent._step_state import (
+            persist_initial_step_instance_if_resolved,
+        )
+
+        db = MagicMock()
+        body = AgentDefinitionBody(
+            name="coder",
+            step_workflow=AgentStepWorkflowBody(steps=[WorkflowStep(name="claim")]),
+        )
+        row = SimpleNamespace(step_workflow_id="wf-1")
+        with (
+            patch(
+                "gobby.workflows.agent_resolver.resolve_agent_with_row",
+                return_value=(body, row),
+            ),
+            patch(
+                "gobby.mcp_proxy.tools.spawn_agent._step_state.persist_initial_step_instance"
+            ) as persist,
+        ):
+            persisted = persist_initial_step_instance_if_resolved(
+                db,
+                body,
+                session_id="11111111-1111-4111-8111-111111111111",
+                project_id="proj-1",
+            )
+
+        assert persisted is True
+        persist.assert_called_once_with(
+            db,
+            body,
+            session_id="11111111-1111-4111-8111-111111111111",
+            step_workflow_id="wf-1",
+            initial_variables=None,
+        )

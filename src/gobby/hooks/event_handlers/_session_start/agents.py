@@ -192,6 +192,10 @@ def activate_default_agent(
 
     _ta_resolve = time.monotonic()
     from gobby.workflows.agent_resolver import AgentResolutionError, resolve_agent
+    from gobby.workflows.variable_defaults import resolve_session_project_id
+
+    if project_id is None:
+        project_id = resolve_session_project_id(handler._session_manager.db, session_id)
 
     try:
         agent_body = resolve_agent(
@@ -211,15 +215,17 @@ def activate_default_agent(
     from gobby.skills.manager import SkillManager
     from gobby.storage.definitions.rules import RuleDefinitionManager
     from gobby.storage.definitions.variables import SessionVariableDefaultManager
-    from gobby.workflows.variable_defaults import resolve_session_project_id
 
-    enabled_rules = RuleDefinitionManager(handler._session_manager.db).list_all(enabled=True)
-    session_project_id = resolve_session_project_id(handler._session_manager.db, session_id)
+    enabled_rules = RuleDefinitionManager(handler._session_manager.db).list_all(
+        enabled=True,
+        project_id=project_id,
+    )
     enabled_variables = SessionVariableDefaultManager(handler._session_manager.db).list_all(
-        project_id=session_project_id,
+        project_id=project_id,
         enabled=True,
     )
-    if session_project_id is None:
+    if project_id is None:
+        enabled_rules = [row for row in enabled_rules if row.project_id is None]
         enabled_variables = [row for row in enabled_variables if row.project_id is None]
     all_skills = SkillManager(handler._session_manager.db).list_skills()
 

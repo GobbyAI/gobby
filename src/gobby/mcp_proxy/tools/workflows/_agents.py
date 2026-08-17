@@ -21,12 +21,13 @@ logger = logging.getLogger(__name__)
 
 def _row_body(row: AgentDefinitionRow) -> dict[str, Any]:
     raw = row.definition_json
-    if isinstance(raw, str):
-        parsed = json.loads(raw)
-        if isinstance(parsed, dict):
-            return parsed
+    try:
+        parsed: object = json.loads(raw) if isinstance(raw, str) else raw
+    except (json.JSONDecodeError, TypeError, ValueError):
         return {}
-    return dict(raw)
+    if isinstance(parsed, dict):
+        return dict(parsed)
+    return {}
 
 
 def _export_row(row: AgentDefinitionRow) -> Any:
@@ -42,6 +43,8 @@ def _agent_summary(row: AgentDefinitionRow) -> dict[str, Any]:
     body = _row_body(row)
     nested = body.get("step_workflow") or {}
     steps = nested.get("steps") if isinstance(nested, dict) else None
+    if not isinstance(steps, list):
+        steps = []
     return {
         "id": row.id,
         "name": row.name,
@@ -52,7 +55,7 @@ def _agent_summary(row: AgentDefinitionRow) -> dict[str, Any]:
         "isolation": body.get("isolation"),
         "surfaces": body.get("surfaces", ["spawn"]),
         "has_steps": bool(steps),
-        "step_count": len(steps or []),
+        "step_count": len(steps),
         "enabled": row.enabled,
         "source": row.source,
         "project_id": row.project_id,

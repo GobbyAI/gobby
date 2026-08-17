@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from pathlib import Path
+
 import pytest
 import yaml
 
@@ -64,6 +66,60 @@ def test_create_update_export_delete_pipeline(
     deleted = delete_pipeline_definition(manager, loader, name="test-pipeline", force=True)
     assert deleted["success"] is True
     assert manager.get_by_name("test-pipeline") is None
+
+
+def test_create_duplicate_points_at_update_pipeline(
+    manager: PipelineDefinitionManager, loader: PipelineLoader
+) -> None:
+    created = create_pipeline_definition(manager, loader, VALID_PIPELINE_YAML)
+    assert created["success"] is True
+
+    duplicate = create_pipeline_definition(manager, loader, VALID_PIPELINE_YAML)
+
+    assert duplicate["success"] is False
+    assert "update_pipeline" in duplicate["error"]
+    assert "update_workflow" not in duplicate["error"]
+
+
+def test_delete_forwards_project_path(
+    manager: PipelineDefinitionManager,
+    loader: PipelineLoader,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    created = create_pipeline_definition(manager, loader, VALID_PIPELINE_YAML)
+    assert created["success"] is True
+    seen: dict[str, object] = {}
+
+    def _auto_delete(
+        name: str,
+        project_path: Path | None = None,
+        *,
+        kind: str,
+        delete_global: bool = False,
+    ) -> bool:
+        seen["name"] = name
+        seen["project_path"] = project_path
+        seen["kind"] = kind
+        seen["delete_global"] = delete_global
+        return True
+
+    monkeypatch.setattr(
+        "gobby.mcp_proxy.tools.workflows._auto_export.auto_delete_definition",
+        _auto_delete,
+    )
+
+    deleted = delete_pipeline_definition(
+        manager,
+        loader,
+        name="test-pipeline",
+        project_path=tmp_path,
+    )
+
+    assert deleted["success"] is True
+    assert seen["name"] == "test-pipeline"
+    assert seen["project_path"] == tmp_path
+    assert seen["kind"] == "pipeline"
 
 
 def test_create_rejects_non_pipeline_yaml(

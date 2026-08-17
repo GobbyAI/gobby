@@ -230,14 +230,15 @@ def _agent_definition_precedence(row: AgentDefinitionRow) -> tuple[int, str]:
 
 def _agent_definition_view(row: AgentDefinitionRow) -> SimpleNamespace:
     try:
-        data = row.definition_json
+        data: object = row.definition_json
         if isinstance(data, str):
-            body = AgentDefinitionBody.model_validate_json(data)
-        else:
-            payload = dict(data)
-            payload.setdefault("name", row.name)
-            body = AgentDefinitionBody.model_validate(payload)
-    except ValueError as exc:
+            data = json.loads(data)
+        if not isinstance(data, Mapping):
+            raise TypeError("agent definition must be a JSON object")
+        payload = dict(data)
+        payload.setdefault("name", row.name)
+        body = AgentDefinitionBody.model_validate(payload)
+    except (ValueError, TypeError) as exc:
         return SimpleNamespace(
             name=row.name,
             enabled=False,
