@@ -103,6 +103,9 @@ impl GrantError {
     }
 
     pub fn from_presentation_http(status: u16, body: &str) -> Option<Self> {
+        if (200..300).contains(&status) {
+            return None;
+        }
         if body.contains("revoked") {
             return Some(Self::Revoked);
         }
@@ -884,36 +887,37 @@ fn fetch_settings_coherent(
     if settings.config_revision == grant.config_revision {
         return Ok((grant, Some(settings)));
     }
-    let retried = if managed {
+    let (retried, retried_bearer) = if managed {
         let (envelope, claims) = managed_envelope(ctx, previous_grant.as_ref())?;
-        challenge_and_handshake(
-            &ctx.daemon_url,
-            &envelope,
-            &ctx.machine_id,
-            &ctx.project_id,
-            Some(&claims.session_id),
-            Some(&claims),
-            ctx.deadline,
-        )?
+        (
+            challenge_and_handshake(
+                &ctx.daemon_url,
+                &envelope,
+                &ctx.machine_id,
+                &ctx.project_id,
+                Some(&claims.session_id),
+                Some(&claims),
+                ctx.deadline,
+            )?,
+            Some(envelope),
+        )
     } else {
         let token = interactive_bearer(&ctx.home)?;
         let session_id = interactive_session_id(ctx);
-        challenge_and_handshake(
-            &ctx.daemon_url,
-            &token,
-            &ctx.machine_id,
-            &ctx.project_id,
-            Some(&session_id),
-            None,
-            ctx.deadline,
-        )?
+        (
+            challenge_and_handshake(
+                &ctx.daemon_url,
+                &token,
+                &ctx.machine_id,
+                &ctx.project_id,
+                Some(&session_id),
+                None,
+                ctx.deadline,
+            )?,
+            interactive_bearer(&ctx.home).ok(),
+        )
     };
     let timeout = ctx.remaining()?;
-    let retried_bearer = if managed {
-        ctx.managed_envelope.clone()
-    } else {
-        interactive_bearer(&ctx.home).ok()
-    };
     let retried_settings = fetch_runtime_config(
         &ctx.daemon_url,
         &retried,
@@ -976,19 +980,6 @@ fn hex_encode(bytes: &[u8]) -> String {
 
 fn sha256(bytes: &[u8]) -> [u8; 32] {
     openssl::sha::sha256(bytes)
-}
-
-fn hmac_sha256(key: &[u8], data: &[u8]) -> Vec<u8> {
-    let pkey = openssl::pkey::PKey::hmac(key)
-        .unwrap_or_else(|_| panic!("openssl hmac key construction cannot fail for raw bytes"));
-    let mut signer = openssl::sign::Signer::new(openssl::hash::MessageDigest::sha256(), &pkey)
-        .unwrap_or_else(|_| panic!("openssl hmac-sha256 signer cannot fail"));
-    signer
-        .update(data)
-        .unwrap_or_else(|_| panic!("openssl hmac update cannot fail"));
-    signer
-        .sign_to_vec()
-        .unwrap_or_else(|_| panic!("openssl hmac sign cannot fail"))
 }
 
 #[cfg(test)]
