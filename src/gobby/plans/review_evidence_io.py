@@ -253,6 +253,13 @@ def append_round_entry(plan_path: Path, prose: str, checkpoint: bytes) -> bool:
     tail = text[end:]
     updated = (text[:start] + updated_section + ("\n" + tail if tail else "")).encode("utf-8")
     _validate_round_entry_plan(plan_path, current, updated)
+    expected = parse_checkpoints(current) + parse_checkpoints(checkpoint)
+    if parse_checkpoints(updated) != expected:
+        raise ReviewEvidenceError(
+            "invalid_round_entry",
+            "round entry checkpoint list must equal current checkpoints plus the "
+            "supplied canonical checkpoint",
+        )
     atomic_write_bytes(plan_path, updated)
     return True
 

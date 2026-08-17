@@ -534,7 +534,7 @@ class PlanReviewEvidenceService:
             return self.checkpoints.append_plan_changelog_round(
                 evidence_id,
                 prose,
-                round_result,
+                payload,
                 plan_path=resolved,
             )
 
