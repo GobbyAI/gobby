@@ -97,6 +97,7 @@ def _set_search_path(conn: psycopg.Connection[object], schema: str) -> None:
 def _wait_for_row_lock_waiter(
     postgres_database_url: str,
     finished: Event,
+    writer_application_name: str,
     *,
     timeout: float = 5.0,
 ) -> None:
@@ -109,9 +110,12 @@ def _wait_for_row_lock_waiter(
                 """
                 SELECT count(*)
                 FROM pg_stat_activity
-                WHERE wait_event_type = 'Lock'
-                  AND query ILIKE '%pipeline_definitions%'
-                """
+                WHERE datname = current_database()
+                  AND pid <> pg_backend_pid()
+                  AND application_name = %s
+                  AND wait_event_type = 'Lock'
+                """,
+                (writer_application_name,),
             ).fetchone()
             if row is not None and int(row[0]) >= 1:
                 return
@@ -161,7 +165,11 @@ def test_concurrent_rename_and_content_update_both_orderings(
                 ).fetchone()
                 assert locked is not None
                 writer.start()
-                _wait_for_row_lock_waiter(postgres_database_url, finished)
+                _wait_for_row_lock_waiter(
+                    postgres_database_url,
+                    finished,
+                    writer_db.application_name,
+                )
                 if first == "content":
                     holder.execute(
                         """
@@ -244,7 +252,11 @@ def test_sync_does_not_override_concurrent_user_pin(
                 ).fetchone()
                 assert locked is not None
                 writer.start()
-                _wait_for_row_lock_waiter(postgres_database_url, finished)
+                _wait_for_row_lock_waiter(
+                    postgres_database_url,
+                    finished,
+                    writer_db.application_name,
+                )
                 holder.execute(
                     """
                     UPDATE pipeline_definitions

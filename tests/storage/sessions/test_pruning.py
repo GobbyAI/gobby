@@ -9,9 +9,11 @@ import pytest
 
 from gobby.sessions.status_events import SessionStatusTransition
 from gobby.storage.hub.protocol import HubDatabase
+from gobby.storage.machines import LocalMachineManager
 from gobby.storage.sessions import SessionManager
 from gobby.workflows.state_manager import SessionVariableManager
 from gobby.workflows.step_instances import AgentStepInstanceManager
+from tests.fixtures.postgres import TEST_USER_ID
 from tests.workflows.step_instance_fixtures import make_step_instance
 
 pytestmark = pytest.mark.unit
@@ -21,9 +23,6 @@ LOCAL_MACHINE_ID = "20000000-0000-4000-8000-000000000001"
 
 @pytest.fixture(autouse=True)
 def _local_machine_identity(temp_db: HubDatabase) -> Iterator[None]:
-    from gobby.storage.machines import LocalMachineManager
-    from tests.fixtures.postgres import TEST_USER_ID
-
     LocalMachineManager(temp_db).upsert_seen(LOCAL_MACHINE_ID, TEST_USER_ID)
     with patch("gobby.utils.machine_id._cached_machine_id", LOCAL_MACHINE_ID):
         yield

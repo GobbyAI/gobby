@@ -1,13 +1,17 @@
-"""Pin the eight domain tables against the applied-schema catalog."""
+"""Pin the seven domain tables against the applied-schema catalog."""
 
 from __future__ import annotations
 
 import json
 from pathlib import Path
 
+import pytest
+
 _REPO_ROOT = Path(__file__).resolve().parents[2]
 _CATALOG = _REPO_ROOT / "crates/gcore/assets/schema/catalog.manifest.json"
 _BASELINE = _REPO_ROOT / "crates/gcore/assets/schema/baseline.sql"
+
+pytestmark = pytest.mark.unit
 
 DOMAIN_TABLES: tuple[str, ...] = (
     "agent_definitions",

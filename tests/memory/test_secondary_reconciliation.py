@@ -22,7 +22,7 @@ from gobby.storage.hub.protocol import HubDatabase
 from gobby.storage.memories_crud import _memory_lock_key
 from gobby.storage.projects import PERSONAL_PROJECT_ID
 
-pytestmark = pytest.mark.unit
+pytestmark = [pytest.mark.integration, pytest.mark.slow]
 
 _VECTOR = [0.1, 0.2, 0.3, 0.4] * 384
 

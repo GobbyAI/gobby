@@ -11,6 +11,7 @@ import time
 from collections.abc import Iterator, Mapping
 from contextlib import ExitStack
 from datetime import datetime
+from pathlib import Path
 from types import SimpleNamespace
 from typing import Any, Literal, cast
 from unittest.mock import AsyncMock, MagicMock, patch
@@ -25,7 +26,7 @@ from gobby.workflows.agent_models import AgentDefinitionBody, AgentStepWorkflowB
 from gobby.workflows.definitions import WorkflowStep
 from gobby.workflows.step_instances import AgentStepInstanceManager, build_step_instance
 
-pytestmark = pytest.mark.unit
+pytestmark = pytest.mark.integration
 
 S1 = "11111111-1111-4111-8111-111111111111"
 S2 = "22222222-2222-4222-8222-222222222222"
@@ -474,9 +475,9 @@ def test_auto_claimed_spawn_initial_step_preserved(snap_db: PostgresHubDatabase)
 
 
 def test_dispatch_spawn_does_not_seed_step_workflow_name() -> None:
-    from pathlib import Path
-
-    source = Path("src/gobby/dispatch/spawn.py").read_text(encoding="utf-8")
+    source = (Path(__file__).resolve().parents[2] / "src/gobby/dispatch/spawn.py").read_text(
+        encoding="utf-8"
+    )
     assert "_step_workflow_name" not in source
     assert "_register_agent_step_workflow" not in source
 
@@ -1164,6 +1165,7 @@ def _wait_until_dead(pid: int, *, timeout: float = 5.0) -> None:
 
 
 @pytest.mark.asyncio
+@pytest.mark.slow
 @pytest.mark.parametrize(
     "fault",
     ("lease_attach", "live_pane", "start_run", "post_claim"),
@@ -1172,14 +1174,15 @@ async def test_post_launch_failure_terminates_process(
     fault: Literal["lease_attach", "live_pane", "start_run", "post_claim"],
     temp_db: Any,
     sample_git_project: dict[str, object],
+    monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     from gobby.agents.tmux import configure_tmux
     from gobby.config.tmux import TmuxConfig
 
     if shutil.which("tmux") is None:
-        pytest.fail("tmux is required to prove post-launch process compensation")
+        pytest.skip("tmux is required to prove post-launch process compensation")
 
-    os.environ.pop("TMUX", None)
+    monkeypatch.delenv("TMUX", raising=False)
     configure_tmux(TmuxConfig())
     sample_project = sample_git_project
     with patch("gobby.utils.machine_id._cached_machine_id", LOCAL_MACHINE_ID):

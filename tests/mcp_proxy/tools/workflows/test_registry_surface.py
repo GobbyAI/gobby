@@ -63,11 +63,12 @@ REQUIRED_DOMAIN_TOOLS = frozenset(
     }
 )
 
+_REPO_ROOT = Path(__file__).resolve().parents[4]
 _CALLER_MODULES = (
-    Path("src/gobby/mcp_proxy/tools/workflows/_agents.py"),
-    Path("src/gobby/mcp_proxy/tools/workflows/_rules.py"),
-    Path("src/gobby/mcp_proxy/tools/workflows/_variables.py"),
-    Path("src/gobby/mcp_proxy/tools/workflows/_pipelines.py"),
+    _REPO_ROOT / "src/gobby/mcp_proxy/tools/workflows/_agents.py",
+    _REPO_ROOT / "src/gobby/mcp_proxy/tools/workflows/_rules.py",
+    _REPO_ROOT / "src/gobby/mcp_proxy/tools/workflows/_variables.py",
+    _REPO_ROOT / "src/gobby/mcp_proxy/tools/workflows/_pipelines.py",
 )
 
 
@@ -164,6 +165,6 @@ def test_definitions_module_is_gone() -> None:
 
 
 def test_generic_crud_suite_is_gone() -> None:
-    repo = Path("tests/mcp_proxy/tools")
+    repo = _REPO_ROOT / "tests/mcp_proxy/tools"
     assert not (repo / "test_workflow_crud.py").exists()
     assert not (repo / "workflows" / "test_get_workflow_not_found.py").exists()

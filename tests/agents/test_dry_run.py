@@ -68,6 +68,7 @@ def mock_runner() -> MagicMock:
     return runner
 
 
+@pytest.mark.integration
 class TestAgentNotFound:
     @pytest.mark.asyncio
     async def test_agent_not_found(self, definition_db: PostgresHubDatabase) -> None:
@@ -106,6 +107,7 @@ class TestAgentNotFound:
         assert result.errors[0].code == "AGENT_NOT_FOUND"
 
 
+@pytest.mark.integration
 class TestWorkflowResolution:
     @pytest.mark.asyncio
     async def test_no_workflow(self, definition_db: PostgresHubDatabase) -> None:
@@ -167,6 +169,7 @@ class TestWorkflowResolution:
         assert result.effective_workflow == "explicit-wf"
 
 
+@pytest.mark.integration
 class TestIsolation:
     @pytest.mark.asyncio
     async def test_isolation_deps_missing_worktree(
@@ -203,6 +206,7 @@ class TestIsolation:
         assert len(dep_items) == 1
 
 
+@pytest.mark.integration
 class TestRuntimeEnvironment:
     @pytest.mark.asyncio
     async def test_spawn_depth_exceeded(
@@ -225,6 +229,7 @@ class TestRuntimeEnvironment:
         assert len(depth_items) == 1
 
 
+@pytest.mark.integration
 class TestWorkflowEvaluation:
     @pytest.mark.asyncio
     async def test_workflow_eval_embedded(
@@ -263,9 +268,7 @@ class TestWorkflowEvaluation:
         assert result.workflow_evaluation is not None
         assert result.workflow_evaluation.valid is True
         assert result.workflow_evaluation.step_trace == []
-        assert any(
-            item.code == "PIPELINE_TYPE" for item in result.workflow_evaluation.items
-        )
+        assert any(item.code == "PIPELINE_TYPE" for item in result.workflow_evaluation.items)
         mock_workflow_loader.validate_pipeline_for_agent.assert_awaited_once_with(
             "worker", project_id
         )
@@ -336,6 +339,7 @@ class TestWorkflowEvaluation:
         assert len(invalid_items) == 1
 
 
+@pytest.mark.integration
 class TestHappyPath:
     @pytest.mark.asyncio
     async def test_full_happy_path(

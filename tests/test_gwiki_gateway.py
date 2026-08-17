@@ -97,7 +97,6 @@ async def test_gateway_exposes_expected_methods() -> None:
         "status",
         "index",
         "search",
-        "ask",
         "read",
         "graph",
         "graph_artifacts",

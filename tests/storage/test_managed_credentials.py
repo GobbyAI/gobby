@@ -614,6 +614,7 @@ def test_interactive_binding_uniqueness(
         store.db.close()
 
 
+@pytest.mark.slow
 def test_interactive_reuse_refreshes_expired_role(
     authorization_fixture: AuthorizationFixture,
     tmp_path: Path,

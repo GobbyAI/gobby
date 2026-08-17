@@ -9,12 +9,23 @@ from pathlib import Path
 import pytest
 
 from gobby.runtime_grants import (
+    DeploymentGrantContext,
     GrantBundle,
+    GrantService,
+    WrongApiContractGrant,
     canonical_payload_bytes,
     payload_checksum,
     sign_grant,
 )
+from gobby.runtime_grants.schema import API_CONTRACT
 from gobby.storage.schema_contract import expected_schema_identity
+from tests.runtime_grants.support import (
+    DEPLOYMENT_TOKEN,
+    FENCING_EPOCH,
+    GOLDEN_SECRET,
+    StaticRuntime,
+    revision_snapshot,
+)
 
 GOLDEN_DIR = Path(__file__).resolve().parent / "golden"
 
@@ -85,6 +96,31 @@ def test_config_revision_signed() -> None:
         assert mutated.signature == grant.signature
         assert payload_checksum(mutated) != grant.payload_checksum
         assert sign_grant(mutated, "golden-grant-signing-secret").signature != grant.signature
+
+
+@pytest.mark.unit
+def test_present_old_client_new_grant_rejects_api_contract() -> None:
+    path = GOLDEN_DIR / "old_client_new_grant.json"
+    grant = GrantBundle.model_validate_json(path.read_bytes())
+    assert grant.api_contract != API_CONTRACT
+    service = GrantService(
+        runtime=StaticRuntime(
+            revision_snapshot(
+                41,
+                host="falkor-a.test",
+                password="falkor-secret-a",
+                qdrant_url="http://qdrant-a.test:6333",
+                api_key="qdrant-secret-a",
+            )
+        ),
+        context=DeploymentGrantContext(
+            token=DEPLOYMENT_TOKEN,
+            fencing_epoch=FENCING_EPOCH,
+            signing_secret=GOLDEN_SECRET,
+        ),
+    )
+    with pytest.raises(WrongApiContractGrant):
+        service.present(grant, now=grant.issued_at + 10)
 
 
 @pytest.mark.unit

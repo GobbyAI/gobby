@@ -2,8 +2,6 @@
 
 from __future__ import annotations
 
-import threading
-
 import pytest
 
 from gobby.config.ai import GenerationEndpointConfig
@@ -86,23 +84,13 @@ def test_single_revision_per_grant() -> None:
 
     successive = SuccessiveCaptureRuntime(first, second)
     after_capture = SnapshotAfterCaptureRuntime(first, second)
+    during_capture = SnapshotAfterCaptureRuntime(first, second, publish_during_capture=True)
 
-    barrier = threading.Barrier(2)
-    swapped = SnapshotAfterCaptureRuntime(first, second)
-
-    def activate() -> None:
-        barrier.wait()
-        swapped.publish_second()
-
-    racer = threading.Thread(target=activate)
-    racer.start()
-    barrier.wait()
-    concurrent = _issue(swapped)
-    racer.join()
     successive_grant = _issue(successive)
     after_capture_grant = _issue(after_capture)
+    during_capture_grant = _issue(during_capture)
 
-    for grant in (successive_grant, after_capture_grant, concurrent):
+    for grant in (successive_grant, after_capture_grant, during_capture_grant):
         assert grant.config_revision == 41
         falkordb = grant.capabilities.falkordb
         qdrant = grant.capabilities.qdrant
@@ -150,6 +138,38 @@ def test_local_qdrant_url_without_api_key_is_direct() -> None:
     assert isinstance(qdrant, QdrantDirect)
     assert qdrant.url == "http://127.0.0.1:6333"
     assert qdrant.api_key == ""
+
+
+@pytest.mark.unit
+def test_remote_falkor_host_without_password_is_not_direct() -> None:
+    snapshot = revision_snapshot(
+        41,
+        host="falkor-a.test",
+        password=None,
+        qdrant_url="http://127.0.0.1:6333",
+        api_key=None,
+    )
+    grant = _issue(SuccessiveCaptureRuntime(snapshot, snapshot))
+    falkordb = grant.capabilities.falkordb
+    assert not isinstance(falkordb, FalkorDirect)
+    assert isinstance(falkordb, BrokeredCapability)
+    assert falkordb.operations
+
+
+@pytest.mark.unit
+def test_remote_qdrant_url_without_api_key_is_not_direct() -> None:
+    snapshot = revision_snapshot(
+        41,
+        host="127.0.0.1",
+        password=None,
+        qdrant_url="http://qdrant-a.test:6333",
+        api_key=None,
+    )
+    grant = _issue(SuccessiveCaptureRuntime(snapshot, snapshot))
+    qdrant = grant.capabilities.qdrant
+    assert not isinstance(qdrant, QdrantDirect)
+    assert isinstance(qdrant, BrokeredCapability)
+    assert qdrant.operations
 
 
 @pytest.mark.unit

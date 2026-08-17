@@ -13,6 +13,8 @@ from psycopg import sql
 from psycopg.rows import dict_row
 from psycopg.types.json import Jsonb
 
+pytestmark = pytest.mark.integration
+
 _REPO = Path(__file__).resolve().parents[2]
 _MIGRATION = _REPO / "crates/gcore/assets/schema/migrations/378_copy_rule_definitions.sql"
 

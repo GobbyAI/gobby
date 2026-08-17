@@ -16,6 +16,8 @@ from psycopg.types.json import Jsonb
 
 from gobby.storage.sessions._constants import LIVE_SESSION_STATUSES
 
+pytestmark = pytest.mark.integration
+
 _REPO = Path(__file__).resolve().parents[2]
 _MIGRATION = _REPO / "crates/gcore/assets/schema/migrations/377_copy_agent_step_instances.sql"
 

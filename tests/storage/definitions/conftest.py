@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import uuid
 from collections.abc import Iterator
+from urllib.parse import parse_qsl, urlencode, urlsplit, urlunsplit
 
 import psycopg
 import pytest
@@ -11,6 +12,18 @@ from psycopg import sql
 
 from gobby.storage.definitions.revisions import reset_definition_revision_state
 from gobby.storage.hub.postgres import PostgresHubDatabase
+
+
+def scoped_postgres_dsn(database_url: str, schema: str) -> str:
+    parsed = urlsplit(database_url)
+    query = dict(parse_qsl(parsed.query, keep_blank_values=True))
+    extra = f"-csearch_path={schema}"
+    existing = query.get("options", "").strip()
+    query["options"] = f"{existing} {extra}".strip() if existing else extra
+    return urlunsplit(
+        (parsed.scheme, parsed.netloc, parsed.path, urlencode(query), parsed.fragment)
+    )
+
 
 _SCHEMA_SQL = """
 CREATE TABLE IF NOT EXISTS definition_revisions (
@@ -134,7 +147,7 @@ def definition_db(postgres_database_url: str) -> Iterator[PostgresHubDatabase]:
         conn.execute(sql.SQL("CREATE SCHEMA {}").format(sql.Identifier(schema)))
         conn.execute(sql.SQL("SET search_path TO {}").format(sql.Identifier(schema)))
         conn.execute(_SCHEMA_SQL)
-    database = PostgresHubDatabase(f"{postgres_database_url}?options=-csearch_path%3D{schema}")
+    database = PostgresHubDatabase(scoped_postgres_dsn(postgres_database_url, schema))
     try:
         yield database
     finally:

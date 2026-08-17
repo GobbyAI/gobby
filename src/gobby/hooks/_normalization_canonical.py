@@ -710,7 +710,11 @@ def _classify_shell_segment_without_redirection(
 
     if cmd == "git" and parts[git_subcommand_index : git_subcommand_index + 1] == ["add"]:
         positional = _git_add_positional_args_after(parts, git_subcommand_index + 1)
-        paths = [candidate for candidate in positional if _looks_path_target(candidate)]
+        paths = [
+            candidate
+            for candidate in positional
+            if _looks_path_target(candidate) or _contains_unexpanded_shell_reference(candidate)
+        ]
         return _ShellSegmentMetadata(
             "execute",
             paths=tuple(_rebase_shell_paths(paths, cwd)),

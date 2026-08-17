@@ -2,6 +2,7 @@
 
 import json
 from collections.abc import Awaitable, Callable
+from pathlib import Path
 from typing import Any
 from unittest.mock import AsyncMock, MagicMock, patch
 
@@ -345,7 +346,7 @@ async def test_get_variable_calls_relocated_session_path_with_scope() -> None:
 
 
 def test_stdio_proxy_has_no_workflows_variable_literal() -> None:
-    from pathlib import Path
-
-    source = Path("src/gobby/mcp_proxy/stdio_proxy.py").read_text(encoding="utf-8")
+    source = (Path(__file__).resolve().parents[2] / "src/gobby/mcp_proxy/stdio_proxy.py").read_text(
+        encoding="utf-8"
+    )
     assert "/api/workflows" not in source

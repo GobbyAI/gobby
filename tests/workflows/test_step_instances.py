@@ -17,7 +17,7 @@ from gobby.storage.hub.postgres import PostgresHubDatabase
 from gobby.workflows.agent_models import AgentDefinitionBody, AgentStepWorkflowBody
 from gobby.workflows.definitions import WorkflowStep
 
-pytestmark = pytest.mark.unit
+pytestmark = pytest.mark.integration
 
 _INSTANCE_SQL = """
 CREATE TABLE IF NOT EXISTS agent_step_instances (
@@ -155,6 +155,7 @@ def test_snapshot_immutable_on_upsert(instance_db: PostgresHubDatabase) -> None:
     assert after.variables == {"v": 99}
 
 
+@pytest.mark.unit
 def test_agent_step_instance_mutation_replaces_workflow_lock() -> None:
     from gobby.storage.hub import protocol
 
