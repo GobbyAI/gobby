@@ -369,26 +369,32 @@ def _apply_cd(cwd: str | None, target: str) -> str:
     return posixpath.normpath(posixpath.join(cwd, target))
 
 
-def _shell_positional_args_after(parts: list[str], start: int) -> list[str]:
+def _shell_positional_args_after(
+    parts: list[str],
+    start: int,
+    *,
+    option_args: set[str] | None = None,
+) -> list[str]:
     positional: list[str] = []
     skip_next = False
     after_options = False
-    option_args = {
-        "-A",
-        "-B",
-        "-C",
-        "-e",
-        "-f",
-        "-g",
-        "-m",
-        "--after-context",
-        "--before-context",
-        "--context",
-        "--file",
-        "--glob",
-        "--max-count",
-        "--regexp",
-    }
+    if option_args is None:
+        option_args = {
+            "-A",
+            "-B",
+            "-C",
+            "-e",
+            "-f",
+            "-g",
+            "-m",
+            "--after-context",
+            "--before-context",
+            "--context",
+            "--file",
+            "--glob",
+            "--max-count",
+            "--regexp",
+        }
     for part in parts[start:]:
         if skip_next:
             skip_next = False
@@ -410,28 +416,11 @@ def _shell_positional_args_after(parts: list[str], start: int) -> list[str]:
 
 
 def _git_add_positional_args_after(parts: list[str], start: int) -> list[str]:
-    positional: list[str] = []
-    skip_next = False
-    after_options = False
-    option_args = {"--chmod", "--pathspec-from-file"}
-    for part in parts[start:]:
-        if skip_next:
-            skip_next = False
-            continue
-        if part in _SHELL_CONTROL_TOKENS or not part:
-            continue
-        if not after_options and part == "--":
-            after_options = True
-            continue
-        if not after_options and part in option_args:
-            skip_next = True
-            continue
-        if not after_options and part.startswith("--") and "=" in part:
-            continue
-        if not after_options and part.startswith("-") and part != "-":
-            continue
-        positional.append(part)
-    return positional
+    return _shell_positional_args_after(
+        parts,
+        start,
+        option_args={"--chmod", "--pathspec-from-file"},
+    )
 
 
 def _search_command_paths(cmd: str, parts: list[str]) -> list[str]:

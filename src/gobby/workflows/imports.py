@@ -9,7 +9,12 @@ from typing import Any
 import yaml
 
 from gobby.paths import get_global_workflows_dir
-from gobby.storage.definitions.agents import AgentDefinitionManager, _parent_body
+from gobby.storage.definitions.agents import (
+    AgentDefinitionManager,
+)
+from gobby.storage.definitions.agents import (
+    parent_body as agent_parent_body,
+)
 from gobby.storage.definitions.pipelines import PipelineDefinitionManager
 from gobby.storage.definitions.rules import RuleDefinitionManager
 from gobby.storage.definitions.variables import SessionVariableDefaultManager
@@ -58,7 +63,7 @@ def _imported_definition_name(data: dict[str, Any], declared_type: str) -> str:
 def _upsert_agent(db: Any, data: dict[str, Any], project_id: str | None) -> Any:
     body = AgentDefinitionBody.model_validate(data)
     dumped = body.model_dump(mode="json")
-    parent_body = _parent_body(dumped)
+    parent_body = agent_parent_body(dumped)
     step_workflow = dumped.get("step_workflow")
     manager = AgentDefinitionManager(db)
     name = str(data["name"])

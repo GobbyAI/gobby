@@ -16,6 +16,7 @@ from gobby.identity import DUMMY_PASSWORD_HASH, verify_password_hash
 from gobby.servers.grant_auth import (
     GRANT_HEADER,
     AuthDecision,
+    GrantPresenter,
     admission_required,
     bearer_matches_grant,
     identity_headers_match,
@@ -183,7 +184,7 @@ class AuthService:
         database_getter: Callable[[], HubDatabase],
         token_file: Path | None = None,
         *,
-        grant_service: object | None = None,
+        grant_service: GrantPresenter | None = None,
         lease_live: Callable[[], bool] | None = None,
         local_machine_id: str | None = None,
         effect_fence: EffectFence | None = None,
@@ -204,7 +205,7 @@ class AuthService:
     def bind_runtime(
         self,
         *,
-        grant_service: object | None,
+        grant_service: GrantPresenter | None,
         lease_live: Callable[[], bool] | None,
         local_machine_id: str | None,
         effect_fence: EffectFence | None,

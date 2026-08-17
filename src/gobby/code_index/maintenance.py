@@ -95,6 +95,10 @@ async def _run_maintenance(
     if gcode_gateway is None:
         logger.warning("gcode unavailable — skipping maintenance index. Run `gobby install`.")
 
+    factory = getattr(context, "launch_factory", None)
+    if gcode_gateway is not None and factory is None:
+        logger.error("Maintenance reindex skipped: launch factory is not configured")
+
     active_project_ids = {str(project.id) for project in projects}
     for stale_project_id in set(missing_root_observations) - active_project_ids:
         missing_root_observations.pop(stale_project_id, None)
@@ -116,66 +120,69 @@ async def _run_maintenance(
 
         missing_root_observations.pop(project_id, None)
         root = decision.root
-        assert root is not None
+        if root is None:
+            logger.error(
+                "Active indexed project %s has no root; treating as stale",
+                project_id,
+            )
+            await _reconcile_stale_selector(context, project_id, "missing_root")
+            continue
 
-        if gcode_gateway is not None and daemon_config_breaker.should_attempt():
-            factory = context.launch_factory
-            if factory is None:
-                logger.error(
-                    "Maintenance reindex failed for %s: launch factory is not configured",
-                    project_id,
-                )
-            else:
-                purge_project = False
-                try:
-                    async with open_launch_async(
-                        factory, project_id, timeout_seconds=index_timeout
-                    ) as launch:
-                        result = await gcode_gateway.maintenance_index(
-                            root, timeout=index_timeout, env=launch.env
-                        )
-                    daemon_config_breaker.record_success()
-                    if result.returncode == 3:
-                        logger.debug(
-                            "Maintenance reindex skipped for %s (index lock busy)",
-                            project.id,
-                        )
-                    elif not result.success:
-                        detail = result.stderr.strip() or result.stdout.strip() or "<no output>"
-                        if result.timed_out:
-                            logger.error(
-                                "Maintenance reindex timed out for %s: %s",
-                                project.id,
-                                detail,
-                            )
-                        else:
-                            error = _classify_gcode_command_error(
-                                result.command,
-                                result.returncode or 1,
-                                detail,
-                            )
-                            if isinstance(error, GcodeProjectNotFoundError):
-                                purge_project = True
-                            else:
-                                logger.error(
-                                    "Maintenance reindex failed for %s (exit code %s): %s",
-                                    project.id,
-                                    result.returncode,
-                                    detail,
-                                )
-                except GcodeDaemonConfigUnavailableError:
-                    daemon_config_breaker.record_failure()
-                except Exception:
-                    daemon_config_breaker.record_inconclusive()
-                    logger.exception("Maintenance reindex failed for %s", project.id)
-
-                if purge_project:
-                    await purge_missing_project(
-                        project=project,
-                        storage=context.storage,
-                        run_db=context.run_db,
+        if (
+            gcode_gateway is not None
+            and factory is not None
+            and daemon_config_breaker.should_attempt()
+        ):
+            purge_project = False
+            try:
+                async with open_launch_async(
+                    factory, project_id, timeout_seconds=index_timeout
+                ) as launch:
+                    result = await gcode_gateway.maintenance_index(
+                        root, timeout=index_timeout, env=launch.env
                     )
-                    continue
+                daemon_config_breaker.record_success()
+                if result.returncode == 3:
+                    logger.debug(
+                        "Maintenance reindex skipped for %s (index lock busy)",
+                        project.id,
+                    )
+                elif not result.success:
+                    detail = result.stderr.strip() or result.stdout.strip() or "<no output>"
+                    if result.timed_out:
+                        logger.error(
+                            "Maintenance reindex timed out for %s: %s",
+                            project.id,
+                            detail,
+                        )
+                    else:
+                        error = _classify_gcode_command_error(
+                            result.command,
+                            result.returncode or 1,
+                            detail,
+                        )
+                        if isinstance(error, GcodeProjectNotFoundError):
+                            purge_project = True
+                        else:
+                            logger.error(
+                                "Maintenance reindex failed for %s (exit code %s): %s",
+                                project.id,
+                                result.returncode,
+                                detail,
+                            )
+            except GcodeDaemonConfigUnavailableError:
+                daemon_config_breaker.record_failure()
+            except Exception:
+                daemon_config_breaker.record_inconclusive()
+                logger.exception("Maintenance reindex failed for %s", project.id)
+
+            if purge_project:
+                await purge_missing_project(
+                    project=project,
+                    storage=context.storage,
+                    run_db=context.run_db,
+                )
+                continue
 
         if summarizer:
             await _summarize_unsummarized(

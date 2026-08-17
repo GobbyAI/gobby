@@ -2,10 +2,18 @@
 
 from __future__ import annotations
 
+import json
 import logging
+import os
+import time
 import weakref
 from collections.abc import Callable
+from datetime import UTC, datetime, timedelta
+from pathlib import Path
 from typing import TYPE_CHECKING
+from uuid import UUID
+
+import psycopg
 
 from gobby.ai.vision import build_daemon_vision_extract_service
 from gobby.app_context import ServiceContainer, set_app_context
@@ -348,9 +356,6 @@ def issue_grant_postgres(
     become a generic handshake rejection so credential details stay out of
     the client envelope.
     """
-    from datetime import UTC, datetime, timedelta
-    from uuid import UUID
-
     from gobby.runtime_grants.handshake import HandshakeRejection
     from gobby.runtime_grants.schema import GrantPrincipal, PostgresDirect
 
@@ -424,12 +429,7 @@ def issue_grant_postgres(
 
 
 def _bind_runtime_grants(server: HTTPServer, runner: GobbyRunner) -> None:
-    import json
-    import os
-    import time
-    from pathlib import Path
-    from uuid import UUID
-
+    # Deferred imports stay here: they close a runner <-> runtime_grants cycle.
     from gobby.runtime_grants.handshake import HandshakeRejection, HandshakeService
     from gobby.runtime_grants.revocation import GrantRevocationStore
     from gobby.runtime_grants.schema import GrantBundle, GrantPrincipal, PostgresDirect
@@ -491,7 +491,11 @@ def _bind_runtime_grants(server: HTTPServer, runner: GobbyRunner) -> None:
                 "SELECT 1 FROM projects WHERE id = %s AND deleted_at IS NULL",
                 (project_id,),
             )
-        except Exception:
+        except psycopg.Error as exc:
+            logger.warning(
+                "project admission query failed",
+                extra={"project_id": project_id, "error": str(exc)},
+            )
             return False
         return row is not None
 

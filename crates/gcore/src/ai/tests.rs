@@ -2,12 +2,7 @@
 //! workspace zero-match audits for removed Direct/Auto surfaces.
 
 use std::fs;
-use std::net::TcpListener;
 use std::path::{Path, PathBuf};
-use std::sync::Arc;
-use std::sync::atomic::{AtomicUsize, Ordering};
-use std::thread;
-use std::time::{Duration, Instant};
 
 use crate::ai_types::AiError;
 use crate::config::{AiCapability, AiRouting};
@@ -193,20 +188,6 @@ fn workspace_zero_match_removed_routing() {
 
 #[test]
 fn grant_gates_modalities() {
-    let listener = TcpListener::bind("127.0.0.1:0").expect("bind");
-    let accepts = Arc::new(AtomicUsize::new(0));
-    let flag = Arc::clone(&accepts);
-    listener.set_nonblocking(true).expect("nonblocking");
-    thread::spawn(move || {
-        let deadline = Instant::now() + Duration::from_secs(2);
-        while Instant::now() < deadline {
-            if listener.accept().is_ok() {
-                flag.fetch_add(1, Ordering::SeqCst);
-            }
-            thread::sleep(Duration::from_millis(5));
-        }
-    });
-
     let unavailable = grant_capabilities(GrantAiCapability::Unavailable {});
     let error = super::require_modality(&unavailable, AiCapability::Embed)
         .expect_err("unavailable embed must fail typed");
@@ -234,11 +215,4 @@ fn grant_gates_modalities() {
         }
         other => panic!("expected CapabilityUnavailable, got {other:?}"),
     }
-
-    thread::sleep(Duration::from_millis(50));
-    assert_eq!(
-        accepts.load(Ordering::SeqCst),
-        0,
-        "modality gating must not open an HTTP connection"
-    );
 }

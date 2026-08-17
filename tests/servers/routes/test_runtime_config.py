@@ -81,20 +81,14 @@ def _client(
     token_file = tmp_path / "local_cli_token"
     token_file.write_text(OPERATOR_TOKEN)
     server.auth_service = AuthService(lambda: server.services.database, token_file=token_file)
-    setattr(
-        server.auth_service,
-        "is_request_authenticated",
-        lambda request: bool(request.headers.get("Authorization")),
+    server.auth_service.is_request_authenticated = lambda request: bool(
+        request.headers.get("Authorization")
     )
-    setattr(
-        server.auth_service,
-        "_legacy_authenticated",
-        lambda request: bool(request.headers.get("Authorization")),
+    server.auth_service._legacy_authenticated = lambda request: bool(
+        request.headers.get("Authorization")
     )
-    setattr(
-        server.auth_service,
-        "_credential_accepted",
-        lambda request: bool(request.headers.get("Authorization")),
+    server.auth_service._credential_accepted = lambda request: bool(
+        request.headers.get("Authorization")
     )
     server.grant_service = grants
     server.handshake_service = handshake
@@ -121,8 +115,10 @@ def test_grant_presenting_config_transport(tmp_path: Path) -> None:
         machine_id=LOCAL_MACHINE_ID,
         timeout_seconds=30,
     )
+    agent_claims = verify_agent_api_token(agent_token, OPERATOR_TOKEN)
+    assert agent_claims is not None
     agent_grant = handshake.issue_for_agent(
-        verify_agent_api_token(agent_token, OPERATOR_TOKEN),
+        agent_claims,
         machine_id=LOCAL_MACHINE_ID,
         project_id=PROJECT_ID,
     )

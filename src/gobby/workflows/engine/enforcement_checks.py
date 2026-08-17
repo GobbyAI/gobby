@@ -58,6 +58,7 @@ class EnforcementCheckMixin:
     """Tool restriction checks for agent and step workflow enforcement."""
 
     instance_manager: AgentStepInstanceManager
+    _pending_terminal_denial: tuple[Any, str, str] | None = None
 
     if TYPE_CHECKING:
         workflow_audit: WorkflowAuditManager
@@ -204,9 +205,8 @@ class EnforcementCheckMixin:
         )
 
     def _flush_pending_terminal_denial(self) -> None:
-        pending = getattr(self, "_pending_terminal_denial", None)
-        if hasattr(self, "_pending_terminal_denial"):
-            delattr(self, "_pending_terminal_denial")
+        pending = self._pending_terminal_denial
+        self._pending_terminal_denial = None
         if pending is None:
             return
         storage, run_id, terminal_error = pending

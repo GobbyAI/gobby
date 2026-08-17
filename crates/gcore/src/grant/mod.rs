@@ -325,6 +325,8 @@ pub fn deployment_token(data_root: &Path) -> String {
     derived_deployment_token(data_root)
 }
 
+pub const RUNTIME_CONFIG_PATH: &str = "/api/runtime/config";
+
 pub fn fetch_runtime_config(
     base_url: &str,
     grant: &GrantBundle,
@@ -334,7 +336,7 @@ pub fn fetch_runtime_config(
     let url = format!(
         "{}{}",
         cache::normalize_endpoint(base_url),
-        "/api/runtime/config"
+        RUNTIME_CONFIG_PATH
     );
     let response = handshake::http_json("GET", &url, None, bearer, Some(grant), timeout)?;
     if !(200..300).contains(&response.status) {

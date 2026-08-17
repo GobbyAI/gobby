@@ -251,13 +251,15 @@ def test_projects_listing_operator_only(
     assert not service.is_request_authenticated(
         _request(capability_headers, method="GET", path="/api/projects")
     )
-    assert service.is_request_authenticated(
+    prune = service.authenticate(
         _request(
             {"Authorization": "Bearer operator-token"},
             method="POST",
             path="/api/code-index/prune",
         )
     )
+    assert prune.allowed is False
+    assert prune.code == "lease_not_held"
     assert not service.is_request_authenticated(
         _request(capability_headers, method="POST", path="/api/code-index/prune")
     )
@@ -888,16 +890,6 @@ def test_in_transaction_epoch_fencing(temp_db: HubDatabase) -> None:
     )
 
     token = "cafebabedeadbeef"
-    temp_db.execute(
-        """
-        CREATE TABLE IF NOT EXISTS deployment_runtime (
-            deployment_token TEXT PRIMARY KEY,
-            fencing_epoch BIGINT NOT NULL DEFAULT 0,
-            grant_signing_secret TEXT NOT NULL,
-            epoch_updated_at TIMESTAMPTZ
-        )
-        """
-    )
     temp_db.execute(
         """
         INSERT INTO deployment_runtime (deployment_token, fencing_epoch, grant_signing_secret)

@@ -1,4 +1,10 @@
-"""Cross-language golden serialization vectors for the v2 grant bundle."""
+"""Cross-language golden serialization vectors for the v2 grant bundle.
+
+Schema identity is signed. After a migration changes
+``expected_schema_identity()``, regenerate every file in ``golden/``:
+recompute each ``payload_checksum`` and re-sign the payloads with
+``GOLDEN_SECRET`` from ``tests/runtime_grants/support.py``.
+"""
 
 from __future__ import annotations
 
@@ -18,6 +24,7 @@ from gobby.runtime_grants import (
     sign_grant,
 )
 from gobby.runtime_grants.schema import API_CONTRACT
+from gobby.runtime_grants.signing import signature_matches
 from gobby.storage.schema_contract import expected_schema_identity
 from tests.runtime_grants.support import (
     DEPLOYMENT_TOKEN,
@@ -92,10 +99,10 @@ def test_config_revision_signed() -> None:
             "latest_checksum": identity["latest_checksum"],
             "assets_root_hash": identity["assets_root_hash"],
         }
+        assert signature_matches(grant, GOLDEN_SECRET)
         mutated = grant.model_copy(update={"config_revision": grant.config_revision + 1})
-        assert mutated.signature == grant.signature
         assert payload_checksum(mutated) != grant.payload_checksum
-        assert sign_grant(mutated, "golden-grant-signing-secret").signature != grant.signature
+        assert sign_grant(mutated, GOLDEN_SECRET).signature != grant.signature
 
 
 @pytest.mark.unit

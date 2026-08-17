@@ -100,18 +100,7 @@ def register_agent_spawn_tools(
         variables: dict[str, Any] | None = None,
         task_id: str | None = None,
     ) -> dict[str, Any]:
-        from gobby.mcp_proxy.tools.apply_persona import (
-            apply_persona_impl,
-            colliding_persona_variable_error,
-        )
-
-        collision = colliding_persona_variable_error(
-            variables,
-            changes={"_agent_type": None},
-            extra_vars={},
-        )
-        if collision:
-            return {"success": False, "error": collision}
+        from gobby.mcp_proxy.tools.apply_persona import apply_persona_impl
 
         return await apply_persona_impl(
             agent=agent,

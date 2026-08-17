@@ -104,7 +104,9 @@ def test_each_rejection_class_is_typed() -> None:
         GOLDEN_SECRET,
     )
 
-    service.revoke(grant)
+    revoked_service = _service()
+    revoked_grant = _issue(revoked_service)
+    revoked_service.revoke(revoked_grant)
 
     cases: list[tuple[GrantBundle, type[GrantRejection], str]] = [
         (expired, ExpiredGrant, "expired"),
@@ -113,7 +115,6 @@ def test_each_rejection_class_is_typed() -> None:
         (wrong_schema, WrongSchemaGrant, "wrong_schema"),
         (wrong_contract, WrongApiContractGrant, "wrong_api_contract"),
         (stale_epoch, StaleEpochGrant, "stale_epoch"),
-        (grant, RevokedGrant, "revoked"),
     ]
     codes: set[str] = set()
     for presented, error_type, code in cases:
@@ -122,8 +123,14 @@ def test_each_rejection_class_is_typed() -> None:
         assert captured.value.code == code
         codes.add(code)
 
+    with pytest.raises(RevokedGrant) as revoked:
+        revoked_service.present(revoked_grant, now=now)
+    assert revoked.value.code == "revoked"
+    codes.add(revoked.value.code)
+
     fresh = _service()
     live = _issue(fresh)
+    fresh.present(live, now=live.issued_at + 10)
     with pytest.raises(WrongCapabilityGrant) as missing:
         fresh.present(
             live,

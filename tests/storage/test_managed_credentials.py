@@ -28,6 +28,7 @@ from gobby.storage.managed_credentials import (
     ManagedCredentialManager,
     ManagedToolCredential,
 )
+from gobby.storage.secrets import SecretStore
 from tests.fixtures.postgres import TEST_USER_ID
 from tests.storage.test_postgres_agent_authorization import (
     AUTH_SCHEMA,
@@ -150,7 +151,7 @@ def test_issue_maintenance_creates_mnt_role_and_revokes(
             expires_at=datetime.now(UTC) + timedelta(minutes=30),
         )
 
-        assert re.fullmatch(rf"gobby_mnt_{execution_id.hex}_1", issued.credential.role_name)
+        assert issued.credential.role_name == f"gobby_mnt_{execution_id.hex}_1"
         assert issued.dsn
         parsed = conninfo_to_dict(issued.dsn)
         assert parsed["user"] == issued.credential.role_name
@@ -540,9 +541,7 @@ def test_other_daemon_waits_for_expired_lease_then_recovers_terminal_and_orphan_
             admin.execute("DELETE FROM public.machines WHERE id = %s", (other_machine_id,))
 
 
-def _secret_store(fixture: AuthorizationFixture, tmp_path: Path) -> Any:
-    from gobby.storage.secrets import SecretStore
-
+def _secret_store(fixture: AuthorizationFixture) -> SecretStore:
     database = PostgresHubDatabase(fixture.database_url, runtime_role=RUNTIME_ROLE)
     database.open()
     return SecretStore(database)
@@ -554,7 +553,7 @@ def test_interactive_binding_uniqueness(
 ) -> None:
     fixture = authorization_fixture
     manager = _manager(fixture, tmp_path / "managed")
-    store = _secret_store(fixture, tmp_path)
+    store = _secret_store(fixture)
     token_a = "aaaaaaaaaaaaaaaa"
     token_b = "bbbbbbbbbbbbbbbb"
     try:
@@ -621,7 +620,7 @@ def test_interactive_reuse_refreshes_expired_role(
 ) -> None:
     fixture = authorization_fixture
     manager = _manager(fixture, tmp_path / "managed-expired")
-    store = _secret_store(fixture, tmp_path)
+    store = _secret_store(fixture)
     token = "dddddddddddddddd"
     try:
         first = manager.issue_interactive(
@@ -661,7 +660,7 @@ def test_interactive_reuse_after_restart(
     tmp_path: Path,
 ) -> None:
     fixture = authorization_fixture
-    store = _secret_store(fixture, tmp_path)
+    store = _secret_store(fixture)
     first_manager = _manager(fixture, tmp_path / "managed-a")
     token = "cccccccccccccccc"
     try:
@@ -711,7 +710,7 @@ def test_rotation_drains_predecessor_generations(
 ) -> None:
     fixture = authorization_fixture
     manager = _manager(fixture, tmp_path / "managed")
-    store = _secret_store(fixture, tmp_path)
+    store = _secret_store(fixture)
     token = "dddddddddddddddd"
     try:
         first = manager.issue_interactive(
@@ -772,7 +771,7 @@ def test_credential_material_ciphertext_at_rest(
 ) -> None:
     fixture = authorization_fixture
     manager = _manager(fixture, tmp_path / "managed")
-    store = _secret_store(fixture, tmp_path)
+    store = _secret_store(fixture)
     token = "eeeeeeeeeeeeeeee"
     try:
         issued = manager.issue_interactive(

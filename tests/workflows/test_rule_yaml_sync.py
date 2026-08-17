@@ -1,7 +1,7 @@
-"""Tests for new rule YAML sync to rule_definitions table.
+"""Tests for syncing typed rule YAML files into rule_definitions rows.
 
 Tests syncing rule YAML files (with `rules:` key and event/effect format)
-into rule_definitions rows with workflow_type='rule'.
+into rule_definitions rows.
 """
 
 from __future__ import annotations

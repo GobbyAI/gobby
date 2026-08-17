@@ -23,6 +23,7 @@ from gobby.workflows.step_instances import (
 if TYPE_CHECKING:
     from gobby.agents.runner import AgentRunner
     from gobby.events.completion_registry import CompletionEventRegistry
+    from gobby.workflows.step_instances import AgentStepInstance
 
 logger = logging.getLogger("gobby.workflows.engine.enforcement")
 
@@ -50,7 +51,7 @@ class EnforcementCompletionMixin:
 
         def _get_step_for_session(
             self, session_id: str
-        ) -> tuple[WorkflowStep | None, Any | None]: ...
+        ) -> tuple[WorkflowStep | None, AgentStepInstance | None]: ...
 
         def _is_native_set_variable_tool(self, tool_name: str) -> bool: ...
 
@@ -390,7 +391,7 @@ class EnforcementCompletionMixin:
                 if not transition_met:
                     continue
 
-                old_step = instance.current_step
+                old_step = instance.current_step or ""
                 new_step = transition.to
                 new_step_def = definition.get_step(new_step)
 

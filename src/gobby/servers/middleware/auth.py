@@ -90,13 +90,13 @@ class AuthMiddleware(BaseHTTPMiddleware):
 
         auth_service = self.server.auth_service
         decision = await self.server.run_db(auth_service.authenticate, request)
-        if getattr(decision, "allowed", None) is True:
+        if decision.allowed:
             return await self._call_next_admitted(request, call_next)
 
         if path.startswith(_PROTECTED_PREFIXES):
-            code = getattr(decision, "code", None)
-            status = int(getattr(decision, "status_code", 401) or 401)
-            message = getattr(decision, "message", None)
+            code = decision.code
+            status = decision.status_code or 401
+            message = decision.message
             if not message:
                 message = (
                     _LOGIN_GUIDANCE if code in _MISSING_AUTH_CODES else _GRANT_REJECTION_MESSAGE

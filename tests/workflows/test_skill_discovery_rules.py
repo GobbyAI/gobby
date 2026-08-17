@@ -6,7 +6,6 @@ have valid structure, and evaluate conditions properly.
 
 from __future__ import annotations
 
-import json
 from datetime import UTC, datetime
 from pathlib import Path
 from types import SimpleNamespace
@@ -19,9 +18,9 @@ from gobby.hooks.events import HookEvent, HookEventType, SessionSource
 from gobby.hooks.normalization import normalize_tool_fields
 from gobby.hooks.tool_error_tracker import extract_target_key, track_proxy_outcome
 from gobby.skills.formatting import skill_fetch_directive
+from gobby.storage.definitions.rules import RuleDefinitionManager
 from gobby.storage.hub.protocol import HubDatabase
 from gobby.storage.sessions import SessionManager
-from gobby.storage.definitions.rules import RuleDefinitionManager
 from gobby.workflows.definitions import RuleDefinitionBody
 from gobby.workflows.engine.blocked_tool_recovery import _CODE_INDEX_REMEDIATION_RULES
 from gobby.workflows.engine.core import RuleEngine
@@ -168,7 +167,9 @@ class TestSkillDiscoverySync:
                 body = row.definition_json
                 assert body.get("group") == "skill-discovery", f"{row.name} missing group"
 
-    def test_all_rules_are_valid_pydantic(self, db, manager) -> None:
+    def test_all_rules_are_valid_pydantic(
+        self, db: HubDatabase, manager: RuleDefinitionManager
+    ) -> None:
         """All synced rules should be valid RuleDefinitionBody instances."""
         _sync_bundled(db)
 
@@ -2726,9 +2727,7 @@ class TestRequireYamlSkillCondition:
 class TestRequirePlanSkillStructure:
     """Verify require-plan-skill rule structure."""
 
-    def test_is_before_tool_event(
-        self, db: HubDatabase, manager: RuleDefinitionManager
-    ) -> None:
+    def test_is_before_tool_event(self, db: HubDatabase, manager: RuleDefinitionManager) -> None:
         _sync_bundled(db)
         row = manager.get_by_name("require-plan-skill")
         assert row is not None

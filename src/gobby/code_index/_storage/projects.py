@@ -90,6 +90,7 @@ class CodeIndexProjectStorageMixin:
             "imports": 0,
             "calls": 0,
             "content_chunks": 0,
+            "projects": 0,
         }
 
         def _write(conn: Transaction) -> None:

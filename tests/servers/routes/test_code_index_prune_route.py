@@ -21,7 +21,7 @@ PROJECT_A = "11111111-1111-4111-8111-111111111111"
 PROJECT_B = "22222222-2222-4222-8222-222222222222"
 
 
-def test_global_prune_operator_only() -> None:
+def test_global_prune_delegates_to_operator_pruner() -> None:
     server = MagicMock()
     pruner = MagicMock()
     pruner.run_operator_global_prune = AsyncMock(

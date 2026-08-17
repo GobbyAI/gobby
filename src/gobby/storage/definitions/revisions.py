@@ -40,6 +40,14 @@ class RevisionExecutor(Protocol):
     ) -> Any: ...
 
 
+class RevisionReader(Protocol):
+    def fetchall(
+        self,
+        sql: str,
+        params: Sequence[Any] | Mapping[str, Any] = (),
+    ) -> Sequence[Mapping[str, Any] | Sequence[Any]]: ...
+
+
 def _require_domain(domain: str) -> DefinitionDomain:
     if domain not in DEFINITION_DOMAINS:
         raise ValueError(f"Unknown definition domain: {domain}")
@@ -108,7 +116,7 @@ def advance_persistent_revision(conn: RevisionExecutor, *domains: DefinitionDoma
         )
 
 
-def fetch_persistent_revisions(database: Any) -> dict[DefinitionDomain, int]:
+def fetch_persistent_revisions(database: RevisionReader) -> dict[DefinitionDomain, int]:
     """Read durable revisions, defaulting unseen domains to 0."""
     observed = dict.fromkeys(DEFINITION_DOMAINS, 0)
     rows = database.fetchall("SELECT domain, revision FROM definition_revisions")

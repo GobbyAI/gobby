@@ -24,8 +24,6 @@ pytestmark = pytest.mark.unit
 PROJECT_ID = "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa"
 S1 = "11111111-1111-4111-8111-111111111111"
 S2 = "22222222-2222-4222-8222-222222222222"
-INST_1 = "33333333-3333-4333-8333-333333333333"
-INST_2 = "44444444-4444-4444-8444-444444444444"
 
 
 @pytest.fixture
@@ -94,7 +92,6 @@ class _SessionEndHandler(SessionEndMixin):
 def _save(
     manager: AgentStepInstanceManager,
     *,
-    instance_id: str,
     session_id: str,
     workflow_name: str,
 ) -> None:
@@ -112,7 +109,6 @@ def test_session_end_deletes_workflow_instances_for_ending_session(db: HubDataba
     instance_manager = AgentStepInstanceManager(db)
     _save(
         instance_manager,
-        instance_id=INST_1,
         session_id=S1,
         workflow_name="plan-adversary-steps",
     )
@@ -132,13 +128,11 @@ def test_session_end_only_deletes_instances_for_target_session(db: HubDatabase) 
     instance_manager = AgentStepInstanceManager(db)
     _save(
         instance_manager,
-        instance_id=INST_1,
         session_id=S1,
         workflow_name="plan-adversary-steps",
     )
     _save(
         instance_manager,
-        instance_id=INST_2,
         session_id=S2,
         workflow_name="developer",
     )

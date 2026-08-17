@@ -4,7 +4,6 @@ import asyncio
 import json
 import logging
 import os
-import threading
 from collections.abc import Iterator
 from pathlib import Path
 from types import SimpleNamespace
@@ -58,7 +57,7 @@ def mock_codex_prompt_delivery() -> Iterator[MagicMock]:
 @pytest.mark.parametrize(
     ("run_token_env", "expected_probe_token"),
     [
-        # The run-scoped capability must win: the service-capabilities route
+        # The run-scoped managed credential must win; isolation gcode
         # rejects the operator token for managed probes (#19709).
         ({"GOBBY_AGENT_API_TOKEN": "run-scoped-token"}, "run-scoped-token"),
         # Tokenless-dev fallback: no minted capability -> operator token.

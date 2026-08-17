@@ -23,11 +23,6 @@ from gobby.workflows.dry_run import WorkflowEvaluation
 pytestmark = pytest.mark.unit
 
 
-def _setup_db(db: PostgresHubDatabase) -> PostgresHubDatabase:
-    """Use the isolated typed-definition schema fixture."""
-    return db
-
-
 def _create_agent(
     db: PostgresHubDatabase,
     name: str = "test-agent",
@@ -73,7 +68,7 @@ class TestAgentNotFound:
     @pytest.mark.asyncio
     async def test_agent_not_found(self, definition_db: PostgresHubDatabase) -> None:
         """AGENT_NOT_FOUND error, can_spawn=False."""
-        db = _setup_db(definition_db)
+        db = definition_db
 
         result = await evaluate_spawn(
             agent="nonexistent",
@@ -90,7 +85,7 @@ class TestAgentNotFound:
         self, definition_db: PostgresHubDatabase, monkeypatch: pytest.MonkeyPatch
     ) -> None:
         """A same-name agent from another project must not leak into dry-run resolution."""
-        db = _setup_db(definition_db)
+        db = definition_db
         target_id = str(uuid4())
         unrelated_id = str(uuid4())
         _create_agent(db, project_id=unrelated_id)
@@ -112,7 +107,7 @@ class TestWorkflowResolution:
     @pytest.mark.asyncio
     async def test_no_workflow(self, definition_db: PostgresHubDatabase) -> None:
         """NO_WORKFLOW info when no pipeline configured."""
-        db = _setup_db(definition_db)
+        db = definition_db
         _create_agent(db)
 
         result = await evaluate_spawn(agent="test-agent", db=db)
@@ -125,7 +120,7 @@ class TestWorkflowResolution:
         self, definition_db: PostgresHubDatabase, mock_workflow_loader: MagicMock
     ) -> None:
         """WORKFLOW_RESOLVED when pipeline is configured."""
-        db = _setup_db(definition_db)
+        db = definition_db
         _create_agent(db, pipeline="my-pipeline")
 
         result = await evaluate_spawn(
@@ -142,7 +137,7 @@ class TestWorkflowResolution:
     async def test_pipeline_warns_when_workflow_loader_is_unavailable(
         self, definition_db: PostgresHubDatabase
     ) -> None:
-        db = _setup_db(definition_db)
+        db = definition_db
         _create_agent(db, pipeline="my-pipeline")
 
         result = await evaluate_spawn(agent="test-agent", db=db)
@@ -156,7 +151,7 @@ class TestWorkflowResolution:
         self, definition_db: PostgresHubDatabase, mock_workflow_loader: MagicMock
     ) -> None:
         """Explicit workflow parameter overrides agent's pipeline."""
-        db = _setup_db(definition_db)
+        db = definition_db
         _create_agent(db, pipeline="my-pipeline")
 
         result = await evaluate_spawn(
@@ -176,7 +171,7 @@ class TestIsolation:
         self, definition_db: PostgresHubDatabase
     ) -> None:
         """ISOLATION_DEPS_MISSING for worktree mode without deps."""
-        db = _setup_db(definition_db)
+        db = definition_db
         _create_agent(db, isolation="worktree")
 
         result = await evaluate_spawn(
@@ -192,7 +187,7 @@ class TestIsolation:
     @pytest.mark.asyncio
     async def test_isolation_deps_missing_clone(self, definition_db: PostgresHubDatabase) -> None:
         """ISOLATION_DEPS_MISSING for clone mode without deps."""
-        db = _setup_db(definition_db)
+        db = definition_db
         _create_agent(db, isolation="clone")
 
         result = await evaluate_spawn(
@@ -213,7 +208,7 @@ class TestRuntimeEnvironment:
         self, definition_db: PostgresHubDatabase, mock_runner: MagicMock
     ) -> None:
         """SPAWN_DEPTH_EXCEEDED when can_spawn returns False."""
-        db = _setup_db(definition_db)
+        db = definition_db
         _create_agent(db)
         mock_runner.can_spawn.return_value = (False, "Max depth 3 exceeded", 4)
 
@@ -239,7 +234,7 @@ class TestWorkflowEvaluation:
         monkeypatch: pytest.MonkeyPatch,
     ) -> None:
         """workflow_evaluation populated with structural results."""
-        db = _setup_db(definition_db)
+        db = definition_db
         _create_agent(db, pipeline="worker")
 
         wf_definition = WorkflowDefinition(
@@ -283,7 +278,7 @@ class TestWorkflowEvaluation:
         tmp_path: Path,
     ) -> None:
         """An explicit target path determines workflow scoping for cross-project dry runs."""
-        db = _setup_db(definition_db)
+        db = definition_db
         mock_workflow_loader.load_pipeline.return_value = WorkflowDefinition(
             name="worker",
             steps=[WorkflowStep(name="done")],
@@ -320,7 +315,7 @@ class TestWorkflowEvaluation:
         self, definition_db: PostgresHubDatabase, mock_workflow_loader: MagicMock
     ) -> None:
         """WORKFLOW_INVALID_FOR_AGENT when lifecycle workflow used for agent."""
-        db = _setup_db(definition_db)
+        db = definition_db
         _create_agent(db, pipeline="lifecycle-wf")
 
         mock_workflow_loader.validate_pipeline_for_agent.return_value = (
@@ -349,7 +344,7 @@ class TestHappyPath:
         mock_runner: MagicMock,
     ) -> None:
         """All layers pass, can_spawn=True."""
-        db = _setup_db(definition_db)
+        db = definition_db
         _create_agent(db, pipeline="worker")
 
         wf_definition = WorkflowDefinition(

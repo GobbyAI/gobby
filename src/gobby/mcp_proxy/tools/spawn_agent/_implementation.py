@@ -568,13 +568,13 @@ async def spawn_agent_impl(
                 handler, spawn_config, cleanup=cleanup_isolation_on_failure
             )
             return slot_response
-        session_manager = runner.child_session_manager
-        if session_manager is None:
+        child_session_manager = runner.child_session_manager
+        if child_session_manager is None:
             task_spawn_lease.release_unattached()
             return {"success": False, "error": "Session manager is required to spawn an agent"}
         try:
             prepared_spawn = prepare_terminal_spawn(
-                session_manager=session_manager,
+                session_manager=child_session_manager,
                 parent_session_id=parent_session_id,
                 project_id=project_id,
                 machine_id=get_machine_id(),
@@ -621,7 +621,7 @@ async def spawn_agent_impl(
                 )
             except Exception as exc:
                 cleanup_unlaunched_spawn(
-                    session_manager,
+                    child_session_manager,
                     session_id=prepared_spawn.session_id,
                     agent_run_id=prepared_spawn.agent_run_id,
                     prompt_file=prepared_spawn.prompt_file,
@@ -655,7 +655,7 @@ async def spawn_agent_impl(
             task_id=resolved_task_id,
             claimed_session_id=claimed_session_id,
             agent_name=agent_display_name,
-            session_manager=session_manager,
+            session_manager=child_session_manager,
             run_manager=runner.run_storage,
             machine_id=get_machine_id(),
             model=effective_model,
@@ -686,7 +686,7 @@ async def spawn_agent_impl(
             spawn_result = await execute_spawn(spawn_request)
         except Exception as exc:
             cleanup_unlaunched_spawn(
-                session_manager,
+                child_session_manager,
                 session_id=prepared_spawn.session_id,
                 agent_run_id=prepared_spawn.agent_run_id,
                 prompt_file=prepared_spawn.prompt_file,

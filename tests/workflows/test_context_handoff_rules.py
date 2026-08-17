@@ -48,14 +48,16 @@ CONTEXT_HANDOFF_RULES = {
     "auto-compact-after-task-close",
 }
 SESSION_ID = "11111111-1111-4111-8111-111111111111"
-_BUNDLED_RULES = (
-    Path(__file__).resolve().parents[2] / "src/gobby/install/shared/workflows/rules"
-)
+_BUNDLED_RULES = Path(__file__).resolve().parents[2] / "src/gobby/install/shared/workflows/rules"
 
 
 def test_bundled_session_rules_do_not_advertise_wiki_ask() -> None:
     offenders: list[str] = []
-    for path in sorted(_BUNDLED_RULES.rglob("*.yaml")):
+    for path in sorted(_BUNDLED_RULES.rglob("*")):
+        if path.suffix not in {".yaml", ".yml"}:
+            continue
+        if "deprecated" in path.parts:
+            continue
         text = path.read_text()
         if "wiki_ask" in text:
             offenders.append(path.relative_to(_BUNDLED_RULES).as_posix())

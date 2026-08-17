@@ -118,7 +118,7 @@ def test_route_registered_in_app() -> None:
     )
 
 
-def test_challenge_proof_before_bearer() -> None:
+def test_challenge_proof_before_bearer(tmp_path: Path) -> None:
     nonce = os.urandom(16)
     interactive = challenge_proof(
         nonce,
@@ -149,7 +149,7 @@ def test_challenge_proof_before_bearer() -> None:
     assert managed == hmac.new(secret, nonce, hashlib.sha256).hexdigest()
 
     server = create_http_server(config=DaemonConfig(), authenticated_requests=False)
-    token_file = Path("/tmp/unused")
+    token_file = tmp_path / "unused"
     server.auth_service = AuthService(lambda: server.services.database, token_file=token_file)
     with patch.object(server.auth_service, "local_token", return_value=OPERATOR_TOKEN):
         client = TestClient(server.app)
@@ -461,7 +461,7 @@ def _config_server(grants: GrantService, token_file: Path) -> Any:
     )
     server.grant_service = grants
     server.handshake_service = _handshake(grants)
-    setattr(server.auth_service, "is_request_authenticated", lambda _request: True)
-    setattr(server.auth_service, "_legacy_authenticated", lambda _request: True)
-    setattr(server.auth_service, "_credential_accepted", lambda _request: True)
+    server.auth_service.is_request_authenticated = lambda _request: True
+    server.auth_service._legacy_authenticated = lambda _request: True
+    server.auth_service._credential_accepted = lambda _request: True
     return server

@@ -97,6 +97,8 @@ def initial_step_state_for_spawn(
     initial_variables: dict[str, Any] | None = None,
 ) -> tuple[str, dict[str, Any]]:
     """Return the initial step workflow state for a spawned agent."""
+    if not snapshot.steps:
+        raise ValueError("Cannot initialize step state for an agent with no steps")
     step_variables = dict(snapshot.variables)
     if initial_variables and "additional_skills" in initial_variables:
         step_variables["additional_skills"] = initial_variables["additional_skills"]
@@ -108,8 +110,6 @@ def initial_step_state_for_spawn(
         for skill in additional_skills
     )
 
-    if not snapshot.steps:
-        raise ValueError("Cannot initialize step state for an agent with no steps")
     first_step = snapshot.steps[0]
     current_step = first_step.name
 
