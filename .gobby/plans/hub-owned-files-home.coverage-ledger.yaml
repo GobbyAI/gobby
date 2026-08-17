@@ -1,6 +1,6 @@
 project_id: d45545c5-ded5-4335-b115-0245752edacf
 plan_id: hub-owned-files-home
-plan_hash: "d75f573ac262d871ea94fc470a352f7831689e3c764f7c66972810ece9fb4810"
+plan_hash: "0f8126ef8efa8b911038b731071fcea5ebfa43612ef9fac022082f6e92574cdb"
 root_task_ref: "20330"
 
 sections:
@@ -14,6 +14,8 @@ sections:
       "1.1.6": {expected_leaves: [{title: Add files_home and hub_daemon_url resolution, owner_agent: backend-developer}]}
       "1.1.7": {expected_leaves: [{title: Add files_home and hub_daemon_url resolution, owner_agent: backend-developer}]}
       "1.1.8": {expected_leaves: [{title: Add files_home and hub_daemon_url resolution, owner_agent: backend-developer}]}
+      "1.1.9": {expected_leaves: [{title: Add files_home and hub_daemon_url resolution, owner_agent: backend-developer}]}
+      "1.1.10": {expected_leaves: [{title: Add files_home and hub_daemon_url resolution, owner_agent: backend-developer}]}
   "2.1":
     acceptance_items:
       "2.1.1": {expected_leaves: [{title: Retarget personal identity and USER.md, owner_agent: backend-developer}]}
@@ -22,6 +24,8 @@ sections:
       "2.1.4": {expected_leaves: [{title: Retarget personal identity and USER.md, owner_agent: backend-developer}]}
       "2.1.5": {expected_leaves: [{title: Retarget personal identity and USER.md, owner_agent: backend-developer}]}
       "2.1.6": {expected_leaves: [{title: Retarget personal identity and USER.md, owner_agent: backend-developer}]}
+      "2.1.7": {expected_leaves: [{title: Retarget personal identity and USER.md, owner_agent: backend-developer}]}
+      "2.1.8": {expected_leaves: [{title: Retarget personal identity and USER.md, owner_agent: backend-developer}]}
   "3.1":
     acceptance_items:
       "3.1.1": {expected_leaves: [{title: Reconstruct chat attachment paths, owner_agent: backend-developer}]}
@@ -30,6 +34,9 @@ sections:
       "3.1.4": {expected_leaves: [{title: Reconstruct chat attachment paths, owner_agent: backend-developer}]}
       "3.1.5": {expected_leaves: [{title: Reconstruct chat attachment paths, owner_agent: backend-developer}]}
       "3.1.6": {expected_leaves: [{title: Reconstruct chat attachment paths, owner_agent: backend-developer}]}
+      "3.1.7": {expected_leaves: [{title: Reconstruct chat attachment paths, owner_agent: backend-developer}]}
+      "3.1.8": {expected_leaves: [{title: Reconstruct chat attachment paths, owner_agent: backend-developer}]}
+      "3.1.9": {expected_leaves: [{title: Reconstruct chat attachment paths, owner_agent: backend-developer}]}
   "4.1":
     acceptance_items:
       "4.1.1": {expected_leaves: [{title: Point gwiki and daemon wiki scope at files_home/wiki, owner_agent: backend-developer}]}
@@ -40,6 +47,7 @@ sections:
       "4.1.6": {expected_leaves: [{title: Point gwiki and daemon wiki scope at files_home/wiki, owner_agent: backend-developer}]}
       "4.1.7": {expected_leaves: [{title: Point gwiki and daemon wiki scope at files_home/wiki, owner_agent: backend-developer}]}
       "4.1.8": {expected_leaves: [{title: Point gwiki and daemon wiki scope at files_home/wiki, owner_agent: backend-developer}]}
+      "4.1.9": {expected_leaves: [{title: Point gwiki and daemon wiki scope at files_home/wiki, owner_agent: backend-developer}]}
   "5.1":
     acceptance_items:
       "5.1.1": {expected_leaves: [{title: Proxy file HTTP to hub_daemon_url, owner_agent: backend-developer}]}
@@ -54,6 +62,9 @@ sections:
       "5.1.10": {expected_leaves: [{title: Proxy file HTTP to hub_daemon_url, owner_agent: backend-developer}]}
       "5.1.11": {expected_leaves: [{title: Proxy file HTTP to hub_daemon_url, owner_agent: backend-developer}]}
       "5.1.12": {expected_leaves: [{title: Proxy file HTTP to hub_daemon_url, owner_agent: backend-developer}]}
+      "5.1.13": {expected_leaves: [{title: Proxy file HTTP to hub_daemon_url, owner_agent: backend-developer}]}
+      "5.1.14": {expected_leaves: [{title: Proxy file HTTP to hub_daemon_url, owner_agent: backend-developer}]}
+      "5.1.15": {expected_leaves: [{title: Proxy file HTTP to hub_daemon_url, owner_agent: backend-developer}]}
   "6.1":
     acceptance_items:
       "6.1.1": {expected_leaves: [{title: Add hub-local files migrate, owner_agent: backend-developer}]}
@@ -66,6 +77,9 @@ sections:
       "6.1.8": {expected_leaves: [{title: Add hub-local files migrate, owner_agent: backend-developer}]}
       "6.1.9": {expected_leaves: [{title: Add hub-local files migrate, owner_agent: backend-developer}]}
       "6.1.10": {expected_leaves: [{title: Add hub-local files migrate, owner_agent: backend-developer}]}
+      "6.1.11": {expected_leaves: [{title: Add hub-local files migrate, owner_agent: backend-developer}]}
+      "6.1.12": {expected_leaves: [{title: Add hub-local files migrate, owner_agent: backend-developer}]}
+      "6.1.13": {expected_leaves: [{title: Add hub-local files migrate, owner_agent: backend-developer}]}
   "6.2":
     acceptance_items:
       "6.2.1": {expected_leaves: [{title: Inventory bind dir in pack and hub-backup, owner_agent: backend-developer}]}
@@ -74,7 +88,10 @@ sections:
       "6.2.4": {expected_leaves: [{title: Inventory bind dir in pack and hub-backup, owner_agent: backend-developer}]}
       "6.2.5": {expected_leaves: [{title: Inventory bind dir in pack and hub-backup, owner_agent: backend-developer}]}
       "6.2.6": {expected_leaves: [{title: Inventory bind dir in pack and hub-backup, owner_agent: backend-developer}]}
+      "6.2.7": {expected_leaves: [{title: Inventory bind dir in pack and hub-backup, owner_agent: backend-developer}]}
+      "6.2.8": {expected_leaves: [{title: Inventory bind dir in pack and hub-backup, owner_agent: backend-developer}]}
   "6.3":
     acceptance_items:
       "6.3.1": {expected_leaves: [{title: Update operator docs for files_home, owner_agent: tech-writer}]}
       "6.3.2": {expected_leaves: [{title: Update operator docs for files_home, owner_agent: tech-writer}]}
+      "6.3.3": {expected_leaves: [{title: Update operator docs for files_home, owner_agent: tech-writer}]}
