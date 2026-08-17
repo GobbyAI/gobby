@@ -175,17 +175,27 @@ def test_developer_prompt_builder_registered() -> None:
     assert "developer" in PROMPT_BUILDERS
 
 
-def test_failure_context_is_capped_with_truncation_marker() -> None:
+def test_failure_context_inlines_when_it_fits() -> None:
     from gobby.dispatch.prompts import PROMPT_BUILDERS
 
     task = SimpleNamespace(ref="#42", title="Follow-up")
-    prompt = PROMPT_BUILDERS["developer"](task, {"failure_context": "x" * 2500})
-    rendered_context = prompt.split(
-        "Previous failure context for this follow-up work:\n", maxsplit=1
-    )[1]
+    body = "lint failed on prompts.py"
+    prompt = PROMPT_BUILDERS["developer"](task, {"failure_context": body})
 
-    assert len(rendered_context) == 2000
-    assert rendered_context.endswith("\n[truncated]")
+    assert f"Previous failure context for this follow-up work:\n{body}" in prompt
+
+
+def test_oversized_failure_context_is_a_pointer_not_a_prefix() -> None:
+    from gobby.dispatch.prompts import PROMPT_BUILDERS
+
+    task = SimpleNamespace(ref="#42", title="Follow-up")
+    body = "x" * 2500
+    prompt = PROMPT_BUILDERS["developer"](task, {"failure_context": body})
+
+    assert body not in prompt
+    assert body[:50] not in prompt
+    assert "stored on this task (2500 chars)" in prompt
+    assert "get_task" in prompt
 
 
 def test_merge_orchestrator_prompt_builder_registered() -> None:

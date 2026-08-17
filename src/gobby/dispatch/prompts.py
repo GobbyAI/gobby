@@ -8,7 +8,6 @@ from collections.abc import Callable, Mapping
 PromptBuilder = Callable[[object, Mapping[str, object]], str]
 
 _FAILURE_CONTEXT_MAX_CHARS = 2000
-_FAILURE_CONTEXT_TRUNCATION_MARKER = "\n[truncated]"
 
 
 def _field(obj: object, name: str, default: object = "") -> object:
@@ -48,8 +47,10 @@ def _bounded_failure_context(context: Mapping[str, object]) -> str | None:
     value = _context_value(context, "failure_context")
     if value is None or len(value) <= _FAILURE_CONTEXT_MAX_CHARS:
         return value
-    prefix_length = _FAILURE_CONTEXT_MAX_CHARS - len(_FAILURE_CONTEXT_TRUNCATION_MARKER)
-    return f"{value[:prefix_length]}{_FAILURE_CONTEXT_TRUNCATION_MARKER}"
+    return (
+        f"Previous failure context is stored on this task ({len(value)} chars). "
+        "Read it from the task record / get_task; do not assume an excerpt is complete."
+    )
 
 
 def _prompt(task: object, context: Mapping[str, object], *, role: str, contract: str) -> str:
