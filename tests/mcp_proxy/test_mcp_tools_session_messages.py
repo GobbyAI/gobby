@@ -97,10 +97,10 @@ async def test_get_session_messages_renderer_path(mock_transcript_reader, render
 
 
 @pytest.mark.asyncio
-async def test_get_session_messages_renderer_truncates_content_blocks(
+async def test_get_session_messages_renderer_keeps_content_blocks(
     mock_transcript_reader, renderer_registry
 ):
-    """Test that content_blocks text is truncated when full_content=False."""
+    """Content blocks stay complete when full_content=False."""
     long_text = "x" * 1000
     rendered = RenderedMessage(
         id="msg-1",
@@ -120,13 +120,8 @@ async def test_get_session_messages_renderer_truncates_content_blocks(
 
     assert result["success"] is True
     msg = result["messages"][0]
-    # Top-level content truncated at 500
-    assert msg["content"].endswith("... (truncated)")
-    assert len(msg["content"]) < 1000
-    # content_blocks text truncated at 500
-    block_content = msg["content_blocks"][0]["content"]
-    assert block_content.endswith("... (truncated)")
-    assert len(block_content) < 1000
+    assert msg["content"] == long_text
+    assert msg["content_blocks"][0]["content"] == long_text
 
 
 @pytest.mark.asyncio

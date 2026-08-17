@@ -341,9 +341,9 @@ class TestGetSessionMessages:
         assert len(result["messages"]) == 2
 
     @pytest.mark.asyncio
-    async def test_get_messages_truncates_content(self) -> None:
-        """Test that large content is truncated when full_content=False."""
-        long_content = "x" * 600  # More than 500 chars
+    async def test_get_messages_keeps_long_content(self) -> None:
+        """Large content stays complete even when full_content=False."""
+        long_content = "x" * 600
         mock_msg = MagicMock()
         mock_msg.to_dict.return_value = {"id": 1, "content": long_content, "role": "user"}
         transcript_reader = AsyncMock()
@@ -357,10 +357,8 @@ class TestGetSessionMessages:
         result = await get_messages(session_id="sess-123", full_content=False)
 
         assert result["success"] is True
-        assert result["truncated"] is True
-        # Content should be truncated to ~500 chars + "... (truncated)"
-        assert len(result["messages"][0]["content"]) < 600
-        assert "... (truncated)" in result["messages"][0]["content"]
+        assert result["truncated"] is False
+        assert result["messages"][0]["content"] == long_content
 
     @pytest.mark.asyncio
     async def test_get_messages_full_content(self) -> None:
@@ -383,8 +381,8 @@ class TestGetSessionMessages:
         assert result["messages"][0]["content"] == long_content
 
     @pytest.mark.asyncio
-    async def test_get_messages_truncates_tool_calls(self) -> None:
-        """Test that tool call input is truncated."""
+    async def test_get_messages_keeps_long_tool_calls(self) -> None:
+        """Tool call input stays complete."""
         long_input = "y" * 300
         mock_msg = MagicMock()
         mock_msg.to_dict.return_value = {
@@ -404,11 +402,11 @@ class TestGetSessionMessages:
         result = await get_messages(session_id="sess-123", full_content=False)
 
         assert result["success"] is True
-        assert "... (truncated)" in result["messages"][0]["tool_calls"][0]["input"]
+        assert result["messages"][0]["tool_calls"][0]["input"] == long_input
 
     @pytest.mark.asyncio
-    async def test_get_messages_truncates_tool_result(self) -> None:
-        """Test that tool result content is truncated."""
+    async def test_get_messages_keeps_long_tool_result(self) -> None:
+        """Tool result content stays complete."""
         long_result = "z" * 300
         mock_msg = MagicMock()
         mock_msg.to_dict.return_value = {
@@ -428,7 +426,7 @@ class TestGetSessionMessages:
         result = await get_messages(session_id="sess-123", full_content=False)
 
         assert result["success"] is True
-        assert "... (truncated)" in result["messages"][0]["tool_result"]["content"]
+        assert result["messages"][0]["tool_result"]["content"] == long_result
 
     @pytest.mark.asyncio
     async def test_get_messages_with_pagination(self) -> None:
@@ -518,8 +516,8 @@ class TestSearchSessionMessages:
         transcript_reader.count_messages.assert_not_called()
 
     @pytest.mark.asyncio
-    async def test_search_session_messages_truncates_result(self) -> None:
-        """Test search result content truncation."""
+    async def test_search_session_messages_keeps_result_content(self) -> None:
+        """Search hits keep complete message bodies and a separate snippet."""
         long_content = "needle " + ("x" * 600)
         mock_msg = MagicMock()
         mock_msg.to_dict.return_value = {
@@ -540,9 +538,10 @@ class TestSearchSessionMessages:
         result = await search(query="needle", session_id="sess-123", full_content=False)
 
         message = result["results"][0]["message"]
-        assert result["truncated"] is True
-        assert "... (truncated)" in message["content"]
-        assert "... (truncated)" in message["content_blocks"][0]["content"]
+        assert result["truncated"] is False
+        assert message["content"] == long_content
+        assert message["content_blocks"][0]["content"] == long_content
+        assert "needle" in result["results"][0]["snippet"]
         transcript_reader.count_messages.assert_not_called()
 
     @pytest.mark.asyncio

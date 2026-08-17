@@ -48,7 +48,7 @@ def register_message_tools(
         session_id: str,
         limit: int = 50,
         offset: int = 0,
-        full_content: bool = False,
+        full_content: bool = True,
     ) -> dict[str, Any]:
         """
         Get messages for a session.
@@ -57,10 +57,11 @@ def register_message_tools(
             session_id: Session reference - supports #N, N (seq_num), UUID, or prefix
             limit: Max messages to return
             offset: Offset for pagination
-            full_content: If True, returns full content. If False (default), truncates large content.
+            full_content: Unused. Content is always returned in full.
         """
         try:
             resolved_id = _resolve_session_id(session_id)
+            _ = full_content
 
             # Use TranscriptReader (windowed; JSONL + gzip fallback)
             if transcript_reader:
@@ -79,10 +80,6 @@ def register_message_tools(
                     "error": "Message retrieval not available (TranscriptReader not configured)",
                 }
 
-            if not full_content:
-                for msg in messages:
-                    _truncate_session_message(msg)
-
             return {
                 "success": True,
                 "messages": messages,
@@ -90,7 +87,7 @@ def register_message_tools(
                 "returned_count": len(messages),
                 "limit": limit,
                 "offset": offset,
-                "truncated": not full_content,
+                "truncated": False,
             }
         except Exception as e:
             return {"success": False, "error": str(e)}
@@ -106,7 +103,7 @@ def register_message_tools(
         status: str | None = None,
         source: str | None = None,
         limit: int = 20,
-        full_content: bool = False,
+        full_content: bool = True,
     ) -> dict[str, Any]:
         """
         Search rendered transcript messages.
@@ -118,7 +115,7 @@ def register_message_tools(
             status: Optional session status filter for multi-session search
             source: Optional CLI source filter for multi-session search
             limit: Max results
-            full_content: If True, returns full content. If False (default), truncates large content.
+            full_content: Unused. Message bodies are always returned in full.
         """
         if transcript_reader is None:
             return {
@@ -127,6 +124,7 @@ def register_message_tools(
             }
 
         query = query.strip()
+        _ = full_content
         if not query:
             return {"success": False, "error": "query must not be empty"}
 
@@ -162,7 +160,7 @@ def register_message_tools(
                 resolved_id = _resolve_session_id(session_id)
                 session_results: list[dict[str, Any]] = []
                 await _scan_session(resolved_id, session_results)
-                return _search_response(query, session_results, 1, result_limit, full_content)
+                return _search_response(query, session_results, 1, result_limit)
 
             if session_manager is None:
                 return {
@@ -185,7 +183,7 @@ def register_message_tools(
                 searched_sessions += 1
                 await _scan_session(session.id, results)
 
-            return _search_response(query, results, searched_sessions, result_limit, full_content)
+            return _search_response(query, results, searched_sessions, result_limit)
         except Exception as e:
             return {"success": False, "error": str(e)}
 
@@ -195,7 +193,6 @@ def _search_response(
     results: list[dict[str, Any]],
     searched_sessions: int,
     limit: int,
-    full_content: bool,
 ) -> dict[str, Any]:
     """Build the search tool response."""
     return {
@@ -205,38 +202,5 @@ def _search_response(
         "returned_count": len(results),
         "searched_sessions": searched_sessions,
         "limit": limit,
-        "truncated": not full_content,
+        "truncated": False,
     }
-
-
-def _truncate_session_message(msg: dict[str, Any]) -> None:
-    """Truncate verbose message fields for MCP responses."""
-    content = msg.get("content")
-    if isinstance(content, str) and len(content) > 500:
-        msg["content"] = content[:500] + "... (truncated)"
-
-    tool_calls = msg.get("tool_calls")
-    if isinstance(tool_calls, list):
-        for tool_call in tool_calls:
-            if not isinstance(tool_call, dict):
-                continue
-            tool_input = tool_call.get("input")
-            if isinstance(tool_input, str) and len(tool_input) > 200:
-                tool_call["input"] = tool_input[:200] + "... (truncated)"
-
-    tool_result = msg.get("tool_result")
-    if isinstance(tool_result, dict):
-        result_content = tool_result.get("content")
-        if isinstance(result_content, str) and len(result_content) > 200:
-            tool_result["content"] = result_content[:200] + "... (truncated)"
-
-    content_blocks = msg.get("content_blocks")
-    if isinstance(content_blocks, list):
-        for block in content_blocks:
-            if not isinstance(block, dict):
-                continue
-            if block.get("type") not in ["text", "thinking"]:
-                continue
-            block_content = block.get("content")
-            if isinstance(block_content, str) and len(block_content) > 500:
-                block["content"] = block_content[:500] + "... (truncated)"

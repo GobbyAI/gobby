@@ -52,8 +52,8 @@ def test_search_rendered_messages_matches_text_blocks() -> None:
     assert "needle in block" in results[0]["snippet"]
 
 
-def test_search_rendered_messages_truncates_default_result_content() -> None:
-    """Search truncates verbose message content by default."""
+def test_search_rendered_messages_keeps_default_result_content() -> None:
+    """Search keeps complete message bodies and exposes a snippet."""
     long_content = "needle " + ("x" * 600)
     results = search_rendered_messages(
         session_id="sess-1",
@@ -63,8 +63,9 @@ def test_search_rendered_messages_truncates_default_result_content() -> None:
     )
 
     message = results[0]["message"]
-    assert "... (truncated)" in message["content"]
-    assert "... (truncated)" in message["content_blocks"][0]["content"]
+    assert message["content"] == long_content
+    assert message["content_blocks"][0]["content"] == long_content
+    assert "needle" in results[0]["snippet"]
 
 
 def test_search_rendered_messages_rejects_non_positive_limit() -> None:

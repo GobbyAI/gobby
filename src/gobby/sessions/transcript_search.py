@@ -10,7 +10,6 @@ if TYPE_CHECKING:
 
 MATCH_BLOCK_TYPES: set[str] = {"text", "thinking"}
 SNIPPET_RADIUS: int = 80
-TRUNCATE_LIMIT: int = 500
 
 
 def search_rendered_messages(
@@ -26,6 +25,7 @@ def search_rendered_messages(
     if not isinstance(limit, int) or isinstance(limit, bool) or limit <= 0:
         return []
     needle = query.casefold()
+    _ = full_content
     if not needle:
         return []
 
@@ -38,8 +38,6 @@ def search_rendered_messages(
             continue
 
         result_message = copy.deepcopy(message_dict)
-        if not full_content:
-            _truncate_message(result_message)
 
         results.append(
             {
@@ -84,23 +82,3 @@ def _make_snippet(text: str, match_index: int, query_length: int) -> str:
     if end < len(text):
         snippet += " ..."
     return snippet
-
-
-def _truncate_message(message: dict[str, Any]) -> None:
-    """Mutate message content and content_blocks in place for MCP transcript tools."""
-    content = message.get("content")
-    if isinstance(content, str) and len(content) > TRUNCATE_LIMIT:
-        message["content"] = content[:TRUNCATE_LIMIT] + "... (truncated)"
-
-    blocks = message.get("content_blocks")
-    if not isinstance(blocks, list):
-        return
-
-    for block in blocks:
-        if not isinstance(block, dict):
-            continue
-        if block.get("type") not in MATCH_BLOCK_TYPES:
-            continue
-        block_content = block.get("content")
-        if isinstance(block_content, str) and len(block_content) > TRUNCATE_LIMIT:
-            block["content"] = block_content[:TRUNCATE_LIMIT] + "... (truncated)"
