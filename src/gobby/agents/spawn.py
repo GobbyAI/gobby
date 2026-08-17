@@ -498,35 +498,44 @@ def _prepare_run_for_session(
 
     prompt_env: str | None = None
     prompt_file: str | None = None
+    try:
+        if prompt:
+            if len(prompt) <= MAX_ENV_PROMPT_LENGTH:
+                prompt_env = prompt
+            else:
+                prompt_file = create_prompt_file(prompt, session_id)
 
-    if prompt:
-        if len(prompt) <= MAX_ENV_PROMPT_LENGTH:
-            prompt_env = prompt
-        else:
-            prompt_file = create_prompt_file(prompt, session_id)
+        env_vars = get_terminal_env_vars(
+            session_id=session_id,
+            parent_session_id=parent_session_id,
+            agent_run_id=agent_run_id,
+            project_id=project_id,
+            workflow_name=workflow_name,
+            agent_depth=session_depth,
+            max_agent_depth=max_agent_depth,
+            prompt=prompt_env,
+            prompt_file=prompt_file,
+            operator_token=read_local_api_token(),
+            timeout_seconds=timeout_seconds,
+        )
 
-    env_vars = get_terminal_env_vars(
-        session_id=session_id,
-        parent_session_id=parent_session_id,
-        agent_run_id=agent_run_id,
-        project_id=project_id,
-        workflow_name=workflow_name,
-        agent_depth=session_depth,
-        max_agent_depth=max_agent_depth,
-        prompt=prompt_env,
-        prompt_file=prompt_file,
-        operator_token=read_local_api_token(),
-        timeout_seconds=timeout_seconds,
-    )
+        return PreparedSpawn(
+            session_id=session_id,
+            agent_run_id=agent_run_id,
+            parent_session_id=parent_session_id,
+            project_id=project_id,
+            workflow_name=workflow_name,
+            agent_depth=session_depth,
+            env_vars=env_vars,
+            seq_num=session_seq_num,
+            prompt_file=prompt_file,
+        )
+    except Exception:
+        if prompt_file:
+            from pathlib import Path
 
-    return PreparedSpawn(
-        session_id=session_id,
-        agent_run_id=agent_run_id,
-        parent_session_id=parent_session_id,
-        project_id=project_id,
-        workflow_name=workflow_name,
-        agent_depth=session_depth,
-        env_vars=env_vars,
-        seq_num=session_seq_num,
-        prompt_file=prompt_file,
-    )
+            try:
+                Path(prompt_file).unlink(missing_ok=True)
+            except OSError:
+                pass
+        raise

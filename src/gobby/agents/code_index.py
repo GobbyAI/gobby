@@ -16,6 +16,7 @@ import subprocess  # nosec B404 # fixed git argv for local exclude updates.
 import time
 from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass
+from datetime import UTC, datetime
 from pathlib import Path
 from typing import TYPE_CHECKING
 
@@ -35,6 +36,7 @@ from gobby.runtime_grants.schema import (
     SchemaIdentity,
     UnavailableCapability,
 )
+from gobby.runtime_grants.service import DeploymentGrantContext
 from gobby.runtime_grants.signing import sign_grant
 from gobby.storage.managed_credentials import MANAGED_EXECUTION_BOOTSTRAP_ENV
 from gobby.storage.schema_contract import expected_schema_identity
@@ -361,6 +363,20 @@ def _prepare_gcode_runtime(
     if credential is None:
         return CodeIndexPreflightResult(env={})
 
+    operator_token = read_local_api_token()
+    if not operator_token:
+        raise IndexInventoryError(
+            "operator_token_unavailable",
+            "operator token unavailable",
+            retryable=False,
+        )
+    if not project_id:
+        raise IndexInventoryError(
+            "project_required",
+            "isolation grant requires project_id",
+            retryable=False,
+        )
+    context = _active_deployment_grant_context()
     source_home = get_gobby_home()
     runtime_home = _runtime_home_for_workspace(
         workspace, runtime_root or source_home / _RUNTIME_DIR_NAME
@@ -374,15 +390,14 @@ def _prepare_gcode_runtime(
         machine_id=machine_id,
         project_id=project_id,
         session_id=session_id,
+        context=context,
     )
+    remaining_seconds = (credential.expires_at - datetime.now(UTC)).total_seconds()
     launch = materialize_managed_launch(
         grant,
         dest_dir=runtime_home,
-        operator_token=read_local_api_token() or "isolation-envelope-token",
-        deadline_seconds=max(
-            1.0,
-            (credential.expires_at - credential.issued_at).total_seconds(),
-        ),
+        operator_token=operator_token,
+        deadline_seconds=max(1.0, remaining_seconds),
     )
     # Spawn already installs GOBBY_AGENT_API_TOKEN; do not overwrite it.
     _link_runtime_assets(source_home, runtime_home)
@@ -410,12 +425,34 @@ def _prepare_gcode_runtime(
     )
 
 
+def _active_deployment_grant_context() -> DeploymentGrantContext:
+    """Read token, epoch, and signing secret from the live daemon lease."""
+    from gobby.daemon_lease import current_lease
+
+    lease = current_lease()
+    token = getattr(lease, "deployment_token", None)
+    epoch = getattr(lease, "fencing_epoch", None)
+    secret = getattr(lease, "grant_signing_secret", None)
+    if lease is None or not token or epoch is None or not secret:
+        raise IndexInventoryError(
+            "lease_unavailable",
+            "active-daemon lease has no grant signing context",
+            retryable=False,
+        )
+    return DeploymentGrantContext(
+        token=str(token),
+        fencing_epoch=int(epoch),
+        signing_secret=str(secret),
+    )
+
+
 def _signed_grant_from_credential(
     credential: ManagedCredential,
     *,
     machine_id: str | None,
-    project_id: str | None,
+    project_id: str,
     session_id: str | None,
+    context: DeploymentGrantContext,
 ) -> GrantBundle:
     from uuid import uuid4
 
@@ -427,12 +464,12 @@ def _signed_grant_from_credential(
     )
     unsigned = GrantBundle(
         config_revision=0,
-        deployment=GrantDeployment(token="0000000000000000", fencing_epoch=0),
+        deployment=GrantDeployment(token=context.token, fencing_epoch=context.fencing_epoch),
         schema_identity=SchemaIdentity.model_validate(expected_schema_identity()),
         principal=GrantPrincipal(
             kind="agent_run",
             machine_id=machine_id or "00000000-0000-4000-8000-000000000000",
-            project_id=project_id or str(credential.managed_execution_id),
+            project_id=project_id,
             execution_id=str(credential.managed_execution_id),
             session_id=session_id or str(uuid4()),
         ),
@@ -450,7 +487,7 @@ def _signed_grant_from_credential(
         issued_at=int(credential.issued_at.timestamp()),
         expires_at=int(credential.expires_at.timestamp()),
     )
-    return sign_grant(unsigned, "isolation-managed-grant")
+    return sign_grant(unsigned, context.signing_secret)
 
 
 def _scoped_database_url(credential: ManagedCredential) -> str:

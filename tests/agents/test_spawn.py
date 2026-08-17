@@ -280,3 +280,58 @@ class TestPrepareTerminalSpawnCleanup:
         cleanup.assert_called_once()
         assert cleanup.call_args.kwargs["session_id"] == prepared.session_id
         assert cleanup.call_args.kwargs["agent_run_id"] == prepared.agent_run_id
+
+
+class TestPrepareRunForSessionPromptCleanup:
+    """Prompt files created inside _prepare_run_for_session must not leak on failure."""
+
+    def test_failed_prepare_deletes_prompt_file(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        from gobby.agents.spawn import MAX_ENV_PROMPT_LENGTH, _prepare_run_for_session
+
+        sm = _make_session_manager()
+        prompt_path = tmp_path / "prompt-child-sess-1.txt"
+        monkeypatch.setattr("gobby.storage.agents.LocalAgentRunManager", MagicMock())
+
+        def _create_prompt(prompt: str, session_id: str) -> str:
+            prompt_path.write_text(prompt, encoding="utf-8")
+            return str(prompt_path)
+
+        monkeypatch.setattr("gobby.agents.spawn.create_prompt_file", _create_prompt)
+        monkeypatch.setattr(
+            "gobby.agents.spawn.get_terminal_env_vars",
+            MagicMock(side_effect=RuntimeError("env failed")),
+        )
+
+        with pytest.raises(RuntimeError, match="env failed"):
+            _prepare_run_for_session(
+                session_manager=sm,
+                session_id="child-sess-1",
+                session_depth=1,
+                session_seq_num=1,
+                parent_session_id="parent-1",
+                project_id="proj-1",
+                provider="claude",
+                workflow_name=None,
+                agent_name=None,
+                git_branch=None,
+                prompt="x" * (MAX_ENV_PROMPT_LENGTH + 1),
+                model=None,
+                is_local=False,
+                max_agent_depth=5,
+                agent_run_id="run-1",
+                task_id=None,
+                claimed_session_id=None,
+                timeout_seconds=None,
+                sandbox_enabled=False,
+                requested_reasoning_effort=None,
+                effective_reasoning_effort=None,
+                reasoning_required=False,
+                reasoning_status="not_requested",
+                reasoning_message=None,
+                resume_metadata_json=None,
+                bind_run=MagicMock(),
+            )
+
+        assert not prompt_path.exists()

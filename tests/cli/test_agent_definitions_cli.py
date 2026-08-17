@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import json
 from datetime import UTC, datetime
-from typing import Any
+from typing import Any, cast
 from unittest.mock import MagicMock, patch
 
 import pytest
@@ -114,6 +114,24 @@ class TestAgentDefinitionsList:
         assert data["agents"][0]["model"] == "opus"
 
     @patch("gobby.cli.agents.get_agent_definition_manager")
+    def test_list_skips_malformed_json(
+        self, mock_get_manager: MagicMock, runner: CliRunner
+    ) -> None:
+        broken = _agent_row("broken")
+        cast(Any, broken).definition_json = "{not-json"
+        manager = MagicMock()
+        manager.list_all.return_value = [_agent_row("developer"), broken]
+        mock_get_manager.return_value = manager
+
+        result = runner.invoke(cli, ["agents", "list", "--json"])
+
+        assert result.exit_code == 0
+        data = json.loads(result.output)
+        assert data["count"] == 1
+        assert data["agents"][0]["name"] == "developer"
+        assert "broken" not in result.output
+
+    @patch("gobby.cli.agents.get_agent_definition_manager")
     def test_old_run_options_removed(self, mock_get_manager: MagicMock, runner: CliRunner) -> None:
         result = runner.invoke(cli, ["agents", "list", "--status", "running"])
 
@@ -192,3 +210,19 @@ class TestAgentDefinitionsShow:
         assert result.exit_code == 1
         assert "Agent definition not found" in result.output
         mock_get_run_manager.assert_not_called()
+
+    @patch("gobby.cli.agents.get_agent_definition_manager")
+    def test_show_reports_malformed_json(
+        self, mock_get_manager: MagicMock, runner: CliRunner
+    ) -> None:
+        broken = _agent_row("developer")
+        cast(Any, broken).definition_json = "{not-json"
+        manager = MagicMock()
+        manager.get_by_name.return_value = broken
+        mock_get_manager.return_value = manager
+
+        result = runner.invoke(cli, ["agents", "show", "developer"])
+
+        assert result.exit_code == 1
+        assert "Failed to parse agent definition 'developer'" in result.output
+        assert "is not valid JSON" in result.output

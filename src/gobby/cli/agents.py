@@ -71,7 +71,10 @@ def _agent_body(row: AgentDefinitionRow) -> tuple[AgentDefinitionBody, dict[str,
     """Parse and validate an agent definition row."""
     data = row.definition_json
     if isinstance(data, str):
-        parsed = json.loads(data)
+        try:
+            parsed = json.loads(data)
+        except json.JSONDecodeError as exc:
+            raise ValueError(f"Agent definition '{row.name}' is not valid JSON") from exc
         if not isinstance(parsed, dict):
             raise ValueError(f"Agent definition '{row.name}' is not a JSON object")
         data = parsed
@@ -343,7 +346,12 @@ def list_agent_definitions(
     """List agent definitions."""
     with agent_definition_manager_context() as manager:
         rows = manager.list_all(enabled=enabled_flag)
-    summaries = [_agent_definition_summary(row) for row in rows]
+    summaries: list[dict[str, Any]] = []
+    for row in rows:
+        try:
+            summaries.append(_agent_definition_summary(row))
+        except ValueError:
+            continue
     if surface:
         summaries = [agent for agent in summaries if surface in agent.get("surfaces", ["spawn"])]
 
