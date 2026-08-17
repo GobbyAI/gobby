@@ -34,6 +34,9 @@ CODE_INDEX_PRUNE_DESCRIPTION = (
 )
 _NO_STALE_PROJECTS = "No stale projects found."
 _DEFAULT_MAINTENANCE_LOG_FILE = "~/.gobby/logs/code-index-maintenance.log"
+_OPERATOR_COMPLETED_SUFFIXES = frozenset({"pruned", "deferred_pending_sync", "reconciled"})
+_OPERATOR_SKIPPED_SUFFIXES = frozenset({"skipped_locked", "skipped_missing_root"})
+_OPERATOR_HUB_DELETE_SUFFIXES = frozenset({"pruned"})
 
 
 def _is_noop_shutdown_prune(exc: Exception) -> bool:
@@ -156,42 +159,43 @@ class CodeIndexPruner:
         skipped: list[OperatorPruneItem] = []
 
         async def _handle(project: Any) -> None:
-            project_id = str(getattr(project, "id", "") or "")
-            root_path = str(getattr(project, "root_path", "") or "")
-            if not project_id:
-                skipped.append({"project_id": "", "reason": "missing_id"})
-                return
-            if not root_path:
-                skipped.append({"project_id": project_id, "reason": "missing_root"})
-                return
-            root = Path(root_path).expanduser()
-            outcome = await self.prune_project(
-                project_id=project_id,
-                root_path=str(root),
-                dirty=True,
-                reason="operator_global_prune",
-                force=force,
-                retention_days=retention_days,
-            )
-            if outcome.endswith(":pruned") or outcome.endswith(":deferred_pending_sync"):
-                if not root.exists():
-                    deleter = getattr(
-                        self._context.storage, "delete_stale_project_records", None
-                    ) or getattr(self._context.storage, "delete_project_index", None)
-                    if deleter is not None:
-                        await self._context.run_db(deleter, project_id)
-                completed.append(project_id)
-                return
-            if outcome.endswith(":skipped_locked") or outcome.endswith(":skipped_missing_root"):
-                skipped.append({"project_id": project_id, "reason": outcome.rsplit(":", 1)[-1]})
-                return
-            await self._context.run_db(
-                self._context.storage.mark_prune_dirty,
-                project_id,
-                root_path,
-                "operator_prune_failed",
-            )
-            failed.append({"project_id": project_id, "reason": outcome})
+            async with self._global_semaphore:
+                project_id = str(getattr(project, "id", "") or "")
+                root_path = str(getattr(project, "root_path", "") or "")
+                if not project_id:
+                    skipped.append({"project_id": "", "reason": "missing_id"})
+                    return
+                if not root_path:
+                    skipped.append({"project_id": project_id, "reason": "missing_root"})
+                    return
+                root = Path(root_path).expanduser()
+                outcome = await self.prune_project(
+                    project_id=project_id,
+                    root_path=str(root),
+                    dirty=True,
+                    reason="operator_global_prune",
+                    force=force,
+                    retention_days=retention_days,
+                )
+                suffix = outcome.rsplit(":", 1)[-1]
+                if suffix in _OPERATOR_COMPLETED_SUFFIXES:
+                    if suffix in _OPERATOR_HUB_DELETE_SUFFIXES and not root.exists():
+                        await self._context.run_db(
+                            self._context.storage.delete_project_index,
+                            project_id,
+                        )
+                    completed.append(project_id)
+                    return
+                if suffix in _OPERATOR_SKIPPED_SUFFIXES:
+                    skipped.append({"project_id": project_id, "reason": suffix})
+                    return
+                await self._context.run_db(
+                    self._context.storage.mark_prune_dirty,
+                    project_id,
+                    root_path,
+                    "operator_prune_failed",
+                )
+                failed.append({"project_id": project_id, "reason": outcome})
 
         await asyncio.gather(*(_handle(project) for project in snapshot))
         return {
@@ -381,71 +385,70 @@ class CodeIndexPruner:
                 )
                 return f"{project_id}:failed"
 
-            async with self._global_semaphore:
-                try:
-                    factory = getattr(self._context, "launch_factory", None)
-                    if factory is None:
+            try:
+                factory = self._context.launch_factory
+                if factory is None:
+                    command_result = await gateway.prune_project_for_maintenance(
+                        Path(root_path).expanduser(),
+                        retention_days=resolved_retention,
+                        timeout=CODE_INDEX_PRUNE_TIMEOUT_SECONDS,
+                    )
+                else:
+                    async with open_launch_async(
+                        factory,
+                        project_id,
+                        timeout_seconds=CODE_INDEX_PRUNE_TIMEOUT_SECONDS,
+                    ) as launch:
                         command_result = await gateway.prune_project_for_maintenance(
                             Path(root_path).expanduser(),
                             retention_days=resolved_retention,
                             timeout=CODE_INDEX_PRUNE_TIMEOUT_SECONDS,
+                            env=launch.env,
                         )
-                    else:
-                        async with open_launch_async(
-                            factory,
-                            project_id,
-                            timeout_seconds=CODE_INDEX_PRUNE_TIMEOUT_SECONDS,
-                        ) as launch:
-                            command_result = await gateway.prune_project_for_maintenance(
-                                Path(root_path).expanduser(),
-                                retention_days=resolved_retention,
-                                timeout=CODE_INDEX_PRUNE_TIMEOUT_SECONDS,
-                                env=launch.env,
-                            )
-                    if command_result.timed_out:
-                        status = "timed_out"
-                    elif command_result.success or _is_noop_shutdown_result(command_result):
-                        status = "completed"
-                    else:
-                        status = "failed"
-                    log_gcode_maintenance_event(
-                        log_file=_maintenance_log_file(self._context),
-                        event="targeted_prune",
-                        run_id=run_id or uuid4().hex,
-                        project_id=project_id,
-                        root_path=str(Path(root_path).expanduser()),
-                        result=command_result,
-                        status=status,
-                        detail=reason,
+                if command_result.timed_out:
+                    status = "timed_out"
+                elif command_result.success or _is_noop_shutdown_result(command_result):
+                    status = "completed"
+                else:
+                    status = "failed"
+                log_gcode_maintenance_event(
+                    log_file=_maintenance_log_file(self._context),
+                    event="targeted_prune",
+                    run_id=run_id or uuid4().hex,
+                    project_id=project_id,
+                    root_path=str(Path(root_path).expanduser()),
+                    result=command_result,
+                    status=status,
+                    detail=reason,
+                )
+                if status != "completed":
+                    detail = (
+                        command_result.stderr.strip()
+                        or command_result.stdout.strip()
+                        or "gcode prune failed"
                     )
-                    if status != "completed":
-                        detail = (
-                            command_result.stderr.strip()
-                            or command_result.stdout.strip()
-                            or "gcode prune failed"
-                        )
-                        raise RuntimeError(detail)
-                except Exception as exc:
-                    if _is_noop_shutdown_prune(exc):
-                        logger.debug(
-                            "Code index prune was interrupted after no-op result for %s at %s",
-                            project_id,
-                            root_path,
-                        )
-                        await self._context.run_db(
-                            self._context.storage.clear_prune_dirty,
-                            project_id,
-                        )
-                        return f"{project_id}:pruned"
-                    await self._record_failure_if_dirty(project_id, dirty, str(exc))
-                    logger.warning(
-                        "Code index prune failed for %s at %s: %s",
+                    raise RuntimeError(detail)
+            except Exception as exc:
+                if _is_noop_shutdown_prune(exc):
+                    logger.debug(
+                        "Code index prune was interrupted after no-op result for %s at %s",
                         project_id,
                         root_path,
-                        exc,
-                        exc_info=True,
                     )
-                    return f"{project_id}:failed"
+                    await self._context.run_db(
+                        self._context.storage.clear_prune_dirty,
+                        project_id,
+                    )
+                    return f"{project_id}:pruned"
+                await self._record_failure_if_dirty(project_id, dirty, str(exc))
+                logger.warning(
+                    "Code index prune failed for %s at %s: %s",
+                    project_id,
+                    root_path,
+                    exc,
+                    exc_info=True,
+                )
+                return f"{project_id}:failed"
 
             await self._context.run_db(self._context.storage.clear_prune_dirty, project_id)
             logger.debug("Code index prune completed for %s (%s)", project_id, reason)

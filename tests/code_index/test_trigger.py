@@ -5,9 +5,11 @@ from __future__ import annotations
 import asyncio
 import logging
 from collections import deque
-from collections.abc import Sequence
+from collections.abc import Iterator, Mapping, Sequence
+from contextlib import AbstractContextManager, contextmanager
 from dataclasses import dataclass
 from pathlib import Path
+from typing import Any, cast
 
 import pytest
 
@@ -19,6 +21,7 @@ from gobby.code_index.gcode_gateway import (
 )
 from gobby.code_index.sync_breaker import BreakerState, SyncCircuitBreaker
 from gobby.code_index.trigger import CodeIndexTrigger
+from gobby.runtime_grants.launch import ManagedLaunch
 
 pytestmark = pytest.mark.unit
 
@@ -59,6 +62,7 @@ def _result(
 class RecordingGateway(GcodeGateway):
     def __init__(self) -> None:
         self.calls: list[tuple[Path, tuple[str, ...], float | None]] = []
+        self.envs: list[dict[str, str] | None] = []
         self.outcomes: deque[GcodeCommandResult | BaseException] = deque()
 
     async def incremental_index(
@@ -67,8 +71,10 @@ class RecordingGateway(GcodeGateway):
         files: Sequence[str],
         *,
         timeout: float | None = None,
+        env: Mapping[str, str] | None = None,
     ) -> GcodeCommandResult:
         self.calls.append((project_root, tuple(files), timeout))
+        self.envs.append(dict(env) if env is not None else None)
         if not self.outcomes:
             return _result(timeout_seconds=timeout or 0.01)
         outcome = self.outcomes.popleft()
@@ -91,8 +97,10 @@ class FirstCallBlockingGateway(RecordingGateway):
         files: Sequence[str],
         *,
         timeout: float | None = None,
+        env: Mapping[str, str] | None = None,
     ) -> GcodeCommandResult:
         self.calls.append((project_root, tuple(files), timeout))
+        self.envs.append(dict(env) if env is not None else None)
         self.active_calls += 1
         self.max_active_calls = max(self.max_active_calls, self.active_calls)
         try:
@@ -182,6 +190,54 @@ async def test_single_file_triggers_gateway_with_root_and_timeout(
     await _wait_for_call_count(harness.gateway, 1)
 
     assert harness.gateway.calls == [(root.resolve(), ("src/foo.py",), 0.01)]
+    assert harness.gateway.envs == [None]
+
+
+@pytest.mark.asyncio
+async def test_flush_resolves_launch_factory_from_launch_source(tmp_path: Path) -> None:
+    @contextmanager
+    def _dummy_launch(project_id: str, *, timeout_seconds: float) -> Iterator[ManagedLaunch]:
+        del project_id, timeout_seconds
+        yield ManagedLaunch(
+            grant_path=Path("/tmp/grant.json"),
+            env={"GOBBY_MANAGED_EXECUTION_BOOTSTRAP": "/tmp/grant.json"},
+        )
+
+    class DummyLaunchFactory:
+        def open(
+            self, project_id: str, *, timeout_seconds: float
+        ) -> AbstractContextManager[ManagedLaunch]:
+            return _dummy_launch(project_id, timeout_seconds=timeout_seconds)
+
+    class LaunchSource:
+        launch_factory = DummyLaunchFactory()
+
+    clock = FakeClock()
+    gateway = RecordingGateway()
+    breaker = SyncCircuitBreaker(
+        name="Gcode daemon-config",
+        probe_target="daemon config endpoint",
+        operation="daemon-owned gcode work",
+        failure_threshold=1,
+        base_backoff_seconds=30.0,
+        max_backoff_seconds=900.0,
+        monotonic=clock,
+    )
+    trigger = CodeIndexTrigger(
+        loop=asyncio.get_running_loop(),
+        retry_base_seconds=5.0,
+        retry_max_seconds=10.0,
+        index_timeout_seconds=0.01,
+        gcode_gateway=gateway,
+        daemon_config_breaker=breaker,
+        launch_source=cast(Any, LaunchSource()),
+    )
+    root = tmp_path / "repo"
+    root.mkdir()
+    trigger.notify_file_changed(str(root / "src" / "foo.py"), "proj-1", str(root))
+    await _wait_for_call_count(gateway, 1)
+
+    assert gateway.envs == [{"GOBBY_MANAGED_EXECUTION_BOOTSTRAP": "/tmp/grant.json"}]
 
 
 @pytest.mark.asyncio

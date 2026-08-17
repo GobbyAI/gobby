@@ -42,7 +42,7 @@ def _project_json_id(root: Path) -> str | None:
     marker = root / ".gobby" / "project.json"
     try:
         payload = json.loads(marker.read_text())
-    except (OSError, json.JSONDecodeError):
+    except (OSError, UnicodeDecodeError, json.JSONDecodeError):
         return None
     if not isinstance(payload, dict):
         return None

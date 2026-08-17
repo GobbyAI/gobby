@@ -8,7 +8,7 @@ import signal
 from datetime import UTC, datetime
 from pathlib import Path
 from types import SimpleNamespace
-from typing import Any
+from typing import Any, cast
 
 import pytest
 
@@ -99,11 +99,19 @@ class PruneStorage:
     def record_prune_failure(self, project_id: str, error: str) -> None:
         self.failures.append((project_id, error))
 
-    def delete_stale_project_records(self, project_id: str) -> None:
+    def delete_project_index(self, project_id: str) -> dict[str, int]:
         self.deleted_hub.append(project_id)
         self.projects = [
             project for project in self.projects if getattr(project, "id", "") != project_id
         ]
+        return {
+            "symbols": 0,
+            "files": 0,
+            "imports": 0,
+            "calls": 0,
+            "content_chunks": 0,
+            "projects": 1,
+        }
 
 
 class PruneGateway:
@@ -149,6 +157,7 @@ class PruneContext:
     ) -> None:
         self.storage = storage
         self.gcode_gateway = gateway
+        self.launch_factory = None
         self.config = SimpleNamespace(maintenance_log_file=str(log_file), content_retention_days=17)
         self.run_db_calls: list[str] = []
 
@@ -448,6 +457,111 @@ async def test_operator_prune_skips_locked_unless_forced(tmp_path: Path) -> None
     forced = await pruner.run_operator_global_prune(force=True)
     assert forced["completed"] == ["proj-live"]
     assert gateway.targeted_roots == [live_root]
+
+
+@pytest.mark.asyncio
+async def test_operator_deferred_pending_sync_does_not_delete_hub_rows(tmp_path: Path) -> None:
+    missing_root = tmp_path / "gone"
+    storage = PruneStorage()
+    storage.projects = [SimpleNamespace(id="proj-defer", root_path=str(missing_root))]
+    storage.pending_by_project["proj-defer"] = [object()]
+    context = PruneContext(storage, PruneGateway(), tmp_path / "maintenance.log")
+    pruner = CodeIndexPruner(cast(Any, context))
+
+    outcome = await pruner.run_operator_global_prune()
+
+    assert outcome["completed"] == ["proj-defer"]
+    assert outcome["failed"] == []
+    assert storage.deleted_hub == []
+    assert "delete_project_index" not in context.run_db_calls
+
+
+@pytest.mark.asyncio
+async def test_operator_pruned_missing_root_deletes_via_delete_project_index(
+    tmp_path: Path,
+) -> None:
+    missing_root = tmp_path / "gone"
+    storage = PruneStorage()
+    storage.projects = [SimpleNamespace(id="proj-pruned", root_path=str(missing_root))]
+    context = PruneContext(storage, PruneGateway(), tmp_path / "maintenance.log")
+    pruner = CodeIndexPruner(cast(Any, context))
+
+    outcome = await pruner.run_operator_global_prune()
+
+    assert outcome["completed"] == ["proj-pruned"]
+    assert storage.deleted_hub == ["proj-pruned"]
+    assert "delete_project_index" in context.run_db_calls
+    assert "delete_stale_project_records" not in context.run_db_calls
+
+
+@pytest.mark.asyncio
+async def test_operator_reconciled_is_completed_not_failed(tmp_path: Path) -> None:
+    missing_root = tmp_path / "gone"
+
+    class RegistryPruneStorage(PruneStorage):
+        def get_registry_project(self, project_id: str) -> tuple[bool, bool]:
+            assert project_id == "proj-reconcile"
+            return True, False
+
+    storage = RegistryPruneStorage()
+    storage.projects = [SimpleNamespace(id="proj-reconcile", root_path=str(missing_root))]
+    context = PruneContext(storage, PruneGateway(), tmp_path / "maintenance.log")
+    pruner = CodeIndexPruner(cast(Any, context))
+
+    outcome = await pruner.run_operator_global_prune()
+
+    assert outcome["completed"] == ["proj-reconcile"]
+    assert outcome["failed"] == []
+    assert storage.deleted_hub == ["proj-reconcile"]
+    assert storage.marked_dirty == []
+
+
+@pytest.mark.asyncio
+async def test_operator_prune_bounds_snapshot_concurrency(tmp_path: Path) -> None:
+    root_one = tmp_path / "one"
+    root_two = tmp_path / "two"
+    root_one.mkdir()
+    root_two.mkdir()
+
+    class CountingContext(PruneContext):
+        def __init__(self, storage: PruneStorage, gateway: PruneGateway, log_file: Path) -> None:
+            super().__init__(storage, gateway, log_file)
+            self.in_flight = 0
+            self.max_in_flight = 0
+            self.pending_starts = 0
+            self.first_entered = asyncio.Event()
+            self.release_first = asyncio.Event()
+
+        async def run_db(self, func: Any, *args: Any, **kwargs: Any) -> Any:
+            if getattr(func, "__name__", "") == "get_pending_sync_files":
+                self.pending_starts += 1
+                self.in_flight += 1
+                self.max_in_flight = max(self.max_in_flight, self.in_flight)
+                if self.pending_starts == 1:
+                    self.first_entered.set()
+                    await self.release_first.wait()
+                try:
+                    return func(*args, **kwargs)
+                finally:
+                    self.in_flight -= 1
+            return await super().run_db(func, *args, **kwargs)
+
+    storage = PruneStorage()
+    storage.projects = [
+        SimpleNamespace(id="proj-one", root_path=str(root_one)),
+        SimpleNamespace(id="proj-two", root_path=str(root_two)),
+    ]
+    context = CountingContext(storage, PruneGateway(), tmp_path / "maintenance.log")
+    pruner = CodeIndexPruner(cast(Any, context), max_concurrency=1)
+
+    task = asyncio.create_task(pruner.run_operator_global_prune())
+    await context.first_entered.wait()
+    assert context.in_flight == 1
+    context.release_first.set()
+    outcome = await task
+
+    assert sorted(outcome["completed"]) == ["proj-one", "proj-two"]
+    assert context.max_in_flight == 1
 
 
 @pytest.mark.asyncio

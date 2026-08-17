@@ -10,6 +10,7 @@ import asyncio
 import logging
 import os
 from pathlib import Path
+from typing import TYPE_CHECKING, Protocol
 
 from gobby.code_index.gcode_gateway import (
     GcodeDaemonConfigUnavailableError,
@@ -18,7 +19,14 @@ from gobby.code_index.gcode_gateway import (
 from gobby.code_index.maintenance_launch import open_launch_async
 from gobby.code_index.sync_breaker import SyncCircuitBreaker
 
+if TYPE_CHECKING:
+    from gobby.code_index.maintenance_launch import MaintenanceLaunchFactory
+
 logger = logging.getLogger(__name__)
+
+
+class _LaunchFactorySource(Protocol):
+    launch_factory: MaintenanceLaunchFactory | None
 
 
 class CodeIndexTrigger:
@@ -37,8 +45,8 @@ class CodeIndexTrigger:
         *,
         gcode_gateway: GcodeGateway,
         daemon_config_breaker: SyncCircuitBreaker,
-        launch_factory: object | None = None,
-        launch_source: object | None = None,
+        launch_factory: MaintenanceLaunchFactory | None = None,
+        launch_source: _LaunchFactorySource | None = None,
     ) -> None:
         self._loop = loop
         self._retry_base_seconds = retry_base_seconds
@@ -198,9 +206,10 @@ class CodeIndexTrigger:
             return
 
         try:
-            factory = getattr(getattr(self, "_launch_source", None), "launch_factory", None)
-            if factory is None:
-                factory = getattr(self, "_launch_factory", None)
+            if self._launch_source is not None:
+                factory = self._launch_source.launch_factory
+            else:
+                factory = self._launch_factory
             timeout = self._index_timeout_seconds
             if factory is None:
                 result = await self._gcode_gateway.incremental_index(

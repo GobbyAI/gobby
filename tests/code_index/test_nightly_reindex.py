@@ -3,9 +3,11 @@
 from __future__ import annotations
 
 import asyncio
+from collections.abc import Iterator
+from contextlib import AbstractContextManager, contextmanager
 from pathlib import Path
 from types import SimpleNamespace
-from typing import Any
+from typing import Any, cast
 
 import pytest
 
@@ -18,6 +20,7 @@ from gobby.code_index.nightly_reindex import (
     register_code_index_nightly_reindex_cron,
 )
 from gobby.config.code_index import CodeIndexConfig
+from gobby.runtime_grants.launch import ManagedLaunch
 from gobby.utils.datetime import resolve_local_timezone
 
 pytestmark = pytest.mark.unit
@@ -72,7 +75,9 @@ class NightlyGateway:
         project_root: Path,
         *,
         timeout: float | None = None,
+        env: dict[str, str] | None = None,
     ) -> GcodeCommandResult:
+        del env
         self.calls.append((project_root, timeout))
         self.active += 1
         self.max_active = max(self.max_active, self.active)
@@ -97,6 +102,25 @@ class NightlyGateway:
             self.active -= 1
 
 
+@contextmanager
+def _dummy_launch(project_id: str, *, timeout_seconds: float) -> Iterator[ManagedLaunch]:
+    del project_id, timeout_seconds
+    yield ManagedLaunch(
+        grant_path=Path("/tmp/grant.json"),
+        env={"GOBBY_MANAGED_EXECUTION_BOOTSTRAP": "/tmp/grant.json"},
+    )
+
+
+class DummyLaunchFactory:
+    def open(
+        self, project_id: str, *, timeout_seconds: float
+    ) -> AbstractContextManager[ManagedLaunch]:
+        return _dummy_launch(project_id, timeout_seconds=timeout_seconds)
+
+
+_DEFAULT_LAUNCH_FACTORY = DummyLaunchFactory()
+
+
 class NightlyContext:
     def __init__(
         self,
@@ -106,9 +130,11 @@ class NightlyContext:
         log_file: Path,
         concurrency: int = 1,
         timeout: int = 7200,
+        launch_factory: DummyLaunchFactory | None = _DEFAULT_LAUNCH_FACTORY,
     ) -> None:
         self.storage = NightlyStorage(projects)
         self.gcode_gateway = gateway
+        self.launch_factory = launch_factory
         self.config = SimpleNamespace(
             nightly_full_reindex_concurrency=concurrency,
             nightly_full_reindex_timeout_seconds=timeout,
@@ -221,7 +247,9 @@ async def test_nightly_reindex_isolates_per_project_exception(tmp_path: Path) ->
             project_root: Path,
             *,
             timeout: float | None = None,
+            env: dict[str, str] | None = None,
         ) -> GcodeCommandResult:
+            del env
             self.calls.append((project_root, timeout))
             if project_root == root_one:
                 raise RuntimeError("boom")
@@ -239,6 +267,27 @@ async def test_nightly_reindex_isolates_per_project_exception(tmp_path: Path) ->
 
     assert "completed=1 failed=1 skipped=0" in result
     assert gateway.calls == [(root_one, 7200), (root_two, 7200)]
+
+
+@pytest.mark.asyncio
+async def test_nightly_reindex_does_not_call_gateway_without_launch_factory(
+    tmp_path: Path,
+) -> None:
+    root = tmp_path / "repo"
+    root.mkdir()
+    gateway = NightlyGateway()
+    context = NightlyContext(
+        projects=[_project("proj-1", root)],
+        gateway=gateway,
+        log_file=tmp_path / "maintenance.log",
+        launch_factory=None,
+    )
+    reindexer = CodeIndexNightlyFullReindexer(cast(Any, context))
+
+    result = await reindexer.run_once()
+
+    assert "completed=0 failed=1 skipped=0" in result
+    assert gateway.calls == []
 
 
 def test_register_nightly_reindex_cron_creates_global_system_job() -> None:
