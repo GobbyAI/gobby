@@ -9,7 +9,7 @@ from typing import Any
 import pytest
 
 from gobby.sessions.transcripts.base import BaseTranscriptParser, ParsedMessage, TokenUsage
-from gobby.sessions.transcripts.qwen import QwenTranscriptParser
+from gobby.sessions.transcripts.qwen import QwenTranscriptParser, _result_content
 
 pytestmark = pytest.mark.unit
 
@@ -127,3 +127,14 @@ def test_qwen_extract_last_messages_reads_nested_parts() -> None:
             "content": "I will inspect the project.\n[Tool call: read_file]",
         },
     ]
+
+
+def test_result_content_keeps_payloads_longer_than_500_characters() -> None:
+    text = "x" * 612
+    payload = {"body": "y" * 580}
+
+    assert _result_content(text) == text
+    assert _result_content(payload) == json.dumps(
+        payload, sort_keys=True, separators=(",", ":"), default=str
+    )
+    assert _result_content(None) == ""

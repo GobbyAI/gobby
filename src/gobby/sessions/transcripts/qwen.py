@@ -25,10 +25,10 @@ _IGNORED_SYSTEM_SUBTYPES = {"file_history_snapshot", "ui_telemetry"}
 
 def _result_content(value: Any) -> str:
     if isinstance(value, str):
-        return value[:500]
+        return value
     if value is None:
         return ""
-    return json.dumps(value, sort_keys=True, separators=(",", ":"), default=str)[:500]
+    return json.dumps(value, sort_keys=True, separators=(",", ":"), default=str)
 
 
 def _parse_timestamp(value: Any) -> datetime:
