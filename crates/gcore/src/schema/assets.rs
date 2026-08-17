@@ -56,7 +56,7 @@ pub(crate) const MIGRATIONS: &[EmbeddedMigration] = &[
     EmbeddedMigration {
         version: 382,
         filename: "382_grant_gwiki_tables_to_capability.sql",
-        checksum: "4845a2541ff64c93055ba556c5513919dd8bf77a63939f8373ee527284957249",
+        checksum: "658527b69d99dfc0c2de99e0d3c9c47d6b5f1172e784fd7980f5c9f76d7cec4e",
         sql: include_str!(
             "../../assets/schema/migrations/382_grant_gwiki_tables_to_capability.sql"
         ),
@@ -64,7 +64,7 @@ pub(crate) const MIGRATIONS: &[EmbeddedMigration] = &[
     EmbeddedMigration {
         version: 383,
         filename: "383_refresh_reused_interactive_principal.sql",
-        checksum: "3cca9a67d97c3f328432c58329736cd2e3814c09f6ccea4e7644f1a6ee24f0b0",
+        checksum: "6a9b479e68847bc240e54ace9d4a4c80e1acf79b1d7568dc8e3eb4fe84477696",
         sql: include_str!(
             "../../assets/schema/migrations/383_refresh_reused_interactive_principal.sql"
         ),
@@ -83,8 +83,21 @@ pub(crate) const MIGRATIONS: &[EmbeddedMigration] = &[
         checksum: "2d666ea0917211806be00cde6a854b45c181ea6344b312f729cd8e37a9aa72f6",
         sql: include_str!("../../assets/schema/migrations/385_issue_maintenance_principal.sql"),
     },
+    EmbeddedMigration {
+        version: 386,
+        filename: "386_interactive_principal_role_hash.sql",
+        checksum: "8570f08f0f90b1c17bf14f45a4d4cfd4b7b85a56a5aa5ce430442fb03f160799",
+        sql: include_str!("../../assets/schema/migrations/386_interactive_principal_role_hash.sql"),
+    },
 ];
 const _: &str = include_str!("../../assets/schema/migrations/.gitkeep");
+
+/// Receipts written before #20368 edited 377 in place. Live hubs keep those
+/// checksums; the improved 377 body is what new applies stamp.
+pub(crate) const PRIOR_RECEIPT_CHECKSUMS: &[(i32, &str)] = &[(
+    377,
+    "43b6c25263c1e510f28c540d9cc24e62ffcad67a3a8dddde3645bdb6a5e92821",
+)];
 
 pub(crate) fn root_hash() -> String {
     let mut digest = Sha256::new();

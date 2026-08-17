@@ -536,11 +536,11 @@ fn parent_and_worktree_fixtures_match_pinned_checksums() {
     );
 }
 
-fn assert_mode_covers_added_statements(
+fn mode_covers_added_statements(
     predecessor_sql: &str,
     mode: RefreshMode,
     prefixes: &[&str],
-) {
+) -> Result<(), String> {
     let current = split_sql_statements(BASELINE_SQL).expect("current baseline splits");
     let predecessor = split_sql_statements(predecessor_sql).expect("lineage baseline splits");
     let predecessor_set = predecessor.iter().cloned().collect::<BTreeSet<_>>();
@@ -554,10 +554,11 @@ fn assert_mode_covers_added_statements(
         .filter(|statement| !baseline_refresh_statement_for_mode(statement, mode))
         .cloned()
         .collect::<Vec<_>>();
-    assert!(
-        unexpected.is_empty(),
-        "refresh mode {mode:?} missed added statements: {unexpected:?}"
-    );
+    if !unexpected.is_empty() {
+        return Err(format!(
+            "refresh mode {mode:?} missed added statements: {unexpected:?}"
+        ));
+    }
     let matched = prefixes
         .iter()
         .map(|prefix| {
@@ -567,28 +568,32 @@ fn assert_mode_covers_added_statements(
                 .count()
         })
         .collect::<Vec<_>>();
-    assert!(
-        matched.iter().all(|count| *count == 1),
-        "each {mode:?} prefix must match exactly one added statement: {matched:?}"
-    );
+    if !matched.iter().all(|count| *count == 1) {
+        return Err(format!(
+            "each {mode:?} prefix must match exactly one added statement: {matched:?}"
+        ));
+    }
+    Ok(())
 }
 
 #[test]
 fn parent_baseline_refresh_is_runtime_boundary_only() {
-    assert_mode_covers_added_statements(
+    let result = mode_covers_added_statements(
         include_str!("../../tests/fixtures/schema/parent_baseline.sql"),
         RefreshMode::RuntimeOnly,
         RUNTIME_BOUNDARY_REFRESH_PREFIXES,
     );
+    assert!(result.is_ok(), "{result:?}");
 }
 
 #[test]
 fn worktree_baseline_refresh_is_typed_domain_only() {
-    assert_mode_covers_added_statements(
+    let result = mode_covers_added_statements(
         include_str!("../../tests/fixtures/schema/worktree_baseline.sql"),
         RefreshMode::TypedDomainOnly,
         TYPED_DOMAIN_REFRESH_PREFIXES,
     );
+    assert!(result.is_ok(), "{result:?}");
 }
 
 #[test]
@@ -1128,7 +1133,7 @@ fn migrations_directory_exists_and_copy_agent_entry_is_registered() {
         migrations_dir.is_dir(),
         "crates/gcore/assets/schema/migrations must exist so later leaves can register include_str entries"
     );
-    assert_eq!(MIGRATIONS.len(), 10);
+    assert_eq!(MIGRATIONS.len(), 11);
     assert_eq!(MIGRATIONS[0].version, 376);
     assert_eq!(MIGRATIONS[0].filename, "376_copy_agent_definitions.sql");
     assert_eq!(MIGRATIONS[1].version, 377);
@@ -1159,6 +1164,11 @@ fn migrations_directory_exists_and_copy_agent_entry_is_registered() {
     assert_eq!(
         MIGRATIONS[9].filename,
         "385_issue_maintenance_principal.sql"
+    );
+    assert_eq!(MIGRATIONS[10].version, 386);
+    assert_eq!(
+        MIGRATIONS[10].filename,
+        "386_interactive_principal_role_hash.sql"
     );
     assert!(MIGRATIONS[5].sql.contains("-- gobby:destructive"));
     for migration in MIGRATIONS {
