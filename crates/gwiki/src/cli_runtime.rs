@@ -119,22 +119,26 @@ fn reset_sigpipe() {
 #[cfg(not(unix))]
 fn reset_sigpipe() {}
 
+/// JSON stderr envelope for `--format json`.
+///
+/// Grant and non-grant errors share the same keys:
+/// - `error`: stable typed code from [`WikiError::code`]
+/// - `message`: human-readable text
+/// - `code`: compatibility alias of `error` (same value)
+fn error_payload(error: &WikiError) -> serde_json::Value {
+    let code = error.code();
+    json!({
+        "error": code,
+        "code": code,
+        "message": error.to_string(),
+    })
+}
+
 fn print_error(format: output::Format, error: &WikiError) {
     match format {
         output::Format::Json => {
-            let payload = match error {
-                WikiError::Grant { source } => json!({
-                    "error": source.cli_code(),
-                    "code": source.cli_code(),
-                    "message": source.to_string(),
-                }),
-                _ => json!({
-                    "code": error.code(),
-                    "message": error.to_string(),
-                }),
-            };
             let mut stderr = std::io::stderr().lock();
-            if output::print_json(&mut stderr, &payload).is_err() {
+            if output::print_json(&mut stderr, &error_payload(error)).is_err() {
                 eprintln!("gwiki: {error}");
             }
         }
@@ -162,5 +166,38 @@ fn exit_code_for_error(error: &WikiError) -> ExitCode {
         | WikiError::Timeout { .. }
         | WikiError::Freshness { .. }
         | WikiError::Generation { .. } => ExitCode::from(1),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use gobby_core::grant::GrantError;
+
+    fn assert_stable_envelope(error: &WikiError) {
+        let payload = error_payload(error);
+        let object = payload.as_object().expect("error envelope object");
+        let mut keys: Vec<_> = object.keys().cloned().collect();
+        keys.sort();
+        assert_eq!(keys, ["code", "error", "message"]);
+        assert_eq!(payload["error"], payload["code"]);
+        assert_eq!(payload["error"], error.code());
+        assert_eq!(payload["message"], error.to_string());
+    }
+
+    #[test]
+    fn grant_json_error_uses_stable_envelope_keys() {
+        let error = WikiError::from(GrantError::DaemonRequired);
+        assert_stable_envelope(&error);
+        assert_eq!(error_payload(&error)["error"], "daemon_required");
+    }
+
+    #[test]
+    fn non_grant_json_error_uses_the_same_envelope_keys() {
+        let error = WikiError::Config {
+            detail: "missing hub".to_string(),
+        };
+        assert_stable_envelope(&error);
+        assert_eq!(error_payload(&error)["error"], "config_error");
     }
 }

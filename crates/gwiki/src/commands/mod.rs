@@ -42,9 +42,7 @@ use crate::{
 };
 
 pub(crate) fn run(command: Command, run_options: RunOptions) -> Result<CommandOutcome, WikiError> {
-    if let Some(root) = command_project_root(&command) {
-        crate::support::env::set_active_project_root(Some(root));
-    }
+    crate::support::env::set_active_project_root(command_project_root(&command));
     let project_lock = project_admission::acquire_command_lock(&command)?;
     run_with_project_lock(project_lock, || dispatch(command, run_options))
 }

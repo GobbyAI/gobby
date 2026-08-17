@@ -58,6 +58,8 @@ pub(crate) fn resolve_command_scope(
         crate::support::env::set_active_project_root(Some(root.to_path_buf()));
     } else if let Some(root) = gobby_core::project::find_project_root(&cwd) {
         crate::support::env::set_active_project_root(Some(root));
+    } else {
+        crate::support::env::set_active_project_root(None);
     }
     wiki_scope::resolve(selection, &cwd)
 }

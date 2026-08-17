@@ -1,6 +1,8 @@
 use std::collections::BTreeSet;
 
-use gobby_core::ai::generation::{DaemonAgenticResult, StopReason, ToolLoopOutcome};
+#[cfg(test)]
+use gobby_core::ai::generation::ToolLoopOutcome;
+use gobby_core::ai::generation::{DaemonAgenticResult, StopReason};
 use gobby_core::ai_types::TokenUsage;
 
 /// Why an AI narrative generation attempt failed on an AI-enabled run.
@@ -167,6 +169,7 @@ impl GenerationOutcome {
         }
     }
 
+    #[cfg(test)]
     pub(crate) fn from_tool_loop(outcome: ToolLoopOutcome, prompt: &str) -> Self {
         let observability = GenerationObservability {
             stop_reason: Some(outcome.stop_reason),

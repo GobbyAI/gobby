@@ -99,7 +99,6 @@ mod strict_markdown;
 mod stubs;
 mod system_model;
 mod text;
-mod tool_executor;
 mod truth_digest;
 mod types;
 
@@ -193,8 +192,6 @@ pub(crate) use run::{
 // Citation repair: re-anchor on-disk citations against the current index with
 // no regeneration. Public so a later leaf's `--repair-citations` flag drives it.
 pub use repair::{CitationRepairSummary, repair_citations};
-// In-process executor for the narrative tool loop (#978).
-pub(crate) use tool_executor::CodewikiToolExecutor;
 // AI and structural text helpers.
 #[cfg(test)]
 pub(crate) use text::ToolLoopResult;

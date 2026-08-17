@@ -187,7 +187,7 @@ pub(crate) fn render_repo_doc(
     let summary = replace_citations_with_markers(summary, source_spans);
     // Lead with the guided tour: the canonical handbook spine as a numbered
     // Chapter 1..N path, with a "new to this codebase" callout and a one-line
-    // ask/search pointer. The module/file tables are demoted to a reference
+    // search pointer. The module/file tables are demoted to a reference
     // appendix below (#853 root cause: the reference dump crowded out the
     // narrative entry points).
     doc.push_str("## Start here — guided tour\n\n");

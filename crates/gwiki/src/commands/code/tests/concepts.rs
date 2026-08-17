@@ -334,7 +334,7 @@ fn guided_tour_spine_numbers_chapters_with_callout_and_reciprocal_nav() {
     let docs = collect_doc_pairs(&concept_input(), GenerateDocsOptions::default());
 
     // Front page and concept index both lead with the numbered guided tour,
-    // the new-to-this-codebase callout, and the ask/search pointer.
+    // the new-to-this-codebase callout, and the search pointer.
     for path in ["code/repo.md", "code/concepts/index.md"] {
         let doc = rendered_doc(&docs, path);
         assert!(doc.contains("## Start here — guided tour"), "{path}: {doc}");

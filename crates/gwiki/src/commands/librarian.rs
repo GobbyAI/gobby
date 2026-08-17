@@ -1,13 +1,8 @@
-use gobby_core::ai::generation::GenerationTier;
 use gobby_core::config::AiRouting;
 
 use crate::support::scope::resolve_selection_context;
 use crate::support::services;
 use crate::{CommandOutcome, ScopeSelection, WikiError, librarian, vault};
-
-/// Librarian patch suggestions operate page-by-page, matching the module
-/// generation tier used by `ask`.
-const LIBRARIAN_TIER: GenerationTier = GenerationTier::Module;
 
 pub(crate) fn execute(
     selection: ScopeSelection,
@@ -19,8 +14,7 @@ pub(crate) fn execute(
     // collision.
     vault::initialize(&context.scope)?;
     let runtime_services = services::probe_runtime_services("gwiki librarian")?;
-    let model_available =
-        services::text_generation_available("gwiki librarian", ai, LIBRARIAN_TIER);
+    let model_available = services::text_generation_available("gwiki librarian", ai);
     let options = librarian::Options::probed(&runtime_services, model_available);
     let mut semantic_backend = runtime_services.semantic_backend();
     let probe = semantic_backend

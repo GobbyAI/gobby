@@ -32,11 +32,6 @@ impl EnvGuard {
         guard
     }
 
-    pub(crate) fn and_unset(mut self, key: &'static str) -> Self {
-        self.unset_value(key);
-        self
-    }
-
     pub(crate) fn and_set(mut self, key: &'static str, value: impl AsRef<OsStr>) -> Self {
         self.set_value(key, value.as_ref());
         self

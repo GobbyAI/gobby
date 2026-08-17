@@ -89,7 +89,7 @@ fn run_search_attached(
     let semantic_config = if include_semantic {
         let embedding = {
             let ai_context = AiContext::resolve(None, &mut source);
-            crate::support::services::resolve_semantic_embedding(&ai_context, &mut source)
+            crate::support::services::resolve_semantic_embedding(&ai_context)
         }
         .ok_or_else(|| required_search_config("embedding endpoint"))?;
         let qdrant = resolve_qdrant_config(&mut source)
