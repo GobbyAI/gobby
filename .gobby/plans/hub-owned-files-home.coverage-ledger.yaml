@@ -1,6 +1,6 @@
 project_id: d45545c5-ded5-4335-b115-0245752edacf
 plan_id: hub-owned-files-home
-plan_hash: "c13086d38d76853e74da00815beecd87ae3f748f1499182479dde59d15e8a118"
+plan_hash: "ee4fab6b30f91d451ac01f199dc8e02e3298b421c38218b6a60edbc3867c8b65"
 root_task_ref: "20330"
 
 sections:
@@ -47,6 +47,7 @@ sections:
       "1.2.13": {expected_leaves: [{title: Add role-bearing singleton and service reservation, owner_agent: backend-developer}]}
       "1.2.14": {expected_leaves: [{title: Add role-bearing singleton and service reservation, owner_agent: backend-developer}]}
       "1.2.15": {expected_leaves: [{title: Add role-bearing singleton and service reservation, owner_agent: backend-developer}]}
+      "1.2.16": {expected_leaves: [{title: Add role-bearing singleton and service reservation, owner_agent: backend-developer}]}
   "2.1":
     acceptance_items:
       "2.1.1": {expected_leaves: [{title: Retarget personal identity and USER.md, owner_agent: backend-developer}]}
@@ -101,6 +102,8 @@ sections:
       "3.1.31": {expected_leaves: [{title: Reconstruct chat attachment paths, owner_agent: backend-developer}]}
       "3.1.32": {expected_leaves: [{title: Reconstruct chat attachment paths, owner_agent: backend-developer}]}
       "3.1.33": {expected_leaves: [{title: Reconstruct chat attachment paths, owner_agent: backend-developer}]}
+      "3.1.34": {expected_leaves: [{title: Reconstruct chat attachment paths, owner_agent: backend-developer}]}
+      "3.1.35": {expected_leaves: [{title: Reconstruct chat attachment paths, owner_agent: backend-developer}]}
   "4.1":
     acceptance_items:
       "4.1.1": {expected_leaves: [{title: Point gwiki and daemon wiki scope at files_home/wiki, owner_agent: backend-developer}]}
