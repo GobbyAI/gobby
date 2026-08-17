@@ -9,13 +9,14 @@ from collections.abc import Callable
 from typing import TYPE_CHECKING, Any, cast
 
 from fastapi import APIRouter, HTTPException, Query, Request
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 
 from gobby.code_index.context import CodeIndexGraphUnavailable, CodeIndexProjectNotFound
 from gobby.code_index.gcode_gateway import (
     GcodeGatewayError,
     GcodeInputValidationError,
     GcodeProjectNotFoundError,
+    GcodeTimeoutError,
     GcodeUnavailableError,
     GcodeVersionError,
 )
@@ -38,7 +39,7 @@ class GlobalPruneRequest(BaseModel):
     """Request body for POST /api/code-index/prune."""
 
     force: bool = False
-    retention_days: int | None = None
+    retention_days: int | None = Field(default=None, ge=1)
 
 
 def _require_project_id(project_id: str | None) -> str:
@@ -402,11 +403,39 @@ def create_code_index_router(server: HTTPServer) -> APIRouter:
     @router.post("/prune")
     async def global_prune(body: GlobalPruneRequest | None = None) -> JSONResponse:
         """Operator-only global prune: hub sweep plus per-project grant children."""
-        del body
+        request = body or GlobalPruneRequest()
         pruner = getattr(server.services, "code_index_pruner", None)
         if pruner is None:
             raise HTTPException(status_code=503, detail="Code index pruner not available")
-        outcome = await pruner.run_operator_global_prune()
+        try:
+            outcome = await pruner.run_operator_global_prune(
+                force=request.force,
+                retention_days=request.retention_days,
+            )
+        except HTTPException:
+            raise
+        except (GcodeUnavailableError, GcodeVersionError, CodeIndexGraphUnavailable) as e:
+            raise HTTPException(status_code=503, detail="Code index pruner not available") from e
+        except GcodeTimeoutError as e:
+            logger.exception(
+                "Code index global prune timed out",
+                extra={"route": "POST /api/code-index/prune", "operation": "global_prune"},
+            )
+            raise HTTPException(status_code=504, detail="Code index prune timed out") from e
+        except GcodeInputValidationError as e:
+            raise HTTPException(status_code=400, detail=str(e)) from e
+        except GcodeGatewayError as e:
+            logger.exception(
+                "Code index global prune failed",
+                extra={"route": "POST /api/code-index/prune", "operation": "global_prune"},
+            )
+            raise HTTPException(status_code=500, detail="Code index prune failed") from e
+        except Exception as e:
+            logger.exception(
+                "Code index global prune failed",
+                extra={"route": "POST /api/code-index/prune", "operation": "global_prune"},
+            )
+            raise HTTPException(status_code=500, detail="Code index prune failed") from e
         return JSONResponse(content=outcome)
 
     @router.post("/invalidate")

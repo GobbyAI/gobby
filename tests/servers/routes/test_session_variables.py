@@ -2,12 +2,15 @@
 
 from __future__ import annotations
 
+from collections.abc import Callable
+from typing import Any
 from unittest.mock import MagicMock, patch
 
 import pytest
 from starlette.testclient import TestClient
 
 from gobby.config.app import DaemonConfig
+from gobby.servers.http import HTTPServer
 from gobby.storage.hub.protocol import HubDatabase
 from gobby.utils.local_token import AgentApiTokenClaims
 from tests.servers.conftest import create_http_server
@@ -98,6 +101,35 @@ def test_set_variable_accepts_json_values() -> None:
     mock_set.assert_called_once()
     assert mock_set.call_args.kwargs["value"] == ["tasks"]
     assert "workflow" not in mock_set.call_args.kwargs
+
+
+def test_set_variable_uses_server_run_db() -> None:
+    calls: list[Callable[..., Any]] = []
+    original = HTTPServer.run_db
+
+    async def spy(
+        self: HTTPServer,
+        func: Callable[..., Any],
+        *args: Any,
+        **kwargs: Any,
+    ) -> Any:
+        calls.append(func)
+        return await original(self, func, *args, **kwargs)
+
+    with (
+        patch("gobby.servers.http.HTTPServer.run_db", spy),
+        patch(
+            "gobby.mcp_proxy.tools.workflows._variables.set_variable",
+            return_value={"success": True},
+        ) as mock_set,
+    ):
+        client = _client_with_session_manager()
+        resp = client.post(
+            "/api/sessions/%231/variables/set",
+            json={"name": "foo", "value": "bar"},
+        )
+    assert resp.status_code == 200
+    assert mock_set in calls
 
 
 def test_set_variable_accepts_step_scope() -> None:

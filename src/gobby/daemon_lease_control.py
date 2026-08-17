@@ -162,16 +162,22 @@ async def serve_standby_until_promotion(
     return bool(promoted)
 
 
+_LEASE_HEARTBEAT_TIMEOUT_SECONDS = 5.0
+
+
 async def monitor_active_lease(
     lease: LeaseBackend,
     *,
     stop: asyncio.Event,
     on_loss: Callable[[], None],
     heartbeat_interval_seconds: float = 2.0,
+    heartbeat_timeout_seconds: float = _LEASE_HEARTBEAT_TIMEOUT_SECONDS,
 ) -> None:
     """Heartbeat the lease and request shutdown immediately after connection loss."""
     if heartbeat_interval_seconds <= 0:
         raise ValueError("heartbeat_interval_seconds must be positive")
+    if heartbeat_timeout_seconds <= 0:
+        raise ValueError("heartbeat_timeout_seconds must be positive")
     while not stop.is_set():
         try:
             await asyncio.wait_for(stop.wait(), timeout=heartbeat_interval_seconds)
@@ -179,7 +185,14 @@ async def monitor_active_lease(
         except TimeoutError:
             pass
         try:
-            await asyncio.to_thread(lease.heartbeat)
+            await asyncio.wait_for(
+                asyncio.to_thread(lease.heartbeat),
+                timeout=heartbeat_timeout_seconds,
+            )
+        except TimeoutError:
+            logger.error("Active-daemon lease heartbeat timed out; requesting shutdown")
+            await asyncio.to_thread(on_loss)
+            return
         except LeaseConnectionLostError:
             logger.error("Active-daemon lease connection lost; requesting shutdown")
             # Drain off the event loop so in-flight handlers can finish.

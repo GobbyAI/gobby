@@ -339,6 +339,8 @@ def create_pipeline_definitions_router(server: HTTPServer) -> APIRouter:
                 fields["definition_json"] = _parse_definition(fields["definition_json"])
             if "canvas_json" in fields and isinstance(fields["canvas_json"], str):
                 fields["canvas_json"] = json.loads(fields["canvas_json"])
+            if "tags" in fields and fields["tags"] is not None:
+                fields["tags"] = [tag for tag in fields["tags"] if tag != "gobby"]
             row = await server.run_db(_get_manager().update, definition_id, **fields)
             await _broadcast("pipeline_updated", definition_id)
             return {"status": "success", "definition": _row_to_dict(row)}

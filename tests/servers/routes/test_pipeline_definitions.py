@@ -194,6 +194,26 @@ def test_create_get_update_toggle_delete_cycle(
     assert updated.status_code == 200
     assert updated.json()["definition"]["description"] == "updated"
 
+
+def test_update_strips_reserved_gobby_tag(client: TestClient) -> None:
+    created = client.post(
+        "/api/pipelines/definitions",
+        json={
+            "name": "tagged-pipe",
+            "definition_json": json.dumps(SAMPLE_PIPELINE),
+            "tags": ["custom"],
+        },
+    )
+    assert created.status_code == 200
+    definition_id = created.json()["definition"]["id"]
+
+    updated = client.put(
+        f"/api/pipelines/definitions/{definition_id}",
+        json={"tags": ["keep", "gobby", "ops"]},
+    )
+    assert updated.status_code == 200
+    assert updated.json()["definition"]["tags"] == ["keep", "ops"]
+
     toggled = client.put(f"/api/pipelines/definitions/{definition_id}/toggle")
     assert toggled.status_code == 200
     assert toggled.json()["definition"]["enabled"] is False

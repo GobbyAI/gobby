@@ -8,7 +8,7 @@ from datetime import datetime
 from typing import TYPE_CHECKING, Any
 
 from fastapi import APIRouter, HTTPException, Query
-from pydantic import BaseModel
+from pydantic import BaseModel, ValidationError
 
 from gobby.mcp_proxy.tools.workflows._variables import _variable_summary
 from gobby.storage.definitions._shared import (
@@ -112,7 +112,7 @@ def create_variable_definitions_router(server: HTTPServer) -> APIRouter:
             VariableDefinitionBody(
                 variable=request.name, value=request.value, description=request.description
             )
-        except Exception as e:
+        except ValidationError as e:
             raise HTTPException(status_code=400, detail=f"Invalid variable: {e}") from e
         try:
             manager = _get_manager()

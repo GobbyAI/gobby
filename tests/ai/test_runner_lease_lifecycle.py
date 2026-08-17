@@ -377,6 +377,39 @@ async def test_reacquire_matching_record_schedules_projection_repair(
 
 
 @pytest.mark.asyncio
+async def test_reacquire_projection_repair_failure_keeps_successor(
+    monkeypatch: pytest.MonkeyPatch,
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    monkeypatch.setattr(embedding_lease, "_EMBEDDING_REACQUIRE_POLL_SECONDS", 0.01)
+    db = _StubHubDatabase()
+    state = EmbeddingGenerationState(cast(Any, db))
+    lease = _lease(state, generation="run-1", revision=7, watermark=3)
+    lease.activate()
+    lease.fence()
+    rebuilds: list[CompletedSwitchRecord | None] = []
+
+    def boom() -> None:
+        raise RuntimeError("projection repair failed")
+
+    handle = embedding_lease._ManagedEmbeddingLease(
+        lease,
+        asyncio.get_running_loop(),
+        read_completed_record=lambda: _completed_record(run_id="run-1", committed_revision=7),
+        request_rebuild=rebuilds.append,
+        request_projection_repair=boom,
+    )
+
+    with caplog.at_level(logging.WARNING):
+        assert await embedding_lease._reacquire_lease(handle) is True
+
+    assert handle.lease is not lease
+    handle.assert_serving()
+    assert rebuilds == []
+    assert "projection repair failed" in caplog.text
+
+
+@pytest.mark.asyncio
 async def test_reacquire_mismatch_requests_rebuild_and_stays_fenced(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:

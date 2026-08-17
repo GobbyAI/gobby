@@ -227,6 +227,35 @@ class TestGetDefinition:
         response = client.get("/api/agents/definitions/nonexistent")
         assert response.status_code == 404
 
+    def test_get_uses_get_by_name(
+        self,
+        client: TestClient,
+        agent_manager: AgentDefinitionManager,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        calls: list[tuple[str, str | None]] = []
+        original = AgentDefinitionManager.get_by_name
+
+        def spy(
+            self: AgentDefinitionManager,
+            name: str,
+            project_id: str | None = None,
+            include_deleted: bool = False,
+        ) -> Any:
+            calls.append((name, project_id))
+            return original(self, name, project_id=project_id, include_deleted=include_deleted)
+
+        monkeypatch.setattr(AgentDefinitionManager, "get_by_name", spy)
+
+        def fail_list_all(*_args: Any, **_kwargs: Any) -> Any:
+            raise AssertionError("list_all should not be used")
+
+        monkeypatch.setattr(AgentDefinitionManager, "list_all", fail_list_all)
+        _create_agent_row(agent_manager, "named-agent")
+        response = client.get("/api/agents/definitions/named-agent")
+        assert response.status_code == 200
+        assert calls == [("named-agent", None)]
+
 
 # ---------------------------------------------------------------------------
 # GET /api/agents/definitions/{name}/export
@@ -1129,11 +1158,20 @@ class TestExportDefinitionErrors:
     def test_export_generic_error(self, client: TestClient) -> None:
         """Export returns 500 on generic exceptions."""
         with patch(
-            "gobby.storage.definitions.AgentDefinitionManager.list_all",
+            "gobby.storage.definitions.AgentDefinitionManager.get_by_name",
             side_effect=RuntimeError("unexpected"),
         ):
             response = client.get("/api/agents/definitions/any-name/export")
         assert response.status_code == 500
+
+
+def test_row_body_rejects_non_dict_json() -> None:
+    from gobby.servers.routes.agents import _row_body
+
+    with pytest.raises(TypeError, match="JSON object"):
+        _row_body(SimpleNamespace(definition_json="[]"))
+    with pytest.raises(TypeError, match="JSON object"):
+        _row_body(SimpleNamespace(definition_json=["not", "an", "object"]))
 
 
 # ---------------------------------------------------------------------------
