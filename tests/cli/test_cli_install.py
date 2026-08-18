@@ -1253,6 +1253,7 @@ def test_remote_mode_install_without_docker(
     remote_probe.assert_called_once_with(
         "postgresql://gobby:secret@hub.test:5432/gobby",
         gobby_home=tmp_path,
+        hub_daemon_url=None,
     )
 
 

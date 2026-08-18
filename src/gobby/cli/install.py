@@ -10,11 +10,17 @@ import sys
 import webbrowser
 from collections.abc import Callable
 from pathlib import Path
-from typing import Any
+from typing import Any, cast
 
 import click
 
-from gobby.config.bootstrap import BootstrapConfigError, load_bootstrap
+from gobby.cli.install_files_home import (
+    acquire_install_maintenance,
+    peek_install_bootstrap,
+    publish_install_files_home,
+    resolve_install_files_home,
+)
+from gobby.config.bootstrap import BootstrapConfigError, DatastoreMode, load_bootstrap
 from gobby.config.persistence import validate_falkordb_password
 from gobby.storage.auth import AuthStore, ensure_local_api_token
 from gobby.storage.config_store import ConfigStore
@@ -111,13 +117,14 @@ __all__ = [
 ]
 
 
-def _maybe_start_daemon_after_install(*, no_interactive: bool) -> None:
+def _maybe_start_daemon_after_install(*, no_interactive: bool, claim: Any | None = None) -> None:
     _daemon_maybe_start_daemon_after_install(
         no_interactive=no_interactive,
         daemon_url=_daemon_url,
         daemon_already_running=_daemon_already_running,
         ci_environment=_ci_environment,
         headless_or_remote=_headless_or_remote,
+        claim=claim,
         subprocess_popen=subprocess.Popen,
         browser_open=webbrowser.open,
     )
@@ -376,6 +383,13 @@ def _install_required_stack(
     help="Apply unless-stopped restart policy to managed service containers (default: enabled).",
 )
 @click.option(
+    "--files-home",
+    "files_home",
+    type=click.Path(exists=True, file_okay=False, dir_okay=True, path_type=Path),
+    default=None,
+    help="Existing absolute directory for hub-owned files (local install).",
+)
+@click.option(
     "-C",
     "--path",
     "working_dir",
@@ -405,7 +419,8 @@ def install(
     expose_ui_flag: bool | None,
     no_interactive_flag: bool,
     container_restarts_flag: bool,
-    working_dir: Path | None,
+    files_home: Path | None = None,
+    working_dir: Path | None = None,
 ) -> None:
     """Install Gobby configuration, required infrastructure, and integrations.
 
@@ -491,7 +506,8 @@ def install(
             clis_to_install.append("droid")
 
     is_full_install = all_flag or config_only_flag
-    bootstrap = load_bootstrap()
+    raw_bootstrap = peek_install_bootstrap()
+    datastore_mode = str(raw_bootstrap.get("datastore_mode") or "local")
     expose_ui = resolve_installer_ui_exposure(
         expose_ui_flag,
         full_install=is_full_install,
@@ -501,7 +517,6 @@ def install(
             default=False,
         ),
     )
-    datastore_mode = bootstrap.datastore_mode
     provision_managed_services = is_full_install and datastore_mode == "local"
     hooks_only_maintenance = (
         hooks_flag
@@ -527,8 +542,13 @@ def install(
         embedding_url=embedding_url,
         embedding_provider=embedding_provider,
         managed_services=provision_managed_services,
-        datastore_mode=datastore_mode,
-        database_url=bootstrap.database_url,
+        datastore_mode=cast(DatastoreMode, datastore_mode),
+        database_url=(
+            str(raw_bootstrap["database_url"]) if raw_bootstrap.get("database_url") else None
+        ),
+        hub_daemon_url=(
+            str(raw_bootstrap["hub_daemon_url"]) if raw_bootstrap.get("hub_daemon_url") else None
+        ),
     )
     if no_supported_cli:
         click.echo("No supported AI coding CLIs detected; CLI hooks will be skipped.")
@@ -539,19 +559,48 @@ def install(
             click.echo(f"Error: {error}", err=True)
         sys.exit(1)
 
-    try:
-        personal_marker = ensure_personal_project_identity()
-    except (OSError, RuntimeError, ValueError) as exc:
-        raise click.ClickException(f"Failed to establish personal project identity: {exc}") from exc
-    click.echo(f"Personal project identity: {personal_marker}")
+    resolved_files_home = resolve_install_files_home(
+        files_home,
+        datastore_mode=datastore_mode,
+        existing_files_home=(
+            str(raw_bootstrap["files_home"]) if raw_bootstrap.get("files_home") else None
+        ),
+        no_interactive=no_interactive_flag,
+    )
+    install_claim = None
+    if datastore_mode == "local":
+        if resolved_files_home is None:
+            raise click.UsageError(
+                "Local install requires --files-home naming an existing absolute directory"
+            )
+        install_claim = acquire_install_maintenance()
+        try:
+            publish_install_files_home(resolved_files_home)
+        except Exception:
+            install_claim.release()
+            install_claim = None
+            raise
+        try:
+            personal_marker = ensure_personal_project_identity()
+        except (OSError, RuntimeError, ValueError) as exc:
+            install_claim.release()
+            install_claim = None
+            raise click.ClickException(
+                f"Failed to establish personal project identity: {exc}"
+            ) from exc
+        click.echo(f"Personal project identity: {personal_marker}")
 
     if hooks_only_maintenance:
-        hook_results: dict[str, dict[str, Any]] = {}
-        _run_git_hooks_install(install_git_hooks, project_path, hook_results)
-        if not hook_results["git-hooks"].get("success", False):
-            sys.exit(1)
-        click.echo("Git hook maintenance complete.")
-        return
+        try:
+            hook_results: dict[str, dict[str, Any]] = {}
+            _run_git_hooks_install(install_git_hooks, project_path, hook_results)
+            if not hook_results["git-hooks"].get("success", False):
+                sys.exit(1)
+            click.echo("Git hook maintenance complete.")
+            return
+        finally:
+            if install_claim is not None:
+                install_claim.release()
 
     initialize_project_after_setup = not config_only_flag and _should_initialize_project(
         project_path,
@@ -608,7 +657,7 @@ def install(
         try:
             exposure_result = apply_installer_ui_exposure(
                 expose_ui,
-                bootstrap.daemon_port,
+                load_bootstrap().daemon_port,
             )
         except UiExposeError as exc:
             click.echo(
@@ -748,6 +797,11 @@ def install(
         if not all_success:
             sys.exit(1)
         if is_full_install:
-            _maybe_start_daemon_after_install(no_interactive=no_interactive_flag)
+            _maybe_start_daemon_after_install(
+                no_interactive=no_interactive_flag,
+                claim=install_claim,
+            )
     finally:
+        if install_claim is not None:
+            install_claim.release()
         runtime.close()

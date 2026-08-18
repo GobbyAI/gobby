@@ -8,10 +8,18 @@ Tests cover:
 """
 
 import json
+from collections.abc import Iterator
 from pathlib import Path
+from unittest.mock import patch
 
 import pytest
 
+from gobby.paths import (
+    FilesHomeError,
+    FilesHomeNotOnThisDaemonError,
+    get_gobby_home,
+)
+from gobby.runner_pid_file import PidFileClaim, claim_pid_file
 from gobby.storage.projects import (
     ORPHANED_PROJECT_ID,
     PERSONAL_PROJECT_ID,
@@ -23,6 +31,48 @@ from gobby.storage.projects import (
 )
 
 pytestmark = pytest.mark.unit
+
+
+def _write_local_bootstrap(files_home: Path) -> Path:
+    home = get_gobby_home()
+    home.mkdir(parents=True, exist_ok=True)
+    bootstrap = home / "bootstrap.yaml"
+    bootstrap.write_text(
+        f"datastore_mode: local\nfiles_home: {files_home}\n",
+        encoding="utf-8",
+    )
+    bootstrap.chmod(0o600)
+    return bootstrap
+
+
+def _write_remote_bootstrap() -> Path:
+    home = get_gobby_home()
+    home.mkdir(parents=True, exist_ok=True)
+    bootstrap = home / "bootstrap.yaml"
+    bootstrap.write_text(
+        "datastore_mode: remote\nhub_daemon_url: http://hub.example.test:60887\n",
+        encoding="utf-8",
+    )
+    bootstrap.chmod(0o600)
+    return bootstrap
+
+
+@pytest.fixture(autouse=True)
+def _restore_bootstrap() -> Iterator[None]:
+    bootstrap = get_gobby_home() / "bootstrap.yaml"
+    previous = bootstrap.read_bytes() if bootstrap.exists() else None
+    yield
+    if previous is None:
+        bootstrap.unlink(missing_ok=True)
+    else:
+        bootstrap.write_bytes(previous)
+        bootstrap.chmod(0o600)
+
+
+def _hold_maintenance() -> PidFileClaim:
+    claim = claim_pid_file(get_gobby_home() / "gobby.pid", role="maintenance")
+    assert claim is not None
+    return claim
 
 
 class TestConstants:
@@ -42,80 +92,135 @@ class TestConstants:
         assert "random-project" not in SYSTEM_PROJECT_NAMES
 
     def test_personal_project_path(self, tmp_path: Path) -> None:
-        assert personal_project_path(tmp_path) == tmp_path / "personal"
+        files_home = tmp_path / "files_home"
+        files_home.mkdir()
+        _write_local_bootstrap(files_home)
+
+        path = personal_project_path()
+
+        assert path == files_home / "_personal"
+        assert path != get_gobby_home() / "personal"
+        assert personal_project_path(tmp_path) == files_home / "_personal"
 
 
 class TestPersonalProjectEnsure:
     """Tests for the backed personal system project."""
 
     def test_identity_helper_creates_marker_without_database(self, tmp_path: Path) -> None:
-        project_file = ensure_personal_project_identity(gobby_home=tmp_path)
+        files_home = tmp_path / "files_home"
+        files_home.mkdir()
+        _write_local_bootstrap(files_home)
+        claim = _hold_maintenance()
+        try:
+            project_file = ensure_personal_project_identity()
+        finally:
+            claim.release()
 
         data = json.loads(project_file.read_text())
+        assert project_file == files_home / "_personal" / ".gobby" / "project.json"
         assert data == {
             "id": PERSONAL_PROJECT_ID,
             "name": "_personal",
             "created_at": data["created_at"],
         }
+        assert not (get_gobby_home() / "personal").exists()
+
+    def test_identity_helper_requires_held_singleton(self, tmp_path: Path) -> None:
+        files_home = tmp_path / "files_home"
+        files_home.mkdir()
+        _write_local_bootstrap(files_home)
+
+        with pytest.raises(RuntimeError, match="held singleton"):
+            ensure_personal_project_identity()
+
+        assert not (files_home / "_personal").exists()
 
     def test_identity_helper_propagates_write_failure(
         self,
-        monkeypatch: pytest.MonkeyPatch,
         tmp_path: Path,
     ) -> None:
-        def fail_write(_path: Path, _content: str) -> int:
-            raise PermissionError("read-only marker")
+        files_home = tmp_path / "files_home"
+        files_home.mkdir()
+        _write_local_bootstrap(files_home)
+        claim = _hold_maintenance()
+        try:
+            with (
+                patch(
+                    "gobby.paths.publish_files_home_descendant",
+                    side_effect=FilesHomeError("read-only marker"),
+                ),
+                pytest.raises(FilesHomeError, match="read-only marker"),
+            ):
+                ensure_personal_project_identity()
+        finally:
+            claim.release()
 
-        monkeypatch.setattr(Path, "write_text", fail_write)
-
-        with pytest.raises(PermissionError, match="read-only marker"):
-            ensure_personal_project_identity(gobby_home=tmp_path)
+        assert not (files_home / "_personal" / ".gobby" / "project.json").exists()
 
     def test_ensure_personal_project_creates_folder_and_repo_path(
         self,
         project_manager: LocalProjectManager,
         tmp_path: Path,
     ) -> None:
-        project = ensure_personal_project(project_manager.db, gobby_home=tmp_path)
+        files_home = tmp_path / "files_home"
+        files_home.mkdir()
+        _write_local_bootstrap(files_home)
+        expected_path = files_home / "_personal"
+        claim = _hold_maintenance()
+        try:
+            project = ensure_personal_project(project_manager.db)
+            second = ensure_personal_project(project_manager.db)
+        finally:
+            claim.release()
 
-        expected_path = tmp_path / "personal"
         assert expected_path.is_dir()
         assert project.id == PERSONAL_PROJECT_ID
         assert project.name == "_personal"
         assert project.repo_path == str(expected_path)
-
-        second = ensure_personal_project(project_manager.db, gobby_home=tmp_path)
         assert second.id == project.id
         assert second.repo_path == str(expected_path)
+        assert not (get_gobby_home() / "personal").exists()
 
     def test_ensure_personal_project_repairs_stale_repo_path(
         self,
         project_manager: LocalProjectManager,
         tmp_path: Path,
     ) -> None:
+        files_home = tmp_path / "files_home"
+        files_home.mkdir()
+        _write_local_bootstrap(files_home)
         project_manager.ensure_exists(PERSONAL_PROJECT_ID, "_personal")
         project_manager.update(PERSONAL_PROJECT_ID, repo_path=None)
+        claim = _hold_maintenance()
+        try:
+            project = ensure_personal_project(project_manager.db)
+        finally:
+            claim.release()
 
-        project = ensure_personal_project(project_manager.db, gobby_home=tmp_path)
-
-        assert project.repo_path == str(tmp_path / "personal")
+        assert project.repo_path == str(files_home / "_personal")
 
     def test_ensure_personal_project_repairs_name_and_deleted_at(
         self,
         project_manager: LocalProjectManager,
         tmp_path: Path,
     ) -> None:
+        files_home = tmp_path / "files_home"
+        files_home.mkdir()
+        _write_local_bootstrap(files_home)
         project_manager.ensure_exists(
             PERSONAL_PROJECT_ID,
             "wrong-name",
             repo_path="/stale",
         )
         project_manager.soft_delete(PERSONAL_PROJECT_ID)
-
-        project = ensure_personal_project(project_manager.db, gobby_home=tmp_path)
+        claim = _hold_maintenance()
+        try:
+            project = ensure_personal_project(project_manager.db)
+        finally:
+            claim.release()
 
         assert project.name == "_personal"
-        assert project.repo_path == str(tmp_path / "personal")
+        assert project.repo_path == str(files_home / "_personal")
         assert project.deleted_at is None
 
     def test_ensure_personal_project_materializes_on_disk_identity(
@@ -124,9 +229,16 @@ class TestPersonalProjectEnsure:
         tmp_path: Path,
     ) -> None:
         """gwiki/gcode read identity from .gobby/project.json, not the DB."""
-        ensure_personal_project(project_manager.db, gobby_home=tmp_path)
+        files_home = tmp_path / "files_home"
+        files_home.mkdir()
+        _write_local_bootstrap(files_home)
+        claim = _hold_maintenance()
+        try:
+            ensure_personal_project(project_manager.db)
+        finally:
+            claim.release()
 
-        project_file = tmp_path / "personal" / ".gobby" / "project.json"
+        project_file = files_home / "_personal" / ".gobby" / "project.json"
         assert project_file.is_file()
         data = json.loads(project_file.read_text())
         assert data["id"] == PERSONAL_PROJECT_ID
@@ -138,7 +250,10 @@ class TestPersonalProjectEnsure:
         project_manager: LocalProjectManager,
         tmp_path: Path,
     ) -> None:
-        gobby_dir = tmp_path / "personal" / ".gobby"
+        files_home = tmp_path / "files_home"
+        files_home.mkdir()
+        _write_local_bootstrap(files_home)
+        gobby_dir = files_home / "_personal" / ".gobby"
         gobby_dir.mkdir(parents=True)
         existing = {
             "id": PERSONAL_PROJECT_ID,
@@ -149,8 +264,11 @@ class TestPersonalProjectEnsure:
         project_file = gobby_dir / "project.json"
         project_file.write_text(json.dumps(existing, indent=2) + "\n")
         before = project_file.read_text()
-
-        ensure_personal_project(project_manager.db, gobby_home=tmp_path)
+        claim = _hold_maintenance()
+        try:
+            ensure_personal_project(project_manager.db)
+        finally:
+            claim.release()
 
         assert project_file.read_text() == before
 
@@ -159,12 +277,18 @@ class TestPersonalProjectEnsure:
         project_manager: LocalProjectManager,
         tmp_path: Path,
     ) -> None:
-        gobby_dir = tmp_path / "personal" / ".gobby"
+        files_home = tmp_path / "files_home"
+        files_home.mkdir()
+        _write_local_bootstrap(files_home)
+        gobby_dir = files_home / "_personal" / ".gobby"
         gobby_dir.mkdir(parents=True)
         project_file = gobby_dir / "project.json"
         project_file.write_text("{not json")
-
-        ensure_personal_project(project_manager.db, gobby_home=tmp_path)
+        claim = _hold_maintenance()
+        try:
+            ensure_personal_project(project_manager.db)
+        finally:
+            claim.release()
 
         data = json.loads(project_file.read_text())
         assert data["id"] == PERSONAL_PROJECT_ID
@@ -174,16 +298,44 @@ class TestPersonalProjectEnsure:
         project_manager: LocalProjectManager,
         tmp_path: Path,
     ) -> None:
-        gobby_dir = tmp_path / "personal" / ".gobby"
+        files_home = tmp_path / "files_home"
+        files_home.mkdir()
+        _write_local_bootstrap(files_home)
+        gobby_dir = files_home / "_personal" / ".gobby"
         gobby_dir.mkdir(parents=True)
         project_file = gobby_dir / "project.json"
         project_file.write_text(json.dumps({"id": "some-other-project"}) + "\n")
-
-        ensure_personal_project(project_manager.db, gobby_home=tmp_path)
+        claim = _hold_maintenance()
+        try:
+            ensure_personal_project(project_manager.db)
+        finally:
+            claim.release()
 
         data = json.loads(project_file.read_text())
         assert data["id"] == PERSONAL_PROJECT_ID
         assert data["name"] == "_personal"
+
+    def test_claimless_ensure_upserts_sentinel_without_filesystem(
+        self,
+        project_manager: LocalProjectManager,
+        tmp_path: Path,
+    ) -> None:
+        files_home = tmp_path / "files_home"
+        files_home.mkdir()
+        _write_local_bootstrap(files_home)
+
+        project = ensure_personal_project(project_manager.db)
+
+        assert project.id == PERSONAL_PROJECT_ID
+        assert project.name == "_personal"
+        assert not (files_home / "_personal").exists()
+        assert not (get_gobby_home() / "personal").exists()
+
+    def test_personal_project_path_raises_on_remote(self, tmp_path: Path) -> None:
+        _write_remote_bootstrap()
+
+        with pytest.raises(FilesHomeNotOnThisDaemonError):
+            personal_project_path()
 
 
 class TestSoftDelete:

@@ -427,7 +427,12 @@ def _launch_direct_runner(
 def start(ctx: click.Context, verbose: bool) -> None:
     """Start the Gobby daemon."""
     from gobby.cli.runtime import get_cli_runtime
-    from gobby.runner_pid_file import PidFileClaim, cancel_service_reservation
+    from gobby.runner_pid_file import (
+        PidFileClaim,
+        adopt_inherited_claim,
+        cancel_service_reservation,
+        convert_held_claim_to_reservation,
+    )
 
     gobby_dir = get_gobby_home()
     if dependency_errors := _start_dependency_errors():
@@ -437,11 +442,23 @@ def start(ctx: click.Context, verbose: bool) -> None:
 
     pid_file = gobby_dir / "gobby.pid"
     svc = get_service_status()
-    claim: PidFileClaim | None = None
+    claim: PidFileClaim | None = adopt_inherited_claim(pid_file)
     reserved = False
     platform = svc.get("platform")
     backend = service_backend_name(platform if isinstance(platform, str) else None)
-    if svc.get("installed"):
+    if claim is not None and svc.get("installed"):
+        from gobby.runner_pid_file import SingletonReservationError
+
+        try:
+            convert_held_claim_to_reservation(claim, backend=backend)
+        except SingletonReservationError as exc:
+            _step(str(exc), error=True)
+            sys.exit(1)
+        claim = None
+        reserved = True
+    elif claim is not None:
+        pass
+    elif svc.get("installed"):
         admission_error = admit_service_start(pid_file, backend=backend)
         if admission_error:
             _step(admission_error, error=True)

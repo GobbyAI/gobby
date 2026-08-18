@@ -144,6 +144,8 @@ class PidFileClaim:
         """Close the local descriptor without unlocking the inherited flock."""
         if self._released:
             return
+        if _CURRENT_CLAIM is self:
+            _set_current_claim(None)
         os.close(self._lock_fd)
         self._released = True
 
@@ -151,6 +153,8 @@ class PidFileClaim:
         """Release the held lock without modifying the PID file."""
         if self._released:
             return
+        if _CURRENT_CLAIM is self:
+            _set_current_claim(None)
         try:
             _unlock_file(self._lock_fd)
         finally:
@@ -169,6 +173,23 @@ class FailOpenPidOwnership:
 
 
 PidOwnershipResolution = PidFileClaim | FailOpenPidOwnership
+
+_CURRENT_CLAIM: PidFileClaim | None = None
+
+
+def held_singleton_claim() -> PidFileClaim | None:
+    """Return the process-local held daemon or maintenance claim, if any."""
+    claim = _CURRENT_CLAIM
+    if claim is None or claim._released:
+        return None
+    if claim.role not in {"daemon", "maintenance"}:
+        return None
+    return claim
+
+
+def _set_current_claim(claim: PidFileClaim | None) -> None:
+    global _CURRENT_CLAIM
+    _CURRENT_CLAIM = claim
 
 
 def _lock_file(lock_fd: int) -> None:
@@ -417,7 +438,9 @@ def claim_pid_file(pid_file: Path, *, role: str = "daemon") -> PidFileClaim | No
     except BaseException:
         _close_failed(lock_fd)
         raise
-    return PidFileClaim(lock_path, lock_fd, role=role, generation=generation)
+    claim = PidFileClaim(lock_path, lock_fd, role=role, generation=generation)
+    _set_current_claim(claim)
+    return claim
 
 
 def probe_daemon_lock(pid_file: Path) -> SingletonProbe:
@@ -485,7 +508,9 @@ def adopt_inherited_claim(
         _write_pid_file(pid_file)
     except (SingletonError, OSError) as exc:
         raise SingletonRecordError(str(exc)) from exc
-    return PidFileClaim(lock_path, lock_fd, role="daemon", generation=generation)
+    claim = PidFileClaim(lock_path, lock_fd, role="daemon", generation=generation)
+    _set_current_claim(claim)
+    return claim
 
 
 def reserve_service_start(pid_file: Path, *, backend: str) -> ServiceReservationView:
@@ -553,6 +578,61 @@ def reserve_service_start(pid_file: Path, *, backend: str) -> ServiceReservation
     )
 
 
+def convert_held_claim_to_reservation(
+    claim: PidFileClaim,
+    *,
+    backend: str,
+) -> ServiceReservationView:
+    """Convert a held claim into a service reservation without unlocking first."""
+    lock_fd = claim.fileno()
+    lock_path = claim.lock_path
+    pid_file = lock_path.with_name(lock_path.name[: -len(".lock")])
+    nonce_path = service_nonce_path(pid_file)
+    try:
+        record = _clear_stale_reservation(read_record_from_fd(lock_fd))
+        if reservation_is_live(_dict_reservation(record)):
+            raise SingletonReservationError("a service start reservation is already live")
+        nonce = secrets.token_hex(16)
+        generation = next_generation(record)
+        issued_at = current_time()
+        boot = current_boot_id()
+        reservation = {
+            "backend": backend,
+            "nonce": nonce,
+            "nonce_path": str(nonce_path),
+            "issued_at": issued_at,
+            "boot_id": boot,
+            "age_bound_seconds": RESERVATION_AGE_BOUND_SECONDS,
+        }
+        write_transitioning_record(lock_fd, generation)
+        create_service_nonce_file(nonce_path, nonce)
+        write_record(
+            lock_fd,
+            {
+                "version": RECORD_VERSION,
+                "state": "reservation",
+                "role": None,
+                "pid": os.getpid(),
+                "boot_id": boot,
+                "generation": generation,
+                "reservation": reservation,
+                "ack": None,
+            },
+        )
+    except SingletonReservationError:
+        raise
+    except (SingletonError, NonceError, OSError) as exc:
+        raise SingletonReservationError(str(exc)) from exc
+    claim.release()
+    return ServiceReservationView(
+        backend=backend,
+        nonce=nonce,
+        nonce_path=str(nonce_path),
+        issued_at=issued_at,
+        boot_id=boot,
+    )
+
+
 def convert_or_acquire_service_claim(pid_file: Path) -> PidFileClaim:
     """Marked service runner: convert a matching nonce or direct-acquire."""
     lock_path = pid_file.with_name(f"{pid_file.name}.lock")
@@ -591,7 +671,9 @@ def convert_or_acquire_service_claim(pid_file: Path) -> PidFileClaim:
                 ack={"status": "converted", "pid": os.getpid()},
             )
             _write_pid_file(pid_file)
-            return PidFileClaim(lock_path, lock_fd, role="daemon", generation=generation)
+            claim = PidFileClaim(lock_path, lock_fd, role="daemon", generation=generation)
+            _set_current_claim(claim)
+            return claim
         if nonce_exists:
             _unlock_file(lock_fd)
             os.close(lock_fd)
@@ -599,7 +681,9 @@ def convert_or_acquire_service_claim(pid_file: Path) -> PidFileClaim:
         generation = next_generation(record)
         _write_role_record(lock_fd, role="daemon", generation=generation)
         _write_pid_file(pid_file)
-        return PidFileClaim(lock_path, lock_fd, role="daemon", generation=generation)
+        claim = PidFileClaim(lock_path, lock_fd, role="daemon", generation=generation)
+        _set_current_claim(claim)
+        return claim
     except SingletonReservationError:
         raise
     except (SingletonError, OSError) as exc:
@@ -677,6 +761,8 @@ __all__ = [
     "adopt_inherited_claim",
     "cancel_service_reservation",
     "claim_pid_file",
+    "held_singleton_claim",
+    "convert_held_claim_to_reservation",
     "convert_or_acquire_service_claim",
     "prepare_commanded_service_start",
     "probe_daemon_lock",

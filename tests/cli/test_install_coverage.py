@@ -6,6 +6,7 @@ from pathlib import Path
 from typing import Any
 from unittest.mock import MagicMock, patch
 
+import httpx
 import pytest
 from click.testing import CliRunner
 
@@ -34,7 +35,7 @@ def runner(monkeypatch: pytest.MonkeyPatch) -> CliRunner:
     import importlib
 
     runtime = MagicMock()
-    runtime.require_database.side_effect = RuntimeError("test hub unavailable")
+    runtime.require_database.return_value = MagicMock()
     runtime.require_config.return_value.hooks.provider_timeout = 120
     install_module = importlib.import_module("gobby.cli.install")
     monkeypatch.setattr(install_module, "get_cli_runtime", lambda: runtime)
@@ -171,6 +172,7 @@ class TestInstallCommand:
             "password_source": "reused",
             "password": None,
         }
+        claim = MagicMock()
         with (
             patch("gobby.cli._install_daemon._docker_daemon_available", return_value=True),
             patch("gobby.cli.install.install_postgres", return_value=postgres_result),
@@ -181,6 +183,26 @@ class TestInstallCommand:
                 return_value={"success": True, "policy": "unless-stopped"},
             ),
             patch("gobby.cli.install._resolve_ide_settings_consent", return_value=False),
+            patch(
+                "gobby.cli.install.resolve_install_files_home",
+                return_value=Path("/tmp/gobby-files-home"),
+            ),
+            patch("gobby.cli.install.acquire_install_maintenance", return_value=claim),
+            patch(
+                "gobby.cli.install.publish_install_files_home",
+                return_value={"created": False, "path": "/fake/bootstrap.yaml"},
+            ),
+            patch(
+                "gobby.cli.install.ensure_personal_project_identity",
+                return_value=Path("/tmp/gobby-files-home/_personal/.gobby/project.json"),
+            ),
+            patch("gobby.cli.install.peek_install_bootstrap", return_value={}),
+            patch(
+                "gobby.cli.install.ensure_install_identity",
+                return_value=MagicMock(email="owner@example.com"),
+            ),
+            patch("gobby.cli.install._configure_secret_kek_posture", lambda *_a, **_k: None),
+            patch("gobby.cli.install._provision_local_api_token", lambda *_a, **_k: None),
         ):
             yield
 
@@ -823,3 +845,245 @@ class TestUninstallCommand:
         assert result.exit_code == 0
         assert "Warning: could not remove Tailscale UI exposure: sentinel" in result.output
         assert "gobby ui unexpose" in result.output
+
+
+class TestInstallFilesHomeLifecycle:
+    def test_local_install_persists_files_home_before_identity_and_services(
+        self, tmp_path: Path
+    ) -> None:
+        files_home = tmp_path / "files"
+        files_home.mkdir()
+        order: list[str] = []
+
+        def publish(_path: Path) -> dict[str, object]:
+            order.append("publish")
+            return {"created": True, "path": str(tmp_path / "bootstrap.yaml")}
+
+        def identity() -> Path:
+            order.append("identity")
+            return files_home / "_personal" / ".gobby" / "project.json"
+
+        def stack(*_args: object, **_kwargs: object) -> None:
+            order.append("services")
+
+        with (
+            patch("gobby.cli.install._run_install_preflight", return_value=([], [])),
+            patch("gobby.cli.install.get_install_dir", return_value=tmp_path),
+            patch("gobby.cli.install.peek_install_bootstrap", return_value={}),
+            patch("gobby.cli.install.acquire_install_maintenance", return_value=MagicMock()),
+            patch("gobby.cli.install.publish_install_files_home", side_effect=publish),
+            patch("gobby.cli.install.ensure_personal_project_identity", side_effect=identity),
+            patch("gobby.cli.install._install_required_stack", side_effect=stack),
+            patch("gobby.cli.install.run_daemon_setup"),
+            patch("gobby.cli.install.get_cli_runtime") as runtime,
+            patch("gobby.cli.install._maybe_start_daemon_after_install"),
+            patch("gobby.cli.install._echo_install_summary", return_value=True),
+            patch("gobby.cli.install._should_initialize_project", return_value=False),
+        ):
+            runtime.return_value.require_database.side_effect = RuntimeError("hub")
+            result = CliRunner().invoke(
+                install,
+                [
+                    "--config-only",
+                    "--no-interactive",
+                    "--no-expose-ui",
+                    "--files-home",
+                    str(files_home),
+                ],
+                catch_exceptions=False,
+            )
+
+        assert result.exit_code != 0 or "publish" in order
+        assert order[:2] == ["publish", "identity"]
+        assert "services" not in order or order.index("identity") < order.index("services")
+
+    def test_bootstrap_write_failure_skips_identity_and_services(self, tmp_path: Path) -> None:
+        files_home = tmp_path / "files"
+        files_home.mkdir()
+        identity = MagicMock(side_effect=AssertionError("identity must not run"))
+        stack = MagicMock(side_effect=AssertionError("services must not run"))
+        with (
+            patch("gobby.cli.install._run_install_preflight", return_value=([], [])),
+            patch("gobby.cli.install.get_install_dir", return_value=tmp_path),
+            patch("gobby.cli.install.peek_install_bootstrap", return_value={}),
+            patch("gobby.cli.install.acquire_install_maintenance", return_value=MagicMock()),
+            patch(
+                "gobby.cli.install.publish_install_files_home",
+                side_effect=RuntimeError("bootstrap write failed"),
+            ),
+            patch("gobby.cli.install.ensure_personal_project_identity", identity),
+            patch("gobby.cli.install._install_required_stack", stack),
+        ):
+            result = CliRunner().invoke(
+                install,
+                [
+                    "--config-only",
+                    "--no-interactive",
+                    "--files-home",
+                    str(files_home),
+                ],
+            )
+
+        assert result.exit_code != 0
+        identity.assert_not_called()
+        stack.assert_not_called()
+
+    def test_legacy_bootstrap_upgrade_then_identity_uses_files_home(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        from gobby.cli.install_files_home import publish_install_files_home
+        from gobby.config.bootstrap_io import bootstrap_path, inject_local_files_home
+
+        home = tmp_path / "home"
+        home.mkdir()
+        files_home = tmp_path / "files"
+        files_home.mkdir()
+        monkeypatch.setenv("GOBBY_HOME", str(home))
+        path = bootstrap_path()
+        path.write_text("datastore_mode: local\ndaemon_port: 60887\n", encoding="utf-8")
+        path.chmod(0o600)
+        result = publish_install_files_home(files_home)
+        assert result.get("upgraded") is True
+        assert "files_home:" in path.read_text()
+        inject_local_files_home(path, files_home)
+        assert str(files_home.resolve()) in path.read_text()
+
+    def test_remote_install_missing_token_starts_no_services(self, tmp_path: Path) -> None:
+        from gobby.cli.installers.remote_preflight import run_remote_preflight
+
+        home = tmp_path / "gobby-home"
+        home.mkdir()
+        stack = MagicMock()
+        errors = run_remote_preflight(
+            "postgresql://gobby:secret@hub.test:5432/gobby",
+            gobby_home=home,
+            hub_daemon_url="http://hub.example.test:60887",
+        )
+        assert any("local_cli_token" in error for error in errors)
+        stack.assert_not_called()
+
+    def test_remote_owner_probe_failures_are_typed(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        from gobby.cli.installers import remote_preflight
+
+        home = tmp_path / "home"
+        home.mkdir()
+        (home / "local_cli_token").write_text("token\n", encoding="utf-8")
+        (home / ".secret_kek").write_text("kek\n", encoding="utf-8")
+
+        class FakeResponse:
+            def __init__(self, status_code: int, payload: object) -> None:
+                self.status_code = status_code
+                self._payload = payload
+                self.text = str(payload)
+
+            def json(self) -> object:
+                if isinstance(self._payload, Exception):
+                    raise self._payload
+                return self._payload
+
+        monkeypatch.setattr(
+            httpx,
+            "get",
+            lambda *_a, **_k: FakeResponse(401, {"error": "auth"}),
+        )
+        errors = remote_preflight.probe_hub_user_md(
+            "http://hub.example.test:60887",
+            gobby_home=home,
+        )
+        assert any("authentication" in error for error in errors)
+
+        monkeypatch.setattr(
+            httpx,
+            "get",
+            lambda *_a, **_k: (_ for _ in ()).throw(httpx.ConnectError("nope")),
+        )
+        errors = remote_preflight.probe_hub_user_md(
+            "http://hub.example.test:60887",
+            gobby_home=home,
+        )
+        assert any("network" in error.lower() for error in errors)
+
+        monkeypatch.setattr(
+            httpx,
+            "get",
+            lambda *_a, **_k: FakeResponse(404, {"error": "missing"}),
+        )
+        errors = remote_preflight.probe_hub_user_md(
+            "http://hub.example.test:60887",
+            gobby_home=home,
+        )
+        assert any("files_home root" in error for error in errors)
+
+        monkeypatch.setattr(
+            httpx,
+            "get",
+            lambda *_a, **_k: FakeResponse(409, {"error": "hop_refused"}),
+        )
+        errors = remote_preflight.probe_hub_user_md(
+            "http://hub.example.test:60887",
+            gobby_home=home,
+        )
+        assert any("hop refused" in error for error in errors)
+
+        monkeypatch.setattr(
+            httpx,
+            "get",
+            lambda *_a, **_k: FakeResponse(200, {"owner": "remote", "content": ""}),
+        )
+        errors = remote_preflight.probe_hub_user_md(
+            "http://hub.example.test:60887",
+            gobby_home=home,
+        )
+        assert any("remote daemon" in error for error in errors)
+
+    def test_filesystem_identity_requires_held_claim_and_refuses_racer(
+        self, tmp_path: Path
+    ) -> None:
+        from gobby.cli.install_files_home import acquire_install_maintenance
+        from gobby.paths import get_gobby_home
+        from gobby.runner_pid_file import claim_pid_file
+
+        first = claim_pid_file(get_gobby_home() / "gobby.pid", role="daemon")
+        assert first is not None
+        try:
+            with pytest.raises(Exception, match="singleton|concurrent"):
+                acquire_install_maintenance()
+        finally:
+            first.release()
+
+    def test_install_to_start_converts_held_claim_under_flock(self, tmp_path: Path) -> None:
+        from gobby.cli._install_daemon import maybe_start_daemon_after_install
+        from gobby.paths import get_gobby_home
+        from gobby.runner_pid_file import claim_pid_file
+
+        claim = claim_pid_file(get_gobby_home() / "gobby.pid", role="maintenance")
+        assert claim is not None
+        converted = MagicMock()
+        start = MagicMock(return_value={"success": False, "error": "launch failed"})
+        try:
+            with (
+                patch(
+                    "gobby.cli.installers.service.get_service_status",
+                    return_value={"installed": True, "platform": "launchd"},
+                ),
+                patch(
+                    "gobby.runner_pid_file.convert_held_claim_to_reservation",
+                    converted,
+                ),
+                patch("gobby.cli.installers.service.service_start", start),
+            ):
+                maybe_start_daemon_after_install(
+                    no_interactive=False,
+                    daemon_url=lambda: "http://localhost:60887/",
+                    daemon_already_running=lambda: False,
+                    ci_environment=lambda: False,
+                    headless_or_remote=lambda: False,
+                    claim=claim,
+                )
+            converted.assert_called_once()
+            start.assert_called_once_with(reserved=True)
+        finally:
+            if not claim._released:
+                claim.release()

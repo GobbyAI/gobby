@@ -11,6 +11,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Protocol, cast
 
+import httpx
 import psycopg
 from psycopg.rows import dict_row
 from qdrant_client import AsyncQdrantClient
@@ -22,6 +23,8 @@ from gobby.storage.secrets import SECRET_KEY_ID, SecretStore
 CONNECT_TIMEOUT_SECONDS = 3
 OPERATION_TIMEOUT_SECONDS = 5
 OVERALL_TIMEOUT_SECONDS = 15
+FILES_PROXY_HOP_HEADER = "X-Gobby-Files-Proxy-Hop"
+USER_MD_PROBE_PATH = "/api/files/user-md"
 
 _CONFIG_KEYS = (
     "databases.qdrant.url",
@@ -362,6 +365,83 @@ def _actionable_error(error: RemotePreflightError) -> str:
     return f"{error}. {guidance[error.service]}"
 
 
+def probe_hub_user_md(hub_daemon_url: str, *, gobby_home: Path) -> list[str]:
+    """Authenticated owner probe. Success is 200 JSON from a local files owner."""
+    token_path = gobby_home / "local_cli_token"
+    try:
+        token = token_path.read_text(encoding="utf-8").strip()
+    except OSError:
+        token = ""
+    if not token:
+        return [
+            f"Remote datastore install requires {token_path}. Copy it from the hub to "
+            f"{token_path} to authenticate to the shared hub; the client installer "
+            "will never generate or rotate it."
+        ]
+    origin = hub_daemon_url.rstrip("/")
+    url = f"{origin}{USER_MD_PROBE_PATH}"
+    headers = {
+        "Authorization": f"Bearer {token}",
+        FILES_PROXY_HOP_HEADER: "1",
+    }
+    try:
+        response = httpx.get(
+            url,
+            headers=headers,
+            timeout=OPERATION_TIMEOUT_SECONDS,
+            trust_env=False,
+        )
+    except httpx.TimeoutException:
+        return ["Hub USER.md probe timed out. Check hub_daemon_url reachability and retry."]
+    except httpx.HTTPError as exc:
+        return [f"Hub USER.md probe network failure: {type(exc).__name__}: {exc}"]
+
+    if response.status_code in {401, 403}:
+        return [
+            "Hub USER.md probe authentication failed. Copy the hub local_cli_token "
+            "and retry; the installer does not generate or rotate it."
+        ]
+    if response.status_code == 404:
+        return ["Hub USER.md probe found no owner files_home root."]
+    if response.status_code in {400, 409, 421}:
+        detail = _probe_error_code(response)
+        if detail == "hop_refused":
+            return ["Hub USER.md probe hop refused."]
+        if detail == "remote_target":
+            return ["Hub USER.md probe targeted a remote daemon, not the files owner."]
+        return [f"Hub USER.md probe refused ({response.status_code})."]
+    if response.status_code != 200:
+        return [f"Hub USER.md probe failed with HTTP {response.status_code}."]
+    try:
+        payload = response.json()
+    except ValueError:
+        return ["Hub USER.md probe did not return JSON."]
+    if not isinstance(payload, dict):
+        return ["Hub USER.md probe did not return owner profile JSON."]
+    if payload.get("owner") == "remote" or payload.get("files_owner") is False:
+        return ["Hub USER.md probe targeted a remote daemon, not the files owner."]
+    if not isinstance(payload.get("content"), str):
+        return ["Hub USER.md probe did not return owner profile JSON."]
+    return []
+
+
+def _probe_error_code(response: httpx.Response) -> str:
+    try:
+        payload = response.json()
+    except ValueError:
+        payload = None
+    if isinstance(payload, dict):
+        error = payload.get("error")
+        if isinstance(error, str) and error:
+            return error
+    text = response.text.lower()
+    if "hop" in text:
+        return "hop_refused"
+    if "remote" in text:
+        return "remote_target"
+    return ""
+
+
 def _credential_errors(gobby_home: Path) -> list[str]:
     errors: list[str] = []
     for filename, purpose in (
@@ -410,9 +490,13 @@ def run_remote_preflight(
     database_url: str,
     *,
     gobby_home: Path | None = None,
+    hub_daemon_url: str | None = None,
 ) -> list[str]:
     """Run one zero-retry remote reachability pass and return actionable errors."""
     home = (gobby_home or get_gobby_home()).expanduser()
     if errors := _credential_errors(home):
         return errors
+    if hub_daemon_url:
+        if errors := probe_hub_user_md(hub_daemon_url, gobby_home=home):
+            return errors
     return asyncio.run(_run_remote_preflight_async(database_url, home))

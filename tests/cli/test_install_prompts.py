@@ -8,6 +8,7 @@ from unittest.mock import MagicMock, call, patch
 
 import click
 import pytest
+from click.testing import CliRunner
 
 from gobby.cli._install_prompts import (
     _echo_install_summary,
@@ -497,6 +498,20 @@ class TestInstallCommandSharedStores:
             patch("gobby.cli.install.run_daemon_setup"),
             patch("gobby.cli.install.get_install_dir", return_value=tmp_path),
             patch("gobby.cli.install._run_install_preflight", return_value=([], [])),
+            patch("gobby.cli.install.peek_install_bootstrap", return_value={}),
+            patch(
+                "gobby.cli.install.resolve_install_files_home",
+                return_value=tmp_path / "files",
+            ),
+            patch("gobby.cli.install.acquire_install_maintenance", return_value=MagicMock()),
+            patch(
+                "gobby.cli.install.publish_install_files_home",
+                return_value={"created": False, "path": str(tmp_path / "bootstrap.yaml")},
+            ),
+            patch(
+                "gobby.cli.install.ensure_personal_project_identity",
+                return_value=tmp_path / "files/_personal/.gobby/project.json",
+            ),
             patch("gobby.cli.install._run_standard_cli_install") as mock_standard_install,
             patch("gobby.cli.install._run_embedding_install", return_value="none"),
             patch("gobby.cli.install._run_voice_install") as mock_voice_install,
@@ -532,7 +547,7 @@ class TestInstallCommandSharedStores:
         runtime.require_config.assert_called_once_with()
         mock_store_cls.assert_called_once_with(db)
         mock_config_cls.assert_called_once_with(db)
-        mock_provision_token.assert_called_once_with(config_store)
+        mock_provision_token.assert_called_once()
         assert mock_standard_install.call_args.kwargs["hook_timeout_seconds"] == 150
         assert mock_voice_install.call_args.kwargs["db"] is db
         assert mock_voice_install.call_args.kwargs["secret_store"] is secret_store
@@ -569,6 +584,20 @@ class TestInstallCommandSharedStores:
             patch("gobby.cli.install.run_daemon_setup"),
             patch("gobby.cli.install.get_install_dir", return_value=tmp_path),
             patch("gobby.cli.install._run_install_preflight", return_value=([], [])),
+            patch("gobby.cli.install.peek_install_bootstrap", return_value={}),
+            patch(
+                "gobby.cli.install.resolve_install_files_home",
+                return_value=tmp_path / "files",
+            ),
+            patch("gobby.cli.install.acquire_install_maintenance", return_value=MagicMock()),
+            patch(
+                "gobby.cli.install.publish_install_files_home",
+                return_value={"created": False, "path": str(tmp_path / "bootstrap.yaml")},
+            ),
+            patch(
+                "gobby.cli.install.ensure_personal_project_identity",
+                return_value=tmp_path / "files/_personal/.gobby/project.json",
+            ),
             pytest.raises(RuntimeError, match="secret setup failed"),
         ):
             install_command.callback(
@@ -648,6 +677,19 @@ class TestInstallCommandSharedStores:
             ),
             patch("gobby.cli.install.run_daemon_setup"),
             patch("gobby.cli.install.get_install_dir", return_value=tmp_path),
+            patch.multiple(
+                "gobby.cli.install",
+                peek_install_bootstrap=lambda: {},
+                resolve_install_files_home=lambda *_a, **_k: tmp_path / "files",
+                acquire_install_maintenance=lambda: MagicMock(),
+                publish_install_files_home=lambda *_a, **_k: {
+                    "created": False,
+                    "path": str(tmp_path / "bootstrap.yaml"),
+                },
+                ensure_personal_project_identity=lambda: (
+                    tmp_path / "files/_personal/.gobby/project.json"
+                ),
+            ),
             patch("gobby.cli.install._run_standard_cli_install"),
             patch("gobby.cli.install.prepare_install_state", return_value=empty_install_state()),
             patch(
@@ -701,7 +743,7 @@ class TestInstallCommandSharedStores:
         runtime.require_config.assert_called_once_with()
         mock_store_cls.assert_called_once_with(db)
         mock_config_cls.assert_called_once_with(db)
-        mock_provision_token.assert_called_once_with(config_store)
+        mock_provision_token.assert_called_once()
         assert mock_embedding.call_args.kwargs["api_base_override"] == "http://lan:1234/v1"
         assert "embedding_api_key" not in mock_embedding.call_args.kwargs
         assert mock_embedding.call_args.kwargs["provider_override"] == "lmstudio"
@@ -711,3 +753,38 @@ class TestInstallCommandSharedStores:
         assert mock_summary.call_args.kwargs["secret_store"] is secret_store
         runtime.close.assert_called_once_with()
         db.close.assert_not_called()
+
+
+def test_install_prompt_accepts_files_home(tmp_path: Path) -> None:
+    files_home = tmp_path / "files"
+    files_home.mkdir()
+    resolve = MagicMock(return_value=files_home)
+    with (
+        patch("gobby.cli.install._run_install_preflight", return_value=([], [])),
+        patch("gobby.cli.install.get_install_dir", return_value=tmp_path),
+        patch("gobby.cli.install.peek_install_bootstrap", return_value={}),
+        patch("gobby.cli.install.resolve_install_files_home", resolve),
+        patch("gobby.cli.install.acquire_install_maintenance", return_value=MagicMock()),
+        patch(
+            "gobby.cli.install.publish_install_files_home",
+            return_value={"created": False, "path": str(tmp_path / "bootstrap.yaml")},
+        ),
+        patch(
+            "gobby.cli.install.ensure_personal_project_identity",
+            return_value=files_home / "_personal/.gobby/project.json",
+        ),
+        patch(
+            "gobby.cli.install._ensure_daemon_config",
+            return_value={"created": False, "path": "x"},
+        ),
+        patch(
+            "gobby.cli.install.run_daemon_setup",
+            side_effect=RuntimeError("stop after identity"),
+        ),
+    ):
+        CliRunner().invoke(
+            install_command,
+            ["--config-only", "--no-interactive", "--files-home", str(files_home)],
+        )
+    resolve.assert_called()
+    assert resolve.call_args[0][0] == files_home

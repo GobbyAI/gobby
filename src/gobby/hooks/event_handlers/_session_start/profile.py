@@ -4,15 +4,15 @@ from __future__ import annotations
 
 from typing import Any
 
-from gobby.storage.projects import personal_project_path
+from gobby.paths import FilesHomeNotOnThisDaemonError, require_files_home
 from gobby.workflows.state_manager import SessionVariableManager
 
 USER_PROFILE_FILENAME = "USER.md"
 
 
 def read_user_profile_content() -> str:
-    """Read the global user profile, returning an empty string when absent."""
-    path = personal_project_path() / USER_PROFILE_FILENAME
+    """Read the hub-owner profile from files_home. Missing file returns empty."""
+    path = require_files_home() / USER_PROFILE_FILENAME
     try:
         return path.read_text(encoding="utf-8").strip()
     except FileNotFoundError:
@@ -27,6 +27,8 @@ def seed_user_profile_content(handler: Any, session_id: str | None) -> None:
 
     try:
         content = read_user_profile_content()
+    except FilesHomeNotOnThisDaemonError:
+        content = ""
     except OSError as exc:
         handler.logger.warning("Failed to read global user profile: %s", exc)
         content = ""
