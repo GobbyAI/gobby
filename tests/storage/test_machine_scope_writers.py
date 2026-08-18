@@ -31,8 +31,10 @@ def test_creation_paths_stamp_machine_id(monkeypatch: pytest.MonkeyPatch) -> Non
         monkeypatch.setattr(module, "require_machine_id", lambda: MACHINE_ID)
 
     worktree_db = MagicMock()
+    worktree_db.execute.return_value.fetchone.return_value = {"created_at": NOW, "updated_at": NOW}
     worktree = LocalWorktreeManager(worktree_db).create("project", "branch", "/worktree")
     clone_db = MagicMock()
+    clone_db.execute.return_value.fetchone.return_value = {"created_at": NOW, "updated_at": NOW}
     clone = LocalCloneManager(clone_db).create("project", "branch", "/clone")
 
     agent_db = MagicMock()

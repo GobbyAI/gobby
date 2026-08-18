@@ -435,9 +435,9 @@ def create_stage_pipeline_execution(
             """
             INSERT INTO pipeline_executions (
                 id, pipeline_name, project_id, status, inputs_json, session_id,
-                definition_json, created_at, updated_at
+                definition_json
             )
-            SELECT %s, %s, project_id, 'pending', %s, %s, %s, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP
+            SELECT %s, %s, project_id, 'pending', %s, %s, %s
               FROM tasks
              WHERE id = %s
             """,

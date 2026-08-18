@@ -191,7 +191,6 @@ class MergeResolutionManager:
         Returns:
             The created MergeResolution
         """
-        now = utc_now()
         resolution_identity = "\0".join((worktree_id, source_branch, target_branch))
         resolution_id = str(uuid.uuid5(_NS_MERGE_RESOLUTIONS, resolution_identity))
 
@@ -200,8 +199,8 @@ class MergeResolutionManager:
                 """
                 INSERT INTO merge_resolutions (
                     id, worktree_id, source_branch, target_branch,
-                    status, tier_used, created_at, updated_at
-                ) VALUES (%s, %s, %s, %s, %s, %s, %s, %s)
+                    status, tier_used
+                ) VALUES (%s, %s, %s, %s, %s, %s)
                 """,
                 (
                     resolution_id,
@@ -210,8 +209,6 @@ class MergeResolutionManager:
                     target_branch,
                     status,
                     tier_used,
-                    now,
-                    now,
                 ),
             )
 
@@ -454,7 +451,6 @@ class MergeResolutionManager:
         Returns:
             The created MergeConflict
         """
-        now = utc_now()
         conflict_id = str(uuid.uuid5(_NS_MERGE_CONFLICTS, resolution_id + file_path))
 
         with self.db.transaction() as conn:
@@ -462,8 +458,8 @@ class MergeResolutionManager:
                 """
                 INSERT INTO merge_conflicts (
                     id, resolution_id, file_path, status,
-                    ours_content, theirs_content, created_at, updated_at
-                ) VALUES (%s, %s, %s, %s, %s, %s, %s, %s)
+                    ours_content, theirs_content
+                ) VALUES (%s, %s, %s, %s, %s, %s)
                 """,
                 (
                     conflict_id,
@@ -472,8 +468,6 @@ class MergeResolutionManager:
                     status,
                     ours_content,
                     theirs_content,
-                    now,
-                    now,
                 ),
             )
 

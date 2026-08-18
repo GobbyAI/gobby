@@ -117,6 +117,14 @@ pub(crate) const MIGRATIONS: &[EmbeddedMigration] = &[
             "../../assets/schema/migrations/390_retain_interactive_credential_material.sql"
         ),
     },
+    EmbeddedMigration {
+        version: 391,
+        filename: "391_session_last_activity_and_creation_defaults.sql",
+        checksum: "40fafbe193afe1a097e71f80d236c466cb759533160eb56fe9afd6b8c74321cf",
+        sql: include_str!(
+            "../../assets/schema/migrations/391_session_last_activity_and_creation_defaults.sql"
+        ),
+    },
 ];
 const _: &str = include_str!("../../assets/schema/migrations/.gitkeep");
 

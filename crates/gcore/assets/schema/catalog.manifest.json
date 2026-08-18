@@ -1382,7 +1382,7 @@
     },
     {
       "name": "cron_jobs.created_at",
-      "definition": "timestamp with time zone|timestamptz|NO||NEVER"
+      "definition": "timestamp with time zone|timestamptz|NO|now()|NEVER"
     },
     {
       "name": "cron_jobs.cron_expr",
@@ -1446,7 +1446,7 @@
     },
     {
       "name": "cron_jobs.updated_at",
-      "definition": "timestamp with time zone|timestamptz|NO||NEVER"
+      "definition": "timestamp with time zone|timestamptz|NO|now()|NEVER"
     },
     {
       "name": "cron_runs.agent_run_id",
@@ -1458,7 +1458,7 @@
     },
     {
       "name": "cron_runs.created_at",
-      "definition": "timestamp with time zone|timestamptz|NO||NEVER"
+      "definition": "timestamp with time zone|timestamptz|NO|now()|NEVER"
     },
     {
       "name": "cron_runs.cron_job_id",
@@ -1670,7 +1670,7 @@
     },
     {
       "name": "expansion_runs.created_at",
-      "definition": "timestamp with time zone|timestamptz|NO||NEVER"
+      "definition": "timestamp with time zone|timestamptz|NO|now()|NEVER"
     },
     {
       "name": "expansion_runs.created_task_ids_json",
@@ -1738,7 +1738,7 @@
     },
     {
       "name": "expansion_runs.updated_at",
-      "definition": "timestamp with time zone|timestamptz|NO||NEVER"
+      "definition": "timestamp with time zone|timestamptz|NO|now()|NEVER"
     },
     {
       "name": "external_issue_sync_status.consecutive_failures",
@@ -2170,7 +2170,7 @@
     },
     {
       "name": "memories.created_at",
-      "definition": "timestamp with time zone|timestamptz|NO||NEVER"
+      "definition": "timestamp with time zone|timestamptz|NO|now()|NEVER"
     },
     {
       "name": "memories.deleted_at",
@@ -2238,7 +2238,7 @@
     },
     {
       "name": "memories.updated_at",
-      "definition": "timestamp with time zone|timestamptz|NO||NEVER"
+      "definition": "timestamp with time zone|timestamptz|NO|now()|NEVER"
     },
     {
       "name": "memories.vector_needs_reindex",
@@ -2818,7 +2818,7 @@
     },
     {
       "name": "plans.created_at",
-      "definition": "timestamp with time zone|timestamptz|NO||NEVER"
+      "definition": "timestamp with time zone|timestamptz|NO|now()|NEVER"
     },
     {
       "name": "plans.id",
@@ -2854,7 +2854,7 @@
     },
     {
       "name": "plans.updated_at",
-      "definition": "timestamp with time zone|timestamptz|NO||NEVER"
+      "definition": "timestamp with time zone|timestamptz|NO|now()|NEVER"
     },
     {
       "name": "project_github_triage_configs.created_at",
@@ -2898,7 +2898,7 @@
     },
     {
       "name": "project_lifecycle_events.created_at",
-      "definition": "timestamp with time zone|timestamptz|NO||NEVER"
+      "definition": "timestamp with time zone|timestamptz|NO|now()|NEVER"
     },
     {
       "name": "project_lifecycle_events.event",
@@ -2970,7 +2970,7 @@
     },
     {
       "name": "prompts.created_at",
-      "definition": "timestamp with time zone|timestamptz|NO||NEVER"
+      "definition": "timestamp with time zone|timestamptz|NO|now()|NEVER"
     },
     {
       "name": "prompts.description",
@@ -3002,7 +3002,7 @@
     },
     {
       "name": "prompts.updated_at",
-      "definition": "timestamp with time zone|timestamptz|NO||NEVER"
+      "definition": "timestamp with time zone|timestamptz|NO|now()|NEVER"
     },
     {
       "name": "prompts.variables",
@@ -3174,7 +3174,7 @@
     },
     {
       "name": "recall_gate_runs.created_at",
-      "definition": "timestamp with time zone|timestamptz|NO||NEVER"
+      "definition": "timestamp with time zone|timestamptz|NO|now()|NEVER"
     },
     {
       "name": "recall_gate_runs.decision",
@@ -3206,7 +3206,7 @@
     },
     {
       "name": "recall_gate_runs.updated_at",
-      "definition": "timestamp with time zone|timestamptz|NO||NEVER"
+      "definition": "timestamp with time zone|timestamptz|NO|now()|NEVER"
     },
     {
       "name": "recall_holdout_consumed.consumed_at",
@@ -3230,7 +3230,7 @@
     },
     {
       "name": "recall_injection_outcomes.created_at",
-      "definition": "timestamp with time zone|timestamptz|NO||NEVER"
+      "definition": "timestamp with time zone|timestamptz|NO|now()|NEVER"
     },
     {
       "name": "recall_injection_outcomes.drop_detail",
@@ -3278,7 +3278,7 @@
     },
     {
       "name": "recall_shadow_audit_verdicts.created_at",
-      "definition": "timestamp with time zone|timestamptz|NO||NEVER"
+      "definition": "timestamp with time zone|timestamptz|NO|now()|NEVER"
     },
     {
       "name": "recall_shadow_audit_verdicts.human_verdict",
@@ -3346,11 +3346,11 @@
     },
     {
       "name": "recall_shadow_judge_state.updated_at",
-      "definition": "timestamp with time zone|timestamptz|NO||NEVER"
+      "definition": "timestamp with time zone|timestamptz|NO|now()|NEVER"
     },
     {
       "name": "recall_shadow_prompt_snapshot.created_at",
-      "definition": "timestamp with time zone|timestamptz|NO||NEVER"
+      "definition": "timestamp with time zone|timestamptz|NO|now()|NEVER"
     },
     {
       "name": "recall_shadow_prompt_snapshot.judge_config_fingerprint",
@@ -3394,7 +3394,7 @@
     },
     {
       "name": "recall_signal_hits.created_at",
-      "definition": "timestamp with time zone|timestamptz|NO||NEVER"
+      "definition": "timestamp with time zone|timestamptz|NO|now()|NEVER"
     },
     {
       "name": "recall_signal_hits.edge_cosine",
@@ -3470,7 +3470,7 @@
     },
     {
       "name": "recall_signal_requests.created_at",
-      "definition": "timestamp with time zone|timestamptz|NO||NEVER"
+      "definition": "timestamp with time zone|timestamptz|NO|now()|NEVER"
     },
     {
       "name": "recall_signal_requests.graph_score_map",
@@ -3662,7 +3662,7 @@
     },
     {
       "name": "secret_key_material.created_at",
-      "definition": "timestamp with time zone|timestamptz|NO||NEVER"
+      "definition": "timestamp with time zone|timestamptz|NO|now()|NEVER"
     },
     {
       "name": "secret_key_material.id",
@@ -3690,7 +3690,7 @@
     },
     {
       "name": "secret_key_material.updated_at",
-      "definition": "timestamp with time zone|timestamptz|NO||NEVER"
+      "definition": "timestamp with time zone|timestamptz|NO|now()|NEVER"
     },
     {
       "name": "secret_key_material.wrapped_dek",
@@ -3702,7 +3702,7 @@
     },
     {
       "name": "secrets.created_at",
-      "definition": "timestamp with time zone|timestamptz|NO||NEVER"
+      "definition": "timestamp with time zone|timestamptz|NO|now()|NEVER"
     },
     {
       "name": "secrets.description",
@@ -3722,7 +3722,7 @@
     },
     {
       "name": "secrets.updated_at",
-      "definition": "timestamp with time zone|timestamptz|NO||NEVER"
+      "definition": "timestamp with time zone|timestamptz|NO|now()|NEVER"
     },
     {
       "name": "session_skills.created_at",
@@ -3802,7 +3802,7 @@
     },
     {
       "name": "session_tasks.created_at",
-      "definition": "timestamp with time zone|timestamptz|NO||NEVER"
+      "definition": "timestamp with time zone|timestamptz|NO|now()|NEVER"
     },
     {
       "name": "session_tasks.id",
@@ -3947,6 +3947,10 @@
     {
       "name": "sessions.is_local",
       "definition": "boolean|bool|NO|false|NEVER"
+    },
+    {
+      "name": "sessions.last_activity",
+      "definition": "timestamp with time zone|timestamptz|NO|now()|NEVER"
     },
     {
       "name": "sessions.last_assistant_content",
@@ -4126,7 +4130,7 @@
     },
     {
       "name": "skill_files.created_at",
-      "definition": "timestamp with time zone|timestamptz|NO||NEVER"
+      "definition": "timestamp with time zone|timestamptz|NO|now()|NEVER"
     },
     {
       "name": "skill_files.deleted_at",
@@ -4154,7 +4158,7 @@
     },
     {
       "name": "skill_files.updated_at",
-      "definition": "timestamp with time zone|timestamptz|NO||NEVER"
+      "definition": "timestamp with time zone|timestamptz|NO|now()|NEVER"
     },
     {
       "name": "skills.allowed_tools",
@@ -4174,7 +4178,7 @@
     },
     {
       "name": "skills.created_at",
-      "definition": "timestamp with time zone|timestamptz|NO||NEVER"
+      "definition": "timestamp with time zone|timestamptz|NO|now()|NEVER"
     },
     {
       "name": "skills.deleted_at",
@@ -4242,7 +4246,7 @@
     },
     {
       "name": "skills.updated_at",
-      "definition": "timestamp with time zone|timestamptz|NO||NEVER"
+      "definition": "timestamp with time zone|timestamptz|NO|now()|NEVER"
     },
     {
       "name": "skills.version",
@@ -4594,7 +4598,7 @@
     },
     {
       "name": "task_dependencies.created_at",
-      "definition": "timestamp with time zone|timestamptz|NO||NEVER"
+      "definition": "timestamp with time zone|timestamptz|NO|now()|NEVER"
     },
     {
       "name": "task_dependencies.dep_type",
@@ -4974,7 +4978,7 @@
     },
     {
       "name": "tasks.created_at",
-      "definition": "timestamp with time zone|timestamptz|NO||NEVER"
+      "definition": "timestamp with time zone|timestamptz|NO|now()|NEVER"
     },
     {
       "name": "tasks.created_in_session_id",
@@ -5086,7 +5090,7 @@
     },
     {
       "name": "tasks.updated_at",
-      "definition": "timestamp with time zone|timestamptz|NO||NEVER"
+      "definition": "timestamp with time zone|timestamptz|NO|now()|NEVER"
     },
     {
       "name": "tasks.validation_criteria",
@@ -8341,6 +8345,10 @@
     {
       "name": "idx_sessions_status",
       "definition": "CREATE INDEX idx_sessions_status ON $schema.sessions USING btree (status)"
+    },
+    {
+      "name": "idx_sessions_status_last_activity",
+      "definition": "CREATE INDEX idx_sessions_status_last_activity ON $schema.sessions USING btree (status, last_activity)"
     },
     {
       "name": "idx_sessions_summary_revision",

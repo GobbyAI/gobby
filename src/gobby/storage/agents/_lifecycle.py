@@ -129,7 +129,6 @@ class _AgentRunLifecycleMixin:
         """
         if run_id is None:
             run_id = str(uuid.uuid4())
-        now = utc_now()
         machine_id = get_machine_id()
         if machine_id is None:
             raise RuntimeError("Local machine identity is required to create an agent run")
@@ -142,10 +141,9 @@ class _AgentRunLifecycleMixin:
                 provider, model, is_local,
                 requested_reasoning_effort, effective_reasoning_effort,
                 reasoning_required, reasoning_status, reasoning_message,
-                status, prompt, task_id, timeout_seconds, resume_metadata_json,
-                created_at, updated_at
+                status, prompt, task_id, timeout_seconds, resume_metadata_json
             )
-            VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, 'pending', %s, %s, %s, %s, %s, %s)
+            VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, 'pending', %s, %s, %s, %s)
             """,
             (
                 run_id,
@@ -167,8 +165,6 @@ class _AgentRunLifecycleMixin:
                 task_id,
                 timeout_seconds,
                 dump_resume_metadata(resume_metadata_json),
-                now,
-                now,
             ),
         )
 

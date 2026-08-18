@@ -70,9 +70,7 @@ class TaskValidator:
         criteria_text = "\n".join(
             f"{index}. {criterion}" for index, criterion in enumerate(criteria, start=1)
         )
-        facts_text = json.dumps(
-            checklist_facts, sort_keys=True, separators=(",", ":"), default=str
-        )
+        facts_text = json.dumps(checklist_facts, sort_keys=True, separators=(",", ":"), default=str)
         prompt = self._loader.render(
             self.config.prompt_path or "validation/validate",
             {

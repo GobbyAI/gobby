@@ -114,11 +114,12 @@ def reconcile_compact_session_activity(
             UPDATE sessions
             SET status = 'active',
                 transcript_processed = FALSE,
-                updated_at = %s
+                updated_at = %s,
+                last_activity = %s
             WHERE id = %s
               AND status != 'deleted'
             """,
-            (now, current.id),
+            (now, now, current.id),
         )
         if not _updated_once(updated):
             return SessionActivityResolution(
@@ -152,16 +153,18 @@ def _activate_without_competitors(
     manager: SessionActivityManager,
     current: Session,
 ) -> SessionActivityResolution:
+    now = utc_now()
     updated = manager.db.execute(
         """
         UPDATE sessions
         SET status = 'active',
             transcript_processed = FALSE,
-            updated_at = %s
+            updated_at = %s,
+            last_activity = %s
         WHERE id = %s
           AND status != 'deleted'
         """,
-        (utc_now(), current.id),
+        (now, now, current.id),
     )
     if not _updated_once(updated):
         return SessionActivityResolution(

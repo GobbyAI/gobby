@@ -444,7 +444,7 @@ class SessionLifecycleManager(TranscriptProcessingMixin):
             "SELECT id FROM sessions "
             "WHERE status = 'active' AND transcript_path IS NOT NULL "
             "AND turn_count - COALESCE(last_digested_pair_index, 0) >= %s "
-            "ORDER BY updated_at DESC LIMIT %s",
+            "ORDER BY last_activity DESC LIMIT %s",
             (threshold, max_sessions),
         )
         if not rows:

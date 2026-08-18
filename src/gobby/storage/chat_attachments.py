@@ -145,7 +145,6 @@ def create_attachment(
     local_path: str,
     attachment_id: str | None = None,
 ) -> ChatAttachmentRecord:
-    now = utc_now()
     record_id = attachment_id or str(uuid.uuid4())
     machine_id = require_machine_id()
     with db.transaction() as conn:
@@ -153,9 +152,9 @@ def create_attachment(
             """
             INSERT INTO chat_attachments (
                 id, machine_id, project_id, draft_id, filename, mime_type, size_bytes,
-                local_path, created_at, updated_at
+                local_path
             )
-            VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+            VALUES (%s, %s, %s, %s, %s, %s, %s, %s)
             """,
             (
                 record_id,
@@ -166,8 +165,6 @@ def create_attachment(
                 mime_type,
                 size_bytes,
                 local_path,
-                now,
-                now,
             ),
         )
         record = _fetch_attachment(conn, record_id, machine_id)

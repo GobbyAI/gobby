@@ -394,6 +394,13 @@ def _seed_shadow_gate_rows(store: RecallSignalStore) -> GateCohort:
         }
         assert store.insert_usefulness_labels_atomic(labels, snapshot, claim_token) is True
 
+    # Snapshot completion time is DB-owned (DEFAULT now()); backdate it so the
+    # fenced-cohort cutoff queries keep selecting the seeded rows.
+    store.db.execute(
+        "UPDATE recall_shadow_prompt_snapshot SET created_at = %s WHERE label_source = %s",
+        (datetime.fromisoformat(_LABEL_TS), _SHADOW_LABEL_SOURCE),
+    )
+
     cohort = GateCohort(
         label_source=_SHADOW_LABEL_SOURCE,
         candidate_scope="full",

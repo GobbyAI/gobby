@@ -297,7 +297,6 @@ class LocalPromptManager:
         Raises:
             ValueError: If prompt already exists in that scope
         """
-        now = utc_now()
         prompt_id = str(uuid.uuid5(_NS_PROMPTS, f"{name}:{scope}:{project_id or 'none'}"))
         if self.get_prompt(prompt_id) is not None:
             prompt_id = str(uuid.uuid4())
@@ -310,9 +309,8 @@ class LocalPromptManager:
                     """
                     INSERT INTO prompts (
                         id, name, description, content, version, variables,
-                        scope, source_path, project_id, enabled,
-                        created_at, updated_at
-                    ) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+                        scope, source_path, project_id, enabled
+                    ) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
                     """,
                     (
                         prompt_id,
@@ -325,8 +323,6 @@ class LocalPromptManager:
                         source_path,
                         project_id,
                         enabled,
-                        now,
-                        now,
                     ),
                 )
             except UniqueViolation as e:

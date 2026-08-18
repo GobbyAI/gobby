@@ -35,7 +35,6 @@ class CodeIndexContentStorageMixin:
                 chunk.line_end,
                 chunk.content,
                 chunk.language,
-                chunk.created_at,
             )
             for chunk in chunks
         ]
@@ -43,8 +42,8 @@ class CodeIndexContentStorageMixin:
             conn.executemany(
                 """INSERT INTO code_content_chunks (
                     id, project_id, file_path, content_hash, chunk_index,
-                    line_start, line_end, content, language, created_at
-                ) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+                    line_start, line_end, content, language
+                ) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s)
                 ON CONFLICT(id) DO UPDATE SET
                     content = excluded.content,
                     line_start = excluded.line_start,

@@ -16,7 +16,6 @@ from gobby.storage.tasks._models import (
     validate_task_type,
 )
 from gobby.tasks.criteria_contract import require_validation_criteria
-from gobby.utils.datetime import utc_now
 
 logger = logging.getLogger(__name__)
 
@@ -99,7 +98,6 @@ def _create_task_in_transaction(
 ) -> str:
     """Insert a task using a caller-owned TaskSeqAllocation transaction."""
     max_retries = 3
-    now = utc_now()
 
     labels_json = json.dumps(labels) if labels else None
     additional_skills_json = (
@@ -130,13 +128,13 @@ def _create_task_in_transaction(
                     id, project_id, title, description, parent_task_id,
                     created_in_session_id, claimed_by_session_id,
                     priority, task_type,
-                    labels, created_at, updated_at,
+                    labels,
                     validation_status, category,
                     validation_criteria, validation_fail_count,
                     assigned_agent, implementation_domain, additional_skills,
                     github_issue_number, github_pr_number, github_repo,
                     linear_issue_id, linear_team_id, seq_num
-                ) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, 0, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+                ) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, 0, %s, %s, %s, %s, %s, %s, %s, %s, %s)
                 """,
                 (
                     task_id,
@@ -149,8 +147,6 @@ def _create_task_in_transaction(
                     priority,
                     task_type,
                     labels_json,
-                    now,
-                    now,
                     validation_status,
                     category,
                     validation_criteria,

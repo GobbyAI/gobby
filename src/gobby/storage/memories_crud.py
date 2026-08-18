@@ -354,9 +354,8 @@ class MemoryCrudMixin(MemoryStoreBase):
                     """
                     INSERT INTO memories (
                         id, project_id, is_global, memory_type, content, source_type,
-                        source_session_id, access_count, tags, vector_needs_reindex,
-                        created_at, updated_at
-                    ) VALUES (%s, %s, %s, %s, %s, %s, %s, 0, %s, TRUE, %s, %s)
+                        source_session_id, access_count, tags, vector_needs_reindex
+                    ) VALUES (%s, %s, %s, %s, %s, %s, %s, 0, %s, TRUE)
                     ON CONFLICT (id) DO UPDATE SET
                         deleted_at = NULL,
                         dream_action = NULL,
@@ -381,8 +380,6 @@ class MemoryCrudMixin(MemoryStoreBase):
                         source_type,
                         source_session_id,
                         tags_json,
-                        created_at_value,
-                        updated_at_value,
                     ),
                 )
             row = cursor.fetchone()

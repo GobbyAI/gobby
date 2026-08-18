@@ -13,6 +13,7 @@ from gobby.storage import chat_messages
 from gobby.storage.hub.protocol import HubDatabase
 from gobby.storage.projects import PERSONAL_PROJECT_ID
 from gobby.storage.sessions import SessionManager
+from tests.fixtures.postgres import TEST_USER_ID
 
 pytestmark = pytest.mark.unit
 
@@ -54,8 +55,9 @@ def _create_attachment(
 
 def _insert_machine(temp_db: HubDatabase, machine_id: str) -> None:
     temp_db.execute(
-        "INSERT INTO machines (id, hostname) VALUES (%s, %s) ON CONFLICT (id) DO NOTHING",
-        (machine_id, f"test-{machine_id[-4:]}"),
+        "INSERT INTO machines (id, hostname, owner_user_id) VALUES (%s, %s, %s) "
+        "ON CONFLICT (id) DO NOTHING",
+        (machine_id, f"test-{machine_id[-4:]}", TEST_USER_ID),
     )
 
 

@@ -305,6 +305,15 @@ class _BulkUpdateMixin:
             return self.get(session_id)
 
         values["updated_at"] = utc_now()
+        # Transcript growth is confirmed activity; stat rewrites that don't
+        # raise a counter (sidecar rehydration, idle re-processing) are not.
+        current = self.get(session_id)
+        if current is not None and (
+            (message_count is not None and message_count > (current.message_count or 0))
+            or (turn_count is not None and turn_count > (current.turn_count or 0))
+            or (tool_call_count is not None and tool_call_count > (current.tool_call_count or 0))
+        ):
+            values["last_activity"] = values["updated_at"]
         with self.db.transaction():
             self.db.safe_update("sessions", values, "id = %s", (session_id,))
         return self.get(session_id)

@@ -86,8 +86,8 @@ def test_lifecycle_event_id_comes_from_returning_row() -> None:
     class ReturningCursor:
         lastrowid = None
 
-        def fetchone(self) -> dict[str, int]:
-            return {"id": 42}
+        def fetchone(self) -> dict[str, Any]:
+            return {"id": 42, "created_at": datetime.now(UTC)}
 
     class RecordingConnection:
         sql = ""
@@ -116,7 +116,7 @@ def test_lifecycle_event_id_comes_from_returning_row() -> None:
     )
 
     assert result.id == 42
-    assert "RETURNING id" in db.conn.sql
+    assert "RETURNING id, created_at" in db.conn.sql
     assert db.conn.params[:4] == (
         "0e27d5b7-167e-5a64-8bd9-6b980bd88f06",
         "build_resume",

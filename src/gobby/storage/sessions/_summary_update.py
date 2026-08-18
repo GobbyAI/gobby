@@ -81,9 +81,9 @@ class _SummaryUpdateMixin:
                 INSERT INTO session_summary_revisions (
                     id, session_id, summary_markdown, generation_mode,
                     source_context_hash, source_digest_turn_count,
-                    previous_revision_id, metadata_json, created_at
+                    previous_revision_id, metadata_json
                 )
-                VALUES (%s, %s, %s, %s, %s, %s, %s, %s::jsonb, %s)
+                VALUES (%s, %s, %s, %s, %s, %s, %s, %s::jsonb)
                 """,
                 (
                     revision_id,
@@ -94,7 +94,6 @@ class _SummaryUpdateMixin:
                     source_digest_turn_count,
                     previous_id,
                     _encode_metadata_json(metadata_json),
-                    now,
                 ),
             )
             conn.execute(

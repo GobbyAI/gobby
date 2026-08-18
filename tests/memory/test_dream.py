@@ -1558,8 +1558,9 @@ class _FakeDreamDB:
                 "dry_run": params[3],
                 "options": params[4],
                 "started_at": params[5],
-                "created_at": params[6],
-                "updated_at": params[7],
+                # created_at/updated_at come from the DB DEFAULT now()
+                "created_at": params[5],
+                "updated_at": params[5],
                 "plan": None,
                 "summary": None,
                 "error": None,

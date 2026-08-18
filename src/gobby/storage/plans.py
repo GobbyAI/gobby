@@ -112,7 +112,6 @@ class LocalPlanManager:
             project_root / relative_path, plan_kind=PlanKind(plan_kind), parse_mode="draft"
         )
         resolve_task_reference(self.db, root_task_ref, project_id)
-        now = _now()
         record_id = str(uuid.uuid4())
 
         with self.db.transaction() as conn:
@@ -120,9 +119,9 @@ class LocalPlanManager:
                 """
                 INSERT INTO plans (
                     id, project_id, plan_id, plan_path, plan_hash, plan_kind, state,
-                    root_task_ref, created_at, updated_at, archived_at
+                    root_task_ref, archived_at
                 )
-                VALUES (%s, %s, %s, %s, %s, %s, 'active', %s, %s, %s, NULL)
+                VALUES (%s, %s, %s, %s, %s, %s, 'active', %s, NULL)
                 ON CONFLICT(project_id, plan_id) DO UPDATE SET
                     plan_path = excluded.plan_path,
                     plan_hash = excluded.plan_hash,
@@ -143,8 +142,6 @@ class LocalPlanManager:
                     doc.source_hash,
                     plan_kind,
                     root_task_ref,
-                    now,
-                    now,
                     reactivate,
                 ),
             )

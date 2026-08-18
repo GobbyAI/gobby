@@ -175,7 +175,12 @@ def test_session_context_usage_binds_snapshot_timestamp_as_datetime() -> None:
 def test_memory_timestamp_writers_and_filters_bind_datetimes() -> None:
     # restore_memory SELECTs the row under FOR UPDATE before writing; give the
     # execute-cursor a row so the existence check passes.
-    db = _RecordingDB(execute_row={"vector_needs_reindex": False})
+    db = _RecordingDB(
+        execute_row={
+            "vector_needs_reindex": False,
+            "created_at": datetime(2026, 7, 3, 1, 2, 3, tzinfo=UTC),
+        }
+    )
     crossrefs = MemoryCrossRefMixin(db)  # type: ignore[arg-type]
     access = MemoryQueryMixin(db)  # type: ignore[arg-type]
     dreams = MemoryDreamMixin(db)  # type: ignore[arg-type]
@@ -183,7 +188,6 @@ def test_memory_timestamp_writers_and_filters_bind_datetimes() -> None:
 
     crossref = crossrefs.create_crossref("source", "target", 0.9)
     _assert_aware_utc(crossref.created_at)
-    _assert_aware_utc(_params(db.calls[-1])[3])
 
     access.update_access_stats("memory-1", timestamp)
     _assert_aware_utc(_params(db.calls[-1])[0])
@@ -224,7 +228,6 @@ def test_cron_run_create_binds_triggered_and_created_at_as_datetimes() -> None:
     assert run is None
     params = _params(db.calls[-1])
     _assert_aware_utc(params[3])
-    _assert_aware_utc(params[12])
 
 
 def test_schema_hash_manager_binds_verification_timestamps_as_datetimes() -> None:
@@ -245,8 +248,6 @@ def test_schema_hash_manager_binds_verification_timestamps_as_datetimes() -> Non
     manager.store_hash("server", "tool", "project", "hash")
     store_params = _params(db.calls[0])
     _assert_aware_utc(store_params[4])
-    _assert_aware_utc(store_params[5])
-    _assert_aware_utc(store_params[6])
 
     updated = manager.update_verification_time("server", "tool", "project")
     assert updated is True
@@ -261,7 +262,7 @@ def test_tool_metrics_store_binds_datetimes_for_writes_and_cutoffs() -> None:
 
     store.record_call("server", "tool", "project", latency_ms=12.5, success=True)
     record_params = _params(db.calls[-1])
-    for index in (8, 9, 10, 15, 16):
+    for index in (8, 13, 14):
         _assert_aware_utc(record_params[index])
 
     store.aggregate_to_daily(retention_days=7)
@@ -271,7 +272,6 @@ def test_tool_metrics_store_binds_datetimes_for_writes_and_cutoffs() -> None:
     store.cleanup_old_metrics(cutoff)
     cleanup_params = _params(db.calls[-1])
     assert _assert_aware_utc(cleanup_params[0]) == cutoff
-    _assert_aware_utc(cleanup_params[1])
 
 
 def test_metrics_event_store_binds_datetimes_for_filters_and_archive() -> None:
@@ -300,7 +300,11 @@ def test_metrics_event_store_binds_datetimes_for_filters_and_archive() -> None:
 
 
 def test_worktree_and_clone_create_bind_and_return_datetimes() -> None:
-    worktree_db = _RecordingDB()
+    returned = {
+        "created_at": datetime(2026, 7, 3, 1, 2, 3, tzinfo=UTC),
+        "updated_at": datetime(2026, 7, 3, 1, 2, 3, tzinfo=UTC),
+    }
+    worktree_db = _RecordingDB(execute_row=returned)
     worktree = LocalWorktreeManager(worktree_db)  # type: ignore[arg-type]
 
     worktree_model = worktree.create(
@@ -311,11 +315,10 @@ def test_worktree_and_clone_create_bind_and_return_datetimes() -> None:
 
     worktree_params = _params(worktree_db.calls[-1])
     _assert_aware_utc(worktree_params[9])
-    _assert_aware_utc(worktree_params[10])
     _assert_aware_utc(worktree_model.created_at)
     _assert_aware_utc(worktree_model.updated_at)
 
-    clone_db = _RecordingDB()
+    clone_db = _RecordingDB(execute_row=returned)
     clone = LocalCloneManager(clone_db)  # type: ignore[arg-type]
     cleanup_after = "2026-07-04T01:02:03+00:00"
 
@@ -328,8 +331,6 @@ def test_worktree_and_clone_create_bind_and_return_datetimes() -> None:
 
     clone_params = _params(clone_db.calls[-1])
     _assert_aware_utc(clone_params[11])
-    _assert_aware_utc(clone_params[12])
-    _assert_aware_utc(clone_params[13])
     assert _assert_aware_utc(clone_model.cleanup_after) == datetime(2026, 7, 4, 1, 2, 3, tzinfo=UTC)
     _assert_aware_utc(clone_model.created_at)
     _assert_aware_utc(clone_model.updated_at)

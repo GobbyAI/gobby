@@ -137,17 +137,14 @@ class RecallShadowGateStoreMixin:
                 """
                 INSERT INTO recall_gate_runs
                     (holdout_consumption_key, status, fit_settings_digest,
-                     claim_token, lease_expires_at, attempts,
-                     created_at, updated_at)
-                VALUES (%s, 'reserved', %s, %s, %s, 1, %s, %s)
+                     claim_token, lease_expires_at, attempts)
+                VALUES (%s, 'reserved', %s, %s, %s, 1)
                 """,
                 (
                     holdout_consumption_key,
                     fit_settings_digest,
                     claim_token,
                     current_time + GATE_RESERVATION_LEASE,
-                    current_time,
-                    current_time,
                 ),
             )
             transaction.executemany(

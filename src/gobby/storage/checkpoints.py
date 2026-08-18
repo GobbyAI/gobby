@@ -61,11 +61,12 @@ class LocalCheckpointManager:
         Raises:
             psycopg.IntegrityError: If a checkpoint with the same ID already exists.
         """
-        self.db.execute(
+        row = self.db.execute(
             """INSERT INTO checkpoints
                (id, task_id, session_id, run_id, ref_name, commit_sha,
-                parent_sha, files_changed, message, created_at)
-               VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s)""",
+                parent_sha, files_changed, message)
+               VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s)
+               RETURNING created_at""",
             (
                 checkpoint.id,
                 checkpoint.task_id,
@@ -76,9 +77,10 @@ class LocalCheckpointManager:
                 checkpoint.parent_sha,
                 checkpoint.files_changed,
                 checkpoint.message,
-                checkpoint.created_at,
             ),
-        )
+        ).fetchone()
+        if row is not None:
+            checkpoint.created_at = row["created_at"]
         return checkpoint
 
     def get(self, checkpoint_id: str) -> Checkpoint | None:

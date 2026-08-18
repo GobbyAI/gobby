@@ -310,10 +310,10 @@ class _SessionCRUDMixin(_SessionIdentityCRUDMixin):
                             transcript_path, git_branch, parent_session_id,
                             agent_depth, spawned_by_agent_id, terminal_context,
                             workflow_name, session_type, is_local, sandbox_enabled, sandbox_policy_hash,
-                            status, created_at, updated_at, seq_num,
+                            status, seq_num,
                             had_edits, message_count, turn_count, tool_call_count, last_assistant_content
                         )
-                        VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, 'active', %s, %s, %s, FALSE, 0, 0, 0, NULL)
+                        VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, 'active', %s, FALSE, 0, 0, 0, NULL)
                         """,
                         (
                             session_id,
@@ -334,8 +334,6 @@ class _SessionCRUDMixin(_SessionIdentityCRUDMixin):
                             bool(is_local),
                             None if sandbox_enabled is None else bool(sandbox_enabled),
                             sandbox_policy_hash,
-                            now,
-                            now,
                             next_seq_num,
                         ),
                     )

@@ -62,7 +62,6 @@ class MCPServerStorageMixin:
     ) -> MCPServer:
         """Persist a server row without applying bundled-server cleanup."""
         server_id = str(uuid.uuid4())
-        now = utc_now()
         requires_oauth_value = _parse_mcp_bool(
             requires_oauth,
             field_name="requires_oauth",
@@ -93,10 +92,9 @@ class MCPServerStorageMixin:
                 """
                 INSERT INTO mcp_servers (
                     id, name, project_id, transport, url, command, args, env, headers,
-                    enabled, description, requires_oauth, oauth_provider, connect_timeout,
-                    created_at, updated_at
+                    enabled, description, requires_oauth, oauth_provider, connect_timeout
                 )
-                VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+                VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
                 ON CONFLICT(name, project_id) DO UPDATE SET
                     transport = excluded.transport,
                     url = excluded.url,
@@ -130,8 +128,6 @@ class MCPServerStorageMixin:
                     requires_oauth_value,
                     oauth_provider,
                     connect_timeout,
-                    now,
-                    now,
                 ),
             )
             cleanup_replaced_mcp_secrets(
@@ -196,13 +192,12 @@ class MCPServerStorageMixin:
         if not tools:
             return
 
-        now = utc_now()
         for tool in tools:
             tool_id = str(uuid.uuid4())
             conn.execute(
                 """
-                INSERT INTO tools (id, mcp_server_id, name, description, input_schema, created_at, updated_at)
-                VALUES (%s, %s, %s, %s, %s, %s, %s)
+                INSERT INTO tools (id, mcp_server_id, name, description, input_schema)
+                VALUES (%s, %s, %s, %s, %s)
                 """,
                 (
                     tool_id,
@@ -210,8 +205,6 @@ class MCPServerStorageMixin:
                     tool.name,
                     tool.description,
                     json.dumps(tool.input_schema) if tool.input_schema is not None else None,
-                    now,
-                    now,
                 ),
             )
             generation_state.append_change("tool", tool_id, transaction=conn)

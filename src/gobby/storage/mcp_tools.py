@@ -8,7 +8,6 @@ from typing import Any, Protocol, cast
 from gobby.storage.embedding_generation_state import EmbeddingGenerationState
 from gobby.storage.hub.protocol import HubDatabase
 from gobby.storage.mcp_models import MCPServer, Tool
-from gobby.utils.datetime import utc_now
 
 logger = logging.getLogger(__name__)
 
@@ -67,7 +66,6 @@ class MCPToolStorageMixin:
             return 0
         entries = _normalized_tool_entries(tools)
 
-        now = utc_now()
         generation_state = EmbeddingGenerationState(self.db)
         with self.db.transaction() as conn:
             stale_rows = conn.execute(
@@ -84,8 +82,8 @@ class MCPToolStorageMixin:
                 input_schema = _tool_input_schema(tool)
                 conn.execute(
                     """
-                    INSERT INTO tools (id, mcp_server_id, name, description, input_schema, created_at, updated_at)
-                    VALUES (%s, %s, %s, %s, %s, %s, %s)
+                    INSERT INTO tools (id, mcp_server_id, name, description, input_schema)
+                    VALUES (%s, %s, %s, %s, %s)
                     """,
                     (
                         tool_id,
@@ -93,8 +91,6 @@ class MCPToolStorageMixin:
                         tool_name,
                         tool.get("description"),
                         json.dumps(input_schema) if input_schema is not None else None,
-                        now,
-                        now,
                     ),
                 )
                 generation_state.append_change("tool", tool_id, transaction=conn)

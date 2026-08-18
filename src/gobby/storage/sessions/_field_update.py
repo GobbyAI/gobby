@@ -118,11 +118,12 @@ class _FieldUpdateMixin(_SessionMetadataUpdateMixin, _SummaryUpdateMixin, _Title
                 UPDATE sessions
                 SET status = %s,
                     transcript_processed = FALSE,
-                    updated_at = %s
+                    updated_at = %s,
+                    last_activity = %s
                 WHERE id = %s
                   AND status != 'deleted'
                 """,
-                (status, now, session_id),
+                (status, now, now, session_id),
             )
             if cursor.rowcount == 0:
                 return None
@@ -155,12 +156,12 @@ class _FieldUpdateMixin(_SessionMetadataUpdateMixin, _SummaryUpdateMixin, _Title
             self.db.execute(
                 """
                 UPDATE sessions
-                SET status = 'active', updated_at = %s
+                SET status = 'active', updated_at = %s, last_activity = %s
                 WHERE id = %s
                 AND session_type = 'web_chat'
                 AND status != 'deleted'
                 """,
-                (now, session_id),
+                (now, now, session_id),
             )
         updated = self.get(session_id)
         if updated is not None and updated.status == "active":
@@ -219,12 +220,13 @@ class _FieldUpdateMixin(_SessionMetadataUpdateMixin, _SummaryUpdateMixin, _Title
                     UPDATE sessions
                     SET status = 'active',
                         transcript_processed = FALSE,
-                        updated_at = %s
+                        updated_at = %s,
+                        last_activity = %s
                     WHERE id = %s
                       AND status = 'expired'
                       AND session_type = 'terminal'
                     """,
-                    (now, session_id),
+                    (now, now, session_id),
                 )
             updated = self.get(session_id)
             if updated is not None and updated.status == "active":
@@ -339,6 +341,7 @@ class _FieldUpdateMixin(_SessionMetadataUpdateMixin, _SummaryUpdateMixin, _Title
                     if desired_status == candidate.status and not reset_transcript:
                         continue
 
+                    revived = candidate.id == owner.id and desired_status == "active"
                     conn.execute(
                         """
                         UPDATE sessions
@@ -347,10 +350,14 @@ class _FieldUpdateMixin(_SessionMetadataUpdateMixin, _SummaryUpdateMixin, _Title
                                 WHEN %s THEN FALSE
                                 ELSE transcript_processed
                             END,
-                            updated_at = %s
+                            updated_at = %s,
+                            last_activity = CASE
+                                WHEN %s THEN %s
+                                ELSE last_activity
+                            END
                         WHERE id = %s
                         """,
-                        (desired_status, reset_transcript, now, candidate.id),
+                        (desired_status, reset_transcript, now, revived, now, candidate.id),
                     )
                     if desired_status != candidate.status:
                         status_changes.append((candidate, desired_status))

@@ -441,8 +441,8 @@ class RecallShadowSignalStoreMixin:
                     """
                     INSERT INTO recall_shadow_audit_verdicts
                         (cohort_digest, sample_digest, request_id, memory_id,
-                         prompt_hash, human_verdict, reviewer, created_at)
-                    VALUES (%s, %s, %s, %s, %s, %s, %s, %s)
+                         prompt_hash, human_verdict, reviewer)
+                    VALUES (%s, %s, %s, %s, %s, %s, %s)
                     ON CONFLICT (cohort_digest, request_id, memory_id) DO NOTHING
                     """,
                     (
@@ -453,7 +453,6 @@ class RecallShadowSignalStoreMixin:
                         prompt_hash,
                         verdict,
                         reviewer,
-                        _parse_datetime(row.get("created_at") or utc_now()),
                     ),
                 )
                 inserted += cursor.rowcount
@@ -726,7 +725,6 @@ class RecallShadowSignalStoreMixin:
             "prompt_hash",
             "judge_model",
             "judge_config_fingerprint",
-            "created_at",
         )
         if any(snapshot.get(field) is None for field in required_snapshot_fields):
             return False
@@ -818,8 +816,8 @@ class RecallShadowSignalStoreMixin:
                 INSERT INTO recall_shadow_prompt_snapshot
                     (recall_request_id, label_source, judge_protocol_version,
                      system_prompt, query_text, presented, prompt_hash, judge_model,
-                     judge_config_fingerprint, created_at)
-                VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+                     judge_config_fingerprint)
+                VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s)
                 ON CONFLICT (recall_request_id, label_source, judge_protocol_version)
                 DO NOTHING
                 """,
@@ -833,7 +831,6 @@ class RecallShadowSignalStoreMixin:
                     snapshot["prompt_hash"],
                     snapshot["judge_model"],
                     snapshot["judge_config_fingerprint"],
-                    _parse_datetime(snapshot["created_at"]),
                 ),
             )
             stored_rows = transaction.execute(
@@ -849,7 +846,7 @@ class RecallShadowSignalStoreMixin:
             stored_snapshot = transaction.execute(
                 """
                 SELECT system_prompt, query_text, presented, prompt_hash, judge_model,
-                       judge_config_fingerprint, created_at
+                       judge_config_fingerprint
                 FROM recall_shadow_prompt_snapshot
                 WHERE recall_request_id = %s
                   AND label_source = %s
@@ -864,7 +861,6 @@ class RecallShadowSignalStoreMixin:
                 "prompt_hash": snapshot["prompt_hash"],
                 "judge_model": snapshot["judge_model"],
                 "judge_config_fingerprint": snapshot["judge_config_fingerprint"],
-                "created_at": _parse_datetime(snapshot["created_at"]),
             }
             actual_snapshot = dict(stored_snapshot) if stored_snapshot is not None else {}
             if "presented" in actual_snapshot:

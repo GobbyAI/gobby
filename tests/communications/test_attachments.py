@@ -16,6 +16,7 @@ from gobby.communications.attachments import PLATFORM_SIZE_LIMITS, AttachmentMan
 from gobby.communications.models import CommsAttachment, CommsMessage
 from gobby.storage.communications import LocalCommunicationsStore
 from gobby.storage.hub.protocol import HubDatabase
+from tests.fixtures.postgres import TEST_USER_ID
 
 LOCAL_MACHINE_ID = "cccccccc-cccc-4ccc-8ccc-000000000001"
 REMOTE_MACHINE_ID = "cccccccc-cccc-4ccc-8ccc-000000000002"
@@ -401,6 +402,11 @@ def test_attachment_cascade_on_message_delete(
 ) -> None:
     channel_id = _create_test_channel(comms_store)
     message_id = _create_test_message(comms_store, channel_id)
+    # Creation time is DB-owned now; backdate the row to make it eligible.
+    comms_store.db.execute(
+        "UPDATE comms_messages SET created_at = %s WHERE id = %s",
+        (datetime(2024, 1, 1, tzinfo=UTC), message_id),
+    )
 
     attachment_path = tmp_path / "cascade.txt"
     attachment_path.write_text("retained attachment")
@@ -416,8 +422,6 @@ def test_attachment_cascade_on_message_delete(
         )
     )
 
-    from datetime import datetime
-
     deleted_count, local_paths = comms_store.delete_messages_before(datetime(2025, 1, 1))
 
     assert deleted_count == 1
@@ -431,8 +435,9 @@ def test_attachment_crud_and_message_cleanup_are_machine_scoped(
 ) -> None:
     for machine_id in (LOCAL_MACHINE_ID, REMOTE_MACHINE_ID):
         temp_db.execute(
-            "INSERT INTO machines (id, hostname) VALUES (%s, %s) ON CONFLICT (id) DO NOTHING",
-            (machine_id, f"test-{machine_id[-4:]}"),
+            "INSERT INTO machines (id, hostname, owner_user_id) VALUES (%s, %s, %s) "
+            "ON CONFLICT (id) DO NOTHING",
+            (machine_id, f"test-{machine_id[-4:]}", TEST_USER_ID),
         )
 
     local_store = LocalCommunicationsStore(

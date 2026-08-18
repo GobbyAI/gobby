@@ -111,11 +111,11 @@ class _DreamRunMixin:
         self.db.execute(
             """
             INSERT INTO memory_dream_runs (
-                id, project_id, status, dry_run, options, started_at, created_at, updated_at
+                id, project_id, status, dry_run, options, started_at
             )
-            VALUES (%s, %s, %s, %s, %s, %s, %s, %s)
+            VALUES (%s, %s, %s, %s, %s, %s)
             """,
-            (run_id, project_id, status, dry_run, _json(options), now, now, now),
+            (run_id, project_id, status, dry_run, _json(options), now),
         )
         return run_id
 

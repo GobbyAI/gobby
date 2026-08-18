@@ -143,8 +143,8 @@ def _write_child(
             """
             INSERT INTO agent_step_workflows (
                 id, agent_definition_id, steps_json, variables_json,
-                exit_condition, created_at, updated_at
-            ) VALUES (%s, %s, %s, %s, %s, %s, %s)
+                exit_condition
+            ) VALUES (%s, %s, %s, %s, %s)
             """,
             (
                 new_definition_id(),
@@ -152,8 +152,6 @@ def _write_child(
                 encode_json_value(steps),
                 encode_json_value(variables),
                 exit_condition,
-                now,
-                now,
             ),
         )
         return True

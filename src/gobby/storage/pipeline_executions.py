@@ -87,17 +87,17 @@ class PipelineExecutionStorageMixin:
         """
         resolved_project_id = project_id or self._require_project_id()
         execution_id = str(uuid.uuid4())
-        now = utc_now()
 
         with self.db.transaction():
-            self.db.execute(
+            row = self.db.execute(
                 """
                 INSERT INTO pipeline_executions (
                     id, pipeline_name, project_id, status, inputs_json,
                     session_id, parent_execution_id, continuation_prompt,
-                    definition_json, created_at, updated_at
+                    definition_json
                 )
-                VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+                VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s)
+                RETURNING created_at, updated_at
                 """,
                 (
                     execution_id,
@@ -109,11 +109,11 @@ class PipelineExecutionStorageMixin:
                     parent_execution_id,
                     continuation_prompt,
                     definition_json,
-                    now,
-                    now,
                 ),
-            )
+            ).fetchone()
 
+        if row is None:
+            raise RuntimeError(f"Failed to insert pipeline execution {execution_id}")
         return PipelineExecution(
             id=execution_id,
             pipeline_name=pipeline_name,
@@ -124,8 +124,8 @@ class PipelineExecutionStorageMixin:
             parent_execution_id=parent_execution_id,
             continuation_prompt=continuation_prompt,
             definition_json=definition_json,
-            created_at=now,
-            updated_at=now,
+            created_at=row["created_at"],
+            updated_at=row["updated_at"],
         )
 
     def get_execution(self, execution_id: str) -> PipelineExecution | None:

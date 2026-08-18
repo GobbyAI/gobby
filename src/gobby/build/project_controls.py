@@ -2,8 +2,6 @@
 
 from __future__ import annotations
 
-from datetime import UTC, datetime
-
 from gobby.build.project_state import ensure_project_row
 from gobby.build.results import BuildControlResult, BuildLifecycleEvent
 from gobby.storage.build_history import best_effort_record_event, best_effort_record_run
@@ -77,15 +75,14 @@ def _record_project_build_event(
     reason: str,
     by_actor: str,
 ) -> BuildLifecycleEvent:
-    created_at = datetime.now(UTC)
     with db.transaction() as conn:
         row = conn.execute(
             """
-            INSERT INTO project_lifecycle_events (project_id, event, reason, by_actor, created_at)
-            VALUES (%s, %s, %s, %s, %s)
-            RETURNING id
+            INSERT INTO project_lifecycle_events (project_id, event, reason, by_actor)
+            VALUES (%s, %s, %s, %s)
+            RETURNING id, created_at
             """,
-            (project_id, event, reason, by_actor, created_at),
+            (project_id, event, reason, by_actor),
         ).fetchone()
     if row is None:
         raise RuntimeError("Database did not return a project lifecycle event id")
@@ -96,7 +93,7 @@ def _record_project_build_event(
         event=event,
         reason=reason,
         by_actor=by_actor,
-        created_at=created_at,
+        created_at=row["created_at"],
     )
 
 

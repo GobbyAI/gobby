@@ -373,7 +373,6 @@ class StageStateTransitions:
             task_id,
             cited_ids,
             reason=reason,
-            now=now,
             holder=holder,
         )
         self.reset_task_from_stage(conn, task_id, "development", now=now, holder=holder)
@@ -465,7 +464,6 @@ class StageStateTransitions:
         cited_subtasks: Sequence[str],
         *,
         reason: str | None,
-        now: datetime | str,
         holder: str,
     ) -> None:
         body = reason or "Epic QA requested follow-up work."
@@ -474,7 +472,6 @@ class StageStateTransitions:
             conn,
             task_id,
             body=parent_body,
-            now=now,
             holder=holder,
         )
         follow_up_body = self._epic_follow_up_body(body)
@@ -483,7 +480,6 @@ class StageStateTransitions:
                 conn,
                 cited_id,
                 body=follow_up_body,
-                now=now,
                 holder=holder,
             )
 
@@ -522,17 +518,16 @@ class StageStateTransitions:
         task_id: str,
         *,
         body: str,
-        now: datetime | str,
         holder: str,
     ) -> None:
         conn.execute(
             """
             INSERT INTO task_comments (
-                id, task_id, parent_comment_id, author, author_type, body, created_at, updated_at
+                id, task_id, parent_comment_id, author, author_type, body
             )
-            VALUES (%s, %s, NULL, %s, 'system', %s, %s, %s)
+            VALUES (%s, %s, NULL, %s, 'system', %s)
             """,
-            (str(uuid.uuid4()), task_id, holder, body, now, now),
+            (str(uuid.uuid4()), task_id, holder, body),
         )
 
     def reset_task_from_stage(

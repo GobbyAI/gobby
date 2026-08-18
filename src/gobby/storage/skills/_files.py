@@ -127,8 +127,8 @@ class SkillFilesMixin:
                 conn.execute(
                     """INSERT INTO skill_files
                        (id, skill_id, path, file_type, content, content_hash,
-                        size_bytes, created_at, updated_at)
-                       VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s)
+                        size_bytes)
+                       VALUES (%s, %s, %s, %s, %s, %s, %s)
                        ON CONFLICT (skill_id, path) DO UPDATE SET
                            content = excluded.content,
                            content_hash = excluded.content_hash,
@@ -144,8 +144,6 @@ class SkillFilesMixin:
                         f.content,
                         f.content_hash,
                         f.size_bytes,
-                        now,
-                        now,
                     ),
                 )
                 changed += 1
