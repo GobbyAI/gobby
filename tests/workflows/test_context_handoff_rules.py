@@ -527,19 +527,22 @@ class TestInjectCompactHandoff:
 
 
 class TestInjectWikiOverview:
-    """Inject the project wiki overview at session start (#17520)."""
+    """Inject the project wiki overview once per context epoch at first prompt (#17520)."""
 
     def test_event_and_effect(self, db, manager) -> None:
         _sync_bundled(db)
         row = manager.get_by_name("inject-wiki-overview")
         assert row is not None
         body = RuleDefinitionBody.model_validate(row.definition_json)
-        assert body.event.value == "session_start"
+        assert body.event.value == "turn_start"
         assert body.effects is not None
         assert body.effects[0].type == "inject_context"
         assert body.effects[0].template is not None
         assert "Project Wiki" in body.effects[0].template
         assert "gobby:injected-context:begin" in body.effects[0].template
+        assert body.effects[1].type == "set_variable"
+        assert body.effects[1].variable == "wiki_overview_injected"
+        assert body.effects[1].value is True
 
     def test_has_when_condition(self, db, manager) -> None:
         _sync_bundled(db)
@@ -547,17 +550,18 @@ class TestInjectWikiOverview:
         body = RuleDefinitionBody.model_validate(row.definition_json)
         assert body.when is not None
         assert "wiki_overview" in body.when
+        assert "not variables.get('wiki_overview_injected')" in body.when
 
     @pytest.mark.asyncio
-    async def test_injects_overview_when_variable_seeded(self, db) -> None:
+    async def test_injects_overview_once_per_epoch(self, db) -> None:
         _sync_bundled(db)
         engine = RuleEngine(db)
         event = HookEvent(
-            event_type=HookEventType.SESSION_START,
+            event_type=HookEventType.BEFORE_AGENT,
             session_id=SESSION_ID,
             source=SessionSource.CLAUDE,
             timestamp=datetime.now(UTC),
-            data={"source": "startup"},
+            data={"prompt": "first prompt"},
         )
 
         seeded = await engine.evaluate(
@@ -568,6 +572,16 @@ class TestInjectWikiOverview:
         assert seeded.context is not None
         assert "Project Wiki" in seeded.context
         assert "Totals: 22 concepts · 196 sources" in seeded.context
+
+        gated = await engine.evaluate(
+            event,
+            session_id=SESSION_ID,
+            variables={
+                "wiki_overview": "Totals: 22 concepts · 196 sources",
+                "wiki_overview_injected": True,
+            },
+        )
+        assert not (gated.context and "Project Wiki" in gated.context)
 
         unseeded = await engine.evaluate(event, session_id=SESSION_ID, variables={})
         assert not (unseeded.context and "Project Wiki" in unseeded.context)

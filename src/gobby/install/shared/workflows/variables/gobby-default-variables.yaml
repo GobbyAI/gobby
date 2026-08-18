@@ -98,6 +98,9 @@ variables:
   skill_discovery_instructions_shown:
     value: false
     description: "True after skill hub discovery instructions have been shown once this session"
+  wiki_overview_injected:
+    value: false
+    description: "True after the wiki overview has been injected once this context epoch"
   brevity_disabled:
     value: false
     description: "True after the user opts out of brevity reinforcement for the session"

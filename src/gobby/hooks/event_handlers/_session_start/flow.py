@@ -155,6 +155,7 @@ def _reset_agent_context_injection(handler: Any, session_id: str | None) -> None
             {
                 "_agent_context_injected": False,
                 "_agent_context_rehydrate_pending": True,
+                "wiki_overview_injected": False,
             },
         )
     except (json.JSONDecodeError, KeyError, psycopg.Error) as e:

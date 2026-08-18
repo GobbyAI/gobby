@@ -2,11 +2,11 @@ tags: [context-handoff, context, wiki, overview, lifecycle, gobby, default]
 
 rules:
   inject-wiki-overview:
-    description: "Inject the project wiki overview at session start"
-    event: session_start
+    description: "Inject the project wiki overview once per context epoch at first prompt"
+    event: turn_start
     enabled: true
     priority: 13
-    when: "variables.get('wiki_overview')"
+    when: "variables.get('wiki_overview') and not variables.get('wiki_overview_injected')"
     effects:
       - type: inject_context
         template: |
@@ -18,3 +18,6 @@ rules:
 
           Query the wiki through the gobby-wiki MCP server (`wiki_search`, `wiki_read`).
           <!-- gobby:injected-context:end -->
+      - type: set_variable
+        variable: wiki_overview_injected
+        value: true

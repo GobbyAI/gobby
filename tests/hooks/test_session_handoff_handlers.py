@@ -693,6 +693,7 @@ class TestPrepareCompactContinuationVariables:
                 "injected_memory_ids": ["mem-1"],
                 "_agent_context_injected": True,
                 "_agent_context_rehydrate_pending": False,
+                "wiki_overview_injected": True,
             },
         )
         session_view = MagicMock()
@@ -716,6 +717,7 @@ class TestPrepareCompactContinuationVariables:
         assert variables["injected_memory_ids"] == []
         assert variables["_agent_context_injected"] is False
         assert variables["_agent_context_rehydrate_pending"] is True
+        assert variables["wiki_overview_injected"] is False
         assert variables["plan_mode"] is True
 
     @pytest.mark.parametrize("auto_inject", [False, "false", "0"])
@@ -756,6 +758,7 @@ class TestPrepareCompactContinuationVariables:
         assert variables["loaded_skills"] == []
         assert variables["_agent_context_injected"] is False
         assert variables["_agent_context_rehydrate_pending"] is True
+        assert variables["wiki_overview_injected"] is False
 
     def test_in_place_closeout_refreshes_claimed_task_context(self, hub_db: HubDatabase) -> None:
         session = self._make_session(hub_db, project_name="handoff-prep-claimed")
