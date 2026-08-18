@@ -756,6 +756,7 @@ def test_rotation_drains_predecessor_generations(
             project_id=fixture.project_id,
             generation=first.credential_generation,
         )
+        assert _material_generations(fixture, token) == {rotated.credential_generation}
     finally:
         manager.revoke_interactive(
             deployment_token=token,
@@ -816,13 +817,149 @@ def test_credential_material_ciphertext_at_rest(
                     (token, fixture.machine_id, fixture.project_id),
                 ).fetchall()
             }
-        assert generations == {issued.credential_generation + 1}
+        assert generations == {
+            issued.credential_generation,
+            issued.credential_generation + 1,
+        }
     finally:
         manager.revoke_interactive(
             deployment_token=token,
             project_id=fixture.project_id,
             reason="test-cleanup",
         )
+        manager.close()
+        store.db.close()
+
+
+def _material_generations(
+    fixture: AuthorizationFixture,
+    deployment_token: str,
+) -> set[int]:
+    with psycopg.connect(fixture.database_url, autocommit=True) as admin:
+        return {
+            row[0]
+            for row in admin.execute(
+                f"SELECT credential_generation "
+                f"FROM {AUTH_SCHEMA}.interactive_credential_material "
+                "WHERE deployment_token = %s AND machine_id = %s AND project_id = %s",
+                (deployment_token, fixture.machine_id, fixture.project_id),
+            ).fetchall()
+        }
+
+
+def test_reuse_after_rotation_rollback_loads_predecessor_material(
+    authorization_fixture: AuthorizationFixture,
+    tmp_path: Path,
+) -> None:
+    fixture = authorization_fixture
+    manager = _manager(fixture, tmp_path / "managed")
+    store = _secret_store(fixture)
+    token = "ffffffffffffffff"
+    first = None
+    try:
+        first = manager.issue_interactive(
+            deployment_token=token,
+            project_id=fixture.project_id,
+            session_id=fixture.session_id,
+            expires_at=datetime.now(UTC) + timedelta(hours=1),
+            secret_store=store,
+        )
+        rotated = manager.rotate_interactive(
+            deployment_token=token,
+            project_id=fixture.project_id,
+            session_id=fixture.session_id,
+            expires_at=datetime.now(UTC) + timedelta(hours=1),
+            secret_store=store,
+        )
+        assert _material_generations(fixture, token) == {
+            first.credential_generation,
+            rotated.credential_generation,
+        }
+        outcome = manager.revoke_interactive(
+            deployment_token=token,
+            project_id=fixture.project_id,
+            generation=rotated.credential_generation,
+            reason="rotation-rollback",
+        )
+        assert outcome.completed
+        assert _material_generations(fixture, token) == {first.credential_generation}
+        with psycopg.connect(fixture.database_url, autocommit=True) as admin:
+            admin.execute(
+                f"UPDATE {AUTH_SCHEMA}.principal_bindings "
+                "SET predecessor_drain_deadline = NULL, revocation_requested_at = NULL "
+                "WHERE owner_kind = 'interactive' AND deployment_token = %s "
+                "AND issuing_machine_id = %s AND project_id = %s "
+                "AND credential_generation = %s",
+                (
+                    token,
+                    fixture.machine_id,
+                    fixture.project_id,
+                    first.credential_generation,
+                ),
+            )
+        reused = manager.issue_interactive(
+            deployment_token=token,
+            project_id=fixture.project_id,
+            session_id=fixture.session_id,
+            expires_at=datetime.now(UTC) + timedelta(hours=1),
+            secret_store=store,
+        )
+        assert reused.reused is True
+        assert reused.credential_generation == first.credential_generation
+        with psycopg.connect(reused.dsn) as conn:
+            assert conn.execute("SELECT 1").fetchone() == (1,)
+    finally:
+        # Generation-less lookup picks the highest (revoked) generation, so the
+        # restored predecessor must be revoked explicitly.
+        if first is not None:
+            manager.revoke_interactive(
+                deployment_token=token,
+                project_id=fixture.project_id,
+                generation=first.credential_generation,
+                reason="test-cleanup",
+            )
+        manager.close()
+        store.db.close()
+
+
+def test_store_skips_revoked_generation(
+    authorization_fixture: AuthorizationFixture,
+    tmp_path: Path,
+) -> None:
+    fixture = authorization_fixture
+    manager = _manager(fixture, tmp_path / "managed")
+    store = _secret_store(fixture)
+    token = "abababababababab"
+    try:
+        issued = manager.issue_interactive(
+            deployment_token=token,
+            project_id=fixture.project_id,
+            session_id=fixture.session_id,
+            expires_at=datetime.now(UTC) + timedelta(hours=1),
+            secret_store=store,
+        )
+        manager.revoke_interactive(
+            deployment_token=token,
+            project_id=fixture.project_id,
+            generation=issued.credential_generation,
+            reason="test-revoke",
+        )
+        assert _material_generations(fixture, token) == set()
+        with psycopg.connect(fixture.database_url, autocommit=True) as admin:
+            admin.execute(
+                f"SELECT {AUTH_SCHEMA}.replace_interactive_credential_material("
+                "%s, %s, %s, %s, %s, %s)",
+                (
+                    token,
+                    fixture.machine_id,
+                    fixture.project_id,
+                    issued.credential_generation,
+                    "late-store-ciphertext",
+                    "late-store-aad",
+                ),
+            )
+        assert _material_generations(fixture, token) == set()
+    finally:
         manager.close()
         store.db.close()
 
