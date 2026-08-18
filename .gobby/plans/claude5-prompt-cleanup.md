@@ -173,8 +173,8 @@ AGENTS.md text; cross-reference it instead.
 `kind: deliverable`
 
 Targets:
-- `tests/workflows/test_p2p_messaging_guidance.py::test_universal_instruction_files_require_p2p_messaging`
-- `tests/workflows/test_monolith_guard.py::test_principle_two_mirrors_require_same_session_decomposition`
+- `tests/workflows/test_p2p_messaging_guidance.py`
+- `tests/workflows/test_monolith_guard.py::*` — scope-reason: removes the doctrine-mirror test and its PRINCIPLE_MIRRORS fixture; the deleted symbols no longer resolve in the executed tree
 
 Delete `tests/workflows/test_p2p_messaging_guidance.py` entirely (its only test is the
 mirror pin). In `tests/workflows/test_monolith_guard.py`, remove
@@ -498,7 +498,7 @@ exhortations; the methodology content stands on its own.
 `kind: deliverable`
 
 Targets:
-- `src/gobby/install/shared/workflows/rules/skill-discovery/require-impeccable-skill.yaml`
+- `src/gobby/install/shared/workflows/rules/skill-discovery/require-impeccable-skill.yaml::*` — scope-reason: new bundled rule file authored whole; indexed with symbols once created
 - `src/gobby/install/shared/workflows/rules/impeccable/design-detector.yaml::rules`
 - `src/gobby/install/shared/workflows/rules/CLAUDE.md`
 
@@ -548,6 +548,27 @@ uv run python -c "from pathlib import Path; from gobby.install.manifest import w
 ## Task Mapping
 `kind: framing`
 
-<!-- Updated after task creation -->
 | Plan Item | Task Ref | Status |
 |-----------|----------|--------|
+| 1.1 | #20456 | closed |
+| 1.2 | #20457 | closed |
+| 1.3 | #20458 | closed |
+| 1.4 | #20459 | closed |
+| 1.5 | #20460 | closed |
+| 1.6 | #20461 | closed |
+| 2.1 | #20462 | closed |
+| 2.2 | #20463 | closed |
+| 2.3 | #20464 | closed |
+| 3.1 | #20465 | closed |
+| 3.2 | #20466 | closed |
+| 3.3 | #20468 | closed |
+| 4.1 | #20469 | closed |
+| 4.2 | #20470 | closed |
+| 4.3 | #20471 | closed |
+| 4.4 | #20472 | closed |
+| 4.5 | #20475 | closed |
+| 5.1 | #20476 | closed |
+| 5.2 | #20477 | closed |
+| 5.3 | #20478 | closed |
+| 5.4 | #20479 | closed |
+| V1 test repairs | #20467, #20474, #20480 | closed |
