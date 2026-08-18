@@ -6,7 +6,7 @@ stream_with_mcp_tools, and describe_image.
 """
 
 import logging
-from collections.abc import Generator
+from collections.abc import AsyncIterator, Generator
 from contextlib import contextmanager
 from pathlib import Path
 from types import SimpleNamespace
@@ -733,6 +733,34 @@ class TestGenerateText:
         assert result.text == "reply"
         assert result.applied_reasoning_effort == "xhigh"
         assert captured_kwargs[0]["effort"] == "xhigh"
+
+    @pytest.mark.asyncio
+    async def test_generate_text_sdk_uses_fixed_cwd_and_disables_auto_memory(
+        self, claude_config: DaemonConfig, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """One-shot textgen shares one stable cwd so Claude materializes a
+        single ~/.claude/projects slug, and auto-memory stays off (#20450)."""
+        monkeypatch.setattr(Path, "home", lambda: tmp_path)
+        captured_kwargs: list[dict[str, object]] = []
+
+        async def mock_query(prompt: str, options: Any) -> AsyncIterator[object]:
+            captured_kwargs.append(options.kwargs)
+            yield MockAssistantMessage([MockTextBlock("reply")])
+
+        with mock_claude_sdk(mock_query):
+            from gobby.llm.claude import ClaudeLLMProvider
+
+            provider = ClaudeLLMProvider(claude_config)
+            first = await provider.generate_text_result("Generate text")
+            second = await provider.generate_text_result("Generate text")
+
+        assert first.text == "reply"
+        assert second.text == "reply"
+        assert captured_kwargs[0]["cwd"] == captured_kwargs[1]["cwd"]
+        assert "gobby-textgen-" not in str(captured_kwargs[0]["cwd"])
+        env = captured_kwargs[0]["env"]
+        assert isinstance(env, dict)
+        assert env["CLAUDE_CODE_DISABLE_AUTO_MEMORY"] == "1"
 
     @pytest.mark.asyncio
     async def test_generate_text_sdk_uses_turn_headroom_with_tools_disabled(

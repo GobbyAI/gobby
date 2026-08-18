@@ -20,6 +20,7 @@ from gobby.config.features import KnowledgeGraphQueueConfig
 from gobby.config.persistence import MemoryDreamConfig
 from gobby.config.runtime import RuntimeActiveBundle
 from gobby.config.sessions import SessionLifecycleConfig
+from gobby.llm.textgen_cwd import purge_textgen_project_dirs
 from gobby.sessions.transcript_processing import TranscriptProcessingMixin
 from gobby.storage.hub.protocol import HubDatabase
 from gobby.storage.sessions import SessionManager
@@ -178,6 +179,13 @@ class SessionLifecycleManager(TranscriptProcessingMixin):
                 await self._sweep_digest_backlogs(active)
             except Exception as e:
                 logger.error("Error sweeping digest backlogs: %s", e)
+
+            try:
+                removed = await asyncio.to_thread(purge_textgen_project_dirs)
+                if removed:
+                    logger.info("Purged %d stale textgen Claude project dirs", removed)
+            except Exception as e:
+                logger.error("Error purging textgen project dirs: %s", e)
 
             try:
                 await asyncio.sleep(active.session_lifecycle.expire_check_interval_minutes * 60)
