@@ -13,6 +13,10 @@ REDIRECT_RULES = frozenset(
         "block-claude-memory-search",
         "block-claude-memory-write",
         "block-edits-plan-mode",
+        "block-git-clone",
+        "block-git-clone-interactive",
+        "block-git-worktree-mutations",
+        "block-git-worktree-mutations-interactive",
         "block-gobby-tasks-cli",
         "block-native-task-tools-unclaimed",
         "block-native-todo-write",
@@ -77,7 +81,9 @@ REDIRECT_RULES = frozenset(
 
 TRUE_RESTRICTION_RULES = frozenset(
     {
+        "block-cross-session-foreign-dirty-edit",
         "block-cross-session-foreign-staged-commit",
+        "block-docker-policy-edits",
         "no-agent-spawn-for-merge",
         "no-brew-install",
         "no-cargo-add",

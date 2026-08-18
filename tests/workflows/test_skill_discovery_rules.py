@@ -314,7 +314,7 @@ class TestBrevityRules:
 
         load_row = manager.get_by_name("load-brevity-on-turn-start")
         assert load_row is not None
-        load_body = RuleDefinitionBody.model_validate_json(load_row.definition_json)
+        load_body = RuleDefinitionBody.model_validate(load_row.definition_json)
         assert load_body.event.value == "turn_start"
         assert load_body.effects[0].type == "load_skill"
         assert load_body.effects[0].skill == "brevity"
@@ -324,7 +324,7 @@ class TestBrevityRules:
 
         reminder_row = manager.get_by_name("remind-brevity-on-turn-start")
         assert reminder_row is not None
-        reminder_body = RuleDefinitionBody.model_validate_json(reminder_row.definition_json)
+        reminder_body = RuleDefinitionBody.model_validate(reminder_row.definition_json)
         assert reminder_body.event.value == "turn_start"
         assert reminder_body.effects[0].type == "inject_context"
 
@@ -3663,9 +3663,10 @@ class TestCodeIndexNavigationRules:
         assert response.decision == "block"
         assert response.reason is not None
         assert (
-            'Use `gcode grep "pattern" -m 50` or `gcode search-content` — '
+            'Use `gcode grep "pattern" -m 50` or `gcode search-content "query"` — '
             "the code index has full access to this repo and returns ranked, token-cheap results."
         ) in response.reason
+        assert "recorded gcode failures deactivate this rule" in response.reason
 
     @pytest.mark.asyncio
     async def test_log_search_bypasses_code_index_rules(self, db, tmp_path, monkeypatch) -> None:
@@ -3690,6 +3691,99 @@ class TestCodeIndexNavigationRules:
             )
 
             assert response.decision == "allow"
+
+    @pytest.mark.asyncio
+    async def test_gcode_fail_open_allows_fallback_search(self, db) -> None:
+        _sync_bundled(db)
+        variables = self._variables(loaded=True)
+        variables["gcode_fail_open"] = True
+        event = self._event(
+            HookEventType.BEFORE_TOOL,
+            {
+                "tool_name": "Bash",
+                "command": "rg pattern src",
+                "canonical_tool_kind": "search",
+                "canonical_code_navigation_action": "search",
+                "canonical_code_navigation_broad": True,
+            },
+        )
+
+        response = await RuleEngine(db).evaluate(event, session_id=SESSION_ID, variables=variables)
+
+        assert response.decision == "allow"
+
+    @pytest.mark.asyncio
+    async def test_gcode_fail_open_bypasses_skill_requirement(self, db) -> None:
+        _sync_bundled(db)
+        variables = self._variables(loaded=False)
+        variables["gcode_fail_open"] = True
+        event = self._event(
+            HookEventType.BEFORE_TOOL,
+            {
+                "tool_name": "Bash",
+                "command": "rg pattern src",
+                "canonical_tool_kind": "search",
+                "canonical_code_navigation_action": "search",
+                "canonical_code_navigation_broad": True,
+            },
+        )
+
+        response = await RuleEngine(db).evaluate(event, session_id=SESSION_ID, variables=variables)
+
+        assert response.decision == "allow"
+
+    @pytest.mark.asyncio
+    async def test_gcode_prefixed_compound_read_is_allowed(self, db, tmp_path) -> None:
+        _sync_bundled(db)
+        repo = tmp_path / "repo"
+        event = self._normalized_bash_event(
+            "gcode outline src/a.py --format text; cat src/a.py",
+            cwd=str(repo),
+            project_path=str(repo),
+        )
+
+        response = await RuleEngine(db).evaluate(
+            event,
+            session_id=SESSION_ID,
+            variables=self._variables(loaded=True),
+        )
+
+        assert response.decision == "allow"
+
+    def test_gcode_fail_open_tracker_rules_sync(self, db, manager) -> None:
+        _sync_bundled(db)
+
+        tracker = manager.get_by_name("track-gcode-fail-open")
+        assert tracker is not None
+        tracker_body = RuleDefinitionBody.model_validate(tracker.definition_json)
+        assert tracker_body.event.value == "after_tool"
+        assert tracker_body.when is not None
+        assert "event.data.get('is_error')" in tracker_body.when
+        assert tracker_body.effects[0].type == "set_variable"
+        assert tracker_body.effects[0].variable == "gcode_fail_open"
+        assert tracker_body.effects[0].value is True
+
+        recovery = manager.get_by_name("track-code-index-navigation")
+        assert recovery is not None
+        recovery_body = RuleDefinitionBody.model_validate(recovery.definition_json)
+        assert recovery_body.effects is not None
+        clear_effects = [
+            effect for effect in recovery_body.effects if effect.variable == "gcode_fail_open"
+        ]
+        assert len(clear_effects) == 1
+        assert clear_effects[0].value is False
+
+        for rule_name in (
+            "require-code-index-skill",
+            "prefer-gcode-for-code-search",
+            "prefer-gcode-for-source-read",
+        ):
+            row = manager.get_by_name(rule_name)
+            assert row is not None
+            body = RuleDefinitionBody.model_validate(row.definition_json)
+            assert body.when is not None
+            assert "not variables.get('gcode_fail_open')" in body.when
+            assert "not shell_command_invokes_gcode(tool_input.get('command'))" in body.when
 
     @pytest.mark.asyncio
     async def test_compound_search_after_pipeline_uses_persistent_shell_cwd(
@@ -3955,7 +4049,7 @@ class TestCodeIndexNavigationRules:
         assert variables["code_index_navigation_used_this_turn"] is False
 
     @pytest.mark.asyncio
-    async def test_broad_cat_blocks_but_tight_line_read_allows(self, db) -> None:
+    async def test_broad_cat_blocks_but_tight_line_read_allows(self, db: HubDatabase) -> None:
         _sync_bundled(db)
         engine = RuleEngine(db)
         variables = self._variables(loaded=True)
@@ -3998,7 +4092,7 @@ class TestCodeIndexNavigationRules:
         assert narrow_response.decision == "allow"
 
     @pytest.mark.asyncio
-    async def test_compound_broad_shell_read_and_search_block(self, db) -> None:
+    async def test_compound_broad_shell_read_and_search_block(self, db: HubDatabase) -> None:
         _sync_bundled(db)
         engine = RuleEngine(db)
         variables = self._variables(loaded=True)
@@ -4018,7 +4112,7 @@ class TestCodeIndexNavigationRules:
         assert read_response.decision == "block"
 
     @pytest.mark.asyncio
-    async def test_compound_narrow_shell_read_allows(self, db) -> None:
+    async def test_compound_narrow_shell_read_allows(self, db: HubDatabase) -> None:
         _sync_bundled(db)
         event = self._normalized_bash_event("cd dir\nsed -n '1,40p' app.py")
 

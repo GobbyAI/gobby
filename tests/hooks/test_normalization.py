@@ -1,6 +1,7 @@
 """Tests for shared MCP field normalization."""
 
 import json
+from pathlib import Path
 from typing import Any
 
 import pytest
@@ -2030,3 +2031,113 @@ class TestUnexpandedShellReferencePaths:
         )
 
         assert _contains_unexpanded_shell_reference(path) is expected
+
+
+class TestExternalNavigationScope:
+    """Navigation over CLI state homes and loop headers resolves repo scope correctly."""
+
+    def test_for_loop_over_external_logs_is_not_repo_scoped(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        repo = tmp_path / "repo"
+        gobby_home = tmp_path / "gobby-home"
+        monkeypatch.setenv("GOBBY_HOME", str(gobby_home))
+        command = (
+            f"for f in {gobby_home}/logs/errors.log {gobby_home}/logs/daemon.log; "
+            'do grep "credential_generation" "$f" | tail -2; done'
+        )
+        data: dict[str, Any] = {
+            "tool_name": "Bash",
+            "cwd": str(repo),
+            "project_path": str(repo),
+            "tool_input": {"command": command},
+        }
+
+        normalize_tool_fields(data)
+
+        assert data["canonical_tool_kind"] == "search"
+        assert data["canonical_code_navigation_repo_scope"] is False
+
+    def test_for_loop_over_repo_files_stays_repo_scoped(self, tmp_path: Path) -> None:
+        repo = tmp_path / "repo"
+        data: dict[str, Any] = {
+            "tool_name": "Bash",
+            "cwd": str(repo),
+            "project_path": str(repo),
+            "tool_input": {"command": 'for f in src/a.py src/b.py; do grep error "$f"; done'},
+        }
+
+        normalize_tool_fields(data)
+
+        assert data["canonical_tool_kind"] == "search"
+        assert data["canonical_code_navigation_repo_scope"] is True
+
+    def test_do_prefixed_command_classifies_as_search(self, tmp_path: Path) -> None:
+        repo = tmp_path / "repo"
+        data: dict[str, Any] = {
+            "tool_name": "Bash",
+            "cwd": str(repo),
+            "project_path": str(repo),
+            "tool_input": {"command": 'for f in src/a.py; do grep error "$f"; done'},
+        }
+
+        normalize_tool_fields(data)
+
+        assert data["canonical_tool_kind"] == "search"
+
+    def test_agent_state_home_search_is_not_repo_scoped(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        home = tmp_path / "home"
+        repo = tmp_path / "repo"
+        monkeypatch.delenv("GOBBY_HOME", raising=False)
+        monkeypatch.setenv("HOME", str(home))
+        data: dict[str, Any] = {
+            "tool_name": "Bash",
+            "cwd": str(repo),
+            "project_path": str(repo),
+            "tool_input": {"command": "grep -iE 'memory|deny' ~/.claude/settings.json"},
+        }
+
+        normalize_tool_fields(data)
+
+        assert data["canonical_tool_kind"] == "search"
+        assert data["canonical_code_navigation_repo_scope"] is False
+
+    def test_source_read_under_agent_home_is_not_repo_scoped(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        home = tmp_path / "home"
+        repo = tmp_path / "repo"
+        monkeypatch.delenv("GOBBY_HOME", raising=False)
+        monkeypatch.setenv("HOME", str(home))
+        data: dict[str, Any] = {
+            "tool_name": "Bash",
+            "cwd": str(repo),
+            "project_path": str(repo),
+            "tool_input": {"command": f"cat {home}/.codex/hooks/session_handler.py"},
+        }
+
+        normalize_tool_fields(data)
+
+        assert data["canonical_tool_kind"] == "read"
+        assert data["canonical_code_navigation_repo_scope"] is False
+
+    def test_worktree_under_agent_home_stays_repo_scoped(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        home = tmp_path / "home"
+        monkeypatch.delenv("GOBBY_HOME", raising=False)
+        monkeypatch.setenv("HOME", str(home))
+        worktree = home / ".claude" / "worktrees" / "gobby"
+        data: dict[str, Any] = {
+            "tool_name": "Bash",
+            "cwd": str(worktree),
+            "project_path": str(worktree),
+            "tool_input": {"command": "rg error src"},
+        }
+
+        normalize_tool_fields(data)
+
+        assert data["canonical_tool_kind"] == "search"
+        assert data["canonical_code_navigation_repo_scope"] is True

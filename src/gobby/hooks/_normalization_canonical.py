@@ -325,6 +325,11 @@ def _strip_shell_wrappers(parts: list[str]) -> list[str]:
         if stripped[:1] == ["env"]:
             stripped = stripped[1:]
             continue
+        # Loop/conditional body keywords prefix the real command after a
+        # segment split (`do grep ...`, `then cat ...`); classify what follows.
+        if stripped[:1] in (["do"], ["then"], ["else"]):
+            stripped = stripped[1:]
+            continue
         break
     return stripped
 
@@ -342,7 +347,7 @@ def _literal_cd_target(parts: list[str]) -> str | None:
 
 
 def _rebase_shell_path(path: str, cwd: str | None) -> str:
-    if not cwd or path.startswith("/") or "://" in path:
+    if not cwd or path.startswith(("/", "~")) or "://" in path:
         return path
     return posixpath.normpath(posixpath.join(cwd, path))
 
@@ -671,6 +676,24 @@ def _classify_shell_segment(
     return _classify_shell_segment_without_redirection(plain_parts, cwd)
 
 
+def _classify_for_loop_header(parts: list[str], cwd: str | None) -> _ShellSegmentMetadata:
+    """Surface literal iteration paths from a ``for <var> in ...`` header.
+
+    The loop body arrives as separate segments whose operands are unexpanded
+    variables (dropped as path evidence), so the header's literal list is the
+    only scope signal a ``for f in <paths>; do grep ... "$f"`` command has.
+    """
+    try:
+        in_index = parts.index("in")
+    except ValueError:
+        return _ShellSegmentMetadata("execute")
+    items = [part for part in parts[in_index + 1 :] if _looks_path_target(part)]
+    return _ShellSegmentMetadata(
+        "execute",
+        paths=tuple(_rebase_shell_paths(items, cwd)),
+    )
+
+
 def _classify_shell_segment_without_redirection(
     parts: list[str],
     cwd: str | None,
@@ -679,6 +702,9 @@ def _classify_shell_segment_without_redirection(
         return _ShellSegmentMetadata("execute")
 
     cmd = shell_command_name(parts[0])
+
+    if cmd == "for":
+        return _classify_for_loop_header(parts, cwd)
 
     git_subcommand_index = 1
     if cmd == "git":
