@@ -23,7 +23,7 @@ _PROVIDER_DOMAINS: dict[str, tuple[str, ...]] = {
     "gemini": ("generativelanguage.googleapis.com", "oauth2.googleapis.com"),
     "qwen": ("dashscope.aliyuncs.com", "*.aliyuncs.com"),
     "droid": ("api.factory.ai", "*.factory.ai"),
-    "grok": ("api.x.ai", "*.x.ai"),
+    "grok": ("api.x.ai", "*.x.ai", "grok.com", "*.grok.com"),
 }
 
 _PROVIDER_AUTH_PATHS: dict[str, tuple[str, ...]] = {
