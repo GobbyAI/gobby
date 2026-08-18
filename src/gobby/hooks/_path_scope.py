@@ -26,6 +26,9 @@ _SCRATCHPAD_PREFIXES = (
     "gobby-agent-scratchpad",
     "gobby-scratchpad",
 )
+# CLI-host scratchpads (e.g. Claude Code's /private/tmp/claude-<uid>/...) live
+# under system temp roots that differ from the daemon's tempfile.gettempdir().
+_EXTRA_TEMP_ROOTS = ("/tmp", "/private/tmp")
 
 
 def apply_path_scope_metadata(
@@ -149,9 +152,13 @@ def _is_gobby_logs_path(path: Path) -> bool:
     return _is_relative_to(path, logs_dir)
 
 
+def _temp_scratchpad_roots() -> frozenset[Path]:
+    roots = {Path(tempfile.gettempdir()), *(Path(raw) for raw in _EXTRA_TEMP_ROOTS)}
+    return frozenset(root.resolve(strict=False) for root in roots)
+
+
 def _is_temp_agent_scratchpad_path(path: Path) -> bool:
-    temp_root = Path(tempfile.gettempdir()).resolve(strict=False)
-    if not _is_relative_to(path, temp_root):
+    if not any(_is_relative_to(path, root) for root in _temp_scratchpad_roots()):
         return False
 
     for part in path.parts:
