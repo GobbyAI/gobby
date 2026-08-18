@@ -1255,9 +1255,1012 @@ Accepted F180-F182. Coordinator also bumped the planned attachment migration fro
 {"evidence_id":"26c195b4-26d9-4a08-ae02-20f31622dd02","plan_hash":"ee4fab6b30f91d451ac01f199dc8e02e3298b421c38218b6a60edbc3867c8b65","round_number":17,"round_result":{"coverage_attestation":{"adjacent_variant_complete":true,"attestation_digest":"a93e715d20a7ceb54afeaac31f5ea0407eabfaaba5f3301cd9fc5e2017f8b329","cross_lane_interaction_complete":true,"disposition_counts":{"dismissed":1,"emitted_findings":3,"total":4},"evidence_id":"26c195b4-26d9-4a08-ae02-20f31622dd02","lanes":[{"candidate_count":0,"lane_id":"requirements_traceability","status":"completed"},{"candidate_count":0,"lane_id":"repository_blast_radius","status":"completed"},{"candidate_count":4,"lane_id":"runtime_invariants","status":"completed"}],"shadow_manifest_status":{"entry_count":9,"manifest_digest":"a8681331900c8e7305d002f67b6dcb3577767ac16f4cf2b691fe0a537d6685fc","status":"valid"},"source_digest":"7e6003c04247fb0f03a660b10eb825894cfc98215d8d034e5793254c60ba5b37","version":1},"findings":[{"category":"weak-testability","causal_finding_id":"F176-gwiki-cli-suite-verification","causal_section_ids":["V2"],"check_key":"gwiki-cli-test-target-selection","description":"`cargo test -p gobby-wiki --lib cli -- --nocapture` cannot execute `crates/gwiki/src/cli/tests.rs`: `lib.rs` does not declare `cli`, while `main.rs` declares it for the `gwiki` binary. The Round-16 fix therefore still leaves acceptance 4.1.21 outside the focused gate.","finding_id":"F180-gwiki-cli-test-target","fix":"Replace the V2 command with `cargo test -p gobby-wiki --bin gwiki cli -- --nocapture` and align the coverage-ledger verification mapping.","introduced_in_round":17,"location":"P4 / § 4.1 and V2","prevention":"Resolve each Rust test module to its owning Cargo target before adding a filtered V2 command, and confirm the filter lists the named tests.","principle":"Every acceptance-named regression suite must be executed by the declared verification target.","root_cause":"The repaired command uses Cargo's library target even though cli.rs and cli/tests.rs belong only to the gwiki binary crate declared by src/main.rs.","section_id":"4.1","severity":"blocking"},{"category":"unhandled-edge","causal_finding_id":"F177-service-nonce-launch-artifacts","causal_section_ids":["1.2"],"check_key":"autonomous-service-admission","description":"Launchd `RunAtLoad`/`KeepAlive`, systemd boot activation/`Restart=on-failure`, and Windows logon/`RestartOnFailure` invoke the marked service runner without a freshly minted reservation nonce. The plan specifies only matching-nonce conversion, so autonomous startup is undefined and may fail to start or bypass the intended gate.","finding_id":"F181-autonomous-service-admission","fix":"Add the no-live-reservation service-marker branch: an autonomous marked runner acquires the daemon claim directly under the singleton, while a live reservation remains convertible only by its matching nonce. Add boot/login, KeepAlive, and restart-on-failure barriers for launchd, systemd, and Windows.","introduced_in_round":17,"location":"P1 / § 1.2","prevention":"Enumerate commanded start, boot/login activation, crash restart, and service-manager retry for every supported backend when changing daemon admission.","principle":"Every service-manager start origin needs an explicit singleton-admission transition.","root_cause":"The reservation helper mints a 30-second nonce only for commanded install, enable, start, and restart paths, while the installed services also launch without that helper at boot, login, KeepAlive, and restart-on-failure.","section_id":"1.2","severity":"blocking"},{"category":"unhandled-edge","causal_finding_id":"F178-conversation-fence-durability","causal_section_ids":["3.1"],"check_key":"cleanup-fence-absent-row-serialization","description":"A producer can observe no cleanup-fence row, cleanup can insert the active fence and complete an empty drain, and the producer can then commit its message or bind after cleanup. Persistence plus a same-transaction check does not provide the required mutual exclusion.","finding_id":"F182-cleanup-fence-absent-row-race","fix":"Define a non-null `(scope_kind, scope_id)` fence key and require cleanup, `save_message`, and attachment bind to upsert and lock that same scope row before checking or changing state. Add the absent-row barrier interleaving to the storage and route tests.","introduced_in_round":17,"location":"P3 / § 3.1 with P5 / § 5.1","prevention":"For every database fence, test the interleaving where a producer observes no row, the fence is created and drains empty, and the producer attempts to commit afterward.","principle":"A producer fence must serialize fence creation with producer admission even when no fence row exists yet.","root_cause":"Checking a durable fence row in the same transaction as `save_message` or bind does not lock the absent-row case under PostgreSQL MVCC.","section_id":"3.1","severity":"blocking"}],"reviewer_session":"fa5e5da4-1cee-4eb0-86c0-6f8d7d8ad33e","round":17,"round_number":17,"verdict":"needs_review"},"session_id":"e18533a2-3d7e-4fa4-bdc4-df7028759faf"}
 ```
 
+**Human handoff** `kind: verification`
+
+- user: consider the plan converged; write the M1 manifest; expand with `gobby-skills` expand
+- declined_without_repair:
+  - F183-service-launch-expiry-fallthrough / blocking / late commanded runner can direct-acquire after reservation expiry or cancel
+  - F184-clear-chat-producer-generation / blocking / upsert-lock does not fence the full producer lifecycle
+  - F185-clear-fence-renewal / blocking / long clear can outlive fence expiry and be reclaimed
+  - F186-windows-bootstrap-lock-backend / blocking / exclusive_file_lock is POSIX-only
+- residual_risk: implementation leaves inherit those four holes; do not treat them as repaired
+- next: coordinator derives and applies M1, then runs expand-task against #20330
+
 ## T1 Task Mapping
 `kind: framing`
 
 | Plan Item | Task Ref | Status |
 |-----------|----------|--------|
 | Epic | #20330 | open |
+
+## M1 Task Manifest
+`kind: manifest`
+
+```yaml
+- title: Add files_home and hub_daemon_url resolution
+  category: code
+  task_type: feature
+  depends_on: []
+  validation_criteria: "1.1.1: Local bootstrap file requires absolute `files_home`\
+    \ and refuses `hub_daemon_url`. test: `tests/config/test_files_home.py`.\n1.1.2:\
+    \ Remote bootstrap file requires `hub_daemon_url` and refuses `files_home`. test:\
+    \ `tests/config/test_files_home.py`.\n1.1.3: `require_files_home` returns the\
+    \ configured path in local mode, raises `FilesHomeNotOnThisDaemonError` in remote\
+    \ mode, and raises `FilesHomeError` when the directory is missing. test: `tests/config/test_files_home.py`.\n\
+    1.1.4: Installed bootstrap template documents `files_home` for local mode. file:\
+    \ `src/gobby/install/shared/config/bootstrap.yaml`.\n1.1.5: Rust `FilesHomeView`\
+    \ accepts owner and remote cases and refuses missing/relative/tilde owner paths;\
+    \ daemon endpoint defaults still load. test: `crates/gcore/src/bootstrap.rs::reads_bootstrap_with_files_home`.\n\
+    1.1.6: Remote `hub_daemon_url` accepts `http(s)://host[:port]`, refuses userinfo/query/fragment/non-root\
+    \ path, and refuses this process\u2019s own origin. test: `tests/config/test_files_home.py`.\n\
+    1.1.7: Present-file local/remote fixtures in the existing bootstrap suites include\
+    \ the required field; missing-file defaults are not treated as a files owner.\
+    \ test: `tests/config/test_bootstrap.py`.\n1.1.8: Local bootstrap writers persist\
+    \ `files_home`; remote writers persist `hub_daemon_url`. test: `tests/config/test_files_home.py`.\n\
+    1.1.9: Creating a local bootstrap through `ensure_daemon_config` persists the\
+    \ caller-supplied absolute `files_home` and does not emit a mapping that fails\
+    \ `load_bootstrap`. test: `tests/config/test_files_home.py`.\n1.1.10: Present-file\
+    \ fixtures in the daemon-url, postgres-bootstrap, and falkordb-bootstrap suites\
+    \ include the required mode-specific field. test: `tests/utils/test_daemon_url.py`.\n\
+    1.1.11: Local and remote `to_config_dict` output includes the mode-specific field,\
+    \ and `DaemonConfig` carries both fields. test: `tests/config/test_app_config.py`.\n\
+    1.1.12: Present-file fixtures in the remote-daemon and UI-exposure suites include\
+    \ the required mode-specific field. test: `tests/cli/test_daemon_remote_mode.py`.\n\
+    1.1.13: Concurrent `update_bootstrap_yaml` writers hold `exclusive_file_lock`\
+    \ across re-read, update, validation, and replace; neither published mapping drops\
+    \ the other writer's owner field. test: `tests/config/test_files_home.py`.\n1.1.14:\
+    \ `expose_datastores` staging and rollback keep `files_home` on the published\
+    \ local mapping. test: `tests/cli/test_datastores_expose.py`.\n1.1.15: Present-file\
+    \ fixtures in the CLI install, runtime, and daemon-coverage suites include the\
+    \ required mode-specific field. test: `tests/cli/test_cli_install.py`.\n1.1.16:\
+    \ A present legacy local mapping without `files_home` upgrades via exclusive-lock\
+    \ raw-read, inject, validate, and durable replace without calling `load_bootstrap`;\
+    \ the published mapping then loads. test: `tests/config/test_files_home.py`.\n\
+    1.1.17: Standalone PostgreSQL Docker install refuses compose, asset, and datastore\
+    \ work unless a present valid local bootstrap already names `files_home`, or persists\
+    \ an explicit existing `files_home` first. test: `tests/cli/installers/test_postgres_installer.py`.\n\
+    1.1.18: Present-file fixtures in the PostgreSQL installer, pool-atexit, and runtime-boundary\
+    \ suites include the required mode-specific field. test: `tests/cli/installers/test_postgres_installer.py`.\
+    \ test: `tests/storage/hub/test_postgres_pool_atexit.py`. test: `tests/e2e/test_runtime_boundary.py`.\n\
+    1.1.19: Direct `write_bootstrap_yaml` create, `update_bootstrap_yaml`, and `expose_datastores`\
+    \ rollback share `exclusive_file_lock` and one durable validated replace path;\
+    \ update-versus-create and update-versus-rollback races keep every owner field.\
+    \ test: `tests/config/test_files_home.py`.\n1.1.20: `require_files_home` holds\
+    \ the directory fd; a root or ancestor swap before descendant publication raises\
+    \ `FilesHomeError` and creates no new bind root. test: `tests/config/test_files_home.py`.\n\
+    1.1.21: A present local mapping whose `files_home` is a filesystem root is `BootstrapConfigError`.\
+    \ test: `tests/config/test_files_home.py`.\n1.1.22: Direct `ensure_daemon_config`\
+    \ callers provision an existing absolute `files_home` and assert exclusive-lock\
+    \ durable publication rather than `copy2`. test: `tests/cli/test_install_setup.py`.\n\
+    1.1.23: Present DaemonClient default-constructor bootstrap includes required local\
+    \ `files_home`. test: `tests/utils/test_utils_daemon_client.py`.\n1.1.24: A present\
+    \ bootstrap whose YAML is invalid, not a mapping, not UTF-8, unreadable, or unstatable\
+    \ raises `BootstrapConfigError` and does not return `_default_bootstrap_config`.\
+    \ test: `tests/config/test_files_home.py`."
+  labels:
+  - covers:hub-owned-files-home:1.1:1.1.1
+  - covers:hub-owned-files-home:1.1:1.1.2
+  - covers:hub-owned-files-home:1.1:1.1.3
+  - covers:hub-owned-files-home:1.1:1.1.4
+  - covers:hub-owned-files-home:1.1:1.1.5
+  - covers:hub-owned-files-home:1.1:1.1.6
+  - covers:hub-owned-files-home:1.1:1.1.7
+  - covers:hub-owned-files-home:1.1:1.1.8
+  - covers:hub-owned-files-home:1.1:1.1.9
+  - covers:hub-owned-files-home:1.1:1.1.10
+  - covers:hub-owned-files-home:1.1:1.1.11
+  - covers:hub-owned-files-home:1.1:1.1.12
+  - covers:hub-owned-files-home:1.1:1.1.13
+  - covers:hub-owned-files-home:1.1:1.1.14
+  - covers:hub-owned-files-home:1.1:1.1.15
+  - covers:hub-owned-files-home:1.1:1.1.16
+  - covers:hub-owned-files-home:1.1:1.1.17
+  - covers:hub-owned-files-home:1.1:1.1.18
+  - covers:hub-owned-files-home:1.1:1.1.19
+  - covers:hub-owned-files-home:1.1:1.1.20
+  - covers:hub-owned-files-home:1.1:1.1.21
+  - covers:hub-owned-files-home:1.1:1.1.22
+  - covers:hub-owned-files-home:1.1:1.1.23
+  - covers:hub-owned-files-home:1.1:1.1.24
+  tdd: true
+  source_section: '1.1'
+  implementation_domain: backend
+- title: Add role-bearing singleton and service reservation
+  category: code
+  task_type: feature
+  depends_on:
+  - '1.1'
+  validation_criteria: '1.2.1: Direct `gobby start` inherits the `daemon` flock into
+    the runner; commanded service-managed start writes a nonce reservation that only
+    the designated runner converts; a marked runner with no live reservation acquires
+    the daemon claim directly; maintenance and other starters refuse while a reservation
+    is live. test: `tests/test_runner_pid_file.py`.
+
+    1.2.2: A `maintenance` claimant is not treated as the daemon; `_do_stop`, `gobby
+    stop`, and restart refuse before runtime, service-manager, Docker, or signaling
+    effects. test: `tests/test_runner_pid_file.py`.
+
+    1.2.3: `run_gobby` and `main` treat a held `daemon` or `maintenance` claim as
+    contention and exit before initialization. test: `tests/test_runner_pid_file.py`.
+
+    1.2.4: Direct `gobby stop` and restart refuse a `maintenance` claim inside `_do_stop`
+    with zero `get_cli_runtime`, service-manager, Docker, or `stop_daemon` effects.
+    test: `tests/test_runner_pid_file.py`.
+
+    1.2.5: Start versus migrate, pack, unpack, snapshot, and restore barriers admit
+    exactly one exclusive claimant; a maintenance winner leaves start with zero service,
+    runtime, or runner effects. test: `tests/test_runner_pid_file.py`.
+
+    1.2.6: Commanded launchd, systemd, and Windows start convert only the one-shot
+    nonce; parent, child, acknowledgement, timeout, and replay failures leave no live
+    reservation and no second starter. test: `tests/test_runner_pid_file.py`.
+
+    1.2.7: Singleton open, lock, role-record write, and fsync failures refuse start,
+    runner, gwiki, migrate, pack, unpack, snapshot, and restore with zero protected
+    effects. test: `tests/test_runner_pid_file.py`.
+
+    1.2.8: The service nonce is a one-shot owner-only file plus a 30-second reservation
+    record; conversion is flock-serialized and acknowledged. test: `tests/test_runner_pid_file.py`.
+
+    1.2.9: A reservation from a previous boot or with expired persisted age is cleared
+    under the flock before admission. test: `tests/test_runner_pid_file.py`.
+
+    1.2.10: Windows nonce creation uses `CREATE_NEW` plus an explicit current-user
+    DACL; a permissive parent or tampered ACL refuses consume. test: `tests/cli/installers/test_service_windows.py`.
+
+    1.2.11: `_do_stop` and restart inspect a live service reservation under the singleton
+    lock before runtime or service-manager calls; they refuse it or atomically cancel
+    it and await terminal acknowledgement on launchd, systemd, and Windows. test:
+    `tests/test_runner_pid_file.py`.
+
+    1.2.12: Reservation and nonce cleanup are paired under flock; only the nonce matching
+    the stale record is removed; tampered credentials refuse safely; every parent-crash,
+    pre-consume crash, timeout, reboot-mismatch, launch-failure, and ACL-refusal state
+    can create a fresh nonce and succeed. test: `tests/test_runner_pid_file.py`.
+
+    1.2.13: Public `gobby service install`, `gobby service enable`, start, and restart
+    enter the same reservation helper; a racing maintenance or second starter is refused
+    on launchd, systemd, and Windows. test: `tests/cli/installers/test_service.py`.
+
+    1.2.14: `gobby status` and `gobby health` report daemon, maintenance, live reservation,
+    stale reservation, transitioning, and absent through the typed probe and do not
+    initialize runtime storage or contact a maintenance claimant. test: `tests/cli/test_daemon_coverage.py`.
+
+    1.2.15: A probe immediately after lock acquisition or role conversion, before
+    the current record is published, reports `transitioning`; stop, restart, status,
+    and health fail closed with zero effects on POSIX and Windows. test: `tests/test_runner_pid_file.py`.
+
+    1.2.16: Launchd, systemd, and Windows service templates pass `GOBBY_SERVICE_LAUNCH=1`
+    and the nonce path into `runner.main`; an ordinary runner without that marker
+    does not consume the nonce or take a service-admission branch. test: `tests/cli/installers/test_service.py`.
+
+    1.2.17: A marked service runner with no live reservation acquires the `daemon`
+    claim directly under the singleton for launchd `RunAtLoad`/`KeepAlive`, systemd
+    boot/`Restart=on-failure`, and Windows logon/`RestartOnFailure`; it does not mint
+    a reservation. test: `tests/test_runner_pid_file.py`. test: `tests/cli/installers/test_service.py`.
+
+    1.2.18: A marked service runner converts a live reservation only with the matching
+    nonce; a missing, mismatched, tampered, or replayed nonce refuses and does not
+    acquire the daemon claim. test: `tests/test_runner_pid_file.py`. test: `tests/cli/installers/test_service_windows.py`.'
+  labels:
+  - covers:hub-owned-files-home:1.2:1.2.1
+  - covers:hub-owned-files-home:1.2:1.2.2
+  - covers:hub-owned-files-home:1.2:1.2.3
+  - covers:hub-owned-files-home:1.2:1.2.4
+  - covers:hub-owned-files-home:1.2:1.2.5
+  - covers:hub-owned-files-home:1.2:1.2.6
+  - covers:hub-owned-files-home:1.2:1.2.7
+  - covers:hub-owned-files-home:1.2:1.2.8
+  - covers:hub-owned-files-home:1.2:1.2.9
+  - covers:hub-owned-files-home:1.2:1.2.10
+  - covers:hub-owned-files-home:1.2:1.2.11
+  - covers:hub-owned-files-home:1.2:1.2.12
+  - covers:hub-owned-files-home:1.2:1.2.13
+  - covers:hub-owned-files-home:1.2:1.2.14
+  - covers:hub-owned-files-home:1.2:1.2.15
+  - covers:hub-owned-files-home:1.2:1.2.16
+  - covers:hub-owned-files-home:1.2:1.2.17
+  - covers:hub-owned-files-home:1.2:1.2.18
+  tdd: true
+  source_section: '1.2'
+  implementation_domain: backend
+- title: Retarget personal identity and USER.md
+  category: code
+  task_type: feature
+  depends_on:
+  - '1.2'
+  validation_criteria: '2.1.1: `personal_project_path` is `<files_home>/_personal`
+    and never `$GOBBY_HOME/personal`. test: `tests/storage/test_project_manager.py::TestConstants.test_personal_project_path`.
+
+    2.1.2: Identity marker is written under files_home and checkout register is not
+    called. test: `tests/storage/test_project_manager.py::TestPersonalProjectEnsure`.
+
+    2.1.3: Hub-owner profile reads `<files_home>/USER.md` only. test: `tests/hooks/test_session_user_profile.py::test_read_user_profile_content_reads_personal_user_md`.
+
+    2.1.4: Node `read_user_profile_content` does not read a daemon-home file. test:
+    `tests/hooks/test_session_user_profile.py::test_read_user_profile_content_reads_personal_user_md`.
+
+    2.1.5: Remote install, hub-open, and config-open upsert the sentinel row and do
+    not create a node-local `_personal` tree. test: `tests/storage/test_personal_remote_init.py`.
+
+    2.1.6: Local install still writes the files_home identity marker. test: `tests/cli/test_install_coverage.py`.
+
+    2.1.7: Local install persists `files_home` before personal identity or managed-service
+    startup; an injected bootstrap write failure performs neither. test: `tests/cli/test_install_coverage.py`.
+
+    2.1.8: `--files-home` must name an existing absolute directory. test: `tests/cli/test_install_front_door.py`.
+
+    2.1.9: Remote install refuses when the hub `local_cli_token` is missing and does
+    not start managed services. test: `tests/cli/test_install_coverage.py`.
+
+    2.1.10: Local `install --files-home` upgrades a present legacy bootstrap and then
+    identity writes use that `files_home`. test: `tests/cli/test_install_coverage.py`.
+
+    2.1.11: Local `--files-home` refuses a filesystem root and any equality, ancestor,
+    or descendant overlap with `$GOBBY_HOME/personal`, `$GOBBY_HOME/projects`, or
+    `~/wiki/topics` with zero bootstrap or identity writes. test: `tests/cli/test_install_front_door.py`.
+
+    2.1.12: `tests/cli/test_utils_coverage.py` constructs config-open as explicit
+    local and calls `ensure_personal_project`; a remote case upserts the sentinel
+    without filesystem identity. test: `tests/cli/test_utils_coverage.py`.
+
+    2.1.13: Remote install treats invalid-token or auth rejection, network or timeout
+    failure, and a missing owner root as typed install errors and starts no managed
+    services. test: `tests/cli/test_install_coverage.py`.
+
+    2.1.14: Install prompt and callback seams pass `--files-home`; config-open cases
+    in `tests/cli/test_cli_utils.py` stay local-only for identity and remote-only
+    for the sentinel. test: `tests/cli/test_install_prompts.py`.
+
+    2.1.15: Filesystem identity writes require an already-held singleton token; a
+    concurrent start cannot enter during install bootstrap-plus-identity; claimless
+    hub-open upserts only the sentinel. test: `tests/cli/test_install_coverage.py`.
+
+    2.1.16: Install-to-start adopts the held claim for direct start or converts it
+    under flock into the service reservation; a racing starter is refused. test: `tests/cli/test_install_coverage.py`.
+
+    2.1.17: Launch failure or acknowledgement timeout leaves no unlocked gap and no
+    second starter. test: `tests/cli/test_install_coverage.py`.'
+  labels:
+  - covers:hub-owned-files-home:2.1:2.1.1
+  - covers:hub-owned-files-home:2.1:2.1.2
+  - covers:hub-owned-files-home:2.1:2.1.3
+  - covers:hub-owned-files-home:2.1:2.1.4
+  - covers:hub-owned-files-home:2.1:2.1.5
+  - covers:hub-owned-files-home:2.1:2.1.6
+  - covers:hub-owned-files-home:2.1:2.1.7
+  - covers:hub-owned-files-home:2.1:2.1.8
+  - covers:hub-owned-files-home:2.1:2.1.9
+  - covers:hub-owned-files-home:2.1:2.1.10
+  - covers:hub-owned-files-home:2.1:2.1.11
+  - covers:hub-owned-files-home:2.1:2.1.12
+  - covers:hub-owned-files-home:2.1:2.1.13
+  - covers:hub-owned-files-home:2.1:2.1.14
+  - covers:hub-owned-files-home:2.1:2.1.15
+  - covers:hub-owned-files-home:2.1:2.1.16
+  - covers:hub-owned-files-home:2.1:2.1.17
+  tdd: true
+  source_section: '2.1'
+  implementation_domain: backend
+- title: Reconstruct chat attachment paths
+  category: code
+  task_type: feature
+  depends_on:
+  - '2.1'
+  validation_criteria: '3.1.1: Upload writes under `<files_home>/_personal/attachments/<project>/<id[:2]>/<id>/`.
+    test: `tests/servers/websocket/test_chat_attachments.py`.
+
+    3.1.2: Download/delete resolve the same reconstructed path and do not require
+    a stored absolute `local_path`. test: `tests/servers/websocket/test_chat_attachments.py`.
+
+    3.1.3: Node resolver does not create `$GOBBY_HOME/projects/.../attachments`. test:
+    `tests/servers/websocket/test_chat_attachments.py`.
+
+    3.1.4: Conversation delete, session cleanup, and stale-upload hygiene unlink via
+    the resolver, not `record.local_path`. test: `tests/servers/routes/test_chat_attachments.py`.
+
+    3.1.5: Remote cleanup does not unlink a node-local file. test: `tests/test_runner_chat_attachments_cleanup.py`.
+
+    3.1.6: A vanished files_home root during upload or USER.md write raises `FilesHomeError`
+    and does not recreate the bind path. test: `tests/servers/routes/test_chat_attachments.py`.
+
+    3.1.7: Stored-chat WebSocket prepare/bind finds a hub row by attachment id after
+    a remote upload. test: `tests/servers/websocket/test_chat_attachments.py`.
+
+    3.1.8: Remote cleanup mutates no shared attachment row; owner unlink failure keeps
+    the row and a later run finishes the delete. test: `tests/test_runner_chat_attachments_cleanup.py`.
+
+    3.1.9: A replaced directory at the configured files_home path raises `FilesHomeError`
+    for upload and USER.md write. test: `tests/servers/routes/test_chat_attachments.py`.
+
+    3.1.10: Storage-layer fetch, bind, and cleanup use project and attachment id visibility,
+    not current-process machine equality. test: `tests/storage/test_chat_attachments.py`.
+
+    3.1.11: Bind CAS accepts only `claim_token IS NULL` and `published IS TRUE`; owner
+    unlink failure keeps the row and releases the claim. test: `tests/storage/test_chat_attachments.py`.
+
+    3.1.12: New uploads persist the files_home-relative locator `_personal/attachments/<project>/<id[:2]>/<id>/<filename>`
+    and never persist an absolute path; conversation-delete fixtures resolve through
+    that locator. test: `tests/servers/routes/test_chat_attachments.py`.
+
+    3.1.13: HTTP GET/DELETE remain attachment_id-only; they load the row by id and
+    reconstruct from that row''s `project_id` and `filename`. test: `tests/servers/routes/test_chat_attachments.py`.
+
+    3.1.14: An expired deletion lease is reclaimable by cleanup; crash after claim,
+    after unlink, and before row delete each converge; cancellation awaits the unlink
+    worker before CAS release or delete. test: `tests/storage/test_chat_attachments.py`.
+
+    3.1.15: An ancestor swap under `files_home` during upload or unlink raises `FilesHomeError`
+    and does not publish or delete through the replaced path. test: `tests/servers/routes/test_chat_attachments.py`.
+
+    3.1.16: Cancellation after the unlink worker starts, including a worker that outlives
+    60 seconds, keeps bind and reclaim excluded until that worker terminates. test:
+    `tests/storage/test_chat_attachments.py`.
+
+    3.1.17: After unlink succeeds and the worker crashes before row delete, lease
+    expiry does not let bind attach a row whose bytes are gone. test: `tests/storage/test_chat_attachments.py`.
+
+    3.1.18: Bind, fetch, and HTTP GET refuse `published = FALSE` rows; cleanup removes
+    an unpublished row and its locator bytes only after the upload-owned claim expires.
+    test: `tests/storage/test_chat_attachments.py`.
+
+    3.1.19: gcore embeds migration 389 with matching checksums; schema-contract counts
+    and the catalog manifest stay fresh. test: `crates/gcore/tests/schema_contract.rs`.
+
+    3.1.20: Migration 389 backfills preexisting attachment rows to `published = TRUE`
+    before enforcing the unpublished-cleanup gate. test: `tests/storage/test_chat_attachments.py`.
+
+    3.1.21: Cancellation during the publication or lease CAS awaits the worker''s
+    terminal result before compensating; a committed publish is preserved and a failed
+    CAS removes unpublished bytes. test: `tests/storage/test_chat_attachments.py`.
+
+    3.1.22: Attachment download streams the verified no-follow descriptor; a leaf
+    or ancestor swap before the first byte refuses and does not reopen a pathname.
+    test: `tests/servers/routes/test_chat_attachments.py`.
+
+    3.1.23: Packaged `schema_expected_identity.json` matches migration 389 after gdaemon
+    rebuild. test: `tests/storage/test_schema_contract.py`.
+
+    3.1.24: HTTP DELETE of an unbound attachment uses the tokenized lease: claim,
+    unlink through the resolver, delete only the still-claimed row after success or
+    FileNotFound, and release on other failures. test: `tests/servers/routes/test_chat_attachments.py`.
+
+    3.1.25: Conversation delete and clear-chat claim only rows bound to the target
+    conversation, messages, or session, then delete messages only after those rows
+    are gone or proven FileNotFound; failure, cancellation, crash, ownership race,
+    and rerun leave no bindable missing-bytes row. test: `tests/servers/routes/test_chat_routes.py`.
+
+    3.1.26: Owner upload runs durable publication as a named shielded worker; cancellation
+    awaits the terminal commit outcome before compensation; a committed replace is
+    preserved for the published-CAS path and a failed or aborted replace leaves no
+    unpublished bytes. test: `tests/servers/routes/test_chat_attachments.py`.
+
+    3.1.27: The event loop stays responsive during durable publication; injected cancellation
+    during write, file fsync, replace, directory fsync, and verification each await
+    the worker. test: `tests/servers/routes/test_chat_attachments.py`.
+
+    3.1.28: No-Postgres grant-bundle `expected_schema_identity` matches migration
+    389 latest version and golden hashes. test: `crates/gcore/src/grant/tests.rs::expected_schema_identity_tracks_catalog_head`.
+
+    3.1.29: Restart cleanup names and removes the deterministic upload temp and final
+    locator after death at temp creation, mid-write, file fsync, replace, and directory
+    fsync. test: `tests/servers/routes/test_chat_attachments.py`.
+
+    3.1.30: Standalone HTTP DELETE refuses a bound row; conversation and clear-chat
+    refuse a row whose owner fields do not match the operation. test: `tests/storage/test_chat_attachments.py`.
+
+    3.1.31: Conversation delete and clear-chat upsert-lock the cleanup fence before
+    the first scan; a bind or message insert that loses that lock is refused or drained;
+    conversation delete keeps a tombstone and clear-chat returns the row to idle.
+    test: `tests/servers/routes/test_chat_routes.py`.
+
+    3.1.32: A lost acknowledgement after a committed published CAS preserves row and
+    bytes until reread; bytes are removed only when the row is proven absent. test:
+    `tests/storage/test_chat_attachments.py`.
+
+    3.1.33: Runtime-grant golden vectors and the gdaemon CLI identity contract report
+    migration 389 schema identity, payload checksum, and signature. test: `tests/runtime_grants/test_golden_vectors.py`.
+    test: `crates/gdaemon/tests/cli_contract.rs`.
+
+    3.1.34: `save_message` and attachment bind refuse or wait on an active or terminal
+    cleanup fence after upsert-lock; an expired active clear-chat fence is reclaimable;
+    a crash after conversation delete leaves the tombstone. test: `tests/storage/test_chat_attachments.py`.
+    test: `tests/servers/routes/test_chat_routes.py`.
+
+    3.1.35: Hygiene cannot claim a live upload-owned unpublished row while replace
+    or the publication CAS is blocked; it reclaims only after upload-claim expiry.
+    test: `tests/storage/test_chat_attachments.py`.
+
+    3.1.36: Cleanup, `save_message`, and bind upsert and lock the same non-null `(scope_kind,
+    scope_id)` fence row before checking state; the absent-row interleaving cannot
+    commit a producer after cleanup inserts, drains empty, and finishes. test: `tests/storage/test_chat_attachments.py`.
+    test: `tests/servers/routes/test_chat_routes.py`.'
+  labels:
+  - covers:hub-owned-files-home:3.1:3.1.1
+  - covers:hub-owned-files-home:3.1:3.1.2
+  - covers:hub-owned-files-home:3.1:3.1.3
+  - covers:hub-owned-files-home:3.1:3.1.4
+  - covers:hub-owned-files-home:3.1:3.1.5
+  - covers:hub-owned-files-home:3.1:3.1.6
+  - covers:hub-owned-files-home:3.1:3.1.7
+  - covers:hub-owned-files-home:3.1:3.1.8
+  - covers:hub-owned-files-home:3.1:3.1.9
+  - covers:hub-owned-files-home:3.1:3.1.10
+  - covers:hub-owned-files-home:3.1:3.1.11
+  - covers:hub-owned-files-home:3.1:3.1.12
+  - covers:hub-owned-files-home:3.1:3.1.13
+  - covers:hub-owned-files-home:3.1:3.1.14
+  - covers:hub-owned-files-home:3.1:3.1.15
+  - covers:hub-owned-files-home:3.1:3.1.16
+  - covers:hub-owned-files-home:3.1:3.1.17
+  - covers:hub-owned-files-home:3.1:3.1.18
+  - covers:hub-owned-files-home:3.1:3.1.19
+  - covers:hub-owned-files-home:3.1:3.1.20
+  - covers:hub-owned-files-home:3.1:3.1.21
+  - covers:hub-owned-files-home:3.1:3.1.22
+  - covers:hub-owned-files-home:3.1:3.1.23
+  - covers:hub-owned-files-home:3.1:3.1.24
+  - covers:hub-owned-files-home:3.1:3.1.25
+  - covers:hub-owned-files-home:3.1:3.1.26
+  - covers:hub-owned-files-home:3.1:3.1.27
+  - covers:hub-owned-files-home:3.1:3.1.28
+  - covers:hub-owned-files-home:3.1:3.1.29
+  - covers:hub-owned-files-home:3.1:3.1.30
+  - covers:hub-owned-files-home:3.1:3.1.31
+  - covers:hub-owned-files-home:3.1:3.1.32
+  - covers:hub-owned-files-home:3.1:3.1.33
+  - covers:hub-owned-files-home:3.1:3.1.34
+  - covers:hub-owned-files-home:3.1:3.1.35
+  - covers:hub-owned-files-home:3.1:3.1.36
+  tdd: true
+  source_section: '3.1'
+  implementation_domain: backend
+- title: Point gwiki and daemon wiki scope at files_home/wiki
+  category: code
+  task_type: feature
+  depends_on:
+  - '2.1'
+  - '1.2'
+  validation_criteria: "4.1.1: Topic `foo` resolves to `<files_home>/wiki/foo`, not\
+    \ `.../wiki/topics/foo`. test: `crates/gwiki/src/scope.rs::resolves_global_topic`.\n\
+    4.1.2: Default hub path is files_home/wiki on the owner and does not silently\
+    \ become `~/wiki`. test: `tests/wiki/test_wiki_files_home.py`.\n4.1.3: Personal\
+    \ wiki scope is `<files_home>/wiki/personal`. test: `tests/wiki/test_wiki_files_home.py`.\n\
+    4.1.4: Daemon topic/personal routes use that same home. test: `tests/wiki/test_wiki_files_home.py`.\n\
+    4.1.5: Topic names `personal`, `_personal`, and `wiki` are reserved-name errors\
+    \ at the Rust resolver. test: `crates/gwiki/src/scope.rs::rejects_invalid_topic_names`.\n\
+    4.1.6: The same three names refuse at the Python daemon topic entry; explicit\
+    \ personal scope still resolves to `<files_home>/wiki/personal`. test: `tests/wiki/test_wiki_files_home.py`.\n\
+    4.1.7: New topic registration writes wiki-home-relative child paths and rejects\
+    \ escapes. test: `crates/gwiki/src/registry.rs`.\n4.1.8: Remote-mode gwiki refuses\
+    \ topic/personal filesystem resolution even when `GOBBY_WIKI_HUB` or a config\
+    \ hub path is set. test: `tests/wiki/test_wiki_files_home.py`.\n4.1.9: Personal\
+    \ sentinel resolves without `repo_path`; reserved topic names refuse in the shared\
+    \ Python resolver used by HTTP, MCP, and scheduled registration. test: `tests/wiki/test_scope_resolution.py`.\n\
+    4.1.10: Rust init/`register_scope` and the Python wiki owner entry refuse a missing\
+    \ or replaced files_home root and do not recreate it. test: `tests/wiki/test_wiki_files_home.py`.\n\
+    4.1.11: Rust init and export integration fixtures treat topic vaults as direct\
+    \ wiki-home children. test: `crates/gwiki/tests/cli_init.rs`.\n4.1.12: After owner\
+    \ bootstrap and gwiki init, `<files_home>/wiki/_gwiki/scope.json` is absent. test:\
+    \ `tests/wiki/test_wiki_files_home.py`.\n4.1.13: `resolve_project_from_root` maps\
+    \ a verified `<files_home>/_personal` personal root to `<files_home>/wiki/personal`\
+    \ and leaves ordinary project roots checkout-adjacent. test: `tests/wiki/test_wiki_files_home.py`.\n\
+    4.1.14: Registry overwrite fixtures persist wiki-home-relative direct-child paths\
+    \ and reject escapes. test: `crates/gwiki/src/registry.rs::register_overwrites_existing_entries`.\n\
+    4.1.15: Rust init/Obsidian writes refuse a missing, replaced, symlink, or non-directory\
+    \ files_home root and do not recreate it. test: `tests/wiki/test_wiki_files_home.py`.\n\
+    4.1.16: `gwiki init` and `register_scope` refuse any live `daemon` or `maintenance`\
+    \ holder and mutate no vault or registry bytes. test: `tests/wiki/test_wiki_files_home.py`.\n\
+    4.1.17: When the singleton is free, init and `register_scope` hold a `maintenance`\
+    \ claim through publication; a concurrent migrate, pack, unpack, snapshot, or\
+    \ restore cannot mutate during that window. test: `tests/wiki/test_wiki_files_home.py`.\n\
+    4.1.18: If the daemon releases after eligibility and before publication, gwiki\
+    \ either already holds the claim or refuses with zero mutation. test: `tests/wiki/test_wiki_files_home.py`.\n\
+    4.1.19: Nested `init` \u2192 `register_scope` uses one already-held maintenance\
+    \ claim; a second public `register_scope` acquires its own claim and does not\
+    \ self-contend. test: `tests/wiki/test_wiki_files_home.py`.\n4.1.20: Direct mutating\
+    \ gwiki commands refuse a live holder and acquire `maintenance`; a daemon child\
+    \ that outlives its parent still holds the inherited daemon claim. test: `tests/test_gwiki_gateway.py`.\n\
+    4.1.21: `cli_runtime::run` classifies the command, acquires or adopts ownership\
+    \ after classification, and retains the guard through dispatch and terminal result\
+    \ handling. test: `crates/gwiki/src/cli/tests.rs`.\n4.1.22: A present local bootstrap\
+    \ resolves topic/personal wiki to `<files_home>/wiki` and refuses a `GOBBY_WIKI_HUB`\
+    \ or config hub-path override that normalizes elsewhere. test: `tests/wiki/test_wiki_files_home.py`.\n\
+    4.1.23: Ordinary checkout-project init/register keeps the project-local registry\
+    \ representation and is not forced into wiki-home-relative direct-child paths.\
+    \ test: `crates/gwiki/tests/cli_init.rs`."
+  labels:
+  - covers:hub-owned-files-home:4.1:4.1.1
+  - covers:hub-owned-files-home:4.1:4.1.2
+  - covers:hub-owned-files-home:4.1:4.1.3
+  - covers:hub-owned-files-home:4.1:4.1.4
+  - covers:hub-owned-files-home:4.1:4.1.5
+  - covers:hub-owned-files-home:4.1:4.1.6
+  - covers:hub-owned-files-home:4.1:4.1.7
+  - covers:hub-owned-files-home:4.1:4.1.8
+  - covers:hub-owned-files-home:4.1:4.1.9
+  - covers:hub-owned-files-home:4.1:4.1.10
+  - covers:hub-owned-files-home:4.1:4.1.11
+  - covers:hub-owned-files-home:4.1:4.1.12
+  - covers:hub-owned-files-home:4.1:4.1.13
+  - covers:hub-owned-files-home:4.1:4.1.14
+  - covers:hub-owned-files-home:4.1:4.1.15
+  - covers:hub-owned-files-home:4.1:4.1.16
+  - covers:hub-owned-files-home:4.1:4.1.17
+  - covers:hub-owned-files-home:4.1:4.1.18
+  - covers:hub-owned-files-home:4.1:4.1.19
+  - covers:hub-owned-files-home:4.1:4.1.20
+  - covers:hub-owned-files-home:4.1:4.1.21
+  - covers:hub-owned-files-home:4.1:4.1.22
+  - covers:hub-owned-files-home:4.1:4.1.23
+  tdd: true
+  source_section: '4.1'
+  implementation_domain: backend
+- title: Proxy file HTTP to hub_daemon_url
+  category: code
+  task_type: feature
+  depends_on:
+  - '3.1'
+  - '4.1'
+  validation_criteria: '5.1.1: Remote profile seed fetches hub USER.md and never reads
+    `$GOBBY_HOME/personal/USER.md`. test: `tests/hooks/test_session_user_profile.py::test_seed_user_profile_content_merges_profile`.
+
+    5.1.2: Remote wiki topic/personal requests, including status/attach/ingest, are
+    proxied and do not create `~/wiki`. test: `tests/servers/routes/test_hub_files_proxy.py`.
+
+    5.1.3: Remote attachment upload/download/delete proxy and do not write `$GOBBY_HOME/projects`.
+    test: `tests/servers/routes/test_hub_files_proxy.py`.
+
+    5.1.4: Hub `GET /api/files/user-md` returns the files_home profile. test: `tests/servers/routes/test_hub_files_proxy.py`.
+
+    5.1.5: Hub PUT writes USER.md atomically; remote `write_user_profile_content`
+    updates the hub copy and creates no node-local USER.md or personal directory.
+    test: `tests/hooks/test_session_user_profile.py`.
+
+    5.1.6: Origin join, timeout/auth errors, multipart upload, and binary download
+    preserve status, bytes, Content-Type, and Content-Disposition. test: `tests/servers/routes/test_hub_files_proxy.py`.
+
+    5.1.7: MCP and scheduled topic/personal jobs use `owner_dispatch` and do not construct
+    a node-local gateway. test: `tests/wiki/test_scheduled_jobs.py`.
+
+    5.1.8: Assembled FastAPI app exposes GET and PUT `/api/files/user-md`. test: `tests/servers/routes/test_hub_files_proxy.py`.
+
+    5.1.9: Async hub requests yield the event loop; cancellation cleans up the client.
+    test: `tests/servers/routes/test_hub_files_proxy.py`.
+
+    5.1.10: Repeated hop, self-origin, remote-to-remote, and two-node cycles refuse
+    with a typed error. test: `tests/servers/routes/test_hub_files_proxy.py`.
+
+    5.1.11: Remote upload then WebSocket bind finds the hub attachment row. test:
+    `tests/servers/routes/test_hub_files_proxy.py`.
+
+    5.1.12: wiki.py and scheduled_jobs.py stay under 1,000 lines after dispatch extraction.
+    behavior: "touched production sources stay under 1,000 lines" in `docs/architecture/hub-owned-files-home.md`.
+
+    5.1.13: Every inventoried MCP and scheduled topic/personal command has a hub `/api/wiki/...`
+    route and uses `owner_dispatch` remotely. test: `tests/servers/routes/test_wiki_routes.py`.
+
+    5.1.14: Remote attach/ingest send streamed bytes plus metadata and do not forward
+    a node filesystem path. test: `tests/servers/routes/test_hub_files_proxy.py`.
+
+    5.1.15: Attachment proxy streams with backpressure; range, slow-consumer, cancellation,
+    and maximum-size cases hold. test: `tests/servers/routes/test_hub_files_proxy.py`.
+
+    5.1.16: Topic and personal watchers and prune use `owner_dispatch`; checkout-project
+    watchers stay local; remote mode creates no node-local wiki state. test: `tests/wiki/test_watcher_lifecycle.py`.
+
+    5.1.17: Streaming calls use a bounded connect timeout, read/write inactivity limit,
+    and overall cancellable deadline; delayed first byte and stalled peer fail typed.
+    test: `tests/servers/routes/test_hub_files_proxy.py`.
+
+    5.1.18: Remote conversation message-delete and clear-chat send the complete owner
+    cleanup fence, attachment lease, and message delete to the hub; a bind or message
+    inserted after the remote request starts is refused or drained. test: `tests/servers/routes/test_hub_files_proxy.py`.
+
+    5.1.19: Attachment and wiki proxies forward inbound `Range`, `If-None-Match`,
+    and `If-Modified-Since` and return `Content-Length`, `Content-Range`, `Accept-Ranges`,
+    `ETag`, and `Last-Modified` with 200, 206, and 304 when FileResponse already honors
+    them. test: `tests/servers/routes/test_hub_files_proxy.py`.
+
+    5.1.20: DaemonClient raw and streaming methods share URL join, auth headers, connect/inactivity/deadline
+    timeouts, cancellation cleanup, and non-2xx error types. test: `tests/utils/test_utils_daemon_client.py`.
+
+    5.1.21: Owner upload cancellation awaits shielded durable publication and then
+    the published CAS; cancellation before a committed replace leaves no orphan bytes
+    or unpublished row; cancellation after the published CAS leaves a valid published
+    row/file pair. test: `tests/servers/routes/test_chat_attachments.py`.
+
+    5.1.22: A successful `GET /api/files/user-md` probe with hop `1` from a local
+    owner lets remote install continue; invalid-token or auth rejection, network or
+    timeout failure, missing owner root, hop refusal, and a remote-target probe are
+    typed install errors and start no managed services. test: `tests/cli/test_install_coverage.py`.
+
+    5.1.23: Remote topic/personal `owner_dispatch` runs before any local path-existence
+    or override resolution. test: `tests/wiki/test_scope_resolution.py`.
+
+    5.1.24: Remote profile read treats only a 200 JSON body with string `content`,
+    including `""`, as success; 404 and other non-2xx statuses are typed failures.
+    test: `tests/hooks/test_session_user_profile.py`.
+
+    5.1.25: Remote file-bearing attachment and wiki requests consume the inbound body
+    via `Request.stream` before multipart binding; the node does not spool a complete
+    UploadFile first. test: `tests/servers/routes/test_hub_files_proxy.py`.
+
+    5.1.26: Remote `sync-sessions` with an explicit archive directory and with the
+    scheduled default transfers archive and session-wiki members through the verified
+    container; missing `wiki_dir`, special files, limit-plus-one, truncation, cancellation,
+    and retry leave no hub staging residue and never treat a node path as a readable
+    directory. test: `tests/servers/routes/test_hub_files_proxy.py`.
+
+    5.1.27: Owner and proxied PUT `/api/files/user-md` accept exactly 1,048,576 decoded
+    UTF-8 content bytes and refuse 1,048,577 before publication, leaving the destination
+    unchanged. test: `tests/servers/routes/test_hub_files_proxy.py`.
+
+    5.1.28: Owner and proxied PUT `/api/files/user-md` accept a wire body of exactly
+    6,291,470 bytes and refuse `Content-Length` 6,291,471 before parsing, leaving
+    the destination unchanged. test: `tests/servers/routes/test_hub_files_proxy.py`.
+
+    5.1.29: Owner and proxied PUT `/api/files/user-md` refuse the first streamed byte
+    above 6,291,470 when `Content-Length` is absent, chunked, or under-reported, and
+    leave the destination unchanged. test: `tests/servers/routes/test_hub_files_proxy.py`.
+
+    5.1.30: A process kill after attachment replace and before the published CAS leaves
+    an unpublished row that restart cleanup removes together with those bytes. test:
+    `tests/servers/routes/test_chat_attachments.py`.
+
+    5.1.31: Cancellation during the owner publication CAS awaits the worker''s terminal
+    result before compensation. test: `tests/servers/routes/test_chat_attachments.py`.
+
+    5.1.32: Attachment and wiki proxies forward an upstream 304 through DaemonClient;
+    profile JSON still treats non-200 as typed failure. test: `tests/utils/test_utils_daemon_client.py`.'
+  labels:
+  - covers:hub-owned-files-home:5.1:5.1.1
+  - covers:hub-owned-files-home:5.1:5.1.2
+  - covers:hub-owned-files-home:5.1:5.1.3
+  - covers:hub-owned-files-home:5.1:5.1.4
+  - covers:hub-owned-files-home:5.1:5.1.5
+  - covers:hub-owned-files-home:5.1:5.1.6
+  - covers:hub-owned-files-home:5.1:5.1.7
+  - covers:hub-owned-files-home:5.1:5.1.8
+  - covers:hub-owned-files-home:5.1:5.1.9
+  - covers:hub-owned-files-home:5.1:5.1.10
+  - covers:hub-owned-files-home:5.1:5.1.11
+  - covers:hub-owned-files-home:5.1:5.1.12
+  - covers:hub-owned-files-home:5.1:5.1.13
+  - covers:hub-owned-files-home:5.1:5.1.14
+  - covers:hub-owned-files-home:5.1:5.1.15
+  - covers:hub-owned-files-home:5.1:5.1.16
+  - covers:hub-owned-files-home:5.1:5.1.17
+  - covers:hub-owned-files-home:5.1:5.1.18
+  - covers:hub-owned-files-home:5.1:5.1.19
+  - covers:hub-owned-files-home:5.1:5.1.20
+  - covers:hub-owned-files-home:5.1:5.1.21
+  - covers:hub-owned-files-home:5.1:5.1.22
+  - covers:hub-owned-files-home:5.1:5.1.23
+  - covers:hub-owned-files-home:5.1:5.1.24
+  - covers:hub-owned-files-home:5.1:5.1.25
+  - covers:hub-owned-files-home:5.1:5.1.26
+  - covers:hub-owned-files-home:5.1:5.1.27
+  - covers:hub-owned-files-home:5.1:5.1.28
+  - covers:hub-owned-files-home:5.1:5.1.29
+  - covers:hub-owned-files-home:5.1:5.1.30
+  - covers:hub-owned-files-home:5.1:5.1.31
+  - covers:hub-owned-files-home:5.1:5.1.32
+  tdd: true
+  source_section: '5.1'
+  implementation_domain: backend
+- title: Add hub-local files migrate
+  category: code
+  task_type: feature
+  depends_on:
+  - '3.1'
+  - '4.1'
+  - '1.2'
+  validation_criteria: '6.1.1: First migrate moves every present source class, including
+    leftover personal notes/reminders when they exist. test: `tests/cli/test_files_migrate.py`.
+
+    6.1.2: Second migrate after a complete destination is a no-op success. test: `tests/cli/test_files_migrate.py`.
+
+    6.1.3: Remote mode refuses. test: `tests/cli/test_files_migrate.py`.
+
+    6.1.4: Checkout wiki and comms_attachments are untouched. test: `tests/cli/test_files_migrate.py`.
+
+    6.1.5: Unrecognized destination content refuses before any source mutation. test:
+    `tests/cli/test_files_migrate.py`.
+
+    6.1.6: After a successful migrate, personal and topic scope metadata name the
+    new wiki-home roots. test: `tests/cli/test_files_migrate.py`.
+
+    6.1.7: After a successful migrate, the wiki registry holds only wiki-home-relative
+    child paths. test: `tests/cli/test_files_migrate.py`.
+
+    6.1.8: A recognized partial destination resumes remaining sources instead of refusing.
+    test: `tests/cli/test_files_migrate.py`.
+
+    6.1.9: Injected failure after the first published class leaves the remaining source
+    intact; the next run finishes it. test: `tests/cli/test_files_migrate.py`.
+
+    6.1.10: `gobby files migrate --help` is reachable from the root command. test:
+    `tests/cli/test_files_migrate.py`.
+
+    6.1.11: The existing hub wiki registry is an explicit source; malformed entries
+    refuse before mutation; a crash before registry publication leaves remaining sources
+    intact. test: `tests/cli/test_files_migrate.py`.
+
+    6.1.12: Empty-source migrate still creates the baseline profile file, personal
+    children, wiki directory, and registry without creating the files_home root. test:
+    `tests/cli/test_files_migrate.py`.
+
+    6.1.13: Migrate refuses while the hub daemon is running. test: `tests/cli/test_files_migrate.py`.
+
+    6.1.14: Cross-device copy removes the source only after destination bytes verify;
+    verification or truncation failure preserves the source and leaves no authoritative
+    partial destination. test: `tests/cli/test_files_migrate.py`.
+
+    6.1.15: Preflight finishes before any publication; a present legacy profile or
+    populated personal directory publishes before baseline seeding and does not collide
+    with a manufactured destination. test: `tests/cli/test_files_migrate.py`.
+
+    6.1.16: After verified attachment publication, every rewritten attachment locator
+    is files_home-relative and names verified destination bytes; a missing-destination
+    row is reported and left unrewritten; interruption between publication and rewrite
+    converges on rerun. test: `tests/cli/test_files_migrate.py`.
+
+    6.1.17: Cross-class destination collisions, prefix overlaps, and reserved legacy
+    topic names refuse before any source mutation. test: `tests/cli/test_files_migrate.py`.
+
+    6.1.18: An equal both-present EXDEV pair unlinks the source after preflight; a
+    divergent both-present pair refuses with zero mutations. test: `tests/cli/test_files_migrate.py`.
+
+    6.1.19: Migrate holds `claim_pid_file` for the campaign; a concurrent daemon start
+    cannot enter. test: `tests/cli/test_files_migrate.py`.
+
+    6.1.20: After migrate and an idempotent rerun, `<files_home>/wiki/_gwiki/scope.json`
+    is absent. test: `tests/cli/test_files_migrate.py`.
+
+    6.1.21: Scope-metadata rewrite runs whenever the destination exists, including
+    after source retirement; an injected crash before rewrite converges on rerun.
+    test: `tests/cli/test_files_migrate.py`.
+
+    6.1.22: Filesystem-root `files_home` and equality, ancestor, or descendant overlap
+    with any resolved legacy personal, project-attachment, or wiki-topic source refuse
+    with zero mutations. test: `tests/cli/test_files_migrate.py`.
+
+    6.1.23: Migrate refuses a legacy symlink, FIFO, socket, device, or `st_nlink >
+    1` file, and a whole-graph identity change through the pre-publication barrier,
+    with zero mutations. test: `tests/cli/test_files_migrate.py`.
+
+    6.1.24: After one class has published, a later source swap is a typed recognized
+    partial; already published classes stay published and remaining classes resume.
+    test: `tests/cli/test_files_migrate.py`.
+
+    6.1.25: Leftover personal attachments and project attachments merge as one per-leaf
+    graph under `_personal/attachments`; exact divergent leaf collisions refuse before
+    publication; both-sources-present is not a prefix-conflict refuse. test: `tests/cli/test_files_migrate.py`.
+
+    6.1.26: A legacy attachment row whose destination bytes are absent on the hub
+    is reported and not rewritten. test: `tests/cli/test_files_migrate.py`.'
+  labels:
+  - covers:hub-owned-files-home:6.1:6.1.1
+  - covers:hub-owned-files-home:6.1:6.1.2
+  - covers:hub-owned-files-home:6.1:6.1.3
+  - covers:hub-owned-files-home:6.1:6.1.4
+  - covers:hub-owned-files-home:6.1:6.1.5
+  - covers:hub-owned-files-home:6.1:6.1.6
+  - covers:hub-owned-files-home:6.1:6.1.7
+  - covers:hub-owned-files-home:6.1:6.1.8
+  - covers:hub-owned-files-home:6.1:6.1.9
+  - covers:hub-owned-files-home:6.1:6.1.10
+  - covers:hub-owned-files-home:6.1:6.1.11
+  - covers:hub-owned-files-home:6.1:6.1.12
+  - covers:hub-owned-files-home:6.1:6.1.13
+  - covers:hub-owned-files-home:6.1:6.1.14
+  - covers:hub-owned-files-home:6.1:6.1.15
+  - covers:hub-owned-files-home:6.1:6.1.16
+  - covers:hub-owned-files-home:6.1:6.1.17
+  - covers:hub-owned-files-home:6.1:6.1.18
+  - covers:hub-owned-files-home:6.1:6.1.19
+  - covers:hub-owned-files-home:6.1:6.1.20
+  - covers:hub-owned-files-home:6.1:6.1.21
+  - covers:hub-owned-files-home:6.1:6.1.22
+  - covers:hub-owned-files-home:6.1:6.1.23
+  - covers:hub-owned-files-home:6.1:6.1.24
+  - covers:hub-owned-files-home:6.1:6.1.25
+  - covers:hub-owned-files-home:6.1:6.1.26
+  tdd: true
+  source_section: '6.1'
+  implementation_domain: backend
+- title: Inventory bind dir in pack and hub-backup
+  category: code
+  task_type: feature
+  depends_on:
+  - '6.1'
+  - '1.2'
+  validation_criteria: '6.2.1: Pack archives `files_home` and not `$GOBBY_HOME/personal`.
+    file: `src/gobby/cli/pack.py`.
+
+    6.2.2: Compose/hub-backup treat `gobby_files` as a bind-dir lifecycle entry, not
+    a datastore named volume. file: `src/gobby/data/docker-compose.services.yml`.
+
+    6.2.3: Pack unpack and hub-backup restore put USER.md, a `_personal` attachment,
+    and a wiki file back under configured `files_home` and apply the existing overwrite
+    policy. test: `tests/cli/test_hub_files_restore.py`.
+
+    6.2.4: Existing pack inventory/summary/overwrite contracts include the files bind.
+    test: `tests/cli/test_pack.py`.
+
+    6.2.5: Existing hub-backup artifact/order/summary contracts include the files
+    bind archive. test: `tests/cli/hub_backup/test_cli.py`.
+
+    6.2.6: `hub_backup/cli.py` stays under 1,000 lines; files-home archive/restore
+    lives in the extracted module. behavior: "touched production sources stay under
+    1,000 lines" in `docs/architecture/hub-owned-files-home.md`.
+
+    6.2.7: `resolve_compose_runtime` exports validated `GOBBY_FILES_HOME`; datastore
+    volume enumeration is unchanged. test: `tests/cli/test_compose_bind_address.py`.
+
+    6.2.8: files_home unpack and restore use chunked temp-file publication and preflight
+    member-count plus aggregate size limits. test: `tests/cli/test_hub_files_restore.py`.
+
+    6.2.9: Archive preflight refuses more than 100,000 members, more than 100 GiB
+    declared uncompressed bytes, duplicate normalized names, and file/directory prefix
+    conflicts before mutation. test: `tests/cli/test_hub_files_restore.py`.
+
+    6.2.10: A late invalid files archive member refuses before any datastore row or
+    files_home path changes, in both confirm and `--force` modes. test: `tests/cli/test_hub_files_restore.py`.
+
+    6.2.11: A valid destination collision aborts when confirmation is declined and
+    proceeds only after complete preflight when confirmed or `--force` is supplied.
+    test: `tests/cli/test_hub_files_restore.py`.
+
+    6.2.12: Pack and hub-backup refuse to emit an archive when `files_home` contains
+    a symlink or other special file; regular files and directories round-trip. test:
+    `tests/cli/test_pack.py`.
+
+    6.2.13: Pack holds `claim_pid_file` from files_home discovery through archive
+    publication; a concurrent daemon start cannot enter. test: `tests/cli/test_pack.py`.
+
+    6.2.14: Pack and hub-backup refuse to emit an archive when `files_home` contains
+    a regular file with `st_nlink > 1`. test: `tests/cli/test_pack.py`.
+
+    6.2.15: Unpack and hub-backup restore require a present destination-local bootstrap,
+    publish files under that `files_home`, and keep the destination `files_home` after
+    merging archived bootstrap data. test: `tests/cli/test_hub_files_restore.py`.
+
+    6.2.16: Unpack holds `claim_pid_file` with role `maintenance` from preflight through
+    publication; a concurrent daemon start cannot enter. test: `tests/cli/test_pack.py`.
+
+    6.2.17: Hub-backup snapshot holds `claim_pid_file` with role `maintenance` from
+    preflight through publication; a concurrent daemon start cannot enter. test: `tests/cli/hub_backup/test_cli.py`.
+
+    6.2.18: Hub-backup restore holds `claim_pid_file` with role `maintenance` from
+    preflight through publication; a concurrent daemon start cannot enter. test: `tests/cli/test_hub_files_restore.py`.
+
+    6.2.19: Small real pack and files-home hub-backup archives round-trip; synthetic
+    prewalk/`TarInfo` tests accept exactly 100,000 members and exactly 100 GiB against
+    the production constants. test: `tests/cli/test_pack.py`.
+
+    6.2.20: Files-home unpack and restore refuse when copied bytes disagree with the
+    declared member size, before publication, without allocating a full oversized
+    payload. test: `tests/cli/test_hub_files_restore.py`.
+
+    6.2.21: Synthetic prewalk/`TarInfo` tests refuse 100,001 members or 100 GiB plus
+    one byte before creating output and leave no archive. test: `tests/cli/test_pack.py`.
+
+    6.2.22: Pack and files-home hub-backup refuse when the output or temporary publication
+    path equals or is contained in `files_home` or another archived source root, before
+    stopping services or creating output. test: `tests/cli/test_pack.py`.
+
+    6.2.23: Files-home unpack and hub-backup restore refuse insufficient destination
+    space before either domain mutates, including confirmation and `--force` paths.
+    test: `tests/cli/test_hub_files_restore.py`.
+
+    6.2.24: Injected pack archive write, fsync, replace, or mid-member publication
+    failure leaves no partial authoritative archive, preserves any prior destination,
+    and converges on rerun. test: `tests/cli/test_pack.py`.
+
+    6.2.25: Pack and files-home hub-backup emit the prewalk graph through the held
+    `files_home` directory fd; a leaf or ancestor swap after prewalk refuses and leaves
+    no unpublished archive. test: `tests/cli/test_pack.py`.
+
+    6.2.26: The backup manifest `files` store earns `archive_verified` and `restore_verified`
+    before the destructive restore gate passes; Rust `schema_contract.rs` asserts
+    the bumped version, store count, and files-store fixture. test: `crates/gcore/tests/schema_contract.rs`.
+
+    6.2.27: After confirmation, restore consumes the verified artifact descriptor;
+    a post-gate swap refuses before files or datastore mutation. test: `tests/cli/test_hub_files_restore.py`.
+
+    6.2.28: Injected hub-backup files-store write, fsync, replace, or mid-member publication
+    failure leaves no partial authoritative backup, preserves any prior destination,
+    and converges on rerun. test: `tests/cli/hub_backup/test_cli.py`.
+
+    6.2.29: Injected unpack or restore files-member temp write, fsync, replace, or
+    mid-member publication failure leaves no partial authoritative destination, preserves
+    any prior destination, and converges on rerun. test: `tests/cli/test_hub_files_restore.py`.
+
+    6.2.30: gcore runner tests and gdaemon schema CLI include the v3 files-store fixture.
+    test: `crates/gcore/src/schema/runner_tests.rs`. test: `crates/gdaemon/tests/schema_cli.rs`.
+
+    6.2.31: Direct `HubBackupManifest` construction in the CLI schema suite includes
+    a verified files store; a missing or unverified files record refuses the destructive
+    gate. test: `tests/cli/test_schema.py`.'
+  labels:
+  - covers:hub-owned-files-home:6.2:6.2.1
+  - covers:hub-owned-files-home:6.2:6.2.2
+  - covers:hub-owned-files-home:6.2:6.2.3
+  - covers:hub-owned-files-home:6.2:6.2.4
+  - covers:hub-owned-files-home:6.2:6.2.5
+  - covers:hub-owned-files-home:6.2:6.2.6
+  - covers:hub-owned-files-home:6.2:6.2.7
+  - covers:hub-owned-files-home:6.2:6.2.8
+  - covers:hub-owned-files-home:6.2:6.2.9
+  - covers:hub-owned-files-home:6.2:6.2.10
+  - covers:hub-owned-files-home:6.2:6.2.11
+  - covers:hub-owned-files-home:6.2:6.2.12
+  - covers:hub-owned-files-home:6.2:6.2.13
+  - covers:hub-owned-files-home:6.2:6.2.14
+  - covers:hub-owned-files-home:6.2:6.2.15
+  - covers:hub-owned-files-home:6.2:6.2.16
+  - covers:hub-owned-files-home:6.2:6.2.17
+  - covers:hub-owned-files-home:6.2:6.2.18
+  - covers:hub-owned-files-home:6.2:6.2.19
+  - covers:hub-owned-files-home:6.2:6.2.20
+  - covers:hub-owned-files-home:6.2:6.2.21
+  - covers:hub-owned-files-home:6.2:6.2.22
+  - covers:hub-owned-files-home:6.2:6.2.23
+  - covers:hub-owned-files-home:6.2:6.2.24
+  - covers:hub-owned-files-home:6.2:6.2.25
+  - covers:hub-owned-files-home:6.2:6.2.26
+  - covers:hub-owned-files-home:6.2:6.2.27
+  - covers:hub-owned-files-home:6.2:6.2.28
+  - covers:hub-owned-files-home:6.2:6.2.29
+  - covers:hub-owned-files-home:6.2:6.2.30
+  - covers:hub-owned-files-home:6.2:6.2.31
+  tdd: true
+  source_section: '6.2'
+  implementation_domain: backend
+- title: Update operator docs for files_home
+  category: docs
+  task_type: chore
+  depends_on:
+  - '6.2'
+  validation_criteria: '6.3.1: Intro skill writes `<files_home>/USER.md` on the hub
+    owner and documents the remote PUT path. file: `src/gobby/install/shared/skills/intro/SKILL.md`.
+
+    6.3.2: System-requirements documents the hub-local files_home profile path. file:
+    `docs/guides/system-requirements.md`.
+
+    6.3.3: Bundled-content digest matches the intro skill after this leaf. test: `tests/install/test_bundled_content_manifest.py`.
+
+    6.3.4: Architecture doc names `hub_daemon_url` as the remote owner URL, states
+    that writers never create the `files_home` root, and matches the singleton-holder
+    owner model including start reservation, maintenance role, stop refusal, and gwiki
+    as the stopped-daemon exception. file: `docs/architecture/hub-owned-files-home.md`.
+
+    6.3.5: Intro skill and system-requirements document provisioning the existing
+    hub bind directory, local `install --files-home`, remote `hub_daemon_url` plus
+    existing-token prerequisite, and migrate-before-start. file: `docs/guides/system-requirements.md`.
+
+    6.3.6: Epic #20330 description matches the singleton-holder owner model, `hub_daemon_url`,
+    and no-root-create writers. behavior: "epic description matches the governing
+    owner contract" in `docs/architecture/hub-owned-files-home.md`.
+
+    6.3.7: Architecture migration order is complete-graph preflight, publish every
+    present source, then seed only still-missing baseline children. file: `docs/architecture/hub-owned-files-home.md`.
+
+    6.3.8: Intro skill and system-requirements require remotes upgraded or stopped
+    and leftover node-local files copied onto hub legacy sources before migrate; this
+    epic does not collect files from other machines. file: `docs/guides/system-requirements.md`.'
+  labels:
+  - covers:hub-owned-files-home:6.3:6.3.1
+  - covers:hub-owned-files-home:6.3:6.3.2
+  - covers:hub-owned-files-home:6.3:6.3.3
+  - covers:hub-owned-files-home:6.3:6.3.4
+  - covers:hub-owned-files-home:6.3:6.3.5
+  - covers:hub-owned-files-home:6.3:6.3.6
+  - covers:hub-owned-files-home:6.3:6.3.7
+  - covers:hub-owned-files-home:6.3:6.3.8
+  tdd: false
+  source_section: '6.3'
+  assigned_agent: tech-writer
+```
