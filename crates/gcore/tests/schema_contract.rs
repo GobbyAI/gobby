@@ -58,16 +58,17 @@ fn statement_splitter_preserves_dollar_quoted_bodies() {
 }
 
 #[test]
-fn python_backup_manifest_v2_fixture_round_trips() {
-    let fixture = include_str!("fixtures/hub_backup_manifest/v2_roundtrip.json");
-    let manifest = parse_backup_manifest(fixture).expect("valid Python-produced v2 manifest");
+fn python_backup_manifest_v3_fixture_round_trips() {
+    let fixture = include_str!("fixtures/hub_backup_manifest/v3_roundtrip.json");
+    let manifest = parse_backup_manifest(fixture).expect("valid Python-produced v3 manifest");
 
     assert_eq!(manifest.manifest_format, "gobby-hub-backup-manifest");
-    assert_eq!(manifest.manifest_version, 2);
+    assert_eq!(manifest.manifest_version, 3);
     assert_eq!(manifest.backup_starting_head, 376);
-    assert_eq!(manifest.stores.len(), 4);
+    assert_eq!(manifest.stores.len(), 5);
+    assert!(manifest.stores.contains_key("files"));
 
     let round_trip = serde_json::to_string(&manifest).expect("serializable manifest");
-    let reparsed = parse_backup_manifest(&round_trip).expect("Rust-produced v2 manifest");
+    let reparsed = parse_backup_manifest(&round_trip).expect("Rust-produced v3 manifest");
     assert_eq!(reparsed, manifest);
 }

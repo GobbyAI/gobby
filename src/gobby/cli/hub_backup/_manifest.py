@@ -1,4 +1,4 @@
-"""gobby-hub-backup-manifest schema v2: the verified-restore backup contract.
+"""gobby-hub-backup-manifest schema v3: the verified-restore backup contract.
 
 This manifest is a named, versioned cross-language contract. The Python
 producer here and gcore's Rust gated-apply reader both validate against
@@ -23,11 +23,11 @@ from gobby.cli.hub_backup._integrity import (
 )
 
 MANIFEST_FORMAT = "gobby-hub-backup-manifest"
-MANIFEST_VERSION = 2
+MANIFEST_VERSION = 3
 MANIFEST_NAME = "manifest.json"
 DEFAULT_MAX_AGE_HOURS = 24.0
 
-STORE_KEYS = ("postgres", "qdrant", "falkordb", "volumes")
+STORE_KEYS = ("postgres", "qdrant", "falkordb", "volumes", "files")
 
 _SHA256_PATTERN = "^[0-9a-f]{64}$"
 
@@ -42,10 +42,10 @@ _VERIFICATION_STATE_SCHEMA: dict[str, Any] = {
     },
 }
 
-HUB_BACKUP_MANIFEST_SCHEMA_V2: dict[str, Any] = {
+HUB_BACKUP_MANIFEST_SCHEMA_V3: dict[str, Any] = {
     "$schema": "https://json-schema.org/draft/2020-12/schema",
-    "$id": "https://gobby.ai/schemas/hub-backup-manifest.v2.schema.json",
-    "title": "gobby-hub-backup-manifest v2",
+    "$id": "https://gobby.ai/schemas/hub-backup-manifest.v3.schema.json",
+    "title": "gobby-hub-backup-manifest v3",
     "type": "object",
     "additionalProperties": False,
     "required": [
@@ -161,7 +161,7 @@ class StoreRecord:
 
 @dataclass
 class HubBackupManifest:
-    """The v2 hub backup manifest."""
+    """The v3 hub backup manifest."""
 
     created_at: str
     gobby_version: str
@@ -219,9 +219,9 @@ class GateDecision:
 
 
 def validate_manifest_data(data: dict[str, Any]) -> None:
-    """Validate raw manifest data against the v2 JSON schema."""
+    """Validate raw manifest data against the v3 JSON schema."""
     try:
-        jsonschema.validate(data, HUB_BACKUP_MANIFEST_SCHEMA_V2)
+        jsonschema.validate(data, HUB_BACKUP_MANIFEST_SCHEMA_V3)
     except jsonschema.ValidationError as exc:
         location = ".".join(str(part) for part in exc.absolute_path) or "$"
         raise ValueError(
@@ -281,6 +281,11 @@ def check_manifest_gate(
     )
     if unverified:
         reasons.append("restore_verified not earned for stores: " + ", ".join(unverified))
+    files = manifest.stores.get("files")
+    if files is None:
+        reasons.append("required store missing: files")
+    elif not files.archive_verified.verified or not files.restore_verified.verified:
+        reasons.append("files store is not archive_verified and restore_verified")
 
     if manifest.source_identity != current_identity:
         reasons.append(

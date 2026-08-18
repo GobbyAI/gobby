@@ -123,3 +123,10 @@ volumes:
     name: gobby_postgres_data
   gobby_pgaudit_log:
     name: gobby_pgaudit_log
+
+# Bind-dir lifecycle entry for pack/hub-backup. Not a datastore named volume
+# and not attached to postgres/qdrant/falkor.
+x-gobby-lifecycle:
+  gobby_files:
+    type: bind
+    source: ${GOBBY_FILES_HOME:?GOBBY_FILES_HOME must be set}

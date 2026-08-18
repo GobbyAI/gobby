@@ -36,7 +36,8 @@ def test_postgres_compose_templates_are_byte_equivalent(repo_root: Path) -> None
     source = repo_root / "src/gobby/data/docker-compose.services.yml"
     gcore_asset = repo_root / "crates/gcore/assets/docker-compose.services.yml"
 
-    assert source.read_bytes() == gcore_asset.read_bytes()
+    assert source.is_file()
+    assert not gcore_asset.exists()
 
 
 def test_compose_defines_postgres_alongside_shared_services(

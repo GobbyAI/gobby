@@ -2268,4 +2268,5 @@ Accepted F180-F182. Coordinator also bumped the planned attachment migration fro
 ## Deviations
 
 - #20428: Catalog head on this worktree was already `389_sweep_interactive_orphan_roles.sql`. The chat-attachment deletion-lease, `published` column, and cleanup-fence table shipped as `390_chat_attachments_deletion_lease.sql` instead of the plan's `389_*` name. Identity, grant goldens, and gdaemon CLI assertions track 390.
+- #20432: `files_home.py` landed at 540 lines (projected <300) and `hub_backup/cli.py` at 983 (projected ≤950). Both stay under the 1,000-line ceiling; files-home archive/restore bodies live in `files_home.py`.
 

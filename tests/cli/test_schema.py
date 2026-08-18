@@ -56,7 +56,7 @@ def _manifest(epoch_id: uuid.UUID) -> HubBackupManifest:
                 restore_verified=_verified_state(),
                 details={},
             )
-            for store in ("postgres", "qdrant", "falkordb", "volumes")
+            for store in ("postgres", "qdrant", "falkordb", "volumes", "files")
         },
     )
 
@@ -218,6 +218,23 @@ def test_destructive_manifest_gate_refuses_each_failure_mode(
             current_identity=identity,
             epoch=epoch,
             batch=batch,
+            now=NOW,
+            max_age_hours=24,
+        )
+
+
+def test_destructive_manifest_gate_refuses_missing_files_store(tmp_path: Path) -> None:
+    epoch_id = uuid.uuid4()
+    manifest = _manifest(epoch_id)
+    manifest.stores.pop("files")
+    with pytest.raises(SchemaGateError, match="files"):
+        validate_destructive_manifest(
+            manifest,
+            backup_root=tmp_path,
+            manifest_sha256="a" * 64,
+            current_identity=IDENTITY,
+            epoch=_epoch(epoch_id),
+            batch=_batch(epoch_id, "a" * 64),
             now=NOW,
             max_age_hours=24,
         )

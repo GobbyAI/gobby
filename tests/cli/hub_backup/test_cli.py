@@ -44,6 +44,7 @@ from gobby.cli.hub_backup._stores import (
     VOLUME_ARCHIVE_DIR,
 )
 from gobby.cli.hub_backup._verify import RoleExpectation
+from gobby.cli.hub_backup.files_home import FILES_ARCHIVE_RELPATH
 from gobby.cli.installers.compose_env import ComposeRuntime
 from gobby.cli.installers.container_restart import FALKORDB_CONTAINER
 from gobby.cli.runtime import CliRuntime
@@ -64,11 +65,11 @@ STARTING_HEAD = 187
 
 ROW_PROBES = {"tasks": 1204, "sessions": 88}
 SCHEMA_OBJECTS = {"table": 22, "index": 37}
-# postgres-dump, postgres-globals, one qdrant snapshot, and falkordb-rdb. The
-# harness home has no machine identity and the runtime fixture points the
+# postgres-dump, postgres-globals, one qdrant snapshot, falkordb-rdb, and files.
+# The harness home has no machine identity and the runtime fixture points the
 # logging dir at an empty tmp path, so identity and rule_allow_audit archives
 # (d41adc20c, #19418) contribute nothing here.
-NON_VOLUME_ARTIFACTS = 4
+NON_VOLUME_ARTIFACTS = 5
 QDRANT_COLLECTION = "gobby_memories"
 QDRANT_SNAPSHOT_RELPATH = f"qdrant/{QDRANT_COLLECTION}.snapshot"
 QDRANT_POINTS = 4211
@@ -102,10 +103,12 @@ CONTRACT_ORDER = [
     "services_stop",
     "tar_volumes",
     "services_start",
+    "archive_files_home",
     "verify_postgres_restore",
     "verify_qdrant_restore",
     "verify_falkordb_restore",
     "verify_volume_archives",
+    "verify_files_home_archive",
     "start_daemon",
 ]
 
@@ -196,6 +199,8 @@ class _Harness:
         return _DiskUsage(total=self.free_bytes * 2, used=self.free_bytes, free=self.free_bytes)
 
     def subprocess_run(self, args: list[str], **kwargs: Any) -> subprocess.CompletedProcess[bytes]:
+        if args[:2] != ["docker", "inspect"]:
+            return self._real_subprocess_run(args, **kwargs)
         assert args[:2] == ["docker", "inspect"], f"unexpected command: {args}"
         assert kwargs.get("timeout"), f"missing subprocess timeout: {args}"
         container = args[-1]
@@ -340,6 +345,13 @@ class _Harness:
             "source_inventories": {name: dict(VOLUME_INVENTORY) for name in names},
         }
 
+    def archive_files_home_store(
+        self, backup_root: Path, files_home: Path | None = None
+    ) -> tuple[list[ArtifactRecord], dict[str, object]]:
+        del files_home
+        self._step("archive_files_home")
+        return [_artifact("files-home", FILES_ARCHIVE_RELPATH, backup_root)], {"members": 3}
+
     # -- verifiers ---------------------------------------------------------
 
     def verify_postgres_restore(
@@ -392,9 +404,17 @@ class _Harness:
         counts = dict.fromkeys(archives, 9)
         return _verified("tar-extract"), {"archives": counts}
 
+    def verify_files_home_archive(
+        self, archive: Path
+    ) -> tuple[VerificationState, dict[str, object]]:
+        self._step("verify_files_home_archive")
+        del archive
+        return _verified("files-home-scratch"), {"members": 3}
+
     # -- wiring ------------------------------------------------------------
 
     def install(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        self._real_subprocess_run = subprocess.run
         monkeypatch.setattr(shutil, "which", self.which)
         monkeypatch.setattr(shutil, "disk_usage", self.disk_usage)
         monkeypatch.setattr(subprocess, "run", self.subprocess_run)
@@ -417,10 +437,12 @@ class _Harness:
             "_services_start": self.services_start,
             "_start_epoch_services": self.services_start,
             "tar_volumes": self.tar_volumes,
+            "archive_files_home_store": self.archive_files_home_store,
             "verify_postgres_restore": self.verify_postgres_restore,
             "verify_qdrant_restore": self.verify_qdrant_restore,
             "verify_falkordb_restore": self.verify_falkordb_restore,
             "verify_volume_archives": self.verify_volume_archives,
+            "verify_files_home_archive": self.verify_files_home_archive,
         }
         for name, replacement in replacements.items():
             monkeypatch.setattr(hub_cli, name, replacement)
@@ -429,6 +451,8 @@ class _Harness:
 @pytest.fixture
 def harness(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> _Harness:
     instance = _Harness(tmp_path)
+    instance.gobby_home.mkdir(parents=True)
+    monkeypatch.setenv("GOBBY_HOME", str(instance.gobby_home))
     instance.install(monkeypatch)
     return instance
 
@@ -496,6 +520,7 @@ class TestRestore:
             raising=False,
         )
         monkeypatch.setattr(hub_cli, "restore_postgres_backup", restore_postgres)
+        monkeypatch.setattr(hub_cli, "restore_hub_files", lambda *_a, **_k: None)
         monkeypatch.setattr(hub_cli, "_daemon_is_running", lambda: False)
         monkeypatch.setattr(
             hub_cli,
@@ -526,6 +551,59 @@ class TestRestore:
             )
         ]
         assert "Maintenance epoch released by restore" in result.output
+
+    def test_6_2_17_snapshot_holds_maintenance_claim(
+        self,
+        harness: _Harness,
+        runtime: CliRuntime,
+        tmp_path: Path,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        from gobby.cli.hub_backup import files_home as files_home_mod
+        from gobby.cli.hub_backup.files_home import FilesHomeArchiveHooks
+        from gobby.runner_pid_file import claim_pid_file
+
+        seen: list[bool] = []
+
+        def _on_claimed(claim: object) -> None:
+            del claim
+            blocked = claim_pid_file(harness.gobby_home / "gobby.pid", role="daemon")
+            seen.append(blocked is None)
+            if blocked is not None:
+                blocked.release()
+
+        monkeypatch.setattr(
+            files_home_mod,
+            "_active_hooks",
+            FilesHomeArchiveHooks(on_claimed=_on_claimed),
+        )
+        _run_ok(runtime, tmp_path / "backup")
+        assert seen == [True]
+
+    def test_6_2_28_injected_files_store_failure_preserves_dest(
+        self,
+        harness: _Harness,
+        runtime: CliRuntime,
+        tmp_path: Path,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        from gobby.cli.hub_backup.files_home import FilesHomeArchiveError
+
+        dest = tmp_path / "backup"
+        dest.mkdir()
+        (dest / "prior.txt").write_text("keep", encoding="utf-8")
+
+        def _fail(
+            backup_root: Path, files_home: Path | None = None
+        ) -> tuple[list[ArtifactRecord], dict[str, object]]:
+            del backup_root, files_home
+            harness.calls.append("archive_files_home")
+            raise FilesHomeArchiveError("temp_write", "injected temp write failure")
+
+        monkeypatch.setattr(hub_cli, "archive_files_home_store", _fail)
+        result = _invoke(runtime, "--output", str(tmp_path / "new-backup"))
+        assert result.exit_code != 0
+        assert (dest / "prior.txt").read_text(encoding="utf-8") == "keep"
 
 
 class TestOrchestration:
@@ -723,7 +801,7 @@ class TestManifest:
         assert manifest.backup_starting_head == STARTING_HEAD
         assert manifest.row_count_probes == ROW_PROBES
         assert manifest.source_identity.pg_system_identifier == SYSTEM_IDENTIFIER
-        assert set(manifest.stores) == {"postgres", "qdrant", "falkordb", "volumes"}
+        assert set(manifest.stores) == {"postgres", "qdrant", "falkordb", "volumes", "files"}
         assert len(manifest.artifacts) == NON_VOLUME_ARTIFACTS + len(HUB_VOLUMES)
 
     def test_manifest_includes_allow_audit_logs_with_checksums(
@@ -767,6 +845,7 @@ class TestManifest:
             "qdrant": "snapshot-download+sha256",
             "falkordb": "bgsave-rdb-copy+sha256",
             "volumes": "tar-archive+sha256",
+            "files": "files-home-prewalk+sha256",
         }
         for store in manifest.stores.values():
             assert store.archive_verified.verified is True
@@ -1190,7 +1269,7 @@ class TestJsonOutput:
         assert payload["backup_root"] == str(backup_root)
         assert payload["epoch_id"] is None
         assert payload["artifacts"] == NON_VOLUME_ARTIFACTS + len(HUB_VOLUMES)
-        assert sorted(payload["stores"]) == ["falkordb", "postgres", "qdrant", "volumes"]
+        assert sorted(payload["stores"]) == ["falkordb", "files", "postgres", "qdrant", "volumes"]
 
     def test_json_output_never_leaks_the_dsn(
         self, harness: _Harness, runtime: CliRuntime, tmp_path: Path

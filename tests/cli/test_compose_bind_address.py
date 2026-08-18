@@ -41,8 +41,13 @@ def test_templates_parameterized_and_identical() -> None:
     python_template = Path("src/gobby/data/docker-compose.services.yml")
     rust_template = Path("crates/gcore/assets/docker-compose.services.yml")
 
-    assert python_template.read_bytes() == rust_template.read_bytes()
-    services = yaml.safe_load(python_template.read_text(encoding="utf-8"))["services"]
+    assert not rust_template.exists()
+    loaded = yaml.safe_load(python_template.read_text(encoding="utf-8"))
+    services = loaded["services"]
+    assert "gobby_files" not in loaded.get("volumes", {})
+    lifecycle = loaded["x-gobby-lifecycle"]["gobby_files"]
+    assert lifecycle["type"] == "bind"
+    assert "GOBBY_FILES_HOME" in lifecycle["source"]
     bind = "${GOBBY_SERVICES_BIND_ADDRESS:-127.0.0.1}"
     assert services["postgres"]["ports"] == [f"{bind}:${{GOBBY_POSTGRES_PORT:-60891}}:5432"]
     assert services["qdrant"]["ports"] == [
@@ -59,6 +64,8 @@ def test_resolve_compose_runtime_reads_bind_from_bootstrap_without_database(
     monkeypatch: pytest.MonkeyPatch,
     tmp_path: Path,
 ) -> None:
+    files_home = tmp_path / "files-home"
+    files_home.mkdir()
     bootstrap = tmp_path / "bootstrap.yaml"
     bootstrap.write_text(
         yaml.safe_dump(
@@ -66,6 +73,7 @@ def test_resolve_compose_runtime_reads_bind_from_bootstrap_without_database(
                 "datastore_mode": "local",
                 "database_url": "postgresql://gobby:secret@localhost:60891/gobby",
                 "services_bind_address": "100.64.0.7",
+                "files_home": str(files_home),
             }
         ),
         encoding="utf-8",
@@ -80,6 +88,7 @@ def test_resolve_compose_runtime_reads_bind_from_bootstrap_without_database(
     runtime = compose_env.resolve_compose_runtime(tmp_path, profiles=("postgres",))
 
     assert runtime.environment["GOBBY_SERVICES_BIND_ADDRESS"] == "100.64.0.7"
+    assert runtime.environment["GOBBY_FILES_HOME"] == str(files_home)
 
 
 def test_installers_respect_published_host(

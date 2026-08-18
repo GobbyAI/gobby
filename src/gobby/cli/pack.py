@@ -16,6 +16,19 @@ from pathlib import Path, PurePosixPath, PureWindowsPath
 
 import click
 
+from gobby.cli.hub_backup.files_home import (
+    PACK_FILES_PREFIX,
+    FilesHomeArchiveError,
+    check_output_outside_sources,
+    destination_free_bytes,
+    files_members_would_overwrite,
+    maintenance_claim,
+    merge_bootstrap_preserving_files_home,
+    preflight_archive_graph,
+    require_destination_files_home,
+    restore_files_home_from_archive,
+    write_restricted_archive,
+)
 from gobby.cli.installers.docker_guard import ensure_docker_allowed
 from gobby.cli.installers.git_hooks import install_git_hooks
 from gobby.cli.postgres_backup import (
@@ -26,6 +39,7 @@ from gobby.cli.postgres_backup import (
     restore_postgres_backup,
 )
 from gobby.cli.utils import get_gobby_home, stop_daemon
+from gobby.paths import FilesHomeError, require_files_home
 from gobby.storage.secrets import SECRET_MATERIAL_FILENAMES
 from gobby.utils.durable_file import durable_replace
 
@@ -213,14 +227,27 @@ def _get_pack_size_estimate() -> int:
     return total
 
 
-def _archive_would_overwrite(members: list[tarfile.TarInfo]) -> bool:
+def _archive_would_overwrite(
+    members: list[tarfile.TarInfo], files_home: Path | None = None
+) -> bool:
     """Return whether unpacking current-runtime members would overwrite files."""
     home = get_gobby_home()
+    files_members = [
+        member
+        for member in members
+        if member.name == PACK_FILES_PREFIX or member.name.startswith(f"{PACK_FILES_PREFIX}/")
+    ]
+    if files_home is not None and files_members_would_overwrite(
+        files_members, files_home, prefix=PACK_FILES_PREFIX
+    ):
+        return True
     for member in members:
         if (
             member.name == "gobby/manifest.json"
             or member.name.startswith("gobby/docker-volumes/")
             or member.name.startswith(f"{POSTGRES_BACKUP_ARCHIVE_PREFIX}/")
+            or member.name == PACK_FILES_PREFIX
+            or member.name.startswith(f"{PACK_FILES_PREFIX}/")
             or not member.name.startswith("gobby/")
         ):
             continue
@@ -228,6 +255,21 @@ def _archive_would_overwrite(members: list[tarfile.TarInfo]) -> bool:
         if rel and _safe_archive_target(home, rel, member).exists():
             return True
     return False
+
+
+def _configured_files_home() -> Path | None:
+    from gobby.config.bootstrap import BootstrapConfigError, load_bootstrap
+
+    bootstrap = get_gobby_home() / "bootstrap.yaml"
+    if not bootstrap.is_file():
+        return None
+    try:
+        config = load_bootstrap(str(bootstrap))
+    except BootstrapConfigError:
+        return None
+    if config.datastore_mode == "remote" or not config.files_home:
+        return None
+    return Path(config.files_home)
 
 
 def _safe_archive_target(base: Path, rel: str, member: tarfile.TarInfo) -> Path:
@@ -316,6 +358,10 @@ def pack(output: str | None, no_docker: bool, no_transcripts: bool, dry_run: boo
     if cwd_gobby.is_dir():
         items.append(("project-gobby", cwd_gobby))
 
+    files_home = _configured_files_home()
+    if files_home is not None:
+        items.append((PACK_FILES_PREFIX, files_home))
+
     # Docker volumes
     docker_volumes_to_export: list[str] = []
     if not no_docker and _docker_available():
@@ -348,6 +394,13 @@ def pack(output: str | None, no_docker: bool, no_transcripts: bool, dry_run: boo
         return
 
     click.echo(f"Packing Gobby data to {output_path}...")
+    source_roots = [get_gobby_home()]
+    if files_home is not None:
+        source_roots.append(files_home)
+        try:
+            check_output_outside_sources(output_path, *source_roots)
+        except FilesHomeArchiveError as exc:
+            raise click.ClickException(str(exc)) from exc
 
     # Stop daemon for consistent DB snapshot
     daemon_was_running = _daemon_is_running()
@@ -364,7 +417,20 @@ def pack(output: str | None, no_docker: bool, no_transcripts: bool, dry_run: boo
 
     primary_error: BaseException | None = None
     try:
-        _do_pack(output_path, items, docker_volumes_to_export, missing, include_postgres)
+        with maintenance_claim(get_gobby_home()):
+            if files_home is not None:
+                require_files_home()
+            _do_pack(
+                output_path,
+                items,
+                docker_volumes_to_export,
+                missing,
+                include_postgres,
+                files_home=files_home,
+            )
+    except FilesHomeArchiveError as error:
+        primary_error = error
+        raise click.ClickException(str(error)) from error
     except BaseException as error:
         primary_error = error
         raise
@@ -405,6 +471,7 @@ def _do_pack(
     docker_volumes_to_export: list[str],
     missing: list[str],
     include_postgres: bool,
+    files_home: Path | None = None,
 ) -> None:
     """Inner pack logic, separated for try/finally lifecycle management."""
     with tempfile.TemporaryDirectory() as tmpdir:
@@ -449,7 +516,7 @@ def _do_pack(
         items.insert(0, ("gobby/manifest.json", manifest_path))
 
         # Create tarball
-        _write_restricted_archive(output_path, items)
+        _write_restricted_archive(output_path, items, files_home=files_home)
 
     final_size = output_path.stat().st_size
     click.echo(f"\nPacked: {output_path} ({_human_size(final_size)})")
@@ -458,29 +525,20 @@ def _do_pack(
         click.echo(f"Skipped (not found): {', '.join(missing)}")
 
 
-def _write_restricted_archive(output_path: Path, items: list[tuple[str, Path]]) -> None:
+def _write_restricted_archive(
+    output_path: Path,
+    items: list[tuple[str, Path]],
+    files_home: Path | None = None,
+) -> None:
     """Write a gzip tarball without exposing it through permissive umask defaults."""
-    fd, temp_name = tempfile.mkstemp(
-        prefix=f".{output_path.name}.",
-        suffix=".tmp",
-        dir=output_path.parent,
+    for archive_name, _path in items:
+        click.echo(f"  Adding: {archive_name}")
+    write_restricted_archive(
+        output_path,
+        items,
+        files_home=files_home,
+        source_roots=(get_gobby_home(),),
     )
-    temp_path = Path(temp_name)
-    try:
-        with os.fdopen(fd, "wb") as raw_file:
-            with tarfile.open(fileobj=raw_file, mode="w:gz") as tar:
-                for archive_name, path in items:
-                    click.echo(f"  Adding: {archive_name}")
-                    tar.add(str(path), arcname=archive_name)
-        temp_path.chmod(0o600)
-        os.replace(temp_path, output_path)
-        output_path.chmod(0o600)
-    except Exception:
-        try:
-            temp_path.unlink()
-        except FileNotFoundError:
-            pass
-        raise
 
 
 @click.command("unpack")
@@ -550,8 +608,36 @@ def unpack(
                     click.echo(f"  {member.name}/")
             return
 
+        try:
+            dest_files_home = require_destination_files_home()
+            files_preflight = [
+                member
+                for member in members
+                if member.name == PACK_FILES_PREFIX
+                or member.name.startswith(f"{PACK_FILES_PREFIX}/")
+            ]
+            preflight_archive_graph(files_preflight)
+            for member in files_preflight:
+                if not member.isfile() and not member.isdir():
+                    raise FilesHomeArchiveError(
+                        "invalid",
+                        f"Unsafe archive member {member.name!r}: "
+                        "only regular files and directories are supported",
+                    )
+            needed = sum(member.size for member in files_preflight if member.isfile())
+            if destination_free_bytes(dest_files_home) < needed:
+                raise FilesHomeArchiveError(
+                    "space", "insufficient destination space for files_home restore"
+                )
+        except FilesHomeArchiveError as exc:
+            raise click.ClickException(str(exc)) from exc
+
         # Safety check
-        if get_gobby_home().exists() and not force and _archive_would_overwrite(members):
+        if (
+            get_gobby_home().exists()
+            and not force
+            and _archive_would_overwrite(members, dest_files_home)
+        ):
             if not click.confirm(
                 f"Warning: {get_gobby_home()} already has Gobby data. "
                 "This will overwrite matching files. Continue?"
@@ -578,10 +664,15 @@ def unpack(
         get_gobby_home().mkdir(parents=True, exist_ok=True)
         docker_archives: list[tarfile.TarInfo] = []
         postgres_members: list[tarfile.TarInfo] = []
+        files_members: list[tarfile.TarInfo] = []
 
         for member in members:
             if member.name == "gobby/manifest.json":
                 # Save manifest but don't need to extract to ~/.gobby
+                continue
+
+            if member.name == PACK_FILES_PREFIX or member.name.startswith(f"{PACK_FILES_PREFIX}/"):
+                files_members.append(member)
                 continue
 
             if member.name.startswith("gobby/docker-volumes/"):
@@ -621,11 +712,26 @@ def unpack(
                     f = tar.extractfile(member)
                     if f:
                         content = f.read()
-                        if rel == "machine_id":
+                        if rel == "bootstrap.yaml":
+                            merge_bootstrap_preserving_files_home(target, content, dest_files_home)
+                        elif rel == "machine_id":
                             durable_replace(target, content)
                         else:
                             target.write_bytes(content)
                 click.echo(f"  Restored: {rel}")
+
+        if files_members:
+            try:
+                with maintenance_claim(get_gobby_home()):
+                    restore_files_home_from_archive(
+                        tar,
+                        dest_files_home,
+                        prefix=PACK_FILES_PREFIX,
+                        hold_claim=False,
+                    )
+            except (FilesHomeArchiveError, FilesHomeError) as exc:
+                raise click.ClickException(str(exc)) from exc
+            click.echo("  Restored: files_home")
 
         # Import Docker volumes
         if not no_docker and docker_archives:

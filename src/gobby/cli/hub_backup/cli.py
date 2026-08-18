@@ -67,6 +67,16 @@ from gobby.cli.hub_backup._verify import (
     verify_qdrant_restore,
     verify_volume_archives,
 )
+from gobby.cli.hub_backup.files_home import (
+    FILES_ARCHIVE_METHOD,
+    FILES_ARCHIVE_RELPATH,
+    FilesHomeArchiveError,
+    archive_files_home_store,
+    check_output_outside_sources,
+    maintenance_claim,
+    restore_hub_files,
+    verify_files_home_archive,
+)
 from gobby.cli.installers.compose_env import (
     MANAGED_SERVICE_PROFILES,
     ComposeEnvironmentError,
@@ -90,6 +100,7 @@ from gobby.cli.postgres_backup import (
 from gobby.cli.runtime import get_cli_runtime
 from gobby.cli.utils_shutdown import stop_daemon
 from gobby.config import expand_env_vars
+from gobby.config.bootstrap import BootstrapConfigError, load_bootstrap
 from gobby.config.logging import LoggingSettings, resolved_logs_dir
 from gobby.config.registry import CONFIG_REGISTRY, UnknownConfigKeyError
 from gobby.paths import get_gobby_home
@@ -144,6 +155,19 @@ class HubBackupTarget:
     falkordb_container: str
     volumes: tuple[str, ...]
     qdrant_port: int | None = None
+
+
+def _configured_files_home(gobby_home: Path) -> Path | None:
+    bootstrap = gobby_home / "bootstrap.yaml"
+    if not bootstrap.is_file():
+        return None
+    try:
+        config = load_bootstrap(str(bootstrap))
+    except BootstrapConfigError:
+        return None
+    if config.datastore_mode == "remote" or not config.files_home:
+        return None
+    return Path(config.files_home)
 
 
 def _hub_backup_target(database_url: str) -> HubBackupTarget:
@@ -226,19 +250,29 @@ def hub_backup(
     manifest_path = backup_root / MANIFEST_NAME
     try:
         stop_daemon(quiet=json_output, shutdown_source="cli_hub_backup")
-        manifest = _run_backup(
-            backup_root=staging_root,
-            gobby_home=gobby_home,
-            logs_dir=_backup_logs_dir(ctx, predecessor=epoch is not None),
-            database_url=database_url,
-            qdrant_url=qdrant_url,
-            qdrant_api_key=qdrant_api_key,
-            epoch=epoch,
-            target=target,
-        )
-        verify_artifacts(staging_root, manifest.artifacts)
-        write_manifest(manifest, staging_root / MANIFEST_NAME)
-        publish_staged_backup(staging_root, backup_root)
+        files_home = _configured_files_home(gobby_home)
+        if files_home is not None:
+            try:
+                check_output_outside_sources(backup_root, files_home)
+            except FilesHomeArchiveError as exc:
+                raise click.ClickException(str(exc)) from exc
+        with maintenance_claim(gobby_home):
+            manifest = _run_backup(
+                backup_root=staging_root,
+                gobby_home=gobby_home,
+                logs_dir=_backup_logs_dir(ctx, predecessor=epoch is not None),
+                database_url=database_url,
+                qdrant_url=qdrant_url,
+                qdrant_api_key=qdrant_api_key,
+                epoch=epoch,
+                target=target,
+                files_home=files_home,
+            )
+            verify_artifacts(staging_root, manifest.artifacts)
+            write_manifest(manifest, staging_root / MANIFEST_NAME)
+            publish_staged_backup(staging_root, backup_root)
+    except FilesHomeArchiveError as exc:
+        raise click.ClickException(str(exc)) from exc
     finally:
         try:
             remove_staging_directory(staging_root)
@@ -291,15 +325,27 @@ def restore_hub_backup(
         click.echo("Aborted.")
         return
 
-    restore_postgres_globals(database_url, backup_root / GLOBALS_DUMP_RELPATH)
-    result = restore_postgres_backup(
-        backup_root / Path(POSTGRES_DUMP_RELPATH).parent,
-        clean=clean,
-        allow_unverified=True,
-        gobby_home=get_gobby_home(),
-        database_url=database_url,
+    files_artifact = next(
+        (artifact for artifact in manifest.artifacts if artifact.path == FILES_ARCHIVE_RELPATH),
+        None,
     )
-    reconcile_restored_principals(database_url)
+    try:
+        with maintenance_claim(get_gobby_home()):
+            restore_hub_files(
+                backup_root,
+                expected_sha256=None if files_artifact is None else files_artifact.sha256,
+            )
+            restore_postgres_globals(database_url, backup_root / GLOBALS_DUMP_RELPATH)
+            result = restore_postgres_backup(
+                backup_root / Path(POSTGRES_DUMP_RELPATH).parent,
+                clean=clean,
+                allow_unverified=True,
+                gobby_home=get_gobby_home(),
+                database_url=database_url,
+            )
+            reconcile_restored_principals(database_url)
+    except FilesHomeArchiveError as exc:
+        raise click.ClickException(str(exc)) from exc
     click.echo("Hub PostgreSQL restore completed.")
     if target := result.get("database_url"):
         click.echo(f"  Target: {target}")
@@ -398,6 +444,7 @@ def _run_backup(
     qdrant_api_key: str | None,
     epoch: str | None,
     target: HubBackupTarget,
+    files_home: Path | None = None,
 ) -> HubBackupManifest:
     """Collect source facts, archive every store, verify each one, and describe it."""
     identity, starting_head = collect_postgres_identity(database_url)
@@ -422,6 +469,8 @@ def _run_backup(
         volumes=target.volumes,
     )
     artifacts.extend(volume_artifacts)
+    files_artifacts, files_details = archive_files_home_store(backup_root, files_home)
+    artifacts.extend(files_artifacts)
     artifacts.extend(archive_rule_allow_audit_logs(logs_dir, backup_root))
     identity_artifact = _archive_machine_identity(gobby_home, backup_root)
     if identity_artifact is not None:
@@ -438,6 +487,7 @@ def _run_backup(
         qdrant_details=qdrant_details,
         falkordb_details=falkordb_details,
         volume_details=volume_details,
+        files_details=files_details,
     )
     return HubBackupManifest(
         created_at=datetime.now(UTC).isoformat(),
@@ -658,6 +708,7 @@ def _verify_stores(
     qdrant_details: dict[str, object],
     falkordb_details: dict[str, object],
     volume_details: dict[str, object],
+    files_details: dict[str, object],
 ) -> dict[str, StoreRecord]:
     """Prove each store restores and fold the proof into its manifest record."""
     postgres_state, postgres_proof = verify_postgres_restore(
@@ -683,6 +734,7 @@ def _verify_stores(
         _volume_archives(backup_root, volume_details),
         _expected_volume_inventories(volume_details),
     )
+    files_state, files_proof = verify_files_home_archive(backup_root / FILES_ARCHIVE_RELPATH)
 
     return {
         "postgres": _store_record(
@@ -695,6 +747,7 @@ def _verify_stores(
         "volumes": _store_record(
             VOLUMES_ARCHIVE_METHOD, volumes_state, volume_details, volumes_proof
         ),
+        "files": _store_record(FILES_ARCHIVE_METHOD, files_state, files_details, files_proof),
     }
 
 

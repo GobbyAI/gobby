@@ -100,6 +100,19 @@ def test_runtime_process_and_explicit_values_override_canonical(
         },
     )
     monkeypatch.setenv("GOBBY_POSTGRES_PASSWORD", "process")
+    files_home = tmp_path / "files-home"
+    files_home.mkdir()
+    from gobby.config.bootstrap_io import write_bootstrap_yaml
+
+    write_bootstrap_yaml(
+        tmp_path / "bootstrap.yaml",
+        {
+            "datastore_mode": "local",
+            "files_home": str(files_home),
+            "daemon_port": 60887,
+            "bind_host": "127.0.0.1",
+        },
+    )
 
     runtime = compose_env.resolve_compose_runtime(
         tmp_path,
@@ -253,6 +266,19 @@ def test_invalid_process_override_is_rejected(
         },
     )
     monkeypatch.setenv("GOBBY_POSTGRES_PORT", "invalid")
+    files_home = tmp_path / "files-home"
+    files_home.mkdir()
+    from gobby.config.bootstrap_io import write_bootstrap_yaml
+
+    write_bootstrap_yaml(
+        tmp_path / "bootstrap.yaml",
+        {
+            "datastore_mode": "local",
+            "files_home": str(files_home),
+            "daemon_port": 60887,
+            "bind_host": "127.0.0.1",
+        },
+    )
 
     with pytest.raises(compose_env.ComposeEnvironmentError, match="valid TCP port"):
         compose_env.resolve_compose_runtime(tmp_path, profiles=("postgres",))

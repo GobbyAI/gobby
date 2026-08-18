@@ -1078,7 +1078,7 @@ fn gate_tests_destructive_apply_requires_a_verified_v2_backup() -> anyhow::Resul
             .expect_err("default apply must halt at a destructive migration");
     assert!(error.to_string().contains("verified hub backup"));
 
-    let fixture = include_str!("../../tests/fixtures/hub_backup_manifest/v2_roundtrip.json");
+    let fixture = include_str!("../../tests/fixtures/hub_backup_manifest/v3_roundtrip.json");
     let mut manifest = parse_backup_manifest(fixture)?;
     let database_head: i32 = client
         .query_one(
@@ -1441,7 +1441,7 @@ fn drop_migration_refused_on_predecessor_until_verified_backup() -> anyhow::Resu
         .get(0);
     assert!(defs_before);
 
-    let fixture = include_str!("../../tests/fixtures/hub_backup_manifest/v2_roundtrip.json");
+    let fixture = include_str!("../../tests/fixtures/hub_backup_manifest/v3_roundtrip.json");
     let mut manifest = parse_backup_manifest(fixture)?;
     let database_head: i32 = client
         .query_one(

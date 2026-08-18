@@ -80,7 +80,8 @@ def durable_replace_files_home(source: Path, final_locator: str, temp_locator: s
     require_files_home()
     assert_held_files_home_identity()
     parent = str(Path(final_locator).parent)
-    ensure_files_home_descendant_dir(parent)
+    if parent not in {"", "."}:
+        ensure_files_home_descendant_dir(parent)
     flags = os.O_WRONLY | os.O_CREAT | os.O_EXCL
     fd = open_files_home_descendant(temp_locator, flags, create_parents=True)
     try:
@@ -106,7 +107,12 @@ def durable_replace_files_home(source: Path, final_locator: str, temp_locator: s
         os.close(fd)
 
     replace_files_home_descendant(temp_locator, final_locator)
-    fsync_files_home_descendant_dir(parent)
+    if parent not in {"", "."}:
+        fsync_files_home_descendant_dir(parent)
+    else:
+        from gobby.paths import files_home_root_fd
+
+        os.fsync(files_home_root_fd())
     verify_fd = open_files_home_descendant(final_locator, os.O_RDONLY)
     try:
         if os.fstat(verify_fd).st_size != source.stat().st_size:
@@ -114,6 +120,8 @@ def durable_replace_files_home(source: Path, final_locator: str, temp_locator: s
         assert_held_files_home_identity()
     finally:
         os.close(verify_fd)
+
+
 def durable_replace_text(path: Path, content: str, *, mode: int = 0o600) -> None:
     """Durably replace ``path`` with UTF-8 text."""
     durable_replace(path, content.encode(), mode=mode)

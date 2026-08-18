@@ -1,8 +1,12 @@
 """Tests for gobby pack and unpack CLI commands."""
 
+from __future__ import annotations
+
 import io
 import json
+import os
 import tarfile
+from dataclasses import dataclass
 from pathlib import Path
 from unittest.mock import MagicMock, patch
 
@@ -10,6 +14,7 @@ import pytest
 from click.testing import CliRunner
 
 from gobby.cli.pack import _human_size, _import_docker_volume, pack, unpack
+from gobby.config.bootstrap_io import write_bootstrap_yaml
 
 pytestmark = pytest.mark.unit
 
@@ -261,9 +266,11 @@ class TestUnpackCommand:
         return out_path
 
     @patch("gobby.cli.pack.get_gobby_home")
-    def test_unpack_dry_run(self, mock_home, tmp_path, runner: CliRunner) -> None:
+    def test_unpack_dry_run(
+        self, mock_home: MagicMock, pack_env: PackEnv, tmp_path: Path, runner: CliRunner
+    ) -> None:
         archive = self._create_fake_archive(tmp_path)
-        mock_home.return_value = tmp_path / ".gobby"
+        mock_home.return_value = pack_env.home
 
         result = runner.invoke(unpack, [str(archive), "--dry-run"])
         assert result.exit_code == 0
@@ -275,20 +282,25 @@ class TestUnpackCommand:
     @patch("gobby.cli.pack._docker_available", return_value=False)
     @patch("gobby.cli.pack.install_git_hooks", return_value={"success": True, "installed": []})
     def test_unpack_success(
-        self, mock_hooks, mock_docker, mock_daemon, mock_home, tmp_path, runner: CliRunner
+        self,
+        mock_hooks: MagicMock,
+        mock_docker: MagicMock,
+        mock_daemon: MagicMock,
+        mock_home: MagicMock,
+        pack_env: PackEnv,
+        tmp_path: Path,
+        runner: CliRunner,
     ) -> None:
         archive = self._create_fake_archive(tmp_path)
+        mock_home.return_value = pack_env.home
 
-        fake_home = tmp_path / ".gobby"
-        # don't exist yet to avoid safety check block
-        mock_home.return_value = fake_home
+        result = runner.invoke(unpack, [str(archive), "--force"])
+        assert result.exit_code == 0, result.output
 
-        result = runner.invoke(unpack, [str(archive)])
-        assert result.exit_code == 0
-
-        assert (fake_home / "hub-postgres.db").read_text() == "restored db"
-        assert (fake_home / "bootstrap.yaml").read_text() == "hub_backend: postgres\n"
-        assert not (fake_home / "machine_id").exists()
+        assert (pack_env.home / "hub-postgres.db").read_text() == "restored db"
+        dest_boot = (pack_env.home / "bootstrap.yaml").read_text()
+        assert str(pack_env.files_home) in dest_boot
+        assert not (pack_env.home / "machine_id").exists()
         assert "Restored: hub-postgres.db" in result.output
 
     @patch("gobby.cli.pack.get_gobby_home")
@@ -296,16 +308,22 @@ class TestUnpackCommand:
     @patch("gobby.cli.pack._docker_available", return_value=False)
     @patch("gobby.cli.pack.install_git_hooks", return_value={"success": True, "installed": []})
     def test_unpack_restore_identity_is_explicit(
-        self, mock_hooks, mock_docker, mock_daemon, mock_home, tmp_path, runner: CliRunner
+        self,
+        mock_hooks: MagicMock,
+        mock_docker: MagicMock,
+        mock_daemon: MagicMock,
+        mock_home: MagicMock,
+        pack_env: PackEnv,
+        tmp_path: Path,
+        runner: CliRunner,
     ) -> None:
         archive = self._create_fake_archive(tmp_path)
-        fake_home = tmp_path / ".gobby"
-        mock_home.return_value = fake_home
+        mock_home.return_value = pack_env.home
 
-        result = runner.invoke(unpack, [str(archive), "--restore-identity"])
+        result = runner.invoke(unpack, [str(archive), "--restore-identity", "--force"])
 
-        assert result.exit_code == 0
-        assert (fake_home / "machine_id").read_text() == "8fa1247f-e924-4bd7-a54e-b9dd5704304a"
+        assert result.exit_code == 0, result.output
+        assert (pack_env.home / "machine_id").read_text() == "8fa1247f-e924-4bd7-a54e-b9dd5704304a"
 
     @patch("gobby.cli.pack.get_gobby_home")
     @patch("gobby.cli.pack._daemon_is_running", return_value=False)
@@ -321,10 +339,11 @@ class TestUnpackCommand:
         self,
         mock_stop_services,
         mock_daemon,
-        mock_home,
-        member_name,
-        expected,
-        tmp_path,
+        mock_home: MagicMock,
+        member_name: str,
+        expected: str,
+        pack_env: PackEnv,
+        tmp_path: Path,
         runner: CliRunner,
     ) -> None:
         archive = tmp_path / "malicious.tar.gz"
@@ -334,8 +353,7 @@ class TestUnpackCommand:
             member.size = len(payload)
             tar.addfile(member, io.BytesIO(payload))
 
-        fake_home = tmp_path / "root" / "nested" / ".gobby"
-        mock_home.return_value = fake_home
+        mock_home.return_value = pack_env.home
 
         result = runner.invoke(unpack, [str(archive), "--force"])
 
@@ -355,12 +373,13 @@ class TestUnpackCommand:
     @patch("gobby.cli.pack._stop_docker_services", return_value=False)
     def test_unpack_rejects_special_members(
         self,
-        mock_stop_services,
-        mock_daemon,
-        mock_home,
-        member_type,
-        expected,
-        tmp_path,
+        mock_stop_services: MagicMock,
+        mock_daemon: MagicMock,
+        mock_home: MagicMock,
+        member_type: bytes,
+        expected: str,
+        pack_env: PackEnv,
+        tmp_path: Path,
         runner: CliRunner,
     ) -> None:
         archive = tmp_path / "malicious.tar.gz"
@@ -370,7 +389,7 @@ class TestUnpackCommand:
             member.linkname = "bootstrap.yaml"
             tar.addfile(member)
 
-        mock_home.return_value = tmp_path / ".gobby"
+        mock_home.return_value = pack_env.home
 
         result = runner.invoke(unpack, [str(archive), "--force"])
 
@@ -378,13 +397,11 @@ class TestUnpackCommand:
         assert expected in result.output
 
     @patch("gobby.cli.pack.get_gobby_home")
-    def test_unpack_aborts_if_exists(self, mock_home, tmp_path, runner: CliRunner) -> None:
+    def test_unpack_aborts_if_exists(
+        self, mock_home: MagicMock, pack_env: PackEnv, tmp_path: Path, runner: CliRunner
+    ) -> None:
         archive = self._create_fake_archive(tmp_path)
-
-        fake_home = tmp_path / ".gobby"
-        fake_home.mkdir()
-        (fake_home / "bootstrap.yaml").write_text("existing")
-        mock_home.return_value = fake_home
+        mock_home.return_value = pack_env.home
 
         # Answer NO to confirmation
         result = runner.invoke(unpack, [str(archive)], input="N\n")
@@ -396,22 +413,24 @@ class TestUnpackCommand:
     @patch("gobby.cli.pack._docker_available", return_value=False)
     @patch("gobby.cli.pack.install_git_hooks", return_value={"success": True, "installed": []})
     def test_unpack_force(
-        self, mock_hooks, mock_docker, mock_daemon, mock_home, tmp_path, runner: CliRunner
+        self,
+        mock_hooks: MagicMock,
+        mock_docker: MagicMock,
+        mock_daemon: MagicMock,
+        mock_home: MagicMock,
+        pack_env: PackEnv,
+        tmp_path: Path,
+        runner: CliRunner,
     ) -> None:
         archive = self._create_fake_archive(tmp_path)
+        mock_home.return_value = pack_env.home
 
-        fake_home = tmp_path / ".gobby"
-        fake_home.mkdir()
-        (fake_home / "bootstrap.yaml").write_text("old")
-
-        mock_home.return_value = fake_home
-
-        # Note we pass --force to bypass confirmation
         result = runner.invoke(unpack, [str(archive), "--force"])
-        assert result.exit_code == 0
+        assert result.exit_code == 0, result.output
 
-        assert (fake_home / "bootstrap.yaml").read_text() == "hub_backend: postgres\n"
-        assert (fake_home / "hub-postgres.db").read_text() == "restored db"
+        dest_boot = (pack_env.home / "bootstrap.yaml").read_text()
+        assert str(pack_env.files_home) in dest_boot
+        assert (pack_env.home / "hub-postgres.db").read_text() == "restored db"
 
     @patch("gobby.cli.pack.get_gobby_home")
     @patch("gobby.cli.pack._daemon_is_running", return_value=False)
@@ -424,13 +443,13 @@ class TestUnpackCommand:
         mock_docker,
         mock_stop_services,
         mock_daemon,
-        mock_home,
-        tmp_path,
+        mock_home: MagicMock,
+        pack_env: PackEnv,
+        tmp_path: Path,
         runner: CliRunner,
     ) -> None:
         archive = self._create_postgres_archive(tmp_path)
-        fake_home = tmp_path / ".gobby"
-        mock_home.return_value = fake_home
+        mock_home.return_value = pack_env.home
         calls: list[Path] = []
 
         def _restore(source: Path, **_kwargs: object) -> dict[str, object]:
@@ -461,11 +480,12 @@ class TestUnpackCommand:
         mock_stop_services: MagicMock,
         mock_daemon: MagicMock,
         mock_home: MagicMock,
+        pack_env: PackEnv,
         tmp_path: Path,
         runner: CliRunner,
     ) -> None:
         archive = self._create_postgres_archive(tmp_path)
-        mock_home.return_value = tmp_path / ".gobby"
+        mock_home.return_value = pack_env.home
 
         with patch("gobby.cli.pack.restore_postgres_backup") as restore:
             result = runner.invoke(unpack, [str(archive), "--force", "--no-postgres"])
@@ -473,3 +493,278 @@ class TestUnpackCommand:
         assert result.exit_code == 0
         restore.assert_not_called()
         assert "Skipped PostgreSQL restore" in result.output
+
+
+@dataclass(frozen=True)
+class PackEnv:
+    home: Path
+    files_home: Path
+
+
+@pytest.fixture
+def pack_env(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> PackEnv:
+    home = tmp_path / ".gobby"
+    files_home = tmp_path / "files-home"
+    home.mkdir()
+    files_home.mkdir()
+    monkeypatch.setenv("GOBBY_HOME", str(home))
+    monkeypatch.setenv("HOME", str(tmp_path / "user-home"))
+    (tmp_path / "user-home").mkdir()
+    write_bootstrap_yaml(
+        home / "bootstrap.yaml",
+        {
+            "datastore_mode": "local",
+            "files_home": str(files_home),
+            "daemon_port": 60887,
+            "bind_host": "127.0.0.1",
+        },
+    )
+    return PackEnv(home=home, files_home=files_home)
+
+
+def _seed_files_home(files_home: Path) -> None:
+    (files_home / "USER.md").write_text("profile", encoding="utf-8")
+    dest = files_home / "_personal" / "attachments" / "p1"
+    dest.mkdir(parents=True)
+    (dest / "a.bin").write_bytes(b"att")
+    wiki = files_home / "wiki" / "alpha"
+    wiki.mkdir(parents=True)
+    (wiki / "note.md").write_text("wiki", encoding="utf-8")
+
+
+class TestFilesHomePack:
+    def test_6_2_1_archives_files_home_not_personal(
+        self, pack_env: PackEnv, tmp_path: Path, runner: CliRunner
+    ) -> None:
+        from gobby.cli.pack import PACK_FILES
+
+        assert "personal" not in PACK_FILES
+        assert "personal/USER.md" not in PACK_FILES
+        _seed_files_home(pack_env.files_home)
+        (pack_env.home / "personal").mkdir()
+        (pack_env.home / "personal" / "USER.md").write_text("legacy", encoding="utf-8")
+        out_path = tmp_path / "out.tar.gz"
+        with (
+            patch("gobby.cli.pack._daemon_is_running", return_value=False),
+            patch("gobby.cli.pack._docker_available", return_value=False),
+        ):
+            result = runner.invoke(pack, [str(out_path)])
+        assert result.exit_code == 0, result.output
+        with tarfile.open(out_path, "r:gz") as tar:
+            names = tar.getnames()
+        assert "gobby/files/USER.md" in names
+        assert "gobby/files/_personal/attachments/p1/a.bin" in names
+        assert "gobby/files/wiki/alpha/note.md" in names
+        assert not any(name.startswith("gobby/personal") for name in names)
+
+    def test_6_2_4_dry_run_includes_files_bind(self, pack_env: PackEnv, runner: CliRunner) -> None:
+        _seed_files_home(pack_env.files_home)
+        with (
+            patch("gobby.cli.pack._daemon_is_running", return_value=False),
+            patch("gobby.cli.pack._docker_available", return_value=False),
+        ):
+            result = runner.invoke(pack, ["--dry-run"])
+        assert result.exit_code == 0, result.output
+        assert "gobby/files/" in result.output
+        assert "gobby/personal" not in result.output
+
+    def test_6_2_12_refuses_symlink_and_specials(
+        self, pack_env: PackEnv, tmp_path: Path, runner: CliRunner
+    ) -> None:
+        (pack_env.files_home / "USER.md").write_text("ok", encoding="utf-8")
+        (pack_env.files_home / "link").symlink_to(pack_env.files_home / "USER.md")
+        out_path = tmp_path / "out.tar.gz"
+        with (
+            patch("gobby.cli.pack._daemon_is_running", return_value=False),
+            patch("gobby.cli.pack._docker_available", return_value=False),
+        ):
+            result = runner.invoke(pack, [str(out_path)])
+        assert result.exit_code != 0
+        assert not out_path.exists()
+        (pack_env.files_home / "link").unlink()
+        os.mkfifo(pack_env.files_home / "fifo")
+        with (
+            patch("gobby.cli.pack._daemon_is_running", return_value=False),
+            patch("gobby.cli.pack._docker_available", return_value=False),
+        ):
+            result = runner.invoke(pack, [str(out_path)])
+        assert result.exit_code != 0
+        assert not out_path.exists()
+
+    def test_6_2_13_and_6_2_16_claim_blocks_daemon_start(
+        self, pack_env: PackEnv, tmp_path: Path, runner: CliRunner
+    ) -> None:
+        from gobby.cli.hub_backup.files_home import FilesHomeArchiveHooks
+        from gobby.runner_pid_file import claim_pid_file
+
+        _seed_files_home(pack_env.files_home)
+        seen: list[bool] = []
+
+        def _on_claimed(claim: object) -> None:
+            del claim
+            blocked = claim_pid_file(pack_env.home / "gobby.pid", role="daemon")
+            seen.append(blocked is None)
+            if blocked is not None:
+                blocked.release()
+
+        out_path = tmp_path / "out.tar.gz"
+        with (
+            patch("gobby.cli.pack._daemon_is_running", return_value=False),
+            patch("gobby.cli.pack._docker_available", return_value=False),
+            patch(
+                "gobby.cli.hub_backup.files_home._active_hooks",
+                FilesHomeArchiveHooks(on_claimed=_on_claimed),
+            ),
+        ):
+            result = runner.invoke(pack, [str(out_path)])
+        assert result.exit_code == 0, result.output
+        assert seen == [True]
+
+        archive = tmp_path / "in.tar.gz"
+        with tarfile.open(archive, "w:gz") as tar:
+            payload = b"p"
+            info = tarfile.TarInfo("gobby/files/USER.md")
+            info.size = len(payload)
+            tar.addfile(info, io.BytesIO(payload))
+        seen.clear()
+        with (
+            patch("gobby.cli.pack._daemon_is_running", return_value=False),
+            patch("gobby.cli.pack._docker_available", return_value=False),
+            patch(
+                "gobby.cli.pack.install_git_hooks", return_value={"success": True, "installed": []}
+            ),
+            patch(
+                "gobby.cli.hub_backup.files_home._active_hooks",
+                FilesHomeArchiveHooks(on_claimed=_on_claimed),
+            ),
+        ):
+            result = runner.invoke(unpack, [str(archive), "--force"])
+        assert result.exit_code == 0, result.output
+        assert seen == [True]
+
+    def test_6_2_14_refuses_hardlink(
+        self, pack_env: PackEnv, tmp_path: Path, runner: CliRunner
+    ) -> None:
+        src = pack_env.files_home / "USER.md"
+        src.write_text("x", encoding="utf-8")
+        os.link(src, pack_env.files_home / "hard")
+        out_path = tmp_path / "out.tar.gz"
+        with (
+            patch("gobby.cli.pack._daemon_is_running", return_value=False),
+            patch("gobby.cli.pack._docker_available", return_value=False),
+        ):
+            result = runner.invoke(pack, [str(out_path)])
+        assert result.exit_code != 0
+        assert not out_path.exists()
+
+    def test_6_2_19_and_6_2_21_prewalk_limits_against_constants(self) -> None:
+        from gobby.cli.hub_backup.files_home import (
+            MAX_ARCHIVE_BYTES,
+            MAX_ARCHIVE_MEMBERS,
+            FilesHomeArchiveError,
+            WalkEntry,
+            preflight_archive_graph,
+        )
+
+        preflight_archive_graph(
+            [WalkEntry(rel=str(i), is_dir=False, size=0) for i in range(MAX_ARCHIVE_MEMBERS)]
+        )
+        preflight_archive_graph([WalkEntry(rel="big", is_dir=False, size=MAX_ARCHIVE_BYTES)])
+        with pytest.raises(FilesHomeArchiveError):
+            preflight_archive_graph(
+                [
+                    WalkEntry(rel=str(i), is_dir=False, size=0)
+                    for i in range(MAX_ARCHIVE_MEMBERS + 1)
+                ]
+            )
+        with pytest.raises(FilesHomeArchiveError):
+            preflight_archive_graph(
+                [WalkEntry(rel="big", is_dir=False, size=MAX_ARCHIVE_BYTES + 1)]
+            )
+
+    def test_6_2_21_producer_refuses_before_output(
+        self, pack_env: PackEnv, tmp_path: Path, runner: CliRunner
+    ) -> None:
+        from gobby.cli.hub_backup.files_home import FilesHomeArchiveHooks
+
+        _seed_files_home(pack_env.files_home)
+        out_path = tmp_path / "out.tar.gz"
+        with (
+            patch("gobby.cli.pack._daemon_is_running", return_value=False),
+            patch("gobby.cli.pack._docker_available", return_value=False),
+            patch(
+                "gobby.cli.hub_backup.files_home._active_hooks",
+                FilesHomeArchiveHooks(force_member_count=100_001),
+            ),
+        ):
+            result = runner.invoke(pack, [str(out_path)])
+        assert result.exit_code != 0
+        assert not out_path.exists()
+
+    def test_6_2_22_refuses_output_inside_files_home(
+        self, pack_env: PackEnv, runner: CliRunner
+    ) -> None:
+        _seed_files_home(pack_env.files_home)
+        out_path = pack_env.files_home / "out.tar.gz"
+        with (
+            patch("gobby.cli.pack._daemon_is_running", return_value=False),
+            patch("gobby.cli.pack._docker_available", return_value=False),
+        ):
+            result = runner.invoke(pack, [str(out_path)])
+        assert result.exit_code != 0
+        assert not out_path.exists()
+        assert "files_home" in result.output.lower() or "source" in result.output.lower()
+
+    def test_6_2_24_injected_pack_failure_preserves_prior(
+        self, pack_env: PackEnv, tmp_path: Path, runner: CliRunner
+    ) -> None:
+        from gobby.cli.hub_backup.files_home import FilesHomeArchiveHooks
+
+        _seed_files_home(pack_env.files_home)
+        out_path = tmp_path / "out.tar.gz"
+        out_path.write_bytes(b"prior-archive")
+        with (
+            patch("gobby.cli.pack._daemon_is_running", return_value=False),
+            patch("gobby.cli.pack._docker_available", return_value=False),
+            patch(
+                "gobby.cli.hub_backup.files_home._active_hooks",
+                FilesHomeArchiveHooks(fail_temp_write=True),
+            ),
+        ):
+            result = runner.invoke(pack, [str(out_path)])
+        assert result.exit_code != 0
+        assert out_path.read_bytes() == b"prior-archive"
+        with (
+            patch("gobby.cli.pack._daemon_is_running", return_value=False),
+            patch("gobby.cli.pack._docker_available", return_value=False),
+        ):
+            result = runner.invoke(pack, [str(out_path)])
+        assert result.exit_code == 0, result.output
+        assert out_path.stat().st_size > 0
+
+    def test_6_2_25_swap_after_prewalk_leaves_no_archive(
+        self, pack_env: PackEnv, tmp_path: Path, runner: CliRunner
+    ) -> None:
+        from gobby.cli.hub_backup.files_home import FilesHomeArchiveHooks
+
+        _seed_files_home(pack_env.files_home)
+        target = pack_env.files_home / "USER.md"
+
+        def _swap(_entries: object) -> None:
+            target.unlink()
+            target.write_text("swapped", encoding="utf-8")
+
+        out_path = tmp_path / "out.tar.gz"
+        with (
+            patch("gobby.cli.pack._daemon_is_running", return_value=False),
+            patch("gobby.cli.pack._docker_available", return_value=False),
+            patch(
+                "gobby.cli.hub_backup.files_home._active_hooks",
+                FilesHomeArchiveHooks(after_prewalk=_swap),
+            ),
+        ):
+            result = runner.invoke(pack, [str(out_path)])
+        assert result.exit_code != 0
+        assert not out_path.exists() or out_path.stat().st_size == 0
+        leftover = list(tmp_path.glob(".out.tar.gz.*.tmp")) + list(tmp_path.glob("*.tmp"))
+        assert leftover == []
