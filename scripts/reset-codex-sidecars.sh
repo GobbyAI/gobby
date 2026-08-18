@@ -32,6 +32,97 @@ cleanup() {
     return "$status"
 }
 
+codex_process_pids() {
+    local pid
+    local command_path
+    local executable_name
+
+    /bin/ps -axo pid=,comm= |
+        while read -r pid command_path; do
+            executable_name="${command_path##*/}"
+            case "$executable_name" in
+                codex | codex-code-mode-host)
+                    printf '%s\n' "$pid"
+                    ;;
+            esac
+        done
+}
+
+codex_pid_matches() {
+    local pid="$1"
+    local command_path
+    local executable_name
+
+    if ! command_path="$(/bin/ps -p "$pid" -o comm= 2>/dev/null)"; then
+        return 1
+    fi
+    read -r command_path <<<"$command_path"
+    executable_name="${command_path##*/}"
+    [[ "$executable_name" == "codex" || "$executable_name" == "codex-code-mode-host" ]]
+}
+
+show_codex_processes() {
+    local pid
+
+    while IFS= read -r pid; do
+        [[ -n "$pid" ]] || continue
+        /bin/ps -p "$pid" -o pid=,command= >&2 || true
+    done < <(codex_process_pids)
+}
+
+force_stop_codex_processes() {
+    local pid
+    local attempt
+    local remaining
+    local -a pids=("")
+
+    while IFS= read -r pid; do
+        [[ -n "$pid" ]] && pids+=("$pid")
+    done < <(codex_process_pids)
+
+    if ((${#pids[@]} == 1)); then
+        printf 'No Codex processes are running.\n'
+        return 0
+    fi
+
+    printf 'Sending SIGTERM to Codex processes:\n' >&2
+    show_codex_processes
+    for pid in "${pids[@]}"; do
+        [[ -n "$pid" ]] || continue
+        if codex_pid_matches "$pid"; then
+            kill -TERM "$pid" 2>/dev/null || true
+        fi
+    done
+
+    for ((attempt = 1; attempt <= 3; attempt++)); do
+        sleep 1
+        remaining="$(codex_process_pids)"
+        [[ -z "$remaining" ]] && return 0
+    done
+
+    printf 'Sending SIGKILL to surviving Codex processes:\n' >&2
+    show_codex_processes
+    pids=("")
+    while IFS= read -r pid; do
+        [[ -n "$pid" ]] && pids+=("$pid")
+    done <<<"$remaining"
+
+    for pid in "${pids[@]}"; do
+        [[ -n "$pid" ]] || continue
+        if codex_pid_matches "$pid"; then
+            kill -KILL "$pid" 2>/dev/null || true
+        fi
+    done
+
+    sleep 1
+    remaining="$(codex_process_pids)"
+    if [[ -n "$remaining" ]]; then
+        printf 'Codex processes still remain after SIGKILL:\n' >&2
+        show_codex_processes
+        return 1
+    fi
+}
+
 check_doctor() {
     local report_path="$1"
 
@@ -113,7 +204,9 @@ main() {
     "$BREW_BIN" list --cask codex >/dev/null ||
         die "Homebrew Codex cask is not installed."
 
-    printf '\nThis will move:\n  %s\ninto:\n  %s\n\n' \
+    printf '\nThis will forcibly terminate every Codex process.\n'
+    printf 'Any in-flight Codex work will be discarded. Run this from a normal shell.\n'
+    printf 'It will then move:\n  %s\ninto:\n  %s\n\n' \
         "$CODEX_HOME_PATH" "$RESET_BACKUP"
     printf 'Type RESET CODEX to continue: '
     if ! IFS= read -r confirmation; then
@@ -126,13 +219,8 @@ main() {
     printf '\nStopping Gobby while leaving its databases running...\n'
     uv run gobby stop || die "Gobby did not stop cleanly."
 
-    local codex_process_pattern='(^|/)(codex|codex-code-mode-host)([[:space:]]|$)'
-    if pgrep -f "$codex_process_pattern" >/dev/null; then
-        printf '\nCodex processes remain:\n' >&2
-        pgrep -fal "$codex_process_pattern" >&2 || true
-        uv run gobby start || true
-        die "Close every listed Codex process and rerun the script."
-    fi
+    printf '\nForce-stopping Codex processes...\n'
+    force_stop_codex_processes || die "Could not stop every Codex process."
 
     printf '\nCreating recoverable backup...\n'
     mv "$CODEX_HOME_PATH" "$RESET_BACKUP" || die "Could not create the Codex backup."
