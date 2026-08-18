@@ -9,6 +9,8 @@ ExecStart={{ python_executable }} -m gobby.runner{% if verbose %} --verbose{% en
 WorkingDirectory={{ working_directory }}
 Environment=HOME={{ home_dir }}
 Environment=PATH={{ path_env }}
+Environment=GOBBY_SERVICE_LAUNCH=1
+Environment=GOBBY_SERVICE_NONCE={{ gobby_home if gobby_home else home_dir + "/.gobby" }}/gobby.pid.service-nonce
 {% if gobby_home %}
 Environment=GOBBY_HOME={{ gobby_home }}
 {% endif %}

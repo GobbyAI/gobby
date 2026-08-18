@@ -104,6 +104,58 @@ class TestTemplateRendering:
         )
         assert r"C:\Tools &amp; More\gobby-launcher.cmd" in content
 
+    def test_launcher_cmd_passes_service_launch_marker(self) -> None:
+        from gobby.cli.installers.service import _render_template
+
+        ctx = {**_INSTALL_CONTEXT, "gobby_home": r"D:\gobby"}
+        content = _render_template("gobby-launcher.cmd.j2", **ctx)
+        assert "GOBBY_SERVICE_LAUNCH=1" in content
+        assert r"GOBBY_SERVICE_NONCE=D:\gobby\gobby.pid.service-nonce" in content
+
+
+class TestWindowsNonceSecurity:
+    def test_create_nonce_uses_create_new_and_explicit_dacl(self, tmp_path: Path) -> None:
+        from gobby.runner_service_reservation import create_windows_nonce_file
+
+        created: dict[str, object] = {}
+
+        def fake_create(
+            path: str,
+            *,
+            nonce: bytes,
+            user_sid: str,
+        ) -> None:
+            created["path"] = path
+            created["nonce"] = nonce
+            created["user_sid"] = user_sid
+            created["disposition"] = "CREATE_NEW"
+            Path(path).write_bytes(nonce)
+
+        target = tmp_path / "gobby.pid.service-nonce"
+        with patch(
+            "gobby.runner_service_reservation._windows_create_file_exclusive",
+            side_effect=fake_create,
+        ):
+            create_windows_nonce_file(target, b"abc123", user_sid="S-1-5-21-1")
+        assert created["disposition"] == "CREATE_NEW"
+        assert created["user_sid"] == "S-1-5-21-1"
+        assert created["nonce"] == b"abc123"
+
+    def test_permissive_or_tampered_acl_refuses_consume(self, tmp_path: Path) -> None:
+        from gobby.runner_service_reservation import consume_windows_nonce_file
+
+        nonce_path = tmp_path / "gobby.pid.service-nonce"
+        nonce_path.write_bytes(b"secret")
+        with (
+            patch(
+                "gobby.runner_service_reservation._windows_nonce_acl_is_owner_only",
+                return_value=False,
+            ),
+            pytest.raises(PermissionError),
+        ):
+            consume_windows_nonce_file(nonce_path, expected=b"secret")
+        assert nonce_path.read_bytes() == b"secret"
+
 
 # ---------------------------------------------------------------------------
 # Install

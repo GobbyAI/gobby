@@ -18,13 +18,21 @@ import httpx
 import psutil
 
 from gobby.agents.spawners.auth_env import has_auth_env
+from gobby.cli.daemon_singleton import (
+    admit_direct_start,
+    admit_service_start,
+    format_singleton_status,
+    probe_start_blocker,
+    service_backend_name,
+    stop_singleton_gate,
+)
 from gobby.config.bootstrap import BootstrapConfigError, load_bootstrap
 from gobby.config.logging import (
     RUNTIME_LOG_FILENAME,
     resolved_log_path,
     resolved_logs_dir,
 )
-from gobby.runner_pid_file import probe_daemon_lock
+from gobby.runner_pid_file import ProbeState, probe_daemon_lock
 from gobby.ui_exposure import UiExposeError, reconcile_ui_exposure
 from gobby.utils.dependency_requirements import (
     collect_dependency_report,
@@ -51,7 +59,7 @@ from .utils import (
     get_gobby_home,
     init_local_storage,
     is_port_available,
-    kill_all_gobby_daemons,
+    kill_all_gobby_daemons,  # noqa: F401 - patched by start tests
     setup_logging,
     wait_for_port_available,
 )
@@ -291,107 +299,25 @@ def _wait_for_service_stop(
     return None
 
 
-@click.command()
-@click.option(
-    "--verbose",
-    "-v",
-    is_flag=True,
-    help="Enable verbose debug output",
-)
-@click.pass_context
-def start(ctx: click.Context, verbose: bool) -> None:
-    """Start the Gobby daemon."""
-    from gobby.cli.runtime import get_cli_runtime
-
-    gobby_dir = get_gobby_home()
-    if dependency_errors := _start_dependency_errors():
-        for error in dependency_errors:
-            _step(error, error=True)
-        sys.exit(1)
-
-    # Revive managed dependencies before launchd/systemd starts the runner.
-    services_result = _services_start(gobby_dir)
-    if services_result.outcome == "failed":
-        _step(services_result.detail, error=True)
-        sys.exit(1)
-    if services_result.outcome == "skipped":
-        _step(services_result.detail)
-    else:
-        _step("Docker services started")
-
-    # DB-backed configuration becomes available only after local PostgreSQL is healthy.
-    config = get_cli_runtime(ctx).operational_config
-    sandbox = config.agent_sandbox
-    if sandbox.enabled and sandbox.backend == "srt":
-        from gobby.agents.srt_runtime import SrtRuntimeError, verify_srt_installation
-
-        try:
-            verify_srt_installation()
-        except SrtRuntimeError as exc:
-            click.secho(
-                "warning: managed SRT sandbox preflight failed: "
-                f"{exc}. Set agent_sandbox.backend = provider-native to use the "
-                "provider sandbox until SRT is available.",
-                fg="yellow",
-            )
-
-    # If OS service is installed, delegate to it
-    svc = get_service_status()
-    if svc.get("installed"):
-        _step("Starting via OS service manager...")
-        result = service_start()
-        if result.get("success"):
-            _step(f"Start request accepted by {svc.get('platform', 'OS')} service manager")
-            _step("Waiting for daemon health via service...")
-            elapsed = _wait_for_daemon_health(config.daemon_port)
-            if elapsed is None:
-                _step("Daemon did not become healthy after service start", error=True)
-                sys.exit(1)
-            if not _poll_startup_progress(config.daemon_port):
-                _step("Daemon did not finish startup readiness after service start", error=True)
-                sys.exit(1)
-            _step(f"Daemon started via {svc.get('platform', 'OS')} service")
-            _step(f"Health check passed ({elapsed:.1f}s)")
-            _reconcile_ui_exposure(config.daemon_port)
-            return
-        _step(f"Service start failed: {result.get('error')}", error=True)
-        click.echo("  Falling back to direct start...")
-
-    pid_file = gobby_dir / "gobby.pid"
+def _launch_direct_runner(
+    claim: Any,
+    pid_file: Path,
+    gobby_dir: Path,
+    config: Any,
+    verbose: bool,
+) -> None:
+    """Launch the runner subprocess with the inherited singleton descriptor."""
     runtime_log_file = resolved_log_path(config.logging, RUNTIME_LOG_FILENAME)
-
     gobby_dir.mkdir(parents=True, exist_ok=True)
     runtime_log_file.parent.mkdir(parents=True, exist_ok=True)
 
     click.echo("Starting Gobby daemon...")
     click.echo("")
 
-    should_kill_existing_daemons = False
-
-    # The flock-based daemon lock is authoritative: a held lock means a live
-    # daemon (flock dies with its owner), so start must fail without tearing
-    # down active work; a free lock means any leftover pid file is stale.
-    lock_owner = probe_daemon_lock(pid_file)
-    if lock_owner is not None:
-        _step(f"Daemon already running (PID: {lock_owner or 'unknown'})", error=True)
-        sys.exit(1)
-
-    if pid_file.exists():
-        pid_file.unlink(missing_ok=True)
-        should_kill_existing_daemons = True
-
-    if should_kill_existing_daemons:
-        killed_count = kill_all_gobby_daemons()
-        if killed_count > 0:
-            _step(f"Stopped {killed_count} existing process(es)")
-            time.sleep(2.0)
-
-    # Initialize runtime hub storage after services are up.
     hub_db = init_local_storage()
     hub_db.close()
     _step("PostgreSQL hub initialized")
 
-    # Check port availability
     http_port = config.daemon_port
     ws_port = config.websocket.port
     bind_host = config.bind_host
@@ -408,7 +334,6 @@ def start(ctx: click.Context, verbose: bool) -> None:
 
     _step(f"Ports available (HTTP: {http_port}, WS: {ws_port})")
 
-    # Build and launch daemon subprocess
     cmd = [sys.executable, "-m", "gobby.runner"]
     if verbose:
         cmd.append("--verbose")
@@ -420,31 +345,34 @@ def start(ctx: click.Context, verbose: bool) -> None:
             fg="yellow",
         )
 
-    with open(runtime_log_file, "a") as runtime_log:
-        try:
-            process = subprocess.Popen(  # nosec B603 # cmd built from sys.executable and module path
-                cmd,
-                stdout=runtime_log,
-                stderr=runtime_log,
-                stdin=subprocess.DEVNULL,
-                start_new_session=True,
-                env=os.environ.copy(),
-            )
+    env = os.environ.copy()
+    env.update(claim.inherit_environment())
+    popen_kwargs: dict[str, Any] = {
+        "stdout": None,
+        "stderr": None,
+        "stdin": subprocess.DEVNULL,
+        "start_new_session": True,
+        "env": env,
+    }
+    if os.name == "posix":
+        popen_kwargs["close_fds"] = True
+        popen_kwargs["pass_fds"] = (claim.fileno(),)
 
-            with open(pid_file, "w") as f:
-                f.write(str(process.pid))
+    with open(runtime_log_file, "a") as runtime_log:
+        popen_kwargs["stdout"] = runtime_log
+        popen_kwargs["stderr"] = runtime_log
+        try:
+            process = subprocess.Popen(cmd, **popen_kwargs)  # nosec B603
+            pid_file.write_text(str(process.pid), encoding="utf-8")
+            claim.detach()
 
             time.sleep(1.0)
-
-            # Check for immediate crash
             if process.poll() is not None:
                 _step("Daemon process exited immediately", error=True)
                 _show_runtime_output_tail(runtime_log_file)
                 sys.exit(1)
 
             _step(f"Daemon process launched (PID: {process.pid})")
-
-            # Wait for health check
             time.sleep(2.0)
             elapsed = _wait_for_daemon_health(http_port)
             if elapsed is not None:
@@ -454,7 +382,6 @@ def start(ctx: click.Context, verbose: bool) -> None:
                 _show_runtime_output_tail(runtime_log_file)
                 sys.exit(1)
 
-            # Poll startup progress from daemon
             if not _poll_startup_progress(http_port):
                 _step("Startup readiness did not complete", error=True)
                 _show_runtime_output_tail(runtime_log_file)
@@ -462,8 +389,6 @@ def start(ctx: click.Context, verbose: bool) -> None:
 
             _reconcile_ui_exposure(http_port)
 
-            # Report the UI endpoint and effective mode when enabled. The runner
-            # owns both production serving and the dev-server lifecycle.
             ui_url = None
             ui_mode_display = None
             if config.ui.enabled:
@@ -472,7 +397,6 @@ def start(ctx: click.Context, verbose: bool) -> None:
                 ui_port = 60889 if ui_resolution.effective == "dev" else http_port
                 ui_url = f"http://localhost:{ui_port}/"
 
-            # Compact startup summary
             click.echo("")
             click.echo(
                 format_startup_summary(
@@ -485,12 +409,115 @@ def start(ctx: click.Context, verbose: bool) -> None:
                 )
             )
             click.echo("")
-
         except SystemExit:
             raise
-        except Exception as e:
-            _step(f"Error starting daemon: {e}", error=True)
+        except Exception as exc:
+            _step(f"Error starting daemon: {exc}", error=True)
             sys.exit(1)
+
+
+@click.command()
+@click.option(
+    "--verbose",
+    "-v",
+    is_flag=True,
+    help="Enable verbose debug output",
+)
+@click.pass_context
+def start(ctx: click.Context, verbose: bool) -> None:
+    """Start the Gobby daemon."""
+    from gobby.cli.runtime import get_cli_runtime
+    from gobby.runner_pid_file import PidFileClaim, cancel_service_reservation
+
+    gobby_dir = get_gobby_home()
+    if dependency_errors := _start_dependency_errors():
+        for error in dependency_errors:
+            _step(error, error=True)
+        sys.exit(1)
+
+    pid_file = gobby_dir / "gobby.pid"
+    svc = get_service_status()
+    claim: PidFileClaim | None = None
+    reserved = False
+    platform = svc.get("platform")
+    backend = service_backend_name(platform if isinstance(platform, str) else None)
+    if svc.get("installed"):
+        admission_error = admit_service_start(pid_file, backend=backend)
+        if admission_error:
+            _step(admission_error, error=True)
+            sys.exit(1)
+        reserved = True
+    else:
+        blocker = probe_start_blocker(probe_daemon_lock(pid_file))
+        if blocker:
+            _step(blocker, error=True)
+            sys.exit(1)
+        claim, admission_error = admit_direct_start(pid_file)
+        if admission_error or claim is None:
+            _step(admission_error or "Could not claim the daemon singleton", error=True)
+            sys.exit(1)
+
+    try:
+        services_result = _services_start(gobby_dir)
+        if services_result.outcome == "failed":
+            _step(services_result.detail, error=True)
+            sys.exit(1)
+        if services_result.outcome == "skipped":
+            _step(services_result.detail)
+        else:
+            _step("Docker services started")
+
+        config = get_cli_runtime(ctx).operational_config
+        sandbox = config.agent_sandbox
+        if sandbox.enabled and sandbox.backend == "srt":
+            from gobby.agents.srt_runtime import SrtRuntimeError, verify_srt_installation
+
+            try:
+                verify_srt_installation()
+            except SrtRuntimeError as exc:
+                click.secho(
+                    "warning: managed SRT sandbox preflight failed: "
+                    f"{exc}. Set agent_sandbox.backend = provider-native to use the "
+                    "provider sandbox until SRT is available.",
+                    fg="yellow",
+                )
+
+        if svc.get("installed"):
+            _step("Starting via OS service manager...")
+            result = service_start(reserved=True)
+            if result.get("success"):
+                _step(f"Start request accepted by {svc.get('platform', 'OS')} service manager")
+                _step("Waiting for daemon health via service...")
+                elapsed = _wait_for_daemon_health(config.daemon_port)
+                if elapsed is None:
+                    _step("Daemon did not become healthy after service start", error=True)
+                    sys.exit(1)
+                if not _poll_startup_progress(config.daemon_port):
+                    _step("Daemon did not finish startup readiness after service start", error=True)
+                    sys.exit(1)
+                _step(f"Daemon started via {svc.get('platform', 'OS')} service")
+                _step(f"Health check passed ({elapsed:.1f}s)")
+                _reconcile_ui_exposure(config.daemon_port)
+                reserved = False
+                return
+            _step(f"Service start failed: {result.get('error')}", error=True)
+            click.echo("  Falling back to direct start...")
+            if reserved:
+                cancel_service_reservation(pid_file)
+                reserved = False
+            if claim is None:
+                claim, admission_error = admit_direct_start(pid_file)
+                if admission_error or claim is None:
+                    _step(admission_error or "Could not claim the daemon singleton", error=True)
+                    sys.exit(1)
+
+        _launch_direct_runner(claim, pid_file, gobby_dir, config, verbose)
+        claim = None
+    finally:
+        if claim is not None:
+            claim.release()
+        if reserved:
+            cancel_service_reservation(pid_file)
 
 
 def _do_stop(
@@ -500,6 +527,14 @@ def _do_stop(
 ) -> bool:
     """Stop the daemon and return whether shutdown succeeded."""
     from gobby.cli.runtime import get_cli_runtime
+
+    pid_file = get_gobby_home() / "gobby.pid"
+    gate, gate_error = stop_singleton_gate(pid_file)
+    if gate == "refuse":
+        click.echo(gate_error or "Refusing to stop a non-daemon singleton holder", err=True)
+        return False
+    if gate == "cancelled":
+        return True
 
     config = get_cli_runtime(ctx).operational_config
     shutdown_source = "cli_restart" if shutdown_intent == "restart" else "cli_stop"
@@ -604,8 +639,16 @@ def status(ctx: click.Context) -> None:
         click.echo(format_status_message(running=False, unsupported_platform=True))
         sys.exit(0)
 
-    config = get_cli_runtime(ctx).operational_config
     gobby_home = get_gobby_home()
+    probe = probe_daemon_lock(gobby_home / "gobby.pid")
+    if probe.state is not ProbeState.DAEMON:
+        if probe.state is ProbeState.ABSENT:
+            click.echo(format_status_message(running=False))
+        else:
+            click.echo(format_singleton_status(probe))
+        sys.exit(0)
+
+    config = get_cli_runtime(ctx).operational_config
     log_dir = resolved_logs_dir(config.logging)
 
     reported_pid = _read_pid_file()
@@ -773,18 +816,15 @@ def health(ctx: click.Context) -> None:
     """Quick one-line daemon health check."""
     from gobby.cli.runtime import get_cli_runtime
 
+    pid_file = get_gobby_home() / "gobby.pid"
+    probe = probe_daemon_lock(pid_file)
+    if probe.state is not ProbeState.DAEMON:
+        click.echo(format_singleton_status(probe))
+        sys.exit(1)
+
     config = get_cli_runtime(ctx).operational_config
     http_port = config.daemon_port
-    pid_file = get_gobby_home() / "gobby.pid"
-
-    # Read PID
-    pid: int | None = None
-    if pid_file.exists():
-        try:
-            with open(pid_file) as f:
-                pid = int(f.read().strip())
-        except Exception as exc:
-            logger.debug("Could not read daemon PID file for health check: %s", exc, exc_info=True)
+    pid = probe.pid
 
     if pid is None:
         svc = get_service_status()

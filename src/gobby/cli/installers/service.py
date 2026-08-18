@@ -68,6 +68,7 @@ __all__ = [
     "install_service",
     "install_service_linux",
     "install_service_macos",
+    "prepare_commanded_service_start",
     "service_restart",
     "service_start",
     "service_stop",
@@ -440,11 +441,36 @@ def _macos_stop() -> dict[str, Any]:
 # ---------------------------------------------------------------------------
 
 
+def prepare_commanded_service_start() -> None:
+    """Mint the one-shot service reservation or raise SingletonReservationError."""
+    from gobby.runner_pid_file import prepare_commanded_service_start as _prepare
+
+    _prepare()
+
+
+def _reserve_commanded_start() -> dict[str, Any] | None:
+    from gobby.runner_pid_file import SingletonReservationError
+
+    try:
+        prepare_commanded_service_start()
+    except SingletonReservationError as exc:
+        return {"success": False, "error": str(exc)}
+    return None
+
+
 def install_service(*, verbose: bool = False) -> dict[str, Any]:
     """Install the Gobby daemon as an OS-level service.
 
     Auto-detects the platform and writes the appropriate service config.
     """
+    if sys.platform not in {"darwin", "linux", "win32"}:
+        return {
+            "success": False,
+            "error": f"Unsupported platform: {sys.platform}",
+        }
+    reserved = _reserve_commanded_start()
+    if reserved is not None:
+        return reserved
     if sys.platform == "darwin":
         return install_service_macos(verbose=verbose)
     elif sys.platform == "linux":
@@ -453,11 +479,7 @@ def install_service(*, verbose: bool = False) -> dict[str, Any]:
         from gobby.cli.installers.service_windows import install_service_windows
 
         return install_service_windows(verbose=verbose)
-    else:
-        return {
-            "success": False,
-            "error": f"Unsupported platform: {sys.platform}",
-        }
+    raise AssertionError("supported platform already checked")
 
 
 def uninstall_service() -> dict[str, Any]:
@@ -476,6 +498,11 @@ def uninstall_service() -> dict[str, Any]:
 
 def enable_service() -> dict[str, Any]:
     """Re-enable the OS service after it was disabled."""
+    if sys.platform not in {"darwin", "linux", "win32"}:
+        return {"success": False, "error": f"Unsupported platform: {sys.platform}"}
+    reserved = _reserve_commanded_start()
+    if reserved is not None:
+        return reserved
     if sys.platform == "darwin":
         return enable_service_macos()
     elif sys.platform == "linux":
@@ -520,6 +547,11 @@ def service_restart(shutdown_source: str = "service_restart") -> dict[str, Any]:
     """Restart the daemon through the OS service manager."""
     from gobby.runner_maintenance import write_shutdown_source
 
+    if sys.platform not in {"darwin", "linux", "win32"}:
+        return {"success": False, "error": f"Unsupported platform: {sys.platform}"}
+    reserved = _reserve_commanded_start()
+    if reserved is not None:
+        return reserved
     if sys.platform == "darwin":
         restart_fn = _macos_restart
     elif sys.platform == "linux":
@@ -538,8 +570,14 @@ def service_restart(shutdown_source: str = "service_restart") -> dict[str, Any]:
     return restart_fn()
 
 
-def service_start() -> dict[str, Any]:
+def service_start(*, reserved: bool = False) -> dict[str, Any]:
     """Start the daemon through the OS service manager."""
+    if sys.platform not in {"darwin", "linux", "win32"}:
+        return {"success": False, "error": f"Unsupported platform: {sys.platform}"}
+    if not reserved:
+        blocked = _reserve_commanded_start()
+        if blocked is not None:
+            return blocked
     if sys.platform == "darwin":
         return _macos_start()
     elif sys.platform == "linux":

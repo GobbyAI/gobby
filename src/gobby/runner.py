@@ -312,8 +312,11 @@ async def run_gobby(
     )
     from gobby.deployment import deployment_token
     from gobby.runner_pid_file import (
-        FailOpenPidOwnership,
+        SERVICE_LAUNCH_ENV,
+        ProbeState,
+        adopt_inherited_claim,
         claim_pid_file,
+        convert_or_acquire_service_claim,
         probe_daemon_lock,
     )
     from gobby.storage.schema_contract import verify_schema
@@ -322,18 +325,29 @@ async def run_gobby(
 
     if ownership_resolution is None:
         pid_file = get_gobby_home() / "gobby.pid"
-        try:
-            ownership_resolution = claim_pid_file(pid_file)
-        except OSError as exc:
-            ownership_resolution = FailOpenPidOwnership(str(exc))
-            logger.warning("Could not claim PID file %s at startup: %s", pid_file, exc)
+        if os.environ.get(SERVICE_LAUNCH_ENV) == "1":
+            ownership_resolution = convert_or_acquire_service_claim(pid_file)
+        else:
+            inherited = adopt_inherited_claim(pid_file)
+            if inherited is not None:
+                ownership_resolution = inherited
+            else:
+                ownership_resolution = claim_pid_file(pid_file)
         if ownership_resolution is None:
             owner = probe_daemon_lock(pid_file)
-            logger.info(
-                "PID file %s is owned by another live daemon (PID %s); exiting cleanly",
-                pid_file,
-                owner or "unknown",
-            )
+            if owner.state is ProbeState.DAEMON:
+                logger.info(
+                    "PID file %s is owned by another live daemon (PID %s); exiting cleanly",
+                    pid_file,
+                    owner.pid or "unknown",
+                )
+            else:
+                logger.info(
+                    "PID file %s is held (%s, PID %s); exiting before initialization",
+                    pid_file,
+                    owner.state.value,
+                    owner.pid or "unknown",
+                )
             return
 
     bootstrap = load_bootstrap(
@@ -507,26 +521,39 @@ def main(config_path: Path | None = None, verbose: bool = False) -> None:
     # KeepAlive.SuccessfulExit=false never hot-loops it.
     from gobby.cli.utils import get_gobby_home
     from gobby.runner_pid_file import (
-        FailOpenPidOwnership,
+        SERVICE_LAUNCH_ENV,
+        ProbeState,
+        SingletonError,
+        adopt_inherited_claim,
         claim_pid_file,
+        convert_or_acquire_service_claim,
         probe_daemon_lock,
     )
 
     pid_file = get_gobby_home() / "gobby.pid"
     ownership_resolution: PidOwnershipResolution | None = None
-    contended = False
     try:
-        ownership_resolution = claim_pid_file(pid_file)
-        contended = ownership_resolution is None
-    except OSError as e:
-        ownership_resolution = FailOpenPidOwnership(str(e))
-        logger.warning("Could not claim PID file %s at startup: %s", pid_file, e)
-    if contended:
+        if os.environ.get(SERVICE_LAUNCH_ENV) == "1":
+            ownership_resolution = convert_or_acquire_service_claim(pid_file)
+        else:
+            inherited = adopt_inherited_claim(pid_file)
+            ownership_resolution = inherited or claim_pid_file(pid_file)
+    except SingletonError as exc:
+        print(f"Gobby daemon lock {pid_file} failed closed: {exc}", file=sys.stderr)
+        sys.exit(1)
+    if ownership_resolution is None:
         owner = probe_daemon_lock(pid_file)
-        print(
-            f"Gobby daemon lock {pid_file} is held by PID {owner or 'unknown'}, exiting.",
-            file=sys.stderr,
-        )
+        if owner.state is ProbeState.DAEMON:
+            print(
+                f"Gobby daemon lock {pid_file} is held by PID {owner.pid or 'unknown'}, exiting.",
+                file=sys.stderr,
+            )
+        else:
+            print(
+                f"Gobby daemon lock {pid_file} is held ({owner.state.value}, "
+                f"PID {owner.pid or 'unknown'}), exiting.",
+                file=sys.stderr,
+            )
         sys.exit(0)
 
     try:

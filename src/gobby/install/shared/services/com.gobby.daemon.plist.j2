@@ -24,6 +24,10 @@
         <string>{{ home_dir }}</string>
         <key>PATH</key>
         <string>{{ path_env }}</string>
+        <key>GOBBY_SERVICE_LAUNCH</key>
+        <string>1</string>
+        <key>GOBBY_SERVICE_NONCE</key>
+        <string>{{ gobby_home if gobby_home else home_dir + "/.gobby" }}/gobby.pid.service-nonce</string>
 {% if gobby_home %}
         <key>GOBBY_HOME</key>
         <string>{{ gobby_home }}</string>
