@@ -14,9 +14,22 @@ rules:
     event: after_tool
     enabled: true
     priority: 60
+    # UI predicate shared with skill-discovery/require-impeccable-skill.yaml:
+    # component/style/markup extensions match anywhere; bare .ts/.js/.mjs/.cjs
+    # match only under a web/ segment so skill scripts and Node tooling stop
+    # counting as UI edits.
     when: >
       event.data.get('canonical_tool_kind') == 'write'
-      and event.data.get('canonical_file_path', '').endswith(('.tsx', '.jsx', '.ts', '.js', '.mjs', '.cjs', '.vue', '.svelte', '.astro', '.css', '.scss', '.html'))
+      and (
+        event.data.get('canonical_file_path', '').endswith(('.tsx', '.jsx', '.vue', '.svelte', '.astro', '.css', '.scss', '.html'))
+        or (
+          event.data.get('canonical_file_path', '').endswith(('.ts', '.js', '.mjs', '.cjs'))
+          and (
+            '/web/' in event.data.get('canonical_file_path', '')
+            or event.data.get('canonical_file_path', '').startswith('web/')
+          )
+        )
+      )
     effects:
       - type: set_variable
         variable: impeccable_ui_edited_this_turn

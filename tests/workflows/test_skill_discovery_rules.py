@@ -106,6 +106,7 @@ SKILL_DISCOVERY_RULES = {
     "require-dart-skill",
     "require-elixir-skill",
     "require-go-skill",
+    "require-impeccable-skill",
     "require-java-skill",
     "require-javascript-skill",
     "require-json-skill",
@@ -3215,6 +3216,117 @@ class TestRequireTypeScriptSkillCondition:
 
     def test_skips_empty_file_path(self) -> None:
         assert self._eval("") is False
+
+
+# --- require-impeccable-skill structure ---
+
+
+class TestRequireImpeccableSkillStructure:
+    """Verify require-impeccable-skill rule structure."""
+
+    def test_is_before_tool_event(self, db, manager) -> None:
+        _sync_bundled(db)
+        row = manager.get_by_name("require-impeccable-skill")
+        assert row is not None
+
+        body = RuleDefinitionBody.model_validate(row.definition_json)
+        assert body.event.value == "before_tool"
+        assert body.when is not None
+        assert "not skill_loaded('impeccable')" in body.when
+
+    def test_has_block_effect_with_canonical_directive(self, db, manager) -> None:
+        _sync_bundled(db)
+        row = manager.get_by_name("require-impeccable-skill")
+        body = RuleDefinitionBody.model_validate(row.definition_json)
+
+        assert len(body.effects) == 1
+        assert body.effects[0].type == "block"
+        assert body.effects[0].reason == _skill_fetch_template("impeccable")
+
+
+# --- shared UI-file predicate (require-impeccable-skill + design detector) ---
+
+
+UI_PREDICATE_MATCHING_PATHS = [
+    "/project/src/components/Button.tsx",
+    "/project/src/legacy/Widget.jsx",
+    "/project/src/App.vue",
+    "/project/src/Card.svelte",
+    "/project/src/page.astro",
+    "/project/styles/theme.css",
+    "/project/styles/mixins.scss",
+    "/project/public/index.html",
+    "web/src/lib/api.ts",
+    "web/src/util/format.js",
+    "/Users/dev/repo/web/src/lib/api.ts",
+    "/Users/dev/repo/web/scripts/build.mjs",
+]
+
+UI_PREDICATE_NON_MATCHING_PATHS = [
+    "src/gobby/install/shared/skills/impeccable/scripts/live-copy-edit-agent.mjs",
+    "/Users/dev/repo/src/gobby/install/shared/skills/impeccable/scripts/hook.mjs",
+    "/project/scripts/release.mjs",
+    "/project/eslint.config.js",
+    "/project/src/daemon/main.ts",
+    "/project/src/gobby/servers/http.py",
+    "/project/README.md",
+]
+
+
+def _eval_condition(condition: str, file_path: str, **variables: Any) -> bool:
+    context = {
+        "variables": {"loaded_skills": [], **variables},
+        "event": SimpleNamespace(
+            data={
+                "canonical_tool_kind": "write",
+                "canonical_file_path": file_path,
+            }
+        ),
+        "tool_input": {},
+    }
+    allowed_funcs = build_condition_helpers(context=context)
+    evaluator = SafeExpressionEvaluator(context=context, allowed_funcs=allowed_funcs)
+    return evaluator.evaluate(condition)
+
+
+class TestRequireImpeccableSkillCondition:
+    """Test the require-impeccable-skill condition from the bundled template."""
+
+    @pytest.fixture
+    def condition(self) -> str:
+        return _bundled_rule_condition(
+            "skill-discovery/require-impeccable-skill.yaml", "require-impeccable-skill"
+        )
+
+    @pytest.mark.parametrize("file_path", UI_PREDICATE_MATCHING_PATHS)
+    def test_matches_ui_writes(self, condition: str, file_path: str) -> None:
+        assert _eval_condition(condition, file_path) is True
+
+    @pytest.mark.parametrize("file_path", UI_PREDICATE_NON_MATCHING_PATHS)
+    def test_skips_non_ui_writes(self, condition: str, file_path: str) -> None:
+        assert _eval_condition(condition, file_path) is False
+
+    def test_skips_when_already_loaded(self, condition: str) -> None:
+        assert (
+            _eval_condition(condition, "/project/src/Button.tsx", loaded_skills=["impeccable"])
+            is False
+        )
+
+
+class TestDesignDetectorPredicate:
+    """The design detector's edit pass shares the UI-file predicate."""
+
+    @pytest.fixture
+    def condition(self) -> str:
+        return _bundled_rule_condition("impeccable/design-detector.yaml", "impeccable-edit-pass")
+
+    @pytest.mark.parametrize("file_path", UI_PREDICATE_MATCHING_PATHS)
+    def test_matches_ui_writes(self, condition: str, file_path: str) -> None:
+        assert _eval_condition(condition, file_path) is True
+
+    @pytest.mark.parametrize("file_path", UI_PREDICATE_NON_MATCHING_PATHS)
+    def test_skips_non_ui_writes(self, condition: str, file_path: str) -> None:
+        assert _eval_condition(condition, file_path) is False
 
 
 # --- require-bash-skill structure ---
