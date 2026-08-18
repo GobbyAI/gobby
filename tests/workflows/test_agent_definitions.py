@@ -230,7 +230,7 @@ def test_qa_reviewer_records_review_verdict_without_closing_task() -> None:
     assert "reject_review" in instructions
     assert "escalate_task" in instructions
     assert 'reason="qa_approved"' not in instructions
-    assert "Do NOT call close_task" in instructions
+    assert "close_task belongs" in instructions
 
     blocked_tools = _blocked_mcp_tools(review)
     assert "gobby-tasks:close_task" in blocked_tools
@@ -406,5 +406,7 @@ def test_planner_relies_on_review_handoff_to_clear_rejected_verdict_label() -> N
     instructions = " ".join(_agent("planner")["instructions"].split())
 
     assert "submit_for_review" in instructions
-    assert "Do not call remove_label for `planning-current-verdict:rejected`" in instructions
-    assert "clears it atomically with the resubmission" in instructions
+    assert "remove_label" in instructions
+    assert "`planning-current-verdict:rejected` label atomically with the resubmission" in (
+        instructions
+    )

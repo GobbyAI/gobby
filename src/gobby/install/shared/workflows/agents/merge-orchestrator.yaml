@@ -247,7 +247,9 @@ step_workflow:
         Call get_skill(name="merge-expert") and
         get_skill(name="build-coordinator") on gobby-skills, then continue.
         Use only mcp__gobby__call_tool in this step. Call get_skill directly:
-        call_tool("gobby-skills", "get_skill", {"name": <skill>}).
+        call_tool("gobby-skills", "get_skill", {"name": <skill>});
+        native Skill, GitHub/app connector, and Computer Use tools bypass
+        Gobby's skill tracking.
       allowed_tools:
         - mcp__gobby__call_tool
         - mcp__gobby__list_mcp_servers
