@@ -8,12 +8,10 @@ import pytest
 from claude_agent_sdk.types import SyncHookJSONOutput
 
 from gobby.servers.chat_session_helpers import (
-    _FALLBACK_SYSTEM_PROMPT,
     _build_gobby_mcp_entry,
     _find_cli_path,
     _find_mcp_config,
     _find_project_root,
-    _load_chat_system_prompt,
     _response_to_compact_output,
     _response_to_post_tool_output,
     _response_to_pre_tool_output,
@@ -24,20 +22,6 @@ from gobby.servers.chat_session_helpers import (
 )
 
 pytestmark = pytest.mark.unit
-
-
-class TestSystemPrompt:
-    def test_load_system_prompt_success(self) -> None:
-        with patch("gobby.prompts.loader.PromptLoader") as mock_loader:
-            mock_loader.return_value.load.return_value.content = "Real prompt"
-            res = _load_chat_system_prompt()
-            assert res == "Real prompt"
-            mock_loader.return_value.load.assert_called_once_with("chat/system")
-
-    def test_load_system_prompt_fallback(self) -> None:
-        with patch("gobby.prompts.loader.PromptLoader", side_effect=ImportError):
-            res = _load_chat_system_prompt()
-            assert res == _FALLBACK_SYSTEM_PROMPT
 
 
 class TestFinders:
