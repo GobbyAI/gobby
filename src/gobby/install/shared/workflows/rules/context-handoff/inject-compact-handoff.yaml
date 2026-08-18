@@ -24,7 +24,8 @@ rules:
           {% for server, tools in durable_mcp_calls | dictsort %}- `{{ server }}`: {{ tools | sort | join(', ') }}
           {% endfor %}
           {% endif %}
-          {% set resume_skills = variables.get('compact_resume_required_skills') or [] %}
+          {% set already_loaded = variables.get('loaded_skills') or [] %}
+          {% set resume_skills = (variables.get('compact_resume_required_skills') or []) | reject('in', already_loaded) | list %}
           {% if resume_skills %}
 
           ## Required Skill Reload
@@ -32,7 +33,7 @@ rules:
 
           {{ skill_fetch_batch_directive(resume_skills) }}
           {% endif %}
-          {% set advisory_skills = variables.get('compact_resume_advisory_skills') or [] %}
+          {% set advisory_skills = (variables.get('compact_resume_advisory_skills') or []) | reject('in', already_loaded) | list %}
           {% if advisory_skills %}
 
           ## Advisory Skill Reload
@@ -72,7 +73,8 @@ rules:
           {% for server, tools in durable_mcp_calls | dictsort %}- `{{ server }}`: {{ tools | sort | join(', ') }}
           {% endfor %}
           {% endif %}
-          {% set resume_skills = variables.get('compact_resume_required_skills') or [] %}
+          {% set already_loaded = variables.get('loaded_skills') or [] %}
+          {% set resume_skills = (variables.get('compact_resume_required_skills') or []) | reject('in', already_loaded) | list %}
           {% if resume_skills %}
 
           ## Required Skill Reload
@@ -80,7 +82,7 @@ rules:
 
           {{ skill_fetch_batch_directive(resume_skills) }}
           {% endif %}
-          {% set advisory_skills = variables.get('compact_resume_advisory_skills') or [] %}
+          {% set advisory_skills = (variables.get('compact_resume_advisory_skills') or []) | reject('in', already_loaded) | list %}
           {% if advisory_skills %}
 
           ## Advisory Skill Reload

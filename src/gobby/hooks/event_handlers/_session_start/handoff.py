@@ -12,7 +12,12 @@ from gobby.sessions.compact_continuation import (
     consume_compact_handoff_marker,
 )
 from gobby.sessions.compact_identity import resolve_compact_continuation
-from gobby.sessions.compact_markers import COMPACT_NOTIFICATION_STARTED_AT_VARIABLE
+from gobby.sessions.compact_markers import (
+    COMPACT_NOTIFICATION_STARTED_AT_VARIABLE,
+    COMPACT_RESUME_ADVISORY_SKILLS_VARIABLE,
+    COMPACT_RESUME_EXCLUDED_SKILLS,
+    COMPACT_RESUME_REQUIRED_SKILLS_VARIABLE,
+)
 from gobby.sessions.handoff_identity import terminal_contexts_match
 from gobby.sessions.tmux_context import parse_terminal_context_value
 from gobby.utils.injected_context import strip_injected_context
@@ -384,20 +389,28 @@ def _normalize_compact_resume_required_skills(
     session_id: str,
     current_vars: dict[str, Any],
 ) -> None:
-    raw_skills = current_vars.get("compact_resume_required_skills")
-    if not isinstance(raw_skills, list):
-        return
-
-    skills: list[str] = []
-    seen: set[str] = set()
-    for value in raw_skills:
-        if not isinstance(value, str):
+    updates: dict[str, Any] = {}
+    for variable in (
+        COMPACT_RESUME_REQUIRED_SKILLS_VARIABLE,
+        COMPACT_RESUME_ADVISORY_SKILLS_VARIABLE,
+    ):
+        raw_skills = current_vars.get(variable)
+        if not isinstance(raw_skills, list):
             continue
-        skill = value.strip()
-        if not skill or skill in seen:
-            continue
-        seen.add(skill)
-        skills.append(skill)
 
-    if skills and skills != raw_skills:
-        sv_mgr.merge_variables(session_id, {"compact_resume_required_skills": skills})
+        skills: list[str] = []
+        seen: set[str] = set()
+        for value in raw_skills:
+            if not isinstance(value, str):
+                continue
+            skill = value.strip()
+            if not skill or skill in seen or skill in COMPACT_RESUME_EXCLUDED_SKILLS:
+                continue
+            seen.add(skill)
+            skills.append(skill)
+
+        if skills != raw_skills:
+            updates[variable] = skills
+
+    if updates:
+        sv_mgr.merge_variables(session_id, updates)

@@ -520,6 +520,72 @@ class TestInjectCompactHandoff:
         assert not (second.context and "One-shot UNIQUE_ONCE" in second.context)
         assert not (second.context and "Continuation Context" in second.context)
 
+    @pytest.mark.asyncio
+    async def test_prompt_path_excludes_skills_reloaded_this_epoch(self, db: HubDatabase) -> None:
+        """Skills already back in the epoch ledger are not directed again."""
+        _sync_bundled(db)
+        engine = RuleEngine(db)
+        event = HookEvent(
+            event_type=HookEventType.BEFORE_AGENT,
+            session_id=SESSION_ID,
+            source=SessionSource.GROK,
+            timestamp=datetime.now(UTC),
+            data={},
+        )
+        result = await engine.evaluate(
+            event,
+            session_id=SESSION_ID,
+            variables={
+                "compact_handoff_inject_pending": True,
+                "session_summary": "Epoch continuation UNIQUE_EPOCH",
+                "loaded_skills": ["tasks", "restraint"],
+                "compact_resume_required_skills": ["tasks", "python"],
+                "compact_resume_advisory_skills": ["restraint"],
+            },
+        )
+        assert result.context is not None
+        assert "Required Skill Reload" in result.context
+        assert '{"name":"python"}' in result.context
+        assert '{"name":"tasks"}' not in result.context
+        assert "Advisory Skill Reload" not in result.context
+
+    @pytest.mark.asyncio
+    async def test_session_start_reload_list_survives_stale_ledger(self, db: HubDatabase) -> None:
+        """The pre-compact ledger never suppresses reloads for the fresh epoch.
+
+        reset-skill-injection must clear loaded_skills before the handoff
+        template renders, so skills genuinely lost to the context reset are
+        still directed for reload.
+        """
+        _sync_bundled(db)
+        engine = RuleEngine(db)
+        event = HookEvent(
+            event_type=HookEventType.SESSION_START,
+            session_id=SESSION_ID,
+            source=SessionSource.CLAUDE,
+            timestamp=datetime.now(UTC),
+            data={"source": "compact"},
+        )
+        variables: dict[str, Any] = {
+            "session_summary": "Fresh epoch UNIQUE_FRESH",
+            "loaded_skills": ["tasks", "python"],
+            "compact_resume_required_skills": ["tasks", "python"],
+        }
+        result = await engine.evaluate(event, session_id=SESSION_ID, variables=variables)
+        assert result.context is not None
+        assert "Required Skill Reload" in result.context
+        assert '{"name":"tasks"}' in result.context
+        assert '{"name":"python"}' in result.context
+        assert variables["loaded_skills"] == []
+
+    def test_ledger_reset_precedes_handoff_injection(self, db, manager) -> None:
+        _sync_bundled(db)
+        inject = manager.get_by_name("inject-compact-handoff")
+        reset = manager.get_by_name("reset-skill-injection")
+        assert inject is not None
+        assert reset is not None
+        assert reset.priority < inject.priority
+
 
 # ═══════════════════════════════════════════════════════════════════════
 # inject-wiki-overview
