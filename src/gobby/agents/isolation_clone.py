@@ -43,7 +43,7 @@ class CloneIsolationHandler(IsolationHandler):
     This handler:
     - Checks for existing clones by branch name
     - Creates new shallow clones if needed
-    - Adds CRITICAL context warning to prompt
+    - Adds an isolation context banner to the prompt
     """
 
     def __init__(
@@ -239,13 +239,12 @@ class CloneIsolationHandler(IsolationHandler):
 
     def build_context_prompt(self, original_prompt: str, ctx: IsolationContext) -> str:
         """
-        Build prompt with CRITICAL clone context warning.
+        Build prompt with the clone context banner.
 
         Prepends isolation context to help the agent understand it's
         working in a clone, not the original repository.
         """
-        warning = f"""CRITICAL: Clone Context
-You are working in a shallow clone, NOT the original repository.
+        warning = f"""Clone context — you are working in an isolated shallow clone, not the original repository.
 - Branch: {ctx.branch_name}
 - Clone path: {ctx.cwd}
 - Source repo: {ctx.extra.get("source_repo", "unknown")}
