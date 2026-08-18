@@ -11,6 +11,7 @@
 //! local to the loop; the transport only relays messages and returns the
 //! model's `tool_calls`.
 
+use std::path::{Path, PathBuf};
 use std::sync::{Arc, OnceLock, mpsc};
 use std::time::{Duration, Instant};
 
@@ -235,8 +236,9 @@ pub struct ToolLoopLimits {
     pub max_turns: Option<usize>,
     /// Maximum number of tool calls executed across the whole run.
     pub max_tool_calls: usize,
-    /// Maximum byte length of a single tool result fed back to the model.
-    /// Larger results are truncated on a UTF-8 boundary.
+    /// Inline budget for a single tool result fed back to the model.
+    /// Larger results are offloaded (sidecar + pointer, or pointer/re-query)
+    /// and are never prefix-sliced into the chat message.
     pub max_bytes_per_tool_result: usize,
     /// Wall-clock budget for each individual tool call.
     pub tool_timeout_seconds: u64,
@@ -495,17 +497,46 @@ const FORCE_INVESTIGATION_CORRECTIONS: [&str; 3] = [
      after you have read at least one tool result.",
 ];
 
+/// Per-run context for [`run_tool_loop_with_context`].
+#[derive(Debug, Clone, Default)]
+pub struct ToolLoopRunContext {
+    /// Directory for oversized tool-result sidecars. When absent, over-cap
+    /// results become pointer/re-query text only.
+    pub artifact_dir: Option<PathBuf>,
+}
+
 /// Run the tool loop to completion or a limit.
 ///
 /// `initial_messages` should carry the system/user prompt; tool schemas are
 /// taken from the executor. Transport failures propagate as `Err`; reaching a
-/// limit returns `Ok` with the corresponding [`StopReason`].
+/// limit returns `Ok` with the corresponding [`StopReason`]. Oversized tool
+/// results are not inlined; pass [`ToolLoopRunContext::artifact_dir`] via
+/// [`run_tool_loop_with_context`] to persist them as sidecars.
 pub fn run_tool_loop(
     transport: &dyn ChatTransport,
     executor: Arc<dyn ToolExecutor>,
     initial_messages: Vec<ChatMessage>,
     limits: &ToolLoopLimits,
     max_tokens: Option<usize>,
+) -> Result<ToolLoopOutcome, AiError> {
+    run_tool_loop_with_context(
+        transport,
+        executor,
+        initial_messages,
+        limits,
+        max_tokens,
+        &ToolLoopRunContext::default(),
+    )
+}
+
+/// Run the tool loop with an explicit [`ToolLoopRunContext`].
+pub fn run_tool_loop_with_context(
+    transport: &dyn ChatTransport,
+    executor: Arc<dyn ToolExecutor>,
+    initial_messages: Vec<ChatMessage>,
+    limits: &ToolLoopLimits,
+    max_tokens: Option<usize>,
+    context: &ToolLoopRunContext,
 ) -> Result<ToolLoopOutcome, AiError> {
     let start = Instant::now();
     run_tool_loop_with_clock(
@@ -514,6 +545,7 @@ pub fn run_tool_loop(
         initial_messages,
         limits,
         max_tokens,
+        context.artifact_dir.as_deref(),
         move || start.elapsed(),
     )
 }
@@ -524,6 +556,7 @@ pub(super) fn run_tool_loop_with_clock<C: FnMut() -> Duration>(
     initial_messages: Vec<ChatMessage>,
     limits: &ToolLoopLimits,
     max_tokens: Option<usize>,
+    artifact_dir: Option<&Path>,
     mut elapsed: C,
 ) -> Result<ToolLoopOutcome, AiError> {
     limits.validate()?;
@@ -663,7 +696,12 @@ pub(super) fn run_tool_loop_with_clock<C: FnMut() -> Duration>(
                     "tool error: execution worker disconnected".to_string()
                 }
             };
-            let result = truncate_utf8(result, limits.max_bytes_per_tool_result);
+            let result = ingest_tool_result(
+                result,
+                limits.max_bytes_per_tool_result,
+                artifact_dir,
+                &call.id,
+            );
             messages.push(ChatMessage::tool_result(call.id.clone(), result));
             tool_call_count += 1;
             if elapsed() >= loop_timeout {
@@ -745,6 +783,8 @@ fn add_component(accumulator: &mut Option<usize>, value: Option<usize>) {
 }
 
 /// Truncate `value` to at most `max_bytes`, never splitting a UTF-8 character.
+/// Char-boundary primitive. Tool-result ingest no longer calls this.
+#[allow(dead_code)]
 fn truncate_utf8(mut value: String, max_bytes: usize) -> String {
     if value.len() <= max_bytes {
         return value;
@@ -755,6 +795,60 @@ fn truncate_utf8(mut value: String, max_bytes: usize) -> String {
     }
     value.truncate(end);
     value
+}
+
+fn ingest_tool_result(
+    result: String,
+    max_bytes: usize,
+    artifact_dir: Option<&Path>,
+    tool_call_id: &str,
+) -> String {
+    if result.len() <= max_bytes {
+        return result;
+    }
+    let byte_count = result.len();
+    if let Some(dir) = artifact_dir
+        && let Ok(path) = write_tool_result_sidecar(dir, tool_call_id, result.as_bytes())
+    {
+        return format!(
+            "Tool result omitted ({byte_count} bytes). Full result written to {}. \
+             Read the sidecar or re-query the tool.",
+            path.display()
+        );
+    }
+    format!(
+        "Tool result omitted ({byte_count} bytes). Result exceeds the inline \
+         budget; re-query the tool. The body is not inlined."
+    )
+}
+
+fn write_tool_result_sidecar(
+    dir: &Path,
+    tool_call_id: &str,
+    bytes: &[u8],
+) -> std::io::Result<PathBuf> {
+    std::fs::create_dir_all(dir)?;
+    let path = dir.join(format!(
+        "tool-result-{}.txt",
+        sanitize_tool_call_id(tool_call_id)
+    ));
+    std::fs::write(&path, bytes)?;
+    Ok(path)
+}
+
+fn sanitize_tool_call_id(id: &str) -> String {
+    let mut out = String::with_capacity(id.len().max(6));
+    for ch in id.chars() {
+        if ch.is_ascii_alphanumeric() || ch == '-' || ch == '_' {
+            out.push(ch);
+        } else {
+            out.push('_');
+        }
+    }
+    if out.is_empty() {
+        out.push_str("result");
+    }
+    out
 }
 
 fn duration_to_ms(duration: Duration) -> u64 {

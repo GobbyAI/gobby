@@ -8,7 +8,8 @@ use std::time::Duration;
 
 use gobby_core::ai::generation::{
     ChatCompletion, ChatCompletionRequest, ChatMessage, ChatTransport, StopReason, ToolCall,
-    ToolError, ToolExecutor, ToolLoopLimits, ToolSchema, run_tool_loop,
+    ToolError, ToolExecutor, ToolLoopLimits, ToolLoopRunContext, ToolSchema,
+    run_tool_loop_with_context,
 };
 use serde_json::json;
 
@@ -347,12 +348,16 @@ fn tool_timeout_does_not_block_subsequent_calls() {
         loop_timeout_seconds: 8,
         ..ToolLoopLimits::default()
     };
-    let outcome = run_tool_loop(
+    let artifact_dir = tempfile::tempdir().expect("artifact dir");
+    let outcome = run_tool_loop_with_context(
         &transport,
         executor,
         vec![ChatMessage::user("investigate")],
         &limits,
         None,
+        &ToolLoopRunContext {
+            artifact_dir: Some(artifact_dir.path().to_path_buf()),
+        },
     )
     .expect("tool loop runs");
 

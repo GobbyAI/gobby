@@ -275,7 +275,7 @@ mod tests {
     use crate::support::test_env::EnvGuard;
     use gobby_core::ai::generation::{
         ChatCompletion, ChatCompletionRequest, ChatMessage, ChatTransport, ToolCall,
-        ToolLoopLimits, run_tool_loop,
+        ToolLoopLimits, ToolLoopRunContext, run_tool_loop_with_context,
     };
     use gobby_core::ai_types::AiError;
 
@@ -488,12 +488,15 @@ mod tests {
             ChatMessage::user("Compile a page."),
         ];
         let limits = ToolLoopLimits::default();
-        let outcome = run_tool_loop(
+        let outcome = run_tool_loop_with_context(
             &transport,
             std::sync::Arc::new(executor),
             messages,
             &limits,
             None,
+            &ToolLoopRunContext {
+                artifact_dir: Some(temp.path().to_path_buf()),
+            },
         )
         .expect("tool loop runs");
 

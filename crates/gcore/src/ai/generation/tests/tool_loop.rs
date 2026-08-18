@@ -488,36 +488,137 @@ fn tool_loop_stops_at_max_tool_calls() {
     assert_eq!(outcome.observability.turns, 2);
 }
 
-#[test]
-fn tool_loop_truncates_tool_result_on_utf8_boundary() {
+const OVERSIZE_HEAD: &str = "UNIQUE_BODY_PREFIX_7f3a9c_";
+const OVERSIZE_TAIL: &str = "_UNIQUE_BODY_SUFFIX_7f3a9c";
+
+fn oversized_tool_body() -> String {
+    format!("{OVERSIZE_HEAD}{}{OVERSIZE_TAIL}", "x".repeat(20_000))
+}
+
+fn tool_message_content(transport: &StubTransport) -> String {
+    let requests = transport.requests.borrow();
+    requests
+        .iter()
+        .flat_map(|turn| turn.iter())
+        .find(|message| message.role == ChatRole::Tool)
+        .and_then(|message| message.content.clone())
+        .expect("tool result present")
+}
+
+fn run_echo_loop(
+    result: &str,
+    max_bytes: usize,
+    artifact_dir: Option<&std::path::Path>,
+) -> (StubTransport, String) {
     let transport = StubTransport::new(vec![
         tool_call_completion("echo", "call_echo", json!({})),
         content_completion("done"),
     ]);
-    // "ééé" is 6 bytes; a 5-byte cap keeps 2 chars (4 bytes) without splitting.
-    let executor = Arc::new(EchoExecutor::new("ééé"));
+    let executor = Arc::new(EchoExecutor::new(result));
     let limits = ToolLoopLimits {
-        max_bytes_per_tool_result: 5,
+        max_bytes_per_tool_result: max_bytes,
         ..ToolLoopLimits::default()
     };
-    let outcome = run_tool_loop(
+    let context = ToolLoopRunContext {
+        artifact_dir: artifact_dir.map(std::path::Path::to_path_buf),
+    };
+    let outcome = run_tool_loop_with_context(
         &transport,
         executor,
         vec![ChatMessage::user("go")],
         &limits,
         None,
+        &context,
     )
     .expect("loop runs");
-
     assert_eq!(outcome.stop_reason, StopReason::Completed);
-    let requests = transport.requests.borrow();
-    let tool_message = requests[1]
-        .iter()
-        .find(|message| message.role == ChatRole::Tool)
-        .expect("tool result present");
-    let content = tool_message.content.as_deref().unwrap();
-    assert!(content.len() <= 5);
-    assert_eq!(content, "éé");
+    let content = tool_message_content(&transport);
+    (transport, content)
+}
+
+#[test]
+fn tool_loop_under_cap_result_is_unchanged_and_writes_no_sidecar() {
+    let dir = tempfile::tempdir().expect("artifact dir");
+    let result = "hello-under-cap";
+    let (_transport, content) = run_echo_loop(result, 64, Some(dir.path()));
+    assert_eq!(content, result);
+    let entries: Vec<_> = fs::read_dir(dir.path())
+        .expect("read artifact dir")
+        .collect();
+    assert!(
+        entries.is_empty(),
+        "under-cap results must not write a sidecar"
+    );
+}
+
+#[test]
+fn tool_loop_over_cap_with_artifact_dir_writes_full_sidecar_and_pointer_only_message() {
+    let dir = tempfile::tempdir().expect("artifact dir");
+    let result = oversized_tool_body();
+    let prefix = result[..64].to_string();
+    let (_transport, content) = run_echo_loop(&result, 64, Some(dir.path()));
+
+    assert!(
+        !content.contains(OVERSIZE_HEAD),
+        "tool message must not contain the body prefix: {content}"
+    );
+    assert!(
+        !content.contains(OVERSIZE_TAIL),
+        "tool message must not contain the body suffix: {content}"
+    );
+    assert!(
+        !content.contains(&prefix),
+        "tool message must not contain a prefix of the body: {content}"
+    );
+    assert!(
+        content.contains(&result.len().to_string()),
+        "pointer must include byte count: {content}"
+    );
+    assert!(
+        content.contains("sidecar") && content.contains("re-query"),
+        "pointer must tell the model to read the sidecar or re-query: {content}"
+    );
+
+    let entries: Vec<_> = fs::read_dir(dir.path())
+        .expect("read artifact dir")
+        .map(|entry| entry.expect("sidecar entry").path())
+        .collect();
+    assert_eq!(entries.len(), 1, "expected exactly one sidecar");
+    let sidecar = &entries[0];
+    let stored = fs::read(sidecar).expect("read sidecar");
+    assert_eq!(stored, result.as_bytes());
+    assert!(
+        content.contains(&sidecar.display().to_string()),
+        "pointer must include the sidecar path: {content}"
+    );
+}
+
+#[test]
+fn tool_loop_over_cap_without_artifact_dir_is_pointer_text_only() {
+    let result = oversized_tool_body();
+    let prefix = result[..64].to_string();
+    let (_transport, content) = run_echo_loop(&result, 64, None);
+
+    assert!(
+        !content.contains(OVERSIZE_HEAD),
+        "tool message must not contain the body prefix: {content}"
+    );
+    assert!(
+        !content.contains(&prefix),
+        "tool message must not contain a prefix of the body: {content}"
+    );
+    assert!(
+        content.contains(&result.len().to_string()),
+        "pointer must include byte count: {content}"
+    );
+    assert!(
+        content.contains("re-query"),
+        "pointer must tell the model to re-query: {content}"
+    );
+    assert!(
+        !content.contains("written to"),
+        "without artifact_dir the pointer must not claim a sidecar path: {content}"
+    );
 }
 
 #[test]
@@ -553,6 +654,7 @@ fn tool_loop_stops_at_timeout() {
         executor,
         vec![ChatMessage::user("go")],
         &limits,
+        None,
         None,
         clock,
     )
@@ -590,6 +692,7 @@ fn tool_loop_content_completion_times_out_after_transport() {
         vec![ChatMessage::user("go")],
         &limits,
         None,
+        None,
         clock,
     )
     .expect("loop runs");
@@ -626,6 +729,7 @@ fn tool_loop_tool_call_completion_times_out_after_transport_without_executing_to
         executor.clone(),
         vec![ChatMessage::user("go")],
         &limits,
+        None,
         None,
         clock,
     )
@@ -665,6 +769,7 @@ fn tool_loop_times_out_after_first_tool_result_before_next_tool_call() {
         executor.clone(),
         vec![ChatMessage::user("go")],
         &limits,
+        None,
         None,
         clock,
     )
@@ -779,6 +884,7 @@ fn remaining_loop_budget_precedes_longer_tool_timeout() {
         executor,
         vec![ChatMessage::user("go")],
         &limits,
+        None,
         None,
         clock,
     )

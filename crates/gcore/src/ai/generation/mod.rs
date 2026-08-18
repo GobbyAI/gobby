@@ -22,7 +22,7 @@ pub use tier::{FEATURE_HIGH, FEATURE_LOW, FEATURE_MID, GenerationTier, profile_f
 pub use tool_loop::{
     ChatCompletion, ChatCompletionRequest, ChatMessage, ChatRole, ChatTransport, StopReason,
     ToolCall, ToolChoice, ToolError, ToolExecutor, ToolLoopLimits, ToolLoopObservability,
-    ToolLoopOutcome, ToolSchema, run_tool_loop,
+    ToolLoopOutcome, ToolLoopRunContext, ToolSchema, run_tool_loop, run_tool_loop_with_context,
 };
 pub use transport::{DaemonAgenticResult, ToolPolicy, daemon_agentic_chat};
 

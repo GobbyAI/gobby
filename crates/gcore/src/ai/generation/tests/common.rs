@@ -20,8 +20,9 @@ pub(super) use super::super::transport::{
 pub(super) use super::super::{
     ChatCompletion, ChatCompletionRequest, ChatMessage, ChatRole, ChatTransport,
     DirectGenerationTarget, FEATURE_HIGH, FEATURE_LOW, FEATURE_MID, GenerationTier, StopReason,
-    ToolCall, ToolChoice, ToolError, ToolExecutor, ToolLoopLimits, ToolSchema,
+    ToolCall, ToolChoice, ToolError, ToolExecutor, ToolLoopLimits, ToolLoopRunContext, ToolSchema,
     generate_one_shot_pinned, profile_for_tier, resolve_direct_generation_target, run_tool_loop,
+    run_tool_loop_with_context,
 };
 pub(super) use crate::ai_context::{AiBindings, AiContext, AiLimiter, GrantAiState};
 pub(super) use crate::ai_types::{AiError, TokenUsage};
