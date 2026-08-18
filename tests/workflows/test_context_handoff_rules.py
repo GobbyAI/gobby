@@ -725,13 +725,13 @@ class TestPreserveContextOnCompact:
         body = RuleDefinitionBody.model_validate(row.definition_json)
         assert body.event.value == "pre_compact"
 
-    def test_has_eight_effects(self, db, manager) -> None:
-        """Should have 8 set_variable effects."""
+    def test_has_eleven_effects(self, db, manager) -> None:
+        """Should have 11 set_variable effects (incl. reminder cadence markers)."""
         _sync_bundled(db)
         row = manager.get_by_name("preserve-context-on-compact")
         body = RuleDefinitionBody.model_validate(row.definition_json)
         effects = body.resolved_effects
-        assert len(effects) == 8
+        assert len(effects) == 11
         assert all(e.type == "set_variable" for e in effects)
 
     def test_resets_injected_memory_ids(self, db, manager) -> None:

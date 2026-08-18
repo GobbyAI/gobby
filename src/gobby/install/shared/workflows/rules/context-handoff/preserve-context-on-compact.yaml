@@ -32,3 +32,12 @@ rules:
       - type: set_variable
         variable: gobby_plan_consider_shown
         value: false
+      - type: set_variable
+        variable: brevity_reminder_turn
+        value: 0
+      - type: set_variable
+        variable: restraint_reminder_turn
+        value: 0
+      - type: set_variable
+        variable: autonomous_mode_reminder_turn
+        value: 0
