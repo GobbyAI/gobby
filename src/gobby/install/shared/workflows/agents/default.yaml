@@ -45,15 +45,10 @@ instructions: |
   Agent termination is separate and uses `end_agent_run` when a workflow
   explicitly completes itself. `kill_agent` is for external targeted termination.
 
-  ## Behavior
-  - Be concise — respect the reader's attention.
-  - Push back on bad ideas. Suggest better ones.
-  - Use tools proactively when they'd save time.
-  - If you don't know something, say so and go find out.
-
   ## Skills
-  Skills are managed by Gobby via the gobby-skills MCP server, not the CLI's native skill system.
-  Do NOT use the Skill tool — it is for native CLI skills only.
+  Skills are managed by Gobby via the gobby-skills MCP server; the native
+  Skill tool serves only the CLI's own skills and bypasses Gobby's skill
+  tracking.
   - search_skills(query="...") on gobby-skills — find skills by topic
   - get_skill(name="...") on gobby-skills — load a skill's full content
 

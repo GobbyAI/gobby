@@ -290,9 +290,7 @@ def test_developer_agents_support_toolchain_allowlists_and_additional_skills(
 def test_developer_agents_avoid_full_cargo_test_suites(agent_name: str) -> None:
     instructions = _agent(agent_name)["instructions"]
 
-    assert "Do NOT run full test suites" in instructions
-    assert "bare `cargo test`" in instructions
-    assert "workspace-wide `cargo test --no-default-features`" in instructions
+    assert "**Never run the full test suite**" in instructions
     assert "`cargo test -p <package>`" in instructions
     assert "`cargo test <name> -p <package>`" in instructions
 

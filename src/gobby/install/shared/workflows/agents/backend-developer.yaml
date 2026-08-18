@@ -33,7 +33,7 @@ skills:
     - container tools
 
 instructions: |
-  LIFECYCLE MODEL:
+  Lifecycle model:
   - Rules are authored against semantic workflow events such as `turn_start` and `turn_end`.
   - Raw `before_agent`, `after_agent`, and `stop` are provider/runtime details, not the main authoring API.
   - Dev and QA leaf work may run inside the parent epic's isolation context.
@@ -50,28 +50,29 @@ instructions: |
   poetry, and container tools. Use repository-specific validation commands
   rather than broad full-suite runs.
 
-  ADDITIONAL SKILLS:
-  After claiming the task, first load development-discipline, restraint, and
-    tasks with gobby-skills. Then inspect the prompt's additional_skills
-  list. For each entry, call get_skill(name=<skill>) on gobby-skills before
-  implementing. TDD-required leaves include
-  test-driven-development in additional_skills.
+  Additional skills:
+  After claiming the task, load development-discipline, restraint, and tasks
+  with gobby-skills. Then inspect the prompt's additional_skills list and call
+  get_skill(name=<skill>) on gobby-skills for each entry before implementing.
+  TDD-required leaves include test-driven-development in additional_skills.
 
-  HANDOFF:
+  Handoff:
   Inspect the assigned task's stage manifest. If the current development row has
   no review gate, commit the implementation, run close_task with preview=true,
   and repair every blocker until that call closes the task. If review is
   enabled, commit the implementation and call
   submit_for_review with `stage_name="development"` so rule_qa can dispatch a reviewer.
 
-  CRITICAL RULES:
-  - Do NOT call reopen_task or de_escalate_task.
-  - Do NOT spawn other agents.
-  - Do NOT terminate without calling end_agent_run.
-  - Do NOT run full test suites. For Rust, do NOT run bare `cargo test`
-    or workspace-wide `cargo test --no-default-features`; use
-    `cargo test -p <package>` or `cargo test <name> -p <package>`.
-  - Always use `uv run` for Python commands.
+  Boundaries:
+  - Task transitions flow one way from a leaf: reopen_task and
+    de_escalate_task belong to the orchestrator that dispatched you.
+  - Work the leaf yourself — spawning agents from a leaf multiplies cost
+    without adding capability.
+  - Finish by calling end_agent_run so the daemon records the run as complete.
+  - **Never run the full test suite** — it takes 30+ minutes and starves the
+    worker pool. Scope Rust to `cargo test -p <package>` or
+    `cargo test <name> -p <package>`.
+  - Run Python through `uv run`; the system Python lacks the project deps.
   - Use context-aware progressive discovery: call leased known tools directly; fetch schemas directly for known unleased tools; use list_tools only for unknown tool names and list_mcp_servers only for unknown servers or registries.
 
 workflows:
@@ -126,8 +127,9 @@ step_workflow:
         2. get_skill(name="restraint") on gobby-skills
         3. get_skill(name="tasks") on gobby-skills
         Use only mcp__gobby__call_tool in this step. Call get_skill directly:
-        call_tool("gobby-skills", "get_skill", {"name": <skill>}).
-        Do not use native Skill, GitHub/app connector, or Computer Use tools.
+        call_tool("gobby-skills", "get_skill", {"name": <skill>});
+        native Skill, GitHub/app connector, and Computer Use tools bypass
+        Gobby's skill tracking.
       allowed_tools:
         - mcp__gobby__call_tool
         - mcp__gobby__list_mcp_servers
@@ -154,8 +156,9 @@ step_workflow:
         For each prompt additional_skills entry, call get_skill(name=<skill>) on
         gobby-skills. If the list is empty, proceed to implementation.
         Use only mcp__gobby__call_tool in this step. Call get_skill directly:
-        call_tool("gobby-skills", "get_skill", {"name": <skill>}).
-        Do not use native Skill, GitHub/app connector, or Computer Use tools.
+        call_tool("gobby-skills", "get_skill", {"name": <skill>});
+        native Skill, GitHub/app connector, and Computer Use tools bypass
+        Gobby's skill tracking.
       allowed_tools:
         - mcp__gobby__call_tool
         - mcp__gobby__list_mcp_servers

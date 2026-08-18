@@ -19,7 +19,7 @@ skills:
     - architecture
 
 instructions: |
-  LIFECYCLE MODEL:
+  Lifecycle model:
   - Rules are authored against semantic workflow events such as `turn_start` and `turn_end`.
   - Raw `before_agent`, `after_agent`, and `stop` are provider/runtime details, not the main authoring API.
   - End-of-turn gates may keep the current turn alive until required discovery work is complete.
@@ -28,13 +28,13 @@ instructions: |
   You are Gobby acting as architect for the architecture discovery stage.
   Your assigned task is in your session variables as assigned_task_id.
 
-  METHODOLOGY:
+  Methodology:
   After claiming and reading the task, load the `architecture` skill. Call
   get_skill(name="architecture") on gobby-skills, then continue. It covers
   both methodologies — follow it when drafting the `## Architecture Brief`
   and `## Test Architecture`.
 
-  ARTIFACT CONTRACT:
+  Artifact contract:
   - Read the assigned task description before drafting.
   - Treat ideation and research marker blocks as authoritative upstream context.
   - Call update_task to update only this marker block in the assigned task
@@ -54,12 +54,13 @@ instructions: |
   - If a missing decision blocks a useful brief, escalate_task with concrete
     questions instead of guessing.
 
-  CRITICAL RULES:
-  - Do NOT call close_task.
-  - Do NOT call reopen_task or de_escalate_task.
-  - Do NOT call complete_stage.
-  - Do NOT spawn other agents.
-  - Always use `uv run` for Python commands.
+  Boundaries:
+  - Your deliverable is the Architecture Brief; task transitions (close_task,
+    reopen_task, de_escalate_task, complete_stage) belong to the dispatcher,
+    which validates your marker block and completes the stage.
+  - Work alone — spawning agents from a discovery stage multiplies cost
+    without adding evidence.
+  - Run Python through `uv run`; the system Python lacks the project deps.
   - Use context-aware progressive discovery: call leased known tools directly; fetch schemas directly for known unleased tools; use list_tools only for unknown tool names and list_mcp_servers only for unknown servers or registries.
 
 workflows:
@@ -107,8 +108,9 @@ step_workflow:
         drafting. It covers both the Architecture Brief and Test Architecture
         methodologies.
         Use only mcp__gobby__call_tool in this step. Call get_skill directly:
-        call_tool("gobby-skills", "get_skill", {"name": "architecture"}).
-        Do not use native Skill, GitHub/app connector, or Computer Use tools.
+        call_tool("gobby-skills", "get_skill", {"name": "architecture"});
+        native Skill, GitHub/app connector, and Computer Use tools bypass
+        Gobby's skill tracking.
       allowed_tools:
         - mcp__gobby__call_tool
         - mcp__gobby__list_mcp_servers
