@@ -166,7 +166,7 @@ fn remove_source_dry_run_reports_intended_changes_without_mutation() {
 }
 
 #[test]
-fn remove_source_yes_removes_manifest_raw_asset_and_indexes() {
+fn remove_source_yes_requires_daemon_without_mutation() {
     let fixture = common::GwikiFixture::new();
     let topic = fixture.init_topic("source-remove");
     let record = seed_source(
@@ -188,35 +188,26 @@ fn remove_source_yes_removes_manifest_raw_asset_and_indexes() {
         &record.id,
         "--yes",
     ]);
-    common::assert_success(&output, "remove-source yes");
-    let payload = common::json_stdout(&output);
-
-    assert_eq!(payload["status"], "removed");
-    assert_eq!(payload["dry_run"], false);
-    assert_eq!(payload["index_status"]["status"], "indexed");
-    assert_eq!(payload["index_status"]["index_required"], false);
-    assert!(json_array_contains(
-        &payload["follow_up"],
-        "audit_recommended"
-    ));
+    common::assert_daemon_required(&output, "remove-source yes");
     assert!(
-        !topic
+        topic
             .vault
             .join("raw")
             .join(format!("{}.md", record.id))
             .exists()
     );
-    assert!(!topic.vault.join("raw/assets/remove.pdf").exists());
-    assert!(
+    assert!(topic.vault.join("raw/assets/remove.pdf").is_file());
+    assert_eq!(
         SourceManifest::read(&topic.vault)
             .expect("read manifest")
             .entries
-            .is_empty()
+            .len(),
+        1
     );
 }
 
 #[test]
-fn remove_source_keep_asset_preserves_raw_asset() {
+fn remove_source_keep_asset_requires_daemon_without_mutation() {
     let fixture = common::GwikiFixture::new();
     let topic = fixture.init_topic("source-keep-asset");
     let record = seed_source(
@@ -239,15 +230,9 @@ fn remove_source_keep_asset_preserves_raw_asset() {
         "--yes",
         "--keep-asset",
     ]);
-    common::assert_success(&output, "remove-source keep-asset");
-    let payload = common::json_stdout(&output);
-
-    assert!(json_array_contains(
-        &payload["kept_paths"],
-        "raw/assets/keep.pdf"
-    ));
+    common::assert_daemon_required(&output, "remove-source keep-asset");
     assert!(
-        !topic
+        topic
             .vault
             .join("raw")
             .join(format!("{}.md", record.id))
@@ -327,7 +312,7 @@ fn remove_source_rejects_unsafe_source_asset_without_mutation() {
 }
 
 #[test]
-fn remove_source_tolerates_missing_raw_file_when_manifest_entry_exists() {
+fn remove_source_missing_raw_requires_daemon_without_mutation() {
     let fixture = common::GwikiFixture::new();
     let topic = fixture.init_topic("source-missing-raw");
     let record = seed_source(
@@ -349,22 +334,12 @@ fn remove_source_tolerates_missing_raw_file_when_manifest_entry_exists() {
         &record.id,
         "--yes",
     ]);
-    common::assert_success(&output, "remove-source missing raw");
-    let payload = common::json_stdout(&output);
-
-    assert_eq!(payload["status"], "removed");
-    assert!(json_array_contains(
-        &payload["missing_paths"],
-        &format!("raw/{}.md", record.id)
-    ));
-    assert!(json_array_contains(
-        &payload["degradations"],
-        &format!("raw_missing:raw/{}.md", record.id)
-    ));
-    assert!(
+    common::assert_daemon_required(&output, "remove-source missing raw");
+    assert_eq!(
         SourceManifest::read(&topic.vault)
             .expect("read manifest")
             .entries
-            .is_empty()
+            .len(),
+        1
     );
 }
