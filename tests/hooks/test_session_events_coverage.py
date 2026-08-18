@@ -667,10 +667,9 @@ class TestSessionMoreCoverage:
             assert result.skills_count == len(expected_skills)
             assert result.injected_skill_names == expected_skills
             assert result.variables_count == 1
-            # Context now contains identity only (role + personality),
-            # instructions and skills are deferred to first before_agent
-            assert "## Role\nRole" in result.context
-            assert "## Personality" in result.context
+            # Persona/identity is injected only at first before_agent; the
+            # activation result carries metadata, not prompt text.
+            assert not hasattr(result, "context")
 
     def test_handle_session_start_qwen_terminal(self) -> None:
         handler = _TestHandler()

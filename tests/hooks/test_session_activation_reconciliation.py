@@ -37,10 +37,10 @@ from gobby.hooks.session_activation import (
 )
 from gobby.storage.agents import LocalAgentRunManager
 from gobby.storage.definitions import AgentDefinitionManager
+from gobby.storage.definitions.rules import RuleDefinitionManager
 from gobby.storage.hub.protocol import HubDatabase
 from gobby.storage.projects import LocalProjectManager
 from gobby.storage.sessions import TERMINAL_SESSION_STATUSES, SessionManager
-from gobby.storage.definitions.rules import RuleDefinitionManager
 from gobby.workflows.definitions import (
     RuleDefinitionBody,
     RuleEffect,
@@ -407,7 +407,7 @@ def test_reconciliation_refreshes_stale_active_rule_names(
     """
     session_id = _register_session(session_manager, project_id, tmp_path)
     manager = RuleDefinitionManager(db)
-    manager.create(
+    AgentDefinitionManager(db).create(
         name="default",
         source="custom",
         definition_json=json.dumps(
@@ -466,7 +466,7 @@ def test_reconciliation_caches_active_rule_names_for_same_agent_and_project(
 ) -> None:
     session_id = _register_session(session_manager, project_id, tmp_path)
     manager = RuleDefinitionManager(db)
-    manager.create(
+    AgentDefinitionManager(db).create(
         name="default",
         source="custom",
         definition_json=json.dumps(
@@ -532,7 +532,7 @@ def test_reconciliation_invalidates_active_rule_cache_after_definition_mutation(
 ) -> None:
     session_id = _register_session(session_manager, project_id, tmp_path)
     manager = RuleDefinitionManager(db)
-    manager.create(
+    AgentDefinitionManager(db).create(
         name="default",
         source="custom",
         definition_json=json.dumps(
@@ -596,8 +596,7 @@ def test_active_rule_names_cache_evicts_oldest_entries(
     db: HubDatabase,
     project_id: str,
 ) -> None:
-    manager = RuleDefinitionManager(db)
-    manager.create(
+    AgentDefinitionManager(db).create(
         name="new-agent",
         source="custom",
         definition_json=json.dumps(
@@ -625,8 +624,7 @@ def test_active_rule_names_cache_purges_expired_entries(
     db: HubDatabase,
     project_id: str,
 ) -> None:
-    manager = RuleDefinitionManager(db)
-    manager.create(
+    AgentDefinitionManager(db).create(
         name="new-agent",
         source="custom",
         definition_json=json.dumps(
