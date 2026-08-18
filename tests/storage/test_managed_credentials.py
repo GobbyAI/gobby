@@ -34,6 +34,7 @@ from tests.storage.test_postgres_agent_authorization import (
     AUTH_SCHEMA,
     RUNTIME_ROLE,
     AuthorizationFixture,
+    _as_runtime,
 )
 
 pytestmark = pytest.mark.integration
@@ -824,3 +825,141 @@ def test_credential_material_ciphertext_at_rest(
         )
         manager.close()
         store.db.close()
+
+
+def _role_exists(database_url: str, role_name: str) -> bool:
+    with psycopg.connect(database_url, autocommit=True) as admin:
+        return admin.execute("SELECT to_regrole(%s)", (role_name,)).fetchone() != (None,)
+
+
+def _drop_role_if_exists(database_url: str, role_name: str) -> None:
+    with psycopg.connect(database_url, autocommit=True) as admin:
+        if admin.execute("SELECT to_regrole(%s)", (role_name,)).fetchone() != (None,):
+            admin.execute(sql.SQL("DROP ROLE {}").format(sql.Identifier(role_name)))
+
+
+def _plant_login_role(database_url: str, role_name: str) -> None:
+    with psycopg.connect(database_url, autocommit=True) as admin:
+        admin.execute("SET ROLE gobby_agent_issuer")
+        try:
+            admin.execute(sql.SQL("CREATE ROLE {} LOGIN").format(sql.Identifier(role_name)))
+        finally:
+            admin.execute("RESET ROLE")
+
+
+def test_hash_format_ix_orphan_does_not_42710_on_issue(
+    authorization_fixture: AuthorizationFixture,
+    tmp_path: Path,
+) -> None:
+    fixture = authorization_fixture
+    manager = _manager(fixture, tmp_path / "orphan-hash-issue")
+    store = _secret_store(fixture)
+    token = "orphanhash000001"
+    planted: str | None = None
+    try:
+        with psycopg.connect(fixture.database_url, autocommit=True) as admin:
+            row = admin.execute(
+                f"SELECT {AUTH_SCHEMA}.interactive_role_name(%s, %s, %s, %s)",
+                (token, fixture.machine_id, fixture.project_id, 1),
+            ).fetchone()
+            assert row is not None
+            planted = str(row[0])
+        _plant_login_role(fixture.database_url, planted)
+        issued = manager.issue_interactive(
+            deployment_token=token,
+            project_id=fixture.project_id,
+            session_id=fixture.session_id,
+            expires_at=datetime.now(UTC) + timedelta(hours=1),
+            secret_store=store,
+        )
+        assert issued.reused is False
+        assert issued.role_name == planted
+        with psycopg.connect(issued.dsn) as conn:
+            assert conn.execute("SELECT 1").fetchone() == (1,)
+    finally:
+        manager.revoke_interactive(
+            deployment_token=token,
+            project_id=fixture.project_id,
+            reason="test-cleanup",
+        )
+        manager.close()
+        store.db.close()
+        if planted is not None:
+            _drop_role_if_exists(fixture.database_url, planted)
+
+
+def test_reconcile_reaps_slug_and_mnt_orphans(
+    authorization_fixture: AuthorizationFixture,
+    tmp_path: Path,
+) -> None:
+    fixture = authorization_fixture
+    manager = _manager(fixture, tmp_path / "orphan-slug-mnt")
+    slug_role = "gobby_ix_tokentok_deadbeef_cafed00d_1"
+    mnt_role = f"gobby_mnt_{uuid4().hex}_1"
+    try:
+        _plant_login_role(fixture.database_url, slug_role)
+        _plant_login_role(fixture.database_url, mnt_role)
+        manager.reconcile()
+        assert not _role_exists(fixture.database_url, slug_role)
+        assert not _role_exists(fixture.database_url, mnt_role)
+    finally:
+        _drop_role_if_exists(fixture.database_url, slug_role)
+        _drop_role_if_exists(fixture.database_url, mnt_role)
+        manager.close()
+
+
+def test_reconcile_spares_bound_ix_and_unmatched_names(
+    authorization_fixture: AuthorizationFixture,
+    tmp_path: Path,
+) -> None:
+    fixture = authorization_fixture
+    manager = _manager(fixture, tmp_path / "orphan-spare")
+    store = _secret_store(fixture)
+    token = "orphanspare000001"
+    decoy = "gobby_ix_test"
+    try:
+        issued = manager.issue_interactive(
+            deployment_token=token,
+            project_id=fixture.project_id,
+            session_id=fixture.session_id,
+            expires_at=datetime.now(UTC) + timedelta(hours=1),
+            secret_store=store,
+        )
+        _plant_login_role(fixture.database_url, decoy)
+        manager.reconcile()
+        assert _role_exists(fixture.database_url, issued.role_name)
+        assert _role_exists(fixture.database_url, decoy)
+    finally:
+        manager.revoke_interactive(
+            deployment_token=token,
+            project_id=fixture.project_id,
+            reason="test-cleanup",
+        )
+        _drop_role_if_exists(fixture.database_url, decoy)
+        manager.close()
+        store.db.close()
+
+
+def test_drain_reaps_hash_format_ix_orphan(
+    authorization_fixture: AuthorizationFixture,
+    tmp_path: Path,
+) -> None:
+    fixture = authorization_fixture
+    manager = _manager(fixture, tmp_path / "orphan-drain")
+    planted: str | None = None
+    try:
+        with psycopg.connect(fixture.database_url, autocommit=True) as admin:
+            row = admin.execute(
+                f"SELECT {AUTH_SCHEMA}.interactive_role_name(%s, %s, %s, %s)",
+                ("orphandrain000001", fixture.machine_id, fixture.project_id, 1),
+            ).fetchone()
+            assert row is not None
+            planted = str(row[0])
+        _plant_login_role(fixture.database_url, planted)
+        with psycopg.connect(fixture.database_url, autocommit=True) as admin:
+            _as_runtime(admin, f"SELECT {AUTH_SCHEMA}.drain_ephemeral_principals()", ())
+            assert admin.execute("SELECT to_regrole(%s)", (planted,)).fetchone() == (None,)
+    finally:
+        manager.close()
+        if planted is not None:
+            _drop_role_if_exists(fixture.database_url, planted)
