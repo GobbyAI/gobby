@@ -159,6 +159,69 @@ shipped Compose template uses named volumes:
 | `gobby_postgres_data` | PostgreSQL hub data |
 | `gobby_pgaudit_log` | pgaudit logs |
 
+Hub-owned `USER.md`, `_personal`, and wiki files are not those volumes. They
+live in a host bind directory. See [Hub-owned files home](#hub-owned-files-home).
+
+## Hub-owned files home
+
+Wiki vaults, the `_personal` tree, and the working profile are hub semantics.
+There is one copy, on the hub host. The hub-local profile path is
+`<files_home>/USER.md`. It is not `$GOBBY_HOME/personal/USER.md`.
+
+Writers never create the `files_home` root. Provision that existing
+absolute directory on the hub first, then install, then migrate, then start.
+
+### Hub host
+
+1. Create the bind directory yourself (for example `/var/lib/gobby/files`).
+   It must already exist, must not be a filesystem root, and must be
+   disjoint from `$GOBBY_HOME/personal`, `$GOBBY_HOME/projects`, and
+   `~/wiki/topics`.
+2. Install against that directory:
+
+   ```bash
+   uv run gobby install --files-home /var/lib/gobby/files
+   ```
+
+3. Upgrade or stop every remote before migrate. Copy leftover node-local
+   `USER.md`, personal tree, wiki, and project attachments onto the hub's
+   legacy source locations first (`$GOBBY_HOME/personal`, `~/wiki/topics`,
+   `$GOBBY_HOME/projects/<id>/attachments`). This campaign does not collect
+   files from other machines.
+4. With the hub daemon stopped, migrate, then start:
+
+   ```bash
+   uv run gobby files migrate
+   uv run gobby start
+   ```
+
+Do not run `gobby start` until migrate has finished. Migrate holds the
+maintenance singleton while the daemon is stopped.
+
+### Remote node
+
+Remote bootstrap requires `hub_daemon_url` (the hub owner's HTTP origin,
+not `daemon_url`) and refuses `files_home`. Copy the hub's existing
+`local_cli_token` to the node. Remote `gobby install` authenticates with
+that token; it does not generate or rotate one.
+
+```yaml
+datastore_mode: "remote"
+hub_daemon_url: "http://<hub-host>:60887"
+```
+
+```bash
+scp <hub>:~/.gobby/local_cli_token ~/.gobby/local_cli_token
+chmod 600 ~/.gobby/local_cli_token
+uv run gobby install
+```
+
+Remote intro and profile writes use `PUT /api/files/user-md` on
+`hub_daemon_url`. They do not create `~/.gobby/personal`.
+
+The owner contract lives in
+[hub-owned-files-home.md](../architecture/hub-owned-files-home.md).
+
 ## Troubleshooting
 
 ### `uv run gobby install` Cannot Start Docker Services
@@ -198,6 +261,7 @@ more RAM or VRAM than the embedding model.
 - [configuration.md](./configuration.md) - Daemon and project configuration
 - [search.md](./search.md) - Search and embedding configuration
 - [memory.md](./memory.md) - Memory backend configuration
+- [hub-owned-files-home.md](../architecture/hub-owned-files-home.md) - Hub files owner contract
 - [CONTRIBUTING.md](../../CONTRIBUTING.md) - Development environment setup
 
-_Last verified: 2026-07-20_
+_Last verified: 2026-08-18_

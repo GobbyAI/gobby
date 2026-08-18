@@ -47,19 +47,40 @@ template. These files are story B / Stage 3 semantics, not M0 execution.
 - Compose may *declare* that path as `gobby_files` so pack / hub-backup /
   restore inventory it beside datastore volumes. That is a lifecycle entry,
   not “put Markdown inside `gobby_postgres_data`.”
-- The only POSIX writers are hub-host processes that hold the singleton:
-  the live `datastore_mode: local` daemon (`role=daemon`; later `gdaemon`
-  in `hub` mode) or an authorized stopped-daemon campaign
-  (`role=maintenance`), including direct `gwiki` mutators. Nodes never
-  write the tree.
+- The POSIX owner is the hub-host singleton holder. See [Owner and
+  singleton](#owner-and-singleton).
 - Node / remote-mode daemons never create `~/.gobby/personal`, never default
   `~/wiki`, and never cache a canonical copy. They read and write through
   the hub owner’s HTTP surfaces, proxied if the UI still talks to a local
-  daemon.
+  daemon. The remote owner URL is `hub_daemon_url`, not `daemon_url`.
 - Standalone (story A) uses the same tree on the one machine. It is still
   not `$GOBBY_HOME/personal`.
 - No file-sync product and no per-node mount. A Tailscale/NFS view on every
   laptop recreates “a wiki on every machine.”
+
+## Owner and singleton
+
+The only POSIX writers are hub-host processes that hold the role-bearing
+singleton in `gobby.pid.lock`:
+
+- Live hub daemon (`datastore_mode: local` today; later `gdaemon` in `hub`
+  mode): `role=daemon`.
+- Authorized stopped-daemon campaigns: `role=maintenance`. `gobby files
+  migrate`, pack, unpack, hub-backup, and restore each hold
+  `claim_pid_file(..., role="maintenance")` while the daemon is stopped.
+- Direct `gwiki init` / `register_scope` are the stopped-daemon exception.
+  They refuse any live `daemon` or `maintenance` holder, then hold their
+  own `maintenance` claim through publication. They do not have to route
+  through the daemon.
+
+`gobby start` acquires the daemon claim, or converts a held install claim
+into a one-shot service-start reservation, before managed services start.
+`gobby stop` refuses a maintenance claimant so it cannot kill a migrate,
+pack, unpack, backup, or restore campaign.
+
+Local install and migrate persist or populate an existing absolute
+`files_home`. Writers never create that root. A missing directory is a
+typed failure, not a silent `mkdir`. Nodes never see a `files_home` field.
 
 Hosted story C is the same contract with gobby.ai holding the tree.
 Customers receive the hub API, not a Docker volume.
@@ -106,8 +127,8 @@ fixture vaults keep using explicit `gwiki --out` paths.
 - Bootstrap on the hub-local daemon: `files_home: <absolute path>`. Required
   when `datastore_mode: local`. Never default to `$GOBBY_HOME/...`.
 - Remote-mode / node bootstrap has no `files_home` and must not mkdir one.
-  File routes proxy to the hub owner (`hub_daemon_url`)
-  or the client talks to the hub daemon directly.
+  The remote owner URL is `hub_daemon_url`, not `daemon_url`. File routes
+  proxy to that origin, or the client talks to the hub daemon directly.
 - `read_user_profile_content` on the hub owner reads `<hub-files>/USER.md`.
   On a node it fetches that file from the hub owner. Absent file → empty
   string. It does not read `$GOBBY_HOME/personal/USER.md`.
@@ -189,30 +210,34 @@ Expected implementation surfaces (not this task):
 - Stage 3 hub/node split, Telegram-vs-cron routing, comms attachments
 - Hosted tenancy beyond keeping the contract hub-API-shaped
 
-## Validity against 2026-08-16 `0.5.0`
+## Validity after implementation
 
-Checked after the plan (written 2026-08-14 09:52) against HEAD
-`bc8348ad2` plus the two days of commits after it.
+Checked against the shipped #20330 leaves. Live owner paths are under
+`files_home`. `$GOBBY_HOME/personal`, `$GOBBY_HOME/projects/<id>/attachments`,
+and `~/wiki/topics` are migrate sources only, not live writes.
 
-Still true, same source bytes:
+Live resolution:
 
-- `personal_project_path()` → `(gobby_home or get_gobby_home()) / "personal"`
-- `read_user_profile_content()` → that path plus `USER.md`
-- `_attachment_dir()` → `$GOBBY_HOME/projects/<id>/attachments/<id[:2]>/<id>`
-- `ensure_personal_project()` still upserts `projects.repo_path`
-- `resolve_topic` still uses `<hub>/topics/<name>` and `~/wiki` as default
-- `BootstrapConfig.daemon_url` still exists
+- `personal_project_path()` → `<files_home>/_personal`
+- `read_user_profile_content()` → `<files_home>/USER.md` on the owner;
+  remote GET `/api/files/user-md` via `hub_daemon_url`
+- Chat attachments reconstruct as
+  `<files_home>/_personal/attachments/<project>/<id[:2]>/<id>/<filename>`
+- Present-local wiki home is `<files_home>/wiki`; a stale
+  `GOBBY_WIKI_HUB` / `wiki.hub_path` override that normalizes elsewhere
+  is a typed refusal
+- `ensure_personal_project_identity()` writes the files_home marker and
+  does not register a checkout
+- Remote bootstrap requires `hub_daemon_url` and refuses `files_home`
 - `/api/wiki` still exposes status, index, search, read, graph, pages,
   backlinks
+- `BootstrapConfig.daemon_url` remains this process’s own origin; it is
+  not the remote files owner URL
 
-Changed around the plan, not against it:
+Unchanged around the contract:
 
-- #19651 is now an epic with P1–P6 children (#20297–#20302). It still must
-  not invent a personal checkout. The design already required that.
-- #18902 (daemon-native gcode/gwiki) is closed. gwiki talks to hub
-  datastores through grants; vault *files* are still machine-local. That
-  makes a hub-owned tree more necessary, not less.
+- #19651 must not invent a personal checkout.
+- #18902 is closed. gwiki talks to hub datastores through grants; vault
+  *files* live in the hub bind directory on the owner.
 - `wiki_ask` was removed. Node access uses the remaining `/api/wiki/*`
   file routes.
-
-No cited implementation file was rewritten. The contract stands.
