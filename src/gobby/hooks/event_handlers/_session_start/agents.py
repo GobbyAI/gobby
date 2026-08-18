@@ -270,12 +270,6 @@ def activate_default_agent(
     sv_mgr.merge_variables(session_id, changes)
 
     _ta_format = time.monotonic()
-    identity_parts: list[str] = []
-    if agent_body.role:
-        identity_parts.append(f"## Role\n{agent_body.role}")
-    if agent_body.personality:
-        identity_parts.append(f"## Personality\n{agent_body.personality}")
-
     if active_skills is None:
         injected_names = sorted(
             skill.name
@@ -319,7 +313,6 @@ def activate_default_agent(
         handler.logger.debug(timing_message)
 
     return AgentActivationResult(
-        context="\n\n".join(identity_parts) if identity_parts else None,
         agent_name=agent_body.name,
         description=agent_body.description,
         role=agent_body.role,

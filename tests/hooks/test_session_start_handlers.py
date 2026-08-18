@@ -33,11 +33,6 @@ pytestmark = pytest.mark.unit
 
 def _agent_activation_context() -> AgentActivationResult:
     return AgentActivationResult(
-        context=(
-            "## Role\nSenior engineer\n\n"
-            "## Personality\nDirect and concise\n\n"
-            "## Instructions\nUse lifecycle hooks correctly"
-        ),
         agent_name="default",
         description=None,
         role="Senior engineer",
