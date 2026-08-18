@@ -245,7 +245,7 @@ class TestBuildTurnAndDigest:
         assert result["title"] == "Test"
 
     @pytest.mark.asyncio
-    async def test_forwards_prior_turn_only(
+    async def test_forwards_catch_up(
         self,
         mock_memory_manager: MagicMock,
         mock_session_manager: MagicMock,
@@ -261,13 +261,13 @@ class TestBuildTurnAndDigest:
             )
             await registry.call(
                 "build_turn_and_digest",
-                {"session_id": "sess-123", "prior_turn_only": True},
+                {"session_id": "sess-123", "catch_up": True},
             )
 
         build_digest.assert_awaited_once()
         await_args = build_digest.await_args
         assert await_args is not None
-        assert await_args.kwargs["prior_turn_only"] is True
+        assert await_args.kwargs["catch_up"] is True
 
     @pytest.mark.asyncio
     async def test_digest_contract_error_returns_failure(

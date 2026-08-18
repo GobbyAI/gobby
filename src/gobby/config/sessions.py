@@ -106,6 +106,22 @@ class DigestConfig(FeatureDefaultConfig):
         gt=0,
         description="Maximum transcript pairs consumed in one digest pass (default 50).",
     )
+    catch_up_num_pairs: int = Field(
+        default=5,
+        gt=0,
+        description=(
+            "Maximum transcript pairs consumed per catch-up batch at turn start "
+            "or by the backlog sweep (default 5)."
+        ),
+    )
+    backlog_sweep_min_undigested: int = Field(
+        default=10,
+        gt=0,
+        description=(
+            "Daemon sweep threshold: sweep sessions whose turn_count exceeds the "
+            "digest pair cursor by at least this many (default 10)."
+        ),
+    )
 
 
 class MemoryUsefulnessConfig(FeatureDefaultConfig):

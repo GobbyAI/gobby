@@ -827,7 +827,7 @@ def create_memory_registry(
     async def build_turn_and_digest_tool(
         session_id: str = "",
         prompt_text: str | None = None,
-        prior_turn_only: bool = False,
+        catch_up: bool = False,
     ) -> dict[str, Any]:
         """
         Build turn record and append to digest after agent response.
@@ -840,7 +840,8 @@ def create_memory_registry(
         Args:
             session_id: Platform session ID (injected by dispatch layer)
             prompt_text: Optional user prompt (usually None for stop events)
-            prior_turn_only: Exclude the active Codex turn during turn-start catch-up
+            catch_up: Drain a bounded undigested backlog batch at turn start,
+                excluding the active turn
         """
         if not session_id:
             return {"success": False, "error": "session_id is required"}
@@ -852,7 +853,7 @@ def create_memory_registry(
                 prompt_text=prompt_text,
                 llm_service=_llm_service(),
                 config=_config(),
-                prior_turn_only=prior_turn_only,
+                catch_up=catch_up,
             )
             if result is None:
                 return {"success": True, "skipped": True, "reason": "disabled or no content"}

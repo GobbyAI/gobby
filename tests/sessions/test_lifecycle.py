@@ -4,7 +4,7 @@ import os
 import time
 from collections.abc import Callable
 from pathlib import Path
-from types import SimpleNamespace
+from types import MappingProxyType, SimpleNamespace
 from typing import Any, TypeVar
 from unittest.mock import AsyncMock, MagicMock, call, patch
 
@@ -13,6 +13,7 @@ import pytest
 
 from gobby.config.features import KnowledgeGraphQueueConfig
 from gobby.config.persistence import MemoryDreamConfig
+from gobby.config.runtime import RuntimeActiveBundle
 from gobby.config.sessions import SessionLifecycleConfig
 from gobby.sessions.lifecycle import SessionLifecycleManager
 from gobby.sessions.transcript_index import load_index_sidecar
@@ -45,13 +46,23 @@ class EmptyTokenEventStore:
 
 
 def _set_llm_service(manager: SessionLifecycleManager, llm: Any) -> Any:
-    """Swap the ai_services entry in the manager's captured runtime bundle."""
-    services = manager._capture_bundle().services
-    assert isinstance(services, dict)
+    """Swap the ai_services entry in the manager's captured runtime bundle.
+
+    The bundle's services mapping is an immutable ``MappingProxyType``, so the
+    swap republishes a bundle with the amended services, mirroring a subscriber
+    rebuild.
+    """
+    bundle = manager._capture_bundle()
+    services = dict(bundle.services)
     if llm is None:
         services.pop("ai_services", None)
     else:
         services["ai_services"] = SimpleNamespace(llm_service=llm)
+    new_bundle = RuntimeActiveBundle(
+        snapshot=bundle.snapshot,
+        services=MappingProxyType(services),
+    )
+    manager._capture_bundle = lambda: new_bundle
     return llm
 
 
@@ -1264,9 +1275,7 @@ class TestPurgeSoftDeletedDefinitions:
     @pytest.mark.asyncio
     async def test_exception_handled(self, manager: SessionLifecycleManager) -> None:
         """Purge errors are caught and logged."""
-        with patch(
-            "gobby.storage.definitions.rules.RuleDefinitionManager"
-        ) as mock_rules:
+        with patch("gobby.storage.definitions.rules.RuleDefinitionManager") as mock_rules:
             mock_rules.return_value.purge_deleted.side_effect = Exception("DB error")
             with (
                 patch("gobby.storage.definitions.agents.AgentDefinitionManager"),
@@ -1925,3 +1934,95 @@ class TestStartStopIdempotent:
         await manager.stop()
         assert manager._expire_task is None
         assert manager._process_task is None
+
+
+class TestDigestBacklogSweep:
+    """Tests for the digest backlog sweep in the expire loop."""
+
+    def _armed_manager(
+        self,
+        mock_db: MagicMock,
+        mock_config: SessionLifecycleConfig,
+    ) -> SessionLifecycleManager:
+        with patch(_SESSION_MANAGER_PATCH):
+            swept = SessionLifecycleManager(
+                mock_db,
+                static_session_capture(
+                    mock_config,
+                    services=_memory_services(MagicMock()),
+                ),
+            )
+        _set_llm_service(swept, MagicMock())
+        swept._running = True
+        return swept
+
+    @pytest.mark.asyncio
+    async def test_sweep_drains_bounded_batches_per_session(
+        self,
+        mock_db: MagicMock,
+        mock_config: SessionLifecycleConfig,
+    ) -> None:
+        swept = self._armed_manager(mock_db, mock_config)
+        mock_db.fetchall.return_value = [{"id": "session-a"}, {"id": "session-b"}]
+
+        build = AsyncMock(
+            side_effect=[
+                {"turn_num": 1},
+                {"turn_num": 2},
+                {"turn_num": 3},
+                None,
+            ]
+        )
+        with patch("gobby.memory.digest.build_turn_and_digest", build):
+            await swept._sweep_digest_backlogs(swept._capture_active())
+
+        assert build.await_count == 4
+        session_calls = [call.kwargs["session_id"] for call in build.await_args_list]
+        assert session_calls == ["session-a", "session-a", "session-a", "session-b"]
+        assert all(call.kwargs["catch_up"] is True for call in build.await_args_list)
+        query, params = mock_db.fetchall.call_args.args
+        assert "turn_count - COALESCE(last_digested_pair_index, 0)" in query
+        assert params[0] == swept._capture_active().digest.backlog_sweep_min_undigested
+
+    @pytest.mark.asyncio
+    async def test_sweep_stops_session_on_error_result(
+        self,
+        mock_db: MagicMock,
+        mock_config: SessionLifecycleConfig,
+    ) -> None:
+        swept = self._armed_manager(mock_db, mock_config)
+        mock_db.fetchall.return_value = [{"id": "session-a"}]
+
+        build = AsyncMock(return_value={"error": "provider outage"})
+        with patch("gobby.memory.digest.build_turn_and_digest", build):
+            await swept._sweep_digest_backlogs(swept._capture_active())
+
+        assert build.await_count == 1
+
+    @pytest.mark.asyncio
+    async def test_sweep_skips_without_memory_services(
+        self,
+        mock_db: MagicMock,
+        mock_config: SessionLifecycleConfig,
+    ) -> None:
+        with patch(_SESSION_MANAGER_PATCH):
+            bare = SessionLifecycleManager(mock_db, static_session_capture(mock_config))
+        bare._running = True
+
+        await bare._sweep_digest_backlogs(bare._capture_active())
+
+        mock_db.fetchall.assert_not_called()
+
+    @pytest.mark.asyncio
+    async def test_sweep_skips_when_digest_disabled(
+        self,
+        mock_db: MagicMock,
+        mock_config: SessionLifecycleConfig,
+    ) -> None:
+        swept = self._armed_manager(mock_db, mock_config)
+        config = swept._capture_active().model_copy(deep=True)
+        config.digest.enabled = False
+
+        await swept._sweep_digest_backlogs(config)
+
+        mock_db.fetchall.assert_not_called()

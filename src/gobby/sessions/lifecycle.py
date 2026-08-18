@@ -175,6 +175,11 @@ class SessionLifecycleManager(TranscriptProcessingMixin):
                 logger.error("Error purging dream-hidden memories: %s", e)
 
             try:
+                await self._sweep_digest_backlogs(active)
+            except Exception as e:
+                logger.error("Error sweeping digest backlogs: %s", e)
+
+            try:
                 await asyncio.sleep(active.session_lifecycle.expire_check_interval_minutes * 60)
             except asyncio.CancelledError:
                 break
@@ -401,3 +406,57 @@ class SessionLifecycleManager(TranscriptProcessingMixin):
             await self._run_memory_db(store.prune_runs, config.run_retention_days)
         except Exception as e:
             logger.error("Failed to prune dream run history: %s", e)
+
+    async def _sweep_digest_backlogs(
+        self,
+        config: DaemonConfig,
+        *,
+        max_sessions: int = 10,
+        max_batches_per_session: int = 3,
+    ) -> None:
+        """Drain digest backlogs for active sessions the turn-start catch-up missed.
+
+        Turn-start catch-up only drains sessions that keep prompting; sessions
+        that went quiet after a provider outage keep a permanent gap. Each sweep
+        cycle runs a bounded number of catch-up batches per candidate session;
+        the per-session digest lock and input-hash dedupe make this safe against
+        concurrent turn-end digests.
+        """
+        digest_config = config.digest
+        if not (config.memory.enabled and digest_config.enabled):
+            return
+        memory_manager = self.memory_manager
+        llm_service = self.llm_service
+        if memory_manager is None or llm_service is None:
+            return
+
+        threshold = digest_config.backlog_sweep_min_undigested
+        rows = await asyncio.to_thread(
+            self.db.fetchall,
+            "SELECT id FROM sessions "
+            "WHERE status = 'active' AND transcript_path IS NOT NULL "
+            "AND turn_count - COALESCE(last_digested_pair_index, 0) >= %s "
+            "ORDER BY updated_at DESC LIMIT %s",
+            (threshold, max_sessions),
+        )
+        if not rows:
+            return
+
+        from gobby.memory.digest import build_turn_and_digest
+
+        for row in rows:
+            session_id = str(row["id"])
+            for _ in range(max_batches_per_session):
+                if not self._running:
+                    return
+                result = await build_turn_and_digest(
+                    memory_manager=memory_manager,
+                    session_manager=self.session_manager,
+                    session_id=session_id,
+                    llm_service=llm_service,
+                    db=self.db,
+                    config=config,
+                    catch_up=True,
+                )
+                if result is None or "error" in result:
+                    break

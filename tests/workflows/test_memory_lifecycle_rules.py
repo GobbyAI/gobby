@@ -27,8 +27,8 @@ import pytest
 
 from gobby.adapters.codex_impl.hooks_adapter import CodexHooksAdapter
 from gobby.hooks.events import HookEventType
-from gobby.storage.hub.protocol import HubDatabase
 from gobby.storage.definitions.rules import RuleDefinitionManager
+from gobby.storage.hub.protocol import HubDatabase
 from gobby.workflows.definitions import RuleDefinitionBody
 from gobby.workflows.safe_evaluator import SafeExpressionEvaluator
 from gobby.workflows.sync_rules import sync_bundled_rules
@@ -204,7 +204,7 @@ class TestDigestOnPlanTurnEnd:
 
 
 class TestDigestCatchUpOnTurnStart:
-    """Catch up undigested prior turns at the next turn_start (e.g. after daemon restart)."""
+    """Drain undigested backlog in bounded batches at each turn_start."""
 
     def test_event_and_effect(
         self,
@@ -223,7 +223,7 @@ class TestDigestCatchUpOnTurnStart:
         assert effect.type == "mcp_call"
         assert effect.server == "gobby-memory"
         assert effect.tool == "build_turn_and_digest"
-        assert effect.arguments == {"prior_turn_only": True}
+        assert effect.arguments == {"catch_up": True}
         assert effect.background is True
 
 
