@@ -16,7 +16,8 @@ cargo build --release -p gobby-daemon     # schema CLI (installed to ~/.gobby/bi
 cargo clippy -p <package>                 # e.g. gobby-code, gobby-core, gobby-daemon, gobby-hooks, gobby-wiki
 cargo fmt -p <package> -- --check         # drop --check to auto-format
 
-# Tests — scope with -p (or a test name). NEVER run bare `cargo test` across the workspace
+# Tests — scope with -p (or a test name); bare `cargo test` builds and runs the
+# whole workspace, which is slow and mostly irrelevant to your change
 cargo test -p gobby-code
 cargo test <name> -p gobby-code
 ```
@@ -31,9 +32,5 @@ Place the tests at `<module>/tests.rs` and declare them from `<module>.rs` with:
 mod tests;
 ```
 
-Crate → binary map: `gobby-code` → `gcode`, `gobby-daemon` → `gdaemon`,
-`gobby-hooks` → `ghook`, `gobby-wiki` → `gwiki`; `gobby-core` is the shared
-library crate. Gobby runtime components use the installed
-`~/.gobby/bin/{gcode,gdaemon,ghook,gwiki}` binaries, so rebuild **and reinstall**
-those after changing crate behavior — a committed change is not live until the
-binary is reinstalled.
+The crate → binary map and the rebuild-and-reinstall requirement (including the
+new-inode install step macOS needs) live in `AGENTS.md` under Architecture Facts.

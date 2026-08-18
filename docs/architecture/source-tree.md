@@ -13,10 +13,10 @@ exhaustive per-file listings drift too quickly to maintain. Use
 gobby/                                  # Project root
 ├── pyproject.toml                      # Project configuration, dependencies, build settings
 ├── README.md                           # Project overview with architecture diagram
-├── CLAUDE.md                           # Claude Code development instructions
-├── AGENTS.md                           # Agent definitions reference
+├── CLAUDE.md                           # Claude-specific wrapper importing AGENTS.md
+├── AGENTS.md                           # Canonical agent instruction file (all CLIs)
 ├── CONTRIBUTING.md                     # Contribution guidelines
-├── GUIDING_PRINCIPLES.md               # Development philosophy
+├── GUIDING_PRINCIPLES.md               # Design rationale behind the AGENTS.md working rules
 ├── ROADMAP.md                          # Project roadmap
 ├── CHANGELOG.md                        # Release history
 ├── SECURITY.md                         # Security policy
