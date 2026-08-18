@@ -27,6 +27,7 @@ __all__ = [
     "replace_files_home_descendant",
     "unlink_files_home_descendant",
     "fsync_files_home_descendant_dir",
+    "files_home_root_fd",
     "get_global_workflows_dir",
     "get_global_rules_dir",
     "get_global_pipelines_dir",
@@ -281,6 +282,11 @@ def _require_held_files_home() -> _HeldFilesHome:
 def assert_held_files_home_identity() -> None:
     """Re-check the held files_home root and ancestor identities."""
     _assert_files_home_identity(_require_held_files_home())
+
+
+def files_home_root_fd() -> int:
+    """Borrowed held files_home directory fd. Callers must not close it."""
+    return _require_held_files_home().fd
 
 
 def _assert_files_home_identity(held: _HeldFilesHome) -> None:

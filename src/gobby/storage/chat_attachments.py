@@ -489,3 +489,30 @@ def delete_attachments_for_conversations(
 ) -> list[ChatAttachmentRecord]:
     """Select conversation-bound rows; callers claim and unlink through the lease."""
     return list_attachments_for_conversations(db, conversation_ids)
+
+
+def list_attachment_records(db: HubDatabase) -> list[ChatAttachmentRecord]:
+    """Return every chat attachment row for hub-local migrate rewrite."""
+    rows = db.fetchall(f"SELECT {_ATTACHMENT_COLUMNS} FROM chat_attachments")
+    return [_row_to_record(row) for row in rows]
+
+
+def rewrite_attachment_local_path(
+    db: HubDatabase,
+    *,
+    attachment_id: str,
+    project_id: str,
+    local_path: str,
+) -> bool:
+    """Persist a verified files_home-relative locator after migrate publication."""
+    now = utc_now()
+    with db.transaction() as conn:
+        cursor = conn.execute(
+            """
+            UPDATE chat_attachments
+               SET local_path = %s, updated_at = %s
+             WHERE id = %s AND project_id = %s
+            """,
+            (local_path, now, attachment_id, project_id),
+        )
+        return cursor.rowcount == 1
