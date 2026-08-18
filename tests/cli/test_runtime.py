@@ -102,8 +102,13 @@ def test_runtime_memoizes_database_and_closes_once(monkeypatch: pytest.MonkeyPat
 
 def test_operational_config_overlays_bootstrap_owned_fields(tmp_path: Path) -> None:
     bootstrap_path = tmp_path / "bootstrap.yaml"
+    files_home = tmp_path / "files"
+    files_home.mkdir()
     bootstrap_path.write_text(
-        "daemon_port: 61999\nwebsocket_port: 62000\nbind_host: 127.0.0.2\n",
+        "daemon_port: 61999\n"
+        "websocket_port: 62000\n"
+        "bind_host: 127.0.0.2\n"
+        f"files_home: {files_home}\n",
         encoding="utf-8",
     )
     bootstrap_path.chmod(0o600)

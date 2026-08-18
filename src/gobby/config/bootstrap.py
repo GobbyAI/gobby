@@ -11,22 +11,21 @@ Pydantic defaults.
 from __future__ import annotations
 
 import ipaddress
-import logging
 import os
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Literal, cast
 from urllib.parse import urlparse
 
+from gobby.paths import get_gobby_home
+
 from .bootstrap_io import bootstrap_path as default_bootstrap_path
-from .bootstrap_io import read_bootstrap_yaml
+from .bootstrap_io import read_present_bootstrap_mapping
 from .postgres_pool import (
     DEFAULT_POSTGRES_POOL_CONFIG,
     PostgresPoolConfig,
     postgres_pool_config_from_mapping,
 )
-
-logger = logging.getLogger(__name__)
 
 # Default bootstrap file location. Kept as a string for compatibility with callers
 # that import the constant; load_bootstrap() resolves GOBBY_HOME dynamically.
@@ -64,6 +63,8 @@ class BootstrapConfig:
     postgres_pool: PostgresPoolConfig = DEFAULT_POSTGRES_POOL_CONFIG
     daemon_url: str | None = None
     ui_expose: UiExposureMode | None = None
+    files_home: str | None = None
+    hub_daemon_url: str | None = None
 
     def to_config_dict(self) -> dict[str, Any]:
         """Convert to a dict suitable for DaemonConfig construction.
@@ -78,6 +79,8 @@ class BootstrapConfig:
             "datastore_mode": self.datastore_mode,
             "database_url": self.database_url,
             "postgres_pool": self.postgres_pool.to_dict(),
+            "files_home": self.files_home,
+            "hub_daemon_url": self.hub_daemon_url,
         }
         return data
 
@@ -116,65 +119,194 @@ def load_bootstrap(
         return _default_bootstrap_config()
 
     try:
-        if bootstrap_path.name == "bootstrap.yaml":
-            _validate_bootstrap_file_permissions(bootstrap_path)
-        data = read_bootstrap_yaml(bootstrap_path)
-
-        if not isinstance(data, dict):
-            if resolve_database_url:
-                raise BootstrapConfigError("bootstrap.yaml must contain a YAML mapping")
-            return _default_bootstrap_config()
-
-        database_url = _parse_optional_str(data.get("database_url"), "database_url")
-        if "database_url_ref" in data:
-            raise BootstrapConfigError(
-                "database_url_ref is no longer supported. Rewrite bootstrap.yaml with database_url."
-            )
-        if "postgres_install_mode" in data:
-            raise BootstrapConfigError(
-                "postgres_install_mode has been removed; PostgreSQL is always Docker-managed"
-            )
-        postgres_pool = _parse_postgres_pool(data.get("postgres_pool"))
-        datastore_mode = _parse_datastore_mode(
-            data.get("datastore_mode", BootstrapConfig.datastore_mode)
-        )
-        ui_expose = _parse_ui_exposure_mode(data.get("ui_expose"))
-        if resolve_database_url and not database_url:
-            raise BootstrapConfigError(HUB_BACKEND_DATABASE_URL_REQUIRED)
-        if resolve_database_url and database_url:
-            _validate_managed_database_url(database_url, datastore_mode)
-
-        return BootstrapConfig(
-            daemon_port=_parse_int(
-                data.get("daemon_port", BootstrapConfig.daemon_port), "daemon_port"
-            ),
-            bind_host=_parse_str(data.get("bind_host", BootstrapConfig.bind_host), "bind_host"),
-            websocket_port=_parse_int(
-                data.get("websocket_port", BootstrapConfig.websocket_port), "websocket_port"
-            ),
-            ui_port=_parse_int(data.get("ui_port", BootstrapConfig.ui_port), "ui_port"),
-            datastore_mode=datastore_mode,
-            services_bind_address=_parse_str(
-                data.get(
-                    "services_bind_address",
-                    BootstrapConfig.services_bind_address,
-                ),
-                "services_bind_address",
-            ),
-            database_url=database_url,
-            postgres_pool=postgres_pool,
-            daemon_url=_parse_optional_daemon_url(data.get("daemon_url")),
-            ui_expose=ui_expose,
-        )
-    except BootstrapConfigError:
-        raise
-    except Exception as e:
-        logger.warning("Failed to load bootstrap config from %s: %s", bootstrap_path, e)
-        return _default_bootstrap_config()
+        stat_result = bootstrap_path.stat()
+    except OSError as exc:
+        raise BootstrapConfigError(f"cannot stat bootstrap.yaml: {exc}") from exc
+    if bootstrap_path.name == "bootstrap.yaml":
+        _validate_bootstrap_file_mode(stat_result.st_mode)
+    data = read_present_bootstrap_mapping(bootstrap_path)
+    return bootstrap_from_mapping(data, resolve_database_url=resolve_database_url)
 
 
 def _default_bootstrap_config() -> BootstrapConfig:
     return BootstrapConfig()
+
+
+def bootstrap_from_mapping(
+    data: dict[str, Any], *, resolve_database_url: bool = False
+) -> BootstrapConfig:
+    """Validate a present bootstrap mapping. Never invent files_home."""
+    database_url = _parse_optional_str(data.get("database_url"), "database_url")
+    if "database_url_ref" in data:
+        raise BootstrapConfigError(
+            "database_url_ref is no longer supported. Rewrite bootstrap.yaml with database_url."
+        )
+    if "postgres_install_mode" in data:
+        raise BootstrapConfigError(
+            "postgres_install_mode has been removed; PostgreSQL is always Docker-managed"
+        )
+    postgres_pool = _parse_postgres_pool(data.get("postgres_pool"))
+    datastore_mode = _parse_datastore_mode(
+        data.get("datastore_mode", BootstrapConfig.datastore_mode)
+    )
+    ui_expose = _parse_ui_exposure_mode(data.get("ui_expose"))
+    bind_host = _parse_str(data.get("bind_host", BootstrapConfig.bind_host), "bind_host")
+    daemon_port = _parse_int(data.get("daemon_port", BootstrapConfig.daemon_port), "daemon_port")
+    daemon_url = _parse_optional_daemon_url(data.get("daemon_url"))
+    files_home, hub_daemon_url = _parse_mode_owner_fields(
+        data,
+        datastore_mode=datastore_mode,
+        bind_host=bind_host,
+        daemon_port=daemon_port,
+        daemon_url=daemon_url,
+    )
+    if resolve_database_url and not database_url:
+        raise BootstrapConfigError(HUB_BACKEND_DATABASE_URL_REQUIRED)
+    if resolve_database_url and database_url:
+        _validate_managed_database_url(database_url, datastore_mode)
+
+    return BootstrapConfig(
+        daemon_port=daemon_port,
+        bind_host=bind_host,
+        websocket_port=_parse_int(
+            data.get("websocket_port", BootstrapConfig.websocket_port), "websocket_port"
+        ),
+        ui_port=_parse_int(data.get("ui_port", BootstrapConfig.ui_port), "ui_port"),
+        datastore_mode=datastore_mode,
+        services_bind_address=_parse_str(
+            data.get(
+                "services_bind_address",
+                BootstrapConfig.services_bind_address,
+            ),
+            "services_bind_address",
+        ),
+        database_url=database_url,
+        postgres_pool=postgres_pool,
+        daemon_url=daemon_url,
+        ui_expose=ui_expose,
+        files_home=files_home,
+        hub_daemon_url=hub_daemon_url,
+    )
+
+
+def validate_existing_files_home(files_home: str | Path) -> Path:
+    """Require an existing absolute files_home directory for writers."""
+    path = Path(_parse_files_home_value(str(files_home)))
+    if path.is_symlink() or not path.is_dir():
+        raise BootstrapConfigError("files_home must be an existing directory")
+    return path.resolve()
+
+
+def _parse_mode_owner_fields(
+    data: dict[str, Any],
+    *,
+    datastore_mode: DatastoreMode,
+    bind_host: str,
+    daemon_port: int,
+    daemon_url: str | None,
+) -> tuple[str | None, str | None]:
+    if datastore_mode == "local":
+        if _has_configured_value(data, "hub_daemon_url"):
+            raise BootstrapConfigError(
+                "hub_daemon_url is not allowed on a local bootstrap; this process is the owner"
+            )
+        if not _has_configured_value(data, "files_home"):
+            raise BootstrapConfigError("files_home is required for datastore_mode: local")
+        return _parse_files_home_value(data.get("files_home")), None
+    if _has_configured_value(data, "files_home"):
+        raise BootstrapConfigError("files_home is not allowed on a remote bootstrap")
+    if not _has_configured_value(data, "hub_daemon_url"):
+        raise BootstrapConfigError("hub_daemon_url is required for datastore_mode: remote")
+    origin = _parse_hub_daemon_url(data.get("hub_daemon_url"))
+    if origin in _own_origins(bind_host, daemon_port, daemon_url):
+        raise BootstrapConfigError("hub_daemon_url must not be this process's own origin")
+    return None, origin
+
+
+def _parse_files_home_value(value: object) -> str:
+    text = _parse_str(value, "files_home").strip()
+    if not text:
+        raise BootstrapConfigError("files_home is required")
+    if text.startswith("~") or not Path(text).is_absolute():
+        raise BootstrapConfigError("files_home must be an absolute path without ~")
+    path = Path(text)
+    if path.parent == path:
+        raise BootstrapConfigError("files_home must not be a filesystem root")
+    _assert_disjoint_files_home(path)
+    return text
+
+
+def _parse_hub_daemon_url(value: object) -> str:
+    text = _parse_str(value, "hub_daemon_url").strip()
+    parsed = urlparse(text)
+    if parsed.scheme not in {"http", "https"} or not parsed.hostname:
+        raise BootstrapConfigError("hub_daemon_url must be an http(s) origin with a host")
+    if parsed.username is not None or parsed.password is not None:
+        raise BootstrapConfigError("hub_daemon_url must not include userinfo")
+    if parsed.query or parsed.fragment:
+        raise BootstrapConfigError("hub_daemon_url must not include a query or fragment")
+    if parsed.path not in {"", "/"}:
+        raise BootstrapConfigError("hub_daemon_url path must be empty or /")
+    host = parsed.hostname
+    if ":" in host and not host.startswith("["):
+        host = f"[{host}]"
+    netloc = host if parsed.port is None else f"{host}:{parsed.port}"
+    return f"{parsed.scheme}://{netloc}"
+
+
+def _own_origins(bind_host: str, daemon_port: int, daemon_url: str | None) -> set[str]:
+    origins: set[str] = set()
+    for scheme in ("http", "https"):
+        try:
+            origins.add(_parse_hub_daemon_url(f"{scheme}://{bind_host}:{daemon_port}"))
+        except BootstrapConfigError:
+            continue
+    if daemon_url:
+        try:
+            origins.add(_parse_hub_daemon_url(daemon_url))
+        except BootstrapConfigError:
+            pass
+    return origins
+
+
+def _assert_disjoint_files_home(files_home: Path) -> None:
+    forbidden = (
+        get_gobby_home() / "personal",
+        get_gobby_home() / "projects",
+        Path.home() / "wiki" / "topics",
+    )
+    candidate = files_home
+    for other in forbidden:
+        if _paths_overlap(candidate, other):
+            raise BootstrapConfigError(
+                "files_home must be disjoint from $GOBBY_HOME/personal, "
+                "$GOBBY_HOME/projects, and ~/wiki/topics"
+            )
+
+
+def _paths_overlap(left: Path, right: Path) -> bool:
+    try:
+        left_resolved = left.resolve()
+    except OSError:
+        left_resolved = left
+    try:
+        right_resolved = right.resolve()
+    except OSError:
+        right_resolved = right
+    return (
+        left_resolved == right_resolved
+        or left_resolved in right_resolved.parents
+        or right_resolved in left_resolved.parents
+    )
+
+
+def _has_configured_value(data: dict[str, Any], key: str) -> bool:
+    if key not in data:
+        return False
+    value = data[key]
+    if value is None:
+        return False
+    return not (isinstance(value, str) and not value.strip())
 
 
 def _parse_datastore_mode(value: object) -> DatastoreMode:
@@ -259,11 +391,18 @@ def _parse_optional_daemon_url(value: object) -> str | None:
 
 
 def _validate_bootstrap_file_permissions(path: Path) -> None:
+    try:
+        mode = path.stat().st_mode
+    except OSError as exc:
+        raise BootstrapConfigError(f"cannot stat bootstrap.yaml: {exc}") from exc
+    _validate_bootstrap_file_mode(mode)
+
+
+def _validate_bootstrap_file_mode(mode: int) -> None:
     if os.name == "nt":
         return
-    mode = path.stat().st_mode & 0o777
-    if mode != 0o600:
+    bits = mode & 0o777
+    if bits != 0o600:
         raise BootstrapConfigError(
-            f"bootstrap.yaml permissions must be 0600 (owner read/write only): "
-            f"{path} has {mode:#04o}"
+            f"bootstrap.yaml permissions must be 0600 (owner read/write only): file has {bits:#04o}"
         )

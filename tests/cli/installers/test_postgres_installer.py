@@ -99,8 +99,10 @@ def test_docker_install_runs_postgres_profile_and_writes_bootstrap(
         _write_bootstrap_defaults,
         raising=False,
     )
+    files_home = tmp_path / "files"
+    files_home.mkdir()
 
-    result = installer._install_docker(gobby_home=tmp_path, port=60991)
+    result = installer._install_docker(gobby_home=tmp_path, port=60991, files_home=files_home)
 
     assert result["success"] is True
     assert helper_calls == [
@@ -131,8 +133,11 @@ def test_postgres_database_url_matches_validated_compose_runtime(
     tmp_path: Path,
 ) -> None:
     installer = _import_installer()
+    files_home = tmp_path / "files"
+    files_home.mkdir()
     (tmp_path / "bootstrap.yaml").write_text(
         "hub_backend: postgres\n"
+        f"files_home: {files_home}\n"
         "database_url: postgresql://gobby:persisted-password@localhost:5432/gobby\n",
         encoding="utf-8",
     )
@@ -153,11 +158,38 @@ def test_postgres_database_url_matches_validated_compose_runtime(
     assert runtime.environment["GOBBY_POSTGRES_PASSWORD"] == "transient-password"
 
 
+def test_docker_install_refuses_compose_without_files_home(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    installer = _import_installer()
+    calls: list[str] = []
+
+    def _compose(*_args: object, **_kwargs: object) -> None:
+        calls.append("compose")
+        raise AssertionError("compose must not run without files_home")
+
+    def _assets(**_kwargs: object) -> None:
+        calls.append("assets")
+
+    monkeypatch.setattr(installer.shutil, "which", lambda _name: "/usr/bin/docker")
+    monkeypatch.setattr(installer, "reconcile_unified_compose", _compose)
+    monkeypatch.setattr(installer, "_sync_postgres_pgsearch_assets", _assets)
+
+    result = installer._install_docker(gobby_home=tmp_path, port=60991)
+
+    assert result["success"] is False
+    assert "files-home" in result["error"]
+    assert calls == []
+
+
 def test_docker_install_reports_incomplete_compose_environment(
     monkeypatch: pytest.MonkeyPatch,
     tmp_path: Path,
 ) -> None:
     installer = _import_installer()
+    files_home = tmp_path / "files"
+    files_home.mkdir()
     monkeypatch.setattr(installer.shutil, "which", lambda _name: "/usr/bin/docker")
     monkeypatch.setattr(installer, "_sync_postgres_pgsearch_assets", lambda **_kwargs: None)
     monkeypatch.setattr(
@@ -166,7 +198,7 @@ def test_docker_install_reports_incomplete_compose_environment(
         lambda *_args, **_kwargs: installer.ComposeRuntime(environment={}, profiles=()),
     )
 
-    result = installer._install_docker(gobby_home=tmp_path, port=60991)
+    result = installer._install_docker(gobby_home=tmp_path, port=60991, files_home=files_home)
 
     assert result["success"] is False
     assert "GOBBY_POSTGRES_USER" in result["error"]
@@ -431,8 +463,11 @@ async def test_get_postgres_status_honors_gobby_home_environment(
     configured_home = tmp_path / "custom-gobby-home"
     configured_home.mkdir()
     bootstrap_path = configured_home / "bootstrap.yaml"
+    files_home = configured_home / "files"
+    files_home.mkdir()
     bootstrap_path.write_text(
         "hub_backend: postgres\n"
+        f"files_home: {files_home}\n"
         "database_url: postgresql://invalid:invalid@127.0.0.1:1/custom_home_db\n"
     )
     bootstrap_path.chmod(0o600)

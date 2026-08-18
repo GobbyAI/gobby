@@ -11,6 +11,16 @@ pytestmark = pytest.mark.unit
 
 
 def _write_bootstrap(path: Path, content: str) -> None:
+    if (
+        "files_home:" not in content
+        and "hub_daemon_url:" not in content
+        and "datastore_mode: remote" not in content
+    ):
+        files_home = path.parent / "files"
+        files_home.mkdir(exist_ok=True)
+        content = f"{content}files_home: {files_home}\n"
+    elif "datastore_mode: remote" in content and "hub_daemon_url:" not in content:
+        content = f"{content}hub_daemon_url: http://hub.example.test:60887\n"
     path.write_text(content, encoding="utf-8")
     path.chmod(0o600)
 

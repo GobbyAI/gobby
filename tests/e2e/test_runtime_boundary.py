@@ -774,6 +774,8 @@ def _spawn_same_deployment_standby(
     logs = work / "logs"
     logs.mkdir(parents=True)
     bootstrap = work / "bootstrap.yaml"
+    files_home = work / "files"
+    files_home.mkdir()
     bootstrap.write_text(
         "\n".join(
             (
@@ -782,6 +784,7 @@ def _spawn_same_deployment_standby(
                 f"daemon_port: {http_port}",
                 "bind_host: localhost",
                 f"websocket_port: {ws_port}",
+                f"files_home: {files_home}",
                 "",
             )
         )

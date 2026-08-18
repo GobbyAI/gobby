@@ -356,8 +356,11 @@ class TestStatusCommand:
         config.websocket.port = 60889
         config.ui.enabled = False
         bootstrap_path = tmp_path / "bootstrap.yaml"
+        files_home = tmp_path / "files"
+        files_home.mkdir()
         bootstrap_path.write_text(
-            "daemon_port: 61999\nwebsocket_port: 62000\n",
+            "daemon_port: 61999\nwebsocket_port: 62000\n"
+            f"files_home: {files_home}\n",
             encoding="utf-8",
         )
         bootstrap_path.chmod(0o600)

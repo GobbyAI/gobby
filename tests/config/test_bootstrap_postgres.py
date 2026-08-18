@@ -11,6 +11,16 @@ pytestmark = pytest.mark.unit
 
 
 def _write_bootstrap(path: Path, content: str, mode: int = 0o600) -> None:
+    if (
+        "files_home:" not in content
+        and "hub_daemon_url:" not in content
+        and "datastore_mode: remote" not in content
+    ):
+        files_home = path.parent / "files"
+        files_home.mkdir(exist_ok=True)
+        content = f"{content}files_home: {files_home}\n"
+    elif "datastore_mode: remote" in content and "hub_daemon_url:" not in content:
+        content = f"{content}hub_daemon_url: http://hub.example.test:60887\n"
     path.write_text(content)
     path.chmod(mode)
 
@@ -112,6 +122,9 @@ def test_write_postgres_defaults_stores_database_url(temp_dir: Path) -> None:
     from gobby.config.postgres_bootstrap import read_bootstrap_database_url, write_postgres_defaults
 
     database_url = "postgresql://gobby:secret@localhost:60891/gobby"
+    files_home = temp_dir / "files"
+    files_home.mkdir()
+    _write_bootstrap(temp_dir / "bootstrap.yaml", f"files_home: {files_home}\n")
 
     write_postgres_defaults(
         gobby_home=temp_dir,
@@ -173,6 +186,9 @@ def test_postgres_defaults_follow_runtime_gobby_home_changes(
     for gobby_home in (first_home, second_home):
         monkeypatch.setenv("GOBBY_HOME", str(gobby_home))
         resolved_home = bootstrap_path().parent
+        files_home = gobby_home / "files"
+        files_home.mkdir(parents=True)
+        _write_bootstrap(gobby_home / "bootstrap.yaml", f"files_home: {files_home}\n")
         write_postgres_defaults(
             gobby_home=resolved_home,
             database_url=database_url,
@@ -223,6 +239,9 @@ def test_write_postgres_defaults_refreshes_database_url(temp_dir: Path) -> None:
 
     first_database_url = "postgresql://gobby:first@localhost:60891/gobby"
     second_database_url = "postgresql://gobby:second@localhost:60891/gobby"
+    files_home = temp_dir / "files"
+    files_home.mkdir()
+    _write_bootstrap(temp_dir / "bootstrap.yaml", f"files_home: {files_home}\n")
 
     write_postgres_defaults(
         gobby_home=temp_dir,

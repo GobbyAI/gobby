@@ -13,7 +13,9 @@ from gobby.config.bootstrap import load_bootstrap
 def _write_remote_bootstrap(gobby_home: Path) -> Path:
     bootstrap_path = gobby_home / "bootstrap.yaml"
     bootstrap_path.write_text(
-        "datastore_mode: remote\ndatabase_url: postgresql://gobby:secret@100.64.0.10:5432/gobby\n",
+        "datastore_mode: remote\n"
+        "hub_daemon_url: http://hub.example.test:60887\n"
+        "database_url: postgresql://gobby:secret@100.64.0.10:5432/gobby\n",
         encoding="utf-8",
     )
     bootstrap_path.chmod(0o600)

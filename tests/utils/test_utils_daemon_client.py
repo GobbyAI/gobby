@@ -23,7 +23,11 @@ class TestDaemonClientInit:
         monkeypatch.delenv("GOBBY_PORT", raising=False)
         monkeypatch.delenv("GOBBY_DAEMON_PORT", raising=False)
         bootstrap_path = tmp_path / "bootstrap.yaml"
-        bootstrap_path.write_text("daemon_port: 61999\n", encoding="utf-8")
+        files_home = tmp_path / "files"
+        files_home.mkdir()
+        bootstrap_path.write_text(
+            f"daemon_port: 61999\nfiles_home: {files_home}\n", encoding="utf-8"
+        )
         bootstrap_path.chmod(0o600)
 
         client = DaemonClient()

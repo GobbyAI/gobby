@@ -654,12 +654,15 @@ session_summary:
     # Write bootstrap.yaml so the runner picks up ports and db_path
     # (load_config Phase 1 reads bootstrap.yaml, not config.yaml)
     bootstrap_path = gobby_home / "bootstrap.yaml"
+    files_home = gobby_home / "files"
+    files_home.mkdir(exist_ok=True)
     bootstrap_content = f"""
 hub_backend: postgres
 database_url: {postgres_url}
 daemon_port: {http_port}
 bind_host: localhost
 websocket_port: {ws_port}
+files_home: {files_home}
 """
     bootstrap_path.write_text(bootstrap_content)
     bootstrap_path.chmod(0o600)

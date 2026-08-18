@@ -177,8 +177,16 @@ def install_postgres(
         return {"success": False, "error": str(exc)}
 
 
-def _install_docker(*, gobby_home: Path | None, port: int) -> dict[str, Any]:
+def _install_docker(
+    *,
+    gobby_home: Path | None,
+    port: int,
+    files_home: Path | None = None,
+) -> dict[str, Any]:
     home = gobby_home or get_gobby_home()
+    preflight = _ensure_local_files_home(gobby_home=home, files_home=files_home)
+    if preflight is not None:
+        return preflight
     if not shutil.which("docker"):
         return {
             "success": False,
@@ -387,17 +395,16 @@ def _resolve_postgres_install_database_url(
 ) -> tuple[str, ComposeRuntime]:
     bootstrap_path = gobby_home / "bootstrap.yaml"
     if bootstrap_path.exists():
-        database_url = _read_bootstrap_database_url(gobby_home)
-        if not database_url:
-            raise click.ClickException(
-                f"{bootstrap_path} is missing database_url; repair it before reinstalling PostgreSQL"
+        from gobby.config.bootstrap import load_bootstrap
+
+        existing_url = load_bootstrap(str(bootstrap_path)).database_url
+        if existing_url:
+            runtime = resolve_compose_runtime(
+                gobby_home,
+                database_url=existing_url,
+                profiles=("postgres",),
             )
-        runtime = resolve_compose_runtime(
-            gobby_home,
-            database_url=database_url,
-            profiles=("postgres",),
-        )
-        return _database_url_from_compose_environment(runtime.environment), runtime
+            return _database_url_from_compose_environment(runtime.environment), runtime
 
     password = os.environ.get("GOBBY_POSTGRES_PASSWORD") or secrets.token_urlsafe(32)
     runtime = resolve_compose_runtime(
@@ -406,6 +413,44 @@ def _resolve_postgres_install_database_url(
         profiles=("postgres",),
     )
     return _database_url_from_compose_environment(runtime.environment), runtime
+
+
+def _ensure_local_files_home(
+    *,
+    gobby_home: Path,
+    files_home: Path | None,
+) -> dict[str, Any] | None:
+    """Refuse compose/asset work until a valid local files_home exists."""
+    from gobby.config.bootstrap import BootstrapConfigError, load_bootstrap
+    from gobby.config.bootstrap_io import bootstrap_path, inject_local_files_home
+
+    path = bootstrap_path(gobby_home)
+    if path.exists():
+        try:
+            config = load_bootstrap(str(path))
+        except BootstrapConfigError:
+            pass
+        else:
+            if config.datastore_mode == "remote":
+                return {
+                    "success": False,
+                    "error": "PostgreSQL Docker install is hub-local; run it on the hub",
+                }
+            if config.files_home:
+                return None
+    if files_home is not None:
+        try:
+            inject_local_files_home(path, files_home)
+        except BootstrapConfigError as exc:
+            return {"success": False, "error": str(exc)}
+        return None
+    return {
+        "success": False,
+        "error": (
+            "Local bootstrap must name an existing files_home before compose, "
+            "asset, or datastore work. Run `gobby install --files-home <absolute-dir>`."
+        ),
+    }
 
 
 def _write_bootstrap_defaults(

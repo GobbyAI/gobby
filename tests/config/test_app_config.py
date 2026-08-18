@@ -114,6 +114,16 @@ def test_code_index_config_rejects_invalid_nightly_schedule(kwargs: dict[str, st
 
 
 def write_secure_bootstrap(path: Path, content: str) -> None:
+    if (
+        "files_home:" not in content
+        and "hub_daemon_url:" not in content
+        and "datastore_mode: remote" not in content
+    ):
+        files_home = path.parent / "files"
+        files_home.mkdir(exist_ok=True)
+        content = f"{content}files_home: {files_home}\n"
+    elif "datastore_mode: remote" in content and "hub_daemon_url:" not in content:
+        content = f"{content}hub_daemon_url: http://hub.example.test:60887\n"
     path.write_text(content)
     path.chmod(0o600)
 
@@ -700,6 +710,11 @@ class TestBootstrapConfig:
         assert d["websocket"]["port"] == 7778
         assert d["bind_host"] == "localhost"
         assert "hub_backend" not in d
+        assert "files_home" in d
+        assert "hub_daemon_url" in d
+        carried = DaemonConfig.model_validate(d)
+        assert carried.files_home is None
+        assert carried.hub_daemon_url is None
         assert d["database_url"] is None
         assert "postgres_install_mode" not in d
 

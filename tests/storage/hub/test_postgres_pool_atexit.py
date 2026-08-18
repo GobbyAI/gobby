@@ -135,8 +135,10 @@ def test_tasks_list_cli_exit_prints_no_finalization_noise(
     """
     config_path = tmp_path / "bootstrap.yaml"
     scoped_url = f"{postgres_database_url}?options=-csearch_path%3D{postgres_schema}"
+    files_home = tmp_path / "files"
+    files_home.mkdir()
     config_path.write_text(
-        f'hub_backend: postgres\ndatabase_url: "{scoped_url}"\n',
+        f'hub_backend: postgres\ndatabase_url: "{scoped_url}"\nfiles_home: {files_home}\n',
         encoding="utf-8",
     )
     config_path.chmod(0o600)

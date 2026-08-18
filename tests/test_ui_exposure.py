@@ -20,7 +20,15 @@ _STATUS = {
 
 
 def _write_bootstrap(path: Path, *, exposed: bool = False) -> None:
-    path.write_text("ui_expose: tailscale\n" if exposed else "")
+    files_home = path.parent / "files"
+    files_home.mkdir(exist_ok=True)
+    lines = [
+        "datastore_mode: local",
+        f"files_home: {files_home}",
+    ]
+    if exposed:
+        lines.append("ui_expose: tailscale")
+    path.write_text("\n".join(lines) + "\n")
     path.chmod(0o600)
 
 

@@ -31,6 +31,25 @@ pub struct HubDatabaseBootstrap {
     pub daemon_url: Option<String>,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum DatastoreMode {
+    Local,
+    Remote,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct FilesHomeView {
+    pub datastore_mode: DatastoreMode,
+    pub files_home: Option<PathBuf>,
+    pub hub_daemon_url: Option<String>,
+}
+
+#[derive(Debug, thiserror::Error)]
+pub enum FilesHomeError {
+    #[error("{0}")]
+    Invalid(String),
+}
+
 /// A daemon endpoint as advertised by bootstrap.yaml.
 ///
 /// `host` is returned verbatim from the config (or [`DEFAULT_BIND_HOST`]);
@@ -155,6 +174,125 @@ pub fn postgres_database_url_from_bootstrap_file(path: &Path) -> anyhow::Result<
 
 pub fn postgres_database_url_from_bootstrap(bootstrap: &HubDatabaseBootstrap) -> Option<String> {
     bootstrap.database_url.clone()
+}
+
+/// Read the typed files-home view from a bootstrap file.
+///
+/// A missing file is owner-less local defaults. A present file is fail-closed.
+pub fn read_files_home_view_at(path: &Path) -> Result<FilesHomeView, FilesHomeError> {
+    if !path.exists() {
+        return Ok(FilesHomeView {
+            datastore_mode: DatastoreMode::Local,
+            files_home: None,
+            hub_daemon_url: None,
+        });
+    }
+    let contents = std::fs::read_to_string(path).map_err(|error| {
+        FilesHomeError::Invalid(format!("failed to read bootstrap.yaml: {error}"))
+    })?;
+    parse_files_home_view(&contents)
+}
+
+pub fn parse_files_home_view(contents: &str) -> Result<FilesHomeView, FilesHomeError> {
+    let yaml: serde_yaml::Value = serde_yaml::from_str(contents).map_err(|error| {
+        FilesHomeError::Invalid(format!("bootstrap.yaml is not valid YAML: {error}"))
+    })?;
+    let Some(map) = yaml.as_mapping() else {
+        return Err(FilesHomeError::Invalid(
+            "bootstrap.yaml must contain a YAML mapping".to_string(),
+        ));
+    };
+    let datastore_mode = match optional_string_field(map, "datastore_mode")
+        .map_err(|error| FilesHomeError::Invalid(error.to_string()))?
+        .as_deref()
+    {
+        None | Some("local") => DatastoreMode::Local,
+        Some("remote") => DatastoreMode::Remote,
+        Some(other) => {
+            return Err(FilesHomeError::Invalid(format!(
+                "datastore_mode must be one of: local, remote (got {other})"
+            )));
+        }
+    };
+    let files_home = optional_string_field(map, "files_home")
+        .map_err(|error| FilesHomeError::Invalid(error.to_string()))?;
+    let hub_daemon_url = optional_string_field(map, "hub_daemon_url")
+        .map_err(|error| FilesHomeError::Invalid(error.to_string()))?;
+    match datastore_mode {
+        DatastoreMode::Local => {
+            if hub_daemon_url.is_some() {
+                return Err(FilesHomeError::Invalid(
+                    "hub_daemon_url is not allowed on a local bootstrap".to_string(),
+                ));
+            }
+            let Some(raw) = files_home else {
+                return Err(FilesHomeError::Invalid(
+                    "files_home is required for datastore_mode: local".to_string(),
+                ));
+            };
+            Ok(FilesHomeView {
+                datastore_mode,
+                files_home: Some(parse_absolute_files_home(&raw)?),
+                hub_daemon_url: None,
+            })
+        }
+        DatastoreMode::Remote => {
+            if files_home.is_some() {
+                return Err(FilesHomeError::Invalid(
+                    "files_home is not allowed on a remote bootstrap".to_string(),
+                ));
+            }
+            let Some(raw) = hub_daemon_url else {
+                return Err(FilesHomeError::Invalid(
+                    "hub_daemon_url is required for datastore_mode: remote".to_string(),
+                ));
+            };
+            Ok(FilesHomeView {
+                datastore_mode,
+                files_home: None,
+                hub_daemon_url: Some(parse_hub_origin(&raw)?),
+            })
+        }
+    }
+}
+
+fn parse_absolute_files_home(value: &str) -> Result<PathBuf, FilesHomeError> {
+    if value.starts_with('~') || !value.starts_with('/') {
+        return Err(FilesHomeError::Invalid(
+            "files_home must be an absolute path without ~".to_string(),
+        ));
+    }
+    let path = PathBuf::from(value);
+    if path.parent() == Some(Path::new("")) || path.parent() == Some(&path) {
+        return Err(FilesHomeError::Invalid(
+            "files_home must not be a filesystem root".to_string(),
+        ));
+    }
+    Ok(path)
+}
+
+fn parse_hub_origin(value: &str) -> Result<String, FilesHomeError> {
+    let trimmed = value.trim().trim_end_matches('/');
+    let (scheme, rest) = if let Some(rest) = trimmed.strip_prefix("https://") {
+        ("https", rest)
+    } else if let Some(rest) = trimmed.strip_prefix("http://") {
+        ("http", rest)
+    } else {
+        return Err(FilesHomeError::Invalid(
+            "hub_daemon_url must be an http(s) origin with a host".to_string(),
+        ));
+    };
+    if rest.is_empty()
+        || rest.contains('@')
+        || rest.contains('?')
+        || rest.contains('#')
+        || rest.contains('/')
+    {
+        return Err(FilesHomeError::Invalid(
+            "hub_daemon_url must be an http(s) origin with a host".to_string(),
+        ));
+    }
+    Ok(format!("{scheme}://{rest}"))
 }
 
 fn optional_string_field(map: &serde_yaml::Mapping, name: &str) -> anyhow::Result<Option<String>> {
@@ -411,5 +549,52 @@ mod tests {
         fs::write(&path, "postgres\n").unwrap();
 
         assert!(postgres_database_url_from_bootstrap_file(&path).is_err());
+    }
+
+    #[test]
+    fn reads_bootstrap_with_files_home() {
+        let dir = tempdir().unwrap();
+        let owner = dir.path().join("owner.yaml");
+        fs::write(
+            &owner,
+            "datastore_mode: local\nfiles_home: /var/lib/gobby/files\ndaemon_port: 61234\n",
+        )
+        .unwrap();
+        let owner_view = read_files_home_view_at(&owner).unwrap();
+        assert_eq!(owner_view.datastore_mode, DatastoreMode::Local);
+        assert_eq!(
+            owner_view.files_home.as_deref(),
+            Some(Path::new("/var/lib/gobby/files"))
+        );
+        assert_eq!(owner_view.hub_daemon_url, None);
+        let owner_endpoint = read_daemon_endpoint_at(&owner);
+        assert_eq!(owner_endpoint.port, 61234);
+
+        let remote = dir.path().join("remote.yaml");
+        fs::write(
+            &remote,
+            "datastore_mode: remote\nhub_daemon_url: http://hub.example.test:60887/\n",
+        )
+        .unwrap();
+        let remote_view = read_files_home_view_at(&remote).unwrap();
+        assert_eq!(remote_view.datastore_mode, DatastoreMode::Remote);
+        assert_eq!(
+            remote_view.hub_daemon_url.as_deref(),
+            Some("http://hub.example.test:60887")
+        );
+
+        let missing = dir.path().join("missing.yaml");
+        let missing_view = read_files_home_view_at(&missing).unwrap();
+        assert_eq!(missing_view.files_home, None);
+        assert_eq!(missing_view.hub_daemon_url, None);
+        assert_eq!(read_daemon_endpoint_at(&missing), DaemonEndpoint::default());
+
+        let relative = dir.path().join("relative.yaml");
+        fs::write(&relative, "datastore_mode: local\nfiles_home: files\n").unwrap();
+        assert!(read_files_home_view_at(&relative).is_err());
+
+        let tilde = dir.path().join("tilde.yaml");
+        fs::write(&tilde, "datastore_mode: local\nfiles_home: ~/files\n").unwrap();
+        assert!(read_files_home_view_at(&tilde).is_err());
     }
 }
