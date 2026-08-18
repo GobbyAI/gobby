@@ -89,15 +89,6 @@ rules:
           {% for skill in advisory_skills %}- `{{ skill }}`
           {% endfor %}
           {% endif %}
-          {% if wiki_overview %}
-
-          ## Project Wiki
-          *Injected by Gobby wiki overview*
-
-          {{ wiki_overview }}
-
-          Query the wiki through the gobby-wiki MCP server (`wiki_search`, `wiki_read`).
-          {% endif %}
           {% if user_profile_content and not is_spawned_agent %}
 
           ## Global User Profile

@@ -344,7 +344,7 @@ class TestInjectCompactHandoff:
         assert "<!-- gobby:injected-context:begin -->" in template
         assert "<!-- gobby:injected-context:end -->" in template
         assert "Continuation Context" in template
-        assert "wiki_overview" in template
+        assert "wiki_overview" not in template
         assert "user_profile_content" in template
         assert "task_context" in template
         assert effects[1].type == "set_variable"
@@ -393,7 +393,7 @@ class TestInjectCompactHandoff:
         assert '{"name":"tasks"}' in first.context
         assert "Advisory Skill Reload" in first.context
         assert "`restraint`" in first.context
-        assert "Wiki UNIQUE_WIKI" in first.context
+        assert first.context.count("Wiki UNIQUE_WIKI") == 1
         assert "Profile UNIQUE_PROFILE" in first.context
         assert "Task UNIQUE_TASK" in first.context
 
