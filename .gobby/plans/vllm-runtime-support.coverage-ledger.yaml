@@ -1,0 +1,97 @@
+project_id: d45545c5-ded5-4335-b115-0245752edacf
+plan_id: vllm-runtime-support
+plan_hash: "6d4e31d8d8e53993c1675090243075ac8f7c882fe017a29d6cb7db51c37a06fc"
+root_task_ref: "20488"
+
+sections:
+  "1.1":
+    acceptance_items:
+      "1.1.1": {expected_leaves: [{title: Add vllm protocol value and adapter dispatch, owner_agent: backend-developer}]}
+      "1.1.2": {expected_leaves: [{title: Add vllm protocol value and adapter dispatch, owner_agent: backend-developer}]}
+      "1.1.3": {expected_leaves: [{title: Add vllm protocol value and adapter dispatch, owner_agent: backend-developer}]}
+  "1.2":
+    acceptance_items:
+      "1.2.1": {expected_leaves: [{title: vLLM model lifecycle in ensure_local_model, owner_agent: backend-developer}]}
+      "1.2.2": {expected_leaves: [{title: vLLM model lifecycle in ensure_local_model, owner_agent: backend-developer}]}
+      "1.2.3": {expected_leaves: [{title: vLLM model lifecycle in ensure_local_model, owner_agent: backend-developer}]}
+      "1.2.4": {expected_leaves: [{title: vLLM model lifecycle in ensure_local_model, owner_agent: backend-developer}]}
+  "2.1":
+    acceptance_items:
+      "2.1.1": {expected_leaves: [{title: Optional image inputs on the text-generation core, owner_agent: backend-developer}]}
+      "2.1.2": {expected_leaves: [{title: Optional image inputs on the text-generation core, owner_agent: backend-developer}]}
+      "2.1.3": {expected_leaves: [{title: Optional image inputs on the text-generation core, owner_agent: backend-developer}]}
+      "2.1.4": {expected_leaves: [{title: Optional image inputs on the text-generation core, owner_agent: backend-developer}]}
+      "2.1.5": {expected_leaves: [{title: Optional image inputs on the text-generation core, owner_agent: backend-developer}]}
+      "2.1.6": {expected_leaves: [{title: Optional image inputs on the text-generation core, owner_agent: backend-developer}]}
+      "2.1.7": {expected_leaves: [{title: Optional image inputs on the text-generation core, owner_agent: backend-developer}]}
+      "2.1.8": {expected_leaves: [{title: Optional image inputs on the text-generation core, owner_agent: backend-developer}]}
+  "2.2":
+    acceptance_items:
+      "2.2.1": {expected_leaves: [{title: Collapse vision_extract onto the generation core, owner_agent: backend-developer}]}
+      "2.2.2": {expected_leaves: [{title: Collapse vision_extract onto the generation core, owner_agent: backend-developer}]}
+      "2.2.3": {expected_leaves: [{title: Collapse vision_extract onto the generation core, owner_agent: backend-developer}]}
+      "2.2.4": {expected_leaves: [{title: Collapse vision_extract onto the generation core, owner_agent: backend-developer}]}
+  "2.3":
+    acceptance_items:
+      "2.3.1": {expected_leaves: [{title: Chat-completions activation probe and modality metadata, owner_agent: backend-developer}]}
+      "2.3.2": {expected_leaves: [{title: Chat-completions activation probe and modality metadata, owner_agent: backend-developer}]}
+      "2.3.3": {expected_leaves: [{title: Chat-completions activation probe and modality metadata, owner_agent: backend-developer}]}
+      "2.3.4": {expected_leaves: [{title: Chat-completions activation probe and modality metadata, owner_agent: backend-developer}]}
+      "2.3.5": {expected_leaves: [{title: Chat-completions activation probe and modality metadata, owner_agent: backend-developer}]}
+      "2.3.6": {expected_leaves: [{title: Chat-completions activation probe and modality metadata, owner_agent: backend-developer}]}
+      "2.3.7": {expected_leaves: [{title: Chat-completions activation probe and modality metadata, owner_agent: backend-developer}]}
+      "2.3.8": {expected_leaves: [{title: Chat-completions activation probe and modality metadata, owner_agent: backend-developer}]}
+      "2.3.9": {expected_leaves: [{title: Chat-completions activation probe and modality metadata, owner_agent: backend-developer}]}
+      "2.3.10": {expected_leaves: [{title: Chat-completions activation probe and modality metadata, owner_agent: backend-developer}]}
+      "2.3.11": {expected_leaves: [{title: Chat-completions activation probe and modality metadata, owner_agent: backend-developer}]}
+      "2.3.12": {expected_leaves: [{title: Chat-completions activation probe and modality metadata, owner_agent: backend-developer}]}
+  "2.4":
+    acceptance_items:
+      "2.4.1": {expected_leaves: [{title: Honest tool_chat availability for clientless adapters, owner_agent: backend-developer}]}
+      "2.4.2": {expected_leaves: [{title: Honest tool_chat availability for clientless adapters, owner_agent: backend-developer}]}
+  "2.5":
+    acceptance_items:
+      "2.5.1": {expected_leaves: [{title: "Cloud transport image mapping: Claude SDK and Codex endpoint", owner_agent: backend-developer}]}
+      "2.5.2": {expected_leaves: [{title: "Cloud transport image mapping: Claude SDK and Codex endpoint", owner_agent: backend-developer}]}
+      "2.5.3": {expected_leaves: [{title: "Cloud transport image mapping: Claude SDK and Codex endpoint", owner_agent: backend-developer}]}
+      "2.5.4": {expected_leaves: [{title: "Cloud transport image mapping: Claude SDK and Codex endpoint", owner_agent: backend-developer}]}
+  "3.1":
+    acceptance_items:
+      "3.1.1": {expected_leaves: [{title: Native vLLM model discovery, owner_agent: backend-developer}]}
+      "3.1.2": {expected_leaves: [{title: Native vLLM model discovery, owner_agent: backend-developer}]}
+      "3.1.3": {expected_leaves: [{title: Native vLLM model discovery, owner_agent: backend-developer}]}
+  "3.2":
+    acceptance_items:
+      "3.2.1": {expected_leaves: [{title: Classify VLMs instead of excluding them, owner_agent: backend-developer}]}
+      "3.2.2": {expected_leaves: [{title: Classify VLMs instead of excluding them, owner_agent: backend-developer}]}
+      "3.2.3": {expected_leaves: [{title: Classify VLMs instead of excluding them, owner_agent: backend-developer}]}
+  "4.1":
+    acceptance_items:
+      "4.1.1": {expected_leaves: [{title: Codex chat-wire transport for vllm endpoints, owner_agent: backend-developer}]}
+      "4.1.2": {expected_leaves: [{title: Codex chat-wire transport for vllm endpoints, owner_agent: backend-developer}]}
+      "4.1.3": {expected_leaves: [{title: Codex chat-wire transport for vllm endpoints, owner_agent: backend-developer}]}
+      "4.1.4": {expected_leaves: [{title: Codex chat-wire transport for vllm endpoints, owner_agent: backend-developer}]}
+  "4.2":
+    acceptance_items:
+      "4.2.1": {expected_leaves: [{title: Agent-spawn parity for vllm endpoints, owner_agent: backend-developer}]}
+      "4.2.2": {expected_leaves: [{title: Agent-spawn parity for vllm endpoints, owner_agent: backend-developer}]}
+  "5.1":
+    acceptance_items:
+      "5.1.1": {expected_leaves: [{title: "Settings: schema-derived protocols and wire_api field", owner_agent: frontend-developer}]}
+      "5.1.2": {expected_leaves: [{title: "Settings: schema-derived protocols and wire_api field", owner_agent: frontend-developer}]}
+      "5.1.3": {expected_leaves: [{title: "Settings: schema-derived protocols and wire_api field", owner_agent: frontend-developer}]}
+      "5.1.4": {expected_leaves: [{title: "Settings: schema-derived protocols and wire_api field", owner_agent: frontend-developer}]}
+  "5.2":
+    acceptance_items:
+      "5.2.1": {expected_leaves: [{title: Icons and provider badges, owner_agent: frontend-developer}]}
+  "5.3":
+    acceptance_items:
+      "5.3.1": {expected_leaves: [{title: Text/Image capability chips, owner_agent: frontend-developer}]}
+      "5.3.2": {expected_leaves: [{title: Text/Image capability chips, owner_agent: frontend-developer}]}
+      "5.3.3": {expected_leaves: [{title: Text/Image capability chips, owner_agent: frontend-developer}]}
+  "6.1":
+    acceptance_items:
+      "6.1.1": {expected_leaves: [{title: vLLM and vllm-metal guides, owner_agent: tech-writer}]}
+      "6.1.2": {expected_leaves: [{title: vLLM and vllm-metal guides, owner_agent: tech-writer}]}
+      "6.1.3": {expected_leaves: [{title: vLLM and vllm-metal guides, owner_agent: tech-writer}]}
+      "6.1.4": {expected_leaves: [{title: vLLM and vllm-metal guides, owner_agent: tech-writer}]}
