@@ -10,7 +10,9 @@ from gobby.hooks.events import HookEvent, HookResponse
 from gobby.storage.hub._ambient import ambient_transaction
 from gobby.workflows.definitions import WorkflowStep
 from gobby.workflows.enforcement.blocking import (
+    canonical_gobby_tool_name,
     is_discovery_tool,
+    is_gobby_call_tool,
     is_infrastructure_tool,
     is_operator_tool,
 )
@@ -303,9 +305,12 @@ class EnforcementCheckMixin:
             return None
 
         agent_type = variables.get("_agent_type", "unknown")
+        canonical_tool = canonical_gobby_tool_name(tool_name)
 
         # Check native tool block-list first so explicit agent blocks override exemptions.
-        if blocked_tools and tool_name in blocked_tools:
+        if blocked_tools and canonical_tool in {
+            canonical_gobby_tool_name(blocked) for blocked in blocked_tools
+        }:
             reason = (
                 f"Rule enforced by Gobby: [agent-enforcement:{agent_type}]\n"
                 f"Tool '{tool_name}' is blocked for the '{agent_type}' agent."
@@ -314,7 +319,7 @@ class EnforcementCheckMixin:
             reason = self._record_enforcement_denial(
                 session_id=session_id,
                 rule="agent-native-tool-block",
-                target=f"tool:{tool_name.casefold()}",
+                target=f"tool:{canonical_tool.casefold()}",
                 reason=reason,
             )
             return HookResponse(
@@ -323,17 +328,13 @@ class EnforcementCheckMixin:
             )
 
         # Discovery/infrastructure tools pass unless explicitly blocked above.
-        if tool_name.startswith("mcp__gobby__"):
-            mcp_suffix = tool_name[len("mcp__gobby__") :]
+        if canonical_tool.startswith("mcp__gobby__"):
+            mcp_suffix = canonical_tool[len("mcp__gobby__") :]
             if is_discovery_tool(mcp_suffix) or is_infrastructure_tool(mcp_suffix):
                 return None
 
         # Check MCP tool restrictions (for call_tool)
-        if blocked_mcp_tools and tool_name in (
-            "call_tool",
-            "mcp__gobby__call_tool",
-            "mcp_gobby_call_tool",
-        ):
+        if blocked_mcp_tools and is_gobby_call_tool(tool_name):
             tool_input = event.data.get("tool_input") or {}
             if isinstance(tool_input, dict):
                 mcp_server = tool_input.get("server_name", "")
@@ -392,14 +393,15 @@ class EnforcementCheckMixin:
             return None
 
         tool_name = event.data.get("tool_name", "")
+        canonical_tool = canonical_gobby_tool_name(tool_name)
         wf_name = instance.agent_name
-        allowed_target = f"tool:{tool_name.casefold()}"
+        allowed_target = f"tool:{canonical_tool.casefold()}"
 
         # ToolSearch (Claude Code deferred tool loader) is always allowed
         if tool_name == "ToolSearch":
             return None
 
-        if tool_name in ("set_variable", "mcp__gobby__set_variable", "mcp_gobby_set_variable"):
+        if self._is_native_set_variable_tool(tool_name):
             tool_input = event.data.get("tool_input") or {}
             variable_name = ""
             if isinstance(tool_input, dict):
@@ -430,14 +432,16 @@ class EnforcementCheckMixin:
                 return HookResponse(decision="block", reason=reason)
 
         # Discovery/infrastructure tools always pass
-        if tool_name.startswith("mcp__gobby__"):
-            mcp_suffix = tool_name[len("mcp__gobby__") :]
+        if canonical_tool.startswith("mcp__gobby__"):
+            mcp_suffix = canonical_tool[len("mcp__gobby__") :]
             if is_discovery_tool(mcp_suffix) or is_infrastructure_tool(mcp_suffix):
                 return None
 
         # Check native tool allow-list
         if step.allowed_tools != "all":
-            if tool_name not in step.allowed_tools:
+            if canonical_tool not in {
+                canonical_gobby_tool_name(allowed) for allowed in step.allowed_tools
+            }:
                 guidance = skill_load_block_guidance(step)
                 reason = (
                     f"Rule enforced by Gobby: [step-enforcement:{wf_name}/{step.name}]\n"
@@ -448,7 +452,7 @@ class EnforcementCheckMixin:
                 reason = self._record_enforcement_denial(
                     session_id=session_id,
                     rule="step-native-tool-allowlist",
-                    target=f"tool:{tool_name.casefold()}",
+                    target=f"tool:{canonical_tool.casefold()}",
                     reason=reason,
                     step=step,
                     instance=instance,
@@ -467,7 +471,7 @@ class EnforcementCheckMixin:
                 )
 
         # Check native tool block-list
-        if tool_name in step.blocked_tools:
+        if canonical_tool in {canonical_gobby_tool_name(blocked) for blocked in step.blocked_tools}:
             reason = (
                 f"Rule enforced by Gobby: [step-enforcement:{wf_name}/{step.name}]\n"
                 f"Tool '{tool_name}' is blocked in the '{step.name}' step."
@@ -476,7 +480,7 @@ class EnforcementCheckMixin:
             reason = self._record_enforcement_denial(
                 session_id=session_id,
                 rule="step-native-tool-block",
-                target=f"tool:{tool_name.casefold()}",
+                target=f"tool:{canonical_tool.casefold()}",
                 reason=reason,
                 step=step,
                 instance=instance,
@@ -495,7 +499,7 @@ class EnforcementCheckMixin:
             )
 
         # Check MCP tool restrictions (for call_tool)
-        if tool_name in ("call_tool", "mcp__gobby__call_tool", "mcp_gobby_call_tool"):
+        if is_gobby_call_tool(tool_name):
             tool_input = event.data.get("tool_input") or {}
             if isinstance(tool_input, dict):
                 mcp_server = tool_input.get("server_name", "")
@@ -673,7 +677,7 @@ class EnforcementCheckMixin:
                 return f"variable:{variable_name.casefold()}"
         if mcp_server and mcp_tool_name:
             return f"mcp:{mcp_server.casefold()}:{mcp_tool_name.casefold()}"
-        return f"tool:{tool_name.casefold()}"
+        return f"tool:{canonical_gobby_tool_name(tool_name).casefold()}"
 
     @staticmethod
     def _is_reserved_variable_write(
@@ -683,11 +687,7 @@ class EnforcementCheckMixin:
         mcp_tool_name: str | None = None,
     ) -> str | None:
         """Return the reserved variable name for blocked user writes."""
-        is_native_set_variable = tool_name in (
-            "set_variable",
-            "mcp__gobby__set_variable",
-            "mcp_gobby_set_variable",
-        )
+        is_native_set_variable = EnforcementCheckMixin._is_native_set_variable_tool(tool_name)
         is_mcp_set_variable = mcp_tool_name == "set_variable"
         if not is_native_set_variable and not is_mcp_set_variable:
             return None
@@ -730,4 +730,4 @@ class EnforcementCheckMixin:
     @staticmethod
     def _is_native_set_variable_tool(tool_name: str) -> bool:
         """Return whether a top-level set_variable tool name was called."""
-        return tool_name in ("set_variable", "mcp__gobby__set_variable", "mcp_gobby_set_variable")
+        return canonical_gobby_tool_name(tool_name) == "mcp__gobby__set_variable"

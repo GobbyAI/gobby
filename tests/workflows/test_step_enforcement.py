@@ -16,6 +16,7 @@ from gobby.hooks.events import HookEvent, HookEventType, HookResponse, SessionSo
 from gobby.storage.agents import LocalAgentRunManager
 from gobby.storage.definitions.agents import AgentDefinitionManager
 from gobby.workflows.agent_models import AgentDefinitionBody
+from gobby.workflows.enforcement.blocking import canonical_gobby_tool_name, is_gobby_call_tool
 from gobby.workflows.engine.core import RuleEngine
 from gobby.workflows.step_instances import AgentStepInstanceManager, build_step_instance
 
@@ -2488,3 +2489,174 @@ async def test_end_agent_run_blocked_when_run_has_no_bound_task(
     )
 
     assert response.decision == "block"
+
+
+@pytest.mark.parametrize(
+    ("spelling", "canonical"),
+    [
+        ("mcp__gobby__call_tool", "mcp__gobby__call_tool"),
+        ("mcp_gobby_call_tool", "mcp__gobby__call_tool"),
+        ("gobby__call_tool", "mcp__gobby__call_tool"),
+        ("call_tool", "mcp__gobby__call_tool"),
+        ("gobby__get_tool_schema", "mcp__gobby__get_tool_schema"),
+        ("mcp_gobby_set_variable", "mcp__gobby__set_variable"),
+        ("set_variable", "mcp__gobby__set_variable"),
+        ("Bash", "Bash"),
+        ("mcp__context7__get-library-docs", "mcp__context7__get-library-docs"),
+        ("gobby__", "gobby__"),
+        ("gobby-tasks__get_task", "gobby-tasks__get_task"),
+    ],
+)
+def test_canonical_gobby_tool_name(spelling: str, canonical: str) -> None:
+    assert canonical_gobby_tool_name(spelling) == canonical
+
+
+@pytest.mark.parametrize(
+    ("spelling", "expected"),
+    [
+        ("gobby__call_tool", True),
+        ("mcp_gobby_call_tool", True),
+        ("call_tool", True),
+        ("mcp__gobby__call_tool", True),
+        ("gobby__list_tools", False),
+        ("Bash", False),
+        ("", False),
+        (None, False),
+    ],
+)
+def test_is_gobby_call_tool(spelling: str | None, expected: bool) -> None:
+    assert is_gobby_call_tool(spelling) is expected
+
+
+class TestProviderToolNameNormalization:
+    """Grok and other runtimes emit Gobby proxy tools without the mcp__ prefix.
+
+    Enforcement must compare canonical spellings; exact-match killed four
+    plan-adversary runs in load_skill (rule step-native-tool-allowlist).
+    """
+
+    @pytest.mark.asyncio
+    async def test_grok_call_tool_alias_passes_step_allowlist(
+        self,
+        db: "HubDatabase",
+        manager: AgentDefinitionManager,
+        engine: RuleEngine,
+        instance_mgr: AgentStepInstanceManager,
+    ) -> None:
+        """gobby__call_tool passes an allowlist authored as mcp__gobby__call_tool."""
+        _setup_step_workflow(db, manager, instance_mgr, current_step="claim")
+        event = _make_event(
+            data={
+                "tool_name": "gobby__call_tool",
+                "tool_input": {
+                    "server_name": "gobby-tasks",
+                    "tool_name": "claim_task",
+                },
+            }
+        )
+
+        response = await engine.evaluate(event, session_id=SESSION_ID, variables={})
+        assert response.decision == "allow"
+
+    @pytest.mark.asyncio
+    async def test_grok_get_tool_schema_alias_passes_discovery_exemption(
+        self,
+        db: "HubDatabase",
+        manager: AgentDefinitionManager,
+        engine: RuleEngine,
+        instance_mgr: AgentStepInstanceManager,
+    ) -> None:
+        """gobby__get_tool_schema is discovery-exempt even when absent from the allowlist."""
+        workflow = {
+            "name": "call-tool-only-workflow",
+            "version": "1.0",
+            "enabled": False,
+            "variables": {},
+            "steps": [
+                {
+                    "name": "claim",
+                    "allowed_tools": ["mcp__gobby__call_tool"],
+                    "allowed_mcp_tools": ["gobby-tasks:claim_task"],
+                }
+            ],
+            "exit_condition": "false",
+        }
+        _setup_step_workflow(
+            db, manager, instance_mgr, current_step="claim", workflow_data=workflow
+        )
+        event = _make_event(data={"tool_name": "gobby__get_tool_schema"})
+
+        response = await engine.evaluate(event, session_id=SESSION_ID, variables={})
+        assert response.decision == "allow"
+
+    @pytest.mark.asyncio
+    async def test_grok_native_search_tool_still_blocked(
+        self,
+        db: "HubDatabase",
+        manager: AgentDefinitionManager,
+        engine: RuleEngine,
+        instance_mgr: AgentStepInstanceManager,
+    ) -> None:
+        """Canonicalization does not fail open: foreign native tools stay denied."""
+        _setup_step_workflow(db, manager, instance_mgr, current_step="claim")
+        event = _make_event(data={"tool_name": "search_tool"})
+
+        response = await engine.evaluate(event, session_id=SESSION_ID, variables={})
+        assert response.decision == "block"
+        assert response.reason is not None
+        assert "step-enforcement" in response.reason
+
+    @pytest.mark.asyncio
+    async def test_grok_call_tool_alias_respects_mcp_allowlist(
+        self,
+        db: "HubDatabase",
+        manager: AgentDefinitionManager,
+        engine: RuleEngine,
+        instance_mgr: AgentStepInstanceManager,
+    ) -> None:
+        """gobby__call_tool reaches the MCP allow-list check instead of skipping it."""
+        _setup_step_workflow(db, manager, instance_mgr, current_step="claim")
+        event = _make_event(
+            data={
+                "tool_name": "gobby__call_tool",
+                "tool_input": {
+                    "server_name": "gobby-agents",
+                    "tool_name": "spawn_agent",
+                },
+            }
+        )
+
+        response = await engine.evaluate(event, session_id=SESSION_ID, variables={})
+        assert response.decision == "block"
+        assert response.reason is not None
+        assert "gobby-agents:spawn_agent" in response.reason
+
+    @pytest.mark.asyncio
+    async def test_implement_to_terminate_transition_for_grok_call_tool_alias(
+        self,
+        db: "HubDatabase",
+        manager: AgentDefinitionManager,
+        engine: RuleEngine,
+        instance_mgr: AgentStepInstanceManager,
+    ) -> None:
+        """on_mcp_success handlers fire for gobby__call_tool so steps still advance."""
+        _setup_step_workflow(db, manager, instance_mgr, current_step="implement")
+        event = _make_event(
+            event_type=HookEventType.AFTER_TOOL,
+            data={
+                "tool_name": "gobby__call_tool",
+                "tool_input": {
+                    "server_name": "gobby-tasks-ops",
+                    "tool_name": "submit_for_review",
+                },
+            },
+        )
+
+        response = await engine.evaluate(event, session_id=SESSION_ID, variables={})
+
+        instance = instance_mgr.get_for_session(SESSION_ID)
+        assert instance is not None
+        assert instance.current_step == "terminate"
+        assert instance.variables.get("review_submitted") is True
+        assert response.context is not None
+        assert "terminate" in response.context

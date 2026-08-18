@@ -21,6 +21,7 @@ from gobby.workflows.enforcement.blocking import (
     get_touched_file_paths,
     is_current_plan_artifact,
     is_discovery_tool,
+    is_gobby_call_tool,
     is_message_delivery_tool,
     is_operator_tool,
     is_plan_file,
@@ -106,7 +107,7 @@ class TemplatingMixin:
         # Preserve MCP routing fields (server_name, tool_name) so helpers like
         # is_tool_unlocked / is_discovery_tool still work after unwrapping.
         tool_name = event.data.get("tool_name", "")
-        if tool_name in ("call_tool", "mcp__gobby__call_tool") and isinstance(raw_tool_input, dict):
+        if is_gobby_call_tool(tool_name) and isinstance(raw_tool_input, dict):
             original_tool_input = raw_tool_input
             inner_args = raw_tool_input.get("arguments")
             if isinstance(inner_args, str):

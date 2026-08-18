@@ -14,6 +14,7 @@ from gobby.storage.agents import LocalAgentRunManager
 from gobby.storage.hub.protocol import HubDatabase
 from gobby.storage.workflow_audit import WorkflowAuditManager
 from gobby.workflows.definitions import WorkflowStep
+from gobby.workflows.enforcement.blocking import is_gobby_call_tool
 from gobby.workflows.engine._offload import offload
 from gobby.workflows.step_instances import (
     AgentStepInstanceManager,
@@ -266,7 +267,7 @@ class EnforcementCompletionMixin:
             return None
 
         is_native_set_variable = self._is_native_set_variable_tool(tool_name)
-        if tool_name in ("call_tool", "mcp__gobby__call_tool", "mcp_gobby_call_tool"):
+        if is_gobby_call_tool(tool_name):
             mcp_server = tool_input.get("server_name", "")
             mcp_tool_name = tool_input.get("tool_name", "")
             if not mcp_server or not mcp_tool_name:
