@@ -286,14 +286,15 @@ class TestCreateMemory:
         assert call_kwargs["source_session_id"] is None
 
     @pytest.mark.asyncio
-    async def test_create_memory_excludes_self_from_similar(
+    async def test_create_memory_auto_supersedes_near_duplicate(
         self, memory_registry, mock_memory_manager
     ):
-        """Test that the newly created memory is excluded from similar_existing."""
-        # Recall returns the new memory itself plus another
+        """A >=0.9-similarity match is superseded atomically and reported."""
+        duplicate_id = "22222222-2222-4222-8222-222222220001"
+        weaker_id = "22222222-2222-4222-8222-222222220002"
         mock_memory_manager.search_memories.return_value = [
-            MockMemory(id="mem-123", content="Test content", similarity=1.0),
-            MockMemory(id="existing-1", content="Similar", similarity=0.9),
+            MockMemory(id=duplicate_id, content="Near duplicate", similarity=0.95),
+            MockMemory(id=weaker_id, content="Related", similarity=0.7),
         ]
 
         with patch(
@@ -303,8 +304,31 @@ class TestCreateMemory:
             result = await memory_registry.call("create_memory", {"content": "Test content"})
 
         assert result["success"] is True
-        assert len(result["similar_existing"]) == 1
-        assert result["similar_existing"][0]["id"] == "existing-1"
+        assert result["auto_superseded"] == [{"id": duplicate_id, "similarity": 0.95}]
+        assert [entry["id"] for entry in result["similar_existing"]] == [duplicate_id, weaker_id]
+        call_kwargs = mock_memory_manager.create_memory.call_args.kwargs
+        assert call_kwargs["supersedes"] == [duplicate_id]
+
+    @pytest.mark.asyncio
+    async def test_create_memory_below_threshold_is_not_superseded(
+        self, memory_registry, mock_memory_manager
+    ):
+        """Matches below the 0.9 similarity threshold are only reported."""
+        related_id = "22222222-2222-4222-8222-222222220003"
+        mock_memory_manager.search_memories.return_value = [
+            MockMemory(id=related_id, content="Related", similarity=0.89),
+        ]
+
+        with patch(
+            "gobby.utils.project_context.get_project_context",
+            return_value={"id": "11111111-1111-4111-8111-111111110001"},
+        ):
+            result = await memory_registry.call("create_memory", {"content": "Test content"})
+
+        assert result["success"] is True
+        assert "auto_superseded" not in result
+        call_kwargs = mock_memory_manager.create_memory.call_args.kwargs
+        assert call_kwargs["supersedes"] == []
 
     @pytest.mark.asyncio
     async def test_create_memory_similar_search_failure_nonfatal(

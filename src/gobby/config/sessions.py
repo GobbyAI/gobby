@@ -159,14 +159,17 @@ class MemoryRecallConfig(FeatureDefaultConfig):
         description="Maximum ranked candidates returned by the single hybrid search.",
     )
     min_score: float = Field(
-        default=0.0,
+        default=0.45,
         ge=0.0,
         le=1.0,
         description=(
             "Minimum decayed semantic similarity for recall candidates. Applies only "
             "to hits carrying a numeric similarity; keyword/RRF-ranked hits pass "
-            "through in direct hybrid-search order. Default 0.0 keeps the full score "
-            "distribution flowing for adaptive tuning (#17099)."
+            "through in direct hybrid-search order. Default 0.45 sits at the 10th "
+            "percentile of the logged recall_signal similarity distribution "
+            "(memory.recall caller, 2026-07 through 2026-08: p10=0.45, p25=0.50), "
+            "trimming the low-signal tail that the transcript audit showed was "
+            "injected but never referenced (#20447)."
         ),
     )
 
