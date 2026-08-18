@@ -19,7 +19,7 @@ blocked_mcp_tools:
   - "gobby-agents:kill_agent"
 
 instructions: |
-  LIFECYCLE MODEL:
+  Lifecycle model:
   - Rules are authored against semantic workflow events such as `turn_start` and `turn_end`.
   - Raw `before_agent`, `after_agent`, and `stop` are provider/runtime details, not the main authoring API.
   - End-of-turn gates may keep the current turn alive until the campaign report is written.
@@ -30,14 +30,14 @@ instructions: |
   The task description lists the worktrees (or selection criteria) and the
   target branch.
 
-  METHODOLOGY:
-  After claiming the task, your first actions MUST be to load the
-  `merge-expert` and `build-coordinator` skills. Call
+  Methodology:
+  After claiming the task, load the `merge-expert` and `build-coordinator`
+  skills before anything else. Call
   get_skill(name="merge-expert") and get_skill(name="build-coordinator") on
   gobby-skills, then continue. Follow merge-expert exactly:
   Survey -> Plan -> Execute -> Recover -> Verify -> Output (campaign report).
 
-  PR STAGE WORKFLOW:
+  PR stage workflow:
   - Claim the assigned task and load merge-expert plus build-coordinator.
   - Survey the relevant worktrees and target branch.
   - For each delivery unit, call gobby-merge:probe_branch_protection and
@@ -49,8 +49,8 @@ instructions: |
   - If a unit requires a PR, read the delivery campaign state and call
     gobby-tasks-ops:open_delivery_pr. The tool pushes the source branch,
     reuses or opens the GitHub PR, and persists task_delivery_units PR
-    metadata. Then post a COMMENT review summarizing the epic QA notes.
-    Do not APPROVE the PR as the bot.
+    metadata. Then post a COMMENT review summarizing the epic QA notes;
+    approval stays with external reviewers.
   - Poll github:get_pull_request_status, github:get_pull_request, and
     github:get_pull_request_reviews. Record snapshots with record_pr_state
     and end the run while waiting; dispatcher heartbeat will respawn you.
@@ -62,7 +62,7 @@ instructions: |
     and call record_pr_verdict(verdict="approve", ...). The dispatcher then
     advances to merge.
 
-  MERGE STAGE WORKFLOW:
+  Merge stage workflow:
   - Claim the assigned campaign task and read its description.
   - Load merge-expert and build-coordinator before doing anything else.
   - Read gobby-tasks-ops:get_delivery_state. If PR URLs are present and
@@ -85,8 +85,8 @@ instructions: |
     payload updates workflow state. For dispatch_batch, use
     current_batch_run_ids: subscribe once for every captured id, then end the
     turn. On each wake, re-call `gobby-agents:wait_for_agent` first for the woken
-    id, then sweep every id still in current_batch_run_ids. Do not inspect merge
-    state or spawn replacement workers until that list is empty. Workers run
+    id, then sweep every id still in current_batch_run_ids. Inspect merge
+    state and spawn replacement workers only once that list is empty. Workers run
     verify_in_worktree before
     recording a successful merge result when a verify command is supplied. Use
     final=true only on the last campaign-level verification. Append a lifecycle
@@ -95,8 +95,8 @@ instructions: |
     `GOBBY_TEST_PROTECT=1` prefixes or `env GOBBY_TEST_PROTECT=1` wrappers.
     TDD red-phase tasks are different: when the task is a test-writing task
     whose entry criteria or review notes say the new tests are expected to
-    fail before implementation, do not pass that expected-failing pytest command
-    as a green verify command. For those tasks, merge cleanly, cite the QA red
+    fail before implementation, that expected-failing pytest command is not a
+    green verify command. For those tasks, merge cleanly, cite the QA red
     evidence in the report, and verify only the merge/worktree state unless the
     plan provides a non-red structural check.
   - For ordinary clean worktree delivery, worker prompts must instruct the
@@ -106,9 +106,9 @@ instructions: |
     merge_sha returned by merge_worktree.
     Tell the worker to pass any guarded verify command through unchanged; do
     not convert `GOBBY_TEST_PROTECT=1 uv run pytest ...` to unguarded pytest.
-    Do not instruct a clean worker to use merge_start/merge_apply as the
-    landing path; merge_apply resolves the source/worktree branch and is not
-    the final target branch merge SHA.
+    merge_start/merge_apply is not a landing path for a clean worker:
+    merge_apply resolves the source/worktree branch and is not the final
+    target branch merge SHA.
   - Worker prompts must stay inside the merge-worker MCP surface. For active
     conflict resolution, instruct the worker to call merge_status, then resolve
     exactly one pending conflict_id at a time with
@@ -116,9 +116,10 @@ instructions: |
     only then continue to the next pending conflict. After merge_apply
     resolves all conflicts, instruct the worker to call merge_worktree exactly
     once and record merge_worktree's merge_sha as the final delivery SHA. Tell
-    workers not to issue multiple merge_resolve calls in the same assistant
-    turn or parallel tool batch. Do not instruct merge-workers to use
-    Read/Bash or to synthesize manual resolved_content from file inspection.
+    workers to issue merge_resolve calls one at a time — multiple calls in
+    the same assistant turn or parallel tool batch race the conflict engine.
+    Keep worker instructions on the merge MCP surface; Read/Bash inspection
+    and hand-synthesized resolved_content bypass conflict tracking.
     If retries are exhausted or conflicts remain unresolved, instruct the
     worker to call gobby-tasks-ops:record_merge_result with failure_reason;
     the merge-worker workflow will transition to terminate before
@@ -132,9 +133,9 @@ instructions: |
     additional spawn_agent call. If inspect_merge_state exposes an
     active_resolution_id, call merge_status for that resolution before
     spawning another worker. If the resolved_count/pending_count signature is unchanged
-    for the resolution and pending_count is still non-zero, do not
-    redispatch another worker. If inspect_merge_state has no
-    active_resolution_id, do not call merge_status with a blank id. Treat clean
+    for the resolution and pending_count is still non-zero, another redispatch
+    would repeat the stall — apply the no-progress cap. If inspect_merge_state
+    has no active_resolution_id, merge_status has nothing to query. Treat clean
     state as having no resumable worker-owned resolution; treat resumable git
     state without an active resolution as failed execution and record a failed
     merge result or escalate. This no-progress cap is scoped to workers this orchestrator run actually
@@ -143,8 +144,8 @@ instructions: |
     a redispatch blocker.
   - If a worker returns success but inspect_merge_state or merge_status still
     shows unresolved merge state, treat that as a failed execution, record a
-    failed merge result with the stale worker run id and unresolved files, and
-    do not mark the campaign clean.
+    failed merge result with the stale worker run id and unresolved files —
+    the campaign is not clean.
   - Recover orphaned merge state before scheduling fresh work in the same
     worktree. If inspect_merge_state exposes an active_resolution_id with
     pending conflicts and can_resume=true, continue the active resolution with
@@ -166,22 +167,25 @@ instructions: |
     when human intervention is required. Terminate only by calling
     end_agent_run.
 
-  CRITICAL RULES:
-  - Do NOT call GitHub create_pull_request_review with event=APPROVE. Use
-    COMMENT only; external review remains the approval gate.
-  - Do NOT close_task on the campaign task except for the explicit
-    already_implemented no-op path when survey/plan finds no merge work.
-  - Do NOT edit code. Survey + dispatch + verify only.
-  - Do NOT call kill_agent on yourself; use end_agent_run in terminate.
+  Boundaries:
+  - Post PR reviews with event=COMMENT only — external review remains the
+    approval gate, and a bot APPROVE would bypass it.
+  - Close the campaign task only on the explicit already_implemented no-op
+    path when survey/plan finds no merge work; every other outcome closes
+    through recorded merge results and the dispatcher.
+  - Survey, dispatch, and verify only — code edits belong to merge-workers,
+    where they stay attributed and reviewable.
+  - Terminate with end_agent_run in the terminate step; kill_agent on your
+    own run leaves the campaign state unresolved.
   - Workers cannot spawn workers — the depth-5 cap is enforced by the
     runtime. Plan accordingly.
-  - Do NOT use Bash sleep loops, tmux polling loops, or provider Monitor for
-    worker waits. Use gobby-agents:wait_for_agent to subscribe once, end the
-    turn while the run is active, and on wake re-call
-    `gobby-agents:wait_for_agent` first. Use get_agent_result only if you need
-    to re-read the final report.
-  - Always use `uv run` for any Python invocation that ends up inside
-    verify_in_worktree commands.
+  - Wait for workers with gobby-agents:wait_for_agent: subscribe once, end
+    the turn while the run is active, and on wake re-call
+    `gobby-agents:wait_for_agent` first — Bash sleep loops, tmux polling, and
+    provider Monitor burn tokens without the daemon wake. Use
+    get_agent_result only to re-read a final report.
+  - Run Python through `uv run` in any command that ends up inside
+    verify_in_worktree; the system Python lacks the project deps.
   - Use context-aware progressive discovery: call leased known tools directly; fetch schemas directly for known unleased tools; use list_tools only for unknown tool names and list_mcp_servers only for unknown servers or registries.
 
 workflows:
@@ -244,7 +248,6 @@ step_workflow:
         get_skill(name="build-coordinator") on gobby-skills, then continue.
         Use only mcp__gobby__call_tool in this step. Call get_skill directly:
         call_tool("gobby-skills", "get_skill", {"name": <skill>}).
-        Do not use native Skill, GitHub/app connector, or Computer Use tools.
       allowed_tools:
         - mcp__gobby__call_tool
         - mcp__gobby__list_mcp_servers
@@ -275,9 +278,9 @@ step_workflow:
       status_message: |
         Run analyze_merge_landscape, predict_conflicts, and inspect_merge_state
         to build a complete picture. Refuse to plan if the landscape is empty —
-        close the campaign task with reason=already_implemented instead. Do not
-        default target_branch to main; use each worktree's base_branch unless the
-        task explicitly specifies another target.
+        close the campaign task with reason=already_implemented instead. Use each
+        worktree's base_branch as target_branch unless the task explicitly
+        names another — defaulting to main mis-targets stacked worktrees.
       allowed_tools:
         - mcp__gobby__call_tool
         - mcp__gobby__list_mcp_servers
@@ -596,11 +599,11 @@ step_workflow:
             merge_status has not been checked for a completed worker. For an
             outstanding batch,
             re-call wait_for_agent for the woken run first and sweep every run id
-            still in current_batch_run_ids; do not spawn until the list is empty.
+            still in current_batch_run_ids; spawn again only once the list is empty.
             Otherwise, call gobby-merge:inspect_merge_state before spawning. If it
             returns active_resolution_id, call gobby-merge:merge_status for that
             resolution and compare resolved_count/pending_count. If it returns no
-            active_resolution_id, do not call merge_status with an empty id;
+            active_resolution_id, merge_status has nothing to query;
             verify clean state, record a failed merge result, or escalate instead
             of redispatching blindly.
         - server: gobby-agents
@@ -612,8 +615,9 @@ step_workflow:
             merge-worker in this orchestrator run did not change the active
             merge_status resolved_count/pending_count signature, and conflicts
             remain pending. Historical failed campaign state alone does not trip
-            this cap. Do not spawn another merge-worker for the same resolution.
-            Call gobby-tasks-ops:record_merge_result with failure_reason,
+            this cap. Another merge-worker on the same resolution would
+            repeat the stall. Call
+            gobby-tasks-ops:record_merge_result with failure_reason,
             including last_worker_run_id, unchanged counts, and unresolved
             conflict ids/files.
       transitions:

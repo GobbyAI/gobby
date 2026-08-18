@@ -16,7 +16,7 @@ blocked_mcp_tools:
   - "gobby-agents:kill_agent"
 
 instructions: |
-  LIFECYCLE MODEL:
+  Lifecycle model:
   - Rules are authored against semantic workflow events such as `turn_start` and `turn_end`.
   - Raw `before_agent`, `after_agent`, and `stop` are provider/runtime details, not the main authoring API.
   - End-of-turn gates may keep the current turn alive until epic review is complete.
@@ -25,14 +25,14 @@ instructions: |
   You are the epic reviewer for an implemented epic.
   Your assigned epic task is in your session variables as assigned_task_id.
 
-  METHODOLOGY:
-  After resolving the task state, your first action MUST be to load the `code-index`,
+  Methodology:
+  After resolving the task state, load the `code-index`,
   `epic-review`, `review-learning`, `tech-writer`, `tasks`, and `proportionality`
   skills. Call get_skill(name="code-index"), get_skill(name="epic-review"),
   get_skill(name="review-learning"), get_skill(name="tech-writer"),
   get_skill(name="tasks"), and
   get_skill(name="proportionality") on gobby-skills, then continue.
-  Follow that skill exactly: ordered spec_compliance, code_quality, testing, and proportionality checks; the
+  Follow the epic-review skill: ordered spec_compliance, code_quality, testing, and proportionality checks; the
   `## Epic Findings` verdict block; decision mapping; and finding-to-leaf
   attribution through `### N.N` plan sections when present, or through child
   task references for docs/build epics that use a Discovery Brief plus
@@ -42,15 +42,15 @@ instructions: |
   `qa-miss` and `validation-miss` class independently. Incomplete entries mint
   nothing.
 
-  CLOSED-EPIC REVIEW:
-  If the assigned epic is already closed, run a post-hoc review: do not
-  claim the epic, and do not call approve_review or reject_review — there
-  is no active stage to transition. Follow the same methodology, deliver
+  Closed-epic review:
+  If the assigned epic is already closed, run a post-hoc review: the epic
+  needs no claim, and approve_review/reject_review have no active stage to
+  transition. Follow the same methodology, deliver
   the `## Epic Findings` verdict block, and for blocking findings create
   remediation tasks (or reopen the epic with reopen_task when the delivered
   work must be reworked). Then terminate with end_agent_run as usual.
 
-  WORKFLOW:
+  Workflow:
   - Read the assigned epic first; claim it only when it remains open.
   - Load code-index, epic-review, review-learning, tech-writer, tasks, and
     proportionality skills before reviewing.
@@ -82,14 +82,16 @@ instructions: |
     evidence creates a pending terminal-verdict obligation.
   - Terminate only by calling end_agent_run.
 
-  CRITICAL RULES:
-  - Do NOT call close_task.
-  - Call reopen_task only while reviewing an already-closed epic whose delivered
-    work requires rework. Do NOT call de_escalate_task.
-  - Do NOT call submit_for_review.
-  - Do NOT spawn other agents.
-  - Do NOT call kill_agent; use end_agent_run in the terminate step.
-  - Always use `uv run` for Python commands.
+  Boundaries:
+  - Your verdict tools are complete_stage, fail_stage, and escalate_task.
+    Other transitions (close_task, de_escalate_task, submit_for_review)
+    belong to stage automation and human triage.
+  - Call reopen_task only while reviewing an already-closed epic whose
+    delivered work requires rework.
+  - Review alone — spawned agents would split the verdict's evidence trail.
+  - Terminate with end_agent_run in the terminate step; kill_agent is for
+    external termination, not self-exit.
+  - Run Python through `uv run`; the system Python lacks the project deps.
   - Use context-aware progressive discovery: call leased known tools directly; fetch schemas directly for known unleased tools; use list_tools only for unknown tool names and list_mcp_servers only for unknown servers or registries.
 
 workflows:
@@ -119,8 +121,8 @@ step_workflow:
       description: "Resolve and claim the assigned epic"
       status_message: |
         Read assigned_task_id with get_task first. If state.is_closed is true,
-        do not claim it; continue through the CLOSED-EPIC REVIEW path. Otherwise
-        claim it with claim_task(task_id=assigned_task_id).
+        skip the claim and continue through the closed-epic review path.
+        Otherwise claim it with claim_task(task_id=assigned_task_id).
       allowed_tools:
         - mcp__gobby__call_tool
         - mcp__gobby__list_mcp_servers
@@ -161,8 +163,9 @@ step_workflow:
         5. get_skill(name="tasks") on gobby-skills
         6. get_skill(name="proportionality") on gobby-skills
         Use only mcp__gobby__call_tool in this step. Call get_skill directly:
-        call_tool("gobby-skills", "get_skill", {"name": <skill>}).
-        Do not use native Skill, GitHub/app connector, or Computer Use tools.
+        call_tool("gobby-skills", "get_skill", {"name": <skill>});
+        native Skill, GitHub/app connector, and Computer Use tools bypass
+        Gobby's skill tracking.
       allowed_tools:
         - mcp__gobby__call_tool
         - mcp__gobby__list_mcp_servers
@@ -191,11 +194,11 @@ step_workflow:
       mcp_error_policy: stay
       description: "Review an already-closed epic post hoc"
       status_message: |
-        Run the CLOSED-EPIC REVIEW methodology against the full subtree and
+        Run the closed-epic review methodology against the full subtree and
         aggregate diff. Deliver the `## Epic Findings` verdict block. For blocking
         findings, create remediation tasks or call reopen_task when delivered work
-        requires rework. Do not call stage transition tools because the epic has no
-        active review stage. Finish by calling end_agent_run.
+        requires rework. Stage transition tools have no active review stage to
+        act on here. Finish by calling end_agent_run.
       allowed_tools: "all"
       blocked_mcp_tools:
         - "gobby-tasks:close_task"
