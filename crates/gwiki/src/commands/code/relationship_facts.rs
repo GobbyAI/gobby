@@ -57,6 +57,12 @@ pub(crate) struct RelationshipFacts {
     pub(crate) outbound_calls: Vec<SymbolRelation>,
     /// Files this file imports (resolved to a representative symbol span).
     pub(crate) imports: Vec<SymbolRelation>,
+    /// Whole inbound relations omitted after [`MAX_RELATIONS_PER_DIRECTION`].
+    pub(crate) omitted_inbound: usize,
+    /// Whole outbound relations omitted after [`MAX_RELATIONS_PER_DIRECTION`].
+    pub(crate) omitted_outbound: usize,
+    /// Whole import relations omitted after [`MAX_RELATIONS_PER_DIRECTION`].
+    pub(crate) omitted_imports: usize,
 }
 
 impl RelationshipFacts {
@@ -146,10 +152,16 @@ pub(crate) fn relationship_facts_for_file(
             }
         }
     }
+    let (inbound_calls, omitted_inbound) = bound_relations(inbound);
+    let (outbound_calls, omitted_outbound) = bound_relations(outbound);
+    let (imports, omitted_imports) = bound_relations(imports);
     RelationshipFacts {
-        inbound_calls: bound_relations(inbound),
-        outbound_calls: bound_relations(outbound),
-        imports: bound_relations(imports),
+        inbound_calls,
+        outbound_calls,
+        imports,
+        omitted_inbound,
+        omitted_outbound,
+        omitted_imports,
     }
 }
 
@@ -200,7 +212,7 @@ fn import_relation(
 /// Deterministically order, dedupe, and cap one direction's relations. A single
 /// `(other, local)` pair can appear many times (the same callee hit from
 /// several call sites); the prose only needs each collaborator once.
-fn bound_relations(mut relations: Vec<SymbolRelation>) -> Vec<SymbolRelation> {
+fn bound_relations(mut relations: Vec<SymbolRelation>) -> (Vec<SymbolRelation>, usize) {
     relations.sort_by(|a, b| {
         a.span
             .cmp(&b.span)
@@ -210,8 +222,9 @@ fn bound_relations(mut relations: Vec<SymbolRelation>) -> Vec<SymbolRelation> {
     relations.dedup_by(|a, b| {
         a.other_name == b.other_name && a.local_name == b.local_name && a.span == b.span
     });
+    let omitted = relations.len().saturating_sub(MAX_RELATIONS_PER_DIRECTION);
     relations.truncate(MAX_RELATIONS_PER_DIRECTION);
-    relations
+    (relations, omitted)
 }
 
 #[cfg(test)]
@@ -347,6 +360,9 @@ mod tests {
 
         // Duplicates collapse and the direction is capped.
         assert_eq!(facts.outbound_calls.len(), MAX_RELATIONS_PER_DIRECTION);
+        assert_eq!(facts.omitted_outbound, 3);
+        assert_eq!(facts.omitted_inbound, 0);
+        assert_eq!(facts.omitted_imports, 0);
         let mut names = facts
             .outbound_calls
             .iter()

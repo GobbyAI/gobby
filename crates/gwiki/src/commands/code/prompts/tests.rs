@@ -189,6 +189,8 @@ fn file_prompt_includes_cross_file_relationships() {
         }],
         outbound_calls: Vec::new(),
         imports: Vec::new(),
+        omitted_inbound: 2,
+        ..RelationshipFacts::default()
     };
 
     let prompt = file_prompt("src/cli.rs", &[], &[], &relationships);
@@ -199,6 +201,7 @@ fn file_prompt_includes_cross_file_relationships() {
         "{prompt}"
     );
     assert!(prompt.contains("[src/other.rs:5-8]"), "{prompt}");
+    assert!(prompt.contains("omitted 2"), "{prompt}");
 }
 
 #[test]
@@ -219,6 +222,7 @@ fn module_prompt_includes_cross_module_relationships() {
         }],
         outbound_calls: Vec::new(),
         imports: Vec::new(),
+        ..RelationshipFacts::default()
     };
     let child = ChildSummary {
         name: "src/search/fts.rs".to_string(),

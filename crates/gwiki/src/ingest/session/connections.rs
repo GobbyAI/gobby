@@ -187,7 +187,16 @@ impl ConnectionsEnricher {
 
 #[cfg(any(feature = "ai", test))]
 pub(super) fn entity_extraction_prompt(body: &str) -> String {
-    let excerpt: String = body.chars().take(EXTRACTION_BODY_BUDGET).collect();
+    let body = body.trim();
+    let excerpt = if body.chars().count() <= EXTRACTION_BODY_BUDGET {
+        body.to_string()
+    } else {
+        format!(
+            "(Summary is {} chars and exceeds the {EXTRACTION_BODY_BUDGET} char budget. \
+             Do not extract from a prefix; use the ingested wiki page or re-query the session.)",
+            body.chars().count()
+        )
+    };
     format!(
         "List up to {MAX_CONNECTIONS} named entities this session summary is about: tools, \
          systems, services, libraries, projects, and durable concepts. One entity per line, \
@@ -370,6 +379,21 @@ mod tests {
             entities_from_model_output(output),
             vec!["gcode", "FalkorDB", "LM Studio", "Qdrant"]
         );
+    }
+
+    #[test]
+    fn extraction_prompt_uses_whole_summary_or_pointer() {
+        let whole = "Gobby session about ToolResultStore";
+        let prompt = entity_extraction_prompt(whole);
+        assert!(prompt.contains(whole));
+
+        let head = "UNIQUE_EXTRACT_HEAD_7f3a9c";
+        let tail = "UNIQUE_EXTRACT_TAIL_7f3a9c";
+        let oversized = format!("{head}{}{tail}", "z".repeat(EXTRACTION_BODY_BUDGET));
+        let prompt = entity_extraction_prompt(&oversized);
+        assert!(!prompt.contains(head), "must not prefix-slice: {prompt}");
+        assert!(!prompt.contains(tail));
+        assert!(prompt.contains("exceeds the"));
     }
 
     #[test]

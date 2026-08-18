@@ -312,8 +312,9 @@ fn build_standalone_summary_context(
     context
 }
 
-/// Render the most-recent messages that fit within `char_budget`, in
-/// chronological order, each capped at [`PER_MESSAGE_CHAR_CAP`].
+/// Render the most-recent whole messages that fit within `char_budget`.
+/// Messages that would exceed the budget (or [`PER_MESSAGE_CHAR_CAP`]) are
+/// omitted entirely, never mid-message sliced.
 #[cfg(feature = "ai")]
 fn render_message_tail(messages: &[ParsedSessionMessage], char_budget: usize) -> String {
     if messages.is_empty() {
@@ -321,23 +322,39 @@ fn render_message_tail(messages: &[ParsedSessionMessage], char_budget: usize) ->
     }
     let mut blocks: Vec<String> = Vec::new();
     let mut used = 0usize;
+    let mut omitted = 0usize;
+    let mut remaining = messages.len();
     for message in messages.iter().rev() {
+        remaining -= 1;
         let heading = super::message_heading(&message.role);
-        let content = truncate_chars(message.content.trim(), PER_MESSAGE_CHAR_CAP);
+        let content = message.content.trim();
         let body = if content.is_empty() {
-            "(no text content)".to_string()
+            "(no text content)"
         } else {
             content
         };
         let block = format!("### {heading}\n{body}");
-        used = used.saturating_add(block.chars().count() + 2);
-        blocks.push(block);
-        if used >= char_budget {
+        let block_chars = block.chars().count();
+        let sep = if blocks.is_empty() { 0 } else { 2 };
+        let next = used.saturating_add(sep).saturating_add(block_chars);
+        if block_chars > PER_MESSAGE_CHAR_CAP || next > char_budget {
+            omitted += 1 + remaining;
             break;
         }
+        used = next;
+        blocks.push(block);
     }
     blocks.reverse();
-    blocks.join("\n\n")
+    let body = blocks.join("\n\n");
+    if omitted == 0 {
+        return body;
+    }
+    let note = format!("omitted {omitted} messages");
+    if body.is_empty() {
+        note
+    } else {
+        format!("{note}\n\n{body}")
+    }
 }
 
 /// Wrap an LLM summary `body` in the daemon `.md` format so it parses through
@@ -375,14 +392,6 @@ fn assemble_standalone_wiki_md(parsed: &ParsedSession, external_id: &str, body: 
 }
 
 #[cfg(feature = "ai")]
-fn truncate_chars(value: &str, max_chars: usize) -> String {
-    if value.chars().count() <= max_chars {
-        value.to_string()
-    } else {
-        value.chars().take(max_chars).collect()
-    }
-}
-
 #[cfg(feature = "ai")]
 fn non_empty(value: &str) -> Option<&str> {
     let trimmed = value.trim();
@@ -509,6 +518,20 @@ mod tests {
         if let (Some(first), Some(last)) = (first, last) {
             assert!(first < last, "messages must render in chronological order");
         }
+    }
+
+    #[test]
+    fn message_tail_omits_whole_messages_instead_of_mid_message_take() {
+        let huge = format!("UNIQUE_HEAD_7f3a9c{}UNIQUE_TAIL_7f3a9c", "x".repeat(80));
+        let messages = vec![message("user", &huge), message("assistant", "kept-recent")];
+        let rendered = render_message_tail(&messages, 40);
+        assert!(rendered.contains("kept-recent"));
+        assert!(rendered.contains("omitted 1 messages"));
+        assert!(
+            !rendered.contains("UNIQUE_HEAD_7f3a9c"),
+            "must not mid-message prefix-slice: {rendered}"
+        );
+        assert!(!rendered.contains("UNIQUE_TAIL_7f3a9c"));
     }
 
     #[test]

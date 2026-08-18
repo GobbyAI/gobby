@@ -106,6 +106,9 @@ pub(super) fn append_relationship_section(prompt: &mut String, relationships: &R
                 ],
             );
         }
+        if relationships.omitted_inbound > 0 {
+            prompt.push_str(&format!("omitted {}\n", relationships.omitted_inbound));
+        }
     }
     if !relationships.outbound_calls.is_empty() {
         prompt.push_str("Calls out to (external symbols this file calls):\n");
@@ -121,12 +124,18 @@ pub(super) fn append_relationship_section(prompt: &mut String, relationships: &R
                 ],
             );
         }
+        if relationships.omitted_outbound > 0 {
+            prompt.push_str(&format!("omitted {}\n", relationships.omitted_outbound));
+        }
     }
     if !relationships.imports.is_empty() {
         prompt.push_str("Imports (files this file depends on):\n");
         write_markdown_table_header(prompt, &["Imported file", "Evidence"]);
         for relation in &relationships.imports {
             write_markdown_table_row(prompt, [relation.other_name.clone(), relation.citation()]);
+        }
+        if relationships.omitted_imports > 0 {
+            prompt.push_str(&format!("omitted {}\n", relationships.omitted_imports));
         }
     }
 }
