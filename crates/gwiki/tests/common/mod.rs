@@ -82,7 +82,7 @@ impl GwikiFixture {
     }
 
     pub fn topic_vault(&self, topic: &str) -> PathBuf {
-        self.hub.join("topics").join(topic)
+        self.hub.join(topic)
     }
 
     pub fn command(&self) -> Command {
@@ -145,6 +145,7 @@ impl GwikiFixture {
     fn apply_isolated_env<'a>(&self, command: &'a mut Command) -> &'a mut Command {
         command
             .env("GOBBY_WIKI_HUB", &self.hub)
+            .env("GOBBY_HOME", &self.home)
             .env("HOME", &self.home)
             .env("XDG_CONFIG_HOME", self.root.join("xdg-config"))
             .env("XDG_DATA_HOME", self.root.join("xdg-data"))

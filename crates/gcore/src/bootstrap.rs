@@ -176,6 +176,20 @@ pub fn postgres_database_url_from_bootstrap(bootstrap: &HubDatabaseBootstrap) ->
     bootstrap.database_url.clone()
 }
 
+/// Read the typed files-home view from the default bootstrap path.
+///
+/// A missing file is owner-less local defaults. A present file is fail-closed.
+pub fn read_files_home_view() -> Result<FilesHomeView, FilesHomeError> {
+    match bootstrap_path() {
+        Some(path) => read_files_home_view_at(&path),
+        None => Ok(FilesHomeView {
+            datastore_mode: DatastoreMode::Local,
+            files_home: None,
+            hub_daemon_url: None,
+        }),
+    }
+}
+
 /// Read the typed files-home view from a bootstrap file.
 ///
 /// A missing file is owner-less local defaults. A present file is fail-closed.

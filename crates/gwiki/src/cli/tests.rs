@@ -9,6 +9,7 @@ use super::mapping::command_from_cli;
 use super::*;
 
 mod code;
+mod ownership;
 mod routing;
 
 #[test]

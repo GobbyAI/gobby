@@ -245,6 +245,26 @@ fn routing_from_no_ai(no_ai: bool) -> gobby_core::config::AiRouting {
     }
 }
 
+pub(crate) fn command_is_mutating(command: &Command) -> bool {
+    !matches!(
+        command,
+        Command::Search { .. }
+            | Command::Read { .. }
+            | Command::Pages { .. }
+            | Command::Backlinks { .. }
+            | Command::LinkSuggest { .. }
+            | Command::Benchmark { .. }
+            | Command::Sources { .. }
+            | Command::Status { .. }
+            | Command::Trust { .. }
+            | Command::Lint { .. }
+            | Command::Graph { .. }
+            | Command::GraphContext { .. }
+            | Command::ReviewReport { .. }
+            | Command::Code(_)
+    )
+}
+
 pub(super) fn detect_project_root_from(start: &Path) -> Result<PathBuf, WikiError> {
     gobby_core::project::find_project_root(start).ok_or_else(|| WikiError::InvalidScope {
         detail: format!("no Gobby project found from {}", start.display()),

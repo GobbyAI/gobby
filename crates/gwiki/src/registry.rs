@@ -33,13 +33,8 @@ pub struct ProjectRegistration {
 }
 
 pub fn register_scope(path: &Path, scope: &ResolvedScope) -> Result<(), WikiError> {
-    if let Some(parent) = path.parent() {
-        std::fs::create_dir_all(parent).map_err(|error| WikiError::Io {
-            action: "create registry directory",
-            path: Some(parent.to_path_buf()),
-            source: error,
-        })?;
-    }
+    let _claim = crate::singleton::ensure_maintenance()?;
+    ensure_registry_parent(path)?;
     let lock_path = registry_lock_path(path);
     let lock = std::fs::OpenOptions::new()
         .create(true)
@@ -62,7 +57,7 @@ pub fn register_scope(path: &Path, scope: &ResolvedScope) -> Result<(), WikiErro
                 name.clone(),
                 TopicRegistration {
                     name: name.clone(),
-                    path: scope.root().display().to_string(),
+                    path: registration_path(scope, name)?,
                 },
             );
         }
@@ -70,12 +65,17 @@ pub fn register_scope(path: &Path, scope: &ResolvedScope) -> Result<(), WikiErro
             project_id,
             project_root,
         } => {
+            let stored_path = if project_id == gobby_core::project::PERSONAL_PROJECT_ID {
+                registration_path(scope, "personal")?
+            } else {
+                scope.root().display().to_string()
+            };
             registry.projects.insert(
                 project_id.clone(),
                 ProjectRegistration {
                     project_id: project_id.clone(),
                     project_root: project_root.display().to_string(),
-                    path: scope.root().display().to_string(),
+                    path: stored_path,
                 },
             );
         }
@@ -99,6 +99,59 @@ pub fn register_scope(path: &Path, scope: &ResolvedScope) -> Result<(), WikiErro
             Err(error)
         }
     }
+}
+
+fn ensure_registry_parent(path: &Path) -> Result<(), WikiError> {
+    let Some(parent) = path.parent() else {
+        return Ok(());
+    };
+    if let Some(owner) = crate::owner_fs::owner_for_files_home()?
+        && let Ok(relative) = parent.strip_prefix(owner.path())
+    {
+        return owner.create_dir_all(relative);
+    }
+    std::fs::create_dir_all(parent).map_err(|error| WikiError::Io {
+        action: "create registry directory",
+        path: Some(parent.to_path_buf()),
+        source: error,
+    })
+}
+
+fn registration_path(scope: &ResolvedScope, expected_name: &str) -> Result<String, WikiError> {
+    let parent = scope
+        .registry_path()
+        .parent()
+        .ok_or_else(|| WikiError::Registry {
+            detail: format!("registry {} has no parent", scope.registry_path().display()),
+        })?;
+    let relative = scope
+        .root()
+        .strip_prefix(parent)
+        .map_err(|_| WikiError::Registry {
+            detail: format!(
+                "scope root {} escapes registry parent {}",
+                scope.root().display(),
+                parent.display()
+            ),
+        })?;
+    if relative.components().count() != 1 {
+        return Err(WikiError::Registry {
+            detail: format!(
+                "scope root {} is not a direct child of {}",
+                scope.root().display(),
+                parent.display()
+            ),
+        });
+    }
+    if relative.as_os_str() != expected_name || expected_name == "topics" {
+        return Err(WikiError::Registry {
+            detail: format!(
+                "refusing escaped or reserved registry path {}",
+                relative.display()
+            ),
+        });
+    }
+    Ok(expected_name.to_string())
 }
 
 fn lock_registry(lock: &std::fs::File, lock_path: &Path) -> Result<(), WikiError> {
@@ -247,8 +300,12 @@ mod tests {
     }
 
     #[test]
+    #[serial_test::serial]
     fn register_overwrites_existing_entries() {
         let tmp = tempfile::tempdir().expect("tempdir");
+        let home = tmp.path().join("gobby-home");
+        fs::create_dir_all(&home).expect("gobby home");
+        let _env = crate::support::test_env::EnvGuard::set("GOBBY_HOME", home.as_os_str());
         let registry = tmp.path().join("wikis.json");
         fs::write(
             &registry,
@@ -273,11 +330,8 @@ mod tests {
 
         let existing = crate::scope::ResolvedScope::topic(
             "existing".to_string(),
-            tmp.path()
-                .join("replacement")
-                .join("topics")
-                .join("existing"),
-            tmp.path().join("replacement").join("wikis.json"),
+            tmp.path().join("existing"),
+            registry.clone(),
         );
         register_scope(&registry, &existing).expect("register existing topic");
 
@@ -290,21 +344,29 @@ mod tests {
 
         let stored = fs::read_to_string(&registry).expect("read registry");
         let stored: Registry = serde_json::from_str(&stored).expect("parse registry");
-        let expected_topic_path = tmp
-            .path()
-            .join("replacement")
-            .join("topics")
-            .join("existing")
-            .display()
-            .to_string();
 
         assert_eq!(
             stored
                 .topics
                 .get("existing")
                 .map(|topic| topic.path.as_str()),
-            Some(expected_topic_path.as_str())
+            Some("existing")
         );
+        assert!(
+            !stored
+                .topics
+                .get("existing")
+                .expect("topic")
+                .path
+                .contains("topics/")
+        );
+
+        let escaped = crate::scope::ResolvedScope::topic(
+            "escaped".to_string(),
+            tmp.path().join("outside").join("escaped"),
+            registry.clone(),
+        );
+        assert!(register_scope(&registry, &escaped).is_err());
         assert_eq!(
             stored
                 .projects

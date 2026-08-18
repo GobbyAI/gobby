@@ -35,6 +35,15 @@ pub(super) fn run() -> ExitCode {
         }
     };
 
+    let mutating = crate::cli::mapping::command_is_mutating(&command);
+    let _ownership = match gobby_wiki::acquire_or_adopt(mutating) {
+        Ok(guard) => guard,
+        Err(error) => {
+            print_error(format, &error);
+            return exit_code_for_error(&error);
+        }
+    };
+
     match gobby_wiki::run(command, gobby_wiki::RunOptions { quiet }) {
         Ok(outcome) => {
             if !quiet {

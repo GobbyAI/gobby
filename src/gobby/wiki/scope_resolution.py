@@ -7,7 +7,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import TYPE_CHECKING
 
-from gobby.storage.projects import LocalProjectManager
+from gobby.storage.projects import PERSONAL_PROJECT_ID, LocalProjectManager
 
 if TYPE_CHECKING:
     from gobby.storage.hub.protocol import HubDatabase
@@ -15,6 +15,8 @@ if TYPE_CHECKING:
 
 PROJECT_SCOPE_PREFIX = "project:"
 TOPIC_SCOPE_PREFIX = "topic:"
+RESERVED_TOPIC_NAMES = frozenset({"personal", "_personal", "wiki"})
+PERSONAL_SENTINELS = frozenset({PERSONAL_PROJECT_ID, "_personal"})
 
 
 class WikiScopeResolutionError(ValueError):
@@ -48,7 +50,51 @@ def topic_scope(topic: str) -> str:
         value = value.removeprefix(TOPIC_SCOPE_PREFIX).strip()
     if not value:
         raise WikiScopeResolutionError("topic scope requires a topic name")
+    if value in RESERVED_TOPIC_NAMES:
+        raise WikiScopeResolutionError(f"topic name `{value}` is reserved")
     return f"{TOPIC_SCOPE_PREFIX}{value}"
+
+
+def owner_wiki_home() -> Path:
+    """Return `<files_home>/wiki` on the local files owner."""
+    from gobby.paths import require_files_home
+
+    return require_files_home() / "wiki"
+
+
+def owner_personal_wiki_root() -> Path:
+    """Return `<files_home>/wiki/personal` on the local files owner."""
+    return owner_wiki_home() / "personal"
+
+
+def _is_personal_sentinel(value: str) -> bool:
+    stripped = value.strip()
+    if stripped.startswith(PROJECT_SCOPE_PREFIX):
+        stripped = stripped.removeprefix(PROJECT_SCOPE_PREFIX).strip()
+    return stripped in PERSONAL_SENTINELS
+
+
+def _require_owner_files_home_if_local() -> None:
+    from gobby.paths import FilesHomeError, get_files_home, require_files_home
+
+    if get_files_home() is None:
+        return
+    try:
+        require_files_home()
+    except FilesHomeError as exc:
+        raise WikiScopeResolutionError(str(exc)) from exc
+
+
+def _personal_scope() -> ResolvedWikiScope:
+    from gobby.paths import get_files_home, require_files_home
+
+    _require_owner_files_home_if_local()
+    project_root = require_files_home() / "_personal" if get_files_home() is not None else None
+    return ResolvedWikiScope(
+        identity=f"{PROJECT_SCOPE_PREFIX}{PERSONAL_PROJECT_ID}",
+        project_id=PERSONAL_PROJECT_ID,
+        project_root=project_root,
+    )
 
 
 def normalize_scope_identity(scope: str, *, default_project_id: str | None = None) -> str:
@@ -76,6 +122,7 @@ async def resolve_wiki_scope(
 
     if topic is not None:
         identity = topic_scope(topic)
+        _require_owner_files_home_if_local()
         return ResolvedWikiScope(
             identity=identity,
             topic=identity.removeprefix(TOPIC_SCOPE_PREFIX),
@@ -84,6 +131,8 @@ async def resolve_wiki_scope(
     project_ref = project if project is not None else default_project_id
     if project_ref is None:
         return ResolvedWikiScope(identity=None)
+    if _is_personal_sentinel(project_ref):
+        return _personal_scope()
 
     return await resolve_scope_identity(db, project_ref, require_project_root=True)
 
@@ -96,12 +145,15 @@ async def resolve_scope_identity(
 ) -> ResolvedWikiScope:
     identity = normalize_scope_identity(scope)
     if identity.startswith(TOPIC_SCOPE_PREFIX):
+        _require_owner_files_home_if_local()
         return ResolvedWikiScope(
             identity=identity,
             topic=identity.removeprefix(TOPIC_SCOPE_PREFIX),
         )
 
     project_id = identity.removeprefix(PROJECT_SCOPE_PREFIX)
+    if _is_personal_sentinel(project_id):
+        return _personal_scope()
     project_root = await resolve_project_root(db, project_id) if db is not None else None
     if require_project_root and project_root is None:
         raise WikiScopeResolutionError("project-scoped wiki calls require a database")

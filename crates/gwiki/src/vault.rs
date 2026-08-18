@@ -94,6 +94,78 @@ pub fn required_paths() -> VaultPaths {
 }
 
 pub fn initialize(scope: &ResolvedScope) -> Result<CreatedVaultPaths, WikiError> {
+    if let Some(owner) = owner_for_scope(scope)? {
+        return initialize_under_owner(&owner, scope);
+    }
+    initialize_unmanaged(scope)
+}
+
+fn owner_for_scope(scope: &ResolvedScope) -> Result<Option<crate::owner_fs::OwnerRoot>, WikiError> {
+    let view =
+        gobby_core::bootstrap::read_files_home_view().map_err(|error| WikiError::Config {
+            detail: error.to_string(),
+        })?;
+    let Some(files_home) = view.files_home else {
+        return Ok(None);
+    };
+    if !scope.root().starts_with(&files_home) {
+        return Ok(None);
+    }
+    Ok(Some(crate::owner_fs::OwnerRoot::open(&files_home)?))
+}
+
+fn initialize_under_owner(
+    owner: &crate::owner_fs::OwnerRoot,
+    scope: &ResolvedScope,
+) -> Result<CreatedVaultPaths, WikiError> {
+    let relative_root = scope
+        .root()
+        .strip_prefix(owner.path())
+        .map_err(|_| WikiError::Config {
+            detail: format!(
+                "scope root {} is not under files_home {}",
+                scope.root().display(),
+                owner.path().display()
+            ),
+        })?;
+    let mut created = CreatedVaultPaths {
+        directories: Vec::new(),
+        files: Vec::new(),
+    };
+    for directory in DIRECTORIES {
+        let relative = relative_root.join(directory);
+        if !owner.path().join(&relative).exists() {
+            created.directories.push((*directory).to_string());
+        }
+        owner.create_dir_all(&relative)?;
+    }
+    for (path, contents) in DEFAULT_FILES {
+        if owner.write_file_if_absent(&relative_root.join(path), contents)? {
+            created.files.push((*path).to_string());
+        }
+    }
+    let identity = scope.identity();
+    let root_path = scope.root().display().to_string();
+    let scope_relative = relative_root.join(STATE_ROOT).join(SCOPE_FILE);
+    let scope_file = owner.path().join(&scope_relative);
+    let scope_json = serde_json::to_string_pretty(&ScopeFile {
+        identity: &identity,
+        root: &root_path,
+    })
+    .map_err(|error| WikiError::Json {
+        action: "serialize scope file",
+        path: Some(scope_file.clone()),
+        source: error,
+    })?;
+    let scope_file_created = !scope_file.exists();
+    owner.replace_file(&scope_relative, format!("{scope_json}\n").as_bytes())?;
+    if scope_file_created {
+        created.files.push(format!("{STATE_ROOT}/{SCOPE_FILE}"));
+    }
+    Ok(created)
+}
+
+fn initialize_unmanaged(scope: &ResolvedScope) -> Result<CreatedVaultPaths, WikiError> {
     let root = scope.root();
     let mut created = CreatedVaultPaths {
         directories: Vec::new(),
@@ -308,9 +380,17 @@ mod tests {
         assert!(paths.files.contains(&"log.md"));
     }
 
+    fn isolated_home(temp: &tempfile::TempDir) -> crate::support::test_env::EnvGuard {
+        let home = temp.path().join("gobby-home");
+        std::fs::create_dir_all(&home).expect("gobby home");
+        crate::support::test_env::EnvGuard::set("GOBBY_HOME", home.as_os_str())
+    }
+
     #[test]
+    #[serial_test::serial]
     fn default_files_drive_required_paths_and_contents() {
         let temp = tempfile::tempdir().expect("tempdir");
+        let _env = isolated_home(&temp);
         let root = temp.path().join("wiki");
         let scope = ResolvedScope::topic(
             "rust".to_string(),
@@ -342,8 +422,10 @@ mod tests {
     }
 
     #[test]
+    #[serial_test::serial]
     fn initialize_overwrites_scope_file() {
         let temp = tempfile::tempdir().expect("tempdir");
+        let _env = isolated_home(&temp);
         let root = temp.path().join("wiki");
         let scope = ResolvedScope::topic(
             "rust".to_string(),
@@ -367,8 +449,10 @@ mod tests {
     }
 
     #[test]
+    #[serial_test::serial]
     fn cleanup_created_removes_only_created_vault_paths() {
         let temp = tempfile::tempdir().expect("tempdir");
+        let _env = isolated_home(&temp);
         let root = temp.path().join("wiki");
         let scope = ResolvedScope::topic(
             "rust".to_string(),

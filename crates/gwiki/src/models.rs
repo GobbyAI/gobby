@@ -155,8 +155,16 @@ pub fn validate_project_id(project_id: &str) -> Result<String, WikiError> {
     validate_scope_id("project id", project_id)
 }
 
+const RESERVED_TOPIC_NAMES: &[&str] = &["personal", "_personal", "wiki"];
+
 pub fn validate_topic_name(topic_name: &str) -> Result<String, WikiError> {
-    validate_scope_id("topic name", topic_name)
+    let topic_name = validate_scope_id("topic name", topic_name)?;
+    if RESERVED_TOPIC_NAMES.contains(&topic_name.as_str()) {
+        return Err(WikiError::InvalidScope {
+            detail: format!("invalid topic name `{topic_name}`"),
+        });
+    }
+    Ok(topic_name)
 }
 
 pub fn project_collection_name(project_id: &str) -> Result<String, WikiError> {

@@ -74,6 +74,19 @@ pub(crate) fn seed_app_json(vault_root: &Path) -> Result<(), WikiError> {
         source,
     })?;
 
+    if let Some(owner) = owner_if_under_files_home(vault_root)? {
+        let relative = path
+            .strip_prefix(owner.path())
+            .map_err(|_| WikiError::Config {
+                detail: format!(
+                    "obsidian path {} is not under files_home {}",
+                    path.display(),
+                    owner.path().display()
+                ),
+            })?;
+        owner.replace_file(relative, &serialized)?;
+        return Ok(());
+    }
     std::fs::create_dir_all(&dir).map_err(|source| WikiError::Io {
         action: "create obsidian config directory",
         path: Some(dir.clone()),
@@ -84,6 +97,22 @@ pub(crate) fn seed_app_json(vault_root: &Path) -> Result<(), WikiError> {
         path: Some(path),
         source,
     })
+}
+
+fn owner_if_under_files_home(
+    vault_root: &Path,
+) -> Result<Option<crate::owner_fs::OwnerRoot>, WikiError> {
+    let view =
+        gobby_core::bootstrap::read_files_home_view().map_err(|error| WikiError::Config {
+            detail: error.to_string(),
+        })?;
+    let Some(files_home) = view.files_home else {
+        return Ok(None);
+    };
+    if !vault_root.starts_with(&files_home) {
+        return Ok(None);
+    }
+    Ok(Some(crate::owner_fs::OwnerRoot::open(&files_home)?))
 }
 
 /// Ensure machine-local Obsidian workspace state is git-ignored, but only when
