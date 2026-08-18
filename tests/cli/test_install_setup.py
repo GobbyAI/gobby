@@ -3,6 +3,7 @@
 import hashlib
 import json
 import os
+import subprocess
 import tarfile
 from io import BytesIO
 from pathlib import Path
@@ -1138,9 +1139,11 @@ class TestEnsurePath:
     @patch("gobby.cli.install_setup.sys.platform", "linux")
     @patch("gobby.cli.install_setup.os.environ")
     @patch("gobby.cli.install_setup.Path.home")
-    def test_ensure_gobby_bin_on_path(self, mock_home, mock_environ, tmp_path):
+    @patch("gobby.cli.install_setup.tempfile.gettempdir")
+    def test_ensure_gobby_bin_on_path(self, mock_gettempdir, mock_home, mock_environ, tmp_path):
         mock_environ.get.side_effect = lambda k, default="": "/bin/bash" if k == "SHELL" else ""
         mock_home.return_value = tmp_path
+        mock_gettempdir.return_value = str(tmp_path / "systmp")
 
         bin_dir = tmp_path / "configured-gobby" / "bin"
         res = _ensure_gobby_bin_on_path(bin_dir)
@@ -1149,9 +1152,10 @@ class TestEnsurePath:
 
         bashrc = tmp_path / ".bashrc"
         assert bashrc.exists()
-        assert "export PATH=" in bashrc.read_text()
-        assert "# gobby" in bashrc.read_text()
-        assert str(bin_dir) in bashrc.read_text()
+        content = bashrc.read_text()
+        assert f'export PATH={bin_dir.resolve()}:"$PATH"  # gobby\n' in content
+        # $PATH must stay expandable: never swallowed into single quotes.
+        assert "'$PATH'" not in content
 
         # Second run should skip
         res2 = _ensure_gobby_bin_on_path(bin_dir)
@@ -1160,14 +1164,63 @@ class TestEnsurePath:
     @patch("gobby.cli.install_setup.sys.platform", "linux")
     @patch("gobby.cli.install_setup.os.environ")
     @patch("gobby.cli.install_setup.Path.home")
+    def test_ensure_gobby_bin_on_path_refuses_tempdir_bin(
+        self,
+        mock_home: MagicMock,
+        mock_environ: MagicMock,
+        tmp_path: Path,
+    ) -> None:
+        mock_environ.get.side_effect = lambda k, default="": "/bin/bash" if k == "SHELL" else ""
+        mock_home.return_value = tmp_path
+
+        # tmp_path lives under the real tempfile.gettempdir(), so an isolated
+        # GOBBY_HOME bin dir must be refused without touching any rc file.
+        res = _ensure_gobby_bin_on_path(tmp_path / "ephemeral-gobby-home" / "bin")
+
+        assert res == {"added": False}
+        assert not (tmp_path / ".bashrc").exists()
+
+    @patch("gobby.cli.install_setup.sys.platform", "linux")
+    @patch("gobby.cli.install_setup.os.environ")
+    @patch("gobby.cli.install_setup.Path.home")
+    @patch("gobby.cli.install_setup.tempfile.gettempdir")
+    def test_ensure_gobby_bin_on_path_line_sources_cleanly(
+        self,
+        mock_gettempdir: MagicMock,
+        mock_home: MagicMock,
+        mock_environ: MagicMock,
+        tmp_path: Path,
+    ) -> None:
+        mock_environ.get.side_effect = lambda k, default="": "/bin/bash" if k == "SHELL" else ""
+        mock_home.return_value = tmp_path
+        mock_gettempdir.return_value = str(tmp_path / "systmp")
+
+        bin_dir = tmp_path / "configured-gobby" / "bin"
+        assert _ensure_gobby_bin_on_path(bin_dir)["added"] is True
+
+        proc = subprocess.run(
+            ["/bin/sh", "-c", f'. {tmp_path / ".bashrc"}; printf %s "$PATH"'],
+            env={"PATH": "/usr/bin:/bin"},
+            capture_output=True,
+            text=True,
+            check=True,
+        )
+        assert proc.stdout == f"{bin_dir.resolve()}:/usr/bin:/bin"
+
+    @patch("gobby.cli.install_setup.sys.platform", "linux")
+    @patch("gobby.cli.install_setup.os.environ")
+    @patch("gobby.cli.install_setup.Path.home")
+    @patch("gobby.cli.install_setup.tempfile.gettempdir")
     def test_ensure_gobby_bin_on_path_skips_non_utf8_rc(
         self,
+        mock_gettempdir,
         mock_home,
         mock_environ,
         tmp_path,
     ):
         mock_environ.get.side_effect = lambda k, default="": "/bin/bash" if k == "SHELL" else ""
         mock_home.return_value = tmp_path
+        mock_gettempdir.return_value = str(tmp_path / "systmp")
         bashrc = tmp_path / ".bashrc"
         bashrc.write_bytes(b"\xff")
 
@@ -1179,14 +1232,17 @@ class TestEnsurePath:
     @patch("gobby.cli.install_setup.sys.platform", "linux")
     @patch("gobby.cli.install_setup.os.environ")
     @patch("gobby.cli.install_setup.Path.home")
+    @patch("gobby.cli.install_setup.tempfile.gettempdir")
     def test_ensure_gobby_bin_on_path_skips_unreadable_rc(
         self,
+        mock_gettempdir,
         mock_home,
         mock_environ,
         tmp_path,
     ):
         mock_environ.get.side_effect = lambda k, default="": "/bin/bash" if k == "SHELL" else ""
         mock_home.return_value = tmp_path
+        mock_gettempdir.return_value = str(tmp_path / "systmp")
         rc_file = tmp_path / ".bashrc"
         rc_file.write_text("# user config\n")
 

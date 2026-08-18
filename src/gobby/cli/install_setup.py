@@ -555,6 +555,13 @@ def _ensure_gobby_bin_on_path(bin_dir: Path) -> dict[str, Any]:
     gobby_bin = str(bin_dir.resolve(strict=False))
     result: dict[str, Any] = {"added": False}
 
+    tmp_root = Path(tempfile.gettempdir()).resolve(strict=False)
+    if bin_dir.resolve(strict=False).is_relative_to(tmp_root):
+        # An ephemeral bin dir (isolated GOBBY_HOME) must never land in the
+        # user's real shell rc.
+        logger.debug("skipping PATH setup for ephemeral bin dir %s", gobby_bin)
+        return result
+
     if gobby_bin in os.environ.get("PATH", "").split(os.pathsep):
         return result
 
@@ -568,11 +575,11 @@ def _ensure_gobby_bin_on_path(bin_dir: Path) -> dict[str, Any]:
     rc_configs: dict[str, tuple[Path, str]] = {
         "zsh": (
             Path.home() / ".zshrc",
-            f"export PATH={shlex.quote(f'{gobby_bin}:$PATH')}  # gobby\n",
+            f'export PATH={shlex.quote(gobby_bin)}:"$PATH"  # gobby\n',
         ),
         "bash": (
             Path.home() / ".bashrc",
-            f"export PATH={shlex.quote(f'{gobby_bin}:$PATH')}  # gobby\n",
+            f'export PATH={shlex.quote(gobby_bin)}:"$PATH"  # gobby\n',
         ),
         "fish": (
             Path.home() / ".config" / "fish" / "config.fish",
