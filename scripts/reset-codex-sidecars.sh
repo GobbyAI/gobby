@@ -2,6 +2,7 @@
 # Requires macOS system Bash 3.2 or newer.
 set -Eeuo pipefail
 umask 077
+export PATH="/opt/homebrew/bin:/usr/local/bin:$HOME/.gobby/bin:$HOME/.local/bin:/usr/bin:/bin:/usr/sbin:/sbin"
 
 readonly CODEX_HOME_PATH="$HOME/.codex"
 readonly RESET_BACKUP="$HOME/.codex.pre-sidecar-reset-2026-08-17"
@@ -12,7 +13,8 @@ readonly CODEX_BIN="/opt/homebrew/bin/codex"
 readonly GOBBY_REPO="/Users/josh/Projects/gobby"
 readonly INDEX_DIR="$HOME/.gobby/cache/transcript-indexes"
 
-declare -a TEMPORARY_FILES=()
+# Bash 3.2 treats an empty array as unset under nounset; retain a harmless sentinel.
+declare -a TEMPORARY_FILES=("")
 
 die() {
     printf 'ERROR: %s\n' "$*" >&2
