@@ -1872,7 +1872,7 @@
     },
     {
       "activation": "live",
-      "default": "You are a QA engineer writing acceptance criteria. CRITICAL: Only include requirements explicitly stated in the task. Do NOT invent specific values, thresholds, timeouts, or edge cases that aren't mentioned. Vague tasks get vague criteria. Use markdown checkboxes.",
+      "default": "You are a QA engineer writing acceptance criteria. Only include requirements explicitly stated in the task — invented values, thresholds, timeouts, or edge cases create false failures. Vague tasks get vague criteria. Use markdown checkboxes.",
       "description": "System prompt for generating validation criteria",
       "key": "gobby_tasks.validation.criteria_system_prompt",
       "machineExport": false,
@@ -1966,7 +1966,7 @@
     },
     {
       "activation": "live",
-      "default": "You are a QA validator. Output ONLY valid JSON. No markdown, no explanation, no code blocks. Just the raw JSON object.",
+      "default": "You are a QA validator. Output only the raw JSON object — markdown, explanations, or code blocks break the parser.",
       "description": "System prompt for task validation",
       "key": "gobby_tasks.validation.system_prompt",
       "machineExport": false,
@@ -2126,6 +2126,17 @@
       "namespace": "hooks",
       "secrecy": "none",
       "type": "number",
+      "visibility": "public"
+    },
+    {
+      "activation": "live",
+      "default": 9950,
+      "description": "Default additionalContext character limit for hook injection. Claude Code / Agent SDK hard-truncates at 10K; keep the default slightly below that. Raise a provider override when its CLI limit grows.",
+      "key": "hooks.additional_context_limit",
+      "machineExport": false,
+      "namespace": "hooks",
+      "secrecy": "none",
+      "type": "integer",
       "visibility": "public"
     },
     {
@@ -4486,6 +4497,7 @@
     {
       "activation": "live",
       "default": 2000000,
+      "description": "Hard cap on persisted result size. Over-cap results are not stored.",
       "key": "tool_result_offload.max_stored_chars",
       "machineExport": false,
       "namespace": "tool_result_offload",
@@ -5897,6 +5909,17 @@
       "pattern": "gobby_tasks.expansion.pattern_criteria.patterns.{pattern}",
       "secrecy": "none",
       "type": "array",
+      "visibility": "public"
+    },
+    {
+      "activation": "live",
+      "default": [],
+      "description": "Per-provider additionalContext character limits keyed by session source (claude, grok, codex, qwen, droid, agy). Unset providers use additional_context_limit.",
+      "machineExport": false,
+      "namespace": "hooks",
+      "pattern": "hooks.additional_context_limits.{provider}",
+      "secrecy": "none",
+      "type": "integer",
       "visibility": "public"
     },
     {
