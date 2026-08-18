@@ -10,9 +10,11 @@ _PYTHON_PIPELINE_BUILTINS = frozenset(
     "reversed set sorted str sum tuple zip".split()
 )
 _PYTHON_PIPELINE_METHODS = frozenset(
-    "casefold count decode encode endswith format get index items join keys lower lstrip "
-    "replace rsplit rstrip split splitlines startswith strip upper values".split()
+    "casefold close count decode encode endswith format get index items join keys lower lstrip "
+    "read readline readlines replace rsplit rstrip split splitlines startswith strip upper "
+    "values".split()
 )
+_OPEN_READ_MODES = frozenset({"r", "rb", "rt", "br", "tr"})
 _PYTHON_PIPELINE_STREAM_CALLS = frozenset(
     "sys.stdin.buffer.read sys.stdin.buffer.readline sys.stdin.buffer.readlines sys.stdin.read "
     "sys.stdin.readline sys.stdin.readlines sys.stdout.flush sys.stdout.write "
@@ -29,7 +31,6 @@ _PYTHON_PIPELINE_BLOCKED_NODES = (
     ast.Global,
     ast.ImportFrom,
     ast.Nonlocal,
-    ast.With,
 )
 
 
@@ -113,6 +114,19 @@ def _has_safe_python_pipeline_callbacks(
     return True
 
 
+def _is_read_only_open_call(node: ast.Call) -> bool:
+    """Allow ``open(...)`` only when the mode is absent or a literal read mode."""
+    mode: ast.expr | None = None
+    if len(node.args) >= 2:
+        mode = node.args[1]
+    for keyword in node.keywords:
+        if keyword.arg == "mode":
+            mode = keyword.value
+    if mode is None:
+        return True
+    return isinstance(mode, ast.Constant) and mode.value in _OPEN_READ_MODES
+
+
 def _is_safe_python_pipeline_call(node: ast.Call, local_names: frozenset[str]) -> bool:
     if any(isinstance(argument, ast.Starred) for argument in node.args) or any(
         keyword.arg is None for keyword in node.keywords
@@ -122,7 +136,10 @@ def _is_safe_python_pipeline_call(node: ast.Call, local_names: frozenset[str]) -
     call_name: str
     if isinstance(node.func, ast.Name):
         call_name = node.func.id
-        if call_name not in _PYTHON_PIPELINE_BUILTINS:
+        if call_name == "open":
+            if not _is_read_only_open_call(node):
+                return False
+        elif call_name not in _PYTHON_PIPELINE_BUILTINS:
             return False
     elif isinstance(node.func, ast.Attribute):
         attribute_name = _python_attribute_name(node.func)
@@ -135,11 +152,18 @@ def _is_safe_python_pipeline_call(node: ast.Call, local_names: frozenset[str]) -
         }:
             pass
         elif call_name == "json.load":
-            if not (
-                node.args
-                and isinstance(node.args[0], ast.Attribute)
-                and _python_attribute_name(node.args[0]) in {"sys.stdin", "sys.stdin.buffer"}
-            ):
+            if not node.args:
+                return False
+            source = node.args[0]
+            stdin_source = isinstance(source, ast.Attribute) and _python_attribute_name(source) in {
+                "sys.stdin",
+                "sys.stdin.buffer",
+            }
+            open_source = isinstance(source, ast.Call) and _is_safe_python_pipeline_call(
+                source, local_names
+            )
+            local_source = isinstance(source, ast.Name) and source.id in local_names
+            if not (stdin_source or open_source or local_source):
                 return False
         elif node.func.attr not in _PYTHON_PIPELINE_METHODS or not (
             _is_safe_python_pipeline_node(node.func.value, local_names)
@@ -195,6 +219,16 @@ def _is_safe_python_pipeline_node(node: ast.AST, local_names: frozenset[str]) ->
         ) and _is_safe_python_pipeline_node(node.body, local_names | lambda_names)
     if isinstance(node, ast.comprehension) and node.is_async:
         return False
+    if isinstance(node, ast.With):
+        for item in node.items:
+            if not (
+                isinstance(item.context_expr, ast.Call)
+                and _is_safe_python_pipeline_call(item.context_expr, local_names)
+            ):
+                return False
+            if item.optional_vars is not None and not isinstance(item.optional_vars, ast.Name):
+                return False
+        return all(_is_safe_python_pipeline_node(child, local_names) for child in node.body)
     return all(
         _is_safe_python_pipeline_node(child, local_names) for child in ast.iter_child_nodes(node)
     )
@@ -204,6 +238,11 @@ def _is_read_only_python_pipeline(parts: list[str]) -> bool:
     script = _python_inline_script(parts)
     if script is None:
         return False
+    return _is_read_only_python_source(script)
+
+
+def _is_read_only_python_source(script: str) -> bool:
+    """Return True when a Python program provably performs no mutation."""
     try:
         tree = ast.parse(script)
     except SyntaxError:

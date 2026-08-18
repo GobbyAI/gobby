@@ -2123,6 +2123,108 @@ class TestExternalNavigationScope:
         assert data["canonical_tool_kind"] == "read"
         assert data["canonical_code_navigation_repo_scope"] is False
 
+    def test_read_only_inline_python_is_execute(self) -> None:
+        data: dict[str, Any] = {
+            "tool_name": "Bash",
+            "tool_input": {
+                "command": (
+                    'python3 -c \'import json; data = json.load(open("runs.json")); '
+                    "print(len(data))'"
+                )
+            },
+        }
+
+        normalize_tool_fields(data)
+
+        assert data["canonical_tool_kind"] == "execute"
+        assert not data.get("canonical_repo_mutation")
+
+    def test_mutating_inline_python_stays_write(self) -> None:
+        data: dict[str, Any] = {
+            "tool_name": "Bash",
+            "tool_input": {"command": 'python3 -c \'open("out.txt", "w").write("x")\''},
+        }
+
+        normalize_tool_fields(data)
+
+        assert data["canonical_tool_kind"] == "write"
+        assert data["canonical_repo_mutation"] is True
+
+    def test_read_only_with_open_inline_python_is_execute(self) -> None:
+        data: dict[str, Any] = {
+            "tool_name": "Bash",
+            "tool_input": {
+                "command": "python3 -c 'with open(\"log.txt\") as fh: print(fh.read())'"
+            },
+        }
+
+        normalize_tool_fields(data)
+
+        assert data["canonical_tool_kind"] == "execute"
+        assert not data.get("canonical_repo_mutation")
+
+    def test_read_only_python_heredoc_is_execute(self) -> None:
+        command = (
+            "python3 - <<'PYEOF'\n"
+            "import json\n"
+            "with open('data.json') as fh:\n"
+            "    rows = json.load(fh)\n"
+            "print(len(rows))\n"
+            "PYEOF"
+        )
+        data: dict[str, Any] = {"tool_name": "Bash", "tool_input": {"command": command}}
+
+        normalize_tool_fields(data)
+
+        assert data["canonical_tool_kind"] == "execute"
+        assert not data.get("canonical_repo_mutation")
+
+    def test_mutating_python_heredoc_stays_write(self) -> None:
+        command = "python3 - <<'PYEOF'\nwith open('out.txt', 'w') as fh:\n    fh.write('x')\nPYEOF"
+        data: dict[str, Any] = {"tool_name": "Bash", "tool_input": {"command": command}}
+
+        normalize_tool_fields(data)
+
+        assert data["canonical_tool_kind"] == "write"
+        assert data["canonical_repo_mutation"] is True
+
+    def test_tmux_capture_pane_is_not_repo_mutation(self) -> None:
+        data: dict[str, Any] = {
+            "tool_name": "Bash",
+            "tool_input": {"command": "tmux -L gobby capture-pane -p -S -10000 -t 'gobby-1'"},
+        }
+
+        normalize_tool_fields(data)
+
+        assert data["canonical_tool_kind"] == "execute"
+        assert not data.get("canonical_repo_mutation")
+
+    def test_external_report_write_is_not_repo_mutation(self, tmp_path: Path) -> None:
+        repo = tmp_path / "repo"
+        report = tmp_path / "reports" / "review-codex.md"
+        data: dict[str, Any] = {
+            "tool_name": "Write",
+            "cwd": str(repo),
+            "project_path": str(repo),
+            "tool_input": {"file_path": str(report), "content": "verdict"},
+        }
+
+        normalize_tool_fields(data)
+
+        assert data["canonical_tool_kind"] == "write"
+        assert data["canonical_repo_mutation"] is False
+
+    def test_python_script_execution_is_execute(self) -> None:
+        data: dict[str, Any] = {
+            "tool_name": "Bash",
+            "tool_input": {"command": "uv run python scripts/generate_schema_identity.py --check"},
+        }
+
+        normalize_tool_fields(data)
+
+        assert data["canonical_tool_kind"] == "execute"
+        assert not data.get("canonical_repo_mutation")
+
     def test_worktree_under_agent_home_stays_repo_scoped(
         self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
     ) -> None:

@@ -63,8 +63,16 @@ class ShellToken:
     quoted: bool = False
 
 
-def tokenize_shell_command(command: str) -> list[ShellToken]:
-    """Split a shell command into tokens while preserving quoted operator literals."""
+def tokenize_shell_command(
+    command: str,
+    *,
+    heredoc_bodies: list[str] | None = None,
+) -> list[ShellToken]:
+    """Split a shell command into tokens while preserving quoted operator literals.
+
+    When ``heredoc_bodies`` is provided, terminated heredoc body text is
+    appended to it in encounter order.
+    """
     tokens: list[ShellToken] = []
     current: list[str] = []
     quoted = False
@@ -146,7 +154,9 @@ def tokenize_shell_command(command: str) -> list[ShellToken]:
             tokens.append(ShellToken(operator))
             if operator == "\n":
                 if pending_heredocs and not logical_continuation:
-                    index = _skip_heredoc_bodies(command, index + 1, pending_heredocs)
+                    index = _skip_heredoc_bodies(
+                        command, index + 1, pending_heredocs, heredoc_bodies
+                    )
                     continue
                 logical_continuation = False
             elif operator in {"&&", "||", "|"}:
@@ -175,12 +185,15 @@ def _skip_heredoc_bodies(
     command: str,
     index: int,
     pending_heredocs: list[tuple[str, bool]],
+    bodies: list[str] | None = None,
 ) -> int:
     """Advance past heredoc body lines, consuming pending delimiters in order.
 
     An unterminated heredoc swallows the rest of the command, matching how the
-    shell would refuse to execute anything after it.
+    shell would refuse to execute anything after it. When ``bodies`` is given,
+    each terminated heredoc's body text is appended to it.
     """
+    body_lines: list[str] = []
     while pending_heredocs and index < len(command):
         delimiter, strip_tabs = pending_heredocs[0]
         line_end = command.find("\n", index)
@@ -190,10 +203,26 @@ def _skip_heredoc_bodies(
         else:
             next_index = line_end + 1
         line = command[index:line_end]
-        if (line.lstrip("\t") if strip_tabs else line) == delimiter:
+        stripped = line.lstrip("\t") if strip_tabs else line
+        if stripped == delimiter:
             pending_heredocs.pop(0)
+            if bodies is not None:
+                bodies.append("\n".join(body_lines))
+            body_lines = []
+        else:
+            body_lines.append(stripped if strip_tabs else line)
         index = next_index
     return index
+
+
+def extract_heredoc_bodies(command: str) -> list[str]:
+    """Return the body text of each terminated heredoc in ``command``."""
+    bodies: list[str] = []
+    try:
+        tokenize_shell_command(command, heredoc_bodies=bodies)
+    except ValueError:
+        return []
+    return bodies
 
 
 def _scan_unquoted_shell_operator(command: str, index: int) -> str | None:
