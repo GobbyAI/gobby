@@ -109,6 +109,12 @@ pub(crate) const MIGRATIONS: &[EmbeddedMigration] = &[
         checksum: "00359659fbe933506babe8f03b643d1558be6ac7dff4c3d5f3d2e62627d534f5",
         sql: include_str!("../../assets/schema/migrations/389_sweep_interactive_orphan_roles.sql"),
     },
+    EmbeddedMigration {
+        version: 390,
+        filename: "390_chat_attachments_deletion_lease.sql",
+        checksum: "4d3f2e9652a958f4ad7f0f64410e622e4e4629b8388b1610527170e0bac83598",
+        sql: include_str!("../../assets/schema/migrations/390_chat_attachments_deletion_lease.sql"),
+    },
 ];
 const _: &str = include_str!("../../assets/schema/migrations/.gitkeep");
 

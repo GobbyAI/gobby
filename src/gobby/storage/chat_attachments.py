@@ -8,6 +8,10 @@ from dataclasses import dataclass
 from datetime import datetime
 from typing import Any
 
+from gobby.storage.chat_attachment_fence import (
+    CleanupFenceConflict,
+    lock_producer_scopes,
+)
 from gobby.storage.hub.protocol import ChatAttachmentMutation, HubDatabase, Transaction
 from gobby.utils.datetime import (
     normalize_datetime_model,
@@ -16,6 +20,12 @@ from gobby.utils.datetime import (
     utc_now,
 )
 from gobby.utils.machine_id import require_machine_id
+
+_ATTACHMENT_COLUMNS = """
+id, machine_id, project_id, draft_id, conversation_id, message_id,
+target_session_id, filename, mime_type, size_bytes, local_path,
+created_at, updated_at, bound_at, published, claim_token, claimed_at
+"""
 
 
 @normalize_datetime_model(
@@ -41,6 +51,9 @@ class ChatAttachmentRecord:
     created_at: datetime
     updated_at: datetime
     bound_at: datetime | None
+    published: bool = True
+    claim_token: str | None = None
+    claimed_at: datetime | None = None
 
     @property
     def is_bound(self) -> bool:
@@ -90,24 +103,39 @@ def _row_to_record(row: Mapping[str, object]) -> ChatAttachmentRecord:
         created_at=require_stored_datetime(_row_datetime(row, "created_at"), "created_at"),
         updated_at=require_stored_datetime(_row_datetime(row, "updated_at"), "updated_at"),
         bound_at=parse_stored_datetime(_row_datetime(row, "bound_at")),
+        published=bool(row.get("published", True)),
+        claim_token=_optional_row_str(row, "claim_token") if "claim_token" in row else None,
+        claimed_at=parse_stored_datetime(_row_datetime(row, "claimed_at"))
+        if "claimed_at" in row
+        else None,
     )
 
 
 def _fetch_attachment(
     conn: Transaction,
     attachment_id: str,
-    machine_id: str,
+    project_id: str | None = None,
 ) -> ChatAttachmentRecord | None:
+    if project_id is None:
+        row = conn.execute(
+            f"""
+            SELECT {_ATTACHMENT_COLUMNS}
+              FROM chat_attachments
+             WHERE id = %s
+            """,
+            (attachment_id,),
+        ).fetchone()
+        if row is None:
+            return None
+        return _fetch_attachment(conn, attachment_id, str(row["project_id"]))
     row = conn.execute(
-        """
-        SELECT id, machine_id, project_id, draft_id, conversation_id, message_id,
-               target_session_id,
-               filename, mime_type, size_bytes, local_path, created_at, updated_at, bound_at
+        f"""
+        SELECT {_ATTACHMENT_COLUMNS}
           FROM chat_attachments
          WHERE id = %s
-           AND machine_id = %s
+           AND project_id = %s
         """,
-        (attachment_id, machine_id),
+        (attachment_id, project_id),
     ).fetchone()
     return _row_to_record(row) if row else None
 
@@ -144,18 +172,21 @@ def create_attachment(
     size_bytes: int,
     local_path: str,
     attachment_id: str | None = None,
+    published: bool = False,
+    claim_token: str | None = None,
 ) -> ChatAttachmentRecord:
     now = utc_now()
     record_id = attachment_id or str(uuid.uuid4())
     machine_id = require_machine_id()
+    claimed_at = now if claim_token else None
     with db.transaction() as conn:
         conn.execute(
             """
             INSERT INTO chat_attachments (
                 id, machine_id, project_id, draft_id, filename, mime_type, size_bytes,
-                local_path, created_at, updated_at
+                local_path, created_at, updated_at, published, claim_token, claimed_at
             )
-            VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+            VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
             """,
             (
                 record_id,
@@ -168,40 +199,54 @@ def create_attachment(
                 local_path,
                 now,
                 now,
+                published,
+                claim_token,
+                claimed_at,
             ),
         )
-        record = _fetch_attachment(conn, record_id, machine_id)
+        record = _fetch_attachment(conn, record_id, project_id)
     if record is None:
         raise RuntimeError("Failed to create chat attachment metadata")
     return record
 
 
-def get_attachment(db: HubDatabase, attachment_id: str) -> ChatAttachmentRecord | None:
+def get_attachment(
+    db: HubDatabase,
+    attachment_id: str,
+    *,
+    require_published: bool = True,
+) -> ChatAttachmentRecord | None:
     with db.transaction() as conn:
-        return _fetch_attachment(conn, attachment_id, require_machine_id())
+        record = _fetch_attachment(conn, attachment_id)
+    if record is None:
+        return None
+    if require_published and not record.published:
+        return None
+    return record
 
 
 def get_attachments_by_ids(
-    db: HubDatabase, attachment_ids: list[str]
+    db: HubDatabase,
+    attachment_ids: list[str],
+    *,
+    require_published: bool = True,
 ) -> list[ChatAttachmentRecord]:
     if not attachment_ids:
         return []
 
     unique_ids = list(dict.fromkeys(attachment_ids))
-    machine_id = require_machine_id()
     placeholders = ",".join("%s" for _ in unique_ids)
     rows = db.fetchall(
         f"""
-        SELECT id, machine_id, project_id, draft_id, conversation_id, message_id,
-               target_session_id,
-               filename, mime_type, size_bytes, local_path, created_at, updated_at, bound_at
+        SELECT {_ATTACHMENT_COLUMNS}
           FROM chat_attachments
          WHERE id IN ({placeholders})
-           AND machine_id = %s
         """,  # nosec B608 # placeholders are generated from the validated ID count only.
-        (*unique_ids, machine_id),
+        tuple(unique_ids),
     )
     records = [_row_to_record(row) for row in rows]
+    if require_published:
+        records = [record for record in records if record.published]
     by_id = {record.id: record for record in records}
     return [by_id[attachment_id] for attachment_id in unique_ids if attachment_id in by_id]
 
@@ -238,19 +283,23 @@ def bind_attachments(
 
     unique_ids = list(dict.fromkeys(attachment_ids))
     now = utc_now()
-    machine_id = require_machine_id()
     with db.transaction_immediate(ChatAttachmentMutation()) as conn:
+        try:
+            lock_producer_scopes(
+                conn,
+                conversation_id=conversation_id,
+                target_session_id=target_session_id,
+            )
+        except CleanupFenceConflict as exc:
+            raise ValueError(str(exc)) from exc
         placeholders = ",".join("%s" for _ in unique_ids)
         rows = conn.execute(
             f"""
-            SELECT id, machine_id, project_id, draft_id, conversation_id, message_id,
-                   target_session_id,
-                   filename, mime_type, size_bytes, local_path, created_at, updated_at, bound_at
+            SELECT {_ATTACHMENT_COLUMNS}
               FROM chat_attachments
              WHERE id IN ({placeholders})
-               AND machine_id = %s
             """,  # nosec B608 # placeholders are generated from the validated ID count only.
-            (*unique_ids, machine_id),
+            tuple(unique_ids),
         ).fetchall()
         records = [_row_to_record(row) for row in rows]
         by_id = {record.id: record for record in records}
@@ -259,6 +308,8 @@ def bind_attachments(
             raise ValueError(f"Unknown attachment id: {missing_ids[0]}")
 
         for record in records:
+            if not record.published or record.claim_token is not None:
+                raise ValueError(f"Unknown attachment id: {record.id}")
             conflict = _binding_conflict_error(
                 record,
                 conversation_id=conversation_id,
@@ -268,8 +319,8 @@ def bind_attachments(
             if conflict is not None:
                 raise conflict
 
-        for attachment_id in unique_ids:
-            conn.execute(
+        for record in records:
+            cursor = conn.execute(
                 """
                 UPDATE chat_attachments
                    SET conversation_id = COALESCE(%s, conversation_id),
@@ -278,7 +329,9 @@ def bind_attachments(
                        bound_at = COALESCE(bound_at, %s),
                        updated_at = %s
                  WHERE id = %s
-                   AND machine_id = %s
+                   AND project_id = %s
+                   AND claim_token IS NULL
+                   AND published IS TRUE
                 """,
                 (
                     conversation_id,
@@ -286,50 +339,96 @@ def bind_attachments(
                     target_session_id,
                     now,
                     now,
-                    attachment_id,
-                    machine_id,
+                    record.id,
+                    record.project_id,
                 ),
             )
+            if cursor.rowcount != 1:
+                raise ValueError(f"Unknown attachment id: {record.id}")
         rows = conn.execute(
             f"""
-            SELECT id, machine_id, project_id, draft_id, conversation_id, message_id,
-                   target_session_id,
-                   filename, mime_type, size_bytes, local_path, created_at, updated_at, bound_at
+            SELECT {_ATTACHMENT_COLUMNS}
               FROM chat_attachments
              WHERE id IN ({placeholders})
-               AND machine_id = %s
             """,  # nosec B608 # placeholders are generated from the validated ID count only.
-            (*unique_ids, machine_id),
+            tuple(unique_ids),
         ).fetchall()
     updated_records = [_row_to_record(row) for row in rows]
     updated_by_id = {record.id: record for record in updated_records}
     return [updated_by_id[attachment_id] for attachment_id in unique_ids]
 
 
-def delete_unbound_attachment(db: HubDatabase, attachment_id: str) -> ChatAttachmentRecord | None:
-    machine_id = require_machine_id()
+def delete_attachment_row(db: HubDatabase, *, attachment_id: str, project_id: str) -> bool:
     with db.transaction_immediate(ChatAttachmentMutation()) as conn:
-        row = conn.execute(
-            """
-            DELETE FROM chat_attachments
-             WHERE id = %s
-               AND machine_id = %s
-               AND conversation_id IS NULL
-               AND message_id IS NULL
-               AND target_session_id IS NULL
-            RETURNING id, machine_id, project_id, draft_id, conversation_id, message_id,
-                      target_session_id,
-                      filename, mime_type, size_bytes, local_path, created_at, updated_at, bound_at
-            """,
-            (attachment_id, machine_id),
-        ).fetchone()
-        if row is not None:
-            return _row_to_record(row)
+        cursor = conn.execute(
+            "DELETE FROM chat_attachments WHERE id = %s AND project_id = %s",
+            (attachment_id, project_id),
+        )
+        return cursor.rowcount == 1
 
-        record = _fetch_attachment(conn, attachment_id, machine_id)
-        if record is not None and record.is_bound:
+
+def delete_unbound_attachment(
+    db: HubDatabase, attachment_id: str
+) -> tuple[ChatAttachmentRecord, str] | None:
+    """Claim an unbound attachment for standalone HTTP DELETE."""
+    from gobby.storage.chat_attachment_lease import claim_attachment, new_claim_token
+
+    token = new_claim_token()
+    with db.transaction_immediate(ChatAttachmentMutation()) as conn:
+        record = _fetch_attachment(conn, attachment_id)
+        if record is None:
+            return None
+        if record.is_bound:
             raise ValueError("Only unbound queued attachments can be deleted")
+        claimed = claim_attachment(
+            conn,
+            attachment_id=record.id,
+            project_id=record.project_id,
+            token=token,
+            operation="http_delete",
+        )
+        if not claimed:
+            raise ValueError("Only unbound queued attachments can be deleted")
+        claimed_record = _fetch_attachment(conn, record.id, record.project_id)
+    if claimed_record is None:
         return None
+    return claimed_record, token
+
+
+def list_stale_cleanup_candidates(
+    db: HubDatabase,
+    *,
+    cutoff: datetime | str,
+    limit: int = 500,
+) -> list[ChatAttachmentRecord]:
+    """Return unpublished-expired or expired-unbound rows for owner cleanup."""
+    cutoff_value = parse_stored_datetime(cutoff)
+    if cutoff_value is None:
+        raise ValueError("cutoff is required")
+    bounded_limit = max(1, int(limit))
+    rows = db.fetchall(
+        f"""
+        SELECT {_ATTACHMENT_COLUMNS}
+          FROM chat_attachments
+         WHERE (
+                published IS FALSE
+                AND claimed_at < %s
+               )
+            OR (
+                published IS TRUE
+                AND conversation_id IS NULL
+                AND message_id IS NULL
+                AND target_session_id IS NULL
+                AND bound_at IS NULL
+                AND created_at < %s
+                AND (claim_token IS NULL OR claimed_at < %s)
+               )
+         ORDER BY created_at ASC
+         LIMIT %s
+        """,
+        (cutoff_value, cutoff_value, cutoff_value, bounded_limit),
+    )
+    return [_row_to_record(row) for row in rows]
 
 
 def delete_stale_unbound_attachments(
@@ -338,34 +437,49 @@ def delete_stale_unbound_attachments(
     cutoff: datetime | str,
     limit: int = 500,
 ) -> list[ChatAttachmentRecord]:
-    """Delete never-bound queued uploads older than ``cutoff`` and return their records."""
-    cutoff_value = parse_stored_datetime(cutoff)
-    if cutoff_value is None:
-        raise ValueError("cutoff is required")
-    bounded_limit = max(1, int(limit))
-    machine_id = require_machine_id()
-    with db.transaction_immediate(ChatAttachmentMutation()) as conn:
-        rows = conn.execute(
+    """Compatibility alias used by hygiene until it claims through the lease."""
+    return list_stale_cleanup_candidates(db, cutoff=cutoff, limit=limit)
+
+
+def list_attachments_for_conversations(
+    db: HubDatabase,
+    conversation_ids: list[str],
+    *,
+    target_session_id: str | None = None,
+) -> list[ChatAttachmentRecord]:
+    """Return attachment rows bound to conversations, messages, or a session."""
+    unique_ids = [value for value in dict.fromkeys(conversation_ids) if value]
+    if not unique_ids and not target_session_id:
+        return []
+
+    clauses: list[str] = []
+    params: list[object] = []
+    if unique_ids:
+        placeholders = ",".join("%s" for _ in unique_ids)
+        clauses.append(
+            f"""
+            conversation_id IN ({placeholders})
+            OR message_id IN (
+                SELECT id::text
+                  FROM chat_messages
+                 WHERE conversation_id IN ({placeholders})
+            )
             """
-            DELETE FROM chat_attachments
-             WHERE id IN (
-                   SELECT id
-                     FROM chat_attachments
-                    WHERE machine_id = %s
-                      AND conversation_id IS NULL
-                      AND message_id IS NULL
-                      AND target_session_id IS NULL
-                      AND bound_at IS NULL
-                      AND created_at < %s
-                    ORDER BY created_at ASC
-                    LIMIT %s
-             )
-            RETURNING id, machine_id, project_id, draft_id, conversation_id, message_id,
-                      target_session_id,
-                      filename, mime_type, size_bytes, local_path, created_at, updated_at, bound_at
-            """,
-            (machine_id, cutoff_value, bounded_limit),
-        ).fetchall()
+        )
+        params.extend(unique_ids)
+        params.extend(unique_ids)
+    if target_session_id:
+        clauses.append("target_session_id = %s")
+        params.append(target_session_id)
+    where = " OR ".join(f"({clause})" for clause in clauses)
+    rows = db.fetchall(
+        f"""
+        SELECT {_ATTACHMENT_COLUMNS}
+          FROM chat_attachments
+         WHERE {where}
+        """,  # nosec B608 # placeholders are generated from the conversation ID count only.
+        tuple(params),
+    )
     return [_row_to_record(row) for row in rows]
 
 
@@ -373,39 +487,5 @@ def delete_attachments_for_conversations(
     db: HubDatabase,
     conversation_ids: list[str],
 ) -> list[ChatAttachmentRecord]:
-    """Delete attachment metadata tied to conversations or their chat messages."""
-    unique_ids = [value for value in dict.fromkeys(conversation_ids) if value]
-    if not unique_ids:
-        return []
-
-    placeholders = ",".join("%s" for _ in unique_ids)
-    machine_id = require_machine_id()
-    with db.transaction_immediate(ChatAttachmentMutation()) as conn:
-        rows = conn.execute(
-            f"""
-            SELECT id, machine_id, project_id, draft_id, conversation_id, message_id,
-                   target_session_id,
-                   filename, mime_type, size_bytes, local_path, created_at, updated_at, bound_at
-              FROM chat_attachments
-             WHERE machine_id = %s
-               AND (
-                    conversation_id IN ({placeholders})
-                    OR message_id IN (
-                        SELECT id::text
-                          FROM chat_messages
-                         WHERE conversation_id IN ({placeholders})
-                    )
-               )
-            """,  # nosec B608 # placeholders are generated from the conversation ID count only.
-            (machine_id, *unique_ids, *unique_ids),
-        ).fetchall()
-        records = [_row_to_record(row) for row in rows]
-        if not records:
-            return []
-        attachment_ids = [record.id for record in records]
-        id_placeholders = ",".join("%s" for _ in attachment_ids)
-        conn.execute(
-            f"DELETE FROM chat_attachments WHERE id IN ({id_placeholders}) AND machine_id = %s",
-            (*attachment_ids, machine_id),
-        )  # nosec B608 # placeholders are generated from selected attachment rows only.
-        return records
+    """Select conversation-bound rows; callers claim and unlink through the lease."""
+    return list_attachments_for_conversations(db, conversation_ids)

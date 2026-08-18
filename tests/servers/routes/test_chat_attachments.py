@@ -12,6 +12,8 @@ from fastapi.testclient import TestClient
 
 import gobby.servers.routes.chat_attachments as chat_attachment_routes
 from gobby.config.app import DaemonConfig
+from gobby.paths import get_gobby_home
+from gobby.servers.chat_attachment_files import attachment_relative_locator
 from gobby.servers.chat_attachment_limits import _store_limit, resolve_server_attachment_limits
 from gobby.servers.routes.chat_attachments import (
     create_chat_attachments_router,
@@ -35,13 +37,33 @@ def test_store_limit_uses_fallback_on_database_driver_error() -> None:
     assert _store_limit(FailingStore(), "chat.attachment_max_file_bytes", 123) == 123
 
 
+def _write_local_bootstrap(files_home: Path) -> None:
+    home = get_gobby_home()
+    home.mkdir(parents=True, exist_ok=True)
+    bootstrap = home / "bootstrap.yaml"
+    bootstrap.write_text(
+        f"datastore_mode: local\nfiles_home: {files_home}\n",
+        encoding="utf-8",
+    )
+    bootstrap.chmod(0o600)
+
+
+@pytest.fixture
+def files_home(tmp_path: Path) -> Path:
+    root = tmp_path / "files_home"
+    root.mkdir()
+    return root
+
+
 @pytest.fixture
 def client(
     temp_db: HubDatabase,
     tmp_path: Path,
+    files_home: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> TestClient:
     monkeypatch.setenv("GOBBY_HOME", str(tmp_path / "gobby-home"))
+    _write_local_bootstrap(files_home)
     server = create_http_server(
         config=DaemonConfig(),
         database=temp_db,
@@ -56,7 +78,11 @@ def client(
     return TestClient(app)
 
 
-def test_upload_persists_metadata_and_file(client: TestClient, temp_db: HubDatabase) -> None:
+def test_upload_persists_metadata_and_file(
+    client: TestClient,
+    temp_db: HubDatabase,
+    files_home: Path,
+) -> None:
     project = LocalProjectManager(temp_db).create(name="attachment-project")
 
     response = client.post(
@@ -77,12 +103,16 @@ def test_upload_persists_metadata_and_file(client: TestClient, temp_db: HubDatab
     assert row is not None
     assert row["project_id"] == project.id
     assert row["draft_id"] == "draft-1"
-    stored_path = Path(row["local_path"])
+    locator = row["local_path"]
+    assert locator == attachment_relative_locator(project.id, payload["id"], "note.txt")
+    assert not Path(locator).is_absolute()
+    stored_path = files_home / locator
     assert stored_path.read_bytes() == b"hello"
     assert stored_path.parent.name == payload["id"]
     assert stored_path.parent.parent.name == payload["id"][:2]
-    assert stored_path.parent.parent.parent.name == "attachments"
-    assert stored_path.parent.parent.parent.parent.name == project.id
+    assert stored_path.parent.parent.parent.name == project.id
+    assert stored_path.parent.parent.parent.parent.name == "attachments"
+    assert stored_path.parent.parent.parent.parent.parent.name == "_personal"
 
 
 def test_attachment_limits_returns_configured_max_file_bytes(
@@ -149,9 +179,11 @@ def test_attachment_limit_runtime_capture_failure_propagates() -> None:
 def test_upload_without_project_id_uses_server_project(
     temp_db: HubDatabase,
     tmp_path: Path,
+    files_home: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     monkeypatch.setenv("GOBBY_HOME", str(tmp_path / "gobby-home"))
+    _write_local_bootstrap(files_home)
     project = LocalProjectManager(temp_db).create(name="server-project")
     server = create_http_server(
         config=DaemonConfig(),
@@ -244,6 +276,7 @@ def test_upload_sanitizes_traversal_filename_preserving_extension(
     )
     assert row is not None
     assert Path(row["local_path"]).name == "_note.txt"
+    assert not Path(row["local_path"]).is_absolute()
 
 
 def test_upload_truncates_oversized_filename_suffix_to_safe_path_part(
@@ -363,19 +396,23 @@ def test_content_route_sets_disposition_by_mime_type(
 def test_content_route_returns_404_when_content_path_is_directory(
     client: TestClient,
     temp_db: HubDatabase,
-    tmp_path: Path,
+    files_home: Path,
 ) -> None:
-    content_dir = tmp_path / "directory-backed-attachment"
+    attachment_id = "00000000-0000-4000-8000-000000000001"
+    locator = attachment_relative_locator(PERSONAL_PROJECT_ID, attachment_id, "directory.txt")
+    content_dir = files_home / locator
+    content_dir.parent.mkdir(parents=True)
     content_dir.mkdir()
     create_attachment(
         temp_db,
-        attachment_id="00000000-0000-4000-8000-000000000001",
+        attachment_id=attachment_id,
         project_id=PERSONAL_PROJECT_ID,
         draft_id=None,
         filename="directory.txt",
         mime_type="text/plain",
         size_bytes=0,
-        local_path=str(content_dir),
+        local_path=locator,
+        published=True,
     )
 
     response = client.get("/api/chat/attachments/00000000-0000-4000-8000-000000000001/content")
@@ -394,16 +431,16 @@ def test_content_route_rejects_invalid_attachment_id(client: TestClient) -> None
 def test_delete_only_removes_unbound_uploads(
     client: TestClient,
     temp_db: HubDatabase,
+    files_home: Path,
 ) -> None:
     first = client.post(
         "/api/chat/attachments",
         files={"file": ("queued.txt", b"queued", "text/plain")},
     ).json()
-    first_path = Path(
-        temp_db.fetchone("SELECT local_path FROM chat_attachments WHERE id = %s", (first["id"],))[
-            "local_path"
-        ]
-    )
+    first_locator = temp_db.fetchone(
+        "SELECT local_path FROM chat_attachments WHERE id = %s", (first["id"],)
+    )["local_path"]
+    first_path = files_home / first_locator
 
     delete_response = client.delete(f"/api/chat/attachments/{first['id']}")
 
@@ -425,6 +462,7 @@ def test_delete_only_removes_unbound_uploads(
 def test_delete_reports_file_removal_failure_after_metadata_delete(
     client: TestClient,
     temp_db: HubDatabase,
+    files_home: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     uploaded = client.post(
@@ -436,20 +474,49 @@ def test_delete_reports_file_removal_failure_after_metadata_delete(
         (uploaded["id"],),
     )
     assert uploaded_row is not None
-    target_path = Path(uploaded_row["local_path"])
-    original_unlink = Path.unlink
+    def fail_unlink(_locator: str) -> None:
+        raise PermissionError("blocked")
 
-    def guarded_unlink(self: Path, *args: object, **kwargs: object) -> None:
-        if self == target_path:
-            raise PermissionError(str(self))
-        original_unlink(self, *args, **kwargs)
-
-    monkeypatch.setattr(Path, "unlink", guarded_unlink)
+    monkeypatch.setattr(
+        "gobby.servers.chat_attachment_files.unlink_files_home_descendant",
+        fail_unlink,
+    )
 
     response = client.delete(f"/api/chat/attachments/{uploaded['id']}")
 
     assert response.status_code == 200
     assert response.json() == {"ok": False}
-    assert (
-        temp_db.fetchone("SELECT * FROM chat_attachments WHERE id = %s", (uploaded["id"],)) is None
+    remaining = temp_db.fetchone(
+        "SELECT claim_token FROM chat_attachments WHERE id = %s", (uploaded["id"],)
     )
+    assert remaining is not None
+    assert remaining["claim_token"] is None
+
+
+def test_upload_vanished_files_home_raises_and_does_not_recreate(
+    client: TestClient,
+    files_home: Path,
+) -> None:
+    from gobby.paths import FilesHomeError, require_files_home
+
+    require_files_home()
+    vanished = files_home.parent / "vanished"
+    files_home.rename(vanished)
+    with pytest.raises(FilesHomeError):
+        require_files_home()
+    assert not files_home.exists()
+
+
+def test_upload_replaced_files_home_raises(
+    client: TestClient,
+    files_home: Path,
+) -> None:
+    from gobby.paths import FilesHomeError, publish_files_home_descendant, require_files_home
+
+    require_files_home()
+    replacement = files_home.parent / "replacement"
+    replacement.mkdir()
+    files_home.rename(files_home.parent / "old-home")
+    replacement.rename(files_home)
+    with pytest.raises(FilesHomeError):
+        publish_files_home_descendant("USER.md", b"nope")

@@ -581,7 +581,39 @@
       "definition": "jsonb|jsonb|YES||NEVER"
     },
     {
+      "name": "chat_attachment_cleanup_fences.claimed_at",
+      "definition": "timestamp with time zone|timestamptz|YES||NEVER"
+    },
+    {
+      "name": "chat_attachment_cleanup_fences.owner",
+      "definition": "text|text|YES||NEVER"
+    },
+    {
+      "name": "chat_attachment_cleanup_fences.scope_id",
+      "definition": "text|text|NO||NEVER"
+    },
+    {
+      "name": "chat_attachment_cleanup_fences.scope_kind",
+      "definition": "text|text|NO||NEVER"
+    },
+    {
+      "name": "chat_attachment_cleanup_fences.state",
+      "definition": "text|text|NO||NEVER"
+    },
+    {
+      "name": "chat_attachment_cleanup_fences.token",
+      "definition": "uuid|uuid|YES||NEVER"
+    },
+    {
       "name": "chat_attachments.bound_at",
+      "definition": "timestamp with time zone|timestamptz|YES||NEVER"
+    },
+    {
+      "name": "chat_attachments.claim_token",
+      "definition": "uuid|uuid|YES||NEVER"
+    },
+    {
+      "name": "chat_attachments.claimed_at",
       "definition": "timestamp with time zone|timestamptz|YES||NEVER"
     },
     {
@@ -623,6 +655,10 @@
     {
       "name": "chat_attachments.project_id",
       "definition": "uuid|uuid|NO||NEVER"
+    },
+    {
+      "name": "chat_attachments.published",
+      "definition": "boolean|bool|NO|false|NEVER"
     },
     {
       "name": "chat_attachments.size_bytes",
@@ -5807,6 +5843,18 @@
       "definition": "CHECK (status = ANY (ARRAY['started'::text, 'completed'::text, 'failed'::text, 'skipped'::text]))"
     },
     {
+      "name": "chat_attachment_cleanup_fences.chat_attachment_cleanup_fences_pkey",
+      "definition": "PRIMARY KEY (scope_kind, scope_id)"
+    },
+    {
+      "name": "chat_attachment_cleanup_fences.chat_attachment_cleanup_fences_scope_kind_check",
+      "definition": "CHECK (scope_kind = ANY (ARRAY['conversation'::text, 'session'::text]))"
+    },
+    {
+      "name": "chat_attachment_cleanup_fences.chat_attachment_cleanup_fences_state_check",
+      "definition": "CHECK (state = ANY (ARRAY['idle'::text, 'active'::text, 'terminal'::text]))"
+    },
+    {
       "name": "chat_attachments.chat_attachments_machine_id_fkey",
       "definition": "FOREIGN KEY (machine_id) REFERENCES machines(id)"
     },
@@ -7367,6 +7415,10 @@
       "definition": "CREATE UNIQUE INDEX build_runs_pkey ON $schema.build_runs USING btree (id)"
     },
     {
+      "name": "chat_attachment_cleanup_fences_pkey",
+      "definition": "CREATE UNIQUE INDEX chat_attachment_cleanup_fences_pkey ON $schema.chat_attachment_cleanup_fences USING btree (scope_kind, scope_id)"
+    },
+    {
       "name": "chat_attachments_pkey",
       "definition": "CREATE UNIQUE INDEX chat_attachments_pkey ON $schema.chat_attachments USING btree (id)"
     },
@@ -7683,6 +7735,10 @@
       "definition": "CREATE INDEX idx_ccc_project ON $schema.code_content_chunks USING btree (project_id)"
     },
     {
+      "name": "idx_chat_attachments_claim",
+      "definition": "CREATE INDEX idx_chat_attachments_claim ON $schema.chat_attachments USING btree (claim_token, claimed_at) WHERE (claim_token IS NOT NULL)"
+    },
+    {
       "name": "idx_chat_attachments_conversation",
       "definition": "CREATE INDEX idx_chat_attachments_conversation ON $schema.chat_attachments USING btree (conversation_id)"
     },
@@ -7709,6 +7765,10 @@
     {
       "name": "idx_chat_attachments_target_session",
       "definition": "CREATE INDEX idx_chat_attachments_target_session ON $schema.chat_attachments USING btree (target_session_id)"
+    },
+    {
+      "name": "idx_chat_attachments_unpublished",
+      "definition": "CREATE INDEX idx_chat_attachments_unpublished ON $schema.chat_attachments USING btree (created_at) WHERE (published IS FALSE)"
     },
     {
       "name": "idx_checkpoints_run",

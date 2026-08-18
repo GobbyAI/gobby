@@ -11,7 +11,7 @@ from datetime import UTC, datetime
 from typing import TYPE_CHECKING, Any
 
 from gobby.hooks.hook_types import SessionEndReason
-from gobby.servers.chat_attachment_files import unlink_stored_attachment_file
+from gobby.servers.chat_attachment_cleanup import cleanup_conversation_attachments
 from gobby.servers.websocket.db import run_db
 from gobby.servers.websocket.models import (
     CLEANUP_INTERVAL_SECONDS,
@@ -31,16 +31,13 @@ async def _delete_chat_attachments(
     conversation_id: str,
 ) -> None:
     """Delete attachment metadata and files for a cleared chat conversation."""
-    from gobby.storage import chat_attachments
 
-    records = await run_db(
-        mixin,
-        chat_attachments.delete_attachments_for_conversations,
+    await cleanup_conversation_attachments(
         db,
-        [conversation_id],
+        conversation_id,
+        run_db=lambda *args, **kwargs: run_db(mixin, *args, **kwargs),
+        terminal=False,
     )
-    for record in records:
-        await unlink_stored_attachment_file(record.local_path, record_id=record.id)
 
 
 async def handle_stop_chat(

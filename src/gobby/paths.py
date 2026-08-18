@@ -20,7 +20,13 @@ __all__ = [
     "get_gobby_home",
     "get_files_home",
     "require_files_home",
+    "assert_held_files_home_identity",
     "publish_files_home_descendant",
+    "ensure_files_home_descendant_dir",
+    "open_files_home_descendant",
+    "replace_files_home_descendant",
+    "unlink_files_home_descendant",
+    "fsync_files_home_descendant_dir",
     "get_global_workflows_dir",
     "get_global_rules_dir",
     "get_global_pipelines_dir",
@@ -135,13 +141,104 @@ def require_files_home() -> Path:
 def publish_files_home_descendant(relative: str | Path, content: bytes) -> None:
     """Publish a descendant file through the held files_home fd (no-follow)."""
     held = _require_held_files_home()
-    rel = Path(relative)
-    if rel.is_absolute() or not rel.parts or ".." in rel.parts:
-        raise FilesHomeError("descendant path must be a relative path")
-    parent_parts = rel.parent.parts if rel.parent != Path(".") else ()
-    directory_fd, opened = _open_descendant_dir(held.fd, parent_parts)
+    parts = _relative_parts(relative)
+    directory_fd, opened = _open_descendant_dir(held.fd, parts[:-1])
     try:
-        _durable_replace_at(directory_fd, rel.name, content)
+        _durable_replace_at(directory_fd, parts[-1], content)
+    finally:
+        for fd in reversed(opened):
+            os.close(fd)
+
+
+def ensure_files_home_descendant_dir(relative: str | Path) -> None:
+    """Create descendant directories through the held files_home fd."""
+    held = _require_held_files_home()
+    parts = _relative_parts(relative)
+    _directory_fd, opened = _open_descendant_dir(held.fd, parts)
+    for fd in reversed(opened):
+        os.close(fd)
+
+
+def open_files_home_descendant(
+    relative: str | Path,
+    flags: int,
+    *,
+    mode: int = 0o600,
+    create_parents: bool = False,
+) -> int:
+    """Open a descendant file through the held files_home fd (no-follow)."""
+    held = _require_held_files_home()
+    parts = _relative_parts(relative)
+    opener = _open_descendant_dir if create_parents else _open_existing_descendant_dir
+    directory_fd, opened = opener(held.fd, parts[:-1])
+    open_flags = flags
+    if hasattr(os, "O_CLOEXEC"):
+        open_flags |= os.O_CLOEXEC
+    if hasattr(os, "O_NOFOLLOW"):
+        open_flags |= os.O_NOFOLLOW
+    try:
+        return os.open(parts[-1], open_flags, mode, dir_fd=directory_fd)
+    except FileNotFoundError:
+        raise
+    except OSError as exc:
+        raise FilesHomeError(f"cannot open files_home descendant: {exc}") from exc
+    finally:
+        for fd in reversed(opened):
+            os.close(fd)
+
+
+def replace_files_home_descendant(source: str | Path, destination: str | Path) -> None:
+    """Atomically replace one descendant with another through the held fd."""
+    held = _require_held_files_home()
+    source_parts = _relative_parts(source)
+    destination_parts = _relative_parts(destination)
+    source_dir_fd, source_opened = _open_existing_descendant_dir(held.fd, source_parts[:-1])
+    try:
+        dest_dir_fd, dest_opened = _open_existing_descendant_dir(
+            held.fd, destination_parts[:-1]
+        )
+        try:
+            os.replace(
+                source_parts[-1],
+                destination_parts[-1],
+                src_dir_fd=source_dir_fd,
+                dst_dir_fd=dest_dir_fd,
+            )
+        except OSError as exc:
+            raise FilesHomeError(f"cannot replace files_home descendant: {exc}") from exc
+        finally:
+            for fd in reversed(dest_opened):
+                os.close(fd)
+    finally:
+        for fd in reversed(source_opened):
+            os.close(fd)
+
+
+def unlink_files_home_descendant(relative: str | Path) -> None:
+    """Unlink a descendant through the held files_home fd (no-follow)."""
+    held = _require_held_files_home()
+    parts = _relative_parts(relative)
+    directory_fd, opened = _open_existing_descendant_dir(held.fd, parts[:-1])
+    try:
+        os.unlink(parts[-1], dir_fd=directory_fd)
+    except FileNotFoundError:
+        raise
+    except OSError as exc:
+        raise FilesHomeError(f"cannot unlink files_home descendant: {exc}") from exc
+    finally:
+        for fd in reversed(opened):
+            os.close(fd)
+
+
+def fsync_files_home_descendant_dir(relative: str | Path) -> None:
+    """Fsync a descendant directory through the held files_home fd."""
+    held = _require_held_files_home()
+    parts = _relative_parts(relative)
+    directory_fd, opened = _open_existing_descendant_dir(held.fd, parts)
+    try:
+        os.fsync(directory_fd)
+    except OSError as exc:
+        raise FilesHomeError(f"cannot fsync files_home descendant: {exc}") from exc
     finally:
         for fd in reversed(opened):
             os.close(fd)
@@ -181,6 +278,11 @@ def _require_held_files_home() -> _HeldFilesHome:
     return _HELD_FILES_HOME
 
 
+def assert_held_files_home_identity() -> None:
+    """Re-check the held files_home root and ancestor identities."""
+    _assert_files_home_identity(_require_held_files_home())
+
+
 def _assert_files_home_identity(held: _HeldFilesHome) -> None:
     try:
         current = _ancestor_identities(held.path)
@@ -207,6 +309,38 @@ def _ancestor_identities(path: Path) -> tuple[tuple[int, int], ...]:
             break
         current = parent
     return tuple(identities)
+
+
+def _relative_parts(relative: str | Path) -> tuple[str, ...]:
+    rel = Path(relative)
+    if (
+        rel.is_absolute()
+        or not rel.parts
+        or ".." in rel.parts
+        or any(part == "." for part in rel.parts)
+    ):
+        raise FilesHomeError("descendant path must be a relative path")
+    return rel.parts
+
+
+def _open_existing_descendant_dir(root_fd: int, parts: tuple[str, ...]) -> tuple[int, list[int]]:
+    current = root_fd
+    opened: list[int] = []
+    flags = os.O_RDONLY | getattr(os, "O_DIRECTORY", 0)
+    if hasattr(os, "O_CLOEXEC"):
+        flags |= os.O_CLOEXEC
+    if hasattr(os, "O_NOFOLLOW"):
+        flags |= os.O_NOFOLLOW
+    for part in parts:
+        try:
+            next_fd = os.open(part, flags, dir_fd=current)
+        except FileNotFoundError:
+            raise
+        except OSError as exc:
+            raise FilesHomeError(f"cannot open files_home descendant: {exc}") from exc
+        opened.append(next_fd)
+        current = next_fd
+    return current, opened
 
 
 def _open_descendant_dir(root_fd: int, parts: tuple[str, ...]) -> tuple[int, list[int]]:

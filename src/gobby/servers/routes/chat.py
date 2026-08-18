@@ -4,8 +4,8 @@ from typing import TYPE_CHECKING, Any
 
 from fastapi import APIRouter, HTTPException, Query
 
-from gobby.servers.chat_attachment_files import unlink_stored_attachment_file
-from gobby.storage import chat_attachments, chat_messages
+from gobby.servers.chat_attachment_cleanup import cleanup_conversation_attachments
+from gobby.storage import chat_messages
 
 if TYPE_CHECKING:
     from gobby.servers.http import HTTPServer
@@ -24,11 +24,13 @@ def create_chat_router(server: "HTTPServer") -> APIRouter:
         db: Any,
         conversation_ids: list[str],
     ) -> None:
-        records = await server.run_db(
-            chat_attachments.delete_attachments_for_conversations, db, conversation_ids
-        )
-        for record in records:
-            await unlink_stored_attachment_file(record.local_path, record_id=record.id)
+        for conversation_id in conversation_ids:
+            await cleanup_conversation_attachments(
+                db,
+                conversation_id,
+                run_db=server.run_db,
+                terminal=True,
+            )
 
     @router.get("/{conversation_id}/messages")
     async def get_messages(

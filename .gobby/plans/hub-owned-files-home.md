@@ -2264,3 +2264,8 @@ Accepted F180-F182. Coordinator also bumped the planned attachment migration fro
   source_section: '6.3'
   assigned_agent: tech-writer
 ```
+
+## Deviations
+
+- #20428: Catalog head on this worktree was already `389_sweep_interactive_orphan_roles.sql`. The chat-attachment deletion-lease, `published` column, and cleanup-fence table shipped as `390_chat_attachments_deletion_lease.sql` instead of the plan's `389_*` name. Identity, grant goldens, and gdaemon CLI assertions track 390.
+

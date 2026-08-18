@@ -6,21 +6,33 @@ import asyncio
 import codecs
 import logging
 import mimetypes
-import re
+import os
 import stat
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 from uuid import UUID, uuid4
 
-import aiofiles
 from fastapi import APIRouter, File, Form, HTTPException, UploadFile
-from fastapi.responses import FileResponse
+from fastapi.responses import StreamingResponse
 
 import gobby.storage.chat_attachments as chat_attachments
-from gobby.paths import get_gobby_home
-from gobby.servers.chat_attachment_files import unlink_stored_attachment_file
+from gobby.paths import FilesHomeError
+from gobby.servers.chat_attachment_files import (
+    open_attachment_descriptor,
+    resolve_attachment_dir,
+    resolve_attachment_locator,
+    safe_path_part,
+    unlink_attachment_bytes,
+)
 from gobby.servers.chat_attachment_limits import resolve_server_attachment_limits
+from gobby.servers.chat_attachment_upload import publish_uploaded_attachment
+from gobby.servers.chat_attachment_workers import run_shielded
 from gobby.servers.upload_limits import ensure_disk_space
+from gobby.storage.chat_attachment_lease import (
+    delete_claimed_row_db,
+    release_claim_db,
+    renew_claim_db,
+)
 from gobby.storage.hub.protocol import HubDatabase
 from gobby.storage.projects import PERSONAL_PROJECT_ID, LocalProjectManager
 
@@ -50,10 +62,7 @@ _SAFE_PATH_PART_MAX_BYTES = 255
 
 
 def _safe_path_part(value: str, fallback: str) -> str:
-    cleaned = value.replace("\x00", "").replace("/", "_").replace("\\", "_")
-    cleaned = cleaned.lstrip(".")
-    cleaned = re.sub(r"[^A-Za-z0-9.\-]", "_", cleaned)
-    return _truncate_path_part_utf8(cleaned or fallback, fallback)
+    return safe_path_part(value, fallback)
 
 
 def _truncate_path_part_utf8(value: str, fallback: str) -> str:
@@ -91,15 +100,7 @@ def _temp_upload_name(safe_name: str) -> str:
 
 
 def _attachment_dir(project_id: str, attachment_id: str) -> Path:
-    safe_project_id = _safe_path_part(project_id, "project")
-    return (
-        get_gobby_home()
-        / "projects"
-        / safe_project_id
-        / "attachments"
-        / attachment_id[:2]
-        / attachment_id
-    )
+    return resolve_attachment_dir(project_id, attachment_id)
 
 
 def _validate_uuid_param(value: str, name: str) -> None:
@@ -283,85 +284,24 @@ def create_chat_attachments_router(server: HTTPServer) -> APIRouter:
 
         attachment_id = str(uuid4())
         raw_filename = (file.filename or "attachment").replace("\x00", "") or "attachment"
-        safe_name = _safe_path_part(raw_filename, "attachment")
-        filename = safe_name
+        filename = _safe_path_part(raw_filename, "attachment")
         mime_type = resolve_mime_type(file.content_type, raw_filename)
-        target_dir = _attachment_dir(resolved_project_id, attachment_id)
-        target_path = target_dir / safe_name
-        temp_path = target_dir / _temp_upload_name(safe_name)
-        size = 0
-        replace_completed = False
-
-        try:
-            await asyncio.to_thread(target_dir.mkdir, parents=True, exist_ok=True)
-            known_file_size = getattr(file, "size", None)
-            reserved_bytes = (
-                min(limits.max_file_bytes, known_file_size)
-                if isinstance(known_file_size, int) and known_file_size >= 0
-                else limits.max_file_bytes
-            )
-            await asyncio.to_thread(_ensure_disk_space, target_dir, reserved_bytes)
-            async with aiofiles.open(temp_path, "wb") as out:
-                while True:
-                    remaining = limits.max_file_bytes - size
-                    # Read one byte past the budget so oversized uploads are rejected immediately.
-                    read_size = min(_UPLOAD_CHUNK_BYTES, max(remaining + 1, 1))
-                    chunk = await file.read(read_size)
-                    if not chunk:
-                        break
-                    size += len(chunk)
-                    if size > limits.max_file_bytes:
-                        raise HTTPException(
-                            status_code=413,
-                            detail=(
-                                f"Attachment exceeds configured {limits.max_file_bytes} byte limit"
-                            ),
-                        )
-                    await out.write(chunk)
-
-            await _validate_declared_mime(
-                temp_path,
-                mime_type,
-                filename=filename,
-                attachment_id=attachment_id,
-            )
-            await asyncio.to_thread(temp_path.replace, target_path)
-            replace_completed = True
-            record = await server.run_db(
-                chat_attachments.create_attachment,
-                server.services.database,
-                attachment_id=attachment_id,
-                project_id=resolved_project_id,
-                draft_id=draft_id,
-                filename=filename,
-                mime_type=mime_type,
-                size_bytes=size,
-                local_path=str(target_path),
-            )
-        except HTTPException:
-            await _remove_path(temp_path)
-            if replace_completed:
-                await _remove_path(target_path)
-            await _remove_empty_directory(target_dir)
-            raise
-        except OSError as exc:
-            logger.warning("Attachment upload storage operation failed", exc_info=True)
-            await _remove_path(temp_path)
-            if replace_completed:
-                await _remove_path(target_path)
-            await _remove_empty_directory(target_dir)
-            raise HTTPException(status_code=507, detail="Attachment storage unavailable") from exc
-        except Exception:
-            await _remove_path(temp_path)
-            if replace_completed:
-                await _remove_path(target_path)
-            await _remove_empty_directory(target_dir)
-            raise
-
-        return chat_attachments.to_api_dict(record)
+        return await publish_uploaded_attachment(
+            file=file,
+            resolved_project_id=resolved_project_id,
+            attachment_id=attachment_id,
+            filename=filename,
+            mime_type=mime_type,
+            draft_id=draft_id,
+            max_file_bytes=limits.max_file_bytes,
+            database=server.services.database,
+            run_db=server.run_db,
+            validate_mime=_validate_declared_mime,
+            ensure_disk_space=_ensure_disk_space,
+        )
 
     @router.get("/{attachment_id}/content")
-    async def get_attachment_content(attachment_id: str) -> FileResponse:
+    async def get_attachment_content(attachment_id: str) -> StreamingResponse:
         _validate_uuid_param(attachment_id, "attachment_id")
         record = await server.run_db(
             chat_attachments.get_attachment,
@@ -371,37 +311,94 @@ def create_chat_attachments_router(server: HTTPServer) -> APIRouter:
         if record is None:
             raise HTTPException(status_code=404, detail="Attachment not found")
 
-        path = Path(record.local_path)
+        locator = resolve_attachment_locator(
+            record.project_id,
+            record.id,
+            record.filename,
+            record.local_path,
+        )
         try:
-            stat_result = await asyncio.to_thread(path.stat)
-        except OSError as exc:
+            fd, stat_result = await asyncio.to_thread(open_attachment_descriptor, locator)
+        except FileNotFoundError as exc:
             raise HTTPException(status_code=404, detail="Attachment content not found") from exc
+        except FilesHomeError as exc:
+            raise HTTPException(status_code=409, detail="Attachment storage unavailable") from exc
         if not stat.S_ISREG(stat_result.st_mode):
+            os.close(fd)
             raise HTTPException(status_code=404, detail="Attachment content not found")
 
-        return FileResponse(
-            path,
-            media_type=record.mime_type,
-            filename=record.filename,
-            content_disposition_type=_content_disposition(record.mime_type),
-            stat_result=stat_result,
-        )
+        async def stream() -> Any:
+            try:
+                from gobby.paths import assert_held_files_home_identity
+
+                assert_held_files_home_identity()
+                while True:
+                    chunk = await asyncio.to_thread(os.read, fd, _UPLOAD_CHUNK_BYTES)
+                    if not chunk:
+                        break
+                    yield chunk
+            except FilesHomeError as exc:
+                raise HTTPException(
+                    status_code=409, detail="Attachment storage unavailable"
+                ) from exc
+            finally:
+                os.close(fd)
+
+        headers = {
+            "content-disposition": (
+                f'{_content_disposition(record.mime_type)}; filename="{record.filename}"'
+            )
+        }
+        return StreamingResponse(stream(), media_type=record.mime_type, headers=headers)
 
     @router.delete("/{attachment_id}")
     async def delete_attachment(attachment_id: str) -> dict[str, bool]:
         _validate_uuid_param(attachment_id, "attachment_id")
         try:
-            record = await server.run_db(
+            claimed = await server.run_db(
                 chat_attachments.delete_unbound_attachment,
                 server.services.database,
                 attachment_id,
             )
         except ValueError as exc:
             raise HTTPException(status_code=409, detail=str(exc)) from exc
-        if record is None:
+        if claimed is None:
             raise HTTPException(status_code=404, detail="Attachment not found")
-
-        removed = await unlink_stored_attachment_file(record.local_path, record_id=record.id)
-        return {"ok": removed}
+        record, token = claimed
+        await server.run_db(
+            renew_claim_db,
+            server.services.database,
+            attachment_id=record.id,
+            project_id=record.project_id,
+            token=token,
+        )
+        outcome, cancelled = await run_shielded(
+            "attachment-unlink",
+            unlink_attachment_bytes,
+            record.project_id,
+            record.id,
+            record.filename,
+        )
+        if outcome.error is not None and not isinstance(outcome.error, FileNotFoundError):
+            await server.run_db(
+                release_claim_db,
+                server.services.database,
+                attachment_id=record.id,
+                project_id=record.project_id,
+                token=token,
+            )
+            if cancelled:
+                raise asyncio.CancelledError
+            return {"ok": False}
+        deleted = await server.run_db(
+            delete_claimed_row_db,
+            server.services.database,
+            attachment_id=record.id,
+            project_id=record.project_id,
+            token=token,
+        )
+        if cancelled:
+            raise asyncio.CancelledError
+        return {"ok": deleted}
 
     return router
