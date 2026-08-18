@@ -48,6 +48,14 @@ get_tool_schema("gobby-tasks", "create_task")  # Learn required params
 call_tool("gobby-tasks", "create_task", {"title": "Fix bug", "category": "code"})
 </common_mistakes>
 
+<call_context>
+`call_tool` session_id is wrapper context: it accepts #N, N, UUID, or prefix, propagates to the
+daemon for context/workflow resolution, and is auto-supplied to target arguments when the target
+schema requires it. Use arguments.session_id only to target a DIFFERENT session; local #N refs
+resolve in the caller project, cross-project targets need UUIDs plus project_id. Prefer
+`arguments` over its `args` alias (both accept dict or JSON string).
+</call_context>
+
 <variables>
 `set_variable` and `get_variable` are top-level tools — no progressive discovery needed.
 Call directly: set_variable(name="flag", value=true, session_id="#123")

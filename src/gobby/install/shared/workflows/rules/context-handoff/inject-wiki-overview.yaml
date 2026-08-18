@@ -6,7 +6,12 @@ rules:
     event: turn_start
     enabled: true
     priority: 13
-    when: "variables.get('wiki_overview') and not variables.get('wiki_overview_injected')"
+    # Taskless spawned agents (reviewers, adversaries) never query the wiki;
+    # skip the block for them until they claim a task or run an auto-task tree.
+    when: >
+      variables.get('wiki_overview') and not variables.get('wiki_overview_injected')
+      and not (variables.get('is_spawned_agent')
+      and not variables.get('task_claimed') and not variables.get('auto_task_ref'))
     effects:
       - type: inject_context
         template: |

@@ -111,17 +111,9 @@ def register_proxy_tools(
         session_id: str | None = None,
     ) -> dict[str, Any]:
         """
-        Get full schema (inputSchema) for a specific MCP tool.
-
-        Call this directly for a known unleased tool. Use list_tools only when
-        the tool name itself is unknown.
-
-        Args:
-            server_name: Name of the MCP server (e.g., "context7", "supabase")
-            tool_name: Name of the tool (e.g., "get-library-docs", "list_tables")
-
-        Returns:
-            Dict with tool name, description, and full inputSchema
+        Get the full inputSchema for a specific MCP tool. Call this directly
+        for a known unleased tool; use list_tools only when the tool name
+        itself is unknown.
         """
         if session_id:
             return await proxy.get_tool_schema(server_name, tool_name, session_id=session_id)
@@ -140,29 +132,13 @@ def register_proxy_tools(
         ctx: Context[Any, Any, Any] | None = None,
     ) -> dict[str, Any]:
         """
-        Execute a tool on a connected MCP server.
+        Execute a tool on a connected MCP server — the primary way to reach
+        Gobby's sub-servers (tasks, memory, skills, ...).
 
-        This is the primary way to interact with MCP servers (Supabase, memory, etc.)
-        through the Gobby daemon.
-
-        Args:
-            server_name: Name of the MCP server
-            tool_name: Name of the specific tool to execute
-            arguments: Dictionary of arguments required by the tool (optional)
-            args: Alias for arguments. Accepts dict or JSON string. Use 'arguments' preferred.
-            session_id: Wrapper context (accepts #N, N, UUID, or prefix).
-                Propagated to the daemon via X-Gobby-Session-Id header and used
-                for Gobby context/workflow resolution. Same-repo calls can rely
-                on wrapper or ambient session context; if the target schema
-                requires session_id, the resolved UUID is supplied to the target
-                arguments before validation. Use arguments.session_id only to
-                target a different session. Local #N refs resolve in the caller
-                project; cross-project target sessions should use UUIDs.
-            project_id: Optional project UUID or name for cross-project tool calls.
-            preflight_enabled: Whether to perform daemon health preflight before proxying.
-
-        Returns:
-            Dictionary with success status and tool execution result
+        Pass `arguments` as a dict; `session_id` is the caller's session ref
+        (#N or UUID) and `project_id` targets another project. Full call-context
+        semantics live in the server instructions. Returns a dict with success
+        status and the tool result.
         """
         deps = get_deps()
         try:
@@ -229,17 +205,9 @@ def register_proxy_tools(
         min_similarity: float = 0.3,
     ) -> dict[str, Any]:
         """
-        Get intelligent tool recommendations for a given task.
-
-        Args:
-            task_description: Description of what you're trying to accomplish
-            agent_id: Optional agent profile ID to filter tools by assigned permissions
-            search_mode: How to search - "llm" (default), "semantic", or "hybrid"
-            top_k: Maximum recommendations to return (semantic/hybrid modes)
-            min_similarity: Minimum similarity threshold 0-1 (semantic/hybrid modes)
-
-        Returns:
-            Dict with tool recommendations and usage suggestions
+        Get tool recommendations for a task description. search_mode is "llm"
+        (default), "semantic", or "hybrid"; top_k and min_similarity apply to
+        the semantic/hybrid modes.
         """
         cwd = os.getcwd()
         return await proxy.recommend_tools(
@@ -259,19 +227,9 @@ def register_proxy_tools(
         server_name: str | None = None,
     ) -> dict[str, Any]:
         """
-        Search for tools using semantic similarity.
-
-        Uses embedding-based search to find tools matching a natural language query.
-        Requires embeddings to be generated first (happens automatically on first search).
-
-        Args:
-            query: Natural language description of the tool you need
-            top_k: Maximum number of results to return (default: 10)
-            min_similarity: Minimum similarity threshold 0-1 (default: 0.0)
-            server_name: Optional server name to filter results
-
-        Returns:
-            Dict with matching tools sorted by similarity
+        Search tools by semantic similarity to a natural-language query;
+        server_name optionally filters results. Embeddings generate
+        automatically on first search.
         """
         cwd = os.getcwd()
         return await proxy.search_tools(
@@ -294,20 +252,9 @@ def register_proxy_tools(
         enabled: bool = True,
     ) -> dict[str, Any]:
         """
-        Add a new MCP server to the daemon's configuration.
-
-        Args:
-            name: Unique server name
-            transport: Transport type - "http", "stdio", or "websocket"
-            url: Server URL (required for http/websocket)
-            headers: Custom HTTP headers (optional)
-            command: Command to run (required for stdio)
-            args: Command arguments (optional for stdio)
-            env: Environment variables (optional for stdio)
-            enabled: Whether server is enabled (default: True)
-
-        Returns:
-            Result dict with success status
+        Add an MCP server to the daemon. transport is "http", "stdio", or
+        "websocket"; http/websocket require url, stdio requires command
+        (args/env optional).
         """
         return await proxy.add_mcp_server(
             name=name,
@@ -341,16 +288,8 @@ def register_proxy_tools(
         query: str | None = None,
     ) -> dict[str, Any]:
         """
-        Import MCP servers from various sources.
-
-        Args:
-            from_project: Source project name to import servers from
-            servers: Optional list of specific server names to import
-            github_url: GitHub repository URL to parse for MCP server config
-            query: Natural language search query
-
-        Returns:
-            Result dict with imported servers or config to fill in
+        Import MCP servers from another project (from_project, optionally
+        narrowed by servers), a GitHub repo URL, or a natural-language query.
         """
         return await proxy.import_mcp_server(
             from_project=from_project,

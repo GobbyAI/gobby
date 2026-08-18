@@ -462,9 +462,27 @@ class TestInjectCompactHandoff:
         )
         assert spawned.context is not None
         assert "Spawned continuation UNIQUE_SPAWNED" in spawned.context
-        assert "Wiki UNIQUE_SPAWNED_WIKI" in spawned.context
+        # Taskless spawned agents also skip the wiki overview (#20451).
+        assert "Wiki UNIQUE_SPAWNED_WIKI" not in spawned.context
         assert "Profile UNIQUE_SPAWNED_PROFILE" not in spawned.context
         assert "## Global User Profile" not in spawned.context
+
+        tasked = await engine.evaluate(
+            event,
+            session_id=SESSION_ID,
+            variables={
+                "compact_handoff_inject_pending": True,
+                "plan_mode": True,
+                "is_spawned_agent": True,
+                "task_claimed": True,
+                "session_summary": "Spawned continuation UNIQUE_SPAWNED",
+                "user_profile_content": "Profile UNIQUE_SPAWNED_PROFILE",
+                "wiki_overview": "Wiki UNIQUE_SPAWNED_WIKI",
+            },
+        )
+        assert tasked.context is not None
+        assert "Wiki UNIQUE_SPAWNED_WIKI" in tasked.context
+        assert "Profile UNIQUE_SPAWNED_PROFILE" not in tasked.context
 
     @pytest.mark.asyncio
     async def test_prompt_path_skips_when_pending_false(self, db: HubDatabase) -> None:
@@ -651,6 +669,35 @@ class TestInjectWikiOverview:
 
         unseeded = await engine.evaluate(event, session_id=SESSION_ID, variables={})
         assert not (unseeded.context and "Project Wiki" in unseeded.context)
+
+    @pytest.mark.asyncio
+    async def test_taskless_spawned_agent_gets_no_wiki_block(self, db) -> None:
+        """Spawned reviewers never query the wiki; the block waits for task work (#20451)."""
+        _sync_bundled(db)
+        engine = RuleEngine(db)
+        event = HookEvent(
+            event_type=HookEventType.BEFORE_AGENT,
+            session_id=SESSION_ID,
+            source=SessionSource.CODEX,
+            timestamp=datetime.now(UTC),
+            data={"prompt": "review this plan"},
+        )
+        base = {"wiki_overview": "Totals: 22 concepts", "is_spawned_agent": True}
+
+        taskless = await engine.evaluate(event, session_id=SESSION_ID, variables=dict(base))
+        assert not (taskless.context and "Project Wiki" in taskless.context)
+
+        with_task = await engine.evaluate(
+            event, session_id=SESSION_ID, variables={**base, "task_claimed": True}
+        )
+        assert with_task.context is not None
+        assert "Project Wiki" in with_task.context
+
+        auto_task = await engine.evaluate(
+            event, session_id=SESSION_ID, variables={**base, "auto_task_ref": "#7"}
+        )
+        assert auto_task.context is not None
+        assert "Project Wiki" in auto_task.context
 
 
 # ═══════════════════════════════════════════════════════════════════════

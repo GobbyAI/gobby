@@ -373,6 +373,16 @@ class TestMemoryCaptureNudge:
         assert body.when is not None
         assert "prompt" in body.when
 
+    def test_skips_taskless_spawned_agents(self, db, manager) -> None:
+        """Spawned reviewers get daemon-composed prompts, never preferences (#20451)."""
+        _sync_bundled(db)
+        row = manager.get_by_name("memory-capture-nudge")
+        body = RuleDefinitionBody.model_validate(row.definition_json)
+        assert body.when is not None
+        assert "is_spawned_agent" in body.when
+        assert "task_claimed" in body.when
+        assert "auto_task_ref" in body.when
+
 
 # ═══════════════════════════════════════════════════════════════════════
 # clear-memory-review-on-create
