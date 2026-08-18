@@ -1,118 +1,155 @@
-## Guiding Principles
+# AGENTS.md
 
-These are enforced by hooks, rules and workflows.
+Gobby is a local-first daemon that unifies AI coding tools: session tracking and
+handoffs across Claude Code, Codex, Droid, Grok, Qwen, and AGY; an MCP proxy with
+progressive discovery; task management with dependencies and validation gates; agent
+spawning with worktree isolation; persistent memory, rules, workflows, and pipelines.
 
-1. **ALWAYS use context-aware progressive tool discovery.** Call leased known tools directly; call `get_tool_schema` directly for known unleased tools; use `list_tools` only when the tool name is unknown and `list_mcp_servers` only when the server or registry is unknown. Skill bootstrap tools are exempt. Do not try to call one step through another (e.g., don't use `call_tool` to invoke `get_tool_schema`).
-2. **NEVER create or leave monoliths.** Before editing hand-maintained production `.py`, `.ts`, `.tsx`, `.css`, `.rs`, `.js`, `.mjs`, `.cjs`, or `.sh` files, check current and projected line counts. Exactly 1,000 lines violates the ceiling. If an edit touches or would produce a file at or above the ceiling, load `decompose-monolith` and complete the decomposition inside the current claimed task and session. Loading the skill permits structural edits; every touched applicable file must be below 1,000 lines before commit, task or review completion, and turn end. Tests, documentation, generated or vendored sources, baselines, and fixtures are excluded. Deferred refactor tasks are prohibited for threshold violations.
-3. **ALWAYS create or claim a task before editing a file.** This applies to file edits only — no task needed for plan mode, research, investigation, or answering questions unless the user explicitly requests one.
-4. **Closing a leaf task is a checklist:** linked commit, no uncommitted task edits, a clean validation run visible in your session transcript, and a bounded criteria review.
-5. **NEVER close a task without a commit if there are diffs.** If you changed something, you have to commit it.
-6. **NEVER stop while you have a claimed task in progress.** Your stop hook is blocked while you have a claimed task. Task must be closed before stopping. If you claim a task, you finish a task.
-7. **Escalate only when the user explicitly needs to review your work, your agent skill/workflow/pipeline directs escalation, or you are genuinely stuck and need guidance.** Do not use escalation as a workaround for committing, closing, or completing required validation.
-8. **You found it, you fix it — in this session.** Every error, test failure,
-   lint warning, or type error you encounter is yours to fix before closing —
-   including breakage already present in committed code, no matter which task
-   or commit introduced it. Filing a task for a finding is deferral, not
-   fixing, and deferral is never yours to self-grant. The single exclusion is
-   another active session's or agent's uncommitted files in the shared
-   worktree, and it exists for exactly one reason: never destroy in-flight
-   work. It does not hand the finding off. Leave those paths untouched — do
-   not modify, format, stage, commit, or roll them back — and send the owner
-   (resolved from session/task file-attribution metadata) the exact failing
-   command, diagnostics, and affected paths via `gobby-agents:send_message`;
-   if no owner resolves, tell the user. Failures confined to those uncommitted
-   foreign paths are the only ones that do not block your close gates, and only
-   after a passing scoped rerun against owned or clean paths demonstrates that
-   confinement. If a fix is genuinely too large to land in this session, say so
-   and let the user decide — only the user can approve a deferral task.
-9. **ALWAYS use gobby-memory to record valuable memories.** You have access to a sophisticated memory system via gobby-memory through the MCP proxy. Use it to store and retrieve facts about the codebase, design decisions, and other relevant information.
-10. **NEVER be a sycophant.** Do not agree with the user just for the sake of agreement. If you disagree with the user, you *MUST* voice your concerns and provide alternative solutions.
-11. **NEVER leave options or unanswered questions in plans.** Plans are for execution, not exploration. If there are unanswered questions or ideas that need to be explored, explore them before finalizing the plan.
-12. **ALWAYS solve the whole problem with the least mechanism that solves it.** Correctness and completeness are non-negotiable — a shortcut that dodges the root cause, skips edge cases, or ships a partial fix is a cop-out, not simplicity. Among approaches that fully solve the problem, prefer the one with the least unjustified mechanism. Complexity must earn its place; so must every line of code.
-13. **ALWAYS remember: Rule templates are not rules.** Templates must be installed in the rules engine to function. Templates are enabled by default and sync to the DB on first startup. The DB is the source of truth — before telling the user a rule is disabled, check the installed version in the DB.
-14. **ALWAYS prefer gcode over grep/rg/sed/awk/nl.** gcode is an advanced code index/graph tool and is *FAR* superior to grep/rg/sed/awk/nl for code search and analysis.
-15. **NEVER guess or assume unless explicitly asked.** Only state things you *KNOW* to be true, otherwise challenge your guess or assumption through exploration, research, and/or tool use.
-16. **DO NOT CREATE BACKWARD COMPATIBILITY.** We haven't shipped 0.5.0 yet. There is no backward compatibility to maintain.
-17. **Agent depth limit of 5.** No recursive agent chains deeper than 5 levels.
-18. **ALWAYS use `gobby-agents:send_message` for direct cross-session agent communication.** Reserve `gobby-sessions:send_keys` for terminal control.
+This file is the canonical instruction set for every coding agent in this repo.
+Claude Code loads it through the `@`-import in `CLAUDE.md`; other CLIs read it
+directly. Most rules below are enforced by hooks and the rule engine — they describe
+how the system behaves so you can work with it instead of being surprised by it.
 
-## Progressive Tool Discovery Enforced by Hooks
+## Working Rules
 
-Gobby uses an MCP proxy with context-aware progressive discovery. A current-context schema lease permits direct `call_tool` use. For a known unleased tool, call `get_tool_schema` directly, then `call_tool`. Use `list_tools` only to discover an unknown tool name and `list_mcp_servers` only to inspect an unknown server or registry. `get_skill`, `list_skills`, and `search_skills` are enforcement-exempt and may be called directly.
+1. **Tool discovery.** Use context-aware progressive discovery through the MCP proxy:
+   call leased known tools directly, `get_tool_schema` first for known unleased tools,
+   `list_tools` only for unknown tool names, `list_mcp_servers` only for unknown
+   servers. Each step is its own top-level tool — never call one step through another.
+   Skill bootstrap tools (`get_skill`, `list_skills`, `search_skills`) are exempt.
+   This keeps schemas out of context until needed; the proxy validates every call.
+2. **Tasks before edits.** Create or claim a Gobby task before editing files (research,
+   plan mode, and Q&A need no task). Edits are attributed to your task and session,
+   which is what makes close gates and shared-worktree safety work.
+3. **Closing a leaf task is a checklist**: a linked commit, no uncommitted
+   task-attributed files, a clean validation run visible in your session transcript,
+   and a bounded criteria review. If you changed something, commit it — the stop hook
+   holds your turn open while a task is claimed, so close before stopping. Escalate
+   only for genuine user review, a directed escalation, or when stuck — never as a
+   workaround for committing, validating, or closing.
+4. **You found it, you fix it — in this session.** Every error, test failure, lint
+   warning, or type error you encounter is yours to fix before closing, including
+   breakage already present in committed code. Filing a task for a finding is deferral,
+   and only the user can approve a deferral. The single exclusion: **never touch
+   another session's uncommitted files in the shared worktree** — that destroys
+   in-flight work. Leave those paths alone (no edits, staging, commits, or rollbacks)
+   and send the owner (from file-attribution metadata) the failing command,
+   diagnostics, and paths via `gobby-agents:send_message`; if no owner resolves, tell
+   the user. Failures confined to those foreign paths don't block your close gates
+   once a passing scoped rerun against owned or clean paths proves the confinement.
+5. **Monolith ceiling.** Hand-maintained production `.py/.ts/.tsx/.css/.rs/.js/.mjs/.cjs/.sh`
+   files stay under 1,000 lines (exactly 1,000 violates it). Hooks block
+   threshold-crossing writes until you load `decompose-monolith`; finish the
+   decomposition inside the current task and session — deferred refactor tasks are
+   prohibited. Tests, docs, generated/vendored sources, baselines, and fixtures are
+   excluded.
+6. **Plans are decision-complete.** Resolve open questions before finalizing a plan;
+   plans are for execution, not exploration.
+7. **Least mechanism, whole problem.** Correctness and completeness first — no
+   root-cause dodges or partial fixes. Among complete solutions, pick the one with the
+   least unjustified mechanism.
+8. **Templates are not live config.** Bundled templates under
+   `src/gobby/install/shared/` sync to DB registry tables; the DB is the source of
+   truth for what's active. Check the installed row before declaring a rule enabled or
+   disabled.
+9. **Prefer `gcode`** over grep/rg/sed/awk for code search and navigation — the code
+   index returns ranked, token-cheap results, and hooks redirect raw grep anyway.
+10. **No backward compatibility.** 0.5.0 has not shipped; there is nothing to preserve.
+11. **Agent depth limit of 5** — no deeper recursive agent chains.
+12. **Cross-session messaging** goes through `gobby-agents:send_message`. Reserve
+    `gobby-sessions:send_keys` for terminal control.
 
-`list_mcp_servers`, `list_tools`, `get_tool_schema`, and `call_tool` are separate top-level tools (for example, `mcp__gobby__get_tool_schema`). Load each via ToolSearch before first use. Do NOT try to call one step through another (for example, don't use `call_tool` to invoke `get_tool_schema`).
+## Development Commands
 
-## DO NOT RUN THE FULL PYTEST SUITE
+Use `uv` for every Python operation.
 
-The repo has over 15,000 tests. Running the full suite takes over 30 minutes. Do not run the full suite unless explicitly asked to do so.
+```bash
+uv sync                          # install deps (Python 3.13+)
+uv run gobby start --verbose     # start daemon; also: stop / restart / status
+uv run gobby init                # initialize project (.gobby/)
+uv run gobby install             # install hooks for detected CLIs
+uv run ruff format src/          # format
+uv run ruff check src/           # lint
+uv run mypy src/                 # type check (repo gate is src/ only)
+uv run gobby test-types audit tests/ --baseline .gobby/test-types-baseline.json --fail-on-new
+uv run pytest tests/tasks/test_validation.py -v          # focused test file
+uv run pytest tests/workflows/ --cov=gobby --cov-report=term-missing
+uv run gobby pipelines list      # pipelines: list / run / approve / reject / import
+uv run gobby build <plan_or_task>  # opt a plan/epic/leaf into state dispatch
+```
 
-When running pytest as an agent, always prefix pytest commands with `GOBBY_TEST_PROTECT=1`.
+## Testing
 
-Pytest must be isolated from the user’s running Gobby daemon and real local daemon state. Tests that need daemon behavior must start/use an isolated test
-daemon with temporary state and ports; they must not talk to the existing user daemon.
+**Never run the full pytest suite unless explicitly asked** — it takes well over 30
+minutes. Target the relevant file or package.
 
-Daemon logs are in `~/.gobby/logs/`.
+- Prefix agent pytest runs with `GOBBY_TEST_PROTECT=1`.
+- Tests must be isolated from the user's running daemon and real local state: anything
+  needing daemon behavior starts an isolated test daemon with temporary state and
+  ports.
+- Markers: `unit`, `slow`, `integration`, `e2e`, `cli`.
+- Coverage is enforced at 80% only by CI (pushes to `main`/`0.5.0` and PRs targeting
+  them); the pre-push hook runs lint/format/type/ts/frontend checks and no pytest.
+- Daemon logs: `~/.gobby/logs/`.
 
-## Plan Mode
+## Repository Guidelines
 
-Task management MCP calls (gobby-tasks) are allowed during plan mode. Planning includes organizing work, not just designing it.
+Core code lives in `src/gobby/` (`cli/`, `servers/`, `mcp_proxy/`, `sessions/`,
+`tasks/`, `workflows/`, `agents/`, `worktrees/`, `memory/`, `storage/`). Tests mirror
+modules under `tests/`. Use `gcode repo-outline` or `gcode tree` for the live map.
 
-## Project Overview
+Python 3.13 with full type hints, `async`/`await` for I/O paths, 4-space indent,
+100-char lines (Ruff). `snake_case` modules/functions, `PascalCase` classes,
+`test_*.py` test files. Prefer small, focused modules inside existing package
+boundaries.
 
-A local-first daemon to unify your AI coding tools. Session tracking and handoffs across Claude Code, Codex, Droid, Grok, Qwen, and AGY. An MCP proxy that discovers tools without flooding context. Task management with dependencies, validation, and TDD expansion. Agent spawning and worktree orchestration. Persistent memory, extensible workflows, and hooks.
+Commits follow `[gobby-#NNNNN] <type>: <summary>` (types: `fix`, `feat`, `refactor`,
+`chore`, `docs`). PRs explain the behavioral change, reference the task, and list the
+validation performed.
 
-- **Session management** that survives restarts and context compactions
-- **Task system** with dependency graphs, TDD expansion, and validation gates
-- **MCP proxy** with progressive discovery (tools stay lightweight until needed)
-- **Rule engine** with declarative enforcement (block, set_variable, inject_context, mcp_call)
-- **On-demand workflows** for structured multi-step processes (plan-execute, TDD, etc.)
-- **Pipeline system** for deterministic automation with approval gates
-- **Agent spawning** with P2P messaging, command coordination, and worktree isolation
-- **Memory system** for persistent facts across sessions
+## Agent Task Workflow
 
-# Repository Guidelines
+Use the `gobby-tasks` MCP server for task lifecycle — never the `gobby tasks` CLI
+(operator-only) and never direct storage/SQL/REST mutations, which leave workflow
+state inconsistent.
 
-## Project Structure & Module Organization
+- `create_task` with `claim=true`, or `claim_task`, before editing.
+- Finish with `close_task(task_id, commit_sha=...)` so the commit links and the task
+  closes in one step; use `link_commit` only to attach a commit while keeping the
+  task open.
+- Hand a stage to review with `gobby-tasks-ops` tools such as
+  `submit_for_review(stage_name=...)`.
+- If `gobby-tasks` is unavailable, stop and surface that as the blocker.
 
-Core code lives in `src/gobby/`. Key areas include `cli/` for Click commands, `servers/` for HTTP/WebSocket endpoints, `mcp_proxy/` and `tools/` for tool execution, `sessions/`, `tasks/`, `workflows/`, `agents/`, `worktrees/`, `memory/`, and `storage/`. Tests live under `tests/`, usually grouped by module (`tests/tasks/`, `tests/workflows/`, `tests/memory/`). Project metadata and synced task state live in `.gobby/`.
+## Architecture Facts
 
-## Build, Test, and Development Commands
+- **Templates vs enforcement**: see `src/gobby/install/shared/CLAUDE.md` for the
+  sync/override contract (rule 8 above is the short version).
+- **Dispatch**: stage-manifest dispatch enters via `gobby build` (CLI, MCP, HTTP all
+  call `src/gobby/build/service.py`). Read `src/gobby/dispatch/CLAUDE.md` before
+  touching dispatch, build, or stage-registry code.
+- **Rust workspace** (`crates/`): `gobby-code`→`gcode`, `gobby-daemon`→`gdaemon`,
+  `gobby-hooks`→`ghook`, `gobby-wiki`→`gwiki`, shared `gobby-core`. The daemon shells
+  out to the installed `~/.gobby/bin/` binaries, so a crate change is live only after
+  rebuild and reinstall — and install via a new inode (`cp` to a dotfile, `mv -f` over
+  the name): macOS kills processes that exec an in-place-overwritten signed binary.
+  Load the `rust` skill before editing Rust; conventions live in `crates/CLAUDE.md`.
+- **Key paths**: `~/.gobby/bootstrap.yaml` (ports, bind host, PostgreSQL `database_url`,
+  owner-only 0600), `~/.gobby/logs/`, `.gobby/project.json` (project metadata),
+  `~/.gobby/backups/<project-uuid>/tasks.jsonl` (machine-local backup, never committed).
+- **Database access**: hub transaction boundary with psycopg `%s` placeholders —
+  `with self.db.transaction() as conn: conn.execute("... VALUES (%s, %s)", (a, b))`.
 
-Use `uv` for local development.
+## Design Context
 
-- `uv sync`: install runtime and dev dependencies for Python 3.13+.
-- `uv run gobby start --verbose`: start the daemon with verbose logs.
-- `uv run gobby status`: check daemon health.
-- `uv run ruff format src/`: apply formatting.
-- `uv run ruff check src/`: run lint checks.
-- `uv run mypy src/`: run strict type checking.
-- `uv run gobby test-types audit tests/ --baseline .gobby/test-types-baseline.json --fail-on-new`: ratchet Python test typing.
-- `uv run pytest tests/tasks/test_validation.py -v`: run a focused test file.
-- `uv run pytest tests/workflows/ --cov=gobby --cov-report=term-missing`: run a module with coverage.
+All design/UI/color/typography work — product UI in `web/`, the gobby.ai site, Gobby
+Pro, installer, CLI/TUI — reads `.impeccable.md` at the project root and loads the
+`impeccable` skill first. The file is the design contract (deutan-safe palette,
+WCAG 2.2 AA, per-surface rules); the skill carries the dispatch table and keeps the
+pairing alive across compaction. Update the file through the skill's `teach` mode,
+not freehand edits.
 
-## Coding Style & Naming Conventions
+## Plans
 
-Follow Python 3.13 conventions with full type hints and `async`/`await` for I/O-heavy paths. Use 4-space indentation and keep lines within Ruff’s 100-character limit. Modules and functions use `snake_case`; classes use `PascalCase`; test files follow `test_*.py`. Prefer small, focused modules in existing package boundaries rather than new top-level directories.
-
-## Testing Guidelines
-
-Pytest is the test runner, with markers including `unit`, `slow`, `integration`, `e2e`, and `cli`. Coverage below 80% fails CI, so add or update tests with code changes. Keep tests near the affected domain and use descriptive names such as `test_task_id_generation.py` or `test_worktree_merge_integration.py`. Avoid running the full suite unless necessary; target the relevant file or package first.
-
-## Commit & Pull Request Guidelines
-
-Recent history uses task-linked commits like `[gobby-#11184] fix: stop retrying transcript processing when JSONL file is missing`. Keep that pattern: `[gobby-#NNNNN] <type>: <summary>`. Typical types include `fix`, `feat`, `refactor`, and `chore`. PRs should explain the behavioral change, reference the task or issue, list validation performed, and include screenshots only for UI changes.
-
-## Agent-Specific Workflow
-
-Before editing files, create or claim a Gobby task and work under that task. For AI agents, use the `gobby-tasks` MCP server for task lifecycle operations, not the `gobby tasks` CLI and not direct storage/SQL/REST mutations. The MCP path updates workflow/session state such as claims, session links, and `task_claimed`; bypassing it can leave the repo in an inconsistent state.
-
-When working task state as an agent:
-
-- Prefer lifecycle MCP tools such as `create_task` with `claim=true`, `claim_task`, `close_task`, `reopen_task`, and `escalate_task`; use `gobby-tasks-ops` review tools such as `submit_for_review(stage_name="...")` when handing a stage to review.
-- When code changes are complete and the task is ready to finish, prefer `close_task(task_id, commit_sha="...")` so the commit is linked and the task is closed in one step.
-- Use `link_commit` only when you intentionally need to attach a commit while keeping the task open, such as handing work off for review or continuing follow-up changes later.
-- Do not claim work by setting generic `status`/`assignee` fields through `update_task`, CLI commands, database writes, or ad hoc scripts.
-- Treat `gobby tasks ...` as a human/operator interface. Use it for manual inspection only when MCP is unavailable, not for agent task lifecycle writes.
-- If the `gobby-tasks` MCP server is unavailable, stop and surface that as the blocker instead of mutating task state through another path.
-
-If you change code, ensure the resulting commit is linked to the task before it is closed; `close_task(..., commit_sha=...)` is the default path for that. If blocked, document the blocker in the task rather than bypassing the workflow.
+Read `docs/contracts/plan-coverage.md` before authoring, reviewing, or expanding any
+plan. The authoring surface is `src/gobby/install/shared/skills/plan-draft/SKILL.md`.
