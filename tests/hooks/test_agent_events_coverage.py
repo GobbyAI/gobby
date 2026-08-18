@@ -232,9 +232,9 @@ class TestHandleBeforeAgent:
         assert "## Instructions" in result.context
         assert "Think out loud" not in result.context
         assert "Show your reasoning" not in result.context
-        behavior = default_agent.instructions.split("## Behavior", 1)[1].split("##", 1)[0]
-        bullets = [line.strip() for line in behavior.splitlines() if line.strip().startswith("- ")]
-        assert bullets[0] == "- Be concise — respect the reader's attention."
+        assert default_agent.instructions is not None
+        assert "## Platform Context" in default_agent.instructions
+        assert default_agent.instructions in result.context
         assert (
             "You think hard, decide fast, and say only what matters." in default_agent.personality
         )
