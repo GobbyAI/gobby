@@ -374,13 +374,19 @@ def test_default_install_completes_required_stack_without_detected_cli(
         )
     )
     monkeypatch.setattr(install_module, "_install_required_stack", required_stack)
+    monkeypatch.setattr(install_module, "_provision_gdaemon_for_services", MagicMock())
     monkeypatch.setattr(install_module, "run_daemon_setup", MagicMock())
     monkeypatch.setattr(
         install_module, "_should_initialize_project", lambda *_args, **_kwargs: False
     )
     runtime = MagicMock()
-    runtime.require_database.side_effect = RuntimeError("test hub unavailable")
+    runtime.require_database.return_value = MagicMock()
     monkeypatch.setattr(install_module, "get_cli_runtime", lambda: runtime)
+    monkeypatch.setattr(
+        install_module,
+        "ensure_install_identity",
+        MagicMock(return_value=MagicMock(email="owner@example.com")),
+    )
     monkeypatch.setattr(
         importlib.import_module("gobby.storage.hub.runtime"),
         "runtime_hub_database",
@@ -458,7 +464,7 @@ def test_config_only_requires_git_before_provisioning(
 
     result = CliRunner().invoke(
         install_module.install,
-        ["--config-only", "--path", str(tmp_path)],
+        ["--config-only", "--path", str(tmp_path), "--no-interactive"],
     )
 
     assert result.exit_code == 1
@@ -498,12 +504,21 @@ def test_config_only_allows_non_repository_personal_workspace(
         )
     )
     monkeypatch.setattr(install_module, "_install_required_stack", required_stack)
+    monkeypatch.setattr(install_module, "_provision_gdaemon_for_services", MagicMock())
     run_setup = MagicMock()
     monkeypatch.setattr(install_module, "run_daemon_setup", run_setup)
+    runtime = MagicMock()
+    runtime.require_database.return_value = MagicMock()
+    monkeypatch.setattr(install_module, "get_cli_runtime", lambda: runtime)
+    monkeypatch.setattr(
+        install_module,
+        "ensure_install_identity",
+        MagicMock(return_value=MagicMock(email="owner@example.com")),
+    )
 
     result = CliRunner().invoke(
         install_module.install,
-        ["--config-only", "--path", str(tmp_path)],
+        ["--config-only", "--path", str(tmp_path), "--no-interactive"],
     )
 
     assert not (tmp_path / ".git").exists()

@@ -73,6 +73,7 @@ from ._install_prompts import (
 from ._install_state import empty_install_state, prepare_install_state, should_configure_section
 from .install_identity import ensure_install_identity
 from .install_setup import ensure_daemon_config, run_daemon_setup
+from .install_setup_gdaemon import GdaemonInstallError, ensure_gdaemon
 from .installers import (
     install_agy,
     install_claude,
@@ -181,6 +182,14 @@ def _provision_local_api_token(auth_store: AuthStore | None) -> None:
         return
     token = secrets.token_urlsafe(32)
     write_private_file(local_token_path(), token.encode("utf-8"))
+
+
+def _provision_gdaemon_for_services() -> None:
+    """Ensure database-backed service installers use the current schema binary."""
+    try:
+        ensure_gdaemon()
+    except (GdaemonInstallError, OSError, ValueError) as exc:
+        raise click.ClickException(f"Failed to provision gdaemon: {exc}") from exc
 
 
 def _resolve_ide_settings_consent(
@@ -576,6 +585,7 @@ def install(
     if config_result["created"]:
         click.echo(f"Created daemon config: {config_result['path']}")
     if provision_managed_services:
+        _provision_gdaemon_for_services()
         _install_required_stack(
             results,
             falkordb_password=falkordb_password,

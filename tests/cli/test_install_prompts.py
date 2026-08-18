@@ -24,11 +24,20 @@ from gobby.storage.config_mutations import ConfigPatch
 pytestmark = pytest.mark.unit
 
 
+def _invoke_install(**kwargs: Any) -> None:
+    callback = install_command.callback
+    assert callback is not None
+    callback(**kwargs)
+
+
 @pytest.fixture(autouse=True)
 def _installed_identity() -> Any:
-    with patch(
-        "gobby.cli.install.ensure_install_identity",
-        return_value=MagicMock(email="owner@example.com"),
+    with (
+        patch(
+            "gobby.cli.install.ensure_install_identity",
+            return_value=MagicMock(email="owner@example.com"),
+        ),
+        patch("gobby.cli.install._provision_gdaemon_for_services"),
     ):
         yield
 
@@ -104,7 +113,9 @@ def patched_deps() -> Any:
 
 class TestPromptHubApiKeys:
     def test_prompts_for_missing_key(
-        self, patched_deps, capsys: pytest.CaptureFixture[str]
+        self,
+        patched_deps: dict[str, MagicMock],
+        capsys: pytest.CaptureFixture[str],
     ) -> None:
         patched_deps["load"].return_value = _config_with_hubs(
             {
@@ -133,7 +144,7 @@ class TestPromptHubApiKeys:
         assert "Stored credential for skillsmp" in output
         assert "SKILLSMP_API_KEY" not in output
 
-    def test_skips_when_secret_exists(self, patched_deps) -> None:
+    def test_skips_when_secret_exists(self, patched_deps: dict[str, MagicMock]) -> None:
         patched_deps["load"].return_value = _config_with_hubs(
             {
                 "skillsmp": HubConfig(
@@ -154,7 +165,9 @@ class TestPromptHubApiKeys:
         assert result["stored"] == 0
         assert result["unresolved"] == []
 
-    def test_empty_input_is_skipped_and_marked_unresolved(self, patched_deps) -> None:
+    def test_empty_input_is_skipped_and_marked_unresolved(
+        self, patched_deps: dict[str, MagicMock]
+    ) -> None:
         patched_deps["load"].return_value = _config_with_hubs(
             {
                 "skillsmp": HubConfig(
@@ -174,7 +187,9 @@ class TestPromptHubApiKeys:
         assert result["stored"] == 0
         assert result["unresolved"] == [("skillsmp", "SKILLSMP_API_KEY")]
 
-    def test_no_interactive_reports_unresolved_without_prompting(self, patched_deps) -> None:
+    def test_no_interactive_reports_unresolved_without_prompting(
+        self, patched_deps: dict[str, MagicMock]
+    ) -> None:
         patched_deps["load"].return_value = _config_with_hubs(
             {
                 "skillsmp": HubConfig(
@@ -195,7 +210,7 @@ class TestPromptHubApiKeys:
         assert result["stored"] == 0
         assert result["skipped"] == 0
 
-    def test_handles_db_init_failure_gracefully(self, patched_deps) -> None:
+    def test_handles_db_init_failure_gracefully(self, patched_deps: dict[str, MagicMock]) -> None:
         patched_deps["load"].side_effect = RuntimeError("DB exploded")
 
         result = _prompt_hub_api_keys(no_interactive=False)
@@ -207,7 +222,9 @@ class TestPromptHubApiKeys:
             "unresolved": [],
         }
 
-    def test_uses_resolved_config_not_pydantic_defaults(self, patched_deps) -> None:
+    def test_uses_resolved_config_not_pydantic_defaults(
+        self, patched_deps: dict[str, MagicMock]
+    ) -> None:
         """The prompt iterates the user's actual hub config, not SkillsConfig()."""
         # User has a custom hub and NO default skillsmp hub.
         patched_deps["load"].return_value = _config_with_hubs(
@@ -232,7 +249,9 @@ class TestPromptHubApiKeys:
         assert patched_deps["store"].set.call_args.kwargs["name"] == "CUSTOM_HUB_KEY"
         assert result["stored"] == 1
 
-    def test_hubs_without_auth_key_name_are_skipped(self, patched_deps) -> None:
+    def test_hubs_without_auth_key_name_are_skipped(
+        self, patched_deps: dict[str, MagicMock]
+    ) -> None:
         """Hubs with auth_key_name=None are not prompted for, not counted, not unresolved."""
         patched_deps["load"].return_value = _config_with_hubs(
             {
@@ -256,7 +275,9 @@ class TestPromptHubApiKeys:
             "unresolved": [],
         }
 
-    def test_opens_runtime_hub_without_removed_path(self, patched_deps) -> None:
+    def test_opens_runtime_hub_without_removed_path(
+        self, patched_deps: dict[str, MagicMock]
+    ) -> None:
         """Prompt setup opens the active runtime hub instead of a configured PostgreSQL path."""
         config = MagicMock()
         config.database_url = "/custom/path/to.db"
@@ -273,7 +294,7 @@ class TestPromptHubApiKeys:
         }
         patched_deps["db_cls"].assert_called_once_with()
 
-    def test_uses_injected_db_and_secret_store(self, patched_deps) -> None:
+    def test_uses_injected_db_and_secret_store(self, patched_deps: dict[str, MagicMock]) -> None:
         patched_deps["load"].return_value = _config_with_hubs(
             {
                 "skillsmp": HubConfig(
@@ -431,7 +452,7 @@ class TestFalkorDBInstallPrompt:
 class TestInstallCommandSharedStores:
     def test_embedding_provider_requires_embedding_url(self, tmp_path: Path) -> None:
         with pytest.raises(click.UsageError, match="--embedding-provider requires --embedding-url"):
-            install_command.callback(
+            _invoke_install(
                 claude_flag=False,
                 grok_flag=False,
                 agy_flag=False,
@@ -464,8 +485,10 @@ class TestInstallCommandSharedStores:
         db.fetchone.return_value = None
         secret_store = MagicMock()
         config_store = MagicMock()
+        auth_store = MagicMock()
         mock_store_cls = MagicMock(return_value=secret_store)
         mock_config_cls = MagicMock(return_value=config_store)
+        mock_auth_cls = MagicMock(return_value=auth_store)
         mock_provision_token = MagicMock()
         runtime = MagicMock()
         runtime.require_database.return_value = db
@@ -487,6 +510,7 @@ class TestInstallCommandSharedStores:
                 "gobby.cli.install",
                 SecretStore=mock_store_cls,
                 ConfigStore=mock_config_cls,
+                AuthStore=mock_auth_cls,
                 _provision_local_api_token=mock_provision_token,
                 install_postgres=MagicMock(return_value={"success": True}),
             ),
@@ -502,7 +526,7 @@ class TestInstallCommandSharedStores:
             patch("gobby.cli.install._run_voice_install") as mock_voice_install,
             patch("gobby.cli.install._echo_install_summary", return_value=True) as mock_summary,
         ):
-            install_command.callback(
+            _invoke_install(
                 claude_flag=False,
                 grok_flag=False,
                 agy_flag=False,
@@ -532,7 +556,8 @@ class TestInstallCommandSharedStores:
         runtime.require_config.assert_called_once_with()
         mock_store_cls.assert_called_once_with(db)
         mock_config_cls.assert_called_once_with(db)
-        mock_provision_token.assert_called_once_with(config_store)
+        mock_auth_cls.assert_called_once_with(db)
+        mock_provision_token.assert_called_once_with(auth_store)
         assert mock_standard_install.call_args.kwargs["hook_timeout_seconds"] == 150
         assert mock_voice_install.call_args.kwargs["db"] is db
         assert mock_voice_install.call_args.kwargs["secret_store"] is secret_store
@@ -571,7 +596,7 @@ class TestInstallCommandSharedStores:
             patch("gobby.cli.install._run_install_preflight", return_value=([], [])),
             pytest.raises(RuntimeError, match="secret setup failed"),
         ):
-            install_command.callback(
+            _invoke_install(
                 claude_flag=False,
                 grok_flag=False,
                 agy_flag=False,
@@ -615,8 +640,10 @@ class TestInstallCommandSharedStores:
         db.fetchone.return_value = None
         secret_store = MagicMock()
         config_store = MagicMock()
+        auth_store = MagicMock()
         mock_store_cls = MagicMock(return_value=secret_store)
         mock_config_cls = MagicMock(return_value=config_store)
+        mock_auth_cls = MagicMock(return_value=auth_store)
         mock_provision_token = MagicMock()
         runtime = MagicMock()
         runtime.require_database.return_value = db
@@ -638,6 +665,7 @@ class TestInstallCommandSharedStores:
                 "gobby.cli.install",
                 SecretStore=mock_store_cls,
                 ConfigStore=mock_config_cls,
+                AuthStore=mock_auth_cls,
                 _provision_local_api_token=mock_provision_token,
                 install_postgres=MagicMock(return_value={"success": True}),
                 apply_managed_service_restart_policy=MagicMock(return_value={"success": True}),
@@ -671,7 +699,7 @@ class TestInstallCommandSharedStores:
             patch("gobby.cli.install._run_install_preflight", return_value=([], [])),
             patch("gobby.cli.install._maybe_start_daemon_after_install"),
         ):
-            install_command.callback(
+            _invoke_install(
                 claude_flag=False,
                 grok_flag=False,
                 agy_flag=False,
@@ -701,7 +729,8 @@ class TestInstallCommandSharedStores:
         runtime.require_config.assert_called_once_with()
         mock_store_cls.assert_called_once_with(db)
         mock_config_cls.assert_called_once_with(db)
-        mock_provision_token.assert_called_once_with(config_store)
+        mock_auth_cls.assert_called_once_with(db)
+        mock_provision_token.assert_called_once_with(auth_store)
         assert mock_embedding.call_args.kwargs["api_base_override"] == "http://lan:1234/v1"
         assert "embedding_api_key" not in mock_embedding.call_args.kwargs
         assert mock_embedding.call_args.kwargs["provider_override"] == "lmstudio"

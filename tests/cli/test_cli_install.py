@@ -116,6 +116,7 @@ def _mock_ext_services_and_prompts() -> Iterator[None]:
 
     with (
         patch("gobby.cli.install.run_daemon_setup"),
+        patch("gobby.cli.install._provision_gdaemon_for_services"),
         patch("gobby.cli.install._run_qdrant_install", side_effect=qdrant_success),
         patch("gobby.cli.install._run_falkordb_install", side_effect=falkordb_success),
         patch(
@@ -637,6 +638,30 @@ class TestInstallCommand:
         assert result.exit_code == 1
         assert "Failed to establish account identity: bootstrap unavailable" in result.output
         assert not token_path.exists()
+
+    def test_config_only_provisions_gdaemon_before_required_stack(
+        self,
+        runner: CliRunner,
+        temp_dir: Path,
+    ) -> None:
+        events: list[str] = []
+
+        with (
+            patch(
+                "gobby.cli.install._provision_gdaemon_for_services",
+                side_effect=lambda: events.append("gdaemon"),
+                create=True,
+            ),
+            patch(
+                "gobby.cli.install._install_required_stack",
+                side_effect=lambda *_args, **_kwargs: events.append("required-stack"),
+            ),
+        ):
+            with runner.isolated_filesystem(temp_dir=str(temp_dir)):
+                result = runner.invoke(cli, ["install", "--config-only", "--no-interactive"])
+
+        assert result.exit_code == 0, result.output
+        assert events == ["gdaemon", "required-stack"]
 
 
 class TestUninstallCommand:
