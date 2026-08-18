@@ -3,6 +3,7 @@
 import gzip
 import json
 import os
+from collections.abc import Callable, Iterator
 from datetime import UTC, datetime
 from pathlib import Path
 from time import time
@@ -12,7 +13,7 @@ from unittest.mock import AsyncMock, MagicMock, patch
 import pytest
 
 from gobby.sessions.gzip_seek_index import load_gzip_block_index
-from gobby.sessions.transcript_index import clear_index_cache, get_or_build_index
+from gobby.sessions.transcript_index import TranscriptIndex, clear_index_cache, get_or_build_index
 from gobby.sessions.transcript_paths import _is_recent_file, find_transcript_on_disk
 from gobby.sessions.transcript_reader import (
     TranscriptReader,
@@ -20,12 +21,13 @@ from gobby.sessions.transcript_reader import (
     clear_archive_cache,
 )
 from gobby.sessions.transcript_renderer import RenderedMessage
+from gobby.sessions.transcripts.base import RawLine
 
 LOCAL_MACHINE_ID = "21000000-0000-4000-8000-000000000001"
 
 
 # Helper to write a plain JSONL file (not gzipped)
-def _write_jsonl_file(path: Path, lines: list[dict]) -> Path:
+def _write_jsonl_file(path: Path, lines: list[dict[str, Any]]) -> Path:
     """Write JSONL lines to a plain file."""
     path.parent.mkdir(parents=True, exist_ok=True)
     with open(path, "w", encoding="utf-8") as f:
@@ -34,7 +36,7 @@ def _write_jsonl_file(path: Path, lines: list[dict]) -> Path:
     return path
 
 
-def _make_codex_message(role: str, text: str, ts: str) -> dict:
+def _make_codex_message(role: str, text: str, ts: str) -> dict[str, Any]:
     block_type = "input_text" if role == "user" else "output_text"
     return {
         "timestamp": ts,
@@ -51,7 +53,7 @@ pytestmark = pytest.mark.unit
 
 
 @pytest.fixture(autouse=True)
-def _clear_cache(monkeypatch: pytest.MonkeyPatch):
+def _clear_cache(monkeypatch: pytest.MonkeyPatch) -> Iterator[None]:
     """Clear LRU caches before/after each test."""
 
     def require_local_ownership(session: Any) -> str:
@@ -69,7 +71,7 @@ def _clear_cache(monkeypatch: pytest.MonkeyPatch):
     clear_index_cache()
 
 
-def _make_msg_dict(index: int, role: str = "assistant", content: str = "hi") -> dict:
+def _make_msg_dict(index: int, role: str = "assistant", content: str = "hi") -> dict[str, Any]:
     return {
         "session_id": "sess-1",
         "message_index": index,
@@ -172,8 +174,8 @@ def test_codex_transcript_scan_treats_external_id_as_literal(
     monkeypatch.setattr(Path, "home", lambda: tmp_path)
     day_dir = tmp_path / ".codex" / "sessions" / "2026" / "05" / "01"
     day_dir.mkdir(parents=True)
-    literal = day_dir / "session-ext[abc].jsonl"
-    wildcard_match = day_dir / "session-exta.jsonl"
+    literal = day_dir / "rollout-session-ext[abc].jsonl"
+    wildcard_match = day_dir / "rollout-session-exta.jsonl"
     literal.write_text("{}\n", encoding="utf-8")
     wildcard_match.write_text("{}\n", encoding="utf-8")
 
@@ -186,6 +188,41 @@ def test_codex_transcript_scan_treats_external_id_as_literal(
     ) == str(literal)
 
 
+def test_codex_transcript_scan_ignores_sidecars_and_non_rollout_jsonl(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    monkeypatch.setattr(Path, "home", lambda: tmp_path)
+    day_dir = tmp_path / ".codex" / "sessions" / "2026" / "05" / "01"
+    day_dir.mkdir(parents=True)
+    external_id = "ext-abc"
+    non_rollout = day_dir / f"session-{external_id}.jsonl"
+    adjacent_sidecar = day_dir / f"rollout-session-{external_id}.jsonl.gobby-index.json"
+    non_rollout.write_text("{}\n", encoding="utf-8")
+    adjacent_sidecar.write_text("{}\n", encoding="utf-8")
+
+    assert (
+        find_transcript_on_disk(
+            "codex",
+            external_id,
+            max_days=1,
+            owner_machine_id=LOCAL_MACHINE_ID,
+            local_machine_id=LOCAL_MACHINE_ID,
+        )
+        is None
+    )
+
+    rollout = day_dir / f"rollout-session-{external_id}.jsonl"
+    rollout.write_text("{}\n", encoding="utf-8")
+    assert find_transcript_on_disk(
+        "codex",
+        external_id,
+        max_days=1,
+        owner_machine_id=LOCAL_MACHINE_ID,
+        local_machine_id=LOCAL_MACHINE_ID,
+    ) == str(rollout)
+
+
 def test_is_recent_file_rejects_non_positive_max_days(tmp_path: Path) -> None:
     target = tmp_path / "session.jsonl"
     target.write_text("{}\n", encoding="utf-8")
@@ -194,7 +231,7 @@ def test_is_recent_file_rejects_non_positive_max_days(tmp_path: Path) -> None:
         _is_recent_file(target, 0)
 
 
-def _write_gzip_archive(archive_dir: Path, external_id: str, lines: list[dict]) -> Path:
+def _write_gzip_archive(archive_dir: Path, external_id: str, lines: list[dict[str, Any]]) -> Path:
     """Write JSONL lines to a gzip archive."""
     archive_dir.mkdir(parents=True, exist_ok=True)
     path = archive_dir / f"{external_id}.jsonl.gz"
@@ -208,7 +245,7 @@ class TestTranscriptReaderGzipFallback:
     """TranscriptReader falls back to gzip archive when JSONL is absent."""
 
     @pytest.mark.asyncio
-    async def test_falls_back_to_gzip(self, tmp_path: Path):
+    async def test_falls_back_to_gzip(self, tmp_path: Path) -> None:
         archive_dir = tmp_path / "archives"
         external_id = "ext-abc123"
 
@@ -237,7 +274,7 @@ class TestTranscriptReaderGzipFallback:
             assert msg["session_id"] == "sess-1"
 
     @pytest.mark.asyncio
-    async def test_count_falls_back_to_gzip(self, tmp_path: Path):
+    async def test_count_falls_back_to_gzip(self, tmp_path: Path) -> None:
         archive_dir = tmp_path / "archives"
         external_id = "ext-count"
 
@@ -264,7 +301,7 @@ class TestTranscriptReaderGzipFallback:
         assert count > 0
 
     @pytest.mark.asyncio
-    async def test_returns_empty_when_no_archive(self, tmp_path: Path):
+    async def test_returns_empty_when_no_archive(self, tmp_path: Path) -> None:
         archive_dir = tmp_path / "empty-archives"
         archive_dir.mkdir()
 
@@ -281,7 +318,7 @@ class TestTranscriptReaderGzipFallback:
         assert result == []
 
     @pytest.mark.asyncio
-    async def test_returns_empty_when_no_external_id(self):
+    async def test_returns_empty_when_no_external_id(self) -> None:
         session = MagicMock()
         session.external_id = None
         session.transcript_path = None
@@ -294,7 +331,7 @@ class TestTranscriptReaderGzipFallback:
         assert result == []
 
     @pytest.mark.asyncio
-    async def test_returns_empty_when_session_not_found(self):
+    async def test_returns_empty_when_session_not_found(self) -> None:
         session_manager = MagicMock()
         session_manager.get.return_value = None
 
@@ -303,7 +340,7 @@ class TestTranscriptReaderGzipFallback:
         assert result == []
 
     @pytest.mark.asyncio
-    async def test_role_filter_applied(self, tmp_path: Path):
+    async def test_role_filter_applied(self, tmp_path: Path) -> None:
         archive_dir = tmp_path / "archives"
         external_id = "ext-filter"
 
@@ -331,7 +368,7 @@ class TestTranscriptReaderGzipFallback:
             assert msg["role"] == "user"
 
     @pytest.mark.asyncio
-    async def test_pagination_applied(self, tmp_path: Path):
+    async def test_pagination_applied(self, tmp_path: Path) -> None:
         archive_dir = tmp_path / "archives"
         external_id = "ext-page"
 
@@ -387,7 +424,7 @@ class TestTranscriptReaderJsonlFallback:
     """TranscriptReader reads from live JSONL when available."""
 
     @pytest.mark.asyncio
-    async def test_falls_back_to_jsonl(self, tmp_path: Path):
+    async def test_falls_back_to_jsonl(self, tmp_path: Path) -> None:
         transcript_path = tmp_path / "transcript.jsonl"
         lines = [
             {"type": "user", "message": {"role": "user", "content": "hello"}},
@@ -417,7 +454,7 @@ class TestTranscriptReaderJsonlFallback:
             assert msg["session_id"] == "sess-1"
 
     @pytest.mark.asyncio
-    async def test_count_falls_back_to_jsonl(self, tmp_path: Path):
+    async def test_count_falls_back_to_jsonl(self, tmp_path: Path) -> None:
         transcript_path = tmp_path / "transcript.jsonl"
         lines = [
             {"type": "user", "message": {"role": "user", "content": "hello"}},
@@ -445,7 +482,7 @@ class TestTranscriptReaderJsonlFallback:
         assert count > 0
 
     @pytest.mark.asyncio
-    async def test_returns_empty_when_no_jsonl(self, tmp_path: Path):
+    async def test_returns_empty_when_no_jsonl(self, tmp_path: Path) -> None:
         session = MagicMock()
         session.external_id = "no-archive"
         session.source = "claude"
@@ -463,7 +500,7 @@ class TestTranscriptReaderJsonlFallback:
         assert result == []
 
     @pytest.mark.asyncio
-    async def test_role_filter_applied(self, tmp_path: Path):
+    async def test_role_filter_applied(self, tmp_path: Path) -> None:
         transcript_path = tmp_path / "transcript.jsonl"
         lines = [
             {"type": "user", "message": {"role": "user", "content": "hello"}},
@@ -492,7 +529,7 @@ class TestTranscriptReaderJsonlFallback:
             assert msg["role"] == "user"
 
     @pytest.mark.asyncio
-    async def test_pagination_applied(self, tmp_path: Path):
+    async def test_pagination_applied(self, tmp_path: Path) -> None:
         transcript_path = tmp_path / "transcript.jsonl"
         lines = [
             {"type": "user", "message": {"role": "user", "content": f"msg {i}"}} for i in range(10)
@@ -517,7 +554,7 @@ class TestTranscriptReaderRendered:
     """Tests for the get_rendered_messages method."""
 
     @pytest.mark.asyncio
-    async def test_get_rendered_messages_jsonl(self, tmp_path: Path):
+    async def test_get_rendered_messages_jsonl(self, tmp_path: Path) -> None:
         transcript_path = tmp_path / "transcript.jsonl"
         lines = [
             {"type": "user", "message": {"role": "user", "content": "hello"}},
@@ -572,7 +609,7 @@ class TestTranscriptReaderRendered:
         assert [message.content for message in result] == ["before", "after"]
 
     @pytest.mark.asyncio
-    async def test_get_rendered_messages_gzip(self, tmp_path: Path):
+    async def test_get_rendered_messages_gzip(self, tmp_path: Path) -> None:
         archive_dir = tmp_path / "archives"
         external_id = "ext-123"
         lines = [
@@ -600,7 +637,7 @@ class TestTranscriptReaderRendered:
         assert isinstance(result[0], RenderedMessage)
 
     @pytest.mark.asyncio
-    async def test_get_rendered_messages_pagination(self, tmp_path: Path):
+    async def test_get_rendered_messages_pagination(self, tmp_path: Path) -> None:
         transcript_path = tmp_path / "transcript.jsonl"
         lines = []
         for i in range(10):
@@ -681,7 +718,7 @@ class TestTranscriptReaderRendered:
         assert result == []
 
     @pytest.mark.asyncio
-    async def test_get_rendered_messages_empty_session(self):
+    async def test_get_rendered_messages_empty_session(self) -> None:
         session_manager = MagicMock()
         session_manager.get.return_value = None
 
@@ -690,7 +727,7 @@ class TestTranscriptReaderRendered:
         assert result == []
 
     @pytest.mark.asyncio
-    async def test_sniffs_codex_source_from_mismatched_live_jsonl(self, tmp_path: Path):
+    async def test_sniffs_codex_source_from_mismatched_live_jsonl(self, tmp_path: Path) -> None:
         transcript_path = tmp_path / "rollout-2026-04-13T10-00-00Z-ext-abc.jsonl"
         lines = [
             _make_codex_message("user", "hello from codex", "2026-04-13T10:00:00Z"),
@@ -717,7 +754,7 @@ class TestTranscriptReaderRendered:
         assert count == 2
 
     @pytest.mark.asyncio
-    async def test_sniffs_codex_source_from_mismatched_archive(self, tmp_path: Path):
+    async def test_sniffs_codex_source_from_mismatched_archive(self, tmp_path: Path) -> None:
         archive_dir = tmp_path / "archives"
         external_id = "ext-codex-archive"
         lines = [
@@ -745,7 +782,7 @@ class TestTranscriptReaderRendered:
         assert count == 2
 
     @pytest.mark.asyncio
-    async def test_rederives_qwen_transcript_from_projects_layout(self, tmp_path: Path):
+    async def test_rederives_qwen_transcript_from_projects_layout(self, tmp_path: Path) -> None:
         external_id = "ext-qwen-123"
         transcript_path = (
             tmp_path / ".qwen" / "projects" / "project-slug" / "chats" / f"{external_id}.jsonl"
@@ -801,7 +838,9 @@ class TestTranscriptReaderRendered:
         session_manager = MagicMock()
         session_manager.get.return_value = session
 
-        async def run_in_thread(func, *args, **kwargs):
+        async def run_in_thread(
+            func: Callable[..., object], *args: object, **kwargs: object
+        ) -> object:
             return func(*args, **kwargs)
 
         to_thread = AsyncMock(side_effect=run_in_thread)
@@ -837,7 +876,7 @@ class TestTranscriptReaderRendered:
         assert to_thread.await_args_list[1].kwargs == {"transcript_path": "/tmp/derived.jsonl"}
 
     @pytest.mark.asyncio
-    async def test_reports_unparseable_transcript_status(self, tmp_path: Path):
+    async def test_reports_unparseable_transcript_status(self, tmp_path: Path) -> None:
         transcript_path = tmp_path / "mystery.jsonl"
         _write_jsonl_file(
             transcript_path,
@@ -958,11 +997,13 @@ class TestTranscriptReaderWindowed:
 
         original = reader_module._iter_jsonl_raw_lines_from
 
-        def capture_start(path: str, start_byte: int, start_line_no: int, size: int):
+        def capture_start(
+            path: str, start_byte: int, start_line_no: int, size: int
+        ) -> Iterator[RawLine]:
             starts.append((start_byte, start_line_no))
             return original(path, start_byte, start_line_no, size)
 
-        def fail_streaming_fallback(*args, **kwargs):
+        def fail_streaming_fallback(*_args: object, **_kwargs: object) -> None:
             raise AssertionError("windowed flat read should not use prefix streaming fallback")
 
         monkeypatch.setattr(reader_module, "_iter_jsonl_raw_lines_from", capture_start)
@@ -1057,7 +1098,7 @@ class TestTranscriptReaderWindowed:
         persisted_modes: list[str] = []
         original_persist = transcript_index_sidecar.persist_index_sidecar
 
-        def record_persist(path: str, index) -> None:
+        def record_persist(path: str, index: TranscriptIndex) -> None:
             persisted_modes.append(index.seek_mode)
             original_persist(path, index)
 
