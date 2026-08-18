@@ -391,30 +391,73 @@ def _split_contributors(text: str, contributor_sizes: Mapping[str, int]) -> list
     return parts if cursor == len(text) else None
 
 
+def _overflow_breadcrumb(omitted: list[str], result_id: str | None) -> str:
+    names = ",".join(omitted)
+    if result_id:
+        return f"omitted contributors=[{names}]; get_tool_result result_id={result_id}"
+    return f"omitted contributors=[{names}]"
+
+
+def _render_contributors(
+    kept: list[tuple[str, str]],
+    omitted: list[str],
+    result_id: str | None,
+) -> str:
+    breadcrumb = _overflow_breadcrumb(omitted, result_id) if omitted or result_id else ""
+    if not kept:
+        return breadcrumb
+    body = "\n\n".join(part for _, part in kept)
+    if not breadcrumb:
+        return body
+    return f"{body}\n\n{breadcrumb}"
+
+
 def _truncate_contributors(
     text: str,
     contributor_sizes: Mapping[str, int],
     *,
     limit: int,
+    result_id: str | None = None,
 ) -> str | None:
     parts = _split_contributors(text, contributor_sizes)
     if not parts:
         return None
-    marker = "\n... [truncated]"
-    separator_budget = 2 * (len(parts) - 1)
-    content_budget = limit - len(marker) - separator_budget
-    if content_budget < 0:
+    kept = list(zip(contributor_sizes.keys(), parts, strict=True))
+    omitted: list[str] = []
+    while True:
+        candidate = _render_contributors(kept, omitted, result_id)
+        if len(candidate) <= limit:
+            return candidate
+        if not kept:
+            return candidate[:limit] if candidate else ""
+        index = max(range(len(kept)), key=lambda i: len(kept[i][1]))
+        name, _part = kept.pop(index)
+        omitted.append(name)
+
+
+def _persist_additional_context(
+    text: str,
+    *,
+    store: object | None,
+    project_id: str | None,
+    session_id: str | None,
+) -> str | None:
+    save = getattr(store, "save", None)
+    if store is None or not callable(save) or not project_id or not session_id:
         return None
-    allocations = [len(part) for part in parts]
-    allocated = sum(allocations)
-    while allocated > content_budget:
-        index = max(range(len(allocations)), key=allocations.__getitem__)
-        reduction = min(allocations[index], allocated - content_budget)
-        allocations[index] -= reduction
-        allocated -= reduction
-    return (
-        "\n\n".join(part[:budget] for part, budget in zip(parts, allocations, strict=True)) + marker
-    )
+    try:
+        result_id = save(
+            project_id=project_id,
+            session_id=session_id,
+            server_name="gobby-context",
+            tool_name="additionalContext",
+            content=text,
+            content_kind="text",
+            total_chars=len(text),
+        )
+    except Exception:
+        return None
+    return result_id if isinstance(result_id, str) and result_id else None
 
 
 def truncate_additional_context(
@@ -423,13 +466,14 @@ def truncate_additional_context(
     contributor_sizes: Mapping[str, int] | None = None,
     logger: logging.Logger | None = None,
     limit: int | None = None,
+    session_id: str | None = None,
+    project_id: str | None = None,
+    store: object | None = None,
 ) -> str:
-    """Truncate text to fit within the additionalContext ship limit.
+    """Fit additionalContext to the ship limit without prefix-slicing bodies.
 
-    Truncation only — no compression, no mutation. Contributors (skills,
-    memory, inject_context effects, metadata lines) are expected to emit
-    payloads that fit within the aggregate limit; this function is the
-    final safety net.
+    Drops whole contributors, largest first. Persists the original aggregate
+    when session and project exist and a store is provided.
     """
     ship_limit = ADDITIONAL_CONTEXT_LIMIT if limit is None else limit
     if len(text) <= ship_limit:
@@ -441,10 +485,20 @@ def truncate_additional_context(
             ship_limit,
             dict(contributor_sizes or {}),
         )
+    result_id = _persist_additional_context(
+        text,
+        store=store,
+        project_id=project_id,
+        session_id=session_id,
+    )
     if contributor_sizes:
-        truncated = _truncate_contributors(text, contributor_sizes, limit=ship_limit)
+        truncated = _truncate_contributors(
+            text,
+            contributor_sizes,
+            limit=ship_limit,
+            result_id=result_id,
+        )
         if truncated is not None:
             return truncated
-    marker = "\n... [truncated]"
-    keep = max(0, ship_limit - len(marker))
-    return text[:keep] + marker
+    breadcrumb = _overflow_breadcrumb(["aggregate"], result_id)
+    return breadcrumb if len(breadcrumb) <= ship_limit else breadcrumb[:ship_limit]

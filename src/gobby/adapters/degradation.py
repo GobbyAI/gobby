@@ -100,8 +100,11 @@ def truncate_context_for_adapter(
     destination_channel: ContextChannel | str,
     contributor_sizes: Mapping[str, int] | None = None,
     event_logger: logging.Logger | None = None,
+    session_id: str | None = None,
+    project_id: str | None = None,
+    store: object | None = None,
 ) -> str:
-    """Truncate context and record telemetry if the adapter must shorten it."""
+    """Bound context and record telemetry if the adapter must shorten it."""
     ship_limit = additional_context_limit_for(provider)
     if len(text) > ship_limit:
         record_adapter_degradation(
@@ -118,4 +121,7 @@ def truncate_context_for_adapter(
         contributor_sizes=contributor_sizes,
         logger=event_logger,
         limit=ship_limit,
+        session_id=session_id,
+        project_id=project_id,
+        store=store,
     )

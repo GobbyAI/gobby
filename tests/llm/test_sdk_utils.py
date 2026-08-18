@@ -1,7 +1,6 @@
 """Tests for shared SDK utilities in gobby.llm.sdk_utils."""
 
 import logging
-import re
 from types import SimpleNamespace
 
 import pytest
@@ -81,15 +80,13 @@ class TestTruncateAdditionalContext:
         text = "x" * ADDITIONAL_CONTEXT_LIMIT
         assert truncate_additional_context(text) == text
 
-    def test_over_limit_truncated(self) -> None:
-        text = "x" * (ADDITIONAL_CONTEXT_LIMIT + 100)
+    def test_over_limit_without_contributors_is_breadcrumb_only(self) -> None:
+        unique_head = "UNIQUE_AC_HEAD_7f3a9c"
+        text = unique_head + "x" * (ADDITIONAL_CONTEXT_LIMIT + 100)
         result = truncate_additional_context(text)
-        assert len(result) == ADDITIONAL_CONTEXT_LIMIT
-
-    def test_over_limit_appends_marker(self) -> None:
-        text = "x" * (ADDITIONAL_CONTEXT_LIMIT + 100)
-        result = truncate_additional_context(text)
-        assert result.endswith("\n... [truncated]")
+        assert unique_head not in result
+        assert result.startswith("omitted contributors=[aggregate]")
+        assert len(result) <= ADDITIONAL_CONTEXT_LIMIT
 
     def test_over_limit_logs_warning_with_contributor_sizes(
         self, caplog: pytest.LogCaptureFixture
@@ -108,8 +105,8 @@ class TestTruncateAdditionalContext:
         assert f"aggregate_len={len(text)}" in caplog.text
         assert "contributors={'skills': 6000, 'metadata': 4050}" in caplog.text
 
-    def test_over_limit_uses_contributor_sizes_to_preserve_small_parts(self) -> None:
-        large_context = "x" * (ADDITIONAL_CONTEXT_LIMIT + 200)
+    def test_over_limit_drops_largest_contributor_whole(self) -> None:
+        large_context = "UNIQUE_LARGE_HEAD_7f3a9c" + "x" * (ADDITIONAL_CONTEXT_LIMIT + 200)
         metadata = "session metadata survives"
         text = f"{large_context}\n\n{metadata}"
 
@@ -121,9 +118,45 @@ class TestTruncateAdditionalContext:
             },
         )
 
-        assert len(result) == ADDITIONAL_CONTEXT_LIMIT
+        assert len(result) <= ADDITIONAL_CONTEXT_LIMIT
         assert metadata in result
-        assert result.endswith("\n... [truncated]")
+        assert "UNIQUE_LARGE_HEAD_7f3a9c" not in result
+        assert "omitted contributors=[response.context]" in result
+        assert result.endswith("session metadata survives") or "metadata" in result
+
+    def test_overflow_persists_and_names_get_tool_result(self) -> None:
+        from unittest.mock import MagicMock
+
+        store = MagicMock()
+        store.save.return_value = "result-ac-1"
+        unique_head = "UNIQUE_PERSIST_HEAD_7f3a9c"
+        text = unique_head + "x" * (ADDITIONAL_CONTEXT_LIMIT + 50)
+        result = truncate_additional_context(
+            text,
+            session_id="session-1",
+            project_id="project-1",
+            store=store,
+        )
+        store.save.assert_called_once()
+        assert store.save.call_args.kwargs["content"] == text
+        assert store.save.call_args.kwargs["total_chars"] == len(text)
+        assert unique_head not in result
+        assert "get_tool_result result_id=result-ac-1" in result
+
+    def test_breadcrumb_only_when_no_contributor_fits_whole(self) -> None:
+        unique_a = "UNIQUE_A_HEAD_7f3a9c" + "a" * 400
+        unique_b = "UNIQUE_B_HEAD_7f3a9c" + "b" * 400
+        text = f"{unique_a}\n\n{unique_b}"
+        result = truncate_additional_context(
+            text,
+            contributor_sizes={"alpha": len(unique_a), "beta": len(unique_b)},
+            limit=80,
+        )
+        assert unique_a not in result
+        assert unique_b not in result
+        assert result.startswith("omitted contributors=")
+        assert "alpha" in result
+        assert "beta" in result
 
     def test_empty_string(self) -> None:
         assert truncate_additional_context("") == ""
@@ -203,18 +236,14 @@ class TestMarkdownSectionBudget:
         assert [section.order for section in sections] == [0, 1, 2]
         assert "".join(section.text for section in sections) == text
 
-    def test_headingless_handoff_matches_previous_head_cut_bytes(self) -> None:
-        summary = "# Summary\n\n" + ("paragraph contents.\n\n" * 600)
-        parent = SimpleNamespace(seq_num=42)
-        result = _bound_handoff_summary(summary, parent)
-        breadcrumb_start = result.index("> ⚠️")
-        breadcrumb = result[breadcrumb_start:]
-
-        assert result == head_with_breadcrumb(
-            summary,
-            budget=HANDOFF_SUMMARY_INJECT_BUDGET,
-            breadcrumb=breadcrumb,
-        )
+    def test_headingless_handoff_is_pointer_only(self) -> None:
+        unique_head = "UNIQUE_HEADLESS_HEAD_7f3a9c"
+        summary = f"# Summary\n\n{unique_head}\n\n" + ("paragraph contents.\n\n" * 600)
+        result = _bound_handoff_summary(summary, SimpleNamespace(seq_num=42))
+        assert unique_head not in result
+        assert "get_handoff_context" in result
+        assert "#42" in result
+        assert len(result) <= HANDOFF_SUMMARY_INJECT_BUDGET
 
     def test_mandatory_sections_survive_combined_overflow(self) -> None:
         summary = "## Next Steps\n" + ("N" * 8_000) + "\n## Current State\n" + ("C" * 8_000)
@@ -300,8 +329,9 @@ class TestMarkdownSectionBudget:
         result = _bound_handoff_summary(summary, SimpleNamespace(seq_num=42))
 
         assert len(result) <= HANDOFF_SUMMARY_INJECT_BUDGET
-        assert "## Next Steps\nDo the next exact thing.\n" in result
-        assert "## Current State\nThe current state is known." in result
+        assert "Do the next exact thing" not in result
+        assert "The current state is known" not in result
+        assert "get_handoff_context" in result
 
     def test_pathological_titles_keep_bounded_handoff_breadcrumb(self) -> None:
         long_sections = "".join(f"## {str(index) * 5_000}\nbody\n" for index in range(20))
@@ -314,11 +344,9 @@ class TestMarkdownSectionBudget:
         result = _bound_handoff_summary(summary, SimpleNamespace(seq_num=42))
 
         assert len(result) <= HANDOFF_SUMMARY_INJECT_BUDGET
-        assert "## Next Steps\nMandatory next step.\n" in result
-        assert "## Current State\nMandatory current state." in result
-        omission_line = next(line for line in result.splitlines() if line.startswith("Omitted"))
-        assert len(omission_line) < 600
-        assert re.search(r"\+[1-9]\d* more", omission_line)
+        assert "Mandatory next step" not in result
+        assert "Mandatory current state" not in result
+        assert "get_handoff_context" in result
 
     def test_mandatory_only_handoff_budgets_actual_breadcrumb(self) -> None:
         summary = "## Next Steps\n" + ("N" * 8_000) + "\n## Current State\n" + ("C" * 8_000)
@@ -326,9 +354,9 @@ class TestMarkdownSectionBudget:
         result = _bound_handoff_summary(summary, SimpleNamespace(seq_num=42))
 
         assert len(result) <= HANDOFF_SUMMARY_INJECT_BUDGET
-        assert "## Next Steps" in result
-        assert "## Current State" in result
-        assert "Omitted sections: Next Steps, Current State" in result
+        assert "## Next Steps" not in result
+        assert "## Current State" not in result
+        assert "get_handoff_context" in result
 
     def test_oversized_next_steps_alone_keeps_heading_and_marker(self) -> None:
         summary = "## Next Steps\n" + ("N" * 10_000)
@@ -336,6 +364,6 @@ class TestMarkdownSectionBudget:
         result = _bound_handoff_summary(summary, SimpleNamespace(seq_num=42))
 
         assert len(result) <= HANDOFF_SUMMARY_INJECT_BUDGET
-        assert result.startswith("## Next Steps\n")
-        assert "[section trimmed]" in result
-        assert "Omitted sections: Next Steps" in result
+        assert not result.startswith("## Next Steps\n")
+        assert "N" * 40 not in result
+        assert "get_handoff_context" in result

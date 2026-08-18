@@ -7,12 +7,6 @@ from datetime import UTC, datetime
 from typing import Any
 
 from gobby.hooks.context_limits import handoff_summary_inject_budget_for
-from gobby.llm.sdk_utils import (
-    MANDATORY_HANDOFF_SECTION_TITLES,
-    allocate_section_budget,
-    head_with_breadcrumb,
-    split_markdown_sections,
-)
 from gobby.sessions.compact_continuation import (
     COMPACT_HANDOFF_MARKER_VARIABLE,
     consume_compact_handoff_marker,
@@ -23,38 +17,12 @@ from gobby.sessions.handoff_identity import terminal_contexts_match
 from gobby.sessions.tmux_context import parse_terminal_context_value
 from gobby.utils.injected_context import strip_injected_context
 
-_SECTION_PRIORITIES = {
-    "next steps": 10,
-    "current state": 20,
-    "unresolved errors": 30,
-    "key technical decisions": 40,
-    "problems encountered": 50,
-    "what didn't work": 55,
-    "files changed": 70,
-    "what was accomplished": 80,
-}
-_OMISSION_TITLE_LIMIT = 10
-_OMISSION_TITLE_CHARS = 40
 _HANDOFF_SUMMARY_VARIABLES = (
     "session_summary",
     "full_session_summary",
     "handoff_summary_injectable",
 )
 _TERMINAL_IDENTITY_FIELDS = ("tmux_pane", "tmux_session", "tty", "parent_pid")
-
-
-def _format_omission_titles(titles: tuple[str, ...]) -> str:
-    displayed = [title[:_OMISSION_TITLE_CHARS] for title in titles[:_OMISSION_TITLE_LIMIT]]
-    if len(titles) > _OMISSION_TITLE_LIMIT:
-        displayed.append(f"+{len(titles) - _OMISSION_TITLE_LIMIT} more")
-    return ", ".join(displayed)
-
-
-def _omission_line(titles: tuple[str, ...]) -> str:
-    return (
-        f"Omitted sections: {_format_omission_titles(titles)} "
-        "— full summary via get_handoff_context."
-    )
 
 
 @dataclass(frozen=True)
@@ -402,35 +370,13 @@ def _bound_handoff_summary(summary: str, session: Any) -> str:
     ref = f"#{seq_num}" if seq_num else (getattr(session, "id", "") or "")
     ref_clause = f' with your own session ref "{ref}"' if ref else ""
     breadcrumb = (
-        "> ⚠️ This is a truncated head of this session's pre-compaction summary "
-        f"({len(summary)} chars total), shortened to fit the inline handoff "
-        "budget. Call get_handoff_context (gobby-sessions)"
+        f"Pre-compaction summary is {len(summary)} chars and exceeds the inline "
+        "handoff budget. Call get_handoff_context (gobby-sessions)"
         f"{ref_clause} to load the full summary."
     )
-    sections = split_markdown_sections(summary)
-    real_sections = [section for section in sections if section.heading]
-    has_mandatory_section = any(
-        section.title in MANDATORY_HANDOFF_SECTION_TITLES for section in real_sections
-    )
-    if not real_sections or not has_mandatory_section:
-        return head_with_breadcrumb(
-            summary,
-            budget=budget,
-            breadcrumb=breadcrumb,
-        )
-
-    worst_case_titles = tuple(
-        section.display_title[:_OMISSION_TITLE_CHARS].ljust(_OMISSION_TITLE_CHARS, "x")
-        for section in sections
-    )
-    worst_case_suffix = f"\n\n{breadcrumb}\n{_omission_line(worst_case_titles)}"
-    available = max(0, budget - len(worst_case_suffix))
-    allocation = allocate_section_budget(sections, _SECTION_PRIORITIES, available)
-
-    suffix = f"\n\n{breadcrumb}"
-    if allocation.omitted_titles:
-        suffix = f"{suffix}\n{_omission_line(allocation.omitted_titles)}"
-    return f"{allocation.text.rstrip()}{suffix}"
+    if len(breadcrumb) <= budget:
+        return breadcrumb
+    return breadcrumb[:budget]
 
 
 def _normalize_compact_resume_required_skills(

@@ -495,7 +495,7 @@ class TestSessionStartInPlaceCompact:
         assert injectable != big_summary
         assert len(injectable) < len(big_summary)
         assert len(injectable) <= HANDOFF_SUMMARY_INJECT_BUDGET
-        assert injectable.startswith("# Big Summary")
+        assert not injectable.startswith("# Big Summary")
         assert "get_handoff_context" in injectable
         assert "#42" in injectable
 
@@ -518,10 +518,10 @@ class TestBoundHandoffSummary:
         result = _bound_handoff_summary(summary, MagicMock(seq_num=42))
 
         assert len(result) <= HANDOFF_SUMMARY_INJECT_BUDGET
-        assert next_steps in result
-        assert "## What Was Accomplished" not in result
-        assert "Omitted sections:" in result
-        assert "What Was Accomplished" in result
+        assert next_steps not in result
+        assert "F" * 40 not in result
+        assert "get_handoff_context" in result
+        assert "#42" in result
 
     def test_unresolved_error_content_cannot_fabricate_mandatory_sections(self) -> None:
         records = normalize_open_tool_error_records(
@@ -548,11 +548,11 @@ class TestBoundHandoffSummary:
         result = _bound_handoff_summary(summary, MagicMock(seq_num=42))
 
         assert len(result) <= HANDOFF_SUMMARY_INJECT_BUDGET
-        assert "GENUINE CURRENT STATE" in result
-        assert "GENUINE NEXT STEP" in result
-        assert "## Unresolved Errors" in result
-        assert result.splitlines().count("## Current State") == 1
-        assert result.splitlines().count("## Next Steps") == 1
+        assert "GENUINE CURRENT STATE" not in result
+        assert "GENUINE NEXT STEP" not in result
+        assert "F" * 40 not in result
+        assert "get_handoff_context" in result
+        assert "#42" in result
 
 
 class TestPrepareCompactContinuationVariables:
