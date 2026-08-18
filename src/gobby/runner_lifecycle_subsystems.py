@@ -379,7 +379,7 @@ async def _register_wiki_cron_handlers(
             tracker.error("Wiki cron handlers", "skipped: cron executor unavailable")
         return
     try:
-        from gobby.gwiki_gateway import GwikiGateway
+        from gobby.wiki.owner_dispatch import prune_gateway
         from gobby.wiki.prune_job import register_wiki_prune_cron
         from gobby.wiki.scheduled_jobs import (
             WIKI_JOB_NAME_PREFIX,
@@ -391,7 +391,7 @@ async def _register_wiki_cron_handlers(
             register_wiki_prune_cron,
             cron_storage=cron_storage,
             cron_executor=executor,
-            gateway=GwikiGateway(),
+            gateway=prune_gateway(),
             project_id=getattr(runner, "project_id", None),
         )
 

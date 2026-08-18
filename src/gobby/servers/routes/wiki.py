@@ -4,10 +4,11 @@ import asyncio
 import tempfile
 from collections.abc import Awaitable, Callable, Sequence
 from pathlib import Path
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Any, cast
 
-from fastapi import APIRouter, Body, File, HTTPException, Query, UploadFile
+from fastapi import APIRouter, Body, HTTPException, Query, Request, UploadFile
 
+from gobby.files_home_http import is_remote_files_mode
 from gobby.gwiki_gateway import (
     GENERATION_GWIKI_TIMEOUT_SECONDS,
     INTERACTIVE_GWIKI_TIMEOUT_SECONDS,
@@ -24,6 +25,11 @@ from gobby.servers.chat_attachment_limits import (
 )
 from gobby.servers.upload_limits import ensure_disk_space
 from gobby.wiki import WikiUpdateCoordinator
+from gobby.wiki.owner_dispatch import (
+    as_json_object,
+    maybe_proxy_owner_request,
+    proxy_owner_request,
+)
 from gobby.wiki.scope_resolution import (
     ResolvedWikiScope,
     WikiScopeResolutionError,
@@ -46,9 +52,13 @@ def create_wiki_router(server: HTTPServer) -> APIRouter:
 
     @router.get("/status")
     async def status(
+        request: Request,
         project: str | None = Query(None),
         topic: str | None = Query(None),
     ) -> dict[str, Any]:
+        proxied = await maybe_proxy_owner_request(request, project=project, topic=topic)
+        if proxied is not None:
+            return as_json_object(proxied)
         resolved = await _resolve_scope(server, project, topic)
         return await collect_wiki_status(
             gateway=_gateway_from_scope(resolved),
@@ -57,13 +67,15 @@ def create_wiki_router(server: HTTPServer) -> APIRouter:
 
     @router.post("/index")
     async def index(
+        request: Request,
         project: str | None = Query(None),
         topic: str | None = Query(None),
     ) -> dict[str, Any]:
-        return await _read(server, project, topic, lambda gateway: gateway.index())
+        return await _read(server, request, project, topic, lambda gateway: gateway.index())
 
     @router.get("/search")
     async def search(
+        request: Request,
         q: str | None = Query(None),
         query: str | None = Query(None),
         limit: int | None = Query(None),
@@ -73,6 +85,7 @@ def create_wiki_router(server: HTTPServer) -> APIRouter:
         search_query = _one_query(q, query)
         return await _read(
             server,
+            request,
             project,
             topic,
             lambda gateway: gateway.search(search_query, limit=limit),
@@ -80,6 +93,7 @@ def create_wiki_router(server: HTTPServer) -> APIRouter:
 
     @router.get("/read")
     async def read(
+        request: Request,
         path: str | None = Query(None),
         title: str | None = Query(None),
         project: str | None = Query(None),
@@ -89,6 +103,7 @@ def create_wiki_router(server: HTTPServer) -> APIRouter:
             raise HTTPException(status_code=400, detail="Provide exactly one of path or title")
         return await _read(
             server,
+            request,
             project,
             topic,
             lambda gateway: gateway.read(path=path, title=title),
@@ -96,6 +111,7 @@ def create_wiki_router(server: HTTPServer) -> APIRouter:
 
     @router.get("/graph")
     async def graph(
+        request: Request,
         include: str = Query("all"),
         project: str | None = Query(None),
         topic: str | None = Query(None),
@@ -103,6 +119,7 @@ def create_wiki_router(server: HTTPServer) -> APIRouter:
         include_value = _normalize_include(include)
         return await _read(
             server,
+            request,
             project,
             topic,
             lambda gateway: gateway.graph(include=include_value),
@@ -110,27 +127,35 @@ def create_wiki_router(server: HTTPServer) -> APIRouter:
 
     @router.get("/pages")
     async def pages(
+        request: Request,
         prefix: str | None = Query(None),
         project: str | None = Query(None),
         topic: str | None = Query(None),
     ) -> dict[str, Any]:
-        return await _read(server, project, topic, lambda gateway: gateway.pages(prefix=prefix))
+        return await _read(
+            server, request, project, topic, lambda gateway: gateway.pages(prefix=prefix)
+        )
 
     @router.get("/backlinks")
     async def backlinks(
+        request: Request,
         target: str = Query(...),
         project: str | None = Query(None),
         topic: str | None = Query(None),
     ) -> dict[str, Any]:
-        return await _read(server, project, topic, lambda gateway: gateway.backlinks(target))
+        return await _read(
+            server, request, project, topic, lambda gateway: gateway.backlinks(target)
+        )
 
     @router.get("/health")
     async def health(
+        request: Request,
         project: str | None = Query(None),
         topic: str | None = Query(None),
     ) -> dict[str, Any]:
         return await _read(
             server,
+            request,
             project,
             topic,
             lambda gateway: gateway.health(),
@@ -139,17 +164,28 @@ def create_wiki_router(server: HTTPServer) -> APIRouter:
 
     @router.get("/sources")
     async def sources(
+        request: Request,
         project: str | None = Query(None),
         topic: str | None = Query(None),
     ) -> dict[str, Any]:
-        return await _read(server, project, topic, lambda gateway: gateway.sources())
+        return await _read(server, request, project, topic, lambda gateway: gateway.sources())
 
     @router.post("/attach")
     async def attach(
-        file: UploadFile = File(...),
+        request: Request,
         project: str | None = Query(None),
         topic: str | None = Query(None),
     ) -> dict[str, Any]:
+        proxied = await maybe_proxy_owner_request(
+            request, project=project, topic=topic, stream_body=True
+        )
+        if proxied is not None:
+            return as_json_object(proxied)
+        form = await request.form()
+        uploaded = form.get("file")
+        if uploaded is None or isinstance(uploaded, (bytes, str)) or not hasattr(uploaded, "read"):
+            raise HTTPException(status_code=400, detail="file is required")
+        file = cast(UploadFile, uploaded)
         gateway = await _gateway(server, project, topic)
         max_upload_bytes = resolve_server_attachment_limits(server).max_file_bytes
         staged_path = await _stage_upload(file, max_bytes=max_upload_bytes)
@@ -161,13 +197,17 @@ def create_wiki_router(server: HTTPServer) -> APIRouter:
 
     @router.post("/ingest")
     async def ingest(
+        request: Request,
         body: dict[str, Any] | None = Body(default=None),
         project: str | None = Query(None),
         topic: str | None = Query(None),
     ) -> dict[str, Any]:
-        request = body or {}
-        urls = _string_sequence(request.get("urls"))
-        paths = _ingest_paths(request)
+        proxied = await maybe_proxy_owner_request(request, project=project, topic=topic)
+        if proxied is not None:
+            return as_json_object(proxied)
+        request_body = body or {}
+        urls = _string_sequence(request_body.get("urls"))
+        paths = _ingest_paths(request_body)
         if not urls and not paths:
             raise HTTPException(status_code=400, detail="Provide path, paths, or urls")
 
@@ -187,22 +227,24 @@ def create_wiki_router(server: HTTPServer) -> APIRouter:
 
     @router.post("/write")
     async def write_page(
+        request: Request,
         body: dict[str, Any] | None = Body(default=None),
         project: str | None = Query(None),
         topic: str | None = Query(None),
     ) -> dict[str, Any]:
-        request = body or {}
-        path = _required_string(request.get("path"), "path is required")
-        content = request.get("content")
+        payload = body or {}
+        path = _required_string(payload.get("path"), "path is required")
+        content = payload.get("content")
         if not isinstance(content, str):
             raise HTTPException(status_code=400, detail="content must be a string")
-        expected_hash = _optional_string(request.get("expected_hash"))
+        expected_hash = _optional_string(payload.get("expected_hash"))
         try:
-            mode = normalize_page_write_mode(_optional_string(request.get("mode")) or "upsert")
+            mode = normalize_page_write_mode(_optional_string(payload.get("mode")) or "upsert")
         except ValueError as exc:
             raise HTTPException(status_code=400, detail=str(exc)) from exc
         return await _write_call(
             server,
+            request,
             project,
             topic,
             lambda gateway: gateway.write_page(
@@ -216,14 +258,16 @@ def create_wiki_router(server: HTTPServer) -> APIRouter:
 
     @router.post("/delete")
     async def delete_page(
+        request: Request,
         body: dict[str, Any] | None = Body(default=None),
         project: str | None = Query(None),
         topic: str | None = Query(None),
     ) -> dict[str, Any]:
-        request = body or {}
-        path = _required_string(request.get("path"), "path is required")
+        payload = body or {}
+        path = _required_string(payload.get("path"), "path is required")
         return await _write_call(
             server,
+            request,
             project,
             topic,
             lambda gateway: gateway.delete_page(path=path),
@@ -232,32 +276,37 @@ def create_wiki_router(server: HTTPServer) -> APIRouter:
 
     @router.post("/collect")
     async def collect(
+        request: Request,
         body: dict[str, Any] | None = Body(default=None),
         project: str | None = Query(None),
         topic: str | None = Query(None),
     ) -> dict[str, Any]:
         query = _optional_string((body or {}).get("query"))
-        return await _write_call(server, project, topic, lambda gateway: gateway.collect(query))
+        return await _write_call(
+            server, request, project, topic, lambda gateway: gateway.collect(query)
+        )
 
     @router.post("/compile")
     async def compile_wiki(
+        request: Request,
         body: dict[str, Any] | None = Body(default=None),
         project: str | None = Query(None),
         topic: str | None = Query(None),
     ) -> dict[str, Any]:
-        request = body or {}
-        compile_topic = _optional_string(request.get("compile_topic"))
-        kind = _normalize_kind(_optional_string(request.get("kind")))
-        sources = _string_sequence(request.get("sources")) or None
-        outline = _string_sequence(request.get("outline")) or None
-        target = _optional_string(request.get("target"))
-        write_intent = bool(request.get("write_intent", False))
-        ai_value = _optional_string(request.get("ai"))
+        payload = body or {}
+        compile_topic = _optional_string(payload.get("compile_topic"))
+        kind = _normalize_kind(_optional_string(payload.get("kind")))
+        sources = _string_sequence(payload.get("sources")) or None
+        outline = _string_sequence(payload.get("outline")) or None
+        target = _optional_string(payload.get("target"))
+        write_intent = bool(payload.get("write_intent", False))
+        ai_value = _optional_string(payload.get("ai"))
         ai = _normalize_ai(ai_value) if ai_value is not None else None
         # Compile defaults to AI routing inside gwiki and its synthesis scales
         # with vault size, so it always gets the generation guard.
         return await _write_call(
             server,
+            request,
             project,
             topic,
             lambda gateway: gateway.compile(
@@ -274,27 +323,30 @@ def create_wiki_router(server: HTTPServer) -> APIRouter:
 
     @router.post("/audit")
     async def audit(
+        request: Request,
         project: str | None = Query(None),
         topic: str | None = Query(None),
     ) -> dict[str, Any]:
-        return await _read(server, project, topic, lambda gateway: gateway.audit())
+        return await _read(server, request, project, topic, lambda gateway: gateway.audit())
 
     @router.post("/remove-source")
     async def remove_source(
+        request: Request,
         body: dict[str, Any] | None = Body(default=None),
         project: str | None = Query(None),
         topic: str | None = Query(None),
     ) -> dict[str, Any]:
-        request = body or {}
-        source_id = _required_string(request.get("id"), "id is required")
-        yes = bool(request.get("yes", False))
-        explicit_dry_run = bool(request.get("dry_run", False))
+        payload = body or {}
+        source_id = _required_string(payload.get("id"), "id is required")
+        yes = bool(payload.get("yes", False))
+        explicit_dry_run = bool(payload.get("dry_run", False))
         if explicit_dry_run and yes:
             raise HTTPException(status_code=400, detail="dry_run and yes cannot both be true")
         dry_run = explicit_dry_run or not yes
-        keep_asset = bool(request.get("keep_asset", False))
+        keep_asset = bool(payload.get("keep_asset", False))
         return await _write_call(
             server,
+            request,
             project,
             topic,
             lambda gateway: gateway.remove_source(
@@ -305,28 +357,161 @@ def create_wiki_router(server: HTTPServer) -> APIRouter:
             ),
         )
 
+    @router.get("/trust")
+    async def trust(
+        request: Request,
+        project: str | None = Query(None),
+        topic: str | None = Query(None),
+    ) -> dict[str, Any]:
+        return await _read(server, request, project, topic, lambda gateway: gateway.trust())
+
+    @router.post("/refresh")
+    async def refresh(
+        request: Request,
+        body: dict[str, Any] | None = Body(default=None),
+        project: str | None = Query(None),
+        topic: str | None = Query(None),
+    ) -> dict[str, Any]:
+        payload = body or {}
+        source_ids = _string_sequence(payload.get("source_ids")) or None
+        dry_run = bool(payload.get("dry_run", False))
+        return await _write_call(
+            server,
+            request,
+            project,
+            topic,
+            lambda gateway: gateway.refresh(source_ids=source_ids, dry_run=dry_run),
+        )
+
+    @router.post("/export")
+    async def export_pages(
+        request: Request,
+        project: str | None = Query(None),
+        topic: str | None = Query(None),
+    ) -> dict[str, Any]:
+        return await _read(server, request, project, topic, lambda gateway: gateway.export_pages())
+
+    @router.post("/graph-artifacts")
+    async def graph_artifacts(
+        request: Request,
+        project: str | None = Query(None),
+        topic: str | None = Query(None),
+    ) -> dict[str, Any]:
+        return await _read(
+            server, request, project, topic, lambda gateway: gateway.graph_artifacts()
+        )
+
+    @router.post("/sync-sessions")
+    async def sync_sessions(
+        request: Request,
+        project: str | None = Query(None),
+        topic: str | None = Query(None),
+        limit: int | None = Query(None),
+    ) -> dict[str, Any]:
+        content_type = request.headers.get("content-type", "")
+        stream_body = "octet-stream" in content_type or "multipart" in content_type
+        proxied = await maybe_proxy_owner_request(
+            request, project=project, topic=topic, stream_body=stream_body
+        )
+        if proxied is not None:
+            return as_json_object(proxied)
+        if stream_body:
+            return await _ingest_sync_container(server, request, project, topic, limit)
+        return await _write_call(
+            server,
+            request,
+            project,
+            topic,
+            lambda gateway: gateway.sync_sessions(limit=limit),
+        )
+
+    @router.post("/upkeep")
+    async def upkeep(
+        request: Request,
+        body: dict[str, Any] | None = Body(default=None),
+        project: str | None = Query(None),
+        topic: str | None = Query(None),
+    ) -> dict[str, Any]:
+        payload = body or {}
+        return await _write_call(
+            server,
+            request,
+            project,
+            topic,
+            lambda gateway: gateway.upkeep(
+                dry_run=bool(payload.get("dry_run", False)),
+                ai=_optional_string(payload.get("ai")),
+                max_pages=payload.get("max_pages"),
+                time_budget_seconds=payload.get("time_budget_seconds"),
+            ),
+        )
+
+    @router.post("/librarian")
+    async def librarian(
+        request: Request,
+        project: str | None = Query(None),
+        topic: str | None = Query(None),
+    ) -> dict[str, Any]:
+        return await _read(server, request, project, topic, lambda gateway: gateway.librarian())
+
+    @router.post("/recap")
+    async def recap(
+        request: Request,
+        body: dict[str, Any] | None = Body(default=None),
+        project: str | None = Query(None),
+        topic: str | None = Query(None),
+    ) -> dict[str, Any]:
+        date = _optional_string((body or {}).get("date"))
+        return await _write_call(
+            server, request, project, topic, lambda gateway: gateway.recap(date=date)
+        )
+
+    @router.post("/prune")
+    async def prune(request: Request) -> dict[str, Any]:
+        if is_remote_files_mode():
+            return as_json_object(await proxy_owner_request(request))
+        result = await GwikiGateway().prune_all_scopes()
+        return {
+            "returncode": result.returncode,
+            "stdout": result.stdout,
+            "stderr": result.stderr,
+            "started_at": result.started_at,
+            "completed_at": result.completed_at,
+            "duration_seconds": result.duration_seconds,
+            "timeout_seconds": result.timeout_seconds,
+            "timed_out": result.timed_out,
+        }
+
     return router
 
 
 async def _read(
     server: HTTPServer,
+    request: Request,
     project: str | None,
     topic: str | None,
     call: GatewayCall,
     timeout_seconds: float = INTERACTIVE_GWIKI_TIMEOUT_SECONDS,
 ) -> dict[str, Any]:
+    proxied = await maybe_proxy_owner_request(request, project=project, topic=topic)
+    if proxied is not None:
+        return as_json_object(proxied)
     gateway = await _gateway(server, project, topic, timeout_seconds=timeout_seconds)
     return await _map_gateway_errors(lambda: call(gateway))
 
 
 async def _write_call(
     server: HTTPServer,
+    request: Request,
     project: str | None,
     topic: str | None,
     call: GatewayCall,
     timeout_seconds: float = INTERACTIVE_GWIKI_TIMEOUT_SECONDS,
     command_status: Callable[[GwikiCommandError], int] | None = None,
 ) -> dict[str, Any]:
+    proxied = await maybe_proxy_owner_request(request, project=project, topic=topic)
+    if proxied is not None:
+        return as_json_object(proxied)
     gateway = await _gateway(server, project, topic, timeout_seconds=timeout_seconds)
     result = await _map_gateway_errors(lambda: call(gateway), command_status=command_status)
     return await _write(gateway, result)
@@ -556,6 +741,43 @@ def _aggregate_ingest_results(results: list[dict[str, Any]], *, command: str) ->
 
 async def _map_gateway_awaitable(awaitable: Awaitable[dict[str, Any]]) -> dict[str, Any]:
     return await _map_gateway_errors(lambda: awaitable)
+
+
+async def _ingest_sync_container(
+    server: HTTPServer,
+    request: Request,
+    project: str | None,
+    topic: str | None,
+    limit: int | None,
+) -> dict[str, Any]:
+    import tarfile
+    import tempfile
+
+    from gobby.wiki.sync_container import SyncContainerError
+
+    staged = Path(tempfile.mkdtemp(prefix="gobby-sync-stage-"))
+    archive_path = staged / "incoming.tar"
+    try:
+        with archive_path.open("wb") as handle:
+            async for chunk in request.stream():
+                handle.write(chunk)
+        with tarfile.open(archive_path, mode="r:") as archive:
+            archive.extractall(staged, filter="data")
+        archive_dir = staged / "archives"
+        wiki_dir = staged / "wiki"
+        if not wiki_dir.is_dir():
+            raise HTTPException(status_code=400, detail="wiki_dir is required")
+        gateway = await _gateway(server, project, topic)
+        result = await _map_gateway_errors(
+            lambda: gateway.sync_sessions(archive_dir=archive_dir, limit=limit)
+        )
+        return await _write(gateway, result)
+    except SyncContainerError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    finally:
+        import shutil
+
+        shutil.rmtree(staged, ignore_errors=True)
 
 
 async def _stage_upload(

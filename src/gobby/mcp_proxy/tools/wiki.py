@@ -17,6 +17,7 @@ from gobby.gwiki_gateway import (
 )
 from gobby.mcp_proxy.tools.internal import InternalToolRegistry
 from gobby.sessions.transcript_archive import get_archive_dir
+from gobby.wiki.owner_dispatch import gateway_for_resolved, remote_scope, should_proxy_owner_scope
 from gobby.wiki.scope_resolution import ResolvedWikiScope, resolve_wiki_scope
 from gobby.wiki.update_coordinator import WikiUpdateCoordinator
 
@@ -71,7 +72,10 @@ def create_wiki_registry(
         project: str | None = None,
         topic: str | None = None,
         timeout_seconds: float = INTERACTIVE_GWIKI_TIMEOUT_SECONDS,
-    ) -> tuple[GwikiGateway, ResolvedWikiScope]:
+    ) -> tuple[Any, ResolvedWikiScope]:
+        if should_proxy_owner_scope(project=project, topic=topic):
+            resolved = remote_scope(project=project, topic=topic)
+            return gateway_for_resolved(resolved, timeout_seconds=timeout_seconds), resolved
         resolved = await resolve_wiki_scope(
             db,
             project=project,

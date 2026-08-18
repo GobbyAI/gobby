@@ -99,10 +99,23 @@ async def handle_clear_chat(
     session_manager = getattr(mixin, "session_manager", None)
     if session_manager and session_manager.db:
         try:
+            from gobby.files_home_http import is_remote_files_mode, require_hub_daemon_url
             from gobby.storage import chat_messages
+            from gobby.utils.daemon_client import DaemonClient
 
-            await _delete_chat_attachments(mixin, session_manager.db, conversation_id)
-            await run_db(mixin, chat_messages.delete_messages, session_manager.db, conversation_id)
+            if is_remote_files_mode():
+                client = DaemonClient.from_url(require_hub_daemon_url())
+                await client.request_raw(
+                    "DELETE",
+                    f"/api/chat/{conversation_id}/messages",
+                    hop=True,
+                    accept_statuses=(200,),
+                )
+            else:
+                await _delete_chat_attachments(mixin, session_manager.db, conversation_id)
+                await run_db(
+                    mixin, chat_messages.delete_messages, session_manager.db, conversation_id
+                )
         except Exception as e:
             logger.warning("Failed to delete chat messages on clear: %s", e)
 

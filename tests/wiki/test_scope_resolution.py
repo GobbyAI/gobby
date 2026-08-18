@@ -1,5 +1,8 @@
 from __future__ import annotations
 
+from pathlib import Path
+from unittest.mock import patch
+
 import pytest
 
 from gobby.storage.projects import PERSONAL_PROJECT_ID
@@ -34,3 +37,29 @@ async def test_reserved_topic_names_refuse_in_shared_resolver(name: str) -> None
         await resolve_wiki_scope(None, topic=name)
     with pytest.raises(WikiScopeResolutionError, match="reserved|invalid"):
         await resolve_scope_identity(None, f"topic:{name}")
+
+
+@pytest.mark.asyncio
+async def test_remote_owner_dispatch_runs_before_local_path_existence(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from gobby.paths import get_gobby_home
+    from gobby.wiki.owner_dispatch import should_proxy_owner_scope
+
+    home = tmp_path / "gobby-home"
+    home.mkdir()
+    monkeypatch.setenv("GOBBY_HOME", str(home))
+    bootstrap = get_gobby_home() / "bootstrap.yaml"
+    bootstrap.write_text(
+        "datastore_mode: remote\nhub_daemon_url: http://hub.example.test:60887\n",
+        encoding="utf-8",
+    )
+    bootstrap.chmod(0o600)
+
+    def boom(*_args: object, **_kwargs: object) -> Path:
+        raise AssertionError("local path existence must not run first")
+
+    with patch("gobby.paths.require_files_home", side_effect=boom):
+        assert should_proxy_owner_scope(project=None, topic="research") is True
+        assert should_proxy_owner_scope(project=PERSONAL_PROJECT_ID, topic=None) is True
+        assert should_proxy_owner_scope(project="checkout-id", topic=None) is False

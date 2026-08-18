@@ -520,3 +520,189 @@ def test_upload_replaced_files_home_raises(
     replacement.rename(files_home)
     with pytest.raises(FilesHomeError):
         publish_files_home_descendant("USER.md", b"nope")
+
+
+@pytest.mark.asyncio
+async def test_upload_cancel_before_replace_leaves_no_row(
+    temp_db: HubDatabase,
+    files_home: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    import asyncio
+    import threading
+
+    from fastapi import UploadFile
+
+    import gobby.servers.chat_attachment_upload as upload
+
+    monkeypatch.setenv("GOBBY_HOME", str(tmp_path / "gobby-home"))
+    _write_local_bootstrap(files_home)
+    started = threading.Event()
+    release = threading.Event()
+
+    def blocking_replace(*_args: object, **_kwargs: object) -> None:
+        started.set()
+        release.wait(timeout=5)
+        raise RuntimeError("replace aborted")
+
+    monkeypatch.setattr(upload, "durable_replace_files_home", blocking_replace)
+
+    class _Upload:
+        filename = "note.txt"
+        content_type = "text/plain"
+        size = 5
+
+        async def read(self, _size: int) -> bytes:
+            if not getattr(self, "_sent", False):
+                self._sent = True
+                return b"hello"
+            return b""
+
+    task = asyncio.create_task(
+        upload.publish_uploaded_attachment(
+            file=cast(UploadFile, _Upload()),
+            resolved_project_id=PERSONAL_PROJECT_ID,
+            attachment_id="aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa",
+            filename="note.txt",
+            mime_type="text/plain",
+            draft_id=None,
+            max_file_bytes=1000,
+            database=temp_db,
+            run_db=_run_db,
+            validate_mime=_noop_mime,
+            ensure_disk_space=lambda *_a, **_k: None,
+        )
+    )
+    await asyncio.to_thread(started.wait, 5)
+    task.cancel()
+    release.set()
+    with pytest.raises(asyncio.CancelledError):
+        await task
+    row = temp_db.fetchone(
+        "SELECT id FROM chat_attachments WHERE id = %s",
+        ("aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa",),
+    )
+    assert row is None
+
+
+async def _run_db(fn: Any, *args: Any, **kwargs: Any) -> Any:
+    return fn(*args, **kwargs)
+
+
+async def _noop_mime(*_args: Any, **_kwargs: Any) -> None:
+    return None
+
+
+@pytest.mark.asyncio
+async def test_cancel_after_published_cas_keeps_row(
+    temp_db: HubDatabase,
+    files_home: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    import asyncio
+
+    from fastapi import UploadFile
+
+    import gobby.servers.chat_attachment_upload as upload
+
+    monkeypatch.setenv("GOBBY_HOME", str(tmp_path / "gobby-home"))
+    _write_local_bootstrap(files_home)
+    calls = {"cas": 0}
+
+    async def tracking_shielded(name: str, fn: Any, *args: Any, **kwargs: Any) -> Any:
+        from gobby.servers.chat_attachment_workers import ShieldedOutcome
+
+        if name == "attachment-publish-cas":
+            calls["cas"] += 1
+            result = fn(*args, **kwargs)
+            return ShieldedOutcome(result=result), True
+        result = fn(*args, **kwargs)
+        return ShieldedOutcome(result=result), False
+
+    monkeypatch.setattr(upload, "run_shielded", tracking_shielded)
+
+    class _Upload:
+        filename = "note.txt"
+        content_type = "text/plain"
+        size = 5
+
+        async def read(self, _size: int) -> bytes:
+            if not getattr(self, "_sent", False):
+                self._sent = True
+                return b"hello"
+            return b""
+
+    with pytest.raises(asyncio.CancelledError):
+        await upload.publish_uploaded_attachment(
+            file=cast(UploadFile, _Upload()),
+            resolved_project_id=PERSONAL_PROJECT_ID,
+            attachment_id="bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb",
+            filename="note.txt",
+            mime_type="text/plain",
+            draft_id=None,
+            max_file_bytes=1000,
+            database=temp_db,
+            run_db=_run_db,
+            validate_mime=_noop_mime,
+            ensure_disk_space=lambda *_a, **_k: None,
+        )
+    row = temp_db.fetchone(
+        "SELECT published FROM chat_attachments WHERE id = %s",
+        ("bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb",),
+    )
+    assert row is not None
+    assert row["published"] is True
+    assert calls["cas"] == 1
+
+
+@pytest.mark.asyncio
+async def test_unpublished_after_replace_is_removed_by_restart_cleanup(
+    temp_db: HubDatabase,
+    files_home: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    from datetime import UTC, datetime, timedelta
+
+    from gobby.servers.chat_attachment_cleanup import cleanup_stale_attachments_sync
+
+    monkeypatch.setenv("GOBBY_HOME", str(tmp_path / "gobby-home"))
+    _write_local_bootstrap(files_home)
+    record = create_attachment(
+        temp_db,
+        project_id=PERSONAL_PROJECT_ID,
+        draft_id=None,
+        filename="note.txt",
+        mime_type="text/plain",
+        size_bytes=5,
+        local_path=attachment_relative_locator(
+            PERSONAL_PROJECT_ID, "cccccccc-cccc-cccc-cccc-cccccccccccc", "note.txt"
+        ),
+        attachment_id="cccccccc-cccc-cccc-cccc-cccccccccccc",
+        published=False,
+        claim_token="dddddddd-dddd-dddd-dddd-dddddddddddd",
+    )
+    dest = files_home / record.local_path
+    dest.parent.mkdir(parents=True, exist_ok=True)
+    dest.write_bytes(b"hello")
+    stale_at = datetime.now(UTC) - timedelta(hours=1)
+    with temp_db.transaction() as conn:
+        conn.execute(
+            "UPDATE chat_attachments SET claimed_at = %s WHERE id = %s",
+            (stale_at, record.id),
+        )
+    removed = cleanup_stale_attachments_sync(
+        temp_db,
+        cutoff=datetime.now(UTC) + timedelta(days=1),
+        limit=10,
+    )
+    assert any(item.id == record.id for item in removed)
+    row = temp_db.fetchone(
+        "SELECT id FROM chat_attachments WHERE id = %s",
+        (record.id,),
+    )
+    assert row is None
+    assert not dest.exists()
+

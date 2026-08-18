@@ -9,14 +9,15 @@ import mimetypes
 import os
 import stat
 from pathlib import Path
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Any, cast
 from uuid import UUID, uuid4
 
-from fastapi import APIRouter, File, Form, HTTPException, UploadFile
-from fastapi.responses import StreamingResponse
+from fastapi import APIRouter, HTTPException, Request, UploadFile
+from fastapi.responses import FileResponse
 
 import gobby.storage.chat_attachments as chat_attachments
-from gobby.paths import FilesHomeError
+from gobby.files_home_http import is_remote_files_mode
+from gobby.paths import FilesHomeError, require_files_home
 from gobby.servers.chat_attachment_files import (
     open_attachment_descriptor,
     resolve_attachment_dir,
@@ -35,6 +36,8 @@ from gobby.storage.chat_attachment_lease import (
 )
 from gobby.storage.hub.protocol import HubDatabase
 from gobby.storage.projects import PERSONAL_PROJECT_ID, LocalProjectManager
+from gobby.wiki import owner_dispatch
+from gobby.wiki.owner_dispatch import as_json_object
 
 if TYPE_CHECKING:
     from gobby.servers.http import HTTPServer
@@ -266,11 +269,20 @@ def create_chat_attachments_router(server: HTTPServer) -> APIRouter:
         return {"max_file_bytes": limits.max_file_bytes}
 
     @router.post("")
-    async def upload_attachment(
-        file: UploadFile = File(...),
-        draft_id: str | None = Form(default=None),
-        project_id: str | None = Form(default=None),
-    ) -> dict[str, Any]:
+    async def upload_attachment(request: Request) -> dict[str, Any]:
+        if is_remote_files_mode():
+            return as_json_object(
+                await owner_dispatch.proxy_owner_request(request, stream_body=True)
+            )
+        form = await request.form()
+        uploaded = form.get("file")
+        if uploaded is None or isinstance(uploaded, (bytes, str)) or not hasattr(uploaded, "read"):
+            raise HTTPException(status_code=400, detail="file is required")
+        file = cast(UploadFile, uploaded)
+        draft_value = form.get("draft_id")
+        project_value = form.get("project_id")
+        draft_id = draft_value if isinstance(draft_value, str) else None
+        project_id = project_value if isinstance(project_value, str) else None
         limits = resolve_server_attachment_limits(server)
         try:
             resolved_project_id = await server.run_db(
@@ -301,7 +313,11 @@ def create_chat_attachments_router(server: HTTPServer) -> APIRouter:
         )
 
     @router.get("/{attachment_id}/content")
-    async def get_attachment_content(attachment_id: str) -> StreamingResponse:
+    async def get_attachment_content(request: Request, attachment_id: str) -> Any:
+        if is_remote_files_mode():
+            return await owner_dispatch.proxy_owner_request(
+                request, accept_statuses=(200, 206, 304)
+            )
         _validate_uuid_param(attachment_id, "attachment_id")
         record = await server.run_db(
             chat_attachments.get_attachment,
@@ -326,33 +342,24 @@ def create_chat_attachments_router(server: HTTPServer) -> APIRouter:
         if not stat.S_ISREG(stat_result.st_mode):
             os.close(fd)
             raise HTTPException(status_code=404, detail="Attachment content not found")
-
-        async def stream() -> Any:
-            try:
-                from gobby.paths import assert_held_files_home_identity
-
-                assert_held_files_home_identity()
-                while True:
-                    chunk = await asyncio.to_thread(os.read, fd, _UPLOAD_CHUNK_BYTES)
-                    if not chunk:
-                        break
-                    yield chunk
-            except FilesHomeError as exc:
-                raise HTTPException(
-                    status_code=409, detail="Attachment storage unavailable"
-                ) from exc
-            finally:
-                os.close(fd)
-
+        os.close(fd)
         headers = {
             "content-disposition": (
                 f'{_content_disposition(record.mime_type)}; filename="{record.filename}"'
             )
         }
-        return StreamingResponse(stream(), media_type=record.mime_type, headers=headers)
+        return FileResponse(
+            path=require_files_home() / locator,
+            media_type=record.mime_type,
+            filename=record.filename,
+            stat_result=stat_result,
+            headers=headers,
+        )
 
     @router.delete("/{attachment_id}")
-    async def delete_attachment(attachment_id: str) -> dict[str, bool]:
+    async def delete_attachment(request: Request, attachment_id: str) -> dict[str, bool]:
+        if is_remote_files_mode():
+            return as_json_object(await owner_dispatch.proxy_owner_request(request))
         _validate_uuid_param(attachment_id, "attachment_id")
         try:
             claimed = await server.run_db(

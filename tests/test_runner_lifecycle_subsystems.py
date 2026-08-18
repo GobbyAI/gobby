@@ -140,6 +140,13 @@ async def test_startup_vector_rebuild_includes_project_id_payload() -> None:
             embed_fn=object(),
         ),
         config=SimpleNamespace(embeddings=SimpleNamespace(dim=768)),
+        config_runtime=SimpleNamespace(
+            capture=lambda: SimpleNamespace(
+                snapshot=SimpleNamespace(
+                    active=SimpleNamespace(embeddings=SimpleNamespace(dim=768))
+                )
+            )
+        ),
         _vector_rebuild_task=None,
     )
     captured: list[dict[str, str]] = []

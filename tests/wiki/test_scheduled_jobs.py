@@ -947,6 +947,34 @@ async def test_exports_handler_raises_after_both_steps_fail() -> None:
 
 
 @pytest.mark.asyncio
+async def test_remote_topic_gateway_does_not_construct_local_gwiki(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from gobby.paths import get_gobby_home
+    from gobby.wiki.owner_gateway import RemoteWikiGateway
+    from gobby.wiki.scheduled_jobs import _gateway_for_resolved
+
+    home = tmp_path / "gobby-home"
+    home.mkdir()
+    monkeypatch.setenv("GOBBY_HOME", str(home))
+    bootstrap = get_gobby_home() / "bootstrap.yaml"
+    bootstrap.write_text(
+        "datastore_mode: remote\nhub_daemon_url: http://hub.example.test:60887\n",
+        encoding="utf-8",
+    )
+    bootstrap.chmod(0o600)
+
+    def boom(*_args: object, **_kwargs: object) -> None:
+        raise AssertionError("local GwikiGateway must not be constructed")
+
+    monkeypatch.setattr("gobby.wiki.owner_dispatch.GwikiGateway", boom)
+    gateway = _gateway_for_resolved(
+        ResolvedWikiScope(identity="topic:research", topic="research"),
+        None,
+    )
+    assert isinstance(gateway, RemoteWikiGateway)
+
+
 async def test_scheduled_jobs_use_gateway() -> None:
     gateway = RecordingGateway()
     coordinator = WikiUpdateCoordinator(gateway)
