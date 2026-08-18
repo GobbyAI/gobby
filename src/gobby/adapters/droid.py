@@ -19,6 +19,7 @@ from gobby.adapters.base import (
 )
 from gobby.adapters.capabilities import ContextChannel, get_provider_capabilities
 from gobby.adapters.degradation import (
+    persist_kwargs_from_hook_response,
     record_unsupported_response_fields,
     truncate_context_for_adapter,
 )
@@ -213,6 +214,7 @@ class DroidAdapter(BaseAdapter):
             destination_channel=ContextChannel.ADDITIONAL_CONTEXT,
             contributor_sizes={label: len(part) for label, part in parts},
             event_logger=logger,
+            **persist_kwargs_from_hook_response(response, self._hook_manager),
         )
 
     def translate_from_hook_response(
@@ -305,5 +307,6 @@ class DroidAdapter(BaseAdapter):
 
         hook_event = self.translate_to_hook_event(native_event)
         hook_type = self._resolve_hook_type(native_event)
+        self._hook_manager = hook_manager
         hook_response = hook_manager.handle(hook_event)
         return self.translate_from_hook_response(hook_response, hook_type=hook_type)

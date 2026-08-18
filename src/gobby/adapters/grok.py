@@ -11,7 +11,10 @@ from gobby.adapters.capabilities import (
     GROK_HOOK_ALIASES,
     ContextChannel,
 )
-from gobby.adapters.degradation import truncate_context_for_adapter
+from gobby.adapters.degradation import (
+    persist_kwargs_from_hook_response,
+    truncate_context_for_adapter,
+)
 from gobby.hooks.events import HookEvent, HookEventType, HookResponse, SessionSource
 from gobby.hooks.normalization import normalize_tool_outcome
 
@@ -130,6 +133,7 @@ class GrokAdapter(ACPHookAdapter):
                         destination_channel=ContextChannel.ADDITIONAL_CONTEXT,
                         contributor_sizes={"response.context": len(response.context)},
                         event_logger=self._event_logger(),
+                        **persist_kwargs_from_hook_response(response, self._hook_manager),
                     ),
                 }
             return result

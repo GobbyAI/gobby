@@ -896,19 +896,24 @@ class TestTranslateFromHookResponse:
         assert "hookSpecificOutput" in result
         assert result["hookSpecificOutput"]["hookEventName"] == "UserPromptSubmit"
 
-    def test_provider_referenced_overflow_is_preserved_for_native_claude_offload(
+    def test_provider_referenced_overflow_is_omitted_not_prefix_sliced(
         self,
     ) -> None:
+        from gobby.llm.sdk_utils import ADDITIONAL_CONTEXT_LIMIT
+
         adapter = ClaudeCodeAdapter()
-        context = "provider-referenced-overflow:" + ("x" * 10_001)
+        unique_head = "UNIQUE_CLAUDE_OVERFLOW_7f3a9c"
+        context = unique_head + ("x" * 10_001)
         assert len(context) > 10_000
         response = HookResponse(decision="allow", context=context)
 
         result = adapter.translate_from_hook_response(response, hook_type="user-prompt-submit")
 
         additional_context = result["hookSpecificOutput"]["additionalContext"]
-        assert additional_context == context
+        assert unique_head not in additional_context
         assert "[truncated]" not in additional_context
+        assert "omitted contributors=[response.context]" in additional_context
+        assert len(additional_context) <= ADDITIONAL_CONTEXT_LIMIT
 
     def test_context_injection_session_start(self) -> None:
         adapter = ClaudeCodeAdapter()

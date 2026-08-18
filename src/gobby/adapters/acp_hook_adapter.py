@@ -39,6 +39,7 @@ from gobby.adapters.capabilities import (
     get_provider_capabilities,
 )
 from gobby.adapters.degradation import (
+    persist_kwargs_from_hook_response,
     record_unsupported_response_fields,
     truncate_context_for_adapter,
 )
@@ -376,6 +377,7 @@ class ACPHookAdapter(BaseAdapter):
                 destination_channel=ContextChannel.ADDITIONAL_CONTEXT,
                 contributor_sizes={label: len(part) for label, part in context_parts},
                 event_logger=event_logger,
+                **persist_kwargs_from_hook_response(response, self._hook_manager),
             )
 
         # Only add hookSpecificOutput if there's content
@@ -419,6 +421,7 @@ class ACPHookAdapter(BaseAdapter):
             input_data = native_event
 
         # Process through HookManager
+        self._hook_manager = hook_manager
         hook_response = hook_manager.handle(hook_event)
 
         # Translate response back to the provider format.

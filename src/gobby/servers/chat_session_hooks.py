@@ -9,10 +9,15 @@ from claude_agent_sdk import HookContext, HookMatcher, PermissionResultDeny
 from claude_agent_sdk.types import HookInput as SDKHookInput
 from claude_agent_sdk.types import SyncHookJSONOutput, UserPromptSubmitHookSpecificOutput
 
+from gobby.adapters.degradation import (
+    AdditionalContextPersistKwargs,
+    tool_result_store_from_hook_manager,
+)
 from gobby.hooks.context_limits import additional_context_limit_for
 from gobby.hooks.events import SessionSource
 from gobby.servers.chat_session_helpers import (
     _PLAN_FILE_PATTERN,
+    _bound_resp_context,
     _response_to_compact_output,
     _response_to_post_tool_output,
     _response_to_pre_tool_output,
@@ -29,6 +34,7 @@ class ChatSessionHooksMixin:
 
     conversation_id: str
     db_session_id: str | None
+    project_id: str | None
     chat_mode: str
     _needs_history_injection: bool
     _plan_approved: bool
@@ -44,6 +50,14 @@ class ChatSessionHooksMixin:
     _on_subagent_start: Callable[[dict[str, Any]], Awaitable[dict[str, Any] | None]] | None
     _on_subagent_stop: Callable[[dict[str, Any]], Awaitable[dict[str, Any] | None]] | None
     _on_plan_ready: Callable[[str | None, dict[str, Any], str | None], Awaitable[None]] | None
+
+    def _additional_context_persist(self) -> AdditionalContextPersistKwargs:
+        """Session/project/store kwargs for additionalContext overflow persist."""
+        return {
+            "store": tool_result_store_from_hook_manager(self._session_manager_ref),
+            "session_id": self.db_session_id,
+            "project_id": self.project_id,
+        }
 
     def _build_sdk_hooks(self) -> dict[str, list[HookMatcher]] | None:
         """Build SDK hook matchers from lifecycle callbacks."""
@@ -81,24 +95,32 @@ class ChatSessionHooksMixin:
 
                 data = {"prompt": inp.get("prompt", ""), "source": "claude"}
                 resp = await cb(data)
-                output = _response_to_prompt_output(resp)
+                persist = self._additional_context_persist()
+                output = _response_to_prompt_output(
+                    resp if isinstance(resp, dict) else None, persist=persist
+                )
 
-                context_parts = []
+                context_parts: list[tuple[str, str]] = []
 
                 hook_specific = output.get("hookSpecificOutput")
                 if hook_specific and isinstance(hook_specific, dict):
                     existing = hook_specific.get("additionalContext")
                     if existing:
-                        context_parts.append(str(existing))
+                        context_parts.append(("hook_context", str(existing)))
 
                 plan_ctx = getattr(self, "_consume_plan_mode_context", lambda: None)()
                 if plan_ctx:
-                    context_parts.append(plan_ctx)
+                    context_parts.append(("plan_mode", str(plan_ctx)))
 
                 if context_parts:
                     output["hookSpecificOutput"] = UserPromptSubmitHookSpecificOutput(
                         hookEventName="UserPromptSubmit",
-                        additionalContext="\n\n".join(context_parts).strip(),
+                        additionalContext=_bound_resp_context(
+                            resp if isinstance(resp, dict) else None,
+                            "\n\n".join(part for _, part in context_parts).strip(),
+                            contributor_sizes={label: len(part) for label, part in context_parts},
+                            persist=persist,
+                        ),
                     )
 
                 # Inject conversation history on first prompt of a recreated session.
@@ -123,7 +145,15 @@ class ChatSessionHooksMixin:
                             )
                             output["hookSpecificOutput"] = UserPromptSubmitHookSpecificOutput(
                                 hookEventName="UserPromptSubmit",
-                                additionalContext=combined,
+                                additionalContext=_bound_resp_context(
+                                    resp if isinstance(resp, dict) else None,
+                                    combined,
+                                    contributor_sizes={
+                                        "existing": len(existing),
+                                        "history": len(history_ctx),
+                                    },
+                                    persist=persist,
+                                ),
                             )
 
                 return output
@@ -148,8 +178,9 @@ class ChatSessionHooksMixin:
                     "tool_input": tool_input,
                 }
                 resp = await cb_pre(data)
+                persist = self._additional_context_persist()
                 if resp and resp.get("decision") == "block":
-                    return _response_to_pre_tool_output(resp)
+                    return _response_to_pre_tool_output(resp, persist=persist)
 
                 effective_input = tool_input
                 modified_input = resp.get("modified_input") if isinstance(resp, dict) else None
@@ -173,7 +204,7 @@ class ChatSessionHooksMixin:
                     deny_resp = dict(resp or {})
                     deny_resp["decision"] = "block"
                     deny_resp["reason"] = permission.message
-                    return _response_to_pre_tool_output(deny_resp)
+                    return _response_to_pre_tool_output(deny_resp, persist=persist)
 
                 allow_resp = dict(resp or {})
                 updated_input = permission.updated_input
@@ -183,7 +214,7 @@ class ChatSessionHooksMixin:
                     allow_resp["auto_approve"] = True
                     if isinstance(tool_use_id, str) and tool_use_id:
                         self._preapproved_tool_use_ids.add(tool_use_id)
-                return _response_to_pre_tool_output(allow_resp)
+                return _response_to_pre_tool_output(allow_resp, persist=persist)
 
             hooks["PreToolUse"] = [HookMatcher(matcher=None, hooks=[_pre_tool_hook])]
 
@@ -231,7 +262,9 @@ class ChatSessionHooksMixin:
                     "tool_response": inp.get("tool_response"),
                 }
                 resp = await cb_post(data)
-                return _response_to_post_tool_output(resp)
+                return _response_to_post_tool_output(
+                    resp, persist=self._additional_context_persist()
+                )
 
             hooks["PostToolUse"] = [HookMatcher(matcher=None, hooks=[_post_tool_hook])]
 
@@ -245,7 +278,7 @@ class ChatSessionHooksMixin:
             ) -> SyncHookJSONOutput:
                 data = {"stop_hook_active": inp.get("stop_hook_active", False)}
                 resp = await cb_stop(data)
-                return _response_to_stop_output(resp)
+                return _response_to_stop_output(resp, persist=self._additional_context_persist())
 
             hooks["Stop"] = [HookMatcher(matcher=None, hooks=[_stop_hook])]
 
@@ -261,7 +294,7 @@ class ChatSessionHooksMixin:
                     "trigger": inp.get("trigger", "auto"),
                 }
                 resp = await cb_compact(data)
-                return _response_to_compact_output(resp)
+                return _response_to_compact_output(resp, persist=self._additional_context_persist())
 
             hooks["PreCompact"] = [HookMatcher(matcher=None, hooks=[_compact_hook])]
 
@@ -278,7 +311,9 @@ class ChatSessionHooksMixin:
                     "source": "claude",
                 }
                 resp = await cb_sub_start(data)
-                return _response_to_subagent_output(resp, "SubagentStart")
+                return _response_to_subagent_output(
+                    resp, "SubagentStart", persist=self._additional_context_persist()
+                )
 
             hooks["SubagentStart"] = [HookMatcher(matcher=None, hooks=[_subagent_start_hook])]
 
@@ -295,7 +330,9 @@ class ChatSessionHooksMixin:
                     "source": "claude",
                 }
                 resp = await cb_sub_stop(data)
-                return _response_to_subagent_output(resp, "SubagentStop")
+                return _response_to_subagent_output(
+                    resp, "SubagentStop", persist=self._additional_context_persist()
+                )
 
             hooks["SubagentStop"] = [HookMatcher(matcher=None, hooks=[_subagent_stop_hook])]
 

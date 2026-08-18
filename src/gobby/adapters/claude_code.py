@@ -24,7 +24,11 @@ from gobby.adapters.claude_contract import (
     ClaudeHookContract,
     get_claude_contract,
 )
-from gobby.adapters.degradation import record_unsupported_response_fields
+from gobby.adapters.degradation import (
+    persist_kwargs_from_hook_response,
+    record_unsupported_response_fields,
+    truncate_context_for_adapter,
+)
 from gobby.hooks.events import HookEvent, HookEventType, HookResponse, SessionSource
 
 if TYPE_CHECKING:
@@ -235,7 +239,15 @@ class ClaudeCodeAdapter(BaseAdapter):
         if not additional_context_parts:
             return None
 
-        return "\n\n".join(part for _, part in additional_context_parts)
+        return truncate_context_for_adapter(
+            "\n\n".join(part for _, part in additional_context_parts),
+            provider=self.source,
+            hook_type=hook_type,
+            destination_channel=ContextChannel.ADDITIONAL_CONTEXT,
+            contributor_sizes={label: len(part) for label, part in additional_context_parts},
+            event_logger=logger,
+            **persist_kwargs_from_hook_response(response, self._hook_manager),
+        )
 
     def translate_from_hook_response(
         self, response: HookResponse, hook_type: str | None = None
@@ -456,5 +468,6 @@ class ClaudeCodeAdapter(BaseAdapter):
 
         # Use HookEvent-based handler
         hook_type = native_event.get("hook_type", "")
+        self._hook_manager = hook_manager
         hook_response = hook_manager.handle(hook_event)
         return self.translate_from_hook_response(hook_response, hook_type=hook_type)

@@ -117,3 +117,124 @@ def test_truncate_honors_explicit_limit() -> None:
     assert len(result) <= 80
     assert unique_head not in result
     assert "omitted contributors=" in result
+
+
+def test_adapter_bounding_forwards_persist_kwargs() -> None:
+    from unittest.mock import MagicMock
+
+    from gobby.adapters.capabilities import ContextChannel
+    from gobby.adapters.degradation import truncate_context_for_adapter
+
+    store = MagicMock()
+    store.save.return_value = "result-adapter-ac-1"
+    unique_head = "UNIQUE_ADAPTER_PERSIST_7f3a9c"
+    text = unique_head + "z" * (ADDITIONAL_CONTEXT_LIMIT + 50)
+    result = truncate_context_for_adapter(
+        text,
+        provider=SessionSource.CLAUDE,
+        hook_type="SessionStart",
+        destination_channel=ContextChannel.ADDITIONAL_CONTEXT,
+        session_id="sess-1",
+        project_id="proj-1",
+        store=store,
+    )
+    store.save.assert_called_once()
+    assert store.save.call_args.kwargs["content"] == text
+    assert unique_head not in result
+    assert "get_tool_result result_id=result-adapter-ac-1" in result
+
+
+def test_persist_kwargs_from_hook_response_use_manager_database() -> None:
+    from types import SimpleNamespace
+    from unittest.mock import MagicMock, patch
+
+    from gobby.adapters.degradation import persist_kwargs_from_hook_response
+    from gobby.hooks.events import HookResponse
+
+    store = MagicMock()
+    response = HookResponse(
+        decision="allow",
+        metadata={"session_id": "sess-1", "project_id": "proj-1"},
+    )
+    hook_manager = SimpleNamespace(_database=object())
+    with patch("gobby.adapters.degradation.ToolResultStore", return_value=store):
+        kwargs = persist_kwargs_from_hook_response(response, hook_manager)
+    assert kwargs["session_id"] == "sess-1"
+    assert kwargs["project_id"] == "proj-1"
+    assert kwargs["store"] is store
+
+
+@pytest.mark.parametrize(
+    ("adapter_factory", "hook_type"),
+    [
+        ("codex", "UserPromptSubmit"),
+        ("droid", "UserPromptSubmit"),
+        ("claude", "user-prompt-submit"),
+        ("grok", "SessionStart"),
+    ],
+)
+def test_production_adapters_persist_overflow(adapter_factory: str, hook_type: str) -> None:
+    from types import SimpleNamespace
+    from typing import Any
+    from unittest.mock import MagicMock, patch
+
+    from gobby.adapters.claude_code import ClaudeCodeAdapter
+    from gobby.adapters.codex_impl.hooks_adapter import CodexHooksAdapter
+    from gobby.adapters.droid import DroidAdapter
+    from gobby.adapters.grok import GrokAdapter
+    from gobby.hooks.events import HookResponse
+
+    adapters: dict[str, type[Any]] = {
+        "codex": CodexHooksAdapter,
+        "droid": DroidAdapter,
+        "claude": ClaudeCodeAdapter,
+        "grok": GrokAdapter,
+    }
+    store = MagicMock()
+    store.save.return_value = f"result-{adapter_factory}-1"
+    unique_head = f"UNIQUE_{adapter_factory.upper()}_SHIP_7f3a9c"
+    full = unique_head + "x" * (ADDITIONAL_CONTEXT_LIMIT + 3_000)
+    adapter = adapters[adapter_factory]()
+    adapter._hook_manager = SimpleNamespace(_database=object())
+    response = HookResponse(
+        decision="allow",
+        context=full,
+        metadata={"session_id": "sess-1", "project_id": "proj-1"},
+    )
+    with patch("gobby.adapters.degradation.ToolResultStore", return_value=store):
+        result = adapter.translate_from_hook_response(response, hook_type=hook_type)
+    store.save.assert_called_once()
+    assert unique_head in store.save.call_args.kwargs["content"]
+    ctx = result["hookSpecificOutput"]["additionalContext"]
+    assert unique_head not in ctx
+    assert f"get_tool_result result_id=result-{adapter_factory}-1" in ctx
+    assert "... [truncated]" not in ctx
+
+
+def test_grok_subagent_stop_persists_overflow() -> None:
+    from types import SimpleNamespace
+    from typing import cast
+    from unittest.mock import MagicMock, patch
+
+    from gobby.adapters.grok import GrokAdapter
+    from gobby.hooks.events import HookResponse
+    from gobby.hooks.hook_manager import HookManager
+
+    store = MagicMock()
+    store.save.return_value = "result-grok-stop-1"
+    unique_head = "UNIQUE_GROK_STOP_7f3a9c"
+    full = unique_head + "x" * (ADDITIONAL_CONTEXT_LIMIT + 3_000)
+    adapter = GrokAdapter()
+    adapter._hook_manager = cast(HookManager, SimpleNamespace(_database=object()))
+    response = HookResponse(
+        decision="block",
+        context=full,
+        metadata={"session_id": "sess-1", "project_id": "proj-1"},
+    )
+    with patch("gobby.adapters.degradation.ToolResultStore", return_value=store):
+        result = adapter.translate_from_hook_response(response, hook_type="subagent_stop")
+    store.save.assert_called_once()
+    assert unique_head in store.save.call_args.kwargs["content"]
+    ctx = result["hookSpecificOutput"]["additionalContext"]
+    assert unique_head not in ctx
+    assert "get_tool_result result_id=result-grok-stop-1" in ctx

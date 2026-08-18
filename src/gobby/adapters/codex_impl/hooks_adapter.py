@@ -23,11 +23,11 @@ from gobby.adapters.codex_impl.shared import (
 )
 from gobby.adapters.degradation import (
     AdapterDegradationKind,
+    persist_kwargs_from_hook_response,
     record_adapter_degradation,
     record_unsupported_response_fields,
     truncate_context_for_adapter,
 )
-from gobby.hooks.context_limits import additional_context_limit_for
 from gobby.hooks.events import HookEvent, HookEventType, HookResponse, SessionSource
 
 if TYPE_CHECKING:
@@ -36,43 +36,15 @@ if TYPE_CHECKING:
 logger = logging.getLogger(__name__)
 
 _CONTEXT_SEPARATOR = "\n\n"
-_TRUNCATION_MARKER = "\n... [truncated]"
 
 
-def _bound_context_parts(
+def _join_context_parts(
     context_parts: list[tuple[str, str]],
-    *,
-    limit: int,
-) -> tuple[str, dict[str, int], list[tuple[str, int, int]]]:
-    """Join context parts without letting one oversized part erase later context."""
-    bounded_parts: list[tuple[str, str]] = []
-    contributor_sizes: dict[str, int] = {}
-    trimmed_parts: list[tuple[str, int, int]] = []
-    used = 0
-
-    for label, part in context_parts:
-        separator_len = len(_CONTEXT_SEPARATOR) if bounded_parts else 0
-        remaining = limit - used - separator_len
-        if remaining <= 0:
-            trimmed_parts.append((label, len(part), 0))
-            continue
-
-        bounded_part = part
-        if len(part) > remaining:
-            if remaining > len(_TRUNCATION_MARKER):
-                bounded_part = part[: remaining - len(_TRUNCATION_MARKER)] + _TRUNCATION_MARKER
-            else:
-                bounded_part = part[:remaining]
-            trimmed_parts.append((label, len(part), len(bounded_part)))
-
-        bounded_parts.append((label, bounded_part))
-        contributor_sizes[label] = len(part)
-        used += separator_len + len(bounded_part)
-
+) -> tuple[str, dict[str, int]]:
+    """Join whole context parts. Overflow is handled by the shared converter."""
     return (
-        _CONTEXT_SEPARATOR.join(part for _, part in bounded_parts),
-        contributor_sizes,
-        trimmed_parts,
+        _CONTEXT_SEPARATOR.join(part for _, part in context_parts),
+        {label: len(part) for label, part in context_parts},
     )
 
 
@@ -236,6 +208,7 @@ class CodexHooksAdapter(BaseAdapter):
                             for idx, part in enumerate(system_parts, start=1)
                         },
                         event_logger=logger,
+                        **persist_kwargs_from_hook_response(response, self._hook_manager),
                     )
                 return deny_result
 
@@ -304,31 +277,15 @@ class CodexHooksAdapter(BaseAdapter):
 
         # Build hookSpecificOutput or systemMessage based on event type.
         if context_parts:
-            ship_limit = additional_context_limit_for(self.source)
-            bounded_context, contributor_sizes, trimmed_parts = _bound_context_parts(
-                context_parts,
-                limit=ship_limit,
-            )
-            for label, original_len, bounded_len in trimmed_parts:
-                record_adapter_degradation(
-                    provider=self.source,
-                    hook_type=hook_type,
-                    kind=AdapterDegradationKind.CONTEXT_TRUNCATED,
-                    response_field=label,
-                    destination_channel=context_channel,
-                    detail=(
-                        f"bounded_part original_len={original_len} "
-                        f"bounded_len={bounded_len} limit={ship_limit}"
-                    ),
-                    event_logger=logger,
-                )
+            joined_context, contributor_sizes = _join_context_parts(context_parts)
             combined_context = truncate_context_for_adapter(
-                bounded_context,
+                joined_context,
                 provider=self.source,
                 hook_type=hook_type,
                 destination_channel=context_channel,
                 contributor_sizes=contributor_sizes,
                 event_logger=logger,
+                **persist_kwargs_from_hook_response(response, self._hook_manager),
             )
             if context_channel is ContextChannel.SYSTEM_MESSAGE:
                 if response.context:
@@ -366,6 +323,7 @@ class CodexHooksAdapter(BaseAdapter):
             return {}
 
         hook_type = native_event.get("hook_type", "")
+        self._hook_manager = hook_manager
         hook_response = hook_manager.handle(hook_event)
         return self.translate_from_hook_response(hook_response, hook_type=hook_type)
 

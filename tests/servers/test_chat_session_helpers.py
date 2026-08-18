@@ -186,3 +186,32 @@ class TestHookResponseConverters:
         res = _response_to_subagent_output({"context": "ctx"}, "SubagentStart")
         assert res["hookSpecificOutput"]["hookEventName"] == "SubagentStart"
         assert res["hookSpecificOutput"]["additionalContext"] == "ctx"
+
+    def test_prompt_output_persists_overflow(self) -> None:
+        from unittest.mock import MagicMock
+
+        from gobby.llm.sdk_utils import ADDITIONAL_CONTEXT_LIMIT
+
+        store = MagicMock()
+        store.save.return_value = "result-chat-ac-1"
+        unique_head = "UNIQUE_CHAT_HELPER_7f3a9c"
+        context = unique_head + "x" * (ADDITIONAL_CONTEXT_LIMIT + 50)
+        res = _response_to_prompt_output(
+            {
+                "context": context,
+                "metadata": {"session_id": "sess-1", "project_id": "proj-1"},
+            },
+            persist={
+                "store": store,
+                "session_id": "sess-1",
+                "project_id": "proj-1",
+            },
+        )
+        store.save.assert_called_once()
+        assert store.save.call_args.kwargs["content"] == context
+        hook_specific = res.get("hookSpecificOutput")
+        assert isinstance(hook_specific, dict)
+        ctx = hook_specific.get("additionalContext")
+        assert isinstance(ctx, str)
+        assert unique_head not in ctx
+        assert "get_tool_result result_id=result-chat-ac-1" in ctx

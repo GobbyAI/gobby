@@ -11,6 +11,7 @@ import os
 import re
 import shutil
 import sys
+from collections.abc import Mapping
 from pathlib import Path
 from typing import Any, TypedDict, cast
 
@@ -22,9 +23,38 @@ from claude_agent_sdk.types import (
     UserPromptSubmitHookSpecificOutput,
 )
 
+from gobby.adapters.degradation import (
+    AdditionalContextPersistKwargs,
+    persist_kwargs_from_mapping,
+)
 from gobby.llm.sdk_utils import truncate_additional_context as _truncate
 
 logger = logging.getLogger(__name__)
+
+
+def _bound_resp_context(
+    resp: dict[str, Any] | None,
+    text: str,
+    *,
+    contributor_sizes: Mapping[str, int] | None = None,
+    persist: AdditionalContextPersistKwargs | None = None,
+) -> str:
+    """Fit hook additionalContext and persist overflow when session/project exist."""
+    mapped = persist_kwargs_from_mapping(
+        resp,
+        store=persist["store"] if persist is not None else None,
+        session_id=persist["session_id"] if persist is not None else None,
+        project_id=persist["project_id"] if persist is not None else None,
+    )
+    return _truncate(
+        text,
+        contributor_sizes=contributor_sizes,
+        logger=logger,
+        session_id=mapped["session_id"],
+        project_id=mapped["project_id"],
+        store=mapped["store"],
+    )
+
 
 # Tools that are blocked in plan mode (write operations)
 _PLAN_MODE_BLOCKED_TOOLS: frozenset[str] = frozenset({"Edit", "Write", "NotebookEdit"})
@@ -126,7 +156,10 @@ def _build_gobby_mcp_entry() -> McpStdioServerConfig:
     return {"command": "gobby", "args": ["mcp-server"]}
 
 
-def _response_to_prompt_output(resp: dict[str, Any] | None) -> SyncHookJSONOutput:
+def _response_to_prompt_output(
+    resp: dict[str, Any] | None,
+    persist: AdditionalContextPersistKwargs | None = None,
+) -> SyncHookJSONOutput:
     """Convert workflow HookResponse dict to UserPromptSubmit SDK output."""
     if not resp:
         return SyncHookJSONOutput()
@@ -136,19 +169,23 @@ def _response_to_prompt_output(resp: dict[str, Any] | None) -> SyncHookJSONOutpu
         if resp.get("reason"):
             output["reason"] = resp["reason"]
     context = resp.get("context")
-    if context:
+    if isinstance(context, str) and context:
         output["hookSpecificOutput"] = UserPromptSubmitHookSpecificOutput(
             hookEventName="UserPromptSubmit",
-            additionalContext=_truncate(
+            additionalContext=_bound_resp_context(
+                resp,
                 context,
                 contributor_sizes={"response.context": len(context)},
-                logger=logger,
+                persist=persist,
             ),
         )
     return output
 
 
-def _response_to_pre_tool_output(resp: dict[str, Any] | None) -> SyncHookJSONOutput:
+def _response_to_pre_tool_output(
+    resp: dict[str, Any] | None,
+    persist: AdditionalContextPersistKwargs | None = None,
+) -> SyncHookJSONOutput:
     """Convert workflow HookResponse dict to PreToolUse SDK output."""
     if not resp:
         return SyncHookJSONOutput()
@@ -178,36 +215,45 @@ def _response_to_pre_tool_output(resp: dict[str, Any] | None) -> SyncHookJSONOut
             specific["updatedInput"] = resp["modified_input"]
         if resp.get("auto_approve"):
             specific["permissionDecision"] = "allow"
-        if resp.get("context"):
-            specific["additionalContext"] = _truncate(
-                resp["context"],
-                contributor_sizes={"response.context": len(resp["context"])},
-                logger=logger,
+        context = resp.get("context")
+        if isinstance(context, str) and context:
+            specific["additionalContext"] = _bound_resp_context(
+                resp,
+                context,
+                contributor_sizes={"response.context": len(context)},
+                persist=persist,
             )
         output["hookSpecificOutput"] = specific
     return output
 
 
-def _response_to_post_tool_output(resp: dict[str, Any] | None) -> SyncHookJSONOutput:
+def _response_to_post_tool_output(
+    resp: dict[str, Any] | None,
+    persist: AdditionalContextPersistKwargs | None = None,
+) -> SyncHookJSONOutput:
     """Convert workflow HookResponse dict to PostToolUse SDK output."""
     if not resp:
         return SyncHookJSONOutput()
     output = SyncHookJSONOutput()
 
     context = resp.get("context")
-    if context:
+    if isinstance(context, str) and context:
         output["hookSpecificOutput"] = PostToolUseHookSpecificOutput(
             hookEventName="PostToolUse",
-            additionalContext=_truncate(
+            additionalContext=_bound_resp_context(
+                resp,
                 context,
                 contributor_sizes={"response.context": len(context)},
-                logger=logger,
+                persist=persist,
             ),
         )
     return output
 
 
-def _response_to_stop_output(resp: dict[str, Any] | None) -> SyncHookJSONOutput:
+def _response_to_stop_output(
+    resp: dict[str, Any] | None,
+    persist: AdditionalContextPersistKwargs | None = None,
+) -> SyncHookJSONOutput:
     """Convert workflow HookResponse dict to Stop SDK output."""
     if not resp:
         return SyncHookJSONOutput()
@@ -217,15 +263,16 @@ def _response_to_stop_output(resp: dict[str, Any] | None) -> SyncHookJSONOutput:
         if resp.get("reason"):
             output["reason"] = resp["reason"]
     context = resp.get("context")
-    if context:
+    if isinstance(context, str) and context:
         output["hookSpecificOutput"] = cast(
             Any,
             {  # No SDK TypedDict for Stop
                 "hookEventName": "Stop",
-                "additionalContext": _truncate(
+                "additionalContext": _bound_resp_context(
+                    resp,
                     context,
                     contributor_sizes={"response.context": len(context)},
-                    logger=logger,
+                    persist=persist,
                 ),
             },
         )
@@ -256,37 +303,42 @@ def build_compaction_context(
     return "\n".join(parts)
 
 
-def _response_to_compact_output(resp: dict[str, Any] | None) -> SyncHookJSONOutput:
+def _response_to_compact_output(
+    resp: dict[str, Any] | None,
+    persist: AdditionalContextPersistKwargs | None = None,
+) -> SyncHookJSONOutput:
     """Convert workflow HookResponse dict to PreCompact SDK output."""
     if not resp:
         return SyncHookJSONOutput()
     output = SyncHookJSONOutput()
     context = resp.get("context")
-    if context:
+    if isinstance(context, str) and context:
         output["hookSpecificOutput"] = cast(
             Any,
             {  # No SDK TypedDict for PreCompact
                 "hookEventName": "PreCompact",
-                "additionalContext": _truncate(context),
+                "additionalContext": _bound_resp_context(resp, context, persist=persist),
             },
         )
     return output
 
 
 def _response_to_subagent_output(
-    resp: dict[str, Any] | None, event_name: str
+    resp: dict[str, Any] | None,
+    event_name: str,
+    persist: AdditionalContextPersistKwargs | None = None,
 ) -> SyncHookJSONOutput:
     """Convert workflow HookResponse dict to SubagentStart/SubagentStop SDK output."""
     if not resp:
         return SyncHookJSONOutput()
     output = SyncHookJSONOutput()
     context = resp.get("context")
-    if context:
+    if isinstance(context, str) and context:
         output["hookSpecificOutput"] = cast(
             Any,
             {  # No SDK TypedDict for Subagent hooks
                 "hookEventName": event_name,
-                "additionalContext": _truncate(context),
+                "additionalContext": _bound_resp_context(resp, context, persist=persist),
             },
         )
     return output
