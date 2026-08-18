@@ -118,7 +118,13 @@ class ToolResultOffloader:
             return result
 
         total_chars = len(serialized.text)
-        stored_content = serialized.text[: self._config.max_stored_chars]
+        if total_chars > self._config.max_stored_chars:
+            return self._too_large_envelope(
+                server_name=server_name,
+                tool_name=tool_name,
+                serialized=serialized,
+                total_chars=total_chars,
+            )
         resolved_project_id = project_id
         try:
             if not resolved_project_id:
@@ -130,7 +136,7 @@ class ToolResultOffloader:
                 session_id=session_id,
                 server_name=server_name,
                 tool_name=tool_name,
-                content=stored_content,
+                content=serialized.text,
                 content_kind=serialized.content_kind,
                 total_chars=total_chars,
             )
@@ -178,7 +184,7 @@ class ToolResultOffloader:
             tool_name=tool_name,
             serialized=serialized,
             total_chars=total_chars,
-            stored_chars=len(stored_content),
+            stored_chars=total_chars,
             result_id=result_id,
             matches=matches,
         )
@@ -212,6 +218,32 @@ class ToolResultOffloader:
             "end_offset": int(row["end_offset"]),
             "score": hit.score,
             "content": str(row["content"]),
+        }
+
+    def _too_large_envelope(
+        self,
+        *,
+        server_name: str,
+        tool_name: str,
+        serialized: _SerializedResult,
+        total_chars: int,
+    ) -> dict[str, Any]:
+        cap = self._config.max_stored_chars
+        return {
+            "offloaded": False,
+            "stored": False,
+            "reason": "too_large",
+            "server_name": render_bounded_identity(server_name),
+            "tool_name": render_bounded_identity(tool_name),
+            "content_kind": serialized.content_kind,
+            "total_chars": total_chars,
+            "stored_chars": 0,
+            "retrieval_available": False,
+            "guidance": (
+                f"Output is {total_chars} chars, over the {cap} char storage cap. "
+                "The result was not stored; the tail is not retrievable from Gobby. "
+                "Re-query the tool with a narrower request."
+            ),
         }
 
     def _build_envelope(
@@ -294,20 +326,13 @@ class ToolResultOffloader:
                 "the omitted tail cannot be retrieved from Gobby. The source system still holds "
                 "the original."
             )
-
-        guidance = (
+        return (
             f"Output exceeded {threshold} chars and is retrievable for {retention} days. "
             "Search it: call_tool('gobby-results','search_tool_result',"
             f"{{'result_id':'{result_id}','query':'...'}}). "
             "Page raw content: get_tool_result. Tip: pass intent='<what you need>' on call_tool "
             "to get matched sections directly."
         )
-        if stored_chars < total_chars:
-            guidance += (
-                " The omitted tail is not retrievable from Gobby; the source system still holds "
-                "the original."
-            )
-        return guidance
 
 
 def _has_non_text_content(result: object) -> bool:

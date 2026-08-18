@@ -131,7 +131,12 @@ class ToolResultOffloadConfig(BaseModel):
     max_envelope_chars: int = Field(8_000, ge=2_000, le=1_000_000)
     preview_chars: int = Field(2_000, ge=0, le=1_000_000)
     chunk_chars: int = Field(2_000, ge=200, le=100_000)
-    max_stored_chars: int = Field(2_000_000, ge=10_000, le=100_000_000)
+    max_stored_chars: int = Field(
+        2_000_000,
+        ge=10_000,
+        le=100_000_000,
+        description="Hard cap on persisted result size. Over-cap results are not stored.",
+    )
     intent_match_limit: int = Field(5, ge=0, le=50)
     retention_days: int = Field(7, ge=1, le=3_650)
     exempt_tools: list[str] = Field(default_factory=list)

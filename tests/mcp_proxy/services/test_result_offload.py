@@ -367,6 +367,7 @@ async def test_oversized_result_is_stored_and_returns_configured_envelope() -> N
         "keys": {"docs": "list[1]", "meta": "object"},
     }
     assert actual["preview"] == serialized[: harness.config.preview_chars]
+    assert actual["stored_chars"] == actual["total_chars"] == len(serialized)
     assert "3,000 chars" not in actual["guidance"]
     assert "3000 chars" in actual["guidance"]
     assert "retrievable for 9 days" in actual["guidance"]
@@ -504,7 +505,7 @@ async def test_default_string_serialization_failure_passes_through_verbatim() ->
 
 
 @pytest.mark.asyncio
-async def test_storage_bound_and_guidance_report_non_retrievable_tail() -> None:
+async def test_over_max_stored_chars_is_typed_too_large_and_does_not_persist() -> None:
     harness = _harness()
     result = "x" * 12_000
 
@@ -516,12 +517,34 @@ async def test_storage_bound_and_guidance_report_non_retrievable_tail() -> None:
         intent=None,
     )
 
-    save_kwargs = harness.store.save.call_args.kwargs
-    assert len(save_kwargs["content"]) == 10_000
-    assert save_kwargs["total_chars"] == 12_000
-    assert actual["stored_chars"] == 10_000
+    harness.store.save.assert_not_called()
+    assert actual["stored"] is False
+    assert actual["reason"] == "too_large"
     assert actual["total_chars"] == 12_000
+    assert actual["stored_chars"] == 0
+    assert actual["retrieval_available"] is False
+    assert "result_id" not in actual
     assert "tail is not retrievable" in actual["guidance"]
+
+
+async def test_successful_offload_persists_every_serialized_character() -> None:
+    harness = _harness()
+    result = "y" * 8_000
+
+    actual = await harness.offloader.maybe_offload(
+        server_name="server",
+        tool_name="tool",
+        result=result,
+        session_id="session",
+        intent=None,
+    )
+
+    save_kwargs = harness.store.save.call_args.kwargs
+    assert save_kwargs["content"] == result
+    assert save_kwargs["total_chars"] == len(result)
+    assert actual["stored_chars"] == actual["total_chars"] == len(result)
+    assert actual["result_id"] == RESULT_ID
+    assert actual["retrieval_available"] is True
 
 
 @pytest.mark.asyncio
