@@ -161,6 +161,7 @@ class TestInstallClaude:
         assert "--gobby-owned --cli=claude --type=statusline" in settings["statusLine"]["command"]
         assert settings["hooks"]["SessionStart"][0]["hooks"][0]["timeout"] == 150
         assert settings["hooks"]["SessionEnd"][0]["hooks"][0]["timeout"] == 60
+        assert settings["autoMemoryEnabled"] is False
 
         # Verify global hooks were installed
         mock_global_hooks.assert_called_once()
@@ -693,6 +694,7 @@ class TestUninstallClaude:
                 "CustomUserHook": [{"hooks": [{"type": "command", "command": "user"}]}],
             },
             "allowedTools": ["tool1"],
+            "autoMemoryEnabled": False,
         }
         (claude_path / "settings.json").write_text(json.dumps(settings))
 
@@ -770,6 +772,9 @@ class TestUninstallClaude:
             {"hooks": [{"type": "command", "command": "user"}]}
         ]
         assert settings["allowedTools"] == ["tool1"]
+
+        # Gobby's auto-memory opt-out should be dropped
+        assert "autoMemoryEnabled" not in settings
 
     def test_uninstall_claude_no_settings_file(self, temp_project: Path) -> None:
         """Test uninstallation when no settings.json exists."""

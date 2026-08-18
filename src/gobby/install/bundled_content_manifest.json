@@ -542,6 +542,7 @@
     "workflows/rules/tdd-enforcement/enforce-tdd-track-tests.yaml": "1e3fde7027cbb14af717f29cc8a0dc809cc9fadf9f649279e686ee6d78cef4d7",
     "workflows/rules/tool-hygiene/block-claude-memory-read.yaml": "41944133669169aeee66d67aec171d3e0fa1060d5f6b7f4ba21d24c0eb1b1663",
     "workflows/rules/tool-hygiene/block-claude-memory-search.yaml": "cd0ae13eeace602dc7591877dc496b5c969b39710cf52618328171be60283079",
+    "workflows/rules/tool-hygiene/block-claude-memory-tool.yaml": "b091d630d9135b09b2ec40f75d1155afcd3c3010a1c760c2a20dfa05b2981d98",
     "workflows/rules/tool-hygiene/block-claude-memory-write.yaml": "16feaf70a087fa7974be646bf8f55fa3b96fe323a6d353f5d5dcb6b8162a9dde",
     "workflows/rules/tool-hygiene/require-uv.yaml": "80787035529caa6756d1a7947cbdf0fb34da1d88331ecb766e6cf196b5d07d09",
     "workflows/rules/worker-safety/block-docker-policy-edits.yaml": "41aaceec5d5c969faabed08967933cede0f1f5ece3e313a74b541efb1cd9e23d",

@@ -1,0 +1,16 @@
+tags: [tool-hygiene, enforcement, memory, gobby, default]
+
+rules:
+  block-claude-memory-tool:
+    description: "Block Claude Code's native Memory tool — use gobby-memory MCP"
+    event: before_tool
+    enabled: true
+    priority: 10
+    when: "event.data.get('tool_name') == 'Memory'"
+    effect:
+      type: block
+      tools: [Memory]
+      reason: |
+        Use gobby-memory — your memories live there with full read/search/write
+        access: search_memories(query), list_memories(), get_memory(id),
+        create_memory(...).

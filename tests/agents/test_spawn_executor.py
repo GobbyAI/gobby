@@ -1322,6 +1322,7 @@ class TestExecuteSpawnSandbox:
         call_kwargs = mock_spawner.spawn.call_args.kwargs
         assert "env" in call_kwargs
         assert "SEATBELT_PROFILE" in call_kwargs["env"]
+        assert call_kwargs["env"]["CLAUDE_CODE_DISABLE_AUTO_MEMORY"] == "1"
         assert Path(call_kwargs["env"][UV_CACHE_DIR]).is_relative_to(
             Path(
                 next(

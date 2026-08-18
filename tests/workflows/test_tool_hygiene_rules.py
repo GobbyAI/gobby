@@ -2,15 +2,14 @@
 
 from __future__ import annotations
 
-import json
 from datetime import UTC, datetime
 
 import pytest
 
 from gobby.hooks.events import HookEvent, HookEventType, SessionSource
 from gobby.hooks.normalization import normalize_tool_fields
-from gobby.storage.hub.protocol import HubDatabase
 from gobby.storage.definitions.rules import RuleDefinitionManager
+from gobby.storage.hub.protocol import HubDatabase
 from gobby.workflows.definitions import RuleDefinitionBody, RuleEffect
 from gobby.workflows.engine.core import RuleEngine
 from gobby.workflows.sync_rules import sync_bundled_rules
@@ -24,6 +23,7 @@ SESSION_ID = "11111111-1111-4111-8111-111111111111"
 CLAUDE_MEMORY_RULES = {
     "block-claude-memory-read",
     "block-claude-memory-search",
+    "block-claude-memory-tool",
     "block-claude-memory-write",
 }
 
@@ -244,6 +244,38 @@ class TestClaudeMemoryHygieneRules:
             assert "canonical_tool_kind" in body.when
             assert "touches_claude_memory_path" in body.when
             assert body.resolved_effects[0].tools == tools
+
+    def test_native_memory_tool_rule_structure(self, db, manager) -> None:
+        """The harness-level Memory tool is blocked by name, not by path."""
+        _sync_bundled(db)
+        row = manager.get_by_name("block-claude-memory-tool")
+        assert row is not None
+        body = RuleDefinitionBody.model_validate(row.definition_json)
+        assert body.when is not None
+        assert "'Memory'" in body.when
+        assert body.resolved_effects[0].tools == ["Memory"]
+
+    @pytest.mark.asyncio
+    async def test_blocks_native_memory_tool(self, db) -> None:
+        _sync_bundled(db)
+        data: dict[str, object] = {
+            "tool_name": "Memory",
+            "tool_input": {"command": "view", "path": "/memories"},
+        }
+        normalize_tool_fields(data)
+        event = HookEvent(
+            event_type=HookEventType.BEFORE_TOOL,
+            session_id=SESSION_ID,
+            source=SessionSource.CLAUDE,
+            timestamp=datetime.now(UTC),
+            data=data,
+        )
+
+        response = await RuleEngine(db).evaluate(event, session_id=SESSION_ID, variables={})
+
+        assert response.decision == "block"
+        assert response.reason is not None
+        assert "Use gobby-memory" in response.reason
 
     @pytest.mark.asyncio
     async def test_blocks_shell_read_workaround(self, db) -> None:

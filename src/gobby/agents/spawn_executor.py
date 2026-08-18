@@ -299,6 +299,9 @@ async def _spawn_claude_terminal(request: SpawnRequest) -> SpawnResult:
         return preflight_error
     env = spawn_context.env_vars.copy()
     _apply_extra_env(env, request)
+    # Gobby owns memory for spawned agents; keep the harness-level auto-memory
+    # section out of their system prompts regardless of user settings.json.
+    env["CLAUDE_CODE_DISABLE_AUTO_MEMORY"] = "1"
     if request.api_base:
         env["ANTHROPIC_BASE_URL"] = request.api_base
     if request.api_token:
