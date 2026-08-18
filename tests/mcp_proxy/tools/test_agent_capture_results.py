@@ -218,6 +218,29 @@ def test_legacy_bare_end_marker_paginates_start_to_eof() -> None:
     assert str(payload["result"]).endswith(_LEGACY_BARE_END_MARKER)
 
 
+@pytest.mark.asyncio
+async def test_get_agent_capture_returns_every_character_after_health_fail_persist() -> None:
+    from gobby.agents.capture import _capture_slot
+    from gobby.sessions.session_wiki_file import redact_session_markdown
+
+    unique_head = "HEALTH_CAPTURE_HEAD_7f3a9c"
+    pane = f"{unique_head}\n{'y' * 1800}\nsk-ABCDEFGHIJKLMNOPQRSTUV"
+    redacted = redact_session_markdown(pane.strip())
+    assert unique_head in redacted
+    assert len(redacted) > 1024
+    run = _run(status="error", result=_capture_slot(_CAPTURE_ID, redacted))
+    run.error = f"Agent process exited immediately after spawn\nPane output:\n[truncated]\ntail\ncapture_id={_CAPTURE_ID}"
+    registry = _registry(run)
+    page = await registry.call(
+        "get_agent_capture",
+        {"run_id": run.id, "limit": len(redacted) + 8},
+    )
+    assert page["success"] is True
+    assert page["content"] == redacted
+    assert page["total_chars"] == len(redacted)
+    assert page["content"] == redacted[:]
+
+
 def test_truncated_tail_reports_actual_excerpt_lines() -> None:
     capture = "\n".join("x" * _AGENT_RESULT_CAPTURE_CHARS for _ in range(3))
 

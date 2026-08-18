@@ -233,3 +233,118 @@ async def test_get_after_lost_start_race_cleans_up_on_storage_error() -> None:
         "child_session_id": "child-1",
     }
     cleanup.assert_awaited_once()
+
+
+class _HealthCaptureStorage:
+    """In-memory capture store matching AgentRunStorage.replace_capture_slot."""
+
+    def __init__(self, run: SimpleNamespace) -> None:
+        self.db = object()
+        self.run = run
+
+    def get(self, _run_id: str) -> SimpleNamespace:
+        return self.run
+
+    def replace_capture_slot(
+        self,
+        _run_id: str,
+        *,
+        capture_id: str,
+        expected_revision: int,
+        marker: str,
+        slot_content: str,
+    ) -> SimpleNamespace:
+        result = self.run.result or ""
+        if self.run.capture_id is None:
+            self.run.result = slot_content if not result else f"{result}\n\n{slot_content}"
+        else:
+            index = result.find(marker)
+            self.run.result = result[:index] + slot_content if index >= 0 else slot_content
+        self.run.capture_id = capture_id
+        self.run.capture_revision = expected_revision + 1
+        return self.run
+
+    def fail(self, _run_id: str, error: str, **_kwargs: Any) -> SimpleNamespace:
+        self.run.status = "error"
+        self.run.error = error
+        return self.run
+
+
+@pytest.mark.asyncio
+async def test_health_fail_persists_full_redacted_pane_for_get_agent_capture() -> None:
+    from gobby.mcp_proxy.tools.agents import create_agents_registry
+    from gobby.mcp_proxy.tools.spawn_agent._health import _deferred_tmux_health_check
+    from gobby.sessions.session_wiki_file import redact_session_markdown
+
+    unique_head = "HEALTH_PANE_HEAD_7f3a9c"
+    unique_tail = "HEALTH_PANE_TAIL_7f3a9c"
+    pane = f"{unique_head}\n{'x' * 2048}\nsk-ABCDEFGHIJKLMNOPQRSTUV\n{unique_tail}"
+    redacted = redact_session_markdown(pane.strip())
+    assert unique_head in redacted
+    assert unique_tail in redacted
+    assert "sk-ABCDEFGHIJKLMNOPQRSTUV" not in redacted
+    assert len(redacted) > 1024
+
+    run = SimpleNamespace(
+        id="run-health-1",
+        status="running",
+        result=None,
+        error=None,
+        capture_id=None,
+        capture_revision=0,
+        provider="claude",
+        model="sonnet",
+        tool_calls_count=0,
+        turns_used=0,
+        started_at=None,
+        completed_at=None,
+        child_session_id=None,
+        terminal_reason=None,
+        prompt="spawn",
+        resume_metadata_json=None,
+    )
+    storage = _HealthCaptureStorage(run)
+    runner = SimpleNamespace(run_storage=storage)
+
+    with (
+        patch(
+            "gobby.mcp_proxy.tools.spawn_agent._health._check_tmux_session_alive",
+            new_callable=AsyncMock,
+            return_value=(False, pane),
+        ),
+        patch(
+            "gobby.agents.terminal_delivery.deliver_existing_terminal_run",
+            new_callable=AsyncMock,
+        ),
+    ):
+        await _deferred_tmux_health_check(
+            runner,
+            run_id=run.id,
+            tmux_session_name="tmux-run",
+            socket_name=None,
+            socket_path=None,
+            delay=0,
+        )
+
+    assert run.status == "error"
+    assert run.capture_id
+    assert run.error is not None
+    assert f"capture_id={run.capture_id}" in run.error
+    assert unique_head not in run.error
+    assert unique_tail in run.error
+    assert "[truncated]" in run.error
+
+    query_runner = MagicMock()
+    query_runner.get_run.return_value = run
+    registry = create_agents_registry(query_runner)
+    page = await registry.call(
+        "get_agent_capture",
+        {"run_id": run.id, "limit": len(redacted) + 32},
+    )
+    assert page["success"] is True
+    assert page["content"] == redacted
+    assert page["total_chars"] == len(redacted)
+    assert page["content"][0] == redacted[0]
+    assert page["content"][-1] == redacted[-1]
+    assert unique_head in page["content"]
+    assert unique_tail in page["content"]

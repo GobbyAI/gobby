@@ -5,10 +5,12 @@ from __future__ import annotations
 import asyncio
 import logging
 import os
+import uuid
 from typing import Any, Protocol
 
 import psycopg
 
+from gobby.agents.capture import _capture_marker, _capture_slot
 from gobby.agents.tmux.errors import TmuxNotFoundError, TmuxSessionError
 from gobby.agents.tmux.session_manager import TmuxSessionManager
 from gobby.sessions.session_wiki_file import redact_session_markdown
@@ -37,18 +39,61 @@ class _RunStorageForHealth(Protocol):
         turns_used: int = 0,
     ) -> Any | None: ...
 
+    def replace_capture_slot(
+        self,
+        run_id: str,
+        *,
+        capture_id: str,
+        expected_revision: int,
+        marker: str,
+        slot_content: str,
+    ) -> Any | None: ...
+
 
 class _RunnerWithRunStorage(Protocol):
     @property
     def run_storage(self) -> _RunStorageForHealth: ...
 
 
-def _bounded_redacted_pane_output(output: str) -> str:
-    redacted = redact_session_markdown(output.strip())
+def _redacted_pane_output(output: str) -> str:
+    return redact_session_markdown(output.strip())
+
+
+def _intentional_pane_tail(redacted: str) -> str:
     if len(redacted) <= _PANE_ERROR_MAX_CHARS:
         return redacted
     tail_chars = _PANE_ERROR_MAX_CHARS - len(_PANE_ERROR_TRUNCATION_MARKER)
     return f"{_PANE_ERROR_TRUNCATION_MARKER}{redacted[-tail_chars:]}"
+
+
+def _bounded_redacted_pane_output(output: str) -> str:
+    """Intentional error-field tail. The full redacted pane is persisted separately."""
+    return _intentional_pane_tail(_redacted_pane_output(output))
+
+
+def _persist_health_pane_capture(
+    storage: _RunStorageForHealth,
+    run: Any,
+    run_id: str,
+    redacted: str,
+) -> str | None:
+    replace = getattr(storage, "replace_capture_slot", None)
+    if run is None or not callable(replace):
+        return None
+    capture_id = getattr(run, "capture_id", None)
+    if not isinstance(capture_id, str) or not capture_id:
+        capture_id = str(uuid.uuid4())
+    expected_revision = getattr(run, "capture_revision", 0) or 0
+    updated = replace(
+        run_id,
+        capture_id=capture_id,
+        expected_revision=expected_revision,
+        marker=_capture_marker(capture_id),
+        slot_content=_capture_slot(capture_id, redacted),
+    )
+    if updated is None:
+        return None
+    return capture_id
 
 
 def cancel_health_checks() -> None:
@@ -146,7 +191,12 @@ async def _deferred_tmux_health_check(
                 return
             error = "Agent process exited immediately after spawn"
             if pane_output:
-                error = f"{error}\nPane output:\n{_bounded_redacted_pane_output(pane_output)}"
+                redacted = _redacted_pane_output(pane_output)
+                tail = _intentional_pane_tail(redacted)
+                capture_id = _persist_health_pane_capture(runner.run_storage, run, run_id, redacted)
+                error = f"{error}\nPane output:\n{tail}"
+                if capture_id:
+                    error = f"{error}\ncapture_id={capture_id}"
             logger.error("Agent %s tmux session %r: %s", run_id, tmux_session_name, error)
             try:
                 failed = runner.run_storage.fail(run_id, error=error)
