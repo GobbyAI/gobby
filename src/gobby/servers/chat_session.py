@@ -30,11 +30,11 @@ from gobby.agents.sandbox import (
 from gobby.config.feature_base import parse_feature_candidate
 from gobby.config.values import ConfigRuntimeReader
 from gobby.servers.chat_session_helpers import (
+    _FALLBACK_SYSTEM_PROMPT,
     PendingApproval,
     _build_gobby_mcp_entry,
     _find_cli_path,
     _find_project_root,
-    _load_chat_system_prompt,
 )
 from gobby.servers.chat_session_hooks import ChatSessionHooksMixin
 from gobby.servers.chat_session_messages import ChatSessionMessagesMixin
@@ -231,10 +231,11 @@ class ChatSession(ChatSessionHooksMixin, ChatSessionMessagesMixin, ChatSessionPe
         if self.resume_session_id:
             system_prompt = None
         else:
-            if self.system_prompt_override:
-                system_prompt = self.system_prompt_override
-            else:
-                system_prompt = _load_chat_system_prompt()
+            # The Gobby persona is single-sourced from the agent-definition
+            # rows: non-default agents arrive as system_prompt_override, and
+            # the default agent's preamble is injected once per context epoch
+            # at first prompt — the static prompt here stays minimal.
+            system_prompt = self.system_prompt_override or _FALLBACK_SYSTEM_PROMPT
             # Inject working directory so the agent doesn't hallucinate paths
             system_prompt += f"\n\n## Environment\n- Working directory: {cwd}\n"
             if self.db_session_id:

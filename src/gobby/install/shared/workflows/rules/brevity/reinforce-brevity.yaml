@@ -47,11 +47,23 @@ rules:
         value: ""
 
   remind-brevity-on-turn-start:
-    description: "Reinforce brevity on every turn after the skill is loaded"
+    description: "Reinforce brevity once per context epoch and every 5 turns"
     event: turn_start
     enabled: true
     priority: 22
-    when: "skill_loaded('brevity') and not variables.get('brevity_disabled')"
+    # turns_since_compact resets to 0 on compact, so a stored marker above the
+    # current counter means a new context epoch began — re-remind once, then
+    # every 5 turns within the epoch.
+    when: >
+      skill_loaded('brevity') and not variables.get('brevity_disabled')
+      and (not variables.get('brevity_reminder_turn')
+      or (variables.get('turns_since_compact') or 0)
+      < (variables.get('brevity_reminder_turn') or 0)
+      or (variables.get('turns_since_compact') or 0)
+      - (variables.get('brevity_reminder_turn') or 0) >= 5)
     effects:
       - type: inject_context
         template: "Brevity reminder ({{ brevity_level }}): answer first; keep context tight."
+      - type: set_variable
+        variable: brevity_reminder_turn
+        value: "variables.get('turns_since_compact') or 0"

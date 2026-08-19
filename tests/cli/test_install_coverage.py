@@ -39,6 +39,16 @@ def runner(monkeypatch: pytest.MonkeyPatch) -> CliRunner:
     runtime.require_config.return_value.hooks.provider_timeout = 120
     install_module = importlib.import_module("gobby.cli.install")
     monkeypatch.setattr(install_module, "get_cli_runtime", lambda: runtime)
+    monkeypatch.setattr(
+        install_module,
+        "ensure_install_identity",
+        MagicMock(return_value=MagicMock(email="owner@example.com")),
+    )
+    monkeypatch.setattr(install_module, "SecretStore", MagicMock())
+    monkeypatch.setattr(install_module, "ConfigStore", MagicMock())
+    monkeypatch.setattr(install_module, "AuthStore", MagicMock())
+    monkeypatch.setattr(install_module, "_provision_local_api_token", MagicMock())
+    monkeypatch.setattr(install_module, "_provision_gdaemon_for_services", MagicMock())
     monkeypatch.setattr(install_module, "_run_install_preflight", lambda **_kwargs: ([], []))
     monkeypatch.setattr(install_module, "_maybe_start_daemon_after_install", MagicMock())
     monkeypatch.setattr(

@@ -168,15 +168,13 @@ class LocalExpansionRunManager:
         """Create a new expansion run."""
         if run_id is None:
             run_id = str(uuid.uuid4())
-        now = utc_now()
         self.db.execute(
             """
             INSERT INTO expansion_runs (
                 id, parent_task_id, project_id, triggering_session_id, status,
-                input_source, plan_file, provider, model, options_json,
-                created_at, updated_at
+                input_source, plan_file, provider, model, options_json
             )
-            VALUES (%s, %s, %s, %s, 'pending', %s, %s, %s, %s, %s, %s, %s)
+            VALUES (%s, %s, %s, %s, 'pending', %s, %s, %s, %s, %s)
             """,
             (
                 run_id,
@@ -188,8 +186,6 @@ class LocalExpansionRunManager:
                 provider,
                 model,
                 json.dumps(options) if options is not None else None,
-                now,
-                now,
             ),
         )
         run = self.get(run_id)

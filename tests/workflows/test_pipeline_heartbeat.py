@@ -16,6 +16,7 @@ from gobby.storage.tasks._manager import LocalTaskManager
 from gobby.tasks.state_semantics import projected_task_state
 from gobby.workflows.pipeline_heartbeat import PipelineHeartbeat
 from gobby.workflows.pipeline_state import ExecutionStatus
+from tests.fixtures.postgres import TEST_USER_ID
 
 if TYPE_CHECKING:
     from gobby.storage.hub.protocol import HubDatabase
@@ -41,8 +42,8 @@ def _seed_db(db: HubDatabase) -> None:
         (PROJECT_ID, "test-project", "/tmp/test"),
     )
     db.execute(
-        "INSERT INTO machines (id, hostname) VALUES (%s, %s) ON CONFLICT (id) DO NOTHING",
-        (MACHINE_ID, "test-machine"),
+        "INSERT INTO machines (id, hostname, owner_user_id) VALUES (%s, %s, %s) ON CONFLICT (id) DO NOTHING",
+        (MACHINE_ID, "test-machine", TEST_USER_ID),
     )
     db.execute(
         """INSERT INTO sessions

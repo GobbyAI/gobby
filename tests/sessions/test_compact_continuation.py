@@ -17,6 +17,7 @@ import pytest
 from gobby.sessions.compact_continuation import (
     _COMPACT_SELF_CONTINUATION_TASKS,
     COMPACT_RESUME_ADVISORY_SKILLS_VARIABLE,
+    COMPACT_RESUME_EXCLUDED_SKILLS,
     COMPACT_RESUME_REQUIRED_SKILLS_VARIABLE,
     COMPACT_SELF_CONTINUE_VARIABLE,
     COMPACT_SELF_INTERRUPT_WARNING,
@@ -35,8 +36,8 @@ from gobby.sessions.compact_continuation import (
     schedule_codex_compact_self_continuation_readiness,
     schedule_compact_self_continuation,
 )
-from gobby.storage.hub.protocol import HubDatabase
 from gobby.storage.definitions.rules import RuleDefinitionRow
+from gobby.storage.hub.protocol import HubDatabase
 from gobby.workflows.definitions import RuleEffect
 from gobby.workflows.engine.effects import EffectsMixin
 from gobby.workflows.state_manager import SessionVariableManager
@@ -733,7 +734,6 @@ def test_persist_compact_resume_required_skills_reloads_claimed_task_skill(
 
     assert skill_tiers == {
         "required": [
-            "loading-skills",
             "python",
             "tasks",
             "development-discipline",
@@ -765,12 +765,10 @@ def test_loaded_skills_remain_required_across_two_compactions(
 
     assert first_tiers == {
         "required": [
-            "loading-skills",
             "python",
             "plan",
             "elicit",
             "code-index",
-            "brevity",
         ],
         "advisory": ["pytest"],
     }
@@ -796,6 +794,31 @@ def test_loaded_skills_remain_required_across_two_compactions(
     second_tiers = persist_compact_resume_required_skills(db, SESSION_ID)
 
     assert second_tiers == first_tiers
+
+
+def test_meta_skills_never_enter_resume_tiers(session_db: HubDatabase) -> None:
+    """brevity and loading-skills ride per-turn reminders, never reload tiers."""
+    db = session_db
+    sv_mgr = SessionVariableManager(db)
+    sv_mgr.merge_variables(
+        SESSION_ID,
+        {
+            "required_skills": ["loading-skills", "brevity"],
+            "claimed_task_required_skills": ["brevity", "tasks"],
+            WORKFLOW_REQUESTED_SKILLS_VARIABLE: ["loading-skills"],
+            "loaded_skills": ["brevity", "loading-skills", "code-index"],
+            "additional_skills": ["brevity", "restraint"],
+        },
+    )
+
+    skill_tiers = persist_compact_resume_required_skills(db, SESSION_ID)
+
+    assert skill_tiers == {
+        "required": ["tasks", "code-index"],
+        "advisory": ["restraint"],
+    }
+    assert not set(skill_tiers["required"]) & COMPACT_RESUME_EXCLUDED_SKILLS
+    assert not set(skill_tiers["advisory"]) & COMPACT_RESUME_EXCLUDED_SKILLS
 
 
 def test_reload_directive_normalized() -> None:
@@ -849,7 +872,7 @@ async def test_load_skill_effect_flows_to_persisted_resume_prompt(
     prompt = build_compact_self_continue_prompt()
 
     assert skill_tiers == {
-        "required": ["loading-skills", "python", "plan", "brevity", "pytest"],
+        "required": ["python", "plan", "pytest"],
         "advisory": ["hypothesis"],
     }
     # The inject-compact-handoff rule reads both persisted tiers into the

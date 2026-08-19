@@ -188,6 +188,20 @@ pub fn assert_success(output: &Output, label: &str) {
     );
 }
 
+pub fn assert_daemon_required(output: &Output, label: &str) {
+    assert!(
+        !output.status.success(),
+        "{label} succeeded without a daemon\nstdout:\n{}\nstderr:\n{}",
+        String::from_utf8_lossy(&output.stdout),
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(
+        stderr.contains("daemon_required") || stderr.contains("daemon required"),
+        "{label} stderr:\n{stderr}"
+    );
+}
+
 pub fn json_stdout(output: &Output) -> serde_json::Value {
     serde_json::from_slice(&output.stdout).expect("stdout is JSON")
 }

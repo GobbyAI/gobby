@@ -157,6 +157,13 @@ pub(crate) fn run_command(options: CodeCommandOptions) -> Result<CommandOutcome,
             CodeCommandError::command("serialize CodeWiki output", None, source)
         });
     }
+    if options.complete_scope && options.scope.is_empty() {
+        return Err(CodeCommandError::command(
+            "generate CodeWiki output",
+            Some(options.project_root.clone()),
+            anyhow::anyhow!("--complete-scope requires at least one --scope path"),
+        ));
+    }
     let facts = CodewikiFacts::open(&options.project_root).map_err(|source| {
         CodeCommandError::command(
             "open CodeWiki facts",

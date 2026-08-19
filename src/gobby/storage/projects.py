@@ -133,15 +133,15 @@ def ensure_personal_project(db: HubDatabase, *, gobby_home: Path | None = None) 
     with db.transaction() as txn:
         txn.execute(
             """
-            INSERT INTO projects (id, name, repo_path, created_at, updated_at, deleted_at)
-            VALUES (%s, %s, %s, %s, %s, NULL)
+            INSERT INTO projects (id, name, repo_path, deleted_at)
+            VALUES (%s, %s, %s, NULL)
             ON CONFLICT (id) DO UPDATE
             SET name = EXCLUDED.name,
                 repo_path = COALESCE(EXCLUDED.repo_path, projects.repo_path),
                 deleted_at = NULL,
                 updated_at = EXCLUDED.updated_at
             """,
-            (PERSONAL_PROJECT_ID, "_personal", repo_path, now, now),
+            (PERSONAL_PROJECT_ID, "_personal", repo_path),
         )
     project = project_manager.get(PERSONAL_PROJECT_ID)
     if project is None:
@@ -335,24 +335,18 @@ class LocalProjectManager:
             self._guard_repo_path_write(repo_path)
 
         project_id = str(uuid.uuid4())
-        now = utc_now()
 
-        self.db.execute(
+        row = self.db.fetchone(
             """
-            INSERT INTO projects (id, name, repo_path, github_url, created_at, updated_at)
-            VALUES (%s, %s, %s, %s, %s, %s)
+            INSERT INTO projects (id, name, repo_path, github_url)
+            VALUES (%s, %s, %s, %s)
+            RETURNING *
             """,
-            (project_id, name, repo_path, github_url, now, now),
+            (project_id, name, repo_path, github_url),
         )
-
-        return Project(
-            id=project_id,
-            name=name,
-            repo_path=repo_path,
-            github_url=github_url,
-            created_at=now,
-            updated_at=now,
-        )
+        if row is None:
+            raise RuntimeError(f"Project '{name}' not found after insert")
+        return Project.from_row(row)
 
     def get(self, project_id: str) -> Project | None:
         """Get project by ID."""
@@ -382,16 +376,15 @@ class LocalProjectManager:
             self._guard_repo_path_write(repo_path)
 
         project_id = str(uuid.uuid4())
-        now = utc_now()
         row = self.db.fetchone(
             """
-            INSERT INTO projects (id, name, repo_path, github_url, created_at, updated_at)
-            VALUES (%s, %s, %s, %s, %s, %s)
+            INSERT INTO projects (id, name, repo_path, github_url)
+            VALUES (%s, %s, %s, %s)
             ON CONFLICT (name) WHERE deleted_at IS NULL
             DO UPDATE SET name = EXCLUDED.name
             RETURNING *
             """,
-            (project_id, name, repo_path, github_url, now, now),
+            (project_id, name, repo_path, github_url),
         )
         if row is None:
             raise RuntimeError(f"Project '{name}' not found after atomic upsert")
@@ -438,14 +431,14 @@ class LocalProjectManager:
 
         self.db.execute(
             """
-            INSERT INTO projects (id, name, repo_path, created_at, updated_at)
-            VALUES (%s, %s, %s, %s, %s)
+            INSERT INTO projects (id, name, repo_path)
+            VALUES (%s, %s, %s)
             ON CONFLICT (id) DO UPDATE SET
                 name = EXCLUDED.name,
                 repo_path = EXCLUDED.repo_path,
                 updated_at = EXCLUDED.updated_at
             """,
-            (project_id, name, repo_path, now, now),
+            (project_id, name, repo_path),
         )
 
         project = self.get(project_id)

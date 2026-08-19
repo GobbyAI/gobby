@@ -20,6 +20,7 @@ from gobby.workflows.pipeline_state import (
     PipelineExecution,
     StepStatus,
 )
+from tests.fixtures.postgres import TEST_USER_ID
 
 pytestmark = pytest.mark.unit
 
@@ -34,8 +35,8 @@ def _local_machine_identity() -> Iterator[None]:
 
 def _insert_local_machine(db: HubDatabase) -> None:
     db.execute(
-        "INSERT INTO machines (id, hostname) VALUES (%s, %s) ON CONFLICT (id) DO NOTHING",
-        (LOCAL_MACHINE_ID, "test-machine"),
+        "INSERT INTO machines (id, hostname, owner_user_id) VALUES (%s, %s, %s) ON CONFLICT (id) DO NOTHING",
+        (LOCAL_MACHINE_ID, "test-machine", TEST_USER_ID),
     )
 
 

@@ -226,20 +226,14 @@ class GitHubTriageStore:
         return GitHubTriageConfig.default(project_id, fallback_repo)
 
     def upsert_config(self, config: GitHubTriageConfig) -> GitHubTriageConfig:
-        now = _now()
         with self.db.transaction() as conn:
-            existing = conn.execute(
-                "SELECT created_at FROM project_github_triage_configs WHERE project_id = %s",
-                (config.project_id,),
-            ).fetchone()
-            created_at = existing["created_at"] if existing else now
             conn.execute(
                 """
                 INSERT INTO project_github_triage_configs (
                     project_id, sync_enabled, triage_enabled, webhook_enabled, repositories_json,
-                    reconcile_interval_seconds, webhook_secret_ref, created_at, updated_at
+                    reconcile_interval_seconds, webhook_secret_ref
                 )
-                VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s)
+                VALUES (%s, %s, %s, %s, %s, %s, %s)
                 ON CONFLICT(project_id) DO UPDATE SET
                     sync_enabled = excluded.sync_enabled,
                     triage_enabled = excluded.triage_enabled,
@@ -257,8 +251,6 @@ class GitHubTriageStore:
                     _json_dumps(list(config.repositories)),
                     config.reconcile_interval_seconds,
                     config.webhook_secret_ref,
-                    created_at,
-                    now,
                 ),
             )
         return self.get_config(config.project_id)
@@ -449,21 +441,15 @@ class GitHubTriageStore:
         row_id = hashlib.sha256(f"{project_id}:{repo}:{issue_number}".encode()).hexdigest()
         now = _now()
         with self.db.transaction() as conn:
-            existing = conn.execute(
-                "SELECT created_at FROM gh_issues_triaged WHERE project_id = %s AND repo = %s "
-                "AND issue_number = %s",
-                (project_id, repo, issue_number),
-            ).fetchone()
-            created_at = existing["created_at"] if existing else now
             conn.execute(
                 """
                 INSERT INTO gh_issues_triaged (
                     id, project_id, repo, issue_number, issue_url, issue_state,
                     labels_json, issue_updated_at, content_hash, verdict, decision_json,
                     task_id, vector_point_id, dedup_issue_key, source, source_text,
-                    last_triaged_at, created_at, updated_at
+                    last_triaged_at
                 )
-                VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+                VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
                 ON CONFLICT(project_id, repo, issue_number) DO UPDATE SET
                     issue_url = excluded.issue_url,
                     issue_state = excluded.issue_state,
@@ -503,8 +489,6 @@ class GitHubTriageStore:
                     dedup_issue_key,
                     source,
                     source_text,
-                    now,
-                    created_at,
                     now,
                 ),
             )

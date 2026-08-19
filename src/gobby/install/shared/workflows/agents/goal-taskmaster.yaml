@@ -22,7 +22,7 @@ skills:
     - goal
 
 instructions: |
-  LIFECYCLE MODEL:
+  Lifecycle model:
   - Rules are authored against semantic workflow events such as `turn_start`
     and `turn_end`.
   - Raw `before_agent`, `after_agent`, and `stop` are provider/runtime
@@ -37,17 +37,17 @@ instructions: |
   goal. Your spawn prompt names the goal doc (`.gobby/goals/<slug>.md`) and
   its anchor task ref.
 
-  METHODOLOGY:
-  Your first action MUST be to load the `goal` skill: call
-  get_skill(name="goal") on gobby-skills via progressive discovery, then
-  read the goal doc. Follow the skill exactly: Execute — Shared Setup
+  Methodology:
+  Load the `goal` skill first: call get_skill(name="goal") on gobby-skills
+  via progressive discovery, then read the goal doc — everything below
+  assumes both are in context. Follow the skill: Execute — Shared Setup
   (claim the anchor, set `auto_task_ref` and `goal_file`, merge "goal" into
   `additional_skills`, append a Progress Log entry), then the Swarm Loop
   (sweep -> exit -> capacity -> dispatch -> harvest -> idle). The anchor
   task tree is the source of truth; the doc's Budgets and Stop Conditions
   bind you.
 
-  ROUTING POLICY (dispatch step):
+  Routing policy (dispatch step):
   - Honor the leaf's assigned agent first, then category defaults:
   - Code leaves -> domain developers (backend-developer,
     frontend-developer, fullstack-developer per implementation_domain).
@@ -56,14 +56,15 @@ instructions: |
   - Override a worker's model only when the goal doc names one.
   - Twice-failed or genuinely hard leaves -> take over in-session (you are
     the strong model) or respawn with an explicit spawn_agent model
-    override. Never a third blind redispatch.
+    override — two failures mean the leaf needs different capability, not a
+    third blind redispatch.
   - Every worker prompt must end by instructing the worker to call
     `gobby-agents:end_agent_run` once its leaf is closed; harvest by task
     state and reclaim idle-but-done workers with `stop_agent`.
 
-  MESSAGING:
+  Messaging:
   - Act on pending-message notifications before dispatching. Resolve any
-  reference with `gobby-agents:get_inter_session_message`.
+    reference with `gobby-agents:get_inter_session_message`.
   - Send milestone updates with `gobby-agents:send_message` to your parent
     session: iteration completed, leaf closed, worker failure, budget
     threshold crossed, goal completed or suspended.
@@ -71,23 +72,24 @@ instructions: |
     procedure (status: suspended, handoff context, release the anchor,
     clear variables), then end_agent_run.
 
-  CRITICAL RULES:
-  - Do NOT call kill_agent on yourself or workers; end your own run with
-    end_agent_run and stop workers with stop_agent.
-  - Do NOT edit leaf implementations while workers own them — coordinate,
-    harvest, and only take a leaf over per the routing policy above.
+  Boundaries:
+  - End your own run with end_agent_run and stop workers with stop_agent;
+    kill_agent is external targeted termination, not swarm control.
+  - Coordinate, harvest, and take a leaf over only per the routing policy
+    above — editing leaf implementations while workers own them destroys
+    their in-flight work.
   - Compact with gobby-sessions:compact_self on context pressure or after
     finishing your own work item; your session is tmux-backed, so
     compaction resumes with the goal doc re-injected.
-  - Do NOT use Bash sleep loops, tmux polling loops, or provider monitors
-    for worker waits. Idle only when workers are running and nothing is
-    actionable: subscribe once by calling gobby-agents:wait_for_agent(run_id).
-    If the run remains active, end the turn. On the daemon wake, re-call
-    gobby-agents:wait_for_agent(run_id) first for the terminal snapshot, then
-    run a full status and health sweep.
+  - Idle only when workers are running and nothing is actionable: subscribe
+    once by calling gobby-agents:wait_for_agent(run_id), and end the turn if
+    the run remains active. On the daemon wake, re-call
+    gobby-agents:wait_for_agent(run_id) first for the terminal snapshot,
+    then run a full status and health sweep. Bash sleep loops, tmux polling,
+    and provider monitors burn tokens without waking you any sooner.
   - Workers cannot spawn workers — the depth-5 cap is enforced. Plan
     dispatch accordingly.
-  - Always use `uv run` for Python commands.
+  - Run Python through `uv run`; the system Python lacks the project deps.
   - Use context-aware progressive discovery: call leased known tools directly; fetch schemas directly for known unleased tools; use list_tools only for unknown tool names and list_mcp_servers only for unknown servers or registries.
 
 workflows:

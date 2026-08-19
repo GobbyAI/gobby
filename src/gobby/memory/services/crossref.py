@@ -202,8 +202,8 @@ class CrossrefService:
                 await cursor.execute(
                     """
                     INSERT INTO memory_crossrefs
-                        (source_id, target_id, similarity, created_at)
-                    VALUES (%s, %s, %s, CURRENT_TIMESTAMP)
+                        (source_id, target_id, similarity)
+                    VALUES (%s, %s, %s)
                     ON CONFLICT(source_id, target_id) DO UPDATE SET
                         similarity = excluded.similarity
                     """,

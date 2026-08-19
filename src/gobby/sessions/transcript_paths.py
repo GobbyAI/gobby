@@ -63,7 +63,7 @@ def find_transcript_on_disk(
                         if inspected_days > source_max_days:
                             return None
                         match = _first_recent_file(
-                            _safe_glob(day_dir, f"*{escaped_external_id}*"),
+                            _safe_glob(day_dir, f"rollout-*{escaped_external_id}.jsonl"),
                             source_max_days,
                         )
                         if match:

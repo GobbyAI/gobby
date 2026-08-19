@@ -365,14 +365,13 @@ class _TerminalMixin:
         Returns:
             Number of new skills recorded
         """
-        now = utc_now()
         count = 0
         with self.db.transaction():
             for name in skill_names:
                 cursor = self.db.execute(
-                    "INSERT INTO session_skills (session_id, skill_name, created_at) "
-                    "VALUES (%s, %s, %s) ON CONFLICT (session_id, skill_name) DO NOTHING",
-                    (session_id, name, now),
+                    "INSERT INTO session_skills (session_id, skill_name) "
+                    "VALUES (%s, %s) ON CONFLICT (session_id, skill_name) DO NOTHING",
+                    (session_id, name),
                 )
                 if cursor.rowcount == 1:
                     count += 1

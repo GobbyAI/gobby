@@ -302,7 +302,9 @@ class TestSessionRegistration:
             str(transcript), "codex", "sid", mtime_ns=st.st_mtime_ns, size=st.st_size
         )
         persist_index_sidecar(str(transcript), index)
-        sidecar = tmp_path / "legacy-rollout.jsonl.gobby-index.json"
+        from gobby.sessions.transcript_index_sidecar import _sidecar_path
+
+        sidecar = Path(_sidecar_path(str(transcript)))
         payload = json.loads(sidecar.read_text(encoding="utf-8"))
         payload.pop("session_stats", None)
         sidecar.write_text(json.dumps(payload), encoding="utf-8")

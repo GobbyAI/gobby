@@ -121,8 +121,8 @@ class ToolMetricsStore:
                 id, project_id, server_name, tool_name,
                 call_count, success_count, failure_count,
                 total_latency_ms, avg_latency_ms,
-                last_called_at, created_at, updated_at
-            ) VALUES (%s, %s, %s, %s, 1, %s, %s, %s, %s, %s, %s, %s)
+                last_called_at
+            ) VALUES (%s, %s, %s, %s, 1, %s, %s, %s, %s, %s)
             ON CONFLICT(project_id, server_name, tool_name) DO UPDATE SET
                 call_count = tool_metrics.call_count + 1,
                 success_count = tool_metrics.success_count + %s,
@@ -143,8 +143,6 @@ class ToolMetricsStore:
                 failure_inc,
                 latency_ms,
                 latency_ms,
-                now,
-                now,
                 now,
                 # ON CONFLICT UPDATE values
                 success_inc,
@@ -348,7 +346,6 @@ class ToolMetricsStore:
             return 0
 
         aggregated = 0
-        now = utc_now()
 
         for row in rows:
             total_calls = row["total_calls"]
@@ -359,8 +356,8 @@ class ToolMetricsStore:
                 INSERT INTO tool_metrics_daily (
                     project_id, server_name, tool_name, date,
                     call_count, success_count, failure_count,
-                    total_latency_ms, avg_latency_ms, created_at
-                ) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+                    total_latency_ms, avg_latency_ms
+                ) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s)
                 ON CONFLICT(project_id, server_name, tool_name, date) DO UPDATE SET
                     call_count = tool_metrics_daily.call_count + excluded.call_count,
                     success_count = tool_metrics_daily.success_count + excluded.success_count,
@@ -381,7 +378,6 @@ class ToolMetricsStore:
                     row["total_failure"],
                     row["total_latency"],
                     avg_latency,
-                    now,
                 ),
             )
             aggregated += 1
@@ -390,7 +386,6 @@ class ToolMetricsStore:
 
     def cleanup_old_metrics(self, cutoff: datetime) -> int:
         """Atomically roll up and delete metrics older than ``cutoff``."""
-        now = utc_now()
         with self.db.transaction() as txn:
             row = txn.execute(
                 """
@@ -418,7 +413,7 @@ class ToolMetricsStore:
                     INSERT INTO tool_metrics_daily (
                         project_id, server_name, tool_name, date,
                         call_count, success_count, failure_count,
-                        total_latency_ms, avg_latency_ms, created_at
+                        total_latency_ms, avg_latency_ms
                     )
                     SELECT
                         project_id,
@@ -429,8 +424,7 @@ class ToolMetricsStore:
                         total_success,
                         total_failure,
                         total_latency,
-                        total_latency / NULLIF(total_calls, 0),
-                        %s
+                        total_latency / NULLIF(total_calls, 0)
                     FROM rollup
                     ON CONFLICT(project_id, server_name, tool_name, date) DO UPDATE SET
                         call_count = tool_metrics_daily.call_count + excluded.call_count,
@@ -445,7 +439,7 @@ class ToolMetricsStore:
                 )
                 SELECT COUNT(*) AS deleted_count FROM archived
                 """,
-                (cutoff, now),
+                (cutoff,),
             ).fetchone()
 
         return int(row["deleted_count"]) if row is not None else 0

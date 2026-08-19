@@ -11,8 +11,8 @@ def ensure_project_row(db: HubDatabase, project_id: str) -> None:
     """Ensure project-scoped build control rows have a valid project."""
     db.execute(
         """
-        INSERT INTO projects (id, name, created_at, updated_at)
-        VALUES (%s, %s, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
+        INSERT INTO projects (id, name)
+        VALUES (%s, %s)
         ON CONFLICT (id) DO NOTHING
         """,
         (project_id, f"project:{project_id}"),

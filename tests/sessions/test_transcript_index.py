@@ -8,6 +8,8 @@ builds once and invalidates on append.
 
 from __future__ import annotations
 
+import asyncio
+import hashlib
 import json
 import logging
 import os
@@ -25,6 +27,7 @@ from gobby.sessions.transcript_index import (
     build_index_from_raw_lines,
     clear_index_cache,
     detect_source_bounded,
+    discard_index_sidecar,
     get_or_build_index,
     load_index_sidecar,
     persist_index_sidecar,
@@ -178,6 +181,12 @@ def _write(tmp_path: Path, name: str, lines: list[str]) -> str:
     path = tmp_path / f"{name}.jsonl"
     path.write_text("\n".join(lines) + "\n", encoding="utf-8")
     return str(path)
+
+
+def _index_sidecar_path(gobby_home: Path, transcript_path: str | Path) -> Path:
+    normalized_path = os.path.abspath(transcript_path)
+    cache_key = hashlib.sha256(normalized_path.encode("utf-8")).hexdigest()
+    return gobby_home / "cache" / "transcript-indexes" / f"{cache_key}.gobby-index.json"
 
 
 def _line_texts(lines: list[str]) -> list[str]:
@@ -520,9 +529,9 @@ def test_nonserializable_adjustment_log_redacts_value(
         for item in caplog.records
         if item.message == "Skipping non-serializable transcript index adjustment value"
     )
-    assert record.value_type == "dict"
-    assert record.value_length == 1
-    assert record.value_redacted is True
+    assert record.__dict__["value_type"] == "dict"
+    assert record.__dict__["value_length"] == 1
+    assert record.__dict__["value_redacted"] is True
     loaded = load_index_sidecar(
         str(transcript),
         "codex",
@@ -610,8 +619,6 @@ async def test_get_or_build_index_defers_lazy_lines_to_worker(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    import gobby.sessions.transcript_index_sidecar as sidecar
-
     clear_index_cache()
     raw_lines = _codex_lines()
     path = _write(tmp_path, "codex", raw_lines)
@@ -634,7 +641,7 @@ async def test_get_or_build_index_defers_lazy_lines_to_worker(
             assert lazy_lines.iterated is False
         return func(*args, **kwargs)
 
-    monkeypatch.setattr(sidecar.asyncio, "to_thread", immediate_to_thread)
+    monkeypatch.setattr(asyncio, "to_thread", immediate_to_thread)
 
     index = await get_or_build_index(
         path,
@@ -709,6 +716,66 @@ async def test_get_or_build_index_loads_valid_sidecar_after_cache_clear(
     assert loaded.parsed_message_count == first.parsed_message_count
     assert loaded.parsed_boundaries
     clear_index_cache()
+
+
+def test_sidecars_use_isolated_cache_and_absolute_path_keys(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    gobby_home = tmp_path / "gobby-home"
+    monkeypatch.setenv("GOBBY_HOME", str(gobby_home))
+    provider_a = tmp_path / "provider-a"
+    provider_b = tmp_path / "provider-b"
+    provider_a.mkdir()
+    provider_b.mkdir()
+    path_a = _write(provider_a, "same-name", _codex_lines())
+    path_b = _write(provider_b, "same-name", _codex_lines())
+
+    for path in (path_a, path_b):
+        st = os.stat(path)
+        index = build_index_from_file(
+            path, "codex", SESSION, mtime_ns=st.st_mtime_ns, size=st.st_size
+        )
+        persist_index_sidecar(path, index)
+
+    sidecar_a = _index_sidecar_path(gobby_home, path_a)
+    sidecar_b = _index_sidecar_path(gobby_home, path_b)
+    assert sidecar_a.is_file()
+    assert sidecar_b.is_file()
+    assert sidecar_a != sidecar_b
+    assert not Path(f"{os.path.abspath(path_a)}.gobby-index.json").exists()
+    assert not Path(f"{os.path.abspath(path_b)}.gobby-index.json").exists()
+
+
+def test_discard_ignores_adjacent_legacy_sidecar(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    gobby_home = tmp_path / "gobby-home"
+    monkeypatch.setenv("GOBBY_HOME", str(gobby_home))
+    path = _write(tmp_path, "codex-legacy-adjacent", _codex_lines())
+    st = os.stat(path)
+    index = build_index_from_file(path, "codex", SESSION, mtime_ns=st.st_mtime_ns, size=st.st_size)
+    persist_index_sidecar(path, index)
+    cached_sidecar = _index_sidecar_path(gobby_home, path)
+    adjacent_sidecar = Path(f"{os.path.abspath(path)}.gobby-index.json")
+    adjacent_sidecar.write_text(cached_sidecar.read_text(encoding="utf-8"), encoding="utf-8")
+
+    discard_index_sidecar(path)
+
+    assert not cached_sidecar.exists()
+    assert adjacent_sidecar.is_file()
+    assert (
+        load_index_sidecar(
+            path,
+            "codex",
+            SESSION,
+            seek_mode="byte",
+            mtime_ns=st.st_mtime_ns,
+            size=st.st_size,
+        )
+        is None
+    )
 
 
 @pytest.mark.asyncio
@@ -890,7 +957,7 @@ def test_legacy_sidecar_without_stats_loads_with_resume_fallbacks(tmp_path: Path
     st = os.stat(path)
     index = build_index_from_file(path, "codex", SESSION, mtime_ns=st.st_mtime_ns, size=st.st_size)
     persist_index_sidecar(path, index)
-    sidecar = Path(f"{os.path.abspath(path)}{transcript_index.INDEX_SIDECAR_SUFFIX}")
+    sidecar = _index_sidecar_path(Path(os.environ["GOBBY_HOME"]), path)
     payload = json.loads(sidecar.read_text(encoding="utf-8"))
     for key in (
         "session_stats",

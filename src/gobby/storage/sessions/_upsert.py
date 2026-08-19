@@ -100,7 +100,8 @@ def update_existing_session(
                 WHEN status = 'expired' AND session_type = 'terminal' THEN 'active'
                 ELSE 'active'
             END,
-            updated_at = %s
+            updated_at = %s,
+            last_activity = %s
         WHERE id = %s
         """,
         (
@@ -118,6 +119,7 @@ def update_existing_session(
             bool(is_local) if is_local is not None else False,
             sandbox_enabled,
             sandbox_policy_hash,
+            now,
             now,
             existing.id,
         ),

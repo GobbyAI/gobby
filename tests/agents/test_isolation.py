@@ -1201,7 +1201,7 @@ class TestWorktreeIsolationHandler:
         )
 
     def test_build_context_prompt_prepends_warning(self) -> None:
-        """Test build_context_prompt prepends CRITICAL: Worktree Context warning."""
+        """Test build_context_prompt prepends the worktree context banner."""
         mock_git_manager = MagicMock()
         mock_worktree_storage = MagicMock()
 
@@ -1221,7 +1221,7 @@ class TestWorktreeIsolationHandler:
 
         result = handler.build_context_prompt(original_prompt, ctx)
 
-        assert "CRITICAL: Worktree Context" in result
+        assert "Worktree context — you are working in an isolated git worktree" in result
         assert original_prompt in result
         assert "feature-branch" in result
 
@@ -1760,7 +1760,7 @@ class TestCloneIsolationHandler:
         assert Path(sanitized_a).name == "feat-x-cccccccc"
 
     def test_build_context_prompt_prepends_warning(self) -> None:
-        """Test build_context_prompt prepends CRITICAL: Clone Context warning."""
+        """Test build_context_prompt prepends the clone context banner."""
         mock_clone_manager = MagicMock()
         mock_clone_storage = MagicMock()
 
@@ -1780,7 +1780,7 @@ class TestCloneIsolationHandler:
 
         result = handler.build_context_prompt(original_prompt, ctx)
 
-        assert "CRITICAL: Clone Context" in result
+        assert "Clone context — you are working in an isolated shallow clone" in result
         assert original_prompt in result
         assert "feature-branch" in result
 

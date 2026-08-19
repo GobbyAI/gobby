@@ -33,11 +33,6 @@ pytestmark = pytest.mark.unit
 
 def _agent_activation_context() -> AgentActivationResult:
     return AgentActivationResult(
-        context=(
-            "## Role\nSenior engineer\n\n"
-            "## Personality\nDirect and concise\n\n"
-            "## Instructions\nUse lifecycle hooks correctly"
-        ),
         agent_name="default",
         description=None,
         role="Senior engineer",
@@ -764,6 +759,7 @@ class TestSessionStartPreCreatedSession:
                 {
                     "_agent_context_injected": False,
                     "_agent_context_rehydrate_pending": True,
+                    "wiki_overview_injected": False,
                 },
             )
             in mock_svm.merge_variables.call_args_list
@@ -839,6 +835,7 @@ class TestSessionStartPreCreatedSession:
                 {
                     "_agent_context_injected": False,
                     "_agent_context_rehydrate_pending": True,
+                    "wiki_overview_injected": False,
                 },
             )
             in mock_svm.merge_variables.call_args_list

@@ -218,16 +218,16 @@ class CronJobStorage(CronRunStorageMixin):
             raise ValueError("enabled cron job requires a valid future schedule")
         job.next_run_at = next_run
 
-        self.db.execute(
+        row = self.db.fetchone(
             """
             INSERT INTO cron_jobs (
                 id, project_id, name, display_name, description, schedule_type,
                 cron_expr, interval_seconds, run_at, timezone,
                 action_type, action_config, enabled, is_system, next_run_at,
-                last_run_at, last_status, consecutive_failures,
-                created_at, updated_at
+                last_run_at, last_status, consecutive_failures
             )
-            VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+            VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+            RETURNING created_at, updated_at
             """,
             (
                 job.id,
@@ -248,10 +248,11 @@ class CronJobStorage(CronRunStorageMixin):
                 job.last_run_at,
                 job.last_status,
                 job.consecutive_failures,
-                now,
-                now,
             ),
         )
+        if row is not None:
+            job.created_at = row["created_at"]
+            job.updated_at = row["updated_at"]
 
         return job
 

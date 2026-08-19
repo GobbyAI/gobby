@@ -26,6 +26,7 @@ logger = logging.getLogger(__name__)
         "updated_at",
     ),
     optional=(
+        "last_activity",
         "summary_generated_at",
         "context_usage_updated_at",
     ),
@@ -48,6 +49,9 @@ class Session:
     parent_session_id: str | None
     created_at: datetime
     updated_at: datetime
+    # Bumped only by confirmed agent/user activity, never by lifecycle status
+    # writes — the trustworthy idle-decision timestamp (updated_at is not).
+    last_activity: datetime | None = None
     summary_revision_id: str | None = None
     summary_source_context_hash: str | None = None
     summary_digest_turn_count: int | None = None
@@ -141,6 +145,7 @@ class Session:
             parent_session_id=row["parent_session_id"],
             created_at=row["created_at"],
             updated_at=row["updated_at"],
+            last_activity=cls._get_optional(row, "last_activity"),
             summary_revision_id=cls._get_optional(row, "summary_revision_id"),
             summary_source_context_hash=cls._get_optional(row, "summary_source_context_hash"),
             summary_digest_turn_count=cls._get_optional(row, "summary_digest_turn_count"),
@@ -331,6 +336,7 @@ class Session:
             "can_proxy_attach": self.can_proxy_attach,
             "created_at": self.created_at,
             "updated_at": self.updated_at,
+            "last_activity": self.last_activity,
             "seq_num": self.seq_num,
             "claimed_task_refs": self.claimed_task_refs,
             "created_task_refs": self.created_task_refs,
@@ -364,6 +370,7 @@ class Session:
             "can_proxy_attach": self.can_proxy_attach,
             "created_at": self.created_at,
             "updated_at": self.updated_at,
+            "last_activity": self.last_activity,
             "seq_num": self.seq_num,
             "claimed_task_refs": self.claimed_task_refs,
             "created_task_refs": self.created_task_refs,

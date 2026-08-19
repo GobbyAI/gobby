@@ -16,11 +16,7 @@ from gobby.communications.models import (
     CommsRoutingRule,
 )
 from gobby.storage.hub.protocol import HubDatabase
-from gobby.utils.datetime import (
-    parse_stored_datetime,
-    to_aware_utc,
-    utc_now,
-)
+from gobby.utils.datetime import to_aware_utc
 from gobby.utils.machine_id import require_machine_id
 
 if TYPE_CHECKING:
@@ -52,10 +48,11 @@ class LocalCommunicationsStore:
             channel.id = str(uuid.uuid4())
 
         with self.db.transaction() as conn:
-            conn.execute(
+            row = conn.execute(
                 """
-                INSERT INTO comms_channels (id, channel_type, name, enabled, config_json, webhook_secret, created_at, updated_at)
-                VALUES (%s, %s, %s, %s, %s, %s, %s, %s)
+                INSERT INTO comms_channels (id, channel_type, name, enabled, config_json, webhook_secret)
+                VALUES (%s, %s, %s, %s, %s, %s)
+                RETURNING created_at, updated_at
                 """,
                 (
                     channel.id,
@@ -64,10 +61,12 @@ class LocalCommunicationsStore:
                     bool(channel.enabled),
                     json.dumps(channel.config_json),
                     channel.webhook_secret,
-                    channel.created_at,
-                    channel.updated_at,
                 ),
-            )
+            ).fetchone()
+        if row is None:
+            raise RuntimeError("Failed to create communications channel")
+        channel.created_at = row["created_at"]
+        channel.updated_at = row["updated_at"]
         return channel
 
     def get_channel(self, channel_id: str) -> ChannelConfig | None:
@@ -145,24 +144,17 @@ class LocalCommunicationsStore:
         if not identity.id:
             identity.id = str(uuid.uuid4())
 
-        now = utc_now()
-        if not identity.created_at:
-            identity.created_at = now
-        if not identity.updated_at:
-            identity.updated_at = now
-        created_at_value = parse_stored_datetime(identity.created_at)
-        updated_at_value = parse_stored_datetime(identity.updated_at)
-
         if identity.project_id is None and self.project_id:
             identity.project_id = self.project_id
 
         with self.db.transaction() as conn:
-            conn.execute(
+            row = conn.execute(
                 """
                 INSERT INTO comms_identities (
                     id, channel_id, external_user_id, external_username,
-                    session_id, project_id, metadata_json, created_at, updated_at
-                ) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s)
+                    session_id, project_id, metadata_json
+                ) VALUES (%s, %s, %s, %s, %s, %s, %s)
+                RETURNING created_at, updated_at
                 """,
                 (
                     identity.id,
@@ -172,10 +164,12 @@ class LocalCommunicationsStore:
                     identity.session_id,
                     identity.project_id,
                     json.dumps(identity.metadata_json),
-                    created_at_value,
-                    updated_at_value,
                 ),
-            )
+            ).fetchone()
+        if row is None:
+            raise RuntimeError("Failed to create communications identity")
+        identity.created_at = row["created_at"]
+        identity.updated_at = row["updated_at"]
         return identity
 
     def get_identity(self, identity_id: str) -> CommsIdentity | None:
@@ -276,8 +270,8 @@ class LocalCommunicationsStore:
                 INSERT INTO comms_messages (
                     id, channel_id, identity_id, direction, content, content_type,
                     platform_message_id, platform_thread_id, session_id, status,
-                    error, metadata_json, created_at
-                ) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+                    error, metadata_json
+                ) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
                 ON CONFLICT (channel_id, platform_message_id)
                 WHERE platform_message_id IS NOT NULL
                 DO NOTHING
@@ -296,7 +290,6 @@ class LocalCommunicationsStore:
                     message.status,
                     message.error,
                     json.dumps(message.metadata_json),
-                    message.created_at,
                 ),
             ).fetchone()
             inserted = row is not None
@@ -486,12 +479,13 @@ SELECT
             rule.id = str(uuid.uuid4())
 
         with self.db.transaction() as conn:
-            conn.execute(
+            row = conn.execute(
                 """
                 INSERT INTO comms_routing_rules (
                     id, name, channel_id, event_pattern, project_id, session_id,
-                    priority, enabled, config_json, created_at, updated_at
-                ) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+                    priority, enabled, config_json
+                ) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s)
+                RETURNING created_at, updated_at
                 """,
                 (
                     rule.id,
@@ -503,10 +497,12 @@ SELECT
                     rule.priority,
                     bool(rule.enabled),
                     json.dumps(rule.config_json),
-                    rule.created_at,
-                    rule.updated_at,
                 ),
-            )
+            ).fetchone()
+        if row is None:
+            raise RuntimeError("Failed to create communications routing rule")
+        rule.created_at = row["created_at"]
+        rule.updated_at = row["updated_at"]
         return rule
 
     def get_routing_rule(self, rule_id: str) -> CommsRoutingRule | None:
@@ -589,12 +585,13 @@ SELECT
 
     def _insert_attachment(self, conn: Transaction, attachment: CommsAttachment) -> None:
         attachment.machine_id = self.machine_id
-        conn.execute(
+        row = conn.execute(
             """
             INSERT INTO comms_attachments (
                 id, machine_id, message_id, filename, content_type, size_bytes,
-                local_path, platform_url, created_at
-            ) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s)
+                local_path, platform_url
+            ) VALUES (%s, %s, %s, %s, %s, %s, %s, %s)
+            RETURNING created_at
             """,
             (
                 attachment.id,
@@ -605,9 +602,10 @@ SELECT
                 attachment.size_bytes,
                 attachment.local_path,
                 attachment.platform_url,
-                attachment.created_at,
             ),
-        )
+        ).fetchone()
+        if row is not None:
+            attachment.created_at = row["created_at"]
 
     def create_attachment(self, attachment: CommsAttachment) -> CommsAttachment:
         """Save a new attachment to the database."""

@@ -84,12 +84,11 @@ class LocalUserManager:
         normalized_name = normalize_user_name(name)
         normalized_email = normalize_user_email(email)
         normalized_hash = validate_password_hash(password_hash)
-        now = utc_now()
         try:
             row = self.db.execute(
                 """
-                INSERT INTO users (id, email, name, password_hash, created_at, updated_at)
-                VALUES (%s, %s, %s, %s, %s, %s)
+                INSERT INTO users (id, email, name, password_hash)
+                VALUES (%s, %s, %s, %s)
                 RETURNING *
                 """,
                 (
@@ -97,8 +96,6 @@ class LocalUserManager:
                     normalized_email,
                     normalized_name,
                     normalized_hash,
-                    now,
-                    now,
                 ),
             ).fetchone()
         except UniqueViolation as exc:

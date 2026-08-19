@@ -18,6 +18,7 @@ from gobby.storage.hub.protocol import HubDatabase
 from gobby.storage.machines import LocalMachineManager
 from gobby.storage.projects import PERSONAL_PROJECT_ID
 from gobby.storage.sessions import SessionManager
+from tests.fixtures.postgres import TEST_USER_ID
 
 pytestmark = pytest.mark.unit
 
@@ -50,13 +51,15 @@ def make_event() -> Callable[..., HookEvent]:
 # ─── Tests for handle() method ──────────────────────────────────────────
 
 
-def test_record_machine_ingress_upserts_payload_metadata(
+def test_record_machine_ingress_refreshes_registered_machine_metadata(
     manager_with_mocks: HookManager,
     make_event: Callable[..., HookEvent],
     temp_db,
 ) -> None:
     manager_with_mocks._database = temp_db
     manager_with_mocks._session_manager = SessionManager(temp_db)
+    machines = LocalMachineManager(temp_db)
+    machines.upsert_seen("2b158c70-5e21-4b49-a996-cb749570120d", TEST_USER_ID)
     event = make_event(
         data={
             "hostname": "workstation",
@@ -69,13 +72,14 @@ def test_record_machine_ingress_upserts_payload_metadata(
 
     manager_with_mocks._record_machine_ingress(event)
 
-    machine = LocalMachineManager(temp_db).get("2b158c70-5e21-4b49-a996-cb749570120d")
+    machine = machines.get("2b158c70-5e21-4b49-a996-cb749570120d")
     assert machine is not None
     assert machine.hostname == "workstation"
     assert machine.os == "Darwin"
     assert machine.label == "desk"
     assert machine.tailscale_name == "workstation.tailnet"
 
+    machines.upsert_seen("e44191db-6853-4999-be63-af0c91fac8ba", TEST_USER_ID)
     payload_event = make_event(
         data={
             "machineId": "e44191db-6853-4999-be63-af0c91fac8ba",
@@ -88,7 +92,7 @@ def test_record_machine_ingress_upserts_payload_metadata(
 
     manager_with_mocks._record_machine_ingress(payload_event)
 
-    payload_machine = LocalMachineManager(temp_db).get("e44191db-6853-4999-be63-af0c91fac8ba")
+    payload_machine = machines.get("e44191db-6853-4999-be63-af0c91fac8ba")
     assert payload_machine is not None
     assert payload_machine.hostname == "laptop"
     assert payload_machine.os == "Linux"
@@ -108,7 +112,9 @@ def test_record_machine_ingress_ignores_malformed_machine_ids(
     def machine_ids() -> set[str]:
         return {str(row["id"]) for row in temp_db.fetchall("SELECT id FROM machines")}
 
-    baseline = machine_ids()
+    machines = LocalMachineManager(temp_db)
+    machines.upsert_seen("7d9f4a68-3c21-4f6b-9e02-5a8f1c33d410", TEST_USER_ID)
+    registered = machine_ids()
 
     fallback_event = make_event(
         data={"machineId": "7d9f4a68-3c21-4f6b-9e02-5a8f1c33d410", "hostname": "laptop"}
@@ -117,17 +123,28 @@ def test_record_machine_ingress_ignores_malformed_machine_ids(
 
     manager_with_mocks._record_machine_ingress(fallback_event)
 
-    fallback_machine = LocalMachineManager(temp_db).get("7d9f4a68-3c21-4f6b-9e02-5a8f1c33d410")
+    fallback_machine = machines.get("7d9f4a68-3c21-4f6b-9e02-5a8f1c33d410")
     assert fallback_machine is not None
     assert fallback_machine.hostname == "laptop"
-    assert machine_ids() == baseline | {"7d9f4a68-3c21-4f6b-9e02-5a8f1c33d410"}
+    assert machine_ids() == registered
+
+    # Unknown machine ids are ignored: hook ingress refreshes registered
+    # machines and never registers new ones.
+    unknown_event = make_event(
+        data={"machineId": "e5c7a7de-71a4-4a6b-9df0-c86b8a2f9f01", "hostname": "rogue"}
+    )
+    unknown_event.machine_id = "unknown-machine"
+
+    manager_with_mocks._record_machine_ingress(unknown_event)
+
+    assert machine_ids() == registered
 
     unattributable_event = make_event(data={"machineId": "also-not-a-uuid"})
     unattributable_event.machine_id = "unknown-machine"
 
     manager_with_mocks._record_machine_ingress(unattributable_event)
 
-    assert machine_ids() == baseline | {"7d9f4a68-3c21-4f6b-9e02-5a8f1c33d410"}
+    assert machine_ids() == registered
 
 
 class TestHandleInternalDaemonNotReady:

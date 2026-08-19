@@ -6,7 +6,14 @@ rules:
     event: turn_start
     enabled: true
     priority: 50
-    when: "not variables.get('memory_nudge_fired') and len((event.data.get('prompt') or '').strip()) >= 10 and not (event.data.get('prompt') or '').strip().startswith('/')"
+    # Taskless spawned agents get daemon-composed prompts, not user preferences
+    # worth capturing; skip the nudge for them until they hold task work.
+    when: >
+      not variables.get('memory_nudge_fired')
+      and len((event.data.get('prompt') or '').strip()) >= 10
+      and not (event.data.get('prompt') or '').strip().startswith('/')
+      and not (variables.get('is_spawned_agent')
+      and not variables.get('task_claimed') and not variables.get('auto_task_ref'))
     effects:
       - type: inject_context
         template: |

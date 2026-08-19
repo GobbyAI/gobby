@@ -175,7 +175,6 @@ class LocalCloneManager:
             Created Clone instance
         """
         clone_id = str(uuid.uuid4())
-        now = utc_now()
         cleanup_after_value = parse_stored_datetime(cleanup_after)
         machine_id = require_machine_id()
         if agent_session_id and not session_is_local(
@@ -185,15 +184,15 @@ class LocalCloneManager:
         ):
             raise ValueError(f"Session not found: {agent_session_id}")
 
-        self.db.execute(
+        row = self.db.execute(
             """
             INSERT INTO clones (
                 id, project_id, machine_id, branch_name, clone_path, base_branch,
                 task_id, agent_session_id, status, remote_url,
-                last_sync_at, cleanup_after, created_at, updated_at,
-                workspace_role
+                last_sync_at, cleanup_after, workspace_role
             )
-            VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+            VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+            RETURNING created_at, updated_at
             """,
             (
                 clone_id,
@@ -208,11 +207,11 @@ class LocalCloneManager:
                 remote_url,
                 None,  # last_sync_at
                 cleanup_after_value,
-                now,
-                now,
                 workspace_role,
             ),
-        )
+        ).fetchone()
+        if row is None:
+            raise RuntimeError(f"Failed to create clone record: {clone_id}")
 
         return Clone(
             id=clone_id,
@@ -227,8 +226,8 @@ class LocalCloneManager:
             remote_url=remote_url,
             last_sync_at=None,
             cleanup_after=cleanup_after_value,
-            created_at=now,
-            updated_at=now,
+            created_at=row["created_at"],
+            updated_at=row["updated_at"],
             workspace_role=workspace_role,
         )
 

@@ -11,6 +11,7 @@ from typing import TYPE_CHECKING, Any
 from gobby.hooks.events import HookEvent, HookEventType, HookResponse
 from gobby.storage.projects import GLOBAL_PROJECT_ID, ORPHANED_PROJECT_ID, PERSONAL_PROJECT_ID
 from gobby.workflows.block_audit import audit_source_block, audit_source_block_sync
+from gobby.workflows.enforcement.blocking import is_gobby_call_tool
 from gobby.workflows.step_context import get_active_step_workflow_context
 from gobby.workflows.tool_context import WorkflowToolContextMixin
 
@@ -87,7 +88,7 @@ def _target_task_tool_input(data: dict[str, Any]) -> dict[str, Any]:
         return {}
 
     tool_name = data.get("tool_name", "")
-    if tool_name in {"call_tool", "mcp__gobby__call_tool"}:
+    if is_gobby_call_tool(tool_name):
         inner_args = raw_tool_input.get("arguments")
         if isinstance(inner_args, dict):
             return inner_args

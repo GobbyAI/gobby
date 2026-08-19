@@ -1,11 +1,6 @@
 use std::fs;
-use std::io::ErrorKind;
-use std::io::{Read, Write};
-use std::net::TcpListener;
 use std::path::{Path, PathBuf};
 use std::process::Output;
-use std::thread;
-use std::time::{Duration, Instant};
 
 #[path = "../common/mod.rs"]
 mod common;
@@ -20,21 +15,16 @@ use gobby_wiki::sources::{
     CompileStatus, IngestionMethod, SourceDraft, SourceKind, SourceManifest,
 };
 
-fn http_fixture_timeout() -> Duration {
-    std::env::var("GWIKI_TEST_HTTP_TIMEOUT_SECS")
-        .ok()
-        .and_then(|value| value.parse::<u64>().ok())
-        .map(Duration::from_secs)
-        .unwrap_or_else(|| Duration::from_secs(15))
-}
-
 fn gwiki(fixture: &common::GwikiFixture, cwd: &Path, args: &[&str]) -> Output {
     fixture
         .command_in(cwd)
         .args(args)
-        .env("GWIKI_ALLOW_LOOPBACK_URL_FETCH_FOR_TESTS", "1")
         .output()
         .expect("gwiki binary runs")
+}
+
+fn assert_daemon_required(output: &Output, label: &str) {
+    common::assert_daemon_required(output, label);
 }
 
 fn gwiki_with_database_url(
@@ -62,62 +52,6 @@ fn assert_json_path(value: &serde_json::Value, expected: &Path) {
 
 fn comparable_test_path(path: &Path) -> PathBuf {
     path.canonicalize().unwrap_or_else(|_| path.to_path_buf())
-}
-
-fn serve_http_responses(
-    responses: Vec<(&'static str, &'static str)>,
-) -> (String, thread::JoinHandle<()>) {
-    let listener = TcpListener::bind("127.0.0.1:0").expect("bind HTTP fixture");
-    listener
-        .set_nonblocking(true)
-        .expect("configure nonblocking HTTP fixture");
-    let base_url = format!("http://{}", listener.local_addr().expect("local addr"));
-    let timeout = http_fixture_timeout();
-    let handle = thread::spawn(move || {
-        for (status, body) in responses {
-            let deadline = Instant::now() + timeout;
-            let (mut stream, _) = loop {
-                match listener.accept() {
-                    Ok(connection) => break connection,
-                    Err(error) if error.kind() == ErrorKind::WouldBlock => {
-                        assert!(
-                            Instant::now() < deadline,
-                            "timed out waiting for HTTP fixture request"
-                        );
-                        thread::sleep(Duration::from_millis(10));
-                    }
-                    Err(error) => panic!("accept HTTP fixture request: {error}"),
-                }
-            };
-            stream
-                .set_nonblocking(false)
-                .expect("configure blocking HTTP fixture stream");
-            let mut buffer = [0_u8; 1024];
-            let mut request = Vec::new();
-            loop {
-                let bytes_read = stream.read(&mut buffer).expect("read HTTP fixture request");
-                if bytes_read == 0 {
-                    break;
-                }
-                request.extend_from_slice(&buffer[..bytes_read]);
-                if request.windows(4).any(|window| window == b"\r\n\r\n") {
-                    break;
-                }
-            }
-            assert!(
-                request.windows(4).any(|window| window == b"\r\n\r\n"),
-                "HTTP fixture request headers should be complete"
-            );
-            let response = format!(
-                "HTTP/1.1 {status}\r\nContent-Type: text/html\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{body}",
-                body.len()
-            );
-            stream
-                .write_all(response.as_bytes())
-                .expect("write HTTP fixture response");
-        }
-    });
-    (base_url, handle)
 }
 
 fn seed_accepted_research_checkpoint(vault: &Path) {

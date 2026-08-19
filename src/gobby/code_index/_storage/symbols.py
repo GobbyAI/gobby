@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import logging
-from datetime import UTC, datetime
 from typing import Any
 
 from gobby.code_index._storage.search_helpers import rows_by_ids
@@ -27,7 +26,6 @@ class CodeIndexSymbolStorageMixin:
         if not symbols:
             return 0
 
-        now = datetime.now(UTC).isoformat()
         rows = [
             (
                 sym.id,
@@ -48,8 +46,6 @@ class CodeIndexSymbolStorageMixin:
                 sym.content_hash,
                 sym.summary,
                 sym.summary_attempted_at,
-                sym.created_at,
-                now,
             )
             for sym in symbols
         ]
@@ -60,10 +56,10 @@ class CodeIndexSymbolStorageMixin:
                     kind, language, byte_start, byte_end,
                     line_start, line_end, signature, docstring,
                     parent_symbol_id, file_content_hash, content_hash, summary,
-                    summary_attempted_at, created_at, updated_at
+                    summary_attempted_at
                 ) VALUES (
                     %s, %s, %s, %s, %s, %s, %s, %s, %s, %s,
-                    %s, %s, %s, %s, %s, %s, %s, %s, %s, %s
+                    %s, %s, %s, %s, %s, %s, %s, %s
                 )
                 ON CONFLICT(id) DO UPDATE SET
                     name=excluded.name,

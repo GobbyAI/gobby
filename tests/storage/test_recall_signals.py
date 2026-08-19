@@ -181,8 +181,14 @@ def _complete_shadow_request(
     snapshot["judge_protocol_version"] = protocol_version
     snapshot["judge_model"] = judge_model
     snapshot["judge_config_fingerprint"] = judge_config_fingerprint
-    snapshot["created_at"] = snapshot_created_at
     assert store.insert_usefulness_labels_atomic(labels, snapshot, token) is True
+    # Snapshot completion time is DB-owned (DEFAULT now()); backdate it so the
+    # cutoff-based cohort assertions stay deterministic.
+    store.db.execute(
+        "UPDATE recall_shadow_prompt_snapshot SET created_at = %s "
+        "WHERE recall_request_id = %s AND judge_protocol_version = %s",
+        (datetime.fromisoformat(snapshot_created_at), request_id, protocol_version),
+    )
 
 
 class TestInsertSignalEvent:

@@ -22,6 +22,7 @@ from typing import Any, NoReturn, Protocol
 from gobby.llm.base import LLMProviderCancellation
 from gobby.memory.generation_schemas import TURN_RECORD_SCHEMA
 from gobby.memory.shadow_relevance import judge_shadow_candidate_relevance
+from gobby.memory.synthetic_prompts import synthetic_body_reason
 from gobby.memory.title_heuristics import (
     LIFECYCLE_CMDS,
     is_template_placeholder,
@@ -136,7 +137,15 @@ def _extract_digest_pairs(parser: Any, turns: list[dict[str, Any]]) -> list[tupl
             for command in LIFECYCLE_CMDS
         )
 
-    return [(prompt, response) for prompt, response in pairs if not _is_lifecycle_prompt(prompt)]
+    def _is_synthetic_noise(prompt: str, response: str) -> bool:
+        """Daemon-generated prompt with no agent response — nothing happened."""
+        return not response.strip() and synthetic_body_reason(prompt) is not None
+
+    return [
+        (prompt, response)
+        for prompt, response in pairs
+        if not _is_lifecycle_prompt(prompt) and not _is_synthetic_noise(prompt, response)
+    ]
 
 
 def _provider_cancelled_result(session_id: str, exc: LLMProviderCancellation) -> dict[str, Any]:
@@ -206,7 +215,7 @@ async def _read_undigested_turns(
     digested_pair_index: int,
     num_pairs: int = 50,
     *,
-    prior_turn_only: bool = False,
+    catch_up: bool = False,
 ) -> tuple[list[tuple[str, str]], int]:
     """Read user/assistant pairs from transcript that haven't been digested yet.
 
@@ -220,7 +229,7 @@ async def _read_undigested_turns(
     source: CLI source (claude, qwen, codex, etc.)
         digested_pair_index: Number of pairs already digested
         num_pairs: Maximum pairs to consume in this digest pass
-        prior_turn_only: For Codex turn-start catch-up, exclude the active turn
+        catch_up: Backlog catch-up outside turn end — exclude the active turn
 
     Returns:
         Tuple of the undigested pair batch and the next persisted pair index.
@@ -254,12 +263,20 @@ async def _read_undigested_turns(
             return [], digested_pair_index
 
         segment_turn_offset = len(turns) - len(segment)
-        if prior_turn_only:
+        is_codex = (source or "").lower() == "codex"
+        if catch_up and is_codex:
+            # Codex transcripts carry an explicit task_started marker for the
+            # active turn; everything before it is complete history.
             segment = _prior_codex_turns(segment, source)
             if not segment:
                 return [], digested_pair_index
 
         pairs = _extract_digest_pairs(parser, segment)
+        if catch_up and not is_codex and pairs and not pairs[-1][1].strip():
+            # Without a turn marker, a trailing pair with no response is the
+            # in-flight turn (or the just-submitted prompt); leave it for the
+            # turn-end digest so the cursor never consumes an active turn.
+            pairs = pairs[:-1]
         if not pairs:
             return [], digested_pair_index
 
@@ -367,7 +384,7 @@ async def _resolve_undigested_pairs(
     session_id: str,
     num_pairs: int = 50,
     *,
-    prior_turn_only: bool = False,
+    catch_up: bool = False,
 ) -> tuple[list[tuple[str, str]], str, int] | None:
     """Resolve undigested turn pairs from transcript or prompt_text.
 
@@ -385,11 +402,11 @@ async def _resolve_undigested_pairs(
             session.source,
             pair_index,
             num_pairs=num_pairs,
-            prior_turn_only=prior_turn_only,
+            catch_up=catch_up,
         )
 
     if not undigested_pairs:
-        if prior_turn_only:
+        if catch_up:
             return None
         user_prompt = prompt_text or ""
         if not user_prompt:
@@ -399,6 +416,11 @@ async def _resolve_undigested_pairs(
         if any(
             _stripped.lower() == c or _stripped.lower().startswith(c + " ") for c in LIFECYCLE_CMDS
         ):
+            return None
+        if synthetic_body_reason(_stripped) is not None:
+            logger.debug(
+                "build_turn_and_digest: Skipping synthetic prompt for session %s", session_id
+            )
             return None
         undigested_pairs = [(user_prompt, "")]
         next_pair_index = pair_index + 1
@@ -580,7 +602,7 @@ async def _build_turn_and_digest_serialized(
     llm_service: Any | None = None,
     db: HubDatabase | None = None,
     config: Any | None = None,
-    prior_turn_only: bool = False,
+    catch_up: bool = False,
 ) -> dict[str, Any] | None:
     """Build a detailed turn record, append to digest, and synthesize title.
 
@@ -596,7 +618,7 @@ async def _build_turn_and_digest_serialized(
         llm_service: LLM service for generation
         db: Database for prompt template loading
         config: DaemonConfig carrying the digest feature configuration
-        prior_turn_only: Digest only the prior interrupted Codex turn
+        catch_up: Drain a bounded undigested backlog batch, excluding the active turn
 
     Returns:
         Dict with turn_num and pipeline results, or None if skipped
@@ -637,13 +659,16 @@ async def _build_turn_and_digest_serialized(
             return None
 
         # 2. Resolve undigested pairs
-        num_pairs = getattr(digest_config, "num_pairs", 50) if digest_config else 50
+        if catch_up:
+            num_pairs = getattr(digest_config, "catch_up_num_pairs", 5) if digest_config else 5
+        else:
+            num_pairs = getattr(digest_config, "num_pairs", 50) if digest_config else 50
         resolved = await _resolve_undigested_pairs(
             session,
             prompt_text,
             session_id,
             num_pairs,
-            prior_turn_only=prior_turn_only,
+            catch_up=catch_up,
         )
         if resolved is None:
             return None
@@ -764,7 +789,7 @@ async def build_turn_and_digest(
     llm_service: Any | None = None,
     db: HubDatabase | None = None,
     config: Any | None = None,
-    prior_turn_only: bool = False,
+    catch_up: bool = False,
 ) -> dict[str, Any] | None:
     """Build one digest turn and its title under a per-session serialization lock."""
     async with _serialize_session_digest(session_id):
@@ -776,5 +801,5 @@ async def build_turn_and_digest(
             llm_service=llm_service,
             db=db,
             config=config,
-            prior_turn_only=prior_turn_only,
+            catch_up=catch_up,
         )

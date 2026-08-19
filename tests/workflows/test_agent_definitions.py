@@ -230,7 +230,7 @@ def test_qa_reviewer_records_review_verdict_without_closing_task() -> None:
     assert "reject_review" in instructions
     assert "escalate_task" in instructions
     assert 'reason="qa_approved"' not in instructions
-    assert "Do NOT call close_task" in instructions
+    assert "close_task belongs" in instructions
 
     blocked_tools = _blocked_mcp_tools(review)
     assert "gobby-tasks:close_task" in blocked_tools
@@ -290,9 +290,7 @@ def test_developer_agents_support_toolchain_allowlists_and_additional_skills(
 def test_developer_agents_avoid_full_cargo_test_suites(agent_name: str) -> None:
     instructions = _agent(agent_name)["instructions"]
 
-    assert "Do NOT run full test suites" in instructions
-    assert "bare `cargo test`" in instructions
-    assert "workspace-wide `cargo test --no-default-features`" in instructions
+    assert "**Never run the full test suite**" in instructions
     assert "`cargo test -p <package>`" in instructions
     assert "`cargo test <name> -p <package>`" in instructions
 
@@ -406,5 +404,7 @@ def test_planner_relies_on_review_handoff_to_clear_rejected_verdict_label() -> N
     instructions = " ".join(_agent("planner")["instructions"].split())
 
     assert "submit_for_review" in instructions
-    assert "Do not call remove_label for `planning-current-verdict:rejected`" in instructions
-    assert "clears it atomically with the resubmission" in instructions
+    assert "remove_label" in instructions
+    assert "`planning-current-verdict:rejected` label atomically with the resubmission" in (
+        instructions
+    )

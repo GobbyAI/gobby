@@ -37,7 +37,8 @@ Title: {{ task_title }}
 ## Instructions
 1. Review each change against the acceptance criteria
 2. Check for correctness, completeness, and potential issues
-3. Be objective - you have no prior context about this implementation
+3. You have no prior context about this implementation — judge only from the
+   criteria and changes shown here
 
 ## Output Format
 Return your assessment as a JSON object:

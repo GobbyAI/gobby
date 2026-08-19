@@ -665,6 +665,27 @@ class TestPrepareCompactContinuationVariables:
         variables = sv_mgr.get_variables(session.id)
         assert variables["compact_resume_required_skills"] == ["tasks", "python"]
 
+    def test_normalization_drops_meta_skills_from_both_tiers(self, hub_db: HubDatabase) -> None:
+        session = self._make_session(hub_db, project_name="handoff-prep-meta-skills")
+        sv_mgr = SessionVariableManager(hub_db)
+        sv_mgr.merge_variables(
+            session.id,
+            {
+                "compact_resume_required_skills": ["loading-skills", "tasks", "brevity"],
+                "compact_resume_advisory_skills": ["brevity", "restraint"],
+            },
+        )
+        session_view = MagicMock()
+        session_view.id = session.id
+        session_view.summary_markdown = None
+        handler = self._make_handler(hub_db, session_view)
+
+        prepare_compact_continuation_variables(handler, session.id, "compact")
+
+        variables = sv_mgr.get_variables(session.id)
+        assert variables["compact_resume_required_skills"] == ["tasks"]
+        assert variables["compact_resume_advisory_skills"] == ["restraint"]
+
     def test_non_compact_source_is_untouched(self, hub_db: HubDatabase) -> None:
         session = self._make_session(hub_db, project_name="handoff-prep-normal")
         sv_mgr = SessionVariableManager(hub_db)
@@ -693,6 +714,7 @@ class TestPrepareCompactContinuationVariables:
                 "injected_memory_ids": ["mem-1"],
                 "_agent_context_injected": True,
                 "_agent_context_rehydrate_pending": False,
+                "wiki_overview_injected": True,
             },
         )
         session_view = MagicMock()
@@ -716,6 +738,7 @@ class TestPrepareCompactContinuationVariables:
         assert variables["injected_memory_ids"] == []
         assert variables["_agent_context_injected"] is False
         assert variables["_agent_context_rehydrate_pending"] is True
+        assert variables["wiki_overview_injected"] is False
         assert variables["plan_mode"] is True
 
     @pytest.mark.parametrize("auto_inject", [False, "false", "0"])
@@ -756,6 +779,7 @@ class TestPrepareCompactContinuationVariables:
         assert variables["loaded_skills"] == []
         assert variables["_agent_context_injected"] is False
         assert variables["_agent_context_rehydrate_pending"] is True
+        assert variables["wiki_overview_injected"] is False
 
     def test_in_place_closeout_refreshes_claimed_task_context(self, hub_db: HubDatabase) -> None:
         session = self._make_session(hub_db, project_name="handoff-prep-claimed")

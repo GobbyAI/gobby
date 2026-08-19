@@ -175,18 +175,18 @@ def create_attachment(
     published: bool = False,
     claim_token: str | None = None,
 ) -> ChatAttachmentRecord:
-    now = utc_now()
     record_id = attachment_id or str(uuid.uuid4())
     machine_id = require_machine_id()
+    now = utc_now()
     claimed_at = now if claim_token else None
     with db.transaction() as conn:
         conn.execute(
             """
             INSERT INTO chat_attachments (
                 id, machine_id, project_id, draft_id, filename, mime_type, size_bytes,
-                local_path, created_at, updated_at, published, claim_token, claimed_at
+                local_path, published, claim_token, claimed_at
             )
-            VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+            VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
             """,
             (
                 record_id,
@@ -197,8 +197,6 @@ def create_attachment(
                 mime_type,
                 size_bytes,
                 local_path,
-                now,
-                now,
                 published,
                 claim_token,
                 claimed_at,

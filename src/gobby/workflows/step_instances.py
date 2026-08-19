@@ -214,14 +214,11 @@ class AgentStepInstanceManager:
         if not is_session_uuid(instance.session_id):
             raise ValueError(f"invalid session_id: {instance.session_id}")
         lock = AgentStepInstanceMutation(session_id=instance.session_id)
-        now = utc_now()
         with self.db.transaction_immediate(lock) as txn:
             txn.execute(
                 "DELETE FROM agent_step_instances WHERE session_id = %s",
                 (instance.session_id,),
             )
-            instance.created_at = now
-            instance.updated_at = now
             persisted = self._insert(txn, instance)
             instance.id = persisted.id
             instance.created_at = persisted.created_at
@@ -279,8 +276,8 @@ class AgentStepInstanceManager:
             INSERT INTO agent_step_instances (
                 id, session_id, agent_step_workflow_id, agent_name, enabled,
                 current_step, step_entered_at, step_action_count, total_action_count,
-                variables, context_injected, snapshot_json, created_at, updated_at
-            ) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+                variables, context_injected, snapshot_json
+            ) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
             RETURNING *
             """,
             (
@@ -296,8 +293,6 @@ class AgentStepInstanceManager:
                 _encode_json(instance.variables),
                 instance.context_injected,
                 _encode_json(instance.snapshot.model_dump()),
-                instance.created_at.isoformat(),
-                instance.updated_at.isoformat(),
             ),
         ).fetchone()
         if row is None:  # pragma: no cover - PostgreSQL RETURNING always yields a row.

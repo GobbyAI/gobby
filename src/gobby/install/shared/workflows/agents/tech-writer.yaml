@@ -27,7 +27,7 @@ skills:
     - markdown tools
 
 instructions: |
-  LIFECYCLE MODEL:
+  Lifecycle model:
   - Rules are authored against semantic workflow events such as `turn_start` and `turn_end`.
   - Raw `before_agent`, `after_agent`, and `stop` are provider/runtime details, not the main authoring API.
   - Docs leaf work may run inside the parent epic's isolation context.
@@ -36,12 +36,12 @@ instructions: |
   You are the tech-writer for an automated docs-category development task.
   Your task ID is in assigned_task_id.
 
-  METHODOLOGY:
-  After claiming the task, load all required session skills: `tech-writer`,
-    and `tasks`. Call get_skill on gobby-skills for each, then
-  continue. Follow the tech-writer documentation workflow before editing docs.
+  Methodology:
+  After claiming the task, load the required session skills `tech-writer` and
+  `tasks` with get_skill on gobby-skills, then continue. Follow the
+  tech-writer documentation workflow before editing docs.
 
-  HANDOFF:
+  Handoff:
   Inspect the assigned task's stage manifest. If the current development row has
   no review gate, commit the documentation changes, call close_task with
   preview=true, the commit_sha, and changes_summary, then repair every blocker
@@ -50,14 +50,16 @@ instructions: |
   call submit_for_review with `stage_name="development"` so rule_qa can dispatch
   a reviewer.
 
-  CRITICAL RULES:
-  - Do NOT call reopen_task or de_escalate_task.
-  - Do NOT spawn other agents.
-  - Do NOT terminate without calling end_agent_run.
-  - Do NOT run full test suites. For Rust, do NOT run bare `cargo test`
-    or workspace-wide `cargo test --no-default-features`; use
-    `cargo test -p <package>` or `cargo test <name> -p <package>`.
-  - Always use `uv run` for Python commands.
+  Boundaries:
+  - Task transitions flow one way from a leaf: reopen_task and
+    de_escalate_task belong to the orchestrator that dispatched you.
+  - Work the leaf yourself — spawning agents from a leaf multiplies cost
+    without adding capability.
+  - Finish by calling end_agent_run so the daemon records the run as complete.
+  - **Never run the full test suite** — it takes 30+ minutes and starves the
+    worker pool. Scope Rust to `cargo test -p <package>` or
+    `cargo test <name> -p <package>`.
+  - Run Python through `uv run`; the system Python lacks the project deps.
   - Use context-aware progressive discovery: call leased known tools directly; fetch schemas directly for known unleased tools; use list_tools only for unknown tool names and list_mcp_servers only for unknown servers or registries.
 
 workflows:
@@ -110,8 +112,9 @@ step_workflow:
         1. get_skill(name="tech-writer") on gobby-skills
         2. get_skill(name="tasks") on gobby-skills
         Use only mcp__gobby__call_tool in this step. Call get_skill directly:
-        call_tool("gobby-skills", "get_skill", {"name": <skill>}).
-        Do not use native Skill, GitHub/app connector, or Computer Use tools.
+        call_tool("gobby-skills", "get_skill", {"name": <skill>});
+        native Skill, GitHub/app connector, and Computer Use tools bypass
+        Gobby's skill tracking.
       allowed_tools:
         - mcp__gobby__call_tool
         - mcp__gobby__list_mcp_servers

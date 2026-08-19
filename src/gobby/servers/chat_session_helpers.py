@@ -82,28 +82,10 @@ class PendingApproval(TypedDict):
     arguments: dict[str, Any]
 
 
-# Fallback system prompt if the prompts system is unavailable
+# Minimal base system prompt. The canonical persona lives on the `default`
+# agent-definition row: build_prompt_preamble() injects it once per context
+# epoch at first prompt, and non-default agents set system_prompt_override.
 _FALLBACK_SYSTEM_PROMPT = "You are Gobby, a helpful AI coding assistant."
-
-
-def _load_chat_system_prompt(db: Any = None) -> str:
-    """Load the chat system prompt from the prompts system.
-
-    Uses PromptLoader with database-backed precedence:
-    project -> global -> bundled.
-
-    Args:
-        db: Database connection for prompt loading. Falls back to default if None.
-    """
-    try:
-        from gobby.prompts.loader import PromptLoader
-
-        loader = PromptLoader(db=db)
-        template = loader.load("chat/system")
-        return template.content
-    except Exception as e:
-        logger.warning("Failed to load chat/system prompt, using fallback: %s", e)
-        return _FALLBACK_SYSTEM_PROMPT
 
 
 def _find_cli_path() -> str | None:

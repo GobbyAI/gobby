@@ -261,7 +261,12 @@ class TestLocalCloneManagerCreate:
     @pytest.fixture
     def mock_db(self):
         """Create mock database."""
-        return MagicMock()
+        db = MagicMock()
+        db.execute.return_value.fetchone.return_value = {
+            "created_at": datetime.now(UTC),
+            "updated_at": datetime.now(UTC),
+        }
+        return db
 
     @pytest.fixture
     def manager(self, mock_db):
@@ -765,7 +770,12 @@ class TestLocalCloneManagerRegisterAdopted:
 
     @pytest.fixture
     def mock_db(self) -> MagicMock:
-        return MagicMock(spec=HubDatabase)
+        db = MagicMock(spec=HubDatabase)
+        db.execute.return_value.fetchone.return_value = {
+            "created_at": datetime.now(UTC),
+            "updated_at": datetime.now(UTC),
+        }
+        return db
 
     @pytest.fixture
     def manager(self, mock_db: MagicMock) -> LocalCloneManager:

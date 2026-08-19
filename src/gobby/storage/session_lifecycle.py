@@ -123,7 +123,7 @@ def expire_stale_sessions(
         Number of sessions expired.
     """
     # Intentionally global: inactivity expiry must cover sessions left by a sleeping machine.
-    updated_stale_sql = older_than_now_expr(db, "updated_at", "%s", "hour")
+    inactive_stale_sql = older_than_now_expr(db, "last_activity", "%s", "hour")
     empty_terminal_created_stale_sql = older_than_now_expr(db, "created_at", "%s", "hour")
     empty_terminal_context_sql = "terminal_context IS NULL"
     tmux_target_sql = """
@@ -142,12 +142,12 @@ def expire_stale_sessions(
             AND source != %s
             AND NOT ({tmux_target_sql})
             AND (
-                {updated_stale_sql}
+                {inactive_stale_sql}
                 OR (
                     session_type = 'terminal'
                     AND {empty_terminal_context_sql}
                     AND {empty_terminal_created_stale_sql}
-                    AND {updated_stale_sql}
+                    AND {inactive_stale_sql}
                 )
             )
             RETURNING *
@@ -319,7 +319,7 @@ def pause_inactive_active_sessions(
     """
     # Intentionally global: inactivity pausing must cover sessions left by a sleeping machine.
     transitioned_at = utc_now()
-    updated_stale_sql = older_than_now_expr(db, "updated_at", "%s", "minute")
+    inactive_stale_sql = older_than_now_expr(db, "last_activity", "%s", "minute")
     with db.transaction() as conn:
         rows = conn.execute(
             f"""
@@ -327,7 +327,7 @@ def pause_inactive_active_sessions(
             SET status = 'paused'
             WHERE status = 'active'
             AND source != %s
-            AND {updated_stale_sql}
+            AND {inactive_stale_sql}
             RETURNING *
             """,  # nosec B608 # cutoff expression is selected by storage dialect.
             (SYSTEM_SESSION_SOURCE, timeout_minutes),
@@ -366,7 +366,7 @@ def expire_empty_sessions(
     Returns:
         Number of sessions expired.
     """
-    updated_stale_sql = older_than_now_expr(db, "updated_at", "%s", "hour")
+    inactive_stale_sql = older_than_now_expr(db, "last_activity", "%s", "hour")
     with db.transaction() as conn:
         rows = conn.execute(
             f"""
@@ -375,7 +375,7 @@ def expire_empty_sessions(
             WHERE status IN ('active', 'paused')
             AND source != %s
             AND COALESCE(message_count, 0) = 0
-            AND {updated_stale_sql}
+            AND {inactive_stale_sql}
             RETURNING *
             """,  # nosec B608 # cutoff expression is selected by storage dialect.
             (SYSTEM_SESSION_SOURCE, timeout_hours),

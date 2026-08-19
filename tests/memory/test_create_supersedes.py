@@ -6,7 +6,6 @@ import uuid
 from concurrent.futures import ThreadPoolExecutor
 from dataclasses import replace
 from datetime import UTC, datetime
-from time import monotonic
 from typing import Any
 from unittest.mock import AsyncMock, MagicMock
 
@@ -1167,7 +1166,15 @@ async def test_restore_after_supersede_rebuilds(temp_db) -> None:
 
 @pytest.mark.slow
 @pytest.mark.asyncio
-async def test_supersedes_row_lock_fencing(temp_db) -> None:
+async def test_supersedes_purge_does_not_fence_restore(temp_db) -> None:
+    """A paused secondary purge never blocks restore_memory.
+
+    #20331 moved supersession-purge fencing from the memories row lock to
+    ``pg_advisory_lock``: the visibility ``FOR UPDATE`` slice commits before
+    secondary I/O starts, so ``restore_memory`` proceeds while the purge is
+    still deleting artifacts, and the restored row's ``vector_needs_reindex``
+    marker hands the (possibly purged) secondary stores to reconciliation.
+    """
     purge_started = asyncio.Event()
     allow_purge = asyncio.Event()
     vector_store = MagicMock()
@@ -1194,39 +1201,18 @@ async def test_supersedes_row_lock_fencing(temp_db) -> None:
         )
     )
     await asyncio.wait_for(purge_started.wait(), timeout=2)
-    loop = asyncio.get_running_loop()
-    restore_started = asyncio.Event()
 
-    def restore() -> bool:
-        loop.call_soon_threadsafe(restore_started.set)
-        return manager.storage.restore_memory(old.id)
-
-    restoring = asyncio.create_task(asyncio.to_thread(restore))
-    await asyncio.wait_for(restore_started.wait(), timeout=2)
-
-    def wait_for_restore_lock() -> None:
-        deadline = monotonic() + 2
-        while monotonic() < deadline:
-            waiting = temp_db.fetchone(
-                """
-                SELECT 1
-                FROM pg_stat_activity
-                WHERE datname = current_database()
-                  AND wait_event_type = 'Lock'
-                  AND query LIKE 'SELECT vector_needs_reindex FROM memories%%'
-                LIMIT 1
-                """,
-            )
-            if waiting is not None:
-                return
-        raise AssertionError("restore_memory did not enter a database lock wait")
-
-    await asyncio.to_thread(wait_for_restore_lock)
+    restored = await asyncio.wait_for(
+        asyncio.to_thread(manager.storage.restore_memory, old.id),
+        timeout=2,
+    )
+    assert restored
 
     allow_purge.set()
-    await asyncio.gather(replacing, restoring)
-    assert restoring.result()
-    assert manager.storage.get_memory(old.id).deleted_at is None
+    await replacing
+    row = manager.storage.get_memory(old.id)
+    assert row.deleted_at is None
+    assert row.vector_needs_reindex is True
 
 
 @pytest.mark.slow

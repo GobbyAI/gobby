@@ -16,6 +16,7 @@ from gobby.storage.tasks import LocalTaskManager
 from gobby.storage.workspace_machine_scope import MachineOwnershipMismatchError
 from gobby.storage.worktrees import LocalWorktreeManager, Worktree, WorktreeStatus
 from gobby.utils.machine_id import require_machine_id
+from tests.fixtures.postgres import TEST_USER_ID
 
 pytestmark = pytest.mark.unit
 MACHINE_ID = "21000000-0000-4000-8000-000000000001"
@@ -129,7 +130,13 @@ class TestLocalWorktreeManagerCreate:
     @pytest.fixture
     def mock_db(self) -> MagicMock:
         """Create mock database."""
-        return MagicMock()
+        db = MagicMock()
+        now = datetime.now(UTC)
+        db.execute.return_value.fetchone.return_value = {
+            "created_at": now,
+            "updated_at": now,
+        }
+        return db
 
     @pytest.fixture
     def manager(self, mock_db: MagicMock) -> LocalWorktreeManager:
@@ -240,8 +247,9 @@ def test_worktree_uniqueness_is_machine_scoped(
     machine_ids = [str(uuid.uuid4()), str(uuid.uuid4())]
     for machine_id in machine_ids:
         temp_db.execute(
-            "INSERT INTO machines (id, hostname) VALUES (%s, %s) ON CONFLICT (id) DO NOTHING",
-            (machine_id, f"host-{machine_id}"),
+            "INSERT INTO machines (id, hostname, owner_user_id) VALUES (%s, %s, %s) "
+            "ON CONFLICT (id) DO NOTHING",
+            (machine_id, f"host-{machine_id}", TEST_USER_ID),
         )
 
     owners = iter(machine_ids)
@@ -283,8 +291,9 @@ def test_cleanup_scoped_to_local_machine(
     remote_machine_id = str(uuid.uuid4())
     for machine_id in (local_machine_id, remote_machine_id):
         temp_db.execute(
-            "INSERT INTO machines (id, hostname) VALUES (%s, %s) ON CONFLICT (id) DO NOTHING",
-            (machine_id, f"host-{machine_id}"),
+            "INSERT INTO machines (id, hostname, owner_user_id) VALUES (%s, %s, %s) "
+            "ON CONFLICT (id) DO NOTHING",
+            (machine_id, f"host-{machine_id}", TEST_USER_ID),
         )
 
     owners = iter((local_machine_id, remote_machine_id))
@@ -336,8 +345,9 @@ def test_claim_scoped_to_local_machine(
     remote_machine_id = str(uuid.uuid4())
     for machine_id in (local_machine_id, remote_machine_id):
         temp_db.execute(
-            "INSERT INTO machines (id, hostname) VALUES (%s, %s) ON CONFLICT (id) DO NOTHING",
-            (machine_id, f"host-{machine_id}"),
+            "INSERT INTO machines (id, hostname, owner_user_id) VALUES (%s, %s, %s) "
+            "ON CONFLICT (id) DO NOTHING",
+            (machine_id, f"host-{machine_id}", TEST_USER_ID),
         )
 
     owners = iter((remote_machine_id, local_machine_id))

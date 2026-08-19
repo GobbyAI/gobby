@@ -160,14 +160,15 @@ class LocalWorktreeManager:
         ):
             raise ValueError(f"Session not found: {agent_session_id}")
 
-        self.db.execute(
+        row = self.db.execute(
             """
             INSERT INTO worktrees (
                 id, project_id, machine_id, task_id, branch_name, worktree_path,
-                base_branch, agent_session_id, status, created_at, updated_at,
+                base_branch, agent_session_id, status,
                 last_activity_at, workspace_role
             )
-            VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+            VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+            RETURNING created_at, updated_at
             """,
             (
                 worktree_id,
@@ -180,11 +181,11 @@ class LocalWorktreeManager:
                 agent_session_id,
                 WorktreeStatus.ACTIVE.value,
                 now,
-                now,
-                now,
                 workspace_role,
             ),
-        )
+        ).fetchone()
+        if row is None:
+            raise RuntimeError("Worktree insert returned no row")
 
         return Worktree(
             id=worktree_id,
@@ -196,8 +197,8 @@ class LocalWorktreeManager:
             base_branch=base_branch,
             agent_session_id=agent_session_id,
             status=WorktreeStatus.ACTIVE.value,
-            created_at=now,
-            updated_at=now,
+            created_at=row["created_at"],
+            updated_at=row["updated_at"],
             last_activity_at=now,
             merged_at=None,
             workspace_role=workspace_role,

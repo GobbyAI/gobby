@@ -504,8 +504,8 @@ class BuildProfileManager:
                 id, name, display_label, description, skip_stages_json, isolation,
                 unattended, plan_enhancement_rounds, delivery_mode, delivery_target_repo,
                 enabled, source, project_id,
-                tags_json, bundled_hash, deleted_at, created_at, updated_at
-            ) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, NULL, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
+                tags_json, bundled_hash, deleted_at
+            ) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, NULL)
             """,
             self._insert_params(profile),
         )

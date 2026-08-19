@@ -53,11 +53,13 @@ def _test_schema_created_epoch(schema_name: str) -> int | None:
     return int(created_epoch)
 
 
-# Reserved machine-id namespace seeded into every worker schema's canonical
+# Reserved machine-id namespaces seeded into every worker schema's canonical
 # snapshot; fixtures attribute sessions to these ids to satisfy the
 # sessions.machine_id -> machines(id) FK. Tests asserting machines-table
-# contents must exclude this prefix.
+# contents must exclude both prefixes. The legacy 20-prefix predates the
+# identity cutover and is still what most session tests pin.
 TEST_MACHINE_ID_PREFIX = "21000000-0000-4000-8000-"
+LEGACY_TEST_MACHINE_ID_PREFIX = "20000000-0000-4000-8000-"
 TEST_USER_ID = "20000000-0000-4000-8000-000000000001"
 TEST_USER_NAME = "Gobby Test User"
 TEST_USER_EMAIL = "test-user@gobby.local"
@@ -493,6 +495,17 @@ def postgres_canonical_seed(
                 INSERT INTO machines (id, owner_user_id)
                 SELECT ('{TEST_MACHINE_ID_PREFIX}' || LPAD(n::TEXT, 12, '0'))::UUID, %s
                 FROM GENERATE_SERIES(1, 50) AS n
+                ON CONFLICT (id) DO NOTHING
+                """,
+            (TEST_USER_ID,),
+        )
+        # Legacy ids mix decimal and hex tails (…0012, …000d), so seed the
+        # hex spelling of a range wide enough to cover both readings.
+        conn.execute(
+            f"""
+                INSERT INTO machines (id, owner_user_id)
+                SELECT ('{LEGACY_TEST_MACHINE_ID_PREFIX}' || LPAD(TO_HEX(n), 12, '0'))::UUID, %s
+                FROM GENERATE_SERIES(1, 80) AS n
                 ON CONFLICT (id) DO NOTHING
                 """,
             (TEST_USER_ID,),

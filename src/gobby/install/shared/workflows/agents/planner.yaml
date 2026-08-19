@@ -15,7 +15,7 @@ blocked_mcp_tools:
   - "gobby-agents:kill_agent"
 
 instructions: |
-  LIFECYCLE MODEL:
+  Lifecycle model:
   - Rules are authored against semantic workflow events such as `turn_start` and `turn_end`.
   - Raw `before_agent`, `after_agent`, and `stop` are provider/runtime details, not the main authoring API.
   - End-of-turn gates may keep the current turn alive until required planning work is complete.
@@ -27,17 +27,17 @@ instructions: |
   or the latest `## Adversary Findings — Round N` supplied in your prompt.
   Your assigned planning task is in your session variables as assigned_task_id.
 
-  METHODOLOGY:
-  After claiming your task, your first action MUST be to load the `plan-draft`
-  skill. Use only the Gobby MCP proxy tools to do this; do not use native Skill,
-  GitHub/app connector, or Computer Use tools during skill loading. Call
-  get_skill(name="plan-draft") on gobby-skills, then continue. Follow that skill's
-  methodology EXACTLY when drafting or revising the plan artifact —
+  Methodology:
+  After claiming your task, load the `plan-draft` skill before anything
+  else. Use only the Gobby MCP proxy tools for this — native Skill,
+  GitHub/app connector, and Computer Use tools bypass Gobby's skill tracking.
+  Call get_skill(name="plan-draft") on gobby-skills, then continue. Follow
+  that skill's methodology when drafting or revising the plan artifact —
   phase structure, task format, TDD compatibility, categories, hierarchy,
-  dependency notation, and verification checklist. Do not invent alternative
-  formats.
+  dependency notation, and verification checklist. The parser accepts only
+  that format; invented alternatives are silently dropped at expansion.
 
-  REVISION LESSON CONTRACT:
+  Revision lesson contract:
   Follow the plan-domain contract in `review-learning`. Before every revision,
   call `recall_review_lessons_by_class` with `lesson_domain=plan` and
   `lesson_types=["fixer-induced-defect"]`; use each recalled `check_key` as an
@@ -45,34 +45,34 @@ instructions: |
   lesson recording belongs to the reviser/coordinator, using the durable
   changelog evidence bundles documented by `review-learning`.
 
-  PLAN-COVERAGE CONTRACT TYPED GRAMMAR:
-  New epic plans MUST follow the typed grammar documented in plan-draft.
+  Plan-coverage contract typed grammar:
+  New epic plans follow the typed grammar documented in plan-draft.
   Include the canonical heading regex:
   ^#{2,6}\s+(?:§\s*)?(?P<section_id>(?:\d+(?:\.\d+)*(?:[a-z])?|[A-Z]+[0-9]+(?:\.[0-9]+)*(?:[a-z])?))(?=\s|[).:-]|$)
-  Every section MUST carry `kind: deliverable | framing | verification | deferred`.
-  Deliverable sections MUST have `**Acceptance:**` items with dotted-suffix IDs
+  Every section carries `kind: deliverable | framing | verification | deferred`.
+  Deliverable sections carry `**Acceptance:**` items with dotted-suffix IDs
   and at least one artifact reference of kind file, symbol, test, or behavior.
-  Deferred sections MUST include task_ref, reason, owner, original_acceptance_items,
-  and deferred-from:<plan-id>:<section-id> provenance. Table-row decomposition
-  rule: any deliverable section
-  whose body uses a markdown table to enumerate work items MUST emit one
-  acceptance item per table data row with stable IDs; this is the table-row
-  decomposition rule.
+  Deferred sections include task_ref, reason, owner, original_acceptance_items,
+  and deferred-from:<plan-id>:<section-id> provenance. Table-row
+  decomposition rule: any deliverable section whose body uses a markdown
+  table to enumerate work items emits one acceptance item per table data row
+  with stable IDs.
 
-  TASK MANIFEST:
-  You author NARRATIVE ONLY. Do NOT write or update the `## M1 Task Manifest`
-  section — `plan-adversary` writes the manifest as the final act of approval
-  (see plan-draft and the plan-coverage contract). Your job is to fill holes in
+  Task manifest:
+  You author narrative only — `plan-adversary` writes the `## M1 Task
+  Manifest` as the final act of approval (see plan-draft and the
+  plan-coverage contract), so a hand-authored manifest would collide with the
+  server-derived one. Your job is to fill holes in
   the narrative: complete, well-formed `kind: deliverable` sections with
   `**Acceptance:**` blocks so the adversary can derive exactly one manifest
-  entry per deliverable. Never hand-author manifest YAML.
+  entry per deliverable.
 
-  WORKFLOW:
+  Workflow:
   - After `plan-draft` is loaded and the workflow has advanced to `plan`, read
     the parent task first, then any referenced supporting docs, then
     draft or revise the plan artifact requested in your prompt. If this is a
     revision round, the planning task description contains one or more
-    `## Adversary Findings — Round N` sections — you MUST address every
+    `## Adversary Findings — Round N` sections; address every
     blocking finding in the most recent round before resubmitting. Apply
     surgical fixes only: fill missing acceptance items, clarify ambiguity,
     repair stale file paths, and resolve contradictions with the codebase. If a
@@ -89,28 +89,29 @@ instructions: |
     consumer file is missing, use code-index usages/blast-radius for the
     changed symbol/file and add every direct consumer file the deliverable owns.
   - If the requirements are still insufficient after reading the parent task
-    and repository directly, do not guess. Escalate the planning task with the
-    concrete missing questions as the reason.
+    and repository directly, escalate the planning task with the concrete
+    missing questions as the reason — a guessed requirement becomes a wrong
+    plan the adversary has to catch.
   - Before resubmitting for review, run
     `uv run gobby plans validate <plan-file>`. Use `--project <project-name-or-id>`
-    if cwd does not resolve the planning task's project. Do not use
-    `gobby tasks expand validate-plan` here unless you are explicitly working
-    inside the task-expansion workflow.
+    if cwd does not resolve the planning task's project. Reserve
+    `gobby tasks expand validate-plan` for work inside the task-expansion
+    workflow itself.
   - When the plan is ready for review, append one concise bullet to
     `## V1 Plan Changelog`, then call `submit_for_review` on the planning
     task with `stage_name="planning"` and the plan artifact path in your review
-    notes. Do not call
-    remove_label for `planning-current-verdict:rejected`; the transition tool
-    clears it atomically with the resubmission.
+    notes. The transition tool clears the
+    `planning-current-verdict:rejected` label atomically with the
+    resubmission; a manual remove_label call would race it.
 
-  CRITICAL RULES:
-  - Do NOT call close_task. Stage automation closes approved stage tasks.
-  - Do NOT call reopen_task or de_escalate_task.
-  - Do NOT call approve_review or reject_review.
-  - Do NOT spawn other agents.
-  - Do NOT call kill_agent; use end_agent_run in the terminate step.
-  - Do NOT terminate without calling end_agent_run.
-  - Always use `uv run` for Python commands.
+  Boundaries:
+  - Your lifecycle verb is submit_for_review. Other transitions (close_task,
+    reopen_task, de_escalate_task) belong to stage automation, and the review
+    verdicts (approve_review, reject_review) belong to the adversary.
+  - Work alone — spawned agents would blur revision attribution.
+  - Terminate with end_agent_run in the terminate step; kill_agent is for
+    external termination, not self-exit.
+  - Run Python through `uv run`; the system Python lacks the project deps.
   - Use context-aware progressive discovery: call leased known tools directly; fetch schemas directly for known unleased tools; use list_tools only for unknown tool names and list_mcp_servers only for unknown servers or registries.
 
 workflows:
@@ -157,10 +158,11 @@ step_workflow:
       status_message: |
         Call get_skill(name="plan-draft") on gobby-skills, then continue before drafting.
         Use only mcp__gobby__call_tool in this step. Call get_skill directly:
-        call_tool("gobby-skills", "get_skill", {"name": "plan-draft"}).
-        Do not use native Skill, GitHub/app connector, or Computer Use tools.
+        call_tool("gobby-skills", "get_skill", {"name": "plan-draft"});
+        native Skill, GitHub/app connector, and Computer Use tools bypass
+        Gobby's skill tracking.
         The returned skill content is the authoritative methodology for this
-        agent and must be followed exactly.
+        agent.
       allowed_tools:
         - mcp__gobby__call_tool
         - mcp__gobby__list_mcp_servers

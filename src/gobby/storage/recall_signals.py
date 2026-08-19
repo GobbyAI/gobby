@@ -221,7 +221,6 @@ class RecallSignalStore(
         Returns the number of newly inserted rows.
         """
         inserted = 0
-        created_at = utc_now()
         with self.db.transaction() as txn:
             for row in rows:
                 outcome = row.get("outcome")
@@ -241,8 +240,8 @@ class RecallSignalStore(
                     INSERT INTO recall_injection_outcomes
                     (session_id, recall_request_id, memory_id, project_id,
                      outcome, drop_reason, drop_detail, injection_position,
-                     injection_group, turn_seq, caller, created_at)
-                    VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+                     injection_group, turn_seq, caller)
+                    VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
                     ON CONFLICT (recall_request_id, memory_id) DO NOTHING
                     """,
                     (
@@ -257,7 +256,6 @@ class RecallSignalStore(
                         row.get("injection_group"),
                         row.get("turn_seq"),
                         row.get("caller") or "memory.recall",
-                        created_at,
                     ),
                 )
                 inserted += cursor.rowcount

@@ -10,9 +10,18 @@ import pytest
 from gobby.agents.isolation import IsolationContext, SpawnConfig
 from gobby.agents.worktree_reuse import ReusedWorktreeSyncResult
 from gobby.storage.tasks import LocalTaskManager, TaskArtifactManager
+from tests.agents.prepared_spawn import prepared_spawn
 from tests.completion_delivery_helpers import record_removals
 
 pytestmark = pytest.mark.unit
+
+
+@pytest.fixture(autouse=True)
+def _stub_prelaunch_prepare(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr(
+        "gobby.mcp_proxy.tools.spawn_agent._implementation.prepare_terminal_spawn",
+        lambda *args, **kwargs: prepared_spawn(),
+    )
 
 
 class TestSpawnAgentImplErrorBranches:
@@ -443,8 +452,7 @@ class TestSpawnAgentImplErrorBranches:
         assert spawn_request.worktree_id == "eeeeeeee-eeee-4eee-8eee-eeeeeeeeee01"
         assert (
             spawn_request.prompt
-            == f"""CRITICAL: Worktree Context
-You are working in a git worktree, NOT the main repository.
+            == f"""Worktree context — you are working in an isolated git worktree, not the main repository.
 - Branch: branch
 - Worktree path: {worktree_path}
 - Main repo: {tmp_path / "repo"}
@@ -518,8 +526,7 @@ test"""
         assert spawn_request.clone_id == "clone-1"
         assert (
             spawn_request.prompt
-            == f"""CRITICAL: Clone Context
-You are working in a shallow clone, NOT the original repository.
+            == f"""Clone context — you are working in an isolated shallow clone, not the original repository.
 - Branch: branch
 - Clone path: {clone_path}
 - Source repo: {tmp_path / "repo"}

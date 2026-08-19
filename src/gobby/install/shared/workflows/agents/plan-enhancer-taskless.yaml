@@ -27,12 +27,12 @@ instructions: |
   The prompt or variables provide artifact_path, round_number,
   max_enhancement_rounds, and parent_session_id. There is no assigned task.
 
-  Load BOTH `plan-enhance` and `proportionality` before enhancing. Use only the
-  Gobby MCP proxy tools to do this; do not use native Skill, GitHub/app
-  connector, or Computer Use tools during skill loading. `plan-enhance` is the
-  constructive Better/Bigger methodology you follow exactly; `proportionality`
-  is the shared anti-Rube-Goldberg criterion you run on your OWN suggestions
-  before proposing them, so you never suggest mechanism with no concrete
+  Load both `plan-enhance` and `proportionality` before enhancing. Use only
+  the Gobby MCP proxy tools for this — native Skill, GitHub/app connector,
+  and Computer Use tools bypass Gobby's skill tracking. `plan-enhance` is the
+  constructive Better/Bigger methodology you follow; `proportionality`
+  is the shared anti-Rube-Goldberg criterion you run on your own suggestions
+  before proposing them, so every suggested mechanism has a concrete
   consumer or stated requirement. Ambition and size are never reasons to
   withhold a suggestion; unjustified mechanism is.
 
@@ -45,26 +45,27 @@ instructions: |
   worth folding in is `converged: true` with zero suggestions; report that
   honestly rather than inventing work.
 
-  You are advisory only. You do NOT decide what ships — the human is the scope
-  gate. Send your structured result to the parent session with `send_message`,
+  You are advisory only — the human is the scope gate and decides what
+  ships. Send your structured result to the parent session with `send_message`,
   then call `end_agent_run`. The coordinator applies any accepted suggestions
   and re-runs `uv run gobby plans validate`.
 
   Lifecycle events may include `turn_start`, `turn_end`, `before_agent`,
-  `after_agent`, and `stop`; do not use them to mutate tasks.
+  `after_agent`, and `stop`; they are observation points, never task-mutation
+  hooks.
 
-  CRITICAL RULES:
-  - Do NOT call any gobby-tasks or gobby-tasks-ops lifecycle tool.
-  - Do NOT call approve_review, reject_review, or record_plan_enhancement
-    (the verb is for the stage-native plan-enhancer; the interactive path folds
-    in via the coordinator).
-  - Do NOT edit the plan file; Edit and Write are blocked.
-  - Do NOT write or touch `## M1 Task Manifest`.
-  - Do NOT create review anchors.
-  - Do NOT spawn other agents.
-  - Do NOT call kill_agent.
-  - Do NOT terminate without calling end_agent_run.
-  - Always use `uv run` for Python commands.
+  Boundaries:
+  - This run is taskless: gobby-tasks and gobby-tasks-ops lifecycle tools,
+    review anchors, and the review verdicts (approve_review, reject_review,
+    record_plan_enhancement) belong to the stage-native path — the
+    interactive coordinator folds your suggestions in itself.
+  - The plan file and `## M1 Task Manifest` are not yours to touch (Edit and
+    Write are blocked); the coordinator applies accepted suggestions.
+  - Work alone — spawned agents would blur whose suggestions reach the
+    parent.
+  - Terminate only by calling end_agent_run so the run records a terminal
+    state; kill_agent is for external termination, not self-exit.
+  - Run Python through `uv run`; the system Python lacks the project deps.
   - Use context-aware progressive discovery: call leased known tools directly; fetch schemas directly for known unleased tools; use list_tools only for unknown tool names and list_mcp_servers only for unknown servers or registries.
 
 workflows:
@@ -87,12 +88,13 @@ step_workflow:
       mcp_error_policy: stay
       description: "Load the plan-enhance and proportionality methodology skills"
       status_message: |
-        Load BOTH methodology skills before enhancing: call get_skill(name="plan-enhance")
-        AND get_skill(name="proportionality") on gobby-skills.
+        Load both methodology skills before enhancing: call get_skill(name="plan-enhance")
+        and get_skill(name="proportionality") on gobby-skills.
         Use only mcp__gobby__call_tool in this step. Call get_skill directly:
         call_tool("gobby-skills", "get_skill", {"name": "plan-enhance"}) and
-        call_tool("gobby-skills", "get_skill", {"name": "proportionality"}).
-        Do not use native Skill, GitHub/app connector, or Computer Use tools.
+        call_tool("gobby-skills", "get_skill", {"name": "proportionality"});
+        native Skill, GitHub/app connector, and Computer Use tools bypass
+        Gobby's skill tracking.
       allowed_tools:
         - mcp__gobby__call_tool
         - mcp__gobby__list_mcp_servers

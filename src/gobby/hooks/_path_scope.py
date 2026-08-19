@@ -26,6 +26,21 @@ _SCRATCHPAD_PREFIXES = (
     "gobby-agent-scratchpad",
     "gobby-scratchpad",
 )
+# CLI-host scratchpads (e.g. Claude Code's /private/tmp/claude-<uid>/...) live
+# under system temp roots that differ from the daemon's tempfile.gettempdir().
+_EXTRA_TEMP_ROOTS = ("/tmp", "/private/tmp")
+# AI-CLI state homes (transcripts, session stores, settings) are not project
+# code; navigation there must not trip code-index preference rules. Project
+# worktrees checked out beneath these roots still classify as in-project
+# because project-root membership is checked first.
+_AGENT_STATE_HOME_DIRS = (
+    ".claude",
+    ".codex",
+    ".factory",
+    ".gemini",
+    ".grok",
+    ".qwen",
+)
 
 
 def apply_path_scope_metadata(
@@ -104,21 +119,30 @@ def code_navigation_may_touch_project(
     cwd: Path | None,
     project_root: Path | None,
 ) -> bool:
-    """Return True when broad read/search navigation may inspect project code."""
+    """Return True when broad read/search navigation may inspect project code.
+
+    In-project membership wins over the known-external roots so a project
+    checked out beneath an external root (a worktree under a CLI state home)
+    still counts as project navigation.
+    """
     if not paths:
         if cwd is None:
             return True
+        if project_root is not None and _is_relative_to(cwd, project_root):
+            return True
         if _is_known_external_path(cwd):
             return False
-        return project_root is None or _is_relative_to(cwd, project_root)
+        return project_root is None
 
     for raw_path in paths:
         path = resolve_tool_path(raw_path, cwd)
         if path is None:
             return True
+        if project_root is not None and _is_relative_to(path, project_root):
+            return True
         if _is_known_external_path(path):
             continue
-        if project_root is None or _is_relative_to(path, project_root):
+        if project_root is None:
             return True
     return False
 
@@ -141,17 +165,31 @@ def _resolve_base_dir(path: Any) -> Path | None:
 
 
 def _is_known_external_path(path: Path) -> bool:
-    return _is_gobby_logs_path(path) or _is_temp_agent_scratchpad_path(path)
+    return (
+        _is_gobby_home_path(path)
+        or _is_agent_state_home_path(path)
+        or _is_temp_agent_scratchpad_path(path)
+    )
 
 
-def _is_gobby_logs_path(path: Path) -> bool:
-    logs_dir = (get_gobby_home().expanduser() / "logs").resolve(strict=False)
-    return _is_relative_to(path, logs_dir)
+def _is_gobby_home_path(path: Path) -> bool:
+    gobby_home = get_gobby_home().expanduser().resolve(strict=False)
+    return _is_relative_to(path, gobby_home)
+
+
+def _is_agent_state_home_path(path: Path) -> bool:
+    """Return True for paths under an AI-CLI state home such as ``~/.claude``."""
+    home = Path.home().resolve(strict=False)
+    return any(_is_relative_to(path, home / name) for name in _AGENT_STATE_HOME_DIRS)
+
+
+def _temp_scratchpad_roots() -> frozenset[Path]:
+    roots = {Path(tempfile.gettempdir()), *(Path(raw) for raw in _EXTRA_TEMP_ROOTS)}
+    return frozenset(root.resolve(strict=False) for root in roots)
 
 
 def _is_temp_agent_scratchpad_path(path: Path) -> bool:
-    temp_root = Path(tempfile.gettempdir()).resolve(strict=False)
-    if not _is_relative_to(path, temp_root):
+    if not any(_is_relative_to(path, root) for root in _temp_scratchpad_roots()):
         return False
 
     for part in path.parts:

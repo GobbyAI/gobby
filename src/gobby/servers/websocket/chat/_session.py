@@ -672,6 +672,9 @@ class ChatSessionMixin:
                     if persona_context:
                         session.system_prompt_override = persona_context
                 elif agent_name != "default":
+                    # The default agent's persona is injected once per context
+                    # epoch at first prompt from its agent-definition row;
+                    # only non-default agents override the system prompt here.
                     context_parts: list[str] = []
                     if effective_provider in {"grok", "qwen"}:
                         preamble = _build_agent_identity_preamble(agent_body)

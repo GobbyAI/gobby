@@ -2,15 +2,14 @@
 
 from __future__ import annotations
 
-import json
 from pathlib import Path
 from types import SimpleNamespace
 from typing import Any
 
 import pytest
 
-from gobby.storage.hub.protocol import HubDatabase
 from gobby.storage.definitions.rules import RuleDefinitionManager
+from gobby.storage.hub.protocol import HubDatabase
 from gobby.workflows.definitions import RuleDefinitionBody
 from gobby.workflows.monolith_guard import (
     MONOLITH_SOURCE_EXTENSIONS,
@@ -28,12 +27,6 @@ RULE_NAMES = (
     "require-monolith-resolution-before-turn-end",
 )
 PROJECT_ROOT = Path(__file__).resolve().parents[2]
-PRINCIPLE_MIRRORS = (
-    PROJECT_ROOT / "AGENTS.md",
-    PROJECT_ROOT / "CLAUDE.md",
-    PROJECT_ROOT / "GUIDING_PRINCIPLES.md",
-    PROJECT_ROOT / "QWEN.md",
-)
 
 
 def _lines(count: int, *, first: str = "line 0") -> str:
@@ -365,25 +358,6 @@ def test_bundled_rules_cover_commit_transitions_turn_end_and_required_guidance(
     assert "code-index" in reasons
     assert "current claimed task and session" in reasons
     assert "deferred refactor tasks are prohibited" in reasons
-
-
-def test_principle_two_mirrors_require_same_session_decomposition() -> None:
-    principle_lines = []
-    for path in PRINCIPLE_MIRRORS:
-        body = path.read_text(encoding="utf-8")
-        principle_lines.append(
-            next(line for line in body.splitlines() if line.startswith("2. **NEVER"))
-        )
-
-    assert len(set(principle_lines)) == 1
-    principle = principle_lines[0]
-    for extension in (".py", ".ts", ".tsx", ".css", ".rs", ".js", ".mjs", ".cjs", ".sh"):
-        assert f"`{extension}`" in principle
-    assert "Exactly 1,000 lines violates the ceiling" in principle
-    assert "current claimed task and session" in principle
-    assert "Deferred refactor tasks are prohibited" in principle
-    assert "search for an existing refactor task" not in principle
-    assert "Leave these tasks for another agent" not in principle
 
 
 def test_task_skill_removes_follow_up_refactor_task_direction() -> None:

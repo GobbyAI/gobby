@@ -18,7 +18,7 @@ const GOLDEN_LATEST_CHECKSUM: &str =
     "4d3f2e9652a958f4ad7f0f64410e622e4e4629b8388b1610527170e0bac83598";
 #[cfg(not(feature = "postgres"))]
 const GOLDEN_ASSETS_ROOT_HASH: &str =
-    "c5565648800234a61b6d7d41b7829d3bb00cfd10aff5ca6d29394bd302f90431";
+    "204db53e26c9e16a945d1e26c5f3e707a065fdecd8b5fb24f156fb09ec996403";
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]

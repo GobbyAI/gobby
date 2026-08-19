@@ -848,6 +848,64 @@ class TestExecuteSpawn:
             assert result.codex_session_id is None  # late-linked via SessionStart hook
 
     @pytest.mark.asyncio
+    async def test_codex_persona_precedes_task_prompt(self, mock_codex_prompt_delivery):
+        """The persona preamble rides ahead of the composer prompt and the
+        first-turn injection is suppressed (#20451)."""
+        mock_session_manager = MagicMock()
+        request = SpawnRequest(
+            prompt="Review the plan",
+            cwd="/path",
+            provider="codex",
+            session_id="sess",
+            run_id="run",
+            parent_session_id="parent",
+            project_id="proj",
+            project_path="/main/repo",
+            agent_run_id="run-abc123def456",
+            agent_name="qa-reviewer",
+            session_manager=mock_session_manager,
+            prepared_spawn=prepared_spawn(),
+        )
+        spawn_context = MagicMock(
+            session_id="gobby-sess-123",
+            agent_run_id="run-abc123def456",
+            env_vars={"GOBBY_SESSION_ID": "gobby-sess-123"},
+        )
+        request.prepared_spawn = spawn_context
+
+        mock_spawner = MagicMock()
+        mock_spawner.spawn.return_value = MagicMock(
+            success=True,
+            pid=12345,
+            terminal_type="tmux",
+            tmux_session_name="agent-run-abc123def456",
+        )
+        agent_body = MagicMock()
+        agent_body.build_prompt_preamble.return_value = "## Persona\nYou are the QA reviewer."
+
+        with (
+            patch("gobby.agents.spawn_executor.TmuxSpawner", return_value=mock_spawner),
+            patch("gobby.agents.spawn_executor.pre_approve_directory"),
+            patch(
+                "gobby.workflows.agent_resolver.resolve_agent",
+                return_value=agent_body,
+            ) as mock_resolve,
+            patch("gobby.workflows.state_manager.SessionVariableManager") as mock_sv_mgr,
+        ):
+            result = await execute_spawn(request)
+
+        assert result.success is True
+        mock_resolve.assert_called_once()
+        assert mock_resolve.call_args.args[0] == "qa-reviewer"
+        delivered_prompt = mock_codex_prompt_delivery.call_args.args[2]
+        assert delivered_prompt.startswith("## Persona\nYou are the QA reviewer.")
+        assert delivered_prompt.endswith("Review the plan")
+        mock_sv_mgr.return_value.merge_variables.assert_called_once_with(
+            "gobby-sess-123",
+            {"_agent_context_injected": True},
+        )
+
+    @pytest.mark.asyncio
     async def test_codex_terminal_spawn_local_oss_model(self) -> None:
         mock_session_manager = MagicMock()
         request = SpawnRequest(
@@ -1322,6 +1380,7 @@ class TestExecuteSpawnSandbox:
         call_kwargs = mock_spawner.spawn.call_args.kwargs
         assert "env" in call_kwargs
         assert "SEATBELT_PROFILE" in call_kwargs["env"]
+        assert call_kwargs["env"]["CLAUDE_CODE_DISABLE_AUTO_MEMORY"] == "1"
         assert Path(call_kwargs["env"][UV_CACHE_DIR]).is_relative_to(
             Path(
                 next(

@@ -257,11 +257,12 @@ class TestMergeResolutionDataclass:
             ("11111111-1111-4111-8111-111111110001", "Test Project"),
         )
         db.execute(
-            """INSERT INTO worktrees (id, project_id, branch_name, worktree_path, status, created_at, updated_at)
-               VALUES (%s, %s, %s, %s, %s, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)""",
+            """INSERT INTO worktrees (id, project_id, machine_id, branch_name, worktree_path, status, created_at, updated_at)
+               VALUES (%s, %s, %s, %s, %s, %s, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)""",
             (
                 "6a061cb3-f607-55f6-b3eb-04579360a44c",
                 "11111111-1111-4111-8111-111111110001",
+                "21000000-0000-4000-8000-000000000001",
                 "feature",
                 "/tmp/wt",
                 "active",
@@ -355,11 +356,12 @@ class TestMergeConflictDataclass:
             ("11111111-1111-4111-8111-111111110001", "Test Project"),
         )
         db.execute(
-            """INSERT INTO worktrees (id, project_id, branch_name, worktree_path, status, created_at, updated_at)
-               VALUES (%s, %s, %s, %s, %s, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)""",
+            """INSERT INTO worktrees (id, project_id, machine_id, branch_name, worktree_path, status, created_at, updated_at)
+               VALUES (%s, %s, %s, %s, %s, %s, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)""",
             (
                 "6a061cb3-f607-55f6-b3eb-04579360a44c",
                 "11111111-1111-4111-8111-111111110001",
+                "21000000-0000-4000-8000-000000000001",
                 "feature",
                 "/tmp/wt",
                 "active",
@@ -442,11 +444,12 @@ class TestMergeResolutionManagerCreate:
             ("11111111-1111-4111-8111-111111110001", "Test Project"),
         )
         db.execute(
-            """INSERT INTO worktrees (id, project_id, branch_name, worktree_path, status, created_at, updated_at)
-               VALUES (%s, %s, %s, %s, %s, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)""",
+            """INSERT INTO worktrees (id, project_id, machine_id, branch_name, worktree_path, status, created_at, updated_at)
+               VALUES (%s, %s, %s, %s, %s, %s, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)""",
             (
                 "6a061cb3-f607-55f6-b3eb-04579360a44c",
                 "11111111-1111-4111-8111-111111110001",
+                "21000000-0000-4000-8000-000000000001",
                 "feature",
                 "/tmp/wt",
                 "active",
@@ -479,11 +482,12 @@ class TestMergeResolutionManagerCreate:
             ("11111111-1111-4111-8111-111111110001", "Test Project"),
         )
         db.execute(
-            """INSERT INTO worktrees (id, project_id, branch_name, worktree_path, status, created_at, updated_at)
-               VALUES (%s, %s, %s, %s, %s, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)""",
+            """INSERT INTO worktrees (id, project_id, machine_id, branch_name, worktree_path, status, created_at, updated_at)
+               VALUES (%s, %s, %s, %s, %s, %s, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)""",
             (
                 "6a061cb3-f607-55f6-b3eb-04579360a44c",
                 "11111111-1111-4111-8111-111111110001",
+                "21000000-0000-4000-8000-000000000001",
                 "feature",
                 "/tmp/wt",
                 "active",
@@ -518,11 +522,12 @@ class TestMergeResolutionManagerGet:
             ("11111111-1111-4111-8111-111111110001", "Test Project"),
         )
         db.execute(
-            """INSERT INTO worktrees (id, project_id, branch_name, worktree_path, status, created_at, updated_at)
-               VALUES (%s, %s, %s, %s, %s, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)""",
+            """INSERT INTO worktrees (id, project_id, machine_id, branch_name, worktree_path, status, created_at, updated_at)
+               VALUES (%s, %s, %s, %s, %s, %s, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)""",
             (
                 "6a061cb3-f607-55f6-b3eb-04579360a44c",
                 "11111111-1111-4111-8111-111111110001",
+                "21000000-0000-4000-8000-000000000001",
                 "feature",
                 "/tmp/wt",
                 "active",
@@ -566,11 +571,12 @@ class TestMergeResolutionManagerMergeLookup:
             ("11111111-1111-4111-8111-111111110001", "Test Project"),
         )
         db.execute(
-            """INSERT INTO worktrees (id, project_id, branch_name, worktree_path, status, created_at, updated_at)
-               VALUES (%s, %s, %s, %s, %s, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)""",
+            """INSERT INTO worktrees (id, project_id, machine_id, branch_name, worktree_path, status, created_at, updated_at)
+               VALUES (%s, %s, %s, %s, %s, %s, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)""",
             (
                 "6a061cb3-f607-55f6-b3eb-04579360a44c",
                 "11111111-1111-4111-8111-111111110001",
+                "21000000-0000-4000-8000-000000000001",
                 "feature",
                 "/tmp/wt",
                 "active",
@@ -723,11 +729,12 @@ class TestMergeResolutionManagerUpdate:
             ("11111111-1111-4111-8111-111111110001", "Test Project"),
         )
         db.execute(
-            """INSERT INTO worktrees (id, project_id, branch_name, worktree_path, status, created_at, updated_at)
-               VALUES (%s, %s, %s, %s, %s, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)""",
+            """INSERT INTO worktrees (id, project_id, machine_id, branch_name, worktree_path, status, created_at, updated_at)
+               VALUES (%s, %s, %s, %s, %s, %s, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)""",
             (
                 "6a061cb3-f607-55f6-b3eb-04579360a44c",
                 "11111111-1111-4111-8111-111111110001",
+                "21000000-0000-4000-8000-000000000001",
                 "feature",
                 "/tmp/wt",
                 "active",
@@ -762,11 +769,12 @@ class TestMergeResolutionManagerUpdate:
             ("b605e6f5-eccf-5d9c-8e6f-7105ec9a44db", "Test Project"),
         )
         db.execute(
-            """INSERT INTO worktrees (id, project_id, branch_name, worktree_path, status, created_at, updated_at)
-               VALUES (%s, %s, %s, %s, %s, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)""",
+            """INSERT INTO worktrees (id, project_id, machine_id, branch_name, worktree_path, status, created_at, updated_at)
+               VALUES (%s, %s, %s, %s, %s, %s, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)""",
             (
                 "453a03f7-e4a0-5d4c-b15b-a67e14f1c180",
                 "b605e6f5-eccf-5d9c-8e6f-7105ec9a44db",
+                "21000000-0000-4000-8000-000000000001",
                 "feature",
                 "/tmp/wt-concurrent-resolution",
                 "active",
@@ -809,11 +817,12 @@ class TestMergeResolutionManagerUpdate:
             ("11111111-1111-4111-8111-111111110001", "Test Project"),
         )
         db.execute(
-            """INSERT INTO worktrees (id, project_id, branch_name, worktree_path, status, created_at, updated_at)
-               VALUES (%s, %s, %s, %s, %s, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)""",
+            """INSERT INTO worktrees (id, project_id, machine_id, branch_name, worktree_path, status, created_at, updated_at)
+               VALUES (%s, %s, %s, %s, %s, %s, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)""",
             (
                 "6a061cb3-f607-55f6-b3eb-04579360a44c",
                 "11111111-1111-4111-8111-111111110001",
+                "21000000-0000-4000-8000-000000000001",
                 "feature",
                 "/tmp/wt",
                 "active",
@@ -850,11 +859,12 @@ class TestMergeResolutionManagerDelete:
             ("11111111-1111-4111-8111-111111110001", "Test Project"),
         )
         db.execute(
-            """INSERT INTO worktrees (id, project_id, branch_name, worktree_path, status, created_at, updated_at)
-               VALUES (%s, %s, %s, %s, %s, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)""",
+            """INSERT INTO worktrees (id, project_id, machine_id, branch_name, worktree_path, status, created_at, updated_at)
+               VALUES (%s, %s, %s, %s, %s, %s, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)""",
             (
                 "6a061cb3-f607-55f6-b3eb-04579360a44c",
                 "11111111-1111-4111-8111-111111110001",
+                "21000000-0000-4000-8000-000000000001",
                 "feature",
                 "/tmp/wt",
                 "active",
@@ -905,11 +915,12 @@ class TestMergeResolutionManagerCreateConflict:
             ("11111111-1111-4111-8111-111111110001", "Test Project"),
         )
         db.execute(
-            """INSERT INTO worktrees (id, project_id, branch_name, worktree_path, status, created_at, updated_at)
-               VALUES (%s, %s, %s, %s, %s, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)""",
+            """INSERT INTO worktrees (id, project_id, machine_id, branch_name, worktree_path, status, created_at, updated_at)
+               VALUES (%s, %s, %s, %s, %s, %s, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)""",
             (
                 "6a061cb3-f607-55f6-b3eb-04579360a44c",
                 "11111111-1111-4111-8111-111111110001",
+                "21000000-0000-4000-8000-000000000001",
                 "feature",
                 "/tmp/wt",
                 "active",
@@ -951,11 +962,12 @@ class TestMergeResolutionManagerUpdateConflict:
             ("11111111-1111-4111-8111-111111110001", "Test Project"),
         )
         db.execute(
-            """INSERT INTO worktrees (id, project_id, branch_name, worktree_path, status, created_at, updated_at)
-               VALUES (%s, %s, %s, %s, %s, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)""",
+            """INSERT INTO worktrees (id, project_id, machine_id, branch_name, worktree_path, status, created_at, updated_at)
+               VALUES (%s, %s, %s, %s, %s, %s, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)""",
             (
                 "6a061cb3-f607-55f6-b3eb-04579360a44c",
                 "11111111-1111-4111-8111-111111110001",
+                "21000000-0000-4000-8000-000000000001",
                 "feature",
                 "/tmp/wt",
                 "active",
@@ -996,11 +1008,12 @@ class TestMergeResolutionManagerUpdateConflict:
             ("7cf6354c-bef0-5522-b6c3-95e7c1feac99", "Test Project"),
         )
         db.execute(
-            """INSERT INTO worktrees (id, project_id, branch_name, worktree_path, status, created_at, updated_at)
-               VALUES (%s, %s, %s, %s, %s, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)""",
+            """INSERT INTO worktrees (id, project_id, machine_id, branch_name, worktree_path, status, created_at, updated_at)
+               VALUES (%s, %s, %s, %s, %s, %s, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)""",
             (
                 "13bd814a-d71b-53ed-ae5b-d7949ac6ba9c",
                 "7cf6354c-bef0-5522-b6c3-95e7c1feac99",
+                "21000000-0000-4000-8000-000000000001",
                 "feature",
                 "/tmp/wt-concurrent-conflict",
                 "active",
@@ -1058,11 +1071,12 @@ class TestConflictStateTransitions:
             ("11111111-1111-4111-8111-111111110001", "Test Project"),
         )
         db.execute(
-            """INSERT INTO worktrees (id, project_id, branch_name, worktree_path, status, created_at, updated_at)
-               VALUES (%s, %s, %s, %s, %s, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)""",
+            """INSERT INTO worktrees (id, project_id, machine_id, branch_name, worktree_path, status, created_at, updated_at)
+               VALUES (%s, %s, %s, %s, %s, %s, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)""",
             (
                 "6a061cb3-f607-55f6-b3eb-04579360a44c",
                 "11111111-1111-4111-8111-111111110001",
+                "21000000-0000-4000-8000-000000000001",
                 "feature",
                 "/tmp/wt",
                 "active",
@@ -1105,11 +1119,12 @@ class TestConflictStateTransitions:
             ("11111111-1111-4111-8111-111111110001", "Test Project"),
         )
         db.execute(
-            """INSERT INTO worktrees (id, project_id, branch_name, worktree_path, status, created_at, updated_at)
-               VALUES (%s, %s, %s, %s, %s, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)""",
+            """INSERT INTO worktrees (id, project_id, machine_id, branch_name, worktree_path, status, created_at, updated_at)
+               VALUES (%s, %s, %s, %s, %s, %s, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)""",
             (
                 "6a061cb3-f607-55f6-b3eb-04579360a44c",
                 "11111111-1111-4111-8111-111111110001",
+                "21000000-0000-4000-8000-000000000001",
                 "feature",
                 "/tmp/wt",
                 "active",
@@ -1146,11 +1161,12 @@ class TestConflictStateTransitions:
             ("11111111-1111-4111-8111-111111110001", "Test Project"),
         )
         db.execute(
-            """INSERT INTO worktrees (id, project_id, branch_name, worktree_path, status, created_at, updated_at)
-               VALUES (%s, %s, %s, %s, %s, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)""",
+            """INSERT INTO worktrees (id, project_id, machine_id, branch_name, worktree_path, status, created_at, updated_at)
+               VALUES (%s, %s, %s, %s, %s, %s, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)""",
             (
                 "6a061cb3-f607-55f6-b3eb-04579360a44c",
                 "11111111-1111-4111-8111-111111110001",
+                "21000000-0000-4000-8000-000000000001",
                 "feature",
                 "/tmp/wt",
                 "active",
@@ -1196,11 +1212,12 @@ class TestQueryResolutionsByFile:
             ("11111111-1111-4111-8111-111111110001", "Test Project"),
         )
         db.execute(
-            """INSERT INTO worktrees (id, project_id, branch_name, worktree_path, status, created_at, updated_at)
-               VALUES (%s, %s, %s, %s, %s, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)""",
+            """INSERT INTO worktrees (id, project_id, machine_id, branch_name, worktree_path, status, created_at, updated_at)
+               VALUES (%s, %s, %s, %s, %s, %s, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)""",
             (
                 "6a061cb3-f607-55f6-b3eb-04579360a44c",
                 "11111111-1111-4111-8111-111111110001",
+                "21000000-0000-4000-8000-000000000001",
                 "feature",
                 "/tmp/wt",
                 "active",
@@ -1248,11 +1265,12 @@ class TestQueryResolutionsByBranch:
             ("11111111-1111-4111-8111-111111110001", "Test Project"),
         )
         db.execute(
-            """INSERT INTO worktrees (id, project_id, branch_name, worktree_path, status, created_at, updated_at)
-               VALUES (%s, %s, %s, %s, %s, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)""",
+            """INSERT INTO worktrees (id, project_id, machine_id, branch_name, worktree_path, status, created_at, updated_at)
+               VALUES (%s, %s, %s, %s, %s, %s, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)""",
             (
                 "6a061cb3-f607-55f6-b3eb-04579360a44c",
                 "11111111-1111-4111-8111-111111110001",
+                "21000000-0000-4000-8000-000000000001",
                 "feature",
                 "/tmp/wt",
                 "active",
@@ -1288,11 +1306,12 @@ class TestQueryResolutionsByBranch:
             ("11111111-1111-4111-8111-111111110001", "Test Project"),
         )
         db.execute(
-            """INSERT INTO worktrees (id, project_id, branch_name, worktree_path, status, created_at, updated_at)
-               VALUES (%s, %s, %s, %s, %s, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)""",
+            """INSERT INTO worktrees (id, project_id, machine_id, branch_name, worktree_path, status, created_at, updated_at)
+               VALUES (%s, %s, %s, %s, %s, %s, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)""",
             (
                 "6a061cb3-f607-55f6-b3eb-04579360a44c",
                 "11111111-1111-4111-8111-111111110001",
+                "21000000-0000-4000-8000-000000000001",
                 "feature",
                 "/tmp/wt",
                 "active",
@@ -1332,11 +1351,12 @@ class TestQueryResolutionsByStatus:
             ("11111111-1111-4111-8111-111111110001", "Test Project"),
         )
         db.execute(
-            """INSERT INTO worktrees (id, project_id, branch_name, worktree_path, status, created_at, updated_at)
-               VALUES (%s, %s, %s, %s, %s, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)""",
+            """INSERT INTO worktrees (id, project_id, machine_id, branch_name, worktree_path, status, created_at, updated_at)
+               VALUES (%s, %s, %s, %s, %s, %s, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)""",
             (
                 "6a061cb3-f607-55f6-b3eb-04579360a44c",
                 "11111111-1111-4111-8111-111111110001",
+                "21000000-0000-4000-8000-000000000001",
                 "feature",
                 "/tmp/wt",
                 "active",
@@ -1374,11 +1394,12 @@ class TestQueryResolutionsByStatus:
             ("11111111-1111-4111-8111-111111110001", "Test Project"),
         )
         db.execute(
-            """INSERT INTO worktrees (id, project_id, branch_name, worktree_path, status, created_at, updated_at)
-               VALUES (%s, %s, %s, %s, %s, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)""",
+            """INSERT INTO worktrees (id, project_id, machine_id, branch_name, worktree_path, status, created_at, updated_at)
+               VALUES (%s, %s, %s, %s, %s, %s, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)""",
             (
                 "6a061cb3-f607-55f6-b3eb-04579360a44c",
                 "11111111-1111-4111-8111-111111110001",
+                "21000000-0000-4000-8000-000000000001",
                 "feature",
                 "/tmp/wt",
                 "active",
@@ -1433,11 +1454,12 @@ class TestResolutionHistoryTracking:
             ("11111111-1111-4111-8111-111111110001", "Test Project"),
         )
         db.execute(
-            """INSERT INTO worktrees (id, project_id, branch_name, worktree_path, status, created_at, updated_at)
-               VALUES (%s, %s, %s, %s, %s, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)""",
+            """INSERT INTO worktrees (id, project_id, machine_id, branch_name, worktree_path, status, created_at, updated_at)
+               VALUES (%s, %s, %s, %s, %s, %s, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)""",
             (
                 "6a061cb3-f607-55f6-b3eb-04579360a44c",
                 "11111111-1111-4111-8111-111111110001",
+                "21000000-0000-4000-8000-000000000001",
                 "feature",
                 "/tmp/wt",
                 "active",
@@ -1467,11 +1489,12 @@ class TestResolutionHistoryTracking:
             ("11111111-1111-4111-8111-111111110001", "Test Project"),
         )
         db.execute(
-            """INSERT INTO worktrees (id, project_id, branch_name, worktree_path, status, created_at, updated_at)
-               VALUES (%s, %s, %s, %s, %s, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)""",
+            """INSERT INTO worktrees (id, project_id, machine_id, branch_name, worktree_path, status, created_at, updated_at)
+               VALUES (%s, %s, %s, %s, %s, %s, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)""",
             (
                 "6a061cb3-f607-55f6-b3eb-04579360a44c",
                 "11111111-1111-4111-8111-111111110001",
+                "21000000-0000-4000-8000-000000000001",
                 "feature",
                 "/tmp/wt",
                 "active",
@@ -1504,11 +1527,12 @@ class TestResolutionHistoryTracking:
             ("11111111-1111-4111-8111-111111110001", "Test Project"),
         )
         db.execute(
-            """INSERT INTO worktrees (id, project_id, branch_name, worktree_path, status, created_at, updated_at)
-               VALUES (%s, %s, %s, %s, %s, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)""",
+            """INSERT INTO worktrees (id, project_id, machine_id, branch_name, worktree_path, status, created_at, updated_at)
+               VALUES (%s, %s, %s, %s, %s, %s, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)""",
             (
                 "6a061cb3-f607-55f6-b3eb-04579360a44c",
                 "11111111-1111-4111-8111-111111110001",
+                "21000000-0000-4000-8000-000000000001",
                 "feature",
                 "/tmp/wt",
                 "active",
@@ -1551,22 +1575,24 @@ class TestResolutionHistoryTracking:
             ("11111111-1111-4111-8111-111111110001", "Test Project"),
         )
         db.execute(
-            """INSERT INTO worktrees (id, project_id, branch_name, worktree_path, status, created_at, updated_at)
-               VALUES (%s, %s, %s, %s, %s, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)""",
+            """INSERT INTO worktrees (id, project_id, machine_id, branch_name, worktree_path, status, created_at, updated_at)
+               VALUES (%s, %s, %s, %s, %s, %s, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)""",
             (
                 "6a061cb3-f607-55f6-b3eb-04579360a44c",
                 "11111111-1111-4111-8111-111111110001",
+                "21000000-0000-4000-8000-000000000001",
                 "feature1",
                 "/tmp/wt1",
                 "active",
             ),
         )
         db.execute(
-            """INSERT INTO worktrees (id, project_id, branch_name, worktree_path, status, created_at, updated_at)
-               VALUES (%s, %s, %s, %s, %s, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)""",
+            """INSERT INTO worktrees (id, project_id, machine_id, branch_name, worktree_path, status, created_at, updated_at)
+               VALUES (%s, %s, %s, %s, %s, %s, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)""",
             (
                 "1b77dc79-b2a0-5404-94ca-6ebac590831c",
                 "11111111-1111-4111-8111-111111110001",
+                "21000000-0000-4000-8000-000000000001",
                 "feature2",
                 "/tmp/wt2",
                 "active",

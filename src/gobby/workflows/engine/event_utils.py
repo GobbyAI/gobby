@@ -4,6 +4,7 @@ from typing import Any
 
 from gobby.hooks.events import HookEvent, HookEventType, SessionSource
 from gobby.workflows.definitions import RuleTriggerEvent
+from gobby.workflows.enforcement.blocking import is_gobby_call_tool
 
 _TURN_START_EVENT_VALUES = frozenset(
     {
@@ -30,7 +31,7 @@ def _get_tool_identity(event_data: dict[str, Any]) -> str:
     blocking all other MCP tools.
     """
     tool_name = event_data.get("tool_name", "")
-    if tool_name in ("call_tool", "mcp__gobby__call_tool"):
+    if is_gobby_call_tool(tool_name):
         tool_input = event_data.get("tool_input") or {}
         if isinstance(tool_input, dict):
             server = tool_input.get("server_name", "")
@@ -51,7 +52,7 @@ def _is_pipeline_direct_mcp_event(event: HookEvent) -> bool:
         return False
 
     tool_name = event.data.get("tool_name", "")
-    return tool_name in ("call_tool", "mcp__gobby__call_tool")
+    return is_gobby_call_tool(tool_name)
 
 
 def _event_value(event_type: HookEventType | str) -> str:

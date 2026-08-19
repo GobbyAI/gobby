@@ -17,6 +17,7 @@ from gobby.sessions.compact_markers import (
     COMPACT_HANDOFF_MARKER_VARIABLE,
     COMPACT_RESUME_ADVISORY_SKILL_VARIABLE_KEYS,
     COMPACT_RESUME_ADVISORY_SKILLS_VARIABLE,
+    COMPACT_RESUME_EXCLUDED_SKILLS,
     COMPACT_RESUME_REQUIRED_SKILL_VARIABLE_KEYS,
     COMPACT_RESUME_REQUIRED_SKILLS_VARIABLE,
     COMPACT_SELF_CONTINUE_FRESH_SECONDS,
@@ -42,6 +43,7 @@ __all__ = [
     "COMPACT_HANDOFF_MARKER_VARIABLE",
     "COMPACT_RESUME_ADVISORY_SKILLS_VARIABLE",
     "COMPACT_RESUME_ADVISORY_SKILL_VARIABLE_KEYS",
+    "COMPACT_RESUME_EXCLUDED_SKILLS",
     "COMPACT_RESUME_REQUIRED_SKILLS_VARIABLE",
     "COMPACT_RESUME_REQUIRED_SKILL_VARIABLE_KEYS",
     "COMPACT_SELF_CONTINUE_FRESH_SECONDS",
@@ -815,17 +817,17 @@ def _collect_compact_resume_required_skills(
 def _prepare_compact_resume_skill_tiers(
     skill_tiers: CompactResumeSkillTiers,
 ) -> CompactResumeSkillTiers:
-    required = _unique_strings(skill_tiers["required"])
+    required = [
+        skill
+        for skill in _unique_strings(skill_tiers["required"])
+        if skill not in COMPACT_RESUME_EXCLUDED_SKILLS
+    ]
     required_names = set(required)
-    advisory = _unique_strings(
-        [skill for skill in skill_tiers["advisory"] if skill not in required_names]
-    )
-    if len(required) + len(advisory) > 1:
-        required = [
-            LOADING_SKILLS_NAME,
-            *(skill for skill in required if skill != LOADING_SKILLS_NAME),
-        ]
-        advisory = [skill for skill in advisory if skill != LOADING_SKILLS_NAME]
+    advisory = [
+        skill
+        for skill in _unique_strings(skill_tiers["advisory"])
+        if skill not in required_names and skill not in COMPACT_RESUME_EXCLUDED_SKILLS
+    ]
     return {"required": required, "advisory": advisory}
 
 

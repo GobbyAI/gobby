@@ -125,7 +125,6 @@ class SkillMetadataMixin:
         skill_id = str(uuid.uuid5(_NS_SKILLS, f"{name}:{project_id or 'global'}:{source}"))
         if self.skill_exists(skill_id, include_deleted=True):
             skill_id = str(uuid.uuid4())
-        now = utc_now()
 
         try:
             conn.execute(
@@ -135,8 +134,8 @@ class SkillMetadataMixin:
                     compatibility, allowed_tools, metadata, source_path,
                     source_type, source_ref, hub_name, hub_slug, hub_version,
                     enabled, always_apply, injection_format, project_id,
-                    source, created_at, updated_at
-                ) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+                    source
+                ) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
                 """,
                 (
                     skill_id,
@@ -159,8 +158,6 @@ class SkillMetadataMixin:
                     injection_format,
                     project_id,
                     source,
-                    now,
-                    now,
                 ),
             )
         except UniqueViolation as exc:

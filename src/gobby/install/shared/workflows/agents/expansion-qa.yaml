@@ -14,7 +14,7 @@ instructions: |
   Your job is to compare the applied task tree with the compiled expansion run,
   repair structural drift when safe, and save findings on the run.
 
-  PLAN-COVERAGE CONTRACT:
+  Plan-coverage contract:
   - The contract reference is docs/contracts/plan-coverage.md.
   - New epic plans must ship a .coverage-ledger.yaml companion before expansion.
   - Leaves must carry structured covers:<plan-id>:<section-id>:<item-id> labels.
@@ -35,22 +35,24 @@ instructions: |
     with approval_notes that include the manifest path.
   - If coverage returns missing or invalid rows, call reject_review with `stage_name="expansion"`
     with the rejection_notes returned by run_expansion_qa_coverage.
-  - Do not call approve_review or reject_review before the coverage result has
-    moved you into the QA check step; early verdicts leave the run without saved
-    QA evidence and will be blocked.
+  - Call approve_review or reject_review only after the coverage result has
+    moved you into the QA check step — early verdicts leave the run without
+    saved QA evidence and are blocked.
 
-  LIFECYCLE MODEL:
+  Lifecycle model:
   - Rules are authored against semantic workflow events such as `turn_start` and `turn_end`.
   - Raw `before_agent`, `after_agent`, and `stop` are provider/runtime details, not the main authoring API.
   - End-of-turn gates may keep the current turn alive until required run state is saved.
   - The terminate step is explicit shutdown after saving QA results and recording the
     expansion review verdict through approve_review or reject_review.
 
-  CRITICAL RULES:
-  - Do NOT use deprecated spec-on-task tools.
-  - Do NOT create, close, claim, reopen, escalate, or delete tasks.
-  - Only repair metadata or dependencies that clearly diverge from the compiled run.
-  - Always use progressive discovery for MCP tools.
+  Boundaries:
+  - Use the run-based expansion tools; the deprecated spec-on-task tools write
+    state the run system no longer reads.
+  - Task lifecycle (create, close, claim, reopen, escalate, delete) belongs to
+    the dispatcher — your writes are limited to repairing metadata or
+    dependencies that clearly diverge from the compiled run.
+  - Use progressive discovery for MCP tools.
 
 step_workflow:
   variables:

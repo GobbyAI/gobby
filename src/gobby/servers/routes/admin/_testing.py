@@ -67,17 +67,14 @@ def register_testing_routes(router: APIRouter, server: "HTTPServer") -> None:
             project_manager = LocalProjectManager(db)
 
             # Create the project with the specific ID
-            from datetime import UTC, datetime
-
-            now = datetime.now(UTC).isoformat()
             inserted = db.execute(
                 """
-                INSERT INTO projects (id, name, repo_path, created_at, updated_at)
-                VALUES (%s, %s, %s, %s, %s)
+                INSERT INTO projects (id, name, repo_path)
+                VALUES (%s, %s, %s)
                 ON CONFLICT (id) DO NOTHING
                 RETURNING id
                 """,
-                (request.project_id, request.name, request.repo_path, now, now),
+                (request.project_id, request.name, request.repo_path),
             ).fetchone()
 
             if inserted is None:

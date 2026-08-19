@@ -132,6 +132,7 @@ class TestInstallQwen:
         assert settings["disableAllHooks"] is False
         assert settings["general"] == {"theme": "dark"}
         assert settings["ui"]["hideTips"] is True
+        assert settings["context"]["fileName"] == ["AGENTS.md", "QWEN.md"]
         assert "hooks" in settings
         for hook_type, user_command in user_hooks.items():
             groups = settings["hooks"][hook_type]
@@ -149,6 +150,33 @@ class TestInstallQwen:
             assert gobby_handler["timeout"] == 150_000
         assert (temp_dir / ".qwen" / "projects.json").exists()
         assert (temp_dir / ".qwen" / "trustedFolders.json").exists()
+
+    def test_install_qwen_preserves_user_context_file_name(
+        self, project_path: Path, mock_install_dir: Path, temp_dir: Path
+    ) -> None:
+        settings_file = project_path / ".qwen" / "settings.json"
+        settings_file.parent.mkdir(parents=True)
+        settings_file.write_text(json.dumps({"context": {"fileName": "MY_CONTEXT.md"}}))
+        with (
+            patch("gobby.cli.installers.qwen.get_install_dir", return_value=mock_install_dir),
+            patch("gobby.cli.installers.qwen.install_shared_content", return_value={}),
+            patch("gobby.cli.installers.qwen.install_cli_content", return_value={}),
+            patch(
+                "gobby.cli.installers.qwen.install_router_skills_as_cli_skills",
+                return_value=[],
+            ),
+            patch(
+                "gobby.cli.installers.qwen.configure_mcp_server_json",
+                return_value={"success": True, "added": True},
+            ),
+            patch.object(Path, "home", return_value=temp_dir),
+        ):
+            result = install_qwen(project_path, mode="project")
+
+        assert result["success"] is True
+        with open(settings_file) as f:
+            settings = json.load(f)
+        assert settings["context"]["fileName"] == "MY_CONTEXT.md"
 
     def test_install_qwen_returns_error_for_malformed_settings_json(
         self, project_path: Path, mock_install_dir: Path, temp_dir: Path

@@ -33,6 +33,10 @@ COMPACT_SELF_CONTINUE_SEND_DELAY_SECONDS = 1.0
 # no-op when the first Enter already submitted (empty composer).
 COMPACT_SELF_CONTINUE_SUBMIT_RETRY_DELAY_SECONDS = 1.5
 LOADING_SKILLS_NAME = "loading-skills"
+# Meta-skills excluded from compact resume reload tiers: the per-turn reminder
+# rules and the proxy server instructions re-deliver their guidance every
+# epoch, so a post-compact reload only duplicates context.
+COMPACT_RESUME_EXCLUDED_SKILLS = frozenset({LOADING_SKILLS_NAME, "brevity"})
 # Written by the workflow engine's load_skill effect: the skills the session's
 # active workflow asked for, whether or not the agent got to them yet.
 WORKFLOW_REQUESTED_SKILLS_VARIABLE = "workflow_requested_skills"

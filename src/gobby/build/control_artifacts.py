@@ -4,7 +4,6 @@ from __future__ import annotations
 
 import uuid
 from dataclasses import dataclass
-from datetime import UTC, datetime
 from pathlib import Path
 from typing import Literal
 
@@ -490,15 +489,14 @@ def _append_system_task_comment_once(db: HubDatabase, task_id: str, body: str) -
     )
     if existing is not None:
         return
-    now = datetime.now(UTC).isoformat()
     db.execute(
         """
         INSERT INTO task_comments (
-            id, task_id, parent_comment_id, author, author_type, body, created_at, updated_at
+            id, task_id, parent_comment_id, author, author_type, body
         )
-        VALUES (%s, %s, NULL, 'build-cleanup', 'system', %s, %s, %s)
+        VALUES (%s, %s, NULL, 'build-cleanup', 'system', %s)
         """,
-        (str(uuid.uuid4()), task_id, body, now, now),
+        (str(uuid.uuid4()), task_id, body),
     )
 
 

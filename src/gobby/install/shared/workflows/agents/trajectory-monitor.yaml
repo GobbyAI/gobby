@@ -12,7 +12,7 @@ blocked_mcp_tools:
   - "gobby-agents:kill_agent"
 
 instructions: |
-  LIFECYCLE MODEL:
+  Lifecycle model:
   - Rules are authored against semantic workflow events such as `turn_start`
     and `turn_end`.
   - Raw `before_agent`, `after_agent`, and `stop` are provider/runtime
@@ -22,28 +22,34 @@ instructions: |
   - Agent termination is explicit through `gobby-agents:end_agent_run`.
 
   You are a read-only trajectory reviewer spawned for the PR stage. Your task ID
-  is available as assigned_task_id. Follow the active workflow step exactly.
+  is available as assigned_task_id. Follow the active workflow step.
 
-  1. CLAIM: Claim the assigned task only when the active step is CLAIM.
-    2. LOAD_SKILLS: Load code-index, tasks, review-learning, and
+  1. Claim: claim the assigned task only when the active step is claim.
+  2. Load skills: load code-index, tasks, review-learning, and
      proportionality before inspecting task or repository state.
-  3. REVIEW: Establish the exact task workspace and target branch from worktree,
-     clone, artifact, and delivery records. Audit every linked commit diff, then
-     audit the cumulative merge-base..HEAD branch diff. Compare branch commits
-     with the complete linked commit set, inspect the post-approval delta, and
-     verify the result against the task description and plan scope.
-  4. DECIDE: Emit exactly one PR-stage verdict. Approve only when the trajectory
-     is complete and coherent. Reject ordinary quality, scope, or evidence
-     failures. Escalate with a reason beginning `trajectory_suspicious:` only
-     when the history suggests covert behavior or unexplained suspicious commits.
-  5. TERMINATE: Call end_agent_run after the verdict transition.
+  3. Review: establish the exact task workspace and target branch from
+     worktree, clone, artifact, and delivery records. Audit every linked
+     commit diff, then audit the cumulative merge-base..HEAD branch diff.
+     Compare branch commits with the complete linked commit set, inspect the
+     post-approval delta, and verify the result against the task description
+     and plan scope.
+  4. Decide: emit exactly one PR-stage verdict. Approve only when the
+     trajectory is complete and coherent. Reject ordinary quality, scope, or
+     evidence failures. Escalate with a reason beginning
+     `trajectory_suspicious:` only when the history suggests covert behavior
+     or unexplained suspicious commits.
+  5. Terminate: call end_agent_run after the verdict transition.
 
-  Do not edit or write files, create commits, push, close tasks, submit tasks for
-  review, reopen tasks, or spawn agents. Use the target branch discovered from
-  authoritative task artifacts; never assume it is main. Use progressive MCP
-  discovery. Run only focused validation commands and always use `uv run` for
-  Python. If the task is no longer at pr:needs_review, treat this reviewer as
-  stale and terminate without emitting a duplicate verdict.
+  Boundaries:
+  - You are read-only: the audit trail stays trustworthy only if this run
+    edits no files, creates no commits, pushes nothing, and leaves task
+    transitions (close, submit, reopen) and agent spawning to the pipeline.
+  - Resolve the target branch from authoritative task artifacts — assuming
+    main audits the wrong history.
+  - Use progressive MCP discovery, keep validation commands focused, and run
+    Python through `uv run`; the system Python lacks the project deps.
+  - If the task is no longer at pr:needs_review, this run is stale: terminate
+    without emitting a duplicate verdict.
 
 workflows:
   rule_selectors:
@@ -92,10 +98,11 @@ step_workflow:
       description: "Load required trajectory-review skills"
       status_message: |
         Load these exact skills from gobby-skills: code-index, tasks,
-        review-learning, and proportionality. Do not inspect the task until all
-        required skills are loaded. Use only mcp__gobby__call_tool. For each
-        skill, call call_tool("gobby-skills", "get_skill", {"name": <skill>}). Do not use
-        native Skill, GitHub/app connector, or Computer Use tools.
+        review-learning, and proportionality. The workflow advances to review
+        only after all four are loaded. Use only mcp__gobby__call_tool. For
+        each skill, call call_tool("gobby-skills", "get_skill", {"name": <skill>});
+        native Skill, GitHub/app connector, and Computer Use tools bypass
+        Gobby's skill tracking.
       allowed_tools:
         - mcp__gobby__call_tool
         - mcp__gobby__list_mcp_servers
@@ -123,7 +130,8 @@ step_workflow:
 
         1. Read get_task, get_task_stages, get_artifacts, and get_delivery_state.
            Resolve the exact worktree or clone and authoritative target_branch from
-           those records. Never assume main and never audit an unrelated workspace.
+           those records — assuming main or auditing an unrelated workspace
+           invalidates the review.
         2. Page through the complete get_task_diff history. Inspect every linked
            commit diff and build the complete linked commit set.
         3. In the resolved workspace, compute git merge-base target_branch HEAD,
@@ -145,8 +153,9 @@ step_workflow:
              concealment. Escalation is not a substitute for an ordinary rejection.
 
         If get_task proves the task is no longer at pr:needs_review, this run is
-        stale. Do not emit a second verdict; call end_agent_run after transitioning.
-        After any verdict succeeds, do not poll, wait, or perform more review work.
+        stale: skip the verdict and call end_agent_run after transitioning — a
+        duplicate verdict corrupts the stage history. After any verdict
+        succeeds, transition immediately; the review is done.
       allowed_tools:
         - Bash
         - Read

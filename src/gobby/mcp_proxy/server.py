@@ -227,32 +227,13 @@ class GobbyDaemonTools:
         project_id: str | None = None,
         intent: str | None = None,
     ) -> Any:
-        """Call a tool.
+        """Execute a tool on a connected MCP server — the primary way to reach
+        Gobby's sub-servers (tasks, memory, skills, ...).
 
-        Returns the tool result, or a CallToolResult with isError=True if the
-        underlying service indicates an error. This ensures the MCP protocol
-        properly signals errors to LLM clients instead of returning error dicts
-        as successful responses.
-
-        When session_id is provided and a workflow is active, checks the current
-        workflow step's blocked_tools setting.
-        Same-repo calls can use wrapper or ambient session context; if the
-        target schema requires session_id, the resolved UUID is supplied to the
-        target arguments before validation.
-
-        Args:
-            server_name: Target MCP server name.
-            tool_name: Tool to call on the server.
-            arguments: Tool arguments (dict or JSON string). When routing fields
-                are supplied at top level, route-like names inside arguments
-                belong to the target tool.
-            session_id: Wrapper context for context resolution and workflow checks.
-                Use arguments.session_id only to target a different session.
-                Local #N refs resolve in the caller project; cross-project
-                target sessions should be supplied as UUIDs.
-            project_id: Optional wrapper project UUID or name. When provided,
-                overrides session-derived wrapper context for routing,
-                workflow checks, and cross-project operations.
+        Pass `arguments` as a dict; `session_id` is the caller's session ref
+        (#N or UUID) and `project_id` targets another project. Full call-context
+        semantics live in the server instructions. Errors return a
+        CallToolResult with isError=True so MCP clients see real failures.
         """
         try:
             canonical = canonicalize_call_tool_wrapper(

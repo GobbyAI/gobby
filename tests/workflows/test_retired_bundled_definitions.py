@@ -12,9 +12,9 @@ import yaml
 
 from gobby.agents.sync import sync_bundled_agents
 from gobby.skills.sync import sync_bundled_skills
+from gobby.storage.definitions import AgentDefinitionManager, PipelineDefinitionManager
 from gobby.storage.hub.protocol import HubDatabase
 from gobby.storage.skills import LocalSkillManager
-from gobby.storage.definitions.rules import RuleDefinitionManager
 from gobby.workflows.sync_pipelines import sync_bundled_pipelines
 
 pytestmark = pytest.mark.unit
@@ -225,17 +225,15 @@ def test_removed_bundled_pipeline_sync_soft_deletes_installed_row(
     tmp_path: Path, temp_db: HubDatabase
 ) -> None:
     db = temp_db
-    manager = RuleDefinitionManager(db)
+    manager = PipelineDefinitionManager(db)
     manager.create(
         name="orchestrator",
-        definition_json=json.dumps(
-            {
-                "name": "orchestrator",
-                "type": "pipeline",
-                "description": "old definition",
-                "steps": [{"id": "noop", "exec": "true"}],
-            }
-        ),
+        definition_json={
+            "name": "orchestrator",
+            "type": "pipeline",
+            "description": "old definition",
+            "steps": [{"id": "noop", "exec": "true"}],
+        },
         source="installed",
         tags=["gobby"],
         enabled=True,
@@ -269,7 +267,7 @@ steps:
     assert row is not None
     assert row.deleted_at is not None
     assert row.enabled is True
-    assert "deprecated" not in row.definition_json
+    assert "deprecated" not in json.dumps(row.definition_json)
 
 
 @pytest.mark.parametrize("name", RETIRED_AGENTS)
@@ -277,7 +275,7 @@ def test_removed_bundled_agent_sync_soft_deletes_installed_row(
     name: str, tmp_path: Path, temp_db: HubDatabase
 ) -> None:
     db = temp_db
-    manager = RuleDefinitionManager(db)
+    manager = AgentDefinitionManager(db)
     manager.create(
         name=name,
         definition_json=json.dumps(

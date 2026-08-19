@@ -26,6 +26,7 @@ from gobby.hooks.normalization import is_shell_tool
 from gobby.sessions.compact_markers import WORKFLOW_REQUESTED_SKILLS_VARIABLE
 from gobby.skills.materialization import SkillScriptMaterializer
 from gobby.storage.definitions.rules import RuleDefinitionRow
+from gobby.workflows.enforcement.blocking import is_gobby_call_tool
 from gobby.workflows.engine._offload import offload
 from gobby.workflows.engine.delivery_formatting import (
     DeliveryFormattingMixin,
@@ -281,10 +282,7 @@ class EffectsMixin(DeliveryFormattingMixin):
                 # For MCP call_tool, nest updates inside arguments
                 # (mirrors the unwrapping in _build_eval_context)
                 event = ctx.get("event")
-                if event and event.data.get("tool_name") in (
-                    "call_tool",
-                    "mcp__gobby__call_tool",
-                ):
+                if event and is_gobby_call_tool(event.data.get("tool_name")):
                     original_args = event.data.get("tool_input", {}).get("arguments", {})
                     if isinstance(original_args, str):
                         try:

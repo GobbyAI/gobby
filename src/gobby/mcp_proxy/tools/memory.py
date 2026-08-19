@@ -41,6 +41,10 @@ if TYPE_CHECKING:
 
 logger = logging.getLogger(__name__)
 
+# Similarity at or above which create_memory supersedes the existing memory
+# instead of leaving a permanent near-duplicate (dream no longer merges).
+AUTO_SUPERSEDE_SIMILARITY = 0.9
+
 
 # Helper to get current project context
 def get_current_project_id() -> str | None:
@@ -130,7 +134,9 @@ def create_memory_registry(
             tags: Optional list of tags
             supersedes: Up to 20 memory UUIDs to atomically soft-hide while recording
                 ``supersedes:<id>`` provenance on the resulting memory. Use this for
-                durable decisions, removals, and replacements.
+                durable decisions, removals, and replacements. Near-duplicates
+                (similarity >= 0.9) are superseded automatically and reported in
+                ``auto_superseded``.
             session_id: Session ID that created this memory (accepts #N, N, UUID, or prefix)
         """
         try:
@@ -165,6 +171,49 @@ def create_memory_registry(
                 except Exception as e:
                     logger.warning("Could not resolve session_id '%s': %s", session_id, e)
 
+            # Search for similar existing memories before creating: duplicates
+            # surface in the result, and near-duplicates are superseded
+            # atomically by the create (dream no longer merges, so unhandled
+            # duplicates are permanent).
+            similar_existing: list[dict[str, Any]] = []
+            auto_superseded: list[dict[str, Any]] = []
+            try:
+                similar = await _memory_manager().search_memories(
+                    query=content,
+                    project_id=project_id,
+                    limit=4,
+                    caller="mcp_proxy.memory.create_memory.similar_existing",
+                )
+                for m in similar:
+                    similarity = getattr(m, "similarity", None)
+                    similar_existing.append(
+                        {
+                            "id": m.id,
+                            "content": m.content,
+                            "similarity": similarity,
+                        }
+                    )
+                    if (
+                        isinstance(similarity, int | float)
+                        and not isinstance(similarity, bool)
+                        and float(similarity) >= AUTO_SUPERSEDE_SIMILARITY
+                        and m.id not in supersedes_ids
+                    ):
+                        auto_superseded.append({"id": m.id, "similarity": float(similarity)})
+                similar_existing = similar_existing[:3]
+                if auto_superseded:
+                    supersedes_ids = normalize_supersedes(
+                        [*supersedes_ids, *(entry["id"] for entry in auto_superseded)]
+                    )
+            except Exception as e:
+                auto_superseded = []
+                logger.debug(
+                    "Similarity search failed during memory creation (project_id=%s): %s",
+                    project_id,
+                    e,
+                    exc_info=True,
+                )
+
             memory = await _memory_manager().create_memory(
                 content=content,
                 memory_type=canonical_memory_type,
@@ -176,35 +225,7 @@ def create_memory_registry(
                 is_global=is_global,
             )
 
-            # Search for similar existing memories to surface potential duplicates
-            similar_existing: list[dict[str, Any]] = []
-            try:
-                similar = await _memory_manager().search_memories(
-                    query=content,
-                    project_id=project_id,
-                    limit=4,  # fetch 4 since the new memory itself may appear
-                    caller="mcp_proxy.memory.create_memory.similar_existing",
-                )
-                for m in similar:
-                    if m.id != memory.id:
-                        similar_existing.append(
-                            {
-                                "id": m.id,
-                                "content": m.content,
-                                "similarity": getattr(m, "similarity", None),
-                            }
-                        )
-                similar_existing = similar_existing[:3]
-            except Exception as e:
-                logger.debug(
-                    "Similarity search failed during memory creation (project_id=%s, memory_id=%s): %s",
-                    project_id,
-                    memory.id,
-                    e,
-                    exc_info=True,
-                )
-
-            return {
+            result: dict[str, Any] = {
                 "success": True,
                 "memory": {
                     "id": memory.id,
@@ -213,6 +234,9 @@ def create_memory_registry(
                 },
                 "similar_existing": similar_existing,
             }
+            if auto_superseded:
+                result["auto_superseded"] = auto_superseded
+            return result
         except Exception as e:
             return {"success": False, "error": str(e)}
 
@@ -827,7 +851,7 @@ def create_memory_registry(
     async def build_turn_and_digest_tool(
         session_id: str = "",
         prompt_text: str | None = None,
-        prior_turn_only: bool = False,
+        catch_up: bool = False,
     ) -> dict[str, Any]:
         """
         Build turn record and append to digest after agent response.
@@ -840,7 +864,8 @@ def create_memory_registry(
         Args:
             session_id: Platform session ID (injected by dispatch layer)
             prompt_text: Optional user prompt (usually None for stop events)
-            prior_turn_only: Exclude the active Codex turn during turn-start catch-up
+            catch_up: Drain a bounded undigested backlog batch at turn start,
+                excluding the active turn
         """
         if not session_id:
             return {"success": False, "error": "session_id is required"}
@@ -852,7 +877,7 @@ def create_memory_registry(
                 prompt_text=prompt_text,
                 llm_service=_llm_service(),
                 config=_config(),
-                prior_turn_only=prior_turn_only,
+                catch_up=catch_up,
             )
             if result is None:
                 return {"success": True, "skipped": True, "reason": "disabled or no content"}

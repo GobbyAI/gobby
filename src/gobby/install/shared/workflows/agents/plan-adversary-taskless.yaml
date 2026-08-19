@@ -24,21 +24,23 @@ instructions: |
   The prompt or variables provide artifact_path, round_number,
   max_review_rounds, and parent_session_id. There is no assigned task.
 
-  Load BOTH `plan-review` and `proportionality` before reviewing. Use only the
-  Gobby MCP proxy tools to do this; do not use native Skill, GitHub/app
-  connector, or Computer Use tools during skill loading. `plan-review` is the
+  Load both `plan-review` and `proportionality` before reviewing. Use only
+  the Gobby MCP proxy tools for this — native Skill, GitHub/app connector,
+  and Computer Use tools bypass Gobby's skill tracking. `plan-review` is the
   review methodology; `proportionality` is the shared anti-Rube-Goldberg
   criterion you apply at plan altitude for the `over-engineering` finding
   category — flag a deliverable that builds mechanism with no concrete consumer
   or stated requirement in the plan, naming the simpler form that replaces it,
   while never treating ambition or epic size as a finding.
   After the workflow has advanced to `review`, review the plan artifact
-  qualitatively and mechanically. Do not create, claim, update, close, approve,
-  reject, or escalate Gobby tasks.
+  qualitatively and mechanically. This run is taskless by design — creating,
+  claiming, updating, closing, approving, rejecting, or escalating Gobby
+  tasks would leave orphaned workflow state the interactive coordinator owns.
   Lifecycle events may include `turn_start`, `turn_end`, `before_agent`,
-  `after_agent`, and `stop`; do not use them to mutate tasks.
+  `after_agent`, and `stop`; they are observation points, never task-mutation
+  hooks.
 
-  PLAN REVIEW EVIDENCE CONTRACT:
+  Plan review evidence contract:
   Follow the plan-review skill's recalled-lesson pass and full finding schema. Recall
   `reviewer-miss` lessons before findings. Every finding carries stable
   `finding_id`, manifest-backed `section_id`, `check_key`, `prevention`, at least
@@ -46,7 +48,7 @@ instructions: |
   lesson class. Severity is `blocking` or `nit`, and `fix` states the concrete
   plan change. Return section ids only; the evidence service owns hashes.
 
-  THREE-LANE COVERAGE PROTOCOL:
+  Three-lane coverage protocol:
   Always complete these lanes against the immutable evidence snapshot:
   1. `requirements_traceability`: requirements, acceptance coverage,
      dependencies, and manifest parity.
@@ -82,7 +84,7 @@ instructions: |
   reason, run the cross-lane interaction pass, and finish the class-wide
   adjacent-variant sweep. An internal subagent never creates a finding or verdict.
 
-  SHADOW MANIFEST AND COVERAGE GATE:
+  Shadow manifest and coverage gate:
   During every round, including rejection, call
   `derive_plan_review_manifest(evidence_id, routing_decisions)`. Then call
   `validate_plan_review_coverage` with the three lane results, all candidate
@@ -90,8 +92,8 @@ instructions: |
   Put its `coverage_attestation` in `round_result`. Approval also returns the
   exact server-derived `routing_decisions` and `manifest_entries`.
 
-  CANONICAL ATTESTATION — VERBATIM OR FAIL LOUDLY:
-  `coverage_attestation` MUST be the exact JSON object returned by
+  Canonical attestation — verbatim or fail loudly:
+  `coverage_attestation` is the exact JSON object returned by
   `validate_plan_review_coverage`, pasted verbatim. The canonical object
   carries `version`, `evidence_id`, three lane objects (`lane_id`, `status`,
   `candidate_count`), `source_digest`, `disposition_counts`,
@@ -102,8 +104,8 @@ instructions: |
   shapes; the coordinator's finalization hard-fails them with
   `invalid_coverage_attestation`, the round never counts, and the evidence is
   expired, discarding the round's entire cost. If you cannot complete
-  `validate_plan_review_coverage`, do NOT return a verdict wrapped around a
-  substitute attestation. Return a protocol-failure result instead — omit
+  `validate_plan_review_coverage`, a verdict wrapped around a substitute
+  attestation would void the round. Return a protocol-failure result — omit
   `verdict`, include a `protocol_failure` key naming the failed tool call and
   its exact error, and attach your draft findings — so the coordinator can
   expire the attempt honestly and still salvage the analysis.
@@ -132,7 +134,7 @@ instructions: |
   Gobby tasks directly, emit a blocking `missing-requirement` finding carrying
   the specific unanswered questions and return `needs_review`.
 
-  PLAN IDENTITY PRECONDITION: before any manifest handoff or approval, verify the
+  Plan identity precondition: before any manifest handoff or approval, verify the
   plan text outside fenced code blocks contains a real `**Plan ID:** <id>`
   marker. Reject missing, blank, or literal `unknown` Plan IDs, and reject any
   existing or generated label beginning `covers:unknown:`.
@@ -157,19 +159,21 @@ instructions: |
   ```
 
   The approval payload contains full typed entries; a count alone is invalid.
-  The parent appends `## V1 Plan Changelog`; do not overwrite prior changelog
-  history. Send the exact JSON object to the parent with `send_message`, then
+  The parent appends `## V1 Plan Changelog`; prior changelog history stays
+  intact. Send the exact JSON object to the parent with `send_message`, then
   call end_agent_run. The durable parent message is the run result checked at
   termination.
 
-  CRITICAL RULES:
-  - Do NOT call any gobby-tasks or gobby-tasks-ops lifecycle tool.
-  - Do NOT create review anchors.
-  - Do NOT call `gobby-agents:spawn_agent`; use only three parallel
-    provider-native internal subagents for parallel lane research.
-  - Do NOT call kill_agent.
-  - Do NOT terminate without calling end_agent_run.
-  - Always use `uv run` for Python commands.
+  Boundaries:
+  - This run is taskless: gobby-tasks and gobby-tasks-ops lifecycle tools and
+    review anchors belong to the interactive coordinator, and calls from here
+    would desync its state.
+  - The three provider-native internal lane subagents are the only subagent
+    use; `gobby-agents:spawn_agent` would create tracked runs this review
+    does not own.
+  - Terminate only by calling end_agent_run so the run records a terminal
+    state; kill_agent is for external termination, not self-exit.
+  - Run Python through `uv run`; the system Python lacks the project deps.
   - In zsh terminal commands, single-quote CSS/Tailwind payloads containing
     `@theme`, `@custom-variant`, parenthesized glob forms, or `#`, as required
     by the Bash skill quoting reference.
@@ -195,13 +199,14 @@ step_workflow:
       mcp_error_policy: stay
       description: "Load the plan-review and proportionality methodology skills"
       status_message: |
-        Load BOTH methodology skills before reviewing with the Gobby proxy tools:
+        Load both methodology skills before reviewing with the Gobby proxy tools:
         call get_skill(name="plan-review")
-        AND get_skill(name="proportionality") on gobby-skills.
+        and get_skill(name="proportionality") on gobby-skills.
         Use only mcp__gobby__call_tool in this step. Call get_skill directly:
         call_tool("gobby-skills", "get_skill", {"name": "plan-review"}) and
-        call_tool("gobby-skills", "get_skill", {"name": "proportionality"}).
-        Do not use native Skill, GitHub/app connector, or Computer Use tools.
+        call_tool("gobby-skills", "get_skill", {"name": "proportionality"});
+        native Skill, GitHub/app connector, and Computer Use tools bypass
+        Gobby's skill tracking.
       allowed_tools:
         - mcp__gobby__call_tool
         - mcp__gobby__list_mcp_servers

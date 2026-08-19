@@ -134,15 +134,15 @@ class SchemaHashManager:
             """
             INSERT INTO tool_schema_hashes (
                 server_name, tool_name, project_id, schema_hash,
-                last_verified_at, created_at, updated_at
+                last_verified_at
             )
-            VALUES (%s, %s, %s, %s, %s, %s, %s)
+            VALUES (%s, %s, %s, %s, %s)
             ON CONFLICT(project_id, server_name, tool_name) DO UPDATE SET
                 schema_hash = excluded.schema_hash,
                 last_verified_at = excluded.last_verified_at,
                 updated_at = excluded.updated_at
             """,
-            (server_name, tool_name, project_id, schema_hash, now, now, now),
+            (server_name, tool_name, project_id, schema_hash, now),
         )
 
         result = self.get_hash(server_name, tool_name, project_id)

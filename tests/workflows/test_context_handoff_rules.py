@@ -344,7 +344,7 @@ class TestInjectCompactHandoff:
         assert "<!-- gobby:injected-context:begin -->" in template
         assert "<!-- gobby:injected-context:end -->" in template
         assert "Continuation Context" in template
-        assert "wiki_overview" in template
+        assert "wiki_overview" not in template
         assert "user_profile_content" in template
         assert "task_context" in template
         assert effects[1].type == "set_variable"
@@ -393,7 +393,7 @@ class TestInjectCompactHandoff:
         assert '{"name":"tasks"}' in first.context
         assert "Advisory Skill Reload" in first.context
         assert "`restraint`" in first.context
-        assert "Wiki UNIQUE_WIKI" in first.context
+        assert first.context.count("Wiki UNIQUE_WIKI") == 1
         assert "Profile UNIQUE_PROFILE" in first.context
         assert "Task UNIQUE_TASK" in first.context
 
@@ -462,9 +462,27 @@ class TestInjectCompactHandoff:
         )
         assert spawned.context is not None
         assert "Spawned continuation UNIQUE_SPAWNED" in spawned.context
-        assert "Wiki UNIQUE_SPAWNED_WIKI" in spawned.context
+        # Taskless spawned agents also skip the wiki overview (#20451).
+        assert "Wiki UNIQUE_SPAWNED_WIKI" not in spawned.context
         assert "Profile UNIQUE_SPAWNED_PROFILE" not in spawned.context
         assert "## Global User Profile" not in spawned.context
+
+        tasked = await engine.evaluate(
+            event,
+            session_id=SESSION_ID,
+            variables={
+                "compact_handoff_inject_pending": True,
+                "plan_mode": True,
+                "is_spawned_agent": True,
+                "task_claimed": True,
+                "session_summary": "Spawned continuation UNIQUE_SPAWNED",
+                "user_profile_content": "Profile UNIQUE_SPAWNED_PROFILE",
+                "wiki_overview": "Wiki UNIQUE_SPAWNED_WIKI",
+            },
+        )
+        assert tasked.context is not None
+        assert "Wiki UNIQUE_SPAWNED_WIKI" in tasked.context
+        assert "Profile UNIQUE_SPAWNED_PROFILE" not in tasked.context
 
     @pytest.mark.asyncio
     async def test_prompt_path_skips_when_pending_false(self, db: HubDatabase) -> None:
@@ -520,36 +538,43 @@ class TestInjectCompactHandoff:
         assert not (second.context and "One-shot UNIQUE_ONCE" in second.context)
         assert not (second.context and "Continuation Context" in second.context)
 
-
-# ═══════════════════════════════════════════════════════════════════════
-# inject-wiki-overview
-# ═══════════════════════════════════════════════════════════════════════
-
-
-class TestInjectWikiOverview:
-    """Inject the project wiki overview at session start (#17520)."""
-
-    def test_event_and_effect(self, db, manager) -> None:
+    @pytest.mark.asyncio
+    async def test_prompt_path_excludes_skills_reloaded_this_epoch(self, db: HubDatabase) -> None:
+        """Skills already back in the epoch ledger are not directed again."""
         _sync_bundled(db)
-        row = manager.get_by_name("inject-wiki-overview")
-        assert row is not None
-        body = RuleDefinitionBody.model_validate(row.definition_json)
-        assert body.event.value == "session_start"
-        assert body.effects is not None
-        assert body.effects[0].type == "inject_context"
-        assert body.effects[0].template is not None
-        assert "Project Wiki" in body.effects[0].template
-        assert "gobby:injected-context:begin" in body.effects[0].template
-
-    def test_has_when_condition(self, db, manager) -> None:
-        _sync_bundled(db)
-        row = manager.get_by_name("inject-wiki-overview")
-        body = RuleDefinitionBody.model_validate(row.definition_json)
-        assert body.when is not None
-        assert "wiki_overview" in body.when
+        engine = RuleEngine(db)
+        event = HookEvent(
+            event_type=HookEventType.BEFORE_AGENT,
+            session_id=SESSION_ID,
+            source=SessionSource.GROK,
+            timestamp=datetime.now(UTC),
+            data={},
+        )
+        result = await engine.evaluate(
+            event,
+            session_id=SESSION_ID,
+            variables={
+                "compact_handoff_inject_pending": True,
+                "session_summary": "Epoch continuation UNIQUE_EPOCH",
+                "loaded_skills": ["tasks", "restraint"],
+                "compact_resume_required_skills": ["tasks", "python"],
+                "compact_resume_advisory_skills": ["restraint"],
+            },
+        )
+        assert result.context is not None
+        assert "Required Skill Reload" in result.context
+        assert '{"name":"python"}' in result.context
+        assert '{"name":"tasks"}' not in result.context
+        assert "Advisory Skill Reload" not in result.context
 
     @pytest.mark.asyncio
-    async def test_injects_overview_when_variable_seeded(self, db) -> None:
+    async def test_session_start_reload_list_survives_stale_ledger(self, db: HubDatabase) -> None:
+        """The pre-compact ledger never suppresses reloads for the fresh epoch.
+
+        reset-skill-injection must clear loaded_skills before the handoff
+        template renders, so skills genuinely lost to the context reset are
+        still directed for reload.
+        """
         _sync_bundled(db)
         engine = RuleEngine(db)
         event = HookEvent(
@@ -557,7 +582,70 @@ class TestInjectWikiOverview:
             session_id=SESSION_ID,
             source=SessionSource.CLAUDE,
             timestamp=datetime.now(UTC),
-            data={"source": "startup"},
+            data={"source": "compact"},
+        )
+        variables: dict[str, Any] = {
+            "session_summary": "Fresh epoch UNIQUE_FRESH",
+            "loaded_skills": ["tasks", "python"],
+            "compact_resume_required_skills": ["tasks", "python"],
+        }
+        result = await engine.evaluate(event, session_id=SESSION_ID, variables=variables)
+        assert result.context is not None
+        assert "Required Skill Reload" in result.context
+        assert '{"name":"tasks"}' in result.context
+        assert '{"name":"python"}' in result.context
+        assert variables["loaded_skills"] == []
+
+    def test_ledger_reset_precedes_handoff_injection(self, db, manager) -> None:
+        _sync_bundled(db)
+        inject = manager.get_by_name("inject-compact-handoff")
+        reset = manager.get_by_name("reset-skill-injection")
+        assert inject is not None
+        assert reset is not None
+        assert reset.priority < inject.priority
+
+
+# ═══════════════════════════════════════════════════════════════════════
+# inject-wiki-overview
+# ═══════════════════════════════════════════════════════════════════════
+
+
+class TestInjectWikiOverview:
+    """Inject the project wiki overview once per context epoch at first prompt (#17520)."""
+
+    def test_event_and_effect(self, db, manager) -> None:
+        _sync_bundled(db)
+        row = manager.get_by_name("inject-wiki-overview")
+        assert row is not None
+        body = RuleDefinitionBody.model_validate(row.definition_json)
+        assert body.event.value == "turn_start"
+        assert body.effects is not None
+        assert body.effects[0].type == "inject_context"
+        assert body.effects[0].template is not None
+        assert "Project Wiki" in body.effects[0].template
+        assert "gobby:injected-context:begin" in body.effects[0].template
+        assert body.effects[1].type == "set_variable"
+        assert body.effects[1].variable == "wiki_overview_injected"
+        assert body.effects[1].value is True
+
+    def test_has_when_condition(self, db, manager) -> None:
+        _sync_bundled(db)
+        row = manager.get_by_name("inject-wiki-overview")
+        body = RuleDefinitionBody.model_validate(row.definition_json)
+        assert body.when is not None
+        assert "wiki_overview" in body.when
+        assert "not variables.get('wiki_overview_injected')" in body.when
+
+    @pytest.mark.asyncio
+    async def test_injects_overview_once_per_epoch(self, db) -> None:
+        _sync_bundled(db)
+        engine = RuleEngine(db)
+        event = HookEvent(
+            event_type=HookEventType.BEFORE_AGENT,
+            session_id=SESSION_ID,
+            source=SessionSource.CLAUDE,
+            timestamp=datetime.now(UTC),
+            data={"prompt": "first prompt"},
         )
 
         seeded = await engine.evaluate(
@@ -569,8 +657,47 @@ class TestInjectWikiOverview:
         assert "Project Wiki" in seeded.context
         assert "Totals: 22 concepts · 196 sources" in seeded.context
 
+        gated = await engine.evaluate(
+            event,
+            session_id=SESSION_ID,
+            variables={
+                "wiki_overview": "Totals: 22 concepts · 196 sources",
+                "wiki_overview_injected": True,
+            },
+        )
+        assert not (gated.context and "Project Wiki" in gated.context)
+
         unseeded = await engine.evaluate(event, session_id=SESSION_ID, variables={})
         assert not (unseeded.context and "Project Wiki" in unseeded.context)
+
+    @pytest.mark.asyncio
+    async def test_taskless_spawned_agent_gets_no_wiki_block(self, db) -> None:
+        """Spawned reviewers never query the wiki; the block waits for task work (#20451)."""
+        _sync_bundled(db)
+        engine = RuleEngine(db)
+        event = HookEvent(
+            event_type=HookEventType.BEFORE_AGENT,
+            session_id=SESSION_ID,
+            source=SessionSource.CODEX,
+            timestamp=datetime.now(UTC),
+            data={"prompt": "review this plan"},
+        )
+        base = {"wiki_overview": "Totals: 22 concepts", "is_spawned_agent": True}
+
+        taskless = await engine.evaluate(event, session_id=SESSION_ID, variables=dict(base))
+        assert not (taskless.context and "Project Wiki" in taskless.context)
+
+        with_task = await engine.evaluate(
+            event, session_id=SESSION_ID, variables={**base, "task_claimed": True}
+        )
+        assert with_task.context is not None
+        assert "Project Wiki" in with_task.context
+
+        auto_task = await engine.evaluate(
+            event, session_id=SESSION_ID, variables={**base, "auto_task_ref": "#7"}
+        )
+        assert auto_task.context is not None
+        assert "Project Wiki" in auto_task.context
 
 
 # ═══════════════════════════════════════════════════════════════════════
@@ -645,13 +772,13 @@ class TestPreserveContextOnCompact:
         body = RuleDefinitionBody.model_validate(row.definition_json)
         assert body.event.value == "pre_compact"
 
-    def test_has_eight_effects(self, db, manager) -> None:
-        """Should have 8 set_variable effects."""
+    def test_has_eleven_effects(self, db, manager) -> None:
+        """Should have 11 set_variable effects (incl. reminder cadence markers)."""
         _sync_bundled(db)
         row = manager.get_by_name("preserve-context-on-compact")
         body = RuleDefinitionBody.model_validate(row.definition_json)
         effects = body.resolved_effects
-        assert len(effects) == 8
+        assert len(effects) == 11
         assert all(e.type == "set_variable" for e in effects)
 
     def test_resets_injected_memory_ids(self, db, manager) -> None:

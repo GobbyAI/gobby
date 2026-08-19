@@ -360,6 +360,29 @@ async def test_filters_review_duplicates_and_injected_ids_in_rank_order(
 
 
 @pytest.mark.asyncio
+async def test_candidates_below_min_score_floor_are_dropped(
+    temp_db: HubDatabase,
+    persisted_session: None,
+) -> None:
+    """The default floor (p10 of the logged distribution) trims low-signal hits."""
+    floor = MemoryRecallConfig().min_score
+    assert floor == 0.45
+    manager = FakeMemoryManager(
+        [
+            _memory("strong", similarity=0.6),
+            _memory("weak", similarity=floor - 0.01),
+            _memory("unscored", similarity=None),
+        ]
+    )
+    llm = FakeLLMService({"substantive": True, "reason": "technical_question"})
+
+    result = await _runner(temp_db, manager, llm).run(_event(), SESSION_ID, _variables())
+
+    assert result is not None
+    assert [memory["id"] for memory in result.memories] == ["strong", "unscored"]
+
+
+@pytest.mark.asyncio
 async def test_search_failure_allows_turn_to_continue(temp_db: HubDatabase) -> None:
     manager = FakeMemoryManager(error=RuntimeError("search unavailable"))
     llm = FakeLLMService({"substantive": True, "reason": "task"})

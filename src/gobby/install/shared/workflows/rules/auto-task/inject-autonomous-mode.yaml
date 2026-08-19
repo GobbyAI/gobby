@@ -2,11 +2,21 @@ tags: [auto-task, task, autonomous, lifecycle, gobby, default]
 
 rules:
   inject-autonomous-mode:
-    description: "Inject autonomous task execution context when auto_task_ref is set"
+    description: "Inject autonomous task execution context once per context epoch and every 5 turns"
     event: turn_start
     enabled: true
     priority: 60
-    when: "variables.get('auto_task_ref')"
+    # turns_since_compact resets to 0 on compact, so a stored marker above the
+    # current counter means a new context epoch began — re-inject once, then
+    # every 5 turns within the epoch. The guide-task-continuation turn_end gate
+    # re-states the mode event-driven whenever the agent tries to stop early.
+    when: >
+      variables.get('auto_task_ref')
+      and (not variables.get('autonomous_mode_reminder_turn')
+      or (variables.get('turns_since_compact') or 0)
+      < (variables.get('autonomous_mode_reminder_turn') or 0)
+      or (variables.get('turns_since_compact') or 0)
+      - (variables.get('autonomous_mode_reminder_turn') or 0) >= 5)
     effects:
       - type: inject_context
         template: |
@@ -23,3 +33,6 @@ rules:
           Use suggest_next_task() to find available work.
           {% endif %}
           When {{ variables.auto_task_ref or '(unknown)' }} is completed, you may stop.
+      - type: set_variable
+        variable: autonomous_mode_reminder_turn
+        value: "variables.get('turns_since_compact') or 0"

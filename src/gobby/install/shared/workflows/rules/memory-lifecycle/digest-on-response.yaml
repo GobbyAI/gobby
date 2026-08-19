@@ -13,7 +13,7 @@ rules:
         background: true
 
   digest-catch-up-on-turn-start:
-    description: "Catch up undigested prior turn at the next prompt (e.g. after daemon restart)"
+    description: "Drain a bounded undigested backlog batch at each prompt (e.g. after outages)"
     event: turn_start
     enabled: true
     priority: 10
@@ -22,5 +22,5 @@ rules:
         server: gobby-memory
         tool: build_turn_and_digest
         arguments:
-          prior_turn_only: true
+          catch_up: true
         background: true

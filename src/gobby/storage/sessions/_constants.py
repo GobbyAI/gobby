@@ -110,14 +110,13 @@ def ensure_system_session(db: HubDatabase) -> None:
                 f"({SYSTEM_SESSION_PROJECT_ID})"
             )
 
-        now = utc_now()
         db.execute(
             """
             INSERT INTO sessions (
                 id, external_id, machine_id, source, project_id, title,
-                status, agent_depth, created_at, updated_at
+                status, agent_depth
             )
-            VALUES (%s, %s, %s, %s, %s, %s, 'active', 0, %s, %s)
+            VALUES (%s, %s, %s, %s, %s, %s, 'active', 0)
             ON CONFLICT (id) DO NOTHING
             """,
             (
@@ -127,8 +126,6 @@ def ensure_system_session(db: HubDatabase) -> None:
                 SYSTEM_SESSION_SOURCE,
                 SYSTEM_SESSION_PROJECT_ID,
                 SYSTEM_SESSION_TITLE,
-                now,
-                now,
             ),
         )
 

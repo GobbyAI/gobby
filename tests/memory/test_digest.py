@@ -8,7 +8,7 @@ import hashlib
 import json
 import logging
 import threading
-from collections.abc import Awaitable
+from collections.abc import Awaitable, Sequence
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
@@ -507,6 +507,22 @@ class TestBuildTurnAndDigest:
             assert result is None
 
     @pytest.mark.asyncio
+    async def test_skips_synthetic_daemon_prompts(
+        self, mock_memory_manager, mock_session_manager, mock_llm_service
+    ):
+        """A daemon wake ping with no transcript content produces no digest turn."""
+        result = await build_turn_and_digest(
+            memory_manager=mock_memory_manager,
+            session_manager=mock_session_manager,
+            session_id="s1",
+            prompt_text="Message from Gobby daemon: New activity available.",
+            llm_service=mock_llm_service,
+            config=_digest_config(),
+        )
+        assert result is None
+        mock_llm_service.call_json_feature.assert_not_awaited()
+
+    @pytest.mark.asyncio
     async def test_successful_pipeline(
         self,
         mock_memory_manager,
@@ -636,7 +652,7 @@ class TestBuildTurnAndDigest:
             session_id="session-123",
             llm_service=llm_service,
             config=_digest_config(),
-            prior_turn_only=True,
+            catch_up=True,
         )
         repeated = await build_turn_and_digest(
             memory_manager=mock_memory_manager,
@@ -644,7 +660,7 @@ class TestBuildTurnAndDigest:
             session_id="session-123",
             llm_service=llm_service,
             config=_digest_config(),
-            prior_turn_only=True,
+            catch_up=True,
         )
 
         assert first is not None
@@ -1535,7 +1551,9 @@ class TestBuildTurnAndDigestIdempotency:
 class TestReadUndigestedTurns:
     """Tests for _read_undigested_turns function."""
 
-    def _write_claude_transcript(self, path, exchanges):
+    def _write_claude_transcript(
+        self, path: Path, exchanges: "Sequence[tuple[str, str | None]]"
+    ) -> None:
         """Write a Claude-format JSONL transcript with given exchanges.
 
         Each exchange is a (user_text, assistant_text) tuple.
@@ -1872,7 +1890,7 @@ class TestReadUndigestedTurns:
         assert result[1] == ("Follow-up question", "Final answer")
 
     @pytest.mark.asyncio
-    async def test_codex_prior_turn_only_excludes_active_turn(self, tmp_path: Path) -> None:
+    async def test_codex_catch_up_excludes_active_turn(self, tmp_path: Path) -> None:
         transcript = tmp_path / "codex.jsonl"
         _write_interrupted_codex_transcript(transcript)
 
@@ -1880,19 +1898,69 @@ class TestReadUndigestedTurns:
             str(transcript),
             "codex",
             0,
-            prior_turn_only=True,
+            catch_up=True,
         )
         repeated, repeated_index = await _read_undigested_turns(
             str(transcript),
             "codex",
             next_index,
-            prior_turn_only=True,
+            catch_up=True,
         )
 
         assert result == [("Investigate the title", "The title is still provisional.")]
         assert next_index == 1
         assert repeated == []
         assert repeated_index == next_index
+
+    @pytest.mark.asyncio
+    async def test_claude_catch_up_drains_backlog_and_excludes_active_prompt(
+        self, tmp_path: Path
+    ) -> None:
+        """Non-codex catch-up drains completed pairs in bounded batches."""
+        transcript = tmp_path / "transcript.jsonl"
+        self._write_claude_transcript(
+            transcript,
+            [("Q1", "A1"), ("Q2", "A2"), ("Q3", "A3"), ("Active prompt", None)],
+        )
+
+        first, first_index = await _read_undigested_turns(
+            str(transcript), "claude", 0, num_pairs=2, catch_up=True
+        )
+        second, second_index = await _read_undigested_turns(
+            str(transcript), "claude", first_index, num_pairs=2, catch_up=True
+        )
+        drained, drained_index = await _read_undigested_turns(
+            str(transcript), "claude", second_index, num_pairs=2, catch_up=True
+        )
+
+        assert first == [("Q1", "A1"), ("Q2", "A2")]
+        assert first_index == 2
+        assert second == [("Q3", "A3")]
+        assert second_index == 3
+        assert drained == []
+        assert drained_index == 3
+
+    @pytest.mark.asyncio
+    async def test_daemon_wake_pairs_without_response_are_skipped(self, tmp_path: Path) -> None:
+        """Daemon pings with no agent response never become digest pairs."""
+        transcript = tmp_path / "transcript.jsonl"
+        wake = "Message from Gobby daemon: New activity available."
+        self._write_claude_transcript(
+            transcript,
+            [
+                (wake, None),
+                ("Real question", "Real answer"),
+                (wake, "Handled the new activity."),
+            ],
+        )
+
+        result, next_index = await _read_undigested_turns(str(transcript), "claude", 0)
+
+        assert result == [
+            ("Real question", "Real answer"),
+            (wake, "Handled the new activity."),
+        ]
+        assert next_index == 2
 
     @pytest.mark.asyncio
     async def test_hook_blocking_attachment_does_not_create_digest_exchange(self, tmp_path) -> None:
@@ -2027,7 +2095,9 @@ class TestBuildTurnAndDigestCatchUp:
         )
         return service
 
-    def _write_claude_transcript(self, path, exchanges):
+    def _write_claude_transcript(
+        self, path: Path, exchanges: "Sequence[tuple[str, str | None]]"
+    ) -> None:
         """Write a Claude-format JSONL transcript."""
         import json
 
@@ -2121,6 +2191,51 @@ class TestBuildTurnAndDigestCatchUp:
         )
         assert remaining == []
         assert next_index == 3
+
+    @pytest.mark.asyncio
+    async def test_catch_up_consumes_bounded_backlog_batch(
+        self,
+        mock_memory_manager,
+        mock_llm_service,
+        tmp_path,
+    ):
+        """Catch-up drains at most catch_up_num_pairs per pass, not the whole backlog."""
+        transcript = tmp_path / "transcript.jsonl"
+        self._write_claude_transcript(
+            transcript,
+            [(f"Question {number}", f"Answer {number}") for number in range(1, 9)],
+        )
+
+        sm = MagicMock()
+        session = MagicMock()
+        session.id = "session-456"
+        session.transcript_path = str(transcript)
+        session.source = "claude"
+        session.digest_markdown = None
+        session.last_digested_pair_index = 0
+        session.title = None
+        session.title_source = None
+        session.seq_num = 99
+        session.terminal_context = None
+        session.last_digest_input_hash = None
+        sm.get.return_value = session
+        sm.persist_digest_state.return_value = session
+
+        result = await build_turn_and_digest(
+            memory_manager=mock_memory_manager,
+            session_manager=sm,
+            session_id="session-456",
+            llm_service=mock_llm_service,
+            config=_digest_config(),
+            catch_up=True,
+        )
+
+        assert result is not None
+        persisted_index = sm.persist_digest_state.call_args.kwargs["last_digested_pair_index"]
+        assert persisted_index == 5
+        prompt_text = mock_llm_service.call_json_feature.call_args_list[0].args[1]
+        assert "Question 5" in prompt_text
+        assert "Question 6" not in prompt_text
 
     @pytest.mark.asyncio
     async def test_session_past_fifty_pairs_processes_next_exchange(

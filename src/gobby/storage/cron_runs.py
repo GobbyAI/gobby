@@ -59,9 +59,9 @@ class CronRunStorageMixin:
             INSERT INTO cron_runs (
                 id, cron_job_id, machine_id, triggered_at, started_at, completed_at,
                 status, output, error, agent_run_id,
-                pipeline_execution_id, scheduler_owner, created_at
+                pipeline_execution_id, scheduler_owner
             )
-            VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+            VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
             ON CONFLICT (cron_job_id) WHERE status IN ('pending', 'running')
             DO NOTHING
             RETURNING *
@@ -79,7 +79,6 @@ class CronRunStorageMixin:
                 candidate.agent_run_id,
                 candidate.pipeline_execution_id,
                 scheduler_owner,
-                now,
             ),
         )
         if row is None:
@@ -143,9 +142,9 @@ class CronRunStorageMixin:
                 INSERT INTO cron_runs (
                     id, cron_job_id, machine_id, triggered_at, started_at, completed_at,
                     status, output, error, agent_run_id,
-                    pipeline_execution_id, scheduler_owner, created_at
+                    pipeline_execution_id, scheduler_owner
                 )
-                SELECT %s, id, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s
+                SELECT %s, id, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s
                   FROM cron_jobs
                  WHERE id = %s
                 ON CONFLICT (cron_job_id) WHERE status IN ('pending', 'running')
@@ -164,7 +163,6 @@ class CronRunStorageMixin:
                     candidate.agent_run_id,
                     candidate.pipeline_execution_id,
                     scheduler_owner,
-                    now,
                     candidate.cron_job_id,
                 ),
             ).fetchone()

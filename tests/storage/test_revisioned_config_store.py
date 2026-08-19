@@ -39,6 +39,7 @@ from gobby.storage.hub.protocol import HubDatabase, Row, Transaction
 from gobby.storage.mcp import LocalMCPManager
 from gobby.storage.mcp_secrets import MCPSecretSlot, cleanup_replaced_mcp_secrets
 from gobby.storage.projects import LocalProjectManager
+from gobby.storage.schema_contract import apply_schema
 from gobby.storage.secrets import SecretStore
 
 pytestmark = pytest.mark.integration
@@ -87,13 +88,14 @@ def mutations(revision_db: HubDatabase, secret_store: SecretStore) -> ConfigMuta
 def revision_db() -> Iterator[PostgresHubDatabase]:
     database_url = os.environ["DATABASE_URL"]
     database_name = f"revisioned_config_{uuid.uuid4().hex}"
-    baseline = Path("crates/gcore/assets/schema/baseline.sql").read_text()
     with psycopg.connect(database_url, autocommit=True) as connection:
         connection.execute(sql.SQL("CREATE DATABASE {}").format(sql.Identifier(database_name)))
     scoped_url = make_conninfo(database_url, dbname=database_name)
     with psycopg.connect(scoped_url, autocommit=True) as connection:
         connection.execute("CREATE EXTENSION IF NOT EXISTS pg_search")
-        connection.execute(baseline)
+    # Baseline alone lacks migration-owned shapes (e.g. the 391 creation-time
+    # defaults); apply the full identity-enforced chain like production does.
+    apply_schema(scoped_url)
     database = PostgresHubDatabase(scoped_url)
     try:
         yield database

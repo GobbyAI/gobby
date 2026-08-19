@@ -3,7 +3,6 @@ from typing import Any, Literal
 
 from gobby.storage.hub.protocol import HubDatabase
 from gobby.storage.tasks import Task
-from gobby.utils.datetime import utc_now
 
 logger = logging.getLogger(__name__)
 
@@ -50,17 +49,15 @@ class SessionTaskManager:
         if action not in self.VALID_ACTIONS:
             raise ValueError(f"Invalid action '{action}'. Must be one of {self.VALID_ACTIONS}")
 
-        now = utc_now()
-
         with self.db.transaction() as conn:
             conn.execute(
                 """
                 INSERT INTO session_tasks (
-                    session_id, task_id, action, created_at
-                ) VALUES (%s, %s, %s, %s)
+                    session_id, task_id, action
+                ) VALUES (%s, %s, %s)
                 ON CONFLICT (session_id, task_id, action) DO NOTHING
                 """,
-                (session_id, task_id, action, now),
+                (session_id, task_id, action),
             )
             logger.debug("Linked task %s to session %s with action %s", task_id, session_id, action)
 

@@ -197,6 +197,36 @@ async def _prepare_managed_code_index(
         return None
 
 
+def _persona_prompt_prefix(request: SpawnRequest) -> str:
+    """Resolve the spawned agent's persona preamble for prompt assembly.
+
+    Codex delivers hook-injected context after the composer prompt, so the
+    persona block used to trail the task prompt (#20451). Prepending it at
+    spawn assembly puts identity before the task. Only an explicitly requested
+    agent is resolved here — activation may pick a configured default agent,
+    and guessing it at spawn time risks front-loading the wrong persona.
+    """
+    if request.session_manager is None:
+        return ""
+    agent_name = request.agent_name or (request.initial_variables or {}).get("_agent_type")
+    if not agent_name:
+        return ""
+    try:
+        from gobby.workflows.agent_resolver import resolve_agent
+
+        agent_body = resolve_agent(
+            str(agent_name),
+            request.session_manager._storage.db,
+            project_id=request.project_id,
+        )
+    except Exception:
+        logger.debug("Persona resolution failed for spawn agent %r", agent_name, exc_info=True)
+        return ""
+    if not agent_body:
+        return ""
+    return agent_body.build_prompt_preamble() or ""
+
+
 def _append_code_index_warning(prompt: str, warning: dict[str, str]) -> str:
     message = warning.get("message", "unknown")
     return (
@@ -299,6 +329,9 @@ async def _spawn_claude_terminal(request: SpawnRequest) -> SpawnResult:
         return preflight_error
     env = spawn_context.env_vars.copy()
     _apply_extra_env(env, request)
+    # Gobby owns memory for spawned agents; keep the harness-level auto-memory
+    # section out of their system prompts regardless of user settings.json.
+    env["CLAUDE_CODE_DISABLE_AUTO_MEMORY"] = "1"
     if request.api_base:
         env["ANTHROPIC_BASE_URL"] = request.api_base
     if request.api_token:
@@ -631,10 +664,22 @@ async def _spawn_codex_terminal(request: SpawnRequest) -> SpawnResult:
         )
 
     if terminal_result.tmux_session_name:
+        prompt_text = request.prompt or ""
+        persona = _persona_prompt_prefix(request)
+        if persona and request.session_manager is not None:
+            prompt_text = f"{persona}\n\n{prompt_text}" if prompt_text else persona
+            from gobby.workflows.state_manager import SessionVariableManager
+
+            # Suppress the first-turn persona injection — identity already
+            # precedes the task prompt in the composer text.
+            SessionVariableManager(request.session_manager._storage.db).merge_variables(
+                gobby_session_id,
+                {"_agent_context_injected": True},
+            )
         schedule_codex_prompt_delivery(
             terminal_spawner.session_manager,
             terminal_result.tmux_session_name,
-            request.prompt or "",
+            prompt_text,
             spawn_context.agent_run_id,
         )
 

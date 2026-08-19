@@ -42,9 +42,6 @@ class TestCanUseTool:
                 return_value={"command": "gobby", "args": ["mcp-server"]},
             ),
             patch("gobby.servers.chat_session._find_project_root", return_value=None),
-            patch(
-                "gobby.servers.chat_session._load_chat_system_prompt", return_value="test prompt"
-            ),
             patch("gobby.servers.chat_session.ClaudeAgentOptions", side_effect=capture_options),
             patch("gobby.servers.chat_session.ClaudeSDKClient") as mock_client_cls,
         ):
@@ -155,7 +152,6 @@ class TestStartupInjectionBoundaries:
                 return_value={"command": "gobby", "args": ["mcp-server"]},
             ),
             patch("gobby.servers.chat_session._find_project_root", return_value=None),
-            patch("gobby.servers.chat_session._load_chat_system_prompt") as mock_load_prompt,
             patch("gobby.servers.chat_session.ClaudeAgentOptions", side_effect=capture_options),
             patch("gobby.servers.chat_session.ClaudeSDKClient") as mock_client_cls,
         ):
@@ -164,7 +160,6 @@ class TestStartupInjectionBoundaries:
 
             await session.start()
 
-        mock_load_prompt.assert_not_called()
         assert captured_options["system_prompt"] is None
         assert captured_options["resume"] == "claude-resume-123"
         assert captured_options["continue_conversation"] is True
@@ -234,9 +229,6 @@ class TestMcpServerInjection:
                 return_value={"command": "/usr/local/bin/gobby", "args": ["mcp-server"]},
             ),
             patch("gobby.servers.chat_session._find_project_root", return_value=None),
-            patch(
-                "gobby.servers.chat_session._load_chat_system_prompt", return_value="test prompt"
-            ),
             patch("gobby.servers.chat_session.ClaudeAgentOptions", side_effect=capture_options),
             patch("gobby.servers.chat_session.ClaudeSDKClient") as mock_client_cls,
         ):
@@ -411,9 +403,6 @@ class TestProjectRouting:
                 "gobby.servers.chat_session._build_gobby_mcp_entry",
                 return_value={"command": "gobby", "args": ["mcp-server"]},
             ),
-            patch(
-                "gobby.servers.chat_session._load_chat_system_prompt", return_value="test prompt"
-            ),
             patch("gobby.servers.chat_session.ClaudeAgentOptions", side_effect=capture_options),
             patch("gobby.servers.chat_session.ClaudeSDKClient") as mock_client_cls,
         ):
@@ -445,9 +434,6 @@ class TestProjectRouting:
                 return_value={"command": "gobby", "args": ["mcp-server"]},
             ),
             patch("gobby.servers.chat_session._find_project_root", return_value=None),
-            patch(
-                "gobby.servers.chat_session._load_chat_system_prompt", return_value="test prompt"
-            ),
             patch("gobby.servers.chat_session.ClaudeAgentOptions", side_effect=capture_options),
             patch("gobby.servers.chat_session.ClaudeSDKClient") as mock_client_cls,
         ):
@@ -483,9 +469,6 @@ class TestProjectRouting:
                 return_value={"command": "gobby", "args": ["mcp-server"]},
             ),
             patch("gobby.servers.chat_session._find_project_root", return_value=None),
-            patch(
-                "gobby.servers.chat_session._load_chat_system_prompt", return_value="test prompt"
-            ),
             patch("gobby.servers.chat_session.ClaudeAgentOptions", side_effect=capture_options),
             patch("gobby.servers.chat_session.ClaudeSDKClient") as mock_client_cls,
         ):
@@ -520,9 +503,6 @@ class TestProjectRouting:
                 return_value={"command": "gobby", "args": ["mcp-server"]},
             ),
             patch("gobby.servers.chat_session._find_project_root", return_value=None),
-            patch(
-                "gobby.servers.chat_session._load_chat_system_prompt", return_value="test prompt"
-            ),
             patch("gobby.servers.chat_session._HEADLESS_SETTINGS", headless),
             patch("gobby.servers.chat_session.ClaudeAgentOptions", side_effect=capture_options),
             patch("gobby.servers.chat_session.ClaudeSDKClient") as mock_client_cls,

@@ -53,7 +53,7 @@ class TestSessionManagerPruning:
             )
         )
         session_manager.db.execute(
-            "UPDATE sessions SET updated_at = NOW() - INTERVAL '31 minutes' WHERE id = %s",
+            "UPDATE sessions SET updated_at = NOW() - INTERVAL '31 minutes', last_activity = NOW() - INTERVAL '31 minutes' WHERE id = %s",
             (session.id,),
         )
 
@@ -238,7 +238,7 @@ class TestSessionManagerPruning:
 
         # Manually backdate the session in DB
         session_manager.db.execute(
-            "UPDATE sessions SET updated_at = NOW() - INTERVAL '25 hours' WHERE id = %s",
+            "UPDATE sessions SET updated_at = NOW() - INTERVAL '25 hours', last_activity = NOW() - INTERVAL '25 hours' WHERE id = %s",
             (session.id,),
         )
         transitions: list[SessionStatusTransition] = []
@@ -268,7 +268,7 @@ class TestSessionManagerPruning:
 
         # Backdate
         session_manager.db.execute(
-            "UPDATE sessions SET updated_at = NOW() - INTERVAL '31 minutes' WHERE id = %s",
+            "UPDATE sessions SET updated_at = NOW() - INTERVAL '31 minutes', last_activity = NOW() - INTERVAL '31 minutes' WHERE id = %s",
             (session.id,),
         )
         transitions: list[SessionStatusTransition] = []
@@ -297,7 +297,7 @@ class TestSessionManagerPruning:
         )
 
         session_manager.db.execute(
-            "UPDATE sessions SET updated_at = NOW() - INTERVAL '31 minutes' WHERE id = %s",
+            "UPDATE sessions SET updated_at = NOW() - INTERVAL '31 minutes', last_activity = NOW() - INTERVAL '31 minutes' WHERE id = %s",
             (session.id,),
         )
         before = session_manager.db.fetchone(
@@ -330,7 +330,7 @@ class TestSessionManagerPruning:
         )
 
         session_manager.db.execute(
-            "UPDATE sessions SET updated_at = NOW() - INTERVAL '25 hours' WHERE id = %s",
+            "UPDATE sessions SET updated_at = NOW() - INTERVAL '25 hours', last_activity = NOW() - INTERVAL '25 hours' WHERE id = %s",
             (session.id,),
         )
 
@@ -358,7 +358,7 @@ class TestSessionManagerPruning:
             terminal_context={target_field: "%304" if target_field == "tmux_pane" else "@42"},
         )
         session_manager.db.execute(
-            "UPDATE sessions SET updated_at = NOW() - INTERVAL '25 hours' WHERE id = %s",
+            "UPDATE sessions SET updated_at = NOW() - INTERVAL '25 hours', last_activity = NOW() - INTERVAL '25 hours' WHERE id = %s",
             (session.id,),
         )
         before = session_manager.get(session.id)
@@ -393,7 +393,7 @@ class TestSessionManagerPruning:
         if status != "active":
             session_manager.update_status(session.id, status)
         session_manager.db.execute(
-            "UPDATE sessions SET updated_at = NOW() - INTERVAL '25 hours' WHERE id = %s",
+            "UPDATE sessions SET updated_at = NOW() - INTERVAL '25 hours', last_activity = NOW() - INTERVAL '25 hours' WHERE id = %s",
             (session.id,),
         )
 
@@ -419,7 +419,7 @@ class TestSessionManagerPruning:
             terminal_context={target_field: "   "},
         )
         session_manager.db.execute(
-            "UPDATE sessions SET updated_at = NOW() - INTERVAL '25 hours' WHERE id = %s",
+            "UPDATE sessions SET updated_at = NOW() - INTERVAL '25 hours', last_activity = NOW() - INTERVAL '25 hours' WHERE id = %s",
             (session.id,),
         )
 
@@ -453,7 +453,7 @@ class TestSessionManagerPruning:
 
         session_manager.update_status(paused_session.id, "paused")
         session_manager.db.execute(
-            "UPDATE sessions SET updated_at = NOW() - INTERVAL '3 hours' WHERE id IN (%s, %s)",
+            "UPDATE sessions SET updated_at = NOW() - INTERVAL '3 hours', last_activity = NOW() - INTERVAL '3 hours' WHERE id IN (%s, %s)",
             (active_session.id, paused_session.id),
         )
 
@@ -489,7 +489,7 @@ class TestSessionManagerPruning:
         session_manager.update_stats(nonempty_active.id, message_count=1)
         session_manager.update_status(expired_empty.id, "expired")
         session_manager.db.execute(
-            "UPDATE sessions SET updated_at = NOW() - INTERVAL '3 hours' WHERE id IN (%s, %s)",
+            "UPDATE sessions SET updated_at = NOW() - INTERVAL '3 hours', last_activity = NOW() - INTERVAL '3 hours' WHERE id IN (%s, %s)",
             (nonempty_active.id, expired_empty.id),
         )
 
@@ -610,7 +610,7 @@ class TestSessionManagerPruning:
         )
         session_manager.update_status(session.id, "expired")
         session_manager.db.execute(
-            "UPDATE sessions SET updated_at = NOW() - INTERVAL '2 hours' WHERE id = %s",
+            "UPDATE sessions SET updated_at = NOW() - INTERVAL '2 hours', last_activity = NOW() - INTERVAL '2 hours' WHERE id = %s",
             (session.id,),
         )
 
@@ -657,7 +657,8 @@ class TestSessionManagerPruning:
         session_manager.db.execute(
             """
             UPDATE sessions
-            SET updated_at = NOW() - INTERVAL '2 hours'
+            SET updated_at = NOW() - INTERVAL '2 hours',
+            last_activity = NOW() - INTERVAL '2 hours'
             WHERE id IN (%s, %s, %s, %s)
             """,
             (child_parent.id, task_ref.id, memory_ref.id, agent_run_ref.id),
@@ -757,7 +758,7 @@ class TestSessionManagerPruning:
         )
         session_manager.update_status(session.id, "expired")
         session_manager.db.execute(
-            "UPDATE sessions SET updated_at = NOW() - INTERVAL '2 hours' WHERE id = %s",
+            "UPDATE sessions SET updated_at = NOW() - INTERVAL '2 hours', last_activity = NOW() - INTERVAL '2 hours' WHERE id = %s",
             (session.id,),
         )
         session_manager.db.execute(
@@ -840,7 +841,8 @@ class TestSessionManagerPruning:
         session_manager.db.execute(
             f"""
             UPDATE sessions
-            SET updated_at = NOW() - INTERVAL '3 hours'
+            SET updated_at = NOW() - INTERVAL '3 hours',
+            last_activity = NOW() - INTERVAL '3 hours'
             WHERE id IN ({placeholders})
             """,
             tuple(stale_ids),

@@ -34,6 +34,7 @@ from gobby.hooks._path_scope import apply_path_scope_metadata
 from gobby.hooks._python_pipeline_classifier import (
     _inline_interpreter_parts,
     _is_read_only_python_pipeline,
+    _is_read_only_python_source,
 )
 from gobby.hooks.code_navigation import (
     count_option_line_count,
@@ -111,6 +112,8 @@ class _ShellSegmentMetadata:
     neutral_setup: bool = False
     pure_gcode_navigation: bool = False
     read_only_pipeline_filter: bool = False
+    # A python program fed via stdin (heredoc); the body may prove it read-only.
+    stdin_python_program: bool = False
 
 
 def _build_canonical_tool_metadata(
@@ -198,6 +201,13 @@ def _is_read_only_pipeline_stage(tokens: list[ShellToken], parts: list[str]) -> 
     if cmd == "sed" and _has_sed_inplace_option(parts):
         return False
     return cmd in _GCODE_PIPELINE_READ_ONLY_FILTERS or _is_read_only_python_pipeline(parts)
+
+
+def _stdin_program_is_python(parts: list[str]) -> bool:
+    interpreter_parts = _inline_interpreter_parts(parts)
+    if not interpreter_parts:
+        return False
+    return shell_command_name(interpreter_parts[0]) in {"python", "python3"}
 
 
 def _interpreter_reads_program_from_stdin(parts: list[str]) -> bool:
@@ -325,6 +335,11 @@ def _strip_shell_wrappers(parts: list[str]) -> list[str]:
         if stripped[:1] == ["env"]:
             stripped = stripped[1:]
             continue
+        # Loop/conditional body keywords prefix the real command after a
+        # segment split (`do grep ...`, `then cat ...`); classify what follows.
+        if stripped[:1] in (["do"], ["then"], ["else"]):
+            stripped = stripped[1:]
+            continue
         break
     return stripped
 
@@ -342,7 +357,7 @@ def _literal_cd_target(parts: list[str]) -> str | None:
 
 
 def _rebase_shell_path(path: str, cwd: str | None) -> str:
-    if not cwd or path.startswith("/") or "://" in path:
+    if not cwd or path.startswith(("/", "~")) or "://" in path:
         return path
     return posixpath.normpath(posixpath.join(cwd, path))
 
@@ -553,8 +568,9 @@ def _input_redirection_paths(tokens: list[ShellToken]) -> list[str]:
 
 def _normalize_shell_tool_metadata(command: str) -> dict[str, Any]:
     """Infer canonical semantics from visible shell command segments."""
+    heredoc_bodies: list[str] = []
     try:
-        tokens = tokenize_shell_command(command)
+        tokens = tokenize_shell_command(command, heredoc_bodies=heredoc_bodies)
     except ValueError:
         return {}
 
@@ -594,7 +610,27 @@ def _normalize_shell_tool_metadata(command: str) -> dict[str, Any]:
 
         metadata.append(_classify_shell_segment(segment.tokens, parts, persistent_cwd))
 
+    metadata = _downgrade_read_only_stdin_python(metadata, heredoc_bodies)
     return _merge_shell_segment_metadata(metadata)
+
+
+def _downgrade_read_only_stdin_python(
+    metadata: list[_ShellSegmentMetadata],
+    heredoc_bodies: list[str],
+) -> list[_ShellSegmentMetadata]:
+    """Reclassify a lone python heredoc segment whose body is provably read-only.
+
+    Only the unambiguous shape downgrades: exactly one stdin-python segment fed
+    by exactly one heredoc body. Anything else keeps the conservative write.
+    """
+    flagged = [item for item in metadata if item.stdin_python_program]
+    if len(flagged) != 1 or len(heredoc_bodies) != 1:
+        return metadata
+    if not _is_read_only_python_source(heredoc_bodies[0]):
+        return metadata
+    return [
+        _ShellSegmentMetadata("execute") if item.stdin_python_program else item for item in metadata
+    ]
 
 
 def _classify_shell_segment(
@@ -646,7 +682,11 @@ def _classify_shell_segment(
     if input_paths:
         base_metadata = _classify_shell_segment_without_redirection(plain_parts, cwd)
         if _interpreter_reads_program_from_stdin(plain_parts):
-            base_metadata = _ShellSegmentMetadata("write", repo_mutation=True)
+            base_metadata = _ShellSegmentMetadata(
+                "write",
+                repo_mutation=True,
+                stdin_python_program=_stdin_program_is_python(plain_parts),
+            )
         base_paths = list(base_metadata.paths)
         if base_metadata.repo_mutation and not base_paths:
             input_paths = []
@@ -662,13 +702,35 @@ def _classify_shell_segment(
 
     if has_shell_input_redirection(tokens):
         if _interpreter_reads_program_from_stdin(plain_parts):
-            return _ShellSegmentMetadata("write", repo_mutation=True)
+            return _ShellSegmentMetadata(
+                "write",
+                repo_mutation=True,
+                stdin_python_program=_stdin_program_is_python(plain_parts),
+            )
         return _ShellSegmentMetadata("execute")
 
     if _is_neutral_echo_segment(tokens, plain_parts):
         return _ShellSegmentMetadata("execute", neutral_setup=True)
 
     return _classify_shell_segment_without_redirection(plain_parts, cwd)
+
+
+def _classify_for_loop_header(parts: list[str], cwd: str | None) -> _ShellSegmentMetadata:
+    """Surface literal iteration paths from a ``for <var> in ...`` header.
+
+    The loop body arrives as separate segments whose operands are unexpanded
+    variables (dropped as path evidence), so the header's literal list is the
+    only scope signal a ``for f in <paths>; do grep ... "$f"`` command has.
+    """
+    try:
+        in_index = parts.index("in")
+    except ValueError:
+        return _ShellSegmentMetadata("execute")
+    items = [part for part in parts[in_index + 1 :] if _looks_path_target(part)]
+    return _ShellSegmentMetadata(
+        "execute",
+        paths=tuple(_rebase_shell_paths(items, cwd)),
+    )
 
 
 def _classify_shell_segment_without_redirection(
@@ -679,6 +741,9 @@ def _classify_shell_segment_without_redirection(
         return _ShellSegmentMetadata("execute")
 
     cmd = shell_command_name(parts[0])
+
+    if cmd == "for":
+        return _classify_for_loop_header(parts, cwd)
 
     git_subcommand_index = 1
     if cmd == "git":
@@ -727,6 +792,8 @@ def _classify_shell_segment_without_redirection(
             or (interpreter == "ruby" and "-e" in interpreter_args)
         )
         if inline_interpreter:
+            if _is_read_only_python_pipeline(parts):
+                return _ShellSegmentMetadata("execute")
             return _ShellSegmentMetadata("write", repo_mutation=True)
 
     if cmd == "curl":

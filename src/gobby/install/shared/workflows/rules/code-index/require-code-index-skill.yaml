@@ -24,6 +24,23 @@ rules:
       - type: set_variable
         variable: code_index_navigation_used_this_turn
         value: true
+      - type: set_variable
+        variable: gcode_fail_open
+        value: false
+
+  track-gcode-fail-open:
+    description: "Fail open on gcode errors: stop preferring a tool that is failing"
+    event: after_tool
+    enabled: true
+    priority: 20
+    when: >
+      variables.get('code_index_available')
+      and event.data.get('canonical_code_index_navigation')
+      and event.data.get('is_error')
+    effects:
+      - type: set_variable
+        variable: gcode_fail_open
+        value: true
 
   require-code-index-skill:
     description: "Block first code navigation until code-index skill is loaded"
@@ -33,12 +50,14 @@ rules:
     when: >
       variables.get('code_index_available')
       and not skill_loaded('code-index')
+      and not variables.get('gcode_fail_open')
       and not has_open_tool_error(
         "gobby-skills/get_skill",
         {"name": "code-index"}
       )
       and not variables.get('code_index_preflight_warning')
       and not event.data.get('canonical_code_index_navigation')
+      and not shell_command_invokes_gcode(tool_input.get('command'))
       and event.data.get('canonical_code_navigation_broad')
       and event.data.get('canonical_code_navigation_repo_scope') is not False
     effects:
@@ -53,6 +72,7 @@ rules:
     when: >
       variables.get('code_index_available')
       and skill_loaded('code-index')
+      and not variables.get('gcode_fail_open')
       and not event.data.get('canonical_code_index_navigation')
       and not shell_command_invokes_gcode(tool_input.get('command'))
       and event.data.get('canonical_code_navigation_action') == 'search'
@@ -60,7 +80,7 @@ rules:
       and event.data.get('canonical_code_navigation_repo_scope') is not False
     effects:
       - type: block
-        reason: 'Use `gcode grep "pattern" -m 50` or `gcode search-content` — the code index has full access to this repo and returns ranked, token-cheap results.'
+        reason: 'Use `gcode grep "pattern" -m 50` or `gcode search-content "query"` — the code index has full access to this repo and returns ranked, token-cheap results. If gcode itself errors, retry your original command: recorded gcode failures deactivate this rule.'
 
   prefer-gcode-for-source-read:
     description: "Block broad source reads in indexed projects after code-index is loaded"
@@ -70,7 +90,9 @@ rules:
     when: >
       variables.get('code_index_available')
       and skill_loaded('code-index')
+      and not variables.get('gcode_fail_open')
       and not event.data.get('canonical_code_index_navigation')
+      and not shell_command_invokes_gcode(tool_input.get('command'))
       and event.data.get('canonical_code_navigation_action') == 'read'
       and event.data.get('canonical_code_navigation_broad')
       and event.data.get('canonical_code_navigation_repo_scope') is not False
@@ -80,4 +102,4 @@ rules:
       )
     effects:
       - type: block
-        reason: 'Use `gcode outline <file>` then `gcode symbol <id>` — ranged Read (offset/limit, ≤40 lines) is always available.'
+        reason: 'Use `gcode outline <file>` then `gcode symbol <id>` — ranged Read (offset/limit, ≤40 lines) is always available. If gcode itself errors, retry your original command: recorded gcode failures deactivate this rule.'

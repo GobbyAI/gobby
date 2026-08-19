@@ -13,6 +13,7 @@ from collections.abc import Iterable
 from datetime import datetime
 from typing import TYPE_CHECKING, Any
 
+from gobby.paths import get_gobby_home
 from gobby.sessions.message_stats import MessageStats
 from gobby.sessions.transcripts.base import TokenUsage
 
@@ -36,7 +37,11 @@ _BUILD_LOCKS: dict[_IndexKey, asyncio.Lock] = {}
 
 
 def _sidecar_path(path: str) -> str:
-    return f"{os.path.abspath(path)}{INDEX_SIDECAR_SUFFIX}"
+    normalized_path = os.path.abspath(path)
+    cache_key = hashlib.sha256(normalized_path.encode("utf-8")).hexdigest()
+    return str(
+        get_gobby_home() / "cache" / "transcript-indexes" / f"{cache_key}{INDEX_SIDECAR_SUFFIX}"
+    )
 
 
 def _encode_adjustment_value(value: Any) -> Any:
@@ -358,7 +363,7 @@ def load_index_sidecar(
 
 
 def persist_index_sidecar(path: str, index: TranscriptIndex) -> None:
-    """Atomically persist an index sidecar next to its source transcript."""
+    """Atomically persist an index sidecar in Gobby's cache."""
     sidecar = _sidecar_path(path)
     directory = os.path.dirname(sidecar)
     os.makedirs(directory, exist_ok=True)

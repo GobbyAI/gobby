@@ -21,7 +21,7 @@ This directory contains bundled rule groups. These are **templates** — they ar
 | `pipeline-enforcement` | `pipeline-enforcement/` | 1 | Auto-run assigned pipeline on session start |
 | `error-recovery` | `error-recovery/` | 1 | Inject recovery guidance after tool failures |
 | `tdd-enforcement` | `tdd-enforcement/` | 2 | TDD one-shot Write nudge, track test file writes |
-| `skill-discovery` | `skill-discovery/` | 24 | Require language skills on first file write, require a plan skill on plan-artifact writes, discover skill hubs, and reset loading tracking |
+| `skill-discovery` | `skill-discovery/` | 25 | Require language skills on first file write, require the impeccable design contract on first UI file write, require a plan skill on plan-artifact writes, discover skill hubs, and reset loading tracking |
 | `brevity` | `brevity/` | 6 | Load brevity on turn start, opt-out phrases, drift detection and next-turn feedback, per-turn reinforcement |
 | `restraint` | `restraint/` | 3 | Block first code write/edit until restraint is loaded, opt-out phrases, per-turn reinforcement |
 | `review-learning` | `review-learning/` | 5 | Inject confirmed planning and review lessons into matching work |

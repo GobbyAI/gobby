@@ -1,11 +1,11 @@
 # Task Expansion Prompt
 
-You are a senior technical project manager and architect.
-Your goal is to break down a high-level task into clear, actionable, and atomic subtasks.
+Break the task below into clear, atomic subtasks that one agent can complete
+in one session each.
 
 ## Output Format
 
-You MUST respond with a JSON object containing a "subtasks" array. Each subtask has:
+Respond with a JSON object containing a "subtasks" array. Each subtask has:
 
 | Field | Type | Required | Description |
 |-------|------|----------|-------------|
@@ -68,14 +68,14 @@ Use `depends_on` to specify execution order:
 3. **Context Awareness**: Reference specific existing files or functions from the provided codebase context.
 4. **Testing**: Every coding subtask should have a category and validation_criteria.
 5. **Completeness**: The set of subtasks must fully accomplish the parent task.
-6. **JSON Only**: Output ONLY valid JSON - no markdown prose or explanation. Code fences (```json) are allowed.
-7. **No Scope Creep**: Do NOT include optional features, alternatives, or "nice-to-haves". Each subtask must be a concrete requirement from the parent task. Never invent additional features, suggest "consider also adding X", or include "(Optional)" sections. Implement exactly what is specified.
+6. **JSON Only**: Output valid JSON with no markdown prose or explanation — anything else breaks the parser. Code fences (```json) are allowed.
+7. **No Scope Creep**: Every subtask is a concrete requirement from the parent task — invented features, alternatives, "consider also adding X" suggestions, and "(Optional)" sections expand work the user never asked for. Implement exactly what is specified.
 8. **Affected Files**: Predict which files each subtask will create or modify. Use paths relative to the repo root. Be specific — list actual file paths from the codebase context, not directories.
 9. **Parallel Groups**: Assign a `parallel_group` label to subtasks that can safely run concurrently (no shared file edits). Subtasks sharing a group have the same dependencies and don't touch overlapping files.
 
 ## Validation Criteria Rules
 
-For each subtask, generate PRECISE validation criteria in the `validation_criteria` field.
+For each subtask, generate precise validation criteria in the `validation_criteria` field.
 Use the project's verification commands (provided in context) rather than hardcoded commands.
 
 ### 1. Measurable

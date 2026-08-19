@@ -1,7 +1,6 @@
 from gobby.storage.memories_base import MemoryStoreBase
 from gobby.storage.memories_models import MemoryCrossRef
 from gobby.storage.memories_scope import ALL_MEMORIES, MemoryScope, memory_scope_predicate
-from gobby.utils.datetime import utc_now
 
 
 class MemoryCrossRefMixin(MemoryStoreBase):
@@ -29,24 +28,25 @@ class MemoryCrossRefMixin(MemoryStoreBase):
         if not 0.0 <= similarity <= 1.0:
             raise ValueError("similarity must be between 0.0 and 1.0")
 
-        now = utc_now()
-
         with self.db.transaction() as conn:
-            conn.execute(
+            row = conn.execute(
                 """
-                INSERT INTO memory_crossrefs (source_id, target_id, similarity, created_at)
-                VALUES (%s, %s, %s, %s)
+                INSERT INTO memory_crossrefs (source_id, target_id, similarity)
+                VALUES (%s, %s, %s)
                 ON CONFLICT(source_id, target_id) DO UPDATE SET
                     similarity = excluded.similarity
+                RETURNING created_at
                 """,
-                (source_id, target_id, similarity, now),
-            )
+                (source_id, target_id, similarity),
+            ).fetchone()
 
+        if row is None:
+            raise RuntimeError(f"Failed to upsert crossref {source_id} -> {target_id}")
         return MemoryCrossRef(
             source_id=source_id,
             target_id=target_id,
             similarity=similarity,
-            created_at=now,
+            created_at=row["created_at"],
         )
 
     def get_crossrefs(

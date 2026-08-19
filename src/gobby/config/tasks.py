@@ -151,7 +151,7 @@ class TaskValidationConfig(FeatureDefaultConfig):
         description="Enable automated task validation",
     )
     system_prompt: str = Field(
-        default="You are a QA validator. Output ONLY valid JSON. No markdown, no explanation, no code blocks. Just the raw JSON object.",
+        default="You are a QA validator. Output only the raw JSON object — markdown, explanations, or code blocks break the parser.",
         description="System prompt for task validation",
     )
     prompt_path: str | None = Field(
@@ -163,7 +163,7 @@ class TaskValidationConfig(FeatureDefaultConfig):
         description="Path to custom criteria generation prompt template (e.g., 'validation/criteria')",
     )
     criteria_system_prompt: str = Field(
-        default="You are a QA engineer writing acceptance criteria. CRITICAL: Only include requirements explicitly stated in the task. Do NOT invent specific values, thresholds, timeouts, or edge cases that aren't mentioned. Vague tasks get vague criteria. Use markdown checkboxes.",
+        default="You are a QA engineer writing acceptance criteria. Only include requirements explicitly stated in the task — invented values, thresholds, timeouts, or edge cases create false failures. Vague tasks get vague criteria. Use markdown checkboxes.",
         description="System prompt for generating validation criteria",
     )
 

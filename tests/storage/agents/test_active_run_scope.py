@@ -12,6 +12,7 @@ from gobby.storage.agents import LocalAgentRunManager
 from gobby.storage.hub.protocol import HubDatabase
 from gobby.storage.sessions import SessionManager
 from gobby.utils.machine_id import require_machine_id
+from tests.fixtures.postgres import TEST_USER_ID
 
 pytestmark = pytest.mark.unit
 
@@ -30,8 +31,9 @@ def test_local_and_global_active_run_apis(
     remote_machine_id = str(uuid.uuid4())
     for machine_id in (local_machine_id, remote_machine_id):
         temp_db.execute(
-            "INSERT INTO machines (id, hostname) VALUES (%s, %s) ON CONFLICT (id) DO NOTHING",
-            (machine_id, f"host-{machine_id}"),
+            "INSERT INTO machines (id, hostname, owner_user_id) VALUES (%s, %s, %s) "
+            "ON CONFLICT (id) DO NOTHING",
+            (machine_id, f"host-{machine_id}", TEST_USER_ID),
         )
 
     parent = session_manager.register(

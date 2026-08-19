@@ -32,9 +32,13 @@ from gobby.llm.claude_runtime import (
     raise_for_error_result,
 )
 from gobby.llm.image_payloads import prepare_image_data
-from gobby.llm.textgen_cwd import neutral_textgen_cwd
+from gobby.llm.textgen_cwd import fixed_textgen_cwd
 
 _FEATURE_TEXTGEN_MAX_TURNS = 8
+
+# One-shot generation needs no memory and must not litter ~/.claude/projects
+# with per-run auto-memory state; the SDK merges this over the inherited env.
+_TEXTGEN_ENV = {"CLAUDE_CODE_DISABLE_AUTO_MEMORY": "1"}
 
 
 class ClaudeSDKClient:
@@ -65,7 +69,7 @@ class ClaudeSDKClient:
         if not cli_path:
             raise RuntimeError("Generation unavailable (Claude CLI not found)")
 
-        with neutral_textgen_cwd() as neutral_cwd:
+        with fixed_textgen_cwd() as neutral_cwd:
             reasoning_options = claude_reasoning_options(reasoning_effort)
             applied_reasoning_effort = reasoning_options.get("effort")
             options = ClaudeAgentOptions(
@@ -78,6 +82,7 @@ class ClaudeSDKClient:
                 permission_mode="default",
                 cli_path=cli_path,
                 cwd=str(neutral_cwd),
+                env=dict(_TEXTGEN_ENV),
                 **reasoning_options,
             )
 
@@ -176,6 +181,7 @@ class ClaudeSDKClient:
             setting_sources=[],
             cli_path=cli_path,
             cwd=project_path,
+            env=dict(_TEXTGEN_ENV),
             **reasoning_options,
         )
 
@@ -273,7 +279,7 @@ class ClaudeSDKClient:
         if not cli_path:
             raise RuntimeError("Generation unavailable (Claude CLI not found)")
 
-        with neutral_textgen_cwd() as neutral_cwd:
+        with fixed_textgen_cwd() as neutral_cwd:
             reasoning_options = claude_reasoning_options(reasoning_effort)
             applied_reasoning_effort = reasoning_options.get("effort")
             if applied_reasoning_effort is not None:
@@ -292,6 +298,7 @@ class ClaudeSDKClient:
                 cli_path=cli_path,
                 output_format={"type": "json_schema", "schema": json_schema},
                 cwd=str(neutral_cwd),
+                env=dict(_TEXTGEN_ENV),
                 **reasoning_options,
             )
             operation = f"generate_json[{caller}]" if caller else "generate_json"
@@ -354,6 +361,7 @@ class ClaudeSDKClient:
             mcp_servers={},
             permission_mode="default",
             cli_path=cli_path,
+            env=dict(_TEXTGEN_ENV),
         )
 
         async def _message_generator() -> AsyncIterator[dict[str, Any]]:

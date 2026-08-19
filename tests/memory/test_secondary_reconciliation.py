@@ -283,4 +283,6 @@ async def test_purge_hidden_splits_supersession_budget(
     await manager._lifecycle_service.purge_secondary_indices(memory.id, require_hidden=True)
     assert sql_deadlines == [2.0]
     assert io_timeouts
-    assert 0 < io_timeouts[0] <= 2.0
+    # The SQL slice is capped at half the budget; artifact deletes then spend
+    # whatever remains of the whole budget (#20364), not a fixed half.
+    assert 0 < io_timeouts[0] <= 4.0

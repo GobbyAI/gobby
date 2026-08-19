@@ -24,6 +24,7 @@ from gobby.code_index.summary_safety import SUMMARY_MAX_CHARS
 from gobby.servers.lease_fence import StaleEpochFence, bind_fenced_writer
 from gobby.storage.hub.protocol import HubDatabase
 from tests.code_index.conftest import FILE_CONTENT_HASH, MISSING_ID, PROJECT_ID, PROJECT_ID_2
+from tests.fixtures.postgres import TEST_USER_ID
 
 pytestmark = pytest.mark.unit
 
@@ -608,8 +609,9 @@ def test_file_states_coexist_across_machines(code_storage: CodeIndexStorage) -> 
     remote_machine_id = "eeeeeeee-eeee-4eee-8eee-000000000002"
     for machine_id in (local_machine_id, remote_machine_id):
         code_storage.db.execute(
-            "INSERT INTO machines (id, hostname) VALUES (%s, %s) ON CONFLICT (id) DO NOTHING",
-            (machine_id, f"test-{machine_id[-4:]}"),
+            "INSERT INTO machines (id, hostname, owner_user_id) VALUES (%s, %s, %s)"
+            " ON CONFLICT (id) DO NOTHING",
+            (machine_id, f"test-{machine_id[-4:]}", TEST_USER_ID),
         )
 
     with patch("gobby.utils.machine_id.get_machine_id", return_value=local_machine_id):
@@ -759,8 +761,9 @@ def test_prune_dirty_projects_are_isolated_by_machine(code_storage: CodeIndexSto
     remote_machine_id = "dddddddd-dddd-4ddd-8ddd-000000000002"
     for machine_id in (local_machine_id, remote_machine_id):
         code_storage.db.execute(
-            "INSERT INTO machines (id, hostname) VALUES (%s, %s) ON CONFLICT (id) DO NOTHING",
-            (machine_id, f"test-{machine_id[-4:]}"),
+            "INSERT INTO machines (id, hostname, owner_user_id) VALUES (%s, %s, %s)"
+            " ON CONFLICT (id) DO NOTHING",
+            (machine_id, f"test-{machine_id[-4:]}", TEST_USER_ID),
         )
 
     with patch("gobby.utils.machine_id.get_machine_id", return_value=local_machine_id):

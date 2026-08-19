@@ -89,7 +89,7 @@ class TestSessionEdgeCases:
 
         # Backdate the session
         session_manager.db.execute(
-            "UPDATE sessions SET updated_at = NOW() - INTERVAL '25 hours' WHERE id = %s",
+            "UPDATE sessions SET updated_at = NOW() - INTERVAL '25 hours', last_activity = NOW() - INTERVAL '25 hours' WHERE id = %s",
             (session.id,),
         )
 
@@ -118,7 +118,7 @@ class TestSessionEdgeCases:
 
         # Backdate the session
         session_manager.db.execute(
-            "UPDATE sessions SET updated_at = NOW() - INTERVAL '31 minutes' WHERE id = %s",
+            "UPDATE sessions SET updated_at = NOW() - INTERVAL '31 minutes', last_activity = NOW() - INTERVAL '31 minutes' WHERE id = %s",
             (session.id,),
         )
 
@@ -235,7 +235,7 @@ class TestSessionEdgeCases:
 
         # Backdate first session
         session_manager.db.execute(
-            "UPDATE sessions SET updated_at = NOW() - INTERVAL '1 hour' WHERE id = %s",
+            "UPDATE sessions SET updated_at = NOW() - INTERVAL '1 hour', last_activity = NOW() - INTERVAL '1 hour' WHERE id = %s",
             (session1.id,),
         )
 
@@ -272,7 +272,7 @@ class TestSessionEdgeCases:
         )
         session_manager.update_status(matching_parent.id, "handoff_ready")
         session_manager.db.execute(
-            "UPDATE sessions SET updated_at = NOW() - INTERVAL '1 minute' WHERE id = %s",
+            "UPDATE sessions SET updated_at = NOW() - INTERVAL '1 minute', last_activity = NOW() - INTERVAL '1 minute' WHERE id = %s",
             (matching_parent.id,),
         )
         newer_wrong_parent = session_manager.register(

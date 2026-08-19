@@ -74,13 +74,13 @@ class TaskDependencyManager:
 
             row = conn.execute(
                 """
-                INSERT INTO task_dependencies (task_id, depends_on, dep_type, created_at)
-                VALUES (%s, %s, %s, %s)
+                INSERT INTO task_dependencies (task_id, depends_on, dep_type)
+                VALUES (%s, %s, %s)
                 ON CONFLICT (task_id, depends_on, dep_type)
                 DO UPDATE SET dep_type = excluded.dep_type
                 RETURNING id, created_at
                 """,
-                (task_id, depends_on, dep_type, now),
+                (task_id, depends_on, dep_type),
             ).fetchone()
 
             if row is None:

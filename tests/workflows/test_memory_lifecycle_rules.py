@@ -27,8 +27,8 @@ import pytest
 
 from gobby.adapters.codex_impl.hooks_adapter import CodexHooksAdapter
 from gobby.hooks.events import HookEventType
-from gobby.storage.hub.protocol import HubDatabase
 from gobby.storage.definitions.rules import RuleDefinitionManager
+from gobby.storage.hub.protocol import HubDatabase
 from gobby.workflows.definitions import RuleDefinitionBody
 from gobby.workflows.safe_evaluator import SafeExpressionEvaluator
 from gobby.workflows.sync_rules import sync_bundled_rules
@@ -204,7 +204,7 @@ class TestDigestOnPlanTurnEnd:
 
 
 class TestDigestCatchUpOnTurnStart:
-    """Catch up undigested prior turns at the next turn_start (e.g. after daemon restart)."""
+    """Drain undigested backlog in bounded batches at each turn_start."""
 
     def test_event_and_effect(
         self,
@@ -223,7 +223,7 @@ class TestDigestCatchUpOnTurnStart:
         assert effect.type == "mcp_call"
         assert effect.server == "gobby-memory"
         assert effect.tool == "build_turn_and_digest"
-        assert effect.arguments == {"prior_turn_only": True}
+        assert effect.arguments == {"catch_up": True}
         assert effect.background is True
 
 
@@ -372,6 +372,16 @@ class TestMemoryCaptureNudge:
         body = RuleDefinitionBody.model_validate(row.definition_json)
         assert body.when is not None
         assert "prompt" in body.when
+
+    def test_skips_taskless_spawned_agents(self, db, manager) -> None:
+        """Spawned reviewers get daemon-composed prompts, never preferences (#20451)."""
+        _sync_bundled(db)
+        row = manager.get_by_name("memory-capture-nudge")
+        body = RuleDefinitionBody.model_validate(row.definition_json)
+        assert body.when is not None
+        assert "is_spawned_agent" in body.when
+        assert "task_claimed" in body.when
+        assert "auto_task_ref" in body.when
 
 
 # ═══════════════════════════════════════════════════════════════════════

@@ -50,6 +50,49 @@ OPERATOR_TOOLS = {
 MESSAGE_DELIVERY_TOOLS = {"get_inter_session_message", "get_inter_session_messages"}
 
 
+# The Gobby MCP proxy's native tool surface. Claude Code exposes these as
+# mcp__gobby__<tool>; other runtimes emit mcp_gobby_<tool>, gobby__<tool>, or
+# the bare tool name. Enforcement lists are authored in the Claude shape, so
+# comparisons canonicalize every spelling to it.
+GOBBY_PROXY_TOOLS = frozenset(
+    {
+        "add_mcp_server",
+        "call_tool",
+        "get_tool_schema",
+        "get_variable",
+        "import_mcp_server",
+        "init_project",
+        "list_mcp_servers",
+        "list_tools",
+        "recommend_tools",
+        "remove_mcp_server",
+        "search_tools",
+        "set_variable",
+    }
+)
+
+_CANONICAL_GOBBY_PREFIX = "mcp__gobby__"
+
+_GOBBY_PROXY_PREFIXES = ("mcp__gobby__", "mcp_gobby_", "gobby__")
+
+
+def canonical_gobby_tool_name(tool_name: str) -> str:
+    """Collapse provider spellings of Gobby proxy tools to mcp__gobby__<tool>."""
+    for prefix in _GOBBY_PROXY_PREFIXES:
+        if tool_name.startswith(prefix) and len(tool_name) > len(prefix):
+            return _CANONICAL_GOBBY_PREFIX + tool_name[len(prefix) :]
+    if tool_name in GOBBY_PROXY_TOOLS:
+        return _CANONICAL_GOBBY_PREFIX + tool_name
+    return tool_name
+
+
+def is_gobby_call_tool(tool_name: str | None) -> bool:
+    """True when *tool_name* is any provider spelling of the proxy's call_tool."""
+    if not tool_name:
+        return False
+    return canonical_gobby_tool_name(tool_name) == "mcp__gobby__call_tool"
+
+
 def is_message_delivery_tool(tool_name: str | None) -> bool:
     """Check if the tool is a message delivery tool.
 

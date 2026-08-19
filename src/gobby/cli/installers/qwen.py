@@ -158,6 +158,12 @@ def install_qwen(
     existing_settings.setdefault("ui", {})
     existing_settings["ui"]["hideTips"] = True
 
+    context_settings = existing_settings.setdefault("context", {})
+    if isinstance(context_settings, dict):
+        # AGENTS.md is the canonical instruction file; keep QWEN.md so other
+        # projects relying on the qwen-code default still resolve.
+        context_settings.setdefault("fileName", ["AGENTS.md", "QWEN.md"])
+
     with open(settings_file, "w") as f:
         json.dump(existing_settings, f, indent=2)
 

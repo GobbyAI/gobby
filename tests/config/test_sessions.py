@@ -28,7 +28,7 @@ def test_memory_recall_config_shape(temp_dir: Path) -> None:
     assert "claude/haiku" in candidate_labels(cfg.candidates)
     assert cfg.timeout == 60
     assert cfg.candidate_limit == 8
-    assert cfg.min_score == 0.0
+    assert cfg.min_score == 0.45
     assert DaemonConfig().memory_recall.enabled is True
     assert MemoryRecallConfig(min_score=0.75).min_score == 0.75
     with pytest.raises(ValueError):

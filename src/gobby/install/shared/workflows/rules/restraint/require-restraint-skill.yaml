@@ -29,11 +29,23 @@ rules:
         reason: '{{ skill_fetch_directive("restraint") }}'
 
   remind-restraint-on-turn-start:
-    description: "Reinforce restraint on every turn after the skill is loaded"
+    description: "Reinforce restraint once per context epoch and every 5 turns"
     event: turn_start
     enabled: true
     priority: 23
-    when: "skill_loaded('restraint') and not variables.get('restraint_disabled')"
+    # turns_since_compact resets to 0 on compact, so a stored marker above the
+    # current counter means a new context epoch began — re-remind once, then
+    # every 5 turns within the epoch.
+    when: >
+      skill_loaded('restraint') and not variables.get('restraint_disabled')
+      and (not variables.get('restraint_reminder_turn')
+      or (variables.get('turns_since_compact') or 0)
+      < (variables.get('restraint_reminder_turn') or 0)
+      or (variables.get('turns_since_compact') or 0)
+      - (variables.get('restraint_reminder_turn') or 0) >= 5)
     effects:
       - type: inject_context
         template: "Restraint reminder ({{ restraint_level }}): least mechanism that fully solves the problem; ladder before new code."
+      - type: set_variable
+        variable: restraint_reminder_turn
+        value: "variables.get('turns_since_compact') or 0"

@@ -30,7 +30,7 @@ class WorktreeIsolationHandler(IsolationHandler):
     - Checks for existing worktrees by branch name
     - Creates new worktrees if needed
     - Copies project.json and installs hooks
-    - Adds CRITICAL context warning to prompt
+    - Adds an isolation context banner to the prompt
     """
 
     def __init__(
@@ -239,13 +239,12 @@ class WorktreeIsolationHandler(IsolationHandler):
 
     def build_context_prompt(self, original_prompt: str, ctx: IsolationContext) -> str:
         """
-        Build prompt with CRITICAL worktree context warning.
+        Build prompt with the worktree context banner.
 
         Prepends isolation context to help the agent understand it's
         working in a worktree, not the main repository.
         """
-        warning = f"""CRITICAL: Worktree Context
-You are working in a git worktree, NOT the main repository.
+        warning = f"""Worktree context — you are working in an isolated git worktree, not the main repository.
 - Branch: {ctx.branch_name}
 - Worktree path: {ctx.cwd}
 - Main repo: {ctx.extra.get("main_repo_path", "unknown")}

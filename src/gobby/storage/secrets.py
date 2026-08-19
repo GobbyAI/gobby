@@ -30,7 +30,7 @@ from gobby.storage.secret_names import (
     normalize_and_validate_secret_name,
     normalize_secret_name,
 )
-from gobby.utils.datetime import datetime_to_required_iso, require_stored_datetime, utc_now
+from gobby.utils.datetime import datetime_to_required_iso, require_stored_datetime
 
 logger = logging.getLogger(__name__)
 
@@ -386,14 +386,12 @@ class SecretStore:
             posture=posture,
             passphrase=passphrase,
         )
-        now = utc_now()
         target = executor if executor is not None else self.db
         target.execute(
             """INSERT INTO secret_key_material (
-                   id, wrapped_dek, kek_posture, kek_salt, kek_kdf_n, kek_kdf_r, kek_kdf_p,
-                   created_at, updated_at
+                   id, wrapped_dek, kek_posture, kek_salt, kek_kdf_n, kek_kdf_r, kek_kdf_p
                )
-               VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s)
+               VALUES (%s, %s, %s, %s, %s, %s, %s)
                ON CONFLICT (id) DO UPDATE SET
                    wrapped_dek = EXCLUDED.wrapped_dek,
                    kek_posture = EXCLUDED.kek_posture,
@@ -402,7 +400,7 @@ class SecretStore:
                    kek_kdf_r = EXCLUDED.kek_kdf_r,
                    kek_kdf_p = EXCLUDED.kek_kdf_p,
                    updated_at = EXCLUDED.updated_at""",
-            (SECRET_KEY_ID, wrapped_dek, posture, salt_text, kdf_n, kdf_r, kdf_p, now, now),
+            (SECRET_KEY_ID, wrapped_dek, posture, salt_text, kdf_n, kdf_r, kdf_p),
         )
 
     def _insert_key_material_if_absent(
@@ -419,16 +417,14 @@ class SecretStore:
             posture=posture,
             passphrase=passphrase,
         )
-        now = utc_now()
         cursor = executor.execute(
             """INSERT INTO secret_key_material (
-                   id, wrapped_dek, kek_posture, kek_salt, kek_kdf_n, kek_kdf_r, kek_kdf_p,
-                   created_at, updated_at
+                   id, wrapped_dek, kek_posture, kek_salt, kek_kdf_n, kek_kdf_r, kek_kdf_p
                )
-               VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s)
+               VALUES (%s, %s, %s, %s, %s, %s, %s)
                ON CONFLICT (id) DO NOTHING
                RETURNING id""",
-            (SECRET_KEY_ID, wrapped_dek, posture, salt_text, kdf_n, kdf_r, kdf_p, now, now),
+            (SECRET_KEY_ID, wrapped_dek, posture, salt_text, kdf_n, kdf_r, kdf_p),
         )
         return cursor.fetchone() is not None
 
@@ -538,19 +534,18 @@ class SecretStore:
         name = normalize_and_validate_secret_name(name)
         fernet = self._get_fernet()
         encrypted = fernet.encrypt(plaintext_value.encode("utf-8")).decode("utf-8")
-        now = utc_now()
         row = self.db.fetchone(
             """INSERT INTO secrets (
-                   id, name, encrypted_value, category, description, created_at, updated_at
+                   id, name, encrypted_value, category, description
                )
-               VALUES (%s, %s, %s, %s, %s, %s, %s)
+               VALUES (%s, %s, %s, %s, %s)
                ON CONFLICT (name) DO UPDATE SET
                    encrypted_value = EXCLUDED.encrypted_value,
                    category = EXCLUDED.category,
                    description = EXCLUDED.description,
                    updated_at = EXCLUDED.updated_at
                RETURNING id, name, category, description, created_at, updated_at""",
-            (str(uuid.uuid4()), name, encrypted, category, description, now, now),
+            (str(uuid.uuid4()), name, encrypted, category, description),
         )
         if row is None:
             raise RuntimeError("Secret upsert did not return a row")

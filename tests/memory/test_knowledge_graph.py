@@ -1354,15 +1354,31 @@ class TestMemoryNodeProjectIdScoping:
         mock_falkor: AsyncMock,
     ) -> None:
         """find_related_memory_ids passes project_id filter to traversal query."""
-        mock_falkor.query = AsyncMock(
-            side_effect=[
-                [{"related_entity_key": entity_key("proj-A", "AuthService")}],
-                [{"memory_id": "mem-1"}],
+        seed_key = entity_key("proj-A", "Auth")
+        related_key = entity_key("proj-A", "AuthService")
+
+        async def fake_query(
+            cypher: str, params: dict[str, Any] | None = None
+        ) -> list[dict[str, Any]]:
+            if "MENTIONED_IN" in cypher:
+                return [{"memory_id": "mem-1"}]
+            if "cluster_id" in cypher:
+                return []
+            return [
+                {
+                    "source_key": seed_key,
+                    "related_entity_key": related_key,
+                    "edge_weight": 1.0,
+                    "raw_weight": None,
+                    "edge_support": None,
+                    "updated_at": None,
+                }
             ]
-        )
+
+        mock_falkor.query = AsyncMock(side_effect=fake_query)
 
         await service.find_related_memory_ids(
-            entity_keys=[entity_key("proj-A", "Auth")],
+            entity_keys=[seed_key],
             project_id="proj-A",
             max_hops=1,
         )
@@ -1377,9 +1393,14 @@ class TestMemoryNodeProjectIdScoping:
         assert neighbor_params["project_id"] == "proj-A"
         assert neighbor_params["include_global"] is True
 
-        memory_call = mock_falkor.query.call_args_list[1]
-        memory_cypher = memory_call.args[0]
-        memory_params = memory_call.args[1]
+        memory_calls = [
+            c
+            for c in mock_falkor.query.call_args_list
+            if "MENTIONED_IN" in c.args[0] and "m.project_id = $project_id" in c.args[0]
+        ]
+        assert len(memory_calls) == 1
+        memory_cypher = memory_calls[0].args[0]
+        memory_params = memory_calls[0].args[1]
         assert "m.project_id = $project_id" in memory_cypher
         assert "OR ($include_global AND m.is_global = true)" in memory_cypher
         assert "OR ($include_global AND e.is_global = true)" in memory_cypher
