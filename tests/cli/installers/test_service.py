@@ -149,6 +149,77 @@ class TestTemplateRendering:
         )
         assert "GOBBY_HOME=/custom/gobby/home" in content
 
+    def test_plist_template_passes_service_launch_marker(self) -> None:
+        content = _render_template(
+            "com.gobby.daemon.plist.j2",
+            python_executable="/usr/bin/python3",
+            working_directory="/Users/test",
+            home_dir="/Users/test",
+            path_env="/usr/bin:/bin",
+            runtime_log_file="/tmp/runtime.log",
+            gobby_home="/custom/gobby/home",
+            verbose=False,
+        )
+        assert "<key>GOBBY_SERVICE_LAUNCH</key>" in content
+        assert "<string>1</string>" in content
+        assert "<key>GOBBY_SERVICE_NONCE</key>" in content
+        assert "<string>/custom/gobby/home/gobby.pid.service-nonce</string>" in content
+
+    def test_systemd_template_passes_service_launch_marker(self) -> None:
+        content = _render_template(
+            "gobby-daemon.service.j2",
+            python_executable="/usr/bin/python3",
+            working_directory="/home/test",
+            home_dir="/home/test",
+            path_env="/usr/bin:/bin",
+            runtime_log_file="/tmp/runtime.log",
+            gobby_home="/custom/gobby/home",
+            verbose=False,
+        )
+        assert "Environment=GOBBY_SERVICE_LAUNCH=1" in content
+        assert "Environment=GOBBY_SERVICE_NONCE=/custom/gobby/home/gobby.pid.service-nonce" in (
+            content
+        )
+
+
+class TestReservationHelperEntry:
+    def test_service_start_reserves_before_platform_start(self) -> None:
+        from gobby.cli.installers.service import service_start
+        from gobby.runner_pid_file import SingletonReservationError
+
+        with (
+            patch(
+                "gobby.cli.installers.service.prepare_commanded_service_start",
+                side_effect=SingletonReservationError("maintenance holds singleton"),
+            ) as reserve,
+            patch("gobby.cli.installers.service._macos_start") as macos_start,
+        ):
+            result = service_start()
+        assert result["success"] is False
+        assert "maintenance" in result["error"]
+        reserve.assert_called_once()
+        macos_start.assert_not_called()
+
+    def test_enable_and_install_enter_reservation_helper(self) -> None:
+        from gobby.cli.installers.service import enable_service, install_service
+        from gobby.runner_pid_file import SingletonReservationError
+
+        with (
+            patch("gobby.cli.installers.service.sys") as mock_sys,
+            patch(
+                "gobby.cli.installers.service.prepare_commanded_service_start",
+                side_effect=SingletonReservationError("busy"),
+            ) as reserve,
+            patch("gobby.cli.installers.service.install_service_macos") as install_macos,
+            patch("gobby.cli.installers.service.enable_service_macos") as enable_macos,
+        ):
+            mock_sys.platform = "darwin"
+            assert install_service()["success"] is False
+            assert enable_service()["success"] is False
+        assert reserve.call_count == 2
+        install_macos.assert_not_called()
+        enable_macos.assert_not_called()
+
 
 # ---------------------------------------------------------------------------
 # Dev mode detection
@@ -383,9 +454,12 @@ class TestFindProjectRoot:
 class TestPlatformDispatch:
     """Test platform dispatch calls correct platform function."""
 
+    @patch("gobby.cli.installers.service.prepare_commanded_service_start")
     @patch("gobby.cli.installers.service.sys")
     @patch("gobby.cli.installers.service.install_service_macos")
-    def test_install_dispatches_darwin(self, mock_install: MagicMock, mock_sys: MagicMock) -> None:
+    def test_install_dispatches_darwin(
+        self, mock_install: MagicMock, mock_sys: MagicMock, _reserve: MagicMock
+    ) -> None:
         """install_service dispatches to macOS on darwin."""
         mock_sys.platform = "darwin"
         mock_install.return_value = {"success": True}
@@ -393,9 +467,12 @@ class TestPlatformDispatch:
         mock_install.assert_called_once_with(verbose=False)
         assert result["success"] is True
 
+    @patch("gobby.cli.installers.service.prepare_commanded_service_start")
     @patch("gobby.cli.installers.service.sys")
     @patch("gobby.cli.installers.service.install_service_linux")
-    def test_install_dispatches_linux(self, mock_install: MagicMock, mock_sys: MagicMock) -> None:
+    def test_install_dispatches_linux(
+        self, mock_install: MagicMock, mock_sys: MagicMock, _reserve: MagicMock
+    ) -> None:
         """install_service dispatches to Linux on linux."""
         mock_sys.platform = "linux"
         mock_install.return_value = {"success": True}
@@ -411,9 +488,12 @@ class TestPlatformDispatch:
         assert result["success"] is False
         assert "Unsupported platform" in result["error"]
 
+    @patch("gobby.cli.installers.service.prepare_commanded_service_start")
     @patch("gobby.cli.installers.service_windows.install_service_windows")
     @patch("gobby.cli.installers.service.sys")
-    def test_install_dispatches_win32(self, mock_sys: MagicMock, mock_install: MagicMock) -> None:
+    def test_install_dispatches_win32(
+        self, mock_sys: MagicMock, mock_install: MagicMock, _reserve: MagicMock
+    ) -> None:
         """install_service dispatches to Windows on win32."""
         mock_sys.platform = "win32"
         mock_install.return_value = {"success": True}
@@ -443,9 +523,12 @@ class TestPlatformDispatch:
         mock_status.assert_called_once()
         assert result["platform"] == "macos"
 
+    @patch("gobby.cli.installers.service.prepare_commanded_service_start")
     @patch("gobby.cli.installers.service.sys")
     @patch("gobby.cli.installers.service.enable_service_macos")
-    def test_enable_dispatches_darwin(self, mock_enable: MagicMock, mock_sys: MagicMock) -> None:
+    def test_enable_dispatches_darwin(
+        self, mock_enable: MagicMock, mock_sys: MagicMock, _reserve: MagicMock
+    ) -> None:
         """enable_service dispatches to macOS on darwin."""
         mock_sys.platform = "darwin"
         mock_enable.return_value = {"success": True}
@@ -1056,8 +1139,9 @@ class TestResultDictStructure:
         assert "running" in result
         assert "platform" in result
 
+    @patch("gobby.cli.installers.service.prepare_commanded_service_start")
     @patch("gobby.cli.installers.service.sys")
-    def test_install_failure_has_error_key(self, mock_sys: MagicMock) -> None:
+    def test_install_failure_has_error_key(self, mock_sys: MagicMock, _reserve: MagicMock) -> None:
         """Failed install has error key."""
         mock_sys.platform = "win32"
         result = install_service()

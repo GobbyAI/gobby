@@ -15,7 +15,6 @@ import sys
 import tempfile
 from datetime import UTC, datetime
 from pathlib import Path
-from shutil import copy2
 from typing import Any
 from urllib.error import URLError
 from urllib.parse import urlparse
@@ -286,43 +285,48 @@ def _download_release_binary(
         return False
 
 
-def ensure_daemon_config() -> dict[str, Any]:
+def ensure_daemon_config(*, files_home: str | Path | None = None) -> dict[str, Any]:
     """Ensure bootstrap config exists at ~/.gobby/bootstrap.yaml.
 
-    If bootstrap.yaml doesn't exist, copies the shared template.
-    Bootstrap.yaml contains only pre-DB settings; all other
-    configuration is managed via the DB (config_store) + Pydantic defaults.
+    Creating a local bootstrap requires an existing absolute ``files_home``.
+    Publication uses exclusive-lock durable replace, not copy2.
 
     Returns:
         Dict with 'created' (bool) and 'path' (str) keys
     """
+    from gobby.config.bootstrap import BootstrapConfigError, validate_existing_files_home
+    from gobby.config.bootstrap_io import read_bootstrap_yaml, write_bootstrap_yaml
+
     bootstrap_path = Path("~/.gobby/bootstrap.yaml").expanduser()
 
     if bootstrap_path.exists():
         return {"created": False, "path": str(bootstrap_path)}
 
-    bootstrap_path.parent.mkdir(parents=True, exist_ok=True)
+    if files_home is None:
+        raise BootstrapConfigError(
+            "Creating a local bootstrap requires an existing absolute files_home. "
+            "Run `gobby install --files-home <absolute-dir>`."
+        )
+    validated = validate_existing_files_home(files_home)
 
     shared_bootstrap = get_install_dir() / "shared" / "config" / "bootstrap.yaml"
     if shared_bootstrap.exists():
-        copy2(shared_bootstrap, bootstrap_path)
-        bootstrap_path.chmod(0o600)
-        return {"created": True, "path": str(bootstrap_path), "source": "shared"}
-
-    import yaml
-
-    defaults = {
-        "database_url": "postgresql://gobby:gobby_dev@localhost:60891/gobby",
-        "postgres_pool": DEFAULT_POSTGRES_POOL_CONFIG.to_dict(),
-        "daemon_port": 60887,
-        "bind_host": "localhost",
-        "websocket_port": DEFAULT_WEBSOCKET_PORT,
-        "ui_port": 60889,
-    }
-    with open(bootstrap_path, "w") as f:
-        yaml.safe_dump(defaults, f, default_flow_style=False, sort_keys=False)
-    bootstrap_path.chmod(0o600)
-    return {"created": True, "path": str(bootstrap_path), "source": "generated"}
+        data = read_bootstrap_yaml(shared_bootstrap)
+        source = "shared"
+    else:
+        data = {
+            "database_url": "postgresql://gobby:gobby_dev@localhost:60891/gobby",
+            "postgres_pool": DEFAULT_POSTGRES_POOL_CONFIG.to_dict(),
+            "daemon_port": 60887,
+            "bind_host": "localhost",
+            "websocket_port": DEFAULT_WEBSOCKET_PORT,
+            "ui_port": 60889,
+        }
+        source = "generated"
+    data["datastore_mode"] = data.get("datastore_mode") or "local"
+    data["files_home"] = str(validated)
+    write_bootstrap_yaml(bootstrap_path, data)
+    return {"created": True, "path": str(bootstrap_path), "source": source}
 
 
 def run_daemon_setup(project_path: Path, *, configure_ide_settings: bool) -> None:

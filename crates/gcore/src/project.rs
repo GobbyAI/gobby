@@ -5,6 +5,9 @@
 use anyhow::Context;
 use std::path::{Path, PathBuf};
 
+/// Canonical personal-project id. Matches the Python `PERSONAL_PROJECT_ID`.
+pub const PERSONAL_PROJECT_ID: &str = "00000000-0000-0000-0000-000000060887";
+
 /// Walk up from `start` looking for a `.gobby` directory containing either
 /// `project.json` or `gcode.json`. Returns the project root (the directory
 /// containing `.gobby`) or `None` if no project is found before hitting the

@@ -29,6 +29,9 @@ def save_message(
     """Save a chat message. Returns the message ID."""
     msg_id = str(uuid.uuid4())
     with db.transaction() as conn:
+        from gobby.storage.chat_attachment_fence import lock_producer_scopes
+
+        lock_producer_scopes(conn, conversation_id=conversation_id, target_session_id=None)
         if seq is None:
             while True:
                 inserted = conn.execute(

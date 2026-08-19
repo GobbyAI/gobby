@@ -174,11 +174,12 @@ class TestDirectStartStopCommands:
 
 
 class TestServiceDispatchHelpers:
+    @patch("gobby.cli.installers.service.prepare_commanded_service_start")
     @patch("gobby.cli.installers.service.sys")
     @patch("gobby.cli.installers.service_windows._windows_start")
     @patch("gobby.cli.installers.service._macos_start")
     @patch("gobby.cli.installers.service._linux_start")
-    def test_service_start(self, mock_ls, mock_ms, mock_ws, mock_sys) -> None:
+    def test_service_start(self, mock_ls, mock_ms, mock_ws, mock_sys, _reserve) -> None:
         mock_ms.return_value = {"success": True, "p": "mac"}
         mock_ls.return_value = {"success": True, "p": "linux"}
         mock_ws.return_value = {"success": True, "p": "win"}
@@ -210,6 +211,7 @@ class TestServiceDispatchHelpers:
         mock_sys.platform = "win32"
         assert service_stop()["p"] == "win"
 
+    @patch("gobby.cli.installers.service.prepare_commanded_service_start")
     @patch("gobby.cli.installers.service.sys")
     @patch("gobby.cli.installers.service_windows._windows_restart")
     @patch("gobby.cli.installers.service._macos_restart")
@@ -222,6 +224,7 @@ class TestServiceDispatchHelpers:
         mock_mr,
         mock_wr,
         mock_sys,
+        _reserve,
     ) -> None:
         mock_mr.return_value = {"success": True, "p": "mac"}
         mock_lr.return_value = {"success": True, "p": "linux"}
@@ -257,6 +260,7 @@ class TestServiceDispatchHelpers:
 
         assert service_stop()["p"] == "linux"
 
+    @patch("gobby.cli.installers.service.prepare_commanded_service_start")
     @patch("gobby.cli.installers.service.sys")
     @patch("gobby.cli.installers.service._linux_restart")
     @patch("gobby.runner_maintenance.write_shutdown_source", side_effect=OSError("readonly"))
@@ -265,6 +269,7 @@ class TestServiceDispatchHelpers:
         _mock_write_shutdown,
         mock_linux_restart,
         mock_sys,
+        _reserve,
     ) -> None:
         mock_sys.platform = "linux"
         mock_linux_restart.return_value = {"success": True, "p": "linux"}

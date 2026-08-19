@@ -1078,7 +1078,7 @@ fn gate_tests_destructive_apply_requires_a_verified_v2_backup() -> anyhow::Resul
             .expect_err("default apply must halt at a destructive migration");
     assert!(error.to_string().contains("verified hub backup"));
 
-    let fixture = include_str!("../../tests/fixtures/hub_backup_manifest/v2_roundtrip.json");
+    let fixture = include_str!("../../tests/fixtures/hub_backup_manifest/v3_roundtrip.json");
     let mut manifest = parse_backup_manifest(fixture)?;
     let database_head: i32 = client
         .query_one(
@@ -1140,7 +1140,7 @@ fn migrations_directory_exists_and_copy_agent_entry_is_registered() {
         migrations_dir.is_dir(),
         "crates/gcore/assets/schema/migrations must exist so later leaves can register include_str entries"
     );
-    assert_eq!(MIGRATIONS.len(), 16);
+    assert_eq!(MIGRATIONS.len(), 17);
     assert_eq!(MIGRATIONS[0].version, 376);
     assert_eq!(MIGRATIONS[0].filename, "376_copy_agent_definitions.sql");
     assert_eq!(MIGRATIONS[1].version, 377);
@@ -1201,6 +1201,11 @@ fn migrations_directory_exists_and_copy_agent_entry_is_registered() {
     assert_eq!(
         MIGRATIONS[15].filename,
         "391_session_last_activity_and_creation_defaults.sql"
+    );
+    assert_eq!(MIGRATIONS[16].version, 392);
+    assert_eq!(
+        MIGRATIONS[16].filename,
+        "392_chat_attachments_deletion_lease.sql"
     );
     assert!(MIGRATIONS[5].sql.contains("-- gobby:destructive"));
     for migration in MIGRATIONS {
@@ -1461,7 +1466,7 @@ fn drop_migration_refused_on_predecessor_until_verified_backup() -> anyhow::Resu
         .get(0);
     assert!(defs_before);
 
-    let fixture = include_str!("../../tests/fixtures/hub_backup_manifest/v2_roundtrip.json");
+    let fixture = include_str!("../../tests/fixtures/hub_backup_manifest/v3_roundtrip.json");
     let mut manifest = parse_backup_manifest(fixture)?;
     let database_head: i32 = client
         .query_one(

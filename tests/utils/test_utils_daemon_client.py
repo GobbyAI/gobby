@@ -1,6 +1,7 @@
 """Tests for src/utils/daemon_client.py - Daemon HTTP Client."""
 
 from pathlib import Path
+from typing import Any
 from unittest.mock import MagicMock, patch
 
 import httpx
@@ -23,7 +24,11 @@ class TestDaemonClientInit:
         monkeypatch.delenv("GOBBY_PORT", raising=False)
         monkeypatch.delenv("GOBBY_DAEMON_PORT", raising=False)
         bootstrap_path = tmp_path / "bootstrap.yaml"
-        bootstrap_path.write_text("daemon_port: 61999\n", encoding="utf-8")
+        files_home = tmp_path / "files"
+        files_home.mkdir()
+        bootstrap_path.write_text(
+            f"daemon_port: 61999\nfiles_home: {files_home}\n", encoding="utf-8"
+        )
         bootstrap_path.chmod(0o600)
 
         client = DaemonClient()
@@ -471,3 +476,84 @@ class TestDaemonClientCallMcpTool:
         )
         assert mock_call.call_count == 1
         assert mock_call.call_args is not None
+
+
+class TestDaemonClientRawAndStream:
+    """Raw/streaming request contract for hub files proxy."""
+
+    @pytest.mark.asyncio
+    async def test_raw_and_stream_share_join_auth_timeouts_and_errors(self) -> None:
+        from gobby.files_home_http import FILES_PROXY_HOP_HEADER
+        from gobby.utils.daemon_client import DaemonStatusError, DaemonTimeoutError
+
+        client = DaemonClient.from_url("http://hub.example.test:9")
+        seen: list[httpx.Request] = []
+
+        def handler(request: httpx.Request) -> httpx.Response:
+            seen.append(request)
+            if request.url.path.endswith("/missing"):
+                return httpx.Response(404, json={"error": "missing"})
+            if request.url.path.endswith("/not-modified"):
+                return httpx.Response(304, headers={"etag": '"x"'})
+            return httpx.Response(200, content=b"ok")
+
+        real_async = httpx.AsyncClient
+
+        def factory(*args: Any, **kwargs: Any) -> httpx.AsyncClient:
+            kwargs["transport"] = httpx.MockTransport(handler)
+            return real_async(*args, **kwargs)
+
+        with patch("httpx.AsyncClient", side_effect=factory):
+            ok = await client.request_raw("GET", "/api/files/user-md", hop=True)
+            assert ok.status_code == 200
+            with pytest.raises(DaemonStatusError):
+                await client.request_raw("GET", "/missing", hop=True, accept_statuses=(200,))
+            not_modified = await client.request_raw(
+                "GET",
+                "/not-modified",
+                hop=True,
+                accept_statuses=(200, 206, 304),
+            )
+            assert not_modified.status_code == 304
+
+        assert seen[0].headers.get(FILES_PROXY_HOP_HEADER) == "1"
+        assert str(seen[0].url).startswith("http://hub.example.test:9/")
+
+        def timeout_handler(_request: httpx.Request) -> httpx.Response:
+            raise httpx.ConnectTimeout("connect")
+
+        def timeout_factory(*args: Any, **kwargs: Any) -> httpx.AsyncClient:
+            kwargs["transport"] = httpx.MockTransport(timeout_handler)
+            return real_async(*args, **kwargs)
+
+        with patch("httpx.AsyncClient", side_effect=timeout_factory):
+            with pytest.raises(DaemonTimeoutError):
+                await client.request_raw("GET", "/api/files/user-md", hop=True)
+
+    @pytest.mark.asyncio
+    async def test_stream_request_closes_on_cancel(self) -> None:
+        import asyncio
+
+        client = DaemonClient.from_url("http://hub.example.test:9")
+        closed = {"done": False}
+        started = asyncio.Event()
+
+        class SlowClient(httpx.AsyncClient):
+            async def send(self, *args: object, **kwargs: object) -> httpx.Response:
+                started.set()
+                await asyncio.Event().wait()
+                return httpx.Response(200)
+
+            async def aclose(self) -> None:
+                closed["done"] = True
+                await super().aclose()
+
+        with patch("httpx.AsyncClient", SlowClient):
+            task = asyncio.create_task(
+                client.stream_request("GET", "/api/chat/attachments/x/content", hop=True).__aenter__()
+            )
+            await started.wait()
+            task.cancel()
+            with pytest.raises(asyncio.CancelledError):
+                await task
+        assert closed["done"] is True

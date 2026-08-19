@@ -13,7 +13,6 @@ from gobby.storage import chat_messages
 from gobby.storage.hub.protocol import HubDatabase
 from gobby.storage.projects import PERSONAL_PROJECT_ID
 from gobby.storage.sessions import SessionManager
-from tests.fixtures.postgres import TEST_USER_ID
 
 pytestmark = pytest.mark.unit
 
@@ -27,8 +26,6 @@ HISTORICALLY_BOUND_ID = "aaaaaaaa-aaaa-4aaa-8aaa-000000000005"
 CONVERSATION_ATTACHMENT_ID = "aaaaaaaa-aaaa-4aaa-8aaa-000000000006"
 MESSAGE_ATTACHMENT_ID = "aaaaaaaa-aaaa-4aaa-8aaa-000000000007"
 OTHER_ATTACHMENT_ID = "aaaaaaaa-aaaa-4aaa-8aaa-000000000008"
-LOCAL_MACHINE_ID = "bbbbbbbb-bbbb-4bbb-8bbb-000000000001"
-REMOTE_MACHINE_ID = "bbbbbbbb-bbbb-4bbb-8bbb-000000000002"
 LOCAL_ATTACHMENT_ID = "aaaaaaaa-aaaa-4aaa-8aaa-000000000009"
 REMOTE_ATTACHMENT_ID = "aaaaaaaa-aaaa-4aaa-8aaa-000000000010"
 
@@ -48,64 +45,38 @@ def _create_attachment(
         filename=path.name,
         mime_type="text/plain",
         size_bytes=path.stat().st_size,
-        local_path=str(path),
+        local_path=f"_personal/attachments/{PERSONAL_PROJECT_ID}/{attachment_id[:2]}/{attachment_id}/{path.name}",
+        published=True,
     )
     return attachment_id
 
 
-def _insert_machine(temp_db: HubDatabase, machine_id: str) -> None:
-    temp_db.execute(
-        "INSERT INTO machines (id, hostname, owner_user_id) VALUES (%s, %s, %s) "
-        "ON CONFLICT (id) DO NOTHING",
-        (machine_id, f"test-{machine_id[-4:]}", TEST_USER_ID),
-    )
-
-
-def test_attachment_storage_is_scoped_to_active_machine(
+def test_attachment_storage_is_visible_by_project_and_id(
     temp_db: HubDatabase,
     tmp_path: Path,
 ) -> None:
-    _insert_machine(temp_db, LOCAL_MACHINE_ID)
-    _insert_machine(temp_db, REMOTE_MACHINE_ID)
+    _create_attachment(temp_db, tmp_path, LOCAL_ATTACHMENT_ID)
+    _create_attachment(temp_db, tmp_path, REMOTE_ATTACHMENT_ID)
 
-    with patch("gobby.utils.machine_id.get_machine_id", return_value=LOCAL_MACHINE_ID):
-        _create_attachment(temp_db, tmp_path, LOCAL_ATTACHMENT_ID)
-        chat_attachments.bind_attachments(
+    assert chat_attachments.get_attachment(temp_db, LOCAL_ATTACHMENT_ID) is not None
+    assert chat_attachments.get_attachment(temp_db, REMOTE_ATTACHMENT_ID) is not None
+    assert [
+        row.id
+        for row in chat_attachments.get_attachments_by_ids(
             temp_db,
-            [LOCAL_ATTACHMENT_ID],
-            conversation_id="shared-conversation",
+            [LOCAL_ATTACHMENT_ID, REMOTE_ATTACHMENT_ID],
         )
-
-    with patch("gobby.utils.machine_id.get_machine_id", return_value=REMOTE_MACHINE_ID):
-        _create_attachment(temp_db, tmp_path, REMOTE_ATTACHMENT_ID)
-
-    with patch("gobby.utils.machine_id.get_machine_id", return_value=LOCAL_MACHINE_ID):
-        assert chat_attachments.get_attachment(temp_db, REMOTE_ATTACHMENT_ID) is None
-        assert [
-            row.id
-            for row in chat_attachments.get_attachments_by_ids(
-                temp_db,
-                [LOCAL_ATTACHMENT_ID, REMOTE_ATTACHMENT_ID],
-            )
-        ] == [LOCAL_ATTACHMENT_ID]
-        with pytest.raises(ValueError, match=f"Unknown attachment id: {REMOTE_ATTACHMENT_ID}"):
-            chat_attachments.bind_attachments(
-                temp_db,
-                [REMOTE_ATTACHMENT_ID],
-                conversation_id="shared-conversation",
-            )
-        assert chat_attachments.delete_unbound_attachment(temp_db, REMOTE_ATTACHMENT_ID) is None
-        deleted = chat_attachments.delete_attachments_for_conversations(
-            temp_db,
-            ["shared-conversation"],
-        )
-        assert [row.id for row in deleted] == [LOCAL_ATTACHMENT_ID]
-
+    ] == [LOCAL_ATTACHMENT_ID, REMOTE_ATTACHMENT_ID]
+    chat_attachments.bind_attachments(
+        temp_db,
+        [REMOTE_ATTACHMENT_ID],
+        conversation_id="shared-conversation",
+    )
     remote_row = temp_db.fetchone(
-        "SELECT machine_id::text, conversation_id FROM chat_attachments WHERE id = %s",
+        "SELECT conversation_id FROM chat_attachments WHERE id = %s",
         (REMOTE_ATTACHMENT_ID,),
     )
-    assert remote_row == {"machine_id": REMOTE_MACHINE_ID, "conversation_id": None}
+    assert remote_row == {"conversation_id": "shared-conversation"}
 
 
 def test_bind_attachments_uses_immediate_transaction_for_read_validate_update(
@@ -232,7 +203,8 @@ def test_create_attachment_fetches_created_row_inside_transaction(
             filename="attachment.txt",
             mime_type="text/plain",
             size_bytes=6,
-            local_path=str(tmp_path / "attachment.txt"),
+            local_path=f"_personal/attachments/{PERSONAL_PROJECT_ID}/{ATTACHMENT_ID[:2]}/{ATTACHMENT_ID}/attachment.txt",
+            published=True,
         )
 
     assert record.id == ATTACHMENT_ID
@@ -247,16 +219,20 @@ def test_delete_unbound_attachment_uses_immediate_transaction(
     with patch.object(
         temp_db, "transaction_immediate", wraps=temp_db.transaction_immediate
     ) as transaction_immediate:
-        record = chat_attachments.delete_unbound_attachment(temp_db, attachment_id)
+        claimed = chat_attachments.delete_unbound_attachment(temp_db, attachment_id)
 
-    assert record is not None
+    assert claimed is not None
+    record, token = claimed
     assert record.id == attachment_id
+    assert token
     transaction_immediate.assert_called_once()
     assert isinstance(
         transaction_immediate.call_args.args[0],
         chat_attachments.ChatAttachmentMutation,
     )
-    assert chat_attachments.get_attachment(temp_db, attachment_id) is None
+    remaining = chat_attachments.get_attachment(temp_db, attachment_id, require_published=True)
+    assert remaining is not None
+    assert remaining.claim_token is not None
 
 
 def test_delete_unbound_attachment_keeps_bound_attachment(
@@ -326,7 +302,7 @@ def test_delete_stale_unbound_attachments_deletes_only_never_bound_old_rows(
     deleted = chat_attachments.delete_stale_unbound_attachments(temp_db, cutoff=cutoff)
 
     assert [record.id for record in deleted] == [old_unbound]
-    assert chat_attachments.get_attachment(temp_db, old_unbound) is None
+    assert chat_attachments.get_attachment(temp_db, old_unbound) is not None
     assert chat_attachments.get_attachment(temp_db, fresh_unbound) is not None
     assert chat_attachments.get_attachment(temp_db, bound) is not None
     assert chat_attachments.get_attachment(temp_db, historically_bound) is not None
@@ -364,6 +340,84 @@ def test_delete_attachments_for_conversations_removes_conversation_and_message_l
     deleted = chat_attachments.delete_attachments_for_conversations(temp_db, ["conv-1"])
 
     assert {record.id for record in deleted} == {conversation_attachment, message_attachment}
-    assert chat_attachments.get_attachment(temp_db, conversation_attachment) is None
-    assert chat_attachments.get_attachment(temp_db, message_attachment) is None
+    assert chat_attachments.get_attachment(temp_db, conversation_attachment) is not None
+    assert chat_attachments.get_attachment(temp_db, message_attachment) is not None
     assert chat_attachments.get_attachment(temp_db, other_attachment) is not None
+
+
+def test_get_and_bind_refuse_unpublished_rows(
+    temp_db: HubDatabase,
+    tmp_path: Path,
+) -> None:
+    unpublished = "aaaaaaaa-aaaa-4aaa-8aaa-0000000000aa"
+    chat_attachments.create_attachment(
+        temp_db,
+        attachment_id=unpublished,
+        project_id=PERSONAL_PROJECT_ID,
+        draft_id=None,
+        filename="pending.txt",
+        mime_type="text/plain",
+        size_bytes=1,
+        local_path=f"_personal/attachments/{PERSONAL_PROJECT_ID}/{unpublished[:2]}/{unpublished}/pending.txt",
+        published=False,
+        claim_token="cccccccc-cccc-4ccc-8ccc-000000000001",
+    )
+
+    assert chat_attachments.get_attachment(temp_db, unpublished) is None
+    assert chat_attachments.get_attachments_by_ids(temp_db, [unpublished]) == []
+    with pytest.raises(ValueError, match="Unknown attachment id"):
+        chat_attachments.bind_attachments(temp_db, [unpublished], conversation_id="conv-1")
+
+
+def test_bind_refuses_claimed_published_row(
+    temp_db: HubDatabase,
+    tmp_path: Path,
+) -> None:
+    attachment_id = _create_attachment(temp_db, tmp_path)
+    claimed = chat_attachments.delete_unbound_attachment(temp_db, attachment_id)
+    assert claimed is not None
+
+    with pytest.raises(ValueError, match="Unknown attachment id"):
+        chat_attachments.bind_attachments(temp_db, [attachment_id], conversation_id="conv-1")
+
+
+def test_http_delete_claim_refuses_bound_row(
+    temp_db: HubDatabase,
+    tmp_path: Path,
+) -> None:
+    attachment_id = _create_attachment(temp_db, tmp_path)
+    chat_attachments.bind_attachments(temp_db, [attachment_id], conversation_id="conv-1")
+
+    with pytest.raises(ValueError, match="Only unbound queued attachments can be deleted"):
+        chat_attachments.delete_unbound_attachment(temp_db, attachment_id)
+
+
+def test_save_message_refuses_terminal_cleanup_fence(
+    temp_db: HubDatabase,
+) -> None:
+    from gobby.storage.chat_attachment_fence import (
+        CleanupFenceConflict,
+        acquire_cleanup_fence,
+        finish_cleanup_fence,
+    )
+    from gobby.storage.hub.protocol import ChatAttachmentMutation
+
+    with temp_db.transaction_immediate(ChatAttachmentMutation()) as conn:
+        acquire_cleanup_fence(
+            conn,
+            scope_kind="conversation",
+            scope_id="conv-tombstone",
+            token="dddddddd-dddd-4ddd-8ddd-000000000001",
+            owner="cleanup",
+        )
+        finish_cleanup_fence(
+            conn, scope_kind="conversation", scope_id="conv-tombstone", terminal=True
+        )
+
+    with pytest.raises(CleanupFenceConflict):
+        chat_messages.save_message(
+            temp_db,
+            conversation_id="conv-tombstone",
+            role="user",
+            content="nope",
+        )

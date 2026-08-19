@@ -138,8 +138,13 @@ def _watch_scope_name(root: WikiRootConfig) -> str:
 
 
 def _roots_by_watch_scope(wiki_config: WikiConfig) -> dict[str, WikiRootConfig]:
+    from gobby.files_home_http import is_remote_files_mode
+    from gobby.wiki.owner_dispatch import is_owner_watch_scope
+
     roots: dict[str, WikiRootConfig] = {}
     for root in wiki_config.roots:
+        if is_remote_files_mode() and is_owner_watch_scope(root.scope):
+            continue
         expanded_path = root.path.expanduser()
         if not expanded_path.exists():
             continue

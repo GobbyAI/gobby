@@ -67,34 +67,30 @@ class TestEnsureDaemonConfig:
         target.touch()
         mock_expand.return_value = target
 
-        res = ensure_daemon_config()
+        files_home = tmp_path / "files"
+        files_home.mkdir()
+        res = ensure_daemon_config(files_home=files_home)
         assert not res["created"]
 
     @patch("gobby.cli.install_setup.Path.expanduser")
     @patch("gobby.cli.install_setup.get_install_dir")
-    @patch("gobby.cli.install_setup.copy2")
-    def test_copy_shared(self, mock_copy, mock_get_dir, mock_expand, tmp_path):
+    def test_copy_shared(self, mock_get_dir, mock_expand, tmp_path):
         target = tmp_path / "bootstrap.yaml"
         mock_expand.return_value = target
 
-        shared_dir = tmp_path / "shared"
-        shared_file = shared_dir / "config" / "bootstrap.yaml"
+        shared_file = tmp_path / "shared" / "config" / "bootstrap.yaml"
         shared_file.parent.mkdir(parents=True)
-        shared_file.touch()
+        shared_file.write_text("datastore_mode: local\ndaemon_port: 60887\nbind_host: localhost\n")
 
         mock_get_dir.return_value = tmp_path
 
-        # copy2 is mocked so the file won't actually exist for chmod —
-        # make the side_effect create it so chmod succeeds
-        def fake_copy(src, dst):
-            Path(dst).touch()
-
-        mock_copy.side_effect = fake_copy
-
-        res = ensure_daemon_config()
+        files_home = tmp_path / "files"
+        files_home.mkdir()
+        res = ensure_daemon_config(files_home=files_home)
         assert res["created"]
         assert res["source"] == "shared"
-        mock_copy.assert_called_once_with(shared_file, target)
+        assert yaml.safe_load(target.read_text())["files_home"] == str(files_home.resolve())
+        assert (tmp_path / ".bootstrap.yaml.lock").exists()
 
     @patch("gobby.cli.install_setup.Path.expanduser")
     @patch("gobby.cli.install_setup.get_install_dir")
@@ -104,7 +100,9 @@ class TestEnsureDaemonConfig:
 
         mock_get_dir.return_value = tmp_path / "nonexistent"
 
-        res = ensure_daemon_config()
+        files_home = tmp_path / "files"
+        files_home.mkdir()
+        res = ensure_daemon_config(files_home=files_home)
         assert res["created"]
         assert res["source"] == "generated"
         assert target.exists()

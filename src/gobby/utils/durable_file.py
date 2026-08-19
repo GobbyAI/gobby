@@ -65,6 +65,63 @@ def durable_replace(path: Path, content: bytes, *, mode: int = 0o600) -> None:
         temp_path.unlink(missing_ok=True)
 
 
+def durable_replace_files_home(source: Path, final_locator: str, temp_locator: str) -> None:
+    """Publish streamed bytes through the held files_home fd without mkdir of the root."""
+    from gobby.paths import (
+        assert_held_files_home_identity,
+        ensure_files_home_descendant_dir,
+        fsync_files_home_descendant_dir,
+        open_files_home_descendant,
+        replace_files_home_descendant,
+        require_files_home,
+        unlink_files_home_descendant,
+    )
+
+    require_files_home()
+    assert_held_files_home_identity()
+    parent = str(Path(final_locator).parent)
+    if parent not in {"", "."}:
+        ensure_files_home_descendant_dir(parent)
+    flags = os.O_WRONLY | os.O_CREAT | os.O_EXCL
+    fd = open_files_home_descendant(temp_locator, flags, create_parents=True)
+    try:
+        with source.open("rb") as handle:
+            while chunk := handle.read(1024 * 1024):
+                remaining = memoryview(chunk)
+                while remaining:
+                    written = os.write(fd, remaining)
+                    if written <= 0:
+                        raise DurableFileError(
+                            f"Failed to write temporary file for {final_locator}"
+                        )
+                    remaining = remaining[written:]
+        os.fsync(fd)
+    except Exception:
+        os.close(fd)
+        try:
+            unlink_files_home_descendant(temp_locator)
+        except FileNotFoundError:
+            pass
+        raise
+    else:
+        os.close(fd)
+
+    replace_files_home_descendant(temp_locator, final_locator)
+    if parent not in {"", "."}:
+        fsync_files_home_descendant_dir(parent)
+    else:
+        from gobby.paths import files_home_root_fd
+
+        os.fsync(files_home_root_fd())
+    verify_fd = open_files_home_descendant(final_locator, os.O_RDONLY)
+    try:
+        if os.fstat(verify_fd).st_size != source.stat().st_size:
+            raise DurableFileError(f"Durable replacement readback mismatch for {final_locator}")
+        assert_held_files_home_identity()
+    finally:
+        os.close(verify_fd)
+
+
 def durable_replace_text(path: Path, content: str, *, mode: int = 0o600) -> None:
     """Durably replace ``path`` with UTF-8 text."""
     durable_replace(path, content.encode(), mode=mode)
@@ -73,6 +130,7 @@ def durable_replace_text(path: Path, content: str, *, mode: int = 0o600) -> None
 __all__ = [
     "DurableFileError",
     "durable_replace",
+    "durable_replace_files_home",
     "durable_replace_text",
     "exclusive_file_lock",
 ]

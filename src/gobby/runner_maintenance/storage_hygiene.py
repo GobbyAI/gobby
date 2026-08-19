@@ -8,9 +8,10 @@ from collections.abc import Awaitable, Callable
 from datetime import UTC, datetime, timedelta
 from typing import TYPE_CHECKING, Any
 
-from gobby.cli.utils import get_gobby_home
+from gobby.paths import get_files_home
 from gobby.runner_maintenance_helpers import _positive_int_or_default, _run_db
 from gobby.runner_maintenance_recurring import _wait_for_first_maintenance_cycle
+from gobby.servers.chat_attachment_cleanup import cleanup_stale_attachments_sync
 from gobby.servers.chat_attachment_files import unlink_stale_attachment_file_sync
 from gobby.storage.schema_contract import sweep_test_schemas
 
@@ -105,25 +106,12 @@ async def purge_deleted_skills_loop(
             break
 
 
-def _remove_stale_chat_attachment_file(local_path: str) -> bool:
-    path, removed = unlink_stale_attachment_file_sync(local_path)
-    if path is None:
-        logger.warning("Skipping stale chat attachment outside managed storage: %s", local_path)
-        return False
-
-    # Empty upload directories are scratch structure; pruning is best effort
-    # because concurrent uploads may share parent buckets.
-    root = get_gobby_home() / "projects"
-    current = path.parent
-    while current != root and root in current.parents:
-        try:
-            current.rmdir()
-        except FileNotFoundError:
-            break
-        except OSError:
-            break
-        current = current.parent
-    return removed
+def _remove_stale_chat_attachment_file(
+    project_id: str,
+    attachment_id: str,
+    filename: str,
+) -> bool:
+    return unlink_stale_attachment_file_sync(project_id, attachment_id, filename)
 
 
 async def cleanup_chat_attachments_loop(
@@ -135,27 +123,23 @@ async def cleanup_chat_attachments_loop(
     sleep: Callable[[float], Awaitable[None]] = asyncio.sleep,
 ) -> None:
     """Delete stale unbound chat uploads left behind by abandoned browser drafts."""
-    from gobby.storage import chat_attachments
 
     async def cleanup_once(retention_hours: int) -> None:
+        if get_files_home() is None:
+            return
         cutoff = datetime.now(UTC) - timedelta(hours=retention_hours)
-        records = await _run_db(
-            run_db,
-            chat_attachments.delete_stale_unbound_attachments,
+        records = await asyncio.to_thread(
+            cleanup_stale_attachments_sync,
             db,
             cutoff=cutoff,
             limit=_CHAT_ATTACHMENT_CLEANUP_BATCH_LIMIT,
         )
         if not records:
             return
-        removed_files = 0
-        for record in records:
-            if await asyncio.to_thread(_remove_stale_chat_attachment_file, record.local_path):
-                removed_files += 1
         logger.info(
             "Removed %s stale unbound chat attachment row(s), %s file(s)",
             len(records),
-            removed_files,
+            len(records),
         )
 
     while not is_shutdown_requested():

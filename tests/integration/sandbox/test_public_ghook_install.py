@@ -44,13 +44,15 @@ def test_public_ghook_install_and_live_sandbox_contract(
 
     home = tmp_path / "home"
     home.mkdir()
+    files_home = tmp_path / "files"
+    files_home.mkdir()
     monkeypatch.setenv("HOME", str(home))
     monkeypatch.setenv("USERPROFILE", str(home))
     monkeypatch.setenv(_GHOOK_INSTALL_VERSION_ENV, version)
     monkeypatch.setenv(_GHOOK_INSTALL_METHOD_ENV, method)
     monkeypatch.chdir(REPO_ROOT)
 
-    ensure_daemon_config()
+    ensure_daemon_config(files_home=files_home)
 
     result = _install_ghook(force=True)
     assert result["installed"] is True

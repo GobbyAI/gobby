@@ -8,6 +8,7 @@ import pytest
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
 
+from gobby.servers.chat_attachment_files import attachment_relative_locator
 from gobby.servers.routes.chat import create_chat_router
 from gobby.storage import chat_attachments, chat_messages
 from gobby.storage.hub.protocol import HubDatabase
@@ -28,7 +29,13 @@ def test_delete_messages_removes_message_bound_attachment_file(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     gobby_home = tmp_path / "gobby-home"
+    files_home = tmp_path / "files_home"
+    files_home.mkdir()
     monkeypatch.setenv("GOBBY_HOME", str(gobby_home))
+    gobby_home.mkdir()
+    bootstrap = gobby_home / "bootstrap.yaml"
+    bootstrap.write_text(f"datastore_mode: local\nfiles_home: {files_home}\n", encoding="utf-8")
+    bootstrap.chmod(0o600)
     server = create_http_server(
         database=temp_db,
         session_manager=SessionManager(temp_db),
@@ -36,9 +43,8 @@ def test_delete_messages_removes_message_bound_attachment_file(
     app = FastAPI()
     app.include_router(create_chat_router(server))
 
-    attachment_path = (
-        gobby_home / "projects" / PERSONAL_PROJECT_ID / "attachments" / "attachment.txt"
-    )
+    locator = attachment_relative_locator(PERSONAL_PROJECT_ID, ATTACHMENT_ID, "attachment.txt")
+    attachment_path = files_home / locator
     attachment_path.parent.mkdir(parents=True)
     attachment_path.write_text("uploaded")
     attachment = chat_attachments.create_attachment(
@@ -49,7 +55,8 @@ def test_delete_messages_removes_message_bound_attachment_file(
         filename=attachment_path.name,
         mime_type="text/plain",
         size_bytes=attachment_path.stat().st_size,
-        local_path=str(attachment_path),
+        local_path=locator,
+        published=True,
     )
     message_id = chat_messages.save_message(
         temp_db,
@@ -73,7 +80,14 @@ def test_delete_messages_skips_attachment_paths_outside_managed_storage(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    monkeypatch.setenv("GOBBY_HOME", str(tmp_path / "gobby-home"))
+    files_home = tmp_path / "files_home"
+    files_home.mkdir()
+    gobby_home = tmp_path / "gobby-home"
+    monkeypatch.setenv("GOBBY_HOME", str(gobby_home))
+    gobby_home.mkdir()
+    bootstrap = gobby_home / "bootstrap.yaml"
+    bootstrap.write_text(f"datastore_mode: local\nfiles_home: {files_home}\n", encoding="utf-8")
+    bootstrap.chmod(0o600)
     server = create_http_server(
         database=temp_db,
         session_manager=SessionManager(temp_db),
@@ -83,6 +97,9 @@ def test_delete_messages_skips_attachment_paths_outside_managed_storage(
 
     attachment_path = tmp_path / "outside.txt"
     attachment_path.write_text("uploaded")
+    locator = attachment_relative_locator(
+        PERSONAL_PROJECT_ID, UNSAFE_ATTACHMENT_ID, attachment_path.name
+    )
     attachment = chat_attachments.create_attachment(
         temp_db,
         attachment_id=UNSAFE_ATTACHMENT_ID,
@@ -91,7 +108,8 @@ def test_delete_messages_skips_attachment_paths_outside_managed_storage(
         filename=attachment_path.name,
         mime_type="text/plain",
         size_bytes=attachment_path.stat().st_size,
-        local_path=str(attachment_path),
+        local_path=locator,
+        published=True,
     )
     message_id = chat_messages.save_message(
         temp_db,

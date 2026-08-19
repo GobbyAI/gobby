@@ -191,6 +191,16 @@ class DaemonConfig(BaseModel):
         default="local",
         description="Whether this machine owns the datastore stack or connects to a remote hub.",
     )
+    files_home: str | None = Field(
+        default=None,
+        description="Absolute hub files bind directory. Local mode only.",
+        exclude=True,
+    )
+    hub_daemon_url: str | None = Field(
+        default=None,
+        description="HTTP origin of the files-owner daemon. Remote mode only.",
+        exclude=True,
+    )
     daemon_health_check_interval: float = Field(
         default=10.0,
         description="Daemon health check interval in seconds",

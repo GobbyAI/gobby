@@ -67,12 +67,15 @@ memory:
 """
     )
     bootstrap_path = home / "bootstrap.yaml"
+    files_home = home / "files"
+    files_home.mkdir(exist_ok=True)
     bootstrap_path.write_text(
         f"""hub_backend: postgres
 database_url: {database_url}
 daemon_port: {http_port}
 bind_host: localhost
 websocket_port: {ws_port}
+files_home: {files_home}
 """
     )
     bootstrap_path.chmod(0o600)

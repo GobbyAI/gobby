@@ -21,16 +21,17 @@ def _report_lock_survivor(deps: Any, quiet: bool) -> None:
     A held lock at this point means an orphaned daemon the kill sequence
     missed (e.g. reparented past the pid file's record).
     """
-    from gobby.runner_pid_file import probe_daemon_lock
+    from gobby.runner_pid_file import ProbeState, probe_daemon_lock
 
     pid_file = cast(Path, deps.get_gobby_home() / "gobby.pid")
     owner = probe_daemon_lock(pid_file)
-    if owner is None:
+    if owner.state is ProbeState.ABSENT:
         return
-    deps.logger.warning("Daemon lock still held by PID %s after stop", owner or "unknown")
+    pid = owner.pid or "unknown"
+    deps.logger.warning("Daemon lock still held by PID %s after stop", pid)
     if not quiet:
         deps._stop_step(
-            f"Warning: daemon lock still held by PID {owner or 'unknown'} — "
+            f"Warning: daemon lock still held by PID {pid} — "
             "an orphaned daemon may still be running",
             error=True,
         )

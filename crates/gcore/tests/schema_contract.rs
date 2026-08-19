@@ -17,18 +17,18 @@ fn embedded_assets_publish_a_complete_schema_identity() {
     assert_eq!(identity.runner_protocol_version, RUNNER_PROTOCOL_VERSION);
     assert_eq!(identity.baseline.version, BASELINE_VERSION);
     assert_eq!(identity.baseline.checksum, BASELINE_CHECKSUM);
-    assert_eq!(identity.latest_asset.version, 391);
+    assert_eq!(identity.latest_asset.version, 392);
     assert_eq!(
         identity.latest_asset.filename,
-        "391_session_last_activity_and_creation_defaults.sql"
+        "392_chat_attachments_deletion_lease.sql"
     );
     assert_eq!(
         identity.latest_asset.checksum,
-        "40fafbe193afe1a097e71f80d236c466cb759533160eb56fe9afd6b8c74321cf"
+        "4d3f2e9652a958f4ad7f0f64410e622e4e4629b8388b1610527170e0bac83598"
     );
     assert_eq!(
         identity.root_hash,
-        "8a4a5cd15539999f573e0d0829002ce73d0b90a870e5785dca0e2355b08399f7"
+        "204db53e26c9e16a945d1e26c5f3e707a065fdecd8b5fb24f156fb09ec996403"
     );
 
     let _public_runner_type = std::any::type_name::<SchemaRunner<'static>>();
@@ -58,16 +58,17 @@ fn statement_splitter_preserves_dollar_quoted_bodies() {
 }
 
 #[test]
-fn python_backup_manifest_v2_fixture_round_trips() {
-    let fixture = include_str!("fixtures/hub_backup_manifest/v2_roundtrip.json");
-    let manifest = parse_backup_manifest(fixture).expect("valid Python-produced v2 manifest");
+fn python_backup_manifest_v3_fixture_round_trips() {
+    let fixture = include_str!("fixtures/hub_backup_manifest/v3_roundtrip.json");
+    let manifest = parse_backup_manifest(fixture).expect("valid Python-produced v3 manifest");
 
     assert_eq!(manifest.manifest_format, "gobby-hub-backup-manifest");
-    assert_eq!(manifest.manifest_version, 2);
+    assert_eq!(manifest.manifest_version, 3);
     assert_eq!(manifest.backup_starting_head, 376);
-    assert_eq!(manifest.stores.len(), 4);
+    assert_eq!(manifest.stores.len(), 5);
+    assert!(manifest.stores.contains_key("files"));
 
     let round_trip = serde_json::to_string(&manifest).expect("serializable manifest");
-    let reparsed = parse_backup_manifest(&round_trip).expect("Rust-produced v2 manifest");
+    let reparsed = parse_backup_manifest(&round_trip).expect("Rust-produced v3 manifest");
     assert_eq!(reparsed, manifest);
 }

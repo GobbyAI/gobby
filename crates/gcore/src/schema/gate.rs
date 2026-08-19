@@ -10,8 +10,8 @@ use time::format_description::well_known::Rfc3339;
 use time::{Duration, OffsetDateTime};
 
 const MANIFEST_FORMAT: &str = "gobby-hub-backup-manifest";
-const MANIFEST_VERSION: u32 = 2;
-const STORE_KEYS: [&str; 4] = ["falkordb", "postgres", "qdrant", "volumes"];
+const MANIFEST_VERSION: u32 = 3;
+const STORE_KEYS: [&str; 5] = ["falkordb", "files", "postgres", "qdrant", "volumes"];
 
 #[derive(Clone, Debug, Eq, PartialEq, Deserialize, Serialize)]
 #[serde(deny_unknown_fields)]
@@ -161,6 +161,11 @@ impl VerifiedBackupManifest {
                 Some(_) => reasons.push(format!("restore_verified not earned for store: {key}")),
                 None => reasons.push(format!("required store missing: {key}")),
             }
+        }
+        match manifest.stores.get("files") {
+            Some(store) if store.archive_verified.verified => {}
+            Some(_) => reasons.push("archive_verified not earned for store: files".to_owned()),
+            None => reasons.push("required store missing: files".to_owned()),
         }
         reasons.extend(artifact_integrity_errors(
             context.backup_root,
@@ -336,9 +341,9 @@ mod tests {
 
     #[test]
     fn parser_rejects_wrong_version_and_unsafe_artifact_paths() {
-        let fixture = include_str!("../../tests/fixtures/hub_backup_manifest/v2_roundtrip.json");
+        let fixture = include_str!("../../tests/fixtures/hub_backup_manifest/v3_roundtrip.json");
         let mut value: serde_json::Value = serde_json::from_str(fixture).expect("fixture JSON");
-        value["manifest_version"] = 3.into();
+        value["manifest_version"] = 4.into();
         value["artifacts"][0]["path"] = "../escape".into();
         value["stores"]["postgres"]["details"] = serde_json::Value::Array(Vec::new());
 

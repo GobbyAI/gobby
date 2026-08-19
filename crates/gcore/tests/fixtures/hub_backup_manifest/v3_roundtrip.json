@@ -12,7 +12,7 @@
   "epoch_id": null,
   "gobby_version": "0.5.0",
   "manifest_format": "gobby-hub-backup-manifest",
-  "manifest_version": 2,
+  "manifest_version": 3,
   "row_count_probes": {},
   "source_identity": {
     "database_name": "gobby_fixture",
@@ -21,6 +21,19 @@
   },
   "stores": {
     "falkordb": {
+      "archive_verified": {
+        "method": "fixture",
+        "timestamp": "2026-08-05T00:00:00+00:00",
+        "verified": true
+      },
+      "details": {},
+      "restore_verified": {
+        "method": "fixture-restore",
+        "timestamp": "2026-08-05T00:00:00+00:00",
+        "verified": true
+      }
+    },
+    "files": {
       "archive_verified": {
         "method": "fixture",
         "timestamp": "2026-08-05T00:00:00+00:00",

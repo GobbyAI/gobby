@@ -1,4 +1,4 @@
-"""Tests for the gobby-hub-backup-manifest v2 contract and destructive gate."""
+"""Tests for the gobby-hub-backup-manifest v3 contract and destructive gate."""
 
 from __future__ import annotations
 
@@ -89,6 +89,7 @@ def _manifest(
             "qdrant": _store(),
             "falkordb": _store(),
             "volumes": _store(),
+            "files": _store(),
         },
     )
 
@@ -102,7 +103,7 @@ class TestManifestRoundTrip:
         loaded = load_manifest(path)
 
         assert loaded.manifest_format == MANIFEST_FORMAT == "gobby-hub-backup-manifest"
-        assert loaded.manifest_version == MANIFEST_VERSION == 2
+        assert loaded.manifest_version == MANIFEST_VERSION == 3
         assert loaded.epoch_id == "epoch-123"
         assert loaded.source_identity == _identity()
         assert loaded.backup_starting_head == 353
@@ -131,7 +132,7 @@ class TestManifestRoundTrip:
         path = tmp_path / "manifest.json"
         write_manifest(_manifest(), path)
         raw = path.read_text(encoding="utf-8").replace(
-            '"manifest_version": 2', '"manifest_version": 1'
+            '"manifest_version": 3', '"manifest_version": 1'
         )
         path.write_text(raw, encoding="utf-8")
 
@@ -190,6 +191,30 @@ class TestManifestGate:
         )
         assert refused.ok is False
         assert accepted.ok is True
+
+    def test_refuses_missing_or_unverified_files_store(self, tmp_path: Path) -> None:
+        backup_root = _backup_root(tmp_path)
+        manifest = _manifest()
+        manifest.stores.pop("files")
+        missing = check_manifest_gate(
+            manifest,
+            backup_root=backup_root,
+            current_identity=_identity(),
+            now=_NOW,
+        )
+        assert missing.ok is False
+        assert any("files" in reason for reason in missing.reasons)
+
+        unverified_manifest = _manifest()
+        unverified_manifest.stores["files"] = _store(restore_verified=False)
+        refused = check_manifest_gate(
+            unverified_manifest,
+            backup_root=backup_root,
+            current_identity=_identity(),
+            now=_NOW,
+        )
+        assert refused.ok is False
+        assert any("files" in reason for reason in refused.reasons)
 
     def test_refuses_manifest_lacking_restore_verified(self, tmp_path: Path) -> None:
         decision = check_manifest_gate(

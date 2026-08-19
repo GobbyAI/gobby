@@ -1273,3 +1273,35 @@ async def test_index_runs_concurrently_across_different_vaults(
     assert a_entered.is_set() and b_entered.is_set()
     assert result_a["ok"] is True
     assert result_b["ok"] is True
+
+
+async def test_mutating_gateway_inherits_held_singleton_fd(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from gobby.runner_pid_file import INHERITED_LOCK_FD_ENV, claim_pid_file
+
+    home = tmp_path / "gobby-home"
+    home.mkdir()
+    monkeypatch.setenv("GOBBY_HOME", str(home))
+    claim = claim_pid_file(home / "gobby.pid", role="daemon")
+    assert claim is not None
+    lock_fd = claim.fileno()
+    captured: list[dict[str, object]] = []
+
+    async def fake_create_subprocess_exec(*args: str, **kwargs: object) -> FakeProcess:
+        captured.append({"args": args, **kwargs})
+        return FakeProcess()
+
+    monkeypatch.setattr("asyncio.create_subprocess_exec", fake_create_subprocess_exec)
+    try:
+        gateway = GwikiGateway(binary="/bin/gwiki", project_root=tmp_path / "repo")
+        await gateway.index()
+    finally:
+        claim.release()
+
+    assert captured
+    env = captured[0]["env"]
+    assert isinstance(env, dict)
+    assert env[INHERITED_LOCK_FD_ENV] == str(lock_fd)
+    assert captured[0].get("pass_fds") == (lock_fd,)

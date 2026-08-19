@@ -42,10 +42,11 @@ def resolve_compose_runtime(
     values, while explicit caller overrides take final precedence.
     """
     home = gobby_home.expanduser()
-    services_bind_address = _require_local_datastore_mode(home)
+    services_bind_address, files_home = _require_local_datastore_mode(home)
     canonical = _postgres_environment(home, database_url=database_url)
     canonical.update(_pgsearch_environment())
     canonical["GOBBY_SERVICES_BIND_ADDRESS"] = services_bind_address
+    canonical["GOBBY_FILES_HOME"] = files_home
 
     unknown_profiles = set(profiles) - set(MANAGED_SERVICE_PROFILES)
     if unknown_profiles:
@@ -63,7 +64,7 @@ def resolve_compose_runtime(
     return ComposeRuntime(environment=environment, profiles=profiles)
 
 
-def _require_local_datastore_mode(gobby_home: Path) -> str:
+def _require_local_datastore_mode(gobby_home: Path) -> tuple[str, str]:
     from gobby.config.bootstrap import BootstrapConfigError, load_bootstrap
 
     bootstrap_path = gobby_home / "bootstrap.yaml"
@@ -75,7 +76,9 @@ def _require_local_datastore_mode(gobby_home: Path) -> str:
         raise ComposeEnvironmentError(
             "this machine is in datastore_mode: remote; compose management runs on the hub"
         )
-    return config.services_bind_address
+    if not config.files_home:
+        raise ComposeEnvironmentError("files_home is not configured")
+    return config.services_bind_address, config.files_home
 
 
 def _postgres_environment(gobby_home: Path, *, database_url: str | None) -> dict[str, str]:
@@ -234,6 +237,7 @@ def _validate_effective_environment(environment: dict[str, str], profiles: tuple
         "GOBBY_POSTGRES_PASSWORD",
         "GOBBY_PG_SEARCH_VERSION",
         "GOBBY_PG_SEARCH_SHA256",
+        "GOBBY_FILES_HOME",
     ):
         if not environment.get(key):
             raise ComposeEnvironmentError(f"{key} must not be empty")

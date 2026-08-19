@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import asyncio
 import json
+import os
 import time
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
@@ -10,6 +11,7 @@ from pathlib import Path
 from typing import Any
 from weakref import WeakKeyDictionary
 
+from gobby.runner_pid_file import held_singleton_claim
 from gobby.runtime_grants.launch import ManagedLaunch, merge_child_env
 from gobby.runtime_output import (
     forward_subprocess_stderr,
@@ -52,6 +54,20 @@ SERIALIZED_WRITE_COMMANDS = frozenset(
 _vault_write_locks: WeakKeyDictionary[asyncio.AbstractEventLoop, dict[str, asyncio.Lock]] = (
     WeakKeyDictionary()
 )
+
+
+def _subprocess_env_and_pass_fds(
+    child_env: Mapping[str, str] | None,
+) -> tuple[dict[str, str] | None, tuple[int, ...]]:
+    """Inherit the process-local singleton lock into a gwiki child."""
+    claim = held_singleton_claim()
+    if child_env is None and claim is None:
+        return None, ()
+    env = dict(child_env) if child_env is not None else dict(os.environ)
+    if claim is None:
+        return env, ()
+    env.update(claim.inherit_environment())
+    return env, (claim.fileno(),)
 
 
 def _vault_write_lock(key: str) -> asyncio.Lock:
@@ -514,14 +530,25 @@ class GwikiGateway:
         stdin_data: bytes | None = None,
     ) -> tuple[bytes, str] | dict[str, Any]:
         proc: asyncio.subprocess.Process | None = None
+        env, pass_fds = _subprocess_env_and_pass_fds(self._child_env)
         try:
-            proc = await asyncio.create_subprocess_exec(
-                *argv,
-                stdin=asyncio.subprocess.PIPE if stdin_data is not None else None,
-                stdout=asyncio.subprocess.PIPE,
-                stderr=asyncio.subprocess.PIPE,
-                env=self._child_env,
-            )
+            if pass_fds:
+                proc = await asyncio.create_subprocess_exec(
+                    *argv,
+                    stdin=asyncio.subprocess.PIPE if stdin_data is not None else None,
+                    stdout=asyncio.subprocess.PIPE,
+                    stderr=asyncio.subprocess.PIPE,
+                    env=env,
+                    pass_fds=pass_fds,
+                )
+            else:
+                proc = await asyncio.create_subprocess_exec(
+                    *argv,
+                    stdin=asyncio.subprocess.PIPE if stdin_data is not None else None,
+                    stdout=asyncio.subprocess.PIPE,
+                    stderr=asyncio.subprocess.PIPE,
+                    env=env,
+                )
             stdout_pipe = getattr(proc, "stdout", None)
             stderr_pipe = getattr(proc, "stderr", None)
             # stdin-fed runs must use communicate() so the input is written and
@@ -603,13 +630,23 @@ class GwikiGateway:
         started_at = datetime.now(UTC).isoformat()
         started = time.perf_counter()
         timeout_seconds = self._timeout_seconds if timeout is None else timeout
+        env, pass_fds = _subprocess_env_and_pass_fds(self._child_env)
         try:
-            proc = await asyncio.create_subprocess_exec(
-                *command,
-                stdout=asyncio.subprocess.PIPE,
-                stderr=asyncio.subprocess.PIPE,
-                env=self._child_env,
-            )
+            if pass_fds:
+                proc = await asyncio.create_subprocess_exec(
+                    *command,
+                    stdout=asyncio.subprocess.PIPE,
+                    stderr=asyncio.subprocess.PIPE,
+                    env=env,
+                    pass_fds=pass_fds,
+                )
+            else:
+                proc = await asyncio.create_subprocess_exec(
+                    *command,
+                    stdout=asyncio.subprocess.PIPE,
+                    stderr=asyncio.subprocess.PIPE,
+                    env=env,
+                )
             stdout, stderr = await asyncio.wait_for(
                 proc.communicate(),
                 timeout=timeout_seconds,

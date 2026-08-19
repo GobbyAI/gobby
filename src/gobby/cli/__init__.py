@@ -18,6 +18,7 @@ from .daemon_lease import lease
 from .datastores import datastores as datastores_cli
 from .embeddings import embeddings
 from .extensions import hooks, webhooks
+from .files import files
 from .github import github
 from .hub_backup.cli import hub_backup
 from .hub_maintenance import hub_maintenance
@@ -134,6 +135,7 @@ cli.add_command(qdrant)
 cli.add_command(postgres_cli)
 cli.add_command(pack)
 cli.add_command(unpack)
+cli.add_command(files)
 cli.add_command(hub_backup)
 cli.add_command(hub_maintenance)
 cli.add_command(comms)

@@ -874,19 +874,44 @@ def test_init_local_storage(tmp_path: Path) -> None:
     mock_db = MagicMock()
     config = MagicMock()
     config.database_url = "postgresql://localhost/gobby"
+    config.datastore_mode = "local"
 
     with (
         patch("gobby.config.bootstrap.load_bootstrap", return_value=config),
         patch("gobby.storage.hub.postgres.PostgresHubDatabase", return_value=mock_db) as mock_open,
         patch("gobby.storage.projects.ensure_personal_project") as ensure_personal,
+        patch("gobby.runner_pid_file.claim_pid_file") as claim,
     ):
         result = init_local_storage()
+    claim.assert_called_once()
 
     assert result is mock_db
     assert mock_db.apply_migrations.call_count == 1
     mock_open.assert_called_once_with(config.database_url, pool_config=config.postgres_pool)
     mock_db.apply_migrations.assert_called_once_with()
     ensure_personal.assert_called_once_with(mock_db)
+
+
+def test_init_local_storage_remote_skips_maintenance_claim() -> None:
+    from gobby.cli.utils import init_local_storage
+
+    mock_db = MagicMock()
+    config = MagicMock()
+    config.database_url = "postgresql://localhost/gobby"
+    config.datastore_mode = "remote"
+    config.postgres_pool = None
+
+    with (
+        patch("gobby.config.bootstrap.load_bootstrap", return_value=config),
+        patch("gobby.storage.hub.postgres.PostgresHubDatabase", return_value=mock_db),
+        patch("gobby.storage.projects.ensure_personal_project") as ensure_personal,
+        patch("gobby.runner_pid_file.claim_pid_file") as claim,
+    ):
+        result = init_local_storage()
+
+    assert result is mock_db
+    ensure_personal.assert_called_once_with(mock_db)
+    claim.assert_not_called()
 
 
 # ---------------------------------------------------------------------------

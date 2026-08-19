@@ -24,9 +24,12 @@ fn assert_vault_shape(root: &std::path::Path) {
 fn init_creates_vault_shape() {
     let tmp = tempfile::tempdir().expect("tempdir");
     let hub = tmp.path().join("hub");
+    let gobby_home = tmp.path().join("gobby-home");
+    std::fs::create_dir_all(&gobby_home).expect("gobby home");
     let topic_output = common::gwiki_command()
         .args(["init", "--topic", "rust"])
         .env("GOBBY_WIKI_HUB", &hub)
+        .env("GOBBY_HOME", &gobby_home)
         .current_dir(tmp.path())
         .output()
         .expect("run topic init");
@@ -37,8 +40,10 @@ fn init_creates_vault_shape() {
         String::from_utf8_lossy(&topic_output.stdout),
         String::from_utf8_lossy(&topic_output.stderr)
     );
-    assert_vault_shape(&hub.join("topics").join("rust"));
+    assert_vault_shape(&hub.join("rust"));
+    assert!(!hub.join("topics").join("rust").exists());
     assert!(hub.join("wikis.json").is_file());
+    assert!(!hub.join("_gwiki").join("scope.json").exists());
 
     let project = tmp.path().join("project");
     let gcode_json = common::write_gcode_json(&project);
@@ -46,6 +51,7 @@ fn init_creates_vault_shape() {
     let project_output = common::gwiki_command()
         .args(["init", "--project"])
         .env_remove("GOBBY_WIKI_HUB")
+        .env("GOBBY_HOME", &gobby_home)
         .current_dir(&project)
         .output()
         .expect("run project init");
@@ -68,9 +74,12 @@ fn init_seeds_obsidian_and_gitignores_inside_git_repo() {
     std::fs::create_dir_all(project.join(".git")).expect("fake git work tree");
     let gcode_json = common::write_gcode_json(&project);
 
+    let gobby_home = tmp.path().join("gobby-home");
+    std::fs::create_dir_all(&gobby_home).expect("gobby home");
     let output = common::gwiki_command()
         .args(["init", "--project"])
         .env_remove("GOBBY_WIKI_HUB")
+        .env("GOBBY_HOME", &gobby_home)
         .current_dir(&project)
         .output()
         .expect("run project init");
@@ -110,9 +119,12 @@ fn init_outside_git_repo_seeds_obsidian_without_gitignore() {
     let project = tmp.path().join("project");
     common::write_gcode_json(&project);
 
+    let gobby_home = tmp.path().join("gobby-home");
+    std::fs::create_dir_all(&gobby_home).expect("gobby home");
     let output = common::gwiki_command()
         .args(["init", "--project"])
         .env_remove("GOBBY_WIKI_HUB")
+        .env("GOBBY_HOME", &gobby_home)
         .current_dir(&project)
         .output()
         .expect("run project init");

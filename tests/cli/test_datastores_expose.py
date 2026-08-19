@@ -27,10 +27,13 @@ pytestmark = pytest.mark.unit
 
 
 def _write_local_bootstrap(home: Path, bind_address: str = "127.0.0.1") -> None:
+    files_home = home / "files"
+    files_home.mkdir(exist_ok=True)
     write_bootstrap_yaml(
         home / "bootstrap.yaml",
         {
             "datastore_mode": "local",
+            "files_home": str(files_home),
             "database_url": "postgresql://gobby:secret@localhost:60891/gobby",
             "services_bind_address": bind_address,
         },
@@ -139,9 +142,13 @@ def test_cold_start_reads_bind_from_bootstrap(
 
     class _Runtime:
         @property
-        def config(self) -> object:
+        def operational_config(self) -> object:
             order.append("config")
             raise click.ClickException("stop after sequencing check")
+
+        @property
+        def config(self) -> object:
+            return self.operational_config
 
     monkeypatch.setattr(daemon, "_services_start", start_services)
     monkeypatch.setattr("gobby.cli.runtime.get_cli_runtime", lambda _ctx: _Runtime())

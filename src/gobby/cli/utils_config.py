@@ -75,12 +75,20 @@ def init_local_storage() -> HubDatabase:
         raise RuntimeError("PostgreSQL hub database is not configured")
     hub_db = PostgresHubDatabase(config.database_url, pool_config=config.postgres_pool)
     initialized = False
+    claim = None
+    if config.datastore_mode == "local":
+        from gobby.paths import get_gobby_home
+        from gobby.runner_pid_file import claim_pid_file
+
+        claim = claim_pid_file(get_gobby_home() / "gobby.pid", role="maintenance")
     try:
         hub_db.apply_migrations()
         ensure_personal_project(hub_db)
         logger.debug("Database: PostgreSQL hub")
         initialized = True
     finally:
+        if claim is not None:
+            claim.release()
         if not initialized:
             hub_db.close()
     return hub_db

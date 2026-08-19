@@ -319,6 +319,11 @@ class TestStartCommand:
         with patch("gobby.cli.daemon._reconcile_ui_exposure") as reconcile:
             yield reconcile
 
+    @pytest.fixture(autouse=True)
+    def mock_service_admission(self) -> Generator[MagicMock]:
+        with patch("gobby.cli.daemon.admit_service_start", return_value=None) as admit:
+            yield admit
+
     def test_start_help(self, runner: CliRunner) -> None:
         """Test start --help displays help text."""
         removed_option = "--no-" + "ui"
@@ -490,7 +495,7 @@ class TestStartCommand:
             call_order.append("docker")
             return ServiceStartResult("success", "Docker services started")
 
-        def start_service() -> dict[str, bool]:
+        def start_service(**_kwargs: object) -> dict[str, bool]:
             call_order.append("service")
             return {"success": True}
 
@@ -979,9 +984,9 @@ class TestStartCommand:
         mock_daemon_config: MagicMock,
         temp_dir: Path,
     ) -> None:
-        """Test start kills existing gobby daemon processes."""
+        """A leftover pid file is not treated as a live daemon."""
         mock_load_config.return_value = mock_daemon_config
-        mock_kill_daemons.return_value = 2  # Two processes killed
+        mock_kill_daemons.return_value = 2
         gobby_dir = temp_dir / ".gobby"
 
         with (
@@ -1011,7 +1016,8 @@ class TestStartCommand:
                 result = runner.invoke(cli, ["start"])
 
                 assert result.exit_code == 0
-                assert "Stopped 2 existing process(es)" in result.output
+                assert "Stopped 2 existing process(es)" not in result.output
+                mock_kill_daemons.assert_not_called()
 
 
 class TestStopCommand:
@@ -1173,6 +1179,11 @@ class TestRestartCommand:
     def runner(self) -> CliRunner:
         """Create a CLI test runner."""
         return CliRunner()
+
+    @pytest.fixture(autouse=True)
+    def mock_service_admission(self) -> Generator[MagicMock]:
+        with patch("gobby.cli.daemon.admit_service_start", return_value=None) as admit:
+            yield admit
 
     def test_restart_help(self, runner: CliRunner) -> None:
         """Test restart --help displays help text."""
@@ -1717,7 +1728,6 @@ class TestStatusCommand:
 
             assert result.exit_code == 0
             assert "Stopped" in result.output
-            assert "Stale PID file found" in result.output
             assert "Uptime:" not in result.output
 
     @patch("gobby.utils.deps.check_config_mismatches", return_value=[])
@@ -1725,6 +1735,7 @@ class TestStatusCommand:
         "gobby.utils.deps.collect_all_deps",
         return_value={"gobby": {}, "coding_clis": {}, "dependencies": {}},
     )
+    @patch("gobby.cli.daemon.probe_daemon_lock")
     @patch("gobby.cli.daemon.get_gobby_home")
     @patch("gobby.cli.daemon.fetch_rich_status", return_value={"process": {}})
     @patch("gobby.cli.daemon.psutil.Process")
@@ -1737,6 +1748,7 @@ class TestStatusCommand:
         mock_psutil_process: MagicMock,
         mock_fetch_status: MagicMock,
         mock_get_gobby_home: MagicMock,
+        mock_probe: MagicMock,
         mock_collect_deps: MagicMock,
         mock_check_mismatches: MagicMock,
         runner: CliRunner,
@@ -1744,8 +1756,13 @@ class TestStatusCommand:
         temp_dir: Path,
         mock_port_listener_pid: MagicMock,
     ) -> None:
+        from gobby.runner_pid_file import ProbeState, SingletonProbe
+
         reported_pid = 40286
         listener_pid = 67485
+        mock_probe.return_value = SingletonProbe(
+            state=ProbeState.DAEMON, pid=reported_pid, role="daemon"
+        )
         mock_load_config.return_value = mock_daemon_config
         mock_port_listener_pid.return_value = listener_pid
         mock_psutil_process.return_value.create_time.return_value = 2800.0
@@ -1803,14 +1820,14 @@ class TestStatusCommand:
 
             assert result.exit_code == 0
             assert "Stopped" in result.output
-            assert "Stale PID file found" in result.output
-            mock_is_process_alive.assert_called_once_with(os.getpid())
+            mock_is_process_alive.assert_not_called()
 
     @patch("gobby.utils.deps.check_config_mismatches", return_value=[])
     @patch(
         "gobby.utils.deps.collect_all_deps",
         return_value={"gobby": {}, "coding_clis": {}, "dependencies": {}},
     )
+    @patch("gobby.cli.daemon.probe_daemon_lock")
     @patch("gobby.cli.daemon.get_gobby_home")
     @patch("gobby.cli.daemon.fetch_rich_status")
     @patch("gobby.cli.daemon.psutil.Process")
@@ -1821,6 +1838,7 @@ class TestStatusCommand:
         mock_psutil_process: MagicMock,
         mock_fetch_status: MagicMock,
         mock_get_gobby_home: MagicMock,
+        mock_probe: MagicMock,
         mock_collect_deps: MagicMock,
         mock_check_mismatches: MagicMock,
         runner: CliRunner,
@@ -1829,6 +1847,11 @@ class TestStatusCommand:
         mock_port_listener_pid: MagicMock,
     ) -> None:
         """Test status when daemon is running."""
+        from gobby.runner_pid_file import ProbeState, SingletonProbe
+
+        mock_probe.return_value = SingletonProbe(
+            state=ProbeState.DAEMON, pid=os.getpid(), role="daemon"
+        )
         mock_load_config.return_value = mock_daemon_config
         mock_fetch_status.return_value = {"process": {}}
         mock_port_listener_pid.return_value = os.getpid()
@@ -1861,6 +1884,7 @@ class TestStatusCommand:
         "gobby.utils.deps.collect_all_deps",
         return_value={"gobby": {}, "coding_clis": {}, "dependencies": {}},
     )
+    @patch("gobby.cli.daemon.probe_daemon_lock")
     @patch("gobby.cli.daemon.fetch_rich_status")
     @patch("gobby.cli.daemon.psutil.Process")
     @patch("gobby.cli.daemon._is_process_alive", return_value=True)
@@ -1871,6 +1895,7 @@ class TestStatusCommand:
         mock_is_process_alive: MagicMock,
         mock_psutil_process: MagicMock,
         mock_fetch_status: MagicMock,
+        mock_probe: MagicMock,
         mock_collect_deps: MagicMock,
         mock_check_mismatches: MagicMock,
         runner: CliRunner,
@@ -1878,6 +1903,11 @@ class TestStatusCommand:
         temp_dir: Path,
     ) -> None:
         """Test status handles psutil errors gracefully."""
+        from gobby.runner_pid_file import ProbeState, SingletonProbe
+
+        mock_probe.return_value = SingletonProbe(
+            state=ProbeState.DAEMON, pid=os.getpid(), role="daemon"
+        )
         mock_load_config.return_value = mock_daemon_config
         mock_fetch_status.return_value = {"process": {}}
         mock_psutil_process.side_effect = psutil.NoSuchProcess(pid=12345)
@@ -2187,6 +2217,7 @@ class TestEdgeCases:
         "gobby.utils.deps.collect_all_deps",
         return_value={"gobby": {}, "coding_clis": {}, "dependencies": {}},
     )
+    @patch("gobby.cli.daemon.probe_daemon_lock")
     @patch("gobby.cli.daemon.fetch_rich_status")
     @patch("gobby.cli.daemon.psutil.Process")
     @patch("gobby.cli.runtime.CliRuntime.require_config")
@@ -2195,6 +2226,7 @@ class TestEdgeCases:
         mock_load_config: MagicMock,
         mock_psutil_process: MagicMock,
         mock_fetch_status: MagicMock,
+        mock_probe: MagicMock,
         mock_collect_deps: MagicMock,
         mock_check_mismatches: MagicMock,
         runner: CliRunner,
@@ -2202,6 +2234,11 @@ class TestEdgeCases:
         temp_dir: Path,
     ) -> None:
         """Test status command with rich daemon data."""
+        from gobby.runner_pid_file import ProbeState, SingletonProbe
+
+        mock_probe.return_value = SingletonProbe(
+            state=ProbeState.DAEMON, pid=os.getpid(), role="daemon"
+        )
         mock_load_config.return_value = mock_daemon_config
         mock_collect_deps.return_value = {
             "gobby": {},

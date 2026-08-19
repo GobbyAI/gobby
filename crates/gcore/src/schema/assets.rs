@@ -125,6 +125,12 @@ pub(crate) const MIGRATIONS: &[EmbeddedMigration] = &[
             "../../assets/schema/migrations/391_session_last_activity_and_creation_defaults.sql"
         ),
     },
+    EmbeddedMigration {
+        version: 392,
+        filename: "392_chat_attachments_deletion_lease.sql",
+        checksum: "4d3f2e9652a958f4ad7f0f64410e622e4e4629b8388b1610527170e0bac83598",
+        sql: include_str!("../../assets/schema/migrations/392_chat_attachments_deletion_lease.sql"),
+    },
 ];
 const _: &str = include_str!("../../assets/schema/migrations/.gitkeep");
 

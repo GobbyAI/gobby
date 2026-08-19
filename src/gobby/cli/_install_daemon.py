@@ -77,6 +77,7 @@ def _run_install_preflight(
     datastore_mode: DatastoreMode = "local",
     database_url: str | None = None,
     gobby_home: Path | None = None,
+    hub_daemon_url: str | None = None,
 ) -> tuple[list[str], list[str]]:
     """Return full-install preflight errors and optional warnings."""
     errors: list[str] = []
@@ -93,7 +94,13 @@ def _run_install_preflight(
     if is_full_install:
         if datastore_mode == "remote":
             if database_url:
-                errors.extend(run_remote_preflight(database_url, gobby_home=gobby_home))
+                errors.extend(
+                    run_remote_preflight(
+                        database_url,
+                        gobby_home=gobby_home,
+                        hub_daemon_url=hub_daemon_url,
+                    )
+                )
             else:
                 errors.append(
                     "Remote datastore install requires database_url in bootstrap.yaml. "
@@ -161,6 +168,7 @@ def maybe_start_daemon_after_install(
     browser_open: Callable[[str], bool] = webbrowser.open,
     monotonic: Callable[[], float] = time.monotonic,
     sleep: Callable[[float], None] = time.sleep,
+    claim: Any | None = None,
 ) -> None:
     """Start the daemon after install when an interactive local UI is available."""
     url = daemon_url()
@@ -174,12 +182,44 @@ def maybe_start_daemon_after_install(
         return
 
     click.echo("Starting Gobby daemon...")
+    popen_kwargs: dict[str, Any] = {
+        "stdout": subprocess.DEVNULL,
+        "stderr": subprocess.DEVNULL,
+        "start_new_session": True,
+    }
+    if claim is not None:
+        from gobby.cli.daemon_singleton import service_backend_name
+        from gobby.cli.installers.service import get_service_status, service_start
+        from gobby.runner_pid_file import (
+            SingletonReservationError,
+            convert_held_claim_to_reservation,
+        )
+
+        svc = get_service_status()
+        if svc.get("installed"):
+            platform = svc.get("platform")
+            backend = service_backend_name(platform if isinstance(platform, str) else None)
+            try:
+                convert_held_claim_to_reservation(claim, backend=backend)
+            except SingletonReservationError as exc:
+                click.echo(f"Warning: failed to convert install singleton: {exc}")
+                click.echo(f"Start manually with `gobby start`, then open {url}")
+                return
+            result = service_start(reserved=True)
+            if not result.get("success"):
+                click.echo(f"Warning: failed to start daemon automatically: {result.get('error')}")
+                click.echo(f"Start manually with `gobby start`, then open {url}")
+            return
+        env = os.environ.copy()
+        env.update(claim.inherit_environment())
+        popen_kwargs["env"] = env
+        if os.name == "posix":
+            popen_kwargs["close_fds"] = True
+            popen_kwargs["pass_fds"] = (claim.fileno(),)
     try:
         process = subprocess_popen(  # nosec B603 # command uses current interpreter/module
             [sys.executable, "-m", "gobby.cli", "start"],
-            stdout=subprocess.DEVNULL,
-            stderr=subprocess.DEVNULL,
-            start_new_session=True,
+            **popen_kwargs,
         )
     except (OSError, subprocess.SubprocessError) as exc:
         click.echo(f"Warning: failed to start daemon automatically: {exc}")
@@ -189,6 +229,8 @@ def maybe_start_daemon_after_install(
     deadline = monotonic() + 5
     while monotonic() < deadline:
         if daemon_already_running():
+            if claim is not None:
+                claim.detach()
             click.echo(f"Gobby daemon started: {url}")
             if not browser_open(url):
                 click.echo(f"Open {url}")
@@ -204,6 +246,8 @@ def maybe_start_daemon_after_install(
         sleep(0.25)
 
     if daemon_already_running():
+        if claim is not None:
+            claim.detach()
         click.echo(f"Gobby daemon started: {url}")
         if not browser_open(url):
             click.echo(f"Open {url}")

@@ -18,6 +18,7 @@ from gobby.servers.routes.cron import create_cron_router
 from gobby.servers.routes.embeddings import create_embeddings_router
 from gobby.servers.routes.files import create_files_router
 from gobby.servers.routes.github_triage import create_github_triage_router
+from gobby.servers.routes.hub_files_proxy import create_hub_files_proxy_router
 from gobby.servers.routes.llm import create_llm_router
 from gobby.servers.routes.mcp import (
     create_hooks_router,
@@ -61,6 +62,7 @@ __all__ = [
     "create_cron_router",
     "create_embeddings_router",
     "create_files_router",
+    "create_hub_files_proxy_router",
     "create_github_triage_router",
     "create_hooks_router",
     "create_llm_router",

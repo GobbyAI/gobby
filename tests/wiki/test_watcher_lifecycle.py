@@ -23,8 +23,12 @@ async def _idle_loop(*args: Any, **kwargs: Any) -> None:
 
 
 def _runner(config: DaemonConfig) -> Any:
+    runtime = SimpleNamespace(
+        capture=lambda: SimpleNamespace(snapshot=SimpleNamespace(active=config))
+    )
     return SimpleNamespace(
         config=config,
+        config_runtime=runtime,
         metrics_manager=object(),
         metrics_event_store=object(),
         database=object(),
@@ -188,6 +192,38 @@ def test_roots_by_watch_scope_expands_user_paths(
     assert {name: root.path for name, root in roots.items()} == {
         f"project:{wiki_root.resolve()}": wiki_root
     }
+
+
+def test_remote_mode_skips_topic_and_personal_watch_roots(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    home = tmp_path / "gobby-home"
+    user_home = tmp_path / "user-home"
+    home.mkdir()
+    user_home.mkdir()
+    monkeypatch.setenv("GOBBY_HOME", str(home))
+    monkeypatch.setenv("HOME", str(user_home))
+    (home / "bootstrap.yaml").write_text(
+        "datastore_mode: remote\nhub_daemon_url: http://hub.example.test:60887\n",
+        encoding="utf-8",
+    )
+    (home / "bootstrap.yaml").chmod(0o600)
+    project_root = tmp_path / "checkout"
+    topic_root = tmp_path / "topic"
+    personal_root = tmp_path / "personal"
+    project_root.mkdir()
+    topic_root.mkdir()
+    personal_root.mkdir()
+    config = WikiConfig(
+        roots=[
+            WikiRootConfig(scope="project", path=project_root),
+            WikiRootConfig(scope="topic:research", path=topic_root),
+            WikiRootConfig(scope="project:_personal", path=personal_root),
+        ]
+    )
+    roots = runner_lifecycle_periodic._roots_by_watch_scope(config)
+    assert list(roots) == [f"project:{project_root.resolve()}"]
+    assert not (Path.home() / "wiki").exists()
 
 
 @pytest.mark.asyncio

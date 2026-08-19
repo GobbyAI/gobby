@@ -10,7 +10,6 @@ from datetime import datetime
 from pathlib import Path
 from typing import Any
 
-from gobby.paths import get_gobby_home
 from gobby.storage.hub.protocol import HubDatabase
 from gobby.utils.datetime import normalize_datetime_model, utc_now
 from gobby.utils.session_context import get_current_session_id
@@ -29,8 +28,11 @@ class IsolatedAgentProjectPathError(ValueError):
 
 
 def personal_project_path(gobby_home: Path | None = None) -> Path:
-    """Return the local folder that backs the personal system project."""
-    return (gobby_home or get_gobby_home()) / "personal"
+    """Hub-owner _personal directory. Raises FilesHomeNotOnThisDaemonError on a node."""
+    del gobby_home
+    from gobby.paths import require_files_home
+
+    return require_files_home() / "_personal"
 
 
 def ensure_personal_project_identity(
@@ -39,10 +41,19 @@ def ensure_personal_project_identity(
     created_at: datetime | None = None,
 ) -> Path:
     """Ensure the personal workspace has a valid DB-independent project marker."""
-    path = personal_project_path(gobby_home)
-    path.mkdir(parents=True, exist_ok=True)
+    del gobby_home
+    from gobby.paths import publish_files_home_descendant, require_files_home
+    from gobby.runner_pid_file import held_singleton_claim
+
+    if held_singleton_claim() is None:
+        raise RuntimeError("filesystem identity requires a held singleton")
+
+    root = require_files_home()
+    path = root / "_personal"
     try:
         path.chmod(0o700)
+    except FileNotFoundError:
+        pass
     except OSError as exc:
         logger.debug("Failed to chmod personal project path %s: %s", path, exc)
 
@@ -74,8 +85,10 @@ def ensure_personal_project_identity(
         "name": "_personal",
         "created_at": marker_created_at,
     }
-    project_file.parent.mkdir(parents=True, exist_ok=True)
-    project_file.write_text(json.dumps(payload, indent=2) + "\n")
+    publish_files_home_descendant(
+        Path("_personal") / ".gobby" / "project.json",
+        (json.dumps(payload, indent=2) + "\n").encode("utf-8"),
+    )
 
     repaired = json.loads(project_file.read_text())
     if not _is_valid_personal_identity(repaired):
@@ -103,8 +116,18 @@ def _is_iso_datetime(value: Any) -> bool:
 
 
 def ensure_personal_project(db: HubDatabase, *, gobby_home: Path | None = None) -> "Project":
-    """Ensure the `_personal` project has a real local folder and repo_path."""
-    path = personal_project_path(gobby_home)
+    """Upsert the checkout-free `_personal` sentinel. Identity is local-owner only."""
+    del gobby_home
+    from gobby.config.bootstrap import load_bootstrap
+    from gobby.runner_pid_file import held_singleton_claim
+
+    config = load_bootstrap()
+    write_identity = (
+        config.datastore_mode == "local"
+        and bool(config.files_home)
+        and held_singleton_claim() is not None
+    )
+    repo_path = str(personal_project_path()) if write_identity else None
     project_manager = LocalProjectManager(db)
     now = utc_now()
     with db.transaction() as txn:
@@ -114,19 +137,17 @@ def ensure_personal_project(db: HubDatabase, *, gobby_home: Path | None = None) 
             VALUES (%s, %s, %s, NULL)
             ON CONFLICT (id) DO UPDATE
             SET name = EXCLUDED.name,
-                repo_path = EXCLUDED.repo_path,
+                repo_path = COALESCE(EXCLUDED.repo_path, projects.repo_path),
                 deleted_at = NULL,
                 updated_at = EXCLUDED.updated_at
             """,
-            (PERSONAL_PROJECT_ID, "_personal", str(path)),
+            (PERSONAL_PROJECT_ID, "_personal", repo_path),
         )
     project = project_manager.get(PERSONAL_PROJECT_ID)
     if project is None:
         raise RuntimeError("Personal project not found after transactional upsert")
-    ensure_personal_project_identity(
-        gobby_home=gobby_home,
-        created_at=project.created_at or now,
-    )
+    if write_identity:
+        ensure_personal_project_identity(created_at=project.created_at or now)
     return project
 
 

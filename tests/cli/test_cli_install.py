@@ -174,11 +174,13 @@ class TestEnsureDaemonConfig:
         """Test when bootstrap file already exists."""
         bootstrap_path = temp_dir / ".gobby" / "bootstrap.yaml"
         bootstrap_path.parent.mkdir(parents=True, exist_ok=True)
-        bootstrap_path.write_text("daemon_port: 60887\n")
+        files_home = temp_dir / "files"
+        files_home.mkdir()
+        bootstrap_path.write_text(f"daemon_port: 60887\nfiles_home: {files_home}\n")
         bootstrap_path.chmod(0o600)
 
         with patch.object(Path, "expanduser", return_value=bootstrap_path):
-            result = _ensure_daemon_config()
+            result = _ensure_daemon_config(files_home=files_home)
 
         assert result["created"] is False
         assert result["path"] == str(bootstrap_path)
@@ -191,6 +193,8 @@ class TestEnsureDaemonConfig:
         shared_bootstrap.parent.mkdir(parents=True, exist_ok=True)
         shared_bootstrap.write_text("daemon_port: 60887\nbind_host: localhost\n")
         shared_bootstrap.chmod(0o600)
+        files_home = temp_dir / "files"
+        files_home.mkdir()
 
         with (
             patch.object(Path, "expanduser", return_value=bootstrap_path),
@@ -199,7 +203,7 @@ class TestEnsureDaemonConfig:
                 return_value=temp_dir / "install",
             ),
         ):
-            result = _ensure_daemon_config()
+            result = _ensure_daemon_config(files_home=files_home)
 
         assert result["created"] is True
         assert result["path"] == str(bootstrap_path)
@@ -218,6 +222,8 @@ class TestEnsureDaemonConfig:
 
         # Set up the parent directory so mkdir works
         bootstrap_path.parent.mkdir(parents=True, exist_ok=True)
+        files_home = temp_dir / "files"
+        files_home.mkdir()
 
         with (
             patch.object(Path, "expanduser", return_value=bootstrap_path),
@@ -226,7 +232,7 @@ class TestEnsureDaemonConfig:
                 return_value=install_dir,
             ),
         ):
-            result = _ensure_daemon_config()
+            result = _ensure_daemon_config(files_home=files_home)
 
         assert result["created"] is True
         assert result["source"] == "generated"
@@ -1272,6 +1278,7 @@ def test_remote_mode_install_without_docker(
     remote_probe.assert_called_once_with(
         "postgresql://gobby:secret@hub.test:5432/gobby",
         gobby_home=tmp_path,
+        hub_daemon_url=None,
     )
 
 

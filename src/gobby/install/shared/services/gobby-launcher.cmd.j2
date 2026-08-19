@@ -1,6 +1,9 @@
 @echo off
 set "PATH={{ path_env }}"
 set "HOME={{ home_dir }}"
+set "GOBBY_SERVICE_LAUNCH=1"
+{% set nonce_home = gobby_home if gobby_home else home_dir + "\\.gobby" %}
+set "GOBBY_SERVICE_NONCE={{ nonce_home }}\gobby.pid.service-nonce"
 {% if gobby_home %}
 set "GOBBY_HOME={{ gobby_home }}"
 {% endif %}

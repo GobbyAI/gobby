@@ -6,9 +6,9 @@ from collections.abc import Awaitable, Callable, Iterable
 from dataclasses import replace
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
-from typing import Any, Literal, Protocol
+from typing import Any, Literal, Protocol, cast
 
-from gobby.gwiki_gateway import GwikiCommandError, GwikiGateway, GwikiGatewayError
+from gobby.gwiki_gateway import GwikiCommandError, GwikiGatewayError
 from gobby.storage.cron import CronJobStorage, compute_next_run
 from gobby.storage.cron_models import CronJob
 from gobby.storage.hub.protocol import HubDatabase
@@ -706,12 +706,12 @@ def _gateway_for_resolved(
     resolved: ResolvedWikiScope,
     gateway_factory: GatewayFactory | None,
 ) -> WikiGatewayProtocol:
+    from gobby.wiki.owner_dispatch import gateway_for_resolved
     if gateway_factory is not None:
         return gateway_factory(resolved)
-    return GwikiGateway(
-        project_root=resolved.project_root,
-        topic=resolved.topic,
-        timeout_seconds=WIKI_SCHEDULED_GATEWAY_TIMEOUT_SECONDS,
+    return cast(
+        WikiGatewayProtocol,
+        gateway_for_resolved(resolved, timeout_seconds=WIKI_SCHEDULED_GATEWAY_TIMEOUT_SECONDS),
     )
 
 

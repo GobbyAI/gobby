@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import json
 import tempfile
 from pathlib import Path
 from types import SimpleNamespace
@@ -314,16 +313,21 @@ def test_project_scope_resolves_to_repo_path(temp_db: Any, tmp_path: Path) -> No
 
 
 def test_personal_scope_routes_resolve_uninitialized_workspace(
-    temp_db: Any, tmp_path: Path
+    temp_db: Any, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    """Regression: personal scope hard-failed with invalid_scope (#17821).
-
-    Starting from a gobby home with no personal folder at all, provisioning
-    must leave status/pages/graph resolvable AND materialize the on-disk
-    identity file gwiki reads at the exact subprocess boundary the routes
-    hand the workspace to (``--project <root>``).
-    """
-    ensure_personal_project(temp_db, gobby_home=tmp_path)
+    """Personal topic-less scope uses files_home/_personal on the owner."""
+    gobby_home = tmp_path / "gobby-home"
+    files_home = tmp_path / "files_home"
+    gobby_home.mkdir()
+    files_home.mkdir()
+    monkeypatch.setenv("GOBBY_HOME", str(gobby_home))
+    bootstrap = gobby_home / "bootstrap.yaml"
+    bootstrap.write_text(
+        f"datastore_mode: local\nfiles_home: {files_home}\n",
+        encoding="utf-8",
+    )
+    bootstrap.chmod(0o600)
+    ensure_personal_project(temp_db)
 
     app = FastAPI()
     server = SimpleNamespace(
@@ -332,15 +336,12 @@ def test_personal_scope_routes_resolve_uninitialized_workspace(
     app.include_router(create_wiki_router(cast(Any, server)))
     client = TestClient(app)
 
-    personal_root = (tmp_path / "personal").resolve()
+    personal_root = (files_home / "_personal").resolve()
     for route in ("/api/wiki/status", "/api/wiki/pages", "/api/wiki/graph"):
         response = client.get(route, params={"project": PERSONAL_PROJECT_ID})
         assert response.status_code == 200, route
         assert response.json()["ok"] is True, route
         assert FakeGateway.instances[-1].project == str(personal_root), route
-
-    identity = json.loads((personal_root / ".gobby" / "project.json").read_text())
-    assert identity["id"] == PERSONAL_PROJECT_ID
 
 
 def test_backlinks_health_and_sources_passthrough(client: TestClient) -> None:
@@ -816,6 +817,15 @@ def test_wiki_router_registered_in_app() -> None:
 
     assert "/api/wiki/status" in route_paths
     assert "/api/wiki/remove-source" in route_paths
+    assert "/api/wiki/trust" in route_paths
+    assert "/api/wiki/refresh" in route_paths
+    assert "/api/wiki/export" in route_paths
+    assert "/api/wiki/graph-artifacts" in route_paths
+    assert "/api/wiki/sync-sessions" in route_paths
+    assert "/api/wiki/upkeep" in route_paths
+    assert "/api/wiki/librarian" in route_paths
+    assert "/api/wiki/recap" in route_paths
+    assert "/api/wiki/prune" in route_paths
 
 
 def _handled_results() -> list[dict[str, Any]]:

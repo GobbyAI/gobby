@@ -260,7 +260,7 @@ fn destructive_apply_succeeds_with_epoch_bound_dsn_and_verified_backup() -> Resu
         &[],
     )?;
     let mut manifest: serde_json::Value = serde_json::from_str(include_str!(
-        "../../gcore/tests/fixtures/hub_backup_manifest/v2_roundtrip.json"
+        "../../gcore/tests/fixtures/hub_backup_manifest/v3_roundtrip.json"
     ))?;
     manifest["source_identity"]["pg_system_identifier"] =
         serde_json::json!(row.get::<_, String>(0));

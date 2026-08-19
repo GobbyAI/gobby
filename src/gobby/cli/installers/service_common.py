@@ -115,6 +115,10 @@ def _runtime_log_file(gobby_home_path: Path) -> str:
         logging_settings = get_cli_runtime().require_config(apply_migrations=False).logging
     except (BootstrapConfigError, ConfigRepositoryError, psycopg.OperationalError, PoolTimeout):
         return str(gobby_home_path / "logs" / RUNTIME_LOG_FILENAME)
+    except RuntimeError as exc:
+        if "CLI runtime is unavailable" not in str(exc):
+            raise
+        return str(gobby_home_path / "logs" / RUNTIME_LOG_FILENAME)
     return str(resolved_log_path(logging_settings, RUNTIME_LOG_FILENAME))
 
 

@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import importlib
+import shutil
 import subprocess
 from pathlib import Path
 from typing import Any
@@ -319,6 +320,7 @@ def test_all_with_only_repository_hooks_still_owns_required_stack(
 
     preflight = MagicMock(return_value=(["stop after classification"], []))
     monkeypatch.setattr(install_module, "_run_install_preflight", preflight)
+    monkeypatch.setattr(install_module, "peek_install_bootstrap", lambda: {})
 
     result = CliRunner().invoke(
         install_module.install,
@@ -335,6 +337,7 @@ def test_all_with_only_repository_hooks_still_owns_required_stack(
         managed_services=True,
         datastore_mode="local",
         database_url=None,
+        hub_daemon_url=None,
     )
 
 
@@ -353,10 +356,27 @@ def test_default_install_completes_required_stack_without_detected_cli(
         monkeypatch.setattr(install_module, detector, lambda: False)
     monkeypatch.setattr(install_module, "get_install_dir", lambda: tmp_path)
     monkeypatch.setattr(install_module, "_run_install_preflight", lambda **_kwargs: ([], []))
+    monkeypatch.setattr(install_module, "peek_install_bootstrap", lambda: {})
+    monkeypatch.setattr(
+        install_module,
+        "resolve_install_files_home",
+        lambda *_a, **_k: tmp_path / "files",
+    )
+    monkeypatch.setattr(install_module, "acquire_install_maintenance", MagicMock())
+    monkeypatch.setattr(
+        install_module,
+        "publish_install_files_home",
+        lambda *_a, **_k: {"created": False, "path": str(tmp_path / "bootstrap.yaml")},
+    )
     monkeypatch.setattr(
         install_module,
         "ensure_personal_project_identity",
-        lambda: tmp_path / "personal/.gobby/project.json",
+        lambda: tmp_path / "files/_personal/.gobby/project.json",
+    )
+    monkeypatch.setattr(
+        install_module,
+        "ensure_install_identity",
+        lambda *_a, **_k: MagicMock(email="owner@example.com"),
     )
     monkeypatch.setattr(
         install_module,
@@ -416,7 +436,8 @@ def test_default_install_completes_required_stack_without_detected_cli(
     assert "No supported AI coding CLIs detected; CLI hooks will be skipped." in result.output
     required_stack.assert_called_once()
     summary.assert_called_once()
-    start_daemon.assert_called_once_with(no_interactive=True)
+    start_daemon.assert_called_once()
+    assert start_daemon.call_args.kwargs["no_interactive"] is True
 
 
 def test_install_fails_when_personal_identity_cannot_be_written(
@@ -425,6 +446,15 @@ def test_install_fails_when_personal_identity_cannot_be_written(
 ) -> None:
     monkeypatch.setattr(install_module, "get_install_dir", lambda: tmp_path)
     monkeypatch.setattr(install_module, "_run_install_preflight", lambda **_kwargs: ([], []))
+    monkeypatch.setattr(install_module, "peek_install_bootstrap", lambda: {})
+    monkeypatch.setattr(
+        install_module,
+        "resolve_install_files_home",
+        lambda *_a, **_k: tmp_path / "files",
+    )
+    monkeypatch.setattr(install_module, "acquire_install_maintenance", MagicMock())
+    publish = MagicMock(return_value={"created": True, "path": str(tmp_path / "bootstrap.yaml")})
+    monkeypatch.setattr(install_module, "publish_install_files_home", publish)
     monkeypatch.setattr(
         install_module,
         "ensure_personal_project_identity",
@@ -440,6 +470,7 @@ def test_install_fails_when_personal_identity_cannot_be_written(
 
     assert result.exit_code == 1
     assert "Failed to establish personal project identity: read-only marker" in result.output
+    publish.assert_called_once()
     ensure_config.assert_not_called()
 
 
@@ -461,6 +492,7 @@ def test_config_only_requires_git_before_provisioning(
         ),
     )
     monkeypatch.setattr(install_module, "_ensure_daemon_config", ensure_config)
+    monkeypatch.setattr(install_module, "peek_install_bootstrap", lambda: {})
 
     result = CliRunner().invoke(
         install_module.install,
@@ -483,6 +515,7 @@ def test_config_only_allows_non_repository_personal_workspace(
         "_run_install_preflight",
         lambda **_kwargs: ([], []),
     )
+    monkeypatch.setattr(install_module, "peek_install_bootstrap", lambda: {})
     monkeypatch.setattr(
         install_module,
         "_ensure_daemon_config",
@@ -490,8 +523,24 @@ def test_config_only_allows_non_repository_personal_workspace(
     )
     monkeypatch.setattr(
         install_module,
+        "resolve_install_files_home",
+        lambda *_a, **_k: tmp_path / "files",
+    )
+    monkeypatch.setattr(install_module, "acquire_install_maintenance", MagicMock())
+    monkeypatch.setattr(
+        install_module,
+        "publish_install_files_home",
+        lambda *_a, **_k: {"created": False, "path": str(config_path)},
+    )
+    monkeypatch.setattr(
+        install_module,
         "ensure_personal_project_identity",
-        lambda: tmp_path / "personal/.gobby/project.json",
+        lambda: tmp_path / "files/_personal/.gobby/project.json",
+    )
+    monkeypatch.setattr(
+        install_module,
+        "ensure_install_identity",
+        lambda *_a, **_k: MagicMock(email="owner@example.com"),
     )
     required_stack = MagicMock(
         side_effect=lambda results, **_kwargs: results.update(
@@ -510,12 +559,6 @@ def test_config_only_allows_non_repository_personal_workspace(
     runtime = MagicMock()
     runtime.require_database.return_value = MagicMock()
     monkeypatch.setattr(install_module, "get_cli_runtime", lambda: runtime)
-    monkeypatch.setattr(
-        install_module,
-        "ensure_install_identity",
-        MagicMock(return_value=MagicMock(email="owner@example.com")),
-    )
-
     result = CliRunner().invoke(
         install_module.install,
         ["--config-only", "--path", str(tmp_path), "--no-interactive"],
@@ -575,3 +618,55 @@ def test_maybe_start_daemon_starts_and_opens_browser(
     assert "/gobby intro" in output
     popen.assert_called_once()
     open_browser.assert_called_once_with("http://localhost:60887/")
+
+
+def test_files_home_must_be_existing_absolute_directory(
+    tmp_path: Path,
+) -> None:
+    missing = tmp_path / "missing-files"
+    result = CliRunner().invoke(
+        install_module.install,
+        ["--config-only", "--no-interactive", "--files-home", str(missing)],
+    )
+    assert result.exit_code != 0
+    assert "does not exist" in result.output or "files-home" in result.output.lower()
+
+
+def test_files_home_refuses_root_and_reserved_overlap(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    from gobby.config.bootstrap_io import bootstrap_path
+    from gobby.paths import get_gobby_home
+
+    identity = MagicMock(side_effect=AssertionError("identity must not run"))
+    monkeypatch.setattr(install_module, "ensure_personal_project_identity", identity)
+    monkeypatch.setattr(install_module, "_run_install_preflight", lambda **_kwargs: ([], []))
+    monkeypatch.setattr(install_module, "peek_install_bootstrap", lambda: {})
+    monkeypatch.setattr(install_module, "get_install_dir", lambda: tmp_path)
+    leftover = bootstrap_path()
+    leftover.unlink(missing_ok=True)
+    personal = get_gobby_home() / "personal"
+    if personal.exists():
+        shutil.rmtree(personal)
+
+    result = CliRunner().invoke(
+        install_module.install,
+        ["--config-only", "--no-interactive", "--files-home", "/"],
+    )
+    assert result.exit_code != 0
+    identity.assert_not_called()
+    assert not bootstrap_path().exists()
+    assert not (get_gobby_home() / "personal").exists()
+
+    reserved = get_gobby_home() / "personal"
+    reserved.mkdir(parents=True, exist_ok=True)
+    try:
+        result = CliRunner().invoke(
+            install_module.install,
+            ["--config-only", "--no-interactive", "--files-home", str(reserved)],
+        )
+        assert result.exit_code != 0
+        identity.assert_not_called()
+    finally:
+        shutil.rmtree(reserved, ignore_errors=True)

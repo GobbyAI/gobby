@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from collections.abc import Iterator
 from pathlib import Path
 from types import SimpleNamespace
 
@@ -9,6 +10,12 @@ import pytest
 
 import gobby.storage.chat_attachments as chat_attachments
 from gobby.config.app import DaemonConfig
+from gobby.paths import FilesHomeNotOnThisDaemonError, get_gobby_home
+from gobby.servers.chat_attachment_files import (
+    attachment_relative_locator,
+    resolve_attachment_dir,
+    resolve_attachment_locator,
+)
 from gobby.servers.chat_attachment_limits import ChatAttachmentLimits
 from gobby.servers.websocket.chat_attachments import (
     append_prepared_attachment_context,
@@ -39,6 +46,83 @@ ATT_ID_2 = "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaa2"
 def test_chat_attachment_limits_reject_non_positive_values(kwargs: dict[str, int]) -> None:
     with pytest.raises(ValueError, match="must be positive"):
         ChatAttachmentLimits(**kwargs)
+
+
+@pytest.fixture(autouse=True)
+def _restore_bootstrap() -> Iterator[None]:
+    bootstrap = get_gobby_home() / "bootstrap.yaml"
+    previous = bootstrap.read_bytes() if bootstrap.exists() else None
+    yield
+    if previous is None:
+        bootstrap.unlink(missing_ok=True)
+    else:
+        bootstrap.write_bytes(previous)
+        bootstrap.chmod(0o600)
+
+
+def _write_local_bootstrap(files_home: Path) -> None:
+    home = get_gobby_home()
+    home.mkdir(parents=True, exist_ok=True)
+    bootstrap = home / "bootstrap.yaml"
+    bootstrap.write_text(
+        f"datastore_mode: local\nfiles_home: {files_home}\n",
+        encoding="utf-8",
+    )
+    bootstrap.chmod(0o600)
+
+
+def _write_remote_bootstrap() -> None:
+    home = get_gobby_home()
+    home.mkdir(parents=True, exist_ok=True)
+    bootstrap = home / "bootstrap.yaml"
+    bootstrap.write_text(
+        "datastore_mode: remote\nhub_daemon_url: http://hub.example.test:60887\n",
+        encoding="utf-8",
+    )
+    bootstrap.chmod(0o600)
+
+
+def test_resolve_attachment_dir_uses_files_home_personal_tree(tmp_path: Path) -> None:
+    files_home = tmp_path / "files_home"
+    files_home.mkdir()
+    _write_local_bootstrap(files_home)
+
+    resolved = resolve_attachment_dir(PERSONAL_PROJECT_ID, ATT_ID_1)
+
+    assert resolved == (
+        files_home
+        / "_personal"
+        / "attachments"
+        / PERSONAL_PROJECT_ID
+        / ATT_ID_1[:2]
+        / ATT_ID_1
+    )
+    assert not (get_gobby_home() / "projects").exists()
+    assert attachment_relative_locator(PERSONAL_PROJECT_ID, ATT_ID_1, "note.txt") == (
+        f"_personal/attachments/{PERSONAL_PROJECT_ID}/{ATT_ID_1[:2]}/{ATT_ID_1}/note.txt"
+    )
+
+
+def test_node_resolver_does_not_create_gobby_home_projects(tmp_path: Path) -> None:
+    _write_remote_bootstrap()
+    gobby_home = get_gobby_home()
+
+    with pytest.raises(FilesHomeNotOnThisDaemonError):
+        resolve_attachment_dir(PERSONAL_PROJECT_ID, ATT_ID_1)
+
+    assert not (gobby_home / "projects").exists()
+    assert not (tmp_path / "projects").exists()
+
+
+def test_resolve_attachment_locator_ignores_absolute_stored_path() -> None:
+    locator = resolve_attachment_locator(
+        PERSONAL_PROJECT_ID,
+        ATT_ID_1,
+        "note.txt",
+        stored_local_path="/tmp/stale/note.txt",
+    )
+    assert locator == attachment_relative_locator(PERSONAL_PROJECT_ID, ATT_ID_1, "note.txt")
+    assert not Path(locator).is_absolute()
 
 
 def _owner(
@@ -72,7 +156,8 @@ def _attachment(
         filename=path.name,
         mime_type="text/plain",
         size_bytes=size_bytes,
-        local_path=str(path),
+        local_path=f"_personal/attachments/{PERSONAL_PROJECT_ID}/{attachment_id[:2]}/{attachment_id}/{path.name}",
+        published=True,
     )
     return attachment_id
 

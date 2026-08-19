@@ -298,7 +298,6 @@ class TestStatusCommand:
         assert result.exit_code == 0
         assert "Not running" in result.output
         _fmt.assert_called_once()
-        _svc.assert_called_once()
 
     @patch("gobby.cli.daemon.get_gobby_home")
     @patch("gobby.cli.daemon.get_service_status", return_value={"running": False})
@@ -319,7 +318,6 @@ class TestStatusCommand:
         assert result.exit_code == 0
         assert "Not running" in result.output
         _fmt.assert_called_once()
-        _svc.assert_called_once()
 
     @patch("gobby.utils.deps.check_config_mismatches", return_value=[])
     @patch(
@@ -331,10 +329,12 @@ class TestStatusCommand:
     @patch("gobby.cli.daemon.format_uptime", return_value="1h 30m")
     @patch("gobby.cli.daemon.psutil.Process")
     @patch("gobby.cli.daemon.os.kill")
+    @patch("gobby.cli.daemon.probe_daemon_lock")
     @patch("gobby.cli.daemon.get_gobby_home")
     def test_status_running(
         self,
         mock_home: MagicMock,
+        mock_probe: MagicMock,
         mock_kill: MagicMock,
         mock_process: MagicMock,
         _uptime: MagicMock,
@@ -345,7 +345,10 @@ class TestStatusCommand:
         runner: CliRunner,
         tmp_path: Path,
     ) -> None:
+        from gobby.runner_pid_file import ProbeState, SingletonProbe
+
         mock_home.return_value = tmp_path
+        mock_probe.return_value = SingletonProbe(state=ProbeState.DAEMON, pid=12345, role="daemon")
         (tmp_path / "gobby.pid").write_text("12345")
         mock_kill.return_value = None
         mock_process.return_value.create_time.return_value = 0.0
@@ -356,8 +359,10 @@ class TestStatusCommand:
         config.websocket.port = 60889
         config.ui.enabled = False
         bootstrap_path = tmp_path / "bootstrap.yaml"
+        files_home = tmp_path / "files"
+        files_home.mkdir()
         bootstrap_path.write_text(
-            "daemon_port: 61999\nwebsocket_port: 62000\n",
+            f"daemon_port: 61999\nwebsocket_port: 62000\nfiles_home: {files_home}\n",
             encoding="utf-8",
         )
         bootstrap_path.chmod(0o600)
@@ -379,10 +384,12 @@ class TestStatusCommand:
     @patch("gobby.cli.daemon.format_uptime", return_value="1h 30m")
     @patch("gobby.cli.daemon.psutil.Process")
     @patch("gobby.cli.daemon.os.kill")
+    @patch("gobby.cli.daemon.probe_daemon_lock")
     @patch("gobby.cli.daemon.get_gobby_home")
     def test_status_degrades_dependency_probe_without_losing_daemon_health(
         self,
         mock_home: MagicMock,
+        mock_probe: MagicMock,
         mock_kill: MagicMock,
         mock_process: MagicMock,
         _uptime: MagicMock,
@@ -393,7 +400,10 @@ class TestStatusCommand:
         runner: CliRunner,
         tmp_path: Path,
     ) -> None:
+        from gobby.runner_pid_file import ProbeState, SingletonProbe
+
         mock_home.return_value = tmp_path
+        mock_probe.return_value = SingletonProbe(state=ProbeState.DAEMON, pid=12345, role="daemon")
         (tmp_path / "gobby.pid").write_text("12345")
         mock_kill.return_value = None
         mock_process.return_value.create_time.return_value = 0.0
@@ -449,20 +459,77 @@ class TestStatusCommand:
         assert result.exit_code == 0
         assert "Stale" in result.output
 
+    @patch("gobby.cli.runtime.get_cli_runtime")
+    @patch("gobby.cli.daemon.get_gobby_home")
+    def test_status_reports_maintenance_without_runtime(
+        self,
+        mock_home: MagicMock,
+        mock_runtime: MagicMock,
+        runner: CliRunner,
+        tmp_path: Path,
+    ) -> None:
+        from gobby.runner_pid_file import claim_pid_file
+
+        mock_home.return_value = tmp_path
+        claim = claim_pid_file(tmp_path / "gobby.pid", role="maintenance")
+        assert claim is not None
+        try:
+            result = runner.invoke(status, [], catch_exceptions=False)
+        finally:
+            claim.release()
+        assert result.exit_code == 0
+        assert "maintenance" in result.output.lower()
+        mock_runtime.assert_not_called()
+
+    @patch("gobby.cli.runtime.get_cli_runtime")
+    @patch("gobby.cli.daemon.probe_daemon_lock")
+    @patch("gobby.cli.daemon.get_gobby_home")
+    def test_status_reports_typed_non_daemon_states(
+        self,
+        mock_home: MagicMock,
+        mock_probe: MagicMock,
+        mock_runtime: MagicMock,
+        runner: CliRunner,
+        tmp_path: Path,
+    ) -> None:
+        from gobby.runner_pid_file import ProbeState, SingletonProbe
+
+        mock_home.return_value = tmp_path
+        cases = (
+            ProbeState.LIVE_RESERVATION,
+            ProbeState.STALE_RESERVATION,
+            ProbeState.TRANSITIONING,
+        )
+        for state in cases:
+            mock_probe.return_value = SingletonProbe(state=state)
+            result = runner.invoke(status, [], catch_exceptions=False)
+            assert result.exit_code == 0
+            assert state.value.replace("_", " ") in result.output.lower()
+        mock_probe.return_value = SingletonProbe(state=ProbeState.ABSENT)
+        result = runner.invoke(status, [], catch_exceptions=False)
+        assert result.exit_code == 0
+        assert "stopped" in result.output.lower() or "not running" in result.output.lower()
+        mock_runtime.assert_not_called()
+
 
 class TestHealthCommand:
     @patch("gobby.cli.daemon.httpx.get")
     @patch("gobby.cli.daemon._is_process_alive", return_value=True)
+    @patch("gobby.cli.daemon.probe_daemon_lock")
     @patch("gobby.cli.daemon.get_gobby_home")
     def test_health_surfaces_hook_runtime_degradation(
         self,
         mock_home: MagicMock,
+        mock_probe: MagicMock,
         _alive: MagicMock,
         mock_get: MagicMock,
         runner: CliRunner,
         tmp_path: Path,
     ) -> None:
+        from gobby.runner_pid_file import ProbeState, SingletonProbe
+
         mock_home.return_value = tmp_path
+        mock_probe.return_value = SingletonProbe(state=ProbeState.DAEMON, pid=12345, role="daemon")
         (tmp_path / "gobby.pid").write_text("12345")
         mock_get.return_value.status_code = 200
         mock_get.return_value.json.return_value = {
@@ -479,3 +546,28 @@ class TestHealthCommand:
         assert result.exit_code == 1
         assert "Gobby daemon: degraded" in result.output
         assert "hook runtime: schema_mismatch" in result.output
+
+    @patch("gobby.cli.runtime.get_cli_runtime")
+    @patch("gobby.cli.daemon.httpx.get")
+    @patch("gobby.cli.daemon.get_gobby_home")
+    def test_health_reports_maintenance_without_runtime_or_http(
+        self,
+        mock_home: MagicMock,
+        mock_http: MagicMock,
+        mock_runtime: MagicMock,
+        runner: CliRunner,
+        tmp_path: Path,
+    ) -> None:
+        from gobby.runner_pid_file import claim_pid_file
+
+        mock_home.return_value = tmp_path
+        claim = claim_pid_file(tmp_path / "gobby.pid", role="maintenance")
+        assert claim is not None
+        try:
+            result = runner.invoke(health, [], catch_exceptions=False)
+        finally:
+            claim.release()
+        assert result.exit_code == 1
+        assert "maintenance" in result.output.lower()
+        mock_runtime.assert_not_called()
+        mock_http.assert_not_called()

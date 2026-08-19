@@ -23,13 +23,22 @@ Example:
     ```
 """
 
+import asyncio
 import logging
 import threading
+from collections.abc import AsyncIterator, Mapping
+from contextlib import asynccontextmanager
 from enum import StrEnum
 from typing import Any, ClassVar, cast
 
 import httpx
 
+from gobby.files_home_http import (
+    CONNECT_TIMEOUT_SECONDS,
+    DEADLINE_TIMEOUT_SECONDS,
+    FILES_PROXY_HOP_HEADER,
+    INACTIVITY_TIMEOUT_SECONDS,
+)
 from gobby.shutdown_intent import ShutdownIntent, read_active_shutdown_intent
 from gobby.utils.daemon_url import daemon_url, normalize_dial_host, validate_daemon_url
 from gobby.utils.local_token import daemon_auth_headers
@@ -43,6 +52,22 @@ DAEMON_AUTH_REMEDIATION = (
 
 class DaemonAuthenticationError(RuntimeError):
     """Raised when the daemon rejects the install-scoped bearer token."""
+
+
+class DaemonClientError(RuntimeError):
+    """Typed failure from a daemon HTTP request."""
+
+
+class DaemonTimeoutError(DaemonClientError):
+    """Connect, inactivity, or overall deadline timeout."""
+
+
+class DaemonStatusError(DaemonClientError):
+    """Upstream status was outside the caller-accepted set."""
+
+    def __init__(self, status_code: int, message: str) -> None:
+        self.status_code = status_code
+        super().__init__(message)
 
 
 class DaemonHealthError(StrEnum):
@@ -239,12 +264,22 @@ class DaemonClient:
             return None
         return record.source
 
+    def _merged_headers(self, headers: Mapping[str, str] | None = None) -> dict[str, str]:
+        merged = dict(self._auth_headers)
+        if headers:
+            merged.update(headers)
+        return merged
+
+    def _join_url(self, endpoint: str) -> str:
+        return f"{self.url}{endpoint}"
+
     def call_http_api(
         self,
         endpoint: str,
         method: str = "POST",
         json_data: dict[str, Any] | None = None,
         timeout: float | None = None,
+        headers: Mapping[str, str] | None = None,
     ) -> Any:
         """
         Call daemon HTTP API endpoint directly (for non-MCP endpoints).
@@ -254,46 +289,48 @@ class DaemonClient:
             method: HTTP method (default: POST)
             json_data: JSON data to send
             timeout: Request timeout (default: uses self.timeout)
+            headers: Extra headers merged over the install-scoped auth headers
 
         Returns:
             Response object (httpx.Response)
         """
-        url = f"{self.url}{endpoint}"
+        url = self._join_url(endpoint)
         timeout_val = self.timeout if timeout is None else timeout
+        request_headers = self._merged_headers(headers)
 
         try:
             if method.upper() == "GET":
                 if json_data is None:
-                    response = httpx.get(url, headers=self._auth_headers, timeout=timeout_val)
+                    response = httpx.get(url, headers=request_headers, timeout=timeout_val)
                 else:
                     response = httpx.request(
                         "GET",
                         url,
                         json=json_data,
-                        headers=self._auth_headers,
+                        headers=request_headers,
                         timeout=timeout_val,
                     )
             elif method.upper() == "POST":
                 response = httpx.post(
-                    url, json=json_data, headers=self._auth_headers, timeout=timeout_val
+                    url, json=json_data, headers=request_headers, timeout=timeout_val
                 )
             elif method.upper() == "PUT":
                 response = httpx.put(
-                    url, json=json_data, headers=self._auth_headers, timeout=timeout_val
+                    url, json=json_data, headers=request_headers, timeout=timeout_val
                 )
             elif method.upper() == "PATCH":
                 response = httpx.patch(
-                    url, json=json_data, headers=self._auth_headers, timeout=timeout_val
+                    url, json=json_data, headers=request_headers, timeout=timeout_val
                 )
             elif method.upper() == "DELETE":
                 if json_data is None:
-                    response = httpx.delete(url, headers=self._auth_headers, timeout=timeout_val)
+                    response = httpx.delete(url, headers=request_headers, timeout=timeout_val)
                 else:
                     response = httpx.request(
                         "DELETE",
                         url,
                         json=json_data,
-                        headers=self._auth_headers,
+                        headers=request_headers,
                         timeout=timeout_val,
                     )
             else:
@@ -308,6 +345,115 @@ class DaemonClient:
         except Exception as e:
             self.logger.error("HTTP API call failed: %s %s - %s", method, endpoint, e)
             raise
+
+    def _request_timeout(
+        self,
+        *,
+        connect_timeout: float,
+        inactivity_timeout: float,
+    ) -> httpx.Timeout:
+        return httpx.Timeout(
+            connect=connect_timeout,
+            pool=connect_timeout,
+            read=inactivity_timeout,
+            write=inactivity_timeout,
+        )
+
+    def _raise_for_status(self, response: httpx.Response, accept_statuses: tuple[int, ...]) -> None:
+        if response.status_code == 401:
+            raise DaemonAuthenticationError(
+                f"Daemon authentication failed: {DAEMON_AUTH_REMEDIATION}"
+            )
+        if response.status_code not in accept_statuses:
+            raise DaemonStatusError(
+                response.status_code,
+                f"Daemon returned HTTP {response.status_code} for {response.request.url}",
+            )
+
+    async def request_raw(
+        self,
+        method: str,
+        path: str,
+        *,
+        headers: Mapping[str, str] | None = None,
+        params: Mapping[str, Any] | None = None,
+        content: bytes | Any = None,
+        json_data: Any = None,
+        hop: bool = False,
+        accept_statuses: tuple[int, ...] = (200,),
+        connect_timeout: float = CONNECT_TIMEOUT_SECONDS,
+        inactivity_timeout: float = INACTIVITY_TIMEOUT_SECONDS,
+        deadline_seconds: float = DEADLINE_TIMEOUT_SECONDS,
+    ) -> httpx.Response:
+        """Async raw request sharing URL join, auth, and error types with call_http_api."""
+        request_headers = self._merged_headers(headers)
+        if hop:
+            request_headers[FILES_PROXY_HOP_HEADER] = "1"
+        timeout = self._request_timeout(
+            connect_timeout=connect_timeout,
+            inactivity_timeout=inactivity_timeout,
+        )
+        client = httpx.AsyncClient(timeout=timeout, trust_env=False)
+        try:
+            async with asyncio.timeout(deadline_seconds):
+                response = await client.request(
+                    method,
+                    self._join_url(path),
+                    headers=request_headers,
+                    params=params,
+                    content=content,
+                    json=json_data,
+                )
+            self._raise_for_status(response, accept_statuses)
+            return response
+        except TimeoutError as exc:
+            raise DaemonTimeoutError(f"Daemon request timed out: {method} {path}") from exc
+        except httpx.TimeoutException as exc:
+            raise DaemonTimeoutError(f"Daemon request timed out: {method} {path}") from exc
+        finally:
+            await client.aclose()
+
+    @asynccontextmanager
+    async def stream_request(
+        self,
+        method: str,
+        path: str,
+        *,
+        headers: Mapping[str, str] | None = None,
+        params: Mapping[str, Any] | None = None,
+        content: Any = None,
+        hop: bool = False,
+        accept_statuses: tuple[int, ...] = (200, 206, 304),
+        connect_timeout: float = CONNECT_TIMEOUT_SECONDS,
+        inactivity_timeout: float = INACTIVITY_TIMEOUT_SECONDS,
+        deadline_seconds: float = DEADLINE_TIMEOUT_SECONDS,
+    ) -> AsyncIterator[httpx.Response]:
+        """Streaming request with connect, inactivity, and overall deadlines."""
+        request_headers = self._merged_headers(headers)
+        if hop:
+            request_headers[FILES_PROXY_HOP_HEADER] = "1"
+        timeout = self._request_timeout(
+            connect_timeout=connect_timeout,
+            inactivity_timeout=inactivity_timeout,
+        )
+        client = httpx.AsyncClient(timeout=timeout, trust_env=False)
+        try:
+            async with asyncio.timeout(deadline_seconds):
+                async with client.stream(
+                    method,
+                    self._join_url(path),
+                    headers=request_headers,
+                    params=params,
+                    content=content,
+                ) as response:
+                    self._raise_for_status(response, accept_statuses)
+                    yield response
+        except TimeoutError as exc:
+            raise DaemonTimeoutError(f"Daemon stream timed out: {method} {path}") from exc
+        except httpx.TimeoutException as exc:
+            raise DaemonTimeoutError(f"Daemon stream timed out: {method} {path}") from exc
+        finally:
+            await client.aclose()
 
     def call_mcp_tool(
         self,

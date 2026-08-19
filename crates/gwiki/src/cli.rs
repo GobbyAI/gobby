@@ -5,7 +5,7 @@ use clap::{ArgGroup, Args, Parser, Subcommand, ValueEnum};
 use gobby_wiki::{BenchmarkOptions, Command, GraphInclude, UpkeepOptions, WikiError, output};
 
 mod code;
-mod mapping;
+pub(crate) mod mapping;
 
 use code::CodeArgs;
 
