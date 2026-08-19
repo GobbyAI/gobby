@@ -16,6 +16,7 @@ import click
 
 from gobby.cli.install_files_home import (
     acquire_install_maintenance,
+    local_install_requires_maintenance,
     peek_install_bootstrap,
     publish_install_files_home,
     resolve_install_files_home,
@@ -577,7 +578,13 @@ def install(
         no_interactive=no_interactive_flag,
     )
     install_claim = None
-    if datastore_mode == "local":
+    if datastore_mode == "local" and resolved_files_home is None:
+        raise click.UsageError(
+            "Local install requires --files-home naming an existing absolute directory"
+        )
+    if local_install_requires_maintenance(
+        datastore_mode=datastore_mode, full_install=is_full_install
+    ):
         if resolved_files_home is None:
             raise click.UsageError(
                 "Local install requires --files-home naming an existing absolute directory"

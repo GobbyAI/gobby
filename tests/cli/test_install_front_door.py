@@ -465,7 +465,7 @@ def test_install_fails_when_personal_identity_cannot_be_written(
 
     result = CliRunner().invoke(
         install_module.install,
-        ["--codex", "--no-interactive", "-C", str(tmp_path)],
+        ["--config-only", "--no-interactive", "-C", str(tmp_path)],
     )
 
     assert result.exit_code == 1

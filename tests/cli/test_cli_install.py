@@ -451,7 +451,15 @@ class TestInstallCommand:
             "mcp_configured": True,
         }
 
-        with runner.isolated_filesystem(temp_dir=str(temp_dir)):
+        files_home = temp_dir / "files"
+        files_home.mkdir()
+        with (
+            patch(
+                "gobby.cli.install.peek_install_bootstrap",
+                return_value={"datastore_mode": "local", "files_home": str(files_home)},
+            ),
+            runner.isolated_filesystem(temp_dir=str(temp_dir)),
+        ):
             result = runner.invoke(cli, ["install", "--qwen", "--no-interactive"])
 
         assert result.exit_code == 0
@@ -484,7 +492,15 @@ class TestInstallCommand:
             "mcp_configured": True,
         }
 
-        with runner.isolated_filesystem(temp_dir=str(temp_dir)):
+        files_home = temp_dir / "files"
+        files_home.mkdir()
+        with (
+            patch(
+                "gobby.cli.install.peek_install_bootstrap",
+                return_value={"datastore_mode": "local", "files_home": str(files_home)},
+            ),
+            runner.isolated_filesystem(temp_dir=str(temp_dir)),
+        ):
             result = runner.invoke(cli, ["install", "--droid", "--no-interactive"])
 
         assert result.exit_code == 0
@@ -515,7 +531,15 @@ class TestInstallCommand:
             "mcp_configured": True,
         }
 
-        with runner.isolated_filesystem(temp_dir=str(temp_dir)):
+        files_home = temp_dir / "files"
+        files_home.mkdir()
+        with (
+            patch(
+                "gobby.cli.install.peek_install_bootstrap",
+                return_value={"datastore_mode": "local", "files_home": str(files_home)},
+            ),
+            runner.isolated_filesystem(temp_dir=str(temp_dir)),
+        ):
             result = runner.invoke(cli, ["install", "--agy", "--no-interactive"])
 
         assert result.exit_code == 0
@@ -539,9 +563,15 @@ class TestInstallCommand:
             "config_updated": True,
             "mcp_configured": True,
         }
+        files_home = temp_dir / "files"
+        files_home.mkdir()
         with (
             patch("gobby.cli.install.run_daemon_setup"),
             patch("gobby.cli.install.get_install_dir", return_value=Path("/fake/install")),
+            patch(
+                "gobby.cli.install.peek_install_bootstrap",
+                return_value={"datastore_mode": "local", "files_home": str(files_home)},
+            ),
             patch(
                 "gobby.cli.install._ensure_daemon_config",
                 return_value={"created": False, "path": "/test/config.yaml"},
@@ -571,6 +601,8 @@ class TestInstallCommand:
     ) -> None:
         gobby_home = temp_dir / "gobby-home"
         monkeypatch.setenv("GOBBY_HOME", str(gobby_home))
+        files_home = temp_dir / "files"
+        files_home.mkdir()
         config_store = MagicMock()
         auth_store = MagicMock()
         auth_store._read_local_api_token_hash.return_value = (None, False)
@@ -587,6 +619,10 @@ class TestInstallCommand:
 
         with (
             patch("gobby.cli.install.get_install_dir", return_value=Path("/fake/install")),
+            patch(
+                "gobby.cli.install.peek_install_bootstrap",
+                return_value={"datastore_mode": "local", "files_home": str(files_home)},
+            ),
             patch(
                 "gobby.cli.install._ensure_daemon_config",
                 return_value={"created": False, "path": "/test/config.yaml"},
@@ -614,6 +650,8 @@ class TestInstallCommand:
     ) -> None:
         gobby_home = temp_dir / "gobby-home"
         monkeypatch.setenv("GOBBY_HOME", str(gobby_home))
+        files_home = temp_dir / "files"
+        files_home.mkdir()
         codex_result = {
             "success": True,
             "hooks_installed": [],
@@ -627,6 +665,10 @@ class TestInstallCommand:
 
         with (
             patch("gobby.cli.install.get_install_dir", return_value=Path("/fake/install")),
+            patch(
+                "gobby.cli.install.peek_install_bootstrap",
+                return_value={"datastore_mode": "local", "files_home": str(files_home)},
+            ),
             patch(
                 "gobby.cli.install._ensure_daemon_config",
                 return_value={"created": False, "path": "/test/config.yaml"},
@@ -651,8 +693,23 @@ class TestInstallCommand:
         temp_dir: Path,
     ) -> None:
         events: list[str] = []
+        files_home = temp_dir / "files"
+        files_home.mkdir()
 
         with (
+            patch(
+                "gobby.cli.install.peek_install_bootstrap",
+                return_value={"datastore_mode": "local", "files_home": str(files_home)},
+            ),
+            patch("gobby.cli.install.acquire_install_maintenance", return_value=MagicMock()),
+            patch(
+                "gobby.cli.install.publish_install_files_home",
+                return_value={"created": False, "path": "/fake"},
+            ),
+            patch(
+                "gobby.cli.install.ensure_personal_project_identity",
+                return_value=files_home / "_personal" / ".gobby" / "project.json",
+            ),
             patch(
                 "gobby.cli.install._provision_gdaemon_for_services",
                 side_effect=lambda: events.append("gdaemon"),

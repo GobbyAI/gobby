@@ -7,6 +7,7 @@ from typing import Any
 
 import click
 
+from gobby.cli.daemon_singleton import format_singleton_status
 from gobby.config.bootstrap import BootstrapConfigError, validate_existing_files_home
 from gobby.config.bootstrap_io import (
     bootstrap_path,
@@ -14,7 +15,12 @@ from gobby.config.bootstrap_io import (
     read_bootstrap_yaml,
 )
 from gobby.paths import get_gobby_home
-from gobby.runner_pid_file import PidFileClaim, claim_pid_file
+from gobby.runner_pid_file import (
+    PidFileClaim,
+    ProbeState,
+    claim_pid_file,
+    probe_daemon_lock,
+)
 from gobby.storage.projects import ensure_personal_project_identity
 
 
@@ -73,14 +79,39 @@ def publish_install_files_home(files_home: Path) -> dict[str, Any]:
     return ensure_daemon_config(files_home=files_home)
 
 
+def local_install_requires_maintenance(*, datastore_mode: str, full_install: bool) -> bool:
+    """Exclusive maintenance is only for full/config-only local install."""
+    return datastore_mode == "local" and full_install
+
+
+def _install_maintenance_block_message(pid_file: Path) -> str:
+    probe = probe_daemon_lock(pid_file)
+    status = format_singleton_status(probe)
+    if probe.state is ProbeState.DAEMON:
+        return (
+            f"Could not claim the daemon singleton for install; {status}. "
+            "Stop the daemon with `gobby stop` before a full install that "
+            "publishes files_home or personal identity."
+        )
+    if probe.state is ProbeState.MAINTENANCE:
+        return (
+            f"Could not claim the daemon singleton for install; {status}. "
+            "A concurrent maintenance campaign is already live."
+        )
+    if probe.state is ProbeState.LIVE_RESERVATION:
+        return (
+            f"Could not claim the daemon singleton for install; {status}. "
+            "A concurrent start campaign is already live."
+        )
+    return f"Could not claim the daemon singleton for install; {status}"
+
+
 def acquire_install_maintenance() -> PidFileClaim:
     """Hold the singleton for bootstrap-plus-identity publication."""
-    claim = claim_pid_file(get_gobby_home() / "gobby.pid", role="maintenance")
+    pid_file = get_gobby_home() / "gobby.pid"
+    claim = claim_pid_file(pid_file, role="maintenance")
     if claim is None:
-        raise click.ClickException(
-            "Could not claim the daemon singleton for install; "
-            "a concurrent start or maintenance campaign is already live"
-        )
+        raise click.ClickException(_install_maintenance_block_message(pid_file))
     return claim
 
 

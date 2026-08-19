@@ -371,7 +371,7 @@ class TestInstallCommand:
         assert "/fake/repo-wiki" in result.output
         assert "Git hook maintenance complete." in result.output
         mock_install.assert_called_once()
-        personal_identity.assert_called_once_with()
+        personal_identity.assert_not_called()
         initialize_project.assert_not_called()
         required_stack.assert_not_called()
         load_config.assert_not_called()
@@ -1097,3 +1097,99 @@ class TestInstallFilesHomeLifecycle:
         finally:
             if not claim._released:
                 claim.release()
+
+    def test_local_install_requires_maintenance_only_for_full_local(self) -> None:
+        from gobby.cli.install_files_home import local_install_requires_maintenance
+
+        assert local_install_requires_maintenance(datastore_mode="local", full_install=True)
+        assert not local_install_requires_maintenance(datastore_mode="local", full_install=False)
+        assert not local_install_requires_maintenance(datastore_mode="remote", full_install=True)
+
+    def test_targeted_codex_install_skips_exclusive_maintenance_while_daemon_holds_claim(
+        self, tmp_path: Path, runner: CliRunner
+    ) -> None:
+        from gobby.paths import get_gobby_home
+        from gobby.runner_pid_file import claim_pid_file
+
+        files_home = tmp_path / "files"
+        files_home.mkdir()
+        first = claim_pid_file(get_gobby_home() / "gobby.pid", role="daemon")
+        assert first is not None
+        acquire = MagicMock(side_effect=AssertionError("must not acquire"))
+        publish = MagicMock(side_effect=AssertionError("must not publish"))
+        identity = MagicMock(side_effect=AssertionError("must not write identity"))
+        try:
+            with (
+                patch("gobby.cli.install.acquire_install_maintenance", acquire),
+                patch("gobby.cli.install.publish_install_files_home", publish),
+                patch("gobby.cli.install.ensure_personal_project_identity", identity),
+                patch("gobby.cli.install.run_daemon_setup"),
+                patch(
+                    "gobby.cli.install.peek_install_bootstrap",
+                    return_value={
+                        "datastore_mode": "local",
+                        "files_home": str(files_home),
+                    },
+                ),
+                patch(
+                    "gobby.cli.install._ensure_daemon_config",
+                    return_value={"created": False, "path": "/fake"},
+                ),
+                patch("gobby.cli.install.get_install_dir", return_value=Path("/fake/install")),
+                patch("gobby.cli.install._is_codex_cli_installed", return_value=True),
+                patch(
+                    "gobby.cli.install.install_codex",
+                    return_value={
+                        "success": True,
+                        "hooks_installed": ["PreToolUse"],
+                        "files_installed": [],
+                        "config_updated": True,
+                        "workflows_installed": [],
+                        "commands_installed": [],
+                        "plugins_installed": [],
+                        "mcp_configured": True,
+                    },
+                ),
+            ):
+                result = runner.invoke(
+                    install, ["--codex", "--no-interactive"], catch_exceptions=False
+                )
+            assert result.exit_code == 0, result.output
+            assert "Codex" in result.output
+            acquire.assert_not_called()
+            publish.assert_not_called()
+            identity.assert_not_called()
+        finally:
+            first.release()
+
+    def test_config_only_install_refuses_live_daemon_claim(self, tmp_path: Path) -> None:
+        from gobby.paths import get_gobby_home
+        from gobby.runner_pid_file import claim_pid_file
+
+        files_home = tmp_path / "files"
+        files_home.mkdir()
+        first = claim_pid_file(get_gobby_home() / "gobby.pid", role="daemon")
+        assert first is not None
+        try:
+            with (
+                patch("gobby.cli.install._run_install_preflight", return_value=([], [])),
+                patch("gobby.cli.install.get_install_dir", return_value=tmp_path),
+                patch(
+                    "gobby.cli.install.peek_install_bootstrap",
+                    return_value={"datastore_mode": "local"},
+                ),
+            ):
+                result = CliRunner().invoke(
+                    install,
+                    [
+                        "--config-only",
+                        "--no-interactive",
+                        "--files-home",
+                        str(files_home),
+                    ],
+                )
+            assert result.exit_code != 0
+            assert "singleton" in result.output.lower()
+            assert "gobby stop" in result.output
+        finally:
+            first.release()
