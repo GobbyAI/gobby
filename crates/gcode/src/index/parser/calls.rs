@@ -16,14 +16,15 @@ mod resolution;
 mod shadowing;
 mod text;
 
-use resolution::CallSyntaxKind;
+pub(in crate::index::parser) use resolution::{CallSyntaxKind, split_qualified_callee};
 
 #[cfg(test)]
-pub(super) use resolution::{call_qualifier_path, split_qualified_callee};
+pub(super) use resolution::call_qualifier_path;
 #[cfg(test)]
 pub(super) use text::line_terminator_len;
 
-pub(super) struct CallExtractionContext<'a> {
+#[derive(Clone, Copy)]
+pub(in crate::index::parser) struct CallExtractionContext<'a> {
     pub(super) language: &'a str,
     pub(super) ts_lang: &'a tree_sitter::Language,
     pub(super) rel_path: &'a str,
@@ -35,13 +36,13 @@ pub(super) struct CallExtractionContext<'a> {
 }
 
 #[derive(Debug)]
-struct CallSite {
-    callee_name: String,
-    qualifier_path: Option<String>,
-    name_byte: usize,
-    scope_byte: usize,
-    line: usize,
-    syntax: CallSyntaxKind,
+pub(in crate::index::parser) struct CallSite {
+    pub(in crate::index::parser) callee_name: String,
+    pub(in crate::index::parser) qualifier_path: Option<String>,
+    pub(in crate::index::parser) name_byte: usize,
+    pub(in crate::index::parser) scope_byte: usize,
+    pub(in crate::index::parser) line: usize,
+    pub(in crate::index::parser) syntax: CallSyntaxKind,
 }
 
 pub(super) fn extract_calls(
@@ -60,7 +61,7 @@ pub(super) fn extract_calls(
     ast::extract_ast_calls(tree, source, spec, ctx, semantic_resolver)
 }
 
-fn materialize_call(
+pub(in crate::index::parser) fn materialize_call(
     source: &[u8],
     ctx: &CallExtractionContext<'_>,
     site: CallSite,

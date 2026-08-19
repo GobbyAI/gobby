@@ -8,7 +8,7 @@ use anyhow::Context as _;
 use streaming_iterator::StreamingIterator;
 use tree_sitter::{Parser, Query, QueryCursor};
 
-mod calls;
+pub(in crate::index::parser) mod calls;
 mod inheritance;
 
 use crate::index::MAX_FILE_SIZE;
@@ -115,28 +115,24 @@ pub(crate) fn parse_file_with_semantic(
         &rel_path,
         import_context,
     )?;
-    let calls = extract_calls(
-        &tree,
-        &source,
-        spec,
-        CallExtractionContext {
-            language,
-            ts_lang: &ts_lang,
-            rel_path: &rel_path,
-            symbols: &symbols,
-            import_context,
-            import_bindings: &extracted_imports.bindings,
-            file_path,
-            root_path,
-        },
-        semantic_resolver,
-    )?;
+    let ctx = CallExtractionContext {
+        language,
+        ts_lang: &ts_lang,
+        rel_path: &rel_path,
+        symbols: &symbols,
+        import_context,
+        import_bindings: &extracted_imports.bindings,
+        file_path,
+        root_path,
+    };
+    let calls = extract_calls(&tree, &source, spec, ctx, semantic_resolver)?;
+    let inheritance = extract_inheritance(&tree, &source, spec, &ctx, &file_content_hash)?;
 
     Ok(Some(ParseResult {
         symbols,
         imports: extracted_imports.imports,
         calls,
-        inheritance: extract_inheritance(),
+        inheritance,
         source,
     }))
 }

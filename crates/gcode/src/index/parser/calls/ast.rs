@@ -162,6 +162,7 @@ mod tests {
             symbol_query: "",
             import_query: "",
             call_query: query,
+            inheritance_query: "",
         };
         let import_context = ImportResolutionContext::default();
         let ctx = CallExtractionContext {

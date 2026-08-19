@@ -1,6 +1,7 @@
 mod bash;
 mod common;
 mod go_rust_java_csharp;
+mod heritage;
 mod kotlin_swift;
 mod lua;
 mod objc;

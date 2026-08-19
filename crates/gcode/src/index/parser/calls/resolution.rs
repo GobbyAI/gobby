@@ -3,7 +3,7 @@ use crate::models::Symbol;
 use super::text::{is_identifier_continue, is_identifier_start};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub(super) enum CallSyntaxKind {
+pub(in crate::index::parser) enum CallSyntaxKind {
     Bare,
     Member,
     Other,

@@ -11,7 +11,12 @@ pub struct LanguageSpec {
     pub symbol_query: &'static str,
     pub import_query: &'static str,
     pub call_query: &'static str,
+    pub inheritance_query: &'static str,
 }
+
+#[path = "languages/heritage.rs"]
+mod heritage;
+use heritage::*;
 
 // ── Query Definitions ──────────────────────────────────────────────────
 
@@ -29,6 +34,7 @@ const PYTHON: LanguageSpec = LanguageSpec {
         (call function: (identifier) @name) @call
         (call function: (attribute attribute: (identifier) @name)) @call
     "#,
+    inheritance_query: HERITAGE_PYTHON,
 };
 
 const JAVASCRIPT: LanguageSpec = LanguageSpec {
@@ -46,6 +52,7 @@ const JAVASCRIPT: LanguageSpec = LanguageSpec {
         (call_expression function: (identifier) @name) @call
         (call_expression function: (member_expression property: (property_identifier) @name)) @call
     "#,
+    inheritance_query: HERITAGE_JAVASCRIPT,
 };
 
 const TYPESCRIPT: LanguageSpec = LanguageSpec {
@@ -66,6 +73,7 @@ const TYPESCRIPT: LanguageSpec = LanguageSpec {
         (call_expression function: (identifier) @name) @call
         (call_expression function: (member_expression property: (property_identifier) @name)) @call
     "#,
+    inheritance_query: HERITAGE_TYPESCRIPT,
 };
 
 const GO: LanguageSpec = LanguageSpec {
@@ -82,6 +90,7 @@ const GO: LanguageSpec = LanguageSpec {
         (call_expression function: (identifier) @name) @call
         (call_expression function: (selector_expression field: (field_identifier) @name)) @call
     "#,
+    inheritance_query: HERITAGE_GO,
 };
 
 const RUST: LanguageSpec = LanguageSpec {
@@ -102,6 +111,7 @@ const RUST: LanguageSpec = LanguageSpec {
         (call_expression function: (scoped_identifier name: (identifier) @name)) @call
         (call_expression function: (field_expression field: (field_identifier) @name)) @call
     "#,
+    inheritance_query: HERITAGE_RUST,
 };
 
 const JAVA: LanguageSpec = LanguageSpec {
@@ -120,6 +130,7 @@ const JAVA: LanguageSpec = LanguageSpec {
         (method_invocation name: (identifier) @name) @call
         (object_creation_expression type: (type_identifier) @name) @call
     "#,
+    inheritance_query: HERITAGE_JAVA,
 };
 
 const PHP: LanguageSpec = LanguageSpec {
@@ -141,6 +152,7 @@ const PHP: LanguageSpec = LanguageSpec {
         (member_call_expression name: (name) @name) @call
         (object_creation_expression [(name) (qualified_name)] @name) @call
     "#,
+    inheritance_query: HERITAGE_PHP,
 };
 
 const DART: LanguageSpec = LanguageSpec {
@@ -158,6 +170,7 @@ const DART: LanguageSpec = LanguageSpec {
     // Dart calls are extracted by parser.rs because this grammar models calls as
     // selector chains rather than a stable call-expression node.
     call_query: "",
+    inheritance_query: HERITAGE_DART,
 };
 
 const CSHARP: LanguageSpec = LanguageSpec {
@@ -177,6 +190,7 @@ const CSHARP: LanguageSpec = LanguageSpec {
         (invocation_expression function: (identifier) @name) @call
         (invocation_expression function: (member_access_expression name: (identifier) @name)) @call
     "#,
+    inheritance_query: HERITAGE_CSHARP,
 };
 
 const C_LANG: LanguageSpec = LanguageSpec {
@@ -193,6 +207,7 @@ const C_LANG: LanguageSpec = LanguageSpec {
     call_query: r#"
         (call_expression function: (identifier) @name) @call
     "#,
+    inheritance_query: "",
 };
 
 const CPP: LanguageSpec = LanguageSpec {
@@ -210,6 +225,7 @@ const CPP: LanguageSpec = LanguageSpec {
         (call_expression function: (identifier) @name) @call
         (call_expression function: (field_expression field: (field_identifier) @name)) @call
     "#,
+    inheritance_query: HERITAGE_CPP,
 };
 
 const OBJC: LanguageSpec = LanguageSpec {
@@ -237,6 +253,7 @@ const OBJC: LanguageSpec = LanguageSpec {
         (call_expression function: (identifier) @name) @call
         (message_expression receiver: (_) @receiver method: (identifier) @name) @call
     "#,
+    inheritance_query: HERITAGE_OBJC,
 };
 
 const ELIXIR: LanguageSpec = LanguageSpec {
@@ -261,6 +278,7 @@ const ELIXIR: LanguageSpec = LanguageSpec {
         (call target: (identifier) @name) @call
         (call target: (dot right: (identifier) @name)) @call
     "#,
+    inheritance_query: "",
 };
 
 const RUBY: LanguageSpec = LanguageSpec {
@@ -277,6 +295,7 @@ const RUBY: LanguageSpec = LanguageSpec {
     call_query: r#"
         (call method: (identifier) @name) @call
     "#,
+    inheritance_query: HERITAGE_RUBY,
 };
 
 const KOTLIN: LanguageSpec = LanguageSpec {
@@ -293,6 +312,7 @@ const KOTLIN: LanguageSpec = LanguageSpec {
         (call_expression (identifier) @name) @call
         (call_expression (navigation_expression (identifier) (identifier) @name)) @call
     "#,
+    inheritance_query: HERITAGE_KOTLIN,
 };
 
 const SCALA: LanguageSpec = LanguageSpec {
@@ -314,6 +334,7 @@ const SCALA: LanguageSpec = LanguageSpec {
         (instance_expression (type_identifier) @name) @call
         (instance_expression (generic_type type: (type_identifier) @name)) @call
 "#,
+    inheritance_query: HERITAGE_SCALA,
 };
 
 const LUA: LanguageSpec = LanguageSpec {
@@ -358,6 +379,7 @@ const LUA: LanguageSpec = LanguageSpec {
     (method_index_expression method: (identifier) @name)
   ]) @call
 "#,
+    inheritance_query: "",
 };
 
 const YAML: LanguageSpec = LanguageSpec {
@@ -367,6 +389,7 @@ const YAML: LanguageSpec = LanguageSpec {
     "#,
     import_query: "",
     call_query: "",
+    inheritance_query: "",
 };
 
 const JSON_LANG: LanguageSpec = LanguageSpec {
@@ -376,6 +399,7 @@ const JSON_LANG: LanguageSpec = LanguageSpec {
     "#,
     import_query: "",
     call_query: "",
+    inheritance_query: "",
 };
 
 const SWIFT: LanguageSpec = LanguageSpec {
@@ -395,6 +419,7 @@ const SWIFT: LanguageSpec = LanguageSpec {
         (call_expression (simple_identifier) @name) @call
         (call_expression (navigation_expression suffix: (navigation_suffix suffix: (simple_identifier) @name))) @call
     "#,
+    inheritance_query: HERITAGE_SWIFT,
 };
 
 const BASH: LanguageSpec = LanguageSpec {
@@ -410,6 +435,7 @@ const BASH: LanguageSpec = LanguageSpec {
     call_query: r#"
         (command name: (command_name) @name) @call
     "#,
+    inheritance_query: "",
 };
 
 // ── Registry ───────────────────────────────────────────────────────────
