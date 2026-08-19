@@ -1,5 +1,6 @@
 """Content checks for removed workflow wait-tool guidance in bundled skills."""
 
+import re
 from pathlib import Path
 
 import pytest
@@ -32,9 +33,23 @@ CAPTURE_GUIDANCE = (
 )
 
 
+_WHITESPACE_RUN = re.compile(r"\s+")
+
+
+def _guidance_text(path: Path) -> str:
+    """Read a template, collapsing whitespace runs to single spaces.
+
+    The asserted phrases live in YAML block scalars and Markdown prose that the
+    prompt style contract wraps at ~80 columns, so a phrase may straddle a line
+    break and its indentation. Normalizing keeps these checks pinned to the
+    guidance content rather than to its current line layout.
+    """
+    return _WHITESPACE_RUN.sub(" ", path.read_text())
+
+
 @pytest.mark.parametrize("skill_name", UPDATED_SKILLS)
 def test_skills_do_not_mention_removed_wait_tool(skill_name: str) -> None:
-    body = (SKILLS_DIR / skill_name / "SKILL.md").read_text()
+    body = _guidance_text(SKILLS_DIR / skill_name / "SKILL.md")
 
     assert "wait_for_completion" not in body
     assert "wait_timeout" not in body
@@ -43,7 +58,7 @@ def test_skills_do_not_mention_removed_wait_tool(skill_name: str) -> None:
 
 @pytest.mark.parametrize("path", WAKE_DRIVEN_GUIDANCE)
 def test_wait_guidance_is_wake_driven(path: Path) -> None:
-    body = path.read_text()
+    body = _guidance_text(path)
 
     assert "subscribe once" in body
     assert "end the turn" in body
@@ -54,7 +69,7 @@ def test_wait_guidance_is_wake_driven(path: Path) -> None:
 
 @pytest.mark.parametrize("path", CAPTURE_GUIDANCE)
 def test_terminal_result_guidance_pages_capture_metadata(path: Path) -> None:
-    body = path.read_text()
+    body = _guidance_text(path)
 
     assert "capture metadata" in body
     assert "get_agent_capture" in body
@@ -63,7 +78,7 @@ def test_terminal_result_guidance_pages_capture_metadata(path: Path) -> None:
 
 @pytest.mark.parametrize("path", REVIEW_DISPATCH_GUIDANCE)
 def test_review_dispatch_guidance_avoids_removed_wait_controls(path: Path) -> None:
-    body = path.read_text()
+    body = _guidance_text(path)
 
     assert "wait_for_completion" not in body
     assert "wait_timeout" not in body
