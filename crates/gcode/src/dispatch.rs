@@ -38,7 +38,7 @@ fn stderr_log_level(quiet: bool, rust_log: Option<&str>) -> log::LevelFilter {
 
 fn ensure_project_fresh(ctx: &config::Context, disabled: bool) -> anyhow::Result<()> {
     if !disabled {
-        warn_freshness(
+        warn_if_busy(
             ctx,
             freshness::ensure_fresh(ctx, freshness::FreshnessScope::Project)?,
         );
@@ -52,7 +52,7 @@ fn ensure_files_fresh(
     files: Vec<std::path::PathBuf>,
 ) -> anyhow::Result<()> {
     if !disabled {
-        warn_freshness(
+        warn_if_busy(
             ctx,
             freshness::ensure_fresh(ctx, freshness::FreshnessScope::Files(files))?,
         );
@@ -66,12 +66,12 @@ fn ensure_file_fresh(ctx: &config::Context, disabled: bool, file: &str) -> anyho
 
 fn ensure_symbol_fresh(ctx: &config::Context, disabled: bool, id: &str) -> anyhow::Result<()> {
     if !disabled {
-        warn_freshness(ctx, freshness::ensure_symbol_fresh(ctx, id)?);
+        warn_if_busy(ctx, freshness::ensure_symbol_fresh(ctx, id)?);
     }
     Ok(())
 }
 
-fn warn_freshness(ctx: &config::Context, status: freshness::FreshnessStatus) {
+fn warn_if_busy(ctx: &config::Context, status: freshness::FreshnessStatus) {
     if let Some(line) = freshness_warning(ctx.quiet, &status) {
         eprintln!("{line}");
     }
