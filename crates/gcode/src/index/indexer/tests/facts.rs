@@ -191,10 +191,9 @@ fn inheritance_pending_status_keeps_graph_only_owner() {
     let mut outcome = IndexOutcome {
         project_id: "project-1".to_string(),
         indexed_file_paths: vec!["src/base.py".to_string()],
-        graph_file_paths: vec!["src/base.py".to_string(), "src/derived.py".to_string()],
-        vector_file_paths: vec!["src/base.py".to_string()],
         ..IndexOutcome::default()
     };
+    outcome.record_promotion_owners(["src/derived.py".to_string()]);
     attach_projection_sync(
         &mut outcome,
         &IndexRequest {
@@ -279,10 +278,11 @@ mod serial_db {
         not(gcode_postgres_tests),
         ignore = "requires a PostgreSQL test database URL"
     )]
-    fn inheritance_invalidates_on_derived_reindex() {
+    fn inheritance_rows_are_retained_per_content_hash_across_reindex() {
         let (mut conn, project_id, _cleanup) = seeded_project("gcode-inherit-reindex");
         write_derived_pending(&mut conn, &project_id, "hash-d1");
         write_derived_without_heritage(&mut conn, &project_id, "hash-d2");
+        // Superseded hash-d1 rows stay until content GC, not this reindex write.
         assert_eq!(count_inheritance_hash(&mut conn, &project_id, "hash-d1"), 1);
         assert_eq!(count_inheritance_hash(&mut conn, &project_id, "hash-d2"), 0);
     }
@@ -521,9 +521,12 @@ mod serial_db {
 
     fn write_derived_pending(conn: &mut postgres::Client, project_id: &str, hash: &str) {
         let rel = "src/derived.py";
-        let source_id = Symbol::make_id(project_id, rel, hash, "Derived", "class", 0);
+        let kind = "class";
+        let source_id = Symbol::make_id(project_id, rel, hash, "Derived", kind, 0);
         let parse = ParseResult {
-            symbols: vec![type_symbol(project_id, rel, hash, "Derived", 0)],
+            symbols: vec![type_symbol(
+                project_id, rel, hash, "Derived", 0, "python", kind,
+            )],
             imports: Vec::new(),
             calls: Vec::new(),
             inheritance: vec![InheritanceRelation {
@@ -548,7 +551,9 @@ mod serial_db {
     fn write_derived_without_heritage(conn: &mut postgres::Client, project_id: &str, hash: &str) {
         let rel = "src/derived.py";
         let parse = ParseResult {
-            symbols: vec![type_symbol(project_id, rel, hash, "Derived", 0)],
+            symbols: vec![type_symbol(
+                project_id, rel, hash, "Derived", 0, "python", "class",
+            )],
             imports: Vec::new(),
             calls: Vec::new(),
             inheritance: Vec::new(),
@@ -560,7 +565,9 @@ mod serial_db {
     fn write_base_symbol(conn: &mut postgres::Client, project_id: &str, hash: &str) {
         let rel = "src/base.py";
         let parse = ParseResult {
-            symbols: vec![type_symbol(project_id, rel, hash, "Base", 0)],
+            symbols: vec![type_symbol(
+                project_id, rel, hash, "Base", 0, "python", "class",
+            )],
             imports: Vec::new(),
             calls: Vec::new(),
             inheritance: Vec::new(),
@@ -599,7 +606,9 @@ mod serial_db {
         let rel = "src/type.rs";
         let hash = "hash-type";
         let parse = ParseResult {
-            symbols: vec![type_symbol(project_id, rel, hash, "Type", 0)],
+            symbols: vec![type_symbol(
+                project_id, rel, hash, "Type", 0, "rust", "struct",
+            )],
             imports: Vec::new(),
             calls: Vec::new(),
             inheritance: Vec::new(),
@@ -638,15 +647,17 @@ mod serial_db {
         hash: &str,
         name: &str,
         byte_start: usize,
+        language: &str,
+        kind: &str,
     ) -> Symbol {
         Symbol {
-            id: Symbol::make_id(project_id, rel, hash, name, "class", byte_start),
+            id: Symbol::make_id(project_id, rel, hash, name, kind, byte_start),
             project_id: project_id.to_string(),
             file_path: rel.to_string(),
             name: name.to_string(),
             qualified_name: name.to_string(),
-            kind: "class".to_string(),
-            language: "python".to_string(),
+            kind: kind.to_string(),
+            language: language.to_string(),
             byte_start,
             byte_end: byte_start + name.len(),
             line_start: 1,
@@ -720,42 +731,44 @@ mod serial_db {
 
     fn cleanup(conn: &mut postgres::Client, project_id: &str) -> anyhow::Result<()> {
         let project_id = db::id_param(project_id)?;
-        conn.execute(
+        let mut tx = conn.transaction()?;
+        tx.execute(
             "DELETE FROM code_indexed_file_states WHERE project_id = $1",
             &[&project_id],
         )?;
-        conn.execute(
+        tx.execute(
             "DELETE FROM code_indexed_project_states WHERE project_id = $1",
             &[&project_id],
         )?;
-        conn.execute(
+        tx.execute(
             "DELETE FROM code_inheritance WHERE project_id = $1",
             &[&project_id],
         )?;
-        conn.execute(
+        tx.execute(
             "DELETE FROM code_calls WHERE project_id = $1",
             &[&project_id],
         )?;
-        conn.execute(
+        tx.execute(
             "DELETE FROM code_imports WHERE project_id = $1",
             &[&project_id],
         )?;
-        conn.execute(
+        tx.execute(
             "DELETE FROM code_content_chunks WHERE project_id = $1",
             &[&project_id],
         )?;
-        conn.execute(
+        tx.execute(
             "DELETE FROM code_symbols WHERE project_id = $1",
             &[&project_id],
         )?;
-        conn.execute(
+        tx.execute(
             "DELETE FROM code_indexed_files WHERE project_id = $1",
             &[&project_id],
         )?;
-        conn.execute(
+        tx.execute(
             "DELETE FROM code_indexed_projects WHERE id = $1",
             &[&project_id],
         )?;
+        tx.commit()?;
         Ok(())
     }
 

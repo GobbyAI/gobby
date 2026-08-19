@@ -83,6 +83,43 @@ fn mark_graph_synced_failed_cas_dirties_live_row() {
     not(gcode_postgres_tests),
     ignore = "requires a PostgreSQL test database URL"
 )]
+fn dirty_graph_sync_for_unreferenced_hash_does_not_change_active_state() {
+    let (mut conn, project_id, _cleanup) = seeded_file("gcode-cas-unref-hash", "hash-a");
+    let attempt = mark_graph_sync_attempted(&mut conn, &project_id, "src/lib.rs")
+        .expect("attempt")
+        .expect("live row");
+    assert!(
+        mark_graph_synced(
+            &mut conn,
+            &project_id,
+            "src/lib.rs",
+            &attempt.content_hash,
+            attempt.attempted_at,
+        )
+        .expect("sync active hash")
+    );
+    upsert_content_version(&mut conn, &project_id, "hash-unreferenced");
+    let (synced_before, attempt_cleared_before) =
+        graph_sync_flags(&mut conn, &project_id, "hash-a");
+    dirty_graph_sync_for_file(&mut conn, &project_id, "src/lib.rs", "hash-unreferenced")
+        .expect("unreferenced dirty");
+    let (synced_after, attempt_cleared_after) = graph_sync_flags(&mut conn, &project_id, "hash-a");
+    assert_eq!(synced_before, synced_after);
+    assert_eq!(attempt_cleared_before, attempt_cleared_after);
+    assert!(synced_after);
+    assert!(attempt_cleared_after);
+    let (unref_synced, unref_cleared) =
+        graph_sync_flags(&mut conn, &project_id, "hash-unreferenced");
+    assert!(!unref_synced);
+    assert!(unref_cleared);
+}
+
+#[test]
+#[serial_test::serial(serial_db)]
+#[cfg_attr(
+    not(gcode_postgres_tests),
+    ignore = "requires a PostgreSQL test database URL"
+)]
 fn mark_graph_synced_cas_rejects_same_hash_stale_attempt() {
     let (mut conn, project_id, _cleanup) = seeded_file("gcode-cas-same-hash", "hash-b");
     let h1 = mark_graph_sync_attempted(&mut conn, &project_id, "src/lib.rs")
@@ -94,6 +131,10 @@ fn mark_graph_synced_cas_rejects_same_hash_stale_attempt() {
         .expect("h2 attempt")
         .expect("live row");
     assert_eq!(h1.content_hash, h2.content_hash);
+    assert_ne!(
+        h1.attempted_at, h2.attempted_at,
+        "stale CAS requires distinct attempt timestamps"
+    );
     assert!(
         mark_graph_synced(
             &mut conn,

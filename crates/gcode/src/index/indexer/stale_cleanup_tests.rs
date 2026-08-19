@@ -177,21 +177,72 @@ mod serial_db {
             "shared file facts remain until content GC"
         );
     }
-}
 
-#[test]
-fn cleanup_project_deletes_code_inheritance() {
-    let source = include_str!("stale_cleanup_tests.rs");
-    let calls = source
-        .find("DELETE FROM code_calls")
-        .expect("cleanup deletes code_calls");
-    let inheritance = source
-        .find("DELETE FROM code_inheritance")
-        .expect("cleanup deletes code_inheritance");
-    assert!(
-        inheritance > calls,
-        "code_inheritance cleanup must sit next to code_calls"
-    );
+    #[test]
+    #[cfg_attr(
+        not(gcode_postgres_tests),
+        ignore = "requires a PostgreSQL test database URL"
+    )]
+    #[serial_test::serial(serial_db)]
+    fn cleanup_project_deletes_code_inheritance() {
+        let (mut conn, database_url) = connect_test_db();
+        let project_root = tempfile::tempdir().expect("project tempdir");
+        let project_id = unique_test_project_id("gcode-cleanup-inheritance");
+        cleanup_project(&mut conn, &project_id).expect("pre-clean project rows");
+        let _cleanup = ProjectCleanup {
+            database_url: database_url.clone(),
+            project_id: project_id.clone(),
+        };
+
+        write_file(
+            project_root.path(),
+            "src/lib.rs",
+            b"pub fn indexed() -> u8 { 1 }\n",
+        );
+        let ctx = test_context(
+            database_url,
+            project_root.path().to_path_buf(),
+            project_id.clone(),
+        );
+        index_files(
+            discovered_request(project_root.path(), true),
+            &ctx,
+            IndexOptions::default(),
+        )
+        .expect("index seed file");
+
+        let project_uuid = db::id_param(&project_id).expect("uuid");
+        conn.execute(
+            "INSERT INTO code_inheritance (
+                 project_id, source_symbol_id, source_name, source_kind, source_external_module,
+                 target_symbol_id, target_name, target_kind, target_external_module,
+                 heritage_kind, file_path, content_hash, line
+             ) VALUES (
+                 $1, NULL, 'Derived', 'symbol', '',
+                 NULL, 'Base', 'symbol', '',
+                 'INHERITS', 'src/lib.rs', 'hash-seed', 1
+             )",
+            &[&project_uuid],
+        )
+        .expect("seed inheritance");
+        let before: i64 = conn
+            .query_one(
+                "SELECT COUNT(*) FROM code_inheritance WHERE project_id = $1",
+                &[&project_uuid],
+            )
+            .expect("count before")
+            .get(0);
+        assert_eq!(before, 1);
+        cleanup_project(&mut conn, &project_id).expect("cleanup project");
+        let after: i64 = conn
+            .query_one(
+                "SELECT COUNT(*) FROM code_inheritance WHERE project_id = $1",
+                &[&project_uuid],
+            )
+            .expect("count after")
+            .get(0);
+        assert_eq!(after, 0);
+    }
 }
 
 fn connect_test_db() -> (postgres::Client, String) {

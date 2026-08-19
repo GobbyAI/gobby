@@ -594,7 +594,7 @@ pub fn promote_inheritance_row(
     let project_uuid = id_param(project_id)?;
     let source_symbol_id = opt_id_param(original.source_symbol_id.as_deref().unwrap_or(""))?;
     let target_symbol_id = opt_id_param(original.target_symbol_id.as_deref().unwrap_or(""))?;
-    conn.execute(
+    let deleted = conn.execute(
         "DELETE FROM code_inheritance
          WHERE project_id = $1
            AND file_path = $2
@@ -625,7 +625,9 @@ pub fn promote_inheritance_row(
             &to_i32(original.line),
         ],
     )?;
-    insert_inheritance(conn, project_id, &original.content_hash, resolved)?;
+    if deleted == 1 {
+        insert_inheritance(conn, project_id, &original.content_hash, resolved)?;
+    }
     Ok(())
 }
 

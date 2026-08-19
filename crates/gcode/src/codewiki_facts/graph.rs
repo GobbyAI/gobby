@@ -5,7 +5,7 @@ use gobby_core::falkor::Row;
 use crate::graph::code_graph;
 use crate::models::GraphResult;
 
-use super::graph_query::{self, EdgeQueryPlan, ScopeKeys, plans_for};
+use super::graph_query::{self, EdgeQueryPlan, QueryPlans, ScopeKeys, plans_for};
 use super::{CodewikiFacts, ScopeSelector};
 
 pub use super::graph_query::{GraphBounds, GraphDirection, GraphEdgeKind, GraphScopeMode};
@@ -130,11 +130,21 @@ impl CodewikiFacts {
                 outgoing_truncated: false,
             });
         }
+        let plans = match plans_for(kind, bounds, mode, keys) {
+            QueryPlans::ClosedScopeTooLarge { .. } => {
+                return Ok(ScopedGraph {
+                    outcome: GraphOutcome::Truncated(Vec::new()),
+                    incoming_truncated: bounds.incoming_limit > 0,
+                    outgoing_truncated: bounds.outgoing_limit > 0,
+                });
+            }
+            QueryPlans::Ready(plans) => plans,
+        };
         let mut incoming_rows = Vec::new();
         let mut outgoing_rows = Vec::new();
         let mut incoming_truncated = false;
         let mut outgoing_truncated = false;
-        for plan in plans_for(kind, bounds, mode, keys) {
+        for plan in plans {
             match self.query_plan_rows(&plan)? {
                 GraphOutcome::Unavailable { reason } => {
                     return Ok(ScopedGraph {

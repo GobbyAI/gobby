@@ -220,48 +220,55 @@ fn print_typed_error(
     std::process::ExitCode::from(exit)
 }
 
-pub(crate) fn classify_run_error(error: &anyhow::Error) -> u8 {
+pub(crate) struct ClassifiedRunError<'a> {
+    pub exit: u8,
+    printer: Option<Box<dyn FnOnce() -> anyhow::Result<()> + 'a>>,
+}
+
+pub(crate) fn classify_run_error(error: &anyhow::Error) -> ClassifiedRunError<'_> {
     if let Some(contract_error) = error.downcast_ref::<commands::graph::GraphSyncContractError>() {
-        return contract_error.exit_code();
+        return ClassifiedRunError {
+            exit: contract_error.exit_code(),
+            printer: Some(Box::new(|| contract_error.print())),
+        };
     }
     if let Some(doctor_exit) =
         error.downcast_ref::<commands::embeddings_doctor::EmbeddingsDoctorExit>()
     {
-        return doctor_exit.exit_code();
+        return ClassifiedRunError {
+            exit: doctor_exit.exit_code(),
+            printer: Some(Box::new(|| doctor_exit.print())),
+        };
     }
     if let Some(cli_error) = error.downcast_ref::<crate::cli_error::CliError>() {
-        return cli_error.exit_status;
+        return ClassifiedRunError {
+            exit: cli_error.exit_status,
+            printer: Some(Box::new(|| cli_error.print())),
+        };
     }
     if let Some(grant_error) = error.downcast_ref::<gobby_core::grant::GrantError>() {
-        return crate::cli_error::CliError::grant(grant_error.clone()).exit_status;
+        let cli_error = crate::cli_error::CliError::grant(grant_error.clone());
+        return ClassifiedRunError {
+            exit: cli_error.exit_status,
+            printer: Some(Box::new(move || cli_error.print())),
+        };
     }
-    1
+    ClassifiedRunError {
+        exit: 1,
+        printer: None,
+    }
 }
 
 pub(crate) fn run_with_exit_code() -> std::process::ExitCode {
     match run() {
         Ok(()) => std::process::ExitCode::SUCCESS,
         Err(error) => {
-            let exit = classify_run_error(&error);
-            if let Some(contract_error) =
-                error.downcast_ref::<commands::graph::GraphSyncContractError>()
-            {
-                return print_typed_error(|| contract_error.print(), exit);
-            }
-            if let Some(doctor_exit) =
-                error.downcast_ref::<commands::embeddings_doctor::EmbeddingsDoctorExit>()
-            {
-                return print_typed_error(|| doctor_exit.print(), exit);
-            }
-            if let Some(cli_error) = error.downcast_ref::<crate::cli_error::CliError>() {
-                return print_typed_error(|| cli_error.print(), exit);
-            }
-            if let Some(grant_error) = error.downcast_ref::<gobby_core::grant::GrantError>() {
-                let cli_error = crate::cli_error::CliError::grant(grant_error.clone());
-                return print_typed_error(|| cli_error.print(), exit);
+            let classified = classify_run_error(&error);
+            if let Some(print) = classified.printer {
+                return print_typed_error(print, classified.exit);
             }
             eprintln!("Error: {error:?}");
-            std::process::ExitCode::from(exit)
+            std::process::ExitCode::from(classified.exit)
         }
     }
 }

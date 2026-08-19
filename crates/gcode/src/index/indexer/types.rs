@@ -1,3 +1,4 @@
+use std::collections::HashSet;
 use std::path::PathBuf;
 
 use serde::{Deserialize, Serialize};
@@ -130,15 +131,17 @@ impl IndexOutcome {
         self.unsupported_file_types = unsupported;
     }
 
-    pub(super) fn record_promotion_owners(&mut self, owners: impl IntoIterator<Item = String>) {
+    pub(crate) fn record_promotion_owners(&mut self, owners: impl IntoIterator<Item = String>) {
         self.vector_file_paths.clone_from(&self.indexed_file_paths);
-        let mut graph = self.indexed_file_paths.clone();
+        if self.graph_file_paths.is_empty() {
+            self.graph_file_paths.clone_from(&self.indexed_file_paths);
+        }
+        let mut seen: HashSet<String> = self.graph_file_paths.iter().cloned().collect();
         for owner in owners {
-            if !graph.iter().any(|path| path == &owner) {
-                graph.push(owner);
+            if seen.insert(owner.clone()) {
+                self.graph_file_paths.push(owner);
             }
         }
-        self.graph_file_paths = graph;
     }
 }
 

@@ -35,5 +35,6 @@ fn has_postgres_test_database() -> bool {
 }
 
 fn non_empty_env(name: &str) -> bool {
-    std::env::var_os(name).is_some_and(|value| !value.is_empty())
+    std::env::var_os(name)
+        .is_some_and(|value| value.to_str().is_some_and(|text| !text.trim().is_empty()))
 }

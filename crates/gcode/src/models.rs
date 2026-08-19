@@ -781,10 +781,27 @@ mod tests {
             relation.target_local_import_candidate_files(),
             vec!["src/trait.rs".to_string()]
         );
-        assert_ne!(
+        assert_eq!(
             relation.source_external_module,
-            relation.target_external_module
+            Some("src/type.rs".to_string())
         );
+        assert_eq!(
+            relation.target_external_module,
+            Some("src/trait.rs".to_string())
+        );
+
+        let multi_path = InheritanceRelation {
+            source_kind: CallTargetKind::LocalImport,
+            source_external_module: Some(format!("src/a.rs{LOCAL_IMPORT_CANDIDATE_SEP}src/b.rs")),
+            target_kind: CallTargetKind::Symbol,
+            target_external_module: Some("src/ignored.rs".to_string()),
+            ..relation.clone()
+        };
+        assert_eq!(
+            multi_path.source_local_import_candidate_files(),
+            vec!["src/a.rs".to_string(), "src/b.rs".to_string()]
+        );
+        assert!(multi_path.target_local_import_candidate_files().is_empty());
     }
 
     #[test]

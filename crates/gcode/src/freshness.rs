@@ -449,10 +449,6 @@ mod tests {
         }
 
         #[test]
-        #[cfg_attr(
-            not(gcode_postgres_tests),
-            ignore = "requires a PostgreSQL test database URL"
-        )]
         #[serial_test::serial(serial_db)]
         fn refresh_closure_failure_yields_degraded() {
             // `ensure_fresh` maps an acquired lock whose refresh closure failed

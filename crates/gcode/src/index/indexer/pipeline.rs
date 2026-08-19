@@ -19,7 +19,7 @@ use super::lifecycle::{
 };
 use super::local_imports::{
     resolve_local_import_calls, resolve_local_import_inheritance,
-    resolve_project_local_import_calls, resolve_project_local_import_inheritance,
+    resolve_project_local_import_calls,
 };
 use super::overlay::index_overlay_files;
 use super::types::{IndexOptions, IndexOutcome, IndexProgressSink, IndexRequest};
@@ -193,10 +193,7 @@ fn index_discovered_files(
     }
     let mut trigger_paths = outcome.indexed_file_paths.clone();
     trigger_paths.extend(adopted_paths);
-    let mut promoted_owners = resolve_local_import_inheritance(conn, project_id, &trigger_paths)?;
-    if request.full && request.path_filter.is_none() {
-        promoted_owners.extend(resolve_project_local_import_inheritance(conn, project_id)?);
-    }
+    let promoted_owners = resolve_local_import_inheritance(conn, project_id, &trigger_paths)?;
     outcome.record_promotion_owners(promoted_owners);
     outcome.durations.indexing_ms = indexing_start.elapsed().as_millis() as u64;
 

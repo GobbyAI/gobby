@@ -27,6 +27,26 @@ impl EmbeddingsDoctorExit {
         self.exit_code
     }
 
+    #[cfg(test)]
+    pub(crate) fn with_exit_code(exit_code: u8) -> Self {
+        Self {
+            payload: EmbeddingsDoctorReport {
+                endpoint: None,
+                model: None,
+                dim: None,
+                probe_error: None,
+                peer_error: None,
+                api_key_present: false,
+                api_key_fingerprint: None,
+                namespace_resolved: None,
+                source: None,
+                agrees: None,
+                drift: None,
+            },
+            exit_code,
+        }
+    }
+
     pub fn print(&self) -> anyhow::Result<()> {
         output::print_json(&self.payload)
     }

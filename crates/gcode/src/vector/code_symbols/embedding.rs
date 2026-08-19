@@ -471,9 +471,11 @@ mod tests {
     #[test]
     #[cfg(feature = "ai")]
     fn embed_via_daemon_or_err_uses_document_mode_for_indexing() {
-        assert!(
-            !super::INDEXING_EMBED_QUERY_MODE,
-            "indexing embeddings must use document mode"
-        );
+        const {
+            assert!(
+                !super::INDEXING_EMBED_QUERY_MODE,
+                "indexing embeddings must use document mode"
+            );
+        }
     }
 }

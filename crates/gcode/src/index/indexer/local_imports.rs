@@ -125,6 +125,7 @@ pub(super) fn resolve_local_import_inheritance(
     resolve_pending_local_import_inheritance(conn, project_id, pending)
 }
 
+#[allow(dead_code)]
 pub(super) fn resolve_project_local_import_inheritance(
     conn: &mut Client,
     project_id: &str,
@@ -161,12 +162,15 @@ fn dedup_inheritance(rows: &mut Vec<InheritanceRelation>) {
     });
 }
 
+const INHERITANCE_PROMOTION_BATCH: usize = 32;
+
 fn resolve_pending_local_import_inheritance(
     conn: &mut Client,
     project_id: &str,
     pending: Vec<InheritanceRelation>,
 ) -> anyhow::Result<Vec<String>> {
     let mut owners = BTreeSet::new();
+    let mut to_promote = Vec::new();
     for original in pending {
         let mut updated = original.clone();
         let mut changed = false;
@@ -198,19 +202,25 @@ fn resolve_pending_local_import_inheritance(
                 changed = true;
             }
         }
-        if !changed {
-            continue;
+        if changed {
+            to_promote.push((original, updated));
         }
+    }
+    for chunk in to_promote.chunks(INHERITANCE_PROMOTION_BATCH) {
         let mut tx = conn.transaction()?;
-        api::promote_inheritance_row(&mut tx, project_id, &original, &updated)?;
-        db::dirty_graph_sync_for_file(
-            &mut tx,
-            project_id,
-            &original.file_path,
-            &original.content_hash,
-        )?;
+        for (original, updated) in chunk {
+            api::promote_inheritance_row(&mut tx, project_id, original, updated)?;
+            db::dirty_graph_sync_for_file(
+                &mut tx,
+                project_id,
+                &original.file_path,
+                &original.content_hash,
+            )?;
+        }
         tx.commit()?;
-        owners.insert(original.file_path);
+        for (original, _) in chunk {
+            owners.insert(original.file_path.clone());
+        }
     }
     Ok(owners.into_iter().collect())
 }

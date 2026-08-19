@@ -14,7 +14,7 @@ pub struct GraphSyncContractError {
 }
 
 impl GraphSyncContractError {
-    pub(super) fn project_not_indexed(ctx: &Context, file_path: &str) -> Self {
+    pub(crate) fn project_not_indexed(ctx: &Context, file_path: &str) -> Self {
         Self {
             payload: json!({
                 "success": false,
@@ -27,7 +27,7 @@ impl GraphSyncContractError {
         }
     }
 
-    pub(super) fn indexed_file_not_found(ctx: &Context, file_path: &str) -> Self {
+    pub(crate) fn indexed_file_not_found(ctx: &Context, file_path: &str) -> Self {
         Self {
             payload: json!({
                 "success": false,

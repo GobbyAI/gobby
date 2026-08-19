@@ -152,8 +152,11 @@ fn api_contract_mismatch_display(
     binary_contract: &i64,
     source: &Option<String>,
 ) -> String {
+    let grant_contract = grant_contract
+        .map(|value| value.to_string())
+        .unwrap_or_else(|| "unknown".to_string());
     let message = format!(
-        "grant api contract {grant_contract:?} does not match this binary's supported contract {binary_contract}"
+        "grant api contract {grant_contract} does not match this binary's supported contract {binary_contract}"
     );
     match source {
         Some(source) => format!("{source}: {message}"),

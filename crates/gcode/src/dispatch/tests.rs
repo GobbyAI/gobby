@@ -1,8 +1,12 @@
 use super::*;
 use crate::cli::Cli;
 use crate::cli_error::CliError;
+use crate::commands::embeddings_doctor::EmbeddingsDoctorExit;
+use crate::commands::graph::GraphSyncContractError;
+use crate::config::{CodeVectorSettings, Context, ProjectIndexScope};
 use clap::Parser;
 use gobby_core::grant::GrantError;
+use std::path::PathBuf;
 
 fn services_for(args: &[&str]) -> config::ServiceConfigSelection {
     let cli = Cli::try_parse_from(std::iter::once("gcode").chain(args.iter().copied()))
@@ -120,7 +124,7 @@ fn cli_error_uses_its_exit_status() {
         recovery: None,
         exit_status: 2,
     });
-    assert_eq!(classify_run_error(&error), 2);
+    assert_eq!(classify_run_error(&error).exit, 2);
 
     let doctor = anyhow::Error::from(CliError {
         code: "embeddings_doctor",
@@ -128,21 +132,72 @@ fn cli_error_uses_its_exit_status() {
         recovery: None,
         exit_status: 11,
     });
-    assert_eq!(classify_run_error(&doctor), 11);
+    assert_eq!(classify_run_error(&doctor).exit, 11);
+}
+
+#[test]
+fn classify_run_error_uses_graph_sync_and_embeddings_doctor_exits() {
+    let ctx = Context {
+        database_url: "postgresql://localhost/nonexistent".to_string(),
+        project_root: PathBuf::from("/nonexistent"),
+        project_id: "test-project".to_string(),
+        quiet: true,
+        falkordb: None,
+        qdrant: None,
+        embedding: None,
+        code_vectors: CodeVectorSettings::default(),
+        runtime_config_capture_degraded: false,
+        indexing: gobby_core::config::IndexingConfig::default(),
+        daemon_url: None,
+        grant_ai: None,
+        index_scope: ProjectIndexScope::Single,
+    };
+    let missing_project = anyhow::Error::from(GraphSyncContractError::project_not_indexed(
+        &ctx,
+        "src/lib.rs",
+    ));
+    assert_eq!(classify_run_error(&missing_project).exit, 2);
+    let missing_file = anyhow::Error::from(GraphSyncContractError::indexed_file_not_found(
+        &ctx,
+        "src/missing.rs",
+    ));
+    assert_eq!(classify_run_error(&missing_file).exit, 2);
+
+    assert_eq!(
+        classify_run_error(&anyhow::Error::from(EmbeddingsDoctorExit::with_exit_code(
+            10
+        )))
+        .exit,
+        10
+    );
+    assert_eq!(
+        classify_run_error(&anyhow::Error::from(EmbeddingsDoctorExit::with_exit_code(
+            11
+        )))
+        .exit,
+        11
+    );
+    assert_eq!(
+        classify_run_error(&anyhow::Error::from(EmbeddingsDoctorExit::with_exit_code(
+            20
+        )))
+        .exit,
+        20
+    );
 }
 
 #[test]
 fn grant_error_maps_through_cli_error_grant() {
     let error = anyhow::Error::from(GrantError::DaemonRequired);
     assert_eq!(
-        classify_run_error(&error),
+        classify_run_error(&error).exit,
         CliError::grant(GrantError::DaemonRequired).exit_status
     );
-    assert_eq!(classify_run_error(&error), 2);
+    assert_eq!(classify_run_error(&error).exit, 2);
 }
 
 #[test]
 fn unclassified_anyhow_error_exits_one() {
     let error = anyhow::anyhow!("unexpected index panic");
-    assert_eq!(classify_run_error(&error), 1);
+    assert_eq!(classify_run_error(&error).exit, 1);
 }

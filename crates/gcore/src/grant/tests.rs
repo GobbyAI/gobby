@@ -476,8 +476,7 @@ fn wrong_api_contract_parses_to_enriched_mismatch() {
     assert_eq!(
         error.to_string(),
         format!(
-            "grant api contract {:?} does not match this binary's supported contract {}",
-            Some(99i64),
+            "grant api contract 99 does not match this binary's supported contract {}",
             EXPECTED_API_CONTRACT
         )
     );
@@ -502,6 +501,13 @@ fn absent_api_contract_parses_to_enriched_mismatch() {
             binary_contract: EXPECTED_API_CONTRACT,
             source: None,
         }
+    );
+    assert_eq!(
+        error.to_string(),
+        format!(
+            "grant api contract unknown does not match this binary's supported contract {}",
+            EXPECTED_API_CONTRACT
+        )
     );
     assert_eq!(error.cli_code(), "api_contract_mismatch");
     assert_eq!(error.exit_status(), 2);

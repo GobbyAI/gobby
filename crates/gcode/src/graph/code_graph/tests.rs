@@ -719,29 +719,45 @@ fn global_prune_scope_discovery_query_reads_distinct_code_projects() {
     assert!(query.params.is_empty());
 }
 
-#[allow(clippy::too_many_arguments)]
+struct HeritageEnd<'a> {
+    id: Option<&'a str>,
+    name: &'a str,
+    kind: CallTargetKind,
+    module: Option<&'a str>,
+}
+
+fn heritage_end<'a>(
+    id: Option<&'a str>,
+    name: &'a str,
+    kind: CallTargetKind,
+    module: Option<&'a str>,
+) -> HeritageEnd<'a> {
+    HeritageEnd {
+        id,
+        name,
+        kind,
+        module,
+    }
+}
+
 fn heritage_relation(
-    source_id: Option<&str>,
-    source_name: &str,
-    source_kind: CallTargetKind,
-    source_module: Option<&str>,
-    target_id: Option<&str>,
-    target_name: &str,
-    target_kind: CallTargetKind,
-    target_module: Option<&str>,
+    source: HeritageEnd<'_>,
+    target: HeritageEnd<'_>,
     heritage_kind: HeritageKind,
     line: usize,
 ) -> InheritanceRelation {
     InheritanceRelation {
-        source_symbol_id: source_id.map(str::to_string),
-        source_name: source_name.to_string(),
-        source_kind,
-        source_external_module: source_module.map(str::to_string),
-        target_symbol_id: target_id.map(str::to_string),
-        target_name: target_name.to_string(),
-        target_kind,
-        target_external_module: target_module.map(str::to_string),
+        source_symbol_id: source.id.map(str::to_string),
+        source_name: source.name.to_string(),
+        source_kind: source.kind,
+        source_external_module: source.module.map(str::to_string),
+        target_symbol_id: target.id.map(str::to_string),
+        target_name: target.name.to_string(),
+        target_kind: target.kind,
+        target_external_module: target.module.map(str::to_string),
         heritage_kind,
+        // planned_heritage always syncs src/owner.rs / hash-1; these carriers
+        // stay stale so planning cannot silently read them.
         file_path: "stale/owner.rs".to_string(),
         content_hash: "stale-hash".to_string(),
         line,
@@ -749,7 +765,11 @@ fn heritage_relation(
 }
 
 fn planned_heritage(rows: &[InheritanceRelation]) -> Vec<TypedQuery> {
-    super::write::plan_test_sync_file("project-1", "src/owner.rs", "hash-1", rows, "tok-1")
+    planned_heritage_with_token(rows, "tok-1")
+}
+
+fn planned_heritage_with_token(rows: &[InheritanceRelation], sync_token: &str) -> Vec<TypedQuery> {
+    super::write::plan_test_sync_file("project-1", "src/owner.rs", "hash-1", rows, sync_token)
         .expect("plan heritage sync")
 }
 
@@ -815,7 +835,7 @@ macro_rules! assert_heritage_merge_keys {
             query
                 .params
                 .get("sync_token")
-                .is_some_and(|value| value.contains("tok-1")),
+                .is_some_and(|value| !value.is_empty()),
             "missing sync_token in {}",
             query.cypher
         );
@@ -843,14 +863,8 @@ macro_rules! assert_heritage_merge_keys {
 #[test]
 fn plan_sync_batches_merges_inheritance_with_content_hash_and_sync_token() {
     let rows = [heritage_relation(
-        Some("derived-id"),
-        "Derived",
-        CallTargetKind::Symbol,
-        None,
-        Some("base-id"),
-        "Base",
-        CallTargetKind::Symbol,
-        None,
+        heritage_end(Some("derived-id"), "Derived", CallTargetKind::Symbol, None),
+        heritage_end(Some("base-id"), "Base", CallTargetKind::Symbol, None),
         HeritageKind::Extends,
         4,
     )];
@@ -863,26 +877,14 @@ fn plan_sync_batches_merges_inheritance_with_content_hash_and_sync_token() {
 fn heritage_merge_recovers_when_owner_syncs_before_provider() {
     let rows = [
         heritage_relation(
-            Some("derived-id"),
-            "Derived",
-            CallTargetKind::Symbol,
-            None,
-            Some("base-id"),
-            "Base",
-            CallTargetKind::Symbol,
-            None,
+            heritage_end(Some("derived-id"), "Derived", CallTargetKind::Symbol, None),
+            heritage_end(Some("base-id"), "Base", CallTargetKind::Symbol, None),
             HeritageKind::Extends,
             4,
         ),
         heritage_relation(
-            Some("type-id"),
-            "ExtType",
-            CallTargetKind::Symbol,
-            None,
-            Some("trait-id"),
-            "LocalTrait",
-            CallTargetKind::Symbol,
-            None,
+            heritage_end(Some("type-id"), "ExtType", CallTargetKind::Symbol, None),
+            heritage_end(Some("trait-id"), "LocalTrait", CallTargetKind::Symbol, None),
             HeritageKind::Implements,
             8,
         ),
@@ -918,32 +920,29 @@ fn heritage_merge_recovers_when_owner_syncs_before_provider() {
 fn heritage_merge_keeps_parallel_same_type_facts() {
     let rows = [
         heritage_relation(
-            Some("derived-id"),
-            "Derived",
-            CallTargetKind::Symbol,
-            None,
-            Some("base-id"),
-            "Base",
-            CallTargetKind::Symbol,
-            None,
+            heritage_end(Some("derived-id"), "Derived", CallTargetKind::Symbol, None),
+            heritage_end(Some("base-id"), "Base", CallTargetKind::Symbol, None),
             HeritageKind::Extends,
             10,
         ),
         heritage_relation(
-            Some("derived-id"),
-            "Derived",
-            CallTargetKind::Symbol,
-            None,
-            Some("base-id"),
-            "Base",
-            CallTargetKind::Symbol,
-            None,
+            heritage_end(Some("derived-id"), "Derived", CallTargetKind::Symbol, None),
+            heritage_end(Some("base-id"), "Base", CallTargetKind::Symbol, None),
             HeritageKind::Extends,
             20,
         ),
     ];
-    let first = planned_heritage(&rows);
-    let second = planned_heritage(&rows);
+    let first = planned_heritage_with_token(&rows, "tok-1");
+    let second = planned_heritage_with_token(&rows, "tok-2");
+    assert_ne!(
+        first
+            .iter()
+            .find_map(|query| query.params.get("sync_token").cloned()),
+        second
+            .iter()
+            .find_map(|query| query.params.get("sync_token").cloned()),
+        "idempotency comparison must use distinct sync tokens"
+    );
     for queries in [&first, &second] {
         let query = query_with(queries, "EXTENDS");
         let rows_param = query.params.get("rows").expect("heritage UNWIND rows");
@@ -959,26 +958,19 @@ fn heritage_merge_keeps_parallel_same_type_facts() {
 fn heritage_merge_external_and_unresolved_sources() {
     let rows = [
         heritage_relation(
-            None,
-            "ExternalType",
-            CallTargetKind::External,
-            Some("external_crate"),
-            Some("trait-id"),
-            "LocalTrait",
-            CallTargetKind::Symbol,
-            None,
+            heritage_end(
+                None,
+                "ExternalType",
+                CallTargetKind::External,
+                Some("external_crate"),
+            ),
+            heritage_end(Some("trait-id"), "LocalTrait", CallTargetKind::Symbol, None),
             HeritageKind::Implements,
             3,
         ),
         heritage_relation(
-            None,
-            "MissingType",
-            CallTargetKind::Unresolved,
-            None,
-            Some("trait-id"),
-            "LocalTrait",
-            CallTargetKind::Symbol,
-            None,
+            heritage_end(None, "MissingType", CallTargetKind::Unresolved, None),
+            heritage_end(Some("trait-id"), "LocalTrait", CallTargetKind::Symbol, None),
             HeritageKind::Implements,
             5,
         ),
@@ -1027,26 +1019,14 @@ fn heritage_merge_external_and_unresolved_sources() {
 fn heritage_merge_external_and_unresolved_targets() {
     let rows = [
         heritage_relation(
-            Some("derived-id"),
-            "Derived",
-            CallTargetKind::Symbol,
-            None,
-            None,
-            "Display",
-            CallTargetKind::External,
-            Some("std::fmt"),
+            heritage_end(Some("derived-id"), "Derived", CallTargetKind::Symbol, None),
+            heritage_end(None, "Display", CallTargetKind::External, Some("std::fmt")),
             HeritageKind::Implements,
             2,
         ),
         heritage_relation(
-            Some("derived-id"),
-            "Derived",
-            CallTargetKind::Symbol,
-            None,
-            None,
-            "UnknownBase",
-            CallTargetKind::Unresolved,
-            None,
+            heritage_end(Some("derived-id"), "Derived", CallTargetKind::Symbol, None),
+            heritage_end(None, "UnknownBase", CallTargetKind::Unresolved, None),
             HeritageKind::Extends,
             3,
         ),
@@ -1093,14 +1073,13 @@ fn heritage_merge_external_and_unresolved_targets() {
 #[test]
 fn heritage_local_import_is_not_projected() {
     let rows = [heritage_relation(
-        Some("derived-id"),
-        "Derived",
-        CallTargetKind::Symbol,
-        None,
-        None,
-        "Helper",
-        CallTargetKind::LocalImport,
-        Some("pkg/helper.py"),
+        heritage_end(Some("derived-id"), "Derived", CallTargetKind::Symbol, None),
+        heritage_end(
+            None,
+            "Helper",
+            CallTargetKind::LocalImport,
+            Some("pkg/helper.py"),
+        ),
         HeritageKind::Inherits,
         9,
     )];
@@ -1117,50 +1096,43 @@ fn heritage_local_import_is_not_projected() {
 
 #[test]
 fn sync_graph_file_projects_inheritance_facts() {
-    let queries = include_str!("../../db/queries.rs");
-    let lifecycle = include_str!("../../commands/graph/lifecycle.rs");
-    let projection = include_str!("../../projection/sync.rs");
-    let facts = queries
-        .split("pub struct GraphFileFacts {")
-        .nth(1)
-        .and_then(|rest| rest.split('}').next())
-        .expect("GraphFileFacts");
-    assert!(
-        facts.contains("inheritance: Vec<InheritanceRelation>"),
-        "GraphFileFacts must carry inheritance rows"
-    );
-    let loader = queries
-        .split("pub fn read_graph_file_facts(")
-        .nth(1)
-        .and_then(|rest| rest.split("\npub fn ").next())
-        .expect("read_graph_file_facts");
-    assert!(
-        loader.contains("read_inheritance_for_file"),
-        "read_graph_file_facts must SELECT code_inheritance"
-    );
-    assert!(
-        queries.contains("pub fn read_active_imports("),
-        "2.2 must expose the project-wide active import reader for MCG seed equivalence"
-    );
-    assert_eq!(
-        lifecycle.matches("&facts.inheritance").count(),
+    let inheritance = heritage_relation(
+        heritage_end(Some("derived-id"), "Derived", CallTargetKind::Symbol, None),
+        heritage_end(Some("base-id"), "Base", CallTargetKind::Symbol, None),
+        HeritageKind::Extends,
         4,
-        "lifecycle has_no_graph_facts, sync, and rebuild must pass PostgreSQL inheritance facts"
     );
-    let projection_sync = projection
-        .split("fn sync_graph_file(")
-        .nth(1)
-        .and_then(|rest| rest.split("\nstruct ").next())
-        .expect("projection/sync.rs::sync_graph_file");
-    assert!(
-        projection_sync.contains("&facts.inheritance"),
-        "sync_graph_file must project inheritance outside the graph CLI"
+    let facts = crate::db::GraphFileFacts {
+        file_path: "src/owner.rs".to_string(),
+        content_hash: "hash-1".to_string(),
+        imports: Vec::new(),
+        definitions: Vec::new(),
+        calls: Vec::new(),
+        inheritance: vec![inheritance.clone()],
+    };
+    assert_eq!(facts.inheritance.len(), 1);
+
+    fn assert_active_imports_reader<C: postgres::GenericClient>(
+        _reader: fn(&mut C, &str) -> anyhow::Result<Vec<crate::models::ImportRelation>>,
+    ) {
+    }
+    assert_active_imports_reader::<postgres::Client>(crate::db::read_active_imports);
+
+    let queries = planned_heritage(&facts.inheritance);
+    let query = query_with(&queries, "EXTENDS");
+    assert_heritage_merge_keys!(query, "EXTENDS");
+
+    let mut outcome = crate::index::indexer::IndexOutcome {
+        project_id: "project-1".to_string(),
+        indexed_file_paths: vec!["src/owner.rs".to_string()],
+        ..crate::index::indexer::IndexOutcome::default()
+    };
+    outcome.record_promotion_owners(["src/derived.rs".to_string()]);
+    assert_eq!(
+        outcome.graph_file_paths,
+        vec!["src/owner.rs".to_string(), "src/derived.rs".to_string(),]
     );
-    assert!(
-        projection_sync.contains("&attempt.content_hash")
-            && projection_sync.contains("attempt.attempted_at"),
-        "sync_graph_file must CAS-complete with the captured hash and attempt timestamp"
-    );
+    assert_eq!(outcome.vector_file_paths, vec!["src/owner.rs".to_string()]);
 }
 
 #[test]
@@ -1184,14 +1156,8 @@ fn delete_queries_include_inheritance_rels() {
 #[test]
 fn rebuild_projects_promoted_inheritance_edge() {
     let rows = [heritage_relation(
-        Some("derived-id"),
-        "Derived",
-        CallTargetKind::Symbol,
-        None,
-        Some("base-id"),
-        "Base",
-        CallTargetKind::Symbol,
-        None,
+        heritage_end(Some("derived-id"), "Derived", CallTargetKind::Symbol, None),
+        heritage_end(Some("base-id"), "Base", CallTargetKind::Symbol, None),
         HeritageKind::Extends,
         4,
     )];

@@ -224,12 +224,24 @@ pub fn clamp_declared_limit(limit: usize) -> usize {
     limit.min(MAX_DECLARED_EDGE_LIMIT)
 }
 
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub enum QueryPlans {
+    Ready(Vec<EdgeQueryPlan>),
+    ClosedScopeTooLarge { chunk_count: usize },
+}
+
 pub fn plans_for(
     kind: GraphEdgeKind,
     bounds: GraphBounds,
     mode: GraphScopeMode,
     keys: ScopeKeys,
-) -> Vec<EdgeQueryPlan> {
+) -> QueryPlans {
+    if mode == GraphScopeMode::Closed {
+        let chunk_count = keys.chunks(SCOPE_CHUNK_LEN).len();
+        if chunk_count > MAX_CLOSED_SCOPE_CHUNKS {
+            return QueryPlans::ClosedScopeTooLarge { chunk_count };
+        }
+    }
     let mut plans = Vec::new();
     if bounds.outgoing_limit > 0 {
         plans.extend(chunked_plans(
@@ -249,7 +261,7 @@ pub fn plans_for(
             bounds.incoming_limit,
         ));
     }
-    plans
+    QueryPlans::Ready(plans)
 }
 
 fn chunked_plans(
@@ -261,9 +273,6 @@ fn chunked_plans(
 ) -> Vec<EdgeQueryPlan> {
     let chunks = keys.chunks(SCOPE_CHUNK_LEN);
     if mode == GraphScopeMode::Closed {
-        if chunks.len() > MAX_CLOSED_SCOPE_CHUNKS {
-            return Vec::new();
-        }
         let mut plans = Vec::new();
         for source in &chunks {
             for target in &chunks {
@@ -342,6 +351,15 @@ fn endpoint_in_scope(keys: &ScopeKeys, id: &str, file: &str) -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    fn ready_plans(plans: QueryPlans) -> Vec<EdgeQueryPlan> {
+        match plans {
+            QueryPlans::Ready(plans) => plans,
+            QueryPlans::ClosedScopeTooLarge { chunk_count } => {
+                panic!("expected ready plans, got ClosedScopeTooLarge ({chunk_count} chunks)")
+            }
+        }
+    }
 
     fn sample(
         kind: GraphEdgeKind,
@@ -521,12 +539,12 @@ mod tests {
         let files = (0..130)
             .map(|index| format!("src/f{index}.rs"))
             .collect::<Vec<_>>();
-        let plans = plans_for(
+        let plans = ready_plans(plans_for(
             GraphEdgeKind::Call,
             GraphBounds::symmetric(4),
             GraphScopeMode::Incident,
             ScopeKeys::Files(files.clone()),
-        );
+        ));
         assert!(plans.len() >= 4);
         for plan in &plans {
             let (query, params) = plan.render("project-id");
@@ -574,12 +592,12 @@ mod tests {
             .collect::<Vec<_>>();
         let first = files[0].clone();
         let last = files[SCOPE_CHUNK_LEN].clone();
-        let plans = plans_for(
+        let plans = ready_plans(plans_for(
             GraphEdgeKind::Call,
             GraphBounds::outgoing(8),
             GraphScopeMode::Closed,
             ScopeKeys::Files(files),
-        );
+        ));
         let edge = SampleGraphEdge {
             kind: GraphEdgeKind::Call,
             source: "src".to_string(),
@@ -609,12 +627,12 @@ mod tests {
         let files = (0..SCOPE_CHUNK_LEN * MAX_CLOSED_SCOPE_CHUNKS)
             .map(|index| format!("src/f{index}.rs"))
             .collect::<Vec<_>>();
-        let plans = plans_for(
+        let plans = ready_plans(plans_for(
             GraphEdgeKind::Call,
             GraphBounds::outgoing(8),
             GraphScopeMode::Closed,
             ScopeKeys::Files(files),
-        );
+        ));
         let expected = MAX_CLOSED_SCOPE_CHUNKS.pow(2);
         assert_eq!(plans.len(), expected);
     }
@@ -624,13 +642,15 @@ mod tests {
         let files = (0..SCOPE_CHUNK_LEN * MAX_CLOSED_SCOPE_CHUNKS + 1)
             .map(|index| format!("src/f{index}.rs"))
             .collect::<Vec<_>>();
+        let chunk_count = files.chunks(SCOPE_CHUNK_LEN).len();
         let plans = plans_for(
             GraphEdgeKind::Call,
             GraphBounds::outgoing(8),
             GraphScopeMode::Closed,
             ScopeKeys::Files(files),
         );
-        assert!(plans.is_empty());
+        assert_eq!(plans, QueryPlans::ClosedScopeTooLarge { chunk_count });
+        assert!(chunk_count > MAX_CLOSED_SCOPE_CHUNKS);
     }
 
     #[test]

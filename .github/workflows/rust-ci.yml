@@ -119,6 +119,9 @@ jobs:
       - name: Test (gcode, no embeddings)
         run: cargo nextest run --profile ci -p gobby-code --no-default-features
 
+      - name: Test (gcode effective_config with ai)
+        run: cargo nextest run --profile ci -p gobby-code --features ai --test effective_config
+
       - name: Test workspace (no default features)
         run: cargo nextest run --profile ci --workspace --no-default-features
 
