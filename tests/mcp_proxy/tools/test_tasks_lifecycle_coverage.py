@@ -9,7 +9,6 @@ from unittest.mock import AsyncMock, MagicMock, call, patch
 import pytest
 
 from gobby.mcp_proxy.tools.tasks import create_task_registry as _create_task_registry
-from gobby.plans.bootstrap_ledger import BootstrapLedgerMismatchError
 from gobby.storage.tasks import Task
 from gobby.tasks.close_verdict import CloseVerdict
 from gobby.utils.session_context import session_context_for_test
@@ -310,27 +309,42 @@ class TestCloseTaskTool:
             mock_git.assert_not_called()
 
     @pytest.mark.asyncio
-    async def test_close_task_surfaces_bootstrap_ledger_mismatch(
+    async def test_close_task_reports_auto_closed_ancestors(
         self, mock_task_manager: MagicMock
     ) -> None:
-        """Test close_task returns structured bootstrap ledger mismatch errors."""
         mock_task = _contract_task()
         mock_task.id = "550e8400-e29b-41d4-a716-446655440000"
         mock_task.commits = None
         mock_task.project_id = "11111111-1111-4111-8111-111111110001"
         mock_task.task_type = "epic"
-        mock_task.seq_num = 13175
+        mock_task.seq_num = 20557
         mock_task.requires_user_review = False
-        mock_task_manager.get_task.return_value = mock_task
+        ancestor = _contract_task()
+        ancestor.id = "ancestor-epic-id"
+        ancestor.title = "Phase epic"
+        ancestor.task_type = "epic"
+        ancestor.seq_num = 20555
+        ancestor.project_id = mock_task.project_id
+
+        def _close_task(*_args: object, **kwargs: object) -> Any:
+            collected = kwargs.get("closed_ancestors")
+            if isinstance(collected, list):
+                collected.append(ancestor.id)
+            return mock_task
+
+        def _get_task(task_id: str) -> Any:
+            if task_id == ancestor.id:
+                return ancestor
+            return mock_task
+
+        mock_task_manager.get_task.side_effect = _get_task
         mock_task_manager.list_tasks.return_value = []
-        mock_task_manager.close_task.side_effect = BootstrapLedgerMismatchError(
-            ["A8:A8.7 expected leaves ['x'], manifest has []"],
-            plan_id="task-13175-plan-coverage-contract",
-        )
+        mock_task_manager.close_task.side_effect = _close_task
 
         with (
             patch("gobby.mcp_proxy.tools.tasks._context.LocalProjectManager") as MockProjManager,
             patch("gobby.utils.git.run_git_command", return_value="abc123"),
+            patch("gobby.hooks.event_handlers._plan.on_epic_terminal") as archive,
         ):
             mock_proj_instance = MagicMock()
             mock_proj_instance.get.return_value = MagicMock(repo_path=TEST_REPO_PATH)
@@ -340,13 +354,17 @@ class TestCloseTaskTool:
 
             result = await registry.call(
                 "close_task",
-                {"task_id": "550e8400-e29b-41d4-a716-446655440000"},
+                {
+                    "task_id": "550e8400-e29b-41d4-a716-446655440000",
+                    "changes_summary": "Landed the leaf.",
+                },
             )
 
-        assert result["success"] is False
-        assert result["error"] == "bootstrap_ledger_mismatch"
-        assert result["plan_id"] == "task-13175-plan-coverage-contract"
-        assert result["mismatches"] == ["A8:A8.7 expected leaves ['x'], manifest has []"]
+        assert result["success"] is True
+        assert result["closed_ancestors"] == [
+            {"id": ancestor.id, "ref": "#20555", "title": "Phase epic"}
+        ]
+        archive.assert_called()
 
     @pytest.mark.asyncio
     async def test_close_task_with_commit_sha_links_after_evaluation(

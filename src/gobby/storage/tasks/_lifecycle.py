@@ -30,6 +30,7 @@ def close_task(
     force: bool = False,
     closed_in_session_id: str | None = None,
     closed_commit_sha: str | None = None,
+    closed_ancestors: list[str] | None = None,
     validation_override_reason: str | None = None,
     expected_updated_at: datetime | None = None,
     reset_validation_fail_count: bool = False,
@@ -64,6 +65,7 @@ def close_task(
                 f"Cannot close task {task_id}: has {len(open_children)} open child task(s): {child_list}"
             )
 
+    collected: list[str] = [] if closed_ancestors is None else closed_ancestors
     _close_task_transition(
         db,
         task_id,
@@ -71,20 +73,22 @@ def close_task(
         force=force,
         closed_in_session_id=closed_in_session_id,
         closed_commit_sha=closed_commit_sha,
+        closed_ancestors=collected,
         validation_override_reason=validation_override_reason,
         expected_updated_at=expected_updated_at,
         reset_validation_fail_count=reset_validation_fail_count,
         validation_status=validation_status,
         validation_feedback=validation_feedback,
     )
-    try:
-        wake_dispatcher_for_task_change(db, task_id)
-    except Exception:
-        logger.warning(
-            "dispatcher_wake_after_task_close_failed",
-            extra={"task_id": task_id},
-            exc_info=True,
-        )
+    for wake_id in (task_id, *collected):
+        try:
+            wake_dispatcher_for_task_change(db, wake_id)
+        except Exception:
+            logger.warning(
+                "dispatcher_wake_after_task_close_failed",
+                extra={"task_id": wake_id},
+                exc_info=True,
+            )
 
 
 def reopen_task(

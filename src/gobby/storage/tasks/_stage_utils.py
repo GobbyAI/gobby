@@ -5,12 +5,13 @@ from __future__ import annotations
 from datetime import datetime
 from typing import Any
 
-from gobby.plans.bootstrap_ledger import bootstrap_ledger_path_for_task, verify_bootstrap_ledger
 from gobby.storage.delivery import upsert_merged_campaign_in_transaction
 from gobby.storage.hub.protocol import HubDatabase, Transaction
 from gobby.storage.session_resolution import is_session_uuid
 from gobby.storage.tasks._models import TaskStaleStateError
 from gobby.utils.datetime import utc_now
+
+_TERMINAL_PARENT_CLOSE_REASONS = frozenset({"completed", "obsolete"})
 
 
 def _now() -> datetime:
@@ -38,6 +39,8 @@ def _close_task_in_txn(
     closed_in_session_id: str | None = None,
     force: bool = False,
     cascade_descendants: bool = False,
+    close_ancestors: bool = True,
+    closed_ancestors: list[str] | None = None,
     validation_override_reason: str | None = None,
     expected_updated_at: datetime | None = None,
     reset_validation_fail_count: bool = False,
@@ -61,9 +64,6 @@ def _close_task_in_txn(
                 f"Cannot close task {task_id}: has {len(open_children)} open child task(s): "
                 f"{child_list}"
             )
-
-    if db is not None and bootstrap_ledger_path_for_task(db, task_id) is not None:
-        verify_bootstrap_ledger(db, task_id)
 
     now = closed_at or _now()
     persisted_session_id = (
@@ -129,6 +129,116 @@ def _close_task_in_txn(
         raise TaskStaleStateError(task_id)
     if cascade_descendants:
         _cascade_close_descendants(conn, task_id, now, persisted_session_id, commit_sha)
+    if close_ancestors:
+        _close_eligible_ancestors(
+            conn,
+            task_id,
+            db=db,
+            reason=reason,
+            closed_at=now,
+            closed_in_session_id=persisted_session_id,
+            closed_ancestors=closed_ancestors,
+        )
+
+
+def _close_eligible_ancestors(
+    conn: Transaction,
+    task_id: str,
+    *,
+    db: HubDatabase | None,
+    reason: str | None,
+    closed_at: datetime | str,
+    closed_in_session_id: str | None,
+    closed_ancestors: list[str] | None,
+) -> None:
+    """Close each ancestor that now has zero open children."""
+    current_id = task_id
+    close_reason = reason or "completed"
+    while True:
+        current = conn.execute(
+            "SELECT parent_task_id FROM tasks WHERE id = %s",
+            (current_id,),
+        ).fetchone()
+        parent_id = current["parent_task_id"] if current else None
+        if not parent_id:
+            return
+        parent = conn.execute(
+            """
+            SELECT id, seq_num, title, task_type, project_id, closed_at
+              FROM tasks
+             WHERE id = %s
+             FOR UPDATE
+            """,
+            (parent_id,),
+        ).fetchone()
+        if parent is None or parent["closed_at"] is not None:
+            return
+        open_child = conn.execute(
+            """
+            SELECT 1
+              FROM tasks
+             WHERE parent_task_id = %s
+               AND closed_at IS NULL
+             LIMIT 1
+            """,
+            (parent_id,),
+        ).fetchone()
+        if open_child is not None:
+            return
+        _close_task_in_txn(
+            conn,
+            parent_id,
+            db=db,
+            reason=close_reason,
+            closed_at=closed_at,
+            closed_in_session_id=closed_in_session_id,
+            close_ancestors=False,
+        )
+        if closed_ancestors is not None:
+            closed_ancestors.append(parent_id)
+        _schedule_ancestor_epic_archive(
+            conn,
+            db,
+            task_id=parent_id,
+            seq_num=parent["seq_num"],
+            project_id=parent["project_id"],
+            task_type=parent["task_type"],
+            reason=close_reason,
+        )
+        current_id = parent_id
+
+
+def _schedule_ancestor_epic_archive(
+    conn: Transaction,
+    db: HubDatabase | None,
+    *,
+    task_id: str,
+    seq_num: int | None,
+    project_id: str,
+    task_type: str,
+    reason: str,
+) -> None:
+    if db is None or task_type != "epic":
+        return
+    closure_reason = reason.casefold()
+    if closure_reason not in _TERMINAL_PARENT_CLOSE_REASONS:
+        return
+    task_ref = f"#{seq_num}" if seq_num else task_id
+
+    def _archive() -> None:
+        from gobby.hooks.event_handlers._plan import on_epic_terminal
+
+        on_epic_terminal(
+            {
+                "task_ref": task_ref,
+                "project_id": project_id,
+                "status": "closed",
+                "closure_reason": closure_reason,
+            },
+            db=db,
+        )
+
+    conn.after_commit(_archive)
 
 
 def _complete_terminal_delivery_stage_for_close(

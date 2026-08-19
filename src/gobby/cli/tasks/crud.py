@@ -303,9 +303,10 @@ def close_task_cmd(task_ids: tuple[str, ...], reason: str) -> None:
         gobby tasks close 42 43 44
         gobby tasks close abc123,#45,46
 
-    Structural parents require all children to be closed first. Canonical no-work
-    reasons may disposition non-epic leaves directly; other leaf closures must use
-    the evidence-aware close_task MCP contract.
+    Structural parents require all children to be closed first and close when they
+    have no remaining open children. Closing the last child auto-closes eligible
+    ancestors. Canonical no-work reasons may disposition non-epic leaves directly;
+    other leaf closures must use the evidence-aware close_task MCP contract.
     """
     close_task_impl(
         services=_services(),

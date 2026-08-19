@@ -432,7 +432,9 @@ Evidence kinds: `commits | task-diff | worktree-diff | coverage-matrix | none`.
 Every new epic plan ships a `.coverage-ledger.yaml` companion file,
 adversary-reviewed before expansion, until the contract tooling is mature. The
 ledger enumerates deliverable acceptance items and expected implementation
-leaves so close-time validation can compare manifest rows against the plan.
+leaves so expansion and `gobby plan coverage` can compare manifest rows against
+the plan. Parent close does not consult the ledger: an epic is closable when it
+has no open children.
 
 ## Plan Storage
 

@@ -87,7 +87,11 @@ Closing a leaf task is an ordered checklist:
 | 1 | At least one linked commit when the task has attributed edits | No-edit close |
 | 2 | No uncommitted task-attributed files | None |
 | 3 | A clean category-appropriate validation command in a task session transcript | Docs, planning, research, manual, or no-edit close |
-| 4 | One bounded criteria review | Organizational parent |
+| 4 | One bounded criteria review | Organizational parent (no open children) |
+
+An epic or other structural parent is closable when it has no open children.
+Closing the last child auto-closes eligible ancestors in the same call — do not
+walk the tree by hand.
 
 Workspace rule: a task that owns an isolation worktree is not finished until
 that worktree is landed and deleted (`merge_worktree` then `delete_worktree`;

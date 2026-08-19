@@ -20,8 +20,8 @@ from gobby.storage.tasks import LocalTaskManager, Task
 pytestmark = pytest.mark.unit
 
 
-def test_close_blocked_on_ledger_mismatch(temp_db: HubDatabase, tmp_path: Path) -> None:
-    root, _leaf, project_id = _seed_plan_task_tree(
+def test_close_succeeds_despite_ledger_mismatch(temp_db: HubDatabase, tmp_path: Path) -> None:
+    root, leaf, project_id = _seed_plan_task_tree(
         temp_db, tmp_path, expected_leaf_title="Expected leaf"
     )
     repo = tmp_path / "repo"
@@ -47,10 +47,15 @@ def test_close_blocked_on_ledger_mismatch(temp_db: HubDatabase, tmp_path: Path) 
     )
 
     with pytest.raises(BootstrapLedgerMismatchError) as exc_info:
-        LocalTaskManager(temp_db).close_task(root.id, force=True)
-
+        verify_bootstrap_ledger(temp_db, root.id)
     assert "A1:A1.1" in str(exc_info.value)
     assert exc_info.value.to_response()["error"] == "bootstrap_ledger_mismatch"
+
+    manager = LocalTaskManager(temp_db)
+    manager.close_task(leaf.id)
+    closed_root = manager.get_task(root.id)
+    assert closed_root is not None
+    assert closed_root.closed_at is not None
 
 
 def test_close_succeeds_on_ledger_match(temp_db: HubDatabase, tmp_path: Path) -> None:
@@ -86,13 +91,11 @@ def test_close_succeeds_on_ledger_match(temp_db: HubDatabase, tmp_path: Path) ->
 
 
 @pytest.mark.parametrize("mismatch_field", ["plan_id", "root_task_ref"])
-def test_close_blocks_on_ledger_identity_mismatch(
+def test_close_succeeds_on_ledger_identity_mismatch(
     temp_db: HubDatabase,
     tmp_path: Path,
     mismatch_field: str,
 ) -> None:
-    from gobby.tasks.state_semantics import serialize_task_state
-
     root, leaf, project_id = _seed_plan_task_tree(
         temp_db, tmp_path, expected_leaf_title="Expected leaf"
     )
@@ -124,11 +127,17 @@ def test_close_blocks_on_ledger_identity_mismatch(
     )
 
     with pytest.raises(BootstrapLedgerMismatchError) as exc_info:
-        LocalTaskManager(temp_db).close_task(root.id, force=True)
+        verify_bootstrap_ledger(temp_db, root.id)
+    assert exc_info.value.to_response()["error"] == "bootstrap_ledger_mismatch"
+
+    manager = LocalTaskManager(temp_db)
+    manager.close_task(leaf.id)
+    closed_root = manager.get_task(root.id)
+    assert closed_root is not None
+    assert closed_root.closed_at is not None
 
     assert f"ledger {mismatch_field}" in str(exc_info.value)
     assert "locating plan entry" in str(exc_info.value)
-    assert serialize_task_state(LocalTaskManager(temp_db).get_task(root.id))["is_closed"] is False
 
 
 @pytest.mark.parametrize("omitted_field", ["plan_id", "root_task_ref"])

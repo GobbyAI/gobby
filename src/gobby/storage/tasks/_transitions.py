@@ -5,7 +5,6 @@ from __future__ import annotations
 from datetime import datetime
 from typing import Any, cast
 
-from gobby.plans.bootstrap_ledger import bootstrap_ledger_path_for_task, verify_bootstrap_ledger
 from gobby.storage.agents import LocalAgentRunManager
 from gobby.storage.hub.protocol import HubDatabase
 from gobby.storage.tasks._dispatch_mutex import TaskDispatchMutexManager
@@ -425,6 +424,7 @@ def close_task(
     force: bool = False,
     closed_in_session_id: str | None = None,
     closed_commit_sha: str | None = None,
+    closed_ancestors: list[str] | None = None,
     validation_override_reason: str | None = None,
     expected_updated_at: datetime | None = None,
     reset_validation_fail_count: bool = False,
@@ -432,22 +432,25 @@ def close_task(
     validation_feedback: str | None = None,
 ) -> Task:
     """Close a task and clear active ownership metadata."""
+    collected: list[str] = []
     with db.transaction() as conn:
-        if bootstrap_ledger_path_for_task(db, task_id) is not None:
-            verify_bootstrap_ledger(db, task_id)
         _close_task_in_txn(
             conn,
             task_id,
+            db=db,
             reason=reason,
             commit_sha=closed_commit_sha,
             closed_in_session_id=closed_in_session_id,
             force=force,
+            closed_ancestors=collected,
             validation_override_reason=validation_override_reason,
             expected_updated_at=expected_updated_at,
             reset_validation_fail_count=reset_validation_fail_count,
             validation_status=validation_status,
             validation_feedback=validation_feedback,
         )
+    if closed_ancestors is not None:
+        closed_ancestors.extend(collected)
     return get_task(db, task_id)
 
 

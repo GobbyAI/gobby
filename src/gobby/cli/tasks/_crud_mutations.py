@@ -183,8 +183,9 @@ def close_task_impl(
                 failed_count += 1
                 continue
 
+        closed_ancestors: list[str] = []
         try:
-            task = manager.close_task(resolved.id, reason=reason)
+            task = manager.close_task(resolved.id, reason=reason, closed_ancestors=closed_ancestors)
         except TaskStaleStateError:
             click.echo(f"Cannot close {task_ref}: task is already closed", err=True)
             failed_count += 1
@@ -192,6 +193,12 @@ def close_task_impl(
 
         task_ref = f"#{task.seq_num}" if task.seq_num else task.id[:8]
         click.echo(f"Closed task {task_ref} ({reason})")
+        for ancestor_id in closed_ancestors:
+            ancestor = manager.get_task(ancestor_id)
+            if ancestor is None:
+                continue
+            ancestor_ref = f"#{ancestor.seq_num}" if ancestor.seq_num else ancestor.id[:8]
+            click.echo(f"Auto-closed parent {ancestor_ref} ({reason})")
         closed_count += 1
 
     if len(expanded_ids) > 1:

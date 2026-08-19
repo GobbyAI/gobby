@@ -46,7 +46,6 @@ from gobby.mcp_proxy.tools.tasks._lifecycle_validation import (
 from gobby.mcp_proxy.tools.tasks._notifications import notify_parent_on_task_state_change
 from gobby.mcp_proxy.tools.tasks._resolution import resolve_task_id_for_mcp
 from gobby.mcp_proxy.tools.tasks._task_scope import evaluate_task_scope
-from gobby.plans.bootstrap_ledger import BootstrapLedgerMismatchError
 from gobby.storage.tasks import Task, TaskNotFoundError, TaskStaleStateError
 from gobby.tasks.close_checklist import evaluate_validation_commands
 from gobby.tasks.commits import collect_commit_diff_text
@@ -672,22 +671,26 @@ async def _commit_close(
             else scope_reason
         )
     current_commit_sha = commit_shas[-1] if commit_shas else None
+    closed_ancestors: list[str] = []
     try:
         ctx.task_manager.close_task(
             task.id,
             reason=reason,
             closed_in_session_id=evaluation.resolved_session_id,
             closed_commit_sha=current_commit_sha,
+            closed_ancestors=closed_ancestors,
             validation_override_reason=audit_reason,
             expected_updated_at=linked.updated_at,
             reset_validation_fail_count=evaluation.validation_reset_reason is not None,
             validation_status=evaluation.validation_status or "valid",
             validation_feedback=evaluation.validation_feedback,
         )
-    except BootstrapLedgerMismatchError as exc:
-        return exc.to_response()
     except TaskStaleStateError as exc:
         return _stale_close_response(evaluation, str(exc))
+
+    ancestor_summaries = _record_closed_ancestors(ctx, closed_ancestors, reason)
+    if ancestor_summaries:
+        evaluation.extra["closed_ancestors"] = ancestor_summaries
 
     if evaluation.is_epic and reason.casefold() in {"completed", "obsolete"}:
         from gobby.hooks.event_handlers._plan import on_epic_terminal
@@ -709,6 +712,40 @@ async def _commit_close(
     )
     _cleanup_closed_claim(ctx, evaluation, commit_shas)
     return evaluation.response(preview=False, closed=True)
+
+
+def _record_closed_ancestors(
+    ctx: RegistryContext,
+    ancestor_ids: list[str],
+    reason: str,
+) -> list[dict[str, str]]:
+    summaries: list[dict[str, str]] = []
+    closure_reason = reason.casefold()
+    for ancestor_id in ancestor_ids:
+        ancestor = ctx.task_manager.get_task(ancestor_id)
+        if ancestor is None:
+            continue
+        ref = f"#{ancestor.seq_num}" if ancestor.seq_num else ancestor.id
+        summaries.append({"id": ancestor.id, "ref": ref, "title": ancestor.title})
+        if ancestor.task_type == "epic" and closure_reason in {"completed", "obsolete"}:
+            from gobby.hooks.event_handlers._plan import on_epic_terminal
+
+            on_epic_terminal(
+                {
+                    "task_ref": ref,
+                    "project_id": ancestor.project_id,
+                    "status": "closed",
+                    "closure_reason": closure_reason,
+                },
+                db=ctx.task_manager.db,
+            )
+        notify_parent_on_task_state_change(
+            ctx.task_manager.db,
+            ancestor.id,
+            "closed",
+            task_ref=ref,
+        )
+    return summaries
 
 
 def register_close_task(registry: InternalToolRegistry, ctx: RegistryContext) -> None:
@@ -757,6 +794,8 @@ def register_close_task(registry: InternalToolRegistry, ctx: RegistryContext) ->
             "Leaf tasks require criteria, a changes summary, commits for attributed edits, "
             "a clean transcript-derived validation run, and one bounded criteria review "
             "unless a justified deliberate close exits escalation. "
+            "Epics and other parents close when they have no open children; closing the "
+            "last child auto-closes eligible ancestors. "
             "preview=true returns diagnostics when blocked and still closes when ready."
         ),
         input_schema={

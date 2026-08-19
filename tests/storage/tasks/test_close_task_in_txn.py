@@ -11,8 +11,8 @@ pytestmark = pytest.mark.unit
 register_contract_tests(
     globals(),
     {
-        "test_bootstrap_ledger_validation_runs_inside_helper": (
-            "_close_task_in_txn performs bootstrap-ledger validation inside the helper"
+        "test_helper_closes_eligible_ancestors": (
+            "_close_task_in_txn auto-closes ancestors with no remaining open children"
         ),
         "test_close_task_public_api_passes_cascade_false": (
             "public close_task delegates with cascade_descendants=False"
