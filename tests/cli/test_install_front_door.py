@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import importlib
+import shutil
 import subprocess
 from pathlib import Path
 from typing import Any
@@ -647,8 +648,6 @@ def test_files_home_refuses_root_and_reserved_overlap(
     leftover.unlink(missing_ok=True)
     personal = get_gobby_home() / "personal"
     if personal.exists():
-        import shutil
-
         shutil.rmtree(personal)
 
     result = CliRunner().invoke(
@@ -662,9 +661,12 @@ def test_files_home_refuses_root_and_reserved_overlap(
 
     reserved = get_gobby_home() / "personal"
     reserved.mkdir(parents=True, exist_ok=True)
-    result = CliRunner().invoke(
-        install_module.install,
-        ["--config-only", "--no-interactive", "--files-home", str(reserved)],
-    )
-    assert result.exit_code != 0
-    identity.assert_not_called()
+    try:
+        result = CliRunner().invoke(
+            install_module.install,
+            ["--config-only", "--no-interactive", "--files-home", str(reserved)],
+        )
+        assert result.exit_code != 0
+        identity.assert_not_called()
+    finally:
+        shutil.rmtree(reserved, ignore_errors=True)
