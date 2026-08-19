@@ -178,7 +178,7 @@ pub(crate) enum Command {
     },
     /// Indexed grep: exact pattern search on content chunks
     #[command(
-        after_help = "gcode grep is indexed search over code_content_chunks. Unsupported grep/rg flags are intentionally rejected; use raw `rg` for filesystem grep."
+        after_help = "gcode grep is indexed search over code_content_chunks. Accepted flags: -F -i -w -l -m -A -B -C -g plus accepted no-ops -E -n -r -R. Remaining grep/rg flags are not supported; use raw `rg` for filesystem grep."
     )]
     Grep {
         /// Pattern to search for (regex or fixed string)
@@ -196,6 +196,20 @@ pub(crate) enum Command {
         /// Match only standalone ASCII identifier words
         #[arg(short = 'w', long)]
         word: bool,
+        /// List matching file paths instead of matching lines (rg -l)
+        #[arg(short = 'l', long)]
+        files_with_matches: bool,
+        /// Accepted no-op: patterns are already extended regex (grep/rg -E)
+        #[arg(short = 'E', long = "extended-regexp", hide = true)]
+        extended_regexp: bool,
+        /// Accepted no-op: line numbers are always shown (grep/rg -n)
+        #[arg(short = 'n', long = "line-number", hide = true)]
+        line_number: bool,
+        /// Accepted no-op: indexed grep is always recursive (grep -r/-R)
+        #[arg(short = 'r', long = "recursive", hide = true)]
+        recursive: bool,
+        #[arg(short = 'R', hide = true)]
+        recursive_dereference: bool,
         /// Show N context lines before match
         #[arg(short = 'B', long)]
         before_context: Option<usize>,

@@ -131,6 +131,7 @@ impl CodewikiFacts {
             before_context: query.before_context,
             after_context: query.after_context,
             max_count: Some(query.limit),
+            files_with_matches: false,
             format: Format::Text,
         };
         let mut conn = self.read_connection()?;
