@@ -18,7 +18,7 @@ from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass
 from datetime import UTC, datetime
 from pathlib import Path
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Literal
 from uuid import uuid4
 
 from psycopg.conninfo import conninfo_to_dict
@@ -458,6 +458,7 @@ def _signed_grant_from_credential(
     project_id: str,
     session_id: str | None,
     context: DeploymentGrantContext,
+    principal_kind: Literal["agent_run", "tool_chat"] = "agent_run",
 ) -> GrantBundle:
     postgres = PostgresDirect(
         dsn=_scoped_database_url(credential),
@@ -470,7 +471,7 @@ def _signed_grant_from_credential(
         deployment=GrantDeployment(token=context.token, fencing_epoch=context.fencing_epoch),
         schema_identity=SchemaIdentity.model_validate(expected_schema_identity()),
         principal=GrantPrincipal(
-            kind="agent_run",
+            kind=principal_kind,
             machine_id=machine_id or "00000000-0000-4000-8000-000000000000",
             project_id=project_id,
             execution_id=str(credential.managed_execution_id),

@@ -15,7 +15,7 @@ from gobby.storage.managed_credentials import (
     CredentialAuthorizationError,
     ManagedCredentialManager,
 )
-from gobby.utils.local_token import issue_tool_api_token, read_local_api_token
+from gobby.utils.local_token import read_local_api_token
 from gobby.utils.machine_id import get_machine_id
 
 _MAX_TOOL_ROLE_LIFETIME_SECONDS = 3540.0
@@ -68,24 +68,44 @@ def build_managed_tool_chat_lease_factory(
             raise
         execution_id = tool_credential.credential.managed_execution_id
         try:
+            from gobby.agents.code_index import (
+                IndexInventoryError,
+                _active_deployment_grant_context,
+                _signed_grant_from_credential,
+            )
+            from gobby.runtime_grants.launch import materialize_managed_launch
+
             operator_token = read_local_api_token()
             if operator_token is None:
                 raise CredentialAuthorizationError("daemon operator capability is unavailable")
-            daemon_api_token = issue_tool_api_token(
-                operator_token,
-                managed_execution_id=str(execution_id),
-                session_id=str(request.session_id),
-                project_id=str(tool_credential.project_id),
+            try:
+                context = _active_deployment_grant_context()
+            except IndexInventoryError as exc:
+                raise CredentialAuthorizationError(str(exc)) from exc
+            grant = _signed_grant_from_credential(
+                tool_credential.credential,
                 machine_id=get_machine_id(),
-                timeout_seconds=lifetime_seconds,
+                project_id=str(tool_credential.project_id),
+                session_id=str(request.session_id),
+                context=context,
+                principal_kind="tool_chat",
+            )
+            remaining_seconds = (
+                tool_credential.credential.expires_at - datetime.now(UTC)
+            ).total_seconds()
+            launch = materialize_managed_launch(
+                grant,
+                dest_dir=tool_credential.credential.bootstrap_path.parent,
+                operator_token=operator_token,
+                deadline_seconds=max(1.0, remaining_seconds),
             )
             scoped_request = replace(
                 request,
                 project_path=tool_credential.project_path,
                 project_id=tool_credential.project_id,
                 managed_execution_id=execution_id,
-                credential_bootstrap_path=str(tool_credential.credential.bootstrap_path),
-                daemon_api_token=daemon_api_token,
+                credential_bootstrap_path=str(launch.grant_path),
+                daemon_api_token=launch.env["GOBBY_AGENT_API_TOKEN"],
             )
             yield scoped_request
         finally:
