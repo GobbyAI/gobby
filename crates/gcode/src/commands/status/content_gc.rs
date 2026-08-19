@@ -69,6 +69,12 @@ pub(super) fn discover_content_gc(
                           AND graph_call.file_path = f.file_path
                           AND graph_call.content_hash = f.content_hash
                     )
+                    OR EXISTS (
+                        SELECT 1 FROM code_inheritance graph_inherit
+                        WHERE graph_inherit.project_id = f.project_id
+                          AND graph_inherit.file_path = f.file_path
+                          AND graph_inherit.content_hash = f.content_hash
+                    )
                 ) AS has_graph_facts,
                 ps.root_path,
                 COALESCE(

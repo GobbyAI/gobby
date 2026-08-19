@@ -32,6 +32,12 @@ pub(crate) fn delete_file_graph_queries(
              DELETE r",
             base_params(),
         )?,
+        typed_query(
+            "MATCH (s {project: $project})-[r:INHERITS|EXTENDS|IMPLEMENTS]->(n {project: $project})
+             WHERE (r.file = $file_path OR r.source_file_path = $file_path)
+             DELETE r",
+            base_params(),
+        )?,
     ];
 
     if current_symbol_ids.is_empty() {
@@ -102,6 +108,14 @@ pub(crate) fn delete_stale_file_graph_queries(
              DELETE r",
             base_params(),
         )?,
+        typed_query(
+            "MATCH (s {project: $project})-[r:INHERITS|EXTENDS|IMPLEMENTS]->(n {project: $project})
+             WHERE (r.file = $file_path OR r.source_file_path = $file_path)
+               AND r.content_hash = $content_hash
+               AND (r.sync_token IS NULL OR r.sync_token <> $sync_token)
+             DELETE r",
+            base_params(),
+        )?,
     ];
 
     // Token-only stale delete: every current symbol was just written with the
@@ -148,6 +162,13 @@ pub(crate) fn delete_content_version_queries(
         )?,
         typed_query(
             "MATCH (s:CodeSymbol {project: $project})-[r:CALLS]->(n {project: $project})
+             WHERE (r.file = $file_path OR r.source_file_path = $file_path)
+               AND r.content_hash = $content_hash
+             DELETE r",
+            base_params(),
+        )?,
+        typed_query(
+            "MATCH (s {project: $project})-[r:INHERITS|EXTENDS|IMPLEMENTS]->(n {project: $project})
              WHERE (r.file = $file_path OR r.source_file_path = $file_path)
                AND r.content_hash = $content_hash
              DELETE r",
@@ -250,12 +271,16 @@ fn cleanup_orphans_cypher_segments() -> [&'static str; 3] {
         "MATCH (n {project: $project})
              WHERE (n:UnresolvedCallee OR n:ExternalSymbol)
                AND NOT ({project: $project})-[:CALLS]->(n)
+               AND NOT ({project: $project})-[:INHERITS|EXTENDS|IMPLEMENTS]->(n)
+               AND NOT (n)-[:INHERITS|EXTENDS|IMPLEMENTS]->({project: $project})
              DETACH DELETE n",
         "MATCH (s:CodeSymbol {project: $project})
              WHERE s.file_path IS NULL
                AND NOT (:CodeFile {project: $project})-[:DEFINES]->(s)
                AND NOT ({project: $project})-[:CALLS]->(s)
                AND NOT (s)-[:CALLS]->({project: $project})
+               AND NOT ({project: $project})-[:INHERITS|EXTENDS|IMPLEMENTS]->(s)
+               AND NOT (s)-[:INHERITS|EXTENDS|IMPLEMENTS]->({project: $project})
              DETACH DELETE s",
     ]
 }

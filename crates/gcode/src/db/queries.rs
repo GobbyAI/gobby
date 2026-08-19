@@ -22,6 +22,7 @@ pub struct GraphFileFacts {
     pub imports: Vec<ImportRelation>,
     pub definitions: Vec<Symbol>,
     pub calls: Vec<CallRelation>,
+    pub inheritance: Vec<InheritanceRelation>,
 }
 
 pub fn list_indexed_file_paths(
@@ -96,6 +97,7 @@ pub fn read_graph_file_facts(
     let imports = read_imports_for_file(conn, project_id, file_path, &content_hash)?;
     let definitions = read_symbols_for_file(conn, project_id, file_path, &content_hash)?;
     let calls = read_calls_for_file(conn, project_id, file_path, &content_hash)?;
+    let inheritance = read_inheritance_for_file(conn, project_id, file_path, &content_hash)?;
 
     Ok(GraphFileFacts {
         file_path: file_path.to_string(),
@@ -103,6 +105,7 @@ pub fn read_graph_file_facts(
         imports,
         definitions,
         calls,
+        inheritance,
     })
 }
 
@@ -329,6 +332,44 @@ pub fn reset_vectors_sync_for_project(
     )?)
 }
 
+/// Active visible `(source_file, target_module)` pairs for this machine's
+/// current content hashes. MCG seed equivalence (plan 3.3) unions these with
+/// path-derived aliases; do not persist a provider file on IMPORTS edges.
+#[cfg_attr(
+    not(test),
+    expect(
+        dead_code,
+        reason = "MCG seed equivalence (plan 3.3) is the first production caller"
+    )
+)]
+pub fn read_active_imports(
+    conn: &mut impl GenericClient,
+    project_id: &str,
+) -> anyhow::Result<Vec<ImportRelation>> {
+    let machine_id = id_param(&gobby_core::machine::read_local_machine_id()?)?;
+    let project_id = id_param(project_id)?;
+    let rows = conn.query(
+        "SELECT ci.source_file, ci.target_module
+         FROM code_imports ci
+         JOIN code_indexed_file_states cifs
+           ON cifs.project_id = ci.project_id
+          AND cifs.file_path = ci.source_file
+          AND cifs.content_hash = ci.content_hash
+          AND cifs.machine_id = $1
+         WHERE ci.project_id = $2
+         ORDER BY ci.source_file, ci.target_module",
+        &[&machine_id, &project_id],
+    )?;
+    rows.into_iter()
+        .map(|row| {
+            Ok(ImportRelation {
+                file_path: row.try_get("source_file")?,
+                module_name: row.try_get("target_module")?,
+            })
+        })
+        .collect()
+}
+
 fn read_imports_for_file(
     conn: &mut impl GenericClient,
     project_id: &str,
@@ -368,6 +409,25 @@ fn read_symbols_for_file(
     );
     let rows = conn.query(&query, &[&project_id, &file_path, &content_hash])?;
     rows.iter().map(Symbol::from_row).collect()
+}
+
+fn read_inheritance_for_file(
+    conn: &mut impl GenericClient,
+    project_id: &str,
+    file_path: &str,
+    content_hash: &str,
+) -> anyhow::Result<Vec<InheritanceRelation>> {
+    let project_id = id_param(project_id)?;
+    let rows = conn.query(
+        &format!(
+            "SELECT {INHERITANCE_SELECT}
+             FROM code_inheritance ci
+             WHERE ci.project_id = $1 AND ci.file_path = $2 AND ci.content_hash = $3
+             ORDER BY ci.line, ci.source_name, ci.target_name"
+        ),
+        &[&project_id, &file_path, &content_hash],
+    )?;
+    rows.iter().map(inheritance_relation_from_row).collect()
 }
 
 fn read_calls_for_file(

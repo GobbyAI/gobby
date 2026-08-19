@@ -619,7 +619,7 @@ fn sync_graph_file(
         &facts.imports,
         &facts.definitions,
         &facts.calls,
-        &[],
+        &facts.inheritance,
         false,
     )?;
     if !db::mark_graph_synced(

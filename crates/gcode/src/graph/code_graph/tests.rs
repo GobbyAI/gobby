@@ -472,17 +472,21 @@ fn content_version_delete_is_project_path_and_hash_scoped() {
         .collect::<Vec<_>>()
         .join("\n");
 
-    assert_eq!(queries.len(), 4);
+    assert_eq!(queries.len(), 5);
     assert!(combined.contains("[r:IMPORTS]"), "{combined}");
     assert!(combined.contains("[r:DEFINES]"), "{combined}");
     assert!(combined.contains("[r:CALLS]"), "{combined}");
+    assert!(
+        combined.contains("[r:INHERITS|EXTENDS|IMPLEMENTS]"),
+        "{combined}"
+    );
     assert!(
         combined.contains("file_content_hash: $content_hash"),
         "{combined}"
     );
     assert_eq!(
         combined.matches("r.content_hash = $content_hash").count(),
-        3
+        4
     );
     assert!(!combined.contains("sync_token"), "{combined}");
     for query in &queries {
@@ -528,7 +532,13 @@ fn cleanup_orphans_is_project_scoped() {
     assert!(
         queries[1]
             .cypher
-            .contains("AND NOT ({project: $project})-[:CALLS]->(n)"),
+            .contains("AND NOT ({project: $project})-[:CALLS]->(n)")
+            && queries[1]
+                .cypher
+                .contains("NOT ({project: $project})-[:INHERITS|EXTENDS|IMPLEMENTS]->(n)")
+            && queries[1]
+                .cypher
+                .contains("NOT (n)-[:INHERITS|EXTENDS|IMPLEMENTS]->({project: $project})"),
         "{}",
         queries[1].cypher
     );
@@ -545,7 +555,13 @@ fn cleanup_orphans_is_project_scoped() {
                 .contains("NOT ({project: $project})-[:CALLS]->(s)")
             && queries[2]
                 .cypher
-                .contains("NOT (s)-[:CALLS]->({project: $project})"),
+                .contains("NOT (s)-[:CALLS]->({project: $project})")
+            && queries[2]
+                .cypher
+                .contains("NOT ({project: $project})-[:INHERITS|EXTENDS|IMPLEMENTS]->(s)")
+            && queries[2]
+                .cypher
+                .contains("NOT (s)-[:INHERITS|EXTENDS|IMPLEMENTS]->({project: $project})"),
         "{}",
         queries[2].cypher
     );
@@ -741,6 +757,46 @@ fn query_with<'a>(queries: &'a [TypedQuery], needle: &str) -> &'a TypedQuery {
         .iter()
         .find(|query| query.cypher.contains(needle))
         .unwrap_or_else(|| panic!("missing query containing {needle}"))
+}
+
+fn combined_cypher(queries: &[TypedQuery]) -> String {
+    queries
+        .iter()
+        .map(|query| query.cypher.as_str())
+        .collect::<Vec<_>>()
+        .join("\n")
+}
+
+macro_rules! assert_heritage_owner_delete {
+    ($combined:expr) => {{
+        let combined: &str = $combined;
+        assert!(
+            combined.contains("[r:INHERITS|EXTENDS|IMPLEMENTS]"),
+            "heritage delete must target INHERITS|EXTENDS|IMPLEMENTS:\n{combined}"
+        );
+        assert!(
+            combined.contains("r.file = $file_path"),
+            "heritage delete must filter relationship owner r.file:\n{combined}"
+        );
+        assert!(
+            combined.contains("r.source_file_path = $file_path"),
+            "heritage delete must filter r.source_file_path:\n{combined}"
+        );
+        assert!(
+            combined.contains("(s {project: $project})"),
+            "heritage delete must bind project on the generic source:\n{combined}"
+        );
+        assert!(
+            combined.contains("(n {project: $project})"),
+            "heritage delete must bind project on the generic target:\n{combined}"
+        );
+        assert!(
+            !combined.contains(
+                "MATCH (s:CodeSymbol {project: $project, file_path: $file_path})-[r:INHERITS"
+            ),
+            "heritage delete must not copy whole-file CALLS source-file binding:\n{combined}"
+        );
+    }};
 }
 
 macro_rules! assert_heritage_merge_keys {
@@ -1059,26 +1115,36 @@ fn heritage_local_import_is_not_projected() {
 }
 
 #[test]
-fn sync_file_graph_passes_empty_inheritance_until_facts_thread() {
-    let write = include_str!("write.rs");
+fn sync_graph_file_projects_inheritance_facts() {
+    let queries = include_str!("../../db/queries.rs");
     let lifecycle = include_str!("../../commands/graph/lifecycle.rs");
     let projection = include_str!("../../projection/sync.rs");
-    let write_wrapper = write
-        .split("pub fn sync_file_graph(")
+    let facts = queries
+        .split("pub struct GraphFileFacts {")
+        .nth(1)
+        .and_then(|rest| rest.split('}').next())
+        .expect("GraphFileFacts");
+    assert!(
+        facts.contains("inheritance: Vec<InheritanceRelation>"),
+        "GraphFileFacts must carry inheritance rows"
+    );
+    let loader = queries
+        .split("pub fn read_graph_file_facts(")
         .nth(1)
         .and_then(|rest| rest.split("\npub fn ").next())
-        .expect("write.rs::sync_file_graph");
+        .expect("read_graph_file_facts");
     assert!(
-        write_wrapper.contains("inheritance: &[InheritanceRelation]"),
-        "sync_file_graph must take the new inheritance arity"
+        loader.contains("read_inheritance_for_file"),
+        "read_graph_file_facts must SELECT code_inheritance"
     );
     assert!(
-        write_wrapper.contains("inheritance,"),
-        "sync_file_graph must forward inheritance into CodeGraph::sync_file"
+        queries.contains("pub fn read_active_imports("),
+        "2.2 must expose the project-wide active import reader for MCG seed equivalence"
     );
-    assert!(
-        lifecycle.contains("&[]"),
-        "lifecycle graph callers must pass empty inheritance slices until 2.2"
+    assert_eq!(
+        lifecycle.matches("&facts.inheritance").count(),
+        4,
+        "lifecycle has_no_graph_facts, sync, and rebuild must pass PostgreSQL inheritance facts"
     );
     let projection_sync = projection
         .split("fn sync_graph_file(")
@@ -1086,7 +1152,188 @@ fn sync_file_graph_passes_empty_inheritance_until_facts_thread() {
         .and_then(|rest| rest.split("\nstruct ").next())
         .expect("projection/sync.rs::sync_graph_file");
     assert!(
-        projection_sync.contains("&[]"),
-        "sync_graph_file must pass an empty inheritance slice until 2.2"
+        projection_sync.contains("&facts.inheritance"),
+        "sync_graph_file must project inheritance outside the graph CLI"
     );
+    assert!(
+        projection_sync.contains("&attempt.content_hash")
+            && projection_sync.contains("attempt.attempted_at"),
+        "sync_graph_file must CAS-complete with the captured hash and attempt timestamp"
+    );
+}
+
+#[test]
+fn delete_queries_include_inheritance_rels() {
+    let file = combined_cypher(
+        &delete_file_graph_queries("project-1", "src/impl.rs", &[]).expect("file delete"),
+    );
+    let stale = combined_cypher(
+        &delete_stale_file_graph_queries("project-1", "src/impl.rs", "hash-1", "tok-1")
+            .expect("stale delete"),
+    );
+    let content = combined_cypher(
+        &delete_content_version_queries("project-1", "src/impl.rs", "hash-old")
+            .expect("content-version delete"),
+    );
+    assert_heritage_owner_delete!(&file);
+    assert_heritage_owner_delete!(&stale);
+    assert_heritage_owner_delete!(&content);
+}
+
+#[test]
+fn rebuild_projects_promoted_inheritance_edge() {
+    let rows = [heritage_relation(
+        Some("derived-id"),
+        "Derived",
+        CallTargetKind::Symbol,
+        None,
+        Some("base-id"),
+        "Base",
+        CallTargetKind::Symbol,
+        None,
+        HeritageKind::Extends,
+        4,
+    )];
+    let queries = planned_heritage(&rows);
+    let query = query_with(&queries, "EXTENDS");
+    assert!(
+        query
+            .cypher
+            .contains("MERGE (source:CodeSymbol {id: row.source_id, project: $project})")
+    );
+    assert!(
+        query
+            .cypher
+            .contains("MERGE (target:CodeSymbol {id: row.target_id, project: $project})")
+    );
+    assert_heritage_merge_keys!(query, "EXTENDS");
+}
+
+#[test]
+fn rebuild_drops_stale_inheritance_after_derived_reindex() {
+    let queries =
+        delete_stale_file_graph_queries("project-1", "src/derived.py", "hash-new", "tok-2")
+            .expect("stale heritage delete");
+    let combined = combined_cypher(&queries);
+    assert_heritage_owner_delete!(&combined);
+    let heritage = query_with(&queries, "[r:INHERITS|EXTENDS|IMPLEMENTS]");
+    assert!(
+        heritage.cypher.contains("r.content_hash = $content_hash"),
+        "{}",
+        heritage.cypher
+    );
+    assert!(
+        heritage
+            .cypher
+            .contains("r.sync_token IS NULL OR r.sync_token <> $sync_token"),
+        "stale heritage delete must drop missing and mismatched tokens:\n{}",
+        heritage.cypher
+    );
+}
+
+#[test]
+fn cleanup_keeps_heritage_only_terminals() {
+    let queries = cleanup_orphans_queries("project-1").expect("cleanup");
+    let external = &queries[1].cypher;
+    let detached = &queries[2].cypher;
+    assert!(
+        external.contains("n:UnresolvedCallee OR n:ExternalSymbol")
+            && external.contains("NOT ({project: $project})-[:INHERITS|EXTENDS|IMPLEMENTS]->(n)")
+            && external.contains("NOT (n)-[:INHERITS|EXTENDS|IMPLEMENTS]->({project: $project})"),
+        "{external}"
+    );
+    assert!(
+        detached.contains("MATCH (s:CodeSymbol {project: $project})")
+            && detached.contains("NOT ({project: $project})-[:INHERITS|EXTENDS|IMPLEMENTS]->(s)")
+            && detached.contains("NOT (s)-[:INHERITS|EXTENDS|IMPLEMENTS]->({project: $project})"),
+        "{detached}"
+    );
+}
+
+#[test]
+fn delete_cross_file_rust_impl_uses_relationship_owner() {
+    let combined = combined_cypher(
+        &delete_file_graph_queries("project-1", "src/impl.rs", &["type-id".to_string()])
+            .expect("impl-file delete"),
+    );
+    assert_heritage_owner_delete!(&combined);
+    assert!(
+        !combined.contains("file_path: $file_path})-[r:INHERITS"),
+        "cross-file impl ownership lives on the relationship, not the Type symbol file:\n{combined}"
+    );
+}
+
+#[test]
+fn promotion_projects_owning_file_without_rebuild() {
+    let promotion = include_str!("../../index/indexer/local_imports.rs");
+    let types = include_str!("../../index/indexer/types.rs");
+    let index = include_str!("../../commands/index.rs");
+    let projection = include_str!("../../projection/sync.rs");
+    assert!(
+        promotion.contains("dirty_graph_sync_for_file")
+            && promotion.contains("&original.file_path"),
+        "promotion must dirty the owning derived/impl file"
+    );
+    assert!(
+        types.contains("record_promotion_owners") && types.contains("graph_file_paths"),
+        "promotion owners must join the graph sync set"
+    );
+    assert!(
+        index.contains("&outcome.graph_file_paths"),
+        "index must graph-sync promoted owners without a rebuild"
+    );
+    assert!(
+        !promotion.contains("rebuild_project_graph") && !promotion.contains("graph rebuild"),
+        "provider-later promotion must not require gcode graph rebuild"
+    );
+    let projection_sync = projection
+        .split("fn sync_graph_file(")
+        .nth(1)
+        .and_then(|rest| rest.split("\nstruct ").next())
+        .expect("projection/sync.rs::sync_graph_file");
+    assert!(
+        projection_sync.contains("&facts.inheritance"),
+        "graph-syncing the owning file must project the promoted heritage edge"
+    );
+}
+
+#[test]
+fn delete_external_source_impl_uses_relationship_owner() {
+    let combined = combined_cypher(
+        &delete_file_graph_queries("project-1", "src/impl.rs", &[])
+            .expect("external-source delete"),
+    );
+    assert_heritage_owner_delete!(&combined);
+    let cleanup = combined_cypher(&cleanup_orphans_queries("project-1").expect("cleanup"));
+    assert!(
+        cleanup.contains("NOT (n)-[:INHERITS|EXTENDS|IMPLEMENTS]->({project: $project})"),
+        "heritage-only ExternalSymbol/UnresolvedCallee sources must survive cleanup:\n{cleanup}"
+    );
+}
+
+#[test]
+fn heritage_delete_binds_project_on_both_endpoints() {
+    for combined in [
+        combined_cypher(&delete_file_graph_queries("project-1", "src/lib.rs", &[]).expect("file")),
+        combined_cypher(
+            &delete_stale_file_graph_queries("project-1", "src/lib.rs", "hash-1", "tok-1")
+                .expect("stale"),
+        ),
+        combined_cypher(
+            &delete_content_version_queries("project-1", "src/lib.rs", "hash-old")
+                .expect("content"),
+        ),
+    ] {
+        assert_heritage_owner_delete!(&combined);
+        let heritage = combined
+            .lines()
+            .filter(|line| line.contains("INHERITS|EXTENDS|IMPLEMENTS"))
+            .collect::<Vec<_>>()
+            .join("\n");
+        assert!(
+            heritage.contains("{project: $project}")
+                && heritage.matches("{project: $project}").count() >= 2,
+            "same-path heritage in another project must not be deleted:\n{heritage}"
+        );
+    }
 }

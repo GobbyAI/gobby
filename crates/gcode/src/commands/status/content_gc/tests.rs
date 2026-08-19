@@ -406,6 +406,45 @@ mod serial_db {
         }
     }
 
+    #[test]
+    #[cfg_attr(
+        not(gcode_postgres_tests),
+        ignore = "requires a PostgreSQL test database URL"
+    )]
+    #[serial_test::serial(serial_db)]
+    fn inheritance_only_content_has_graph_facts() {
+        let (mut conn, database_url) = connect_test_db();
+        let project_id = unique_test_project_id("gcode-gc-inherit-only");
+        cleanup_project(&mut conn, &project_id).expect("pre-clean project rows");
+        let _cleanup = ProjectCleanup {
+            database_url: database_url.clone(),
+            project_id: project_id.clone(),
+        };
+        let root = git_init_root();
+        seed_project(&mut conn, &project_id, root.path());
+        seed_content_version(
+            &mut conn,
+            &project_id,
+            "src/heritage.rs",
+            "gc-hash-inherit",
+            60,
+            true,
+        );
+        seed_inheritance(&mut conn, &project_id, "src/heritage.rs", "gc-hash-inherit");
+
+        let candidates = discover_content_gc(&database_url, 17, Some(&project_id))
+            .expect("discover GC candidates");
+        let candidate = candidates
+            .iter()
+            .find(|candidate| candidate.file_path == "src/heritage.rs")
+            .expect("inheritance-only content candidate");
+        assert!(candidate.symbol_ids.is_empty());
+        assert!(
+            candidate.has_graph_facts,
+            "inheritance-only content must participate in projection deletion before PostgreSQL GC"
+        );
+    }
+
     struct ProjectCleanup {
         database_url: String,
         project_id: String,
@@ -570,6 +609,25 @@ mod serial_db {
             &[&project_uuid, &file_path, &content_hash],
         )
         .expect("insert import");
+    }
+
+    fn seed_inheritance(
+        conn: &mut postgres::Client,
+        project_id: &str,
+        file_path: &str,
+        content_hash: &str,
+    ) {
+        let project_uuid = db::id_param(project_id).expect("test project id is a uuid");
+        conn.execute(
+            "INSERT INTO code_inheritance
+            (project_id, source_symbol_id, source_name, source_kind, source_external_module,
+             target_symbol_id, target_name, target_kind, target_external_module,
+             heritage_kind, file_path, content_hash, line)
+         VALUES ($1, NULL, 'Derived', 'unresolved', '', NULL, 'Base', 'unresolved', '',
+                 'EXTENDS', $2, $3, 1)",
+            &[&project_uuid, &file_path, &content_hash],
+        )
+        .expect("insert inheritance");
     }
 
     fn seed_call(

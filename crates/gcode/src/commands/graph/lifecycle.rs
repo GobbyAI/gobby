@@ -197,8 +197,13 @@ pub(super) fn skipped_no_graph_facts_payload(ctx: &Context, file_path: &str) -> 
     })
 }
 
-pub(super) fn has_no_graph_facts<I, D, C>(imports: &[I], definitions: &[D], calls: &[C]) -> bool {
-    imports.is_empty() && definitions.is_empty() && calls.is_empty()
+pub(super) fn has_no_graph_facts<I, D, C, H>(
+    imports: &[I],
+    definitions: &[D],
+    calls: &[C],
+    inheritance: &[H],
+) -> bool {
+    imports.is_empty() && definitions.is_empty() && calls.is_empty() && inheritance.is_empty()
 }
 
 fn sync_file_graph(
@@ -221,7 +226,12 @@ fn sync_file_graph(
         return Err(GraphSyncContractError::indexed_file_not_found(ctx, file_path).into());
     };
     let facts = db::read_graph_file_facts(&mut conn, &ctx.project_id, file_path)?;
-    if has_no_graph_facts(&facts.imports, &facts.definitions, &facts.calls) {
+    if has_no_graph_facts(
+        &facts.imports,
+        &facts.definitions,
+        &facts.calls,
+        &facts.inheritance,
+    ) {
         code_graph::sync_no_fact_file(ctx, &facts.file_path, &facts.content_hash)?;
         db::mark_graph_synced(
             &mut conn,
@@ -245,7 +255,7 @@ fn sync_file_graph(
         &facts.imports,
         &facts.definitions,
         &facts.calls,
-        &[],
+        &facts.inheritance,
         false,
     )?;
     db::mark_graph_synced(
@@ -323,7 +333,12 @@ fn rebuild_project_graph(ctx: &Context) -> anyhow::Result<GraphLifecycleOutput> 
 
             let synced_symbols = match (|| -> anyhow::Result<usize> {
                 let facts = db::read_graph_file_facts(&mut conn, &ctx.project_id, file_path)?;
-                if has_no_graph_facts(&facts.imports, &facts.definitions, &facts.calls) {
+                if has_no_graph_facts(
+                    &facts.imports,
+                    &facts.definitions,
+                    &facts.calls,
+                    &facts.inheritance,
+                ) {
                     graph.sync_no_fact_file(&facts.file_path, &facts.content_hash)?;
                     db::mark_graph_synced(
                         &mut conn,
@@ -340,7 +355,7 @@ fn rebuild_project_graph(ctx: &Context) -> anyhow::Result<GraphLifecycleOutput> 
                     &facts.imports,
                     &facts.definitions,
                     &facts.calls,
-                    &[],
+                    &facts.inheritance,
                     false,
                 )?;
                 db::mark_graph_synced(

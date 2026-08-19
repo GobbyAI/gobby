@@ -1,6 +1,8 @@
 use super::*;
 use crate::index::api;
-use crate::models::{IndexedFile, IndexedProject};
+use crate::models::{
+    CallTargetKind, HeritageKind, IndexedFile, IndexedProject, InheritanceRelation,
+};
 use std::time::{SystemTime, UNIX_EPOCH};
 
 #[test]
@@ -115,6 +117,55 @@ fn mark_graph_synced_cas_rejects_same_hash_stale_attempt() {
     let (synced, attempt_cleared) = graph_sync_flags(&mut conn, &project_id, "hash-b");
     assert!(!synced);
     assert!(attempt_cleared);
+}
+
+#[test]
+#[serial_test::serial(serial_db)]
+#[cfg_attr(
+    not(gcode_postgres_tests),
+    ignore = "requires a PostgreSQL test database URL"
+)]
+fn read_graph_file_facts_includes_inheritance_rows() {
+    let (mut conn, project_id, _cleanup) = seeded_file("gcode-facts-inherit", "hash-a");
+    api::upsert_inheritance(
+        &mut conn,
+        &project_id,
+        "src/lib.rs",
+        "hash-a",
+        &[InheritanceRelation {
+            source_symbol_id: None,
+            source_name: "Derived".to_string(),
+            source_kind: CallTargetKind::Unresolved,
+            source_external_module: None,
+            target_symbol_id: None,
+            target_name: "Base".to_string(),
+            target_kind: CallTargetKind::Unresolved,
+            target_external_module: None,
+            heritage_kind: HeritageKind::Extends,
+            file_path: "src/lib.rs".to_string(),
+            content_hash: "hash-a".to_string(),
+            line: 3,
+        }],
+    )
+    .expect("upsert inheritance");
+    conn.execute(
+        "INSERT INTO code_imports (project_id, source_file, content_hash, target_module)
+         VALUES ($1, 'src/lib.rs', 'hash-a', 'pkg.mod')",
+        &[&id_param(&project_id).expect("uuid")],
+    )
+    .expect("insert import");
+
+    let facts = read_graph_file_facts(&mut conn, &project_id, "src/lib.rs").expect("facts");
+    assert!(facts.definitions.is_empty() && facts.calls.is_empty());
+    assert_eq!(facts.imports.len(), 1);
+    assert_eq!(facts.inheritance.len(), 1);
+    assert_eq!(facts.inheritance[0].target_name, "Base");
+    assert_eq!(facts.inheritance[0].heritage_kind, HeritageKind::Extends);
+
+    let pairs = read_active_imports(&mut conn, &project_id).expect("active imports");
+    assert_eq!(pairs.len(), 1);
+    assert_eq!(pairs[0].file_path, "src/lib.rs");
+    assert_eq!(pairs[0].module_name, "pkg.mod");
 }
 
 struct ProjectCleanup {

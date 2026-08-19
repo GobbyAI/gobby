@@ -351,14 +351,15 @@ fn no_graph_facts_skip_payload_is_terminal_success_shape() {
 }
 
 #[test]
-fn no_graph_facts_requires_empty_imports_definitions_and_calls() {
+fn no_graph_facts_requires_empty_imports_definitions_calls_and_inheritance() {
     let empty: &[()] = &[];
     let present: &[()] = &[()];
 
-    assert!(has_no_graph_facts(empty, empty, empty));
-    assert!(!has_no_graph_facts(present, empty, empty));
-    assert!(!has_no_graph_facts(empty, present, empty));
-    assert!(!has_no_graph_facts(empty, empty, present));
+    assert!(has_no_graph_facts(empty, empty, empty, empty));
+    assert!(!has_no_graph_facts(present, empty, empty, empty));
+    assert!(!has_no_graph_facts(empty, present, empty, empty));
+    assert!(!has_no_graph_facts(empty, empty, present, empty));
+    assert!(!has_no_graph_facts(empty, empty, empty, present));
 }
 
 #[test]

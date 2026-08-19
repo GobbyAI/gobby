@@ -50,6 +50,6 @@ use read::{
 use write::{
     cleanup_orphans_queries, clear_all_code_index_query, clear_project_query,
     count_file_projection_nodes_query, delete_content_version_queries, delete_file_graph_queries,
-    delete_file_node_query, import_graph_items, partition_call_graph_items,
-    project_file_path_queries, project_scopes_query,
+    delete_file_node_query, delete_stale_file_graph_queries, import_graph_items,
+    partition_call_graph_items, project_file_path_queries, project_scopes_query,
 };

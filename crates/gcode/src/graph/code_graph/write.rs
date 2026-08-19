@@ -21,13 +21,13 @@ mod sync_plan;
 pub(crate) use deletion::{
     cleanup_orphans_queries, clear_project_query, count_file_projection_nodes_query,
     delete_content_version_queries, delete_file_graph_queries, delete_file_node_query,
-    project_file_path_queries,
+    delete_stale_file_graph_queries, project_file_path_queries,
 };
 #[cfg(test)]
 pub(crate) use deletion::{clear_all_code_index_query, project_scopes_query};
 pub(in crate::graph::code_graph) use mutation::{import_graph_items, partition_call_graph_items};
 
-use deletion::{delete_bare_file_node_query, delete_stale_file_graph_queries};
+use deletion::delete_bare_file_node_query;
 use inheritance::partition_inheritance_graph_items;
 use mutation::{SyncFileMutation, definition_graph_symbols, new_sync_token};
 use support::execute_write_query;
@@ -57,8 +57,7 @@ impl<'a> CodeGraph<'a> {
         Self { project_id, client }
     }
 
-    // Eighth argument is the 2.1 inheritance slice; 2.2 threads PostgreSQL facts
-    // into the same position rather than packing a new input struct.
+    // Eighth argument is the inheritance slice loaded by read_graph_file_facts.
     #[allow(clippy::too_many_arguments)]
     pub fn sync_file(
         &mut self,
