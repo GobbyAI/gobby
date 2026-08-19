@@ -1,209 +1,394 @@
 header:
   plan_id: gcode-ergonomics-grant-degradation
-  plan_hash: d22d323cd6531bb546b4fc739c7af1072359355976022df1479004ff54adac80
+  plan_hash: 4dd818849692fd21f9204ec2edc8f4dd6e4f4e197b4b241370d434e2d110bdc9
   root_task_ref: '20454'
   project_id: d45545c5-ded5-4335-b115-0245752edacf
-  generated_at: '2026-08-19T02:37:08Z'
+  generated_at: '2026-08-19T17:24:38Z'
   task_tree_source: db
-  task_tree_source_hash: 54e0b6fb085266f10fd484d940af10526ad2bef9aa473b09361e326acc7f2f0b
+  task_tree_source_hash: 520c39d9917992bdff5798a889110b2838c473553e2a7dbc2c785c57d20f40a9
   evidence_summary: []
   evidence: []
 rows:
 - section_id: '1.1'
   item_id: 1.1.1
   plan_node_hash: 7102405e366254a90ee4077294b3f276ad34458df6cfabd36310e86e71ddd9a7
-  status: missing
-  leaves: []
+  status: covered
+  leaves:
+  - leaf_task_ref: '#20566'
+    validation_criteria_snippet: '1.1.1: `gcode grep -l` lists sorted unique matching
+      paths in text mode and populates `files` in JSON mode. symbol: `GrepResponse`.
+      file: `crates/gcode/src/comm...'
+    matched_artifact_ref: GrepResponse
   deferral_target: null
 - section_id: '1.1'
   item_id: 1.1.2
   plan_node_hash: ce88d5e6ada205db26992aa22c93f21a43294429c540943494b7b48b7d71103a
-  status: missing
-  leaves: []
+  status: covered
+  leaves:
+  - leaf_task_ref: '#20566'
+    validation_criteria_snippet: '1.1.1: `gcode grep -l` lists sorted unique matching
+      paths in text mode and populates `files` in JSON mode. symbol: `GrepResponse`.
+      file: `crates/gcode/src/comm...'
+    matched_artifact_ref: Command
   deferral_target: null
 - section_id: '1.1'
   item_id: 1.1.3
   plan_node_hash: f4b21c72886f2ec237612ffe51e6429c07ad6c0b767444d520fd1b7080f7041f
-  status: missing
-  leaves: []
+  status: covered
+  leaves:
+  - leaf_task_ref: '#20566'
+    validation_criteria_snippet: '1.1.1: `gcode grep -l` lists sorted unique matching
+      paths in text mode and populates `files` in JSON mode. symbol: `GrepResponse`.
+      file: `crates/gcode/src/comm...'
+    matched_artifact_ref: crates/gcode/src/cli/tests/grep.rs
   deferral_target: null
 - section_id: '1.1'
   item_id: 1.1.4
   plan_node_hash: 12867614b7b36d487e63198f96af7440167c43c951bbd0fa43f0e7349c29fc46
-  status: missing
-  leaves: []
+  status: covered
+  leaves:
+  - leaf_task_ref: '#20566'
+    validation_criteria_snippet: '1.1.1: `gcode grep -l` lists sorted unique matching
+      paths in text mode and populates `files` in JSON mode. symbol: `GrepResponse`.
+      file: `crates/gcode/src/comm...'
+    matched_artifact_ref: crates/gcode/src/commands/grep/tests.rs
   deferral_target: null
 - section_id: '1.1'
   item_id: 1.1.5
-  plan_node_hash: de0d9a4706847a9d909e10f089b6b10702a670e36f1fb62c260ba6610d01bb70
-  status: missing
-  leaves: []
+  plan_node_hash: 297d258ab7c3c422c166f09d23c57bb224b8eb0bea6166d95fbea0df5742225d
+  status: covered
+  leaves:
+  - leaf_task_ref: '#20566'
+    validation_criteria_snippet: '1.1.1: `gcode grep -l` lists sorted unique matching
+      paths in text mode and populates `files` in JSON mode. symbol: `GrepResponse`.
+      file: `crates/gcode/src/comm...'
+    matched_artifact_ref: crates/gcode/tests/contract.rs::contract_builder_matches_pinned_json
   deferral_target: null
 - section_id: '1.2'
   item_id: 1.2.1
   plan_node_hash: 8934acda9ce583bc2d6610fefd600fa4acdf00c2460cdd0e11a05ace617533f0
-  status: missing
-  leaves: []
+  status: covered
+  leaves:
+  - leaf_task_ref: '#20567'
+    validation_criteria_snippet: '1.2.1: Argument errors print one JSON line with
+      `error: "usage"`, a single usage string, and a recovery hint; no command listing
+      is emitted. file: `crates/gcod...'
+    matched_artifact_ref: crates/gcode/src/dispatch/usage.rs
   deferral_target: null
 - section_id: '1.2'
   item_id: 1.2.2
   plan_node_hash: e66607a9967749f28f0bd5a93bca5a71bdb6a2c63fa24d62ee499fcae4cf078e
-  status: missing
-  leaves: []
+  status: covered
+  leaves:
+  - leaf_task_ref: '#20567'
+    validation_criteria_snippet: '1.2.1: Argument errors print one JSON line with
+      `error: "usage"`, a single usage string, and a recovery hint; no command listing
+      is emitted. file: `crates/gcod...'
+    matched_artifact_ref: CliError
   deferral_target: null
 - section_id: '1.2'
   item_id: 1.2.3
   plan_node_hash: d8f5c552c5262ac340866f9f0a412234f90c7a8a035c212704ce28aeb2f5c100
-  status: missing
-  leaves: []
+  status: covered
+  leaves:
+  - leaf_task_ref: '#20567'
+    validation_criteria_snippet: '1.2.1: Argument errors print one JSON line with
+      `error: "usage"`, a single usage string, and a recovery hint; no command listing
+      is emitted. file: `crates/gcod...'
+    matched_artifact_ref: crates/gcode/src/cli/tests/top_level.rs
   deferral_target: null
 - section_id: '2.1'
   item_id: 2.1.1
   plan_node_hash: bf1f4deb17616f25eacfaaf93b213eec4366133e7b129c75cf414f09eca70124
-  status: missing
-  leaves: []
+  status: covered
+  leaves:
+  - leaf_task_ref: '#20568'
+    validation_criteria_snippet: '2.1.1: A failed incremental refresh yields `FreshnessStatus::Degraded`
+      and the read command still succeeds with exit 0. symbol: `ensure_fresh`. file:
+      `crates/g...'
+    matched_artifact_ref: ensure_fresh
   deferral_target: null
 - section_id: '2.1'
   item_id: 2.1.2
   plan_node_hash: aa93418d8f2e3858123aea731dfb7b3bc11d23bb82f2c283956f5f596b8518ca
-  status: missing
-  leaves: []
+  status: covered
+  leaves:
+  - leaf_task_ref: '#20568'
+    validation_criteria_snippet: '2.1.1: A failed incremental refresh yields `FreshnessStatus::Degraded`
+      and the read command still succeeds with exit 0. symbol: `ensure_fresh`. file:
+      `crates/g...'
+    matched_artifact_ref: warn_if_busy
   deferral_target: null
 - section_id: '2.1'
   item_id: 2.1.3
   plan_node_hash: 72f03e5f12cf3cfa90972083227945eb800702cfd1db07a1e087519552e72ac1
-  status: missing
-  leaves: []
+  status: covered
+  leaves:
+  - leaf_task_ref: '#20568'
+    validation_criteria_snippet: '2.1.1: A failed incremental refresh yields `FreshnessStatus::Degraded`
+      and the read command still succeeds with exit 0. symbol: `ensure_fresh`. file:
+      `crates/g...'
+    matched_artifact_ref: crates/gcode/src/freshness.rs
   deferral_target: null
 - section_id: '2.2'
   item_id: 2.2.1
   plan_node_hash: 1e64cb756004a16729db3248638864acbd710994a31f6fa3fc78b41202929509
-  status: missing
-  leaves: []
+  status: covered
+  leaves:
+  - leaf_task_ref: '#20569'
+    validation_criteria_snippet: '2.2.1: The CLI contract carries a typed exit-code
+      table. symbol: `CliContract`. file: `crates/gcore/src/cli_contract.rs`. 2.2.2:
+      `gcode contract` emits `contra...'
+    matched_artifact_ref: CliContract
   deferral_target: null
 - section_id: '2.2'
   item_id: 2.2.2
   plan_node_hash: da4dfc7d5c55225053f2095d3c02626662236cbd5e48e13afbecc2c3829dbd88
-  status: missing
-  leaves: []
+  status: covered
+  leaves:
+  - leaf_task_ref: '#20569'
+    validation_criteria_snippet: '2.2.1: The CLI contract carries a typed exit-code
+      table. symbol: `CliContract`. file: `crates/gcore/src/cli_contract.rs`. 2.2.2:
+      `gcode contract` emits `contra...'
+    matched_artifact_ref: crates/gcode/contract/gcode.contract.json
   deferral_target: null
 - section_id: '2.2'
   item_id: 2.2.3
   plan_node_hash: 39e719c83d6149f9d8c010e0a7e03c542e48bc77078efd7185fdbb3ae9da3d2e
-  status: missing
-  leaves: []
+  status: covered
+  leaves:
+  - leaf_task_ref: '#20569'
+    validation_criteria_snippet: '2.2.1: The CLI contract carries a typed exit-code
+      table. symbol: `CliContract`. file: `crates/gcore/src/cli_contract.rs`. 2.2.2:
+      `gcode contract` emits `contra...'
+    matched_artifact_ref: crates/gcode/src/dispatch/tests.rs
   deferral_target: null
 - section_id: '2.2'
   item_id: 2.2.4
-  plan_node_hash: 8d72a704dd9aab24c6a54a1c9ad57e3e90ca200219417829b91221a7d6994071
-  status: missing
-  leaves: []
+  plan_node_hash: de60c7ef0393adaaaa9402a91d4008680ccec829e8edc161a5dde9634c189bad
+  status: covered
+  leaves:
+  - leaf_task_ref: '#20569'
+    validation_criteria_snippet: '2.2.1: The CLI contract carries a typed exit-code
+      table. symbol: `CliContract`. file: `crates/gcore/src/cli_contract.rs`. 2.2.2:
+      `gcode contract` emits `contra...'
+    matched_artifact_ref: contract
+  deferral_target: null
+- section_id: '2.2'
+  item_id: 2.2.5
+  plan_node_hash: c25f78fcd99ed502e94e3e65382688700097183b219853cdd874321dbfc33ad9
+  status: covered
+  leaves:
+  - leaf_task_ref: '#20569'
+    validation_criteria_snippet: '2.2.1: The CLI contract carries a typed exit-code
+      table. symbol: `CliContract`. file: `crates/gcore/src/cli_contract.rs`. 2.2.2:
+      `gcode contract` emits `contra...'
+    matched_artifact_ref: grep_flags
   deferral_target: null
 - section_id: '3.1'
   item_id: 3.1.1
   plan_node_hash: 4520cdc04d6d5f0066935158f5ebd3fcc1acd10ed820ef3fbf2c1b077d1e9f52
-  status: missing
-  leaves: []
+  status: covered
+  leaves:
+  - leaf_task_ref: '#20570'
+    validation_criteria_snippet: '3.1.1: Unknown grant fields with a matching contract
+      number parse to `PayloadSkew`, never a raw serde dump. symbol: `parse_grant_json`.
+      file: `crates/gcore/src...'
+    matched_artifact_ref: parse_grant_json
   deferral_target: null
 - section_id: '3.1'
   item_id: 3.1.2
   plan_node_hash: 0d86ad3063ebf4d17a9e060661a4a8230490970d41717b6438cb081fb486af4b
-  status: missing
-  leaves: []
+  status: covered
+  leaves:
+  - leaf_task_ref: '#20570'
+    validation_criteria_snippet: '3.1.1: Unknown grant fields with a matching contract
+      number parse to `PayloadSkew`, never a raw serde dump. symbol: `parse_grant_json`.
+      file: `crates/gcore/src...'
+    matched_artifact_ref: GrantError
   deferral_target: null
 - section_id: '3.1'
   item_id: 3.1.3
   plan_node_hash: 5590e23a3fe4eeb9d3b8588050972b1ffaef311c90fc3bbfa3475b36b13b3bff
-  status: missing
-  leaves: []
+  status: covered
+  leaves:
+  - leaf_task_ref: '#20570'
+    validation_criteria_snippet: '3.1.1: Unknown grant fields with a matching contract
+      number parse to `PayloadSkew`, never a raw serde dump. symbol: `parse_grant_json`.
+      file: `crates/gcore/src...'
+    matched_artifact_ref: crates/gcore/src/grant/tests.rs
   deferral_target: null
 - section_id: '3.1'
   item_id: 3.1.4
   plan_node_hash: c1515b084276a0d73b638536c8161472b4486451d4e78b473acf33dcd3f78170
-  status: missing
-  leaves: []
+  status: covered
+  leaves:
+  - leaf_task_ref: '#20570'
+    validation_criteria_snippet: '3.1.1: Unknown grant fields with a matching contract
+      number parse to `PayloadSkew`, never a raw serde dump. symbol: `parse_grant_json`.
+      file: `crates/gcore/src...'
+    matched_artifact_ref: crates/gcore/src/grant/inspection.rs
+  deferral_target: null
+- section_id: '3.1'
+  item_id: 3.1.5
+  plan_node_hash: 13ead2565a8485f50edea151c39433f700a2551db2850a91a3e495d962d846f8
+  status: covered
+  leaves:
+  - leaf_task_ref: '#20570'
+    validation_criteria_snippet: '3.1.1: Unknown grant fields with a matching contract
+      number parse to `PayloadSkew`, never a raw serde dump. symbol: `parse_grant_json`.
+      file: `crates/gcore/src...'
+    matched_artifact_ref: crates/gcode/tests/grant_errors.rs
   deferral_target: null
 - section_id: '3.2'
   item_id: 3.2.1
   plan_node_hash: d514e57e6f7c7058fe5d4bbb2b35cb6a47108e33281873c1c36d0a5679e7db3c
-  status: missing
-  leaves: []
+  status: covered
+  leaves:
+  - leaf_task_ref: '#20571'
+    validation_criteria_snippet: '3.2.1: Every acquisition path''s parse failure names
+      its source artifact in the typed error. symbol: `acquire_managed`. file: `crates/gcore/src/grant/mod.rs`.
+      3...'
+    matched_artifact_ref: acquire_managed
   deferral_target: null
 - section_id: '3.2'
   item_id: 3.2.2
   plan_node_hash: c4ff30d5b090dc4da70ab2365f2ad937b398a6dae712a74aab95f0bb824eb689
-  status: missing
-  leaves: []
+  status: covered
+  leaves:
+  - leaf_task_ref: '#20571'
+    validation_criteria_snippet: '3.2.1: Every acquisition path''s parse failure names
+      its source artifact in the typed error. symbol: `acquire_managed`. file: `crates/gcore/src/grant/mod.rs`.
+      3...'
+    matched_artifact_ref: parse_cache_bytes
   deferral_target: null
 - section_id: '3.2'
   item_id: 3.2.3
   plan_node_hash: cb1d664022e6eaa0a5639e71bf4033ae0198f6d480f8d13e6c52b671c7013c90
-  status: missing
-  leaves: []
+  status: covered
+  leaves:
+  - leaf_task_ref: '#20571'
+    validation_criteria_snippet: '3.2.1: Every acquisition path''s parse failure names
+      its source artifact in the typed error. symbol: `acquire_managed`. file: `crates/gcore/src/grant/mod.rs`.
+      3...'
+    matched_artifact_ref: grant_status_snapshot
   deferral_target: null
 - section_id: '3.2'
   item_id: 3.2.4
   plan_node_hash: 2c1277e6899462231e590aad4b5830c6bb6ef18d8eebedb7267721b5c1199b49
-  status: missing
-  leaves: []
+  status: covered
+  leaves:
+  - leaf_task_ref: '#20571'
+    validation_criteria_snippet: '3.2.1: Every acquisition path''s parse failure names
+      its source artifact in the typed error. symbol: `acquire_managed`. file: `crates/gcore/src/grant/mod.rs`.
+      3...'
+    matched_artifact_ref: crates/gcore/src/grant/tests.rs
   deferral_target: null
 - section_id: '3.3'
   item_id: 3.3.1
   plan_node_hash: a4d022a764f3e2ecbd231c4ec450a0d8c8f8830f8f660902f71e294cc51686d9
-  status: missing
-  leaves: []
+  status: covered
+  leaves:
+  - leaf_task_ref: '#20572'
+    validation_criteria_snippet: '3.3.1: Grant skew errors printed by gcode carry
+      the reinstall/restart recovery directive. symbol: `CliError::grant`. file: `crates/gcode/src/cli_error.rs`.
+      3.3...'
+    matched_artifact_ref: CliError::grant
   deferral_target: null
 - section_id: '3.3'
   item_id: 3.3.2
   plan_node_hash: b3460b7e61b944fe39ef00068aa855ccd142eeed570316e3fe3a537496c275f0
-  status: missing
-  leaves: []
+  status: covered
+  leaves:
+  - leaf_task_ref: '#20572'
+    validation_criteria_snippet: '3.3.1: Grant skew errors printed by gcode carry
+      the reinstall/restart recovery directive. symbol: `CliError::grant`. file: `crates/gcode/src/cli_error.rs`.
+      3.3...'
+    matched_artifact_ref: CliError::print
   deferral_target: null
 - section_id: '3.4'
   item_id: 3.4.1
   plan_node_hash: d8542db7be5f424276f821c966a679ce25139c5128577cac4da1bb609624029b
-  status: missing
-  leaves: []
+  status: covered
+  leaves:
+  - leaf_task_ref: '#20573'
+    validation_criteria_snippet: '3.4.1: A shared golden vector proves both languages
+      reject an unknown-field grant with the typed skew classification. file: `tests/runtime_grants/golden/payloa...'
+    matched_artifact_ref: tests/runtime_grants/golden/payload_skew_unknown_field.json
   deferral_target: null
 - section_id: '3.4'
   item_id: 3.4.2
   plan_node_hash: 5b913e83539ae76b99b7ab1dc7ad7a7533a8f0ddfe5a1bb6fc647612aeb9f635
-  status: missing
-  leaves: []
+  status: covered
+  leaves:
+  - leaf_task_ref: '#20573'
+    validation_criteria_snippet: '3.4.1: A shared golden vector proves both languages
+      reject an unknown-field grant with the typed skew classification. file: `tests/runtime_grants/golden/payloa...'
+    matched_artifact_ref: crates/gcore/src/grant/tests.rs
   deferral_target: null
 - section_id: '3.4'
   item_id: 3.4.3
   plan_node_hash: b72a6633a31ef075932a943561ed0cbb4ccb54f7cffcf7fb1afe19d9d066a96e
-  status: missing
-  leaves: []
+  status: covered
+  leaves:
+  - leaf_task_ref: '#20573'
+    validation_criteria_snippet: '3.4.1: A shared golden vector proves both languages
+      reject an unknown-field grant with the typed skew classification. file: `tests/runtime_grants/golden/payloa...'
+    matched_artifact_ref: tests/runtime_grants/test_golden_vectors.py
   deferral_target: null
 - section_id: '4.1'
   item_id: 4.1.1
   plan_node_hash: 37644dcf8125e3949c40756e48bad3adf11dac197e2451a4980f17ef9b6b994a
-  status: missing
-  leaves: []
+  status: covered
+  leaves:
+  - leaf_task_ref: '#20574'
+    validation_criteria_snippet: '4.1.1: All three block reasons name only flags and
+      behaviors the shipped CLI has, including `-l` and the exit-0-on-empty contract.
+      file: `src/gobby/install/sha...'
+    matched_artifact_ref: src/gobby/install/shared/workflows/rules/code-index/require-code-index-skill.yaml
   deferral_target: null
 - section_id: '4.1'
   item_id: 4.1.2
   plan_node_hash: 43598726862b38ca477ea2cdf7c8448bff11dc3e49f07f7d5de5d3ceb740b9a3
-  status: missing
-  leaves: []
+  status: covered
+  leaves:
+  - leaf_task_ref: '#20574'
+    validation_criteria_snippet: '4.1.1: All three block reasons name only flags and
+      behaviors the shipped CLI has, including `-l` and the exit-0-on-empty contract.
+      file: `src/gobby/install/sha...'
+    matched_artifact_ref: reason text references the recovery field and fail-open
+      retry
   deferral_target: null
 - section_id: '4.2'
   item_id: 4.2.1
   plan_node_hash: 65c12995f5a2238267eddea1fc7c1db170bd6ce078f5b92233756e91918c8b1f
-  status: missing
-  leaves: []
+  status: covered
+  leaves:
+  - leaf_task_ref: '#20575'
+    validation_criteria_snippet: '4.2.1: Both skill copies document the compat flags,
+      exit-code contract, and typed grant-error guidance, and stay byte-identical.
+      file: `src/gobby/install/share...'
+    matched_artifact_ref: src/gobby/install/shared/skills/code-index/SKILL.md
   deferral_target: null
 - section_id: '4.2'
   item_id: 4.2.2
   plan_node_hash: e106224589f959b730fdfc55473a4dfc2130bdea1f17c49324f4e51475fc51d6
-  status: missing
-  leaves: []
+  status: covered
+  leaves:
+  - leaf_task_ref: '#20575'
+    validation_criteria_snippet: '4.2.1: Both skill copies document the compat flags,
+      exit-code contract, and typed grant-error guidance, and stay byte-identical.
+      file: `src/gobby/install/share...'
+    matched_artifact_ref: crates/gcode/assets/SKILL.md
   deferral_target: null
 - section_id: '4.2'
   item_id: 4.2.3
   plan_node_hash: ee6de6e83137c2995a144256b3f3377cfb54288a1391821a4d53ff92733b4849
-  status: missing
-  leaves: []
+  status: covered
+  leaves:
+  - leaf_task_ref: '#20575'
+    validation_criteria_snippet: '4.2.1: Both skill copies document the compat flags,
+      exit-code contract, and typed grant-error guidance, and stay byte-identical.
+      file: `src/gobby/install/share...'
+    matched_artifact_ref: tests/skills/test_code_index_skill.py
   deferral_target: null
