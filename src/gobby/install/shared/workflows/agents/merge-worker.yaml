@@ -31,12 +31,11 @@ instructions: |
   MAX_RESOLVE_RETRIES: 3 per conflict id.
   1. If the spawn prompt asks for preflight or branch metadata, stay inside
      the merge step MCP surface — Bash/Read metadata bypasses merge tracking.
-     Then call merge_worktree with worktree_id and target_branch, without
-     pushing: remote publication happens only through explicit PR delivery.
+     Then call merge_worktree with worktree_id and target_branch. Do not push.
      merge_worktree is the authoritative final landing tool for worktree
      delivery. Its merge_sha/target_head_sha is the final local target branch
-     SHA to record; Bash, Read, and merge_start/merge_apply cannot supply or
-     substitute that SHA.
+     SHA to record. Do not use Bash, Read, or merge_start/merge_apply to
+     discover or substitute the final merge SHA.
   2. If SUCCESS: when the spawn prompt provides a verification command, call
      gobby-merge:verify_in_worktree with the worktree_id and that command
      before recording success. If verification fails, call
@@ -76,8 +75,7 @@ instructions: |
      record gobby-tasks-ops:record_merge_result with failure_reason including
      the unresolved conflict ids/files and retry counts. The workflow will
      transition to terminate; call end_agent_run only after that transition.
-     A single conflict_id at its retry cap is not a reason for merge_abort —
-     aborting discards the conflicts already resolved.
+     Do not call merge_abort solely because one conflict_id reached its retry cap.
 
   Clone merge flow:
   1. Sync the clone first: call sync_clone with clone_id
@@ -101,8 +99,8 @@ instructions: |
     merge_worktree succeeds and before record_merge_result.
   - Pass verification commands exactly as supplied. Commands may include
     required environment guards such as `GOBBY_TEST_PROTECT=1 uv run pytest ...`
-    or `env GOBBY_TEST_PROTECT=1 uv run pytest ...`; those guards protect the
-    user's live daemon state, so keep them on every retry.
+    or `env GOBBY_TEST_PROTECT=1 uv run pytest ...`; do not strip those guards
+    or retry pytest without them.
   - On unresolved conflict or verification failure, call
     gobby-tasks-ops:record_merge_result with failure_reason before end_agent_run.
   - end_agent_run belongs after the merge step: first record a successful
@@ -119,17 +117,17 @@ instructions: |
   Boundaries:
   - The coordinator owns task lifecycle; leave close_task to it.
   - Work alone — spawned sub-agents would compete for the same merge state.
-  - Resolve conflicts through the merge MCP surface only: `merge_status`
-    gives conflict ids/paths and `merge_resolve(use_ai=true)` hydrates the
-    current conflict content from the worktree. Bash, Read, and other
-    file-inspection tools bypass conflict tracking.
+  - Do NOT use Bash, Read, or other file-inspection tools during merge conflict
+    resolution — the merge step allows only MCP tools. `merge_status` gives
+    conflict ids/paths and `merge_resolve(use_ai=true)` hydrates the current
+    conflict content from the worktree.
   - If `merge_resolve(use_ai=true)` times out or fails, retry that same
-    conflict_id within MAX_RESOLVE_RETRIES on the same MCP surface. If
-    retries are exhausted, continue the remaining conflict_ids, then record
-    unresolved ids/files with record_merge_result.
-  - Resolve sequentially: one `merge_resolve(use_ai=true)` call, wait for it
-    to complete, call `merge_status`, and only then attempt the next pending
-    conflict_id — parallel calls race the conflict engine.
+    conflict_id within MAX_RESOLVE_RETRIES. Do not switch to Bash/Read or
+    blocked inspection tools. If retries are exhausted, continue the remaining
+    conflict_ids, then record unresolved ids/files with record_merge_result.
+  - Do NOT parallelize conflict resolution. For a single active resolution,
+    make one `merge_resolve(use_ai=true)` call, wait for it to complete, call
+    `merge_status`, and only then attempt the next pending conflict_id.
   - Land locally without pushing; remote publication is allowed only through
     explicit PR delivery.
   - Exit by transitioning to the terminate step and then calling
@@ -165,9 +163,9 @@ step_workflow:
            If verification fails, record_merge_result with failure_reason. If
            verification passes or no verification command was supplied, record the
            merge_sha returned by merge_worktree/merge_clone with
-           record_merge_result, then call close_linked_github_issue. Bash, Read,
-           merge_start, and merge_apply cannot supply or replace that final
-           target merge SHA. The workflow will transition to cleanup
+           record_merge_result, then call close_linked_github_issue. Do not call
+           Bash, Read, merge_start, or merge_apply to discover or replace that
+           final target merge SHA. The workflow will transition to cleanup
            (delete your worktree), then terminate; call end_agent_run only after
            the terminate transition.
 
@@ -189,13 +187,13 @@ step_workflow:
            multiple merge_resolve calls in one assistant turn or parallel tool
            batch. Track attempts by conflict_id. If one conflict_id reaches
            MAX_RESOLVE_RETRIES=3, skip that conflict_id and continue with the
-           next pending conflict. merge_resolve(use_ai=true) is the conflict
-           content access path in this step; Read/Bash-built manual
-           resolved_content bypasses conflict tracking.
+           next pending conflict. Do not call Read, Bash, or file-inspection
+           tools to build manual resolved_content; merge_resolve(use_ai=true) is
+           the conflict content access path in this step.
         4. Re-check merge_status after each attempt. Call merge_apply with the
            resolution_id only when all conflicts are resolved. Treat merge_apply
-           as source/worktree branch resolution only; its SHA is not the final
-           delivery SHA.
+           as source/worktree branch resolution only; do not record its SHA as
+           the final delivery SHA.
         5. Call merge_worktree exactly once with target_branch to merge the
            resolved work locally. Record the merge_sha returned by merge_worktree.
         6. Call record_merge_result with that merge_sha, then
@@ -205,9 +203,8 @@ step_workflow:
 
         Clone conflicts: record_merge_result with failure_reason (no
         auto-resolution for clones), then terminate.
-        Resolution failure or retry cap: a single conflict_id at its cap is
-        not a reason for merge_abort — aborting discards resolved conflicts.
-        Continue other conflict_ids, then report the
+        RESOLUTION FAILURE OR RETRY CAP: do not call merge_abort solely because
+        one conflict_id hit the cap. Continue other conflict_ids, then report the
         unresolved ids/files and retry counts in record_merge_result before
         terminating.
 
@@ -286,13 +283,12 @@ step_workflow:
           action: block
           when: "vars.get('merge_resolve_attempts', []).count(tool_input.get('conflict_id', '')) >= 3"
           reason: |
-            MAX_RESOLVE_RETRIES reached for this conflict_id. Skip it,
-            continue with the next pending conflict_id, then
+            MAX_RESOLVE_RETRIES reached for this conflict_id. Do not retry this
+            conflict_id. Skip it, continue with the next pending conflict_id, then
             call merge_status and report any unresolved ids/files with retry
             counts in gobby-tasks-ops:record_merge_result with failure_reason.
-            The workflow will transition to terminate. A single capped
-            conflict_id is not a reason for merge_abort — aborting discards
-            the conflicts already resolved.
+            The workflow will transition to terminate. Do not call merge_abort
+            solely because one conflict_id hit the retry cap.
       # Do not set completion directly from merge_worktree — it returns
       # success:false on conflicts, but handler success fires on any
       # non-transport-error response. Completion is recorded explicitly through

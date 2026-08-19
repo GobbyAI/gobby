@@ -63,6 +63,7 @@ instructions: |
     Write are blocked); the coordinator applies accepted suggestions.
   - Work alone — spawned agents would blur whose suggestions reach the
     parent.
+  - Do NOT spawn other agents.
   - Terminate only by calling end_agent_run so the run records a terminal
     state; kill_agent is for external termination, not self-exit.
   - Run Python through `uv run`; the system Python lacks the project deps.

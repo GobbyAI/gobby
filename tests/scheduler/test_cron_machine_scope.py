@@ -16,6 +16,7 @@ from gobby.scheduler.scheduler import CronScheduler
 from gobby.storage.cron import CronJobStorage
 from gobby.storage.cron_models import CronRun
 from tests.config_runtime_helpers import static_cron_capture
+from tests.fixtures.postgres import TEST_USER_ID
 
 if TYPE_CHECKING:
     from gobby.storage.hub.protocol import HubDatabase
@@ -33,8 +34,8 @@ def _seed_active_runs(
     remote_machine_id = str(uuid.uuid4())
     for machine_id in (local_machine_id, remote_machine_id):
         temp_db.execute(
-            "INSERT INTO machines (id, hostname) VALUES (%s, %s)",
-            (machine_id, f"host-{machine_id}"),
+            "INSERT INTO machines (id, hostname, owner_user_id) VALUES (%s, %s, %s)",
+            (machine_id, f"host-{machine_id}", TEST_USER_ID),
         )
 
     storage = CronJobStorage(temp_db)

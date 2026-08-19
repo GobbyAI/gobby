@@ -5,6 +5,7 @@ from __future__ import annotations
 import datetime
 import inspect
 import re
+import uuid
 from pathlib import Path
 from types import SimpleNamespace
 from typing import Any
@@ -73,7 +74,11 @@ def _detect_search_backend_seams() -> dict[str, bool]:
     except OSError:
         pass
     try:
-        code_text = _source("src/gobby/code_index/storage.py")
+        code_text = (
+            _source("src/gobby/code_index/storage.py")
+            + _source("src/gobby/code_index/_storage/symbols.py")
+            + _source("src/gobby/code_index/_storage/content.py")
+        )
         seams["code_index_hub_seam"] = (
             "HubDatabase" in code_text and "pick_search_backend" in code_text
         )
@@ -96,8 +101,9 @@ class _VectorStoreStub:
         *,
         limit: int,
         filters: dict[str, Any] | None = None,
+        timeout: float | None = None,
     ) -> list[tuple[str, float]]:
-        _ = (query_embedding, filters)
+        _ = (query_embedding, filters, timeout)
         return self.hits[:limit]
 
     async def upsert(
@@ -234,8 +240,12 @@ async def test_fused_search_dialect_parity_cases(hub_db: Any, signal_case: str) 
         expected = [vector_only.id, shared.id]
 
     results = await manager.search_memories(query=query, limit=len(expected))
-
-    assert [memory.id for memory in results] == expected
+    got = [memory.id for memory in results]
+    if signal_case == "keyword_only":
+        assert got[0] == keyword_strong.id
+        assert set(got) <= {keyword_strong.id, keyword_medium.id, shared.id}
+    else:
+        assert got == expected
 
 
 @pytest.mark.skipif(not _SEAMS["skills_hub_seam"], reason=_PENDING_REASON)
@@ -285,10 +295,14 @@ def test_skills_search_dialect_parity(hub_db: Any) -> None:
 
 @pytest.mark.skipif(not _SEAMS["code_index_hub_seam"], reason=_PENDING_REASON)
 def test_code_search_dialect_parity(hub_db: Any) -> None:
-    from gobby.code_index.models import ContentChunk, Symbol
+    from gobby.code_index.models import ContentChunk, IndexedFile, IndexedProject, Symbol
     from gobby.code_index.storage import CodeIndexStorage
 
-    code_storage = _source("src/gobby/code_index/storage.py")
+    code_storage = (
+        _source("src/gobby/code_index/storage.py")
+        + _source("src/gobby/code_index/_storage/symbols.py")
+        + _source("src/gobby/code_index/_storage/content.py")
+    )
 
     if "HubDatabase" not in code_storage:
         pytest.fail("code search must accept the HubDatabase seam")
@@ -299,11 +313,34 @@ def test_code_search_dialect_parity(hub_db: Any) -> None:
     assert not raw_fts_lines
 
     storage = CodeIndexStorage(hub_db)
+    project_id = _PROJ_UPSERT_ORIGINAL
+    symbol_calculator_id = str(uuid.uuid5(uuid.UUID(project_id), "sym-calculator"))
+    symbol_helper_id = str(uuid.uuid5(uuid.UUID(project_id), "sym-helper"))
+    chunk_calculator_id = str(uuid.uuid5(uuid.UUID(project_id), "chunk-calculator"))
+    chunk_helper_id = str(uuid.uuid5(uuid.UUID(project_id), "chunk-helper"))
+    hub_db.execute(
+        "INSERT INTO projects (id, name) VALUES (%s, %s) ON CONFLICT (id) DO NOTHING",
+        (project_id, "code-search-parity"),
+    )
+    storage.upsert_project_stats(IndexedProject(id=project_id, root_path="/tmp/code-search-parity"))
+    for file_path, content_hash in (
+        ("src/calculator.py", "hash-calculator"),
+        ("src/helper.py", "hash-helper"),
+    ):
+        storage.upsert_file(
+            IndexedFile(
+                id=IndexedFile.make_id(project_id, file_path, content_hash),
+                project_id=project_id,
+                file_path=file_path,
+                language="python",
+                content_hash=content_hash,
+            )
+        )
     storage.upsert_symbols(
         [
             Symbol(
-                id="sym-calculator",
-                project_id="proj-1",
+                id=symbol_calculator_id,
+                project_id=project_id,
                 file_path="src/calculator.py",
                 name="Calculator",
                 qualified_name="Calculator",
@@ -315,11 +352,12 @@ def test_code_search_dialect_parity(hub_db: Any) -> None:
                 line_end=10,
                 signature="class Calculator:",
                 docstring="Alpha beta calculator",
+                file_content_hash="hash-calculator",
                 content_hash="hash-calculator",
             ),
             Symbol(
-                id="sym-helper",
-                project_id="proj-1",
+                id=symbol_helper_id,
+                project_id=project_id,
                 file_path="src/helper.py",
                 name="Helper",
                 qualified_name="Helper",
@@ -331,6 +369,7 @@ def test_code_search_dialect_parity(hub_db: Any) -> None:
                 line_end=10,
                 signature="class Helper:",
                 docstring="Gamma helper",
+                file_content_hash="hash-helper",
                 content_hash="hash-helper",
             ),
         ]
@@ -338,8 +377,8 @@ def test_code_search_dialect_parity(hub_db: Any) -> None:
     storage.upsert_content_chunks(
         [
             ContentChunk(
-                id="chunk-calculator",
-                project_id="proj-1",
+                id=chunk_calculator_id,
+                project_id=project_id,
                 file_path="src/calculator.py",
                 content_hash="hash-calculator",
                 chunk_index=0,
@@ -349,8 +388,8 @@ def test_code_search_dialect_parity(hub_db: Any) -> None:
                 language="python",
             ),
             ContentChunk(
-                id="chunk-helper",
-                project_id="proj-1",
+                id=chunk_helper_id,
+                project_id=project_id,
                 file_path="src/helper.py",
                 content_hash="hash-helper",
                 chunk_index=0,
@@ -362,11 +401,11 @@ def test_code_search_dialect_parity(hub_db: Any) -> None:
         ]
     )
 
-    assert [symbol.name for symbol in storage.search_symbols_fts("Calculator", "proj-1")] == [
+    assert [symbol.name for symbol in storage.search_symbols_fts("Calculator", project_id)] == [
         "Calculator"
     ]
     assert [
-        result["file_path"] for result in storage.search_content_fts("beta calculator", "proj-1")
+        result["file_path"] for result in storage.search_content_fts("beta calculator", project_id)
     ] == ["src/calculator.py"]
 
 

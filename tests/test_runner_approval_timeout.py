@@ -8,8 +8,8 @@ from unittest.mock import MagicMock, patch
 
 import pytest
 
+from gobby.config.app import DaemonConfig
 from gobby.config.bin_freshness import BinFreshnessConfig
-from gobby.config.logging import LoggingSettings
 from gobby.runner_lifecycle_periodic import start_periodic_tasks
 from gobby.runner_maintenance import expire_approval_timeouts_loop
 from gobby.storage.pipelines import LocalPipelineExecutionManager
@@ -58,13 +58,17 @@ def test_periodic_approval_expiry_uses_global_manager_without_startup_project() 
         http_server=SimpleNamespace(app=object()),
         pipeline_execution_manager=None,
         _shutdown_requested=False,
-        config=SimpleNamespace(
-            telemetry=SimpleNamespace(trace_retention_days=7),
-            bin_freshness=BinFreshnessConfig(enabled=False),
-            chat=None,
-            logging=LoggingSettings(),
-            get_tool_result_offload_config=MagicMock(return_value=MagicMock()),
+        config_runtime=SimpleNamespace(
+            capture=lambda: SimpleNamespace(
+                snapshot=SimpleNamespace(
+                    active=DaemonConfig(
+                        telemetry={"trace_retention_days": 7},
+                        bin_freshness=BinFreshnessConfig(enabled=False),
+                    )
+                )
+            )
         ),
+        degraded_services=set(),
     )
     approval_managers: list[LocalPipelineExecutionManager] = []
 

@@ -12,7 +12,6 @@ from gobby.storage.hub.protocol import (
     SessionRegistration,
     SessionSeqMutation,
 )
-from gobby.storage.machines import LocalMachineManager, MachineNotRegisteredError
 from gobby.storage.projects import PERSONAL_PROJECT_ID
 from gobby.storage.session_models import Session
 from gobby.storage.workspace_machine_scope import (
@@ -25,7 +24,11 @@ from ._constants import ensure_system_session, get_logger, system_session_id
 from ._identity_crud import _SessionIdentityCRUDMixin
 from ._identity_reconciliation import reconcile_session_identity
 from ._lineage_guard import repair_self_parent_session, sanitize_parent_session_id
-from ._registration import manual_registration_title
+from ._registration import (
+    manual_registration_title,
+    require_registered_machine,
+    require_valid_title_source,
+)
 from ._title_defaults import (
     PROVISIONAL_TITLE_SOURCE,
     format_provisional_session_title,
@@ -103,29 +106,7 @@ class _SessionCRUDMixin(_SessionIdentityCRUDMixin):
         sandbox_policy_hash: str | None = None,
         title_source: str | None | UnsetType = UNSET,
     ) -> Session:
-        """
-        Register a new session or return existing one.
-
-        Looks up by (external_id, source, project_id, session_type) to find if this exact
-        session already exists (e.g., daemon restarted mid-session). If found, returns
-        the existing session. Otherwise creates a new one.
-
-        Args:
-            external_id: External session identifier (e.g., Claude Code session ID)
-            machine_id: Machine identifier
-            source: CLI source (claude, qwen, codex, droid)
-            project_id: Project ID (None if project context unavailable)
-            title: Explicit user title; non-empty values are classified as manual
-            title_source: Provenance for an explicit user title
-            transcript_path: Transcript path; omit to preserve, or pass None to clear
-            git_branch: Git branch; omit to preserve, or pass None to clear
-            parent_session_id: Parent session; omit to preserve, or pass None to clear
-            agent_depth: Nesting depth (0 = human-initiated, 1+ = agent-spawned)
-            spawned_by_agent_id: ID of the agent that spawned this session
-
-        Returns:
-            Session instance
-        """
+        """Register a session or return the existing (external_id, source, project) row."""
         machine_id = require_local_machine_id(
             machine_id,
             resource_kind="session",
@@ -134,19 +115,8 @@ class _SessionCRUDMixin(_SessionIdentityCRUDMixin):
         now = utc_now()
         terminal_context_json = json.dumps(terminal_context) if terminal_context else None
         storage_project_id = project_id or PERSONAL_PROJECT_ID
-        machine = LocalMachineManager(self.db).refresh_seen(machine_id, seen_at=now)
-        if machine is None:
-            raise MachineNotRegisteredError(
-                f"Machine {machine_id} is not registered; run authenticated enrollment first"
-            )
-
-        if (
-            is_set(title_source)
-            and title_source is not None
-            and title_source not in self._VALID_TITLE_SOURCES
-        ):
-            sources = ", ".join(sorted(self._VALID_TITLE_SOURCES))
-            raise ValueError(f"Invalid title_source {title_source!r}. Must be one of: {sources}")
+        require_registered_machine(self.db, machine_id, seen_at=now)
+        require_valid_title_source(title_source, self._VALID_TITLE_SOURCES)
 
         manual_title, manual_title_source = manual_registration_title(title, title_source)
 

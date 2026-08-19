@@ -17,6 +17,37 @@ import pytest
 pytest_plugins = ["tests.fixtures.postgres", "tests.review_coverage_helpers"]
 
 
+def _ensure_isolated_bootstrap() -> None:
+    """Write files_home (+ optional database_url) when GOBBY_HOME is empty.
+
+    Pre-push points GOBBY_HOME at a fresh temp dir. Session-start and
+    installer code call require_files_home() / load_bootstrap() and must
+    not inherit the operator ~/.gobby. Do not overwrite a bootstrap a test
+    already wrote.
+    """
+    raw_home = os.environ.get("GOBBY_HOME")
+    if raw_home is None or not raw_home.strip():
+        return
+    home = Path(raw_home).expanduser()
+    bootstrap = home / "bootstrap.yaml"
+    if bootstrap.exists():
+        return
+    files_home = home / "files"
+    files_home.mkdir(parents=True, exist_ok=True)
+    lines = [
+        "datastore_mode: local\n",
+        f"files_home: {files_home}\n",
+    ]
+    database_url = os.environ.get("GOBBY_POSTGRES_TEST_DSN") or os.environ.get("DATABASE_URL")
+    if database_url:
+        lines.append(f"database_url: {database_url}\n")
+    bootstrap.write_text("".join(lines), encoding="utf-8")
+    bootstrap.chmod(0o600)
+
+
+_ensure_isolated_bootstrap()
+
+
 @pytest.fixture(scope="session", autouse=True)
 def _checkout_gdaemon_for_schema_contract() -> Iterator[None]:
     """Pin schema-contract gdaemon calls at this checkout's debug binary.

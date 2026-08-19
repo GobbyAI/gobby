@@ -477,7 +477,9 @@ class TestAgentRestartReconciliation:
         terminalize_cancelled_run = AsyncMock(return_value=True)
         return SimpleNamespace(
             database=db,
-            config=SimpleNamespace(),
+            config_runtime=SimpleNamespace(
+                capture=lambda: SimpleNamespace(snapshot=SimpleNamespace(active=SimpleNamespace()))
+            ),
             session_manager=MagicMock(),
             agent_runner=SimpleNamespace(
                 child_session_manager=MagicMock(),

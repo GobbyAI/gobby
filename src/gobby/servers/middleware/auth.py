@@ -63,6 +63,12 @@ def _remote_hook_requires_auth(server: "HTTPServer", path: str) -> bool:
 
     services = getattr(server, "services", None)
     config = getattr(services, "config", None)
+    if config is None:
+        runtime = getattr(services, "config_runtime", None)
+        capture = getattr(runtime, "capture", None)
+        if callable(capture):
+            snapshot = capture()
+            config = getattr(getattr(snapshot, "snapshot", None), "active", None)
     bind_host = getattr(config, "bind_host", None)
     return isinstance(bind_host, str) and not is_loopback_bind_host(bind_host)
 

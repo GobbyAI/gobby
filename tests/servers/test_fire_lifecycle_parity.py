@@ -21,6 +21,7 @@ from gobby.workflows.evaluation_runtime import WorkflowEvaluationRuntime
 from gobby.workflows.hooks import WorkflowHookHandler
 from gobby.workflows.state_manager import SessionVariableManager
 from gobby.workflows.sync_rules import get_bundled_rules_path, sync_bundled_rules
+from tests.fixtures.postgres import TEST_USER_ID
 
 pytestmark = pytest.mark.unit
 
@@ -80,8 +81,9 @@ def _seed_session_row(db: HubDatabase, session_id: str = SESSION_ID) -> None:
         (project_id, "parity-test-project"),
     )
     db.execute(
-        "INSERT INTO machines (id) VALUES (%s) ON CONFLICT (id) DO NOTHING",
-        (machine_id,),
+        "INSERT INTO machines (id, owner_user_id) VALUES (%s, %s) "
+        "ON CONFLICT (id) DO NOTHING",
+        (machine_id, TEST_USER_ID),
     )
     db.execute(
         "INSERT INTO sessions (id, external_id, machine_id, source, project_id) "

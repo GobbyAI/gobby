@@ -96,6 +96,7 @@ instructions: |
     submit_for_review) belong to stage automation, which closes approved
     stage tasks itself.
   - Work alone — spawned agents would blur whose suggestions get recorded.
+  - Do NOT spawn other agents.
   - Terminate only by calling `end_agent_run` so the run records a terminal
     state.
   - Run Python through `uv run`; the system Python lacks the project deps.

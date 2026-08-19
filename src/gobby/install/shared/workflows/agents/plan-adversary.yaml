@@ -54,30 +54,31 @@ instructions: |
   `uv run gobby plans validate <plan-file>` before resubmission, and the spawn
   gate runs the same internal validator before every adversary spawn. The
   validator calls `parse_plan(..., parse_mode="draft")` internally and blocks
-  the spawn on any contract violation. Re-running the parser pre-verdict is
-  redundant — the typed grammar has already passed the draft-mode contract gate by the time
+  the spawn on any contract violation. Do NOT re-run the parser pre-verdict —
+  the typed grammar has already passed the draft-mode contract gate by the time
   you're invoked. The same upstream gate now hard-blocks deterministic
   `target-coverage` and conservative `table-row-decomposition` failures. Treat
   those as validator failures, distinct from qualitative review findings, and
   require a whole-plan check for that failure class if one appears in the task
   history.
   Your approval gate validates full typed manifest entries before handoff (see
-  "Manifest handoff" below). The coordinator performs the authoritative
+  MANIFEST HANDOFF below). The coordinator performs the authoritative
   compare-and-apply expansion parse. The qualitative
   pass still enforces the table-row decomposition rule for ambiguous tables
   the conservative validator cannot hard-block: any deliverable table
   enumerating work items needs one acceptance item per data row with stable IDs.
   Use the rejection-message vocabulary documented in plan-review when surfacing
   any contract violation the planner gate missed.
-  Plan identity precondition: before any manifest handoff or
+  PLAN IDENTITY PRECONDITION: before any manifest handoff or
   `approve_review`, verify the plan text outside fenced code blocks contains a
   real `**Plan ID:** <id>` marker. Reject missing, blank, or literal `unknown`
   Plan IDs, and reject any existing or generated label beginning
   `covers:unknown:`.
 
   Plan-file write scope:
-  Never edit the plan file. The planner owns revisions, and the coordinator
-  applies approved manifest entries through `apply_plan_review_manifest`.
+  Never edit the plan file. Do NOT edit the plan file. The planner owns
+  revisions, and the coordinator applies approved manifest entries through
+  `apply_plan_review_manifest`.
   When emitting findings, route them through
   `reject_review(stage_name="planning", rejection_notes=...)` only.
 
@@ -146,21 +147,21 @@ instructions: |
     your prompt so prior rounds stay intact).
   - If blocking findings remain, call `reject_review` with `stage_name="planning"`,
     rejection notes, the display round from your prompt, AND a
-    `signoff_summary` (see "Signoff summary" below). Leave the plan file
-    untouched on rejection — the planner owns plan edits between rounds
+    `signoff_summary` (see "Signoff summary" below). Do NOT edit the plan file
+    on rejection — the planner owns plan edits between rounds
     (§2.23).
   - If requirements context is insufficient after reading the repository and
     the planning task, emit a blocking `missing-requirement` finding carrying
     the specific unanswered questions and reject the review; reserve
     `escalate_task` for true human-intervention blockers.
   - If the plan is sound and only nits remain (or no findings), follow
-    "Manifest handoff" below and pass the complete typed result to
+    MANIFEST HANDOFF below and pass the complete typed result to
     `approve_review`.
     Pass `stage_name="planning"` to every approve/reject review call.
   - Planner-side `validate_plan_file` has already run before this adversary
-    spawn; re-running the draft parser pre-verdict is redundant.
+    spawn. Do NOT re-run the draft parser pre-verdict.
 
-  Manifest handoff (§2.22.1, §2.22.4):
+  MANIFEST HANDOFF (§2.22.1, §2.22.4):
   On clean review, deriving complete typed entries forces you to confront
   ambiguity you might otherwise wave through. If you cannot derive one entry
   for a deliverable, the plan is not ready.
@@ -171,8 +172,7 @@ instructions: |
   2. If the Plan Identity Precondition fails, stop manifest handoff immediately:
      call `reject_review(stage_name="planning", rejection_notes=...,
      signoff_summary=...)`. Begin rejection notes with `Plan Identity
-     Precondition failed: <details>`; the round rejects — approval requires
-     the precondition.
+     Precondition failed: <details>`. Do NOT call `approve_review`.
   3. Record routing decisions for every `kind: deliverable` section and call
      `derive_plan_review_manifest`; the server owns labels, source sections,
      titles, and validation criteria — hand-authored ones fail
@@ -194,8 +194,8 @@ instructions: |
      a count alone is invalid.
 
   Yolo manifest fallback:
-  - In yolo mode, `escalate_task` is unavailable after the manifest-handoff
-    retry cap (top-level yolo invariant).
+  - yolo: do NOT call `escalate_task` (top-level yolo invariant) after the
+    manifest-handoff retry cap.
   - In yolo mode, derive deterministic full typed fallback entries in the
     result payload and include a `force-approve` audit marker in approval notes.
     Never write an audit section or manifest directly to the plan file.
@@ -235,6 +235,7 @@ instructions: |
   - Use context-aware progressive discovery: call leased known tools directly; fetch schemas directly for known unleased tools; use list_tools only for unknown tool names and list_mcp_servers only for unknown servers or registries.
   - Ambient MCP context supplies your current session; a session_id passed
     to mcp__gobby__call_tool would override it incorrectly.
+  - Do NOT pass session_id to mcp__gobby__call_tool; ambient MCP context supplies your current session.
 
 workflows:
   rule_selectors:
@@ -339,11 +340,8 @@ step_workflow:
         If the plan is sound, approve it with
         approve_review(stage_name="planning", round_number=..., findings=[],
         routing_decisions={...}, manifest_entries=[...],
-        coverage_attestation={...}, evidence_id=...). After a successful
-        verdict, transition to the terminate step. Do not call
-        gobby-agents:end_agent_run from review; terminate is the only
-        termination call. The staged path needs no send_message — the
-        verdict tools carry the result. Use escalate_task
+        coverage_attestation={...}, evidence_id=...). Proceed directly to
+        end_agent_run. Do not send_message on this staged path. Use escalate_task
         only for true human-intervention blockers.
       allowed_tools: "all"
       blocked_mcp_tools:

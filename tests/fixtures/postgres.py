@@ -75,6 +75,12 @@ _TEST_DSN_REQUIRED = (
 )
 _ISOLATED_SCHEMA_APPLICATION_PREFIX = "gobby-isolated-schema-"
 _SCHEMA_BOOKKEEPING_TABLES = frozenset({"schema_migrations"})
+_CANONICAL_TABLES_BY_SCHEMA: dict[str, frozenset[str]] = {}
+_PROBE_TABLE_NAMES = (
+    "ambient_items",
+    "lease_fence_probe",
+    "manager_surface_items",
+)
 
 
 def _schema_looks_test_only(schema: str) -> bool:
@@ -318,6 +324,15 @@ def _reset_schema(
                 "SELECT tablename FROM pg_tables WHERE schemaname = current_schema()"
             ).fetchall()
         }
+        canonical_tables = _CANONICAL_TABLES_BY_SCHEMA.get(schema)
+        extra_tables = (
+            all_tables - canonical_tables
+            if canonical_tables is not None
+            else {name for name in _PROBE_TABLE_NAMES if name in all_tables}
+        )
+        for table in extra_tables:
+            conn.execute(sql.SQL("DROP TABLE IF EXISTS {} CASCADE").format(sql.Identifier(table)))
+        all_tables -= extra_tables
         reset_tables = _delete_order(conn, all_tables - _SCHEMA_BOOKKEEPING_TABLES)
         sequences = [
             row[0]
@@ -520,7 +535,23 @@ def postgres_canonical_seed(
                 """,
                 (local_machine_id, TEST_USER_ID),
             )
-        return _capture_canonical_seed(conn)
+        conn.execute(
+            f"""
+                INSERT INTO machines (id, owner_user_id)
+                SELECT ('{TEST_MACHINE_ID_PREFIX}' || LPAD(TO_HEX(n), 12, '0'))::UUID, %s
+                FROM GENERATE_SERIES(1, 80) AS n
+                ON CONFLICT (id) DO NOTHING
+                """,
+            (TEST_USER_ID,),
+        )
+        snapshot = _capture_canonical_seed(conn)
+        _CANONICAL_TABLES_BY_SCHEMA[postgres_schema] = frozenset(
+            row[0]
+            for row in conn.execute(
+                "SELECT tablename FROM pg_tables WHERE schemaname = current_schema()"
+            ).fetchall()
+        )
+        return snapshot
 
 
 @pytest.fixture

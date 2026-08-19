@@ -12,7 +12,6 @@ pytestmark = pytest.mark.unit
 def _make_container(**overrides):
     """Create a minimal ServiceContainer with sensible defaults."""
     defaults = {
-        "config": MagicMock(),
         "database": MagicMock(),
         "session_manager": MagicMock(),
         "task_manager": MagicMock(),

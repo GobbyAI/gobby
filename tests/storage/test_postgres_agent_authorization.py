@@ -54,8 +54,10 @@ class AuthorizationFixture:
 
 
 def _require_isolated_hub(database_url: str) -> None:
+    from tests.fixtures.postgres import _LOOPBACK_HOSTS
+
     parsed = conninfo_to_dict(database_url)
-    assert parsed.get("host") == "127.0.0.1"
+    assert parsed.get("host") in _LOOPBACK_HOSTS
     assert parsed.get("port") == "60892"
     assert parsed.get("dbname") == "gobby_test"
 

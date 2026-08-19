@@ -23,7 +23,13 @@ async def test_periodic_start_schedules_configured_workflow_audit_retention() ->
     loops = dict.fromkeys(_default_loops(), complete_loop)
     loops["workflow_audit_cleanup_loop"] = capture_audit_loop
     runner = SimpleNamespace(
-        config=DaemonConfig(session_lifecycle={"workflow_audit_retention_days": 21}),
+        config_runtime=SimpleNamespace(
+            capture=lambda: SimpleNamespace(
+                snapshot=SimpleNamespace(
+                    active=DaemonConfig(session_lifecycle={"workflow_audit_retention_days": 21})
+                )
+            )
+        ),
         metrics_manager=object(),
         metrics_event_store=object(),
         database=object(),
@@ -41,4 +47,5 @@ async def test_periodic_start_schedules_configured_workflow_audit_retention() ->
     )
 
     assert len(calls) == 1
-    assert calls[0]["retention_days"] == 21
+    snapshot = calls[0]["capture_bundle"]()
+    assert snapshot.snapshot.active.session_lifecycle.workflow_audit_retention_days == 21

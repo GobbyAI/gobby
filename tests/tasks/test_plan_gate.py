@@ -406,10 +406,6 @@ async def test_spawn_agent_impl_injects_symbol_repair_diagnostics(tmp_path: Path
             return_value={"id": "project-1", "project_path": str(repo_path)},
         ),
         patch(
-            "gobby.mcp_proxy.tools.spawn_agent._code_index.ensure_isolation_code_index",
-            new=AsyncMock(return_value=SimpleNamespace(env={})),
-        ),
-        patch(
             "gobby.mcp_proxy.tools.spawn_agent._implementation.execute_spawn",
             new=AsyncMock(return_value=spawn_result),
         ) as execute,
@@ -424,7 +420,7 @@ async def test_spawn_agent_impl_injects_symbol_repair_diagnostics(tmp_path: Path
             daemon_config=daemon_config,
         )
 
-    assert result["success"] is True
+    assert result["success"] is True, result
     await_args = execute.await_args
     assert await_args is not None
     spawn_request = await_args.args[0]

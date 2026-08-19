@@ -25,6 +25,7 @@ from gobby.workflows.hooks import WorkflowHookHandler
 from gobby.workflows.state_manager import SessionVariableManager
 from gobby.workflows.sync_rules import get_bundled_rules_path, sync_bundled_rules
 from tests._timing import drain_asyncio_tasks
+from tests.fixtures.postgres import TEST_USER_ID
 
 
 async def _done_stream():
@@ -469,8 +470,9 @@ class TestWebChatLifecycle:
         db_session_id = "dddddddd-dddd-4ddd-8ddd-ddddddddddd1"
         machine_id = "eeeeeeee-eeee-4eee-8eee-eeeeeeeeeee1"
         temp_db.execute(
-            "INSERT INTO machines (id) VALUES (%s) ON CONFLICT (id) DO NOTHING",
-            (machine_id,),
+            "INSERT INTO machines (id, owner_user_id) VALUES (%s, %s) "
+            "ON CONFLICT (id) DO NOTHING",
+            (machine_id, TEST_USER_ID),
         )
         temp_db.execute(
             "INSERT INTO sessions (id, external_id, machine_id, source, project_id) "

@@ -65,6 +65,20 @@ def _patch_config_db(db: HubDatabase) -> Iterator[None]:
         yield
 
 
+def _write_local_bootstrap(home: Path) -> Path:
+    files_home = home / "files"
+    files_home.mkdir(parents=True, exist_ok=True)
+    bootstrap = home / "bootstrap.yaml"
+    bootstrap.write_text(
+        "datastore_mode: local\n"
+        f"files_home: {files_home}\n"
+        "database_url: postgresql://gobby:postgres-secret@localhost:5432/gobby\n",
+        encoding="utf-8",
+    )
+    bootstrap.chmod(0o600)
+    return files_home
+
+
 def _successful_run(stdout: str = "") -> subprocess.CompletedProcess[str]:
     return subprocess.CompletedProcess(args=[], returncode=0, stdout=stdout, stderr="")
 
@@ -116,6 +130,7 @@ class TestInstallFalkorDB:
         hub_db: HubDatabase,
     ) -> None:
         module = _falkor_module()
+        _write_local_bootstrap(tmp_path)
 
         with (
             patch.object(shutil, "which", return_value="/usr/bin/docker"),
@@ -126,7 +141,7 @@ class TestInstallFalkorDB:
 
             result = module.install_falkordb(gobby_home=tmp_path, password="secret")
 
-        assert result["success"] is True
+        assert result["success"] is True, result
         assert result["password_source"] == "provided"
         assert result["password"] is None
         assert result["browser_url"] == "http://localhost:13000"
@@ -171,6 +186,7 @@ class TestInstallFalkorDB:
         hub_db: HubDatabase,
     ) -> None:
         module = _falkor_module()
+        _write_local_bootstrap(tmp_path)
 
         with (
             patch.object(shutil, "which", return_value="/usr/bin/docker"),
@@ -196,6 +212,7 @@ class TestInstallFalkorDB:
         hub_db: HubDatabase,
     ) -> None:
         module = _falkor_module()
+        _write_local_bootstrap(tmp_path)
 
         with (
             patch.object(shutil, "which", return_value="/usr/bin/docker"),
@@ -215,6 +232,7 @@ class TestInstallFalkorDB:
         hub_db: HubDatabase,
     ) -> None:
         module = _falkor_module()
+        _write_local_bootstrap(tmp_path)
         secret_store = SecretStore(hub_db, gobby_home=tmp_path)
         ConfigMutations(hub_db, secret_store=secret_store).patch_internal(
             expected_revision=0,
@@ -259,6 +277,7 @@ class TestInstallFalkorDB:
         hub_db: HubDatabase,
     ) -> None:
         module = _falkor_module()
+        _write_local_bootstrap(tmp_path)
 
         with (
             patch.object(shutil, "which", return_value="/usr/bin/docker"),
@@ -270,7 +289,10 @@ class TestInstallFalkorDB:
 
         assert result["success"] is True
 
-        assert not (tmp_path / "bootstrap.yaml").exists()
+        bootstrap = tmp_path / "bootstrap.yaml"
+        bootstrap_text = bootstrap.read_text(encoding="utf-8")
+        assert "falkordb" not in bootstrap_text.lower()
+        assert "falkordb_password" not in bootstrap_text
 
         snapshot = ConfigRepository(hub_db).read(resolve_secrets=False)
         assert snapshot.values["databases.falkordb.host"] == "127.0.0.1"
@@ -293,6 +315,7 @@ class TestInstallFalkorDB:
         hub_db: HubDatabase,
     ) -> None:
         module = _falkor_module()
+        _write_local_bootstrap(tmp_path)
 
         with (
             patch.object(shutil, "which", return_value="/usr/bin/docker"),
@@ -309,7 +332,9 @@ class TestInstallFalkorDB:
         assert result["success"] is False
         assert "FalkorDB config" in result["error"]
         mock_run.assert_not_called()
-        assert not (tmp_path / "bootstrap.yaml").exists()
+        bootstrap_text = (tmp_path / "bootstrap.yaml").read_text(encoding="utf-8")
+        assert "falkordb" not in bootstrap_text.lower()
+        assert "falkordb_password" not in bootstrap_text
 
     def test_incomplete_canonical_config_does_not_generate_replacement_password(
         self,
@@ -426,6 +451,7 @@ class TestUninstallFalkorDB:
         hub_db: HubDatabase,
     ) -> None:
         module = _falkor_module()
+        _write_local_bootstrap(tmp_path)
 
         with (
             patch.object(shutil, "which", return_value="/usr/bin/docker"),

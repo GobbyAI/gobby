@@ -44,6 +44,7 @@ from gobby.storage.embedding_generation_state import (
 )
 from gobby.storage.hub.postgres import PostgresHubDatabase
 from gobby.storage.secrets import POSTURE_SCRYPT_PASSPHRASE, SecretStore
+from tests.integration.config.worker_entry import WorkerSpec, _worker_entry
 
 LIVE_KEY = "rules.enforcement_enabled"
 RESTART_KEY = "ui.enabled"
@@ -64,14 +65,6 @@ class RemoteConfigConflict(RuntimeError):
 
 class RemoteWorkerError(RuntimeError):
     pass
-
-
-@dataclass(frozen=True, slots=True)
-class WorkerSpec:
-    name: str
-    dsn: str
-    home: Path
-    passphrase: str
 
 
 class _Prepared:
@@ -487,10 +480,6 @@ async def _serve(connection: Connection, spec: WorkerSpec) -> None:
         await state.runtime.close()
         await asyncio.to_thread(state.db.close)
         connection.close()
-
-
-def _worker_entry(connection: Connection, spec: WorkerSpec) -> None:
-    asyncio.run(_serve(connection, spec))
 
 
 class DaemonWorker:

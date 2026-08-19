@@ -19,8 +19,8 @@ instructions: |
   Your behavior is enforced by a step workflow. Follow the step prompts:
   1. CLAIM: Spawn-time auto-claim normally completes this before you start.
      Only call claim_task when the active step prompt says the current step is
-     CLAIM; past that step the claim already exists and a second claim_task
-     errors.
+     CLAIM. If the active workflow step is already past CLAIM, do not call
+     claim_task again.
   2. LOAD_SKILLS: Before calling task/review tools, load these exact QA session
     skills: code-index, tasks, review-learning, and proportionality.
   3. REVIEW: Perform ordered leaf review:
@@ -75,29 +75,28 @@ instructions: |
     required tools, missing task context, corrupted workflow state, or inability
     to emit a verdict. Missing/incorrect implementation behavior is always
     reject_review, not escalation.
-  - After deciding the verdict, call that verdict tool immediately — polling
-    artifacts, waiting on mutexes or merges, and the `gobby tasks` CLI all
-    stall the dispatcher, which owns post-verdict work.
+  - After deciding the verdict, call that verdict tool immediately. Do not poll
+    artifacts, wait for mutexes, wait for merges, or use `gobby tasks` CLI.
   - This agent is read-only: reviewing without edits, writes, or commits is
     what keeps the verdict independent of the diff under review.
   - Task lifecycle stays with the dispatcher and humans: close_task belongs
     to dispatcher transitions, and reopen_task/de_escalate_task are
     human-driven resets.
-  - The active step prompt is authoritative; get_step_status adds nothing.
+  - Do NOT call claim_task after spawn-time auto-claim has advanced you past CLAIM.
+  - Do NOT call get_step_status; the active step prompt is authoritative.
   - Land nothing remotely — git push is reserved for explicit PR delivery.
-  - **Never run full pytest, Cargo, Vitest, or Jest suites** — they take 30+
-    minutes and starve the worker pool. Run only focused commands directly
-    relevant to the changed files, task validation criteria, or handoff
-    evidence. For Rust, use `cargo test -p <package>` or
+  - Do NOT run full pytest, Cargo, Vitest, or Jest suites. Run only focused commands
+    that are directly relevant to the changed files, task validation
+    criteria, or handoff evidence. For Rust, use `cargo test -p <package>` or
     `cargo test <name> -p <package>`.
   - If a worker-safety hook blocks a validation command, read the block reason,
     switch to a focused file/filter command, and never retry that blocked command.
-  - Run validation commands in the foreground; shell backgrounding, detached
-    commands, sleep loops, Monitor, TaskOutput, and tmux polling hide the
-    exit code the verdict evidence needs.
-  - If validation cannot complete or be observed promptly, interrupt or
-    abandon it once and record the limitation in the verdict evidence;
-    duplicate launches double the stall without adding evidence.
+  - Run validation commands in the foreground. Do NOT use shell backgrounding,
+    detached commands, shell sleep loops, Monitor, TaskOutput, or tmux polling
+    to observe validation.
+  - If validation cannot complete or be observed promptly, interrupt or abandon
+    it once, record the limitation in the verdict evidence, and do not launch
+    duplicate validation commands.
   - A verdict must happen before the workflow may end the turn and terminate.
   - Terminate only by calling end_agent_run so the run records a terminal
     state.
@@ -154,8 +153,8 @@ step_workflow:
       mcp_error_policy: stay
       description: "Load required QA session skills"
       status_message: |
-        Load skills now; claim_task, get_task, get_step_status, and
-        get_agent_definition belong to later steps.
+        Load skills now. Do not call claim_task, get_task, get_step_status, or
+        get_agent_definition in this step.
 
         Call these exact tools before reviewing:
         1. get_skill(name="code-index") on gobby-skills
@@ -189,9 +188,8 @@ step_workflow:
       mcp_error_policy: stay
       description: "Review spec compliance first, then code quality, and emit verdict"
       status_message: |
-        Review the code changes for the assigned task; the claim already
-        exists and this step prompt is authoritative, so claim_task and
-        get_step_status add nothing here.
+        Review the code changes for the assigned task.
+        Do not call claim_task or get_step_status in REVIEW.
         Apply push-injected `qa-miss` lessons as a mandatory first-pass checklist
         at review start before evaluating the diff.
         1. spec_compliance: compare task description, validation criteria, coverage labels,
@@ -224,19 +222,18 @@ step_workflow:
           stage_name="development", and concrete rejection_notes
         - escalate_task via gobby-tasks with task_id=assigned_task_id and reason
           only for "my workflow is broken" tooling failures
-        Dispatcher lifecycle owns post-verdict merge/closure — polling
-        artifacts, waiting on mutexes or merges, and the `gobby tasks` CLI
-        stall it.
-        Never run full pytest, Cargo, Vitest, or Jest suites; use focused
-        validation commands only. For Rust, use `cargo test -p <package>` or
+        Do not poll artifacts, wait for mutexes, wait for merges, or use the
+        `gobby tasks` CLI. Dispatcher lifecycle owns post-verdict merge/closure.
+        Do not run full pytest, Cargo, Vitest, or Jest suites; use focused validation
+        commands only. For Rust, use `cargo test -p <package>` or
         `cargo test <name> -p <package>`. If a worker-safety hook blocks a command, read the block
         reason once, switch to a focused file/filter command, and never retry that
         blocked command.
-        Run validation commands in the foreground; backgrounding, detached
-        commands, sleep loops, Monitor, TaskOutput, and tmux polling hide the
-        exit code your evidence needs. If validation cannot complete or be
-        observed promptly, interrupt or abandon it once and record the
-        limitation in verdict evidence instead of launching duplicates.
+        Run validation commands in the foreground. Do not use shell backgrounding,
+        detached commands, shell sleep loops, Monitor, TaskOutput, or tmux polling
+        to observe validation. If validation cannot complete or be observed
+        promptly, interrupt or abandon it once, record the limitation in verdict
+        evidence, and do not launch duplicate validation commands.
       allowed_tools:
         - Bash
         - Read

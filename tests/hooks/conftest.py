@@ -12,8 +12,15 @@ import pytest
 from gobby.hooks.event_handlers import EventHandlers
 from gobby.hooks.events import HookResponse
 from gobby.hooks.hook_manager import HookManager
+from tests.conftest import _ensure_isolated_bootstrap
 
 from ._event_handler_helpers import empty_database_mock
+
+
+@pytest.fixture(autouse=True)
+def _hook_files_home() -> None:
+    """Hook modules always have a files_home even when GOBBY_HOME is isolated."""
+    _ensure_isolated_bootstrap()
 
 
 @pytest.fixture

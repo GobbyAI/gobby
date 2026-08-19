@@ -39,7 +39,7 @@ def test_effective_dev_starts_vite(monkeypatch: pytest.MonkeyPatch, tmp_path: Pa
 
     monkeypatch.setattr("gobby.cli.utils.spawn_ui_server", fake_spawn_ui_server)
 
-    _maybe_start_ui_dev_server(SimpleNamespace(config=config))
+    _maybe_start_ui_dev_server(SimpleNamespace(startup_config=config))
 
     assert calls
     assert calls[0][0:4] == ("localhost", 60889, web_dir, tmp_path / "logs" / "ui.log")
@@ -63,7 +63,7 @@ def test_source_checkout_auto_mode_starts_vite(
 
     monkeypatch.setattr("gobby.cli.utils.spawn_ui_server", fake_spawn_ui_server)
 
-    _maybe_start_ui_dev_server(SimpleNamespace(config=config))
+    _maybe_start_ui_dev_server(SimpleNamespace(startup_config=config))
 
     assert calls
     assert calls[0][0:4] == ("localhost", 60889, web_dir, tmp_path / "logs" / "ui.log")
@@ -81,7 +81,7 @@ def test_effective_production_skips_vite(monkeypatch: pytest.MonkeyPatch, tmp_pa
 
     monkeypatch.setattr("gobby.cli.utils.spawn_ui_server", fail_spawn_ui_server)
 
-    _maybe_start_ui_dev_server(SimpleNamespace(config=config))
+    _maybe_start_ui_dev_server(SimpleNamespace(startup_config=config))
 
     assert calls == []
 
@@ -97,6 +97,6 @@ def test_effective_dev_stops_vite(monkeypatch: pytest.MonkeyPatch, tmp_path: Pat
 
     monkeypatch.setattr("gobby.cli.utils.stop_ui_server", fake_stop_ui_server)
 
-    _stop_ui_dev_server_if_needed(SimpleNamespace(config=config))
+    _stop_ui_dev_server_if_needed(SimpleNamespace(startup_config=config))
 
     assert calls == [True]

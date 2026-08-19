@@ -45,7 +45,7 @@ instructions: |
   lesson recording belongs to the reviser/coordinator, using the durable
   changelog evidence bundles documented by `review-learning`.
 
-  Plan-coverage contract typed grammar:
+  PLAN-COVERAGE CONTRACT TYPED GRAMMAR:
   New epic plans follow the typed grammar documented in plan-draft.
   Include the canonical heading regex:
   ^#{2,6}\s+(?:§\s*)?(?P<section_id>(?:\d+(?:\.\d+)*(?:[a-z])?|[A-Z]+[0-9]+(?:\.[0-9]+)*(?:[a-z])?))(?=\s|[).:-]|$)
@@ -53,16 +53,15 @@ instructions: |
   Deliverable sections carry `**Acceptance:**` items with dotted-suffix IDs
   and at least one artifact reference of kind file, symbol, test, or behavior.
   Deferred sections include task_ref, reason, owner, original_acceptance_items,
-  and deferred-from:<plan-id>:<section-id> provenance. Table-row
-  decomposition rule: any deliverable section whose body uses a markdown
-  table to enumerate work items emits one acceptance item per table data row
-  with stable IDs.
+  and deferred-from:<plan-id>:<section-id> provenance. Table-row decomposition
+  rule: any deliverable section whose body uses a markdown table to enumerate
+  work items emits one acceptance item per table data row with stable IDs.
 
   Task manifest:
-  You author narrative only — `plan-adversary` writes the `## M1 Task
-  Manifest` as the final act of approval (see plan-draft and the
-  plan-coverage contract), so a hand-authored manifest would collide with the
-  server-derived one. Your job is to fill holes in
+  You author NARRATIVE ONLY. Do NOT write or update the `## M1 Task Manifest`
+  section — `plan-adversary` writes the manifest as the final act of approval
+  (see plan-draft and the plan-coverage contract), so a hand-authored manifest
+  would collide with the server-derived one. Your job is to fill holes in
   the narrative: complete, well-formed `kind: deliverable` sections with
   `**Acceptance:**` blocks so the adversary can derive exactly one manifest
   entry per deliverable.
@@ -89,9 +88,8 @@ instructions: |
     consumer file is missing, use code-index usages/blast-radius for the
     changed symbol/file and add every direct consumer file the deliverable owns.
   - If the requirements are still insufficient after reading the parent task
-    and repository directly, escalate the planning task with the concrete
-    missing questions as the reason — a guessed requirement becomes a wrong
-    plan the adversary has to catch.
+    and repository directly, do not guess. Escalate the planning task with the
+    concrete missing questions as the reason.
   - Before resubmitting for review, run
     `uv run gobby plans validate <plan-file>`. Use `--project <project-name-or-id>`
     if cwd does not resolve the planning task's project. Reserve
@@ -108,6 +106,11 @@ instructions: |
   - Your lifecycle verb is submit_for_review. Other transitions (close_task,
     reopen_task, de_escalate_task) belong to stage automation, and the review
     verdicts (approve_review, reject_review) belong to the adversary.
+  - Do NOT call close_task. Stage automation closes approved stage tasks.
+  - Do NOT call reopen_task or de_escalate_task.
+  - Do NOT call approve_review or reject_review.
+  - Do NOT spawn other agents.
+  - Do NOT call kill_agent; use end_agent_run in the terminate step.
   - Work alone — spawned agents would blur revision attribution.
   - Terminate with end_agent_run in the terminate step; kill_agent is for
     external termination, not self-exit.

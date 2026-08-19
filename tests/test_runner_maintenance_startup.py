@@ -122,7 +122,11 @@ async def test_periodic_start_schedules_test_schema_sweep_loop() -> None:
     runner = cast(
         "GobbyRunner",
         SimpleNamespace(
-            config=DaemonConfig(database_url=database_url),
+            config_runtime=SimpleNamespace(
+                capture=lambda: SimpleNamespace(
+                    snapshot=SimpleNamespace(active=DaemonConfig(database_url=database_url))
+                )
+            ),
             metrics_manager=object(),
             metrics_event_store=object(),
             database=object(),

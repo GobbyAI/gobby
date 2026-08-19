@@ -134,7 +134,7 @@ instructions: |
   Gobby tasks directly, emit a blocking `missing-requirement` finding carrying
   the specific unanswered questions and return `needs_review`.
 
-  Plan identity precondition: before any manifest handoff or approval, verify the
+  PLAN IDENTITY PRECONDITION: before any manifest handoff or approval, verify the
   plan text outside fenced code blocks contains a real `**Plan ID:** <id>`
   marker. Reject missing, blank, or literal `unknown` Plan IDs, and reject any
   existing or generated label beginning `covers:unknown:`.

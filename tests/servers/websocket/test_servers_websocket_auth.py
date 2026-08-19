@@ -38,6 +38,7 @@ async def test_wired_callback_rejects_and_accepts(monkeypatch: pytest.MonkeyPatc
             self.services = services
             self.auth_service = SimpleNamespace(
                 verify_ws_token=auth_callback,
+                bind_runtime=lambda **_kwargs: None,
             )
             self._internal_manager = object()
             self.broadcaster = SimpleNamespace(websocket_server=None)

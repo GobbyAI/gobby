@@ -240,7 +240,7 @@ def _is_plan_markdown(path: Path) -> bool:
     text = path.read_text(encoding="utf-8")
     if _is_orphan_manifest_plan(path, text):
         return False
-    return _strip_leading_html_comments(text).lstrip().startswith("#")
+    return _plan_heading_text(text).startswith("#")
 
 
 def _is_orphan_manifest_plan(path: Path, text: str) -> bool:
@@ -259,6 +259,15 @@ def _coverage_manifest_exists(path: Path) -> bool:
         root_task_ref=_root_ref(path),
         plan_id=path.stem,
     ).exists()
+
+
+def _plan_heading_text(text: str) -> str:
+    stripped = _strip_leading_html_comments(text).lstrip()
+    if stripped.startswith("Plan artifact:"):
+        newline = stripped.find("\n")
+        if newline != -1:
+            stripped = stripped[newline + 1 :].lstrip()
+    return stripped
 
 
 def _strip_leading_html_comments(text: str) -> str:
@@ -339,7 +348,7 @@ def _manifest_identity(path: Path) -> tuple[str, str, str]:
     header = _manifest_header(manifest)
     return (
         _required_string(header, "project_id", path=path),
-        _required_string(header, "root_task_ref", path=path),
+        _canonical_ref(_required_string(header, "root_task_ref", path=path).lstrip("#")),
         _required_string(header, "plan_id", path=path),
     )
 

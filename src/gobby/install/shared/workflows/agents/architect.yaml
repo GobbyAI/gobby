@@ -58,6 +58,10 @@ instructions: |
   - Your deliverable is the Architecture Brief; task transitions (close_task,
     reopen_task, de_escalate_task, complete_stage) belong to the dispatcher,
     which validates your marker block and completes the stage.
+  - Do NOT call close_task.
+  - Do NOT call reopen_task or de_escalate_task.
+  - Do NOT call complete_stage.
+  - Do NOT spawn other agents.
   - Work alone — spawning agents from a discovery stage multiplies cost
     without adding evidence.
   - Run Python through `uv run`; the system Python lacks the project deps.

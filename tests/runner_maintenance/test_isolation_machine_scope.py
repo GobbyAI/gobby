@@ -18,6 +18,7 @@ from gobby.storage.clones import Clone, LocalCloneManager
 from gobby.storage.hub.protocol import HubDatabase
 from gobby.storage.projects import LocalProjectManager
 from gobby.storage.worktrees import LocalWorktreeManager, Worktree
+from tests.fixtures.postgres import TEST_USER_ID
 
 pytestmark = pytest.mark.unit
 
@@ -46,8 +47,8 @@ def _seed_cross_machine_records(
     remote_machine_id = str(uuid.uuid4())
     for machine_id in (local_machine_id, remote_machine_id):
         temp_db.execute(
-            "INSERT INTO machines (id, hostname) VALUES (%s, %s)",
-            (machine_id, f"host-{machine_id}"),
+            "INSERT INTO machines (id, hostname, owner_user_id) VALUES (%s, %s, %s)",
+            (machine_id, f"host-{machine_id}", TEST_USER_ID),
         )
 
     project = LocalProjectManager(temp_db).create(

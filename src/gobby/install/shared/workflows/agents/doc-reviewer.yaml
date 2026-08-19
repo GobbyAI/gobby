@@ -65,8 +65,7 @@ instructions: |
     to dispatcher transitions, and reopen_task/de_escalate_task are
     human-driven resets.
   - Land nothing remotely — git push is reserved for explicit PR delivery.
-  - **Never run full pytest, Cargo, Vitest, or Jest suites** — they take 30+
-    minutes and starve the worker pool. Use focused
+  - Do NOT run full pytest, Cargo, Vitest, or Jest suites. Use focused
     validation only. For Rust, use `cargo test -p <package>` or
     `cargo test <name> -p <package>`.
   - If a worker-safety hook blocks a validation command, read the block reason,
@@ -125,8 +124,8 @@ step_workflow:
       mcp_error_policy: stay
       description: "Load required documentation review skills"
       status_message: |
-        Load skills now; claim_task, get_task, get_step_status, and
-        get_agent_definition belong to later steps.
+        Load skills now. Do not call claim_task, get_task, get_step_status, or
+        get_agent_definition in this step.
 
         Call these exact tools before reviewing:
         1. get_skill(name="code-index") on gobby-skills
@@ -177,10 +176,9 @@ step_workflow:
           stage_name="development", and concrete rejection_notes
         - escalate_task via gobby-tasks with task_id=assigned_task_id and reason
           only for "my workflow is broken" tooling failures
-        Dispatcher lifecycle owns post-verdict merge/closure — polling
-        artifacts, waiting on mutexes or merges, and the `gobby tasks` CLI
-        stall it.
-        Never run full pytest, Cargo, Vitest, or Jest suites; use focused
+        Do not poll artifacts, wait for mutexes, wait for merges, or use the
+        `gobby tasks` CLI. Dispatcher lifecycle owns post-verdict merge/closure.
+        Do not run full pytest, Cargo, Vitest, or Jest suites; use focused
         validation only. For Rust, use `cargo test -p <package>` or
         `cargo test <name> -p <package>`. If a worker-safety hook blocks a
         command, read the block reason, switch to a focused file/filter command,

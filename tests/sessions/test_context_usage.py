@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from collections.abc import Iterator
+from contextlib import contextmanager
 from types import SimpleNamespace
 from unittest.mock import patch
 
@@ -17,6 +19,12 @@ from gobby.sessions.context_usage import (
 from gobby.sessions.transcripts.base import TokenUsage
 
 pytestmark = pytest.mark.unit
+
+
+class _TransactionFakeDb:
+    @contextmanager
+    def transaction(self) -> Iterator[None]:
+        yield
 
 
 def test_snapshot_builders_resolve_one_million_context_marker() -> None:
@@ -177,7 +185,7 @@ def test_effective_context_window_preserves_reported_session_value() -> None:
 
 
 def test_effective_context_window_uses_reported_db_session_value() -> None:
-    class FakeDb:
+    class FakeDb(_TransactionFakeDb):
         def fetchall(self, *_args: object, **_kwargs: object) -> list[dict[str, object]]:
             return []
 
@@ -194,7 +202,7 @@ def test_effective_context_window_uses_reported_db_session_value() -> None:
 
 
 def test_effective_context_window_prefers_reported_db_value_over_model_fallback() -> None:
-    class FakeDb:
+    class FakeDb(_TransactionFakeDb):
         def fetchall(self, *_args: object, **_kwargs: object) -> list[dict[str, object]]:
             return []
 
@@ -211,7 +219,7 @@ def test_effective_context_window_prefers_reported_db_value_over_model_fallback(
 
 
 def test_effective_context_window_ignores_non_reported_db_session_value() -> None:
-    class FakeDb:
+    class FakeDb(_TransactionFakeDb):
         def fetchall(self, *_args: object, **_kwargs: object) -> list[dict[str, object]]:
             return []
 
@@ -228,12 +236,15 @@ def test_effective_context_window_ignores_non_reported_db_session_value() -> Non
         model="unknown-model",
     )
 
-    with patch("gobby.llm.model_registry.lookup_context_window", return_value=None):
+    with patch(
+        "gobby.sessions.context_usage._resolve_context_window_for_source_model",
+        return_value=None,
+    ):
         assert effective_context_window_for_session(session, db=FakeDb()) is None
 
 
 def test_effective_context_window_prefers_latest_token_event_window() -> None:
-    class FakeDb:
+    class FakeDb(_TransactionFakeDb):
         def fetchall(self, *_args: object, **_kwargs: object) -> list[dict[str, object]]:
             return [
                 {
@@ -346,7 +357,10 @@ def test_backfill_bumps_under_counted_windows_and_recomputes_ratio() -> None:
     def registry_window(model: str, **_kwargs: object) -> int | None:
         return 1_000_000 if "claude-opus-4-8" in model else None
 
-    with patch("gobby.llm.model_registry.lookup_context_window", side_effect=registry_window):
+    with patch(
+        "gobby.sessions.context_usage._resolve_context_window_for_source_model",
+        side_effect=lambda source, model, **_kwargs: registry_window(str(model)),
+    ):
         result = backfill_session_context_windows(db)  # type: ignore[arg-type]
 
     assert result.scanned == 5
@@ -374,7 +388,10 @@ def test_backfill_dry_run_writes_nothing() -> None:
         }
     ]
     db = _BackfillFakeDb(rows)
-    with patch("gobby.llm.model_registry.lookup_context_window", return_value=1_000_000):
+    with patch(
+        "gobby.sessions.context_usage._resolve_context_window_for_source_model",
+        return_value=1_000_000,
+    ):
         result = backfill_session_context_windows(db, dry_run=True)  # type: ignore[arg-type]
 
     assert result.updated == 1

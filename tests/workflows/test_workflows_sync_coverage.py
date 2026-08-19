@@ -53,10 +53,10 @@ class TestSyncBundledVariables:
                 "gobby.workflows.sync_variables.get_bundled_variables_path", return_value=tmp_path
             ),
             patch(
-                "gobby.workflows.sync_variables.RuleDefinitionManager", return_value=mgr
+                "gobby.workflows.sync_variables.SessionVariableDefaultManager",
+                return_value=mgr,
             ),
         ):
-            db.fetchall.return_value = []
             result = sync_bundled_variables(db)
 
         assert result["success"] is True
@@ -80,10 +80,10 @@ class TestSyncBundledVariables:
                 "gobby.workflows.sync_variables.get_bundled_variables_path", return_value=tmp_path
             ),
             patch(
-                "gobby.workflows.sync_variables.RuleDefinitionManager", return_value=mgr
+                "gobby.workflows.sync_variables.SessionVariableDefaultManager",
+                return_value=mgr,
             ),
         ):
-            db.fetchall.return_value = []
             result = sync_bundled_variables(db)
 
         assert result["success"] is False
@@ -104,7 +104,8 @@ class TestSyncBundledVariables:
                 "gobby.workflows.sync_variables.get_bundled_variables_path", return_value=tmp_path
             ),
             patch(
-                "gobby.workflows.sync_variables.RuleDefinitionManager", return_value=mgr
+                "gobby.workflows.sync_variables.SessionVariableDefaultManager",
+                return_value=mgr,
             ),
         ):
             result = sync_bundled_variables(db)

@@ -38,10 +38,23 @@ def _required_auth_middleware_app(
     *,
     bind_host: str = "localhost",
 ) -> FastAPI:
+    from gobby.servers.grant_auth import AuthDecision
+
     auth_service = MagicMock()
-    auth_service.is_request_authenticated.side_effect = (
-        lambda request: request.headers.get("Authorization") == "Bearer shared-token"
-    )
+
+    def authenticate(request: Request) -> AuthDecision:
+        if request.headers.get("Authorization") == "Bearer shared-token":
+            return AuthDecision(allowed=True)
+        return AuthDecision(
+            allowed=False,
+            code="missing_auth",
+            message=(
+                "Authentication required. CLI clients need ~/.gobby/local_cli_token "
+                "(run 'gobby install' or 'gobby auth token --rotate'). Browsers: log in."
+            ),
+        )
+
+    auth_service.authenticate.side_effect = authenticate
     server = cast(
         HTTPServer,
         SimpleNamespace(

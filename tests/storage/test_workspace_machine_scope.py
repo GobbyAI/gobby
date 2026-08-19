@@ -17,14 +17,15 @@ from gobby.storage.clones import CloneStatus, LocalCloneManager
 from gobby.storage.hub.protocol import HubDatabase
 from gobby.storage.workspace_machine_scope import MachineOwnershipMismatchError
 from gobby.storage.worktrees import LocalWorktreeManager, WorktreeStatus
+from tests.fixtures.postgres import TEST_USER_ID
 
 pytestmark = pytest.mark.integration
 
 
 def _insert_machine(db: HubDatabase, machine_id: str) -> None:
     db.execute(
-        "INSERT INTO machines (id, hostname) VALUES (%s, %s)",
-        (machine_id, f"host-{machine_id}"),
+        "INSERT INTO machines (id, hostname, owner_user_id) VALUES (%s, %s, %s)",
+        (machine_id, f"host-{machine_id}", TEST_USER_ID),
     )
 
 

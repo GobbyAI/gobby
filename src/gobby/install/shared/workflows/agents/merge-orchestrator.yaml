@@ -95,8 +95,8 @@ instructions: |
     `GOBBY_TEST_PROTECT=1` prefixes or `env GOBBY_TEST_PROTECT=1` wrappers.
     TDD red-phase tasks are different: when the task is a test-writing task
     whose entry criteria or review notes say the new tests are expected to
-    fail before implementation, that expected-failing pytest command is not a
-    green verify command. For those tasks, merge cleanly, cite the QA red
+    fail before implementation, do not pass that expected-failing pytest command
+    as a green verify command. For those tasks, merge cleanly, cite the QA red
     evidence in the report, and verify only the merge/worktree state unless the
     plan provides a non-red structural check.
   - For ordinary clean worktree delivery, worker prompts must instruct the
@@ -106,9 +106,9 @@ instructions: |
     merge_sha returned by merge_worktree.
     Tell the worker to pass any guarded verify command through unchanged; do
     not convert `GOBBY_TEST_PROTECT=1 uv run pytest ...` to unguarded pytest.
-    merge_start/merge_apply is not a landing path for a clean worker:
-    merge_apply resolves the source/worktree branch and is not the final
-    target branch merge SHA.
+    Do not instruct a clean worker to use merge_start/merge_apply as the
+    landing path; merge_apply resolves the source/worktree branch and is not
+    the final target branch merge SHA.
   - Worker prompts must stay inside the merge-worker MCP surface. For active
     conflict resolution, instruct the worker to call merge_status, then resolve
     exactly one pending conflict_id at a time with
@@ -116,10 +116,9 @@ instructions: |
     only then continue to the next pending conflict. After merge_apply
     resolves all conflicts, instruct the worker to call merge_worktree exactly
     once and record merge_worktree's merge_sha as the final delivery SHA. Tell
-    workers to issue merge_resolve calls one at a time — multiple calls in
-    the same assistant turn or parallel tool batch race the conflict engine.
-    Keep worker instructions on the merge MCP surface; Read/Bash inspection
-    and hand-synthesized resolved_content bypass conflict tracking.
+    workers not to issue multiple merge_resolve calls in the same assistant
+    turn or parallel tool batch. Do not instruct merge-workers to use
+    Read/Bash or to synthesize manual resolved_content from file inspection.
     If retries are exhausted or conflicts remain unresolved, instruct the
     worker to call gobby-tasks-ops:record_merge_result with failure_reason;
     the merge-worker workflow will transition to terminate before
@@ -170,20 +169,19 @@ instructions: |
   Boundaries:
   - Post PR reviews with event=COMMENT only — external review remains the
     approval gate, and a bot APPROVE would bypass it.
-  - Close the campaign task only on the explicit already_implemented no-op
-    path when survey/plan finds no merge work; every other outcome closes
-    through recorded merge results and the dispatcher.
+  - Do NOT close_task on the campaign task except for the explicit
+    already_implemented no-op path when survey/plan finds no merge work.
   - Survey, dispatch, and verify only — code edits belong to merge-workers,
     where they stay attributed and reviewable.
   - Terminate with end_agent_run in the terminate step; kill_agent on your
     own run leaves the campaign state unresolved.
   - Workers cannot spawn workers — the depth-5 cap is enforced by the
     runtime. Plan accordingly.
-  - Wait for workers with gobby-agents:wait_for_agent: subscribe once, end
-    the turn while the run is active, and on wake re-call
-    `gobby-agents:wait_for_agent` first — Bash sleep loops, tmux polling, and
-    provider Monitor burn tokens without the daemon wake. Use
-    get_agent_result only to re-read a final report.
+  - Do NOT use Bash sleep loops, tmux polling loops, or provider Monitor for
+    worker waits. Use gobby-agents:wait_for_agent to subscribe once, end the
+    turn while the run is active, and on wake re-call
+    `gobby-agents:wait_for_agent` first. Use get_agent_result only if you need
+    to re-read the final report.
   - Run Python through `uv run` in any command that ends up inside
     verify_in_worktree; the system Python lacks the project deps.
   - Use context-aware progressive discovery: call leased known tools directly; fetch schemas directly for known unleased tools; use list_tools only for unknown tool names and list_mcp_servers only for unknown servers or registries.
