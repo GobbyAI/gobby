@@ -151,12 +151,22 @@ pub(crate) const MIGRATIONS: &[EmbeddedMigration] = &[
         checksum: "a8e488ff1515e14c0544f0f8efbd5f9ce0869a0861ee3d7a7eb6613f41972ab9",
         sql: include_str!("../../assets/schema/migrations/395_code_inheritance.sql"),
     },
+    EmbeddedMigration {
+        version: 396,
+        filename: "396_memory_rationale_and_provenance.sql",
+        checksum: "0696d021aee10934261018742e7d632511591de8c59f20f3203623cbe366cb7d",
+        sql: include_str!("../../assets/schema/migrations/396_memory_rationale_and_provenance.sql"),
+    },
 ];
 const _: &str = include_str!("../../assets/schema/migrations/.gitkeep");
 
-/// Receipts written before #20368 edited 377 in place. Live hubs keep those
-/// checksums; the improved 377 body is what new applies stamp.
+/// Receipts written before in-place asset edits. Live hubs keep those
+/// checksums; the improved bodies are what new applies stamp.
 pub(crate) const PRIOR_RECEIPT_CHECKSUMS: &[(i32, &str)] = &[
+    (
+        375,
+        "ece3754752dbc72aaff4bbd3ebaa91a41305e4899e180012f8429c4f7467b1bf",
+    ),
     (
         377,
         "43b6c25263c1e510f28c540d9cc24e62ffcad67a3a8dddde3645bdb6a5e92821",

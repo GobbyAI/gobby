@@ -648,6 +648,27 @@ fn receipt_chain_advances_from_19645_and_lineage_checksums() -> anyhow::Result<(
     assert_eq!(after_reject, ACCOUNT_IDENTITY_PREDECESSOR_CHECKSUM);
 
     client.execute(
+        "UPDATE schema_migrations SET checksum = $1 WHERE version = $2",
+        &[
+            &"ece3754752dbc72aaff4bbd3ebaa91a41305e4899e180012f8429c4f7467b1bf",
+            &BASELINE_VERSION,
+        ],
+    )?;
+    let prior_baseline = SchemaRunner::new(&mut client, "public")?.apply()?;
+    assert!(!prior_baseline.baseline_applied);
+    assert_eq!(prior_baseline.migrations_applied, 0);
+    let kept_prior: String = client
+        .query_one(
+            "SELECT checksum FROM schema_migrations WHERE version = $1",
+            &[&BASELINE_VERSION],
+        )?
+        .get(0);
+    assert_eq!(
+        kept_prior,
+        "ece3754752dbc72aaff4bbd3ebaa91a41305e4899e180012f8429c4f7467b1bf"
+    );
+
+    client.execute(
         "UPDATE schema_migrations SET checksum = 'unrecognized' WHERE version = $1",
         &[&BASELINE_VERSION],
     )?;
@@ -1142,7 +1163,7 @@ fn migrations_directory_exists_and_copy_agent_entry_is_registered() {
         migrations_dir.is_dir(),
         "crates/gcore/assets/schema/migrations must exist so later leaves can register include_str entries"
     );
-    assert_eq!(MIGRATIONS.len(), 20);
+    assert_eq!(MIGRATIONS.len(), 21);
     assert_eq!(MIGRATIONS[0].version, 376);
     assert_eq!(MIGRATIONS[0].filename, "376_copy_agent_definitions.sql");
     assert_eq!(MIGRATIONS[1].version, 377);
@@ -1221,6 +1242,11 @@ fn migrations_directory_exists_and_copy_agent_entry_is_registered() {
     );
     assert_eq!(MIGRATIONS[19].version, 395);
     assert_eq!(MIGRATIONS[19].filename, "395_code_inheritance.sql");
+    assert_eq!(MIGRATIONS[20].version, 396);
+    assert_eq!(
+        MIGRATIONS[20].filename,
+        "396_memory_rationale_and_provenance.sql"
+    );
     assert!(MIGRATIONS[5].sql.contains("-- gobby:destructive"));
     for migration in MIGRATIONS {
         assert_eq!(

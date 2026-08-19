@@ -342,6 +342,12 @@ fn classify_baseline_state(
     Ok(BaselineState::CorruptPartial)
 }
 
+fn prior_baseline_receipt(checksum: &str) -> bool {
+    PRIOR_RECEIPT_CHECKSUMS
+        .iter()
+        .any(|(version, prior)| *version == BASELINE_VERSION && *prior == checksum)
+}
+
 fn recognized_baseline_receipt(
     client: &mut Client,
     schema: &str,
@@ -360,6 +366,7 @@ fn recognized_baseline_receipt(
     let checksum = row.get::<_, Option<String>>(1);
     Ok(match checksum.as_deref() {
         Some(BASELINE_CHECKSUM) => Some(BaselineState::AlreadyBaselined),
+        Some(prior) if prior_baseline_receipt(prior) => Some(BaselineState::AlreadyBaselined),
         Some(PREDECESSOR_BASELINE_CHECKSUM) => Some(BaselineState::PredecessorBaseline),
         Some(PARENT_BASELINE_CHECKSUM) => Some(BaselineState::ParentBaseline),
         Some(WORKTREE_BASELINE_CHECKSUM) => Some(BaselineState::WorktreeBaseline),
