@@ -29,6 +29,10 @@ _SUPPRESSED_UPDATE_TYPES = frozenset(
         "hook_annotation",
     }
 )
+_PAIR_RESPONSE_CHAR_BUDGET = 4000
+_TURN_COMPLETED_UPDATE = "turn_completed"
+_USER_MESSAGE_CHUNK = "user_message_chunk"
+_AGENT_MESSAGE_CHUNK = "agent_message_chunk"
 
 
 class GrokTranscriptParser(BaseTranscriptParser):
@@ -173,20 +177,8 @@ class GrokTranscriptParser(BaseTranscriptParser):
         self, turns: list[dict[str, Any]], num_pairs: int = 2
     ) -> list[dict[str, Any]]:
         messages: list[dict[str, str]] = []
-        for turn in reversed(turns):
-            update = _extract_update(turn)
-            if not update:
-                continue
-            update_type = str(update.get("sessionUpdate") or "")
-            if update_type == "user_message_chunk":
-                messages.insert(
-                    0, {"role": "user", "content": _extract_text(update.get("content"))}
-                )
-            elif update_type == "agent_message_chunk":
-                messages.insert(
-                    0,
-                    {"role": "assistant", "content": _extract_text(update.get("content"))},
-                )
+        for segment in reversed(_turn_segments(turns)):
+            messages = _segment_pair_messages(segment) + messages
             if len(messages) >= num_pairs * 2:
                 break
         return messages
@@ -199,6 +191,56 @@ class GrokTranscriptParser(BaseTranscriptParser):
     def is_session_boundary(self, turn: dict[str, Any]) -> bool:
         del turn
         return False
+
+
+def _turn_segments(turns: list[dict[str, Any]]) -> list[list[dict[str, Any]]]:
+    segments: list[list[dict[str, Any]]] = []
+    current: list[dict[str, Any]] = []
+    for turn in turns:
+        current.append(turn)
+        update = _extract_update(turn)
+        if update is not None and str(update.get("sessionUpdate") or "") == _TURN_COMPLETED_UPDATE:
+            segments.append(current)
+            current = []
+    if current:
+        segments.append(current)
+    return segments
+
+
+def _segment_pair_messages(segment: list[dict[str, Any]]) -> list[dict[str, str]]:
+    messages: list[dict[str, str]] = []
+    accumulated = ""
+    pending_user = False
+
+    def flush(*, empty_if_pending: bool = False) -> None:
+        nonlocal accumulated, pending_user
+        if accumulated:
+            messages.append({"role": "assistant", "content": accumulated})
+            accumulated = ""
+            pending_user = False
+        elif empty_if_pending and pending_user:
+            messages.append({"role": "assistant", "content": ""})
+            pending_user = False
+
+    for record in segment:
+        update = _extract_update(record)
+        if update is None:
+            continue
+        update_type = str(update.get("sessionUpdate") or "")
+        if update_type == _USER_MESSAGE_CHUNK:
+            flush()
+            messages.append({"role": "user", "content": _extract_text(update.get("content"))})
+            pending_user = True
+        elif update_type == _AGENT_MESSAGE_CHUNK:
+            text = _extract_text(update.get("content"))
+            if not text:
+                continue
+            if accumulated and len(accumulated) + len(text) > _PAIR_RESPONSE_CHAR_BUDGET:
+                flush()
+            accumulated += text
+            pending_user = False
+    flush(empty_if_pending=True)
+    return messages
 
 
 def _message(

@@ -6,6 +6,7 @@ import json
 
 import pytest
 
+from gobby.memory.digest import _extract_digest_pairs
 from gobby.sessions.transcript_normalization import normalize_transcript_records
 from gobby.sessions.transcripts.base import (
     NON_MESSAGE_CONTENT_TYPES,
@@ -24,6 +25,39 @@ def _event(update: dict[str, object]) -> str:
             "method": "session/update",
             "params": {"sessionId": "grok-session", "update": update},
             "timestamp": "2026-05-22T22:22:00Z",
+        }
+    )
+
+
+def _record(update: dict[str, object]) -> dict[str, object]:
+    parsed = json.loads(_event(update))
+    assert isinstance(parsed, dict)
+    return parsed
+
+
+def _user_chunk(text: str) -> dict[str, object]:
+    return _record(
+        {
+            "sessionUpdate": "user_message_chunk",
+            "content": {"type": "text", "text": text},
+        }
+    )
+
+
+def _agent_chunk(text: str) -> dict[str, object]:
+    return _record(
+        {
+            "sessionUpdate": "agent_message_chunk",
+            "content": {"type": "text", "text": text},
+        }
+    )
+
+
+def _thought_chunk(text: str) -> dict[str, object]:
+    return _record(
+        {
+            "sessionUpdate": "agent_thought_chunk",
+            "content": {"type": "text", "text": text},
         }
     )
 
@@ -327,3 +361,139 @@ def test_grok_usage_aggregates_nested_cache_details() -> None:
     assert message.usage.output_tokens == 7
     assert message.usage.cache_read_tokens == 16
     assert message.usage.cache_creation_tokens == 15
+
+
+def test_grok_extract_last_messages_turn_keyed_pairs() -> None:
+    parser = GrokTranscriptParser(session_id="grok-session")
+    tool_call = _record(
+        {
+            "sessionUpdate": "tool_call",
+            "toolCallId": "call-1",
+            "title": "run_terminal_command",
+            "rawInput": {"command": "pwd"},
+        }
+    )
+    turns = [
+        _user_chunk("first prompt"),
+        _thought_chunk("planning"),
+        _agent_chunk("Hello"),
+        tool_call,
+        _agent_chunk(" world"),
+        _turn_completed_record(),
+        _user_chunk("second prompt"),
+        _agent_chunk("Do"),
+        _agent_chunk("ne."),
+        _turn_completed_record(),
+    ]
+
+    messages = parser.extract_last_messages(turns, num_pairs=len(turns))
+
+    assert messages == [
+        {"role": "user", "content": "first prompt"},
+        {"role": "assistant", "content": "Hello world"},
+        {"role": "user", "content": "second prompt"},
+        {"role": "assistant", "content": "Done."},
+    ]
+    assert parser.extract_last_messages(turns, num_pairs=1) == [
+        {"role": "user", "content": "second prompt"},
+        {"role": "assistant", "content": "Done."},
+    ]
+    assert _extract_digest_pairs(parser, turns) == [
+        ("first prompt", "Hello world"),
+        ("second prompt", "Done."),
+    ]
+
+
+def test_grok_marathon_turn_sub_segmentation() -> None:
+    parser = GrokTranscriptParser(session_id="grok-session")
+    seg1_a = "a" * 2000
+    seg1_b = "b" * 2000
+    oversized = "c" * 5000
+    tail = "d" * 2079
+    turns = [
+        _user_chunk("marathon prompt"),
+        _agent_chunk(seg1_a),
+        _agent_chunk(seg1_b),
+        _agent_chunk(oversized),
+        _agent_chunk(tail),
+        _turn_completed_record(),
+    ]
+
+    messages = parser.extract_last_messages(turns, num_pairs=len(turns))
+
+    assert messages == [
+        {"role": "user", "content": "marathon prompt"},
+        {"role": "assistant", "content": seg1_a + seg1_b},
+        {"role": "assistant", "content": oversized},
+        {"role": "assistant", "content": tail},
+    ]
+    assert [len(msg["content"]) for msg in messages[1:]] == [4000, 5000, 2079]
+    assert _extract_digest_pairs(parser, turns) == [
+        ("marathon prompt", seg1_a + seg1_b),
+        ("", oversized),
+        ("", tail),
+    ]
+
+
+def test_grok_mid_turn_injection_anchoring() -> None:
+    parser = GrokTranscriptParser(session_id="grok-session")
+    injection = "The user sent a message while you were working"
+    turns = [
+        _user_chunk("do the work"),
+        _agent_chunk("started "),
+        _agent_chunk("more"),
+        _user_chunk(injection),
+        _agent_chunk("acknowledged"),
+        _turn_completed_record(),
+    ]
+
+    messages = parser.extract_last_messages(turns, num_pairs=len(turns))
+
+    assert messages == [
+        {"role": "user", "content": "do the work"},
+        {"role": "assistant", "content": "started more"},
+        {"role": "user", "content": injection},
+        {"role": "assistant", "content": "acknowledged"},
+    ]
+    assert _extract_digest_pairs(parser, turns) == [
+        ("do the work", "started more"),
+        (injection, "acknowledged"),
+    ]
+
+
+def test_grok_open_and_cancelled_turn_pairs() -> None:
+    parser = GrokTranscriptParser(session_id="grok-session")
+    turns = [
+        _user_chunk("cancelled prompt"),
+        _turn_completed_record(),
+        _user_chunk("finished prompt"),
+        _agent_chunk("all done"),
+        _turn_completed_record(),
+        _user_chunk("in flight"),
+        _agent_chunk("part"),
+        _agent_chunk("ial"),
+    ]
+
+    messages = parser.extract_last_messages(turns, num_pairs=len(turns))
+
+    assert messages == [
+        {"role": "user", "content": "cancelled prompt"},
+        {"role": "assistant", "content": ""},
+        {"role": "user", "content": "finished prompt"},
+        {"role": "assistant", "content": "all done"},
+        {"role": "user", "content": "in flight"},
+        {"role": "assistant", "content": "partial"},
+    ]
+    assert parser.extract_last_messages(turns, num_pairs=1) == [
+        {"role": "user", "content": "in flight"},
+        {"role": "assistant", "content": "partial"},
+    ]
+    assert parser.extract_last_messages(turns[:2], num_pairs=1) == [
+        {"role": "user", "content": "cancelled prompt"},
+        {"role": "assistant", "content": ""},
+    ]
+    assert _extract_digest_pairs(parser, turns) == [
+        ("cancelled prompt", ""),
+        ("finished prompt", "all done"),
+        ("in flight", "partial"),
+    ]
