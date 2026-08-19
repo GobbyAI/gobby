@@ -89,6 +89,10 @@ fn disabled_freshness_admission_is_quiet_and_does_not_resolve_context() -> Resul
 }
 
 #[test]
+#[cfg_attr(
+    not(gcode_postgres_tests),
+    ignore = "requires a PostgreSQL test database URL"
+)]
 #[serial(serial_db)]
 fn facade_reads_owned_facts_from_a_temp_indexed_project() -> Result<()> {
     let fixture = IndexedFixture::new()?;
@@ -138,6 +142,10 @@ fn facade_reads_owned_facts_from_a_temp_indexed_project() -> Result<()> {
 }
 
 #[test]
+#[cfg_attr(
+    not(gcode_postgres_tests),
+    ignore = "requires a PostgreSQL test database URL"
+)]
 #[serial(serial_db)]
 fn facade_handle_is_clone_send_sync_and_reuses_read_connection() -> Result<()> {
     fn assert_clone_send_sync<T: Clone + Send + Sync>() {}

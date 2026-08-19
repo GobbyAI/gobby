@@ -38,6 +38,10 @@ fn gobby_mode_uses_registry_authority() {
 }
 
 #[test]
+#[cfg_attr(
+    not(gcode_postgres_tests),
+    ignore = "requires a PostgreSQL test database URL"
+)]
 #[serial_test::serial(serial_db)]
 fn hub_fallback_reads_atomic_snapshot() {
     let database_url = crate::test_env::postgres_test_database_url("runtime contract snapshot");

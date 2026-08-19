@@ -341,6 +341,10 @@ mod tests {
     }
 
     #[test]
+    #[cfg_attr(
+        not(gcode_postgres_tests),
+        ignore = "requires a PostgreSQL test database URL"
+    )]
     #[serial_test::serial(serial_db)]
     fn scoped_hub_capture_degrades_once_for_best_effort_reads() {
         install_capture_logger();
@@ -393,6 +397,10 @@ mod tests {
     }
 
     #[test]
+    #[cfg_attr(
+        not(gcode_postgres_tests),
+        ignore = "requires a PostgreSQL test database URL"
+    )]
     #[serial_test::serial(serial_db)]
     fn scoped_daemon_capture_discards_served_services_for_best_effort_reads() {
         install_capture_logger();
@@ -421,6 +429,10 @@ mod tests {
     }
 
     #[test]
+    #[cfg_attr(
+        not(gcode_postgres_tests),
+        ignore = "requires a PostgreSQL test database URL"
+    )]
     #[serial_test::serial(serial_db)]
     fn scoped_required_capture_names_daemon_route() {
         install_capture_logger();
