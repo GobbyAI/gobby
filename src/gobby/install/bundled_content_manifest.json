@@ -530,7 +530,7 @@
     "workflows/rules/task-enforcement/require-claimed-task-required-skills.yaml": "f7ba7a84723b737a4fc4381fe783925957ef02b8c4cab2cb0405ec9af8a617d4",
     "workflows/rules/task-enforcement/require-commit-before-status.yaml": "deed1db03e4995e60850a2f9ec362d0cd31bf66e49a590785e1d6dabb8d10ea3",
     "workflows/rules/task-enforcement/require-task-before-commit.yaml": "328824cd0b531e2d0f0067e2cf8699e9eecb15204f03fa052ff78bd4af245197",
-    "workflows/rules/task-enforcement/require-task-before-edit.yaml": "5c0750a7720438cc21dd6ca11b02335246d50fd95a20eebd445b2de1177cc149",
+    "workflows/rules/task-enforcement/require-task-before-edit.yaml": "3e2acf0942ff33c845e5fc953b028b23d1e1e9b2e3db29be2674e2557ad66d29",
     "workflows/rules/task-enforcement/require-task-creation-skill-loaded.yaml": "814d180e46f329c58ac603bb06ebeef025dcfed9fa970c83cadbbc818cae8833",
     "workflows/rules/task-enforcement/require-task-creation-skill-on-schema.yaml": "2158d14d1b75709e7d941571ce960a52e5963f4f06b8d45f3228fe227290eb83",
     "workflows/rules/task-enforcement/require-task-transitions-skill-loaded.yaml": "0a7f17d0b6e1015960468e6ddc20468065261754c174042adf204ca24294bac9",

@@ -466,17 +466,41 @@ def plan_write_paths_allowed(
     return True
 
 
+def _canonical_event_paths(event_data: Any) -> list[str]:
+    """Return adapter-extracted canonical paths from tool event data."""
+    if not isinstance(event_data, dict):
+        return []
+
+    canonical_paths = event_data.get("canonical_file_paths")
+    if isinstance(canonical_paths, list):
+        normalized = [
+            path.strip() for path in canonical_paths if isinstance(path, str) and path.strip()
+        ]
+        if normalized:
+            return _dedupe_paths(normalized)
+
+    canonical_path = event_data.get("canonical_file_path")
+    if isinstance(canonical_path, str) and canonical_path.strip():
+        return [canonical_path.strip()]
+    return []
+
+
 def requires_task_for_any_touched_file(
     tool_input: Any,
     source: str | None = None,
     plan_mode: bool = False,
+    event_data: Any = None,
 ) -> bool:
     """Return True when any touched file should be task-gated.
 
-    The helper fails closed: when no touched paths can be determined for a
-    write-like tool, the edit is treated as requiring a task.
+    Structured tool inputs (Write/Edit shapes) carry their own paths; shell
+    commands carry none, so the adapter's canonical path extraction in event
+    data is the fallback — a bash write whose extracted paths are all plan
+    files is exempt exactly like the structured path. The helper still fails
+    closed: when neither source yields a path for a write-like tool, the edit
+    is treated as requiring a task.
     """
-    touched_paths = get_touched_file_paths(tool_input)
+    touched_paths = get_touched_file_paths(tool_input) or _canonical_event_paths(event_data)
     if not touched_paths:
         return True
 

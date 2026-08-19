@@ -448,6 +448,104 @@ class TestRequireTaskBeforeEdit:
         result = evaluator.evaluate(condition)
         assert result is True, "Should block shell write to source file without task"
 
+    def test_when_condition_exempts_shell_write_to_plan_file(self) -> None:
+        """A shell write whose canonical paths are all plan files stays exempt."""
+        from gobby.workflows.enforcement.blocking import requires_task_for_any_touched_file
+        from gobby.workflows.safe_evaluator import SafeExpressionEvaluator, build_condition_helpers
+
+        condition = (
+            "variables.get('require_task_before_edit') and not variables.get('task_claimed') "
+            "and event.data.get('canonical_repo_mutation') "
+            "and requires_task_for_any_touched_file("
+            "tool_input, source, variables.get('plan_mode'), event.data)"
+        )
+        data: dict[str, object] = {
+            "tool_name": "Bash",
+            "tool_input": {"command": "printf hello > .gobby/plans/my-plan.md"},
+        }
+        normalize_tool_fields(data)
+        assert data.get("canonical_repo_mutation") is True
+
+        context = {
+            "variables": {
+                "require_task_before_edit": True,
+                "task_claimed": False,
+                "plan_mode": False,
+            },
+            "event": type("Event", (), {"data": data})(),
+            "tool_input": data["tool_input"],
+            "source": "claude_code",
+        }
+        allowed_funcs = build_condition_helpers(context=context)
+        allowed_funcs["requires_task_for_any_touched_file"] = requires_task_for_any_touched_file
+
+        evaluator = SafeExpressionEvaluator(context=context, allowed_funcs=allowed_funcs)
+        result = evaluator.evaluate(condition)
+        assert result is False, "Shell writes touching only plan files must not require a task"
+
+    def test_when_condition_blocks_shell_write_mixing_plan_and_source(self) -> None:
+        """A shell write touching a plan file AND source still requires a task."""
+        from gobby.workflows.enforcement.blocking import requires_task_for_any_touched_file
+        from gobby.workflows.safe_evaluator import SafeExpressionEvaluator, build_condition_helpers
+
+        condition = (
+            "variables.get('require_task_before_edit') and not variables.get('task_claimed') "
+            "and event.data.get('canonical_repo_mutation') "
+            "and requires_task_for_any_touched_file("
+            "tool_input, source, variables.get('plan_mode'), event.data)"
+        )
+        data: dict[str, object] = {
+            "tool_name": "Bash",
+            "tool_input": {
+                "command": "printf hi > .gobby/plans/my-plan.md && printf hi > src/main.py"
+            },
+        }
+        normalize_tool_fields(data)
+
+        context = {
+            "variables": {
+                "require_task_before_edit": True,
+                "task_claimed": False,
+                "plan_mode": False,
+            },
+            "event": type("Event", (), {"data": data})(),
+            "tool_input": data["tool_input"],
+            "source": "claude_code",
+        }
+        allowed_funcs = build_condition_helpers(context=context)
+        allowed_funcs["requires_task_for_any_touched_file"] = requires_task_for_any_touched_file
+
+        evaluator = SafeExpressionEvaluator(context=context, allowed_funcs=allowed_funcs)
+        result = evaluator.evaluate(condition)
+        assert result is True, "Mixed plan/source shell writes must still require a task"
+
+    def test_requires_task_fails_closed_without_any_paths(self) -> None:
+        """No structured and no canonical paths keeps the fail-closed contract."""
+        from gobby.workflows.enforcement.blocking import requires_task_for_any_touched_file
+
+        assert (
+            requires_task_for_any_touched_file(
+                {"command": "uv run python - <<'EOF'\nprint('opaque')\nEOF"},
+                "claude_code",
+                False,
+                {"canonical_repo_mutation": True},
+            )
+            is True
+        )
+
+    def test_requires_task_canonical_path_string_fallback(self) -> None:
+        """A bare canonical_file_path string is honored when the list is absent."""
+        from gobby.workflows.enforcement.blocking import requires_task_for_any_touched_file
+
+        event_data = {
+            "canonical_repo_mutation": True,
+            "canonical_file_path": ".claude/plans/current-plan.md",
+        }
+        assert (
+            requires_task_for_any_touched_file({"command": "x"}, "claude_code", False, event_data)
+            is False
+        )
+
     def test_when_condition_ignores_stderr_suppression(self) -> None:
         """Read-only commands with benign redirects carry no mutation metadata."""
         from gobby.workflows.enforcement.blocking import requires_task_for_any_touched_file

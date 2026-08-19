@@ -10,7 +10,7 @@ rules:
       variables.get('require_task_before_edit')
       and not variables.get('task_claimed')
       and event.data.get('canonical_repo_mutation')
-      and requires_task_for_any_touched_file(tool_input, source, variables.get('plan_mode'))
+      and requires_task_for_any_touched_file(tool_input, source, variables.get('plan_mode'), event.data)
     effects:
       - type: block
         reason: |
