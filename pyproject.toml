@@ -46,9 +46,10 @@ dependencies = [
     # python-multipart <0.0.31 has CVE-2026-24486, CVE-2026-40347,
     # CVE-2026-42561 and later DoS advisories fixed in 0.0.30/0.0.31.
     "python-multipart>=0.0.31",
-    # cryptography <48.0.1 has CVE-2026-26007, CVE-2026-34073, CVE-2026-39892
-    # and the later advisory fixed in 48.0.1.
-    "cryptography>=48.0.1",
+    # cryptography <50.0.0 has PYSEC-2026-3552 (PKCS#7 EnvelopedData
+    # Bleichenbacher oracle). Earlier 48.0.1 also closed CVE-2026-26007,
+    # CVE-2026-34073, and CVE-2026-39892.
+    "cryptography>=50.0.0",
     "argon2-cffi>=23.1.0",
     "clawcare>=0.9.0",
 # pyjwt <2.13.0 has 2026 advisories (transitive via mcp)
@@ -102,6 +103,8 @@ constraint-dependencies = [
     "joserfc>=1.6.8",
     # pillow <12.3.0 has multiple 2026 advisories (transitive via the voice stack).
     "pillow>=12.3.0",
+    # h2 <4.4.1 has PYSEC-2026-3628 / CVE-2026-71554 (duplicate Host header).
+    "h2>=4.4.1",
     # torch <2.8.0 has GHSA-887c-mr87-cxwp; see override-dependencies below.
     "torch>=2.8.0",
 ]
