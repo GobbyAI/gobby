@@ -68,6 +68,9 @@ class StorageAdapter:
         supersedes: list[str] | None = None,
         source_type: str = "agent",
         source_session_id: str | None = None,
+        rationale: str | None = None,
+        source_task_id: str | None = None,
+        created_by_agent: str | None = None,
         metadata: dict[str, Any] | None = None,
     ) -> MemoryWriteResult[MemoryRecord]:
         result = await self._run_storage(
@@ -80,6 +83,9 @@ class StorageAdapter:
             source_session_id=source_session_id,
             tags=tags,
             supersedes=supersedes,
+            rationale=rationale,
+            source_task_id=source_task_id,
+            created_by_agent=created_by_agent,
         )
         return MemoryWriteResult(
             self._to_record(result.memory, user_id=user_id, metadata=metadata),
@@ -207,6 +213,9 @@ class StorageAdapter:
             tags=memory.tags or [],
             source_type=memory.source_type,
             source_session_id=memory.source_session_id,
+            rationale=memory.rationale,
+            source_task_id=memory.source_task_id,
+            created_by_agent=memory.created_by_agent,
             access_count=memory.access_count,
             last_accessed_at=last_accessed,
             metadata=metadata or {},

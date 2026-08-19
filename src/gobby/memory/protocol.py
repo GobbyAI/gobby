@@ -184,6 +184,9 @@ class MemoryRecord:
     tags: list[str] = field(default_factory=list)
     source_type: str = "agent"
     source_session_id: str | None = None
+    rationale: str | None = None
+    source_task_id: str | None = None
+    created_by_agent: str | None = None
     access_count: int = 0
     last_accessed_at: datetime | None = None
     metadata: dict[str, Any] = field(default_factory=dict)
@@ -210,6 +213,9 @@ class MemoryRecord:
             "tags": self.tags,
             "source_type": self.source_type,
             "source_session_id": self.source_session_id,
+            "rationale": self.rationale,
+            "source_task_id": self.source_task_id,
+            "created_by_agent": self.created_by_agent,
             "access_count": self.access_count,
             "last_accessed_at": (
                 self.last_accessed_at.isoformat() if self.last_accessed_at else None
@@ -260,6 +266,11 @@ class MemoryRecord:
             tags=data.get("tags", []),
             source_type=data.get("source_type", "agent"),
             source_session_id=data.get("source_session_id"),
+            rationale=data.get("rationale"),
+            source_task_id=(
+                str(data["source_task_id"]) if data.get("source_task_id") is not None else None
+            ),
+            created_by_agent=data.get("created_by_agent"),
             access_count=data.get("access_count", 0),
             last_accessed_at=last_accessed_at,
             metadata=data.get("metadata", {}),
@@ -315,6 +326,9 @@ class MemoryBackendProtocol(Protocol):
         supersedes: list[str] | None = None,
         source_type: str = "agent",
         source_session_id: str | None = None,
+        rationale: str | None = None,
+        source_task_id: str | None = None,
+        created_by_agent: str | None = None,
         metadata: dict[str, Any] | None = None,
     ) -> MemoryWriteResult[MemoryRecord]:
         """Create a new memory.
@@ -328,6 +342,9 @@ class MemoryBackendProtocol(Protocol):
             supersedes: Memory ids atomically soft-hidden by this write
             source_type: Origin of memory
             source_session_id: Session that created the memory
+            rationale: Writer's durable-value claim
+            source_task_id: Creating task id
+            created_by_agent: Creating agent or interactive source
             metadata: Additional metadata
 
         Returns:

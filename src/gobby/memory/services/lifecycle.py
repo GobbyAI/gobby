@@ -172,6 +172,9 @@ class MemoryLifecycleService:
         source_type: str,
         source_session_id: str | None,
         exclude_memory_id: str | None = None,
+        rationale: str | None = None,
+        source_task_id: str | None = None,
+        created_by_agent: str | None = None,
     ) -> None:
         """Fire a background dedup task."""
         global _local_mode_dedup_warning_logged
@@ -196,6 +199,9 @@ class MemoryLifecycleService:
                     source_type=source_type,
                     source_session_id=source_session_id,
                     exclude_memory_id=exclude_memory_id,
+                    rationale=rationale,
+                    source_task_id=source_task_id,
+                    created_by_agent=created_by_agent,
                 )
             except Exception as e:
                 logger.warning("Background dedup failed: %s", e)
@@ -335,6 +341,9 @@ class MemoryLifecycleService:
         supersedes: list[str] | None = None,
         *,
         is_global: bool = False,
+        rationale: str | None = None,
+        source_task_id: str | None = None,
+        created_by_agent: str | None = None,
     ) -> Memory:
         """Store a new memory in storage and secondary indices."""
         memory_type = validate_memory_type(memory_type)
@@ -347,6 +356,9 @@ class MemoryLifecycleService:
             source_session_id=source_session_id,
             tags=tags,
             supersedes=supersedes,
+            rationale=rationale,
+            source_task_id=source_task_id,
+            created_by_agent=created_by_agent,
         )
         memory = self._record_to_memory(result.memory)
 
@@ -376,6 +388,9 @@ class MemoryLifecycleService:
                 source_type=source_type,
                 source_session_id=source_session_id,
                 exclude_memory_id=memory.id,
+                rationale=rationale,
+                source_task_id=source_task_id,
+                created_by_agent=created_by_agent,
             )
 
         return memory

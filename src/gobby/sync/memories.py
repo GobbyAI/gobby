@@ -135,6 +135,7 @@ def _validate_memory_record(data: dict[str, Any], line_num: int) -> dict[str, An
     if not isinstance(data.get("is_global"), bool):
         raise MemoryRestoreError(f"Memory backup line {line_num}: is_global must be a boolean")
     _validate_uuid(data.get("source_id"), field="source_id", line_num=line_num)
+    _validate_uuid(data.get("source_task_id"), field="source_task_id", line_num=line_num)
     return data
 
 
@@ -297,6 +298,9 @@ class MemoryBackupManager:
             existing_session_ids = {
                 row["id"] for row in conn.execute("SELECT id FROM sessions").fetchall()
             }
+            existing_task_ids = {
+                str(row["id"]) for row in conn.execute("SELECT id FROM tasks").fetchall()
+            }
             existing_project_ids = {
                 row["id"] for row in conn.execute("SELECT id FROM projects").fetchall()
             }
@@ -319,6 +323,11 @@ class MemoryBackupManager:
                 source_session_id = record.get("source_id")
                 if source_session_id not in existing_session_ids:
                     source_session_id = None
+                source_task_id = record.get("source_task_id")
+                if source_task_id is not None:
+                    source_task_id = str(source_task_id)
+                if source_task_id not in existing_task_ids:
+                    source_task_id = None
                 result = memory_manager.storage.create_memory_with_outcome(
                     content=record["content"],
                     memory_type=record["type"],
@@ -330,6 +339,9 @@ class MemoryBackupManager:
                     memory_id=record["id"],
                     created_at=record["created_at"],
                     updated_at=record["updated_at"],
+                    rationale=record.get("rationale"),
+                    source_task_id=source_task_id,
+                    created_by_agent=record.get("created_by_agent"),
                 )
                 restored_count += 1
                 if result.outcome in {"created", "reactivated", "updated"}:
@@ -368,6 +380,9 @@ class MemoryBackupManager:
                     "updated_at": memory.updated_at,
                     "source": memory.source_type,
                     "source_id": memory.source_session_id,
+                    "rationale": memory.rationale,
+                    "source_task_id": memory.source_task_id,
+                    "created_by_agent": memory.created_by_agent,
                     "project_id": memory.project_id,
                     "is_global": memory.is_global,
                 }

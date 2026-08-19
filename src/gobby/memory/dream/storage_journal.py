@@ -10,6 +10,12 @@ from gobby.storage.hub.protocol import HubDatabase, Transaction
 from gobby.utils.json_helpers import json_dumps
 
 _DREAM_SOFT_DELETE_COLUMNS = ("deleted_at", "dream_action", "last_dreamed_at")
+_OPTIONAL_MEMORY_COLUMNS = (
+    *_DREAM_SOFT_DELETE_COLUMNS,
+    "rationale",
+    "source_task_id",
+    "created_by_agent",
+)
 _MEMORY_COLUMNS = (
     "id",
     "project_id",
@@ -18,6 +24,9 @@ _MEMORY_COLUMNS = (
     "content",
     "source_type",
     "source_session_id",
+    "rationale",
+    "source_task_id",
+    "created_by_agent",
     "access_count",
     "last_accessed_at",
     "tags",
@@ -267,7 +276,7 @@ class _DreamJournalMixin:
         missing = [
             column
             for column in _MEMORY_COLUMNS
-            if column not in data and column not in _DREAM_SOFT_DELETE_COLUMNS
+            if column not in data and column not in _OPTIONAL_MEMORY_COLUMNS
         ]
         if missing:
             raise ValueError(

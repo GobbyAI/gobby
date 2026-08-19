@@ -278,6 +278,57 @@ class TestModuleExports:
             assert "NullBackend" not in backends.__all__
 
 
+@pytest.mark.asyncio
+async def test_create_memory_round_trips_rationale_and_provenance(hub_db: HubDatabase) -> None:
+    from gobby.config.persistence import MemoryConfig
+    from gobby.memory.manager import MemoryManager
+    from gobby.memory.services.repository import MemoryRepository
+    from gobby.storage.projects import PERSONAL_PROJECT_ID
+
+    task_id = "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaa1"
+    hub_db.execute(
+        "INSERT INTO tasks "
+        "(id, title, project_id, task_type, priority, validation_criteria, created_at, updated_at) "
+        "VALUES (%s, %s, %s, %s, %s, %s, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)",
+        (
+            task_id,
+            "Provenance task",
+            PERSONAL_PROJECT_ID,
+            "task",
+            2,
+            "Facade provenance fixture.",
+        ),
+    )
+    manager = MemoryManager(
+        db=hub_db,
+        config=MemoryConfig(enabled=True, backend="local", access_debounce_seconds=0),
+    )
+    memory = await manager.create_memory(
+        content="Facade rationale hop",
+        rationale="because the hop must echo",
+        source_task_id=task_id,
+        created_by_agent="backend-developer",
+    )
+    assert memory.rationale == "because the hop must echo"
+    assert memory.source_task_id == task_id
+    assert memory.created_by_agent == "backend-developer"
+
+    null_backend = get_backend("null")
+    null_result = await null_backend.create(
+        content="Null rationale hop",
+        rationale="null echo",
+        source_task_id=task_id,
+        created_by_agent="null-agent",
+    )
+    assert null_result.memory.rationale == "null echo"
+    assert null_result.memory.source_task_id == task_id
+    assert null_result.memory.created_by_agent == "null-agent"
+    echoed = MemoryRepository.record_to_memory(null_result.memory)
+    assert echoed.rationale == "null echo"
+    assert echoed.source_task_id == task_id
+    assert echoed.created_by_agent == "null-agent"
+
+
 # =============================================================================
 # Test: StorageAdapter Media Support
 # =============================================================================

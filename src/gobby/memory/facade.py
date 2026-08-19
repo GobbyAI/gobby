@@ -163,6 +163,9 @@ class MemoryManagerFacadeMethods:
         supersedes: list[str] | None = None,
         *,
         is_global: bool = False,
+        rationale: str | None = None,
+        source_task_id: str | None = None,
+        created_by_agent: str | None = None,
     ) -> Memory:
         return await self._lifecycle_service.create_memory(
             content=content,
@@ -173,6 +176,9 @@ class MemoryManagerFacadeMethods:
             tags=tags,
             supersedes=supersedes,
             is_global=is_global,
+            rationale=rationale,
+            source_task_id=source_task_id,
+            created_by_agent=created_by_agent,
         )
 
     @staticmethod

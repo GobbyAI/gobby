@@ -276,3 +276,69 @@ def test_restore_missing_file_and_disabled_manager_are_noops(
     assert enabled.restore_sync() == 0
     assert disabled.backup_sync() == 0
     assert not backup_path.exists()
+
+
+TASK_1 = "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaa1"
+MISSING_TASK = "cccccccc-cccc-4ccc-8ccc-ccccccccccc1"
+
+
+def test_backup_restore_preserves_rationale_and_provenance(
+    backup_manager: MemoryBackupManager,
+    memory_manager: MemoryManager,
+    backup_path: Path,
+) -> None:
+    backup_manager.db.execute(
+        "INSERT INTO tasks "
+        "(id, title, project_id, task_type, priority, validation_criteria, created_at, updated_at) "
+        "VALUES (%s, %s, %s, %s, %s, %s, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)",
+        (
+            TASK_1,
+            "Backup provenance task",
+            PERSONAL_PROJECT_ID,
+            "task",
+            2,
+            "Backup provenance fixture.",
+        ),
+    )
+    memory_manager.storage.create_memory(
+        content="backed up with rationale",
+        memory_type="fact",
+        source_type="agent",
+        project_id=PERSONAL_PROJECT_ID,
+        memory_id=MEMORY_A,
+        created_at=OLD_TIME,
+        updated_at=OLD_TIME,
+        rationale="keep this claim",
+        source_task_id=TASK_1,
+        created_by_agent="backup-agent",
+    )
+
+    assert backup_manager.backup_sync() == 1
+    records = [json.loads(line) for line in backup_path.read_text().splitlines()]
+    assert records[0]["rationale"] == "keep this claim"
+    assert records[0]["source_task_id"] == TASK_1
+    assert records[0]["created_by_agent"] == "backup-agent"
+
+    assert memory_manager.storage.delete_memory(MEMORY_A)
+    assert backup_manager.restore_sync() == 1
+    restored = memory_manager.storage.get_memory(MEMORY_A)
+    assert restored.rationale == "keep this claim"
+    assert restored.source_task_id == TASK_1
+    assert restored.created_by_agent == "backup-agent"
+
+    _write_records(
+        backup_path,
+        [
+            {
+                **_record(memory_id=MEMORY_B, content="orphan task memory"),
+                "rationale": "orphan task",
+                "source_task_id": MISSING_TASK,
+                "created_by_agent": "orphan-agent",
+            }
+        ],
+    )
+    assert backup_manager.restore_sync() == 1
+    orphan = memory_manager.storage.get_memory(MEMORY_B)
+    assert orphan.rationale == "orphan task"
+    assert orphan.source_task_id is None
+    assert orphan.created_by_agent == "orphan-agent"

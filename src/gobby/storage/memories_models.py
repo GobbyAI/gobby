@@ -108,6 +108,9 @@ class Memory:
     is_global: bool = False
     source_type: Literal["user", "agent"] = "agent"
     source_session_id: str | None = None
+    rationale: str | None = None  # writer's durable-value claim; NULL on legacy rows
+    source_task_id: str | None = None  # tasks.id UUID; FK ON DELETE SET NULL
+    created_by_agent: str | None = None  # agent definition name or interactive CLI source
     access_count: int = 0
     last_accessed_at: datetime | None = None
     graph_processed: bool = True
@@ -157,6 +160,11 @@ class Memory:
             source_session_id=(
                 str(row["source_session_id"]) if row["source_session_id"] is not None else None
             ),
+            rationale=row.get("rationale"),
+            source_task_id=(
+                str(row["source_task_id"]) if row.get("source_task_id") is not None else None
+            ),
+            created_by_agent=row.get("created_by_agent"),
             access_count=row["access_count"],
             last_accessed_at=row["last_accessed_at"],
             graph_processed=bool(row.get("graph_processed", True)),
@@ -184,6 +192,9 @@ class Memory:
             "is_global": self.is_global,
             "source_type": self.source_type,
             "source_session_id": self.source_session_id,
+            "rationale": self.rationale,
+            "source_task_id": self.source_task_id,
+            "created_by_agent": self.created_by_agent,
             "access_count": self.access_count,
             "last_accessed_at": self.last_accessed_at,
             "graph_processed": self.graph_processed,

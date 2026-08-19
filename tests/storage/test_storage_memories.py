@@ -20,6 +20,7 @@ PROJECT_2 = "22222222-2222-2222-2222-222222222222"
 SESSION_1 = "33333333-3333-3333-3333-333333333333"
 UNKNOWN_MEMORY_ID = "99999999-9999-9999-9999-999999999999"
 UNKNOWN_PROJECT_ID = "88888888-8888-8888-8888-888888888888"
+TASK_1 = "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaa1"
 
 
 @pytest.fixture
@@ -53,6 +54,22 @@ def _insert_session(db: HubDatabase, session_id: str, project_id: str) -> None:
         "INSERT INTO sessions (id, external_id, machine_id, source, project_id, created_at) "
         "VALUES (%s, %s, '21000000-0000-4000-8000-000000000001', 'claude', %s, CURRENT_TIMESTAMP)",
         (session_id, f"ext-{session_id}", project_id),
+    )
+
+
+def _insert_task(db: HubDatabase, task_id: str, project_id: str = PERSONAL_PROJECT_ID) -> None:
+    db.execute(
+        "INSERT INTO tasks "
+        "(id, title, project_id, task_type, priority, validation_criteria, created_at, updated_at) "
+        "VALUES (%s, %s, %s, %s, %s, %s, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)",
+        (
+            task_id,
+            f"Task {task_id}",
+            project_id,
+            "task",
+            2,
+            "Storage fixture task; behavior asserted by the test.",
+        ),
     )
 
 
@@ -1459,3 +1476,157 @@ def test_create_memory_restores_hidden_duplicate(
     assert recreated.deleted_at is None
     assert recreated.dream_action is None
     assert memory_manager.get_memory(created.id).id == created.id
+
+
+def test_create_memory_persists_rationale_and_provenance(
+    memory_manager: LocalMemoryManager, db: HubDatabase
+) -> None:
+    _insert_task(db, TASK_1)
+    created = memory_manager.create_memory(
+        content="Fresh rationale memory",
+        project_id=PERSONAL_PROJECT_ID,
+        rationale="Need this for later recall",
+        source_task_id=TASK_1,
+        created_by_agent="backend-developer",
+    )
+    loaded = memory_manager.get_memory(created.id)
+    assert loaded.rationale == "Need this for later recall"
+    assert loaded.source_task_id == TASK_1
+    assert loaded.created_by_agent == "backend-developer"
+    dumped = loaded.to_dict()
+    assert dumped["rationale"] == "Need this for later recall"
+    assert dumped["source_task_id"] == TASK_1
+    assert dumped["created_by_agent"] == "backend-developer"
+
+    rehydrated = Memory.from_row(
+        {
+            "id": created.id,
+            "memory_type": "fact",
+            "content": "Fresh rationale memory",
+            "created_at": loaded.created_at,
+            "updated_at": loaded.updated_at,
+            "project_id": loaded.project_id,
+            "source_type": "agent",
+            "source_session_id": None,
+            "access_count": 0,
+            "last_accessed_at": None,
+            "tags": None,
+            "rationale": "Need this for later recall",
+            "source_task_id": uuid.UUID(TASK_1),
+            "created_by_agent": "backend-developer",
+        }
+    )
+    assert rehydrated.rationale == "Need this for later recall"
+    assert rehydrated.source_task_id == TASK_1
+    assert rehydrated.created_by_agent == "backend-developer"
+
+    restore_id = "bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbb1"
+    restored = memory_manager.create_memory(
+        content="Restore metadata memory",
+        project_id=PERSONAL_PROJECT_ID,
+        rationale="Restored claim",
+        source_task_id=TASK_1,
+        created_by_agent="codex",
+        memory_id=restore_id,
+        created_at=datetime(2024, 1, 1, tzinfo=UTC),
+        updated_at=datetime(2024, 1, 1, tzinfo=UTC),
+    )
+    assert restored.id == restore_id
+    assert restored.rationale == "Restored claim"
+    assert restored.source_task_id == TASK_1
+    assert restored.created_by_agent == "codex"
+
+    winner = memory_manager.create_memory(
+        content="Restore metadata memory updated",
+        project_id=PERSONAL_PROJECT_ID,
+        rationale="Winning claim",
+        source_task_id=TASK_1,
+        created_by_agent="grok",
+        memory_id=restore_id,
+        created_at=datetime(2024, 1, 1, tzinfo=UTC),
+        updated_at=datetime(2025, 1, 1, tzinfo=UTC),
+    )
+    assert winner.id == restore_id
+    assert winner.content == "Restore metadata memory updated"
+    assert winner.rationale == "Winning claim"
+    assert winner.source_task_id == TASK_1
+    assert winner.created_by_agent == "grok"
+
+
+def test_duplicate_create_preserves_original_rationale(
+    memory_manager: LocalMemoryManager, db: HubDatabase
+) -> None:
+    _insert_task(db, TASK_1)
+    _insert_session(db, SESSION_1, PERSONAL_PROJECT_ID)
+
+    first = memory_manager.create_memory(
+        content="Duplicate rationale content",
+        project_id=PERSONAL_PROJECT_ID,
+        is_global=True,
+        rationale="original",
+        source_task_id=TASK_1,
+        created_by_agent="first-agent",
+    )
+    second = memory_manager.create_memory(
+        content="Duplicate rationale content",
+        project_id=PERSONAL_PROJECT_ID,
+        is_global=True,
+        rationale="overwrite attempt",
+        created_by_agent="second-agent",
+    )
+    assert second.id == first.id
+    assert second.rationale == "original"
+    assert second.source_task_id == TASK_1
+    assert second.created_by_agent == "first-agent"
+
+    prox = memory_manager.create_memory(
+        content="Proximity rationale content",
+        project_id=PERSONAL_PROJECT_ID,
+        source_session_id=SESSION_1,
+        rationale="prox-original",
+        source_task_id=TASK_1,
+        created_by_agent="prox-agent",
+    )
+    # Content-duplicate SQL matches stored content exactly; proximity compares
+    # the stripped stored value, so a trailing-space row isolates that branch.
+    db.execute("UPDATE memories SET content = %s WHERE id = %s", (prox.content + "  ", prox.id))
+    prox2 = memory_manager.create_memory(
+        content="Proximity rationale content",
+        project_id=PERSONAL_PROJECT_ID,
+        source_session_id=SESSION_1,
+        rationale="prox-overwrite",
+        created_by_agent="other-agent",
+    )
+    assert prox2.id == prox.id
+    assert prox2.rationale == "prox-original"
+    assert prox2.source_task_id == TASK_1
+    assert prox2.created_by_agent == "prox-agent"
+
+
+def test_restore_memory_row_round_trips_rationale_and_provenance(
+    memory_manager: LocalMemoryManager, db: HubDatabase
+) -> None:
+    from gobby.memory.dream.storage import MemoryDreamStore
+
+    _insert_task(db, TASK_1)
+    store = MemoryDreamStore(db)
+    created = memory_manager.create_memory(
+        content="Dream journal rationale",
+        project_id=PERSONAL_PROJECT_ID,
+        rationale="snapshot claim",
+        source_task_id=TASK_1,
+        created_by_agent="dream-agent",
+    )
+    snapshot = store.get_memory_row(created.id)
+    assert snapshot is not None
+    assert snapshot["rationale"] == "snapshot claim"
+    assert str(snapshot["source_task_id"]) == TASK_1
+    assert snapshot["created_by_agent"] == "dream-agent"
+
+    db.execute("DELETE FROM memories WHERE id = %s", (created.id,))
+    store.restore_memory_row(snapshot)
+
+    restored = memory_manager.get_memory(created.id)
+    assert restored.rationale == "snapshot claim"
+    assert restored.source_task_id == TASK_1
+    assert restored.created_by_agent == "dream-agent"

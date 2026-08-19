@@ -52,6 +52,9 @@ class NullBackend:
         supersedes: list[str] | None = None,
         source_type: str = "agent",
         source_session_id: str | None = None,
+        rationale: str | None = None,
+        source_task_id: str | None = None,
+        created_by_agent: str | None = None,
         metadata: dict[str, Any] | None = None,
     ) -> MemoryWriteResult[MemoryRecord]:
         """Create a memory record (in-memory only, not persisted)."""
@@ -69,6 +72,9 @@ class NullBackend:
             ),
             source_type=source_type,
             source_session_id=source_session_id,
+            rationale=rationale,
+            source_task_id=source_task_id,
+            created_by_agent=created_by_agent,
             metadata=metadata or {},
         )
         return MemoryWriteResult(record, "created")

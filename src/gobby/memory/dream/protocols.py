@@ -60,6 +60,9 @@ class MemoryDreamManagerProtocol(Protocol):
         tags: list[str] | None = None,
         *,
         is_global: bool = False,
+        rationale: str | None = None,
+        source_task_id: str | None = None,
+        created_by_agent: str | None = None,
     ) -> Any: ...
 
     async def update_memory(

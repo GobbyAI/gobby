@@ -119,6 +119,9 @@ class MemoryCrudMixin(MemoryStoreBase):
         supersedes: list[str] | None = None,
         *,
         is_global: bool = False,
+        rationale: str | None = None,
+        source_task_id: str | None = None,
+        created_by_agent: str | None = None,
     ) -> MemoryWriteResult[Memory]:
         # Validate that content is not empty
         if not content or not content.strip():
@@ -267,9 +270,10 @@ class MemoryCrudMixin(MemoryStoreBase):
                     """
                     INSERT INTO memories (
                         id, project_id, is_global, memory_type, content, source_type,
-                        source_session_id, access_count, tags, vector_needs_reindex,
+                        source_session_id, rationale, source_task_id, created_by_agent,
+                        access_count, tags, vector_needs_reindex,
                         created_at, updated_at
-                    ) VALUES (%s, %s, %s, %s, %s, %s, %s, 0, %s, TRUE, %s, %s)
+                    ) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, 0, %s, TRUE, %s, %s)
                     ON CONFLICT (id) DO UPDATE SET
                         project_id = CASE
                             WHEN excluded.updated_at > memories.updated_at
@@ -300,6 +304,21 @@ class MemoryCrudMixin(MemoryStoreBase):
                             WHEN excluded.updated_at > memories.updated_at
                             THEN excluded.source_session_id
                             ELSE memories.source_session_id
+                        END,
+                        rationale = CASE
+                            WHEN excluded.updated_at > memories.updated_at
+                            THEN excluded.rationale
+                            ELSE memories.rationale
+                        END,
+                        source_task_id = CASE
+                            WHEN excluded.updated_at > memories.updated_at
+                            THEN excluded.source_task_id
+                            ELSE memories.source_task_id
+                        END,
+                        created_by_agent = CASE
+                            WHEN excluded.updated_at > memories.updated_at
+                            THEN excluded.created_by_agent
+                            ELSE memories.created_by_agent
                         END,
                         tags = CASE
                             WHEN excluded.updated_at > memories.updated_at
@@ -344,6 +363,9 @@ class MemoryCrudMixin(MemoryStoreBase):
                         normalized_content,
                         source_type,
                         source_session_id,
+                        rationale,
+                        source_task_id,
+                        created_by_agent,
                         tags_json,
                         created_at_value,
                         updated_at_value,
@@ -354,8 +376,9 @@ class MemoryCrudMixin(MemoryStoreBase):
                     """
                     INSERT INTO memories (
                         id, project_id, is_global, memory_type, content, source_type,
-                        source_session_id, access_count, tags, vector_needs_reindex
-                    ) VALUES (%s, %s, %s, %s, %s, %s, %s, 0, %s, TRUE)
+                        source_session_id, rationale, source_task_id, created_by_agent,
+                        access_count, tags, vector_needs_reindex
+                    ) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, 0, %s, TRUE)
                     ON CONFLICT (id) DO UPDATE SET
                         deleted_at = NULL,
                         dream_action = NULL,
@@ -379,6 +402,9 @@ class MemoryCrudMixin(MemoryStoreBase):
                         normalized_content,
                         source_type,
                         source_session_id,
+                        rationale,
+                        source_task_id,
+                        created_by_agent,
                         tags_json,
                     ),
                 )
@@ -447,6 +473,9 @@ class MemoryCrudMixin(MemoryStoreBase):
         supersedes: list[str] | None = None,
         *,
         is_global: bool = False,
+        rationale: str | None = None,
+        source_task_id: str | None = None,
+        created_by_agent: str | None = None,
     ) -> Memory:
         """Create or deduplicate a memory while preserving the legacy payload surface."""
         return self.create_memory_with_outcome(
@@ -461,6 +490,9 @@ class MemoryCrudMixin(MemoryStoreBase):
             updated_at=updated_at,
             supersedes=supersedes,
             is_global=is_global,
+            rationale=rationale,
+            source_task_id=source_task_id,
+            created_by_agent=created_by_agent,
         ).memory
 
     def get_memory(
