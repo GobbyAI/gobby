@@ -13,7 +13,7 @@ snapshots — pass unfiltered into durable facts and get re-served across
 unrelated sessions, while dream's planner, which must cite a concrete
 obsolescence signal before every `delete`, has no creation claim to judge
 staleness against. This epic adds three columns — `rationale`,
-`source_task_id`, `created_by_agent` — as schema migration 395 with the full
+`source_task_id`, `created_by_agent` — as schema migration 396 with the full
 gcore identity-chain hop, makes `rationale` a required argument of the
 `create_memory` contract, and surfaces the rationale everywhere the memory is
 later judged: the dream planner's candidate payload and verdict reasons, the
@@ -36,10 +36,10 @@ citable claim about its own durability.
   only. The local branch's migration chain currently ends at 394
   (`394_sessions_status_last_activity_index.sql`, assets_root_hash
   `6fa33ac9c62b3e8f829d96089fcba7c764a83193cbcadaa46f4af04cd123e50f`), so this
-  epic's migration is number 395. All identity pins — `GOLDEN_LATEST_CHECKSUM`,
+  epic's migration is number 396. All identity pins — `GOLDEN_LATEST_CHECKSUM`,
   `GOLDEN_ASSETS_ROOT_HASH`, catalog `latest_version`,
   `schema_expected_identity.json`, and the four signed grant golden vectors
-  under `tests/runtime_grants/golden/` — are derived from the post-395
+  under `tests/runtime_grants/golden/` — are derived from the post-396
   identity; never rewrite them backward.
 - A gcore migration is live only after the full identity hop: embedded-asset
   registration with sha256 checksum, catalog-manifest regeneration against the
@@ -66,14 +66,14 @@ citable claim about its own durability.
 **Goal**: `memories` carries `rationale`, `source_task_id`, and
 `created_by_agent`, and every element of the gcore schema-identity chain —
 embedded assets, catalog manifest, golden pins, packaged Python projection,
-installed binaries, runtime grants — agrees on migration 395.
+installed binaries, runtime grants — agrees on migration 396.
 
-### 1.1 Add migration 395 and complete the gcore identity hop [category: code]
+### 1.1 Add migration 396 and complete the gcore identity hop [category: code]
 `kind: deliverable`
 
 Targets:
-- `crates/gcore/assets/schema/migrations/395_memory_rationale_and_provenance.sql`
-- `crates/gcore/src/schema/assets.rs::*` — scope-reason: the change appends the migration-395 entry to the `MIGRATIONS` const, which is not an indexed symbol, so file-wide scope is the only honest reference
+- `crates/gcore/assets/schema/migrations/396_memory_rationale_and_provenance.sql`
+- `crates/gcore/src/schema/assets.rs::*` — scope-reason: the change appends the migration-396 entry to the `MIGRATIONS` const, which is not an indexed symbol, so file-wide scope is the only honest reference
 - `crates/gcore/assets/schema/catalog.manifest.json::*` — scope-reason: the manifest is regenerated wholesale by the `UPDATE_GCORE_SCHEMA_MANIFEST=1` freshness test, not hand-edited
 - `crates/gcore/src/grant/bundle.rs::expected_schema_identity`
 - `crates/gcore/src/grant/tests.rs::expected_schema_identity_tracks_catalog_head`
@@ -86,7 +86,7 @@ Targets:
 - `tests/runtime_grants/golden/old_client_new_grant.json::*` — scope-reason: signed golden vector rewritten wholesale after the identity change
 - `tests/runtime_grants/golden/unavailable_datastores.json::*` — scope-reason: signed golden vector rewritten wholesale after the identity change
 
-New migration file (`395_memory_rationale_and_provenance.sql`), following the
+New migration file (`396_memory_rationale_and_provenance.sql`), following the
 comment-first style of migration 391:
 
 ```sql
@@ -119,9 +119,9 @@ referencing-side reason.
 Identity hop, in the release-artifact order documented in
 `docs/guides/account-identity-cutover.md`:
 
-1. Append the `EmbeddedMigration` entry for version 395 to the `MIGRATIONS`
-   const in `assets.rs` — `version: 395`, `filename:
-   "395_memory_rationale_and_provenance.sql"`, `checksum:` the sha256 of the
+1. Append the `EmbeddedMigration` entry for version 396 to the `MIGRATIONS`
+   const in `assets.rs` — `version: 396`, `filename:
+   "396_memory_rationale_and_provenance.sql"`, `checksum:` the sha256 of the
    file (compute with `shasum -a 256`), `sql: include_str!(...)` — exactly
    like the version-391 entry.
 2. Regenerate the catalog manifest against the protected test database:
@@ -131,9 +131,9 @@ Identity hop, in the release-artifact order documented in
    --exact`.
 3. Pin the new chain in the four contract sites: `GOLDEN_LATEST_CHECKSUM` and
    `GOLDEN_ASSETS_ROOT_HASH` next to `expected_schema_identity` in
-   `bundle.rs`; `latest_version` 395 in
-   `expected_schema_identity_tracks_catalog_head`; `MIGRATIONS.len()` 20 plus
-   the `MIGRATIONS[19]` version/filename asserts in
+   `bundle.rs`; `latest_version` 396 in
+   `expected_schema_identity_tracks_catalog_head`; `MIGRATIONS.len()` 21 plus
+   the `MIGRATIONS[20]` version/filename asserts in
    `migrations_directory_exists_and_copy_agent_entry_is_registered`;
    `latest_asset` version/filename/checksum and `root_hash` in
    `embedded_assets_publish_a_complete_schema_identity`; `latest_version` and
@@ -143,30 +143,30 @@ Identity hop, in the release-artifact order documented in
    Python projection with `uv run python
    scripts/generate_schema_expected_identity.py --gdaemon
    target/release/gdaemon` so `schema_expected_identity.json` reports
-   `latest_version` 395 and the new `latest_checksum`/`assets_root_hash`.
+   `latest_version` 396 and the new `latest_checksum`/`assets_root_hash`.
 5. Regenerate the four signed grant golden vectors under
    `tests/runtime_grants/golden/` (`brokered_datastores.json`,
    `direct_datastores.json`, `old_client_new_grant.json`,
    `unavailable_datastores.json`): rewrite each `schema_identity` to the
-   post-395 identity, recompute `payload_checksum`, and re-sign with
+   post-396 identity, recompute `payload_checksum`, and re-sign with
    `GOLDEN_SECRET`, following the signed-vector suite's module docstring. The
    suite asserts every vector's identity equals the packaged Python
    projection, so it stays red between step 4 and this step.
 6. Reinstall the four binaries into `~/.gobby/bin/` via new inodes (`cp` to a
    dotfile, `mv -f` over the name), then restart the daemon. The restarted
-   daemon applies migration 395 and re-issues runtime grants stamped with the
+   daemon applies migration 396 and re-issues runtime grants stamped with the
    new schema identity; gcode/gdaemon/ghook/gwiki accept them again.
 
 **Acceptance:**
 
-- 1.1.1 - Migration 395 adds the three columns, the task foreign key with `ON DELETE SET NULL DEFERRABLE`, and the `idx_memories_source_task` index. file: `crates/gcore/assets/schema/migrations/395_memory_rationale_and_provenance.sql`.
-- 1.1.2 - The embedded `MIGRATIONS` const registers version 395 with the file's sha256 checksum, and the runner contract test pins length 20 and the `MIGRATIONS[19]` entry. test: `crates/gcore/src/schema/runner_tests.rs::migrations_directory_exists_and_copy_agent_entry_is_registered`.
+- 1.1.1 - Migration 396 adds the three columns, the task foreign key with `ON DELETE SET NULL DEFERRABLE`, and the `idx_memories_source_task` index. file: `crates/gcore/assets/schema/migrations/396_memory_rationale_and_provenance.sql`.
+- 1.1.2 - The embedded `MIGRATIONS` const registers version 396 with the file's sha256 checksum, and the runner contract test pins length 21 and the `MIGRATIONS[20]` entry. test: `crates/gcore/src/schema/runner_tests.rs::migrations_directory_exists_and_copy_agent_entry_is_registered`.
 - 1.1.3 - The regenerated catalog manifest lists the three new `memories` columns, the foreign-key constraint, and the new index. file: `crates/gcore/assets/schema/catalog.manifest.json`.
-- 1.1.4 - Grant and schema identity pins report version 395 with the new checksum and root hash, and both contract tests pass. test: `crates/gcore/tests/schema_contract.rs::embedded_assets_publish_a_complete_schema_identity`.
-- 1.1.5 - The gdaemon CLI identity contract pins version 395. test: `crates/gdaemon/tests/cli_contract.rs::version_json_reports_exact_schema_identity_contract`.
-- 1.1.6 - The packaged Python identity projection reports `latest_version` 395 with matching `latest_checksum` and `assets_root_hash`, regenerated from the release gdaemon. file: `src/gobby/storage/schema_expected_identity.json`.
-- 1.1.7 - All four binaries are rebuilt from this commit and reinstalled via new inodes, and after daemon restart the re-issued runtime grants carry the 395 identity accepted by `expected_schema_identity`. symbol: `expected_schema_identity`.
-- 1.1.8 - The four signed grant golden vectors carry the post-395 `schema_identity` with recomputed `payload_checksum` and `GOLDEN_SECRET` signatures, and the signed-vector suite passes. test: `tests/runtime_grants/test_golden_vectors.py::test_config_revision_signed`.
+- 1.1.4 - Grant and schema identity pins report version 396 with the new checksum and root hash, and both contract tests pass. test: `crates/gcore/tests/schema_contract.rs::embedded_assets_publish_a_complete_schema_identity`.
+- 1.1.5 - The gdaemon CLI identity contract pins version 396. test: `crates/gdaemon/tests/cli_contract.rs::version_json_reports_exact_schema_identity_contract`.
+- 1.1.6 - The packaged Python identity projection reports `latest_version` 396 with matching `latest_checksum` and `assets_root_hash`, regenerated from the release gdaemon. file: `src/gobby/storage/schema_expected_identity.json`.
+- 1.1.7 - All four binaries are rebuilt from this commit and reinstalled via new inodes, and after daemon restart the re-issued runtime grants carry the 396 identity accepted by `expected_schema_identity`. symbol: `expected_schema_identity`.
+- 1.1.8 - The four signed grant golden vectors carry the post-396 `schema_identity` with recomputed `payload_checksum` and `GOLDEN_SECRET` signatures, and the signed-vector suite passes. test: `tests/runtime_grants/test_golden_vectors.py::test_config_revision_signed`.
 
 ## P2: Write Path and Creation Contract
 `kind: framing`
@@ -513,35 +513,35 @@ The memory skill documents the new contract for agents:
 `kind: manifest`
 
 ```yaml
-- title: Add migration 395 and complete the gcore identity hop
+- title: Add migration 396 and complete the gcore identity hop
   category: code
   task_type: feature
   depends_on: []
-  validation_criteria: '1.1.1: Migration 395 adds the three columns, the task foreign
+  validation_criteria: '1.1.1: Migration 396 adds the three columns, the task foreign
     key with `ON DELETE SET NULL DEFERRABLE`, and the `idx_memories_source_task` index.
-    file: `crates/gcore/assets/schema/migrations/395_memory_rationale_and_provenance.sql`.
+    file: `crates/gcore/assets/schema/migrations/396_memory_rationale_and_provenance.sql`.
 
-    1.1.2: The embedded `MIGRATIONS` const registers version 395 with the file''s
-    sha256 checksum, and the runner contract test pins length 20 and the `MIGRATIONS[19]`
+    1.1.2: The embedded `MIGRATIONS` const registers version 396 with the file''s
+    sha256 checksum, and the runner contract test pins length 21 and the `MIGRATIONS[20]`
     entry. test: `crates/gcore/src/schema/runner_tests.rs::migrations_directory_exists_and_copy_agent_entry_is_registered`.
 
     1.1.3: The regenerated catalog manifest lists the three new `memories` columns,
     the foreign-key constraint, and the new index. file: `crates/gcore/assets/schema/catalog.manifest.json`.
 
-    1.1.4: Grant and schema identity pins report version 395 with the new checksum
+    1.1.4: Grant and schema identity pins report version 396 with the new checksum
     and root hash, and both contract tests pass. test: `crates/gcore/tests/schema_contract.rs::embedded_assets_publish_a_complete_schema_identity`.
 
-    1.1.5: The gdaemon CLI identity contract pins version 395. test: `crates/gdaemon/tests/cli_contract.rs::version_json_reports_exact_schema_identity_contract`.
+    1.1.5: The gdaemon CLI identity contract pins version 396. test: `crates/gdaemon/tests/cli_contract.rs::version_json_reports_exact_schema_identity_contract`.
 
-    1.1.6: The packaged Python identity projection reports `latest_version` 395 with
+    1.1.6: The packaged Python identity projection reports `latest_version` 396 with
     matching `latest_checksum` and `assets_root_hash`, regenerated from the release
     gdaemon. file: `src/gobby/storage/schema_expected_identity.json`.
 
     1.1.7: All four binaries are rebuilt from this commit and reinstalled via new
-    inodes, and after daemon restart the re-issued runtime grants carry the 395 identity
+    inodes, and after daemon restart the re-issued runtime grants carry the 396 identity
     accepted by `expected_schema_identity`. symbol: `expected_schema_identity`.
 
-    1.1.8: The four signed grant golden vectors carry the post-395 `schema_identity`
+    1.1.8: The four signed grant golden vectors carry the post-396 `schema_identity`
     with recomputed `payload_checksum` and `GOLDEN_SECRET` signatures, and the signed-vector
     suite passes. test: `tests/runtime_grants/test_golden_vectors.py::test_config_revision_signed`.'
   labels:

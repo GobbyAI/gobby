@@ -1,19 +1,19 @@
 project_id: d45545c5-ded5-4335-b115-0245752edacf
 plan_id: memory-rationale-provenance
-plan_hash: "625831f8a8abf7d68328b7bb6f48993657372b6f8b17b208902791343163199a"
+plan_hash: "5cfcacfe5b733bd040be16cfa3574f4762bacd8194295309635cd015e4cd73dc"
 root_task_ref: "20455"
 
 sections:
   "1.1":
     acceptance_items:
-      "1.1.1": {expected_leaves: [{title: Add migration 395 and complete the gcore identity hop, owner_agent: backend-developer}]}
-      "1.1.2": {expected_leaves: [{title: Add migration 395 and complete the gcore identity hop, owner_agent: backend-developer}]}
-      "1.1.3": {expected_leaves: [{title: Add migration 395 and complete the gcore identity hop, owner_agent: backend-developer}]}
-      "1.1.4": {expected_leaves: [{title: Add migration 395 and complete the gcore identity hop, owner_agent: backend-developer}]}
-      "1.1.5": {expected_leaves: [{title: Add migration 395 and complete the gcore identity hop, owner_agent: backend-developer}]}
-      "1.1.6": {expected_leaves: [{title: Add migration 395 and complete the gcore identity hop, owner_agent: backend-developer}]}
-      "1.1.7": {expected_leaves: [{title: Add migration 395 and complete the gcore identity hop, owner_agent: backend-developer}]}
-      "1.1.8": {expected_leaves: [{title: Add migration 395 and complete the gcore identity hop, owner_agent: backend-developer}]}
+      "1.1.1": {expected_leaves: [{title: Add migration 396 and complete the gcore identity hop, owner_agent: backend-developer}]}
+      "1.1.2": {expected_leaves: [{title: Add migration 396 and complete the gcore identity hop, owner_agent: backend-developer}]}
+      "1.1.3": {expected_leaves: [{title: Add migration 396 and complete the gcore identity hop, owner_agent: backend-developer}]}
+      "1.1.4": {expected_leaves: [{title: Add migration 396 and complete the gcore identity hop, owner_agent: backend-developer}]}
+      "1.1.5": {expected_leaves: [{title: Add migration 396 and complete the gcore identity hop, owner_agent: backend-developer}]}
+      "1.1.6": {expected_leaves: [{title: Add migration 396 and complete the gcore identity hop, owner_agent: backend-developer}]}
+      "1.1.7": {expected_leaves: [{title: Add migration 396 and complete the gcore identity hop, owner_agent: backend-developer}]}
+      "1.1.8": {expected_leaves: [{title: Add migration 396 and complete the gcore identity hop, owner_agent: backend-developer}]}
   "2.1":
     acceptance_items:
       "2.1.1": {expected_leaves: [{title: Thread the three columns through the Memory model and storage write path, owner_agent: backend-developer}]}
