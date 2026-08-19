@@ -34,10 +34,10 @@ rules:
         value: false
       - type: set_variable
         variable: brevity_reminder_turn
-        value: 0
+        value: null
       - type: set_variable
         variable: restraint_reminder_turn
-        value: 0
+        value: null
       - type: set_variable
         variable: autonomous_mode_reminder_turn
-        value: 0
+        value: null

@@ -56,7 +56,7 @@ rules:
     # every 5 turns within the epoch.
     when: >
       skill_loaded('brevity') and not variables.get('brevity_disabled')
-      and (not variables.get('brevity_reminder_turn')
+      and (variables.get('brevity_reminder_turn') is None
       or (variables.get('turns_since_compact') or 0)
       < (variables.get('brevity_reminder_turn') or 0)
       or (variables.get('turns_since_compact') or 0)

@@ -12,7 +12,7 @@ rules:
     # re-states the mode event-driven whenever the agent tries to stop early.
     when: >
       variables.get('auto_task_ref')
-      and (not variables.get('autonomous_mode_reminder_turn')
+      and (variables.get('autonomous_mode_reminder_turn') is None
       or (variables.get('turns_since_compact') or 0)
       < (variables.get('autonomous_mode_reminder_turn') or 0)
       or (variables.get('turns_since_compact') or 0)

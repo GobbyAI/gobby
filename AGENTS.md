@@ -27,7 +27,7 @@ how the system behaves so you can work with it instead of being surprised by it.
    holds your turn open while a task is claimed, so close before stopping. Escalate
    only for genuine user review, a directed escalation, or when stuck — never as a
    workaround for committing, validating, or closing.
-4. **You found it, you fix it — in this session.** Every error, test failure, lint
+4. You found it, you fix it — in this session. Every error, test failure, lint
    warning, or type error you encounter is yours to fix before closing, including
    breakage already present in committed code. Filing a task for a finding is deferral,
    and only the user can approve a deferral. The single exclusion: **never touch

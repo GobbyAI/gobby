@@ -114,15 +114,31 @@ class TestReminderCadence:
             data={"trigger": "manual"},
         )
         await engine.evaluate(compact_event, session_id=SESSION_ID, variables=variables)
-        assert variables["brevity_reminder_turn"] == 0
-        assert variables["restraint_reminder_turn"] == 0
-        assert variables["autonomous_mode_reminder_turn"] == 0
+        assert variables["brevity_reminder_turn"] is None
+        assert variables["restraint_reminder_turn"] is None
+        assert variables["autonomous_mode_reminder_turn"] is None
 
         second_epoch = await _run_turns(engine, variables, range(1, 4))
         brevity_hits = [
             i for i, ctx in enumerate(second_epoch, start=1) if "Brevity reminder" in ctx
         ]
         assert brevity_hits == [1]
+
+    @pytest.mark.asyncio
+    async def test_stored_zero_marker_does_not_remind_every_turn(
+        self, temp_db: HubDatabase
+    ) -> None:
+        _sync_bundled(temp_db)
+        engine = RuleEngine(temp_db)
+        variables = _base_variables()
+        variables["brevity_reminder_turn"] = 0
+        variables["restraint_reminder_turn"] = 0
+
+        contexts = await _run_turns(engine, variables, range(0, 5))
+
+        joined = "\n".join(contexts)
+        assert "Brevity reminder" not in joined
+        assert "Restraint reminder" not in joined
 
     @pytest.mark.asyncio
     async def test_disabled_flags_still_suppress_reminders(self, temp_db: HubDatabase) -> None:
