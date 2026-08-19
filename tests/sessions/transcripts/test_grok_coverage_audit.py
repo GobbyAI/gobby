@@ -92,6 +92,16 @@ def compute_user_anchored_coverage(
     )
 
 
+_VENDORED_AUDIT_ROOT = Path(__file__).parent / "fixtures" / "grok_audit"
+
+
+def test_vendored_grok_audit_fixtures_match_builders() -> None:
+    for name, builder, _expected_real, _expected_completeness in _SHAPE_CASES:
+        path = _VENDORED_AUDIT_ROOT / name / "updates.jsonl"
+        assert path.is_file(), path
+        assert path.read_text(encoding="utf-8") == "\n".join(builder()) + "\n"
+
+
 def test_user_anchored_coverage_on_audited_shapes() -> None:
     parser = GrokTranscriptParser(session_id="grok-coverage-audit")
     for name, builder, expected_real, expected_completeness in _SHAPE_CASES:

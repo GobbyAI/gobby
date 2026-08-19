@@ -44,6 +44,14 @@ POSTGRES_SKIP_REASONS=(
     "DATABASE_URL must point at an isolated PostgreSQL test database"
     "PostgreSQL DSN required for hub runtime surface tests"
 )
+PYTEST_FORBIDDEN_SKIP_REASONS=(
+    "set GOBBY_RUN_AGY_PROBE=1"
+    "set GOBBY_RUN_POSTGRES_TMPFS_FILL_TEST=1"
+    "FalkorDB not reachable for integration benchmark"
+    "set GOBBY_GROK_AUDIT_TRANSCRIPTS_DIR"
+    "awaiting #14098"
+    "set GOBBY_OTEL_COLLECTOR_SMOKE=1"
+)
 PYTEST_SELECTION_ARGS=()
 if [ "${GOBBY_RUN_PRE_PUSH_SANDBOX:-}" = "1" ]; then
     PYTEST_SELECTION_ARGS+=(--run-sandbox)
@@ -292,9 +300,9 @@ resolve_pytest_database_url() {
 check_pytest_postgres_skip_guard() {
     local report_path="$1"
     local reason
-    for reason in "${POSTGRES_SKIP_REASONS[@]}"; do
+    for reason in "${POSTGRES_SKIP_REASONS[@]}" "${PYTEST_FORBIDDEN_SKIP_REASONS[@]}"; do
         if [ -f "$report_path" ] && grep -q "$reason" "$report_path"; then
-            echo "✗ Pytest skipped PostgreSQL tests because no database URL was available"
+            echo "✗ Pytest skipped required coverage"
             echo "  Report contains: $reason"
             return 1
         fi
@@ -477,11 +485,22 @@ elif ! load_pytest_falkordb_settings; then
     echo "✗ Failed to resolve managed FalkorDB settings for pytest"
     echo "  Run gobby install to configure the managed FalkorDB host, port, and password."
     FAILED=1
+elif ! command -v agy >/dev/null 2>&1; then
+    PYTEST_EXIT=1
+    echo "✗ agy not found on PATH; install the AGY CLI before running pytest"
+    FAILED=1
 elif DATABASE_URL="$PYTEST_DATABASE_URL" \
     GOBBY_POSTGRES_TEST_DSN="$PYTEST_DATABASE_URL" \
     GOBBY_FALKORDB_HOST="$PYTEST_FALKORDB_HOST" \
     GOBBY_FALKORDB_PORT="$PYTEST_FALKORDB_PORT" \
     GOBBY_FALKORDB_PASSWORD="$PYTEST_FALKORDB_PASSWORD" \
+    GOBBY_TEST_FALKOR_HOST="$PYTEST_FALKORDB_HOST" \
+    GOBBY_TEST_FALKOR_PORT="$PYTEST_FALKORDB_PORT" \
+    GOBBY_TEST_FALKOR_PASSWORD="$PYTEST_FALKORDB_PASSWORD" \
+    GOBBY_RUN_AGY_PROBE=1 \
+    GOBBY_RUN_POSTGRES_TMPFS_FILL_TEST=1 \
+    GOBBY_OTEL_COLLECTOR_SMOKE=1 \
+    GOBBY_GROK_AUDIT_TRANSCRIPTS_DIR="$PWD/tests/sessions/transcripts/fixtures/grok_audit" \
     GOBBY_TEST_PROTECT=1 \
     HOME="$PYTEST_ISOLATION_DIR/home" \
     GOBBY_HOME="$PYTEST_ISOLATION_DIR/gobby-home" \

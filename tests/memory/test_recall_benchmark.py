@@ -495,17 +495,16 @@ async def test_recall_benchmark_arms(monkeypatch: pytest.MonkeyPatch) -> None:
     host = os.environ.get("GOBBY_TEST_FALKOR_HOST", "127.0.0.1")
     port = int(os.environ.get("GOBBY_TEST_FALKOR_PORT", "16379"))
     password = os.environ.get("GOBBY_TEST_FALKOR_PASSWORD")
+    if not password:
+        pytest.skip("GOBBY_TEST_FALKOR_PASSWORD is unset")
 
     from gobby.memory.falkor_client import FalkorClient
 
     graph_name = f"test_recall_benchmark_{os.getpid()}"
-    try:
-        client = FalkorClient(host=host, port=port, password=password, graph_name=graph_name)
-    except Exception as exc:
-        pytest.skip(f"FalkorDB not reachable for integration benchmark: {exc}")
+    client = FalkorClient(host=host, port=port, password=password, graph_name=graph_name)
     try:
         if not await client.ping():
-            pytest.skip("FalkorDB not reachable for integration benchmark")
+            pytest.fail("FalkorDB not reachable for integration benchmark")
         # Pin the support-query dialect early: a DISTINCT CASE count failure must
         # surface here, before the rest of the benchmark depends on it.
         await client.query("MATCH (n) DETACH DELETE n")

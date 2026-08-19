@@ -46,6 +46,14 @@ _POSTGRES_SKIP_REASONS = [
     "DATABASE_URL must point at an isolated PostgreSQL test database",
     "PostgreSQL DSN required for hub runtime surface tests",
 ]
+_PYTEST_FORBIDDEN_SKIP_REASONS = [
+    "set GOBBY_RUN_AGY_PROBE=1",
+    "set GOBBY_RUN_POSTGRES_TMPFS_FILL_TEST=1",
+    "FalkorDB not reachable for integration benchmark",
+    "set GOBBY_GROK_AUDIT_TRANSCRIPTS_DIR",
+    "awaiting #14098",
+    "set GOBBY_OTEL_COLLECTOR_SMOKE=1",
+]
 
 _PGAUDIT_COMMAND_OPTIONS = [
     "shared_preload_libraries=pg_search,pgaudit",
@@ -450,6 +458,9 @@ def test_pre_push_exports_managed_falkordb_settings_before_home_isolation(
         assert f'"{name}"' in script
         assert f'{name}="$PYTEST_FALKORDB_{name.removeprefix("GOBBY_FALKORDB_")}"' in script
         assert f'"{name}"' in dream_e2e
+    assert 'GOBBY_TEST_FALKOR_HOST="$PYTEST_FALKORDB_HOST"' in script
+    assert 'GOBBY_TEST_FALKOR_PORT="$PYTEST_FALKORDB_PORT"' in script
+    assert 'GOBBY_TEST_FALKOR_PASSWORD="$PYTEST_FALKORDB_PASSWORD"' in script
     assert "os.environ.get(name)" in dream_e2e
     _assert_before(
         script,
@@ -479,13 +490,32 @@ def test_pre_push_fails_if_postgres_skip_reason_reaches_pytest_report(
     script = _load_pre_push_script(repo_root)
 
     assert "POSTGRES_SKIP_REASONS=(" in script
+    assert "PYTEST_FORBIDDEN_SKIP_REASONS=(" in script
     for reason in _POSTGRES_SKIP_REASONS:
         assert reason in script
+    for reason in _PYTEST_FORBIDDEN_SKIP_REASONS:
+        assert reason in script
     assert "check_pytest_postgres_skip_guard()" in script
-    assert 'for reason in "${POSTGRES_SKIP_REASONS[@]}"; do' in script
+    assert (
+        'for reason in "${POSTGRES_SKIP_REASONS[@]}" "${PYTEST_FORBIDDEN_SKIP_REASONS[@]}"; do'
+    ) in script
     assert 'grep -q "$reason" "$report_path"' in script
     assert 'uv_run pytest "${PYTEST_SELECTION_ARGS[@]}" -v --tb=line -rFEsw' in script
     assert 'check_pytest_postgres_skip_guard "$PYTEST_REPORT"' in script
+    assert "GOBBY_RUN_AGY_PROBE=1" in script
+    assert "GOBBY_RUN_POSTGRES_TMPFS_FILL_TEST=1" in script
+    assert "GOBBY_OTEL_COLLECTOR_SMOKE=1" in script
+    assert (
+        'GOBBY_GROK_AUDIT_TRANSCRIPTS_DIR="$PWD/tests/sessions/transcripts/fixtures/grok_audit"'
+    ) in script
+    assert "command -v agy" in script
+    assert "agy not found on PATH" in script
+    _assert_before(script, "command -v agy", "uv_run pytest")
+
+    fill_probe = (repo_root / "tests/ci/test_postgres_tmpfs_fill.py").read_text()
+    assert "/usr/lib/postgresql/18/bin" not in fill_probe
+    assert "refusing to fill /dev/shm" not in fill_probe
+    assert "mount -t tmpfs" in fill_probe
 
 
 def test_pre_push_supports_local_all_extras_uv_run_opt_in(repo_root: Path) -> None:

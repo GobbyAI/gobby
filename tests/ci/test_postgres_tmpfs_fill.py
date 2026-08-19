@@ -15,6 +15,7 @@ pytestmark = pytest.mark.integration
 
 _RUN_FILL_TEST_ENV = "GOBBY_RUN_POSTGRES_TMPFS_FILL_TEST"
 _MAX_SAFE_TMPFS_KIB = 128 * 1024
+_FILL_TMPFS_SIZE = "32M"
 
 
 def _program_lines(conn: psycopg.Connection[Any], command: str) -> list[str]:
@@ -25,6 +26,18 @@ def _program_lines(conn: psycopg.Connection[Any], command: str) -> list[str]:
     return [row[0] for row in conn.execute("SELECT line FROM tmpfs_fill_program_output")]
 
 
+def _resolve_pg_tool(conn: psycopg.Connection[Any], name: str) -> str:
+    quoted = shlex.quote(name)
+    lines = _program_lines(
+        conn,
+        f"command -v {quoted} || "
+        f'{{ p=$(command -v postgres) && tool="${{p%/*}}/{name}" '
+        f'&& test -x "$tool" && printf "%s\\n" "$tool"; }}',
+    )
+    assert lines and lines[0].strip(), f"{name} not found on PATH"
+    return lines[0].strip()
+
+
 @pytest.mark.skipif(
     os.environ.get(_RUN_FILL_TEST_ENV) != "1",
     reason=f"set {_RUN_FILL_TEST_ENV}=1 to run the destructive tmpfs fill probe",
@@ -32,26 +45,35 @@ def _program_lines(conn: psycopg.Connection[Any], command: str) -> list[str]:
 def test_postgres_tmpfs_fill_reports_enospc(postgres_database_url: str) -> None:
     """A nested cluster reports ENOSPC without filling the test server's PGDATA."""
     suffix = uuid.uuid4().hex[:12]
-    cluster_dir = f"/dev/shm/gobby-pg-fill-{suffix}"
-    quoted_dir = shlex.quote(cluster_dir)
+    shm_dir = f"/dev/shm/gobby-pg-fill-{suffix}"
+    isolated_dir = f"/tmp/gobby-pg-fill-{suffix}"
     port = 50_000 + int(suffix[:4], 16) % 10_000
-    postgres_bin = "/usr/lib/postgresql/18/bin"
+    fill_mount: str | None = None
 
     with psycopg.connect(postgres_database_url, autocommit=True) as conn:
         conn.execute("CREATE TEMP TABLE tmpfs_fill_program_output (line text)")
         tmpfs_fields = _program_lines(conn, "df -Pk /dev/shm | tail -n 1")[0].split()
         tmpfs_size_kib = int(tmpfs_fields[1])
         if tmpfs_size_kib > _MAX_SAFE_TMPFS_KIB:
-            pytest.skip(
-                f"refusing to fill /dev/shm larger than {_MAX_SAFE_TMPFS_KIB} KiB "
-                f"(found {tmpfs_size_kib} KiB)"
+            cluster_dir = isolated_dir
+            quoted_dir = shlex.quote(cluster_dir)
+            _program_lines(
+                conn,
+                f"mkdir -m 700 -p -- {quoted_dir} && "
+                f"mount -t tmpfs -o size={_FILL_TMPFS_SIZE},mode=700 tmpfs {quoted_dir}",
             )
+            fill_mount = cluster_dir
+        else:
+            cluster_dir = shm_dir
+            quoted_dir = shlex.quote(cluster_dir)
+            _program_lines(conn, f"mkdir -m 700 -- {quoted_dir}")
 
-        _program_lines(conn, f"mkdir -m 700 -- {quoted_dir}")
+        initdb_bin = shlex.quote(_resolve_pg_tool(conn, "initdb"))
+        pg_ctl_bin = shlex.quote(_resolve_pg_tool(conn, "pg_ctl"))
         try:
             _program_lines(
                 conn,
-                f"{postgres_bin}/initdb -D {quoted_dir} -U postgres --no-sync >/dev/null 2>&1",
+                f"{initdb_bin} -D {quoted_dir} -U postgres --no-sync >/dev/null 2>&1",
             )
             server_options = shlex.quote(
                 f"-p {port} -k {cluster_dir} -c listen_addresses='' "
@@ -59,7 +81,7 @@ def test_postgres_tmpfs_fill_reports_enospc(postgres_database_url: str) -> None:
             )
             _program_lines(
                 conn,
-                f"{postgres_bin}/pg_ctl -D {quoted_dir} -l {quoted_dir}/server.log "
+                f"{pg_ctl_bin} -D {quoted_dir} -l {quoted_dir}/server.log "
                 f"-o {server_options} -w start >/dev/null 2>&1",
             )
 
@@ -81,8 +103,8 @@ def test_postgres_tmpfs_fill_reports_enospc(postgres_database_url: str) -> None:
             assert "No space left on device" in server_log
             assert "could not write" in server_log
         finally:
-            _program_lines(
-                conn,
-                f"{postgres_bin}/pg_ctl -D {quoted_dir} -m immediate -w stop "
-                f">/dev/null 2>&1 || true; rm -r -- {quoted_dir}",
-            )
+            cleanup = f"{pg_ctl_bin} -D {quoted_dir} -m immediate -w stop >/dev/null 2>&1 || true"
+            if fill_mount is not None:
+                cleanup += f"; umount {quoted_dir} >/dev/null 2>&1 || true"
+            cleanup += f"; rm -r -- {quoted_dir}"
+            _program_lines(conn, cleanup)

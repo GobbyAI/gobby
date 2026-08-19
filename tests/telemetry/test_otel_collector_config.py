@@ -7,6 +7,7 @@ import json
 import os
 import shutil
 import subprocess
+import sys
 import threading
 import time
 from dataclasses import dataclass
@@ -153,24 +154,87 @@ def test_collector_readme_pins_runtime_and_documents_loki() -> None:
     assert "telemetry.exporter.otlp_endpoint" in readme
 
 
-def _require_collector_smoke() -> str:
+@dataclass(frozen=True)
+class _CollectorLaunch:
+    use_docker: bool
+    binary: str | None
+
+    def version_command(self) -> list[str]:
+        if self.binary is not None:
+            return [self.binary, "--version"]
+        return ["docker", "run", "--rm", COLLECTOR_IMAGE, "--version"]
+
+    def argv(
+        self,
+        *collector_args: str,
+        logs_dir: Path,
+        state_dir: Path,
+        endpoint: str,
+    ) -> tuple[list[str], dict[str, str]]:
+        if self.binary is not None:
+            return (
+                [self.binary, *collector_args],
+                _collector_env(logs_dir, state_dir, endpoint),
+            )
+        remapped = [
+            "--config=/etc/otelcol-contrib/config.yaml" if arg.startswith("--config=") else arg
+            for arg in collector_args
+        ]
+        cmd = ["docker", "run", "--rm"]
+        if sys.platform.startswith("linux"):
+            cmd.extend(["--network", "host"])
+        if hasattr(os, "getuid"):
+            cmd.extend(["--user", f"{os.getuid()}:{os.getgid()}"])
+        docker_endpoint = endpoint
+        if not sys.platform.startswith("linux"):
+            docker_endpoint = endpoint.replace("127.0.0.1", "host.docker.internal")
+            docker_endpoint = docker_endpoint.replace("localhost", "host.docker.internal")
+        cmd.extend(
+            [
+                "-e",
+                "GOBBY_LOG_DIR=/logs",
+                "-e",
+                "GOBBY_OTEL_STORAGE_DIR=/state",
+                "-e",
+                f"GOBBY_OTLP_ENDPOINT={docker_endpoint}",
+                "-v",
+                f"{logs_dir.resolve()}:/logs",
+                "-v",
+                f"{state_dir.resolve()}:/state",
+                "-v",
+                f"{CONFIG_PATH.resolve()}:/etc/otelcol-contrib/config.yaml:ro",
+                COLLECTOR_IMAGE,
+                *remapped,
+            ]
+        )
+        return cmd, os.environ.copy()
+
+
+def _require_collector_smoke() -> _CollectorLaunch:
     if os.environ.get("GOBBY_OTEL_COLLECTOR_SMOKE") != "1":
         pytest.skip("set GOBBY_OTEL_COLLECTOR_SMOKE=1 to run the pinned collector")
-    configured = os.environ.get("GOBBY_OTELCOL_BIN")
+    configured = os.environ.get("GOBBY_OTELCOL_BIN") or None
     collector = configured or shutil.which("otelcol-contrib")
-    if collector is None:
-        pytest.skip("set GOBBY_OTELCOL_BIN to an otelcol-contrib 0.156.0 binary")
+    if collector is not None:
+        launch = _CollectorLaunch(use_docker=False, binary=collector)
+    elif shutil.which("docker") is not None:
+        launch = _CollectorLaunch(use_docker=True, binary=None)
+    else:
+        pytest.fail(
+            "otelcol-contrib not found; set GOBBY_OTELCOL_BIN or install docker "
+            f"to run {COLLECTOR_IMAGE}"
+        )
     result = subprocess.run(
-        [collector, "--version"],
+        launch.version_command(),
         check=False,
         capture_output=True,
         text=True,
-        timeout=15,
+        timeout=60,
     )
     version_output = result.stdout + result.stderr
     assert result.returncode == 0, version_output
     assert COLLECTOR_VERSION in version_output, version_output
-    return collector
+    return launch
 
 
 def _collector_env(logs_dir: Path, state_dir: Path, endpoint: str) -> dict[str, str]:
@@ -182,25 +246,73 @@ def _collector_env(logs_dir: Path, state_dir: Path, endpoint: str) -> dict[str, 
     }
 
 
+@pytest.mark.unit
+def test_require_collector_smoke_falls_back_to_docker(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    monkeypatch.setenv("GOBBY_OTEL_COLLECTOR_SMOKE", "1")
+    monkeypatch.delenv("GOBBY_OTELCOL_BIN", raising=False)
+    monkeypatch.setattr(
+        shutil, "which", lambda name: "/usr/bin/docker" if name == "docker" else None
+    )
+
+    def run(cmd: list[str], **_kwargs: object) -> subprocess.CompletedProcess[str]:
+        assert cmd[:3] == ["docker", "run", "--rm"]
+        assert COLLECTOR_IMAGE in cmd
+        assert "--version" in cmd
+        return subprocess.CompletedProcess(
+            cmd, 0, stdout=f"otelcol-contrib version {COLLECTOR_VERSION}\n", stderr=""
+        )
+
+    monkeypatch.setattr(subprocess, "run", run)
+    launch = _require_collector_smoke()
+    assert launch.use_docker
+    argv, _env = launch.argv(
+        "validate",
+        f"--config={CONFIG_PATH}",
+        logs_dir=tmp_path / "logs",
+        state_dir=tmp_path / "state",
+        endpoint="http://127.0.0.1:4318",
+    )
+    assert argv[0] == "docker"
+    assert COLLECTOR_IMAGE in argv
+    assert "validate" in argv
+    assert "--config=/etc/otelcol-contrib/config.yaml" in argv
+
+
+@pytest.mark.unit
+def test_require_collector_smoke_fails_without_runtime(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setenv("GOBBY_OTEL_COLLECTOR_SMOKE", "1")
+    monkeypatch.delenv("GOBBY_OTELCOL_BIN", raising=False)
+    monkeypatch.setattr(shutil, "which", lambda _name: None)
+    with pytest.raises(pytest.fail.Exception, match="docker"):
+        _require_collector_smoke()
+
+
 @pytest.mark.integration
 def test_pinned_collector_accepts_reference_config(tmp_path: Path) -> None:
-    collector = _require_collector_smoke()
+    launch = _require_collector_smoke()
     logs_dir = tmp_path / "logs"
     state_dir = tmp_path / "state"
     logs_dir.mkdir()
     state_dir.mkdir()
+    argv, env = launch.argv(
+        "validate",
+        f"--config={CONFIG_PATH}",
+        logs_dir=logs_dir,
+        state_dir=state_dir,
+        endpoint="http://127.0.0.1:4318",
+    )
 
     result = subprocess.run(
-        [
-            collector,
-            "validate",
-            f"--config={CONFIG_PATH}",
-        ],
+        argv,
         check=False,
         capture_output=True,
-        env=_collector_env(logs_dir, state_dir, "http://127.0.0.1:4318"),
+        env=env,
         text=True,
-        timeout=30,
+        timeout=60,
     )
 
     assert result.returncode == 0, result.stdout + result.stderr
@@ -394,7 +506,7 @@ def _stop_collector(process: subprocess.Popen[str], output: _CollectorOutput) ->
 
 @pytest.mark.integration
 def test_collector_exports_all_surfaces_from_fresh_offsets(tmp_path: Path) -> None:
-    collector = _require_collector_smoke()
+    launch = _require_collector_smoke()
     logs_dir = tmp_path / "logs"
     state_dir = tmp_path / "state"
     logs_dir.mkdir()
@@ -402,17 +514,23 @@ def test_collector_exports_all_surfaces_from_fresh_offsets(tmp_path: Path) -> No
     paths = _seed_log_files(logs_dir)
 
     capture = _Capture()
-    server = ThreadingHTTPServer(("127.0.0.1", 0), _make_otlp_handler(capture))
+    listen_host = "127.0.0.1"
+    if launch.use_docker and not sys.platform.startswith("linux"):
+        listen_host = "0.0.0.0"
+    server = ThreadingHTTPServer((listen_host, 0), _make_otlp_handler(capture))
     port = int(server.server_address[1])
     server_thread = threading.Thread(target=server.serve_forever, daemon=True)
     server_thread.start()
+    argv, env = launch.argv(
+        f"--config={CONFIG_PATH}",
+        logs_dir=logs_dir,
+        state_dir=state_dir,
+        endpoint=f"http://127.0.0.1:{port}",
+    )
 
     process = subprocess.Popen(
-        [
-            collector,
-            f"--config={CONFIG_PATH}",
-        ],
-        env=_collector_env(logs_dir, state_dir, f"http://127.0.0.1:{port}"),
+        argv,
+        env=env,
         stdout=subprocess.PIPE,
         stderr=subprocess.STDOUT,
         text=True,
@@ -420,10 +538,12 @@ def test_collector_exports_all_surfaces_from_fresh_offsets(tmp_path: Path) -> No
     output = _CollectorOutput(process)
 
     collector_output = ""
+    ready_timeout = 30 if launch.use_docker else 10
+    export_timeout = 40 if launch.use_docker else 20
     try:
-        output.wait_until_ready(timeout=10)
+        output.wait_until_ready(timeout=ready_timeout)
         _append_smoke_records(paths)
-        records = capture.wait_for_count(9, timeout=20)
+        records = capture.wait_for_count(9, timeout=export_timeout)
     finally:
         collector_output = _stop_collector(process, output)
         server.shutdown()

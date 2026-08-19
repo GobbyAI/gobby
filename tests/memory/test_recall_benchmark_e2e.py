@@ -470,18 +470,17 @@ async def test_search_memories_e2e_recall_gate(tmp_path: Any) -> None:
     host = os.environ.get("GOBBY_TEST_FALKOR_HOST", "127.0.0.1")
     port = int(os.environ.get("GOBBY_TEST_FALKOR_PORT", "16379"))
     password = os.environ.get("GOBBY_TEST_FALKOR_PASSWORD")
+    if not password:
+        pytest.skip("GOBBY_TEST_FALKOR_PASSWORD is unset")
 
     from gobby.memory.falkor_client import FalkorClient
 
     graph_name = f"test_recall_benchmark_e2e_{os.getpid()}"
-    try:
-        client = FalkorClient(host=host, port=port, password=password, graph_name=graph_name)
-    except Exception as exc:
-        pytest.skip(f"FalkorDB not reachable for integration benchmark: {exc}")
+    client = FalkorClient(host=host, port=port, password=password, graph_name=graph_name)
     reachable = False
     try:
         if not await client.ping():
-            pytest.skip("FalkorDB not reachable for integration benchmark")
+            pytest.fail("FalkorDB not reachable for integration benchmark")
         reachable = True
 
         corpus = build_e2e_corpus()
