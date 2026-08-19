@@ -4,11 +4,11 @@ mod bundle;
 mod cache;
 pub mod fixture;
 mod handshake;
+mod inspection;
 
+use std::fmt;
 use std::path::{Path, PathBuf};
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
-
-use thiserror::Error;
 
 pub use bundle::{
     AiCapability, BrokerOperation, EXPECTED_API_CONTRACT, FalkorCapability, GRANT_VERSION,
@@ -28,6 +28,7 @@ pub use handshake::{
     MANAGED_BOOTSTRAP_ENV, MANAGED_EXECUTION_HEADER, SESSION_HEADER, TARGET_PROJECT_HEADER,
     daemon_reachable, encode_grant_header, parse_capability_token, reject_remote_endpoint,
 };
+pub use inspection::{CachedGrantInspection, inspect_cached_grant, inspect_cached_grant_at};
 
 use bundle::validate_for_construction as validate_grant;
 use cache::{
@@ -43,31 +44,56 @@ const DEFAULT_DEADLINE: Duration = Duration::from_secs(5);
 const DEFAULT_STALE_LOCK: Duration = Duration::from_secs(10);
 const REACHABILITY_PROBE: Duration = Duration::from_millis(150);
 
-#[derive(Debug, Error, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub enum GrantError {
-    #[error("daemon required")]
     DaemonRequired,
-    #[error("grant expired")]
     Expired,
-    #[error("schema identity mismatch")]
     SchemaMismatch,
-    #[error("deployment mismatch")]
     DeploymentMismatch,
-    #[error("api contract mismatch")]
-    ApiContractMismatch,
-    #[error("remote daemon endpoint refused")]
+    ApiContractMismatch {
+        grant_contract: Option<i64>,
+        binary_contract: i64,
+        source: Option<String>,
+    },
+    PayloadSkew {
+        detail: String,
+    },
     RemoteEndpoint,
-    #[error("config revision mismatch")]
     ConfigRevisionMismatch,
-    #[error("grant revoked")]
     Revoked,
-    #[error("grant operation timed out")]
     Timeout,
-    #[error("malformed grant: {0}")]
     Malformed(String),
-    #[error("grant io error: {0}")]
     Io(String),
 }
+
+impl fmt::Display for GrantError {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::DaemonRequired => f.write_str("daemon required"),
+            Self::Expired => f.write_str("grant expired"),
+            Self::SchemaMismatch => f.write_str("schema identity mismatch"),
+            Self::DeploymentMismatch => f.write_str("deployment mismatch"),
+            Self::ApiContractMismatch {
+                grant_contract,
+                binary_contract,
+                source,
+            } => f.write_str(&api_contract_mismatch_display(
+                grant_contract,
+                binary_contract,
+                source,
+            )),
+            Self::PayloadSkew { detail } => write!(f, "grant payload skew: {detail}"),
+            Self::RemoteEndpoint => f.write_str("remote daemon endpoint refused"),
+            Self::ConfigRevisionMismatch => f.write_str("config revision mismatch"),
+            Self::Revoked => f.write_str("grant revoked"),
+            Self::Timeout => f.write_str("grant operation timed out"),
+            Self::Malformed(message) => write!(f, "malformed grant: {message}"),
+            Self::Io(message) => write!(f, "grant io error: {message}"),
+        }
+    }
+}
+
+impl std::error::Error for GrantError {}
 
 impl GrantError {
     pub fn cli_code(&self) -> &'static str {
@@ -76,7 +102,8 @@ impl GrantError {
             Self::Expired => "expired",
             Self::SchemaMismatch => "schema_mismatch",
             Self::DeploymentMismatch => "deployment_mismatch",
-            Self::ApiContractMismatch => "api_contract_mismatch",
+            Self::ApiContractMismatch { .. } => "api_contract_mismatch",
+            Self::PayloadSkew { .. } => "payload_skew",
             Self::RemoteEndpoint => "remote_endpoint",
             Self::ConfigRevisionMismatch => "config_revision_mismatch",
             Self::Revoked => "revoked",
@@ -119,6 +146,20 @@ impl GrantError {
     }
 }
 
+fn api_contract_mismatch_display(
+    grant_contract: &Option<i64>,
+    binary_contract: &i64,
+    source: &Option<String>,
+) -> String {
+    let message = format!(
+        "grant api contract {grant_contract:?} does not match this binary's supported contract {binary_contract}"
+    );
+    match source {
+        Some(source) => format!("{source}: {message}"),
+        None => message,
+    }
+}
+
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum GrantSource {
     ManagedFile,
@@ -143,15 +184,6 @@ impl AcquiredGrant {
     pub fn permits_ai(&self) -> bool {
         self.permits_datastore() && self.daemon_reachable
     }
-}
-
-#[derive(Clone, Debug, PartialEq, Eq)]
-pub enum CachedGrantInspection {
-    Absent,
-    Malformed,
-    Valid { expires_at: i64, remaining_ttl: i64 },
-    Expiring { expires_at: i64, remaining_ttl: i64 },
-    Expired { expires_at: i64 },
 }
 
 #[derive(Clone, Debug)]
@@ -263,61 +295,6 @@ where
             present(&refreshed.bundle)
         }
         Err(error) => Err(error),
-    }
-}
-
-pub fn inspect_cached_grant(project_root: impl AsRef<Path>) -> CachedGrantInspection {
-    inspect_cached_grant_at(project_root.as_ref(), None, None, None)
-}
-
-pub fn inspect_cached_grant_at(
-    project_root: &Path,
-    home: Option<&Path>,
-    daemon_url: Option<&str>,
-    now: Option<i64>,
-) -> CachedGrantInspection {
-    let Ok(home) = resolve_home(home) else {
-        return CachedGrantInspection::Malformed;
-    };
-    let Ok(project_id) = crate::project::read_project_id(project_root) else {
-        return CachedGrantInspection::Malformed;
-    };
-    let now = now.unwrap_or_else(unix_now);
-    let daemon_url = daemon_url
-        .map(ToOwned::to_owned)
-        .unwrap_or_else(crate::daemon_url::daemon_url);
-    let token = load_binding(&home, &daemon_url)
-        .map(|binding| binding.deployment_token)
-        .or_else(|| {
-            is_default_local_endpoint(&daemon_url)
-                .ok()
-                .filter(|is_default| *is_default)
-                .map(|_| derived_deployment_token(&home))
-        });
-    let Some(token) = token else {
-        return CachedGrantInspection::Absent;
-    };
-    let path = interactive_cache_path(&home, &token, &project_id);
-    if !path.exists() {
-        return CachedGrantInspection::Absent;
-    }
-    let Ok(grant) = load_grant_file(&path) else {
-        return CachedGrantInspection::Malformed;
-    };
-    if grant.is_expired(now) {
-        return CachedGrantInspection::Expired {
-            expires_at: grant.expires_at,
-        };
-    }
-    if grant.past_half_ttl(now) {
-        return CachedGrantInspection::Expiring {
-            expires_at: grant.expires_at,
-            remaining_ttl: grant.remaining_ttl(now),
-        };
-    }
-    CachedGrantInspection::Valid {
-        expires_at: grant.expires_at,
-        remaining_ttl: grant.remaining_ttl(now),
     }
 }
 

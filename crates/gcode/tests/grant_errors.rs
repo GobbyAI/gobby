@@ -146,9 +146,13 @@ fn grant_errors_stable_contract() {
             2,
         ),
         (
-            GrantError::ApiContractMismatch,
+            GrantError::ApiContractMismatch {
+                grant_contract: Some(99),
+                binary_contract: 1,
+                source: None,
+            },
             "api_contract_mismatch",
-            "api contract mismatch",
+            "grant api contract Some(99) does not match this binary's supported contract 1",
             2,
         ),
         (

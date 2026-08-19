@@ -381,7 +381,14 @@ fn api_contract_gate() {
     let mut request = harness.request(None);
     request.managed_bootstrap = Some(path.clone());
     let error = acquire_with(&request).expect_err("contract");
-    assert_eq!(error, GrantError::ApiContractMismatch);
+    assert_eq!(
+        error,
+        GrantError::ApiContractMismatch {
+            grant_contract: Some(99),
+            binary_contract: EXPECTED_API_CONTRACT,
+            source: None,
+        }
+    );
     assert_eq!(error.cli_code(), "api_contract_mismatch");
     assert_eq!(error.exit_status(), 2);
 
@@ -390,7 +397,7 @@ fn api_contract_gate() {
         let raw = fs::read(old_client).expect("old/new golden");
         let grant: GrantBundle = serde_json::from_slice(raw.trim_ascii()).expect("parse");
         assert_ne!(grant.api_contract, EXPECTED_API_CONTRACT);
-        assert!(matches!(
+        assert_eq!(
             validate_for_construction(
                 &grant,
                 &grant.principal.project_id,
@@ -398,8 +405,12 @@ fn api_contract_gate() {
                 None,
                 grant.principal.kind.is_managed()
             ),
-            Err(GrantError::ApiContractMismatch)
-        ));
+            Err(GrantError::ApiContractMismatch {
+                grant_contract: Some(grant.api_contract),
+                binary_contract: EXPECTED_API_CONTRACT,
+                source: None,
+            })
+        );
     } else {
         let (_, mut grant) = load_golden("direct_datastores.json");
         grant.api_contract = EXPECTED_API_CONTRACT + 1;
@@ -412,9 +423,85 @@ fn api_contract_gate() {
                 None,
                 false
             ),
-            Err(GrantError::ApiContractMismatch)
+            Err(GrantError::ApiContractMismatch {
+                grant_contract: Some(grant.api_contract),
+                binary_contract: EXPECTED_API_CONTRACT,
+                source: None,
+            })
         );
     }
+}
+
+#[test]
+fn unknown_grant_field_with_matching_contract_is_payload_skew() {
+    let grant = fixture_grant(PrincipalKind::Interactive);
+    let mut value = serde_json::to_value(&grant).expect("json");
+    value
+        .as_object_mut()
+        .expect("object")
+        .insert("credential_generation".into(), json!(1));
+    let raw = serde_json::to_vec(&value).expect("serialize");
+    let error = parse_grant_json(&raw).expect_err("skew");
+    assert!(
+        matches!(error, GrantError::PayloadSkew { .. }),
+        "expected PayloadSkew, got {error:?}"
+    );
+    assert_eq!(error.cli_code(), "payload_skew");
+    assert_eq!(error.exit_status(), 2);
+    assert!(
+        error.to_string().starts_with("grant payload skew:"),
+        "typed skew must wrap the serde dump, got {}",
+        error
+    );
+}
+
+#[test]
+fn wrong_api_contract_parses_to_enriched_mismatch() {
+    let mut grant = fixture_grant(PrincipalKind::Interactive);
+    grant.api_contract = 99;
+    grant = grant.with_checksum();
+    let raw = serde_json::to_vec(&grant).expect("serialize");
+    let error = parse_grant_json(&raw).expect_err("mismatch");
+    assert_eq!(
+        error,
+        GrantError::ApiContractMismatch {
+            grant_contract: Some(99),
+            binary_contract: EXPECTED_API_CONTRACT,
+            source: None,
+        }
+    );
+    assert_eq!(
+        error.to_string(),
+        format!(
+            "grant api contract {:?} does not match this binary's supported contract {}",
+            Some(99i64),
+            EXPECTED_API_CONTRACT
+        )
+    );
+    assert_eq!(error.cli_code(), "api_contract_mismatch");
+    assert_eq!(error.exit_status(), 2);
+}
+
+#[test]
+fn absent_api_contract_parses_to_enriched_mismatch() {
+    let grant = fixture_grant(PrincipalKind::Interactive);
+    let mut value = serde_json::to_value(&grant).expect("json");
+    value
+        .as_object_mut()
+        .expect("object")
+        .remove("api_contract");
+    let raw = serde_json::to_vec(&value).expect("serialize");
+    let error = parse_grant_json(&raw).expect_err("absent");
+    assert_eq!(
+        error,
+        GrantError::ApiContractMismatch {
+            grant_contract: None,
+            binary_contract: EXPECTED_API_CONTRACT,
+            source: None,
+        }
+    );
+    assert_eq!(error.cli_code(), "api_contract_mismatch");
+    assert_eq!(error.exit_status(), 2);
 }
 
 #[test]
@@ -485,7 +572,7 @@ fn corrupt_grant_refused_offline() {
     let path = interactive_cache_path(&harness.home, &grant.deployment.token, PROJECT);
     write_grant_file(&path, &grant).expect("write");
     let mut raw = fs::read(&path).expect("read");
-    raw[20] ^= 0x01;
+    raw[0] ^= 0x01;
     fs::write(&path, raw).expect("corrupt payload");
     let error =
         acquire_with(&harness.request(Some("http://127.0.0.1:1".into()))).expect_err("payload");

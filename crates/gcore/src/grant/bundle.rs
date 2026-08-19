@@ -244,9 +244,34 @@ pub fn verify_payload_checksum(grant: &GrantBundle) -> Result<(), GrantError> {
     Ok(())
 }
 
+#[derive(Deserialize)]
+struct GrantProbe {
+    #[serde(default)]
+    #[allow(dead_code)]
+    version: Option<i64>,
+    #[serde(default)]
+    api_contract: Option<i64>,
+}
+
 pub fn parse_grant_json(raw: &[u8]) -> Result<GrantBundle, GrantError> {
-    let grant: GrantBundle = serde_json::from_slice(raw.trim_ascii())
+    let trimmed = raw.trim_ascii();
+    let probe: GrantProbe = serde_json::from_slice(trimmed)
         .map_err(|error| GrantError::Malformed(error.to_string()))?;
+    if probe.api_contract != Some(EXPECTED_API_CONTRACT) {
+        return Err(GrantError::ApiContractMismatch {
+            grant_contract: probe.api_contract,
+            binary_contract: EXPECTED_API_CONTRACT,
+            source: None,
+        });
+    }
+    let grant: GrantBundle = serde_json::from_slice(trimmed).map_err(|error| {
+        let message = error.to_string();
+        if message.contains("unknown field") {
+            GrantError::PayloadSkew { detail: message }
+        } else {
+            GrantError::Malformed(message)
+        }
+    })?;
     verify_payload_checksum(&grant)?;
     Ok(grant)
 }
@@ -266,7 +291,11 @@ pub fn validate_for_construction(
     }
     verify_payload_checksum(grant)?;
     if grant.api_contract != EXPECTED_API_CONTRACT {
-        return Err(GrantError::ApiContractMismatch);
+        return Err(GrantError::ApiContractMismatch {
+            grant_contract: Some(grant.api_contract),
+            binary_contract: EXPECTED_API_CONTRACT,
+            source: None,
+        });
     }
     if grant.schema_identity != expected_schema_identity() {
         return Err(GrantError::SchemaMismatch);
