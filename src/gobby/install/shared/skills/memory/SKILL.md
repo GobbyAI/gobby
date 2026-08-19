@@ -52,6 +52,67 @@ Memories that survive are **specific, contextual, and time-resilient**.
 
 **Durability test**: Will this be useful in 3 months? If the answer depends on code not changing, it's not durable.
 
+## Every Memory Needs a Rationale
+
+`create_memory` requires a `rationale`: one or two sentences (max 500 characters) on
+why a **future, unrelated session** should be re-served this memory. Missing, empty,
+whitespace-only, and over-length rationales are rejected with `rationale_required`.
+The MCP tool, the HTTP route, and `gobby memory create --rationale` all enforce it.
+
+A rationale is not a summary of the content — it is the argument for the memory's
+continued existence. Write the sentence a future session would need to hear to agree
+the memory is still worth reading.
+
+**Good:**
+
+> **content:** "Gobby commits use `[gobby-#NNNNN] <type>: <summary>`; the types are fix, feat, refactor, chore, docs."
+> **rationale:** "Every session that commits here needs this format, and it is enforced by hooks rather than stated anywhere obvious."
+
+The claim is durable — it names a standing convention and says why rediscovery is
+expensive. Nothing in it expires.
+
+**Bad:**
+
+> **content:** "Review run 57c41dbb found 3 blocking findings in plan 380b1294; resolved in round 2."
+> **rationale:** "Records the outcome of the round-1 plan review."
+
+Rejected, and the rationale is what exposes it: the only honest claim available for
+this memory is that it describes one event that already finished. Hex IDs, run
+numbers, and dated status are the tell. When the best rationale you can write
+describes a one-time event, the finding belongs in the plan evidence or a task.
+
+**Rationale test**: if it needs a past-tense verb and a specific identifier, you are
+logging, not memorizing.
+
+Rationales are visible at recall time — injected `<project-memory>` blocks render
+`why: <rationale>` next to `memory_id`, so a weak claim is read by every session the
+memory reaches.
+
+### Provenance is derived, not passed
+
+`source_task_id` and `created_by_agent` are filled in automatically:
+
+- `source_task_id` — the open task your session currently has claimed (the most
+  recently updated one, if you hold several).
+- `created_by_agent` — your agent run's agent name, falling back to the session's CLI
+  source for interactive sessions.
+
+Pass either argument only to override the derived value. Derivation failures degrade
+to `None` instead of failing the create.
+
+### Rationale controls how long a memory lives
+
+Dream's audit judges every candidate against its rationale, and a `delete` or
+`refresh` verdict must quote or paraphrase that rationale and say why the claim no
+longer holds. Two consequences:
+
+- A rationale describing one-time state hands dream a citable reason to reap the
+  memory as soon as that state passes.
+- A legacy row with a `NULL` rationale is not deletable on that basis alone — a
+  missing rationale is treated as absent evidence, never as a verdict.
+
+Rationale quality is the main lever you have over a memory's lifetime.
+
 ## What to Remember
 
 - **User preferences** — coding style, communication preferences, workflow choices
