@@ -261,7 +261,10 @@ class TestSearchPipelineExecutions:
         result = search_pipeline_executions(mock_em, query="deploy", include_steps=True)
 
         assert "steps" in result["executions"][0]
-        assert result["executions"][0]["steps"][0]["error"] == "Connection refused"
+        step = result["executions"][0]["steps"][0]
+        assert step["error_present"] is True
+        assert step["error_chars"] == len("Connection refused")
+        assert "error" not in step
 
 
 class TestClearPipelineExecutionHistory:

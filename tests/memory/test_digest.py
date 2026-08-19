@@ -577,6 +577,7 @@ class TestBuildTurnAndDigest:
             call.kwargs.get("name")
             for call in mock_memory_manager.schedule_background_task.call_args_list
         ]
+        # session_summary is unset on _digest_config(), so refresh is skipped.
         assert not any(
             isinstance(name, str) and name.startswith("session-summary-refresh")
             for name in refresh_names
@@ -613,6 +614,40 @@ class TestBuildTurnAndDigest:
             for call in mock_memory_manager.schedule_background_task.call_args_list
         ]
         assert "session-summary-refresh-session-123" in refresh_names
+
+    @pytest.mark.asyncio
+    async def test_does_not_schedule_summary_refresh_when_at_watermark(
+        self,
+        mock_memory_manager,
+        mock_session_manager,
+        mock_llm_service,
+    ) -> None:
+        session = mock_session_manager.get.return_value
+        session.summary_digest_turn_count = 1
+        session.summary_markdown = "## Current State\nCompact snapshot"
+        digest_config = _DigestTestConfig(
+            digest=_digest_config().digest,
+            session_summary=object(),
+        )
+
+        result = await build_turn_and_digest(
+            memory_manager=mock_memory_manager,
+            session_manager=mock_session_manager,
+            session_id="session-123",
+            prompt_text="Fix the authentication bug in auth.py",
+            llm_service=mock_llm_service,
+            config=digest_config,
+        )
+
+        assert result is not None
+        refresh_names = [
+            call.kwargs.get("name")
+            for call in mock_memory_manager.schedule_background_task.call_args_list
+        ]
+        assert not any(
+            isinstance(name, str) and name.startswith("session-summary-refresh")
+            for name in refresh_names
+        )
 
     @pytest.mark.asyncio
     async def test_codex_turn_start_catches_up_once_without_completed_turn_recovery(

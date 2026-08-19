@@ -16,6 +16,8 @@ from gobby.communications.adapters.telegram import TelegramAdapter
 from gobby.communications.attachments import AttachmentManager
 from gobby.communications.models import ChannelConfig, CommsAttachment, CommsMessage
 
+pytestmark = pytest.mark.unit
+
 
 @pytest.fixture
 def channel_config() -> ChannelConfig:

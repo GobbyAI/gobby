@@ -30,7 +30,11 @@ from gobby.memory.title_heuristics import (
     is_template_placeholder,
     normalize_title_candidate,
 )
-from gobby.sessions.summary_refresh import coerce_digest_turn_count, digest_turn_count
+from gobby.sessions.summary_refresh import (
+    DIGEST_TURN_SENTINEL_RE,
+    coerce_digest_turn_count,
+    digest_turn_count,
+)
 from gobby.storage.hub.protocol import HubDatabase
 from gobby.storage.sessions._title_defaults import DIGEST_TITLE_SOURCE, MANUAL_TITLE_SOURCE
 from gobby.utils.injected_context import strip_injected_context
@@ -59,7 +63,6 @@ class _DigestLockEntry:
     users: int = 0
 
 
-_DIGEST_TURN_SENTINEL_RE = re.compile(r"(?m)^[ \t]*<!-- gobby:digest-turn:(\d+) -->[ \t]*$")
 _DIGEST_LOCKS: dict[str, _DigestLockEntry] = {}
 _DIGEST_LOCKS_GUARD = threading.Lock()
 
@@ -334,13 +337,13 @@ def _get_next_turn_number(previous_digest: str | None) -> int:
     if not previous_digest:
         return 1
 
-    turn_numbers = _DIGEST_TURN_SENTINEL_RE.findall(previous_digest)
+    turn_numbers = DIGEST_TURN_SENTINEL_RE.findall(previous_digest)
     return max((int(number) for number in turn_numbers), default=0) + 1
 
 
 def _sanitize_turn_markdown(turn_markdown: str) -> str:
     """Remove reserved sentinels so model output cannot forge digest state."""
-    return _DIGEST_TURN_SENTINEL_RE.sub("", turn_markdown).strip()
+    return DIGEST_TURN_SENTINEL_RE.sub("", turn_markdown).strip()
 
 
 def _build_turn_record_prompt(prompt_text: str, response_text: str) -> str:

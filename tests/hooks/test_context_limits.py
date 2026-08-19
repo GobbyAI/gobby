@@ -149,6 +149,7 @@ def test_persist_kwargs_from_hook_response_use_manager_database() -> None:
     from unittest.mock import MagicMock, patch
 
     from gobby.adapters.degradation import persist_kwargs_from_hook_response
+    from gobby.config.features import ToolResultOffloadConfig
     from gobby.hooks.events import HookResponse
 
     store = MagicMock()
@@ -161,6 +162,7 @@ def test_persist_kwargs_from_hook_response_use_manager_database() -> None:
         kwargs = persist_kwargs_from_hook_response(response, hook_manager)
     store_cls.assert_called_once()
     assert store_cls.call_args.args[0] is hook_manager._database
+    assert isinstance(store_cls.call_args.args[1], ToolResultOffloadConfig)
     assert kwargs["session_id"] == "sess-1"
     assert kwargs["project_id"] == "proj-1"
     assert kwargs["store"] is store

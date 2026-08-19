@@ -31,14 +31,12 @@ def digest_turns(digest_markdown: str | None) -> list[str]:
     if not isinstance(digest_markdown, str) or not digest_markdown.strip():
         return []
 
+    turns: list[str] = []
     sentinels = list(DIGEST_TURN_SENTINEL_RE.finditer(digest_markdown))
     if sentinels:
-        turns: list[str] = []
         for index, match in enumerate(sentinels):
             end = (
-                sentinels[index + 1].start()
-                if index + 1 < len(sentinels)
-                else len(digest_markdown)
+                sentinels[index + 1].start() if index + 1 < len(sentinels) else len(digest_markdown)
             )
             turns.append(digest_markdown[match.start() : end].strip())
         return turns
@@ -48,7 +46,6 @@ def digest_turns(digest_markdown: str | None) -> list[str]:
         return []
 
     parts = DIGEST_TURN_PATTERN.split(digest_markdown)
-    turns: list[str] = []
     for index, heading in enumerate(headings):
         content = parts[index + 1] if index + 1 < len(parts) else ""
         turns.append(f"{heading}\n{content.strip()}".strip())

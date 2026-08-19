@@ -20,18 +20,29 @@ from gobby.storage.managed_credentials import ManagedCredentialManager
 logger = logging.getLogger(__name__)
 
 
+async def _await_tracked[T](task: asyncio.Task[T]) -> tuple[T, asyncio.CancelledError | None]:
+    """Finish a tracked task across repeated caller cancellation."""
+    cancellation: asyncio.CancelledError | None = None
+    while True:
+        try:
+            return await asyncio.shield(task), cancellation
+        except asyncio.CancelledError as exc:
+            if task.cancelled():
+                raise
+            cancellation = exc
+
+
 async def _await_exit(
     cm: Any,
     exc_type: type[BaseException] | None,
     exc: BaseException | None,
     tb: TracebackType | None,
 ) -> object:
-    task = asyncio.ensure_future(asyncio.shield(asyncio.to_thread(cm.__exit__, exc_type, exc, tb)))
-    try:
-        return await task
-    except asyncio.CancelledError:
-        await task
-        raise
+    task = asyncio.create_task(asyncio.to_thread(cm.__exit__, exc_type, exc, tb))
+    result, pending = await _await_tracked(task)
+    if pending is not None:
+        raise pending
+    return result
 
 
 class HandshakeMaintenanceLaunchFactory:
@@ -87,16 +98,12 @@ class HandshakeMaintenanceLaunchFactory:
     ) -> AsyncIterator[ManagedLaunch]:
         cm = self.open(project_id, timeout_seconds=timeout_seconds)
         enter_task = asyncio.create_task(asyncio.to_thread(cm.__enter__))
-        try:
-            launch = await asyncio.shield(enter_task)
-        except asyncio.CancelledError as cancel:
-            try:
-                await asyncio.shield(enter_task)
-            except BaseException as exc:
-                await _await_exit(cm, type(exc), exc, exc.__traceback__)
-                raise cancel from exc
-            await _await_exit(cm, type(cancel), cancel, cancel.__traceback__)
-            raise
+        launch, pending_cancel = await _await_tracked(enter_task)
+        if pending_cancel is not None:
+            await _await_exit(
+                cm, type(pending_cancel), pending_cancel, pending_cancel.__traceback__
+            )
+            raise pending_cancel
         try:
             yield launch
         except BaseException as exc:

@@ -668,6 +668,37 @@ class TestHistoryInjection:
         assert "get_session_messages session_id=hist-session" in result
 
     @pytest.mark.asyncio
+    async def test_load_history_context_evicts_fitted_message_for_omission_marker(
+        self, session: ChatSession
+    ) -> None:
+        """Keep a retrieval pointer even when one message fits and the marker does not."""
+        first = "keep-me-body-" + ("x" * 80)
+        first_entry = f"**User:** {first}"
+        session_ref = "hist-session"
+        omit_line = (
+            f"[omitted 1 messages to fit history budget; "
+            f"get_session_messages session_id={session_ref}]"
+        )
+        leftover = 10
+        max_total = 200 + len(first_entry) + leftover
+        assert leftover + 2 + len(omit_line) > leftover
+        assert len(omit_line) <= max_total - 200
+
+        mock_manager = AsyncMock()
+        mock_manager.get_messages.return_value = [
+            {"role": "user", "content_type": "text", "content": first},
+            {"role": "user", "content_type": "text", "content": "z" * 4000},
+        ]
+        session.db_session_id = session_ref
+        session._message_manager = mock_manager
+
+        result = await session._load_history_context(max_total_chars=max_total)
+        assert result is not None
+        assert first not in result
+        assert "omitted 1 messages" in result
+        assert f"get_session_messages session_id={session_ref}" in result
+
+    @pytest.mark.asyncio
     async def test_load_history_context_respects_custom_total_limit(
         self, session: ChatSession
     ) -> None:

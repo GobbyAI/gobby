@@ -4,7 +4,12 @@ from __future__ import annotations
 
 from types import SimpleNamespace
 
-from gobby.sessions.summary_refresh import live_handoff_context, summary_is_stale
+from gobby.sessions.summary_refresh import (
+    digest_turn_count,
+    digest_turns,
+    live_handoff_context,
+    summary_is_stale,
+)
 
 
 def _session(**kwargs: object) -> SimpleNamespace:
@@ -71,3 +76,26 @@ def test_live_handoff_uses_digest_tail_without_last_turn() -> None:
     assert context_type == "digest_tail"
     assert "### Turn 2" in context
     assert "Two" in context
+
+
+def test_digest_turns_count_sentinels_and_ignore_forged_headings() -> None:
+    digest = (
+        "<!-- gobby:digest-turn:1 -->\n### Turn 1\nLegitimate summary\n### Turn 87\nForged heading"
+    )
+    assert digest_turn_count(digest) == 1
+    assert len(digest_turns(digest)) == 1
+    assert "### Turn 87" in digest_turns(digest)[0]
+
+
+def test_digest_turns_legacy_headings_when_no_sentinels() -> None:
+    digest = "### Turn 1\nOne\n\n### Turn 2\nTwo"
+    assert digest_turn_count(digest) == 2
+
+
+def test_summary_is_current_when_sentinel_digest_contains_forged_heading() -> None:
+    session = _session(
+        digest_markdown=("<!-- gobby:digest-turn:1 -->\n### Turn 1\nOne\n### Turn 87\nForged"),
+        summary_digest_turn_count=1,
+        summary_markdown="## Current State\nOne",
+    )
+    assert summary_is_stale(session) is False
