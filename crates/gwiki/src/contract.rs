@@ -6,7 +6,7 @@ use gobby_core::cli_contract::{
 pub fn contract() -> CliContract {
     CliContract {
         tool: "gwiki",
-        contract_version: 18,
+        contract_version: 19,
         summary: "Local-first wiki CLI for capture, search, upkeep, and synthesis.",
         global_flags: vec![format_flag(), FlagContract::switch("--quiet")],
         scope: Some(ScopeContract {
@@ -613,7 +613,13 @@ pub fn contract() -> CliContract {
                 daemon_consumed: true,
                 positionals: vec![],
                 flags: vec![],
-                json_output_keys: scoped_keys(vec!["status", "daemon_url", "runtime", "services"]),
+                json_output_keys: scoped_keys(vec![
+                    "status",
+                    "daemon_url",
+                    "grant",
+                    "runtime",
+                    "services",
+                ]),
                 ..CommandContract::new("status", "Show shell readiness.")
             },
             CommandContract {

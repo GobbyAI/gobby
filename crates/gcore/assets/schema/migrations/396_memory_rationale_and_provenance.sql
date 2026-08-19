@@ -15,5 +15,3 @@ ALTER TABLE ONLY memories
     ADD CONSTRAINT memories_source_task_id_fkey
     FOREIGN KEY (source_task_id) REFERENCES tasks(id)
     ON DELETE SET NULL DEFERRABLE;
-
-CREATE INDEX idx_memories_source_task ON memories USING btree (source_task_id);

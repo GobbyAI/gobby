@@ -892,7 +892,7 @@ fn hmac_sha256_rejects_empty_key() {
 
 #[test]
 fn expected_schema_identity_tracks_catalog_head() {
-    assert_eq!(expected_schema_identity().latest_version, 396);
+    assert_eq!(expected_schema_identity().latest_version, 397);
 }
 
 #[test]
@@ -1740,6 +1740,20 @@ fn inspect_cached_grant_reports_malformed_reason() {
         }
         other => panic!("expected Malformed {{ reason }}, got {other:?}"),
     }
+}
+
+#[test]
+fn inspect_cached_grant_missing_file_is_absent() {
+    let harness = Harness::new();
+    let grant = fixture_grant(PrincipalKind::Interactive);
+    write_binding_for(&harness, "http://127.0.0.1:60887", &grant.deployment.token);
+    let inspected = inspect_cached_grant_at(
+        &harness.project_root,
+        Some(&harness.home),
+        Some("http://127.0.0.1:60887"),
+        Some(NOW),
+    );
+    assert!(matches!(inspected, CachedGrantInspection::Absent));
 }
 
 // Changing this inventory requires bumping EXPECTED_API_CONTRACT (Rust) and

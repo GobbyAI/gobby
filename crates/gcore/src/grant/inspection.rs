@@ -2,7 +2,7 @@
 
 use std::path::Path;
 
-use super::cache::{interactive_cache_path, load_binding, load_grant_file};
+use super::cache::{interactive_cache_path, is_missing_grant_file, load_binding, load_grant_file};
 use super::handshake::{deployment_token as derived_deployment_token, is_default_local_endpoint};
 use super::{GrantError, resolve_home, unix_now};
 
@@ -76,11 +76,11 @@ pub fn inspect_cached_grant_at(
         return CachedGrantInspection::Absent;
     };
     let path = interactive_cache_path(&home, &token, &project_id);
-    if !path.exists() {
-        return CachedGrantInspection::Absent;
-    }
     let grant = match load_grant_file(&path) {
         Ok(grant) => grant,
+        Err(error) if is_missing_grant_file(&error) => {
+            return CachedGrantInspection::Absent;
+        }
         Err(error) => {
             return CachedGrantInspection::Malformed {
                 reason: error.to_string(),

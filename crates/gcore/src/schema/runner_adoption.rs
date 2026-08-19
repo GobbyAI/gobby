@@ -109,6 +109,7 @@ pub(super) fn adopted_column_contracts() -> BTreeMap<&'static str, &'static [&'s
                 "callee_target_kind",
                 "callee_external_module",
                 "file_path",
+                "content_hash",
                 "line",
             ] as &[_],
         ),

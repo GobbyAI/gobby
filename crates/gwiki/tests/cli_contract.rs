@@ -167,7 +167,7 @@ fn json_contains_key(value: &Value, key: &str) -> bool {
 #[test]
 fn parity_contract_tracks_code_grounding_and_dependency_classification() {
     let contract = pinned_contract();
-    assert_eq!(contract["contract_version"], 18);
+    assert_eq!(contract["contract_version"], 19);
     assert!(
         contract["commands"]
             .as_array()

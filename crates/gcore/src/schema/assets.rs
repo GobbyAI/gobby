@@ -148,14 +148,20 @@ pub(crate) const MIGRATIONS: &[EmbeddedMigration] = &[
     EmbeddedMigration {
         version: 395,
         filename: "395_code_inheritance.sql",
-        checksum: "a8e488ff1515e14c0544f0f8efbd5f9ce0869a0861ee3d7a7eb6613f41972ab9",
+        checksum: "717946c2093e4db2bffa21e6427964fc88ee2e6d90893af7fc2737248205feb0",
         sql: include_str!("../../assets/schema/migrations/395_code_inheritance.sql"),
     },
     EmbeddedMigration {
         version: 396,
         filename: "396_memory_rationale_and_provenance.sql",
-        checksum: "0696d021aee10934261018742e7d632511591de8c59f20f3203623cbe366cb7d",
+        checksum: "67f01619b6ae8f637c868ff9b8e86c8a2f6e7168299bd506551e2b366266c79f",
         sql: include_str!("../../assets/schema/migrations/396_memory_rationale_and_provenance.sql"),
+    },
+    EmbeddedMigration {
+        version: 397,
+        filename: "397_memories_source_task_index.sql",
+        checksum: "72104d71d3c69a8c277e206cf1d8932570c532899bed45dc006ecec02e4cdddd",
+        sql: include_str!("../../assets/schema/migrations/397_memories_source_task_index.sql"),
     },
 ];
 const _: &str = include_str!("../../assets/schema/migrations/.gitkeep");
@@ -186,6 +192,14 @@ pub(crate) const PRIOR_RECEIPT_CHECKSUMS: &[(i32, &str)] = &[
     (
         391,
         "40fafbe193afe1a097e71f80d236c466cb759533160eb56fe9afd6b8c74321cf",
+    ),
+    (
+        395,
+        "a8e488ff1515e14c0544f0f8efbd5f9ce0869a0861ee3d7a7eb6613f41972ab9",
+    ),
+    (
+        396,
+        "0696d021aee10934261018742e7d632511591de8c59f20f3203623cbe366cb7d",
     ),
 ];
 

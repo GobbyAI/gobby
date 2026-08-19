@@ -1,6 +1,6 @@
 {
   "tool": "gwiki",
-  "contract_version": 18,
+  "contract_version": 19,
   "summary": "Local-first wiki CLI for capture, search, upkeep, and synthesis.",
   "global_flags": [
     {
@@ -1301,6 +1301,7 @@
         "scope",
         "status",
         "daemon_url",
+        "grant",
         "runtime",
         "services"
       ]

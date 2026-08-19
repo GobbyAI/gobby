@@ -44,13 +44,17 @@ $identity$;
 DO $constraints$
 BEGIN
     IF NOT EXISTS (
-        SELECT 1 FROM pg_constraint WHERE conname = 'code_inheritance_pkey'
+        SELECT 1 FROM pg_constraint
+        WHERE conname = 'code_inheritance_pkey'
+          AND conrelid = 'code_inheritance'::regclass
     ) THEN
         ALTER TABLE ONLY code_inheritance
             ADD CONSTRAINT code_inheritance_pkey PRIMARY KEY (id);
     END IF;
     IF NOT EXISTS (
-        SELECT 1 FROM pg_constraint WHERE conname = 'code_inheritance_unique_target'
+        SELECT 1 FROM pg_constraint
+        WHERE conname = 'code_inheritance_unique_target'
+          AND conrelid = 'code_inheritance'::regclass
     ) THEN
         ALTER TABLE ONLY code_inheritance
             ADD CONSTRAINT code_inheritance_unique_target UNIQUE NULLS NOT DISTINCT (
@@ -61,7 +65,9 @@ BEGIN
             );
     END IF;
     IF NOT EXISTS (
-        SELECT 1 FROM pg_constraint WHERE conname = 'code_inheritance_content_fkey'
+        SELECT 1 FROM pg_constraint
+        WHERE conname = 'code_inheritance_content_fkey'
+          AND conrelid = 'code_inheritance'::regclass
     ) THEN
         ALTER TABLE ONLY code_inheritance
             ADD CONSTRAINT code_inheritance_content_fkey
@@ -72,6 +78,7 @@ BEGIN
     IF NOT EXISTS (
         SELECT 1 FROM pg_constraint
         WHERE conname = 'code_inheritance_heritage_kind_check'
+          AND conrelid = 'code_inheritance'::regclass
     ) THEN
         ALTER TABLE ONLY code_inheritance
             ADD CONSTRAINT code_inheritance_heritage_kind_check

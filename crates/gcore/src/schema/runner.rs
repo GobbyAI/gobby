@@ -519,9 +519,36 @@ fn gcore_hop_owns_code_inheritance_ddl(body: &str) -> bool {
     }
     let normalized = body.split_whitespace().collect::<Vec<_>>().join(" ");
     let upper = normalized.to_ascii_uppercase();
+    // FOREACH keeps baseline RLS DO blocks from being classified as code_inheritance DDL.
     (upper.starts_with("GRANT ") || upper.contains(" POLICY "))
-        && normalized.contains("code_inheritance")
+        && statement_targets_relation(&normalized, "code_inheritance")
         && !upper.contains("FOREACH")
+}
+
+fn statement_targets_relation(statement: &str, relation: &str) -> bool {
+    let tokens: Vec<&str> = statement.split_whitespace().collect();
+    let Some(on) = tokens
+        .iter()
+        .position(|token| token.eq_ignore_ascii_case("ON"))
+    else {
+        return false;
+    };
+    let Some(first) = tokens.get(on + 1).copied() else {
+        return false;
+    };
+    let raw = if first.eq_ignore_ascii_case("TABLE") || first.eq_ignore_ascii_case("SEQUENCE") {
+        tokens.get(on + 2).copied().unwrap_or("")
+    } else {
+        first
+    };
+    let name = trim_identifier(raw);
+    let name = name
+        .rsplit_once('.')
+        .map_or(name, |(_, relation_name)| relation_name);
+    name == relation
+        || name
+            .strip_prefix(relation)
+            .is_some_and(|suffix| suffix.starts_with('_'))
 }
 
 fn statement_body(mut statement: &str) -> &str {
