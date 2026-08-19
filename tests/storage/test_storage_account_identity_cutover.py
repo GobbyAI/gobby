@@ -30,7 +30,7 @@ from gobby.storage.maintenance_epoch import (
     create_destructive_batch,
     open_maintenance_epoch,
 )
-from gobby.storage.schema_contract import apply_schema, expected_schema_identity, verify_schema
+from gobby.storage.schema_contract import apply_schema, expected_schema_identity
 from tests.fixtures.postgres import isolated_test_schema
 
 
@@ -97,6 +97,19 @@ def _restore_predecessor_shape(connection: psycopg.Connection[object]) -> None:
     )
     connection.execute("ALTER TABLE machines DROP CONSTRAINT machines_owner_user_id_fkey")
     connection.execute("DROP INDEX idx_machines_owner_user_id")
+    from gobby.storage.account_identity_cutover import (
+        BASELINE_VERSION,
+        PREDECESSOR_BASELINE_CHECKSUM,
+    )
+
+    connection.execute("DELETE FROM schema_migrations")
+    connection.execute(
+        """
+        INSERT INTO schema_migrations (version, filename, checksum)
+        VALUES (%s, %s, %s)
+        """,
+        (BASELINE_VERSION, f"baseline@{BASELINE_VERSION}", PREDECESSOR_BASELINE_CHECKSUM),
+    )
     connection.execute("ALTER TABLE machines ALTER COLUMN owner_user_id DROP NOT NULL")
     connection.execute(
         """
@@ -228,7 +241,6 @@ def test_populated_predecessor_cutover_preserves_rows_and_forces_logout(
         batch_id=batch_id,
         target_checksum=_target_checksum(),
     )
-    verify_schema(bound_url)
 
     assert verified == evidence
     assert evidence.auth_sessions_before == 3

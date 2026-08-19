@@ -14,8 +14,20 @@ import pytest
 from gobby.agents.isolation import IsolationContext
 from gobby.config.app import DaemonConfig
 from gobby.workflows.definitions import AgentDefinitionBody
+from tests.agents.prepared_spawn import prepared_spawn
 
 pytestmark = pytest.mark.unit
+
+
+@pytest.fixture(autouse=True)
+def _prepare_terminal_spawn(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr(
+        "gobby.mcp_proxy.tools.spawn_agent._implementation.prepare_terminal_spawn",
+        lambda *args, **kwargs: prepared_spawn(
+            parent_session_id=str(kwargs.get("parent_session_id") or "parent"),
+            project_id=str(kwargs.get("project_id") or "proj"),
+        ),
+    )
 
 
 def _make_runner() -> MagicMock:

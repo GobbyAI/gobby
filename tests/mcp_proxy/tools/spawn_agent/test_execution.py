@@ -15,7 +15,6 @@ from gobby.agents.session import ChildSessionManager
 from gobby.storage.agents import LocalAgentRunManager
 from gobby.storage.sessions import SessionManager
 from gobby.storage.tasks import LocalTaskManager
-from tests.agents.prepared_spawn import prepared_spawn
 
 pytestmark = pytest.mark.unit
 
@@ -664,12 +663,24 @@ class TestSpawnAgentPreRegistration:
         sample_git_project: dict[str, object],
         mock_runner,
         agent_body,
+        monkeypatch: pytest.MonkeyPatch,
     ) -> None:
         from gobby.mcp_proxy.tools.spawn_agent import create_spawn_agent_registry
 
+        monkeypatch.setattr(
+            "gobby.utils.machine_id._cached_machine_id",
+            "21000000-0000-4000-8000-000000000004",
+        )
+
         sample_project = sample_git_project
         session_manager = SessionManager(temp_db)
-        parent_session_id = _register_parent_session(temp_db, sample_project, "parent-exception")
+        parent_session_id = session_manager.register_session(
+            external_id="parent-exception",
+            machine_id="21000000-0000-4000-8000-000000000004",
+            source="test",
+            project_id=str(sample_project["id"]),
+            title="Parent",
+        )
         child_manager = ChildSessionManager(session_manager)
         run_storage = LocalAgentRunManager(temp_db)
         mock_runner.child_session_manager = child_manager
@@ -678,23 +689,8 @@ class TestSpawnAgentPreRegistration:
         captured: dict[str, str] = {}
 
         async def execute_spawn(request) -> None:
-            child_session_id = session_manager.register_session(
-                external_id=request.session_id,
-                machine_id="21000000-0000-4000-8000-000000000001",
-                source="test-agent",
-                project_id=request.project_id,
-                parent_session_id=request.parent_session_id,
-                title="Child",
-            )
-            run_storage.create(
-                parent_session_id=request.parent_session_id,
-                provider=request.provider,
-                prompt=request.prompt,
-                child_session_id=child_session_id,
-                run_id=request.agent_run_id,
-            )
             captured["run_id"] = request.agent_run_id
-            captured["child_session_id"] = child_session_id
+            captured["child_session_id"] = request.session_id
             raise RuntimeError("tmux spawn exploded")
 
         registry = create_spawn_agent_registry(mock_runner, db=temp_db)
@@ -743,13 +739,9 @@ class TestSpawnAgentPreRegistration:
                 },
             )
 
-        run = run_storage.get(captured["run_id"])
         assert result["success"] is False
         assert result["error"] == "tmux spawn exploded"
-        assert run is not None
-        assert run.status == "cancelled"
-        assert run.error is None
-        assert run.child_session_id is None
+        assert run_storage.get(captured["run_id"]) is None
         assert session_manager.get(captured["child_session_id"]) is None
         mock_handler.cleanup_environment.assert_awaited_once()
 
@@ -760,9 +752,14 @@ class TestSpawnAgentPreRegistration:
         sample_git_project: dict[str, object],
         mock_runner,
         agent_body,
+        monkeypatch: pytest.MonkeyPatch,
     ) -> None:
         from gobby.mcp_proxy.tools.spawn_agent import create_spawn_agent_registry
 
+        monkeypatch.setattr(
+            "gobby.utils.machine_id._cached_machine_id",
+            "21000000-0000-4000-8000-000000000004",
+        )
         sample_project = sample_git_project
         task_manager = LocalTaskManager(temp_db)
         task = task_manager.create_task(
@@ -771,7 +768,13 @@ class TestSpawnAgentPreRegistration:
             validation_criteria="Test task completion is observable.",
         )
         session_manager = SessionManager(temp_db)
-        parent_session_id = _register_parent_session(temp_db, sample_project, "parent-attach")
+        parent_session_id = session_manager.register_session(
+            external_id="parent-attach",
+            machine_id="21000000-0000-4000-8000-000000000004",
+            source="test",
+            project_id=str(sample_project["id"]),
+            title="Parent",
+        )
         child_manager = ChildSessionManager(session_manager)
         run_storage = LocalAgentRunManager(temp_db)
         mock_runner.child_session_manager = child_manager
@@ -780,27 +783,11 @@ class TestSpawnAgentPreRegistration:
         captured: dict[str, str] = {}
 
         async def execute_spawn(request) -> SimpleNamespace:
-            child_session_id = session_manager.register_session(
-                external_id=request.session_id,
-                machine_id="21000000-0000-4000-8000-000000000001",
-                source="test-agent",
-                project_id=request.project_id,
-                parent_session_id=request.parent_session_id,
-                title="Child",
-            )
-            run_storage.create(
-                parent_session_id=request.parent_session_id,
-                provider=request.provider,
-                prompt=request.prompt,
-                child_session_id=child_session_id,
-                run_id=request.agent_run_id,
-                task_id=request.task_id,
-            )
             captured["run_id"] = request.agent_run_id
-            captured["child_session_id"] = child_session_id
+            captured["child_session_id"] = request.session_id
             return SimpleNamespace(
                 success=True,
-                child_session_id=child_session_id,
+                child_session_id=request.session_id,
                 status="pending",
                 terminal_type="none",
                 pid=None,

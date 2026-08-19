@@ -3,14 +3,17 @@
 from __future__ import annotations
 
 from collections.abc import Callable
+from typing import Any
 from unittest.mock import MagicMock
 
 import pytest
 
 from gobby.agents.isolation import IsolationContext
-from gobby.storage.hub.protocol import HubDatabase
+from gobby.agents.spawn import prepare_terminal_spawn as real_prepare_terminal_spawn
 from gobby.storage.definitions.agents import AgentDefinitionManager
+from gobby.storage.hub.protocol import HubDatabase
 from gobby.workflows.definitions import AgentDefinitionBody
+from tests.agents.prepared_spawn import prepared_spawn
 
 
 @pytest.fixture(autouse=True)
@@ -19,6 +22,24 @@ def _mock_spawn_machine_id(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setattr(
         "gobby.mcp_proxy.tools.spawn_agent._implementation.get_machine_id",
         lambda: "21000000-0000-4000-8000-000000000004",
+    )
+
+    def _prepare_terminal_spawn(*args: Any, **kwargs: Any) -> Any:
+        session_manager = kwargs.get("session_manager")
+        if session_manager is None and args:
+            session_manager = args[0]
+        storage = getattr(session_manager, "_storage", None)
+        db = getattr(storage, "db", None)
+        if db is not None and not isinstance(db, MagicMock):
+            return real_prepare_terminal_spawn(*args, **kwargs)
+        return prepared_spawn(
+            parent_session_id=str(kwargs.get("parent_session_id") or "parent"),
+            project_id=str(kwargs.get("project_id") or "proj"),
+        )
+
+    monkeypatch.setattr(
+        "gobby.mcp_proxy.tools.spawn_agent._implementation.prepare_terminal_spawn",
+        _prepare_terminal_spawn,
     )
 
 
@@ -37,7 +58,7 @@ def manager(db: HubDatabase) -> AgentDefinitionManager:
 def mock_runner() -> MagicMock:
     runner = MagicMock()
     runner.can_spawn.return_value = (True, "Can spawn", 0)
-    runner._child_session_manager = MagicMock()
+    runner.child_session_manager = MagicMock()
     runner.run_storage.has_active_run_for_task.return_value = False
     runner.agent_lifecycle_monitor = None
     runner.task_manager = None

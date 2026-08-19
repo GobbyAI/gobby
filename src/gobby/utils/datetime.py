@@ -25,22 +25,24 @@ def to_aware_utc(value: datetime) -> datetime:
     return value.astimezone(UTC)
 
 
-def parse_stored_datetime(value: datetime | str | None) -> datetime | None:
+def parse_stored_datetime(value: object) -> datetime | None:
     """Parse a stored ISO timestamp and normalize it to UTC.
 
     Legacy rows may contain naive ISO strings. Treat those as UTC so arithmetic
     against aware ``datetime.now(UTC)`` stays valid. Malformed string values
-    raise ``ValueError`` from ``datetime.fromisoformat``.
+    raise ``ValueError`` from ``datetime.fromisoformat``. Non-string, non-datetime
+    values (including mock objects) return ``None``.
     """
     if value is None:
         return None
-    parsed = value if isinstance(value, datetime) else datetime.fromisoformat(value)
-    return to_aware_utc(parsed)
+    if isinstance(value, datetime):
+        return to_aware_utc(value)
+    if not isinstance(value, str):
+        return None
+    return to_aware_utc(datetime.fromisoformat(value))
 
 
-def require_stored_datetime(
-    value: datetime | str | None, field_name: str = "timestamp"
-) -> datetime:
+def require_stored_datetime(value: object, field_name: str = "timestamp") -> datetime:
     """Parse a required stored timestamp and normalize it to UTC."""
     parsed = parse_stored_datetime(value)
     if parsed is None:

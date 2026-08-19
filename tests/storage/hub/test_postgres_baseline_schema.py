@@ -135,12 +135,17 @@ def test_postgres_baseline_has_flattened_auth_session_token_hashes() -> None:
     _assert_matches(
         sql,
         r"CREATE\s+TABLE\s+auth_sessions\s*\([^;]*token_hash\s+TEXT\s+NOT\s+NULL",
-        "auth_sessions must use token_hash as the primary key in the flattened baseline",
+        "auth_sessions must keep a NOT NULL token_hash column",
     )
     _assert_matches(
         sql,
-        r"ADD\s+CONSTRAINT\s+auth_sessions_pkey\s+PRIMARY\s+KEY\s*\(token_hash\)",
-        "auth_sessions.token_hash must remain the primary key",
+        r"ADD\s+CONSTRAINT\s+auth_sessions_pkey\s+PRIMARY\s+KEY\s*\(id\)",
+        "auth_sessions.id must be the primary key",
+    )
+    _assert_matches(
+        sql,
+        r"ADD\s+CONSTRAINT\s+auth_sessions_token_hash_key\s+UNIQUE\s*\(token_hash\)",
+        "auth_sessions.token_hash must stay unique",
     )
     assert "DROP COLUMN token" not in sql
     assert re.search(r"CREATE\s+TABLE\s+auth_sessions", sql, flags=re.IGNORECASE)
@@ -188,7 +193,7 @@ def test_postgres_baseline_replaces_fts5_with_pg_search_bm25_indexes() -> None:
     sql = _schema_text()
     upper_sql = sql.upper()
 
-    assert "CREATE EXTENSION" not in upper_sql
+    assert "CREATE EXTENSION IF NOT EXISTS PGCRYPTO" in upper_sql
     assert "CREATE VIRTUAL TABLE" not in upper_sql
     assert "USING FTS5" not in upper_sql
     for removed_fts_table in (

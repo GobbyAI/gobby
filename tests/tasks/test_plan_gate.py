@@ -23,6 +23,7 @@ from gobby.tasks.expansion._plan_gate import (
     PLANNING_AGENTS,
     validate_plan_for_agent_spawn,
 )
+from tests.agents.prepared_spawn import prepared_spawn
 
 pytestmark = pytest.mark.unit
 
@@ -404,6 +405,13 @@ async def test_spawn_agent_impl_injects_symbol_repair_diagnostics(tmp_path: Path
         patch(
             "gobby.mcp_proxy.tools.spawn_agent._implementation.get_project_context",
             return_value={"id": "project-1", "project_path": str(repo_path)},
+        ),
+        patch(
+            "gobby.mcp_proxy.tools.spawn_agent._implementation.prepare_terminal_spawn",
+            return_value=prepared_spawn(
+                parent_session_id="parent-1",
+                project_id="project-1",
+            ),
         ),
         patch(
             "gobby.mcp_proxy.tools.spawn_agent._implementation.execute_spawn",

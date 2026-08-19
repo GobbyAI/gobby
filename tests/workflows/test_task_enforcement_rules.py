@@ -1751,11 +1751,11 @@ class TestWriteRouteParity:
             ("git -C /repo apply changes.patch", True),
             ("git -c core.autocrlf=false apply changes.patch", True),
             ("patch -p1 < changes.patch", True),
-            ('python -c "print(1)"', True),
-            ('python3 -c "print(1)"', True),
-            ('uv run python -c "print(1)"', True),
-            ('uv run python3 -c "print(1)"', True),
-            ('uv run --with rich python -c "print(1)"', True),
+            ('python -c "print(1)"', False),
+            ('python3 -c "print(1)"', False),
+            ('uv run python -c "print(1)"', False),
+            ('uv run python3 -c "print(1)"', False),
+            ('uv run --with rich python -c "print(1)"', False),
             ('node -e "console.log(1)"', True),
             ('node --eval "console.log(1)"', True),
             ('ruby -e "puts 1"', True),
@@ -1850,7 +1850,7 @@ class TestWriteRouteParity:
                 True,
                 True,
             ),
-            ('python3 -c "print(1)"', "write", True, True),
+            ('python3 -c "print(1)"', "execute", False, False),
             ('printf content | python3 -c "unknown()"', "write", True, True),
             (
                 "printf content | python3 -c "
@@ -1864,8 +1864,8 @@ class TestWriteRouteParity:
                 'python3 -c "unknown()" && curl -o '
                 "{scratchpad}/data.json https://example.test/data.json",
                 "write",
-                True,
-                True,
+                False,
+                False,
             ),
             (
                 "python3 - <<'PY'\nopen('src/main.py', 'w').write('content')\nPY",

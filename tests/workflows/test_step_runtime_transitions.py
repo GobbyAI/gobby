@@ -14,7 +14,6 @@ from gobby.hooks.events import HookEvent, HookEventType, SessionSource
 from gobby.storage.definitions.agents import AgentDefinitionManager
 from gobby.storage.hub.protocol import HubDatabase
 from gobby.workflows.agent_models import AgentStepWorkflowBody
-from gobby.workflows.definitions import WorkflowStep
 from gobby.workflows.engine.core import RuleEngine
 from gobby.workflows.step_instances import AgentStepInstance, AgentStepInstanceManager
 
@@ -141,7 +140,13 @@ def _setup_workflow(
             id=str(uuid.uuid4()),
             session_id=SESSION_ID,
             agent_name=str(workflow["name"]),
-            snapshot=AgentStepWorkflowBody(steps=[WorkflowStep(name=current_step)]),
+            snapshot=AgentStepWorkflowBody.model_validate(
+                {
+                    "steps": workflow["steps"],
+                    "variables": workflow.get("variables") or {},
+                    "exit_condition": workflow.get("exit_condition"),
+                }
+            ),
             enabled=True,
             current_step=current_step,
             step_entered_at=datetime.now(UTC),

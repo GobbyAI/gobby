@@ -68,6 +68,10 @@ def test_parse_stored_datetime_normalizes_aware_values_to_utc() -> None:
     )
 
 
+def test_parse_stored_datetime_ignores_non_string_non_datetime_values() -> None:
+    assert parse_stored_datetime(object()) is None
+
+
 def test_parse_stored_datetime_rejects_malformed_strings() -> None:
     with pytest.raises(ValueError, match="Invalid isoformat string"):
         parse_stored_datetime("not-a-timestamp")
