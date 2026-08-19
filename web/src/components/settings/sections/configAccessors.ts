@@ -82,7 +82,9 @@ export function encodeDynamicMapRows<V>(
           ? displayKey
           : encodeDynamicSegment(displayKey);
     if (storedKeys.has(nextStoredKey)) {
-      throw new Error(`Dynamic map rows collide at stored key ${nextStoredKey}`);
+      throw new Error(
+        `Dynamic map rows collide at stored key ${nextStoredKey}`,
+      );
     }
     storedKeys.add(nextStoredKey);
     entries.push([nextStoredKey, value]);
