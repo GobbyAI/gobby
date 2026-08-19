@@ -23,8 +23,10 @@ pub use types::{
 };
 
 #[cfg(test)]
-use embedding::{embed_text, embed_text_batch, embedding_client, vector_text_for_symbol};
-#[cfg(test)]
+use embedding::vector_text_for_symbol;
+#[cfg(all(test, feature = "ai"))]
+use embedding::{embed_text, embed_text_batch, embedding_client};
+#[cfg(all(test, feature = "ai"))]
 pub(crate) use qdrant::VECTOR_DISTANCE_COSINE;
 #[cfg(test)]
 use qdrant::delete_file_vectors;

@@ -1,5 +1,5 @@
 pub mod code_symbols;
 
-#[cfg(test)]
+#[cfg(all(test, feature = "ai"))]
 #[path = "tests/projection.rs"]
 mod projection_tests;

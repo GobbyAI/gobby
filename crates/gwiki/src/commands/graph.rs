@@ -177,6 +177,7 @@ mod tests {
         TestConfigSource::default().with("databases.falkordb.host", "127.0.0.1")
     }
 
+    #[cfg(feature = "ai")]
     fn with_embedding_and_qdrant(source: TestConfigSource) -> TestConfigSource {
         source
             .with("ai.embeddings.api_base", "http://embeddings.local/v1")
@@ -197,12 +198,14 @@ mod tests {
 
     #[test]
     #[serial_test::serial]
+    #[cfg(feature = "ai")]
     fn degraded_optional_sources_accepts_present_falkor_embedding_and_qdrant() {
         assert!(degraded_markers(with_embedding_and_qdrant(falkor_config())).is_empty());
     }
 
     #[test]
     #[serial_test::serial]
+    #[cfg(feature = "ai")]
     fn degraded_optional_sources_reports_missing_falkor_only() {
         assert_eq!(
             degraded_markers(with_embedding_and_qdrant(TestConfigSource::default())),

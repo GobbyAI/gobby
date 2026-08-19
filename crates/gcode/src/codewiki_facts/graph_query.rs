@@ -590,7 +590,7 @@ mod tests {
         assert!(
             plans
                 .iter()
-                .any(|plan| !plan.select(&[edge.clone()]).is_empty()),
+                .any(|plan| !plan.select(std::slice::from_ref(&edge)).is_empty()),
             "Closed plans must cover an edge whose endpoints sit in different chunks"
         );
         for plan in &plans {

@@ -2,7 +2,7 @@
 
 use gobby_core::ai_context::AiContext;
 use gobby_core::config::embedding_keys;
-use gobby_core::config::{AiCapability, CapabilityBinding, ConfigSource};
+use gobby_core::config::{AiCapability, AiRouting, CapabilityBinding, ConfigSource};
 use postgres::Client;
 
 use super::{
@@ -352,15 +352,10 @@ pub(crate) fn resolve_embedding_config_from_source(
 ) -> Option<super::EmbeddingConfig> {
     let context = AiContext::resolve(project_id, source);
     let binding = context.binding(AiCapability::Embed);
-    if !embedding_binding_uses_openai_http(binding) || !embedding_binding_routes_direct(binding) {
+    if binding.routing == AiRouting::Off || !embedding_binding_uses_openai_http(binding) {
         return None;
     }
     gobby_core::config::resolve_embedding_config_from_binding(source, binding)
-}
-
-fn embedding_binding_routes_direct(binding: &CapabilityBinding) -> bool {
-    let _ = binding;
-    false
 }
 
 fn embedding_binding_uses_openai_http(binding: &CapabilityBinding) -> bool {

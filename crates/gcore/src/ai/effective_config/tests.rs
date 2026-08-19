@@ -12,7 +12,7 @@ use super::*;
 use crate::ai_context::{AiConfigSource, NoPrimaryAiConfigSource};
 use crate::config::{
     AiCapability, ConfigSource, DaemonOrPrimary, DaemonServedConfig, is_machine_config_key,
-    resolve_capability_binding, resolve_embedding_config_from_binding,
+    resolve_capability_binding, resolve_embedding_config_from_binding, secret_marker_prefix,
 };
 use crate::local_token::{AUTHORIZATION_HEADER, LOCAL_CLI_TOKEN_FILENAME};
 use crate::test_http::{
@@ -293,10 +293,11 @@ fn success_with_invalid_json_or_missing_envelope_is_protocol_failure() {
 #[test]
 #[serial_test::serial]
 fn served_secret_or_environment_references_are_contract_failures() {
+    let secret_value = format!("{}embedding_model", secret_marker_prefix());
     let cases = [
         (
             "ai.embeddings.model",
-            "secret-marker embedding_model",
+            secret_value.as_str(),
             "unresolved secret reference",
         ),
         (

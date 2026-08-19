@@ -692,7 +692,7 @@ mod tests {
         let mut source = TestConfigSource { value: None };
         let context = AiContext::resolve(None, &mut source);
 
-        assert_eq!(effective_embedding_route(&context), AiRouting::Daemon);
+        assert_eq!(effective_embedding_route(&context), AiRouting::Off);
     }
 
     fn sample_counts() -> IndexCounts {

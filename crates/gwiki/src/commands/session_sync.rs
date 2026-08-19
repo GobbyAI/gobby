@@ -321,9 +321,11 @@ mod tests {
         std::fs::create_dir_all(&archive_dir).expect("archive dir");
 
         // Injecting no database is fail-closed: sync-sessions no longer degrades
-        // to an in-memory store. GOBBY_WIKI_HUB keeps topic vault initialization
-        // inside the tempdir.
-        let _env = EnvGuard::set("GOBBY_WIKI_HUB", hub.as_os_str());
+        // to an in-memory store. Isolate GOBBY_HOME so operator bootstrap.yaml
+        // cannot reject the temp hub, then keep topic vault init in the tempdir.
+        std::fs::create_dir_all(&hub).expect("wiki hub");
+        let _env =
+            EnvGuard::set("GOBBY_HOME", temp.path()).and_set("GOBBY_WIKI_HUB", hub.as_os_str());
 
         let options = SyncSessionsOptions {
             wiki_dir: Some(wiki_dir),

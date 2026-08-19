@@ -719,6 +719,7 @@ fn global_prune_scope_discovery_query_reads_distinct_code_projects() {
     assert!(query.params.is_empty());
 }
 
+#[allow(clippy::too_many_arguments)]
 fn heritage_relation(
     source_id: Option<&str>,
     source_name: &str,

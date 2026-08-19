@@ -8,12 +8,8 @@ fn main() {
         "GOBBY_POSTGRES_TEST_PASSWORD",
         "GOBBY_POSTGRES_TEST_HOST",
         "GOBBY_POSTGRES_TEST_PORT",
-        "GOBBY_HOME",
     ] {
         println!("cargo:rerun-if-env-changed={name}");
-    }
-    if let Some(path) = gobby_core::bootstrap::bootstrap_path() {
-        println!("cargo:rerun-if-changed={}", path.display());
     }
     println!("cargo:rustc-check-cfg=cfg(gcode_postgres_tests)");
 
@@ -23,6 +19,9 @@ fn main() {
 }
 
 fn has_postgres_test_database() -> bool {
+    // Must match crates/gcode/src/test_env.rs: operator bootstrap.yaml is not a
+    // test DSN. Enabling this cfg from bootstrap compiles serial_db tests and
+    // then panics at runtime when the env resolver refuses that file.
     [
         "GCODE_POSTGRES_TEST_DATABASE_URL",
         "GOBBY_POSTGRES_TEST_DATABASE_URL",
@@ -33,26 +32,8 @@ fn has_postgres_test_database() -> bool {
         || ["GOBBY_POSTGRES_TEST_DB", "GOBBY_POSTGRES_TEST_USER"]
             .iter()
             .all(|name| non_empty_env(name))
-        || has_bootstrap_postgres_database_url()
-}
-
-fn has_bootstrap_postgres_database_url() -> bool {
-    let Some(path) = gobby_core::bootstrap::bootstrap_path() else {
-        return false;
-    };
-    match gobby_core::bootstrap::postgres_database_url_from_bootstrap_file(&path) {
-        Ok(Some(_)) => true,
-        Ok(None) => false,
-        Err(error) => {
-            println!(
-                "cargo:warning=failed to read PostgreSQL test database URL from {}: {error:#}",
-                path.display()
-            );
-            false
-        }
-    }
 }
 
 fn non_empty_env(name: &str) -> bool {
-    std::env::var(name).is_ok_and(|value| !value.trim().is_empty())
+    std::env::var_os(name).is_some_and(|value| !value.is_empty())
 }

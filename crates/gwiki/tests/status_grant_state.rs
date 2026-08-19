@@ -60,11 +60,14 @@ fn write_cached_grant(home: &Path, daemon_url: &str, expires_at: i64) -> GrantBu
 }
 
 fn run_gwiki(home: &Path, cwd: &Path, daemon_url: &str, args: &[&str]) -> Output {
+    let hub = home.join("wiki-hub");
+    std::fs::create_dir_all(&hub).expect("wiki hub");
     let mut cmd = Command::new(env!("CARGO_BIN_EXE_gwiki"));
     cmd.args(args)
         .current_dir(cwd)
         .env("HOME", home)
         .env("GOBBY_HOME", home)
+        .env("GOBBY_WIKI_HUB", &hub)
         .env("GOBBY_DAEMON_URL", daemon_url)
         .env_remove("GOBBY_MANAGED_EXECUTION_BOOTSTRAP")
         .stdout(Stdio::piped())

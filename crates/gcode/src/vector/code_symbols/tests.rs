@@ -12,9 +12,11 @@ use std::time::{Duration, Instant};
 
 mod collection;
 mod deletion;
+#[cfg(feature = "ai")]
 mod embedding;
 mod module_scope;
 mod payload;
+#[cfg(feature = "ai")]
 mod sync;
 
 fn test_symbol(summary: Option<String>) -> Symbol {
@@ -41,6 +43,7 @@ fn test_symbol(summary: Option<String>) -> Symbol {
     }
 }
 
+#[cfg(feature = "ai")]
 fn test_symbol_with_index(index: usize) -> Symbol {
     let mut symbol = test_symbol(None);
     symbol.id = format!("symbol-{index}");
