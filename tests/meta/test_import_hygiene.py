@@ -215,3 +215,12 @@ def test_hook_manager_has_single_session_attribute() -> None:
 
     assert manager._session_manager is components.session_manager
     assert not hasattr(manager, "_session_storage")
+
+
+def test_test_module_basenames_are_unique() -> None:
+    files = [path for path in _iter_python_files(TESTS_DIR) if path.name.startswith("test_")]
+    by_name: dict[str, list[str]] = {}
+    for path in files:
+        by_name.setdefault(path.name, []).append(str(path.relative_to(REPO_ROOT)))
+    collisions = {name: paths for name, paths in sorted(by_name.items()) if len(paths) > 1}
+    assert collisions == {}, f"duplicate test module basenames: {collisions}"

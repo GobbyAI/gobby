@@ -959,7 +959,7 @@ async def test_persona_same_agent_missing_instance_persistence_fault_fails(
 
 @pytest.mark.asyncio
 async def test_webchat_persona_failure_stops_runtime_and_skips_register() -> None:
-    from tests.servers.websocket.chat.test_session import DummyMixin
+    from tests.servers.websocket.chat.test_servers_websocket_chat_session import DummyMixin
 
     mixin = DummyMixin()
     mixin._pending_agents["conv-fail"] = "planner"

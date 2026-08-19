@@ -83,7 +83,7 @@ class TestIsGobbyBuildCommand:
             'rg "gobby build" src tests',
             "uv run gobby status",
             "gobby status",
-            "python -m pytest tests/cli/test_build.py",
+            "python -m pytest tests/cli/test_cli_build.py",
         ],
     )
     def test_skips_non_build_invocations(self, command: object) -> None:

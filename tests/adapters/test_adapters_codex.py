@@ -1703,7 +1703,7 @@ class TestCodexAdapterTranslateToHookEvent:
                 "item": {
                     "id": "item-command-1",
                     "type": "commandExecution",
-                    "command": "uv run pytest tests/adapters/test_codex.py -q",
+                    "command": "uv run pytest tests/adapters/test_adapters_codex.py -q",
                     "aggregatedOutput": "1 passed",
                     "exitCode": 0,
                     "status": "completed",
@@ -1724,7 +1724,7 @@ class TestCodexAdapterTranslateToHookEvent:
             "item": {
                 "id": "item-command-1",
                 "type": "commandExecution",
-                "command": "uv run pytest tests/adapters/test_codex.py -q",
+                "command": "uv run pytest tests/adapters/test_adapters_codex.py -q",
                 "aggregatedOutput": "1 passed",
                 "exitCode": 0,
                 "status": "completed",

@@ -263,12 +263,12 @@ def test_validate_covers_artifact_referenced_by_test_path_and_name() -> None:
     item = _item(
         "A1.1",
         artifact_kind=ArtifactKind.test,
-        artifact_ref="tests/plans/test_parser.py::test_source_hash_is_sha256_of_bytes",
+        artifact_ref="tests/plans/test_plans_parser.py::test_source_hash_is_sha256_of_bytes",
     )
 
     result = validate_covers(
         CoversRecord("plan", "A1", "A1.1"),
-        "Run tests/plans/test_parser.py and test_source_hash_is_sha256_of_bytes.",
+        "Run tests/plans/test_plans_parser.py and test_source_hash_is_sha256_of_bytes.",
         "#leaf",
         _plan_doc("A1", item),
     )
@@ -280,12 +280,12 @@ def test_validate_covers_artifact_referenced_by_backticked_test_ref() -> None:
     item = _item(
         "A1.1",
         artifact_kind=ArtifactKind.test,
-        artifact_ref="`tests/plans/test_parser.py::test_source_hash_is_sha256_of_bytes` asserts it",
+        artifact_ref="`tests/plans/test_plans_parser.py::test_source_hash_is_sha256_of_bytes` asserts it",
     )
 
     result = validate_covers(
         CoversRecord("plan", "A1", "A1.1"),
-        "tests/plans/test_parser.py::test_source_hash_is_sha256_of_bytes passes.",
+        "tests/plans/test_plans_parser.py::test_source_hash_is_sha256_of_bytes passes.",
         "#leaf",
         _plan_doc("A1", item),
     )
