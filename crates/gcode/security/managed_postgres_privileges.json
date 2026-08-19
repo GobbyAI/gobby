@@ -20,13 +20,15 @@
     {"relation": "code_symbols", "operations": ["SELECT", "INSERT", "UPDATE", "DELETE"], "scope_column": "project_id"},
     {"relation": "code_imports", "operations": ["SELECT", "INSERT", "UPDATE", "DELETE"], "scope_column": "project_id"},
     {"relation": "code_calls", "operations": ["SELECT", "INSERT", "UPDATE", "DELETE"], "scope_column": "project_id"},
+    {"relation": "code_inheritance", "operations": ["SELECT", "INSERT", "UPDATE", "DELETE"], "scope_column": "project_id"},
     {"relation": "code_content_chunks", "operations": ["SELECT", "INSERT", "UPDATE", "DELETE"], "scope_column": "project_id"},
     {"relation": "code_index_projection_cleanup_pending", "operations": ["SELECT", "INSERT", "UPDATE", "DELETE"], "scope_column": "project_id"},
     {"relation": "code_index_prune_dirty_projects", "operations": ["SELECT", "INSERT", "UPDATE", "DELETE"], "scope_column": "project_id", "machine_scope_column": "machine_id"}
   ],
   "sequences": [
     {"sequence": "code_imports_id_seq", "operations": ["USAGE", "SELECT"]},
-    {"sequence": "code_calls_id_seq", "operations": ["USAGE", "SELECT"]}
+    {"sequence": "code_calls_id_seq", "operations": ["USAGE", "SELECT"]},
+    {"sequence": "code_inheritance_id_seq", "operations": ["USAGE", "SELECT"]}
   ],
   "explicitly_denied_relations": [
     "agent_runs",

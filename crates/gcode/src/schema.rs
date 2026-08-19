@@ -127,6 +127,25 @@ const TABLE_CONTRACTS: &[TableContract] = &[
             "line",
         ],
     },
+    TableContract {
+        name: "code_inheritance",
+        required_columns: &[
+            "id",
+            "project_id",
+            "source_symbol_id",
+            "source_name",
+            "source_kind",
+            "source_external_module",
+            "target_symbol_id",
+            "target_name",
+            "target_kind",
+            "target_external_module",
+            "heritage_kind",
+            "file_path",
+            "content_hash",
+            "line",
+        ],
+    },
 ];
 
 const REQUIRED_TABLES: &[&str] = &[
@@ -138,6 +157,7 @@ const REQUIRED_TABLES: &[&str] = &[
     "code_content_chunks",
     "code_imports",
     "code_calls",
+    "code_inheritance",
 ];
 
 const REQUIRED_BM25_INDEXES: &[&str] = &["code_symbols_search_bm25", "code_content_search_bm25"];
@@ -267,6 +287,22 @@ mod tests {
     fn required_schema_contract_names_code_index_tables_and_bm25_indexes() {
         assert!(REQUIRED_TABLES.contains(&"code_symbols"));
         assert!(REQUIRED_TABLES.contains(&"code_content_chunks"));
+        assert!(REQUIRED_TABLES.contains(&"code_inheritance"));
+        let inheritance = TABLE_CONTRACTS
+            .iter()
+            .find(|contract| contract.name == "code_inheritance")
+            .expect("code_inheritance contract");
+        assert!(inheritance.required_columns.contains(&"heritage_kind"));
+        assert!(
+            inheritance
+                .required_columns
+                .contains(&"source_external_module")
+        );
+        assert!(
+            inheritance
+                .required_columns
+                .contains(&"target_external_module")
+        );
         let indexed_files = TABLE_CONTRACTS
             .iter()
             .find(|contract| contract.name == "code_indexed_files")

@@ -316,11 +316,13 @@ pub enum CallTargetKind {
     Symbol,
     Unresolved,
     External,
-    /// Transient marker for a cross-file local import whose canonical target is
-    /// resolved against `code_symbols` in a post-write pass (see
-    /// `index::indexer::local_imports`). After resolution a row is rewritten to
-    /// `Symbol` (hit) or `Unresolved` (miss), so this kind never persists past a
-    /// completed index run.
+    /// Cross-file local import whose canonical target is resolved against
+    /// `code_symbols` in a post-write pass (see `index::indexer::local_imports`).
+    /// Call-graph misses rewrite the row to `Unresolved` and drop the candidate
+    /// carrier after an index run. Inheritance misses keep this kind and the
+    /// side's `*_external_module` carrier so a later provider index can retry;
+    /// the kind therefore persists past a completed index run for inheritance
+    /// rows only.
     LocalImport,
 }
 
@@ -436,27 +438,87 @@ impl CallRelation {
     /// Candidate target files carried by a `LocalImport` call, parsed back out of
     /// `callee_external_module`. Empty for any other kind.
     pub fn local_import_candidate_files(&self) -> Vec<String> {
-        if self.callee_target_kind != CallTargetKind::LocalImport {
-            return Vec::new();
+        local_import_candidates(
+            self.callee_target_kind,
+            self.callee_external_module.as_deref(),
+        )
+    }
+}
+
+/// Typed heritage edge extracted from an explicit extends/implements/embeds clause.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[allow(dead_code)] // constructed by 1.2 heritage extraction
+pub enum HeritageKind {
+    Inherits,
+    Extends,
+    Implements,
+}
+
+impl HeritageKind {
+    #[allow(dead_code)] // used by 1.2/1.3 writers
+    pub fn as_rel_type(self) -> &'static str {
+        match self {
+            Self::Inherits => "INHERITS",
+            Self::Extends => "EXTENDS",
+            Self::Implements => "IMPLEMENTS",
         }
-        self.callee_external_module
-            .as_deref()
-            .map(|joined| {
-                joined
-                    .split(LOCAL_IMPORT_CANDIDATE_SEP)
-                    .filter(|part| !part.is_empty() && *part != LOCAL_IMPORT_DEFAULT_EXPORT_MARKER)
-                    .map(ToOwned::to_owned)
-                    .collect()
-            })
-            .unwrap_or_default()
+    }
+}
+
+/// Inheritance relationship extracted from AST. Orientation is derived → base.
+#[derive(Debug, Clone)]
+#[allow(dead_code)] // persisted in 1.3; 1.1 only establishes the model
+pub struct InheritanceRelation {
+    pub source_symbol_id: Option<String>,
+    pub source_name: String,
+    pub source_kind: CallTargetKind,
+    pub source_external_module: Option<String>,
+    pub target_symbol_id: Option<String>,
+    pub target_name: String,
+    pub target_kind: CallTargetKind,
+    pub target_external_module: Option<String>,
+    pub heritage_kind: HeritageKind,
+    pub file_path: String,
+    pub content_hash: String,
+    pub line: usize,
+}
+
+impl InheritanceRelation {
+    /// Candidate files carried on the derived (source) `LocalImport` side.
+    #[allow(dead_code)] // used by 1.3 promotion
+    pub fn source_local_import_candidate_files(&self) -> Vec<String> {
+        local_import_candidates(self.source_kind, self.source_external_module.as_deref())
+    }
+
+    /// Candidate files carried on the base (target) `LocalImport` side.
+    #[allow(dead_code)] // used by 1.3 promotion
+    pub fn target_local_import_candidate_files(&self) -> Vec<String> {
+        local_import_candidates(self.target_kind, self.target_external_module.as_deref())
     }
 }
 
 /// Separator for the candidate-file list carried in `callee_external_module`
 /// while a call is a pending `LocalImport`. Newlines never appear in project
-/// file paths, so the join/split round-trips losslessly.
+/// file paths, so the join/split round-trips losslessly. Inheritance rows reuse
+/// the same encoding independently on `source_external_module` and
+/// `target_external_module`.
 pub const LOCAL_IMPORT_CANDIDATE_SEP: &str = "\n";
 const LOCAL_IMPORT_DEFAULT_EXPORT_MARKER: &str = "__gcode_local_import_default_export__";
+
+fn local_import_candidates(kind: CallTargetKind, carrier: Option<&str>) -> Vec<String> {
+    if kind != CallTargetKind::LocalImport {
+        return Vec::new();
+    }
+    carrier
+        .map(|joined| {
+            joined
+                .split(LOCAL_IMPORT_CANDIDATE_SEP)
+                .filter(|part| !part.is_empty() && *part != LOCAL_IMPORT_DEFAULT_EXPORT_MARKER)
+                .map(ToOwned::to_owned)
+                .collect()
+        })
+        .unwrap_or_default()
+}
 
 /// Project index statistics.
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -537,6 +599,8 @@ pub struct ParseResult {
     pub symbols: Vec<Symbol>,
     pub imports: Vec<ImportRelation>,
     pub calls: Vec<CallRelation>,
+    #[allow(dead_code)] // filled in 1.2 and persisted in 1.3
+    pub inheritance: Vec<InheritanceRelation>,
     /// Raw file bytes — carried through for body snippet extraction at embedding time.
     pub source: Vec<u8>,
 }
@@ -687,6 +751,43 @@ mod tests {
 
         assert_eq!(call.callee_symbol_id.as_deref(), Some("callee-id"));
         assert_eq!(call.callee_target_kind, CallTargetKind::Symbol);
+    }
+
+    #[test]
+    fn heritage_kind_emits_typed_rel_labels() {
+        assert_eq!(HeritageKind::Inherits.as_rel_type(), "INHERITS");
+        assert_eq!(HeritageKind::Extends.as_rel_type(), "EXTENDS");
+        assert_eq!(HeritageKind::Implements.as_rel_type(), "IMPLEMENTS");
+    }
+
+    #[test]
+    fn inheritance_keeps_independent_source_and_target_carriers() {
+        let relation = InheritanceRelation {
+            source_symbol_id: None,
+            source_name: "Type".to_string(),
+            source_kind: CallTargetKind::LocalImport,
+            source_external_module: Some("src/type.rs".to_string()),
+            target_symbol_id: None,
+            target_name: "Trait".to_string(),
+            target_kind: CallTargetKind::LocalImport,
+            target_external_module: Some("src/trait.rs".to_string()),
+            heritage_kind: HeritageKind::Implements,
+            file_path: "src/impls.rs".to_string(),
+            content_hash: "hash".to_string(),
+            line: 4,
+        };
+        assert_eq!(
+            relation.source_local_import_candidate_files(),
+            vec!["src/type.rs".to_string()]
+        );
+        assert_eq!(
+            relation.target_local_import_candidate_files(),
+            vec!["src/trait.rs".to_string()]
+        );
+        assert_ne!(
+            relation.source_external_module,
+            relation.target_external_module
+        );
     }
 
     #[test]

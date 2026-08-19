@@ -9,6 +9,7 @@ use streaming_iterator::StreamingIterator;
 use tree_sitter::{Parser, Query, QueryCursor};
 
 mod calls;
+mod inheritance;
 
 use crate::index::MAX_FILE_SIZE;
 use crate::index::hasher::{content_hash, symbol_content_hash};
@@ -18,6 +19,7 @@ use crate::index::security;
 use crate::index::semantic::SemanticCallResolver;
 use crate::models::{ParseResult, Symbol};
 use calls::{CallExtractionContext, extract_calls};
+use inheritance::extract_inheritance;
 
 pub use crate::index::import_resolution::{
     ImportResolutionContext, build_import_resolution_context,
@@ -134,6 +136,7 @@ pub(crate) fn parse_file_with_semantic(
         symbols,
         imports: extracted_imports.imports,
         calls,
+        inheritance: extract_inheritance(),
         source,
     }))
 }

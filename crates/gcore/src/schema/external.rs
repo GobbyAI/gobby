@@ -34,6 +34,7 @@ pub fn gcode_postgres_objects(
     let code_content_chunks = qualified_relation(schema, "code_content_chunks")?;
     let code_imports = qualified_relation(schema, "code_imports")?;
     let code_calls = qualified_relation(schema, "code_calls")?;
+    let code_inheritance = qualified_relation(schema, "code_inheritance")?;
 
     Ok(vec![
         object(
@@ -344,6 +345,64 @@ pub fn gcode_postgres_objects(
             format!(
                 "CREATE INDEX IF NOT EXISTS idx_cc_target
                  ON {code_calls}(project_id, callee_target_kind, callee_symbol_id, callee_name);"
+            ),
+        ),
+        object(
+            "code_inheritance table",
+            ExternalPostgresObjectKind::Table,
+            format!(
+                "CREATE TABLE IF NOT EXISTS {code_inheritance} (
+                    id INTEGER GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
+                    project_id UUID NOT NULL,
+                    source_symbol_id UUID,
+                    source_name TEXT NOT NULL,
+                    source_kind TEXT NOT NULL DEFAULT 'symbol',
+                    source_external_module TEXT NOT NULL DEFAULT '',
+                    target_symbol_id UUID,
+                    target_name TEXT NOT NULL,
+                    target_kind TEXT NOT NULL DEFAULT 'unresolved',
+                    target_external_module TEXT NOT NULL DEFAULT '',
+                    heritage_kind TEXT NOT NULL,
+                    file_path TEXT NOT NULL,
+                    content_hash TEXT NOT NULL,
+                    line INTEGER NOT NULL DEFAULT 0,
+                    CONSTRAINT code_inheritance_unique_target
+                    UNIQUE NULLS NOT DISTINCT (
+                        project_id, file_path, content_hash,
+                        source_symbol_id, source_name, source_kind, source_external_module,
+                        target_symbol_id, target_name, target_kind, target_external_module,
+                        heritage_kind, line
+                    ),
+                    CONSTRAINT code_inheritance_heritage_kind_check
+                    CHECK (heritage_kind IN ('INHERITS', 'EXTENDS', 'IMPLEMENTS')),
+                    FOREIGN KEY (project_id, file_path, content_hash)
+                        REFERENCES {code_indexed_files}(project_id, file_path, content_hash)
+                        ON DELETE CASCADE
+                );"
+            ),
+        ),
+        object(
+            "idx_cinherit_file index",
+            ExternalPostgresObjectKind::Index,
+            format!(
+                "CREATE INDEX IF NOT EXISTS idx_cinherit_file
+                 ON {code_inheritance}(project_id, file_path);"
+            ),
+        ),
+        object(
+            "idx_cinherit_source index",
+            ExternalPostgresObjectKind::Index,
+            format!(
+                "CREATE INDEX IF NOT EXISTS idx_cinherit_source
+                 ON {code_inheritance}(project_id, source_symbol_id);"
+            ),
+        ),
+        object(
+            "idx_cinherit_target index",
+            ExternalPostgresObjectKind::Index,
+            format!(
+                "CREATE INDEX IF NOT EXISTS idx_cinherit_target
+                 ON {code_inheritance}(project_id, target_kind, target_symbol_id, target_name);"
             ),
         ),
         object(

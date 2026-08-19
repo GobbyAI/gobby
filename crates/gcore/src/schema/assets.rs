@@ -3,7 +3,7 @@ use sha2::{Digest, Sha256};
 pub const RUNNER_PROTOCOL_VERSION: u32 = 1;
 pub const BASELINE_VERSION: i32 = 375;
 pub const BASELINE_CHECKSUM: &str =
-    "ece3754752dbc72aaff4bbd3ebaa91a41305e4899e180012f8429c4f7467b1bf";
+    "d19810005e6c931219781941ab1c63ecc057973dfe60e2d4a8b6a69f460c6dd0";
 pub const BASELINE_SQL: &str = include_str!("../../assets/schema/baseline.sql");
 pub const SEED_MANIFEST_JSON: &str = include_str!("../../assets/schema/seed.manifest.json");
 pub const CATALOG_MANIFEST_JSON: &str = include_str!("../../assets/schema/catalog.manifest.json");
@@ -144,6 +144,12 @@ pub(crate) const MIGRATIONS: &[EmbeddedMigration] = &[
         sql: include_str!(
             "../../assets/schema/migrations/394_sessions_status_last_activity_index.sql"
         ),
+    },
+    EmbeddedMigration {
+        version: 395,
+        filename: "395_code_inheritance.sql",
+        checksum: "a8e488ff1515e14c0544f0f8efbd5f9ce0869a0861ee3d7a7eb6613f41972ab9",
+        sql: include_str!("../../assets/schema/migrations/395_code_inheritance.sql"),
     },
 ];
 const _: &str = include_str!("../../assets/schema/migrations/.gitkeep");

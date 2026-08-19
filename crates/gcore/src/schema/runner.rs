@@ -1,5 +1,5 @@
 use std::borrow::Cow;
-use std::collections::{BTreeMap, BTreeSet};
+use std::collections::BTreeSet;
 
 use postgres::{Client, GenericClient};
 
@@ -13,14 +13,20 @@ use super::gate::{SourceIdentity, VerifiedBackupManifest};
 use super::sql_splitter::split_sql_statements;
 use super::verify::{VerificationReport, qualified_name, validate_identifier, verify_schema};
 
+#[path = "runner_adoption.rs"]
+mod runner_adoption;
+use runner_adoption::{
+    GCORE_CODE_INDEX_CORE_TABLES, GCORE_CODE_INDEX_TABLES, adopted_column_contracts,
+};
+
 pub(crate) const ACCOUNT_IDENTITY_PREDECESSOR_CHECKSUM: &str =
     "855576453641152d2ef9199dc418fcc3dd2ad69e78eff924b05a7b3b122cf398";
 pub(crate) const PREDECESSOR_BASELINE_CHECKSUM: &str =
-    "b2e08b119ba08d342cb2729a96ff4a0e42380a1335a5661c89c45fa3f75832b3";
+    "f4cbda62b6ab0cdf426c581693f26373968b02578387abf843baab4e600c3aa0";
 pub(crate) const PARENT_BASELINE_CHECKSUM: &str =
-    "5d598c3609d0bdbcfd10f1c363c60bd38d5625100c3e8719b3ff42d189047117";
+    "2d3f79a8a6aef0426d6604956d3edc2d8c5e89e01b6bced2643a88e55da342e5";
 pub(crate) const WORKTREE_BASELINE_CHECKSUM: &str =
-    "86ad53076df7527fa0b832dd62b91037954a62d301957ef09b0c9f0f69331b33";
+    "7477af06f3e54121b97f6af26e68efab79712d187bef7f1773a80e023a4faee6";
 
 #[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
 pub struct ApplyReport {
@@ -233,16 +239,6 @@ impl BaselineState {
     }
 }
 
-const GCORE_CODE_INDEX_TABLES: [&str; 8] = [
-    "code_calls",
-    "code_content_chunks",
-    "code_imports",
-    "code_indexed_file_states",
-    "code_indexed_files",
-    "code_indexed_project_states",
-    "code_indexed_projects",
-    "code_symbols",
-];
 const GWIKI_TABLES: [&str; 3] = ["gwiki_chunks", "gwiki_documents", "gwiki_sources"];
 
 fn ensure_schema(client: &mut Client, schema: &str) -> Result<(), SchemaError> {
@@ -328,7 +324,7 @@ fn classify_baseline_state(
             BaselineState::Fresh
         });
     }
-    if GCORE_CODE_INDEX_TABLES
+    if GCORE_CODE_INDEX_CORE_TABLES
         .iter()
         .all(|table| application_tables.contains(table))
     {
@@ -476,21 +472,26 @@ fn baseline_statement_for_state(statement: &str, state: BaselineState) -> Option
         return Some(statement.to_owned());
     }
     let body = statement_body(statement);
+    if state == BaselineState::GcoreCodeIndex && gcore_hop_owns_code_inheritance_ddl(body) {
+        return None;
+    }
     if let Some(table) = create_table_name(body)
         && (table.starts_with("gwiki_")
-            || (state == BaselineState::GcoreCodeIndex && GCORE_CODE_INDEX_TABLES.contains(&table)))
+            || (state == BaselineState::GcoreCodeIndex
+                && GCORE_CODE_INDEX_CORE_TABLES.contains(&table)))
     {
         return None;
     }
     if let Some(table) = create_index_table(body)
         && (table.starts_with("gwiki_")
-            || (state == BaselineState::GcoreCodeIndex && GCORE_CODE_INDEX_TABLES.contains(&table)))
+            || (state == BaselineState::GcoreCodeIndex
+                && GCORE_CODE_INDEX_CORE_TABLES.contains(&table)))
     {
         return Some(add_index_if_not_exists(statement));
     }
     if state == BaselineState::GcoreCodeIndex
         && let Some(table) = alter_table_name(body)
-        && GCORE_CODE_INDEX_TABLES.contains(&table)
+        && GCORE_CODE_INDEX_CORE_TABLES.contains(&table)
     {
         let normalized = body.split_whitespace().collect::<Vec<_>>().join(" ");
         if normalized.contains(" ADD GENERATED ALWAYS AS IDENTITY ")
@@ -500,6 +501,20 @@ fn baseline_statement_for_state(statement: &str, state: BaselineState) -> Option
         }
     }
     Some(statement.to_owned())
+}
+
+fn gcore_hop_owns_code_inheritance_ddl(body: &str) -> bool {
+    if create_table_name(body) == Some("code_inheritance")
+        || create_index_table(body) == Some("code_inheritance")
+        || alter_table_name(body) == Some("code_inheritance")
+    {
+        return true;
+    }
+    let normalized = body.split_whitespace().collect::<Vec<_>>().join(" ");
+    let upper = normalized.to_ascii_uppercase();
+    (upper.starts_with("GRANT ") || upper.contains(" POLICY "))
+        && normalized.contains("code_inheritance")
+        && !upper.contains("FOREACH")
 }
 
 fn statement_body(mut statement: &str) -> &str {
@@ -614,6 +629,9 @@ fn verify_adopted_columns(
             .into_iter()
             .map(|row| row.get::<_, String>(0))
             .collect::<BTreeSet<_>>();
+        if actual.is_empty() && *table == "code_inheritance" {
+            continue;
+        }
         let missing = contracts[*table]
             .iter()
             .filter(|column| !actual.contains(**column))
@@ -627,115 +645,6 @@ fn verify_adopted_columns(
         }
     }
     Ok(())
-}
-
-fn adopted_column_contracts() -> BTreeMap<&'static str, &'static [&'static str]> {
-    BTreeMap::from([
-        (
-            "code_indexed_projects",
-            &["id", "created_at", "updated_at"] as &[_],
-        ),
-        (
-            "code_indexed_project_states",
-            &[
-                "machine_id",
-                "project_id",
-                "root_path",
-                "total_files",
-                "total_symbols",
-                "last_indexed_at",
-                "index_duration_ms",
-                "created_at",
-                "updated_at",
-            ] as &[_],
-        ),
-        (
-            "code_indexed_file_states",
-            &[
-                "machine_id",
-                "project_id",
-                "file_path",
-                "content_hash",
-                "updated_at",
-            ] as &[_],
-        ),
-        (
-            "code_indexed_files",
-            &[
-                "id",
-                "project_id",
-                "file_path",
-                "language",
-                "content_hash",
-                "symbol_count",
-                "byte_size",
-                "graph_synced",
-                "vectors_synced",
-                "graph_sync_attempted_at",
-                "vector_sync_attempted_at",
-                "indexed_at",
-            ] as &[_],
-        ),
-        (
-            "code_symbols",
-            &[
-                "id",
-                "project_id",
-                "file_path",
-                "name",
-                "qualified_name",
-                "kind",
-                "language",
-                "byte_start",
-                "byte_end",
-                "line_start",
-                "line_end",
-                "signature",
-                "docstring",
-                "parent_symbol_id",
-                "content_hash",
-                "summary",
-                "summary_attempted_at",
-                "created_at",
-                "updated_at",
-            ] as &[_],
-        ),
-        (
-            "code_imports",
-            &["id", "project_id", "source_file", "target_module"] as &[_],
-        ),
-        (
-            "code_calls",
-            &[
-                "id",
-                "project_id",
-                "caller_symbol_id",
-                "callee_symbol_id",
-                "callee_name",
-                "callee_target_kind",
-                "callee_external_module",
-                "file_path",
-                "line",
-            ] as &[_],
-        ),
-        (
-            "code_content_chunks",
-            &[
-                "id",
-                "project_id",
-                "file_path",
-                "chunk_index",
-                "line_start",
-                "line_end",
-                "content",
-                "language",
-                "created_at",
-            ] as &[_],
-        ),
-        ("gwiki_documents", &["id"] as &[_]),
-        ("gwiki_chunks", &["id", "document_id"] as &[_]),
-        ("gwiki_sources", &["id"] as &[_]),
-    ])
 }
 
 fn apply_pending_migrations(

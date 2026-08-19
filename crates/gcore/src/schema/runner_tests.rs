@@ -17,6 +17,7 @@ use super::baseline_refresh::{
     baseline_refresh_statement_for_mode, baseline_removed_statement,
 };
 use super::error::SchemaError;
+use super::external::{ExternalPostgresObjectKind, gcode_postgres_objects};
 use super::gate::{
     BackupGateContext, SourceIdentity, VerifiedBackupManifest, parse_backup_manifest,
 };
@@ -66,7 +67,7 @@ static COPY_THEN_DESTRUCTIVE: &[EmbeddedMigration] = &[COPY_THEN_FENCE, DESTRUCT
 
 static DATABASE_TEST_LOCK: Mutex<()> = Mutex::new(());
 
-const GCODE_RLS_TABLES: [&str; 10] = [
+const GCODE_RLS_TABLES: [&str; 11] = [
     "code_indexed_projects",
     "code_indexed_project_states",
     "code_indexed_file_states",
@@ -74,6 +75,7 @@ const GCODE_RLS_TABLES: [&str; 10] = [
     "code_symbols",
     "code_imports",
     "code_calls",
+    "code_inheritance",
     "code_content_chunks",
     "code_index_projection_cleanup_pending",
     "code_index_prune_dirty_projects",
@@ -1140,7 +1142,7 @@ fn migrations_directory_exists_and_copy_agent_entry_is_registered() {
         migrations_dir.is_dir(),
         "crates/gcore/assets/schema/migrations must exist so later leaves can register include_str entries"
     );
-    assert_eq!(MIGRATIONS.len(), 19);
+    assert_eq!(MIGRATIONS.len(), 20);
     assert_eq!(MIGRATIONS[0].version, 376);
     assert_eq!(MIGRATIONS[0].filename, "376_copy_agent_definitions.sql");
     assert_eq!(MIGRATIONS[1].version, 377);
@@ -1217,6 +1219,8 @@ fn migrations_directory_exists_and_copy_agent_entry_is_registered() {
         MIGRATIONS[18].filename,
         "394_sessions_status_last_activity_index.sql"
     );
+    assert_eq!(MIGRATIONS[19].version, 395);
+    assert_eq!(MIGRATIONS[19].filename, "395_code_inheritance.sql");
     assert!(MIGRATIONS[5].sql.contains("-- gobby:destructive"));
     for migration in MIGRATIONS {
         assert_eq!(
@@ -1518,6 +1522,250 @@ fn drop_migration_refused_on_predecessor_until_verified_backup() -> anyhow::Resu
         .query_one("SELECT to_regclass('legacy_copy_ledger') IS NOT NULL", &[])?
         .get(0);
     assert!(!defs_after && !inst_after && !ledger_after);
+    Ok(())
+}
+
+#[test]
+fn code_inheritance_has_gcode_project_policies() -> anyhow::Result<()> {
+    let _serial = DATABASE_TEST_LOCK
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner);
+    let Some((database, mut client)) = test_database()? else {
+        return Ok(());
+    };
+    SchemaRunner::new(&mut client, "public")?.apply()?;
+    assert_gcode_rls_policies(&mut client)?;
+
+    let owner_user_id = Uuid::new_v4();
+    let machine_id = Uuid::new_v4();
+    let project_id = Uuid::new_v4();
+    let other_project_id = Uuid::new_v4();
+    let parent_session_id = Uuid::new_v4();
+    let child_session_id = Uuid::new_v4();
+    let agent_run_id = Uuid::new_v4();
+    let worktree_id = Uuid::new_v4();
+    let execution_id = Uuid::new_v4();
+    let password = format!("gobby-inheritance-rls-{}", Uuid::new_v4().simple());
+
+    client.execute(
+        "INSERT INTO users(id, email, name, password_hash) \
+         VALUES ($1, 'inheritance-rls@example.invalid', 'Inheritance RLS', 'test-only')",
+        &[&owner_user_id],
+    )?;
+    client.execute(
+        "INSERT INTO machines(id, hostname, owner_user_id) VALUES ($1, 'inheritance-rls', $2)",
+        &[&machine_id, &owner_user_id],
+    )?;
+    client.execute(
+        "INSERT INTO projects(id, name, repo_path) \
+         VALUES ($1, 'parent', '/tmp/gobby-inheritance'), ($2, 'other', '/tmp/other')",
+        &[&project_id, &other_project_id],
+    )?;
+    client.execute(
+        "INSERT INTO sessions(id, external_id, machine_id, source, project_id) \
+         VALUES ($1, 'inheritance-parent', $2, 'test', $3)",
+        &[&parent_session_id, &machine_id, &project_id],
+    )?;
+    client.execute(
+        "INSERT INTO worktrees(id, project_id, machine_id, branch_name, worktree_path) \
+         VALUES ($1, $2, $3, 'inheritance-rls', '/tmp/gobby-inheritance')",
+        &[&worktree_id, &project_id, &machine_id],
+    )?;
+    client.execute(
+        "INSERT INTO agent_runs(id, machine_id, parent_session_id, provider, prompt, worktree_id) \
+         VALUES ($1, $2, $3, 'test', 'inheritance rls', $4)",
+        &[&agent_run_id, &machine_id, &parent_session_id, &worktree_id],
+    )?;
+    client.execute(
+        "INSERT INTO sessions( \
+             id, external_id, machine_id, source, project_id, parent_session_id, agent_run_id \
+         ) VALUES ($1, 'inheritance-child', $2, 'test', $3, $4, $5)",
+        &[
+            &child_session_id,
+            &machine_id,
+            &project_id,
+            &parent_session_id,
+            &agent_run_id,
+        ],
+    )?;
+    client.execute(
+        "INSERT INTO code_indexed_projects(id) VALUES ($1), ($2)",
+        &[&project_id, &other_project_id],
+    )?;
+    client.execute(
+        "INSERT INTO code_indexed_files(id, project_id, file_path, language, content_hash) \
+         VALUES ($1, $2, 'a.rs', 'rust', 'hash-a'), ($3, $4, 'b.rs', 'rust', 'hash-b')",
+        &[
+            &Uuid::new_v4(),
+            &project_id,
+            &Uuid::new_v4(),
+            &other_project_id,
+        ],
+    )?;
+
+    let role_name: String = client
+        .query_one(
+            "SELECT role_name::TEXT FROM gobby_agent_auth.issue_principal( \
+                 $1, 'agent_run', $2, $3, $4, \
+                 clock_timestamp() + INTERVAL '10 minutes', $5 \
+             )",
+            &[
+                &execution_id,
+                &child_session_id,
+                &agent_run_id,
+                &machine_id,
+                &password,
+            ],
+        )?
+        .get(0);
+    let bound_overlay_id: Option<Uuid> = client
+        .query_one(
+            "SELECT code_overlay_project_id FROM gobby_agent_auth.principal_bindings \
+             WHERE managed_execution_id = $1",
+            &[&execution_id],
+        )?
+        .get(0);
+    let write_project_id = bound_overlay_id.unwrap_or(project_id);
+    if bound_overlay_id.is_some() {
+        client.execute(
+            "INSERT INTO code_indexed_projects(id) VALUES ($1)",
+            &[&write_project_id],
+        )?;
+        client.execute(
+            "INSERT INTO code_indexed_files(id, project_id, file_path, language, content_hash) \
+             VALUES ($1, $2, 'a.rs', 'rust', 'hash-a')",
+            &[&Uuid::new_v4(), &write_project_id],
+        )?;
+    }
+
+    let validation = match database.connect_as(&role_name, &password) {
+        Ok(mut scoped) => (|| -> anyhow::Result<()> {
+            scoped.execute(
+                "INSERT INTO code_inheritance(\
+                     project_id, source_name, target_name, heritage_kind, file_path, content_hash, line\
+                 ) VALUES ($1, 'Derived', 'Base', 'EXTENDS', 'a.rs', 'hash-a', 1)",
+                &[&write_project_id],
+            )?;
+            let visible: i64 = scoped
+                .query_one("SELECT count(*) FROM code_inheritance", &[])?
+                .get(0);
+            assert_eq!(visible, 1, "same-project inheritance rows must be readable");
+            let error = scoped
+                .execute(
+                    "INSERT INTO code_inheritance(\
+                         project_id, source_name, target_name, heritage_kind, file_path, content_hash, line\
+                     ) VALUES ($1, 'Other', 'Base', 'EXTENDS', 'b.rs', 'hash-b', 1)",
+                    &[&other_project_id],
+                )
+                .expect_err("cross-project inheritance inserts must fail RLS");
+            assert_eq!(error.code(), Some(&SqlState::INSUFFICIENT_PRIVILEGE));
+            Ok(())
+        })(),
+        Err(error) => Err(error.into()),
+    };
+    let revoke_result = client.query_one(
+        "SELECT gobby_agent_auth.revoke_principal($1, 1)",
+        &[&execution_id],
+    );
+    validation?;
+    revoke_result?;
+    Ok(())
+}
+
+#[test]
+fn code_inheritance_heritage_kind_check_rejects_unknown() -> anyhow::Result<()> {
+    let _serial = DATABASE_TEST_LOCK
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner);
+    let Some((_database, mut client)) = test_database()? else {
+        return Ok(());
+    };
+    SchemaRunner::new(&mut client, "public")?.apply()?;
+    let project_id = Uuid::new_v4();
+    client.execute(
+        "INSERT INTO code_indexed_projects(id) VALUES ($1)",
+        &[&project_id],
+    )?;
+    client.execute(
+        "INSERT INTO code_indexed_files(id, project_id, file_path, language, content_hash) \
+         VALUES ($1, $2, 'a.rs', 'rust', 'hash-a')",
+        &[&Uuid::new_v4(), &project_id],
+    )?;
+    for kind in ["INHERITS", "EXTENDS", "IMPLEMENTS"] {
+        client.execute(
+            "INSERT INTO code_inheritance(\
+                 project_id, source_name, target_name, heritage_kind, file_path, content_hash, line\
+             ) VALUES ($1, 'Derived', 'Base', $2, 'a.rs', 'hash-a', 1)",
+            &[&project_id, &kind],
+        )?;
+    }
+    let error = client
+        .execute(
+            "INSERT INTO code_inheritance(\
+                 project_id, source_name, target_name, heritage_kind, file_path, content_hash, line\
+             ) VALUES ($1, 'Derived', 'Base', 'MIXIN', 'a.rs', 'hash-a', 2)",
+            &[&project_id],
+        )
+        .expect_err("unknown heritage_kind must fail the CHECK");
+    assert_eq!(error.code(), Some(&SqlState::CHECK_VIOLATION));
+    Ok(())
+}
+
+#[test]
+fn code_inheritance_is_in_gcode_postgres_objects() {
+    let objects = gcode_postgres_objects("public").expect("external objects");
+    let names: BTreeSet<&str> = objects.iter().map(|object| object.name).collect();
+    assert!(names.contains("code_inheritance table"));
+    assert!(names.contains("idx_cinherit_file index"));
+    assert!(names.contains("idx_cinherit_source index"));
+    assert!(names.contains("idx_cinherit_target index"));
+    let table = objects
+        .iter()
+        .find(|object| object.name == "code_inheritance table")
+        .expect("code_inheritance table object");
+    assert_eq!(table.kind, ExternalPostgresObjectKind::Table);
+    assert!(table.sql.contains("code_inheritance_unique_target"));
+    assert!(table.sql.contains("REFERENCES"));
+    assert!(table.sql.contains("ON DELETE CASCADE"));
+    assert!(!table.sql.contains("idx_cinherit_file"));
+}
+
+#[test]
+fn code_inheritance_adoption_preserves_pre_inheritance_and_skips_existing() -> anyhow::Result<()> {
+    let _serial = DATABASE_TEST_LOCK
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner);
+    let Some((_database, mut client)) = test_database()? else {
+        return Ok(());
+    };
+
+    for object in gcode_postgres_objects("public")? {
+        if object.name.contains("inheritance") || object.name.contains("cinherit") {
+            continue;
+        }
+        client.batch_execute(&object.sql)?;
+    }
+    let before: bool = client
+        .query_one("SELECT to_regclass('code_inheritance') IS NOT NULL", &[])?
+        .get(0);
+    assert!(!before, "pre-inheritance schema must omit code_inheritance");
+    SchemaRunner::new(&mut client, "public")?.apply()?;
+    let after: bool = client
+        .query_one("SELECT to_regclass('code_inheritance') IS NOT NULL", &[])?
+        .get(0);
+    assert!(after, "adoption must apply the code_inheritance hop");
+
+    let Some((_database2, mut existing)) = test_database()? else {
+        return Ok(());
+    };
+    for object in gcode_postgres_objects("public")? {
+        existing.batch_execute(&object.sql)?;
+    }
+    SchemaRunner::new(&mut existing, "public")?.apply()?;
+    let still: bool = existing
+        .query_one("SELECT to_regclass('code_inheritance') IS NOT NULL", &[])?
+        .get(0);
+    assert!(still, "already-provisioned code_inheritance must be kept");
     Ok(())
 }
 

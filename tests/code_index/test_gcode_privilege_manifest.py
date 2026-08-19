@@ -64,6 +64,7 @@ def test_manifest_privileges_match_the_managed_relation_set() -> None:
         "code_symbols",
         "code_imports",
         "code_calls",
+        "code_inheritance",
         "code_content_chunks",
         "code_index_projection_cleanup_pending",
         "code_index_prune_dirty_projects",
@@ -81,6 +82,19 @@ def test_manifest_privileges_match_the_managed_relation_set() -> None:
         "UPDATE",
         "DELETE",
     ]
+    assert relations["code_inheritance"]["operations"] == [
+        "SELECT",
+        "INSERT",
+        "UPDATE",
+        "DELETE",
+    ]
+    assert relations["code_inheritance"]["scope_column"] == "project_id"
+    sequences = {entry["sequence"]: entry["operations"] for entry in manifest["sequences"]}
+    assert sequences == {
+        "code_imports_id_seq": ["USAGE", "SELECT"],
+        "code_calls_id_seq": ["USAGE", "SELECT"],
+        "code_inheritance_id_seq": ["USAGE", "SELECT"],
+    }
     assert "config_store" in manifest["explicitly_denied_relations"]
     assert "tasks" in manifest["explicitly_denied_relations"]
     assert "sessions" in manifest["explicitly_denied_relations"]

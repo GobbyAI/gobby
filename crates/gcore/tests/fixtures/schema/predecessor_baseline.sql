@@ -386,6 +386,34 @@ ALTER TABLE code_calls ALTER COLUMN id ADD GENERATED ALWAYS AS IDENTITY (
     CACHE 1
 );
 
+CREATE TABLE code_inheritance (
+    id integer NOT NULL,
+    project_id uuid NOT NULL,
+    source_symbol_id uuid,
+    source_name text NOT NULL,
+    source_kind text DEFAULT 'symbol'::text NOT NULL,
+    source_external_module text DEFAULT ''::text NOT NULL,
+    target_symbol_id uuid,
+    target_name text NOT NULL,
+    target_kind text DEFAULT 'unresolved'::text NOT NULL,
+    target_external_module text DEFAULT ''::text NOT NULL,
+    heritage_kind text NOT NULL,
+    file_path text NOT NULL,
+    content_hash text NOT NULL,
+    line integer DEFAULT 0 NOT NULL
+);
+
+ALTER TABLE ONLY code_inheritance FORCE ROW LEVEL SECURITY;
+
+ALTER TABLE code_inheritance ALTER COLUMN id ADD GENERATED ALWAYS AS IDENTITY (
+    SEQUENCE NAME code_inheritance_id_seq
+    START WITH 1
+    INCREMENT BY 1
+    NO MINVALUE
+    NO MAXVALUE
+    CACHE 1
+);
+
 CREATE TABLE code_content_chunks (
     id uuid NOT NULL,
     project_id uuid NOT NULL,
@@ -2258,6 +2286,21 @@ ALTER TABLE ONLY code_calls
 ALTER TABLE ONLY code_calls
     ADD CONSTRAINT code_calls_unique_call_target UNIQUE NULLS NOT DISTINCT (project_id, file_path, content_hash, caller_symbol_id, callee_symbol_id, callee_name, callee_target_kind, callee_external_module, line);
 
+ALTER TABLE ONLY code_inheritance
+    ADD CONSTRAINT code_inheritance_pkey PRIMARY KEY (id);
+
+ALTER TABLE ONLY code_inheritance
+    ADD CONSTRAINT code_inheritance_unique_target UNIQUE NULLS NOT DISTINCT (
+        project_id, file_path, content_hash,
+        source_symbol_id, source_name, source_kind, source_external_module,
+        target_symbol_id, target_name, target_kind, target_external_module,
+        heritage_kind, line
+    );
+
+ALTER TABLE ONLY code_inheritance
+    ADD CONSTRAINT code_inheritance_heritage_kind_check
+    CHECK (heritage_kind IN ('INHERITS', 'EXTENDS', 'IMPLEMENTS'));
+
 ALTER TABLE ONLY code_content_chunks
     ADD CONSTRAINT code_content_chunks_pkey PRIMARY KEY (id);
 
@@ -2317,6 +2360,9 @@ ALTER TABLE ONLY code_imports
 
 ALTER TABLE ONLY code_calls
     ADD CONSTRAINT code_calls_content_fkey FOREIGN KEY (project_id, file_path, content_hash) REFERENCES code_indexed_files(project_id, file_path, content_hash) ON DELETE CASCADE;
+
+ALTER TABLE ONLY code_inheritance
+    ADD CONSTRAINT code_inheritance_content_fkey FOREIGN KEY (project_id, file_path, content_hash) REFERENCES code_indexed_files(project_id, file_path, content_hash) ON DELETE CASCADE;
 
 ALTER TABLE ONLY comms_attachments
     ADD CONSTRAINT comms_attachments_pkey PRIMARY KEY (id);
@@ -2759,6 +2805,12 @@ CREATE INDEX idx_cc_caller ON code_calls USING btree (project_id, caller_symbol_
 CREATE INDEX idx_cc_file ON code_calls USING btree (project_id, file_path);
 
 CREATE INDEX idx_cc_target ON code_calls USING btree (project_id, callee_target_kind, callee_symbol_id, callee_name);
+
+CREATE INDEX idx_cinherit_source ON code_inheritance USING btree (project_id, source_symbol_id);
+
+CREATE INDEX idx_cinherit_file ON code_inheritance USING btree (project_id, file_path);
+
+CREATE INDEX idx_cinherit_target ON code_inheritance USING btree (project_id, target_kind, target_symbol_id, target_name);
 
 CREATE INDEX idx_ccc_file ON code_content_chunks USING btree (project_id, file_path);
 
@@ -3628,6 +3680,8 @@ ALTER TABLE ONLY worktrees
 
 ALTER TABLE code_calls ENABLE ROW LEVEL SECURITY;
 
+ALTER TABLE code_inheritance ENABLE ROW LEVEL SECURITY;
+
 ALTER TABLE code_content_chunks ENABLE ROW LEVEL SECURITY;
 
 ALTER TABLE code_imports ENABLE ROW LEVEL SECURITY;
@@ -3647,6 +3701,8 @@ ALTER TABLE code_indexed_file_states ENABLE ROW LEVEL SECURITY;
 ALTER TABLE code_symbols ENABLE ROW LEVEL SECURITY;
 
 CREATE POLICY gobby_daemon_runtime_access ON code_calls TO gobby_daemon_runtime USING (true) WITH CHECK (true);
+
+CREATE POLICY gobby_daemon_runtime_access ON code_inheritance TO gobby_daemon_runtime USING (true) WITH CHECK (true);
 
 CREATE POLICY gobby_daemon_runtime_access ON code_content_chunks TO gobby_daemon_runtime USING (true) WITH CHECK (true);
 
@@ -3669,6 +3725,8 @@ CREATE POLICY gobby_daemon_runtime_access ON code_symbols TO gobby_daemon_runtim
 CREATE POLICY gobby_daemon_runtime_access ON projects TO gobby_daemon_runtime USING (true) WITH CHECK (true);
 
 CREATE POLICY gobby_migration_owner_access ON code_calls TO CURRENT_USER USING (true) WITH CHECK (true);
+
+CREATE POLICY gobby_migration_owner_access ON code_inheritance TO CURRENT_USER USING (true) WITH CHECK (true);
 
 CREATE POLICY gobby_migration_owner_access ON code_content_chunks TO CURRENT_USER USING (true) WITH CHECK (true);
 
@@ -3763,6 +3821,14 @@ GRANT SELECT,INSERT,DELETE,UPDATE ON TABLE code_calls TO gobby_gcode_capability;
 GRANT ALL ON SEQUENCE code_calls_id_seq TO gobby_daemon_runtime;
 
 GRANT SELECT,USAGE ON SEQUENCE code_calls_id_seq TO gobby_gcode_capability;
+
+GRANT SELECT,INSERT,DELETE,UPDATE ON TABLE code_inheritance TO gobby_daemon_runtime;
+
+GRANT SELECT,INSERT,DELETE,UPDATE ON TABLE code_inheritance TO gobby_gcode_capability;
+
+GRANT ALL ON SEQUENCE code_inheritance_id_seq TO gobby_daemon_runtime;
+
+GRANT SELECT,USAGE ON SEQUENCE code_inheritance_id_seq TO gobby_gcode_capability;
 
 GRANT SELECT,INSERT,DELETE,UPDATE ON TABLE code_content_chunks TO gobby_daemon_runtime;
 
@@ -4943,12 +5009,16 @@ BEGIN
         'code_symbols',
         'code_imports',
         'code_calls',
+        'code_inheritance',
         'code_content_chunks',
         'code_index_projection_cleanup_pending',
         'code_index_prune_dirty_projects'
     ]
     LOOP
         IF to_regclass(format('%I.%I', target_schema, table_name)) IS NULL THEN
+            IF table_name = 'code_inheritance' THEN
+                CONTINUE;
+            END IF;
             RAISE EXCEPTION 'authorization substrate requires relation %.%',
                 target_schema,
                 table_name;
@@ -6274,12 +6344,16 @@ BEGIN
         'code_symbols',
         'code_imports',
         'code_calls',
+        'code_inheritance',
         'code_content_chunks',
         'code_index_projection_cleanup_pending',
         'code_index_prune_dirty_projects'
     ]
     LOOP
         IF to_regclass(format('%I.%I', target_schema, table_name)) IS NULL THEN
+            IF table_name = 'code_inheritance' THEN
+                CONTINUE;
+            END IF;
             RAISE EXCEPTION 'gcode authorization requires relation %.%',
                 target_schema,
                 table_name;

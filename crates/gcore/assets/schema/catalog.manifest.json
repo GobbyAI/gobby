@@ -1085,6 +1085,62 @@
       "definition": "timestamp with time zone|timestamptz|NO|now()|NEVER"
     },
     {
+      "name": "code_inheritance.content_hash",
+      "definition": "text|text|NO||NEVER"
+    },
+    {
+      "name": "code_inheritance.file_path",
+      "definition": "text|text|NO||NEVER"
+    },
+    {
+      "name": "code_inheritance.heritage_kind",
+      "definition": "text|text|NO||NEVER"
+    },
+    {
+      "name": "code_inheritance.id",
+      "definition": "integer|int4|NO||NEVER"
+    },
+    {
+      "name": "code_inheritance.line",
+      "definition": "integer|int4|NO|0|NEVER"
+    },
+    {
+      "name": "code_inheritance.project_id",
+      "definition": "uuid|uuid|NO||NEVER"
+    },
+    {
+      "name": "code_inheritance.source_external_module",
+      "definition": "text|text|NO|''::text|NEVER"
+    },
+    {
+      "name": "code_inheritance.source_kind",
+      "definition": "text|text|NO|'symbol'::text|NEVER"
+    },
+    {
+      "name": "code_inheritance.source_name",
+      "definition": "text|text|NO||NEVER"
+    },
+    {
+      "name": "code_inheritance.source_symbol_id",
+      "definition": "uuid|uuid|YES||NEVER"
+    },
+    {
+      "name": "code_inheritance.target_external_module",
+      "definition": "text|text|NO|''::text|NEVER"
+    },
+    {
+      "name": "code_inheritance.target_kind",
+      "definition": "text|text|NO|'unresolved'::text|NEVER"
+    },
+    {
+      "name": "code_inheritance.target_name",
+      "definition": "text|text|NO||NEVER"
+    },
+    {
+      "name": "code_inheritance.target_symbol_id",
+      "definition": "uuid|uuid|YES||NEVER"
+    },
+    {
       "name": "code_symbols.byte_end",
       "definition": "integer|int4|NO||NEVER"
     },
@@ -6015,6 +6071,22 @@
       "definition": "PRIMARY KEY (id)"
     },
     {
+      "name": "code_inheritance.code_inheritance_content_fkey",
+      "definition": "FOREIGN KEY (project_id, file_path, content_hash) REFERENCES code_indexed_files(project_id, file_path, content_hash) ON DELETE CASCADE"
+    },
+    {
+      "name": "code_inheritance.code_inheritance_heritage_kind_check",
+      "definition": "CHECK (heritage_kind = ANY (ARRAY['INHERITS'::text, 'EXTENDS'::text, 'IMPLEMENTS'::text]))"
+    },
+    {
+      "name": "code_inheritance.code_inheritance_pkey",
+      "definition": "PRIMARY KEY (id)"
+    },
+    {
+      "name": "code_inheritance.code_inheritance_unique_target",
+      "definition": "UNIQUE NULLS NOT DISTINCT (project_id, file_path, content_hash, source_symbol_id, source_name, source_kind, source_external_module, target_symbol_id, target_name, target_kind, target_external_module, heritage_kind, line)"
+    },
+    {
       "name": "code_symbols.code_symbols_content_fkey",
       "definition": "FOREIGN KEY (project_id, file_path, file_content_hash) REFERENCES code_indexed_files(project_id, file_path, content_hash) ON DELETE CASCADE"
     },
@@ -7499,6 +7571,14 @@
       "definition": "CREATE UNIQUE INDEX code_indexed_projects_pkey ON $schema.code_indexed_projects USING btree (id)"
     },
     {
+      "name": "code_inheritance_pkey",
+      "definition": "CREATE UNIQUE INDEX code_inheritance_pkey ON $schema.code_inheritance USING btree (id)"
+    },
+    {
+      "name": "code_inheritance_unique_target",
+      "definition": "CREATE UNIQUE INDEX code_inheritance_unique_target ON $schema.code_inheritance USING btree (project_id, file_path, content_hash, source_symbol_id, source_name, source_kind, source_external_module, target_symbol_id, target_name, target_kind, target_external_module, heritage_kind, line) NULLS NOT DISTINCT"
+    },
+    {
       "name": "code_symbols_pkey",
       "definition": "CREATE UNIQUE INDEX code_symbols_pkey ON $schema.code_symbols USING btree (id)"
     },
@@ -7809,6 +7889,18 @@
     {
       "name": "idx_cifs_machine_project",
       "definition": "CREATE INDEX idx_cifs_machine_project ON $schema.code_indexed_file_states USING btree (machine_id, project_id)"
+    },
+    {
+      "name": "idx_cinherit_file",
+      "definition": "CREATE INDEX idx_cinherit_file ON $schema.code_inheritance USING btree (project_id, file_path)"
+    },
+    {
+      "name": "idx_cinherit_source",
+      "definition": "CREATE INDEX idx_cinherit_source ON $schema.code_inheritance USING btree (project_id, source_symbol_id)"
+    },
+    {
+      "name": "idx_cinherit_target",
+      "definition": "CREATE INDEX idx_cinherit_target ON $schema.code_inheritance USING btree (project_id, target_kind, target_symbol_id, target_name)"
     },
     {
       "name": "idx_cipcp_updated",

@@ -646,6 +646,7 @@ fn write_postgres_parsed_file_facts_with_root(
         symbols,
         imports: Vec::new(),
         calls: Vec::new(),
+        inheritance: Vec::new(),
         source: source.to_vec(),
     };
     let mut tx = conn.transaction().expect("start parsed write transaction");

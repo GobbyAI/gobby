@@ -124,6 +124,7 @@ fn library_writes_all_code_facts() {
             rel.to_string(),
             3,
         )],
+        inheritance: Vec::new(),
         source: source.to_vec(),
     };
 
