@@ -15,6 +15,7 @@ import pytest
 from gobby.code_index.context import CodeIndexContext
 from gobby.code_index.gcode_gateway import (
     GcodeCommandError,
+    GcodeFalkorTransportError,
     GcodeGateway,
     GcodeIndexedFileNotFoundError,
     GcodeProjectNotFoundError,
@@ -55,6 +56,7 @@ class RecordingGcodeGateway(GcodeGateway):
         graph_timeout: bool = False,
         vector_timeout: bool = False,
         vector_result: dict[str, Any] | None = None,
+        graph_errors: list[BaseException] | None = None,
     ) -> None:
         self.fail = fail
         self.result = result or {"success": True}
@@ -62,6 +64,7 @@ class RecordingGcodeGateway(GcodeGateway):
         self.graph_timeout = graph_timeout
         self.vector_timeout = vector_timeout
         self.vector_result = vector_result or {"success": True}
+        self.graph_errors = list(graph_errors or [])
         self.synced_files: list[tuple[Path, str]] = []
         self.vector_synced_files: list[tuple[Path, str]] = []
         self.graph_sync_timeouts: list[float | None] = []
@@ -76,6 +79,8 @@ class RecordingGcodeGateway(GcodeGateway):
     ) -> dict[str, Any]:
         self.synced_files.append((project_root, file_path))
         self.graph_sync_timeouts.append(timeout)
+        if self.graph_errors:
+            raise self.graph_errors.pop(0)
         if self.graph_timeout:
             raise GcodeTimeoutError("gcode timed out: graph sync-file")
         if self.fail:
@@ -831,50 +836,123 @@ async def test_sync_file_logs_real_graph_failures_as_errors(
 @pytest.mark.asyncio
 async def test_sync_file_warns_and_retries_when_graph_sync_times_out(
     caplog: pytest.LogCaptureFixture,
-    code_storage: CodeIndexStorage,
     tmp_path: Path,
 ) -> None:
-    """Graph gcode timeouts stay pending without traceback logs."""
-    project_id = PROJECT_ID
-    file_path = "src/app.py"
+    """Graph gcode timeouts exhaust bounded retries and stay pending."""
     _write_source(tmp_path)
-    indexed_file = _indexed_file(vectors_synced=True, graph_synced=False)
-    code_storage.upsert_project_stats(
-        IndexedProject(id=project_id, root_path=str(tmp_path), total_files=1, total_symbols=1)
-    )
-    code_storage.upsert_file(indexed_file)
-    code_storage.record_projection_cleanup_failure(project_id, "graph", "stale graph drift")
+    pending_file = _indexed_file(vectors_synced=True, graph_synced=False)
+    storage = MagicMock()
+    storage.get_file.return_value = pending_file
     gcode_gateway = RecordingGcodeGateway(graph_timeout=True)
 
     with caplog.at_level(logging.WARNING, logger="gobby.code_index.sync_worker"):
         did_sync = await _sync_file(
-            storage=code_storage,
+            storage=storage,
             gcode_gateway=gcode_gateway,
             config=CodeIndexConfig(
                 embedding_enabled=False,
                 graph_enabled=True,
                 sync_worker_projection_timeout_seconds=124.0,
             ),
-            project_id=project_id,
+            project_id=PROJECT_ID,
             root=tmp_path,
-            file=indexed_file,
+            file=pending_file,
         )
 
     assert did_sync is False
-    assert gcode_gateway.synced_files == [(tmp_path, file_path)]
-    assert gcode_gateway.graph_sync_timeouts == [124.0]
-    synced_file = code_storage.get_file(project_id, file_path)
-    assert synced_file is not None
-    assert synced_file.graph_synced is False
-    assert synced_file.graph_sync_attempted_at is not None
-    assert code_storage.list_projection_cleanup_pending()
+    assert gcode_gateway.synced_files == [(tmp_path, pending_file.file_path)] * 3
+    assert gcode_gateway.graph_sync_timeouts == [124.0] * 3
+    storage.mark_graph_synced.assert_not_called()
+    storage.mark_graph_sync_attempted.assert_called_once_with(pending_file.id)
     assert any(
         record.levelno == logging.WARNING
-        and "Sync worker: graph sync timed out for src/app.py" in record.getMessage()
+        and "Sync worker: transient graph sync failure for src/app.py" in record.getMessage()
+        and not record.exc_info
+        for record in caplog.records
+    )
+    errors = [record for record in caplog.records if record.levelno == logging.ERROR]
+    assert len(errors) == 1
+    assert "graph sync retries exhausted for src/app.py" in errors[0].getMessage()
+    assert errors[0].exc_info is None
+
+
+def _falkor_transport_error() -> GcodeFalkorTransportError:
+    return GcodeFalkorTransportError(
+        ["gcode", "graph", "sync-file"],
+        1,
+        "Error: FalkorDB graph query failed: Resource temporarily unavailable (os error 35)",
+    )
+
+
+@pytest.mark.asyncio
+async def test_sync_file_retries_transient_falkor_graph_error(
+    caplog: pytest.LogCaptureFixture,
+    tmp_path: Path,
+) -> None:
+    """A one-shot Falkor EAGAIN is retried and then marked synced."""
+    _write_source(tmp_path)
+    pending_file = _indexed_file(vectors_synced=True, graph_synced=False)
+    storage = MagicMock()
+    storage.get_file.return_value = pending_file
+    gcode_gateway = RecordingGcodeGateway(graph_errors=[_falkor_transport_error()])
+
+    with caplog.at_level(logging.WARNING, logger="gobby.code_index.sync_worker"):
+        did_sync = await _sync_file(
+            storage=storage,
+            gcode_gateway=gcode_gateway,
+            config=CodeIndexConfig(embedding_enabled=False, graph_enabled=True),
+            project_id=PROJECT_ID,
+            root=tmp_path,
+            file=pending_file,
+        )
+
+    assert did_sync is True
+    assert gcode_gateway.synced_files == [(tmp_path, pending_file.file_path)] * 2
+    storage.mark_graph_synced.assert_called_once_with(pending_file.id, pending_file.content_hash)
+    assert any(
+        record.levelno == logging.WARNING
+        and "transient graph sync failure for src/app.py" in record.getMessage()
         and not record.exc_info
         for record in caplog.records
     )
     assert not any(record.levelno >= logging.ERROR for record in caplog.records)
+
+
+@pytest.mark.asyncio
+async def test_sync_file_exhausts_transient_falkor_graph_retries(
+    caplog: pytest.LogCaptureFixture,
+    tmp_path: Path,
+) -> None:
+    """Persistent Falkor EAGAIN stays unsynced without a traceback."""
+    _write_source(tmp_path)
+    pending_file = _indexed_file(vectors_synced=True, graph_synced=False)
+    storage = MagicMock()
+    storage.get_file.return_value = pending_file
+    gcode_gateway = RecordingGcodeGateway(
+        graph_errors=[
+            _falkor_transport_error(),
+            _falkor_transport_error(),
+            _falkor_transport_error(),
+        ]
+    )
+
+    with caplog.at_level(logging.WARNING, logger="gobby.code_index.sync_worker"):
+        did_sync = await _sync_file(
+            storage=storage,
+            gcode_gateway=gcode_gateway,
+            config=CodeIndexConfig(embedding_enabled=False, graph_enabled=True),
+            project_id=PROJECT_ID,
+            root=tmp_path,
+            file=pending_file,
+        )
+
+    assert did_sync is False
+    assert gcode_gateway.synced_files == [(tmp_path, pending_file.file_path)] * 3
+    storage.mark_graph_synced.assert_not_called()
+    errors = [record for record in caplog.records if record.levelno == logging.ERROR]
+    assert len(errors) == 1
+    assert "graph sync retries exhausted for src/app.py" in errors[0].getMessage()
+    assert errors[0].exc_info is None
 
 
 @pytest.mark.asyncio

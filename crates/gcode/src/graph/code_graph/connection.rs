@@ -29,7 +29,7 @@ pub(super) fn with_required_core_graph<T>(
             Err(GraphReadError::Unreachable { message }.into())
         }
         Ok((None, ServiceState::Available)) => Err(GraphReadError::QueryFailed {
-            message: "graph read returned no value".to_string(),
+            message: "graph query returned no value".to_string(),
         }
         .into()),
         Err(error) => Err(GraphReadError::QueryFailed {
@@ -57,7 +57,7 @@ pub(super) fn with_optional_core_graph<T>(
         Ok((Some(value), ServiceState::Available)) => Ok(value),
         Ok((_, ServiceState::NotConfigured | ServiceState::Unreachable { .. })) => Ok(default()),
         Ok((None, ServiceState::Available)) => Err(GraphReadError::QueryFailed {
-            message: "graph read returned no value".to_string(),
+            message: "graph query returned no value".to_string(),
         }
         .into()),
         Err(error) => Err(GraphReadError::QueryFailed {

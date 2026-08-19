@@ -11,6 +11,7 @@ import pytest
 from gobby.code_index.gcode_gateway import (
     GcodeCommandError,
     GcodeDaemonConfigUnavailableError,
+    GcodeFalkorTransportError,
     GcodeGateway,
     GcodeIndexedFileNotFoundError,
     GcodeInputValidationError,
@@ -750,6 +751,41 @@ async def test_gateway_classifies_indexed_file_not_found(
     assert exc_info.value.file_path == "src/app.py"
     assert exc_info.value.project_id == "proj-1"
     assert exc_info.value.returncode == 2
+
+
+async def test_gateway_classifies_falkor_eagain_as_transport_error(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    processes = [
+        FakeProcess(stdout=GCODE_PIN_STDOUT),
+        FakeProcess(
+            returncode=1,
+            stderr=b"Error: FalkorDB graph query failed: Resource temporarily unavailable (os error 35)",
+        ),
+    ]
+    _patch_subprocess(monkeypatch, processes)
+    gateway = GcodeGateway(binary="/tmp/gcode")
+
+    with pytest.raises(GcodeFalkorTransportError, match="os error 35"):
+        await gateway.graph_sync_file(tmp_path, "src/app.py")
+
+
+async def test_gateway_classifies_unrelated_graph_stderr_as_command_error(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    processes = [
+        FakeProcess(stdout=GCODE_PIN_STDOUT),
+        FakeProcess(returncode=1, stderr=b"Error: FalkorDB graph query failed: syntax error"),
+    ]
+    _patch_subprocess(monkeypatch, processes)
+    gateway = GcodeGateway(binary="/tmp/gcode")
+
+    with pytest.raises(GcodeCommandError, match="syntax error") as exc_info:
+        await gateway.graph_sync_file(tmp_path, "src/app.py")
+
+    assert type(exc_info.value) is GcodeCommandError
 
 
 async def test_gateway_returns_indexed_file_not_found_skip_response(

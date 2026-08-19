@@ -137,16 +137,16 @@ impl fmt::Display for GraphReadError {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
             Self::NotConfigured => {
-                f.write_str("FalkorDB is not configured; graph read APIs require FalkorDB")
+                f.write_str("FalkorDB is not configured; graph APIs require FalkorDB")
             }
             Self::Unreachable { message } => {
                 write!(
                     f,
-                    "FalkorDB is unreachable; graph read APIs require FalkorDB: {message}"
+                    "FalkorDB is unreachable; graph APIs require FalkorDB: {message}"
                 )
             }
             Self::QueryFailed { message } => {
-                write!(f, "FalkorDB graph read failed: {message}")
+                write!(f, "FalkorDB graph query failed: {message}")
             }
         }
     }

@@ -18,6 +18,7 @@ from gobby.code_index.gcode_gateway import (
     GcodeCommandError,
     GcodeDaemonConfigUnavailableError,
     GcodeEmbeddingTransportError,
+    GcodeFalkorTransportError,
     GcodeIndexedFileNotFoundError,
     GcodeProjectNotFoundError,
     GcodeTimeoutError,
@@ -40,6 +41,7 @@ _pool_outage_log = ThrottledLogger()
 
 _EMBEDDING_CONFIG_UNAVAILABLE = "embedding config is required for vector lifecycle commands"
 _VECTOR_SYNC_RETRY_BACKOFF_SECONDS = (1.0, 2.0)
+_GRAPH_SYNC_RETRY_BACKOFF_SECONDS = _VECTOR_SYNC_RETRY_BACKOFF_SECONDS
 
 _GRAPH_SYNC_LANGUAGES = frozenset(
     {
@@ -82,6 +84,13 @@ def _is_transient_vector_error(error: Exception) -> bool:
     )
 
 
+def _is_transient_graph_error(error: Exception) -> bool:
+    return isinstance(
+        error,
+        (GcodeFalkorTransportError, GcodeTimeoutError, GcodeUnavailableError),
+    )
+
+
 async def _sync_vector_file_with_retry(
     gcode_gateway: GcodeGateway,
     project_root: Path,
@@ -113,6 +122,39 @@ async def _sync_vector_file_with_retry(
             await asyncio.sleep(_VECTOR_SYNC_RETRY_BACKOFF_SECONDS[attempt - 1])
 
     raise AssertionError("unreachable vector retry state")
+
+
+async def _sync_graph_file_with_retry(
+    gcode_gateway: GcodeGateway,
+    project_root: Path,
+    file: IndexedFile,
+    *,
+    timeout: float | None = None,
+) -> bool:
+    attempts = len(_GRAPH_SYNC_RETRY_BACKOFF_SECONDS) + 1
+    for attempt in range(1, attempts + 1):
+        try:
+            return await _sync_graph(
+                gcode_gateway=gcode_gateway,
+                project_root=project_root,
+                file=file,
+                timeout=timeout,
+            )
+        except (GcodeCommandError, GcodeTimeoutError, GcodeUnavailableError) as error:
+            if not _is_transient_graph_error(error):
+                raise
+            if attempt == 1:
+                logger.warning(
+                    "Sync worker: transient graph sync failure for %s; retrying up to %s times: %s",
+                    file.file_path,
+                    attempts - 1,
+                    error,
+                )
+            if attempt == attempts:
+                raise
+            await asyncio.sleep(_GRAPH_SYNC_RETRY_BACKOFF_SECONDS[attempt - 1])
+
+    raise AssertionError("unreachable graph retry state")
 
 
 def _arm_breakers(
@@ -472,7 +514,7 @@ async def _sync_file(
                     if armed is not None:
                         try:
                             await _run_db(run_db, storage.mark_graph_sync_attempted, current.id)
-                            graph_synced = await _sync_graph(
+                            graph_synced = await _sync_graph_file_with_retry(
                                 gcode_gateway=gcode_gateway,
                                 project_root=root,
                                 file=current,
@@ -505,10 +547,14 @@ async def _sync_file(
                                 run_db=run_db,
                             )
                             return False
-                        except GcodeTimeoutError as e:
+                        except (
+                            GcodeFalkorTransportError,
+                            GcodeTimeoutError,
+                            GcodeUnavailableError,
+                        ) as e:
                             _record_breaker_outcomes(armed)
-                            logger.warning(
-                                "Sync worker: graph sync timed out for %s: %s",
+                            logger.error(
+                                "Sync worker: graph sync retries exhausted for %s: %s",
                                 current.file_path,
                                 e,
                             )

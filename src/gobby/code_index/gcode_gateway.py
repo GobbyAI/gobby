@@ -33,6 +33,13 @@ _EMBEDDING_TRANSPORT_SIGNATURES = (
     "ai transport failed",
     "embedding response was invalid",
 )
+_FALKOR_TRANSPORT_SIGNATURES = (
+    "os error 35",
+    "resource temporarily unavailable",
+    "would block",
+    "query timed out",
+    "max execution time",
+)
 _INDEXED_FILE_NOT_FOUND_PATTERN = re.compile(
     r"indexed file `([^`]+)` was not found for project (\S+)"
 )
@@ -139,6 +146,15 @@ class GcodeEmbeddingTransportError(GcodeCommandError):
     """
 
 
+class GcodeFalkorTransportError(GcodeCommandError):
+    """Raised when gcode fails because FalkorDB I/O timed out or returned EAGAIN.
+
+    Distinct from generic ``GcodeCommandError`` so graph sync can retry
+    transient Redis/FalkorDB contention without treating Cypher errors as
+    transport failures.
+    """
+
+
 class GcodeJsonError(GcodeGatewayError):
     """Raised when gcode returns invalid JSON."""
 
@@ -217,6 +233,8 @@ def _classify_gcode_command_error(
     lowered = stderr_text.lower()
     if any(signature in lowered for signature in _EMBEDDING_TRANSPORT_SIGNATURES):
         return GcodeEmbeddingTransportError(command, returncode, stderr_text, stdout=stdout_text)
+    if any(signature in lowered for signature in _FALKOR_TRANSPORT_SIGNATURES):
+        return GcodeFalkorTransportError(command, returncode, stderr_text, stdout=stdout_text)
     return GcodeCommandError(command, returncode, stderr_text, stdout=stdout_text)
 
 
@@ -738,6 +756,7 @@ __all__ = [
     "GcodeCommandError",
     "GcodeCommandResult",
     "GcodeEmbeddingTransportError",
+    "GcodeFalkorTransportError",
     "GcodeGateway",
     "GcodeGatewayError",
     "GcodeIndexedFileNotFoundError",

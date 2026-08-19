@@ -10,10 +10,12 @@
 //! version range.
 
 use std::collections::HashMap;
+use std::io::ErrorKind;
+use std::thread;
 use std::time::Duration;
 
 use redis::Value as RedisValue;
-use redis::{Client, Connection, ConnectionAddr, ConnectionInfo, RedisConnectionInfo};
+use redis::{Client, Cmd, Connection, ConnectionAddr, ConnectionInfo, RedisConnectionInfo};
 use serde_json::{Map, Number, Value};
 
 use crate::config::FalkorConfig;
@@ -29,10 +31,17 @@ pub type Row = HashMap<String, Value>;
 pub struct GraphClient {
     connection: Connection,
     graph_name: String,
+    query_timeout: Duration,
 }
 
-const DEFAULT_CONNECT_TIMEOUT: Duration = Duration::from_secs(5);
+/// Handshake and socket I/O share the same bound so AUTH can wait out an
+/// in-flight `GRAPH.QUERY` on single-threaded Redis. Connection refused still
+/// fails immediately; a busy server no longer AUTH-times-out at 5s.
+const DEFAULT_CONNECT_TIMEOUT: Duration = Duration::from_secs(30);
 const DEFAULT_SOCKET_TIMEOUT: Duration = Duration::from_secs(30);
+const HANDSHAKE_ATTEMPTS: usize = 3;
+const HANDSHAKE_RETRY_BACKOFF: [Duration; 2] =
+    [Duration::from_millis(100), Duration::from_millis(200)];
 
 impl GraphClient {
     /// Build a client for a consumer-selected graph.
@@ -73,6 +82,7 @@ impl GraphClient {
         Ok(Self {
             connection,
             graph_name: graph_name.to_string(),
+            query_timeout: query_timeout_from_socket(socket_timeout),
         })
     }
 
@@ -83,10 +93,7 @@ impl GraphClient {
         params: Option<HashMap<String, String>>,
     ) -> anyhow::Result<Vec<Row>> {
         let query = construct_query(cypher, params.as_ref());
-        let response = redis::cmd("GRAPH.QUERY")
-            .arg(&self.graph_name)
-            .arg(&query)
-            .arg("--compact")
+        let response = graph_query_cmd(&self.graph_name, &query, self.query_timeout)
             .query::<RedisValue>(&mut self.connection)?;
         parse_compact_response(response)
     }
@@ -133,7 +140,7 @@ fn with_graph_client<T, C>(
     config: Option<&FalkorConfig>,
     graph_name: &str,
     default: T,
-    make_client: impl FnOnce(&FalkorConfig, &str) -> anyhow::Result<C>,
+    mut make_client: impl FnMut(&FalkorConfig, &str) -> anyhow::Result<C>,
     f: impl FnOnce(&mut C) -> anyhow::Result<T>,
 ) -> anyhow::Result<(T, ServiceState)> {
     let Some(config) = config else {
@@ -141,21 +148,67 @@ fn with_graph_client<T, C>(
         return Ok((default, ServiceState::NotConfigured));
     };
 
-    let mut client = match make_client(config, graph_name) {
-        Ok(client) => client,
-        Err(error) => {
-            log::debug!("FalkorDB graph `{graph_name}` unavailable: {error}");
-            return Ok((
-                default,
-                ServiceState::Unreachable {
-                    message: error.to_string(),
-                },
-            ));
+    for attempt in 1..=HANDSHAKE_ATTEMPTS {
+        match make_client(config, graph_name) {
+            Ok(mut client) => {
+                let value = f(&mut client)?;
+                return Ok((value, ServiceState::Available));
+            }
+            Err(error) if is_transient_graph_io(&error) && attempt < HANDSHAKE_ATTEMPTS => {
+                log::debug!(
+                    "FalkorDB graph `{graph_name}` handshake attempt {attempt}/{HANDSHAKE_ATTEMPTS} \
+                     transient: {error}"
+                );
+                thread::sleep(HANDSHAKE_RETRY_BACKOFF[attempt - 1]);
+            }
+            Err(error) => {
+                log::debug!("FalkorDB graph `{graph_name}` unavailable: {error}");
+                return Ok((
+                    default,
+                    ServiceState::Unreachable {
+                        message: error.to_string(),
+                    },
+                ));
+            }
         }
-    };
+    }
 
-    let value = f(&mut client)?;
-    Ok((value, ServiceState::Available))
+    unreachable!("handshake retry loop returns on the final attempt");
+}
+
+fn query_timeout_from_socket(socket_timeout: Duration) -> Duration {
+    socket_timeout
+        .checked_sub(Duration::from_secs(1))
+        .filter(|timeout| *timeout > Duration::ZERO)
+        .unwrap_or(Duration::from_millis(1))
+}
+
+fn graph_query_cmd(graph_name: &str, query: &str, timeout: Duration) -> Cmd {
+    let timeout_ms = u64::try_from(timeout.as_millis())
+        .unwrap_or(u64::MAX)
+        .max(1);
+    let mut cmd = redis::cmd("GRAPH.QUERY");
+    cmd.arg(graph_name)
+        .arg(query)
+        .arg("--compact")
+        .arg("timeout")
+        .arg(timeout_ms);
+    cmd
+}
+
+fn is_transient_graph_io(error: &anyhow::Error) -> bool {
+    error.chain().any(|cause| {
+        if let Some(io_error) = cause.downcast_ref::<std::io::Error>() {
+            return matches!(
+                io_error.kind(),
+                ErrorKind::TimedOut | ErrorKind::WouldBlock | ErrorKind::Interrupted
+            );
+        }
+        let lowered = cause.to_string().to_ascii_lowercase();
+        lowered.contains("os error 35")
+            || lowered.contains("resource temporarily unavailable")
+            || lowered.contains("would block")
+    })
 }
 
 /// Escape a graph label for safe Cypher embedding.
@@ -799,5 +852,86 @@ mod tests {
         let error = anyhow::anyhow!("syntax error near CREATE INDEX");
 
         assert!(!is_existing_index_error(&error));
+    }
+
+    #[test]
+    fn handshake_retries_transient_io_then_succeeds() {
+        let attempts = std::sync::atomic::AtomicUsize::new(0);
+        let result = with_graph_client(
+            Some(&test_config()),
+            "consumer_graph",
+            Vec::<String>::new(),
+            |_config, _graph_name| {
+                let n = attempts.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+                if n < 2 {
+                    Err(anyhow::Error::from(std::io::Error::from(
+                        ErrorKind::WouldBlock,
+                    )))
+                } else {
+                    Ok(FakeGraphClient)
+                }
+            },
+            |_client| Ok(vec!["ok".to_string()]),
+        )
+        .expect("transient handshake should retry");
+
+        assert_eq!(result, (vec!["ok".to_string()], ServiceState::Available));
+        assert_eq!(attempts.load(std::sync::atomic::Ordering::SeqCst), 3);
+    }
+
+    #[test]
+    fn handshake_does_not_retry_non_transient_errors() {
+        let attempts = std::sync::atomic::AtomicUsize::new(0);
+        let started = Instant::now();
+        let result = with_graph_client(
+            Some(&test_config()),
+            "consumer_graph",
+            Vec::<String>::new(),
+            |_config, _graph_name| {
+                attempts.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+                Err(anyhow!("NOAUTH: Authentication required"))
+            },
+            |_client: &mut FakeGraphClient| Ok(vec!["value".to_string()]),
+        )
+        .expect("non-transient failure should degrade");
+
+        assert!(matches!(
+            result,
+            (_, ServiceState::Unreachable { ref message }) if message.contains("NOAUTH")
+        ));
+        assert_eq!(attempts.load(std::sync::atomic::Ordering::SeqCst), 1);
+        assert!(started.elapsed() < Duration::from_millis(80));
+    }
+
+    #[test]
+    fn graph_query_cmd_includes_timeout_below_socket_budget() {
+        let packed = graph_query_cmd(
+            "g",
+            "RETURN 1",
+            query_timeout_from_socket(Duration::from_secs(30)),
+        )
+        .get_packed_command();
+        let text = String::from_utf8_lossy(&packed);
+        assert!(text.contains("GRAPH.QUERY"), "{text}");
+        assert!(text.contains("timeout"), "{text}");
+        assert!(text.contains("29000"), "{text}");
+    }
+
+    #[test]
+    fn query_timeout_floors_subsecond_socket_budget() {
+        assert_eq!(
+            query_timeout_from_socket(Duration::from_millis(150)),
+            Duration::from_millis(1)
+        );
+    }
+
+    #[test]
+    fn transient_io_classification() {
+        let blocked = anyhow::Error::from(std::io::Error::from(ErrorKind::WouldBlock));
+        assert!(is_transient_graph_io(&blocked));
+        let display = anyhow!("Resource temporarily unavailable (os error 35)");
+        assert!(is_transient_graph_io(&display));
+        let syntax = anyhow!("syntax error near RETURN");
+        assert!(!is_transient_graph_io(&syntax));
     }
 }
