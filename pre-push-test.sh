@@ -133,14 +133,16 @@ load_pytest_falkordb_settings() {
         [ -n "$PYTEST_FALKORDB_PASSWORD" ]
 }
 
+# bash 3.2 + set -u: empty "${arr[@]}" is unbound; "$@" is not.
 record_command_result() {
     local name="$1"
     local exit_code="$2"
     local report_path="$3"
     local non_gating="${4:-}"
-    local gating_args=()
     if [ "$non_gating" = "non-gating" ]; then
-        gating_args+=(--non-gating)
+        set -- --non-gating
+    else
+        set --
     fi
     local manifest_exit=0
     if python3 "$MANIFEST_TOOL" record \
@@ -148,7 +150,7 @@ record_command_result() {
         --name "$name" \
         --report "$report_path" \
         --exit-code "$exit_code" \
-        "${gating_args[@]}"; then
+        "$@"; then
         return 0
     else
         manifest_exit=$?
@@ -165,16 +167,17 @@ record_command_result() {
 record_skipped_command() {
     local name="$1"
     local non_gating="${2:-}"
-    local gating_args=()
     if [ "$non_gating" = "non-gating" ]; then
-        gating_args+=(--non-gating)
+        set -- --non-gating
+    else
+        set --
     fi
     local manifest_exit=0
     if python3 "$MANIFEST_TOOL" record \
         --manifest "$MANIFEST_PATH" \
         --name "$name" \
         --status skipped \
-        "${gating_args[@]}"; then
+        "$@"; then
         return 0
     else
         manifest_exit=$?

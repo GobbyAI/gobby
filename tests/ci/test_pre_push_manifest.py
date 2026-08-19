@@ -160,6 +160,49 @@ def test_manifest_invalidates_a_concurrent_head_change(repo_root: Path, git_repo
     assert manifest["invalidation_reasons"] == ["HEAD changed during the report run"]
 
 
+def test_record_helpers_tolerate_empty_optional_args_under_bash_nounset(
+    repo_root: Path, tmp_path: Path
+) -> None:
+    script = (repo_root / "pre-push-test.sh").read_text(encoding="utf-8")
+    assert "gating_args" not in script
+
+    harness = tmp_path / "record-helpers.sh"
+    harness.write_text(
+        "\n".join(
+            (
+                "#!/usr/bin/env bash",
+                "set -euo pipefail",
+                'MANIFEST_TOOL="pre-push-manifest.py"',
+                'MANIFEST_PATH="unused.json"',
+                "python3() { :; }",
+                _bash_function(script, "record_command_result"),
+                _bash_function(script, "record_skipped_command"),
+                'record_command_result "ruff" "0" "ruff.txt"',
+                'record_skipped_command "coderabbit"',
+                'record_command_result "coderabbit" "0" "cr.md" "non-gating"',
+                'record_skipped_command "coderabbit" "non-gating"',
+            )
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+    completed = subprocess.run(
+        ("bash", str(harness)),
+        cwd=tmp_path,
+        check=False,
+        capture_output=True,
+        text=True,
+    )
+    assert completed.returncode == 0, completed.stderr
+
+
+def _bash_function(script: str, name: str) -> str:
+    header = f"{name}() {{"
+    start = script.index(header)
+    end = script.index("\n}\n", start)
+    return script[start : end + 3]
+
+
 def _manifest(
     helper: Path,
     command: str,
