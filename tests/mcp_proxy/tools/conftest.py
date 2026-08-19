@@ -18,7 +18,21 @@ LOCAL_MACHINE_ID = "21000000-0000-4000-8000-00000000000b"
 
 
 @pytest.fixture(autouse=True)
-def _local_machine_identity() -> Iterator[None]:
+def _local_machine_identity(request: pytest.FixtureRequest) -> Iterator[None]:
+    """Patch the local machine id and enroll it whenever a database is in scope.
+
+    ``SessionManager.register`` refuses an unenrolled machine, so every test here
+    that registers a real session needs the row to exist. Tests that use no
+    database keep the patch alone rather than paying for a hub fixture.
+    """
+    db_fixture = next((name for name in ("db", "temp_db") if name in request.fixturenames), None)
+    if db_fixture is not None:
+        from gobby.storage.machines import LocalMachineManager
+        from tests.fixtures.postgres import TEST_USER_ID
+
+        LocalMachineManager(request.getfixturevalue(db_fixture)).upsert_seen(
+            LOCAL_MACHINE_ID, TEST_USER_ID
+        )
     with patch("gobby.utils.machine_id._cached_machine_id", LOCAL_MACHINE_ID):
         yield
 
