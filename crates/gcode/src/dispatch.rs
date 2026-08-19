@@ -3,6 +3,8 @@ use clap::Parser as _;
 
 use crate::cli::{self, Cli, Command, EmbeddingsCommand, GraphCommand, VectorCommand};
 
+mod usage;
+
 static STDERR_LOGGER: StderrLogger = StderrLogger;
 
 struct StderrLogger;
@@ -246,7 +248,10 @@ pub(crate) fn run_with_exit_code() -> std::process::ExitCode {
 }
 
 fn run() -> anyhow::Result<()> {
-    let cli = Cli::parse();
+    let cli = match Cli::try_parse() {
+        Ok(cli) => cli,
+        Err(error) => return usage::handle_parse_error(error),
+    };
     init_logger(cli.quiet);
     let format = cli::effective_format(cli.format, &cli.command);
 

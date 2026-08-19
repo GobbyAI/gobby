@@ -111,6 +111,7 @@ fn unique_project_by_name(
         [] => Err(CliError {
             code: "project_not_found",
             message: format!("Project '{name}' not found"),
+            recovery: None,
             exit_status: 2,
         }),
         [_] => {
@@ -121,6 +122,7 @@ fn unique_project_by_name(
             looked_up_project(project).ok_or_else(|| CliError {
                 code: "project_not_found",
                 message: format!("Project '{name}' not found"),
+                recovery: None,
                 exit_status: 2,
             })
         }
@@ -136,6 +138,7 @@ fn unique_project_by_name(
                     "Project '{name}' matches multiple roots ({}); specify a project path or id",
                     roots.join(", ")
                 ),
+                recovery: None,
                 exit_status: 2,
             })
         }
@@ -151,6 +154,7 @@ pub fn lookup_project_by_id(project_id: &str) -> Result<LookedUpProject, CliErro
         .ok_or_else(|| CliError {
             code: "project_not_found",
             message: format!("Project '{project_id}' not found"),
+            recovery: None,
             exit_status: 2,
         })
 }
@@ -221,6 +225,7 @@ fn read_json<T: serde::de::DeserializeOwned>(
     let body = response.into_string().map_err(|error| CliError {
         code: "io",
         message: format!("{} io error: {error}", kind.noun()),
+        recovery: None,
         exit_status: 1,
     })?;
     if !(200..300).contains(&status) {
@@ -229,6 +234,7 @@ fn read_json<T: serde::de::DeserializeOwned>(
     serde_json::from_str(&body).map_err(|error| CliError {
         code: "malformed",
         message: format!("malformed {}: {error}", kind.noun()),
+        recovery: None,
         exit_status: 2,
     })
 }
@@ -239,6 +245,7 @@ fn status_error(status: u16, body: &str, kind: DaemonRequestKind) -> CliError {
         _ => CliError {
             code: kind.error_code(),
             message: format!("{} failed ({status}): {}", kind.noun(), sanitize_body(body)),
+            recovery: None,
             exit_status: 2,
         },
     }

@@ -203,9 +203,33 @@ fn test_parse_allow_stale_global_flag() {
     }
 }
 
+fn parse_failure(args: &[&str]) -> clap::Error {
+    match Cli::try_parse_from(args) {
+        Err(error) => error,
+        Ok(_) => panic!("expected clap parse failure for {args:?}"),
+    }
+}
+
 #[test]
 fn test_rejects_removed_no_freshness_global_flag() {
-    assert!(Cli::try_parse_from(["gcode", "--no-freshness", "tree"]).is_err());
+    let error = parse_failure(&["gcode", "--no-freshness", "tree"]);
+    assert_eq!(error.kind(), clap::error::ErrorKind::UnknownArgument);
+}
+
+#[test]
+fn help_request_keeps_full_clap_output() {
+    let error = parse_failure(&["gcode", "--help"]);
+    assert_eq!(error.kind(), clap::error::ErrorKind::DisplayHelp);
+    let rendered = error.to_string();
+    assert!(rendered.contains("Usage:"));
+    assert!(rendered.contains("Commands:"));
+}
+
+#[test]
+fn version_request_keeps_full_clap_output() {
+    let error = parse_failure(&["gcode", "--version"]);
+    assert_eq!(error.kind(), clap::error::ErrorKind::DisplayVersion);
+    assert!(error.to_string().contains("gcode"));
 }
 
 #[test]

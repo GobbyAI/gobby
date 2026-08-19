@@ -9,6 +9,7 @@ use serde_json::json;
 pub struct CliError {
     pub code: &'static str,
     pub message: String,
+    pub recovery: Option<&'static str>,
     pub exit_status: u8,
 }
 
@@ -17,6 +18,7 @@ impl CliError {
         Self {
             code: error.cli_code(),
             message: error.to_string(),
+            recovery: None,
             exit_status: error.exit_status() as u8,
         }
     }
@@ -25,6 +27,7 @@ impl CliError {
         Self {
             code: "project_required",
             message: "project required".to_string(),
+            recovery: None,
             exit_status: 2,
         }
     }
@@ -33,16 +36,27 @@ impl CliError {
         Self {
             code: "capability_unavailable",
             message: format!("{capability} capability is unavailable"),
+            recovery: None,
             exit_status: 2,
         }
     }
 
+    pub(crate) fn json_payload(&self) -> serde_json::Value {
+        match self.recovery {
+            Some(recovery) => json!({
+                "error": self.code,
+                "message": self.message,
+                "recovery": recovery,
+            }),
+            None => json!({
+                "error": self.code,
+                "message": self.message,
+            }),
+        }
+    }
+
     pub fn print(&self) -> anyhow::Result<()> {
-        let payload = json!({
-            "error": self.code,
-            "message": self.message,
-        });
-        eprintln!("{}", serde_json::to_string(&payload)?);
+        eprintln!("{}", serde_json::to_string(&self.json_payload())?);
         Ok(())
     }
 }
