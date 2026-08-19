@@ -379,28 +379,28 @@ class TestMemoryCaptureNudge:
         row = manager.get_by_name("memory-capture-nudge")
         body = RuleDefinitionBody.model_validate(row.definition_json)
         assert body.when is not None
-        assert "is_spawned_agent" in body.when
-        assert "task_claimed" in body.when
-        assert "auto_task_ref" in body.when
+        prompt_event = {"data": {"prompt": "Please remember this durable preference"}}
         taskless = SafeExpressionEvaluator(
             {
+                "event": prompt_event,
                 "variables": {
                     "is_spawned_agent": True,
                     "task_claimed": False,
                     "auto_task_ref": None,
-                }
+                },
             },
-            {},
+            {"len": len},
         )
         task_owned = SafeExpressionEvaluator(
             {
+                "event": prompt_event,
                 "variables": {
                     "is_spawned_agent": True,
                     "task_claimed": True,
-                    "auto_task_ref": "#1",
-                }
+                    "auto_task_ref": None,
+                },
             },
-            {},
+            {"len": len},
         )
         assert taskless.evaluate(body.when) is False
         assert task_owned.evaluate(body.when) is True

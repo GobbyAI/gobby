@@ -5,12 +5,13 @@ umask 077
 export PATH="/opt/homebrew/bin:/usr/local/bin:$HOME/.gobby/bin:$HOME/.local/bin:/usr/bin:/bin:/usr/sbin:/sbin"
 
 readonly CODEX_HOME_PATH="$HOME/.codex"
-readonly RESET_BACKUP="$HOME/.codex.pre-sidecar-reset-2026-08-17"
+RESET_BACKUP="$HOME/.codex.pre-sidecar-reset-$(date +%Y-%m-%dT%H%M%S)"
+readonly RESET_BACKUP
 readonly OLD_CODEX_LINK="$HOME/.local/bin/codex"
 readonly EXPECTED_OLD_TARGET="$CODEX_HOME_PATH/packages/standalone/current/bin/codex"
 readonly BREW_BIN="/opt/homebrew/bin/brew"
 readonly CODEX_BIN="/opt/homebrew/bin/codex"
-readonly GOBBY_REPO="/Users/josh/Projects/gobby"
+readonly GOBBY_REPO="${GOBBY_REPO:-$(cd "$(dirname "$0")/.." && pwd)}"
 readonly INDEX_DIR="$HOME/.gobby/cache/transcript-indexes"
 
 # Bash 3.2 treats an empty array as unset under nounset; retain a harmless sentinel.
@@ -174,7 +175,6 @@ main() {
     local events_file
     local thread_id
     local rollout_path
-    local rollout_dir
     local normalized_rollout
     local rollout_hash
     local sidecar_path
@@ -245,6 +245,7 @@ main() {
     "$CODEX_BIN" login status || die "Codex login status is unhealthy."
 
     printf '\nRestoring selected user-authored configuration...\n'
+    mkdir -p "$CODEX_HOME_PATH"
     for filename in config.toml AGENTS.md; do
         if [[ -f "$RESET_BACKUP/$filename" ]]; then
             cp -p "$RESET_BACKUP/$filename" "$CODEX_HOME_PATH/$filename"
@@ -324,10 +325,9 @@ main() {
     fi
 
     thread_id="$(
-        /usr/bin/jq -r \
-            'select(.type == "thread.started") | .thread_id // empty' \
-            "$events_file" |
-            /usr/bin/head -n 1
+        /usr/bin/jq -sr \
+            'first(.[] | select(.type == "thread.started") | (.thread_id // empty)) // empty' \
+            "$events_file"
     )"
 
     [[ -n "$thread_id" ]] || die "Disposable Codex thread ID was not reported."
@@ -347,8 +347,11 @@ main() {
 
     [[ -n "$rollout_path" ]] || die "Disposable rollout file was not found."
 
-    rollout_dir="$(cd "$(dirname "$rollout_path")" && pwd -P)"
-    normalized_rollout="$rollout_dir/$(basename "$rollout_path")"
+    normalized_rollout="$(
+        /usr/bin/python3 -c \
+            'import os,sys; print(os.path.abspath(sys.argv[1]))' \
+            "$rollout_path"
+    )"
     rollout_hash="$(
         printf '%s' "$normalized_rollout" |
             /usr/bin/shasum -a 256 |

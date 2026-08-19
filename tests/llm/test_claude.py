@@ -1359,6 +1359,41 @@ class TestDescribeImage:
 
         assert result == "A blue diagram"
 
+    @pytest.mark.asyncio
+    async def test_describe_image_sdk_uses_fixed_cwd(
+        self,
+        claude_config: DaemonConfig,
+        tmp_path: Path,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        from gobby.llm.claude import ClaudeLLMProvider
+
+        monkeypatch.setattr(Path, "home", lambda: tmp_path)
+        image_path = tmp_path / "image.png"
+        image_path.write_bytes(b"image")
+        provider = ClaudeLLMProvider(claude_config)
+        provider._sdk_client._verify_cli_path = AsyncMock(return_value="/bin/claude")
+        captured_cwds: list[str] = []
+
+        async def capture_options(
+            _operation: str,
+            _query: Any,
+            options: Any,
+            _logger: Any,
+        ) -> str:
+            captured_cwds.append(options.cwd)
+            return "A blue diagram"
+
+        with patch(
+            "gobby.llm.claude_sdk.execute_sdk_query",
+            new=AsyncMock(side_effect=capture_options),
+        ):
+            result = await provider.describe_image(str(image_path))
+
+        assert result == "A blue diagram"
+        assert captured_cwds == [str(tmp_path / ".gobby" / "tmp" / "textgen")]
+        assert "gobby-textgen-" not in captured_cwds[0]
+
 
 # ─── generate_text no backend ────────────────────────────────────────────
 

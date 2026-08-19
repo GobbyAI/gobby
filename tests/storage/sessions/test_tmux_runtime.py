@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from collections.abc import Iterator
+from datetime import timedelta
 from typing import Any
 from unittest.mock import patch
 
@@ -176,18 +177,21 @@ def test_explicit_terminal_resume_rebinds_same_row_and_replaces_runtime_context(
         "tty": "/dev/ttys012",
         "cwd": "/work/gobby",
     }
+    assert original.last_activity is not None
+    activation_time = original.last_activity + timedelta(minutes=1)
 
-    rebound = session_manager.rebind_resumed_terminal_session(
-        original.id,
-        machine_id=LOCAL_MACHINE_ID,
-        project_id=sample_project["id"],
-        source="codex",
-        transcript_path="/tmp/new.jsonl",
-        terminal_context=fresh_context,
-        workflow_name=None,
-        agent_depth=0,
-        sandbox_enabled=False,
-    )
+    with patch("gobby.storage.sessions._terminal.utc_now", return_value=activation_time):
+        rebound = session_manager.rebind_resumed_terminal_session(
+            original.id,
+            machine_id=LOCAL_MACHINE_ID,
+            project_id=sample_project["id"],
+            source="codex",
+            transcript_path="/tmp/new.jsonl",
+            terminal_context=fresh_context,
+            workflow_name=None,
+            agent_depth=0,
+            sandbox_enabled=False,
+        )
 
     assert rebound is not None
     assert rebound.id == original.id
@@ -195,6 +199,7 @@ def test_explicit_terminal_resume_rebinds_same_row_and_replaces_runtime_context(
     assert rebound.status == "active"
     assert rebound.terminal_context == fresh_context
     assert rebound.transcript_path == "/tmp/new.jsonl"
+    assert rebound.last_activity == activation_time
     paused = session_manager.update_status(rebound.id, "paused")
     assert paused is not None and paused.status == "paused"
 
@@ -240,14 +245,17 @@ def test_web_continuation_converts_same_terminal_row_and_clears_context(
         terminal_context=_terminal_context(30),
     )
     session_manager.update_status(original.id, "expired")
+    assert original.last_activity is not None
+    activation_time = original.last_activity + timedelta(minutes=1)
 
-    continued = session_manager.continue_terminal_session_as_web_chat(
-        original.id,
-        source="claude",
-        model="claude-opus-4-6",
-        project_id=sample_project["id"],
-        sandbox_policy_hash="policy-v2",
-    )
+    with patch("gobby.storage.sessions._terminal.utc_now", return_value=activation_time):
+        continued = session_manager.continue_terminal_session_as_web_chat(
+            original.id,
+            source="claude",
+            model="claude-opus-4-6",
+            project_id=sample_project["id"],
+            sandbox_policy_hash="policy-v2",
+        )
 
     assert continued is not None
     assert continued.id == original.id
@@ -255,6 +263,7 @@ def test_web_continuation_converts_same_terminal_row_and_clears_context(
     assert continued.session_type == "web_chat"
     assert continued.status == "active"
     assert continued.terminal_context == {}
+    assert continued.last_activity == activation_time
 
 
 def test_web_continuation_rejects_foreign_terminal_before_mutation(

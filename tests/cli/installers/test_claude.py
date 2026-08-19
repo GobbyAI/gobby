@@ -162,9 +162,60 @@ class TestInstallClaude:
         assert settings["hooks"]["SessionStart"][0]["hooks"][0]["timeout"] == 150
         assert settings["hooks"]["SessionEnd"][0]["hooks"][0]["timeout"] == 60
         assert settings["autoMemoryEnabled"] is False
+        provenance = json.loads((temp_project / ".claude" / ".gobby-auto-memory.json").read_text())
+        assert provenance == {"managed": True, "previous": None}
 
         # Verify global hooks were installed
         mock_global_hooks.assert_called_once()
+
+    @patch("gobby.cli.installers.claude.remove_mcp_server_json")
+    @patch("gobby.cli.installers.claude.install_global_hooks")
+    @patch("gobby.cli.installers.claude.get_install_dir")
+    @patch("gobby.cli.installers.claude.install_shared_content")
+    @patch("gobby.cli.installers.claude.install_cli_content")
+    @patch("gobby.cli.installers.claude.configure_mcp_server_json")
+    @pytest.mark.parametrize("existing_value", [True, False])
+    def test_install_and_uninstall_preserve_user_owned_auto_memory(
+        self,
+        mock_mcp_config: MagicMock,
+        mock_cli_content: MagicMock,
+        mock_shared_content: MagicMock,
+        mock_get_install_dir: MagicMock,
+        mock_global_hooks: MagicMock,
+        mock_remove_mcp: MagicMock,
+        existing_value: bool,
+        temp_project: Path,
+        mock_install_dir: Path,
+        mock_home_dir: Path,
+    ) -> None:
+        from gobby.cli.installers.claude import install_claude, uninstall_claude
+
+        claude_path = temp_project / ".claude"
+        claude_path.mkdir()
+        settings_file = claude_path / "settings.json"
+        settings_file.write_text(json.dumps({"autoMemoryEnabled": existing_value}))
+        mock_get_install_dir.return_value = mock_install_dir
+        mock_global_hooks.return_value = []
+        mock_shared_content.return_value = {"plugins": [], "docs": []}
+        mock_cli_content.return_value = {"commands": []}
+        mock_mcp_config.return_value = {"success": True, "added": True}
+        mock_remove_mcp.return_value = {"success": True, "removed": True}
+
+        with (
+            patch.object(Path, "home", return_value=mock_home_dir),
+            patch(
+                "gobby.cli.installers.hook_commands.resolve_native_bin_or_default",
+                return_value="/custom/bin/ghook",
+            ),
+        ):
+            install_result = install_claude(temp_project, mode="project")
+            uninstall_result = uninstall_claude(temp_project)
+
+        assert install_result["success"] is True
+        assert uninstall_result["success"] is True
+        settings = json.loads(settings_file.read_text())
+        assert settings["autoMemoryEnabled"] is existing_value
+        assert not (claude_path / ".gobby-auto-memory.json").exists()
 
     @patch("gobby.cli.installers.claude.get_install_dir")
     def test_install_claude_missing_source_files(
@@ -697,6 +748,9 @@ class TestUninstallClaude:
             "autoMemoryEnabled": False,
         }
         (claude_path / "settings.json").write_text(json.dumps(settings))
+        (claude_path / ".gobby-auto-memory.json").write_text(
+            json.dumps({"managed": True, "previous": None})
+        )
 
         # Create hook files
         (hooks_dir / "hook_dispatcher.py").write_text("# hook")

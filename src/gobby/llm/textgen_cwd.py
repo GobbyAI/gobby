@@ -75,7 +75,7 @@ def purge_textgen_project_dirs(
 ) -> int:
     """Delete Claude project dirs left behind by per-call textgen cwds.
 
-    Matches only slugs carrying the per-call ``gobby-textgen-`` marker; the
+    Matches only slugs starting with the per-call ``gobby-textgen-`` prefix; the
     fixed cwd's slug never matches. The age guard keeps an in-flight run from a
     still-running older daemon from losing its transcript mid-call.
     """
@@ -87,7 +87,7 @@ def purge_textgen_project_dirs(
     for entry in root.iterdir():
         if removed >= max_dirs:
             break
-        if _gobby_textgen_project_slug_fragment() not in entry.name or not entry.is_dir():
+        if not entry.name.startswith(_gobby_textgen_project_slug_fragment()) or not entry.is_dir():
             continue
         try:
             if entry.stat().st_mtime > cutoff:

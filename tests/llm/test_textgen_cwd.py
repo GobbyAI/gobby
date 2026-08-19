@@ -83,5 +83,14 @@ class TestPurgeTextgenProjectDirs:
         leftover = [entry.name for entry in tmp_path.iterdir()]
         assert len(leftover) == 2
 
+    def test_retains_old_dir_when_prefix_is_not_at_start(self, tmp_path: Path) -> None:
+        fragment = _gobby_textgen_project_slug_fragment()
+        unrelated = self._make_dir(tmp_path, f"unrelated{fragment}abc123", age_seconds=7200)
+
+        removed = purge_textgen_project_dirs(tmp_path, older_than_seconds=3600.0)
+
+        assert removed == 0
+        assert unrelated.exists()
+
     def test_missing_root_returns_zero(self, tmp_path: Path) -> None:
         assert purge_textgen_project_dirs(tmp_path / "absent") == 0

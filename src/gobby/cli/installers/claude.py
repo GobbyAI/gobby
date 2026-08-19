@@ -18,6 +18,7 @@ from typing import Any
 from gobby.adapters.claude_contract import CLAUDE_PASCAL_HOOK_NAMES
 from gobby.agents.trust import seed_gobby_home_trust
 from gobby.cli.utils import get_install_dir
+from gobby.utils.durable_file import durable_replace_text
 from gobby.utils.native_bin import resolve_native_bin_or_default
 
 from .hook_commands import (
@@ -42,6 +43,7 @@ _GOBBY_HOOK_TYPES = list(CLAUDE_PASCAL_HOOK_NAMES)
 
 
 _STATUSLINE_GHOOK_MARKER = "--gobby-owned --cli=claude --type=statusline"
+_AUTO_MEMORY_PROVENANCE_FILENAME = ".gobby-auto-memory.json"
 
 
 def _is_gobby_statusline_command(command: str) -> bool:
@@ -188,6 +190,7 @@ def install_claude(
     else:
         claude_path = project_path / ".claude"
     settings_file = claude_path / "settings.json"
+    auto_memory_provenance_file = claude_path / _AUTO_MEMORY_PROVENANCE_FILENAME
 
     # Ensure directories exist
     claude_path.mkdir(parents=True, exist_ok=True)
@@ -320,17 +323,26 @@ def install_claude(
         )
         hooks_installed.append(hook_type)
 
-    # Gobby owns memory: disable Claude Code's harness-level auto-memory so its
-    # MEMORY.md injection cannot bypass the tool-level block rules.
-    if "_gobbyAutoMemoryPrior" not in existing_settings:
-        existing_settings["_gobbyAutoMemoryPrior"] = {
-            "existed": "autoMemoryEnabled" in existing_settings,
-            "value": existing_settings.get("autoMemoryEnabled"),
-        }
-    existing_settings["autoMemoryEnabled"] = False
+    # Gobby owns memory for settings it creates. User-authored true/false values
+    # remain untouched and are never marked as Gobby-managed.
+    introduced_auto_memory = "autoMemoryEnabled" not in existing_settings
+    if introduced_auto_memory:
+        existing_settings["autoMemoryEnabled"] = False
 
     # Configure statusLine for token tracking middleware before persisting settings.
     _configure_statusline(existing_settings, hooks_dir)
+
+    provenance_file_existed = auto_memory_provenance_file.exists()
+    if introduced_auto_memory:
+        try:
+            durable_replace_text(
+                auto_memory_provenance_file,
+                json.dumps({"managed": True, "previous": None}, indent=2) + "\n",
+            )
+        except OSError as e:
+            logger.error("Failed to write auto-memory provenance: %s", e)
+            result["error"] = f"Failed to write auto-memory provenance: {e}"
+            return result
 
     # Write merged settings back using atomic write
     try:
@@ -349,6 +361,11 @@ def install_claude(
             raise
     except OSError as e:
         logger.error("Failed to write settings.json: %s", e)
+        if introduced_auto_memory and not provenance_file_existed:
+            try:
+                auto_memory_provenance_file.unlink(missing_ok=True)
+            except OSError as cleanup_error:
+                logger.error("Failed to remove auto-memory provenance: %s", cleanup_error)
         # Attempt to restore from backup if we have one
         if backup_file and backup_file.exists():
             try:
@@ -398,6 +415,7 @@ def uninstall_claude(project_path: Path) -> dict[str, Any]:
 
     claude_path = project_path / ".claude"
     settings_file = claude_path / "settings.json"
+    auto_memory_provenance_file = claude_path / _AUTO_MEMORY_PROVENANCE_FILENAME
     hooks_dir = claude_path / "hooks"
 
     if not settings_file.exists():
@@ -433,6 +451,15 @@ def uninstall_claude(project_path: Path) -> dict[str, Any]:
         result["error"] = f"Failed to read settings.json: {e}"
         return result
 
+    auto_memory_managed = False
+    if auto_memory_provenance_file.exists():
+        try:
+            provenance = json.loads(auto_memory_provenance_file.read_text())
+        except (OSError, json.JSONDecodeError) as e:
+            logger.warning("Failed to read auto-memory provenance: %s", e)
+        else:
+            auto_memory_managed = isinstance(provenance, dict) and provenance.get("managed") is True
+
     # Restore original statusLine (or remove if no downstream)
     before_mutation = json.dumps(settings, sort_keys=True)
     _restore_statusline(settings)
@@ -443,7 +470,7 @@ def uninstall_claude(project_path: Path) -> dict[str, Any]:
             settings["autoMemoryEnabled"] = prior.get("value")
         else:
             settings.pop("autoMemoryEnabled", None)
-    elif settings.get("autoMemoryEnabled") is False:
+    elif auto_memory_managed and settings.get("autoMemoryEnabled") is False:
         settings.pop("autoMemoryEnabled", None)
 
     if json.dumps(settings, sort_keys=True) != before_mutation:
@@ -474,6 +501,14 @@ def uninstall_claude(project_path: Path) -> dict[str, Any]:
             except OSError as restore_error:
                 logger.error("Failed to restore from backup: %s", restore_error)
             result["error"] = f"Failed to write settings.json: {e}"
+            return result
+
+    if auto_memory_managed:
+        try:
+            auto_memory_provenance_file.unlink(missing_ok=True)
+        except OSError as e:
+            logger.error("Failed to remove auto-memory provenance: %s", e)
+            result["error"] = f"Failed to remove auto-memory provenance: {e}"
             return result
 
     # Remove hook files
