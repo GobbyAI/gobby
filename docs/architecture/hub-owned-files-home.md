@@ -100,21 +100,29 @@ Customers receive the hub API, not a Docker volume.
 ```text
 <hub-files>/                    # bind dir on hub host only
   USER.md                       # global working profile
-  _personal/                    # life-admin; not a git repo; not a vault
+  _personal/                    # life-admin only; not a git repo; not a vault
     .gobby/project.json         # id PERSONAL_PROJECT_ID, name _personal
     notes/
     reminders/
-    attachments/
-      <project-id>/<id[:2]>/<id>/<filename>
   wiki/                         # wiki home; not a vault
     wikis.json                  # gwiki registry (paths relative to wiki home)
     personal/                   # personal vault
     <topic>/                    # topic vaults (flattened off ~/wiki/topics/)
+  attachments/                  # hub chat uploads for any project
+    <project-id>/<id[:2]>/<id>/<filename>
 ```
 
-Reserved names at `<hub-files>`: `USER.md`, `_personal`, `wiki`.
-Reserved vault name: `personal`. Creating a topic or project vault named
-`personal`, `_personal`, or `wiki` is a typed refusal.
+Reserved names at `<hub-files>`: `USER.md`, `_personal`, `wiki`,
+`attachments`. Reserved vault name: `personal`. Creating a topic or
+project vault named `personal`, `_personal`, `wiki`, or `attachments` is a
+typed refusal.
+
+Destination HTTP (see `docs/architecture/evolution.md`): `/api/hub/user`,
+`/api/hub/wiki/*`, `/api/hub/chat/attachments`. `/api/files` remains the
+machine-local checkout browser. Today's writers still persist chat
+uploads at `_personal/attachments/<project-id>/...` and serve
+`/api/files/user-md` plus `/api/chat/attachments`; those paths are
+transitional.
 
 Wiki home is an ordinary folder. It must not carry `_gwiki/scope.json`.
 A child directory is a vault only when it carries `_gwiki/scope.json`.
@@ -146,17 +154,18 @@ fixture vaults keep using explicit `gwiki --out` paths.
   Personal scope is `<hub-files>/wiki/personal`, not `_personal/wiki`.
   Arbitrary overrides are missing-bootstrap fixture contexts only.
 - Chat attachment bytes reconstruct as
-  `<hub-files>/_personal/attachments/<project_id>/<id[:2]>/<id>/<filename>`.
+  `<hub-files>/attachments/<project_id>/<id[:2]>/<id>/<filename>`.
   Absolute `local_path` is not canonical. Nodes upload and download through
-  the hub owner.
+  the hub owner. Current locators under `_personal/attachments/` are
+  transitional.
 - Missing hub tree is a typed failure. No silent recreate under
   `$GOBBY_HOME`.
 
-Node access uses the existing wiki and attachment HTTP surfaces, not a
-local tree:
-
-- `GET /api/wiki/status|search|read|graph|pages|backlinks`
-- `POST /api/wiki/index`
+Node access uses hub HTTP surfaces, not a local tree. Destination prefixes
+are `/api/hub/user`, `/api/hub/wiki/*`, and `/api/hub/chat/attachments`
+(`docs/architecture/evolution.md`). Until that cutover, nodes already
+proxy today's `/api/wiki` personal/topic scopes and `/api/chat/attachments`
+to the hub. Project/CodeWiki vaults stay checkout-local until #18779.
 - chat attachment upload / download / delete
 
 `wiki_ask` is gone (#20322). That does not remove the file surfaces.
@@ -174,7 +183,7 @@ migrate. This campaign does not collect files from other machines.
    personal marker, leftover personal children, topic vaults, attachments,
    wiki registry).
 3. Seed only still-missing baseline children
-   `<hub-files>/{USER.md,_personal/{notes,reminders,attachments},wiki}`.
+   `<hub-files>/{USER.md,_personal/{notes,reminders},wiki,attachments}`.
 4. Rewrite published vault metadata and `wikis.json` to wiki-home-relative
    children.
 5. Leave `<checkout>/wiki` for #18779.
@@ -220,13 +229,15 @@ Checked against the shipped #20330 leaves. Live owner paths are under
 `files_home`. `$GOBBY_HOME/personal`, `$GOBBY_HOME/projects/<id>/attachments`,
 and `~/wiki/topics` are migrate sources only, not live writes.
 
-Live resolution:
+Live resolution (transitional locators and prefixes; destination HTTP and
+`attachments/<project-id>/` are in `docs/architecture/evolution.md`):
 
 - `personal_project_path()` → `<files_home>/_personal`
 - `read_user_profile_content()` → `<files_home>/USER.md` on the owner;
   remote GET `/api/files/user-md` via `hub_daemon_url`
-- Chat attachments reconstruct as
-  `<files_home>/_personal/attachments/<project>/<id[:2]>/<id>/<filename>`
+- Chat attachments reconstruct today as
+  `<files_home>/_personal/attachments/<project>/<id[:2]>/<id>/<filename>`;
+  destination is `<files_home>/attachments/<project>/...`
 - Present-local wiki home is `<files_home>/wiki`; a stale
   `GOBBY_WIKI_HUB` / `wiki.hub_path` override that normalizes elsewhere
   is a typed refusal
@@ -234,7 +245,8 @@ Live resolution:
   does not register a checkout
 - Remote bootstrap requires `hub_daemon_url` and refuses `files_home`
 - `/api/wiki` still exposes status, index, search, read, graph, pages,
-  backlinks
+  backlinks (personal/topic proxy on a node; project/CodeWiki stays
+  checkout-local until #18779)
 - `BootstrapConfig.daemon_url` remains this process’s own origin; it is
   not the remote files owner URL
 

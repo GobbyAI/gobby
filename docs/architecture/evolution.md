@@ -92,6 +92,58 @@ privacy stance (#20203).
   plugin system (manifest-driven external processes declaring actions, event
   hooks, and panes) hosts on the public API only, in Rust, so plugins survive
   every migration stage (#20201).
+- **HTTP splits machine checkouts from hub documents.** `/api/files` is the
+  checkout browser on this daemon. Hub-owned files_home content is under
+  `/api/hub/...`. Nodes reach those hub routes through `hub_daemon_url`
+  (one hop). There is no shared mount of `$GOBBY_HOME/files`. Detail below.
+
+### Destination HTTP API and files_home layout
+
+Decided 2026-08-19. Current Python routes still use the transitional prefixes
+in the table; 0.5.0 is unshipped, so the destination names replace them
+rather than aliasing.
+
+| Job | Destination | Today | Bytes |
+| --- | --- | --- | --- |
+| Project checkout browser | `/api/files/*` | `/api/files/*` (except `user-md`) | Local repo on this machine |
+| Working profile | `GET`/`PUT /api/hub/user` | `GET`/`PUT /api/files/user-md` | Hub `files_home/USER.md` |
+| Hub wiki (personal, topic; project vaults after #18779) | `/api/hub/wiki/*` | `/api/wiki/*` with topic or personal scope | Hub `files_home/wiki/` |
+| Project / CodeWiki vault | `/api/wiki/*` with a real project id until #18779, then `/api/hub/wiki/*` | `/api/wiki/*` with project scope | `<checkout>/wiki` until #18779, then `files_home/wiki/<project.name>` |
+| Hub chat uploads (any project, including a repo agent chat) | `/api/hub/chat/attachments` | `/api/chat/attachments` | Hub `files_home/attachments/<project-id>/...` |
+| Telegram inbound media | unchanged until Stage 3 | machine-local | `~/.gobby/comms_attachments` until #17488 / Stage 3 |
+
+`/api/hub/wiki` must not claim CodeWiki while the vault is still
+checkout-adjacent. Personal and topic scopes are hub-owned now; a node
+already proxies those to the hub.
+
+Destination on-disk tree on the hub host (`$GOBBY_HOME/files` standalone;
+`/var/lib/gobby/files` is still allowed on a dedicated server):
+
+```text
+<files_home>/
+  USER.md
+  _personal/                 # life-admin only; not a git repo; not a vault
+    .gobby/project.json
+    notes/
+    reminders/
+  wiki/                      # wiki home; not itself a vault
+    wikis.json
+    personal/                # personal vault
+    <topic>/
+    <project.name>/          # after #18779 only
+  attachments/               # all hub chat uploads, keyed by project id
+    <project-id>/<id[:2]>/<id>/<filename>
+```
+
+Reserved names at `<files_home>`: `USER.md`, `_personal`, `wiki`,
+`attachments`. Reserved vault name: `personal`.
+
+`_personal` is the life-admin project. It is not the dump for every hub
+blob. Chat uploads for a gobby-repo conversation are hub documents, but
+they are not personal files; they belong under `attachments/<project-id>/`.
+Today's writers still persist
+`_personal/attachments/<project-id>/...` — that path is transitional and
+must move with the `/api/hub/chat/attachments` cutover.
 
 ## The staged path
 
@@ -177,6 +229,12 @@ the public API surface exist; Gobby Pro fleet surfaces per `ROADMAP.md`
    seam (was six per-provider call sites), so new providers and backends
    inherit the invariant structurally.
 7. **Plugins target the public API only** and live client-side in Rust.
+8. **Hub documents vs machine checkouts are separate HTTP trees**
+   (2026-08-19). `/api/files` stays the local checkout browser.
+   `/api/hub/user`, `/api/hub/wiki`, and `/api/hub/chat/attachments` are
+   the hub files_home surfaces. Hub chat bytes live at
+   `files_home/attachments/<project-id>/`, not under `_personal`.
+   Project/CodeWiki vaults stay checkout-adjacent until #18779.
 
 ## Citations
 
@@ -191,5 +249,5 @@ the public API surface exist; Gobby Pro fleet surfaces per `ROADMAP.md`
 | `.gobby/plans/two-daemon-hub.md`, `.gobby/plans/m0-shared-datastores-bridge.md`, `.gobby/plans/hub-pc-datastore-move.md` | Shared-datastore / lease groundwork |
 | `.gobby/plans/daemon-native-runtime-boundary.md`, `.gobby/plans/reactive-config-store.md` | Rust-daemon boundary foundations |
 | `.gobby/plans/account-identity-machine-ownership.md`, `.gobby/plans/machine-scoped-worktrees-clones.md`, `.gobby/plans/shared-remote-stack.md` | Stage 3 identity/machine/remote groundwork |
-| `docs/architecture/hub-owned-files-home.md`, #20238 | Hub-owned `USER.md`, wiki home, and `_personal` files; not per-machine daemon-home copies |
+| `docs/architecture/hub-owned-files-home.md`, #20238 | Hub-owned `USER.md`, wiki home, `_personal` life-admin, and `attachments/`; destination HTTP under `/api/hub/...` |
 | `ROADMAP.md` | Release-line what/when; the 0.6.0 sidecar on `:60890` is the transition vehicle; destination daemon is `gdaemon` |
