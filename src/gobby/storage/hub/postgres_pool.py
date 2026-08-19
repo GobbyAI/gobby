@@ -146,7 +146,9 @@ def _acquire_with_backoff(
             pool_stats(),
         )
         pool.check()
-        time.sleep(backoff * (1 + random.uniform(0, POOL_TIMEOUT_RETRY_JITTER_RATIO)))
+        time.sleep(
+            backoff * (1 + random.uniform(0, POOL_TIMEOUT_RETRY_JITTER_RATIO))  # nosec B311  # jitter, not crypto
+        )
         try:
             return stack.enter_context(pool.connection())
         except PoolTimeout:
