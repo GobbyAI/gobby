@@ -3575,7 +3575,10 @@ class TestRequireCodeIndexSkillStructure:
         assert len(body.effects) == 1
         assert body.effects[0].type == "block"
         assert _skill_fetch_template("code-index") in body.effects[0].reason
-        assert "If that call fails, retry the code search" in body.effects[0].reason
+        assert (
+            "If that call fails, its recorded failure fails this rule open"
+            in body.effects[0].reason
+        )
         assert "list_tools" not in body.effects[0].reason
 
     def test_code_index_navigation_rules_sync(self, db, manager) -> None:
@@ -3669,7 +3672,7 @@ class TestCodeIndexNavigationRules:
         assert response.decision == "block"
         assert response.reason is not None
         assert skill_fetch_directive("code-index") in response.reason
-        assert "If that call fails, retry the code search" in response.reason
+        assert "If that call fails, its recorded failure fails this rule open" in response.reason
 
     @pytest.mark.asyncio
     async def test_code_index_skill_proxy_error_fails_open_until_matching_success(
@@ -3790,10 +3793,13 @@ class TestCodeIndexNavigationRules:
         assert response.decision == "block"
         assert response.reason is not None
         assert (
-            'Use `gcode grep "pattern" -m 50` or `gcode search-content "query"` — '
+            'Use `gcode grep "pattern" -m 50` (supports -F -i -w -l -g; '
+            "exit 0 even with no matches) or "
+            '`gcode search-content "query"` — '
             "the code index has full access to this repo and returns ranked, token-cheap results."
         ) in response.reason
-        assert "recorded gcode failures deactivate this rule" in response.reason
+        assert "follow the `recovery` directive" in response.reason
+        assert "do NOT re-run the failing gcode call" in response.reason
 
     @pytest.mark.asyncio
     async def test_log_search_bypasses_code_index_rules(self, db, tmp_path, monkeypatch) -> None:
@@ -4216,6 +4222,8 @@ class TestCodeIndexNavigationRules:
             "Use `gcode outline <file>` then `gcode symbol <id>` — "
             "ranged Read (offset/limit, ≤40 lines) is always available."
         ) in broad_response.reason
+        assert "follow the `recovery` directive" in broad_response.reason
+        assert "use Read on the file instead" in broad_response.reason
         assert narrow_response.decision == "allow"
 
     @pytest.mark.asyncio
