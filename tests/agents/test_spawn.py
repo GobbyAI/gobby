@@ -16,9 +16,11 @@ import pytest
 from gobby.agents.constants import UV_CACHE_DIR
 from gobby.agents.spawn import (
     PreparedSpawn,
+    _issue_prelaunch_credential,
     prepare_terminal_spawn,
 )
 from gobby.agents.spawn_cache_policy import PATH_ENV_VAR, managed_tool_bin_dir
+from gobby.storage.managed_credentials import MANAGED_EXECUTION_BOOTSTRAP_ENV
 
 pytestmark = pytest.mark.unit
 
@@ -136,13 +138,25 @@ class TestPrepareTerminalSpawnMetadata:
         run_id = str(uuid.uuid4())
         issued_at = datetime(2026, 8, 12, tzinfo=UTC)
         sm = _make_session_manager(child_session_id=session_id)
+        sm._storage.get.return_value.machine_id = "21000000-0000-4000-8000-000000000001"
         credential_manager = MagicMock()
-        credential_manager.issue.return_value.bootstrap_path = Path(
-            "/private/runtime/bootstrap.json"
-        )
+        credential = credential_manager.issue.return_value
+        credential.bootstrap_path = Path("/private/runtime/bootstrap.json")
+        credential.expires_at = issued_at + timedelta(seconds=expected_lifetime_seconds)
         sm._storage.db.managed_credential_manager = credential_manager
+        launch = MagicMock()
+        launch.grant_path = Path("/private/runtime/grant.json")
 
-        with patch("gobby.agents.spawn.datetime") as mock_datetime:
+        with (
+            patch("gobby.agents.spawn.datetime") as mock_datetime,
+            patch("gobby.agents.spawn.read_local_api_token", return_value="op-token"),
+            patch("gobby.agents.code_index._active_deployment_grant_context"),
+            patch("gobby.agents.code_index._signed_grant_from_credential"),
+            patch(
+                "gobby.runtime_grants.launch.materialize_managed_launch",
+                return_value=launch,
+            ),
+        ):
             mock_datetime.now.return_value = issued_at
             result = prepare_terminal_spawn(
                 session_manager=sm,
@@ -161,7 +175,7 @@ class TestPrepareTerminalSpawnMetadata:
             expires_at=issued_at + timedelta(seconds=expected_lifetime_seconds),
         )
         assert result.env_vars["GOBBY_MANAGED_EXECUTION_BOOTSTRAP"] == (
-            "/private/runtime/bootstrap.json"
+            "/private/runtime/grant.json"
         )
         assert result.managed_credential is credential_manager.issue.return_value
 
@@ -335,3 +349,104 @@ class TestPrepareRunForSessionPromptCleanup:
             )
 
         assert not prompt_path.exists()
+
+
+class TestIssuePrelaunchCredential:
+    """The managed bootstrap env must point at a signed grant file."""
+
+    @staticmethod
+    def _prepared() -> PreparedSpawn:
+        return PreparedSpawn(
+            session_id=str(uuid.uuid4()),
+            agent_run_id=str(uuid.uuid4()),
+            parent_session_id="parent-1",
+            project_id="proj-1",
+            workflow_name=None,
+            agent_depth=1,
+            env_vars={},
+        )
+
+    @staticmethod
+    def _session_manager_with_credential(tmp_path: Path) -> tuple[MagicMock, MagicMock]:
+        sm = MagicMock()
+        manager = MagicMock()
+        sm._storage.db.managed_credential_manager = manager
+        credential = MagicMock()
+        credential.bootstrap_path = tmp_path / "run" / "credentials.json"
+        credential.bootstrap_path.parent.mkdir(parents=True)
+        credential.expires_at = datetime.now(UTC) + timedelta(hours=1)
+        manager.issue.return_value = credential
+        session = MagicMock()
+        session.machine_id = "21000000-0000-4000-8000-000000000001"
+        sm._storage.get.return_value = session
+        return sm, manager
+
+    def test_bootstrap_env_points_at_materialized_grant_file(self, tmp_path: Path) -> None:
+        sm, manager = self._session_manager_with_credential(tmp_path)
+        prepared = self._prepared()
+        launch = MagicMock()
+        launch.grant_path = tmp_path / "run" / "grant.json"
+
+        with (
+            patch("gobby.agents.spawn.read_local_api_token", return_value="op-token"),
+            patch("gobby.agents.code_index._active_deployment_grant_context") as mock_context,
+            patch("gobby.agents.code_index._signed_grant_from_credential") as mock_signer,
+            patch(
+                "gobby.runtime_grants.launch.materialize_managed_launch",
+                return_value=launch,
+            ) as mock_materialize,
+        ):
+            result = _issue_prelaunch_credential(sm, prepared, timeout_seconds=None)
+
+        assert result.env_vars[MANAGED_EXECUTION_BOOTSTRAP_ENV] == str(launch.grant_path)
+        assert result.managed_credential is manager.issue.return_value
+        mock_signer.assert_called_once_with(
+            manager.issue.return_value,
+            machine_id="21000000-0000-4000-8000-000000000001",
+            project_id="proj-1",
+            session_id=prepared.session_id,
+            context=mock_context.return_value,
+        )
+        materialize_kwargs = mock_materialize.call_args.kwargs
+        assert materialize_kwargs["dest_dir"] == tmp_path / "run"
+        assert materialize_kwargs["operator_token"] == "op-token"
+        assert materialize_kwargs["deadline_seconds"] > 0
+
+    def test_missing_operator_token_fails_closed_before_issuing(self, tmp_path: Path) -> None:
+        sm, manager = self._session_manager_with_credential(tmp_path)
+
+        with (
+            patch("gobby.agents.spawn.read_local_api_token", return_value=None),
+            pytest.raises(RuntimeError, match="operator token"),
+        ):
+            _issue_prelaunch_credential(sm, self._prepared(), timeout_seconds=None)
+
+        manager.issue.assert_not_called()
+
+    def test_missing_lease_context_fails_closed_before_issuing(self, tmp_path: Path) -> None:
+        sm, manager = self._session_manager_with_credential(tmp_path)
+
+        with (
+            patch("gobby.agents.spawn.read_local_api_token", return_value="op-token"),
+            patch(
+                "gobby.agents.code_index._active_deployment_grant_context",
+                side_effect=RuntimeError("lease_unavailable"),
+            ),
+            pytest.raises(RuntimeError, match="lease_unavailable"),
+        ):
+            _issue_prelaunch_credential(sm, self._prepared(), timeout_seconds=None)
+
+        manager.issue.assert_not_called()
+
+    def test_no_credential_manager_leaves_prepared_untouched(self) -> None:
+        class _BareDb:
+            pass
+
+        sm = MagicMock()
+        sm._storage.db = _BareDb()
+        prepared = self._prepared()
+
+        result = _issue_prelaunch_credential(sm, prepared, timeout_seconds=None)
+
+        assert result is prepared
+        assert MANAGED_EXECUTION_BOOTSTRAP_ENV not in result.env_vars
