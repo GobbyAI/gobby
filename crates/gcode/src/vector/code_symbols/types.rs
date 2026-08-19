@@ -133,6 +133,7 @@ pub struct CodeSymbolVectorLifecycleOutput {
 pub enum VectorLifecycleError {
     MissingQdrantConfig,
     MissingEmbeddingConfig,
+    #[cfg(feature = "ai")]
     EmbeddingHttp {
         status: u16,
         body: String,
@@ -164,6 +165,7 @@ impl fmt::Display for VectorLifecycleError {
                 f,
                 "embedding config is required for vector lifecycle commands"
             ),
+            #[cfg(feature = "ai")]
             Self::EmbeddingHttp { status, body } => {
                 write!(f, "embedding request failed: HTTP {status}: {body}")
             }

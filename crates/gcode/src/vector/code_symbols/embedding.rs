@@ -122,6 +122,7 @@ impl EmbeddingBackend {
     }
 }
 
+#[cfg(feature = "ai")]
 const INDEXING_EMBED_QUERY_MODE: bool = false;
 
 fn embed_via_daemon_or_err(
@@ -374,7 +375,11 @@ pub fn vector_text_for_symbol(symbol: &Symbol) -> String {
 
 #[cfg(test)]
 mod tests {
-    use super::{EmbeddingSource, embedding_source_from_resolved_ai_context};
+    #[cfg(feature = "ai")]
+    use super::EmbeddingSource;
+    #[cfg(feature = "ai")]
+    use super::embedding_source_from_resolved_ai_context;
+    #[cfg(feature = "ai")]
     use gobby_core::ai_context::AiContext;
     use gobby_core::config::{ConfigSource, ai_keys};
     use std::collections::HashMap;
@@ -450,6 +455,7 @@ mod tests {
     }
 
     #[test]
+    #[cfg(feature = "ai")]
     fn daemon_source_is_selected_for_daemon_route() {
         let mut source = TestSource::with_values([(ai_keys::EMBEDDINGS_ROUTING, "daemon")]);
         let context = AiContext::resolve(None, &mut source);
@@ -463,6 +469,7 @@ mod tests {
     }
 
     #[test]
+    #[cfg(feature = "ai")]
     fn embed_via_daemon_or_err_uses_document_mode_for_indexing() {
         assert!(
             !super::INDEXING_EMBED_QUERY_MODE,

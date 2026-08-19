@@ -301,14 +301,17 @@ fn required_capture_error(error: anyhow::Error) -> anyhow::Error {
 #[cfg(test)]
 mod tests {
     use std::collections::BTreeMap;
+    #[cfg(feature = "ai")]
     use std::fs;
     use std::io::{Read, Write};
     use std::net::TcpListener;
     use std::thread;
 
+    #[cfg(feature = "ai")]
+    use super::layers_from_daemon_result;
     use super::{
         ConfigLayers, ConfigMode, HubConfigCapture, HubConfigCaptureStatus, ServiceSource,
-        capture_failure, layers_from_daemon_result, warn_for_unregistered_served_keys,
+        capture_failure, warn_for_unregistered_served_keys,
     };
     use crate::config::services::{
         ServiceConfigSource, resolve_embedding_config_details_from_service_source,
@@ -635,6 +638,7 @@ mod tests {
     }
 
     #[test]
+    #[cfg(feature = "ai")]
     #[serial_test::serial(serial_db)]
     fn read_config_layers_warns_for_unregistered_served_keys() {
         install_capture_logger();

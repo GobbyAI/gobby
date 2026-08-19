@@ -231,26 +231,29 @@ fn outage_degrades_with_warning() {
     assert_eq!(warnings[0]["lane"], "semantic");
     assert_eq!(warnings[0]["cause"], "daemon_unreachable");
 
-    let explicit = gobby_core::ai::require_modality_ready(
-        &gobby_core::grant::GrantCapabilities {
-            postgres: gobby_core::grant::PostgresCapability::Unavailable {},
-            falkordb: gobby_core::grant::FalkorCapability::Unavailable {},
-            qdrant: gobby_core::grant::QdrantCapability::Unavailable {},
-            embed: gobby_core::grant::AiCapability::Daemon {},
-            text_generate: gobby_core::grant::AiCapability::Daemon {},
-            tool_chat: gobby_core::grant::AiCapability::Daemon {},
-            vision_extract: gobby_core::grant::AiCapability::Daemon {},
-            audio_transcribe: gobby_core::grant::AiCapability::Daemon {},
-            broker_operations: Vec::new(),
-        },
-        false,
-        gobby_core::config::AiCapability::TextGenerate,
-    )
-    .expect_err("explicit AI must fail typed on daemon outage");
-    match explicit {
-        gobby_core::ai_types::AiError::CapabilityUnavailable { capability, .. } => {
-            assert_eq!(capability, "text_generate");
+    #[cfg(feature = "ai")]
+    {
+        let explicit = gobby_core::ai::require_modality_ready(
+            &gobby_core::grant::GrantCapabilities {
+                postgres: gobby_core::grant::PostgresCapability::Unavailable {},
+                falkordb: gobby_core::grant::FalkorCapability::Unavailable {},
+                qdrant: gobby_core::grant::QdrantCapability::Unavailable {},
+                embed: gobby_core::grant::AiCapability::Daemon {},
+                text_generate: gobby_core::grant::AiCapability::Daemon {},
+                tool_chat: gobby_core::grant::AiCapability::Daemon {},
+                vision_extract: gobby_core::grant::AiCapability::Daemon {},
+                audio_transcribe: gobby_core::grant::AiCapability::Daemon {},
+                broker_operations: Vec::new(),
+            },
+            false,
+            gobby_core::config::AiCapability::TextGenerate,
+        )
+        .expect_err("explicit AI must fail typed on daemon outage");
+        match explicit {
+            gobby_core::ai_types::AiError::CapabilityUnavailable { capability, .. } => {
+                assert_eq!(capability, "text_generate");
+            }
+            other => panic!("expected typed capability error, got {other:?}"),
         }
-        other => panic!("expected typed capability error, got {other:?}"),
     }
 }

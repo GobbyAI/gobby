@@ -702,6 +702,7 @@ fn vector_error_kind(error: &VectorLifecycleError) -> &'static str {
     match error {
         VectorLifecycleError::MissingQdrantConfig => "missing_qdrant_config",
         VectorLifecycleError::MissingEmbeddingConfig => "missing_embedding_config",
+        #[cfg(feature = "ai")]
         VectorLifecycleError::EmbeddingHttp { .. } => "embedding_http",
         VectorLifecycleError::EmbeddingResponse(_) => "embedding_response",
         VectorLifecycleError::QdrantHttp { .. } => "qdrant_http",

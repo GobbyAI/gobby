@@ -26,6 +26,11 @@ name = "gcode"
 path = "src/main.rs"
 
 [[test]]
+name = "effective_config"
+path = "tests/effective_config.rs"
+required-features = ["ai"]
+
+[[test]]
 name = "projection_stale"
 path = "tests/projection_stale.rs"
 required-features = ["test-support"]
