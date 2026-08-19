@@ -220,29 +220,48 @@ fn print_typed_error(
     std::process::ExitCode::from(exit)
 }
 
+pub(crate) fn classify_run_error(error: &anyhow::Error) -> u8 {
+    if let Some(contract_error) = error.downcast_ref::<commands::graph::GraphSyncContractError>() {
+        return contract_error.exit_code();
+    }
+    if let Some(doctor_exit) =
+        error.downcast_ref::<commands::embeddings_doctor::EmbeddingsDoctorExit>()
+    {
+        return doctor_exit.exit_code();
+    }
+    if let Some(cli_error) = error.downcast_ref::<crate::cli_error::CliError>() {
+        return cli_error.exit_status;
+    }
+    if let Some(grant_error) = error.downcast_ref::<gobby_core::grant::GrantError>() {
+        return crate::cli_error::CliError::grant(grant_error.clone()).exit_status;
+    }
+    1
+}
+
 pub(crate) fn run_with_exit_code() -> std::process::ExitCode {
     match run() {
         Ok(()) => std::process::ExitCode::SUCCESS,
         Err(error) => {
+            let exit = classify_run_error(&error);
             if let Some(contract_error) =
                 error.downcast_ref::<commands::graph::GraphSyncContractError>()
             {
-                return print_typed_error(|| contract_error.print(), contract_error.exit_code());
+                return print_typed_error(|| contract_error.print(), exit);
             }
             if let Some(doctor_exit) =
                 error.downcast_ref::<commands::embeddings_doctor::EmbeddingsDoctorExit>()
             {
-                return print_typed_error(|| doctor_exit.print(), doctor_exit.exit_code());
+                return print_typed_error(|| doctor_exit.print(), exit);
             }
             if let Some(cli_error) = error.downcast_ref::<crate::cli_error::CliError>() {
-                return print_typed_error(|| cli_error.print(), cli_error.exit_status);
+                return print_typed_error(|| cli_error.print(), exit);
             }
             if let Some(grant_error) = error.downcast_ref::<gobby_core::grant::GrantError>() {
                 let cli_error = crate::cli_error::CliError::grant(grant_error.clone());
-                return print_typed_error(|| cli_error.print(), cli_error.exit_status);
+                return print_typed_error(|| cli_error.print(), exit);
             }
             eprintln!("Error: {error:?}");
-            std::process::ExitCode::FAILURE
+            std::process::ExitCode::from(exit)
         }
     }
 }

@@ -74,7 +74,8 @@
         "global_flags",
         "scope",
         "commands",
-        "error_codes"
+        "error_codes",
+        "exit_codes"
       ]
     },
     {
@@ -1391,5 +1392,19 @@
     "precondition_failed",
     "index",
     "search"
+  ],
+  "exit_codes": [
+    {
+      "code": 0,
+      "meaning": "success, including empty result sets"
+    },
+    {
+      "code": 1,
+      "meaning": "internal error (config, I/O, daemon, unclassified); error envelope on stderr"
+    },
+    {
+      "code": 2,
+      "meaning": "usage error or typed error (invalid input, not found, grant); JSON envelope on stderr"
+    }
   ]
 }

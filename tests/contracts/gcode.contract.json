@@ -1,6 +1,6 @@
 {
   "tool": "gcode",
-  "contract_version": 4,
+  "contract_version": 5,
   "summary": "Fast code index CLI for Gobby.",
   "global_flags": [
     {
@@ -90,7 +90,8 @@
         "global_flags",
         "scope",
         "commands",
-        "error_codes"
+        "error_codes",
+        "exit_codes"
       ]
     },
     {
@@ -99,135 +100,6 @@
       "daemon_consumed": false,
       "positionals": [],
       "flags": [],
-      "json_output_keys": []
-    },
-    {
-      "name": "setup",
-      "summary": "Create gcode-owned standalone database objects and local service config.",
-      "daemon_consumed": false,
-      "positionals": [],
-      "flags": [
-        {
-          "name": "--standalone",
-          "takes_value": false,
-          "value_name": null,
-          "allowed_values": [],
-          "required": true,
-          "repeatable": false
-        },
-        {
-          "name": "--database-url",
-          "takes_value": true,
-          "value_name": "DATABASE_URL",
-          "allowed_values": [],
-          "required": false,
-          "repeatable": false
-        },
-        {
-          "name": "--no-services",
-          "takes_value": false,
-          "value_name": null,
-          "allowed_values": [],
-          "required": false,
-          "repeatable": false
-        },
-        {
-          "name": "--overwrite-code-index",
-          "takes_value": false,
-          "value_name": null,
-          "allowed_values": [],
-          "required": false,
-          "repeatable": false
-        },
-        {
-          "name": "--schema",
-          "takes_value": true,
-          "value_name": "SCHEMA",
-          "allowed_values": [],
-          "required": false,
-          "repeatable": false
-        },
-        {
-          "name": "--embedding-provider",
-          "takes_value": true,
-          "value_name": "PROVIDER",
-          "allowed_values": [],
-          "required": false,
-          "repeatable": false
-        },
-        {
-          "name": "--embedding-api-base",
-          "takes_value": true,
-          "value_name": "URL",
-          "allowed_values": [],
-          "required": false,
-          "repeatable": false
-        },
-        {
-          "name": "--embedding-model",
-          "takes_value": true,
-          "value_name": "MODEL",
-          "allowed_values": [],
-          "required": false,
-          "repeatable": false
-        },
-        {
-          "name": "--embedding-query-prefix",
-          "takes_value": true,
-          "value_name": "PREFIX",
-          "allowed_values": [],
-          "required": false,
-          "repeatable": false
-        },
-        {
-          "name": "--embedding-vector-dim",
-          "takes_value": true,
-          "value_name": "N",
-          "allowed_values": [],
-          "required": false,
-          "repeatable": false
-        },
-        {
-          "name": "--embedding-api-key",
-          "takes_value": true,
-          "value_name": "KEY",
-          "allowed_values": [],
-          "required": false,
-          "repeatable": false
-        },
-        {
-          "name": "--falkordb-host",
-          "takes_value": true,
-          "value_name": "HOST",
-          "allowed_values": [],
-          "required": false,
-          "repeatable": false
-        },
-        {
-          "name": "--falkordb-port",
-          "takes_value": true,
-          "value_name": "PORT",
-          "allowed_values": [],
-          "required": false,
-          "repeatable": false
-        },
-        {
-          "name": "--falkordb-password",
-          "takes_value": true,
-          "value_name": "PASSWORD",
-          "allowed_values": [],
-          "required": false,
-          "repeatable": false
-        },
-        {
-          "name": "--qdrant-url",
-          "takes_value": true,
-          "value_name": "URL",
-          "allowed_values": [],
-          "required": false,
-          "repeatable": false
-        }
-      ],
       "json_output_keys": []
     },
     {
@@ -643,6 +515,46 @@
           "repeatable": false
         },
         {
+          "name": "--files-with-matches",
+          "takes_value": false,
+          "value_name": null,
+          "allowed_values": [],
+          "required": false,
+          "repeatable": false
+        },
+        {
+          "name": "--extended-regexp",
+          "takes_value": false,
+          "value_name": null,
+          "allowed_values": [],
+          "required": false,
+          "repeatable": false
+        },
+        {
+          "name": "--line-number",
+          "takes_value": false,
+          "value_name": null,
+          "allowed_values": [],
+          "required": false,
+          "repeatable": false
+        },
+        {
+          "name": "--recursive",
+          "takes_value": false,
+          "value_name": null,
+          "allowed_values": [],
+          "required": false,
+          "repeatable": false
+        },
+        {
+          "name": "-R",
+          "takes_value": false,
+          "value_name": null,
+          "allowed_values": [],
+          "required": false,
+          "repeatable": false
+        },
+        {
           "name": "--before-context",
           "takes_value": true,
           "value_name": "N",
@@ -728,16 +640,7 @@
           "repeatable": false
         }
       ],
-      "flags": [
-        {
-          "name": "--summarize",
-          "takes_value": false,
-          "value_name": null,
-          "allowed_values": [],
-          "required": false,
-          "repeatable": false
-        }
-      ],
+      "flags": [],
       "json_output_keys": [
         "id",
         "name",
@@ -1707,16 +1610,20 @@
     {
       "name": "embeddings doctor",
       "summary": "Emit embedding configuration doctor JSON.",
-      "daemon_consumed": false,
+      "daemon_consumed": true,
       "positionals": [],
       "flags": [],
       "json_output_keys": [
-        "status",
-        "project_id",
-        "source",
+        "endpoint",
         "model",
-        "vector_dim",
-        "peer",
+        "dim",
+        "probe_error",
+        "peer_error",
+        "api_key_present",
+        "api_key_fingerprint",
+        "namespace_resolved",
+        "source",
+        "agrees",
         "drift"
       ]
     },
@@ -1784,5 +1691,35 @@
     "backend_unavailable",
     "index_unavailable",
     "contract_violation"
+  ],
+  "exit_codes": [
+    {
+      "code": 0,
+      "meaning": "success, including empty result sets"
+    },
+    {
+      "code": 1,
+      "meaning": "internal error (unclassified bug); plain `Error:` line on stderr"
+    },
+    {
+      "code": 2,
+      "meaning": "usage error or typed error (grant, project_required, capability_unavailable, graph sync contract); one JSON line on stderr"
+    },
+    {
+      "code": 3,
+      "meaning": "`index --skip-if-locked` yielded to a concurrent indexer"
+    },
+    {
+      "code": 10,
+      "meaning": "embeddings doctor: config missing"
+    },
+    {
+      "code": 11,
+      "meaning": "embeddings doctor: config drift"
+    },
+    {
+      "code": 20,
+      "meaning": "embeddings doctor: transport failure"
+    }
   ]
 }

@@ -67,7 +67,7 @@ fn output_keys(contract: &Value, name: &str) -> Vec<String> {
 #[test]
 fn contract_is_version_four_without_codewiki() {
     let contract = serde_json::to_value(gobby_code::contract::contract()).expect("contract json");
-    assert_eq!(contract["contract_version"], serde_json::json!(4));
+    assert_eq!(contract["contract_version"], serde_json::json!(5));
     let global_flags = contract["global_flags"]
         .as_array()
         .expect("global flags array");
@@ -80,6 +80,39 @@ fn contract_is_version_four_without_codewiki() {
         !global_flags
             .iter()
             .any(|flag| flag["name"] == "--no-freshness")
+    );
+    assert_eq!(
+        contract["exit_codes"],
+        serde_json::json!([
+            {
+                "code": 0,
+                "meaning": "success, including empty result sets"
+            },
+            {
+                "code": 1,
+                "meaning": "internal error (unclassified bug); plain `Error:` line on stderr"
+            },
+            {
+                "code": 2,
+                "meaning": "usage error or typed error (grant, project_required, capability_unavailable, graph sync contract); one JSON line on stderr"
+            },
+            {
+                "code": 3,
+                "meaning": "`index --skip-if-locked` yielded to a concurrent indexer"
+            },
+            {
+                "code": 10,
+                "meaning": "embeddings doctor: config missing"
+            },
+            {
+                "code": 11,
+                "meaning": "embeddings doctor: config drift"
+            },
+            {
+                "code": 20,
+                "meaning": "embeddings doctor: transport failure"
+            }
+        ])
     );
     assert!(
         contract["commands"]
@@ -97,6 +130,33 @@ fn contract_is_version_four_without_codewiki() {
             .all(|command| command["name"] != "setup"),
         "standalone setup command must be absent"
     );
+}
+
+fn grep_flag_names(contract: &Value) -> Vec<String> {
+    command(contract, "grep")["flags"]
+        .as_array()
+        .expect("grep flags array")
+        .iter()
+        .map(|flag| flag["name"].as_str().expect("flag name").to_string())
+        .collect()
+}
+
+#[test]
+fn grep_flags_include_files_with_matches_and_noop_switches() {
+    let contract = serde_json::to_value(gobby_code::contract::contract()).expect("contract json");
+    let flags = grep_flag_names(&contract);
+    for expected in [
+        "--files-with-matches",
+        "--extended-regexp",
+        "--line-number",
+        "--recursive",
+        "-R",
+    ] {
+        assert!(
+            flags.contains(&expected.to_string()),
+            "grep contract missing {expected}; flags={flags:?}"
+        );
+    }
 }
 
 #[test]

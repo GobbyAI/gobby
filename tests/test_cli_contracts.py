@@ -5,7 +5,7 @@ import os
 import shutil
 import subprocess
 import sys
-from collections.abc import Awaitable, Callable, Sequence
+from collections.abc import Awaitable, Callable, Mapping, Sequence
 from pathlib import Path
 from typing import Any
 
@@ -110,6 +110,7 @@ class RecordingGcodeGateway(GcodeGateway):
         *,
         timeout: float | None = None,
         check_version: bool = True,
+        env: Mapping[str, str] | None = None,
     ) -> tuple[bytes, bytes]:
         command_key = " ".join(command[1:3]) if command[1] in {"graph", "vector"} else command[1]
         self.argv_by_command[command_key] = list(command)
@@ -376,7 +377,7 @@ def test_gcode_contract_covers_daemon_consumed_surface() -> None:
     contract = _contract("gcode")
     commands = {command["name"] for command in contract["commands"]}
 
-    assert contract["contract_version"] == 4
+    assert contract["contract_version"] == 5
     assert {
         "index",
         "search",

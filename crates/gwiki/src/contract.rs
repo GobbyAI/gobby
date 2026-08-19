@@ -1,6 +1,6 @@
 use gobby_core::cli_contract::{
-    CliContract, CommandContract, DegradationContract, FlagContract, PositionalContract,
-    ScopeContract,
+    CliContract, CommandContract, DegradationContract, ExitCodeContract, FlagContract,
+    PositionalContract, ScopeContract,
 };
 
 pub fn contract() -> CliContract {
@@ -676,6 +676,20 @@ pub fn contract() -> CliContract {
             "index",
             "search",
         ],
+        exit_codes: vec![
+            ExitCodeContract {
+                code: 0,
+                meaning: "success, including empty result sets",
+            },
+            ExitCodeContract {
+                code: 1,
+                meaning: "internal error (config, I/O, daemon, unclassified); error envelope on stderr",
+            },
+            ExitCodeContract {
+                code: 2,
+                meaning: "usage error or typed error (invalid input, not found, grant); JSON envelope on stderr",
+            },
+        ],
     }
 }
 
@@ -715,5 +729,6 @@ fn contract_keys() -> Vec<&'static str> {
         "scope",
         "commands",
         "error_codes",
+        "exit_codes",
     ]
 }

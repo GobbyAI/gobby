@@ -1,6 +1,6 @@
 {
   "tool": "gcode",
-  "contract_version": 4,
+  "contract_version": 5,
   "summary": "Fast code index CLI for Gobby.",
   "global_flags": [
     {
@@ -90,7 +90,8 @@
         "global_flags",
         "scope",
         "commands",
-        "error_codes"
+        "error_codes",
+        "exit_codes"
       ]
     },
     {
@@ -507,6 +508,46 @@
         },
         {
           "name": "--word",
+          "takes_value": false,
+          "value_name": null,
+          "allowed_values": [],
+          "required": false,
+          "repeatable": false
+        },
+        {
+          "name": "--files-with-matches",
+          "takes_value": false,
+          "value_name": null,
+          "allowed_values": [],
+          "required": false,
+          "repeatable": false
+        },
+        {
+          "name": "--extended-regexp",
+          "takes_value": false,
+          "value_name": null,
+          "allowed_values": [],
+          "required": false,
+          "repeatable": false
+        },
+        {
+          "name": "--line-number",
+          "takes_value": false,
+          "value_name": null,
+          "allowed_values": [],
+          "required": false,
+          "repeatable": false
+        },
+        {
+          "name": "--recursive",
+          "takes_value": false,
+          "value_name": null,
+          "allowed_values": [],
+          "required": false,
+          "repeatable": false
+        },
+        {
+          "name": "-R",
           "takes_value": false,
           "value_name": null,
           "allowed_values": [],
@@ -1650,5 +1691,35 @@
     "backend_unavailable",
     "index_unavailable",
     "contract_violation"
+  ],
+  "exit_codes": [
+    {
+      "code": 0,
+      "meaning": "success, including empty result sets"
+    },
+    {
+      "code": 1,
+      "meaning": "internal error (unclassified bug); plain `Error:` line on stderr"
+    },
+    {
+      "code": 2,
+      "meaning": "usage error or typed error (grant, project_required, capability_unavailable, graph sync contract); one JSON line on stderr"
+    },
+    {
+      "code": 3,
+      "meaning": "`index --skip-if-locked` yielded to a concurrent indexer"
+    },
+    {
+      "code": 10,
+      "meaning": "embeddings doctor: config missing"
+    },
+    {
+      "code": 11,
+      "meaning": "embeddings doctor: config drift"
+    },
+    {
+      "code": 20,
+      "meaning": "embeddings doctor: transport failure"
+    }
   ]
 }

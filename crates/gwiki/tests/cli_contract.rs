@@ -19,6 +19,20 @@ fn contract_builder_matches_pinned_json() {
 }
 
 #[test]
+fn contract_declares_exit_code_table() {
+    let contract = serde_json::to_value(gobby_wiki::contract::contract()).expect("contract json");
+    let codes: Vec<u8> = contract["exit_codes"]
+        .as_array()
+        .expect("exit_codes array")
+        .iter()
+        .map(|entry| {
+            u8::try_from(entry["code"].as_u64().expect("exit code")).expect("u8 exit code")
+        })
+        .collect();
+    assert_eq!(codes, vec![0, 1, 2]);
+}
+
+#[test]
 fn contract_command_emits_pinned_json() {
     let output = common::gwiki_command()
         .args(["contract", "--format", "json"])

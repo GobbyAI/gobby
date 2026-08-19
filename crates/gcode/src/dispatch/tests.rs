@@ -1,6 +1,8 @@
 use super::*;
 use crate::cli::Cli;
+use crate::cli_error::CliError;
 use clap::Parser;
+use gobby_core::grant::GrantError;
 
 fn services_for(args: &[&str]) -> config::ServiceConfigSelection {
     let cli = Cli::try_parse_from(std::iter::once("gcode").chain(args.iter().copied()))
@@ -108,4 +110,39 @@ fn degraded_freshness_warning_is_suppressed_when_quiet() {
         ),
         None
     );
+}
+
+#[test]
+fn cli_error_uses_its_exit_status() {
+    let error = anyhow::Error::from(CliError {
+        code: "usage",
+        message: "unknown argument".to_string(),
+        recovery: None,
+        exit_status: 2,
+    });
+    assert_eq!(classify_run_error(&error), 2);
+
+    let doctor = anyhow::Error::from(CliError {
+        code: "embeddings_doctor",
+        message: "config drift".to_string(),
+        recovery: None,
+        exit_status: 11,
+    });
+    assert_eq!(classify_run_error(&doctor), 11);
+}
+
+#[test]
+fn grant_error_maps_through_cli_error_grant() {
+    let error = anyhow::Error::from(GrantError::DaemonRequired);
+    assert_eq!(
+        classify_run_error(&error),
+        CliError::grant(GrantError::DaemonRequired).exit_status
+    );
+    assert_eq!(classify_run_error(&error), 2);
+}
+
+#[test]
+fn unclassified_anyhow_error_exits_one() {
+    let error = anyhow::anyhow!("unexpected index panic");
+    assert_eq!(classify_run_error(&error), 1);
 }

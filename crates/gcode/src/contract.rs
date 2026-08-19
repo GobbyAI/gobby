@@ -1,12 +1,11 @@
 use gobby_core::cli_contract::{
-    CliContract, CommandContract, FlagContract, PositionalContract, ScopeContract,
+    CliContract, CommandContract, ExitCodeContract, FlagContract, PositionalContract, ScopeContract,
 };
 
 pub fn contract() -> CliContract {
     CliContract {
         tool: "gcode",
-        // Additive optional flags are backward-compatible and do not bump this version.
-        contract_version: 4,
+        contract_version: 5,
         summary: "Fast code index CLI for Gobby.",
         global_flags: vec![
             FlagContract::value("--project", "ROOT"),
@@ -476,6 +475,36 @@ pub fn contract() -> CliContract {
             "index_unavailable",
             "contract_violation",
         ],
+        exit_codes: vec![
+            ExitCodeContract {
+                code: 0,
+                meaning: "success, including empty result sets",
+            },
+            ExitCodeContract {
+                code: 1,
+                meaning: "internal error (unclassified bug); plain `Error:` line on stderr",
+            },
+            ExitCodeContract {
+                code: 2,
+                meaning: "usage error or typed error (grant, project_required, capability_unavailable, graph sync contract); one JSON line on stderr",
+            },
+            ExitCodeContract {
+                code: 3,
+                meaning: "`index --skip-if-locked` yielded to a concurrent indexer",
+            },
+            ExitCodeContract {
+                code: 10,
+                meaning: "embeddings doctor: config missing",
+            },
+            ExitCodeContract {
+                code: 11,
+                meaning: "embeddings doctor: config drift",
+            },
+            ExitCodeContract {
+                code: 20,
+                meaning: "embeddings doctor: transport failure",
+            },
+        ],
     }
 }
 
@@ -501,6 +530,11 @@ fn grep_flags() -> Vec<FlagContract> {
         FlagContract::switch("--fixed-strings"),
         FlagContract::switch("--ignore-case"),
         FlagContract::switch("--word"),
+        FlagContract::switch("--files-with-matches"),
+        FlagContract::switch("--extended-regexp"),
+        FlagContract::switch("--line-number"),
+        FlagContract::switch("--recursive"),
+        FlagContract::switch("-R"),
         FlagContract::value("--before-context", "N"),
         FlagContract::value("--after-context", "N"),
         FlagContract::value("--context", "N"),
@@ -679,6 +713,7 @@ fn contract_keys() -> Vec<&'static str> {
         "scope",
         "commands",
         "error_codes",
+        "exit_codes",
     ]
 }
 

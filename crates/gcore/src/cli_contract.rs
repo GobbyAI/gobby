@@ -9,6 +9,13 @@ pub struct CliContract {
     pub scope: Option<ScopeContract>,
     pub commands: Vec<CommandContract>,
     pub error_codes: Vec<&'static str>,
+    pub exit_codes: Vec<ExitCodeContract>,
+}
+
+#[derive(Debug, Serialize)]
+pub struct ExitCodeContract {
+    pub code: u8,
+    pub meaning: &'static str,
 }
 
 #[derive(Debug, Serialize)]
@@ -175,5 +182,37 @@ mod tests {
         assert_eq!(round_trip["flags"][0]["value_name"].as_str(), Some("GLOB"));
         assert_eq!(round_trip["flags"][0]["required"].as_bool(), Some(true));
         assert_eq!(round_trip["flags"][0]["repeatable"].as_bool(), Some(true));
+    }
+
+    #[test]
+    fn cli_contract_serializes_typed_exit_code_table() {
+        let contract = CliContract {
+            tool: "probe",
+            contract_version: 5,
+            summary: "probe contract",
+            global_flags: Vec::new(),
+            scope: None,
+            commands: Vec::new(),
+            error_codes: Vec::new(),
+            exit_codes: vec![
+                ExitCodeContract {
+                    code: 0,
+                    meaning: "success, including empty result sets",
+                },
+                ExitCodeContract {
+                    code: 2,
+                    meaning: "usage error or typed error",
+                },
+            ],
+        };
+
+        let json = serde_json::to_value(&contract).expect("serialize cli contract");
+        assert_eq!(
+            json["exit_codes"],
+            serde_json::json!([
+                {"code": 0, "meaning": "success, including empty result sets"},
+                {"code": 2, "meaning": "usage error or typed error"}
+            ])
+        );
     }
 }
