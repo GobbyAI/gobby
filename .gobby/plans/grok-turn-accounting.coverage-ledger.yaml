@@ -1,0 +1,32 @@
+project_id: d45545c5-ded5-4335-b115-0245752edacf
+plan_id: grok-turn-accounting
+plan_hash: "f122730c1efdf31c8cb2f042555007f5a9888060766d7793b507f04acb4def49"
+root_task_ref: "20453"
+
+sections:
+  "1.1":
+    acceptance_items:
+      "1.1.1": {expected_leaves: [{title: Emit turn_completed boundary records in the grok parser, owner_agent: backend-developer}]}
+      "1.1.2": {expected_leaves: [{title: Emit turn_completed boundary records in the grok parser, owner_agent: backend-developer}]}
+      "1.1.3": {expected_leaves: [{title: Emit turn_completed boundary records in the grok parser, owner_agent: backend-developer}]}
+      "1.1.4": {expected_leaves: [{title: Emit turn_completed boundary records in the grok parser, owner_agent: backend-developer}]}
+  "1.2":
+    acceptance_items:
+      "1.2.1": {expected_leaves: [{title: Count grok turns from boundary records in message stats, owner_agent: backend-developer}]}
+      "1.2.2": {expected_leaves: [{title: Count grok turns from boundary records in message stats, owner_agent: backend-developer}]}
+      "1.2.3": {expected_leaves: [{title: Count grok turns from boundary records in message stats, owner_agent: backend-developer}]}
+      "1.2.4": {expected_leaves: [{title: Count grok turns from boundary records in message stats, owner_agent: backend-developer}]}
+  "1.3":
+    acceptance_items:
+      "1.3.1": {expected_leaves: [{title: Turn-keyed digest pair extraction with marathon sub-segmentation, owner_agent: backend-developer}]}
+      "1.3.2": {expected_leaves: [{title: Turn-keyed digest pair extraction with marathon sub-segmentation, owner_agent: backend-developer}]}
+      "1.3.3": {expected_leaves: [{title: Turn-keyed digest pair extraction with marathon sub-segmentation, owner_agent: backend-developer}]}
+      "1.3.4": {expected_leaves: [{title: Turn-keyed digest pair extraction with marathon sub-segmentation, owner_agent: backend-developer}]}
+  "2.1":
+    acceptance_items:
+      "2.1.1": {expected_leaves: [{title: Grok audited-stream fixture builders, owner_agent: backend-developer}]}
+      "2.1.2": {expected_leaves: [{title: Grok audited-stream fixture builders, owner_agent: backend-developer}]}
+  "2.2":
+    acceptance_items:
+      "2.2.1": {expected_leaves: [{title: User-anchored coverage recompute, owner_agent: backend-developer}]}
+      "2.2.2": {expected_leaves: [{title: User-anchored coverage recompute, owner_agent: backend-developer}]}
