@@ -28,6 +28,7 @@ pub use handshake::{
     MANAGED_BOOTSTRAP_ENV, MANAGED_EXECUTION_HEADER, SESSION_HEADER, TARGET_PROJECT_HEADER,
     daemon_reachable, encode_grant_header, parse_capability_token, reject_remote_endpoint,
 };
+use inspection::annotate_source;
 pub use inspection::{CachedGrantInspection, inspect_cached_grant, inspect_cached_grant_at};
 
 use bundle::validate_for_construction as validate_grant;
@@ -388,7 +389,9 @@ impl AcquireCtx {
 }
 
 fn acquire_managed(ctx: &AcquireCtx, path: &Path) -> Result<AcquiredGrant, GrantError> {
-    let grant = load_grant_file(path)?;
+    let grant = load_grant_file(path).map_err(|error| {
+        annotate_source(error, &format!("managed grant file {}", path.display()))
+    })?;
     validate_grant(
         &grant,
         &ctx.project_id,
@@ -440,7 +443,12 @@ fn acquire_interactive(ctx: &AcquireCtx) -> Result<AcquiredGrant, GrantError> {
     let binding = load_binding(&ctx.home, &ctx.daemon_url);
     if let Some(binding) = binding {
         let path = interactive_cache_path(&ctx.home, &binding.deployment_token, &ctx.project_id);
-        match inspect_cache_pair(&path)? {
+        match inspect_cache_pair(&path).map_err(|error| {
+            annotate_source(
+                error,
+                &format!("interactive grant cache {}", path.display()),
+            )
+        })? {
             Some(CachePair::Coherent(grant, settings)) => {
                 return accept_cached_or_rehandshake(
                     ctx,
@@ -512,7 +520,16 @@ pub fn rehandshake(request: &AcquireRequest<'_>) -> Result<AcquiredGrant, GrantE
         let destination = path.to_path_buf();
         let lock_path = grant_lock_path(&destination);
         let _lock = lock_with_deadline(&lock_path, ctx.stale_lock_after, ctx.deadline)?;
-        let existing = load_grant_file(&destination).ok();
+        let existing = match load_grant_file(&destination) {
+            Ok(grant) => Some(grant),
+            Err(error) if cache::is_missing_grant_file(&error) => None,
+            Err(error) => {
+                return Err(annotate_source(
+                    error,
+                    &format!("managed grant file {}", destination.display()),
+                ));
+            }
+        };
         return handshake_managed(&ctx, existing.as_ref(), destination);
     }
     let token = load_binding(&ctx.home, &ctx.daemon_url)
@@ -648,18 +665,24 @@ fn refresh_or_fail(
             }
         }
     };
-    if let Ok(current) = load_grant_file(&destination)
-        && !current.is_expired(ctx.now)
-        && !current.past_half_ttl(ctx.now)
-    {
-        let settings = matching_settings(&destination, &current);
-        return Ok(AcquiredGrant {
-            bundle: current,
-            source,
-            settings,
-            daemon_reachable: true,
-            now: ctx.now,
-        });
+    match load_grant_file(&destination) {
+        Ok(current) if !current.is_expired(ctx.now) && !current.past_half_ttl(ctx.now) => {
+            let settings = matching_settings(&destination, &current);
+            return Ok(AcquiredGrant {
+                bundle: current,
+                source,
+                settings,
+                daemon_reachable: true,
+                now: ctx.now,
+            });
+        }
+        Err(error) if !cache::is_missing_grant_file(&error) => {
+            return Err(annotate_source(
+                error,
+                &format!("cached grant {}", destination.display()),
+            ));
+        }
+        _ => {}
     }
     if managed {
         handshake_managed(ctx, existing, destination)

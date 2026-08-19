@@ -25,6 +25,7 @@ fn render(scope: ScopeIdentity) -> Result<CommandOutcome, WikiError> {
         "daemon_url": snapshot.daemon_url,
         "grant": {
             "state": snapshot.state,
+            "reason": snapshot.reason,
             "deployment_token": snapshot.deployment_token,
             "epoch": snapshot.epoch,
             "expires_at": snapshot.expires_at,
@@ -38,10 +39,11 @@ fn render(scope: ScopeIdentity) -> Result<CommandOutcome, WikiError> {
         "gwiki {state}
 Scope: {scope}
 Daemon: {daemon_url}
-Grant: {state}
+{grant_line}
 Reachable: {reachable}",
         state = snapshot.state,
         daemon_url = snapshot.daemon_url,
+        grant_line = grant_text_line(snapshot.state, snapshot.reason.as_deref()),
         reachable = snapshot.reachable,
     );
     Ok(super::scoped_outcome("status", &scope, payload, text))
@@ -55,6 +57,14 @@ pub(crate) struct GrantStatusSnapshot {
     pub(crate) expires_at: Option<i64>,
     pub(crate) remaining_ttl: Option<i64>,
     pub(crate) reachable: bool,
+    pub(crate) reason: Option<String>,
+}
+
+fn grant_text_line(state: &str, reason: Option<&str>) -> String {
+    match reason {
+        Some(reason) => format!("Grant: {state}: {reason}"),
+        None => format!("Grant: {state}"),
+    }
 }
 
 pub(crate) fn grant_status_snapshot() -> GrantStatusSnapshot {
@@ -69,17 +79,18 @@ pub(crate) fn grant_status_snapshot() -> GrantStatusSnapshot {
             expires_at: None,
             remaining_ttl: None,
             reachable,
+            reason: None,
         };
     };
     let inspection = inspect_cached_grant(&root);
-    let state = match inspection {
-        CachedGrantInspection::Absent => "absent",
-        CachedGrantInspection::Malformed => "malformed",
-        CachedGrantInspection::Valid { .. } => "valid",
-        CachedGrantInspection::Expiring { .. } => "expiring",
-        CachedGrantInspection::Expired { .. } => "expired",
+    let (state, reason) = match &inspection {
+        CachedGrantInspection::Absent => ("absent", None),
+        CachedGrantInspection::Malformed { reason } => ("malformed", Some(reason.clone())),
+        CachedGrantInspection::Valid { .. } => ("valid", None),
+        CachedGrantInspection::Expiring { .. } => ("expiring", None),
+        CachedGrantInspection::Expired { .. } => ("expired", None),
     };
-    let (expires_at, remaining_ttl) = match inspection {
+    let (expires_at, remaining_ttl) = match &inspection {
         CachedGrantInspection::Valid {
             expires_at,
             remaining_ttl,
@@ -87,9 +98,9 @@ pub(crate) fn grant_status_snapshot() -> GrantStatusSnapshot {
         | CachedGrantInspection::Expiring {
             expires_at,
             remaining_ttl,
-        } => (Some(expires_at), Some(remaining_ttl)),
-        CachedGrantInspection::Expired { expires_at } => (Some(expires_at), None),
-        CachedGrantInspection::Absent | CachedGrantInspection::Malformed => (None, None),
+        } => (Some(*expires_at), Some(*remaining_ttl)),
+        CachedGrantInspection::Expired { expires_at } => (Some(*expires_at), None),
+        CachedGrantInspection::Absent | CachedGrantInspection::Malformed { .. } => (None, None),
     };
     let bundle = load_cached_grant_bundle(&root, &daemon_url);
     GrantStatusSnapshot {
@@ -100,6 +111,7 @@ pub(crate) fn grant_status_snapshot() -> GrantStatusSnapshot {
         expires_at,
         remaining_ttl,
         reachable,
+        reason,
     }
 }
 
@@ -114,4 +126,16 @@ fn load_cached_grant_bundle(
         .unwrap_or_else(|| deployment_token(&home));
     let path = interactive_cache_path(&home, &token, &project_id);
     load_grant_file(&path).ok()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::grant_text_line;
+
+    #[test]
+    fn malformed_reason_is_rendered_in_status_text() {
+        let reason = "grant payload skew: unknown field `credential_generation`";
+        let text = grant_text_line("malformed", Some(reason));
+        assert_eq!(text, format!("Grant: malformed: {reason}"));
+    }
 }

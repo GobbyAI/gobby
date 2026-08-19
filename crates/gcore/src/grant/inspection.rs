@@ -4,15 +4,34 @@ use std::path::Path;
 
 use super::cache::{interactive_cache_path, load_binding, load_grant_file};
 use super::handshake::{deployment_token as derived_deployment_token, is_default_local_endpoint};
-use super::{resolve_home, unix_now};
+use super::{GrantError, resolve_home, unix_now};
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum CachedGrantInspection {
     Absent,
-    Malformed,
+    Malformed { reason: String },
     Valid { expires_at: i64, remaining_ttl: i64 },
     Expiring { expires_at: i64, remaining_ttl: i64 },
     Expired { expires_at: i64 },
+}
+
+pub(crate) fn annotate_source(error: GrantError, source: &str) -> GrantError {
+    match error {
+        GrantError::Malformed(message) => GrantError::Malformed(format!("{source}: {message}")),
+        GrantError::PayloadSkew { detail } => GrantError::PayloadSkew {
+            detail: format!("{source}: {detail}"),
+        },
+        GrantError::ApiContractMismatch {
+            grant_contract,
+            binary_contract,
+            source: existing,
+        } => GrantError::ApiContractMismatch {
+            grant_contract,
+            binary_contract,
+            source: Some(existing.unwrap_or_else(|| source.to_string())),
+        },
+        other => other,
+    }
 }
 
 pub fn inspect_cached_grant(project_root: impl AsRef<Path>) -> CachedGrantInspection {
@@ -25,11 +44,21 @@ pub fn inspect_cached_grant_at(
     daemon_url: Option<&str>,
     now: Option<i64>,
 ) -> CachedGrantInspection {
-    let Ok(home) = resolve_home(home) else {
-        return CachedGrantInspection::Malformed;
+    let home = match resolve_home(home) {
+        Ok(home) => home,
+        Err(error) => {
+            return CachedGrantInspection::Malformed {
+                reason: error.to_string(),
+            };
+        }
     };
-    let Ok(project_id) = crate::project::read_project_id(project_root) else {
-        return CachedGrantInspection::Malformed;
+    let project_id = match crate::project::read_project_id(project_root) {
+        Ok(project_id) => project_id,
+        Err(error) => {
+            return CachedGrantInspection::Malformed {
+                reason: error.to_string(),
+            };
+        }
     };
     let now = now.unwrap_or_else(unix_now);
     let daemon_url = daemon_url
@@ -50,8 +79,13 @@ pub fn inspect_cached_grant_at(
     if !path.exists() {
         return CachedGrantInspection::Absent;
     }
-    let Ok(grant) = load_grant_file(&path) else {
-        return CachedGrantInspection::Malformed;
+    let grant = match load_grant_file(&path) {
+        Ok(grant) => grant,
+        Err(error) => {
+            return CachedGrantInspection::Malformed {
+                reason: error.to_string(),
+            };
+        }
     };
     if grant.is_expired(now) {
         return CachedGrantInspection::Expired {

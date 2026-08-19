@@ -10,7 +10,7 @@ static TMP_SEQ: AtomicU64 = AtomicU64::new(1);
 
 use serde::{Deserialize, Serialize};
 
-use super::bundle::{GrantBundle, parse_grant_json, verify_payload_checksum};
+use super::bundle::{GrantBundle, parse_grant_json};
 use super::{GrantError, hex_encode, sha256};
 
 const GRANTS_DIR: &str = "grants";
@@ -86,6 +86,10 @@ pub fn write_binding(home: &Path, binding: &TrustedBinding) -> Result<(), GrantE
 pub fn load_grant_file(path: &Path) -> Result<GrantBundle, GrantError> {
     let raw = read_cache_bytes(path)?;
     parse_cache_bytes(&raw).map(|(grant, _)| grant)
+}
+
+pub(crate) fn is_missing_grant_file(error: &GrantError) -> bool {
+    matches!(error, GrantError::Malformed(message) if message.starts_with("grant file missing:"))
 }
 
 pub fn load_settings_file(path: &Path) -> Result<CachedSettings, GrantError> {
@@ -178,9 +182,17 @@ fn read_cache_bytes(path: &Path) -> Result<Vec<u8>, GrantError> {
 
 fn parse_cache_bytes(raw: &[u8]) -> Result<(GrantBundle, Option<CachedSettings>), GrantError> {
     let trimmed = raw.trim_ascii();
-    if let Ok(envelope) = serde_json::from_slice::<CacheEnvelope>(trimmed) {
-        verify_payload_checksum(&envelope.grant)?;
-        return Ok((envelope.grant, Some(envelope.settings)));
+    let Ok(value) = serde_json::from_slice::<serde_json::Value>(trimmed) else {
+        return Ok((parse_grant_json(raw)?, None));
+    };
+    if let Some(grant_value) = value.get("grant") {
+        let grant_raw = serde_json::to_vec(grant_value).map_err(json_err)?;
+        let grant = parse_grant_json(&grant_raw)?;
+        let settings = match value.get("settings") {
+            Some(settings) => Some(serde_json::from_value(settings.clone()).map_err(json_err)?),
+            None => None,
+        };
+        return Ok((grant, settings));
     }
     Ok((parse_grant_json(raw)?, None))
 }

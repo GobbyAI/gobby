@@ -386,7 +386,7 @@ fn api_contract_gate() {
         GrantError::ApiContractMismatch {
             grant_contract: Some(99),
             binary_contract: EXPECTED_API_CONTRACT,
-            source: None,
+            source: Some(format!("managed grant file {}", path.display())),
         }
     );
     assert_eq!(error.cli_code(), "api_contract_mismatch");
@@ -1550,4 +1550,185 @@ fn maintenance_principal_is_managed_and_serializes() {
         signature: vec![0; 32],
     };
     assert!(!tool_claims.matches_principal(&grant.principal));
+}
+
+fn grant_json_without_api_contract(grant: &GrantBundle) -> Vec<u8> {
+    let mut value = serde_json::to_value(grant).expect("json");
+    value
+        .as_object_mut()
+        .expect("object")
+        .remove("api_contract");
+    serde_json::to_vec(&value).expect("serialize")
+}
+
+fn grant_json_with_unknown_field(grant: &GrantBundle) -> Vec<u8> {
+    let mut value = serde_json::to_value(grant).expect("json");
+    value
+        .as_object_mut()
+        .expect("object")
+        .insert("credential_generation".into(), json!(1));
+    serde_json::to_vec(&value).expect("serialize")
+}
+
+#[test]
+fn managed_grant_file_parse_failure_names_source() {
+    let harness = Harness::new();
+    let grant = fixture_grant(PrincipalKind::AgentRun);
+    let path = harness.home.join("managed.json");
+    fs::write(&path, grant_json_without_api_contract(&grant)).expect("write");
+    let mut request = harness.request(Some("http://127.0.0.1:1".into()));
+    request.managed_bootstrap = Some(path.clone());
+    let error = acquire_with(&request).expect_err("managed parse");
+    let source = format!("managed grant file {}", path.display());
+    assert_eq!(
+        error,
+        GrantError::ApiContractMismatch {
+            grant_contract: None,
+            binary_contract: EXPECTED_API_CONTRACT,
+            source: Some(source.clone()),
+        }
+    );
+    assert!(
+        error.to_string().starts_with(&format!("{source}:")),
+        "display must name the managed file, got {error}"
+    );
+}
+
+#[test]
+fn interactive_cache_parse_failure_names_source() {
+    let harness = Harness::new();
+    let grant = fixture_grant(PrincipalKind::Interactive);
+    write_binding_for(&harness, "http://127.0.0.1:1", &grant.deployment.token);
+    let path = interactive_cache_path(&harness.home, &grant.deployment.token, PROJECT);
+    fs::create_dir_all(path.parent().expect("parent")).expect("dirs");
+    fs::write(&path, grant_json_with_unknown_field(&grant)).expect("write");
+    let error =
+        acquire_with(&harness.request(Some("http://127.0.0.1:1".into()))).expect_err("cache parse");
+    let source = format!("interactive grant cache {}", path.display());
+    match error {
+        GrantError::PayloadSkew { detail } => {
+            assert!(
+                detail.starts_with(&format!("{source}:")),
+                "detail must name the cache file, got {detail}"
+            );
+            assert!(
+                detail.contains("credential_generation") || detail.contains("unknown field"),
+                "detail must keep the inner serde cause, got {detail}"
+            );
+        }
+        other => panic!("expected PayloadSkew, got {other:?}"),
+    }
+}
+
+#[test]
+fn handshake_parse_failure_names_source() {
+    let grant = fixture_grant(PrincipalKind::Interactive);
+    let body = json!({
+        "grant": serde_json::from_slice::<Value>(&grant_json_without_api_contract(&grant))
+            .expect("value")
+    })
+    .to_string();
+    let error = super::handshake::grant_from_handshake(super::handshake::HttpResponse {
+        status: 200,
+        body,
+    })
+    .expect_err("handshake parse");
+    assert_eq!(
+        error,
+        GrantError::ApiContractMismatch {
+            grant_contract: None,
+            binary_contract: EXPECTED_API_CONTRACT,
+            source: Some("daemon handshake response".into()),
+        }
+    );
+}
+
+#[test]
+fn refresh_or_fail_reread_names_cached_grant_source() {
+    let harness = Harness::new();
+    let listener = TcpListener::bind("127.0.0.1:0").expect("bind");
+    let url = format!("http://{}", listener.local_addr().expect("addr"));
+    let existing = fixture_grant(PrincipalKind::Interactive);
+    let dest = harness.home.join("stale-cache.json");
+    fs::write(&dest, grant_json_with_unknown_field(&existing)).expect("write");
+    let ctx = super::AcquireCtx::from_request(&harness.request(Some(url))).expect("ctx");
+    let error = super::refresh_or_fail(
+        &ctx,
+        Some(&existing),
+        GrantSource::Cache,
+        dest.clone(),
+        false,
+        true,
+        None,
+    )
+    .expect_err("reread parse");
+    drop(listener);
+    let source = format!("cached grant {}", dest.display());
+    match error {
+        GrantError::PayloadSkew { detail } => {
+            assert!(
+                detail.starts_with(&format!("{source}:")),
+                "detail must name the cached grant, got {detail}"
+            );
+        }
+        other => panic!("expected PayloadSkew, got {other:?}"),
+    }
+}
+
+#[test]
+fn envelope_cache_with_skewed_grant_reports_inner_typed_error() {
+    let harness = Harness::new();
+    let grant = fixture_grant(PrincipalKind::Interactive);
+    let inner =
+        serde_json::from_slice::<Value>(&grant_json_with_unknown_field(&grant)).expect("inner");
+    let envelope = json!({
+        "grant": inner,
+        "settings": {
+            "config_revision": grant.config_revision,
+            "settings": {}
+        }
+    });
+    let path = harness.home.join("envelope.json");
+    fs::write(&path, serde_json::to_vec(&envelope).expect("serialize")).expect("write");
+    let error = load_grant_file(&path).expect_err("envelope skew");
+    match error {
+        GrantError::PayloadSkew { detail } => {
+            assert!(
+                detail.contains("unknown field") && detail.contains("credential_generation"),
+                "must report the inner grant's unknown field, got {detail}"
+            );
+            assert!(
+                !detail.contains("unknown field `grant`")
+                    && !detail.contains("unknown field `settings`"),
+                "must not reparse the envelope as a bare grant, got {detail}"
+            );
+        }
+        other => panic!("expected inner PayloadSkew, got {other:?}"),
+    }
+}
+
+#[test]
+fn inspect_cached_grant_reports_malformed_reason() {
+    let harness = Harness::new();
+    let grant = fixture_grant(PrincipalKind::Interactive);
+    write_binding_for(&harness, "http://127.0.0.1:60887", &grant.deployment.token);
+    let path = interactive_cache_path(&harness.home, &grant.deployment.token, PROJECT);
+    fs::create_dir_all(path.parent().expect("parent")).expect("dirs");
+    fs::write(&path, grant_json_with_unknown_field(&grant)).expect("write");
+    let inspected = inspect_cached_grant_at(
+        &harness.project_root,
+        Some(&harness.home),
+        Some("http://127.0.0.1:60887"),
+        Some(NOW),
+    );
+    match inspected {
+        CachedGrantInspection::Malformed { reason } => {
+            assert!(!reason.is_empty(), "malformed inspection must explain why");
+            assert!(
+                reason.contains("payload skew") || reason.contains("unknown field"),
+                "reason must surface the parse failure, got {reason}"
+            );
+        }
+        other => panic!("expected Malformed {{ reason }}, got {other:?}"),
+    }
 }

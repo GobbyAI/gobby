@@ -9,6 +9,7 @@ use serde_json::{Value, json};
 
 use super::bundle::{GrantBundle, GrantPrincipal, PrincipalKind, parse_grant_json};
 use super::cache::normalize_endpoint;
+use super::inspection::annotate_source;
 use super::{GrantError, hex_encode, sha256};
 
 pub const GRANT_HEADER: &str = "X-Gobby-Runtime-Grant";
@@ -249,11 +250,19 @@ pub fn grant_from_handshake(response: HttpResponse) -> Result<GrantBundle, Grant
     if !(200..300).contains(&response.status) {
         return classify_http(response.status, &response.body);
     }
-    let envelope: HandshakeEnvelope = serde_json::from_str(&response.body)
-        .map_err(|error| GrantError::Malformed(error.to_string()))?;
-    let raw = serde_json::to_vec(&envelope.grant)
-        .map_err(|error| GrantError::Malformed(error.to_string()))?;
-    parse_grant_json(&raw)
+    let envelope: HandshakeEnvelope = serde_json::from_str(&response.body).map_err(|error| {
+        annotate_source(
+            GrantError::Malformed(error.to_string()),
+            "daemon handshake response",
+        )
+    })?;
+    let raw = serde_json::to_vec(&envelope.grant).map_err(|error| {
+        annotate_source(
+            GrantError::Malformed(error.to_string()),
+            "daemon handshake response",
+        )
+    })?;
+    parse_grant_json(&raw).map_err(|error| annotate_source(error, "daemon handshake response"))
 }
 
 #[derive(Debug)]
