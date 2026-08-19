@@ -26,8 +26,19 @@ def _facade() -> ModuleType:
     help="Type of memory",
 )
 @click.option("--project", "-p", "project_ref", help="Project (name or UUID)")
+@click.option(
+    "--rationale",
+    required=True,
+    help="Why a future, unrelated session should be served this memory (max 500 chars)",
+)
 @click.pass_context
-def create(ctx: click.Context, content: str, memory_type: str, project_ref: str | None) -> None:
+def create(
+    ctx: click.Context,
+    content: str,
+    memory_type: str,
+    project_ref: str | None,
+    rationale: str,
+) -> None:
     """Create a new memory."""
     memory_module = _facade()
     project_id = memory_module.resolve_project_ref(project_ref)
@@ -38,6 +49,7 @@ def create(ctx: click.Context, content: str, memory_type: str, project_ref: str 
             memory_type=memory_type,
             project_id=project_id,
             source_type="user",
+            rationale=rationale,
         )
     )
     click.echo(f"Created memory: {memory.id} - {memory.content}")

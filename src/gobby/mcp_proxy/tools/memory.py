@@ -44,6 +44,62 @@ logger = logging.getLogger(__name__)
 # Similarity at or above which create_memory supersedes the existing memory
 # instead of leaving a permanent near-duplicate (dream no longer merges).
 AUTO_SUPERSEDE_SIMILARITY = 0.9
+RATIONALE_REQUIRED_ERROR = (
+    "rationale_required: one or two sentences on why this memory should be "
+    "re-served to future sessions (max 500 chars)"
+)
+_RATIONALE_MAX_LEN = 500
+
+
+def normalize_memory_rationale(rationale: str | None) -> str | None:
+    stripped = "" if rationale is None else rationale.strip()
+    return stripped if stripped and len(stripped) <= _RATIONALE_MAX_LEN else None
+
+
+def derive_memory_create_provenance(
+    db: Any,
+    *,
+    project_id: str,
+    resolved_session_id: str | None,
+    source_task_id: str | None = None,
+    created_by_agent: str | None = None,
+) -> tuple[str | None, str | None]:
+    """Derive task/agent provenance. Lookup failures degrade to None."""
+    task_id: str | None = None
+    try:
+        if source_task_id:
+            from gobby.storage.tasks._id import resolve_task_reference
+
+            task_id = resolve_task_reference(db, source_task_id, project_id)
+        elif resolved_session_id:
+            from gobby.storage.tasks import LocalTaskManager
+
+            claimed = LocalTaskManager(db).list_tasks(
+                claimed_by_session_id=resolved_session_id,
+                closed=False,
+                sort_by="updated_at",
+                sort_order="desc",
+            )
+            task_id = str(claimed[0].id) if claimed else None
+    except Exception:
+        logger.debug("Could not derive source_task_id", exc_info=True)
+        task_id = None
+    if created_by_agent or not resolved_session_id:
+        return task_id, created_by_agent
+    try:
+        from gobby.storage.agents import LocalAgentRunManager
+
+        run = LocalAgentRunManager(db).get_by_session(resolved_session_id)
+        if run is not None and run.agent_name:
+            return task_id, str(run.agent_name)
+        from gobby.storage.sessions import SessionManager
+
+        session = SessionManager(db).get(resolved_session_id)
+        source = getattr(session, "source", None) if session is not None else None
+        return task_id, str(source) if source else None
+    except Exception:
+        logger.debug("Could not derive created_by_agent", exc_info=True)
+        return task_id, None
 
 
 # Helper to get current project context
@@ -115,14 +171,23 @@ def create_memory_registry(
 
     @registry.tool(
         name="create_memory",
-        description="Create a new memory. Returns similar existing memories to help detect duplicates.",
+        description=(
+            "Create a new memory. rationale is mandatory: one or two sentences "
+            "on why a future, unrelated session should be served this memory "
+            "(max 500 chars). source_task_id and created_by_agent are derived "
+            "unless overridden. Returns similar existing memories to help detect "
+            "duplicates."
+        ),
     )
     async def create_memory(
         content: str,
+        rationale: str | None = None,
         memory_type: MemoryType | Literal["implementation_note"] = MemoryType.FACT,
         tags: list[str] | None = None,
         supersedes: list[str] | None = None,
         session_id: str | None = None,
+        source_task_id: str | None = None,
+        created_by_agent: str | None = None,
         is_global: bool = False,
     ) -> dict[str, Any]:
         """
@@ -130,6 +195,9 @@ def create_memory_registry(
 
         Args:
             content: The memory content to store
+            rationale: Durable-value claim — why a future, unrelated session
+                should see this. Run logs, status snapshots, and one-time
+                results do not qualify. Max 500 characters.
             memory_type: Type of memory (fact, preference, etc)
             tags: Optional list of tags
             supersedes: Up to 20 memory UUIDs to atomically soft-hide while recording
@@ -138,9 +206,17 @@ def create_memory_registry(
                 (similarity >= 0.9) are superseded automatically and reported in
                 ``auto_superseded``.
             session_id: Session ID that created this memory (accepts #N, N, UUID, or prefix)
+            source_task_id: Optional task override (#N or UUID); derived from the
+                session's open claim when omitted
+            created_by_agent: Optional agent-name override; derived from the
+                agent run or CLI source when omitted
         """
         try:
             from gobby.storage.memories_crud import normalize_supersedes
+
+            normalized_rationale = normalize_memory_rationale(rationale)
+            if normalized_rationale is None:
+                return {"success": False, "error": RATIONALE_REQUIRED_ERROR}
 
             supersedes_ids = normalize_supersedes(supersedes)
             if not supersedes_ids and is_ephemeral_implementation_note(
@@ -214,6 +290,13 @@ def create_memory_registry(
                     exc_info=True,
                 )
 
+            derived_task_id, derived_agent = derive_memory_create_provenance(
+                _memory_manager().db,
+                project_id=project_id,
+                resolved_session_id=resolved_session_id,
+                source_task_id=source_task_id,
+                created_by_agent=created_by_agent,
+            )
             memory = await _memory_manager().create_memory(
                 content=content,
                 memory_type=canonical_memory_type,
@@ -223,6 +306,9 @@ def create_memory_registry(
                 source_type="agent",
                 source_session_id=resolved_session_id,
                 is_global=is_global,
+                rationale=normalized_rationale,
+                source_task_id=derived_task_id,
+                created_by_agent=derived_agent,
             )
 
             result: dict[str, Any] = {
@@ -231,6 +317,9 @@ def create_memory_registry(
                     "id": memory.id,
                     "project_id": memory.project_id,
                     "is_global": memory.is_global,
+                    "rationale": normalized_rationale,
+                    "source_task_id": derived_task_id,
+                    "created_by_agent": derived_agent,
                 },
                 "similar_existing": similar_existing,
             }
@@ -239,6 +328,12 @@ def create_memory_registry(
             return result
         except Exception as e:
             return {"success": False, "error": str(e)}
+
+    create_meta = registry.get_tool_metadata("create_memory")
+    if create_meta is not None:
+        required = create_meta.input_schema.setdefault("required", [])
+        if "rationale" not in required:
+            required.append("rationale")
 
     @registry.tool(
         name="search_memories",

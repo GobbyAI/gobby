@@ -20,6 +20,7 @@ from gobby.storage.memories_scope import ALL_MEMORIES, MemoryScope
 pytestmark = pytest.mark.unit
 
 NOW_ISO = "2026-02-10T12:00:00+00:00"
+_VALID_RATIONALE = "Future sessions should match the user's established preference."
 
 
 def _make_memory(**overrides) -> Memory:
@@ -421,6 +422,7 @@ class TestCreateMemory:
             "/api/memories",
             json={
                 "content": "User prefers dark mode",
+                "rationale": _VALID_RATIONALE,
                 "memory_type": "preference",
                 "project_id": "test-project",
                 "tags": ["ui"],
@@ -438,7 +440,11 @@ class TestCreateMemory:
         )
         response = client.post(
             "/api/memories",
-            json={"content": "Replacement", "supersedes": [superseded_id]},
+            json={
+                "content": "Replacement",
+                "rationale": _VALID_RATIONALE,
+                "supersedes": [superseded_id],
+            },
         )
         assert response.status_code == 201
         assert mock_server.memory_manager.create_memory.call_args.kwargs["supersedes"] == [
@@ -450,7 +456,11 @@ class TestCreateMemory:
         mock_server.memory_manager.create_memory = AsyncMock(
             return_value=_make_memory(id="replacement")
         )
-        payload = {"content": "Replacement", "supersedes": [superseded_id]}
+        payload = {
+            "content": "Replacement",
+            "rationale": _VALID_RATIONALE,
+            "supersedes": [superseded_id],
+        }
         assert client.post("/api/memories", json=payload).status_code == 201
         assert client.post("/api/memories", json=payload).status_code == 201
 
@@ -475,6 +485,30 @@ class TestCreateMemory:
         response = client.post("/api/memories", json={})
         assert response.status_code == 422
 
+    def test_create_requires_rationale_and_forwards_provenance(self, client, mock_server) -> None:
+        missing = client.post("/api/memories", json={"content": "User prefers dark mode"})
+        assert missing.status_code == 422
+        mock_server.memory_manager.create_memory.assert_not_called()
+
+        mock_server.memory_manager.create_memory = AsyncMock(
+            return_value=_make_memory(id="mm-new-123")
+        )
+        task_id = "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaa1"
+        response = client.post(
+            "/api/memories",
+            json={
+                "content": "User prefers dark mode",
+                "rationale": _VALID_RATIONALE,
+                "source_task_id": task_id,
+                "created_by_agent": "operator",
+            },
+        )
+        assert response.status_code == 201
+        kwargs = mock_server.memory_manager.create_memory.call_args.kwargs
+        assert kwargs["rationale"] == _VALID_RATIONALE
+        assert kwargs["source_task_id"] == task_id
+        assert kwargs["created_by_agent"] == "operator"
+
     def test_create_rejects_noncanonical_memory_type(self, client, mock_server) -> None:
         response = client.post(
             "/api/memories",
@@ -489,7 +523,7 @@ class TestCreateMemory:
         mock_server.memory_manager.create_memory.side_effect = RuntimeError("Backend failure")
         response = client.post(
             "/api/memories",
-            json={"content": "test"},
+            json={"content": "test", "rationale": _VALID_RATIONALE},
         )
         assert response.status_code == 500
         assert "Backend failure" in response.json()["detail"]

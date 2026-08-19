@@ -130,7 +130,10 @@ class TestCreateMemory:
         mock_mem.content = "Hello world"
         mock_manager.create_memory = AsyncMock(return_value=mock_mem)
 
-        result = runner.invoke(memory, ["create", "Hello world"])
+        result = runner.invoke(
+            memory,
+            ["create", "Hello world", "--rationale", "Future sessions should reuse this."],
+        )
         assert result.exit_code == 0
         assert "Created memory: mem-new" in result.output
 
@@ -140,7 +143,17 @@ class TestCreateMemory:
         mock_mem.content = "pref"
         mock_manager.create_memory = AsyncMock(return_value=mock_mem)
 
-        result = runner.invoke(memory, ["create", "pref", "--type", "preference"])
+        result = runner.invoke(
+            memory,
+            [
+                "create",
+                "pref",
+                "--type",
+                "preference",
+                "--rationale",
+                "Future sessions should reuse this.",
+            ],
+        )
         assert result.exit_code == 0
         call_kwargs = mock_manager.create_memory.call_args[1]
         assert call_kwargs["memory_type"] == "preference"
@@ -154,7 +167,17 @@ class TestCreateMemory:
         mock_mem.content = "c"
         mock_manager.create_memory = AsyncMock(return_value=mock_mem)
 
-        result = runner.invoke(memory, ["create", "content", "--project", "myproj"])
+        result = runner.invoke(
+            memory,
+            [
+                "create",
+                "content",
+                "--project",
+                "myproj",
+                "--rationale",
+                "Future sessions should reuse this.",
+            ],
+        )
         assert result.exit_code == 0
         call_kwargs = mock_manager.create_memory.call_args[1]
         assert call_kwargs["project_id"] == "proj-1"

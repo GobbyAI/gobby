@@ -69,6 +69,9 @@ class ReviewLearningMemoryManager(PromotionMemoryManager, Protocol):
         source_type: str,
         source_session_id: str | None,
         tags: list[str],
+        rationale: str | None = None,
+        source_task_id: str | None = None,
+        created_by_agent: str | None = None,
     ) -> Any: ...
 
     async def search_memories(
@@ -370,6 +373,16 @@ class ReviewLearningService:
                     "skipped_reason": "missing_verified_fix",
                 }
 
+            check_key = str(normalized.finding.get("check_key") or "unspecified")
+            source_task_id: str | None = None
+            if source_session_id:
+                from gobby.mcp_proxy.tools.memory import derive_memory_create_provenance
+
+                source_task_id, _created_by_agent = derive_memory_create_provenance(
+                    self.memory_manager.db,
+                    project_id=project_id,
+                    resolved_session_id=source_session_id,
+                )
             memory = await self.memory_manager.create_memory(
                 content=normalized.content,
                 memory_type="pattern",
@@ -377,6 +390,12 @@ class ReviewLearningService:
                 source_type="agent",
                 source_session_id=source_session_id,
                 tags=normalized.tags,
+                rationale=(
+                    f"Confirmed review finding ({check_key}): recurring pattern "
+                    "worth re-serving when similar code is reviewed"
+                ),
+                source_task_id=source_task_id,
+                created_by_agent="review-learning",
             )
             promotion = await promote_lesson(
                 lesson=normalized,

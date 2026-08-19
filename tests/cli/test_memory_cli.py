@@ -56,7 +56,16 @@ class TestMemoryCreateCommand:
         )
         mock_get_manager.return_value = mock_manager
 
-        result = runner.invoke(cli, ["memory", "create", "remember this"])
+        result = runner.invoke(
+            cli,
+            [
+                "memory",
+                "create",
+                "remember this",
+                "--rationale",
+                "Future sessions should reuse this reminder.",
+            ],
+        )
 
         assert result.exit_code == 0
         assert "Created memory: mem-1 - remember this" in result.output
@@ -66,6 +75,7 @@ class TestMemoryCreateCommand:
             memory_type="fact",
             project_id="proj-current",
             source_type="user",
+            rationale="Future sessions should reuse this reminder.",
         )
 
     @patch("gobby.cli.memory.get_memory_manager")
@@ -76,12 +86,26 @@ class TestMemoryCreateCommand:
     ) -> None:
         result = runner.invoke(
             cli,
-            ["memory", "create", "Bad type", "--type", "debugging_pattern"],
+            [
+                "memory",
+                "create",
+                "Bad type",
+                "--type",
+                "debugging_pattern",
+                "--rationale",
+                "Future sessions should reuse this reminder.",
+            ],
         )
 
         assert result.exit_code == 2
         assert "Invalid value for '--type'" in result.output
         mock_get_manager.assert_not_called()
+
+    def test_create_requires_rationale(self, runner: CliRunner) -> None:
+        result = runner.invoke(cli, ["memory", "create", "remember this"])
+
+        assert result.exit_code == 2
+        assert "Missing option '--rationale'" in result.output
 
 
 class TestMemoryShowCommand:

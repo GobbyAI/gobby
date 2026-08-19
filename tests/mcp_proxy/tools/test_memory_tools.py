@@ -23,6 +23,10 @@ from gobby.storage.projects import PERSONAL_PROJECT_ID
 
 pytestmark = pytest.mark.unit
 
+_VALID_RATIONALE = (
+    "Durable convention: future sessions should reuse this so they do not rediscover it."
+)
+
 
 class MockMemory:
     """Mock memory object for tests."""
@@ -141,7 +145,11 @@ class TestCreateMemory:
         ):
             result = await memory_registry.call(
                 "create_memory",
-                {"content": "Test content", "memory_type": "fact"},
+                {
+                    "content": "Test content",
+                    "memory_type": "fact",
+                    "rationale": _VALID_RATIONALE,
+                },
             )
 
         assert result["success"] is True
@@ -163,7 +171,8 @@ class TestCreateMemory:
             return_value={"id": "11111111-1111-4111-8111-111111110001"},
         ):
             result = await memory_registry.call(
-                "create_memory", {"content": "Test", "tags": ["tag1", "tag2"]}
+                "create_memory",
+                {"content": "Test", "tags": ["tag1", "tag2"], "rationale": _VALID_RATIONALE},
             )
 
         assert result["success"] is True
@@ -184,6 +193,7 @@ class TestCreateMemory:
                 "content": "Gobby build #epic E2E docs test #14353 completed.",
                 "memory_type": "implementation_note",
                 "tags": ["gobby", "build-e2e", "#14353"],
+                "rationale": _VALID_RATIONALE,
             },
         )
 
@@ -211,7 +221,10 @@ class TestCreateMemory:
             "gobby.utils.project_context.get_project_context",
             return_value={"id": "11111111-1111-4111-8111-111111110001"},
         ):
-            result = await registry.call("create_memory", {"content": proposal})
+            result = await registry.call(
+                "create_memory",
+                {"content": proposal, "rationale": _VALID_RATIONALE},
+            )
 
         assert result["success"] is True
         assert "redirected_to_task_note" not in result
@@ -226,7 +239,11 @@ class TestCreateMemory:
     ) -> None:
         result = await memory_registry.call(
             "create_memory",
-            {"content": "Bad type", "memory_type": "debugging_pattern"},
+            {
+                "content": "Bad type",
+                "memory_type": "debugging_pattern",
+                "rationale": _VALID_RATIONALE,
+            },
         )
 
         assert result["success"] is False
@@ -250,7 +267,8 @@ class TestCreateMemory:
             ) as mock_resolve,
         ):
             result = await memory_registry.call(
-                "create_memory", {"content": "Test", "session_id": "#42"}
+                "create_memory",
+                {"content": "Test", "session_id": "#42", "rationale": _VALID_RATIONALE},
             )
 
         assert result["success"] is True
@@ -278,7 +296,8 @@ class TestCreateMemory:
             ),
         ):
             result = await memory_registry.call(
-                "create_memory", {"content": "Test", "session_id": "#999"}
+                "create_memory",
+                {"content": "Test", "session_id": "#999", "rationale": _VALID_RATIONALE},
             )
 
         assert result["success"] is True
@@ -301,7 +320,10 @@ class TestCreateMemory:
             "gobby.utils.project_context.get_project_context",
             return_value={"id": "11111111-1111-4111-8111-111111110001"},
         ):
-            result = await memory_registry.call("create_memory", {"content": "Test content"})
+            result = await memory_registry.call(
+                "create_memory",
+                {"content": "Test content", "rationale": _VALID_RATIONALE},
+            )
 
         assert result["success"] is True
         assert result["auto_superseded"] == [{"id": duplicate_id, "similarity": 0.95}]
@@ -323,7 +345,10 @@ class TestCreateMemory:
             "gobby.utils.project_context.get_project_context",
             return_value={"id": "11111111-1111-4111-8111-111111110001"},
         ):
-            result = await memory_registry.call("create_memory", {"content": "Test content"})
+            result = await memory_registry.call(
+                "create_memory",
+                {"content": "Test content", "rationale": _VALID_RATIONALE},
+            )
 
         assert result["success"] is True
         assert "auto_superseded" not in result
@@ -341,7 +366,10 @@ class TestCreateMemory:
             "gobby.utils.project_context.get_project_context",
             return_value={"id": "11111111-1111-4111-8111-111111110001"},
         ):
-            result = await memory_registry.call("create_memory", {"content": "Test"})
+            result = await memory_registry.call(
+                "create_memory",
+                {"content": "Test", "rationale": _VALID_RATIONALE},
+            )
 
         assert result["success"] is True
         assert result["similar_existing"] == []
@@ -352,7 +380,10 @@ class TestCreateMemory:
         mock_memory_manager.create_memory.side_effect = Exception("Database error")
 
         with patch("gobby.utils.project_context.get_project_context", return_value=None):
-            result = await memory_registry.call("create_memory", {"content": "Test"})
+            result = await memory_registry.call(
+                "create_memory",
+                {"content": "Test", "rationale": _VALID_RATIONALE},
+            )
 
         assert result["success"] is False
         assert "Database error" in result["error"]

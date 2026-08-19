@@ -119,6 +119,11 @@ async def test_domain_and_check_key_tags(
     assert "lesson-domain:plan" in (memory.tags or [])
     assert "check-key:stale-section" in (memory.tags or [])
     assert "category:correctness-safety" in (memory.tags or [])
+    assert memory.created_by_agent == "review-learning"
+    assert memory.rationale == (
+        "Confirmed review finding (stale-section): recurring pattern worth "
+        "re-serving when similar code is reviewed"
+    )
 
     code_lesson = normalize_lesson(
         source_kind="review_comment",

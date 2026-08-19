@@ -40,6 +40,9 @@ class FakeMemory:
     source_session_id: str | None = None
     tags: list[str] | None = None
     created_at: datetime | None = None
+    rationale: str | None = None
+    source_task_id: str | None = None
+    created_by_agent: str | None = None
 
 
 @dataclass
@@ -93,6 +96,9 @@ class FakeMemoryManager:
         source_type: str = "agent",
         source_session_id: str | None = None,
         tags: list[str] | None = None,
+        rationale: str | None = None,
+        source_task_id: str | None = None,
+        created_by_agent: str | None = None,
     ) -> FakeMemory:
         await asyncio.sleep(0)
         memory = FakeMemory(
@@ -102,6 +108,9 @@ class FakeMemoryManager:
             project_id=project_id,
             source_session_id=source_session_id,
             tags=tags or [],
+            rationale=rationale,
+            source_task_id=source_task_id,
+            created_by_agent=created_by_agent,
         )
         self.memories.append(memory)
         return memory

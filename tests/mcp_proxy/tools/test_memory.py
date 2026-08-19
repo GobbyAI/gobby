@@ -61,6 +61,9 @@ async def test_create_memory_supersedes_guard_bypass(mock_memory_manager: MagicM
         "content": "Gobby build #epic E2E docs test #14353 completed.",
         "memory_type": "implementation_note",
         "tags": ["gobby", "build-e2e", "#14353"],
+        "rationale": (
+            "Durable convention: future sessions should reuse this so they do not rediscover it."
+        ),
     }
 
     skipped = await registry.call("create_memory", ephemeral)
@@ -71,6 +74,110 @@ async def test_create_memory_supersedes_guard_bypass(mock_memory_manager: MagicM
     )
     assert persisted["success"] is True, persisted
     assert mock_memory_manager.create_memory.call_args.kwargs["supersedes"] == [superseded_id]
+
+
+_RATIONALE_REQUIRED_PREFIX = "rationale_required:"
+_VALID_RATIONALE = (
+    "Durable convention: future sessions should reuse this so they do not rediscover it."
+)
+
+
+@pytest.mark.asyncio
+async def test_create_memory_requires_rationale(mock_memory_manager: MagicMock) -> None:
+    registry = create_memory_registry(lambda: mock_memory_manager)
+    payload = {"content": "Always use psycopg %s placeholders in hub SQL."}
+
+    missing = await registry.call("create_memory", payload)
+    assert missing["success"] is False
+    assert str(missing["error"]).startswith(_RATIONALE_REQUIRED_PREFIX)
+
+    empty = await registry.call("create_memory", {**payload, "rationale": "   "})
+    assert empty["success"] is False
+    assert str(empty["error"]).startswith(_RATIONALE_REQUIRED_PREFIX)
+
+    too_long = await registry.call("create_memory", {**payload, "rationale": "x" * 501})
+    assert too_long["success"] is False
+    assert str(too_long["error"]).startswith(_RATIONALE_REQUIRED_PREFIX)
+
+    ephemeral = await registry.call(
+        "create_memory",
+        {
+            "content": "Gobby build #epic E2E docs test #14353 completed.",
+            "memory_type": "implementation_note",
+            "tags": ["gobby", "build-e2e", "#14353"],
+            "rationale": "",
+        },
+    )
+    assert ephemeral["success"] is False
+    assert str(ephemeral["error"]).startswith(_RATIONALE_REQUIRED_PREFIX)
+    mock_memory_manager.create_memory.assert_not_called()
+
+    persisted = await registry.call("create_memory", {**payload, "rationale": _VALID_RATIONALE})
+    assert persisted["success"] is True, persisted
+    assert persisted["memory"]["rationale"] == _VALID_RATIONALE
+    assert mock_memory_manager.create_memory.call_args.kwargs["rationale"] == _VALID_RATIONALE
+
+
+@pytest.mark.asyncio
+async def test_create_memory_derives_task_and_agent_provenance(
+    mock_memory_manager: MagicMock,
+) -> None:
+    registry = create_memory_registry(lambda: mock_memory_manager)
+    session_id = "11111111-1111-4111-8111-111111110042"
+    task_id = "22222222-2222-4222-8222-222222220001"
+    claimed = MagicMock()
+    claimed.id = task_id
+    agent_run = MagicMock()
+    agent_run.agent_name = "backend-developer"
+    interactive = MagicMock()
+    interactive.source = "claude"
+
+    with (
+        patch(
+            "gobby.utils.project_context.get_project_context",
+            return_value={"id": "11111111-1111-4111-8111-111111110001"},
+        ),
+        patch(
+            "gobby.storage.session_resolution.resolve_session_reference",
+            return_value=session_id,
+        ),
+        patch("gobby.storage.tasks.LocalTaskManager") as mock_task_manager_cls,
+        patch("gobby.storage.agents.LocalAgentRunManager") as mock_agent_mgr_cls,
+        patch("gobby.storage.sessions.SessionManager") as mock_session_mgr_cls,
+    ):
+        mock_task_manager_cls.return_value.list_tasks.return_value = [claimed]
+        mock_agent_mgr_cls.return_value.get_by_session.return_value = agent_run
+        mock_session_mgr_cls.return_value.get.return_value = interactive
+
+        agent_result = await registry.call(
+            "create_memory",
+            {
+                "content": "Always use psycopg %s placeholders in hub SQL.",
+                "rationale": _VALID_RATIONALE,
+                "session_id": session_id,
+            },
+        )
+        assert agent_result["success"] is True, agent_result
+        agent_kwargs = mock_memory_manager.create_memory.call_args.kwargs
+        assert agent_kwargs["source_task_id"] == task_id
+        assert agent_kwargs["created_by_agent"] == "backend-developer"
+        assert agent_result["memory"]["source_task_id"] == task_id
+        assert agent_result["memory"]["created_by_agent"] == "backend-developer"
+
+        mock_agent_mgr_cls.return_value.get_by_session.return_value = None
+        interactive_result = await registry.call(
+            "create_memory",
+            {
+                "content": "Interactive sessions record the CLI source as created_by_agent.",
+                "rationale": _VALID_RATIONALE,
+                "session_id": session_id,
+            },
+        )
+        assert interactive_result["success"] is True, interactive_result
+        interactive_kwargs = mock_memory_manager.create_memory.call_args.kwargs
+        assert interactive_kwargs["source_task_id"] == task_id
+        assert interactive_kwargs["created_by_agent"] == "claude"
+        assert interactive_result["memory"]["created_by_agent"] == "claude"
 
 
 @pytest.fixture

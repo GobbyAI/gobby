@@ -70,6 +70,20 @@ class MemoryCreateRequest(BaseModel):
     """Request body for creating a memory."""
 
     content: str = Field(..., description="Memory content text")
+    rationale: str = Field(
+        ...,
+        min_length=1,
+        max_length=500,
+        description="Why a future, unrelated session should be served this memory",
+    )
+    source_task_id: str | None = Field(
+        default=None,
+        description="Optional task UUID that produced this memory",
+    )
+    created_by_agent: str | None = Field(
+        default=None,
+        description="Optional agent or CLI source that wrote this memory",
+    )
     memory_type: MemoryType = Field(
         default=MemoryType.FACT,
         description="Memory type (fact, preference, pattern, context)",
@@ -308,6 +322,9 @@ def create_memory_router(server: "HTTPServer") -> APIRouter:
                 source_session_id=request_data.source_session_id,
                 tags=request_data.tags,
                 supersedes=request_data.supersedes,
+                rationale=request_data.rationale,
+                source_task_id=request_data.source_task_id,
+                created_by_agent=request_data.created_by_agent,
             )
             return memory.to_dict()
         except HTTPException:
