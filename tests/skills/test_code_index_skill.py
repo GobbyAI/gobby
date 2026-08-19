@@ -65,6 +65,20 @@ def test_code_index_skill_documents_allow_stale_flag() -> None:
     assert "--no-freshness" not in body
 
 
+def test_code_index_skill_documents_grep_compat_exit_and_grant_errors() -> None:
+    body = parse_skill_file(SKILL_PATH).content
+
+    assert "-l/--files-with-matches" in body
+    assert "`-E`, `-n`, `-r`, and `-R` are accepted no-ops" in body
+    assert "one-line JSON usage error" in body
+    assert "Exit 0 always means success, including empty results" in body
+    assert "payload_skew" in body
+    assert "api_contract_mismatch" in body
+    assert "stop retrying gcode" in body
+    assert "`recovery` directive" in body
+    assert "--no-freshness" not in body
+
+
 def test_code_index_skill_documents_durable_plan_targets() -> None:
     body = parse_skill_file(SKILL_PATH).content
 
