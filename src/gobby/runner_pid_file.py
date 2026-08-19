@@ -349,11 +349,20 @@ def _probe_from_record(
     return SingletonProbe(state=ProbeState.ABSENT)
 
 
+def _issuer_pid_is_dead(record: dict[str, object] | None) -> bool:
+    if record is None:
+        return False
+    pid = record.get("pid")
+    if not isinstance(pid, int) or pid == os.getpid():
+        return False
+    return not _pid_is_alive(pid)
+
+
 def _clear_stale_reservation(record: dict[str, object] | None) -> dict[str, object] | None:
     reservation = record.get("reservation") if record else None
     if not isinstance(reservation, dict):
         return record
-    if reservation_is_live(reservation):
+    if reservation_is_live(reservation) and not _issuer_pid_is_dead(record):
         return record
     view = _reservation_view(reservation)
     if view is not None:

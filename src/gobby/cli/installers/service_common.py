@@ -43,6 +43,11 @@ LAUNCHD_PLIST_NAME = f"{LAUNCHD_LABEL}.plist"
 SYSTEMD_UNIT_NAME = "gobby-daemon.service"
 
 
+def service_unit_has_launch_env(text: str) -> bool:
+    """Return whether a service unit can consume a commanded start reservation."""
+    return "GOBBY_SERVICE_LAUNCH" in text and "GOBBY_SERVICE_NONCE" in text
+
+
 def _render_template(template_name: str, **context: Any) -> str:
     """Render a Jinja2 template from the services directory."""
     env = (

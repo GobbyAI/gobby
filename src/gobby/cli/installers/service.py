@@ -25,6 +25,7 @@ from gobby.cli.installers.service_common import (
     _is_dev_mode,
     _render_template,
     _resolve_install_context,
+    service_unit_has_launch_env,
 )
 from gobby.cli.installers.service_linux import (
     _check_linger,
@@ -88,25 +89,46 @@ def _plist_path() -> Path:
     return Path.home() / "Library" / "LaunchAgents" / LAUNCHD_PLIST_NAME
 
 
+def _write_macos_plist(*, verbose: bool = False) -> Path:
+    """Render the current launchd template over the installed plist."""
+    ctx = _resolve_install_context(verbose=verbose)
+    plist_file = _plist_path()
+    plist_file.parent.mkdir(parents=True, exist_ok=True)
+    plist_file.write_text(
+        _render_template("com.gobby.daemon.plist.j2", **ctx),
+        encoding="utf-8",
+    )
+    plist_file.chmod(0o644)
+    return plist_file
+
+
+def _ensure_macos_service_launch_env() -> dict[str, Any] | None:
+    """Rewrite a stale launchd unit that cannot consume a start reservation."""
+    plist_file = _plist_path()
+    try:
+        text = plist_file.read_text(encoding="utf-8")
+    except OSError as exc:
+        return {"success": False, "error": f"cannot read service unit: {exc}"}
+    if service_unit_has_launch_env(text):
+        return None
+    try:
+        _write_macos_plist()
+    except OSError as exc:
+        return {"success": False, "error": f"cannot refresh service unit: {exc}"}
+    return None
+
+
 def install_service_macos(*, verbose: bool = False) -> dict[str, Any]:
     """Install the Gobby daemon as a macOS launchd user agent.
 
     Writes the plist to ~/Library/LaunchAgents/ and bootstraps it.
     """
     ctx = _resolve_install_context(verbose=verbose)
-    plist_content = _render_template(
-        "com.gobby.daemon.plist.j2",
-        **ctx,
-    )
-
-    plist_file = _plist_path()
-    plist_file.parent.mkdir(parents=True, exist_ok=True)
 
     # If already loaded, bootout first (ignore errors if not loaded)
     _launchctl_bootout(quiet=True)
 
-    plist_file.write_text(plist_content, encoding="utf-8")
-    plist_file.chmod(0o644)
+    plist_file = _write_macos_plist(verbose=verbose)
 
     # Bootstrap the service
     uid = os.getuid()
@@ -178,6 +200,10 @@ def enable_service_macos() -> dict[str, Any]:
             "Daemon already running (pid=%s) - skipping bootout/bootstrap", status.get("pid")
         )
         return {"success": True, "platform": "macos", "already_running": True}
+
+    refresh_error = _ensure_macos_service_launch_env()
+    if refresh_error is not None:
+        return refresh_error
 
     # Bootout any stale service entry before bootstrapping.
     # Without this, bootstrap fails with error 5 (I/O error) when a
@@ -380,6 +406,10 @@ def _macos_restart() -> dict[str, Any]:
 
     # Bootout the running service (stop + unload).
     _launchctl_bootout(quiet=True)
+
+    refresh_error = _ensure_macos_service_launch_env()
+    if refresh_error is not None:
+        return refresh_error
 
     # Wait for launchd to fully unload the service entry.
     # The plist sets ExitTimeOut=60s, so the process may take that long

@@ -455,6 +455,15 @@ class TestServiceReservation:
         with pytest.raises(SingletonReservationError):
             reserve_service_start(pid_file, backend="launchd")
 
+    def test_second_reserve_succeeds_when_issuer_pid_is_dead(self, tmp_path: Path) -> None:
+        pid_file = tmp_path / "gobby.pid"
+        with patch("gobby.runner_pid_file.os.getpid", return_value=999_999):
+            first = reserve_service_start(pid_file, backend="launchd")
+        with patch("gobby.runner_pid_file._pid_is_alive", return_value=False):
+            second = reserve_service_start(pid_file, backend="launchd")
+        assert second.nonce != first.nonce
+        assert Path(second.nonce_path).is_file()
+
     def test_probe_reports_stale_reservation_without_clearing(self, tmp_path: Path) -> None:
         pid_file = tmp_path / "gobby.pid"
         reservation = reserve_service_start(pid_file, backend="windows")

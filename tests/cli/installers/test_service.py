@@ -648,7 +648,9 @@ class TestMacOSEnable:
         from gobby.cli.installers.service import enable_service_macos
 
         plist_file = tmp_path / LAUNCHD_PLIST_NAME
-        plist_file.write_text("<plist>test</plist>")
+        plist_file.write_text(
+            "<plist><key>GOBBY_SERVICE_LAUNCH</key><key>GOBBY_SERVICE_NONCE</key></plist>"
+        )
         mock_plist_path.return_value = plist_file
 
         # Health check shows daemon running with PID
@@ -679,7 +681,9 @@ class TestMacOSEnable:
         from gobby.cli.installers.service import enable_service_macos
 
         plist_file = tmp_path / LAUNCHD_PLIST_NAME
-        plist_file.write_text("<plist>test</plist>")
+        plist_file.write_text(
+            "<plist><key>GOBBY_SERVICE_LAUNCH</key><key>GOBBY_SERVICE_NONCE</key></plist>"
+        )
         mock_plist_path.return_value = plist_file
         mock_run.return_value = MagicMock(returncode=0, stderr="", stdout="")
 
@@ -706,7 +710,9 @@ class TestMacOSEnable:
         from gobby.cli.installers.service import enable_service_macos
 
         plist_file = tmp_path / LAUNCHD_PLIST_NAME
-        plist_file.write_text("<plist>test</plist>")
+        plist_file.write_text(
+            "<plist><key>GOBBY_SERVICE_LAUNCH</key><key>GOBBY_SERVICE_NONCE</key></plist>"
+        )
         mock_plist_path.return_value = plist_file
 
         # Health check (loaded but not running), bootout fails (no stale entry), bootstrap succeeds
@@ -737,6 +743,41 @@ class TestMacOSEnable:
         assert result["success"] is False
         assert "not installed" in result["error"].lower()
 
+    @patch("gobby.cli.installers.service.subprocess.run")
+    @patch("gobby.cli.installers.service._resolve_install_context")
+    @patch("gobby.cli.installers.service._plist_path")
+    def test_enable_rewrites_plist_missing_launch_env(
+        self,
+        mock_plist_path: MagicMock,
+        mock_context: MagicMock,
+        mock_run: MagicMock,
+        tmp_path: Path,
+    ) -> None:
+        from gobby.cli.installers.service import enable_service_macos
+
+        plist_file = tmp_path / LAUNCHD_PLIST_NAME
+        plist_file.write_text("<plist>stale</plist>", encoding="utf-8")
+        mock_plist_path.return_value = plist_file
+        mock_context.return_value = {
+            "python_executable": "/usr/bin/python3",
+            "working_directory": "/Users/test",
+            "home_dir": "/Users/test",
+            "path_env": "/usr/bin:/bin",
+            "runtime_log_file": "/tmp/runtime.log",
+            "gobby_home": "/Users/test/.gobby",
+            "verbose": False,
+            "mode": "dev",
+        }
+        mock_run.return_value = MagicMock(returncode=0, stderr="", stdout="")
+
+        result = enable_service_macos()
+
+        assert result["success"] is True
+        refreshed = plist_file.read_text(encoding="utf-8")
+        assert "<key>GOBBY_SERVICE_LAUNCH</key>" in refreshed
+        assert "<key>GOBBY_SERVICE_NONCE</key>" in refreshed
+        assert "/Users/test/.gobby/gobby.pid.service-nonce" in refreshed
+
 
 class TestMacOSRestart:
     """Test macOS launchd restart."""
@@ -755,7 +796,9 @@ class TestMacOSRestart:
         from gobby.cli.installers.service import _macos_restart
 
         plist_file = tmp_path / LAUNCHD_PLIST_NAME
-        plist_file.write_text("<plist>test</plist>")
+        plist_file.write_text(
+            "<plist><key>GOBBY_SERVICE_LAUNCH</key><key>GOBBY_SERVICE_NONCE</key></plist>"
+        )
         mock_plist_path.return_value = plist_file
         mock_status.return_value = {"enabled": False}
 
@@ -784,7 +827,9 @@ class TestMacOSRestart:
         from gobby.cli.installers.service import _macos_restart
 
         plist_file = tmp_path / LAUNCHD_PLIST_NAME
-        plist_file.write_text("<plist>test</plist>")
+        plist_file.write_text(
+            "<plist><key>GOBBY_SERVICE_LAUNCH</key><key>GOBBY_SERVICE_NONCE</key></plist>"
+        )
         mock_plist_path.return_value = plist_file
         mock_status.return_value = {"enabled": False}
 
@@ -814,7 +859,9 @@ class TestMacOSRestart:
         from gobby.cli.installers.service import _macos_restart
 
         plist_file = tmp_path / LAUNCHD_PLIST_NAME
-        plist_file.write_text("<plist>test</plist>")
+        plist_file.write_text(
+            "<plist><key>GOBBY_SERVICE_LAUNCH</key><key>GOBBY_SERVICE_NONCE</key></plist>"
+        )
         mock_plist_path.return_value = plist_file
 
         # Simulate launchd taking 3 polls to fully unload
@@ -868,7 +915,9 @@ class TestMacOSUninstall:
         from gobby.cli.installers.service import uninstall_service_macos
 
         plist_file = tmp_path / LAUNCHD_PLIST_NAME
-        plist_file.write_text("<plist>test</plist>")
+        plist_file.write_text(
+            "<plist><key>GOBBY_SERVICE_LAUNCH</key><key>GOBBY_SERVICE_NONCE</key></plist>"
+        )
         mock_plist_path.return_value = plist_file
         mock_run.return_value = MagicMock(returncode=0, stderr="", stdout="")
 

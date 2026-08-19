@@ -12,6 +12,7 @@ from gobby.cli.installers.service_common import (
     _ensure_cli_on_path,
     _render_template,
     _resolve_install_context,
+    service_unit_has_launch_env,
 )
 
 
@@ -121,6 +122,34 @@ def enable_service_linux() -> dict[str, Any]:
             "success": False,
             "error": "Service not installed. Run `gobby service install` first.",
         }
+
+    try:
+        text = unit_file.read_text(encoding="utf-8")
+    except OSError as exc:
+        return {"success": False, "error": f"cannot read service unit: {exc}"}
+    if not service_unit_has_launch_env(text):
+        ctx = _resolve_install_context()
+        try:
+            unit_file.write_text(
+                _render_template("gobby-daemon.service.j2", **ctx),
+                encoding="utf-8",
+            )
+        except OSError as exc:
+            return {"success": False, "error": f"cannot refresh service unit: {exc}"}
+        try:
+            reload = subprocess.run(  # nosec B603 B607
+                ["systemctl", "--user", "daemon-reload"],
+                capture_output=True,
+                text=True,
+                timeout=30,
+            )
+        except (subprocess.TimeoutExpired, OSError) as exc:
+            return {"success": False, "error": f"systemctl daemon-reload failed: {exc}"}
+        if reload.returncode != 0:
+            return {
+                "success": False,
+                "error": f"systemctl daemon-reload failed: {reload.stderr or reload.stdout}",
+            }
 
     for action in ["enable", "start"]:
         try:
