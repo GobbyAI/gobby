@@ -8,10 +8,16 @@ counts used by both the live ``SessionMessageProcessor`` poll loop and the batch
 from __future__ import annotations
 
 from types import SimpleNamespace
+from typing import get_type_hints
 
 import pytest
 
-from gobby.sessions.message_stats import compute_message_stats
+from gobby.sessions.message_stats import (
+    MessageProtocol,
+    accumulate_message_stats,
+    compute_message_stats,
+    merge_message_stats,
+)
 
 pytestmark = pytest.mark.unit
 
@@ -21,6 +27,7 @@ def _msg(
     content_type: str,
     content: str = "",
     tool_name: str | None = None,
+    source: str | None = None,
 ) -> SimpleNamespace:
     """Build a parsed-message double exposing the attributes the predicate reads."""
     return SimpleNamespace(
@@ -28,6 +35,7 @@ def _msg(
         content_type=content_type,
         content=content,
         tool_name=tool_name,
+        source=source,
     )
 
 
@@ -110,3 +118,68 @@ def test_accepts_sequence_of_message_protocol() -> None:
         "tool_call_count": 1,
         "last_assistant_content": "tuple message",
     }
+
+
+def test_turn_completed_boundary_counts_turn_not_message() -> None:
+    stats = compute_message_stats(
+        [
+            _msg("assistant", "turn_completed", source="grok"),
+            _msg("system", "session_title", "A title"),
+        ]
+    )
+
+    assert stats["turn_count"] == 1
+    assert stats["message_count"] == 0
+    assert stats["tool_call_count"] == 0
+    assert stats["last_assistant_content"] is None
+
+
+def test_turn_boundary_source_gates_assistant_text_turns() -> None:
+    stats = compute_message_stats(
+        [
+            _msg("assistant", "text", "grok in flight", source="grok"),
+            _msg("assistant", "text", "claude completed", source="claude"),
+        ]
+    )
+
+    # Grok assistant text does not increment turn_count but still updates
+    # last_assistant_content (later overwritten here by the non-grok reply).
+    # Non-grok assistant text keeps incrementing.
+    assert stats["turn_count"] == 1
+    assert stats["message_count"] == 2
+    assert stats["last_assistant_content"] == "claude completed"
+
+    grok_only = compute_message_stats([_msg("assistant", "text", "still drafting", source="grok")])
+    assert grok_only["turn_count"] == 0
+    assert grok_only["message_count"] == 1
+    assert grok_only["last_assistant_content"] == "still drafting"
+
+
+def test_message_protocol_declares_source() -> None:
+    hints = get_type_hints(MessageProtocol)
+    assert "source" in hints
+    assert hints["source"] == str | None
+
+
+def test_merge_and_accumulate_preserve_boundary_turn_counts() -> None:
+    first = compute_message_stats([_msg("assistant", "turn_completed", source="grok")])
+    second = compute_message_stats(
+        [
+            _msg("assistant", "text", "later reply", source="grok"),
+            _msg("assistant", "turn_completed", source="grok"),
+        ]
+    )
+
+    merged = merge_message_stats(first, second)
+    accumulated = accumulate_message_stats(
+        first,
+        [
+            _msg("assistant", "text", "later reply", source="grok"),
+            _msg("assistant", "turn_completed", source="grok"),
+        ],
+    )
+
+    assert merged["turn_count"] == 2
+    assert merged["message_count"] == 1
+    assert merged["last_assistant_content"] == "later reply"
+    assert accumulated == merged

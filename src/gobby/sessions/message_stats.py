@@ -15,6 +15,8 @@ from typing import Any, Protocol, TypedDict
 from gobby.sessions.transcripts.base import NON_MESSAGE_CONTENT_TYPES
 
 _LAST_ASSISTANT_CONTENT_LIMIT = 500
+TURN_BOUNDARY_CONTENT_TYPE = "turn_completed"
+TURN_BOUNDARY_SOURCES: frozenset[str] = frozenset({"grok"})
 
 
 class MessageStats(TypedDict):
@@ -31,6 +33,7 @@ class MessageProtocol(Protocol):
     content_type: str | None
     content: object
     tool_name: str | None
+    source: str | None
 
 
 def compute_message_stats(messages: Sequence[MessageProtocol]) -> MessageStats:
@@ -40,9 +43,10 @@ def compute_message_stats(messages: Sequence[MessageProtocol]) -> MessageStats:
 
     - ``message_count`` counts every parsed message except session-metadata
       content types (``NON_MESSAGE_CONTENT_TYPES``: native titles, hook prompts,
-      and the unmodeled-record sentinel), which are not conversation messages.
-    - ``turn_count`` counts assistant messages whose ``content_type`` is
-      ``"text"`` (one completed assistant text turn each).
+      usage, turn boundaries, and the unmodeled-record sentinel).
+    - ``turn_count`` counts one completed turn per ``turn_completed`` boundary,
+      plus assistant ``text`` messages whose ``source`` is not in
+      ``TURN_BOUNDARY_SOURCES`` (those sources emit explicit boundaries).
     - ``tool_call_count`` counts messages carrying a truthy ``tool_name``.
     - ``last_assistant_content`` is the last non-empty assistant text, stripped
       and clamped to the trailing ``500`` characters; ``None`` when the batch
@@ -55,6 +59,10 @@ def compute_message_stats(messages: Sequence[MessageProtocol]) -> MessageStats:
 
     for msg in messages:
         content_type = _message_attr(msg, "content_type")
+        if content_type == TURN_BOUNDARY_CONTENT_TYPE:
+            # Explicit turn boundary: counts one turn, is not a conversation message.
+            turn_count += 1
+            continue
         if content_type in NON_MESSAGE_CONTENT_TYPES:
             # Session metadata (native titles, unmodeled-record sentinel) is not
             # a conversation message — never counted.
@@ -62,7 +70,8 @@ def compute_message_stats(messages: Sequence[MessageProtocol]) -> MessageStats:
         message_count += 1
         role = _message_attr(msg, "role")
         if role == "assistant" and content_type == "text":
-            turn_count += 1
+            if _message_attr(msg, "source") not in TURN_BOUNDARY_SOURCES:
+                turn_count += 1
             content = _message_attr(msg, "content")
             if isinstance(content, str) and content.strip():
                 last_assistant_content = content.strip()[-_LAST_ASSISTANT_CONTENT_LIMIT:]

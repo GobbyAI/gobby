@@ -37,6 +37,7 @@ from datetime import datetime
 from typing import TYPE_CHECKING, Any, cast
 
 from gobby.sessions.message_stats import (
+    TURN_BOUNDARY_CONTENT_TYPE,
     MessageProtocol,
     MessageStats,
     accumulate_message_stats,
@@ -406,7 +407,12 @@ class TranscriptIndexAppender:
                 # position via _next_start_index / event.parsed_index below.
                 # render_incremental runs unconditionally so the unmodeled-record
                 # sentinel is still observed (and metadata produces no group).
-                if record.content_type not in NON_MESSAGE_CONTENT_TYPES:
+                # Turn-boundary records join NON_MESSAGE_CONTENT_TYPES so they
+                # stay out of parsed_message_count/role counts, but they must
+                # still reach accumulate_message_stats to increment turn_count.
+                if record.content_type == TURN_BOUNDARY_CONTENT_TYPE:
+                    stats_messages.append(record)
+                elif record.content_type not in NON_MESSAGE_CONTENT_TYPES:
                     stats_messages.append(record)
                     self.index.parsed_message_count += 1
                     self._role_counts[record.role] = self._role_counts.get(record.role, 0) + 1

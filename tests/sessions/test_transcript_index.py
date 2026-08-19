@@ -16,10 +16,12 @@ import os
 from collections.abc import Callable, Iterator
 from pathlib import Path
 from typing import Any
+from unittest.mock import MagicMock
 
 import pytest
 
 import gobby.sessions.transcript_index as transcript_index
+from gobby.sessions.processor import SessionMessageProcessor
 from gobby.sessions.transcript_index import (
     INDEX_CACHE_MAX_ENTRIES,
     TranscriptIndexAppender,
@@ -1034,3 +1036,87 @@ def test_metadata_excluded_from_display_counts_but_counted_for_parser_position(
     assert loaded.parsed_message_count == 1
     assert loaded.next_parser_index == 3
     assert loaded.next_parser_index > loaded.parsed_message_count
+
+
+def _grok_event(update: dict[str, object]) -> str:
+    return json.dumps(
+        {
+            "jsonrpc": "2.0",
+            "method": "session/update",
+            "params": {"sessionId": "grok-session", "update": update},
+            "timestamp": "2026-05-22T22:22:00Z",
+        }
+    )
+
+
+def _grok_boundary_lines() -> list[str]:
+    """Two grok assistant texts plus one completed-turn boundary.
+
+    The extra in-flight assistant text distinguishes boundary counting from the
+    old per-text-block increment: current code would report two turns.
+    """
+    return [
+        _grok_event(
+            {
+                "sessionUpdate": "user_message_chunk",
+                "content": {"type": "text", "text": "Run pwd"},
+            }
+        ),
+        _grok_event(
+            {
+                "sessionUpdate": "agent_message_chunk",
+                "content": {"type": "text", "text": "Checking."},
+            }
+        ),
+        _grok_event(
+            {
+                "sessionUpdate": "agent_message_chunk",
+                "content": {"type": "text", "text": "Done."},
+            }
+        ),
+        _grok_event(
+            {
+                "sessionUpdate": "turn_completed",
+                "stop_reason": "end_turn",
+                "prompt_id": "prompt-1",
+            }
+        ),
+    ]
+
+
+def test_grok_boundary_records_feed_sidecar_stats(tmp_path: Path) -> None:
+    lines = _grok_boundary_lines()
+    path = _write(tmp_path, "grok-boundary", lines)
+    st = os.stat(path)
+    index = build_index_from_file(path, "grok", SESSION, mtime_ns=st.st_mtime_ns, size=st.st_size)
+
+    assert index.parsed_message_count == 3
+    assert index.role_message_counts == {"user": 1, "assistant": 2}
+    assert index.session_stats == {
+        "message_count": 3,
+        "turn_count": 1,
+        "tool_call_count": 0,
+        "last_assistant_content": "Done.",
+    }
+    # Boundary still advances parser position even though it is not a display message.
+    assert index.next_parser_index == 4
+    assert index.next_parser_index > index.parsed_message_count
+
+    persist_index_sidecar(path, index)
+    loaded = load_index_sidecar(
+        path, "grok", SESSION, seek_mode="byte", mtime_ns=st.st_mtime_ns, size=st.st_size
+    )
+    assert loaded is not None
+    assert loaded.session_stats == index.session_stats
+
+    session_manager = MagicMock()
+    processor = SessionMessageProcessor(MagicMock(), session_manager=session_manager)
+    processor.register_session(SESSION, path, source="grok")
+
+    session_manager.update_stats.assert_called_once_with(
+        SESSION,
+        message_count=3,
+        turn_count=1,
+        tool_call_count=0,
+        last_assistant_content="Done.",
+    )
