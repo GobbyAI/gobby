@@ -25,6 +25,14 @@ _TEXTGEN_PROJECT_DIR_MARKER = "gobby-textgen-"
 _FIXED_TEXTGEN_DIRNAME = "textgen"
 
 
+def _claude_project_slug(path: Path) -> str:
+    return str(path).replace("/", "-").replace(".", "-")
+
+
+def _gobby_textgen_project_slug_fragment() -> str:
+    return _claude_project_slug(Path(tempfile.gettempdir()) / _NEUTRAL_TEXTGEN_CWD_PREFIX)
+
+
 @contextlib.contextmanager
 def neutral_textgen_cwd() -> Iterator[Path]:
     """Yield a private temp directory to use as the cwd for one-shot text generation.
@@ -79,7 +87,7 @@ def purge_textgen_project_dirs(
     for entry in root.iterdir():
         if removed >= max_dirs:
             break
-        if _TEXTGEN_PROJECT_DIR_MARKER not in entry.name or not entry.is_dir():
+        if _gobby_textgen_project_slug_fragment() not in entry.name or not entry.is_dir():
             continue
         try:
             if entry.stat().st_mtime > cutoff:

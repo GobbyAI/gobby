@@ -207,6 +207,42 @@ def touches_docker_policy_path(
     )
 
 
+_UI_DESIGN_MARKUP_SUFFIXES = (
+    ".tsx",
+    ".jsx",
+    ".vue",
+    ".svelte",
+    ".astro",
+    ".css",
+    ".scss",
+    ".html",
+)
+_UI_DESIGN_SCRIPT_SUFFIXES = (".ts", ".js", ".mjs", ".cjs")
+
+
+def touches_ui_design_path(
+    event_data: Mapping[str, Any] | None,
+    tool_input: Any,
+) -> bool:
+    """Return True when a write touches UI or design files.
+
+    Markup, style, and component extensions match anywhere. Bare script
+    extensions match only under a ``web/`` segment so skill scripts and
+    Node tooling stay out of design enforcement.
+    """
+    return any(is_ui_design_path(path) for path in _event_and_tool_paths(event_data, tool_input))
+
+
+def is_ui_design_path(path: str) -> bool:
+    """Return whether one path is a UI or design file."""
+    normalized = _normalize_condition_path(path)
+    if normalized.endswith(_UI_DESIGN_MARKUP_SUFFIXES):
+        return True
+    if not normalized.endswith(_UI_DESIGN_SCRIPT_SUFFIXES):
+        return False
+    return "/web/" in normalized or normalized.startswith("web/")
+
+
 def _first_matching_path(
     event_data: Mapping[str, Any] | None,
     tool_input: Any,

@@ -2507,6 +2507,7 @@ async def test_end_agent_run_blocked_when_run_has_no_bound_task(
         ("gobby-tasks__get_task", "gobby-tasks__get_task"),
     ],
 )
+@pytest.mark.unit
 def test_canonical_gobby_tool_name(spelling: str, canonical: str) -> None:
     assert canonical_gobby_tool_name(spelling) == canonical
 
@@ -2524,10 +2525,12 @@ def test_canonical_gobby_tool_name(spelling: str, canonical: str) -> None:
         (None, False),
     ],
 )
+@pytest.mark.unit
 def test_is_gobby_call_tool(spelling: str | None, expected: bool) -> None:
     assert is_gobby_call_tool(spelling) is expected
 
 
+@pytest.mark.integration
 class TestProviderToolNameNormalization:
     """Grok and other runtimes emit Gobby proxy tools without the mcp__ prefix.
 

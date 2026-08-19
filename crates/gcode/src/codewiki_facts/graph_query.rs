@@ -16,6 +16,7 @@ pub enum GraphEdgeKind {
 }
 
 pub const SCOPE_CHUNK_LEN: usize = 64;
+pub const MAX_CLOSED_SCOPE_CHUNKS: usize = 8;
 pub const MAX_DECLARED_EDGE_LIMIT: usize = 10_000;
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -260,6 +261,9 @@ fn chunked_plans(
 ) -> Vec<EdgeQueryPlan> {
     let chunks = keys.chunks(SCOPE_CHUNK_LEN);
     if mode == GraphScopeMode::Closed {
+        if chunks.len() > MAX_CLOSED_SCOPE_CHUNKS {
+            return Vec::new();
+        }
         let mut plans = Vec::new();
         for source in &chunks {
             for target in &chunks {
@@ -598,6 +602,35 @@ mod tests {
                 other => panic!("expected file chunks, got {other:?}"),
             }
         }
+    }
+
+    #[test]
+    fn closed_plans_at_max_scope_stay_bounded() {
+        let files = (0..SCOPE_CHUNK_LEN * MAX_CLOSED_SCOPE_CHUNKS)
+            .map(|index| format!("src/f{index}.rs"))
+            .collect::<Vec<_>>();
+        let plans = plans_for(
+            GraphEdgeKind::Call,
+            GraphBounds::outgoing(8),
+            GraphScopeMode::Closed,
+            ScopeKeys::Files(files),
+        );
+        let expected = MAX_CLOSED_SCOPE_CHUNKS.pow(2);
+        assert_eq!(plans.len(), expected);
+    }
+
+    #[test]
+    fn closed_plans_reject_oversized_scopes_instead_of_quadratic_blowup() {
+        let files = (0..SCOPE_CHUNK_LEN * MAX_CLOSED_SCOPE_CHUNKS + 1)
+            .map(|index| format!("src/f{index}.rs"))
+            .collect::<Vec<_>>();
+        let plans = plans_for(
+            GraphEdgeKind::Call,
+            GraphBounds::outgoing(8),
+            GraphScopeMode::Closed,
+            ScopeKeys::Files(files),
+        );
+        assert!(plans.is_empty());
     }
 
     #[test]

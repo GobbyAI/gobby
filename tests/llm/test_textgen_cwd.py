@@ -9,6 +9,7 @@ from pathlib import Path
 import pytest
 
 from gobby.llm.textgen_cwd import (
+    _gobby_textgen_project_slug_fragment,
     fixed_textgen_cwd,
     neutral_textgen_cwd,
     purge_textgen_project_dirs,
@@ -52,10 +53,12 @@ class TestPurgeTextgenProjectDirs:
         return target
 
     def test_removes_only_old_marker_dirs(self, tmp_path: Path) -> None:
-        old_textgen = self._make_dir(tmp_path, "-T-gobby-textgen---abc123", age_seconds=7200)
-        young_textgen = self._make_dir(tmp_path, "-T-gobby-textgen---def456", age_seconds=60)
+        fragment = _gobby_textgen_project_slug_fragment()
+        old_textgen = self._make_dir(tmp_path, f"{fragment}abc123", age_seconds=7200)
+        young_textgen = self._make_dir(tmp_path, f"{fragment}def456", age_seconds=60)
         real_project = self._make_dir(tmp_path, "-Users-josh-Projects-gobby", age_seconds=7200)
         fixed_slug = self._make_dir(tmp_path, "-Users-josh--gobby-tmp-textgen", age_seconds=7200)
+        unrelated = self._make_dir(tmp_path, "my-gobby-textgen-notes", age_seconds=7200)
 
         removed = purge_textgen_project_dirs(tmp_path, older_than_seconds=3600.0)
 
@@ -64,10 +67,15 @@ class TestPurgeTextgenProjectDirs:
         assert young_textgen.exists()
         assert real_project.exists()
         assert fixed_slug.exists()
+        assert unrelated.exists()
 
     def test_respects_max_dirs_bound(self, tmp_path: Path) -> None:
         for index in range(5):
-            self._make_dir(tmp_path, f"-T-gobby-textgen---{index}", age_seconds=7200)
+            self._make_dir(
+                tmp_path,
+                f"{_gobby_textgen_project_slug_fragment()}{index}",
+                age_seconds=7200,
+            )
 
         removed = purge_textgen_project_dirs(tmp_path, older_than_seconds=3600.0, max_dirs=3)
 

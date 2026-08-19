@@ -84,13 +84,17 @@ def _persist_health_pane_capture(
     if not isinstance(capture_id, str) or not capture_id:
         capture_id = str(uuid.uuid4())
     expected_revision = getattr(run, "capture_revision", 0) or 0
-    updated = replace(
-        run_id,
-        capture_id=capture_id,
-        expected_revision=expected_revision,
-        marker=_capture_marker(capture_id),
-        slot_content=_capture_slot(capture_id, redacted),
-    )
+    try:
+        updated = replace(
+            run_id,
+            capture_id=capture_id,
+            expected_revision=expected_revision,
+            marker=_capture_marker(capture_id),
+            slot_content=_capture_slot(capture_id, redacted),
+        )
+    except psycopg.Error as exc:
+        logger.warning("Failed to persist health pane capture for %s: %s", run_id, exc)
+        return None
     if updated is None:
         return None
     return capture_id
@@ -162,7 +166,7 @@ async def _check_tmux_session_alive(
             output = None
         if not output or not output.strip():
             return False, None
-        return False, output.strip()[-4096:]
+        return False, output.strip()
     except (TimeoutError, OSError, TmuxNotFoundError, TmuxSessionError):
         return True, None  # Timed out, assume alive
     except asyncio.CancelledError:

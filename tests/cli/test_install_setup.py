@@ -1138,7 +1138,13 @@ class TestEnsurePath:
     @patch("gobby.cli.install_setup.os.environ")
     @patch("gobby.cli.install_setup.Path.home")
     @patch("gobby.cli.install_setup.tempfile.gettempdir")
-    def test_ensure_gobby_bin_on_path(self, mock_gettempdir, mock_home, mock_environ, tmp_path):
+    def test_ensure_gobby_bin_on_path(
+        self,
+        mock_gettempdir: MagicMock,
+        mock_home: MagicMock,
+        mock_environ: MagicMock,
+        tmp_path: Path,
+    ) -> None:
         mock_environ.get.side_effect = lambda k, default="": "/bin/bash" if k == "SHELL" else ""
         mock_home.return_value = tmp_path
         mock_gettempdir.return_value = str(tmp_path / "systmp")
@@ -1211,11 +1217,11 @@ class TestEnsurePath:
     @patch("gobby.cli.install_setup.tempfile.gettempdir")
     def test_ensure_gobby_bin_on_path_skips_non_utf8_rc(
         self,
-        mock_gettempdir,
-        mock_home,
-        mock_environ,
-        tmp_path,
-    ):
+        mock_gettempdir: MagicMock,
+        mock_home: MagicMock,
+        mock_environ: MagicMock,
+        tmp_path: Path,
+    ) -> None:
         mock_environ.get.side_effect = lambda k, default="": "/bin/bash" if k == "SHELL" else ""
         mock_home.return_value = tmp_path
         mock_gettempdir.return_value = str(tmp_path / "systmp")
@@ -1233,11 +1239,11 @@ class TestEnsurePath:
     @patch("gobby.cli.install_setup.tempfile.gettempdir")
     def test_ensure_gobby_bin_on_path_skips_unreadable_rc(
         self,
-        mock_gettempdir,
-        mock_home,
-        mock_environ,
-        tmp_path,
-    ):
+        mock_gettempdir: MagicMock,
+        mock_home: MagicMock,
+        mock_environ: MagicMock,
+        tmp_path: Path,
+    ) -> None:
         mock_environ.get.side_effect = lambda k, default="": "/bin/bash" if k == "SHELL" else ""
         mock_home.return_value = tmp_path
         mock_gettempdir.return_value = str(tmp_path / "systmp")

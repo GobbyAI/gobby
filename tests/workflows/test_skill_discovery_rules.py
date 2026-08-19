@@ -3312,6 +3312,21 @@ class TestRequireImpeccableSkillCondition:
             is False
         )
 
+    def test_matches_ui_path_in_canonical_file_paths(self, condition: str) -> None:
+        context = {
+            "variables": {"loaded_skills": []},
+            "event": SimpleNamespace(
+                data={
+                    "canonical_tool_kind": "write",
+                    "canonical_file_paths": [None, "README.md", "web/src/lib/api.ts"],
+                }
+            ),
+            "tool_input": {},
+        }
+        allowed_funcs = build_condition_helpers(context=context)
+        evaluator = SafeExpressionEvaluator(context=context, allowed_funcs=allowed_funcs)
+        assert evaluator.evaluate(condition) is True
+
 
 class TestDesignDetectorPredicate:
     """The design detector's edit pass shares the UI-file predicate."""

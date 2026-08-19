@@ -352,67 +352,69 @@ class ClaudeSDKClient:
         if context:
             text_prompt = f"{context}\n\n{text_prompt}"
 
-        options = ClaudeAgentOptions(
-            system_prompt="You are a vision assistant that describes images in detail.",
-            max_turns=1,
-            model=model or self._default_model,
-            tools=[],
-            allowed_tools=[],
-            mcp_servers={},
-            permission_mode="default",
-            cli_path=cli_path,
-            env=dict(_TEXTGEN_ENV),
-        )
-
-        async def _message_generator() -> AsyncIterator[dict[str, Any]]:
-            yield {
-                "type": "user",
-                "message": {
-                    "role": "user",
-                    "content": [
-                        {"type": "text", "text": text_prompt},
-                        {
-                            "type": "image",
-                            "source": {
-                                "type": "base64",
-                                "media_type": mime_type,
-                                "data": image_base64,
-                            },
-                        },
-                    ],
-                },
-            }
-
-        async def _run_query() -> str:
-            result_text = ""
-            message_count = 0
-            rate_limit_info: Any | None = None
-            async for message in query(prompt=_message_generator(), options=options):
-                message_count += 1
-                event_rate_limit = getattr(message, "rate_limit_info", None)
-                if event_rate_limit is not None:
-                    rate_limit_info = event_rate_limit
-                if isinstance(message, AssistantMessage):
-                    for block in message.content:
-                        if isinstance(block, TextBlock):
-                            result_text += block.text
-                elif isinstance(message, ResultMessage):
-                    raise_for_error_result(
-                        message, "describe_image", rate_limit_info=rate_limit_info
-                    )
-                    if message.result:
-                        result_text = message.result
-            if not result_text:
-                self.logger.warning(
-                    "describe_image: SDK returned no text content (messages=%d)",
-                    message_count,
-                )
-            return result_text
-
-        try:
-            result = str(
-                await execute_sdk_query("describe_image", _run_query, options, self.logger)
+        with fixed_textgen_cwd() as neutral_cwd:
+            options = ClaudeAgentOptions(
+                system_prompt="You are a vision assistant that describes images in detail.",
+                max_turns=1,
+                model=model or self._default_model,
+                tools=[],
+                allowed_tools=[],
+                mcp_servers={},
+                permission_mode="default",
+                cli_path=cli_path,
+                cwd=str(neutral_cwd),
+                env=dict(_TEXTGEN_ENV),
             )
-        except RuntimeError as exc:
-            raise VisionProviderError(f"Claude image description failed: {exc}") from exc
-        return validate_vision_description(result)
+
+            async def _message_generator() -> AsyncIterator[dict[str, Any]]:
+                yield {
+                    "type": "user",
+                    "message": {
+                        "role": "user",
+                        "content": [
+                            {"type": "text", "text": text_prompt},
+                            {
+                                "type": "image",
+                                "source": {
+                                    "type": "base64",
+                                    "media_type": mime_type,
+                                    "data": image_base64,
+                                },
+                            },
+                        ],
+                    },
+                }
+
+            async def _run_query() -> str:
+                result_text = ""
+                message_count = 0
+                rate_limit_info: Any | None = None
+                async for message in query(prompt=_message_generator(), options=options):
+                    message_count += 1
+                    event_rate_limit = getattr(message, "rate_limit_info", None)
+                    if event_rate_limit is not None:
+                        rate_limit_info = event_rate_limit
+                    if isinstance(message, AssistantMessage):
+                        for block in message.content:
+                            if isinstance(block, TextBlock):
+                                result_text += block.text
+                    elif isinstance(message, ResultMessage):
+                        raise_for_error_result(
+                            message, "describe_image", rate_limit_info=rate_limit_info
+                        )
+                        if message.result:
+                            result_text = message.result
+                if not result_text:
+                    self.logger.warning(
+                        "describe_image: SDK returned no text content (messages=%d)",
+                        message_count,
+                    )
+                return result_text
+
+            try:
+                result = str(
+                    await execute_sdk_query("describe_image", _run_query, options, self.logger)
+                )
+            except RuntimeError as exc:
+                raise VisionProviderError(f"Claude image description failed: {exc}") from exc
+            return validate_vision_description(result)

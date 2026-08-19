@@ -11,6 +11,8 @@ import re
 from collections.abc import Iterator, Mapping
 from dataclasses import dataclass, replace
 
+import psycopg
+
 
 def sanitize_error(e: Exception) -> str:
     """Return a user-facing error message, hiding internal library details."""
@@ -455,7 +457,7 @@ def _persist_additional_context(
             content_kind="text",
             total_chars=len(text),
         )
-    except Exception:
+    except (OSError, psycopg.Error):
         return None
     return result_id if isinstance(result_id, str) and result_id else None
 

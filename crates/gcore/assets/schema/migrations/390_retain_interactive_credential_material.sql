@@ -12,7 +12,10 @@
 -- material the moment the binding is revoked. A one-time repair drops rows
 -- already orphaned by revoked bindings; draining predecessors keep theirs.
 
-CREATE OR REPLACE FUNCTION gobby_agent_auth.replace_interactive_credential_material(
+DROP FUNCTION IF EXISTS gobby_agent_auth.replace_interactive_credential_material(
+    TEXT, UUID, UUID, INTEGER, TEXT, TEXT
+);
+CREATE FUNCTION gobby_agent_auth.replace_interactive_credential_material(
     requested_deployment_token TEXT,
     requested_machine_id UUID,
     requested_project_id UUID,
@@ -20,7 +23,7 @@ CREATE OR REPLACE FUNCTION gobby_agent_auth.replace_interactive_credential_mater
     requested_ciphertext TEXT,
     requested_aad_identity TEXT
 )
-RETURNS VOID
+RETURNS BOOLEAN
 LANGUAGE plpgsql
 SECURITY DEFINER
 SET search_path = gobby_agent_auth, pg_temp
@@ -44,7 +47,7 @@ BEGIN
         AND pb.revoked_at IS NULL
         FOR UPDATE;
     IF NOT FOUND THEN
-        RETURN;
+        RETURN FALSE;
     END IF;
     DELETE FROM interactive_credential_material AS icm
      WHERE icm.deployment_token = requested_deployment_token
@@ -80,9 +83,20 @@ BEGIN
     DO UPDATE SET
         ciphertext = EXCLUDED.ciphertext,
         aad_identity = EXCLUDED.aad_identity,
-        created_at = NOW();
+        created_at = clock_timestamp();
+    RETURN TRUE;
 END
 $function$;
+
+ALTER FUNCTION gobby_agent_auth.replace_interactive_credential_material(
+    TEXT, UUID, UUID, INTEGER, TEXT, TEXT
+) OWNER TO gobby_agent_issuer;
+REVOKE ALL ON FUNCTION gobby_agent_auth.replace_interactive_credential_material(
+    TEXT, UUID, UUID, INTEGER, TEXT, TEXT
+) FROM PUBLIC;
+GRANT EXECUTE ON FUNCTION gobby_agent_auth.replace_interactive_credential_material(
+    TEXT, UUID, UUID, INTEGER, TEXT, TEXT
+) TO gobby_daemon_runtime;
 
 CREATE OR REPLACE FUNCTION gobby_agent_auth.revoke_principal(
     requested_execution_id UUID,

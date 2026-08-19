@@ -19,6 +19,8 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, NoReturn, Protocol
 
+from jinja2 import TemplateError
+
 from gobby.llm.base import LLMProviderCancellation
 from gobby.memory.generation_schemas import TURN_RECORD_SCHEMA
 from gobby.memory.shadow_relevance import judge_shadow_candidate_relevance
@@ -467,7 +469,7 @@ async def _build_turn_record(
             {"prompt_text": prompt_text, "response_text": response_text},
             db,
         )
-    except Exception:
+    except (FileNotFoundError, ValueError, TypeError, json.JSONDecodeError, TemplateError):
         turn_prompt = _build_turn_record_prompt(prompt_text, response_text)
 
     last_error: ValueError | None = None

@@ -38,7 +38,14 @@ async def open_launch_async(
         exc: BaseException | None,
         tb: TracebackType | None,
     ) -> object:
-        return await asyncio.shield(asyncio.to_thread(cm.__exit__, exc_type, exc, tb))
+        task = asyncio.ensure_future(
+            asyncio.shield(asyncio.to_thread(cm.__exit__, exc_type, exc, tb))
+        )
+        try:
+            return await task
+        except asyncio.CancelledError:
+            await task
+            raise
 
     try:
         yield launch

@@ -92,7 +92,7 @@ pub(crate) const MIGRATIONS: &[EmbeddedMigration] = &[
     EmbeddedMigration {
         version: 387,
         filename: "387_interactive_principal_role_helper.sql",
-        checksum: "0831490e4169d0e778575761a3463d19bb2ac68b1f73940c00f716447adfed0b",
+        checksum: "89fbe7978fbd565510b2698e06f15adddad3eec273ee2665e5d17144ef1ebd69",
         sql: include_str!(
             "../../assets/schema/migrations/387_interactive_principal_role_helper.sql"
         ),
@@ -106,13 +106,13 @@ pub(crate) const MIGRATIONS: &[EmbeddedMigration] = &[
     EmbeddedMigration {
         version: 389,
         filename: "389_sweep_interactive_orphan_roles.sql",
-        checksum: "00359659fbe933506babe8f03b643d1558be6ac7dff4c3d5f3d2e62627d534f5",
+        checksum: "a86978cd9afd129b3d8cfb4f38d3d9efc096309543c3e08aacc8ea773575283f",
         sql: include_str!("../../assets/schema/migrations/389_sweep_interactive_orphan_roles.sql"),
     },
     EmbeddedMigration {
         version: 390,
         filename: "390_retain_interactive_credential_material.sql",
-        checksum: "25ff1d544e9ee87e54c4a4ca1330660b29b1c1dd7464eda9aa9985460ec93ad3",
+        checksum: "e2cc73155a4c4d13ae0bb18cf93d95bd745da2cf0ce8dcb423cd40608a61b9a5",
         sql: include_str!(
             "../../assets/schema/migrations/390_retain_interactive_credential_material.sql"
         ),
@@ -120,7 +120,7 @@ pub(crate) const MIGRATIONS: &[EmbeddedMigration] = &[
     EmbeddedMigration {
         version: 391,
         filename: "391_session_last_activity_and_creation_defaults.sql",
-        checksum: "40fafbe193afe1a097e71f80d236c466cb759533160eb56fe9afd6b8c74321cf",
+        checksum: "775a2f0622a1866984d01a85158c2d85235fd13698728ca23f41d797ad3ae675",
         sql: include_str!(
             "../../assets/schema/migrations/391_session_last_activity_and_creation_defaults.sql"
         ),
@@ -131,15 +131,47 @@ pub(crate) const MIGRATIONS: &[EmbeddedMigration] = &[
         checksum: "4d3f2e9652a958f4ad7f0f64410e622e4e4629b8388b1610527170e0bac83598",
         sql: include_str!("../../assets/schema/migrations/392_chat_attachments_deletion_lease.sql"),
     },
+    EmbeddedMigration {
+        version: 393,
+        filename: "393_interactive_principal_hardening.sql",
+        checksum: "199d27292b0c3e48c0beb0e5aad2a8748a2a78f82e31f0647b8c0973564633da",
+        sql: include_str!("../../assets/schema/migrations/393_interactive_principal_hardening.sql"),
+    },
+    EmbeddedMigration {
+        version: 394,
+        filename: "394_sessions_status_last_activity_index.sql",
+        checksum: "449a7e2e482c086b063fb066e93019c043703ce970ed1a0c7c30f46e7050d097",
+        sql: include_str!(
+            "../../assets/schema/migrations/394_sessions_status_last_activity_index.sql"
+        ),
+    },
 ];
 const _: &str = include_str!("../../assets/schema/migrations/.gitkeep");
 
 /// Receipts written before #20368 edited 377 in place. Live hubs keep those
 /// checksums; the improved 377 body is what new applies stamp.
-pub(crate) const PRIOR_RECEIPT_CHECKSUMS: &[(i32, &str)] = &[(
-    377,
-    "43b6c25263c1e510f28c540d9cc24e62ffcad67a3a8dddde3645bdb6a5e92821",
-)];
+pub(crate) const PRIOR_RECEIPT_CHECKSUMS: &[(i32, &str)] = &[
+    (
+        377,
+        "43b6c25263c1e510f28c540d9cc24e62ffcad67a3a8dddde3645bdb6a5e92821",
+    ),
+    (
+        387,
+        "0831490e4169d0e778575761a3463d19bb2ac68b1f73940c00f716447adfed0b",
+    ),
+    (
+        389,
+        "00359659fbe933506babe8f03b643d1558be6ac7dff4c3d5f3d2e62627d534f5",
+    ),
+    (
+        390,
+        "25ff1d544e9ee87e54c4a4ca1330660b29b1c1dd7464eda9aa9985460ec93ad3",
+    ),
+    (
+        391,
+        "40fafbe193afe1a097e71f80d236c466cb759533160eb56fe9afd6b8c74321cf",
+    ),
+];
 
 pub(crate) fn root_hash() -> String {
     let mut digest = Sha256::new();

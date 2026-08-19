@@ -181,7 +181,8 @@ class _TerminalMixin:
                     sandbox_enabled = COALESCE(%s, sandbox_enabled),
                     status = 'active',
                     transcript_processed = FALSE,
-                    updated_at = %s
+                    updated_at = %s,
+                    last_activity = %s
                 WHERE id = %s
                   AND session_type = 'terminal'
                   AND status != 'deleted'
@@ -194,6 +195,7 @@ class _TerminalMixin:
                     workflow_name,
                     agent_depth,
                     sandbox_enabled,
+                    now,
                     now,
                     session_id,
                 ),
@@ -245,7 +247,8 @@ class _TerminalMixin:
                     terminal_context = '{}'::jsonb,
                     sandbox_enabled = FALSE,
                     sandbox_policy_hash = %s,
-                    updated_at = %s
+                    updated_at = %s,
+                    last_activity = %s
                 WHERE id = %s
                   AND machine_id = %s
                   AND session_type = 'terminal'
@@ -256,6 +259,7 @@ class _TerminalMixin:
                     model,
                     project_id,
                     sandbox_policy_hash,
+                    now,
                     now,
                     session_id,
                     machine_id,

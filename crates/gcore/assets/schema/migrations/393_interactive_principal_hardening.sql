@@ -1,109 +1,91 @@
--- Sweep leftover interactive and maintenance roles the same way agent
--- orphans are reaped. Hash-format gobby_ix_* leftovers 42710 the next
--- issue/rotate; slug-format and gobby_mnt_* leftovers are dead login
--- credentials. Drop the derived hash name at issue/rotate time when no
--- binding names it so the next issuance does not wait for reconcile.
+-- Re-apply interactive principal hardening for hubs that already ran 387-390.
+-- Greenfield applies of the edited 387-390 already contain these bodies.
 
-CREATE OR REPLACE FUNCTION gobby_agent_auth.reconcile_daemon(
-    p_machine_id UUID
+DROP FUNCTION IF EXISTS gobby_agent_auth.replace_interactive_credential_material(
+    TEXT, UUID, UUID, INTEGER, TEXT, TEXT
+);
+CREATE FUNCTION gobby_agent_auth.replace_interactive_credential_material(
+    requested_deployment_token TEXT,
+    requested_machine_id UUID,
+    requested_project_id UUID,
+    requested_generation INTEGER,
+    requested_ciphertext TEXT,
+    requested_aad_identity TEXT
 )
-RETURNS INTEGER
+RETURNS BOOLEAN
 LANGUAGE plpgsql
 SECURITY DEFINER
 SET search_path = gobby_agent_auth, pg_temp
-SET createrole_self_grant = ''
 AS $function$
-DECLARE
-    candidate RECORD;
-    orphan_role RECORD;
-    result_count INTEGER;
-    remaining_sessions INTEGER;
-    reconciled_count INTEGER := 0;
-    retry_pending BOOLEAN := FALSE;
 BEGIN
-    PERFORM pg_advisory_xact_lock(hashtextextended('gobby-agent-auth-reconcile', 0));
-    IF NOT EXISTS (SELECT 1 FROM public.machines WHERE id = p_machine_id) THEN
-        RAISE EXCEPTION 'unknown reconciling machine' USING ERRCODE = '23503';
+    IF requested_ciphertext IS NULL OR requested_ciphertext = '' THEN
+        RAISE EXCEPTION 'interactive credential material must be ciphertext'
+            USING ERRCODE = '22023';
     END IF;
-
-    FOR candidate IN
-        SELECT pb.managed_execution_id, pb.credential_generation
-        FROM principal_bindings AS pb
-        LEFT JOIN daemon_registry AS daemon
-          ON daemon.machine_id = pb.issuing_machine_id
-        LEFT JOIN public.agent_runs AS run
-          ON run.id = pb.agent_run_id
-        WHERE pb.revoked_at IS NULL
-          AND (
-              pb.issuing_machine_id = p_machine_id
-              OR daemon.lease_expires_at IS NULL
-              OR daemon.lease_expires_at <= clock_timestamp()
-          )
-          AND (
-              pb.expires_at <= clock_timestamp()
-              OR pb.revocation_requested_at IS NOT NULL
-              OR (
-                  pb.owner_kind = 'agent_run'
-                  AND run.status IN ('success', 'error', 'timeout', 'cancelled')
-              )
-          )
-        ORDER BY pb.managed_execution_id, pb.credential_generation
-    LOOP
-        result_count := revoke_principal(
-            candidate.managed_execution_id,
-            candidate.credential_generation
-        );
-        IF result_count > 0 THEN
-            reconciled_count := reconciled_count + result_count;
-        ELSIF result_count < 0 THEN
-            retry_pending := TRUE;
-        END IF;
-    END LOOP;
-
-    FOR orphan_role IN
-        SELECT roles.rolname
-        FROM pg_roles AS roles
-        WHERE roles.rolname ~ '^(gobby_agent_[0-9a-f]{32}|gobby_ix_([0-9a-f]{16}|[A-Za-z0-9]{1,8}_[0-9a-f]{8}_[0-9a-f]{8})|gobby_mnt_[0-9a-f]{32})_[1-9][0-9]*$'
-          AND NOT EXISTS (
-              SELECT 1 FROM principal_bindings AS binding
-              WHERE binding.role_name = roles.rolname
-          )
-        ORDER BY roles.rolname
-    LOOP
-        EXECUTE format('ALTER ROLE %I NOLOGIN', orphan_role.rolname);
-        PERFORM pg_terminate_backend(pid, 5000)
-        FROM pg_stat_activity
-        WHERE usename = orphan_role.rolname::TEXT
-          AND pid <> pg_backend_pid();
-        SELECT count(*) INTO remaining_sessions
-        FROM pg_stat_activity
-        WHERE usename = orphan_role.rolname::TEXT;
-        IF remaining_sessions <> 0 THEN
-            INSERT INTO orphan_revocation_retries (
-                role_name, revocation_attempts, next_retry_at, last_failure, updated_at
-            ) VALUES (
-                orphan_role.rolname, 1, clock_timestamp() + INTERVAL '15 seconds',
-                'active_sessions_remaining', clock_timestamp()
-            )
-            ON CONFLICT (role_name) DO UPDATE
-            SET revocation_attempts = orphan_revocation_retries.revocation_attempts + 1,
-                next_retry_at = EXCLUDED.next_retry_at,
-                last_failure = EXCLUDED.last_failure,
-                updated_at = EXCLUDED.updated_at;
-            retry_pending := TRUE;
-            CONTINUE;
-        END IF;
-        EXECUTE format('DROP ROLE %I', orphan_role.rolname);
-        DELETE FROM orphan_revocation_retries
-        WHERE role_name = orphan_role.rolname;
-        reconciled_count := reconciled_count + 1;
-    END LOOP;
-    IF retry_pending THEN
-        RETURN -1;
+    IF requested_aad_identity IS NULL OR requested_aad_identity = '' THEN
+        RAISE EXCEPTION 'interactive credential material requires AAD identity'
+            USING ERRCODE = '22023';
     END IF;
-    RETURN reconciled_count;
+    PERFORM 1
+       FROM principal_bindings AS pb
+      WHERE pb.owner_kind = 'interactive'
+        AND pb.deployment_token = requested_deployment_token
+        AND pb.issuing_machine_id = requested_machine_id
+        AND pb.project_id = requested_project_id
+        AND pb.credential_generation = requested_generation
+        AND pb.revoked_at IS NULL
+        FOR UPDATE;
+    IF NOT FOUND THEN
+        RETURN FALSE;
+    END IF;
+    DELETE FROM interactive_credential_material AS icm
+     WHERE icm.deployment_token = requested_deployment_token
+       AND icm.machine_id = requested_machine_id
+       AND icm.project_id = requested_project_id
+       AND icm.credential_generation <> requested_generation
+       AND NOT EXISTS (
+           SELECT 1
+             FROM principal_bindings AS pb
+            WHERE pb.owner_kind = 'interactive'
+              AND pb.deployment_token = icm.deployment_token
+              AND pb.issuing_machine_id = icm.machine_id
+              AND pb.project_id = icm.project_id
+              AND pb.credential_generation = icm.credential_generation
+              AND pb.revoked_at IS NULL
+       );
+    INSERT INTO interactive_credential_material (
+        deployment_token,
+        machine_id,
+        project_id,
+        credential_generation,
+        ciphertext,
+        aad_identity
+    ) VALUES (
+        requested_deployment_token,
+        requested_machine_id,
+        requested_project_id,
+        requested_generation,
+        requested_ciphertext,
+        requested_aad_identity
+    )
+    ON CONFLICT (deployment_token, machine_id, project_id, credential_generation)
+    DO UPDATE SET
+        ciphertext = EXCLUDED.ciphertext,
+        aad_identity = EXCLUDED.aad_identity,
+        created_at = clock_timestamp();
+    RETURN TRUE;
 END
 $function$;
+
+ALTER FUNCTION gobby_agent_auth.replace_interactive_credential_material(
+    TEXT, UUID, UUID, INTEGER, TEXT, TEXT
+) OWNER TO gobby_agent_issuer;
+REVOKE ALL ON FUNCTION gobby_agent_auth.replace_interactive_credential_material(
+    TEXT, UUID, UUID, INTEGER, TEXT, TEXT
+) FROM PUBLIC;
+GRANT EXECUTE ON FUNCTION gobby_agent_auth.replace_interactive_credential_material(
+    TEXT, UUID, UUID, INTEGER, TEXT, TEXT
+) TO gobby_daemon_runtime;
 
 CREATE OR REPLACE FUNCTION gobby_agent_auth.drain_ephemeral_principals()
 RETURNS INTEGER
@@ -520,3 +502,4 @@ BEGIN
         (SELECT pb.managed_execution_id FROM principal_bindings AS pb WHERE pb.id = binding_id);
 END
 $function$;
+

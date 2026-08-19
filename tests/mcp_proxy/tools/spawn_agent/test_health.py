@@ -100,7 +100,9 @@ async def test_check_tmux_session_alive_rejects_missing_pane_pid() -> None:
     ):
         result = await _check_tmux_session_alive("sess", socket_name="gobby")
 
-    assert result == (False, "x" * 4096)
+    assert result == (False, "x" * 5000)
+    assert result[1] is not None
+    assert len(result[1]) > 4096
     config = manager_cls.call_args.args[0]
     assert config.socket_name == "gobby"
     assert config.socket_path is None

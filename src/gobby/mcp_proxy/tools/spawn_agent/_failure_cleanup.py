@@ -10,15 +10,18 @@ import subprocess
 from typing import Any
 
 _SPAWN_TERM_GRACE_SECONDS = 0.2
-_PID_STARTTIMES: dict[int, str] = {}
+_RUN_STARTTIMES: dict[str, str] = {}
 
 
-def remember_spawn_pid(pid: int | None) -> None:
+def remember_spawn_pid(pid: int | None, *, run_id: str | None = None) -> str | None:
     if pid is None:
-        return
+        return None
     stamp = _pid_starttime(pid)
-    if stamp is not None:
-        _PID_STARTTIMES[pid] = stamp
+    if stamp is None:
+        return None
+    if run_id is not None:
+        _RUN_STARTTIMES[run_id] = stamp
+    return stamp
 
 
 def _pid_starttime(pid: int) -> str | None:
@@ -35,15 +38,15 @@ def _pid_starttime(pid: int) -> str | None:
     return stamp or None
 
 
-def _pid_matches_remembered(pid: int) -> bool:
-    remembered = _PID_STARTTIMES.get(pid)
-    if remembered is None:
+def _pid_matches_remembered(pid: int, expected: str | None) -> bool:
+    if expected is None:
         return False
-    return _pid_starttime(pid) == remembered
+    return _pid_starttime(pid) == expected
 
 
-def _forget_spawn_pid(pid: int) -> None:
-    _PID_STARTTIMES.pop(pid, None)
+def _forget_spawn_run(run_id: str | None) -> None:
+    if run_id is not None:
+        _RUN_STARTTIMES.pop(run_id, None)
 
 
 async def cleanup_created_isolation(
@@ -87,10 +90,12 @@ async def cleanup_failed_spawn(
         tmux_session_name = _string_attr(run, "tmux_session_name")
     await _terminate_spawn_process(
         pid=pid,
+        expected_starttime=_RUN_STARTTIMES.get(run_id),
         tmux_session_name=tmux_session_name,
         tmux_socket_name=tmux_socket_name,
         tmux_socket_path=tmux_socket_path,
     )
+    _forget_spawn_run(run_id)
     if run_storage is not None:
         from gobby.mcp_proxy.tools.agent_cancellation import (
             terminalize_cancelled_agent_run,
@@ -231,6 +236,7 @@ def _delete_child_session(
 async def _terminate_spawn_process(
     *,
     pid: int | None,
+    expected_starttime: str | None = None,
     tmux_session_name: str | None,
     tmux_socket_name: str | None,
     tmux_socket_path: str | None,
@@ -250,23 +256,32 @@ async def _terminate_spawn_process(
                 exc,
             )
     if pid is not None:
-        remember_spawn_pid(pid)
+        if expected_starttime is None or not _pid_matches_remembered(pid, expected_starttime):
+            return
         try:
             os.kill(pid, signal.SIGTERM)
         except ProcessLookupError:
-            _forget_spawn_pid(pid)
             return
         except Exception as exc:
-            logging.getLogger(__name__).warning("Failed to terminate spawn pid %s: %s", pid, exc)
+            logging.getLogger(__name__).warning(
+                "Failed to terminate spawn pid %s: %s",
+                pid,
+                exc,
+                extra={"pid": pid},
+            )
         await asyncio.sleep(_SPAWN_TERM_GRACE_SECONDS)
-        if _pid_matches_remembered(pid):
+        if _pid_matches_remembered(pid, expected_starttime):
             try:
                 os.kill(pid, signal.SIGKILL)
             except ProcessLookupError:
                 pass
             except Exception as exc:
-                logging.getLogger(__name__).warning("Failed to kill spawn pid %s: %s", pid, exc)
-        _forget_spawn_pid(pid)
+                logging.getLogger(__name__).warning(
+                    "Failed to kill spawn pid %s: %s",
+                    pid,
+                    exc,
+                    extra={"pid": pid},
+                )
 
 
 def _string_attr(obj: Any, name: str) -> str | None:

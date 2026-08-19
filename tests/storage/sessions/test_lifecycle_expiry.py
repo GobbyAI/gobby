@@ -13,7 +13,7 @@ from gobby.storage.session_lifecycle import _build_empty_session_prune_reference
 from gobby.storage.sessions import SessionManager
 from gobby.storage.sessions._field_update import _FieldUpdateMixin
 
-pytestmark = pytest.mark.unit
+# PostgreSQL-backed tests below are marked integration individually.
 
 LOCAL_MACHINE_ID = "21000000-0000-4000-8000-000000000002"
 
@@ -49,6 +49,7 @@ class _PostgresColumnCaptureDb:
         return []
 
 
+@pytest.mark.unit
 def test_empty_session_prune_reference_guards_use_postgres_information_schema() -> None:
     db = _PostgresColumnCaptureDb()
 
@@ -60,6 +61,7 @@ def test_empty_session_prune_reference_guards_use_postgres_information_schema() 
     )
 
 
+@pytest.mark.unit
 def test_update_status_if_non_terminal_loses_race_to_expiration() -> None:
     manager = MagicMock()
     manager.get.return_value.status = "active"
@@ -77,6 +79,7 @@ def test_update_status_if_non_terminal_loses_race_to_expiration() -> None:
     assert set(params[3]) == {"expired", "deleted"}
 
 
+@pytest.mark.unit
 def test_expire_stale_sessions_keeps_recently_active_untracked_terminal_session(
     session_mgr: SessionManager,
     project_id: str,
@@ -105,6 +108,7 @@ def test_expire_stale_sessions_keeps_recently_active_untracked_terminal_session(
     assert refreshed.status == "active"
 
 
+@pytest.mark.unit
 def test_expire_stale_sessions_keeps_stale_tmux_terminal_session(
     session_mgr: SessionManager,
     project_id: str,
@@ -136,6 +140,7 @@ def test_expire_stale_sessions_keeps_stale_tmux_terminal_session(
     assert refreshed.status == "paused"
 
 
+@pytest.mark.integration
 def test_register_leaves_creation_timestamps_to_database(
     session_mgr: SessionManager,
     project_id: str,
@@ -157,6 +162,7 @@ def test_register_leaves_creation_timestamps_to_database(
     assert row is not None and row["fresh"] is True
 
 
+@pytest.mark.integration
 def test_expire_stale_sessions_keys_on_last_activity_not_updated_at(
     session_mgr: SessionManager,
     project_id: str,
@@ -192,6 +198,7 @@ def test_expire_stale_sessions_keys_on_last_activity_not_updated_at(
     assert row is not None and row["untouched"] is True
 
 
+@pytest.mark.integration
 def test_pause_inactive_keys_on_last_activity(
     session_mgr: SessionManager,
     project_id: str,
@@ -236,6 +243,7 @@ def test_pause_inactive_keys_on_last_activity(
     assert refreshed_busy is not None and refreshed_busy.status == "active"
 
 
+@pytest.mark.integration
 def test_update_status_from_activity_bumps_last_activity(
     session_mgr: SessionManager,
     project_id: str,
@@ -260,6 +268,7 @@ def test_update_status_from_activity_bumps_last_activity(
     assert row is not None and row["fresh"] is True
 
 
+@pytest.mark.integration
 def test_update_stats_bumps_last_activity_only_on_counter_growth(
     session_mgr: SessionManager,
     project_id: str,
@@ -291,6 +300,7 @@ def test_update_stats_bumps_last_activity_only_on_counter_growth(
     assert row is not None and row["fresh"] is True
 
 
+@pytest.mark.unit
 def test_expire_stale_sessions_keeps_web_chat_session_with_recent_activity(
     session_mgr: SessionManager,
     project_id: str,

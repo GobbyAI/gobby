@@ -83,6 +83,7 @@ async def test_prompt_between_legacy_and_default_limits_reaches_llm_intact(
     assert tdd_summary in prompt
 
 
+@pytest.mark.unit
 @pytest.mark.asyncio
 async def test_long_changes_summary_reaches_llm_intact(
     monkeypatch: pytest.MonkeyPatch,

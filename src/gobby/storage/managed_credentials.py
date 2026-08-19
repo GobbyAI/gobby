@@ -650,7 +650,7 @@ class ManagedCredentialManager:
             generation=generation,
         )
         ciphertext = secret_store.seal(password.encode("utf-8"), aad=aad.encode("utf-8"))
-        self._database.fetchone(
+        stored = self._database.fetchone(
             f"""SELECT {AUTH_SCHEMA}.replace_interactive_credential_material(
                 %s, %s, %s, %s, %s, %s
             )""",
@@ -663,6 +663,12 @@ class ManagedCredentialManager:
                 aad,
             ),
         )
+        if stored is None or not bool(
+            _row_value(stored, "replace_interactive_credential_material")
+        ):
+            raise CredentialIssuanceError(
+                "interactive credential material was not stored for a live binding"
+            )
 
     def _load_interactive_password(
         self,

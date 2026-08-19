@@ -382,6 +382,28 @@ class TestMemoryCaptureNudge:
         assert "is_spawned_agent" in body.when
         assert "task_claimed" in body.when
         assert "auto_task_ref" in body.when
+        taskless = SafeExpressionEvaluator(
+            {
+                "variables": {
+                    "is_spawned_agent": True,
+                    "task_claimed": False,
+                    "auto_task_ref": None,
+                }
+            },
+            {},
+        )
+        task_owned = SafeExpressionEvaluator(
+            {
+                "variables": {
+                    "is_spawned_agent": True,
+                    "task_claimed": True,
+                    "auto_task_ref": "#1",
+                }
+            },
+            {},
+        )
+        assert taskless.evaluate(body.when) is False
+        assert task_owned.evaluate(body.when) is True
 
 
 # ═══════════════════════════════════════════════════════════════════════

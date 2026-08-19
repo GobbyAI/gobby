@@ -12,8 +12,6 @@ ALTER TABLE sessions
 
 UPDATE sessions SET last_activity = updated_at;
 
-CREATE INDEX idx_sessions_status_last_activity ON sessions (status, last_activity);
-
 -- The database owns creation timestamps: application INSERTs stop passing
 -- created_at/updated_at, so every table they touch needs the now() default
 -- the rest of the schema already has. Values are unchanged for existing rows.

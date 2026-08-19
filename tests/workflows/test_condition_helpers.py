@@ -25,6 +25,7 @@ from gobby.workflows.condition_helpers import (
     task_type_in,
     touches_claude_memory_path,
     touches_docker_policy_path,
+    touches_ui_design_path,
 )
 
 pytestmark = pytest.mark.unit
@@ -659,6 +660,42 @@ class TestTouchesDockerPolicyPath:
         event_data = {"canonical_file_paths": ["README.md", "config/app.yaml", "docker-bakery.hcl"]}
 
         assert touches_docker_policy_path(event_data, {}) is False
+
+
+class TestTouchesUiDesignPath:
+    @pytest.mark.parametrize(
+        "path",
+        [
+            "/project/src/components/Button.tsx",
+            "web/src/lib/api.ts",
+            "/Users/dev/repo/web/scripts/build.mjs",
+        ],
+    )
+    def test_matches_ui_paths(self, path: str) -> None:
+        assert touches_ui_design_path({"canonical_file_path": path}, {}) is True
+
+    def test_matches_any_path_in_multi_file_event(self) -> None:
+        event_data = {
+            "canonical_file_paths": ["README.md", None, "web/src/lib/api.ts"],
+        }
+
+        assert touches_ui_design_path(event_data, {}) is True
+
+    def test_ignores_non_string_entries(self) -> None:
+        event_data = {"canonical_file_paths": [None, 12, {"path": "web/src/App.tsx"}]}
+
+        assert touches_ui_design_path(event_data, {}) is False
+
+    def test_skips_non_ui_script_paths(self) -> None:
+        event_data = {
+            "canonical_file_paths": [
+                "src/gobby/install/shared/skills/impeccable/scripts/hook.mjs",
+                "/project/eslint.config.js",
+                "/project/README.md",
+            ]
+        }
+
+        assert touches_ui_design_path(event_data, {}) is False
 
 
 class TestAllTasksHaveLabel:

@@ -649,6 +649,7 @@ class TestHistoryInjection:
         assert body in result
         assert "a" * 50 + "..." not in result
 
+    @pytest.mark.asyncio
     async def test_load_history_context_omits_whole_message_when_over_budget(
         self, session: ChatSession
     ) -> None:

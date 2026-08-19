@@ -31,11 +31,9 @@ def resolve_server_for_tool(service: Any, tool_name: str) -> str | None:
     """Resolve the actual server name for a tool when given the proxy namespace."""
     resolved = cast("str | None", service.find_tool_server(tool_name))
     if resolved:
-        logger.warning(
-            "Auto-resolved server_name='gobby' → '%s' for tool '%s'", resolved, tool_name
-        )
+        logger.debug("Auto-resolved server_name='gobby' → '%s' for tool '%s'", resolved, tool_name)
     else:
-        logger.warning("server_name='gobby' used but tool '%s' not found on any server", tool_name)
+        logger.debug("server_name='gobby' used but tool '%s' not found on any server", tool_name)
     return resolved
 
 

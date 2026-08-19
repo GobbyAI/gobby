@@ -372,4 +372,59 @@ mod tests {
         .expect("generation freshness");
         assert_eq!(status, Some(FreshnessStatus::SkippedBusy));
     }
+
+    fn command_options(scope: Vec<String>, complete_scope: bool) -> CodeCommandOptions {
+        CodeCommandOptions {
+            project_root: PathBuf::from("/tmp/gwiki-complete-scope"),
+            out: None,
+            purge: false,
+            force: false,
+            scope,
+            complete_scope,
+            ai: None,
+            ai_depth: AiDepth::default(),
+            ai_prose_depth: ProseDepth::default(),
+            ai_register: None,
+            ai_aggregate_profile: None,
+            ai_aggregate_candidates: Vec::new(),
+            ai_verify_profile: None,
+            ai_verify_scope: VerifyScope::default(),
+            edge_limit: DEFAULT_CODE_GRAPH_EDGE_LIMIT,
+            include_docs: false,
+            since: None,
+            compare_to: None,
+            max_workers: 1,
+            repair_citations: false,
+            allow_stale: true,
+            quiet: true,
+            verbose: false,
+        }
+    }
+
+    fn command_error_text(error: CodeCommandError) -> String {
+        match error {
+            CodeCommandError::Command { source, .. } => source.to_string(),
+            other => format!("{other:?}"),
+        }
+    }
+
+    #[test]
+    fn complete_scope_without_scope_is_rejected() {
+        let error = run_command(command_options(Vec::new(), true)).expect_err("empty scope");
+        assert!(
+            command_error_text(error)
+                .contains("--complete-scope requires at least one --scope path")
+        );
+    }
+
+    #[test]
+    fn complete_scope_with_scope_does_not_return_empty_scope_error() {
+        match run_command(command_options(vec!["src".to_string()], true)) {
+            Ok(_) => {}
+            Err(error) => assert!(
+                !command_error_text(error)
+                    .contains("--complete-scope requires at least one --scope path")
+            ),
+        }
+    }
 }

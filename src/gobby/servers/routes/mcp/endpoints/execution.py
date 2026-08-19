@@ -12,6 +12,7 @@ from typing import TYPE_CHECKING, Any, cast
 
 from fastapi import Depends, HTTPException, Request
 
+from gobby.mcp_proxy.models import MCPError
 from gobby.mcp_proxy.services.schema_guidance import record_schema_shown
 from gobby.mcp_proxy.tools.internal import normalize_internal_success_result
 from gobby.mcp_proxy.wait_tools import (
@@ -31,6 +32,24 @@ if TYPE_CHECKING:
     from gobby.servers.http import HTTPServer
 
 logger = logging.getLogger(__name__)
+
+_PROXY_NAMESPACE = "gobby"
+_MCP_TOOL_PREFIX = "mcp__"
+
+
+def _normalize_schema_ref(server_name: str, tool_name: str) -> tuple[str, str]:
+    """Map wrapper names such as mcp__gobby__call_tool onto the proxy namespace."""
+    raw_server = server_name.strip()
+    raw_tool = tool_name.strip()
+    if raw_tool.startswith(_MCP_TOOL_PREFIX):
+        rest = raw_tool[len(_MCP_TOOL_PREFIX) :]
+        if "__" in rest:
+            parsed_server, parsed_tool = rest.split("__", 1)
+            if parsed_server and parsed_tool:
+                if not raw_server or raw_server in {"?", _PROXY_NAMESPACE}:
+                    raw_server = parsed_server
+                raw_tool = parsed_tool
+    return raw_server, raw_tool
 
 
 def _json_safe_payload(payload: dict[str, Any]) -> dict[str, Any]:
@@ -409,6 +428,7 @@ async def get_tool_schema(
                 status_code=400,
                 detail={"success": False, "error": "Required fields: server_name, tool_name"},
             )
+        server_name, tool_name = _normalize_schema_ref(str(server_name), str(tool_name))
 
         ctx_token = await request_context._set_context_for_request(server, body, request)
 
@@ -446,6 +466,37 @@ async def get_tool_schema(
                     detail={"success": False, "error": "MCP manager not available"},
                 )
 
+            if server_name == _PROXY_NAMESPACE or not server.mcp_manager.has_server(server_name):
+                if server.tool_proxy is None:
+                    response_time_ms = (time.perf_counter() - start_time) * 1000
+                    return {
+                        "success": False,
+                        "error": f"Unknown MCP server: '{server_name}'",
+                        "response_time_ms": response_time_ms,
+                    }
+                proxied = await server.tool_proxy.get_tool_schema(server_name, tool_name)
+                response_time_ms = (time.perf_counter() - start_time) * 1000
+                if not proxied.get("success"):
+                    return {
+                        "success": False,
+                        "error": proxied.get("error") or f"Unknown MCP server: '{server_name}'",
+                        "response_time_ms": response_time_ms,
+                    }
+                tool_schema = proxied.get("tool")
+                schema = tool_schema if isinstance(tool_schema, dict) else {}
+                result = {
+                    "success": True,
+                    "name": schema.get("name", tool_name),
+                    "inputSchema": schema.get("inputSchema"),
+                    "server": server_name,
+                    "response_time_ms": response_time_ms,
+                }
+                description = schema.get("description")
+                if description:
+                    result["description"] = description
+                _record_schema_lease(server, body, server_name, tool_name)
+                return result
+
             # Get from external MCP server
             try:
                 tool_info = await server.mcp_manager.get_tool_info(server_name, tool_name)
@@ -464,7 +515,7 @@ async def get_tool_schema(
                 _record_schema_lease(server, body, server_name, tool_name)
                 return response
 
-            except (KeyError, ValueError) as e:
+            except (KeyError, ValueError, MCPError) as e:
                 # Tool or server not found
                 response_time_ms = (time.perf_counter() - start_time) * 1000
                 response = {"success": False, "error": str(e), "response_time_ms": response_time_ms}

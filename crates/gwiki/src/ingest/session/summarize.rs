@@ -345,15 +345,25 @@ fn render_message_tail(messages: &[ParsedSessionMessage], char_budget: usize) ->
         blocks.push(block);
     }
     blocks.reverse();
-    let body = blocks.join("\n\n");
     if omitted == 0 {
-        return body;
+        return blocks.join("\n\n");
     }
-    let note = format!("omitted {omitted} messages");
-    if body.is_empty() {
-        note
-    } else {
-        format!("{note}\n\n{body}")
+    loop {
+        let body = blocks.join("\n\n");
+        let note = format!("omitted {omitted} messages");
+        let rendered = if body.is_empty() {
+            note
+        } else {
+            format!("{note}\n\n{body}")
+        };
+        if rendered.chars().count() <= char_budget || blocks.is_empty() {
+            if rendered.chars().count() <= char_budget {
+                return rendered;
+            }
+            return rendered.chars().take(char_budget).collect();
+        }
+        blocks.remove(0);
+        omitted += 1;
     }
 }
 
@@ -524,7 +534,7 @@ mod tests {
     fn message_tail_omits_whole_messages_instead_of_mid_message_take() {
         let huge = format!("UNIQUE_HEAD_7f3a9c{}UNIQUE_TAIL_7f3a9c", "x".repeat(80));
         let messages = vec![message("user", &huge), message("assistant", "kept-recent")];
-        let rendered = render_message_tail(&messages, 40);
+        let rendered = render_message_tail(&messages, 80);
         assert!(rendered.contains("kept-recent"));
         assert!(rendered.contains("omitted 1 messages"));
         assert!(
@@ -532,6 +542,21 @@ mod tests {
             "must not mid-message prefix-slice: {rendered}"
         );
         assert!(!rendered.contains("UNIQUE_TAIL_7f3a9c"));
+        assert!(
+            rendered.chars().count() <= 80,
+            "omission note must stay inside the budget: {rendered}"
+        );
+    }
+
+    #[test]
+    fn message_tail_including_omission_note_never_exceeds_budget() {
+        let messages = vec![
+            message("user", "oldest kept if budget allows"),
+            message("assistant", "recent"),
+        ];
+        let rendered = render_message_tail(&messages, 28);
+        assert!(rendered.contains("omitted"));
+        assert!(rendered.chars().count() <= 28, "{rendered}");
     }
 
     #[test]

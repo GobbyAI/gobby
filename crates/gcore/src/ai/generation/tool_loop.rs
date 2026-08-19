@@ -11,9 +11,14 @@
 //! local to the loop; the transport only relays messages and returns the
 //! model's `tool_calls`.
 
+use std::fs::OpenOptions;
+use std::io::Write;
 use std::path::{Path, PathBuf};
+use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, OnceLock, mpsc};
 use std::time::{Duration, Instant};
+
+static SIDECAR_SEQ: AtomicU64 = AtomicU64::new(0);
 
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
@@ -828,29 +833,51 @@ fn write_tool_result_sidecar(
     bytes: &[u8],
 ) -> std::io::Result<PathBuf> {
     std::fs::create_dir_all(dir)?;
-    let path = dir.join(format!(
-        "tool-result-{}.txt",
-        sanitize_tool_call_id(tool_call_id)
-    ));
-    std::fs::write(&path, bytes)?;
-    Ok(path)
-}
-
-fn sanitize_tool_call_id(id: &str) -> String {
-    let mut out = String::with_capacity(id.len().max(6));
-    for ch in id.chars() {
-        if ch.is_ascii_alphanumeric() || ch == '-' || ch == '_' {
-            out.push(ch);
-        } else {
-            out.push('_');
+    let encoded = encode_tool_call_id(tool_call_id);
+    loop {
+        let suffix = SIDECAR_SEQ.fetch_add(1, Ordering::Relaxed);
+        let path = dir.join(format!("tool-result-{encoded}-{suffix}.txt"));
+        match OpenOptions::new().write(true).create_new(true).open(&path) {
+            Ok(mut file) => {
+                file.write_all(bytes)?;
+                return Ok(path);
+            }
+            Err(error) if error.kind() == std::io::ErrorKind::AlreadyExists => continue,
+            Err(error) => return Err(error),
         }
     }
+}
+
+fn encode_tool_call_id(id: &str) -> String {
+    const HEX: &[u8; 16] = b"0123456789abcdef";
+    let bytes = id.as_bytes();
+    let mut out = String::with_capacity(bytes.len().saturating_mul(2).max(2));
+    for byte in bytes {
+        out.push(HEX[(byte >> 4) as usize] as char);
+        out.push(HEX[(byte & 0x0f) as usize] as char);
+    }
     if out.is_empty() {
-        out.push_str("result");
+        out.push_str("00");
     }
     out
 }
 
 fn duration_to_ms(duration: Duration) -> u64 {
     duration.as_millis().min(u128::from(u64::MAX)) as u64
+}
+
+#[cfg(test)]
+mod sidecar_tests {
+    use super::{encode_tool_call_id, write_tool_result_sidecar};
+
+    #[test]
+    fn sidecar_paths_keep_distinct_ids_that_sanitize_to_the_same_lossy_name() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let first = write_tool_result_sidecar(dir.path(), "a/b", b"slash").expect("write slash");
+        let second = write_tool_result_sidecar(dir.path(), "a?b", b"query").expect("write query");
+        assert_ne!(first, second);
+        assert_eq!(std::fs::read(&first).expect("read slash"), b"slash");
+        assert_eq!(std::fs::read(&second).expect("read query"), b"query");
+        assert_ne!(encode_tool_call_id("a/b"), encode_tool_call_id("a?b"));
+    }
 }

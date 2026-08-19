@@ -7,7 +7,7 @@ use clap::{Parser, Subcommand};
 use gobby_core::bootstrap::{bootstrap_path, postgres_database_url_from_bootstrap_file};
 use gobby_core::degradation::redact_database_url;
 use gobby_core::gobby_home;
-use gobby_core::postgres::connect_readwrite;
+use gobby_core::postgres::{connect_readwrite, is_lock_timeout};
 use gobby_core::schema::{
     BackupGateContext, HubBackupManifest, SchemaRunner, SourceIdentity, VerifiedBackupManifest,
     parse_backup_manifest, schema_identity, sweep_test_schemas as sweep_orphaned_test_schemas,
@@ -254,7 +254,7 @@ fn hold_open_maintenance_epoch_lease(
         Ok(rows) => rows,
         Err(error) => {
             let _ = lease.batch_execute("ROLLBACK");
-            if error.to_string().contains("lock timeout") {
+            if is_lock_timeout(&error) {
                 return Err(error)
                     .context("timed out acquiring a lock on the open maintenance epoch");
             }

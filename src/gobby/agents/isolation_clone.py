@@ -244,17 +244,19 @@ class CloneIsolationHandler(IsolationHandler):
         Prepends isolation context to help the agent understand it's
         working in a clone, not the original repository.
         """
-        warning = f"""Clone context — you are working in an isolated shallow clone, not the original repository.
-- Branch: {ctx.branch_name}
-- Clone path: {ctx.cwd}
-- Source repo: {ctx.extra.get("source_repo", "unknown")}
-
-Changes in this clone are fully isolated from the original repository.
-Push your changes when ready to share with the original.
-
----
-
-"""
+        warning = (
+            "Clone context — you are working in an isolated shallow clone, "
+            "not the original repository.\n"
+            f"- Branch: {ctx.branch_name}\n"
+            f"- Clone path: {ctx.cwd}\n"
+            f"- Source repo: {ctx.extra.get('source_repo', 'unknown')}\n"
+            "\n"
+            "Changes in this clone are fully isolated from the original repository.\n"
+            "Push your changes when ready to share with the original.\n"
+            "\n"
+            "---\n"
+            "\n"
+        )
         return warning + original_prompt
 
     def _generate_clone_path(self, branch_name: str, project_name: str) -> str:

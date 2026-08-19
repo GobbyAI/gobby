@@ -195,9 +195,7 @@ def replace_files_home_descendant(source: str | Path, destination: str | Path) -
     destination_parts = _relative_parts(destination)
     source_dir_fd, source_opened = _open_existing_descendant_dir(held.fd, source_parts[:-1])
     try:
-        dest_dir_fd, dest_opened = _open_existing_descendant_dir(
-            held.fd, destination_parts[:-1]
-        )
+        dest_dir_fd, dest_opened = _open_existing_descendant_dir(held.fd, destination_parts[:-1])
         try:
             os.replace(
                 source_parts[-1],

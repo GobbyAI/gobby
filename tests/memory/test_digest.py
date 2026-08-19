@@ -395,6 +395,7 @@ class TestBuildTurnAndDigest:
         session.transcript_path = None
         session.source = "claude"
         session.digest_markdown = None
+        session.summary_digest_turn_count = 5
         session.title = None
         session.title_source = None
         session.seq_num = 42
@@ -531,6 +532,10 @@ class TestBuildTurnAndDigest:
     ):
         """Test the full pipeline with prompt_text provided."""
         digest_config = _digest_config()
+        digest_config = _DigestTestConfig(
+            digest=digest_config.digest,
+            session_summary=object(),
+        )
         result = await build_turn_and_digest(
             memory_manager=mock_memory_manager,
             session_manager=mock_session_manager,
@@ -1434,6 +1439,7 @@ class TestBuildTurnAndDigestIdempotency:
         session.transcript_path = None
         session.source = "claude"
         session.digest_markdown = None
+        session.summary_digest_turn_count = 5
         session.title = None
         session.title_source = None
         session.seq_num = 42

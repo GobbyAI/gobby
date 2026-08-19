@@ -157,8 +157,10 @@ def test_persist_kwargs_from_hook_response_use_manager_database() -> None:
         metadata={"session_id": "sess-1", "project_id": "proj-1"},
     )
     hook_manager = SimpleNamespace(_database=object())
-    with patch("gobby.adapters.degradation.ToolResultStore", return_value=store):
+    with patch("gobby.adapters.degradation.ToolResultStore", return_value=store) as store_cls:
         kwargs = persist_kwargs_from_hook_response(response, hook_manager)
+    store_cls.assert_called_once()
+    assert store_cls.call_args.args[0] is hook_manager._database
     assert kwargs["session_id"] == "sess-1"
     assert kwargs["project_id"] == "proj-1"
     assert kwargs["store"] is store

@@ -92,8 +92,10 @@ fn grant_without_daemon_is_config_error() {
         String::from_utf8_lossy(&index.stderr)
     );
     let stderr = String::from_utf8_lossy(&index.stderr);
-    assert!(
-        stderr.contains("config_error"),
+    let payload = common::parse_json_error_payload(&index);
+    assert_eq!(
+        payload.get("code").and_then(|value| value.as_str()),
+        Some("config_error"),
         "grant without daemon should fail as config_error, not a DSN connect\nstderr:\n{stderr}"
     );
 }

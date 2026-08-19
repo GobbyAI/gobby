@@ -11,6 +11,8 @@ import pytest
 from gobby.scheduler.executor import CronExecutor, CronShellError
 from gobby.storage.cron_models import CronJob, CronRun
 
+pytestmark = pytest.mark.unit
+
 
 @pytest.mark.asyncio
 async def test_execute_shell_raises_error_with_full_output() -> None:

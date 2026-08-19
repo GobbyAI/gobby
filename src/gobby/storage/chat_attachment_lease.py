@@ -205,9 +205,7 @@ def delete_claimed_row(
     return cursor.rowcount == 1
 
 
-def mark_published(
-    conn: Transaction, *, attachment_id: str, project_id: str, token: str
-) -> bool:
+def mark_published(conn: Transaction, *, attachment_id: str, project_id: str, token: str) -> bool:
     now = utc_now()
     cursor = conn.execute(
         """
@@ -226,22 +224,14 @@ def mark_published(
     return cursor.rowcount == 1
 
 
-def mark_published_db(
-    db: HubDatabase, *, attachment_id: str, project_id: str, token: str
-) -> bool:
+def mark_published_db(db: HubDatabase, *, attachment_id: str, project_id: str, token: str) -> bool:
     with db.transaction_immediate(ChatAttachmentMutation()) as conn:
-        return mark_published(
-            conn, attachment_id=attachment_id, project_id=project_id, token=token
-        )
+        return mark_published(conn, attachment_id=attachment_id, project_id=project_id, token=token)
 
 
-def release_claim_db(
-    db: HubDatabase, *, attachment_id: str, project_id: str, token: str
-) -> bool:
+def release_claim_db(db: HubDatabase, *, attachment_id: str, project_id: str, token: str) -> bool:
     with db.transaction_immediate(ChatAttachmentMutation()) as conn:
-        return release_claim(
-            conn, attachment_id=attachment_id, project_id=project_id, token=token
-        )
+        return release_claim(conn, attachment_id=attachment_id, project_id=project_id, token=token)
 
 
 def delete_claimed_row_db(
@@ -253,10 +243,6 @@ def delete_claimed_row_db(
         )
 
 
-def renew_claim_db(
-    db: HubDatabase, *, attachment_id: str, project_id: str, token: str
-) -> bool:
+def renew_claim_db(db: HubDatabase, *, attachment_id: str, project_id: str, token: str) -> bool:
     with db.transaction_immediate(ChatAttachmentMutation()) as conn:
-        return renew_claim(
-            conn, attachment_id=attachment_id, project_id=project_id, token=token
-        )
+        return renew_claim(conn, attachment_id=attachment_id, project_id=project_id, token=token)

@@ -506,12 +506,22 @@ def create_clone_operations_registry(ctx: CloneRegistryContext) -> InternalToolR
                                 cleanup_after=cleanup_after,
                             )
                             merge_succeeded = True
+                            merge_sha = ""
+                            sha_result = await run_thread_to_completion(
+                                git_manager.run_git_command,
+                                ["rev-parse", target_branch],
+                                cwd=git_manager.repo_path,
+                                timeout=10,
+                            )
+                            if sha_result.returncode == 0:
+                                merge_sha = sha_result.stdout.strip()
                             primary_result = {
                                 "success": True,
                                 "message": (
                                     f"Successfully merged {clone.branch_name} into {target_branch}"
                                 ),
                                 "cleanup_after": cleanup_after,
+                                "merge_sha": merge_sha,
                             }
             finally:
                 try:

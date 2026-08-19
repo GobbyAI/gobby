@@ -707,6 +707,7 @@ def _gateway_for_resolved(
     gateway_factory: GatewayFactory | None,
 ) -> WikiGatewayProtocol:
     from gobby.wiki.owner_dispatch import gateway_for_resolved
+
     if gateway_factory is not None:
         return gateway_factory(resolved)
     return cast(

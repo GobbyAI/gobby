@@ -322,6 +322,11 @@ def install_claude(
 
     # Gobby owns memory: disable Claude Code's harness-level auto-memory so its
     # MEMORY.md injection cannot bypass the tool-level block rules.
+    if "_gobbyAutoMemoryPrior" not in existing_settings:
+        existing_settings["_gobbyAutoMemoryPrior"] = {
+            "existed": "autoMemoryEnabled" in existing_settings,
+            "value": existing_settings.get("autoMemoryEnabled"),
+        }
     existing_settings["autoMemoryEnabled"] = False
 
     # Configure statusLine for token tracking middleware before persisting settings.
@@ -432,9 +437,14 @@ def uninstall_claude(project_path: Path) -> dict[str, Any]:
     before_mutation = json.dumps(settings, sort_keys=True)
     _restore_statusline(settings)
     hooks_removed.extend(_remove_gobby_hooks(settings))
-    # Drop the auto-memory opt-out Gobby installed; a user-set True is kept.
-    if settings.get("autoMemoryEnabled") is False:
-        del settings["autoMemoryEnabled"]
+    prior = settings.pop("_gobbyAutoMemoryPrior", None)
+    if isinstance(prior, dict):
+        if prior.get("existed"):
+            settings["autoMemoryEnabled"] = prior.get("value")
+        else:
+            settings.pop("autoMemoryEnabled", None)
+    elif settings.get("autoMemoryEnabled") is False:
+        settings.pop("autoMemoryEnabled", None)
 
     if json.dumps(settings, sort_keys=True) != before_mutation:
         # Write to temp file and atomically replace

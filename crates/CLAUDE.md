@@ -3,8 +3,9 @@
 The former `gobby-cli` repo now lives here — Gobby is a monorepo. The Rust code is
 a Cargo workspace (`Cargo.toml`, `Cargo.lock`, and `rust-toolchain.toml` at the
 repo root). Use `cargo` for all Rust operations, respect `rust-toolchain.toml`,
-and load the `rust` skill before editing Rust. Detailed Rust conventions live in
-`AGENTS.md`.
+and load the `rust` skill before editing Rust. Rust-specific conventions are
+defined in this file. Shared architecture facts (crate-to-binary mappings and
+the rebuild/reinstall new-inode requirement) live in `AGENTS.md`.
 
 ```bash
 # Build / check a specific crate (use -p; avoid whole-workspace builds unless needed)

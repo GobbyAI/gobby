@@ -196,10 +196,33 @@ pub fn assert_daemon_required(output: &Output, label: &str) {
         String::from_utf8_lossy(&output.stderr)
     );
     let stderr = String::from_utf8_lossy(&output.stderr);
-    assert!(
-        stderr.contains("daemon_required") || stderr.contains("daemon required"),
+    let payload = parse_json_error_payload(output);
+    assert_eq!(
+        payload.get("code").and_then(|value| value.as_str()),
+        Some("daemon_required"),
         "{label} stderr:\n{stderr}"
     );
+}
+
+pub fn parse_json_error_payload(output: &Output) -> serde_json::Value {
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    for stream in [stderr.as_ref(), stdout.as_ref()] {
+        if let Ok(value) = serde_json::from_str::<serde_json::Value>(stream.trim())
+            && (value.get("error").is_some() || value.get("code").is_some())
+        {
+            return value;
+        }
+        for line in stream.lines().rev() {
+            let trimmed = line.trim();
+            if let Ok(value) = serde_json::from_str::<serde_json::Value>(trimmed)
+                && (value.get("error").is_some() || value.get("code").is_some())
+            {
+                return value;
+            }
+        }
+    }
+    panic!("expected JSON error payload\nstdout:\n{stdout}\nstderr:\n{stderr}");
 }
 
 pub fn json_stdout(output: &Output) -> serde_json::Value {

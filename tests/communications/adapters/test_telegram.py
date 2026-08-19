@@ -662,6 +662,7 @@ async def test_send_attachment_uses_send_photo_for_images(
     }
 
 
+@pytest.mark.unit
 @pytest.mark.asyncio
 async def test_send_attachment_sends_remaining_caption_chunks(
     adapter: TelegramAdapter,
@@ -712,7 +713,7 @@ async def test_send_attachment_sends_remaining_caption_chunks(
     assert follow["chat_id"] == "chat999"
     assert follow["parse_mode"] == "HTML"
     assert follow["text"]
-    assert follow["text"] != caption
+    assert caption + follow["text"] == long_caption
 
 
 @pytest.mark.asyncio

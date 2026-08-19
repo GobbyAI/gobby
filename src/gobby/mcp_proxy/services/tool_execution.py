@@ -168,9 +168,7 @@ async def list_tools(
     """List tools for a specific server with progressive discovery format."""
     server_name = service._resolve_server_name(server_name)
     if service._is_proxy_namespace(server_name):
-        logger.warning(
-            "list_tools called with server_name='gobby' — aggregating all internal tools"
-        )
+        logger.debug("list_tools called with server_name='gobby' — aggregating all internal tools")
         if service._internal_manager:
             brief_tools: list[dict[str, Any]] = []
             for reg in service._internal_manager.get_all_registries():

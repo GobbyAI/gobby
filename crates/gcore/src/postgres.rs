@@ -125,6 +125,12 @@ fn connection_config(database_url: &str) -> anyhow::Result<postgres::Config> {
     Ok(config)
 }
 
+pub fn is_lock_timeout(error: &postgres::Error) -> bool {
+    error
+        .as_db_error()
+        .is_some_and(|db_error| db_error.code() == &postgres::error::SqlState::LOCK_NOT_AVAILABLE)
+}
+
 fn is_password_authentication_failure(error: &anyhow::Error) -> bool {
     error.chain().any(|source| {
         source
@@ -395,6 +401,14 @@ mod tests {
     fn password_authentication_failure_requires_sqlstate() {
         let error = anyhow::anyhow!("password authentication failed for user \"gobby\"");
         assert!(!is_password_authentication_failure(&error));
+    }
+
+    #[test]
+    fn lock_timeout_sqlstate_is_55p03() {
+        assert_eq!(
+            postgres::error::SqlState::LOCK_NOT_AVAILABLE.code(),
+            "55P03"
+        );
     }
 
     #[test]

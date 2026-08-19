@@ -339,9 +339,11 @@ step_workflow:
         If the plan is sound, approve it with
         approve_review(stage_name="planning", round_number=..., findings=[],
         routing_decisions={...}, manifest_entries=[...],
-        coverage_attestation={...}, evidence_id=...). Proceed directly to
-        end_agent_run. The staged path needs no send_message — the verdict tools
-        carry the result. Use escalate_task
+        coverage_attestation={...}, evidence_id=...). After a successful
+        verdict, transition to the terminate step. Do not call
+        gobby-agents:end_agent_run from review; terminate is the only
+        termination call. The staged path needs no send_message — the
+        verdict tools carry the result. Use escalate_task
         only for true human-intervention blockers.
       allowed_tools: "all"
       blocked_mcp_tools:

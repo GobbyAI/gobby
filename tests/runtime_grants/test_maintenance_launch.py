@@ -134,3 +134,39 @@ async def test_open_async_yields_launch(monkeypatch: pytest.MonkeyPatch, tmp_pat
         assert opened is launch
 
     assert len(credentials.revoked) == 1
+
+
+@pytest.mark.asyncio
+async def test_open_async_double_cancel_during_entry_still_exits(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    import asyncio
+
+    handshake = _Handshake()
+    credentials = _RecordingCredentials()
+    factory = _factory(handshake, credentials)
+    launch = ManagedLaunch(grant_path=tmp_path / "grant.json", env={})
+    monkeypatch.setattr(
+        "gobby.runtime_grants.maintenance.materialize_managed_launch",
+        lambda *_args, **_kwargs: launch,
+    )
+    real_to_thread = asyncio.to_thread
+
+    async def slow_to_thread(func: Any, *args: Any, **kwargs: Any) -> Any:
+        if getattr(func, "__name__", "") == "__enter__":
+            await asyncio.sleep(0.05)
+        return await real_to_thread(func, *args, **kwargs)
+
+    monkeypatch.setattr("gobby.runtime_grants.maintenance.asyncio.to_thread", slow_to_thread)
+
+    async def _run() -> None:
+        async with factory.open_async("project-1", timeout_seconds=1):
+            pass
+
+    task = asyncio.create_task(_run())
+    await asyncio.sleep(0.01)
+    task.cancel()
+    task.cancel()
+    with pytest.raises(asyncio.CancelledError):
+        await task
+    assert len(credentials.revoked) == 1

@@ -9,6 +9,8 @@ import tempfile
 from collections.abc import AsyncIterator, Iterator
 from contextlib import asynccontextmanager, contextmanager
 from pathlib import Path
+from types import TracebackType
+from typing import Any
 from uuid import uuid4
 
 from gobby.runtime_grants.handshake import HandshakeService
@@ -16,6 +18,20 @@ from gobby.runtime_grants.launch import ManagedLaunch, materialize_managed_launc
 from gobby.storage.managed_credentials import ManagedCredentialManager
 
 logger = logging.getLogger(__name__)
+
+
+async def _await_exit(
+    cm: Any,
+    exc_type: type[BaseException] | None,
+    exc: BaseException | None,
+    tb: TracebackType | None,
+) -> object:
+    task = asyncio.ensure_future(asyncio.shield(asyncio.to_thread(cm.__exit__, exc_type, exc, tb)))
+    try:
+        return await task
+    except asyncio.CancelledError:
+        await task
+        raise
 
 
 class HandshakeMaintenanceLaunchFactory:
@@ -75,16 +91,16 @@ class HandshakeMaintenanceLaunchFactory:
             launch = await asyncio.shield(enter_task)
         except asyncio.CancelledError as cancel:
             try:
-                await enter_task
+                await asyncio.shield(enter_task)
             except BaseException as exc:
-                await asyncio.to_thread(cm.__exit__, type(exc), exc, exc.__traceback__)
+                await _await_exit(cm, type(exc), exc, exc.__traceback__)
                 raise cancel from exc
-            await asyncio.to_thread(cm.__exit__, type(cancel), cancel, cancel.__traceback__)
+            await _await_exit(cm, type(cancel), cancel, cancel.__traceback__)
             raise
         try:
             yield launch
         except BaseException as exc:
-            await asyncio.shield(asyncio.to_thread(cm.__exit__, type(exc), exc, exc.__traceback__))
+            await _await_exit(cm, type(exc), exc, exc.__traceback__)
             raise
         else:
-            await asyncio.shield(asyncio.to_thread(cm.__exit__, None, None, None))
+            await _await_exit(cm, None, None, None)

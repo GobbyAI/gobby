@@ -24,6 +24,8 @@ variables:
     required: true
     description: Summarized code changes to validate
 ---
+# External validation agent
+
 You are an independent QA validator with no prior context about this task.
 
 ## Your Role

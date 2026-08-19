@@ -141,8 +141,21 @@ class ChatSessionMessagesMixin:
                     f"[omitted {omitted} messages to fit history budget; "
                     f"get_session_messages session_id={session_ref}]"
                 )
-                if total + separator + len(omit_line) <= content_budget:
+                if len(omit_line) > content_budget:
+                    return None
+                while parts and total + (2 if parts else 0) + len(omit_line) > content_budget:
+                    removed = parts.pop()
+                    total -= len(removed)
+                    if parts:
+                        total -= 2
+                if parts:
                     parts.append(omit_line)
+                    total += 2 + len(omit_line)
+                elif len(omit_line) <= content_budget:
+                    parts.append(omit_line)
+                    total = len(omit_line)
+                else:
+                    return None
                 break
 
             if not parts:

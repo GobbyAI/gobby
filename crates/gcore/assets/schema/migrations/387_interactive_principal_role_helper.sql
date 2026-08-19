@@ -73,6 +73,10 @@ BEGIN
         RAISE EXCEPTION 'interactive principal requires a project id'
             USING ERRCODE = '22023';
     END IF;
+    IF requested_expires_at IS NULL THEN
+        RAISE EXCEPTION 'managed principal expiry must be in the future'
+            USING ERRCODE = '22023';
+    END IF;
     IF requested_expires_at <= clock_timestamp() THEN
         RAISE EXCEPTION 'managed principal expiry must be in the future'
             USING ERRCODE = '22023';
@@ -218,6 +222,10 @@ BEGIN
     END IF;
     IF requested_project_id IS NULL THEN
         RAISE EXCEPTION 'interactive principal requires a project id'
+            USING ERRCODE = '22023';
+    END IF;
+    IF requested_expires_at IS NULL THEN
+        RAISE EXCEPTION 'managed principal expiry must be in the future'
             USING ERRCODE = '22023';
     END IF;
     IF requested_expires_at <= clock_timestamp() THEN

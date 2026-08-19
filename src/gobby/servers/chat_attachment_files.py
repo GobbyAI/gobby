@@ -56,10 +56,7 @@ def attachment_relative_locator(project_id: str, attachment_id: str, filename: s
     """Return the files_home-relative locator persisted on new uploads."""
     safe_project = safe_path_part(project_id, "project")
     safe_name = safe_path_part(filename, "attachment")
-    return (
-        f"_personal/attachments/{safe_project}/"
-        f"{attachment_id[:2]}/{attachment_id}/{safe_name}"
-    )
+    return f"_personal/attachments/{safe_project}/{attachment_id[:2]}/{attachment_id}/{safe_name}"
 
 
 def attachment_temp_locator(project_id: str, attachment_id: str, filename: str) -> str:

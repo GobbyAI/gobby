@@ -15,16 +15,7 @@ rules:
     when: >
       not skill_loaded('impeccable')
       and event.data.get('canonical_tool_kind') == 'write'
-      and (
-        event.data.get('canonical_file_path', '').endswith(('.tsx', '.jsx', '.vue', '.svelte', '.astro', '.css', '.scss', '.html'))
-        or (
-          event.data.get('canonical_file_path', '').endswith(('.ts', '.js', '.mjs', '.cjs'))
-          and (
-            '/web/' in event.data.get('canonical_file_path', '')
-            or event.data.get('canonical_file_path', '').startswith('web/')
-          )
-        )
-      )
+      and touches_ui_design_path(event.data, tool_input)
     effects:
       - type: block
         reason: '{{ skill_fetch_directive("impeccable") }}'

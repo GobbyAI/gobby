@@ -1974,11 +1974,14 @@ class TestDigestBacklogSweep:
             ]
         )
         with patch("gobby.memory.digest.build_turn_and_digest", build):
-            await swept._sweep_digest_backlogs(swept._capture_active())
+            await swept._sweep_digest_backlogs(
+                swept._capture_active(),
+                max_batches_per_session=2,
+            )
 
-        assert build.await_count == 4
         session_calls = [call.kwargs["session_id"] for call in build.await_args_list]
-        assert session_calls == ["session-a", "session-a", "session-a", "session-b"]
+        assert session_calls[:3] == ["session-a", "session-a", "session-b"]
+        assert session_calls.count("session-a") == 2
         assert all(call.kwargs["catch_up"] is True for call in build.await_args_list)
         query, params = mock_db.fetchall.call_args.args
         assert "turn_count - COALESCE(last_digested_pair_index, 0)" in query

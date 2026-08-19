@@ -11,6 +11,7 @@ from typing import Any
 from gobby.utils.injected_context import strip_injected_context
 
 DIGEST_TURN_PATTERN = re.compile(r"^### Turn \d+.*$", re.MULTILINE)
+DIGEST_TURN_SENTINEL_RE = re.compile(r"(?m)^[ \t]*<!-- gobby:digest-turn:(\d+) -->[ \t]*$")
 FULL_REBUILD_DIGEST_TURN_THRESHOLD = 20
 
 
@@ -29,6 +30,18 @@ def digest_turns(digest_markdown: str | None) -> list[str]:
     """Split rolling digest markdown into complete turn blocks."""
     if not isinstance(digest_markdown, str) or not digest_markdown.strip():
         return []
+
+    sentinels = list(DIGEST_TURN_SENTINEL_RE.finditer(digest_markdown))
+    if sentinels:
+        turns: list[str] = []
+        for index, match in enumerate(sentinels):
+            end = (
+                sentinels[index + 1].start()
+                if index + 1 < len(sentinels)
+                else len(digest_markdown)
+            )
+            turns.append(digest_markdown[match.start() : end].strip())
+        return turns
 
     headings = DIGEST_TURN_PATTERN.findall(digest_markdown)
     if not headings:

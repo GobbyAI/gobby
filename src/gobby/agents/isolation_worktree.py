@@ -244,17 +244,19 @@ class WorktreeIsolationHandler(IsolationHandler):
         Prepends isolation context to help the agent understand it's
         working in a worktree, not the main repository.
         """
-        warning = f"""Worktree context — you are working in an isolated git worktree, not the main repository.
-- Branch: {ctx.branch_name}
-- Worktree path: {ctx.cwd}
-- Main repo: {ctx.extra.get("main_repo_path", "unknown")}
-
-Changes in this worktree are isolated from the main repository.
-Commit your changes to the worktree branch when done.
-
----
-
-"""
+        warning = (
+            "Worktree context — you are working in an isolated git worktree, "
+            "not the main repository.\n"
+            f"- Branch: {ctx.branch_name}\n"
+            f"- Worktree path: {ctx.cwd}\n"
+            f"- Main repo: {ctx.extra.get('main_repo_path', 'unknown')}\n"
+            "\n"
+            "Changes in this worktree are isolated from the main repository.\n"
+            "Commit your changes to the worktree branch when done.\n"
+            "\n"
+            "---\n"
+            "\n"
+        )
         return warning + original_prompt
 
     def _generate_worktree_path(self, branch_name: str, project_name: str) -> str:

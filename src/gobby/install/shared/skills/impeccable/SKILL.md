@@ -223,7 +223,8 @@ Step 4. Cross-check the result. The right font for an "elegant" brief is not nec
 </font_selection_procedure>
 
 <typography_rules>
-Use a modular type scale with fluid sizing (clamp) on headings.
+Use a modular type scale with fluid sizing (clamp) for marketing/content
+headings. Use fixed rem scales for app UI and dashboard headings.
 Vary font weights and sizes to create clear visual hierarchy.
 Vary your font choices across projects. If you used a serif display font on the last project, look for a sans, monospace, or display face on this one.
 
@@ -328,6 +329,7 @@ Avoid rounded rectangles with generic drop shadows. Safe, forgettable, could be 
 Avoid modals unless there's truly no better alternative. Modals are lazy.
 
 ### Motion
+
 → *Consult [motion reference](references/motion-design.md) for timing, easing, and reduced motion.*
 
 Focus on high-impact moments: one well-orchestrated page load with staggered reveals creates more delight than scattered micro-interactions.
@@ -339,6 +341,7 @@ Focus on high-impact moments: one well-orchestrated page load with staggered rev
 - Avoid bounce and elastic easing. They feel dated and tacky; real objects decelerate smoothly.
 
 ### Interaction
+
 → *Consult [interaction reference](references/interaction-design.md) for forms, focus, and loading patterns.*
 
 Make interactions feel fast. Use optimistic UI: update immediately, sync later.
@@ -350,6 +353,7 @@ Make interactions feel fast. Use optimistic UI: update immediately, sync later.
 - Avoid making every button primary. Use ghost buttons, text links, secondary styles; hierarchy matters.
 
 ### Responsive
+
 → *Consult [responsive reference](references/responsive-design.md) for mobile-first, fluid design, and container queries.*
 
 - Use container queries (@container) for component-level responsiveness.
@@ -357,6 +361,7 @@ Make interactions feel fast. Use optimistic UI: update immediately, sync later.
 - Keep critical functionality on mobile. Adapt the interface, don't amputate it.
 
 ### UX Writing
+
 → *Consult [ux-writing reference](references/ux-writing.md) for labels, errors, and empty states.*
 
 - Make every word earn its place.

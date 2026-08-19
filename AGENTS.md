@@ -12,16 +12,16 @@ how the system behaves so you can work with it instead of being surprised by it.
 
 ## Working Rules
 
-1. **Tool discovery.** Use context-aware progressive discovery through the MCP proxy:
+1. Tool discovery. Use context-aware progressive discovery through the MCP proxy:
    call leased known tools directly, `get_tool_schema` first for known unleased tools,
    `list_tools` only for unknown tool names, `list_mcp_servers` only for unknown
    servers. Each step is its own top-level tool — never call one step through another.
    Skill bootstrap tools (`get_skill`, `list_skills`, `search_skills`) are exempt.
    This keeps schemas out of context until needed; the proxy validates every call.
-2. **Tasks before edits.** Create or claim a Gobby task before editing files (research,
+2. Tasks before edits. Create or claim a Gobby task before editing files (research,
    plan mode, and Q&A need no task). Edits are attributed to your task and session,
    which is what makes close gates and shared-worktree safety work.
-3. **Closing a leaf task is a checklist**: a linked commit, no uncommitted
+3. Closing a leaf task is a checklist: a linked commit, no uncommitted
    task-attributed files, a clean validation run visible in your session transcript,
    and a bounded criteria review. If you changed something, commit it — the stop hook
    holds your turn open while a task is claimed, so close before stopping. Escalate
@@ -37,26 +37,26 @@ how the system behaves so you can work with it instead of being surprised by it.
    diagnostics, and paths via `gobby-agents:send_message`; if no owner resolves, tell
    the user. Failures confined to those foreign paths don't block your close gates
    once a passing scoped rerun against owned or clean paths proves the confinement.
-5. **Monolith ceiling.** Hand-maintained production `.py/.ts/.tsx/.css/.rs/.js/.mjs/.cjs/.sh`
+5. Monolith ceiling. Hand-maintained production `.py/.ts/.tsx/.css/.rs/.js/.mjs/.cjs/.sh`
    files stay under 1,000 lines (exactly 1,000 violates it). Hooks block
    threshold-crossing writes until you load `decompose-monolith`; finish the
    decomposition inside the current task and session — deferred refactor tasks are
    prohibited. Tests, docs, generated/vendored sources, baselines, and fixtures are
    excluded.
-6. **Plans are decision-complete.** Resolve open questions before finalizing a plan;
+6. Plans are decision-complete. Resolve open questions before finalizing a plan;
    plans are for execution, not exploration.
-7. **Least mechanism, whole problem.** Correctness and completeness first — no
+7. Least mechanism, whole problem. Correctness and completeness first — no
    root-cause dodges or partial fixes. Among complete solutions, pick the one with the
    least unjustified mechanism.
-8. **Templates are not live config.** Bundled templates under
+8. Templates are not live config. Bundled templates under
    `src/gobby/install/shared/` sync to DB registry tables; the DB is the source of
    truth for what's active. Check the installed row before declaring a rule enabled or
    disabled.
-9. **Prefer `gcode`** over grep/rg/sed/awk for code search and navigation — the code
+9. Prefer `gcode` over grep/rg/sed/awk for code search and navigation — the code
    index returns ranked, token-cheap results, and hooks redirect raw grep anyway.
-10. **No backward compatibility.** 0.5.0 has not shipped; there is nothing to preserve.
-11. **Agent depth limit of 5** — no deeper recursive agent chains.
-12. **Cross-session messaging** goes through `gobby-agents:send_message`. Reserve
+10. No backward compatibility. 0.5.0 has not shipped; there is nothing to preserve.
+11. Agent depth limit of 5 — no deeper recursive agent chains.
+12. Cross-session messaging goes through `gobby-agents:send_message`. Reserve
     `gobby-sessions:send_keys` for terminal control.
 
 ## Development Commands
@@ -72,8 +72,8 @@ uv run ruff format src/          # format
 uv run ruff check src/           # lint
 uv run mypy src/                 # type check (repo gate is src/ only)
 uv run gobby test-types audit tests/ --baseline .gobby/test-types-baseline.json --fail-on-new
-uv run pytest tests/tasks/test_validation.py -v          # focused test file
-uv run pytest tests/workflows/ --cov=gobby --cov-report=term-missing
+GOBBY_TEST_PROTECT=1 uv run pytest tests/tasks/test_validation.py -v          # focused test file
+GOBBY_TEST_PROTECT=1 uv run pytest tests/workflows/ --cov=gobby --cov-report=term-missing
 uv run gobby pipelines list      # pipelines: list / run / approve / reject / import
 uv run gobby build <plan_or_task>  # opt a plan/epic/leaf into state dispatch
 ```
@@ -123,21 +123,21 @@ state inconsistent.
 
 ## Architecture Facts
 
-- **Templates vs enforcement**: see `src/gobby/install/shared/CLAUDE.md` for the
+- Templates vs enforcement: see `src/gobby/install/shared/CLAUDE.md` for the
   sync/override contract (rule 8 above is the short version).
-- **Dispatch**: stage-manifest dispatch enters via `gobby build` (CLI, MCP, HTTP all
+- Dispatch: stage-manifest dispatch enters via `gobby build` (CLI, MCP, HTTP all
   call `src/gobby/build/service.py`). Read `src/gobby/dispatch/CLAUDE.md` before
   touching dispatch, build, or stage-registry code.
-- **Rust workspace** (`crates/`): `gobby-code`→`gcode`, `gobby-daemon`→`gdaemon`,
+- Rust workspace (`crates/`): `gobby-code`→`gcode`, `gobby-daemon`→`gdaemon`,
   `gobby-hooks`→`ghook`, `gobby-wiki`→`gwiki`, shared `gobby-core`. The daemon shells
   out to the installed `~/.gobby/bin/` binaries, so a crate change is live only after
   rebuild and reinstall — and install via a new inode (`cp` to a dotfile, `mv -f` over
   the name): macOS kills processes that exec an in-place-overwritten signed binary.
   Load the `rust` skill before editing Rust; conventions live in `crates/CLAUDE.md`.
-- **Key paths**: `~/.gobby/bootstrap.yaml` (ports, bind host, PostgreSQL `database_url`,
+- Key paths: `~/.gobby/bootstrap.yaml` (ports, bind host, PostgreSQL `database_url`,
   owner-only 0600), `~/.gobby/logs/`, `.gobby/project.json` (project metadata),
   `~/.gobby/backups/<project-uuid>/tasks.jsonl` (machine-local backup, never committed).
-- **Database access**: hub transaction boundary with psycopg `%s` placeholders —
+- Database access: hub transaction boundary with psycopg `%s` placeholders —
   `with self.db.transaction() as conn: conn.execute("... VALUES (%s, %s)", (a, b))`.
 
 ## Design Context

@@ -110,6 +110,40 @@ async def test_get_schema_executes_under_resolved_session() -> None:
     registry.get_schema.assert_called_once_with("search_memories")
 
 
+@pytest.mark.parametrize(
+    ("server_name", "tool_name"),
+    [
+        ("gobby", "call_tool"),
+        ("?", "mcp__gobby__call_tool"),
+    ],
+)
+async def test_get_schema_does_not_probe_unconfigured_proxy_namespace(
+    server_name: str, tool_name: str
+) -> None:
+    server = _make_server()
+    server._internal_manager.is_internal.return_value = False
+    server.mcp_manager.has_server.return_value = False
+    server.tool_proxy.get_tool_schema = AsyncMock(
+        return_value={
+            "success": False,
+            "error": "server_name='gobby' is not a real server",
+        }
+    )
+
+    with patch(
+        "gobby.servers.routes.mcp.endpoints.request_context.resolve_and_seed_contexts",
+        return_value=SeededContextTokens(resolved_project_id=PROJECT_ID),
+    ):
+        result = await get_tool_schema(
+            _make_request({"server_name": server_name, "tool_name": tool_name}),
+            server,
+        )
+
+    assert result["success"] is False
+    server.mcp_manager.get_tool_info.assert_not_called()
+    server.tool_proxy.get_tool_schema.assert_awaited_once_with("gobby", "call_tool")
+
+
 @pytest.mark.parametrize("endpoint", ["call", "proxy"])
 async def test_tool_calls_use_resolved_session_ownership(endpoint: str) -> None:
     server = _make_server()

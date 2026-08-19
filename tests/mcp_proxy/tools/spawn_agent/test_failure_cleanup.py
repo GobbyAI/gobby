@@ -181,11 +181,13 @@ async def test_terminate_does_not_sigkill_after_process_exits() -> None:
     with (
         patch.object(cleanup_module, "os") as mock_os,
         patch.object(cleanup_module, "asyncio") as mock_asyncio,
+        patch.object(cleanup_module, "_pid_starttime", side_effect=["stamp", None]),
     ):
         mock_os.kill.side_effect = fake_kill
         mock_asyncio.sleep = AsyncMock()
         await _failure_cleanup._terminate_spawn_process(
             pid=4242,
+            expected_starttime="stamp",
             tmux_session_name=None,
             tmux_socket_name=None,
             tmux_socket_path=None,
@@ -211,6 +213,7 @@ async def test_terminate_sigkills_only_when_pid_still_alive() -> None:
         mock_asyncio.sleep = AsyncMock()
         await _failure_cleanup._terminate_spawn_process(
             pid=4242,
+            expected_starttime="Mon Jan  1 00:00:00 2026",
             tmux_session_name=None,
             tmux_socket_name=None,
             tmux_socket_path=None,

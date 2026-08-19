@@ -25,6 +25,8 @@ class _ToolInventoryManager(Protocol):
 
     def cache_discovered_tools(self, server_name: str, tools: list[dict[str, Any]]) -> None: ...
 
+    def has_server(self, server_name: str) -> bool: ...
+
     async def ensure_connected(self, server_name: str) -> ClientSession: ...
 
     async def get_client_session(self, server_name: str) -> ClientSession: ...
@@ -72,6 +74,8 @@ async def list_tools_for_server(
     logger: logging.Logger,
 ) -> list[dict[str, Any]]:
     """List tools for one server and retry after stale-session failures."""
+    if not manager.has_server(server_name):
+        raise KeyError(f"Server '{server_name}' not configured")
     try:
         session = await manager.get_client_session(server_name)
         tool_list = await manager._list_tools_from_session(session)

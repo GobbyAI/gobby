@@ -63,8 +63,6 @@ REQUIRED_DOMAIN_TOOLS = frozenset(
     }
 )
 
-pytestmark = pytest.mark.unit
-
 _REPO_ROOT = Path(__file__).resolve().parents[4]
 _CALLER_MODULES = (
     _REPO_ROOT / "src/gobby/mcp_proxy/tools/workflows/_agents.py",
@@ -79,6 +77,7 @@ def _tool_names() -> set[str]:
     return {str(tool["name"]) for tool in registry.list_tools()}
 
 
+@pytest.mark.unit
 def test_registry_inventory_matches_disposition() -> None:
     names = _tool_names()
     leftover = DELETED_TOOLS & names
@@ -88,6 +87,7 @@ def test_registry_inventory_matches_disposition() -> None:
     assert "gobby-workflows" == create_workflows_registry(loader=MagicMock()).name
 
 
+@pytest.mark.unit
 def test_get_step_status_is_registered_under_new_name() -> None:
     registry = create_workflows_registry(loader=MagicMock())
     names = {str(tool["name"]) for tool in registry.list_tools()}
@@ -128,6 +128,7 @@ async def test_evaluate_tools_cover_pipeline_and_agent(temp_db: HubDatabase) -> 
     )
 
 
+@pytest.mark.unit
 def test_sync_registry_is_canonical_fan_out() -> None:
     from gobby.sync_registry import SYNC_TARGETS, sync_bundled_content_to_db
 
@@ -138,6 +139,7 @@ def test_sync_registry_is_canonical_fan_out() -> None:
     assert "skip_types" in signature.parameters
 
 
+@pytest.mark.unit
 def test_auto_export_requires_explicit_kind() -> None:
     from gobby.mcp_proxy.tools.workflows._auto_export import (
         auto_delete_definition,
@@ -155,6 +157,7 @@ def test_auto_export_requires_explicit_kind() -> None:
     assert collision_params["kind"].default is inspect.Parameter.empty
 
 
+@pytest.mark.unit
 def test_auto_export_callers_pass_kind_explicitly() -> None:
     for path in _CALLER_MODULES:
         source = path.read_text(encoding="utf-8")
@@ -162,11 +165,13 @@ def test_auto_export_callers_pass_kind_explicitly() -> None:
         assert 'kind="' in source or "kind='" in source, f"{path} must pass kind="
 
 
+@pytest.mark.unit
 def test_definitions_module_is_gone() -> None:
     with pytest.raises(ModuleNotFoundError):
         __import__("gobby.mcp_proxy.tools.workflows._definitions")
 
 
+@pytest.mark.unit
 def test_generic_crud_suite_is_gone() -> None:
     repo = _REPO_ROOT / "tests/mcp_proxy/tools"
     assert not (repo / "test_workflow_crud.py").exists()

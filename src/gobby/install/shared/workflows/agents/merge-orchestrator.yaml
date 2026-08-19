@@ -450,6 +450,12 @@ step_workflow:
           variable: last_worker_run_id
           value: "str(tool_output.get('run_id') or tool_output.get('result', {}).get('run_id'))"
         - server: gobby-agents
+          tool: spawn_agent
+          when: "bool(tool_output.get('run_id') or tool_output.get('result', {}).get('run_id'))"
+          action: set_variable
+          variable: current_batch_run_ids
+          value: "(vars.get('current_batch_run_ids') or []) + [rid for rid in [str(tool_output.get('run_id') or tool_output.get('result', {}).get('run_id'))] if rid and rid not in (vars.get('current_batch_run_ids') or [])]"
+        - server: gobby-agents
           tool: dispatch_batch
           action: set_variable
           variable: merge_worker_completed

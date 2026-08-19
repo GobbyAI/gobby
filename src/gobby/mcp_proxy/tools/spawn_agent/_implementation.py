@@ -689,7 +689,7 @@ async def spawn_agent_impl(
         )
         try:
             spawn_result = await execute_spawn(spawn_request)
-            remember_spawn_pid(spawn_result.pid)
+            remember_spawn_pid(spawn_result.pid, run_id=run_id)
         except Exception as exc:
             cleanup_unlaunched_spawn(
                 child_session_manager,
