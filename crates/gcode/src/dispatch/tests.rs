@@ -83,3 +83,29 @@ fn invalidate_requests_projection_cleanup_services() {
         config::ServiceConfigSelection::projection_cleanup()
     );
 }
+
+#[test]
+fn degraded_freshness_warning_names_allow_stale() {
+    let line = freshness_warning(
+        false,
+        &freshness::FreshnessStatus::Degraded("disk full".to_string()),
+    )
+    .expect("degraded status should warn");
+    assert_eq!(
+        line,
+        "warning: index refresh failed (disk full); serving existing index \
+         (pass --allow-stale to skip this check)"
+    );
+    assert!(!line.contains('\n'));
+}
+
+#[test]
+fn degraded_freshness_warning_is_suppressed_when_quiet() {
+    assert_eq!(
+        freshness_warning(
+            true,
+            &freshness::FreshnessStatus::Degraded("disk full".to_string()),
+        ),
+        None
+    );
+}

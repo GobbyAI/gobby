@@ -15,10 +15,11 @@ pub enum FreshnessScope {
     Files(Vec<PathBuf>),
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub enum FreshnessStatus {
     Checked,
     SkippedBusy,
+    Degraded(String),
 }
 
 pub fn ensure_fresh(ctx: &Context, scope: FreshnessScope) -> anyhow::Result<FreshnessStatus> {
@@ -38,33 +39,14 @@ pub fn ensure_fresh(ctx: &Context, scope: FreshnessScope) -> anyhow::Result<Fres
     let _guard = FreshnessGuard::enter();
     let result =
         index_lock::with_project_lock(ctx, IndexLockPolicy::brief_freshness_try(), || {
-            match scope {
-                FreshnessScope::Project => {
-                    api::index_files(
-                        api::IndexRequest {
-                            project_root: ctx.project_root.clone(),
-                            path_filter: None,
-                            explicit_files: Vec::new(),
-                            full: false,
-                            require_cpp_semantics: false,
-                            sync_projections: false,
-                        },
-                        ctx,
-                        api::IndexOptions::default(),
-                    )?;
-                }
-                FreshnessScope::Files(paths) => {
-                    let files: Vec<PathBuf> = paths
-                        .iter()
-                        .map(|path| normalize_file_path(&ctx.project_root, path))
-                        .map(PathBuf::from)
-                        .collect();
-                    if !files.is_empty() {
+            let refresh = || -> anyhow::Result<()> {
+                match &scope {
+                    FreshnessScope::Project => {
                         api::index_files(
                             api::IndexRequest {
                                 project_root: ctx.project_root.clone(),
                                 path_filter: None,
-                                explicit_files: files,
+                                explicit_files: Vec::new(),
                                 full: false,
                                 require_cpp_semantics: false,
                                 sync_projections: false,
@@ -73,14 +55,41 @@ pub fn ensure_fresh(ctx: &Context, scope: FreshnessScope) -> anyhow::Result<Fres
                             api::IndexOptions::default(),
                         )?;
                     }
+                    FreshnessScope::Files(paths) => {
+                        let files: Vec<PathBuf> = paths
+                            .iter()
+                            .map(|path| normalize_file_path(&ctx.project_root, path))
+                            .map(PathBuf::from)
+                            .collect();
+                        if !files.is_empty() {
+                            api::index_files(
+                                api::IndexRequest {
+                                    project_root: ctx.project_root.clone(),
+                                    path_filter: None,
+                                    explicit_files: files,
+                                    full: false,
+                                    require_cpp_semantics: false,
+                                    sync_projections: false,
+                                },
+                                ctx,
+                                api::IndexOptions::default(),
+                            )?;
+                        }
+                    }
                 }
-            }
-            Ok(())
+                Ok(())
+            };
+            Ok(refresh().map_err(|error| error.to_string()))
         })?;
 
+    Ok(freshness_from_lock(result))
+}
+
+fn freshness_from_lock(result: IndexLockResult<Result<(), String>>) -> FreshnessStatus {
     match result {
-        IndexLockResult::Acquired(()) => Ok(FreshnessStatus::Checked),
-        IndexLockResult::Busy => Ok(FreshnessStatus::SkippedBusy),
+        IndexLockResult::Acquired(Ok(())) => FreshnessStatus::Checked,
+        IndexLockResult::Acquired(Err(message)) => FreshnessStatus::Degraded(message),
+        IndexLockResult::Busy => FreshnessStatus::SkippedBusy,
     }
 }
 
@@ -437,6 +446,39 @@ mod tests {
             )
             .expect("shift file");
             assert!(!symbol_slice_is_current(&ctx, &sym));
+        }
+
+        #[test]
+        #[cfg_attr(
+            not(gcode_postgres_tests),
+            ignore = "requires a PostgreSQL test database URL"
+        )]
+        #[serial_test::serial(serial_db)]
+        fn refresh_closure_failure_yields_degraded() {
+            // `ensure_fresh` maps an acquired lock whose refresh closure failed
+            // onto Degraded; hub/lock errors never reach this helper because
+            // they stay `Err` from `with_project_lock` / `project_needs_refresh`.
+            let status = freshness_from_lock(IndexLockResult::Acquired(Err(
+                "unreadable project root".to_string(),
+            )));
+            assert_eq!(
+                status,
+                FreshnessStatus::Degraded("unreadable project root".to_string())
+            );
+        }
+
+        #[test]
+        #[serial_test::serial(serial_db)]
+        fn hub_connect_failure_still_errors() {
+            let tmp = tempfile::tempdir().expect("tempdir");
+            let mut ctx = context_for(tmp.path());
+            ctx.database_url = "postgresql://gobby@/gobby_freshness_unreachable?\
+                host=/tmp/gobby-no-postgres-hub&sslmode=disable"
+                .to_string();
+
+            let error = ensure_fresh(&ctx, FreshnessScope::Project)
+                .expect_err("hub unavailability must fail closed");
+            assert!(!error.to_string().is_empty());
         }
     }
 }
