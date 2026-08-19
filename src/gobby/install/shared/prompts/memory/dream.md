@@ -35,6 +35,8 @@ Apply this to every candidate:
 
 A `delete` requires a concrete, citable obsolescence signal in your `reason` — for example: it contradicts the current truth below (removed or renamed API, superseded infrastructure, retired config key, stale daemon path); a newer related memory records a decision or state change that contradicts or supersedes this memory; it references a task, epic, branch, or migration that is completed or closed; or it bakes in a hard date that marks it as time-bound state (a test-run snapshot, an in-progress investigation, a status or progress report). High `age_days` with `access_count` at or near zero may corroborate a `delete`; a citable `delete` does not require low `access_count` when a contradiction signal exists. Absent such a signal, do not assign high `delete` confidence.
 
+Judge each candidate against its `rationale`. `rationale` is the writer's own claim about why the memory deserved to persist; `source_task_id` and `created_by_agent` say which task and agent produced it. A rationale that names a one-time event — a specific review run, test run, task, or dated status — is a concrete, citable time-bound-state signal once that event is over; `source_task_id` referring to a completed or closed task corroborates it. A `delete` or `refresh` on a candidate with a non-null rationale must quote or paraphrase that rationale in its `reason` and say why the claim no longer holds. A `NULL` rationale is a legacy row, not evidence — absence of a rationale may corroborate other signals but never justifies `delete` on its own.
+
 ## Current truth
 
 Judge each memory against the current-truth digest below. When the digest says `authoritative - complete current set`, its infrastructure stack is the complete current stack for this scope: infrastructure that contradicts the stack, or is absent from it, is a concrete stale signal. For example, under an authoritative Gobby platform digest, Neo4j contradicted by FalkorDB or MySQL contradicted by PostgreSQL is a strong `delete` or `refresh` signal.
@@ -66,6 +68,8 @@ Absent or empty `related_newer_memories` is not evidence of currentness.
 11. High `access_count` is never evidence of correctness: recall frequency measures retrieval, not truth, and a wrong-but-popular memory self-reinforces. Only `access_count` at or near zero may corroborate a `delete`; never use high `access_count` to justify `keep` against a concrete obsolescence signal.
 
 ## Candidates
+
+Each candidate includes `rationale` (the writer's own claim about why the memory deserved to persist) plus `source_task_id` and `created_by_agent` (which task and agent produced it). Legacy rows carry `"rationale": null`.
 
 {{ candidates }}
 

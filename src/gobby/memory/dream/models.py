@@ -108,6 +108,9 @@ class DreamCandidate:
     dream_due_version: int = 0
     reasons: list[str] = field(default_factory=list)
     related: tuple[RelatedMemoryEvidence, ...] = ()
+    rationale: str | None = None
+    source_task_id: str | None = None
+    created_by_agent: str | None = None
 
     def to_prompt_dict(self) -> dict[str, Any]:
         """Return compact JSON-safe context for the planner prompt."""
@@ -118,6 +121,9 @@ class DreamCandidate:
             "project_id": self.project_id,
             "source_type": self.source_type,
             "source_session_id": self.source_session_id,
+            "rationale": self.rationale,
+            "source_task_id": self.source_task_id,
+            "created_by_agent": self.created_by_agent,
             "tags": self.tags,
             "age_days": round(self.age_days, 1),
             "access_count": self.access_count,

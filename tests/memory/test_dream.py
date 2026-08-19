@@ -273,6 +273,37 @@ def test_memory_to_candidate_computes_age_from_updated_at() -> None:
     assert candidate.age_days >= 9.0
 
 
+def test_candidate_carries_rationale_and_provenance() -> None:
+    task_id = "11111111-1111-4111-8111-111111111111"
+    populated = _memory("populated")
+    populated.rationale = "Worth re-serving because it records the FalkorDB backend choice."
+    populated.source_task_id = task_id
+    populated.created_by_agent = "backend-developer"
+
+    populated_candidate = memory_to_candidate(populated, datetime.now(UTC))
+
+    assert populated_candidate.rationale == populated.rationale
+    assert populated_candidate.source_task_id == task_id
+    assert populated_candidate.created_by_agent == "backend-developer"
+    populated_prompt = populated_candidate.to_prompt_dict()
+    assert populated_prompt["rationale"] == populated.rationale
+    assert populated_prompt["source_task_id"] == task_id
+    assert populated_prompt["created_by_agent"] == "backend-developer"
+
+    legacy_candidate = memory_to_candidate(_memory("legacy"), datetime.now(UTC))
+
+    assert legacy_candidate.rationale is None
+    assert legacy_candidate.source_task_id is None
+    assert legacy_candidate.created_by_agent is None
+    legacy_prompt = legacy_candidate.to_prompt_dict()
+    assert "rationale" in legacy_prompt
+    assert "source_task_id" in legacy_prompt
+    assert "created_by_agent" in legacy_prompt
+    assert legacy_prompt["rationale"] is None
+    assert legacy_prompt["source_task_id"] is None
+    assert legacy_prompt["created_by_agent"] is None
+
+
 @pytest.mark.asyncio
 async def test_build_raw_plan_logs_non_dict_actions(
     caplog: pytest.LogCaptureFixture,
@@ -2846,6 +2877,21 @@ def test_prompt_contract_evidence_and_access_count(temp_db: HubDatabase) -> None
         "never use high `access_count` to justify `keep` against a concrete obsolescence signal"
     ) in prompt
     assert "does not require low `access_count` when a contradiction signal exists" in prompt
+
+
+def test_dream_prompt_judges_staleness_against_rationale() -> None:
+    import gobby
+
+    prompt = (Path(gobby.__file__).parent / "install/shared/prompts/memory/dream.md").read_text(
+        encoding="utf-8"
+    )
+
+    assert "the writer's own claim about why the memory deserved to persist" in prompt
+    assert "`source_task_id`" in prompt
+    assert "`created_by_agent`" in prompt
+    assert "Judge each candidate against its `rationale`" in prompt
+    assert "must quote or paraphrase that rationale" in prompt
+    assert "never justifies `delete` on its own" in prompt
 
 
 @pytest.mark.asyncio
