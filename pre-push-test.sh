@@ -225,11 +225,7 @@ start_docker_postgres_test_database() {
             --format '{{if .State.Health}}{{.State.Health.Status}}{{else}}{{.State.Status}}{{end}}' \
             "$container_id" 2>/dev/null || true)
         if [ "$health_status" = "healthy" ] || [ "$health_status" = "running" ]; then
-            printf 'postgresql://%s:%s@localhost:%s/%s\n' \
-                "${GOBBY_POSTGRES_TEST_USER:-gobby_test}" \
-                "${GOBBY_POSTGRES_TEST_PASSWORD:-gobby_test}" \
-                "${GOBBY_POSTGRES_TEST_PORT:-60892}" \
-                "${GOBBY_POSTGRES_TEST_DB:-gobby_test}"
+            existing_postgres_test_dsn
             return 0
         fi
         if [ "$health_status" = "unhealthy" ] \
@@ -248,12 +244,45 @@ start_docker_postgres_test_database() {
     return 1
 }
 
+# Isolated test stack already used by docker-compose.test.yml and any other
+# container publishing 60892 (for example gobby-postgres-test-1). Never the
+# live hub on 60891.
+existing_postgres_test_dsn() {
+    printf 'postgresql://%s:%s@localhost:%s/%s\n' \
+        "${GOBBY_POSTGRES_TEST_USER:-gobby_test}" \
+        "${GOBBY_POSTGRES_TEST_PASSWORD:-gobby_test}" \
+        "${GOBBY_POSTGRES_TEST_PORT:-60892}" \
+        "${GOBBY_POSTGRES_TEST_DB:-gobby_test}"
+}
+
+postgres_test_dsn_is_ready() {
+    local url="$1"
+    uv_run python - "$url" <<'PY' >/dev/null 2>&1
+import sys
+
+import psycopg
+
+try:
+    with psycopg.connect(sys.argv[1], connect_timeout=2) as conn:
+        conn.execute("SELECT 1")
+except Exception:
+    raise SystemExit(1)
+PY
+}
+
 # Never resolve the bootstrap database_url here: that is the hub the running
 # daemon owns, and the suite drops schemas and terminates backends on whatever
 # database it is handed.
 resolve_pytest_database_url() {
     if [ -n "${DATABASE_URL:-}" ]; then
         printf '%s\n' "$DATABASE_URL"
+        return 0
+    fi
+
+    local url
+    url=$(existing_postgres_test_dsn)
+    if postgres_test_dsn_is_ready "$url"; then
+        printf '%s\n' "$url"
         return 0
     fi
 

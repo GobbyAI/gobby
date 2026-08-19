@@ -37,6 +37,10 @@ _POSTGRES_TEST_TMPFS = (
     f",nr_inodes={_POSTGRES_TEST_TMPFS_NR_INODES}"
 )
 _POSTGRES_TEST_USER = "gobby_test"
+_DEFAULT_POSTGRES_TEST_DSN = (
+    f"postgresql://{_POSTGRES_TEST_USER}:{_POSTGRES_TEST_PASSWORD}"
+    f"@localhost:{_POSTGRES_TEST_PORT}/{_POSTGRES_TEST_DB}"
+)
 _PGAUDIT_EMISSION_PROBE = "bash .github/scripts/verify-pgaudit-emission.sh"
 _POSTGRES_SKIP_REASONS = [
     "DATABASE_URL must point at an isolated PostgreSQL test database",
@@ -304,16 +308,88 @@ def test_pre_push_resolves_and_exports_postgres_database_url_for_pytest(
 
     assert "resolve_pytest_database_url()" in script
     assert 'if [ -n "${DATABASE_URL:-}" ]; then' in script
+    assert "existing_postgres_test_dsn" in script
+    assert "postgres_test_dsn_is_ready" in script
     assert "docker_compose -f docker-compose.test.yml up -d postgres-test" in script
     assert "${GOBBY_POSTGRES_TEST_PORT:-60892}" in script
     assert "PYTEST_DATABASE_URL=$(resolve_pytest_database_url)" in script
     assert 'DATABASE_URL="$PYTEST_DATABASE_URL"' in script
     assert 'GOBBY_POSTGRES_TEST_DSN="$PYTEST_DATABASE_URL"' in script
+    resolve_fn = _bash_function(script, "resolve_pytest_database_url")
+    _assert_before(
+        resolve_fn,
+        'if postgres_test_dsn_is_ready "$url"; then',
+        "start_docker_postgres_test_database",
+    )
     _assert_before(
         script,
         "PYTEST_DATABASE_URL=$(resolve_pytest_database_url)",
         'HOME="$PYTEST_ISOLATION_DIR/home"',
     )
+
+
+def test_pre_push_reuses_reachable_existing_test_dsn(repo_root: Path, tmp_path: Path) -> None:
+    completed = _run_resolve_harness(
+        repo_root,
+        tmp_path,
+        body=(
+            "postgres_test_dsn_is_ready() { return 0; }\n"
+            "start_docker_postgres_test_database() { echo STARTED >&2; return 1; }\n"
+            "unset DATABASE_URL\n"
+            "resolve_pytest_database_url\n"
+        ),
+        env=_env_without_database_url(),
+    )
+
+    assert completed.returncode == 0, completed.stderr
+    assert completed.stdout.strip() == _DEFAULT_POSTGRES_TEST_DSN
+    assert "STARTED" not in completed.stderr
+
+
+def test_pre_push_starts_compose_when_existing_test_dsn_is_down(
+    repo_root: Path, tmp_path: Path
+) -> None:
+    completed = _run_resolve_harness(
+        repo_root,
+        tmp_path,
+        body=(
+            "postgres_test_dsn_is_ready() { return 1; }\n"
+            "start_docker_postgres_test_database() {\n"
+            "    echo COMPOSE >&2\n"
+            "    existing_postgres_test_dsn\n"
+            "}\n"
+            "unset DATABASE_URL\n"
+            "resolve_pytest_database_url\n"
+        ),
+        env=_env_without_database_url(),
+    )
+
+    assert completed.returncode == 0, completed.stderr
+    assert completed.stdout.strip() == _DEFAULT_POSTGRES_TEST_DSN
+    assert "COMPOSE" in completed.stderr
+
+
+def test_pre_push_prefers_exported_database_url_over_existing_test_dsn(
+    repo_root: Path, tmp_path: Path
+) -> None:
+    exported = "postgresql://custom:pw@127.0.0.1:1/custom"
+    env = _env_without_database_url()
+    env["DATABASE_URL"] = exported
+    completed = _run_resolve_harness(
+        repo_root,
+        tmp_path,
+        body=(
+            "postgres_test_dsn_is_ready() { echo READY >&2; return 0; }\n"
+            "start_docker_postgres_test_database() { echo STARTED >&2; return 1; }\n"
+            "resolve_pytest_database_url\n"
+        ),
+        env=env,
+    )
+
+    assert completed.returncode == 0, completed.stderr
+    assert completed.stdout.strip() == exported
+    assert "READY" not in completed.stderr
+    assert "STARTED" not in completed.stderr
 
 
 def test_pre_push_never_resolves_the_live_hub_dsn_for_pytest(repo_root: Path) -> None:
@@ -482,6 +558,49 @@ def _load_yaml(path: Path) -> Mapping[str, Any]:
 
 def _load_pre_push_script(repo_root: Path) -> str:
     return (repo_root / "pre-push-test.sh").read_text()
+
+
+def _bash_function(script: str, name: str) -> str:
+    header = f"{name}() {{"
+    start = script.index(header)
+    end = script.index("\n}\n", start)
+    return script[start : end + 3]
+
+
+def _env_without_database_url() -> dict[str, str]:
+    return {key: value for key, value in os.environ.items() if key != "DATABASE_URL"}
+
+
+def _run_resolve_harness(
+    repo_root: Path,
+    tmp_path: Path,
+    *,
+    body: str,
+    env: dict[str, str],
+) -> subprocess.CompletedProcess[str]:
+    script = _load_pre_push_script(repo_root)
+    harness = tmp_path / "resolve-dsn.sh"
+    harness.write_text(
+        "\n".join(
+            (
+                "#!/usr/bin/env bash",
+                "set -euo pipefail",
+                _bash_function(script, "existing_postgres_test_dsn"),
+                _bash_function(script, "resolve_pytest_database_url"),
+                body,
+            )
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+    return subprocess.run(
+        ("bash", str(harness)),
+        cwd=tmp_path,
+        check=False,
+        capture_output=True,
+        text=True,
+        env=env,
+    )
 
 
 def _load_pre_push_short_script(repo_root: Path) -> str:
