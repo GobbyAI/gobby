@@ -72,7 +72,8 @@ pub fn run(
             // (#17711). Failures fold into degraded reports, never an error.
             let projections = sync::sync_after_index_bounded(
                 &target_ctx,
-                &outcome.indexed_file_paths,
+                &outcome.graph_file_paths,
+                &outcome.vector_file_paths,
                 sync::DEFAULT_PROJECTION_SYNC_STALL_TIMEOUT,
                 &mut projection_progress,
             );
@@ -519,6 +520,28 @@ mod tests {
         }
 
         insta::assert_json_snapshot!("index_outcome", redacted);
+    }
+
+    #[test]
+    fn index_promotion_projects_owner_on_graph_only() {
+        let source = include_str!("index.rs");
+        assert!(
+            source.contains("&outcome.graph_file_paths"),
+            "gcode index must graph-sync promoted owners"
+        );
+        assert!(
+            source.contains("&outcome.vector_file_paths"),
+            "gcode index must vector-sync only this run's indexed files"
+        );
+        let sync_call = source
+            .split("let projections = sync::sync_after_index_bounded(")
+            .nth(1)
+            .and_then(|rest| rest.split(");").next())
+            .expect("sync_after_index_bounded call");
+        assert!(
+            !sync_call.contains("indexed_file_paths"),
+            "gcode index must not pass indexed_file_paths into dual-backend sync"
+        );
     }
 
     #[test]

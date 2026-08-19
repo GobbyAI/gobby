@@ -17,7 +17,10 @@ use super::lifecycle::{
     attach_projection_sync, current_file_state, get_orphan_files, get_stale_files,
     refresh_project_stats,
 };
-use super::local_imports::{resolve_local_import_calls, resolve_project_local_import_calls};
+use super::local_imports::{
+    resolve_local_import_calls, resolve_local_import_inheritance,
+    resolve_project_local_import_calls, resolve_project_local_import_inheritance,
+};
 use super::overlay::index_overlay_files;
 use super::types::{IndexOptions, IndexOutcome, IndexProgressSink, IndexRequest};
 use super::util::{
@@ -114,6 +117,7 @@ fn index_discovered_files(
     outcome.durations.discovery_ms = discovery_start.elapsed().as_millis() as u64;
 
     let indexing_start = Instant::now();
+    let mut adopted_paths = Vec::new();
     let mut progress = ActiveIndexProgress::new(options.progress.take(), eligible_files);
     for path in &candidates {
         let rel = match relative_path(path, root_path) {
@@ -131,6 +135,7 @@ fn index_discovered_files(
             && let Some(content_hash) = current_files.hashes.get(&rel)
             && api::adopt_file_state(conn, &machine_id, project_id, &rel, content_hash)?
         {
+            adopted_paths.push(rel.clone());
             outcome.skipped_files += 1;
             progress.advance(&rel);
             continue;
@@ -169,6 +174,7 @@ fn index_discovered_files(
             && let Some(content_hash) = current_files.hashes.get(&rel)
             && api::adopt_file_state(conn, &machine_id, project_id, &rel, content_hash)?
         {
+            adopted_paths.push(rel.clone());
             outcome.skipped_files += 1;
             progress.advance(&rel);
             continue;
@@ -185,6 +191,13 @@ fn index_discovered_files(
     if request.full && request.path_filter.is_none() {
         resolve_project_local_import_calls(conn, project_id)?;
     }
+    let mut trigger_paths = outcome.indexed_file_paths.clone();
+    trigger_paths.extend(adopted_paths);
+    let mut promoted_owners = resolve_local_import_inheritance(conn, project_id, &trigger_paths)?;
+    if request.full && request.path_filter.is_none() {
+        promoted_owners.extend(resolve_project_local_import_inheritance(conn, project_id)?);
+    }
+    outcome.record_promotion_owners(promoted_owners);
     outcome.durations.indexing_ms = indexing_start.elapsed().as_millis() as u64;
 
     let stats_start = Instant::now();
@@ -282,6 +295,7 @@ fn index_explicit_files_with_connection(
 
     let indexing_start = Instant::now();
     let routed_file_count = routed_files.len();
+    let mut adopted_paths = Vec::new();
     let mut progress = ActiveIndexProgress::new(options.progress.take(), routed_file_count);
     for (abs, route) in routed_files {
         let rel = relative_path(&abs, root_path).ok();
@@ -290,6 +304,7 @@ fn index_explicit_files_with_connection(
             && let Ok(content_hash) = crate::index::hasher::file_content_hash(&abs)
             && api::adopt_file_state(conn, &machine_id, project_id, rel, &content_hash)?
         {
+            adopted_paths.push(rel.to_string());
             outcome.skipped_files += 1;
             progress.advance(rel);
             continue;
@@ -325,6 +340,10 @@ fn index_explicit_files_with_connection(
     // Resolve cross-file local-import calls now that every file's symbols are in
     // the hub. Order-independent and bounded by this run's changed files.
     resolve_local_import_calls(conn, project_id, &outcome.indexed_file_paths)?;
+    let mut trigger_paths = outcome.indexed_file_paths.clone();
+    trigger_paths.extend(adopted_paths);
+    let promoted_owners = resolve_local_import_inheritance(conn, project_id, &trigger_paths)?;
+    outcome.record_promotion_owners(promoted_owners);
     outcome.durations.indexing_ms = indexing_start.elapsed().as_millis() as u64;
 
     let stats_start = Instant::now();

@@ -8,7 +8,8 @@ pub use crate::index::indexer::{
 
 use crate::db::{id_param, id_params, opt_id_param};
 use crate::models::{
-    CallRelation, ContentChunk, ImportRelation, IndexedFile, IndexedProject, Symbol,
+    CallRelation, ContentChunk, ImportRelation, IndexedFile, IndexedProject, InheritanceRelation,
+    Symbol,
 };
 
 const SYMBOL_UPSERT_BATCH_SIZE: usize = 500;
@@ -20,6 +21,7 @@ pub struct CodeFactWriteRequest {
     pub symbols: usize,
     pub imports: usize,
     pub calls: usize,
+    pub inheritance: usize,
     pub chunks: usize,
 }
 
@@ -29,18 +31,26 @@ pub struct CodeFactWriteSummary {
     pub symbols_written: usize,
     pub imports_written: usize,
     pub calls_written: usize,
+    pub inheritance_written: usize,
     pub chunks_written: usize,
     pub graph_sync_pending: bool,
     pub vectors_sync_pending: bool,
 }
 
 impl CodeFactWriteSummary {
-    pub fn for_file(symbols: usize, imports: usize, calls: usize, chunks: usize) -> Self {
+    pub fn for_file(
+        symbols: usize,
+        imports: usize,
+        calls: usize,
+        inheritance: usize,
+        chunks: usize,
+    ) -> Self {
         Self {
             files_written: 1,
             symbols_written: symbols,
             imports_written: imports,
             calls_written: calls,
+            inheritance_written: inheritance,
             chunks_written: chunks,
             graph_sync_pending: true,
             vectors_sync_pending: true,
@@ -95,6 +105,11 @@ pub fn delete_content_version_non_symbol_facts(
     )?;
     conn.execute(
         "DELETE FROM code_calls
+         WHERE project_id = $1 AND file_path = $2 AND content_hash = $3",
+        &[&project_id, &file_path, &content_hash],
+    )?;
+    conn.execute(
+        "DELETE FROM code_inheritance
          WHERE project_id = $1 AND file_path = $2 AND content_hash = $3",
         &[&project_id, &file_path, &content_hash],
     )?;
@@ -505,6 +520,113 @@ fn insert_call(
         ],
     )?;
     Ok(rows as usize)
+}
+
+pub fn upsert_inheritance(
+    conn: &mut impl GenericClient,
+    project_id: &str,
+    file_path: &str,
+    content_hash: &str,
+    inheritance: &[InheritanceRelation],
+) -> anyhow::Result<usize> {
+    let project_uuid = id_param(project_id)?;
+    conn.execute(
+        "DELETE FROM code_inheritance
+         WHERE project_id = $1 AND file_path = $2 AND content_hash = $3",
+        &[&project_uuid, &file_path, &content_hash],
+    )?;
+    let mut rows_affected = 0usize;
+    for relation in inheritance {
+        rows_affected += insert_inheritance(conn, project_id, content_hash, relation)?;
+    }
+    Ok(rows_affected)
+}
+
+fn insert_inheritance(
+    conn: &mut impl GenericClient,
+    project_id: &str,
+    content_hash: &str,
+    relation: &InheritanceRelation,
+) -> anyhow::Result<usize> {
+    let project_id = id_param(project_id)?;
+    let source_symbol_id = opt_id_param(relation.source_symbol_id.as_deref().unwrap_or(""))?;
+    let target_symbol_id = opt_id_param(relation.target_symbol_id.as_deref().unwrap_or(""))?;
+    let rows = conn.execute(
+        "INSERT INTO code_inheritance
+         (project_id, source_symbol_id, source_name, source_kind, source_external_module,
+          target_symbol_id, target_name, target_kind, target_external_module,
+          heritage_kind, file_path, content_hash, line)
+         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13)
+         ON CONFLICT (
+            project_id, file_path, content_hash,
+            source_symbol_id, source_name, source_kind, source_external_module,
+            target_symbol_id, target_name, target_kind, target_external_module,
+            heritage_kind, line
+         ) DO NOTHING",
+        &[
+            &project_id,
+            &source_symbol_id,
+            &relation.source_name,
+            &relation.source_kind.as_str(),
+            &relation.source_external_module.as_deref().unwrap_or(""),
+            &target_symbol_id,
+            &relation.target_name,
+            &relation.target_kind.as_str(),
+            &relation.target_external_module.as_deref().unwrap_or(""),
+            &relation.heritage_kind.as_rel_type(),
+            &relation.file_path,
+            &content_hash,
+            &to_i32(relation.line),
+        ],
+    )?;
+    Ok(rows as usize)
+}
+
+/// Replace a pending inheritance row with an independently promoted form.
+/// A source hit clears only `source_external_module`; a target hit clears only
+/// `target_external_module`. A miss is not rewritten here.
+pub fn promote_inheritance_row(
+    conn: &mut impl GenericClient,
+    project_id: &str,
+    original: &InheritanceRelation,
+    resolved: &InheritanceRelation,
+) -> anyhow::Result<()> {
+    let project_uuid = id_param(project_id)?;
+    let source_symbol_id = opt_id_param(original.source_symbol_id.as_deref().unwrap_or(""))?;
+    let target_symbol_id = opt_id_param(original.target_symbol_id.as_deref().unwrap_or(""))?;
+    conn.execute(
+        "DELETE FROM code_inheritance
+         WHERE project_id = $1
+           AND file_path = $2
+           AND content_hash = $3
+           AND source_symbol_id IS NOT DISTINCT FROM $4
+           AND source_name = $5
+           AND source_kind = $6
+           AND source_external_module = $7
+           AND target_symbol_id IS NOT DISTINCT FROM $8
+           AND target_name = $9
+           AND target_kind = $10
+           AND target_external_module = $11
+           AND heritage_kind = $12
+           AND line = $13",
+        &[
+            &project_uuid,
+            &original.file_path,
+            &original.content_hash,
+            &source_symbol_id,
+            &original.source_name,
+            &original.source_kind.as_str(),
+            &original.source_external_module.as_deref().unwrap_or(""),
+            &target_symbol_id,
+            &original.target_name,
+            &original.target_kind.as_str(),
+            &original.target_external_module.as_deref().unwrap_or(""),
+            &original.heritage_kind.as_rel_type(),
+            &to_i32(original.line),
+        ],
+    )?;
+    insert_inheritance(conn, project_id, &original.content_hash, resolved)?;
+    Ok(())
 }
 
 /// Replace a pending `local_import` call row with its resolved form. The exact

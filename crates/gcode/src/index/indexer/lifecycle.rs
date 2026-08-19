@@ -19,7 +19,8 @@ pub(super) fn attach_projection_sync(outcome: &mut IndexOutcome, request: &Index
 
     outcome.projection_sync = Some(sync::pending_after_code_fact_write(ProjectionSyncRequest {
         project_id: outcome.project_id.clone(),
-        file_paths: outcome.indexed_file_paths.clone(),
+        graph_file_paths: outcome.graph_file_paths.clone(),
+        vector_file_paths: outcome.vector_file_paths.clone(),
         targets: vec![ProjectionTarget::Graph, ProjectionTarget::Vectors],
     }));
 }

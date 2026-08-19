@@ -2,7 +2,8 @@ use std::time::{SystemTime, UNIX_EPOCH};
 
 use crate::db;
 use crate::models::{
-    CODE_INDEX_UUID_NAMESPACE, CallRelation, ImportRelation, IndexedFile, IndexedProject, Symbol,
+    CODE_INDEX_UUID_NAMESPACE, CallRelation, CallTargetKind, HeritageKind, ImportRelation,
+    IndexedFile, IndexedProject, InheritanceRelation, Symbol,
 };
 
 use super::api;
@@ -380,6 +381,66 @@ mod serial_db {
         assert_eq!(import_count, 1);
         assert_eq!(call_count, 1);
     }
+
+    #[test]
+    #[serial_test::serial(serial_db)]
+    #[cfg_attr(
+        not(gcode_postgres_tests),
+        ignore = "requires a PostgreSQL test database URL"
+    )]
+    fn api_upsert_inheritance_reports_rows_inserted_not_input_len() {
+        let (mut conn, database_url) = connect_test_db();
+        let project_id = unique_test_project_id("gcode-api-inheritance-upsert");
+        cleanup_project(&mut conn, &project_id).expect("pre-clean test project rows");
+        let _cleanup = ProjectCleanup {
+            database_url,
+            project_id: project_id.clone(),
+        };
+        seed_project(&mut conn, &project_id);
+
+        let rel = "src/lib.rs";
+        api::upsert_file(
+            &mut conn,
+            &indexed_file(&project_id, rel, "file-hash", 0, 16),
+        )
+        .expect("seed indexed file");
+        let source_id = Symbol::make_id(&project_id, rel, "file-hash", "Derived", "class", 0);
+        let relation = InheritanceRelation {
+            source_symbol_id: Some(source_id),
+            source_name: "Derived".to_string(),
+            source_kind: CallTargetKind::Symbol,
+            source_external_module: None,
+            target_symbol_id: None,
+            target_name: "Base".to_string(),
+            target_kind: CallTargetKind::Unresolved,
+            target_external_module: None,
+            heritage_kind: HeritageKind::Inherits,
+            file_path: rel.to_string(),
+            content_hash: "file-hash".to_string(),
+            line: 3,
+        };
+        assert_eq!(
+            api::upsert_inheritance(
+                &mut conn,
+                &project_id,
+                rel,
+                "file-hash",
+                &[relation.clone(), relation],
+            )
+            .expect("upsert duplicate inheritance"),
+            1
+        );
+
+        let project_uuid = db::id_param(&project_id).expect("test project id is a uuid");
+        let inheritance_count: i64 = conn
+            .query_one(
+                "SELECT COUNT(*) FROM code_inheritance WHERE project_id = $1",
+                &[&project_uuid],
+            )
+            .expect("count inheritance")
+            .get(0);
+        assert_eq!(inheritance_count, 1);
+    }
 }
 
 fn connect_test_db() -> (postgres::Client, String) {
@@ -533,6 +594,10 @@ fn cleanup_project(conn: &mut postgres::Client, project_id: &str) -> anyhow::Res
     )?;
     conn.execute(
         "DELETE FROM code_calls WHERE project_id = $1",
+        &[&project_id],
+    )?;
+    conn.execute(
+        "DELETE FROM code_inheritance WHERE project_id = $1",
         &[&project_id],
     )?;
     conn.execute(

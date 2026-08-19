@@ -209,6 +209,8 @@ pub(super) fn write_parsed_file_facts(
     let imports_indexed =
         sink.upsert_imports(project_id, rel, content_hash, &parse_result.imports)?;
     let calls_indexed = sink.upsert_calls(project_id, rel, content_hash, &parse_result.calls)?;
+    let _inheritance_indexed =
+        sink.upsert_inheritance(project_id, rel, content_hash, &parse_result.inheritance)?;
     let unresolved_targets_indexed = parse_result
         .calls
         .iter()

@@ -591,6 +591,10 @@ fn cleanup_summary_preservation_project(
         &[&project_id],
     )?;
     tx.execute(
+        "DELETE FROM code_inheritance WHERE project_id = $1",
+        &[&project_id],
+    )?;
+    tx.execute(
         "DELETE FROM code_imports WHERE project_id = $1",
         &[&project_id],
     )?;

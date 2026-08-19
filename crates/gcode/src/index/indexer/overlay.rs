@@ -15,7 +15,7 @@ use crate::visibility;
 
 use super::file::{create_semantic_resolver_if_needed, index_content_only, index_file};
 use super::lifecycle::{attach_projection_sync, refresh_project_stats};
-use super::local_imports::resolve_local_import_calls;
+use super::local_imports::{resolve_local_import_calls, resolve_local_import_inheritance};
 use super::sink::{CodeFactSink, PostgresCodeFactSink};
 use super::types::{IndexOutcome, IndexRequest, OverlayIndexMetadata};
 use super::util::{
@@ -170,6 +170,7 @@ pub(super) fn index_overlay_files(
         create_semantic_resolver_if_needed(root_path, &ast_reindex, request.require_cpp_semantics)?;
 
     let indexing_start = Instant::now();
+    let mut adopted_paths = Vec::new();
     for rel in rels {
         let abs = root_path.join(&rel);
         let parent = parent_files.get(&rel);
@@ -187,6 +188,7 @@ pub(super) fn index_overlay_files(
             && let Some(hash) = current_hash
             && api::adopt_file_state(conn, &machine_id, overlay_project_id, &rel, hash)?
         {
+            adopted_paths.push(rel.clone());
             outcome.skipped_files += 1;
             continue;
         }
@@ -234,6 +236,11 @@ pub(super) fn index_overlay_files(
     // Calls into inherited (not re-indexed) files miss and degrade to unresolved,
     // matching pre-resolution behavior; no project-wide file scan is performed.
     resolve_local_import_calls(conn, overlay_project_id, &outcome.indexed_file_paths)?;
+    let mut trigger_paths = outcome.indexed_file_paths.clone();
+    trigger_paths.extend(adopted_paths);
+    let promoted_owners =
+        resolve_local_import_inheritance(conn, overlay_project_id, &trigger_paths)?;
+    outcome.record_promotion_owners(promoted_owners);
     outcome.durations.indexing_ms = indexing_start.elapsed().as_millis() as u64;
 
     let stats_start = Instant::now();

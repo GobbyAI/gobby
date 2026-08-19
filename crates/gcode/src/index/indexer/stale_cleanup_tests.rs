@@ -179,6 +179,21 @@ mod serial_db {
     }
 }
 
+#[test]
+fn cleanup_project_deletes_code_inheritance() {
+    let source = include_str!("stale_cleanup_tests.rs");
+    let calls = source
+        .find("DELETE FROM code_calls")
+        .expect("cleanup deletes code_calls");
+    let inheritance = source
+        .find("DELETE FROM code_inheritance")
+        .expect("cleanup deletes code_inheritance");
+    assert!(
+        inheritance > calls,
+        "code_inheritance cleanup must sit next to code_calls"
+    );
+}
+
 fn connect_test_db() -> (postgres::Client, String) {
     let database_url = crate::test_env::postgres_test_database_url("stale cleanup tests");
     let conn = db::connect_readwrite(&database_url)
@@ -261,6 +276,10 @@ fn cleanup_project(conn: &mut postgres::Client, project_id: &str) -> anyhow::Res
     )?;
     tx.execute(
         "DELETE FROM code_calls WHERE project_id = $1",
+        &[&project_id],
+    )?;
+    tx.execute(
+        "DELETE FROM code_inheritance WHERE project_id = $1",
         &[&project_id],
     )?;
     tx.execute(

@@ -211,18 +211,25 @@ fn sync_file_graph(
         return Err(GraphSyncContractError::project_not_indexed(ctx, file_path).into());
     }
     code_graph::require_graph_reads(ctx)?;
-    if !db::mark_graph_sync_attempted(&mut conn, &ctx.project_id, file_path)? {
+    let Some(attempt) = db::mark_graph_sync_attempted(&mut conn, &ctx.project_id, file_path)?
+    else {
         if allow_missing_indexed_file {
             return Ok(GraphFileSyncOutcome::SkippedMissingIndexedFile {
                 reconcile_failures: projection::reconcile_deleted_file(ctx, file_path),
             });
         }
         return Err(GraphSyncContractError::indexed_file_not_found(ctx, file_path).into());
-    }
+    };
     let facts = db::read_graph_file_facts(&mut conn, &ctx.project_id, file_path)?;
     if has_no_graph_facts(&facts.imports, &facts.definitions, &facts.calls) {
         code_graph::sync_no_fact_file(ctx, &facts.file_path, &facts.content_hash)?;
-        db::mark_graph_synced(&mut conn, &ctx.project_id, file_path)?;
+        db::mark_graph_synced(
+            &mut conn,
+            &ctx.project_id,
+            file_path,
+            &attempt.content_hash,
+            attempt.attempted_at,
+        )?;
         return Ok(GraphFileSyncOutcome::SkippedNoGraphFacts);
     }
     // Per-file sync intentionally does NOT run project-wide orphan cleanup:
@@ -240,7 +247,13 @@ fn sync_file_graph(
         &facts.calls,
         false,
     )?;
-    db::mark_graph_synced(&mut conn, &ctx.project_id, file_path)?;
+    db::mark_graph_synced(
+        &mut conn,
+        &ctx.project_id,
+        file_path,
+        &attempt.content_hash,
+        attempt.attempted_at,
+    )?;
     Ok(GraphFileSyncOutcome::Synced {
         relationships_written,
         symbols_synced: facts.definitions.len(),
@@ -285,9 +298,10 @@ fn rebuild_project_graph(ctx: &Context) -> anyhow::Result<GraphLifecycleOutput> 
     let mut error_kind = None;
     code_graph::with_code_graph(ctx, |graph| {
         for file_path in &file_paths {
-            match db::mark_graph_sync_attempted(&mut conn, &ctx.project_id, file_path) {
-                Ok(true) => {}
-                Ok(false) => {
+            let attempt = match db::mark_graph_sync_attempted(&mut conn, &ctx.project_id, file_path)
+            {
+                Ok(Some(attempt)) => attempt,
+                Ok(None) => {
                     files_skipped += 1;
                     for failure in projection::reconcile_deleted_file(ctx, file_path) {
                         error_kind.get_or_insert_with(|| "projection_reconcile_failed".to_string());
@@ -304,13 +318,19 @@ fn rebuild_project_graph(ctx: &Context) -> anyhow::Result<GraphLifecycleOutput> 
                     errors.push(format!("{file_path}: {err}"));
                     continue;
                 }
-            }
+            };
 
             let synced_symbols = match (|| -> anyhow::Result<usize> {
                 let facts = db::read_graph_file_facts(&mut conn, &ctx.project_id, file_path)?;
                 if has_no_graph_facts(&facts.imports, &facts.definitions, &facts.calls) {
                     graph.sync_no_fact_file(&facts.file_path, &facts.content_hash)?;
-                    db::mark_graph_synced(&mut conn, &ctx.project_id, file_path)?;
+                    db::mark_graph_synced(
+                        &mut conn,
+                        &ctx.project_id,
+                        file_path,
+                        &attempt.content_hash,
+                        attempt.attempted_at,
+                    )?;
                     return Ok(0);
                 }
                 graph.sync_file(
@@ -321,7 +341,13 @@ fn rebuild_project_graph(ctx: &Context) -> anyhow::Result<GraphLifecycleOutput> 
                     &facts.calls,
                     false,
                 )?;
-                db::mark_graph_synced(&mut conn, &ctx.project_id, file_path)?;
+                db::mark_graph_synced(
+                    &mut conn,
+                    &ctx.project_id,
+                    file_path,
+                    &attempt.content_hash,
+                    attempt.attempted_at,
+                )?;
                 Ok(facts.definitions.len())
             })() {
                 Ok(symbols) => symbols,

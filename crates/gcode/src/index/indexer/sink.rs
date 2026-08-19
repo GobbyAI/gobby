@@ -3,7 +3,9 @@ use std::path::Path;
 use postgres::GenericClient;
 
 use crate::index::api;
-use crate::models::{CallRelation, ContentChunk, ImportRelation, IndexedFile, Symbol};
+use crate::models::{
+    CallRelation, ContentChunk, ImportRelation, IndexedFile, InheritanceRelation, Symbol,
+};
 
 pub(super) trait CodeFactSink {
     fn delete_file_non_symbol_facts(
@@ -34,6 +36,13 @@ pub(super) trait CodeFactSink {
         file_path: &str,
         content_hash: &str,
         calls: &[CallRelation],
+    ) -> anyhow::Result<usize>;
+    fn upsert_inheritance(
+        &mut self,
+        project_id: &str,
+        file_path: &str,
+        content_hash: &str,
+        inheritance: &[InheritanceRelation],
     ) -> anyhow::Result<usize>;
     fn upsert_content_chunks(&mut self, chunks: &[ContentChunk]) -> anyhow::Result<usize>;
 }
@@ -110,6 +119,16 @@ where
         calls: &[CallRelation],
     ) -> anyhow::Result<usize> {
         api::upsert_calls(self.conn, project_id, file_path, content_hash, calls)
+    }
+
+    fn upsert_inheritance(
+        &mut self,
+        project_id: &str,
+        file_path: &str,
+        content_hash: &str,
+        inheritance: &[InheritanceRelation],
+    ) -> anyhow::Result<usize> {
+        api::upsert_inheritance(self.conn, project_id, file_path, content_hash, inheritance)
     }
 
     fn upsert_content_chunks(&mut self, chunks: &[ContentChunk]) -> anyhow::Result<usize> {

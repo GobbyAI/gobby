@@ -1,9 +1,19 @@
+use std::time::SystemTime;
+
 use anyhow::bail;
 use postgres::GenericClient;
 
 use super::ids::{id_param, id_string, opt_id_string};
-use crate::models::{CallRelation, CallTargetKind, ImportRelation, Symbol};
+use crate::models::{
+    CallRelation, CallTargetKind, HeritageKind, ImportRelation, InheritanceRelation, Symbol,
+};
 use crate::utils::i64_to_usize;
+
+#[derive(Debug, Clone)]
+pub struct GraphSyncAttempt {
+    pub content_hash: String,
+    pub attempted_at: SystemTime,
+}
 
 #[derive(Debug, Clone)]
 pub struct GraphFileFacts {
@@ -100,10 +110,10 @@ pub fn mark_graph_sync_attempted(
     conn: &mut impl GenericClient,
     project_id: &str,
     file_path: &str,
-) -> anyhow::Result<bool> {
+) -> anyhow::Result<Option<GraphSyncAttempt>> {
     let machine_id = id_param(&gobby_core::machine::read_local_machine_id()?)?;
     let project_id = id_param(project_id)?;
-    let updated = conn.execute(
+    let row = conn.query_opt(
         "UPDATE code_indexed_files cif
          SET graph_synced = false, graph_sync_attempted_at = NOW()
          FROM code_indexed_file_states cifs
@@ -111,31 +121,90 @@ pub fn mark_graph_sync_attempted(
            AND cifs.project_id = $2 AND cifs.file_path = $3
            AND cif.project_id = cifs.project_id
            AND cif.file_path = cifs.file_path
-           AND cif.content_hash = cifs.content_hash",
+           AND cif.content_hash = cifs.content_hash
+         RETURNING cif.content_hash, cif.graph_sync_attempted_at",
         &[&machine_id, &project_id, &file_path],
     )?;
-    Ok(updated > 0)
+    row.map(|row| {
+        Ok(GraphSyncAttempt {
+            content_hash: row.try_get("content_hash")?,
+            attempted_at: row.try_get("graph_sync_attempted_at")?,
+        })
+    })
+    .transpose()
 }
 
 pub fn mark_graph_synced(
     conn: &mut impl GenericClient,
     project_id: &str,
     file_path: &str,
+    content_hash: &str,
+    attempted_at: SystemTime,
 ) -> anyhow::Result<bool> {
     let machine_id = id_param(&gobby_core::machine::read_local_machine_id()?)?;
     let project_id = id_param(project_id)?;
-    let updated = conn.execute(
+    let succeeded: bool = conn
+        .query_one(
+            "WITH cas AS (
+                UPDATE code_indexed_files cif
+                SET graph_synced = true
+                FROM code_indexed_file_states cifs
+                WHERE cifs.machine_id = $1
+                  AND cifs.project_id = $2 AND cifs.file_path = $3
+                  AND cif.project_id = cifs.project_id
+                  AND cif.file_path = cifs.file_path
+                  AND cif.content_hash = cifs.content_hash
+                  AND cif.content_hash = $4
+                  AND cif.graph_sync_attempted_at IS NOT DISTINCT FROM $5
+                RETURNING cif.file_path
+             ), dirty AS (
+                UPDATE code_indexed_files cif
+                SET graph_synced = false, graph_sync_attempted_at = NULL
+                FROM code_indexed_file_states cifs
+                WHERE NOT EXISTS (SELECT 1 FROM cas)
+                  AND cifs.machine_id = $1
+                  AND cifs.project_id = $2 AND cifs.file_path = $3
+                  AND cif.project_id = cifs.project_id
+                  AND cif.file_path = cifs.file_path
+                  AND cif.content_hash = cifs.content_hash
+                RETURNING cif.file_path
+             )
+             SELECT EXISTS (SELECT 1 FROM cas) AS succeeded",
+            &[
+                &machine_id,
+                &project_id,
+                &file_path,
+                &content_hash,
+                &attempted_at,
+            ],
+        )?
+        .try_get("succeeded")?;
+    Ok(succeeded)
+}
+
+/// Clear graph-sync completion on the active content row without stamping a
+/// cooloff. Promotion uses this so pending recovery can project the new typed
+/// edge; do not call [`mark_graph_sync_attempted`] for that dirty.
+pub fn dirty_graph_sync_for_file(
+    conn: &mut impl GenericClient,
+    project_id: &str,
+    file_path: &str,
+    content_hash: &str,
+) -> anyhow::Result<()> {
+    let project_id = id_param(project_id)?;
+    conn.execute(
         "UPDATE code_indexed_files cif
-         SET graph_synced = true, graph_sync_attempted_at = NOW()
+         SET graph_synced = false, graph_sync_attempted_at = NULL
          FROM code_indexed_file_states cifs
-         WHERE cifs.machine_id = $1
-           AND cifs.project_id = $2 AND cifs.file_path = $3
+         WHERE cifs.project_id = $1
+           AND cifs.file_path = $2
+           AND cifs.content_hash = $3
            AND cif.project_id = cifs.project_id
            AND cif.file_path = cifs.file_path
            AND cif.content_hash = cifs.content_hash",
-        &[&machine_id, &project_id, &file_path],
+        &[&project_id, &file_path, &content_hash],
     )?;
-    Ok(updated > 0)
+    Ok(())
 }
 
 /// Reset graph sync flags for every machine's referenced content rows.
@@ -378,6 +447,89 @@ pub fn read_project_local_import_calls(
     rows.iter().map(call_relation_from_row).collect()
 }
 
+const INHERITANCE_SELECT: &str = "ci.source_symbol_id, ci.source_name, ci.source_kind,
+                ci.source_external_module, ci.target_symbol_id, ci.target_name,
+                ci.target_kind, ci.target_external_module, ci.heritage_kind,
+                ci.file_path, ci.content_hash, ci.line::BIGINT AS line";
+
+fn inheritance_relation_from_row(row: &postgres::Row) -> anyhow::Result<InheritanceRelation> {
+    let source_kind: String = row.try_get("source_kind")?;
+    let target_kind: String = row.try_get("target_kind")?;
+    let source_external_module: String = row.try_get("source_external_module")?;
+    let target_external_module: String = row.try_get("target_external_module")?;
+    let heritage_kind: String = row.try_get("heritage_kind")?;
+    Ok(InheritanceRelation {
+        source_symbol_id: opt_id_string(row, "source_symbol_id")?,
+        source_name: row.try_get("source_name")?,
+        source_kind: call_target_kind_from_str(&source_kind)?,
+        source_external_module: non_empty(source_external_module),
+        target_symbol_id: opt_id_string(row, "target_symbol_id")?,
+        target_name: row.try_get("target_name")?,
+        target_kind: call_target_kind_from_str(&target_kind)?,
+        target_external_module: non_empty(target_external_module),
+        heritage_kind: heritage_kind_from_str(&heritage_kind)?,
+        file_path: row.try_get("file_path")?,
+        content_hash: row.try_get("content_hash")?,
+        line: i64_to_usize(row.try_get("line")?, "line")?,
+    })
+}
+
+/// Pending LocalImport inheritance rows owned by `file_paths` on this machine's
+/// active content hash. Inactive retained rows are excluded.
+pub fn read_local_import_inheritance(
+    conn: &mut impl GenericClient,
+    project_id: &str,
+    file_paths: &[String],
+) -> anyhow::Result<Vec<InheritanceRelation>> {
+    if file_paths.is_empty() {
+        return Ok(Vec::new());
+    }
+    let machine_id = id_param(&gobby_core::machine::read_local_machine_id()?)?;
+    let project_id = id_param(project_id)?;
+    let rows = conn.query(
+        &format!(
+            "SELECT {INHERITANCE_SELECT}
+             FROM code_inheritance ci
+             JOIN code_indexed_file_states cifs
+               ON cifs.project_id = ci.project_id
+              AND cifs.file_path = ci.file_path
+              AND cifs.content_hash = ci.content_hash
+              AND cifs.machine_id = $1
+             WHERE ci.project_id = $2 AND ci.file_path = ANY($3)
+               AND (ci.source_kind = 'local_import' OR ci.target_kind = 'local_import')
+             ORDER BY ci.file_path, ci.line, ci.source_name, ci.target_name"
+        ),
+        &[&machine_id, &project_id, &file_paths],
+    )?;
+    rows.iter().map(inheritance_relation_from_row).collect()
+}
+
+/// Project-wide pending LocalImport inheritance rows on this machine's active
+/// content. Used for provider-later recovery and full-index sweeps.
+pub fn read_project_local_import_inheritance(
+    conn: &mut impl GenericClient,
+    project_id: &str,
+) -> anyhow::Result<Vec<InheritanceRelation>> {
+    let machine_id = id_param(&gobby_core::machine::read_local_machine_id()?)?;
+    let project_id = id_param(project_id)?;
+    let rows = conn.query(
+        &format!(
+            "SELECT {INHERITANCE_SELECT}
+             FROM code_inheritance ci
+             JOIN code_indexed_file_states cifs
+               ON cifs.project_id = ci.project_id
+              AND cifs.file_path = ci.file_path
+              AND cifs.content_hash = ci.content_hash
+              AND cifs.machine_id = $1
+             WHERE ci.project_id = $2
+               AND (ci.source_kind = 'local_import' OR ci.target_kind = 'local_import')
+             ORDER BY ci.file_path, ci.line, ci.source_name, ci.target_name"
+        ),
+        &[&machine_id, &project_id],
+    )?;
+    rows.iter().map(inheritance_relation_from_row).collect()
+}
+
 /// Resolve a cross-file local-import call target to its canonical `code_symbols`
 /// id by `(candidate files, original name)`. Returns the real indexed id (no
 /// UUID recompute, so a phantom edge is structurally impossible), or `None` when
@@ -400,13 +552,19 @@ pub fn resolve_local_callee_symbol_id(
     if target_files.is_empty() || name.is_empty() {
         return Ok(None);
     }
+    let machine_id = id_param(&gobby_core::machine::read_local_machine_id()?)?;
     let project_id = id_param(project_id)?;
     let rows = conn.query(
-        "SELECT id, kind, parent_symbol_id
-         FROM code_symbols
-         WHERE project_id = $1 AND file_path = ANY($2) AND name = $3
-         ORDER BY file_path, byte_start",
-        &[&project_id, &target_files, &name],
+        "SELECT s.id, s.kind, s.parent_symbol_id
+         FROM code_symbols s
+         JOIN code_indexed_file_states cifs
+           ON cifs.project_id = s.project_id
+          AND cifs.file_path = s.file_path
+          AND cifs.content_hash = s.file_content_hash
+          AND cifs.machine_id = $1
+         WHERE s.project_id = $2 AND s.file_path = ANY($3) AND s.name = $4
+         ORDER BY s.file_path, s.byte_start",
+        &[&machine_id, &project_id, &target_files, &name],
     )?;
 
     let candidates: Vec<LocalCalleeCandidate> = rows
@@ -542,6 +700,15 @@ fn non_empty(value: String) -> Option<String> {
     if value.is_empty() { None } else { Some(value) }
 }
 
+fn heritage_kind_from_str(value: &str) -> anyhow::Result<HeritageKind> {
+    match value {
+        "INHERITS" => Ok(HeritageKind::Inherits),
+        "EXTENDS" => Ok(HeritageKind::Extends),
+        "IMPLEMENTS" => Ok(HeritageKind::Implements),
+        other => bail!("unknown code_inheritance.heritage_kind `{other}`"),
+    }
+}
+
 fn call_target_kind_from_str(value: &str) -> anyhow::Result<CallTargetKind> {
     match value {
         "symbol" => Ok(CallTargetKind::Symbol),
@@ -586,6 +753,10 @@ fn safe_symbol_select_alias(alias: &str) -> bool {
         .is_some_and(|ch| ch == '_' || ch.is_ascii_alphabetic())
         && chars.all(|ch| ch == '_' || ch.is_ascii_alphanumeric())
 }
+
+#[cfg(test)]
+#[path = "queries_cas_tests.rs"]
+mod queries_cas_tests;
 
 #[cfg(test)]
 mod tests {

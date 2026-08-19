@@ -54,6 +54,7 @@ fn invalidate_postgres_deletes_only_machine_state() {
         "DELETE FROM code_content_chunks",
         "DELETE FROM code_imports",
         "DELETE FROM code_calls",
+        "DELETE FROM code_inheritance",
         "DELETE FROM code_indexed_projects",
     ] {
         assert!(

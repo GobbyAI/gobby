@@ -77,6 +77,10 @@ pub struct IndexOutcome {
     pub tombstones_indexed: usize,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub indexed_file_paths: Vec<String>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub graph_file_paths: Vec<String>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub vector_file_paths: Vec<String>,
     pub durations: IndexDurations,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub degraded: Vec<IndexDegradation>,
@@ -124,6 +128,17 @@ impl IndexOutcome {
 
     pub(super) fn set_unsupported_file_types(&mut self, unsupported: Vec<UnsupportedFileType>) {
         self.unsupported_file_types = unsupported;
+    }
+
+    pub(super) fn record_promotion_owners(&mut self, owners: impl IntoIterator<Item = String>) {
+        self.vector_file_paths.clone_from(&self.indexed_file_paths);
+        let mut graph = self.indexed_file_paths.clone();
+        for owner in owners {
+            if !graph.iter().any(|path| path == &owner) {
+                graph.push(owner);
+            }
+        }
+        self.graph_file_paths = graph;
     }
 }
 

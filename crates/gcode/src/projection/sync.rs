@@ -21,7 +21,8 @@ pub enum ProjectionTarget {
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct ProjectionSyncRequest {
     pub project_id: String,
-    pub file_paths: Vec<String>,
+    pub graph_file_paths: Vec<String>,
+    pub vector_file_paths: Vec<String>,
     pub targets: Vec<ProjectionTarget>,
 }
 
@@ -34,7 +35,8 @@ pub trait ProjectionProgressSink {
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct ProjectionSyncStatus {
     pub project_id: String,
-    pub file_paths: Vec<String>,
+    pub graph_file_paths: Vec<String>,
+    pub vector_file_paths: Vec<String>,
     pub graph_pending: bool,
     pub vectors_pending: bool,
 }
@@ -162,17 +164,19 @@ pub fn pending_after_code_fact_write(request: ProjectionSyncRequest) -> Projecti
         graph_pending: request.targets.contains(&ProjectionTarget::Graph),
         vectors_pending: request.targets.contains(&ProjectionTarget::Vectors),
         project_id: request.project_id,
-        file_paths: request.file_paths,
+        graph_file_paths: request.graph_file_paths,
+        vector_file_paths: request.vector_file_paths,
     }
 }
 
 pub fn sync_after_index(
     ctx: &Context,
-    file_paths: &[String],
+    graph_file_paths: &[String],
+    vector_file_paths: &[String],
     progress: &mut dyn ProjectionProgressSink,
 ) -> anyhow::Result<ProjectionSyncReports> {
-    let graph = sync_graph_files(ctx, file_paths, Some(progress))?;
-    let vector = sync_vector_files(ctx, file_paths, Some(progress))?;
+    let graph = sync_graph_files(ctx, graph_file_paths, Some(progress))?;
+    let vector = sync_vector_files(ctx, vector_file_paths, Some(progress))?;
     Ok(ProjectionSyncReports { graph, vector })
 }
 
@@ -257,14 +261,16 @@ impl ProjectionProgressSink for ChannelProgressSink {
 /// never fail the index command or hold the lock (#17711).
 pub fn sync_after_index_bounded(
     ctx: &Context,
-    file_paths: &[String],
+    graph_file_paths: &[String],
+    vector_file_paths: &[String],
     stall_timeout: Duration,
     progress: &mut dyn ProjectionProgressSink,
 ) -> ProjectionSyncReports {
     let worker_ctx = ctx.clone();
-    let worker_files = file_paths.to_vec();
+    let worker_graph = graph_file_paths.to_vec();
+    let worker_vectors = vector_file_paths.to_vec();
     run_projection_phase_bounded(stall_timeout, progress, move |sink| {
-        sync_after_index(&worker_ctx, &worker_files, sink)
+        sync_after_index(&worker_ctx, &worker_graph, &worker_vectors, sink)
     })
 }
 
@@ -603,9 +609,9 @@ fn sync_graph_file(
     graph: &mut code_graph::CodeGraph<'_>,
     file_path: &str,
 ) -> anyhow::Result<ProjectionFileSyncOutcome> {
-    if !db::mark_graph_sync_attempted(conn, &ctx.project_id, file_path)? {
+    let Some(attempt) = db::mark_graph_sync_attempted(conn, &ctx.project_id, file_path)? else {
         return Ok(ProjectionFileSyncOutcome::SkippedMissingIndexedFile);
-    }
+    };
     let facts = db::read_graph_file_facts(conn, &ctx.project_id, file_path)?;
     graph.sync_file(
         &facts.file_path,
@@ -615,7 +621,13 @@ fn sync_graph_file(
         &facts.calls,
         false,
     )?;
-    if !db::mark_graph_synced(conn, &ctx.project_id, file_path)? {
+    if !db::mark_graph_synced(
+        conn,
+        &ctx.project_id,
+        file_path,
+        &attempt.content_hash,
+        attempt.attempted_at,
+    )? {
         return Ok(ProjectionFileSyncOutcome::SkippedMissingIndexedFile);
     }
     Ok(ProjectionFileSyncOutcome::Synced {
