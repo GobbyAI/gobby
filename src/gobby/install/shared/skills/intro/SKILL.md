@@ -29,8 +29,9 @@ repository.
 Writers never create the `files_home` root. Provision that hub bind directory
 first, then install, then migrate, then start.
 
-1. On the hub host, create the existing absolute bind directory (for example
-   `/var/lib/gobby/files`). Do not use `$GOBBY_HOME/personal`.
+1. On the hub host, create the existing absolute bind directory. Standalone
+   and laptop hubs use `$GOBBY_HOME/files`. Do not use `$GOBBY_HOME` itself
+   or `$GOBBY_HOME/personal`.
 2. Local hub install: `gobby install --files-home <existing-abs-dir>`.
 3. Remote install requires `hub_daemon_url` in the node bootstrap and a copy of
    the hub's existing `local_cli_token`. The remote installer does not generate

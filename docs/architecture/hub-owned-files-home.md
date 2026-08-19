@@ -43,7 +43,9 @@ template. These files are story B / Stage 3 semantics, not M0 execution.
 
 **Locked mechanism**
 
-- One bind directory on the hub host (for example `/var/lib/gobby/files`).
+- One bind directory on the hub host. Standalone and laptop hubs use
+  `$GOBBY_HOME/files` (every install already has `$GOBBY_HOME`). A dedicated
+  server may still bind `/var/lib/gobby/files`.
 - Compose may *declare* that path as `gobby_files` so pack / hub-backup /
   restore inventory it beside datastore volumes. That is a lifecycle entry,
   not “put Markdown inside `gobby_postgres_data`.”
@@ -53,8 +55,8 @@ template. These files are story B / Stage 3 semantics, not M0 execution.
   `~/wiki`, and never cache a canonical copy. They read and write through
   the hub owner’s HTTP surfaces, proxied if the UI still talks to a local
   daemon. The remote owner URL is `hub_daemon_url`, not `daemon_url`.
-- Standalone (story A) uses the same tree on the one machine. It is still
-  not `$GOBBY_HOME/personal`.
+- Standalone (story A) uses the same tree at `$GOBBY_HOME/files`. It is
+  still not `$GOBBY_HOME/personal`.
 - No file-sync product and no per-node mount. A Tailscale/NFS view on every
   laptop recreates “a wiki on every machine.”
 
@@ -125,7 +127,9 @@ fixture vaults keep using explicit `gwiki --out` paths.
 ## Resolution
 
 - Bootstrap on the hub-local daemon: `files_home: <absolute path>`. Required
-  when `datastore_mode: local`. Never default to `$GOBBY_HOME/...`.
+  when `datastore_mode: local`. The standalone recommendation is
+  `$GOBBY_HOME/files`. Never default to `$GOBBY_HOME` itself or
+  `$GOBBY_HOME/personal`.
 - Remote-mode / node bootstrap has no `files_home` and must not mkdir one.
   The remote owner URL is `hub_daemon_url`, not `daemon_url`. File routes
   proxy to that origin, or the client talks to the hub daemon directly.

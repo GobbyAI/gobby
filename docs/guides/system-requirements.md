@@ -173,14 +173,15 @@ absolute directory on the hub first, then install, then migrate, then start.
 
 ### Hub host
 
-1. Create the bind directory yourself (for example `/var/lib/gobby/files`).
-   It must already exist, must not be a filesystem root, and must be
-   disjoint from `$GOBBY_HOME/personal`, `$GOBBY_HOME/projects`, and
-   `~/wiki/topics`.
+1. Create the bind directory yourself. On a standalone or laptop hub use
+   `$GOBBY_HOME/files` (typically `~/.gobby/files`). A dedicated server may
+   use `/var/lib/gobby/files`. It must already exist, must not be a
+   filesystem root, and must be disjoint from `$GOBBY_HOME/personal`,
+   `$GOBBY_HOME/projects`, and `~/wiki/topics`.
 2. Install against that directory:
 
    ```bash
-   uv run gobby install --files-home /var/lib/gobby/files
+   uv run gobby install --files-home "$HOME/.gobby/files"
    ```
 
 3. Upgrade or stop every remote before migrate. Copy leftover node-local
