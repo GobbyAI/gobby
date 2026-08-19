@@ -636,6 +636,7 @@ def _memory_to_payload(memory: Memory) -> dict[str, Any]:
         "tags": list(memory.tags or []),
         "created_at": datetime_to_required_iso(memory.created_at),
         "updated_at": datetime_to_required_iso(memory.updated_at),
+        "rationale": memory.rationale,
     }
     for key in ("similarity", "search_via", "ranking_score", "ranking_mode"):
         value = getattr(memory, key, None)

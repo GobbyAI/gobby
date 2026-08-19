@@ -68,6 +68,7 @@ def emit_search_debug(
                 ranking_mode=mem.ranking_mode,
                 graph_score=graph_scores.get(mem.id),
                 content_hash=hashlib.sha256(mem.content.encode("utf-8")).hexdigest(),
+                rationale=getattr(mem, "rationale", None),
             )
             for rank, mem in enumerate(returned)
         ],

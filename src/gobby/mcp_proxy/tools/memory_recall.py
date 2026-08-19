@@ -194,6 +194,7 @@ def _next_chunk(
     memory_id = memory.get("id")
     content = memory.get("content")
     memory_type = memory.get("memory_type")
+    rationale = memory.get("rationale")
     if not isinstance(memory_id, str) or not isinstance(content, str):
         raise TypeError("invalid queued memory body")
     if content_offset > len(content):
@@ -204,20 +205,21 @@ def _next_chunk(
         next_memory_index = memory_index + 1 if memory_complete else memory_index
         next_content_offset = 0 if memory_complete else segment_end
         final_chunk = memory_complete and next_memory_index == len(memories)
+        memory_payload: dict[str, Any] = {
+            "id": memory_id,
+            "memory_type": memory_type if isinstance(memory_type, str) else "fact",
+        }
+        if isinstance(rationale, str):
+            memory_payload["rationale"] = rationale
+        memory_payload["content"] = content[content_offset:segment_end]
+        memory_payload["content_offset"] = content_offset
+        memory_payload["memory_complete"] = memory_complete
         payload = {
             "success": True,
             "recall_request_id": delivery["recall_request_id"],
             "chunk_index": chunk_index,
             "final_chunk": final_chunk,
-            "memories": [
-                {
-                    "id": memory_id,
-                    "memory_type": memory_type if isinstance(memory_type, str) else "fact",
-                    "content": content[content_offset:segment_end],
-                    "content_offset": content_offset,
-                    "memory_complete": memory_complete,
-                }
-            ],
+            "memories": [memory_payload],
         }
         next_cursor = {
             "memory_index": next_memory_index,

@@ -247,6 +247,7 @@ def _hit_to_event(
         "edge_support_norm": _finite_or_none(components.get("edge_support_norm")),
         "edge_weight_blend": _finite_or_none(components.get("edge_weight_blend")),
         "edge_decay_factor": _finite_or_none(components.get("edge_decay_factor")),
+        "rationale": hit.rationale,
     }
 
 

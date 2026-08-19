@@ -176,13 +176,15 @@ def _memory_bodies(memories: Sequence[Mapping[str, Any]]) -> list[dict[str, Any]
             continue
         seen.add(memory_id)
         memory_type = memory.get("memory_type")
-        bodies.append(
-            {
-                "id": memory_id,
-                "content": content,
-                "memory_type": memory_type if isinstance(memory_type, str) else "fact",
-            }
-        )
+        body: dict[str, Any] = {
+            "id": memory_id,
+            "content": content,
+            "memory_type": memory_type if isinstance(memory_type, str) else "fact",
+        }
+        rationale = memory.get("rationale")
+        if isinstance(rationale, str) and rationale:
+            body["rationale"] = rationale
+        bodies.append(body)
     return bodies
 
 

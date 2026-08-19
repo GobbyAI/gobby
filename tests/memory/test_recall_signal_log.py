@@ -23,7 +23,7 @@ from gobby.memory.recall_signal_log import (
 )
 from gobby.memory.services._search_debug import emit_search_debug
 from gobby.memory.services.search import SearchDebugHit, SearchDebugSnapshot
-from gobby.storage.memories_models import Memory
+from gobby.storage.memories_models import Memory, MemoryType
 
 
 class _FakeCursor:
@@ -415,3 +415,86 @@ def test_make_injection_outcome_recorder_default_off_and_records() -> None:
 
     outcome_inserts = [sql for sql, _ in db.calls if "recall_injection_outcomes" in sql]
     assert len(outcome_inserts) == 1
+
+
+def test_hit_event_logs_rationale() -> None:
+    populated = SearchDebugHit(
+        memory_id="semantic",
+        rank=0,
+        search_via="semantic",
+        similarity=0.9,
+        raw_semantic_score=0.9,
+        temporal_decay_factor=1.0,
+        ranking_score=0.9,
+        ranking_mode="rrf",
+        graph_score=None,
+        content_hash="semantic-hash",
+        rationale="keep the TS convention for future sessions",
+    )
+    legacy = SearchDebugHit(
+        memory_id="graph",
+        rank=1,
+        search_via="graph",
+        similarity=0.72,
+        raw_semantic_score=None,
+        temporal_decay_factor=1.0,
+        ranking_score=0.8,
+        ranking_mode="graph_synthetic",
+        graph_score=0.8,
+        content_hash="graph-hash",
+    )
+    snapshot = SearchDebugSnapshot(
+        merged_ids=["semantic", "graph"],
+        returned_ids=["semantic", "graph"],
+        ranking_score_map={"semantic": 0.9, "graph": 0.8},
+        rrf_applied=True,
+        query="raw user query",
+        project_id="project-1",
+        session_id="session-1",
+        recall_request_id="request-1",
+        caller="memory.recall",
+        constants_provenance="static",
+        returned_hits=[populated, legacy],
+    )
+    event = build_recall_signal_event(
+        snapshot=snapshot,
+        timestamp="2026-06-15T00:00:00+00:00",
+        weighting={},
+    )
+    assert event["hits"][0]["rationale"] == "keep the TS convention for future sessions"
+    assert "rationale" in event["hits"][1]
+    assert event["hits"][1]["rationale"] is None
+
+    snapshots: list[SearchDebugSnapshot] = []
+    now = datetime.now(UTC)
+    emit_search_debug(
+        search_debug_sink=snapshots.append,
+        query="rationale identity",
+        project_id="project-1",
+        session_id="session-1",
+        recall_request_id="request-rationale",
+        caller="memory.recall",
+        merged_ids=["memory-1", "memory-2"],
+        returned=[
+            Memory(
+                id="memory-1",
+                memory_type=MemoryType.FACT,
+                content="Use TypeScript",
+                created_at=now,
+                updated_at=now,
+                rationale="keep the TS convention for future sessions",
+            ),
+            Memory(
+                id="memory-2",
+                memory_type=MemoryType.FACT,
+                content="Legacy row",
+                created_at=now,
+                updated_at=now,
+            ),
+        ],
+        ranking_score_map={"memory-1": 0.7, "memory-2": 0.6},
+        rrf_applied=False,
+        constants_provenance="static",
+    )
+    assert snapshots[0].returned_hits[0].rationale == ("keep the TS convention for future sessions")
+    assert snapshots[0].returned_hits[1].rationale is None

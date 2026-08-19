@@ -1,5 +1,7 @@
 """Tests for memory context building."""
 
+from datetime import UTC, datetime
+
 import pytest
 
 from gobby.memory.context import (
@@ -8,6 +10,7 @@ from gobby.memory.context import (
     format_memory_metadata_suffix,
 )
 from gobby.storage.memories import Memory
+from gobby.storage.memories_models import MemoryType
 
 pytestmark = pytest.mark.unit
 
@@ -67,6 +70,20 @@ class TestFormatMemoryMetadataSuffix:
         result = format_memory_metadata_suffix("m1", score=0.92634, via="keyword")
 
         assert result == " (memory_id: m1, score: 0.9263, via: keyword)"
+
+    def test_memory_id_with_rationale(self) -> None:
+        """Formats rationale as why immediately after memory_id."""
+        result = format_memory_metadata_suffix(
+            "m1",
+            rationale="keep the TS convention for future sessions",
+            score=0.92634,
+            via="keyword",
+        )
+
+        assert result == (
+            " (memory_id: m1, why: keep the TS convention for future sessions, "
+            "score: 0.9263, via: keyword)"
+        )
 
 
 class TestBuildMemoryContext:
@@ -246,3 +263,22 @@ class TestBuildMemoryContext:
         lines = result.split("\n")
         bullet_lines = [line for line in lines if line.strip() == "-"]
         assert len(bullet_lines) == 0
+
+
+def test_memory_context_shows_rationale() -> None:
+    mem = Memory(
+        id="m1",
+        content="- Use TypeScript",
+        memory_type=MemoryType.PREFERENCE,
+        created_at=datetime(2024, 1, 1, tzinfo=UTC),
+        updated_at=datetime(2024, 1, 1, tzinfo=UTC),
+        rationale="the project standardized on TypeScript",
+    )
+
+    result = build_memory_context([mem])
+
+    assert "- Use TypeScript (memory_id: m1, why: the project standardized on TypeScript)" in result
+    assert (
+        format_memory_metadata_suffix("m1", rationale="the project standardized on TypeScript")
+        == " (memory_id: m1, why: the project standardized on TypeScript)"
+    )

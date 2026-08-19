@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+from datetime import UTC, datetime
 from typing import Any, cast
 
 import pytest
@@ -10,16 +11,19 @@ import pytest
 from gobby.hooks.memory_recall_delivery import (
     MEMORY_RECALL_DELIVERIES_VARIABLE,
     MemoryRecallDeliveryQueue,
+    _memory_bodies,
 )
 from gobby.mcp_proxy.tools.internal import InternalToolRegistry
 from gobby.mcp_proxy.tools.memory import create_memory_registry
 from gobby.mcp_proxy.tools.memory_recall import (
     MAX_DIRECT_MCP_SERIALIZED_CHARS,
+    _next_chunk,
     register_memory_recall_tool,
 )
 from gobby.memory.manager import MemoryManager
-from gobby.memory.recall import MemoryRecallRunner
+from gobby.memory.recall import MemoryRecallRunner, _memory_to_payload
 from gobby.storage.hub.protocol import HubDatabase
+from gobby.storage.memories_models import Memory, MemoryType
 from gobby.utils.session_context import session_context_for_test
 from gobby.workflows.state_manager import SessionVariableManager
 
@@ -311,3 +315,79 @@ def test_main_memory_registry_includes_inline_and_overflow_tools(
 
     assert registry.get_tool("recall_memories_for_prompt") is not None
     assert registry.get_tool("get_recall_memories") is not None
+
+
+@pytest.mark.asyncio
+async def test_recall_chunks_include_rationale(temp_db: HubDatabase) -> None:
+    now = datetime.now(UTC)
+    populated = Memory(
+        id="memory-1",
+        memory_type=MemoryType.PATTERN,
+        content="Exact body.",
+        created_at=now,
+        updated_at=now,
+        rationale="keep the TS convention for future sessions",
+    )
+    legacy = Memory(
+        id="memory-2",
+        memory_type=MemoryType.FACT,
+        content="Legacy row.",
+        created_at=now,
+        updated_at=now,
+    )
+    populated_payload = _memory_to_payload(populated)
+    legacy_payload = _memory_to_payload(legacy)
+    assert populated_payload["rationale"] == "keep the TS convention for future sessions"
+    assert "rationale" in legacy_payload
+    assert legacy_payload["rationale"] is None
+
+    bodies = _memory_bodies(
+        [
+            populated_payload,
+            legacy_payload,
+            {
+                "id": "memory-3",
+                "content": "Empty claim.",
+                "memory_type": "fact",
+                "rationale": "",
+            },
+        ]
+    )
+    assert bodies[0]["rationale"] == "keep the TS convention for future sessions"
+    assert "rationale" not in bodies[1]
+    assert "rationale" not in bodies[2]
+
+    chunk, _cursor = _next_chunk(
+        {
+            "recall_request_id": "request-rationale",
+            "memories": bodies[:1],
+            "cursor": {"memory_index": 0, "content_offset": 0, "chunk_index": 0},
+        }
+    )
+    assert chunk["memories"][0]["memory_type"] == "pattern"
+    assert chunk["memories"][0]["rationale"] == "keep the TS convention for future sessions"
+
+    _create_sessions(temp_db)
+    _queue(
+        temp_db,
+        "request-rationale",
+        21,
+        [
+            {
+                "id": "memory-1",
+                "content": "Exact body.",
+                "memory_type": "pattern",
+                "rationale": "keep the TS convention for future sessions",
+            }
+        ],
+    )
+    with session_context_for_test(SESSION_ID):
+        result = await _registry(temp_db).call(
+            "get_recall_memories",
+            {"recall_request_id": "request-rationale"},
+        )
+    assert result["success"] is True
+    assert result["memories"][0]["rationale"] == "keep the TS convention for future sessions"
+    stored = SessionVariableManager(temp_db).get_variables(SESSION_ID)
+    queued = stored[MEMORY_RECALL_DELIVERIES_VARIABLE][0]["memories"][0]
+    assert queued["rationale"] == "keep the TS convention for future sessions"

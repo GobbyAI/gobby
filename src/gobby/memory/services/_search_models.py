@@ -21,6 +21,7 @@ class SearchDebugHit:
     ranking_mode: str | None
     graph_score: float | None
     content_hash: str
+    rationale: str | None = None
 
 
 @dataclass(frozen=True)
