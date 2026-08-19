@@ -9,10 +9,12 @@ recompute each ``payload_checksum`` and re-sign the payloads with
 from __future__ import annotations
 
 import hashlib
+import json
 from collections import defaultdict
 from pathlib import Path
 
 import pytest
+from pydantic import ValidationError
 
 from gobby.runtime_grants import (
     DeploymentGrantContext,
@@ -23,7 +25,7 @@ from gobby.runtime_grants import (
     payload_checksum,
     sign_grant,
 )
-from gobby.runtime_grants.schema import API_CONTRACT
+from gobby.runtime_grants.schema import API_CONTRACT, PostgresDirect
 from gobby.runtime_grants.signing import signature_matches
 from gobby.storage.schema_contract import expected_schema_identity
 from tests.runtime_grants.support import (
@@ -35,6 +37,7 @@ from tests.runtime_grants.support import (
 )
 
 GOLDEN_DIR = Path(__file__).resolve().parent / "golden"
+NEGATIVE_GOLDENS = frozenset({"payload_skew_unknown_field.json"})
 
 REQUIRED_MODES: dict[str, frozenset[str]] = {
     "postgres": frozenset({"direct", "brokered", "unavailable"}),
@@ -49,7 +52,7 @@ REQUIRED_MODES: dict[str, frozenset[str]] = {
 
 
 def _golden_paths() -> list[Path]:
-    return sorted(GOLDEN_DIR.glob("*.json"))
+    return sorted(path for path in GOLDEN_DIR.glob("*.json") if path.name not in NEGATIVE_GOLDENS)
 
 
 def _load_grants() -> list[tuple[Path, bytes, GrantBundle]]:
@@ -140,3 +143,52 @@ def test_payload_checksum_pinned() -> None:
         assert digest == hashlib.sha256(canonical_payload_bytes(grant)).hexdigest()
         assert len(grant.payload_checksum) == 64
         assert len(grant.signature) == 64
+
+
+# Changing this inventory requires bumping EXPECTED_API_CONTRACT (Rust) and
+# API_CONTRACT (Python) together and regenerating the goldens.
+GRANT_FIELD_INVENTORY: tuple[str, ...] = (
+    "api_contract",
+    "capabilities",
+    "config_revision",
+    "deployment",
+    "expires_at",
+    "issued_at",
+    "payload_checksum",
+    "postgres.credential_generation",
+    "postgres.dsn",
+    "postgres.mode",
+    "postgres.role_name",
+    "postgres.valid_until",
+    "principal",
+    "schema_identity",
+    "signature",
+    "version",
+)
+
+
+@pytest.mark.unit
+def test_payload_skew_unknown_field_golden_rejects() -> None:
+    path = GOLDEN_DIR / "payload_skew_unknown_field.json"
+    raw = path.read_bytes()
+    payload = json.loads(raw)
+    assert payload["api_contract"] == API_CONTRACT
+    assert payload["future_capability_probe"] == 1
+    with pytest.raises(ValidationError) as exc_info:
+        GrantBundle.model_validate_json(raw)
+    extras = [err for err in exc_info.value.errors() if err["type"] == "extra_forbidden"]
+    assert extras, exc_info.value.errors()
+    assert any(err["loc"] == ("future_capability_probe",) for err in extras)
+
+
+@pytest.mark.unit
+def test_grant_field_inventory_matches_api_contract() -> None:
+    inventory = tuple(
+        sorted(
+            [
+                *GrantBundle.model_fields,
+                *(f"postgres.{name}" for name in PostgresDirect.model_fields),
+            ]
+        )
+    )
+    assert inventory == GRANT_FIELD_INVENTORY

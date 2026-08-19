@@ -359,6 +359,9 @@ fn golden_vectors_match_python() {
         if entry.path().extension().and_then(|ext| ext.to_str()) != Some("json") {
             continue;
         }
+        if entry.file_name() == "payload_skew_unknown_field.json" {
+            continue;
+        }
         files += 1;
         let raw = fs::read(entry.path()).expect("read");
         let grant: GrantBundle = serde_json::from_slice(raw.trim_ascii())
@@ -1731,4 +1734,60 @@ fn inspect_cached_grant_reports_malformed_reason() {
         }
         other => panic!("expected Malformed {{ reason }}, got {other:?}"),
     }
+}
+
+// Changing this inventory requires bumping EXPECTED_API_CONTRACT (Rust) and
+// API_CONTRACT (Python) together and regenerating the goldens.
+const GRANT_FIELD_INVENTORY: &[&str] = &[
+    "api_contract",
+    "capabilities",
+    "config_revision",
+    "deployment",
+    "expires_at",
+    "issued_at",
+    "payload_checksum",
+    "postgres.credential_generation",
+    "postgres.dsn",
+    "postgres.mode",
+    "postgres.role_name",
+    "postgres.valid_until",
+    "principal",
+    "schema_identity",
+    "signature",
+    "version",
+];
+
+fn serialized_field_inventory(value: &Value) -> Vec<String> {
+    let mut names: Vec<String> = value.as_object().expect("object").keys().cloned().collect();
+    let postgres = value
+        .pointer("/capabilities/postgres")
+        .and_then(Value::as_object)
+        .expect("postgres");
+    names.extend(postgres.keys().map(|key| format!("postgres.{key}")));
+    names.sort();
+    names
+}
+
+#[test]
+fn payload_skew_unknown_field_golden_is_payload_skew() {
+    let raw = fs::read(golden_dir().join("payload_skew_unknown_field.json"))
+        .expect("payload_skew_unknown_field.json");
+    let value: Value = serde_json::from_slice(raw.trim_ascii()).expect("json");
+    assert_eq!(value["api_contract"], EXPECTED_API_CONTRACT);
+    assert_eq!(value["future_capability_probe"], 1);
+    let error = parse_grant_json(&raw).expect_err("skew");
+    assert!(
+        matches!(error, GrantError::PayloadSkew { .. }),
+        "expected PayloadSkew, got {error:?}"
+    );
+    assert_eq!(error.cli_code(), "payload_skew");
+}
+
+#[test]
+fn grant_field_inventory_matches_expected_api_contract() {
+    let (_, grant) = load_golden("direct_datastores.json");
+    assert_eq!(grant.api_contract, EXPECTED_API_CONTRACT);
+    let value = serde_json::to_value(&grant).expect("json");
+    let actual = serialized_field_inventory(&value);
+    assert_eq!(actual, GRANT_FIELD_INVENTORY);
 }
