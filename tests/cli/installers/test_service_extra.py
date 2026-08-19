@@ -274,4 +274,7 @@ class TestServiceDispatchHelpers:
         mock_sys.platform = "linux"
         mock_linux_restart.return_value = {"success": True, "p": "linux"}
 
-        assert service_restart()["p"] == "linux"
+        result = service_restart()
+        assert result["p"] == "linux"
+        assert result["success"] is True
+        assert mock_linux_restart.call_count == 1

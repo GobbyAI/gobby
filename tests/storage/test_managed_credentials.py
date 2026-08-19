@@ -6,7 +6,6 @@ import json
 import os
 import re
 import stat
-import time
 from collections.abc import Mapping, Sequence
 from concurrent.futures import ThreadPoolExecutor
 from datetime import UTC, datetime, timedelta
@@ -29,6 +28,7 @@ from gobby.storage.managed_credentials import (
     ManagedToolCredential,
 )
 from gobby.storage.secrets import SecretStore
+from tests._timing import wait_for_condition
 from tests.fixtures.postgres import TEST_USER_ID
 from tests.storage.test_postgres_agent_authorization import (
     AUTH_SCHEMA,
@@ -631,10 +631,20 @@ def test_interactive_reuse_refreshes_expired_role(
             expires_at=datetime.now(UTC) + timedelta(seconds=2),
             secret_store=store,
         )
-        time.sleep(2.2)
-        with pytest.raises(psycopg.OperationalError):
-            with psycopg.connect(first.dsn) as conn:
-                conn.execute("SELECT 1")
+
+        def expired_dsn_rejected() -> bool:
+            try:
+                with psycopg.connect(first.dsn) as conn:
+                    conn.execute("SELECT 1")
+            except psycopg.OperationalError:
+                return True
+            return False
+
+        wait_for_condition(
+            expired_dsn_rejected,
+            timeout=5.0,
+            description="expired interactive role rejected",
+        )
         refreshed = manager.issue_interactive(
             deployment_token=token,
             project_id=fixture.project_id,

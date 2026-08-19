@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import logging
 from typing import cast
-from unittest.mock import MagicMock, patch
+from unittest.mock import MagicMock, call, patch
 
 import pytest
 
@@ -101,9 +101,12 @@ class TestAgentNameOverride:
                 project_id=None,
             )
 
-            mock_repo.assert_called_once_with(handlers._session_manager.db)
-            mock_repo.return_value.read.assert_called_once_with(resolve_secrets=False)
-            mock_resolve.assert_called_once_with(
+            assert mock_repo.call_count == 1
+            assert mock_repo.call_args == call(handlers._session_manager.db)
+            assert mock_repo.return_value.read.call_count == 1
+            assert mock_repo.return_value.read.call_args == call(resolve_secrets=False)
+            assert mock_resolve.call_count == 1
+            assert mock_resolve.call_args == call(
                 configured_agent,
                 handlers._session_manager.db,
                 project_id=None,
@@ -125,9 +128,11 @@ class TestAgentNameOverride:
             agent_name_override="my-agent",
         )
 
-        mock_resolve.assert_called_once_with(
+        assert mock_resolve.call_count == 1
+        assert mock_resolve.call_args == call(
             "my-agent", handlers._session_manager.db, project_id="proj-2"
         )
+        assert mock_resolve.return_value.name == "my-agent"
 
     @patch("gobby.workflows.state_manager.SessionVariableManager")
     @patch("gobby.workflows.agent_resolver.resolve_agent")

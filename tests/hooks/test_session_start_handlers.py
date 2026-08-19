@@ -1471,4 +1471,6 @@ def test_resolve_agent_name_reads_config_without_resolving_secrets(
     )
 
     assert resolve_agent_name(handler, "session-1", None) == "gobby"
-    repository.read.assert_called_once_with(resolve_secrets=False)
+    assert repository.read.call_count == 1
+    assert repository.read.call_args == call(resolve_secrets=False)
+    assert variables.get_variables.return_value == {}

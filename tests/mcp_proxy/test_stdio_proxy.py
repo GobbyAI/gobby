@@ -4,7 +4,7 @@ import json
 from collections.abc import Awaitable, Callable
 from pathlib import Path
 from typing import Any
-from unittest.mock import AsyncMock, MagicMock, patch
+from unittest.mock import AsyncMock, MagicMock, call, patch
 
 import pytest
 from mcp.server.fastmcp import FastMCP
@@ -323,8 +323,10 @@ async def test_list_tools_strips_explicit_nulls_from_schemas() -> None:
 async def test_set_variable_calls_relocated_session_path_with_scope() -> None:
     proxy = DaemonProxy(60887)
     with patch.object(proxy, "_request", new=AsyncMock(return_value={"success": True})) as req:
-        await proxy.set_variable("foo", "bar", session_id="sess-1")
-    req.assert_awaited_once_with(
+        result = await proxy.set_variable("foo", "bar", session_id="sess-1")
+    assert result == {"success": True}
+    assert req.await_count == 1
+    assert req.await_args == call(
         "POST",
         "/api/sessions/sess-1/variables/set",
         json={"name": "foo", "value": "bar", "scope": "session"},
@@ -336,8 +338,10 @@ async def test_set_variable_calls_relocated_session_path_with_scope() -> None:
 async def test_get_variable_calls_relocated_session_path_with_scope() -> None:
     proxy = DaemonProxy(60887)
     with patch.object(proxy, "_request", new=AsyncMock(return_value={"success": True})) as req:
-        await proxy.get_variable("foo", session_id="sess-1")
-    req.assert_awaited_once_with(
+        result = await proxy.get_variable("foo", session_id="sess-1")
+    assert result == {"success": True}
+    assert req.await_count == 1
+    assert req.await_args == call(
         "POST",
         "/api/sessions/sess-1/variables/get",
         json={"name": "foo", "scope": "session"},

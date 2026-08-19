@@ -3,7 +3,7 @@ from __future__ import annotations
 import json
 from types import SimpleNamespace
 from typing import Any, cast
-from unittest.mock import AsyncMock, MagicMock, patch
+from unittest.mock import AsyncMock, MagicMock, call, patch
 
 import pytest
 
@@ -131,8 +131,10 @@ class TestPaneOwnershipLifecycle:
                 inventory=_inventory(),
             )
 
-        expire.assert_not_awaited()
-        release.assert_not_awaited()
+        assert expire.await_count == 0
+        assert release.await_count == 0
+        assert decision.owner is None
+        assert {first.session_id, second.session_id} == {"first", "second"}
 
     @pytest.mark.asyncio
     async def test_release_title_stops_after_released_outcome(
@@ -149,7 +151,9 @@ class TestPaneOwnershipLifecycle:
         ):
             await monitor._release_tmux_title(record)
 
-        manager.release_window_title_ownership.assert_awaited_once_with("%1")
+        assert manager.release_window_title_ownership.await_count == 1
+        assert manager.release_window_title_ownership.await_args_list == [call("%1")]
+        assert record.tmux_pane == "%1"
 
     @pytest.mark.asyncio
     async def test_release_title_retries_once_after_indeterminate(
@@ -215,9 +219,12 @@ class TestPaneOwnershipLifecycle:
                 inventory=_inventory(),
             )
 
-        expire.assert_not_awaited()
-        repair.assert_awaited_once_with(owner, _inventory())
-        release.assert_not_awaited()
+        assert expire.await_count == 0
+        assert release.await_count == 0
+        assert repair.await_count == 1
+        assert repair.await_args_list == [call(owner, _inventory())]
+        assert decision.owner is owner
+        assert background.session_id == "background"
 
     @pytest.mark.asyncio
     async def test_nested_foreground_group_keeps_both_rows_and_repairs_owner(
@@ -256,8 +263,12 @@ class TestPaneOwnershipLifecycle:
                 inventory=_inventory(),
             )
 
-        expire.assert_not_awaited()
-        repair.assert_awaited_once()
+        assert expire.await_count == 0
+        assert repair.await_count == 1
+        repair_args = repair.await_args
+        assert repair_args is not None
+        assert repair_args.args[0] is outer
+        assert decision.validated_session_ids == frozenset({"outer", "inner"})
 
     @pytest.mark.asyncio
     async def test_handoff_ready_ownerless_row_is_preserved(
@@ -294,7 +305,9 @@ class TestPaneOwnershipLifecycle:
                 inventory=_inventory(),
             )
 
-        expire.assert_not_awaited()
+        assert expire.await_count == 0
+        assert handoff.status == "handoff_ready"
+        assert decision.owner is None
 
     @pytest.mark.asyncio
     async def test_live_target_without_group_identity_skips_process_expiry(
@@ -333,9 +346,10 @@ class TestPaneOwnershipLifecycle:
         ):
             await monitor._check_sessions()
 
-        inspect.assert_not_called()
-        expire.assert_not_awaited()
-        release.assert_not_awaited()
+        assert inspect.call_count == 0
+        assert expire.await_count == 0
+        assert release.await_count == 0
+        assert "tmux_socket_name" not in record.terminal_context
 
     @pytest.mark.asyncio
     @pytest.mark.parametrize(
@@ -382,9 +396,11 @@ class TestPaneOwnershipLifecycle:
                 inventory=_inventory(),
             )
 
-        expire.assert_not_awaited()
-        repair.assert_not_awaited()
-        release.assert_not_awaited()
+        assert expire.await_count == 0
+        assert repair.await_count == 0
+        assert release.await_count == 0
+        assert decision.reason == reason
+        assert record.status == "active"
 
     @pytest.mark.asyncio
     async def test_missing_target_expires_session_then_releases_title(
@@ -418,8 +434,11 @@ class TestPaneOwnershipLifecycle:
         ):
             await monitor._check_sessions()
 
-        expire.assert_awaited_once_with("owner")
-        release.assert_awaited_once_with(owner)
+        assert expire.await_count == 1
+        assert expire.await_args_list == [call("owner")]
+        assert release.await_count == 1
+        assert release.await_args_list == [call(owner)]
+        assert owner.tmux_pane == "%1"
 
     @pytest.mark.asyncio
     async def test_tmux_probe_failure_preserves_state(
@@ -451,8 +470,10 @@ class TestPaneOwnershipLifecycle:
         ):
             await monitor._check_sessions()
 
-        expire.assert_not_awaited()
-        resolve.assert_not_called()
+        assert expire.await_count == 0
+        assert resolve.call_count == 0
+        assert record.status == "active"
+        assert socket.socket_name == "gobby"
 
 
 class TestTmuxTargetRepair:

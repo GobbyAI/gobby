@@ -13,6 +13,7 @@ from gobby.gwiki_gateway import (
     GwikiGateway,
     GwikiReadSelectorError,
 )
+from tests._timing import wait_for_async_condition
 
 pytestmark = [pytest.mark.unit, pytest.mark.asyncio]
 
@@ -760,13 +761,26 @@ async def test_timeout_does_not_wait_for_process_wait_cancellation(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     class CancellationResistantProcess(FakeProcess):
+        def __init__(self, **kwargs: Any) -> None:
+            super().__init__(**kwargs)
+            self._progress = asyncio.Event()
+
         async def wait(self) -> None:
             self.waited = True
             while self.timeout and not self.terminated and not self.killed:
                 try:
-                    await asyncio.sleep(0.01)
+                    await self._progress.wait()
                 except asyncio.CancelledError:
                     continue
+                self._progress.clear()
+
+        def terminate(self) -> None:
+            super().terminate()
+            self._progress.set()
+
+        def kill(self) -> None:
+            super().kill()
+            self._progress.set()
 
     process = CancellationResistantProcess(timeout=True)
     _patch_subprocess(monkeypatch, [process])
@@ -778,8 +792,10 @@ async def test_timeout_does_not_wait_for_process_wait_cancellation(
     command = asyncio.create_task(gateway.health())
 
     try:
-        await asyncio.sleep(0.05)
-        assert command.done()
+        await wait_for_async_condition(
+            lambda: command.done(),
+            description="gwiki health timeout without waiting on cancelled wait()",
+        )
         result = await command
     finally:
         process.terminate()

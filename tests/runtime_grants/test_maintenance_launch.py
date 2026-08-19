@@ -13,6 +13,7 @@ from gobby.runtime_grants.handshake import HandshakeService
 from gobby.runtime_grants.launch import ManagedLaunch
 from gobby.runtime_grants.maintenance import HandshakeMaintenanceLaunchFactory
 from gobby.storage.managed_credentials import ManagedCredentialManager
+from tests._timing import drain_asyncio_tasks
 
 pytestmark = pytest.mark.unit
 
@@ -151,10 +152,12 @@ async def test_open_async_double_cancel_during_entry_still_exits(
         lambda *_args, **_kwargs: launch,
     )
     real_to_thread = asyncio.to_thread
+    entered = asyncio.Event()
 
     async def slow_to_thread(func: Any, *args: Any, **kwargs: Any) -> Any:
         if getattr(func, "__name__", "") == "__enter__":
-            await asyncio.sleep(0.05)
+            entered.set()
+            await drain_asyncio_tasks(cycles=5)
         return await real_to_thread(func, *args, **kwargs)
 
     monkeypatch.setattr("gobby.runtime_grants.maintenance.asyncio.to_thread", slow_to_thread)
@@ -164,7 +167,8 @@ async def test_open_async_double_cancel_during_entry_still_exits(
             pass
 
     task = asyncio.create_task(_run())
-    await asyncio.sleep(0.01)
+    await drain_asyncio_tasks(cycles=8)
+    assert entered.is_set() or task.done()
     task.cancel()
     task.cancel()
     with pytest.raises(asyncio.CancelledError):

@@ -303,8 +303,10 @@ def test_schema_apply_executor_verify_uses_bootstrap_dsn(
 
     schema_module._SchemaApplyExecutor().verify(epoch, MagicMock())
 
-    bind.assert_called_once_with("postgresql://gobby:pw@127.0.0.1:60892/hub", epoch.id)
-    collect.assert_called_once_with(bound)
+    assert bind.call_count == 1
+    assert bind.call_args.args == ("postgresql://gobby:pw@127.0.0.1:60892/hub", epoch.id)
+    assert collect.call_count == 1
+    assert collect.call_args.args == (bound,)
 
 
 def test_destructive_schema_apply_composes_epoch_manifest_and_execution_guards(

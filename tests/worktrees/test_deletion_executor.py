@@ -21,6 +21,7 @@ from gobby.worktrees.deletion import (
 )
 from gobby.worktrees.executor import DestructiveBoundary, WorktreeDeleteExecutor
 from gobby.worktrees.git import WorktreeGitManager
+from tests._timing import drain_asyncio_tasks, wait_for_async_condition
 
 pytestmark = pytest.mark.unit
 
@@ -129,7 +130,7 @@ async def test_four_concurrent_transactions_stay_off_loop_and_finish_cleanup(
         nonlocal heartbeat_ticks
         while not stop_heartbeat.is_set():
             heartbeat_ticks += 1
-            await asyncio.sleep(0)
+            await drain_asyncio_tasks()
 
     def transaction(worktree_id: str) -> Callable[[DestructiveBoundary], Any]:
         request = WorktreeDeletionRequest(worktree_id, DeletionSurface.MCP)
@@ -148,8 +149,10 @@ async def test_four_concurrent_transactions_stay_off_loop_and_finish_cleanup(
     ]
     try:
         assert await asyncio.to_thread(git_manager.started.wait, 1)
-        await asyncio.sleep(0.02)
-        assert heartbeat_ticks > 1
+        await wait_for_async_condition(
+            lambda: heartbeat_ticks > 1,
+            description="event-loop heartbeat while deletes run off-loop",
+        )
         stats = executor.stats()
         assert stats.active == 4
         assert stats.max_workers == 4
@@ -194,7 +197,7 @@ async def test_cancellation_before_mutation_abandons_work() -> None:
     try:
         assert await asyncio.to_thread(precheck_started.wait, 1)
         task.cancel()
-        await asyncio.sleep(0)
+        await drain_asyncio_tasks()
         release_precheck.set()
         with pytest.raises(asyncio.CancelledError):
             await task
@@ -222,7 +225,7 @@ async def test_cancellation_after_mutation_waits_for_cleanup() -> None:
     try:
         assert await asyncio.to_thread(mutation_started.wait, 1)
         task.cancel()
-        await asyncio.sleep(0)
+        await drain_asyncio_tasks()
         assert task.done() is False
         release_cleanup.set()
         with pytest.raises(asyncio.CancelledError):
@@ -255,7 +258,7 @@ async def test_shutdown_cancels_queue_drains_active_and_closes_admission() -> No
     queued_task = asyncio.create_task(executor.run_delete(queued))
     try:
         assert await asyncio.to_thread(active_started.wait, 1)
-        await asyncio.sleep(0)
+        await drain_asyncio_tasks()
         assert executor.stats().queued == 1
         executor.shutdown(cancel_futures=True)
         with pytest.raises(RuntimeError, match="shut down"):

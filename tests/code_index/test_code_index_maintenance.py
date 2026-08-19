@@ -11,7 +11,7 @@ from contextlib import AbstractContextManager, contextmanager
 from pathlib import Path
 from types import SimpleNamespace
 from typing import Any, Protocol, TypeVar, cast
-from unittest.mock import AsyncMock, MagicMock
+from unittest.mock import AsyncMock, MagicMock, call
 
 import pytest
 
@@ -348,7 +348,7 @@ async def test_maintenance_retries_pending_vector_projection_cleanup(tmp_path: P
         run_db=run_db,
     )
 
-    await _run_maintenance(context)
+    await _run_maintenance(cast(CodeIndexContext, context))
 
     assert gcode_gateway.vector_cleared_roots == [tmp_path]
     assert storage.cleared == [("proj-retry", "vector")]
@@ -425,7 +425,10 @@ async def test_maintenance_purges_indexed_project_when_gcode_rejects_existing_ro
     )
 
     with caplog.at_level(logging.WARNING, logger="gobby.code_index.maintenance"):
-        await _run_maintenance(context, summarizer=summarizer)
+        await _run_maintenance(
+            cast(CodeIndexContext, context),
+            summarizer=cast(Any, summarizer),
+        )
 
     assert gcode_gateway.maintenance_calls == [(root, 30)]
     assert gcode_gateway.maintenance_result is not None
@@ -568,8 +571,8 @@ async def test_maintenance_lock_busy_is_expected_and_continues_summaries(
 
     with caplog.at_level(logging.WARNING):
         await _run_maintenance(
-            context,
-            summarizer=SimpleNamespace(summarize_batch=AsyncMock()),
+            cast(CodeIndexContext, context),
+            summarizer=cast(Any, SimpleNamespace(summarize_batch=AsyncMock())),
         )
 
     assert gateway.maintenance_calls == [(root, 900)]
@@ -694,8 +697,8 @@ async def test_maintenance_daemon_config_failure_opens_shared_breaker_once(
     )
 
     with caplog.at_level(logging.WARNING):
-        await _run_maintenance(context)
-        await _run_maintenance(context)
+        await _run_maintenance(cast(CodeIndexContext, context))
+        await _run_maintenance(cast(CodeIndexContext, context))
 
     assert breaker.state is BreakerState.OPEN
     assert gateway.maintenance_calls == [(root, 900)]
@@ -744,9 +747,12 @@ async def test_maintenance_logs_and_raises_on_unexpected_delete_counts(
         run_db=run_db,
     )
 
-    await _run_maintenance(context)
+    with caplog.at_level(logging.WARNING):
+        await _run_maintenance(cast(CodeIndexContext, context))
 
-    storage.delete_project_index.assert_called_once_with("proj-missing")
+    assert storage.delete_project_index.call_count == 1
+    assert storage.delete_project_index.call_args == call("proj-missing")
+    assert storage.delete_project_index.return_value == ["bad"]
 
 
 @pytest.mark.asyncio

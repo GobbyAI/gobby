@@ -730,6 +730,8 @@ class TestExecuteSpawn:
             result = await execute_spawn(request)
 
         assert result.success is True
+        assert result.pid == 12345
+        assert mock_spawner.spawn.call_count == 1
 
     @pytest.mark.asyncio
     async def test_codex_terminal_direct_spawn(self, mock_codex_prompt_delivery):
@@ -2203,6 +2205,7 @@ class TestCodexPromptDelivery:
         ):
             await _deliver_codex_prompt(tmux, "sess", "Do the task", "run-1")
 
+        assert tmux.capture_pane.await_count == 2
         assert tmux.send_keys.await_args_list == [
             call("sess", "Do the task\n", literal=True),
             call("sess", "Enter", literal=False),
@@ -2218,7 +2221,8 @@ class TestCodexPromptDelivery:
         with patch.object(spawn_executor_support, "_CODEX_COMPOSER_READY_TIMEOUT_SECONDS", 0.0):
             await _deliver_codex_prompt(tmux, "sess", "Do the task", "run-1")
 
-        tmux.send_keys.assert_not_awaited()
+        assert tmux.send_keys.await_count == 0
+        assert tmux.capture_pane.await_count >= 1
 
     @pytest.mark.asyncio
     async def test_failed_paste_skips_follow_up_enter(self) -> None:
@@ -2232,7 +2236,10 @@ class TestCodexPromptDelivery:
         ):
             await _deliver_codex_prompt(tmux, "sess", "Do the task", "run-1")
 
-        tmux.send_keys.assert_awaited_once_with("sess", "Do the task\n", literal=True)
+        assert tmux.send_keys.await_count == 1
+        assert tmux.send_keys.await_args_list == [
+            call("sess", "Do the task\n", literal=True),
+        ]
 
     @pytest.mark.asyncio
     async def test_schedule_skips_empty_prompt(self) -> None:

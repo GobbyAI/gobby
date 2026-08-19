@@ -1270,7 +1270,9 @@ class TestPurgeSoftDeletedDefinitions:
         ):
             await manager._purge_soft_deleted_definitions()
         for mock in (mock_rules, mock_agents, mock_variables, mock_pipelines):
-            mock.return_value.purge_deleted.assert_called_once_with(older_than_days=30)
+            assert mock.call_count == 1
+            assert mock.return_value.purge_deleted.call_count == 1
+            assert mock.return_value.purge_deleted.call_args == call(older_than_days=30)
 
     @pytest.mark.asyncio
     async def test_exception_handled(self, manager: SessionLifecycleManager) -> None:
@@ -1284,6 +1286,7 @@ class TestPurgeSoftDeletedDefinitions:
             ):
                 await manager._purge_soft_deleted_definitions()
         assert mock_rules.return_value.purge_deleted.call_count == 1
+        assert mock_rules.return_value.purge_deleted.call_args == call(older_than_days=30)
 
 
 class TestPurgeDreamHiddenMemories:
@@ -2014,7 +2017,8 @@ class TestDigestBacklogSweep:
 
         await bare._sweep_digest_backlogs(bare._capture_active())
 
-        mock_db.fetchall.assert_not_called()
+        assert mock_db.fetchall.call_count == 0
+        assert bare._running is True
 
     @pytest.mark.asyncio
     async def test_sweep_skips_when_digest_disabled(
@@ -2028,4 +2032,5 @@ class TestDigestBacklogSweep:
 
         await swept._sweep_digest_backlogs(config)
 
-        mock_db.fetchall.assert_not_called()
+        assert mock_db.fetchall.call_count == 0
+        assert config.digest.enabled is False

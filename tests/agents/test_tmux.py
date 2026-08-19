@@ -13,7 +13,7 @@ import shlex
 import signal
 from collections.abc import Iterator
 from pathlib import Path
-from unittest.mock import AsyncMock, MagicMock, patch
+from unittest.mock import AsyncMock, MagicMock, call, patch
 
 import pytest
 
@@ -604,7 +604,8 @@ class TestTmuxSessionManager:
         ) as mock_run:
             await mgr.refresh_client("demo")
 
-        mock_run.assert_awaited_once_with(
+        assert mock_run.await_count == 1
+        assert mock_run.await_args == call(
             "list-clients", "-t", "demo", "-F", "#{client_tty}", timeout=5.0
         )
 

@@ -57,9 +57,11 @@ async def test_slow_embed_converges_outside_postgres_budget(
     caplog: pytest.LogCaptureFixture,
 ) -> None:
     monkeypatch.setattr(lifecycle_module, "MUTATOR_RECONCILIATION_BUDGET_SECONDS", 1.1)
+    ready = asyncio.Event()
+    asyncio.get_running_loop().call_later(1.5, ready.set)
 
     async def slow_embed(_content: str) -> list[float]:
-        await asyncio.sleep(1.5)
+        await ready.wait()
         return list(_VECTOR)
 
     manager = _manager(hub_db, AsyncMock(side_effect=slow_embed), vector_store)
@@ -149,9 +151,11 @@ async def test_rebuild_crossrefs_slow_embed_does_not_use_bounded_db(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     monkeypatch.setattr(lifecycle_module, "MUTATOR_RECONCILIATION_BUDGET_SECONDS", 1.1)
+    ready = asyncio.Event()
+    asyncio.get_running_loop().call_later(1.5, ready.set)
 
     async def slow_embed(_content: str) -> list[float]:
-        await asyncio.sleep(1.5)
+        await ready.wait()
         return list(_VECTOR)
 
     manager = _manager(hub_db, AsyncMock(return_value=list(_VECTOR)), vector_store)

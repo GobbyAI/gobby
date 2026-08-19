@@ -815,5 +815,6 @@ def test_install_prompt_accepts_files_home(tmp_path: Path) -> None:
             install_command,
             ["--config-only", "--no-interactive", "--files-home", str(files_home)],
         )
-    resolve.assert_called()
+    assert resolve.call_count >= 1
     assert resolve.call_args[0][0] == files_home
+    assert files_home.is_dir()

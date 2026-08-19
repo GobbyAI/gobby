@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from datetime import UTC, datetime
 from typing import Any
-from unittest.mock import MagicMock, patch
+from unittest.mock import MagicMock, call, patch
 
 import pytest
 
@@ -194,7 +194,9 @@ class TestSessionEndHandling:
 
         handlers.handle_session_end(event)
 
-        processor.unregister_session.assert_called_once_with("mapped-sess-123")
+        assert processor.unregister_session.call_count == 1
+        assert processor.unregister_session.call_args == call("mapped-sess-123")
+        assert "mapped-sess-123" not in handlers._session_message_processors
 
     def test_session_end_lookup_miss_does_not_unregister_external_id(
         self, mock_dependencies: dict

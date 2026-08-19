@@ -194,6 +194,8 @@ async def test_terminate_does_not_sigkill_after_process_exits() -> None:
         )
 
     assert sent == [signal.SIGTERM]
+    assert mock_os.kill.call_count >= 1
+    assert signal.SIGKILL not in sent
 
 
 @pytest.mark.asyncio
@@ -220,6 +222,8 @@ async def test_terminate_sigkills_only_when_pid_still_alive() -> None:
         )
 
     assert sent == [signal.SIGTERM, signal.SIGKILL]
+    assert mock_os.kill.call_count == 2
+    assert sent[-1] == signal.SIGKILL
 
 
 async def test_get_after_lost_start_race_cleans_up_on_storage_error() -> None:

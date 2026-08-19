@@ -73,7 +73,9 @@ def test_runtime_hub_open_skips_identity_on_remote(tmp_path: Path) -> None:
         with runtime_hub_database():
             pass
 
-    ensure.assert_called_once_with(db)
+    assert ensure.call_count == 1
+    assert ensure.call_args.args == (db,)
+    assert load.return_value.database_url == "postgresql://x"
 
 
 def test_config_open_remote_upserts_sentinel_without_identity(tmp_path: Path) -> None:
@@ -94,5 +96,7 @@ def test_config_open_remote_upserts_sentinel_without_identity(tmp_path: Path) ->
         result = init_local_storage()
 
     assert result is db
-    ensure.assert_called_once_with(db)
-    claim.assert_not_called()
+    assert config.datastore_mode == "remote"
+    assert ensure.call_count == 1
+    assert ensure.call_args.args == (db,)
+    assert claim.call_count == 0

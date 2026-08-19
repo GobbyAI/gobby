@@ -320,4 +320,7 @@ def test_hook_manager_forwards_injected_memory_manager() -> None:
             memory_manager=memory_manager,
         )
 
+    assert create.call_count == 1
     assert create.call_args.kwargs["memory_manager"] is memory_manager
+    assert create.call_args.kwargs["database"] is database
+    assert create.call_args.kwargs["session_manager"] is session_manager

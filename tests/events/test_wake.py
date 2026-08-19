@@ -128,9 +128,11 @@ class TestWakeDispatch:
             terminal_context={"tmux_pane": "%1"},
         )
         completed = asyncio.Event()
+        release = asyncio.Event()
+        asyncio.get_running_loop().call_later(0.05, release.set)
 
         async def slow_sender(*_args: object, **_kwargs: object) -> None:
-            await asyncio.sleep(0.05)
+            await release.wait()
             completed.set()
 
         monkeypatch.setattr("gobby.events.wake.LIVE_WAKE_TIMEOUT_SECONDS", 0.01)

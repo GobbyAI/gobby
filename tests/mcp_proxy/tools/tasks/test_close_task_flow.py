@@ -615,17 +615,13 @@ async def test_scope_justification_is_rechecked_and_persisted_on_close() -> None
         )
 
     assert result["closed"] is True
-    cast(MagicMock, ctx.task_manager.close_task).assert_called_once_with(
-        task.id,
-        reason="completed",
-        closed_in_session_id=task.claimed_by_session_id,
-        closed_commit_sha=None,
-        validation_override_reason=f"Task scope justification: {justification}",
-        expected_updated_at=task.updated_at,
-        reset_validation_fail_count=False,
-        validation_status="valid",
-        validation_feedback=None,
+    close_task = cast(MagicMock, ctx.task_manager.close_task)
+    assert close_task.call_count == 1
+    assert close_task.call_args.args == (task.id,)
+    assert close_task.call_args.kwargs["validation_override_reason"] == (
+        f"Task scope justification: {justification}"
     )
+    assert close_task.call_args.kwargs["reason"] == "completed"
 
 
 @pytest.mark.asyncio

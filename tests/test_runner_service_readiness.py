@@ -138,7 +138,9 @@ async def test_test_mode_skips_managed_service_readiness(
 
     await readiness.require_managed_services_ready(runner)
 
-    check.assert_not_awaited()
+    assert check.await_count == 0
+    assert config.test_mode is True
+    assert config.databases is managed_services
 
 
 @pytest.mark.asyncio

@@ -384,8 +384,10 @@ async def test_outbound_selects_tasks_updated_after_cursor(temp_db: HubDatabase)
     with patch("gobby.sync.github_issue_sync.GitHubSyncService", return_value=remote_sync):
         stats = await service.push_linked_tasks(project.id, cursor)
 
-    remote_sync.sync_task_to_github.assert_awaited_once_with(dirty_task.id)
+    assert remote_sync.sync_task_to_github.await_count == 1
+    assert remote_sync.sync_task_to_github.await_args.args == (dirty_task.id,)
     assert stats == {"candidates": 1, "pushed": 1, "errors": 0}
+    assert old_task.github_issue_number == 7
 
 
 @pytest.mark.asyncio

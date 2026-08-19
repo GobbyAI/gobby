@@ -757,6 +757,9 @@ async def test_send_attachment_reports_partial_caption_when_follow_up_fails(
     with pytest.raises(RuntimeError, match="caption continuation failed after media message 42"):
         await adapter.send_attachment(message, attachment, image_path)
 
+    assert mock_client.post.await_count == 1
+    assert image_path.exists()
+
 
 @pytest.mark.asyncio
 async def test_send_attachment_uses_send_voice_for_voice_notes(

@@ -543,6 +543,7 @@ async def test_shutdown_closes_definition_revision_listener(
         shutdown_telemetry=MagicMock(),
     )
     assert closed["count"] == 1
+    assert runner.definition_revision_listener is not None
 
 
 def test_rollback_closes_unstarted_listener() -> None:

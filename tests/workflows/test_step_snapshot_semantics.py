@@ -14,7 +14,7 @@ from datetime import datetime
 from pathlib import Path
 from types import SimpleNamespace
 from typing import Any, Literal, cast
-from unittest.mock import AsyncMock, MagicMock, patch
+from unittest.mock import AsyncMock, MagicMock, call, patch
 from uuid import uuid4
 
 import psycopg
@@ -443,8 +443,10 @@ async def test_post_launch_faults_leave_no_live_process() -> None:
             pid=4242,
             tmux_session_name="gobby-run",
         )
-    assert kill.called
-    tmux.kill_session.assert_awaited()
+    assert tmux.kill_session.await_count == 1
+    assert tmux.kill_session.await_args == call("gobby-run", missing_ok=True)
+    assert kill.call_count == 0
+    assert runner.child_session_manager._storage.delete.call_count >= 1
 
 
 def test_auto_claimed_spawn_initial_step_preserved(snap_db: PostgresHubDatabase) -> None:

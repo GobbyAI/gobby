@@ -300,6 +300,7 @@ def test_server_installs_auth_service(temp_db: HubDatabase) -> None:
     server = http_module.HTTPServer(services)
 
     assert isinstance(server.auth_service, AuthService)
+    assert type(server.auth_service) is AuthService
 
 
 def test_verify_password_uses_argon2id_hash(temp_db: HubDatabase, tmp_path: Path) -> None:

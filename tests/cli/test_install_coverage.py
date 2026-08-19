@@ -935,8 +935,10 @@ class TestInstallFilesHomeLifecycle:
             )
 
         assert result.exit_code != 0
-        identity.assert_not_called()
-        stack.assert_not_called()
+        assert identity.call_count == 0
+        assert stack.call_count == 0
+        failure = result.output or str(result.exception or "")
+        assert "bootstrap write failed" in failure
 
     def test_legacy_bootstrap_upgrade_then_identity_uses_files_home(
         self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
@@ -1092,8 +1094,10 @@ class TestInstallFilesHomeLifecycle:
                     headless_or_remote=lambda: False,
                     claim=claim,
                 )
-            converted.assert_called_once()
-            start.assert_called_once_with(reserved=True)
+            assert converted.call_count == 1
+            assert start.call_count == 1
+            assert start.call_args.kwargs == {"reserved": True}
+            assert claim.role == "maintenance"
         finally:
             if not claim._released:
                 claim.release()

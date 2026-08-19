@@ -5,7 +5,6 @@ from __future__ import annotations
 import os
 import subprocess
 import sys
-import time
 from pathlib import Path
 from types import SimpleNamespace
 from typing import cast
@@ -13,14 +12,14 @@ from typing import cast
 import pytest
 from fastapi import HTTPException
 
-from gobby.servers.http import HTTPServer
-
 from gobby.config.bootstrap_io import write_bootstrap_yaml
 from gobby.paths import FilesHomeError, require_files_home
 from gobby.runner_pid_file import claim_pid_file
+from gobby.servers.http import HTTPServer
 from gobby.servers.routes.wiki import _gateway_from_scope, _resolve_scope
 from gobby.storage.projects import PERSONAL_PROJECT_ID
 from gobby.wiki.scope_resolution import resolve_wiki_scope
+from tests._timing import wait_for_condition
 
 pytestmark = pytest.mark.unit
 
@@ -340,6 +339,7 @@ def test_inherited_daemon_claim_survives_parent_exit(tmp_path: Path) -> None:
                 "assert claim is not None",
                 "pid = os.fork()",
                 "if pid == 0:",
+                "    Path(os.environ['GOBBY_HOME']).joinpath('child-ready').write_text(str(os.getpid()))",
                 "    time.sleep(4)",
                 "    os._exit(0)",
                 "os._exit(0)",
@@ -354,8 +354,13 @@ def test_inherited_daemon_claim_survives_parent_exit(tmp_path: Path) -> None:
         check=True,
         env={**os.environ, "GOBBY_HOME": str(home)},
     )
-    time.sleep(0.2)
+    wait_for_condition(
+        lambda: (home / "child-ready").exists(),
+        timeout=2.0,
+        description="forked child holding daemon claim",
+    )
     from gobby.runner_pid_file import claim_pid_file
 
     blocked = claim_pid_file(home / "gobby.pid", role="maintenance")
     assert blocked is None
+    assert (home / "child-ready").read_text(encoding="utf-8").strip().isdigit()
