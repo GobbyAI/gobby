@@ -52,7 +52,13 @@ def _msg(
 
 def test_non_message_content_types_membership() -> None:
     assert NON_MESSAGE_CONTENT_TYPES == frozenset(
-        {"session_title", "hook_prompt", "usage", UNMODELED_RECORD_CONTENT_TYPE}
+        {
+            "session_title",
+            "hook_prompt",
+            "usage",
+            "turn_completed",
+            UNMODELED_RECORD_CONTENT_TYPE,
+        }
     )
 
 

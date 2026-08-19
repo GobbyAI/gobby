@@ -7,7 +7,11 @@ import json
 import pytest
 
 from gobby.sessions.transcript_normalization import normalize_transcript_records
-from gobby.sessions.transcripts.base import ParsedMessage
+from gobby.sessions.transcripts.base import (
+    NON_MESSAGE_CONTENT_TYPES,
+    RENDER_SKIP_CONTENT_TYPES,
+    ParsedMessage,
+)
 from gobby.sessions.transcripts.grok import GrokTranscriptParser
 
 pytestmark = pytest.mark.unit
@@ -25,44 +29,110 @@ def _event(update: dict[str, object]) -> str:
 
 
 @pytest.mark.parametrize(
-    "record",
+    "update_type",
     [
-        {
-            "timestamp": 1784250114,
-            "method": "_x.ai/session/update",
-            "params": {
-                "sessionId": "grok-session",
-                "update": {
-                    "sessionUpdate": "retry_state",
-                    "type": "retrying",
-                    "attempt": 1,
-                    "max_retries": 15,
-                    "reason": "request error",
-                },
-                "_meta": {"eventId": "grok-session-132", "agentTimestampMs": 1784250114541},
-            },
-        },
-        {
-            "timestamp": 1784250127,
-            "method": "_x.ai/session/update",
-            "params": {
-                "sessionId": "grok-session",
-                "update": {
-                    "sessionUpdate": "turn_completed",
-                    "prompt_id": "prompt-1",
-                    "stop_reason": "end_turn",
-                },
-                "_meta": {"eventId": "grok-session-216", "agentTimestampMs": 1784250127054},
-            },
-        },
+        "retry_state",
+        "compaction_checkpoint",
+        "auto_compact_completed",
+        "task_backgrounded",
+        "task_completed",
+        "current_mode_update",
+        "hook_annotation",
     ],
 )
-def test_grok_protocol_metadata_records_are_suppressed(record: dict[str, object]) -> None:
+def test_grok_protocol_metadata_records_are_suppressed(update_type: str) -> None:
     parser = GrokTranscriptParser(session_id="grok-session")
-    line = json.dumps(record)
+    line = _event({"sessionUpdate": update_type})
 
-    assert parser.parse_line(line, 0) is None
+    parsed = parser.parse_line(line, 0)
+    assert parsed is None
     assert parser.parse_lines([line]) == []
+
+
+def _turn_completed_record(
+    *,
+    prompt_id: str | None = "prompt-1",
+    usage: dict[str, object] | None = None,
+    include_usage: bool = True,
+) -> dict[str, object]:
+    update: dict[str, object] = {
+        "sessionUpdate": "turn_completed",
+        "stop_reason": "end_turn",
+        "modelCalls": 2,
+        "reasoningTokens": 7,
+        "modelUsage": {"grok-4": {"inputTokens": 100}},
+    }
+    if prompt_id is not None:
+        update["prompt_id"] = prompt_id
+    if include_usage:
+        update["usage"] = (
+            {
+                "inputTokens": 100,
+                "outputTokens": 20,
+                "cachedReadTokens": 30,
+                "cacheCreationTokens": 10,
+                "totalTokens": 120,
+                "reasoningTokens": 7,
+                "modelCalls": 2,
+            }
+            if usage is None
+            else usage
+        )
+    return {
+        "timestamp": 1784250127,
+        "method": "_x.ai/session/update",
+        "params": {
+            "sessionId": "grok-session",
+            "update": update,
+            "_meta": {"eventId": "grok-session-216", "agentTimestampMs": 1784250127054},
+        },
+    }
+
+
+def test_grok_turn_completed_maps_turn_aggregate_usage() -> None:
+    parser = GrokTranscriptParser(session_id="grok-session")
+    record = _turn_completed_record()
+    parsed = parser.parse_line(json.dumps(record), 4)
+
+    assert isinstance(parsed, ParsedMessage)
+    assert parsed.role == "assistant"
+    assert parsed.content == ""
+    assert parsed.content_type == "turn_completed"
+    assert parsed.message_id is not None
+    assert "prompt-1" in parsed.message_id
+    assert parsed.raw_json == record
+    assert parsed.usage is not None
+    # inputTokens 100 minus cachedReadTokens 30 minus cacheCreationTokens 10.
+    assert parsed.usage.input_tokens == 60
+    assert parsed.usage.output_tokens == 20
+    assert parsed.usage.cache_read_tokens == 30
+    assert parsed.usage.cache_creation_tokens == 10
+
+
+def test_grok_turn_completed_without_usage_still_emits_boundary() -> None:
+    parser = GrokTranscriptParser(session_id="grok-session")
+    record = _turn_completed_record(include_usage=False)
+    parsed = parser.parse_line(json.dumps(record), 0)
+
+    assert isinstance(parsed, ParsedMessage)
+    assert parsed.content_type == "turn_completed"
+    assert parsed.content == ""
+    assert parsed.usage is None
+    assert parsed.raw_json == record
+
+
+def test_grok_turn_completed_missing_prompt_id_uses_index_message_id() -> None:
+    parser = GrokTranscriptParser(session_id="grok-session")
+    record = _turn_completed_record(prompt_id=None, include_usage=False)
+    parsed = parser.parse_line(json.dumps(record), 9)
+
+    assert isinstance(parsed, ParsedMessage)
+    assert parsed.message_id == "grok-session:grok:9"
+
+
+def test_grok_turn_completed_is_render_skip_excluded_from_message_count() -> None:
+    assert "turn_completed" in RENDER_SKIP_CONTENT_TYPES
+    assert "turn_completed" in NON_MESSAGE_CONTENT_TYPES
 
 
 def test_grok_updates_jsonl_parser_renders_message_and_tool_records() -> None:

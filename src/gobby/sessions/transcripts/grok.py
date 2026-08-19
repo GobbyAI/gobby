@@ -18,6 +18,18 @@ from gobby.sessions.transcripts.base import (
 
 logger = logging.getLogger(__name__)
 
+_SUPPRESSED_UPDATE_TYPES = frozenset(
+    {
+        "retry_state",
+        "compaction_checkpoint",
+        "auto_compact_completed",
+        "task_backgrounded",
+        "task_completed",
+        "current_mode_update",
+        "hook_annotation",
+    }
+)
+
 
 class GrokTranscriptParser(BaseTranscriptParser):
     """Parse Grok ACP update JSONL into normalized transcript messages."""
@@ -51,7 +63,18 @@ class GrokTranscriptParser(BaseTranscriptParser):
         message_id = _message_id("grok", self.session_id, index, update.get("messageId"))
         usage = _extract_usage(update)
 
-        if update_type in {"retry_state", "turn_completed"}:
+        if update_type == "turn_completed":
+            return _message(
+                index,
+                "assistant",
+                "",
+                "turn_completed",
+                timestamp,
+                data,
+                message_id=_message_id("grok", self.session_id, index, update.get("prompt_id")),
+                usage=_turn_usage(update),
+            )
+        if update_type in _SUPPRESSED_UPDATE_TYPES:
             return None
         if update_type == "user_message_chunk":
             return _message(
@@ -206,6 +229,24 @@ def _message(
         usage=usage,
         tool_use_id=tool_use_id,
         message_id=message_id,
+    )
+
+
+def _turn_usage(update: dict[str, Any]) -> TokenUsage | None:
+    usage = update.get("usage")
+    if not isinstance(usage, dict):
+        return None
+    cache_read = _count(usage.get("cachedReadTokens"))
+    cache_creation = _count(usage.get("cacheCreationTokens"))
+    input_tokens = max(0, _count(usage.get("inputTokens")) - cache_read - cache_creation)
+    output_tokens = _count(usage.get("outputTokens"))
+    if input_tokens == output_tokens == cache_read == cache_creation == 0:
+        return None
+    return TokenUsage(
+        input_tokens=input_tokens,
+        output_tokens=output_tokens,
+        cache_creation_tokens=cache_creation,
+        cache_read_tokens=cache_read,
     )
 
 

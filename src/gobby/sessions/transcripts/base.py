@@ -23,7 +23,9 @@ logger = logging.getLogger(__name__)
 # correct — only display/flat counters exclude them.
 UNMODELED_RECORD_CONTENT_TYPE = "unmodeled_record"
 # Metadata content types that are plain-skipped at render (no telemetry).
-RENDER_SKIP_CONTENT_TYPES: frozenset[str] = frozenset({"hook_prompt", "session_title", "usage"})
+RENDER_SKIP_CONTENT_TYPES: frozenset[str] = frozenset(
+    {"hook_prompt", "session_title", "usage", "turn_completed"}
+)
 # All "not a conversation message" content types: render-skipped metadata plus
 # the unmodeled-record sentinel (observed for telemetry, then skipped). Excluded
 # from message_count / parsed_message_count / flat output everywhere.
