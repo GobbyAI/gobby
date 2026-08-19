@@ -417,11 +417,27 @@ def _issue_prelaunch_credential(
     *,
     timeout_seconds: float | None,
 ) -> PreparedSpawn:
-    """Issue a scoped role after run commit and before provider launch."""
+    """Issue a scoped role and a signed grant file before provider launch."""
+    from gobby.agents.code_index import (
+        _active_deployment_grant_context,
+        _signed_grant_from_credential,
+    )
+    from gobby.runtime_grants.launch import materialize_managed_launch
+
     database = session_manager._storage.db
     credential_manager = vars(database).get("managed_credential_manager")
     if credential_manager is None:
         return prepared
+    # Grant identity and HMAC come from the live daemon lease; fail closed
+    # before issuing anything a broken bootstrap could leak into the launch.
+    operator_token = read_local_api_token()
+    if not operator_token:
+        raise RuntimeError("prelaunch credential requires an operator token")
+    if not prepared.project_id:
+        raise RuntimeError("prelaunch credential requires a project_id")
+    context = _active_deployment_grant_context()
+    session = session_manager._storage.get(prepared.session_id)
+    machine_id = getattr(session, "machine_id", None)
     lifetime_seconds = 3540.0 if timeout_seconds is None else timeout_seconds
     lifetime_seconds = max(lifetime_seconds + 300.0, 1.0)
     credential = credential_manager.issue(
@@ -431,8 +447,25 @@ def _issue_prelaunch_credential(
         agent_run_id=uuid.UUID(prepared.agent_run_id),
         expires_at=datetime.now(UTC) + timedelta(seconds=lifetime_seconds),
     )
-    prepared.env_vars[MANAGED_EXECUTION_BOOTSTRAP_ENV] = str(credential.bootstrap_path)
     prepared.managed_credential = credential
+    grant = _signed_grant_from_credential(
+        credential,
+        machine_id=str(machine_id) if machine_id else None,
+        project_id=prepared.project_id,
+        session_id=prepared.session_id,
+        context=context,
+    )
+    remaining_seconds = (credential.expires_at - datetime.now(UTC)).total_seconds()
+    launch = materialize_managed_launch(
+        grant,
+        dest_dir=credential.bootstrap_path.parent,
+        operator_token=operator_token,
+        deadline_seconds=max(1.0, remaining_seconds),
+    )
+    # gcore consumers parse this file as a full GrantBundle; the minimal
+    # credential JSON stays reachable via credential.bootstrap_path only.
+    # Spawn installs GOBBY_AGENT_API_TOKEN itself; take only the grant path.
+    prepared.env_vars[MANAGED_EXECUTION_BOOTSTRAP_ENV] = str(launch.grant_path)
     return prepared
 
 
