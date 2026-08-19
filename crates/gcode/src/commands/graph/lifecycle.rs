@@ -245,6 +245,7 @@ fn sync_file_graph(
         &facts.imports,
         &facts.definitions,
         &facts.calls,
+        &[],
         false,
     )?;
     db::mark_graph_synced(
@@ -339,6 +340,7 @@ fn rebuild_project_graph(ctx: &Context) -> anyhow::Result<GraphLifecycleOutput> 
                     &facts.imports,
                     &facts.definitions,
                     &facts.calls,
+                    &[],
                     false,
                 )?;
                 db::mark_graph_synced(

@@ -48,6 +48,29 @@ token metadata.
 callee name, source file path, source symbol id, provenance, source system, and
 sync token metadata.
 
+`INHERITS`
+: `CodeSymbol -> CodeSymbol`, `CodeSymbol -> ExternalSymbol`, `CodeSymbol -> UnresolvedCallee`,
+`ExternalSymbol -> CodeSymbol`, `ExternalSymbol -> ExternalSymbol`, `ExternalSymbol -> UnresolvedCallee`,
+`UnresolvedCallee -> CodeSymbol`, `UnresolvedCallee -> ExternalSymbol`, or
+`UnresolvedCallee -> UnresolvedCallee`. Explicit heritage from a derived type to
+its base. Either endpoint may be a code symbol, external symbol, or unresolved
+callee. The relationship stores the owner file, line, source file path, source
+symbol id, provenance, source system, content hash, and sync token.
+
+`EXTENDS`
+: `CodeSymbol -> CodeSymbol`, `CodeSymbol -> ExternalSymbol`, `CodeSymbol -> UnresolvedCallee`,
+`ExternalSymbol -> CodeSymbol`, `ExternalSymbol -> ExternalSymbol`, `ExternalSymbol -> UnresolvedCallee`,
+`UnresolvedCallee -> CodeSymbol`, `UnresolvedCallee -> ExternalSymbol`, or
+`UnresolvedCallee -> UnresolvedCallee`. Same endpoint set and provenance fields as
+INHERITS.
+
+`IMPLEMENTS`
+: `CodeSymbol -> CodeSymbol`, `CodeSymbol -> ExternalSymbol`, `CodeSymbol -> UnresolvedCallee`,
+`ExternalSymbol -> CodeSymbol`, `ExternalSymbol -> ExternalSymbol`, `ExternalSymbol -> UnresolvedCallee`,
+`UnresolvedCallee -> CodeSymbol`, `UnresolvedCallee -> ExternalSymbol`, or
+`UnresolvedCallee -> UnresolvedCallee`. Same endpoint set and provenance fields as
+INHERITS, including external-symbol sources implementing a project trait.
+
 ## Consumer Contract
 
 `gwiki` reads this graph live from shared FalkorDB. When FalkorDB is missing or

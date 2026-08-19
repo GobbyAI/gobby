@@ -446,8 +446,7 @@ impl CallRelation {
 }
 
 /// Typed heritage edge extracted from an explicit extends/implements/embeds clause.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-#[allow(dead_code)] // constructed by 1.2 heritage extraction
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub enum HeritageKind {
     Inherits,
     Extends,
@@ -455,7 +454,6 @@ pub enum HeritageKind {
 }
 
 impl HeritageKind {
-    #[allow(dead_code)] // used by 1.2/1.3 writers
     pub fn as_rel_type(self) -> &'static str {
         match self {
             Self::Inherits => "INHERITS",
@@ -467,7 +465,6 @@ impl HeritageKind {
 
 /// Inheritance relationship extracted from AST. Orientation is derived → base.
 #[derive(Debug, Clone)]
-#[allow(dead_code)] // persisted in 1.3; 1.1 only establishes the model
 pub struct InheritanceRelation {
     pub source_symbol_id: Option<String>,
     pub source_name: String,

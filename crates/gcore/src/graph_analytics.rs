@@ -104,11 +104,11 @@ pub fn analyze(graph: &AnalyticsGraph) -> GraphAnalytics {
 /// public `AnalyticsEdge.weight` (NaN/∞/≤0) happens at the adapter boundary.
 pub fn weight_for_kind(kind: &str) -> f64 {
     match kind.to_ascii_lowercase().as_str() {
-        "contains" | "member" => 3.0,    // structural containment
-        "extends" | "implements" => 2.5, // inheritance
-        "import" | "imports" => 2.0,     // module dependency
-        "call" | "calls" => 1.5,         // call coupling
-        "cites" | "supports" => 1.5,     // gwiki provenance
+        "contains" | "member" => 3.0,                 // structural containment
+        "extends" | "implements" | "inherits" => 2.5, // inheritance
+        "import" | "imports" => 2.0,                  // module dependency
+        "call" | "calls" => 1.5,                      // call coupling
+        "cites" | "supports" => 1.5,                  // gwiki provenance
         "references" | "refers" | "uses" | "callers" => 1.0,
         "links" | "link" | "neighbor" | "relates" => 1.0,
         _ => 1.0, // unknown DB rel-types, "changed", etc.
@@ -636,6 +636,8 @@ mod tests {
             ("member", 3.0),
             ("extends", 2.5),
             ("implements", 2.5),
+            ("inherits", 2.5),
+            ("INHERITS", 2.5),
             ("import", 2.0),
             ("imports", 2.0),
             ("IMPORTS", 2.0),

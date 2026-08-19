@@ -5,7 +5,7 @@
 //! writes FalkorDB `Code*` nodes/edges derived from its PostgreSQL index rows.
 
 use crate::config::Context;
-use crate::models::{CallRelation, ImportRelation, Symbol};
+use crate::models::{CallRelation, ImportRelation, InheritanceRelation, Symbol};
 use gobby_core::falkor::GraphClient;
 use serde_json::Value;
 use std::collections::{BTreeSet, HashSet};
@@ -13,6 +13,7 @@ use std::collections::{BTreeSet, HashSet};
 use super::connection::with_required_core_graph;
 
 mod deletion;
+mod inheritance;
 mod mutation;
 mod support;
 mod sync_plan;
@@ -27,6 +28,7 @@ pub(crate) use deletion::{clear_all_code_index_query, project_scopes_query};
 pub(in crate::graph::code_graph) use mutation::{import_graph_items, partition_call_graph_items};
 
 use deletion::{delete_bare_file_node_query, delete_stale_file_graph_queries};
+use inheritance::partition_inheritance_graph_items;
 use mutation::{SyncFileMutation, definition_graph_symbols, new_sync_token};
 use support::execute_write_query;
 use sync_plan::plan_sync_batches;
@@ -55,6 +57,9 @@ impl<'a> CodeGraph<'a> {
         Self { project_id, client }
     }
 
+    // Eighth argument is the 2.1 inheritance slice; 2.2 threads PostgreSQL facts
+    // into the same position rather than packing a new input struct.
+    #[allow(clippy::too_many_arguments)]
     pub fn sync_file(
         &mut self,
         file_path: &str,
@@ -62,17 +67,21 @@ impl<'a> CodeGraph<'a> {
         imports: &[ImportRelation],
         definitions: &[Symbol],
         calls: &[CallRelation],
+        inheritance: &[InheritanceRelation],
         cleanup_orphans: bool,
     ) -> anyhow::Result<usize> {
         let sync_token = new_sync_token(file_path);
         let import_items = import_graph_items(file_path, imports);
         let symbols = definition_graph_symbols(definitions);
         let call_groups = partition_call_graph_items(self.project_id, file_path, calls);
+        let inheritance_groups =
+            partition_inheritance_graph_items(self.project_id, file_path, inheritance);
         let relationship_count = import_items.len()
             + symbols.len()
             + call_groups.symbol.len()
             + call_groups.external.len()
-            + call_groups.unresolved.len();
+            + call_groups.unresolved.len()
+            + inheritance_groups.row_count();
         // Issue the mutation as bounded batches so no single FalkorDB request
         // grows unbounded for pathological files (gobby-cli #678).
         for query in plan_sync_batches(SyncFileMutation {
@@ -83,6 +92,7 @@ impl<'a> CodeGraph<'a> {
             imports: &import_items,
             symbols: &symbols,
             calls: &call_groups,
+            inheritance: &inheritance_groups,
             sync_token: &sync_token,
         })? {
             execute_write_query(self.client, query)?;
@@ -227,6 +237,7 @@ fn value_to_usize(value: &Value) -> Option<usize> {
     value.as_i64().and_then(|value| usize::try_from(value).ok())
 }
 
+#[allow(clippy::too_many_arguments)]
 pub fn sync_file_graph(
     ctx: &Context,
     file_path: &str,
@@ -234,6 +245,7 @@ pub fn sync_file_graph(
     imports: &[ImportRelation],
     definitions: &[Symbol],
     calls: &[CallRelation],
+    inheritance: &[InheritanceRelation],
     cleanup_orphans: bool,
 ) -> anyhow::Result<usize> {
     with_code_graph(ctx, |graph| {
@@ -243,6 +255,7 @@ pub fn sync_file_graph(
             imports,
             definitions,
             calls,
+            inheritance,
             cleanup_orphans,
         )
     })
@@ -289,5 +302,28 @@ pub fn cleanup_deleted_files(
 pub fn clear_project(ctx: &Context) -> anyhow::Result<()> {
     with_required_core_graph(ctx, |client| {
         CodeGraph::new(&ctx.project_id, client).clear_project()
+    })
+}
+
+#[cfg(test)]
+pub(in crate::graph::code_graph) fn plan_test_sync_file(
+    project_id: &str,
+    file_path: &str,
+    content_hash: &str,
+    inheritance: &[crate::models::InheritanceRelation],
+    sync_token: &str,
+) -> anyhow::Result<Vec<crate::graph::typed_query::TypedQuery>> {
+    let calls = partition_call_graph_items(project_id, file_path, &[]);
+    let inheritance_groups = partition_inheritance_graph_items(project_id, file_path, inheritance);
+    plan_sync_batches(SyncFileMutation {
+        project_id,
+        file_path,
+        content_hash,
+        symbol_count: 0,
+        imports: &[],
+        symbols: &[],
+        calls: &calls,
+        inheritance: &inheritance_groups,
+        sync_token,
     })
 }

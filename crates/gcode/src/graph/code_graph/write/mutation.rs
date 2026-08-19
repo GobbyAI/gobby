@@ -86,6 +86,465 @@ const ADD_UNRESOLVED_CALLS_CYPHER: &str = "UNWIND $unresolved_calls AS call
              r.source_line = call.line,
              r.source_symbol_id = call.caller_id,
              r.sync_token = $sync_token";
+pub(super) const ADD_INHERITS_SYMBOL_SYMBOL_CYPHER: &str = "UNWIND $rows AS row
+         MERGE (source:CodeSymbol {id: row.source_id, project: $project})
+         ON CREATE SET source.name = row.source_name, source.updated_at = timestamp()
+         MERGE (target:CodeSymbol {id: row.target_id, project: $project})
+         ON CREATE SET target.name = row.target_name, target.updated_at = timestamp()
+         MERGE (source)-[r:INHERITS {file: row.file_path, line: row.line, content_hash: $content_hash}]->(target)
+         SET r.provenance = $provenance,
+             r.confidence = $confidence,
+             r.source_system = $source_system,
+             r.source_file_path = row.file_path,
+             r.source_line = row.line,
+             r.source_symbol_id = row.source_id,
+             r.sync_token = $sync_token";
+pub(super) const ADD_INHERITS_SYMBOL_EXTERNAL_CYPHER: &str = "UNWIND $rows AS row
+         MERGE (source:CodeSymbol {id: row.source_id, project: $project})
+         ON CREATE SET source.name = row.source_name, source.updated_at = timestamp()
+         MERGE (target:ExternalSymbol {id: row.target_id, project: $project})
+         ON CREATE SET target.name = row.target_name,
+             target.external_module = row.target_module,
+             target.module = row.target_module,
+             target.updated_at = timestamp(),
+             target.sync_token = $sync_token
+         MERGE (source)-[r:INHERITS {file: row.file_path, line: row.line, content_hash: $content_hash}]->(target)
+         SET r.provenance = $provenance,
+             r.confidence = $confidence,
+             r.source_system = $source_system,
+             r.source_file_path = row.file_path,
+             r.source_line = row.line,
+             r.source_symbol_id = row.source_id,
+             r.sync_token = $sync_token";
+pub(super) const ADD_INHERITS_SYMBOL_UNRESOLVED_CYPHER: &str = "UNWIND $rows AS row
+         MERGE (source:CodeSymbol {id: row.source_id, project: $project})
+         ON CREATE SET source.name = row.source_name, source.updated_at = timestamp()
+         MERGE (target:UnresolvedCallee {id: row.target_id, project: $project})
+         ON CREATE SET target.name = row.target_name,
+             target.updated_at = timestamp(),
+             target.sync_token = $sync_token
+         MERGE (source)-[r:INHERITS {file: row.file_path, line: row.line, content_hash: $content_hash}]->(target)
+         SET r.provenance = $provenance,
+             r.confidence = $confidence,
+             r.source_system = $source_system,
+             r.source_file_path = row.file_path,
+             r.source_line = row.line,
+             r.source_symbol_id = row.source_id,
+             r.sync_token = $sync_token";
+pub(super) const ADD_INHERITS_EXTERNAL_SYMBOL_CYPHER: &str = "UNWIND $rows AS row
+         MERGE (source:ExternalSymbol {id: row.source_id, project: $project})
+         ON CREATE SET source.name = row.source_name,
+             source.external_module = row.source_module,
+             source.module = row.source_module,
+             source.updated_at = timestamp(),
+             source.sync_token = $sync_token
+         MERGE (target:CodeSymbol {id: row.target_id, project: $project})
+         ON CREATE SET target.name = row.target_name, target.updated_at = timestamp()
+         MERGE (source)-[r:INHERITS {file: row.file_path, line: row.line, content_hash: $content_hash}]->(target)
+         SET r.provenance = $provenance,
+             r.confidence = $confidence,
+             r.source_system = $source_system,
+             r.source_file_path = row.file_path,
+             r.source_line = row.line,
+             r.source_symbol_id = row.source_id,
+             r.sync_token = $sync_token";
+pub(super) const ADD_INHERITS_EXTERNAL_EXTERNAL_CYPHER: &str = "UNWIND $rows AS row
+         MERGE (source:ExternalSymbol {id: row.source_id, project: $project})
+         ON CREATE SET source.name = row.source_name,
+             source.external_module = row.source_module,
+             source.module = row.source_module,
+             source.updated_at = timestamp(),
+             source.sync_token = $sync_token
+         MERGE (target:ExternalSymbol {id: row.target_id, project: $project})
+         ON CREATE SET target.name = row.target_name,
+             target.external_module = row.target_module,
+             target.module = row.target_module,
+             target.updated_at = timestamp(),
+             target.sync_token = $sync_token
+         MERGE (source)-[r:INHERITS {file: row.file_path, line: row.line, content_hash: $content_hash}]->(target)
+         SET r.provenance = $provenance,
+             r.confidence = $confidence,
+             r.source_system = $source_system,
+             r.source_file_path = row.file_path,
+             r.source_line = row.line,
+             r.source_symbol_id = row.source_id,
+             r.sync_token = $sync_token";
+pub(super) const ADD_INHERITS_EXTERNAL_UNRESOLVED_CYPHER: &str = "UNWIND $rows AS row
+         MERGE (source:ExternalSymbol {id: row.source_id, project: $project})
+         ON CREATE SET source.name = row.source_name,
+             source.external_module = row.source_module,
+             source.module = row.source_module,
+             source.updated_at = timestamp(),
+             source.sync_token = $sync_token
+         MERGE (target:UnresolvedCallee {id: row.target_id, project: $project})
+         ON CREATE SET target.name = row.target_name,
+             target.updated_at = timestamp(),
+             target.sync_token = $sync_token
+         MERGE (source)-[r:INHERITS {file: row.file_path, line: row.line, content_hash: $content_hash}]->(target)
+         SET r.provenance = $provenance,
+             r.confidence = $confidence,
+             r.source_system = $source_system,
+             r.source_file_path = row.file_path,
+             r.source_line = row.line,
+             r.source_symbol_id = row.source_id,
+             r.sync_token = $sync_token";
+pub(super) const ADD_INHERITS_UNRESOLVED_SYMBOL_CYPHER: &str = "UNWIND $rows AS row
+         MERGE (source:UnresolvedCallee {id: row.source_id, project: $project})
+         ON CREATE SET source.name = row.source_name,
+             source.updated_at = timestamp(),
+             source.sync_token = $sync_token
+         MERGE (target:CodeSymbol {id: row.target_id, project: $project})
+         ON CREATE SET target.name = row.target_name, target.updated_at = timestamp()
+         MERGE (source)-[r:INHERITS {file: row.file_path, line: row.line, content_hash: $content_hash}]->(target)
+         SET r.provenance = $provenance,
+             r.confidence = $confidence,
+             r.source_system = $source_system,
+             r.source_file_path = row.file_path,
+             r.source_line = row.line,
+             r.source_symbol_id = row.source_id,
+             r.sync_token = $sync_token";
+pub(super) const ADD_INHERITS_UNRESOLVED_EXTERNAL_CYPHER: &str = "UNWIND $rows AS row
+         MERGE (source:UnresolvedCallee {id: row.source_id, project: $project})
+         ON CREATE SET source.name = row.source_name,
+             source.updated_at = timestamp(),
+             source.sync_token = $sync_token
+         MERGE (target:ExternalSymbol {id: row.target_id, project: $project})
+         ON CREATE SET target.name = row.target_name,
+             target.external_module = row.target_module,
+             target.module = row.target_module,
+             target.updated_at = timestamp(),
+             target.sync_token = $sync_token
+         MERGE (source)-[r:INHERITS {file: row.file_path, line: row.line, content_hash: $content_hash}]->(target)
+         SET r.provenance = $provenance,
+             r.confidence = $confidence,
+             r.source_system = $source_system,
+             r.source_file_path = row.file_path,
+             r.source_line = row.line,
+             r.source_symbol_id = row.source_id,
+             r.sync_token = $sync_token";
+pub(super) const ADD_INHERITS_UNRESOLVED_UNRESOLVED_CYPHER: &str = "UNWIND $rows AS row
+         MERGE (source:UnresolvedCallee {id: row.source_id, project: $project})
+         ON CREATE SET source.name = row.source_name,
+             source.updated_at = timestamp(),
+             source.sync_token = $sync_token
+         MERGE (target:UnresolvedCallee {id: row.target_id, project: $project})
+         ON CREATE SET target.name = row.target_name,
+             target.updated_at = timestamp(),
+             target.sync_token = $sync_token
+         MERGE (source)-[r:INHERITS {file: row.file_path, line: row.line, content_hash: $content_hash}]->(target)
+         SET r.provenance = $provenance,
+             r.confidence = $confidence,
+             r.source_system = $source_system,
+             r.source_file_path = row.file_path,
+             r.source_line = row.line,
+             r.source_symbol_id = row.source_id,
+             r.sync_token = $sync_token";
+pub(super) const ADD_EXTENDS_SYMBOL_SYMBOL_CYPHER: &str = "UNWIND $rows AS row
+         MERGE (source:CodeSymbol {id: row.source_id, project: $project})
+         ON CREATE SET source.name = row.source_name, source.updated_at = timestamp()
+         MERGE (target:CodeSymbol {id: row.target_id, project: $project})
+         ON CREATE SET target.name = row.target_name, target.updated_at = timestamp()
+         MERGE (source)-[r:EXTENDS {file: row.file_path, line: row.line, content_hash: $content_hash}]->(target)
+         SET r.provenance = $provenance,
+             r.confidence = $confidence,
+             r.source_system = $source_system,
+             r.source_file_path = row.file_path,
+             r.source_line = row.line,
+             r.source_symbol_id = row.source_id,
+             r.sync_token = $sync_token";
+pub(super) const ADD_EXTENDS_SYMBOL_EXTERNAL_CYPHER: &str = "UNWIND $rows AS row
+         MERGE (source:CodeSymbol {id: row.source_id, project: $project})
+         ON CREATE SET source.name = row.source_name, source.updated_at = timestamp()
+         MERGE (target:ExternalSymbol {id: row.target_id, project: $project})
+         ON CREATE SET target.name = row.target_name,
+             target.external_module = row.target_module,
+             target.module = row.target_module,
+             target.updated_at = timestamp(),
+             target.sync_token = $sync_token
+         MERGE (source)-[r:EXTENDS {file: row.file_path, line: row.line, content_hash: $content_hash}]->(target)
+         SET r.provenance = $provenance,
+             r.confidence = $confidence,
+             r.source_system = $source_system,
+             r.source_file_path = row.file_path,
+             r.source_line = row.line,
+             r.source_symbol_id = row.source_id,
+             r.sync_token = $sync_token";
+pub(super) const ADD_EXTENDS_SYMBOL_UNRESOLVED_CYPHER: &str = "UNWIND $rows AS row
+         MERGE (source:CodeSymbol {id: row.source_id, project: $project})
+         ON CREATE SET source.name = row.source_name, source.updated_at = timestamp()
+         MERGE (target:UnresolvedCallee {id: row.target_id, project: $project})
+         ON CREATE SET target.name = row.target_name,
+             target.updated_at = timestamp(),
+             target.sync_token = $sync_token
+         MERGE (source)-[r:EXTENDS {file: row.file_path, line: row.line, content_hash: $content_hash}]->(target)
+         SET r.provenance = $provenance,
+             r.confidence = $confidence,
+             r.source_system = $source_system,
+             r.source_file_path = row.file_path,
+             r.source_line = row.line,
+             r.source_symbol_id = row.source_id,
+             r.sync_token = $sync_token";
+pub(super) const ADD_EXTENDS_EXTERNAL_SYMBOL_CYPHER: &str = "UNWIND $rows AS row
+         MERGE (source:ExternalSymbol {id: row.source_id, project: $project})
+         ON CREATE SET source.name = row.source_name,
+             source.external_module = row.source_module,
+             source.module = row.source_module,
+             source.updated_at = timestamp(),
+             source.sync_token = $sync_token
+         MERGE (target:CodeSymbol {id: row.target_id, project: $project})
+         ON CREATE SET target.name = row.target_name, target.updated_at = timestamp()
+         MERGE (source)-[r:EXTENDS {file: row.file_path, line: row.line, content_hash: $content_hash}]->(target)
+         SET r.provenance = $provenance,
+             r.confidence = $confidence,
+             r.source_system = $source_system,
+             r.source_file_path = row.file_path,
+             r.source_line = row.line,
+             r.source_symbol_id = row.source_id,
+             r.sync_token = $sync_token";
+pub(super) const ADD_EXTENDS_EXTERNAL_EXTERNAL_CYPHER: &str = "UNWIND $rows AS row
+         MERGE (source:ExternalSymbol {id: row.source_id, project: $project})
+         ON CREATE SET source.name = row.source_name,
+             source.external_module = row.source_module,
+             source.module = row.source_module,
+             source.updated_at = timestamp(),
+             source.sync_token = $sync_token
+         MERGE (target:ExternalSymbol {id: row.target_id, project: $project})
+         ON CREATE SET target.name = row.target_name,
+             target.external_module = row.target_module,
+             target.module = row.target_module,
+             target.updated_at = timestamp(),
+             target.sync_token = $sync_token
+         MERGE (source)-[r:EXTENDS {file: row.file_path, line: row.line, content_hash: $content_hash}]->(target)
+         SET r.provenance = $provenance,
+             r.confidence = $confidence,
+             r.source_system = $source_system,
+             r.source_file_path = row.file_path,
+             r.source_line = row.line,
+             r.source_symbol_id = row.source_id,
+             r.sync_token = $sync_token";
+pub(super) const ADD_EXTENDS_EXTERNAL_UNRESOLVED_CYPHER: &str = "UNWIND $rows AS row
+         MERGE (source:ExternalSymbol {id: row.source_id, project: $project})
+         ON CREATE SET source.name = row.source_name,
+             source.external_module = row.source_module,
+             source.module = row.source_module,
+             source.updated_at = timestamp(),
+             source.sync_token = $sync_token
+         MERGE (target:UnresolvedCallee {id: row.target_id, project: $project})
+         ON CREATE SET target.name = row.target_name,
+             target.updated_at = timestamp(),
+             target.sync_token = $sync_token
+         MERGE (source)-[r:EXTENDS {file: row.file_path, line: row.line, content_hash: $content_hash}]->(target)
+         SET r.provenance = $provenance,
+             r.confidence = $confidence,
+             r.source_system = $source_system,
+             r.source_file_path = row.file_path,
+             r.source_line = row.line,
+             r.source_symbol_id = row.source_id,
+             r.sync_token = $sync_token";
+pub(super) const ADD_EXTENDS_UNRESOLVED_SYMBOL_CYPHER: &str = "UNWIND $rows AS row
+         MERGE (source:UnresolvedCallee {id: row.source_id, project: $project})
+         ON CREATE SET source.name = row.source_name,
+             source.updated_at = timestamp(),
+             source.sync_token = $sync_token
+         MERGE (target:CodeSymbol {id: row.target_id, project: $project})
+         ON CREATE SET target.name = row.target_name, target.updated_at = timestamp()
+         MERGE (source)-[r:EXTENDS {file: row.file_path, line: row.line, content_hash: $content_hash}]->(target)
+         SET r.provenance = $provenance,
+             r.confidence = $confidence,
+             r.source_system = $source_system,
+             r.source_file_path = row.file_path,
+             r.source_line = row.line,
+             r.source_symbol_id = row.source_id,
+             r.sync_token = $sync_token";
+pub(super) const ADD_EXTENDS_UNRESOLVED_EXTERNAL_CYPHER: &str = "UNWIND $rows AS row
+         MERGE (source:UnresolvedCallee {id: row.source_id, project: $project})
+         ON CREATE SET source.name = row.source_name,
+             source.updated_at = timestamp(),
+             source.sync_token = $sync_token
+         MERGE (target:ExternalSymbol {id: row.target_id, project: $project})
+         ON CREATE SET target.name = row.target_name,
+             target.external_module = row.target_module,
+             target.module = row.target_module,
+             target.updated_at = timestamp(),
+             target.sync_token = $sync_token
+         MERGE (source)-[r:EXTENDS {file: row.file_path, line: row.line, content_hash: $content_hash}]->(target)
+         SET r.provenance = $provenance,
+             r.confidence = $confidence,
+             r.source_system = $source_system,
+             r.source_file_path = row.file_path,
+             r.source_line = row.line,
+             r.source_symbol_id = row.source_id,
+             r.sync_token = $sync_token";
+pub(super) const ADD_EXTENDS_UNRESOLVED_UNRESOLVED_CYPHER: &str = "UNWIND $rows AS row
+         MERGE (source:UnresolvedCallee {id: row.source_id, project: $project})
+         ON CREATE SET source.name = row.source_name,
+             source.updated_at = timestamp(),
+             source.sync_token = $sync_token
+         MERGE (target:UnresolvedCallee {id: row.target_id, project: $project})
+         ON CREATE SET target.name = row.target_name,
+             target.updated_at = timestamp(),
+             target.sync_token = $sync_token
+         MERGE (source)-[r:EXTENDS {file: row.file_path, line: row.line, content_hash: $content_hash}]->(target)
+         SET r.provenance = $provenance,
+             r.confidence = $confidence,
+             r.source_system = $source_system,
+             r.source_file_path = row.file_path,
+             r.source_line = row.line,
+             r.source_symbol_id = row.source_id,
+             r.sync_token = $sync_token";
+pub(super) const ADD_IMPLEMENTS_SYMBOL_SYMBOL_CYPHER: &str = "UNWIND $rows AS row
+         MERGE (source:CodeSymbol {id: row.source_id, project: $project})
+         ON CREATE SET source.name = row.source_name, source.updated_at = timestamp()
+         MERGE (target:CodeSymbol {id: row.target_id, project: $project})
+         ON CREATE SET target.name = row.target_name, target.updated_at = timestamp()
+         MERGE (source)-[r:IMPLEMENTS {file: row.file_path, line: row.line, content_hash: $content_hash}]->(target)
+         SET r.provenance = $provenance,
+             r.confidence = $confidence,
+             r.source_system = $source_system,
+             r.source_file_path = row.file_path,
+             r.source_line = row.line,
+             r.source_symbol_id = row.source_id,
+             r.sync_token = $sync_token";
+pub(super) const ADD_IMPLEMENTS_SYMBOL_EXTERNAL_CYPHER: &str = "UNWIND $rows AS row
+         MERGE (source:CodeSymbol {id: row.source_id, project: $project})
+         ON CREATE SET source.name = row.source_name, source.updated_at = timestamp()
+         MERGE (target:ExternalSymbol {id: row.target_id, project: $project})
+         ON CREATE SET target.name = row.target_name,
+             target.external_module = row.target_module,
+             target.module = row.target_module,
+             target.updated_at = timestamp(),
+             target.sync_token = $sync_token
+         MERGE (source)-[r:IMPLEMENTS {file: row.file_path, line: row.line, content_hash: $content_hash}]->(target)
+         SET r.provenance = $provenance,
+             r.confidence = $confidence,
+             r.source_system = $source_system,
+             r.source_file_path = row.file_path,
+             r.source_line = row.line,
+             r.source_symbol_id = row.source_id,
+             r.sync_token = $sync_token";
+pub(super) const ADD_IMPLEMENTS_SYMBOL_UNRESOLVED_CYPHER: &str = "UNWIND $rows AS row
+         MERGE (source:CodeSymbol {id: row.source_id, project: $project})
+         ON CREATE SET source.name = row.source_name, source.updated_at = timestamp()
+         MERGE (target:UnresolvedCallee {id: row.target_id, project: $project})
+         ON CREATE SET target.name = row.target_name,
+             target.updated_at = timestamp(),
+             target.sync_token = $sync_token
+         MERGE (source)-[r:IMPLEMENTS {file: row.file_path, line: row.line, content_hash: $content_hash}]->(target)
+         SET r.provenance = $provenance,
+             r.confidence = $confidence,
+             r.source_system = $source_system,
+             r.source_file_path = row.file_path,
+             r.source_line = row.line,
+             r.source_symbol_id = row.source_id,
+             r.sync_token = $sync_token";
+pub(super) const ADD_IMPLEMENTS_EXTERNAL_SYMBOL_CYPHER: &str = "UNWIND $rows AS row
+         MERGE (source:ExternalSymbol {id: row.source_id, project: $project})
+         ON CREATE SET source.name = row.source_name,
+             source.external_module = row.source_module,
+             source.module = row.source_module,
+             source.updated_at = timestamp(),
+             source.sync_token = $sync_token
+         MERGE (target:CodeSymbol {id: row.target_id, project: $project})
+         ON CREATE SET target.name = row.target_name, target.updated_at = timestamp()
+         MERGE (source)-[r:IMPLEMENTS {file: row.file_path, line: row.line, content_hash: $content_hash}]->(target)
+         SET r.provenance = $provenance,
+             r.confidence = $confidence,
+             r.source_system = $source_system,
+             r.source_file_path = row.file_path,
+             r.source_line = row.line,
+             r.source_symbol_id = row.source_id,
+             r.sync_token = $sync_token";
+pub(super) const ADD_IMPLEMENTS_EXTERNAL_EXTERNAL_CYPHER: &str = "UNWIND $rows AS row
+         MERGE (source:ExternalSymbol {id: row.source_id, project: $project})
+         ON CREATE SET source.name = row.source_name,
+             source.external_module = row.source_module,
+             source.module = row.source_module,
+             source.updated_at = timestamp(),
+             source.sync_token = $sync_token
+         MERGE (target:ExternalSymbol {id: row.target_id, project: $project})
+         ON CREATE SET target.name = row.target_name,
+             target.external_module = row.target_module,
+             target.module = row.target_module,
+             target.updated_at = timestamp(),
+             target.sync_token = $sync_token
+         MERGE (source)-[r:IMPLEMENTS {file: row.file_path, line: row.line, content_hash: $content_hash}]->(target)
+         SET r.provenance = $provenance,
+             r.confidence = $confidence,
+             r.source_system = $source_system,
+             r.source_file_path = row.file_path,
+             r.source_line = row.line,
+             r.source_symbol_id = row.source_id,
+             r.sync_token = $sync_token";
+pub(super) const ADD_IMPLEMENTS_EXTERNAL_UNRESOLVED_CYPHER: &str = "UNWIND $rows AS row
+         MERGE (source:ExternalSymbol {id: row.source_id, project: $project})
+         ON CREATE SET source.name = row.source_name,
+             source.external_module = row.source_module,
+             source.module = row.source_module,
+             source.updated_at = timestamp(),
+             source.sync_token = $sync_token
+         MERGE (target:UnresolvedCallee {id: row.target_id, project: $project})
+         ON CREATE SET target.name = row.target_name,
+             target.updated_at = timestamp(),
+             target.sync_token = $sync_token
+         MERGE (source)-[r:IMPLEMENTS {file: row.file_path, line: row.line, content_hash: $content_hash}]->(target)
+         SET r.provenance = $provenance,
+             r.confidence = $confidence,
+             r.source_system = $source_system,
+             r.source_file_path = row.file_path,
+             r.source_line = row.line,
+             r.source_symbol_id = row.source_id,
+             r.sync_token = $sync_token";
+pub(super) const ADD_IMPLEMENTS_UNRESOLVED_SYMBOL_CYPHER: &str = "UNWIND $rows AS row
+         MERGE (source:UnresolvedCallee {id: row.source_id, project: $project})
+         ON CREATE SET source.name = row.source_name,
+             source.updated_at = timestamp(),
+             source.sync_token = $sync_token
+         MERGE (target:CodeSymbol {id: row.target_id, project: $project})
+         ON CREATE SET target.name = row.target_name, target.updated_at = timestamp()
+         MERGE (source)-[r:IMPLEMENTS {file: row.file_path, line: row.line, content_hash: $content_hash}]->(target)
+         SET r.provenance = $provenance,
+             r.confidence = $confidence,
+             r.source_system = $source_system,
+             r.source_file_path = row.file_path,
+             r.source_line = row.line,
+             r.source_symbol_id = row.source_id,
+             r.sync_token = $sync_token";
+pub(super) const ADD_IMPLEMENTS_UNRESOLVED_EXTERNAL_CYPHER: &str = "UNWIND $rows AS row
+         MERGE (source:UnresolvedCallee {id: row.source_id, project: $project})
+         ON CREATE SET source.name = row.source_name,
+             source.updated_at = timestamp(),
+             source.sync_token = $sync_token
+         MERGE (target:ExternalSymbol {id: row.target_id, project: $project})
+         ON CREATE SET target.name = row.target_name,
+             target.external_module = row.target_module,
+             target.module = row.target_module,
+             target.updated_at = timestamp(),
+             target.sync_token = $sync_token
+         MERGE (source)-[r:IMPLEMENTS {file: row.file_path, line: row.line, content_hash: $content_hash}]->(target)
+         SET r.provenance = $provenance,
+             r.confidence = $confidence,
+             r.source_system = $source_system,
+             r.source_file_path = row.file_path,
+             r.source_line = row.line,
+             r.source_symbol_id = row.source_id,
+             r.sync_token = $sync_token";
+pub(super) const ADD_IMPLEMENTS_UNRESOLVED_UNRESOLVED_CYPHER: &str = "UNWIND $rows AS row
+         MERGE (source:UnresolvedCallee {id: row.source_id, project: $project})
+         ON CREATE SET source.name = row.source_name,
+             source.updated_at = timestamp(),
+             source.sync_token = $sync_token
+         MERGE (target:UnresolvedCallee {id: row.target_id, project: $project})
+         ON CREATE SET target.name = row.target_name,
+             target.updated_at = timestamp(),
+             target.sync_token = $sync_token
+         MERGE (source)-[r:IMPLEMENTS {file: row.file_path, line: row.line, content_hash: $content_hash}]->(target)
+         SET r.provenance = $provenance,
+             r.confidence = $confidence,
+             r.source_system = $source_system,
+             r.source_file_path = row.file_path,
+             r.source_line = row.line,
+             r.source_symbol_id = row.source_id,
+             r.sync_token = $sync_token";
 
 pub(super) fn new_sync_token(file_path: &str) -> String {
     let nanos = SystemTime::now()
@@ -119,7 +578,9 @@ pub(in crate::graph::code_graph) struct CallGraphItems {
     pub(in crate::graph::code_graph) unresolved: Vec<CallGraphItem>,
 }
 
-fn map_value(values: impl IntoIterator<Item = (&'static str, TypedValue)>) -> TypedValue {
+pub(super) fn map_value(
+    values: impl IntoIterator<Item = (&'static str, TypedValue)>,
+) -> TypedValue {
     TypedValue::Map(
         values
             .into_iter()
@@ -182,7 +643,10 @@ pub(in crate::graph::code_graph) fn partition_call_graph_items(
     groups
 }
 
-fn metadata_params(sync_token: &str, content_hash: &str) -> Vec<(&'static str, TypedValue)> {
+pub(super) fn metadata_params(
+    sync_token: &str,
+    content_hash: &str,
+) -> Vec<(&'static str, TypedValue)> {
     vec![
         (
             "provenance",
@@ -206,6 +670,7 @@ pub(super) struct SyncFileMutation<'a> {
     pub(super) imports: &'a [ImportGraphItem],
     pub(super) symbols: &'a [&'a Symbol],
     pub(super) calls: &'a CallGraphItems,
+    pub(super) inheritance: &'a super::inheritance::InheritanceGraphItems,
     pub(super) sync_token: &'a str,
 }
 

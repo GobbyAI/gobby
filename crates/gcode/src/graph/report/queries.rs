@@ -2,8 +2,9 @@ use std::collections::HashMap;
 
 use crate::graph::typed_query;
 
-const CODE_EDGE_REL_TYPES: &str = "['DEFINES', 'IMPORTS', 'CALLS']";
-const CODE_EDGE_REL_PATTERN: &str = "DEFINES|IMPORTS|CALLS";
+const CODE_EDGE_REL_TYPES: &str =
+    "['DEFINES', 'IMPORTS', 'CALLS', 'INHERITS', 'EXTENDS', 'IMPLEMENTS']";
+const CODE_EDGE_REL_PATTERN: &str = "DEFINES|IMPORTS|CALLS|INHERITS|EXTENDS|IMPLEMENTS";
 
 pub(super) fn report_node_type_case(alias: &str) -> String {
     format!(
@@ -170,14 +171,15 @@ mod tests {
             "label-less MATCH + WHERE label filter regressed: {query}"
         );
 
-        // Traverses the DEFINES/IMPORTS/CALLS relationship-type matrices
-        // directly instead of expanding every edge and filtering by type().
+        // Traverses the DEFINES/IMPORTS/CALLS/INHERITS/EXTENDS/IMPLEMENTS
+        // relationship-type matrices directly instead of expanding every edge
+        // and filtering by type().
         assert!(
-            query.contains("-[out:DEFINES|IMPORTS|CALLS]->"),
+            query.contains("-[out:DEFINES|IMPORTS|CALLS|INHERITS|EXTENDS|IMPLEMENTS]->"),
             "expected typed outgoing traversal, got: {query}"
         );
         assert!(
-            query.contains("-[inc:DEFINES|IMPORTS|CALLS]->"),
+            query.contains("-[inc:DEFINES|IMPORTS|CALLS|INHERITS|EXTENDS|IMPLEMENTS]->"),
             "expected typed incoming traversal, got: {query}"
         );
         assert!(
@@ -210,6 +212,27 @@ mod tests {
             "expected pushed-down limit, got: {query}"
         );
         assert!(params.contains_key("project"));
+    }
+
+    #[test]
+    fn report_edge_patterns_include_inheritance_rels() {
+        for rel in ["INHERITS", "EXTENDS", "IMPLEMENTS"] {
+            assert!(
+                CODE_EDGE_REL_TYPES.contains(rel),
+                "CODE_EDGE_REL_TYPES missing {rel}: {CODE_EDGE_REL_TYPES}"
+            );
+            assert!(
+                CODE_EDGE_REL_PATTERN.contains(rel),
+                "CODE_EDGE_REL_PATTERN missing {rel}: {CODE_EDGE_REL_PATTERN}"
+            );
+        }
+        let (query, _) = report_code_edge_counts_query("proj-1");
+        for rel in ["INHERITS", "EXTENDS", "IMPLEMENTS"] {
+            assert!(
+                query.contains(rel),
+                "edge-count query missing {rel}: {query}"
+            );
+        }
     }
 
     #[test]

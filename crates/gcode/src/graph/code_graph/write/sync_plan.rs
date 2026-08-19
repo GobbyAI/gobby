@@ -8,6 +8,7 @@
 
 use crate::graph::typed_query::TypedQuery;
 
+use super::inheritance::add_inheritance_query;
 use super::mutation::{
     SyncFileMutation, add_definitions_query, add_external_calls_query, add_imports_query,
     add_symbol_calls_query, add_unresolved_calls_query, ensure_file_node_query,
@@ -81,6 +82,19 @@ pub(super) fn plan_sync_batches(input: SyncFileMutation<'_>) -> anyhow::Result<V
             input.sync_token,
         )?);
     }
+    for (source, target, kind, rows) in input.inheritance.iter_non_empty() {
+        for chunk in rows.chunks(GRAPH_SYNC_BATCH_SIZE) {
+            queries.push(add_inheritance_query(
+                input.project_id,
+                source,
+                target,
+                kind,
+                chunk,
+                input.content_hash,
+                input.sync_token,
+            )?);
+        }
+    }
 
     Ok(queries)
 }
@@ -128,6 +142,7 @@ mod tests {
             imports: &[],
             symbols: &symbols,
             calls: &calls,
+            inheritance: &super::super::inheritance::InheritanceGraphItems::default(),
             sync_token: "tok-1",
         })
         .expect("plan");
@@ -175,6 +190,7 @@ mod tests {
             imports: &[],
             symbols: &symbols,
             calls: &calls,
+            inheritance: &super::super::inheritance::InheritanceGraphItems::default(),
             sync_token: "tok-2",
         })
         .expect("plan");

@@ -1,7 +1,11 @@
 use super::lifecycle::GraphLifecycleTimeouts;
 use super::*;
 use crate::config::{CodeVectorSettings, Context};
-use crate::models::{CallRelation, ImportRelation, ProjectionProvenance, SOURCE_SYSTEM_GCODE};
+use crate::graph::typed_query::TypedQuery;
+use crate::models::{
+    CallRelation, CallTargetKind, HeritageKind, ImportRelation, InheritanceRelation,
+    ProjectionProvenance, SOURCE_SYSTEM_GCODE, make_external_symbol_id, make_unresolved_callee_id,
+};
 use gobby_core::falkor::Row;
 use serde_json::json;
 use std::io::{Read, Write};
@@ -697,4 +701,392 @@ fn global_prune_scope_discovery_query_reads_distinct_code_projects() {
         assert!(query.cypher.contains(code_label), "missing {code_label}");
     }
     assert!(query.params.is_empty());
+}
+
+fn heritage_relation(
+    source_id: Option<&str>,
+    source_name: &str,
+    source_kind: CallTargetKind,
+    source_module: Option<&str>,
+    target_id: Option<&str>,
+    target_name: &str,
+    target_kind: CallTargetKind,
+    target_module: Option<&str>,
+    heritage_kind: HeritageKind,
+    line: usize,
+) -> InheritanceRelation {
+    InheritanceRelation {
+        source_symbol_id: source_id.map(str::to_string),
+        source_name: source_name.to_string(),
+        source_kind,
+        source_external_module: source_module.map(str::to_string),
+        target_symbol_id: target_id.map(str::to_string),
+        target_name: target_name.to_string(),
+        target_kind,
+        target_external_module: target_module.map(str::to_string),
+        heritage_kind,
+        file_path: "stale/owner.rs".to_string(),
+        content_hash: "stale-hash".to_string(),
+        line,
+    }
+}
+
+fn planned_heritage(rows: &[InheritanceRelation]) -> Vec<TypedQuery> {
+    super::write::plan_test_sync_file("project-1", "src/owner.rs", "hash-1", rows, "tok-1")
+        .expect("plan heritage sync")
+}
+
+fn query_with<'a>(queries: &'a [TypedQuery], needle: &str) -> &'a TypedQuery {
+    queries
+        .iter()
+        .find(|query| query.cypher.contains(needle))
+        .unwrap_or_else(|| panic!("missing query containing {needle}"))
+}
+
+macro_rules! assert_heritage_merge_keys {
+    ($query:expr, $rel:expr) => {{
+        let query = $query;
+        let rel = $rel;
+        assert!(
+            query.cypher.contains(&format!(
+                "[r:{rel} {{file: row.file_path, line: row.line, content_hash: $content_hash}}]"
+            )),
+            "heritage MERGE must key {rel} by file, line, and content_hash:\n{}",
+            query.cypher
+        );
+        assert!(
+            query
+                .params
+                .get("sync_token")
+                .is_some_and(|value| value.contains("tok-1")),
+            "missing sync_token in {}",
+            query.cypher
+        );
+        assert!(
+            query
+                .params
+                .get("content_hash")
+                .is_some_and(|value| value.contains("hash-1")),
+            "missing content_hash in {}",
+            query.cypher
+        );
+        assert!(
+            !query.cypher.contains("MATCH (source:"),
+            "heritage endpoints must MERGE, not MATCH:\n{}",
+            query.cypher
+        );
+        assert!(
+            !query.cypher.contains("MATCH (target:"),
+            "heritage endpoints must MERGE, not MATCH:\n{}",
+            query.cypher
+        );
+    }};
+}
+
+#[test]
+fn plan_sync_batches_merges_inheritance_with_content_hash_and_sync_token() {
+    let rows = [heritage_relation(
+        Some("derived-id"),
+        "Derived",
+        CallTargetKind::Symbol,
+        None,
+        Some("base-id"),
+        "Base",
+        CallTargetKind::Symbol,
+        None,
+        HeritageKind::Extends,
+        4,
+    )];
+    let queries = planned_heritage(&rows);
+    let query = query_with(&queries, "EXTENDS");
+    assert_heritage_merge_keys!(query, "EXTENDS");
+}
+
+#[test]
+fn heritage_merge_recovers_when_owner_syncs_before_provider() {
+    let rows = [
+        heritage_relation(
+            Some("derived-id"),
+            "Derived",
+            CallTargetKind::Symbol,
+            None,
+            Some("base-id"),
+            "Base",
+            CallTargetKind::Symbol,
+            None,
+            HeritageKind::Extends,
+            4,
+        ),
+        heritage_relation(
+            Some("type-id"),
+            "ExtType",
+            CallTargetKind::Symbol,
+            None,
+            Some("trait-id"),
+            "LocalTrait",
+            CallTargetKind::Symbol,
+            None,
+            HeritageKind::Implements,
+            8,
+        ),
+    ];
+    let queries = planned_heritage(&rows);
+    for (needle, rel) in [("EXTENDS", "EXTENDS"), ("IMPLEMENTS", "IMPLEMENTS")] {
+        let query = query_with(&queries, needle);
+        assert!(
+            query
+                .cypher
+                .contains("MERGE (source:CodeSymbol {id: row.source_id, project: $project})")
+        );
+        assert!(
+            query
+                .cypher
+                .contains("ON CREATE SET source.name = row.source_name")
+        );
+        assert!(
+            query
+                .cypher
+                .contains("MERGE (target:CodeSymbol {id: row.target_id, project: $project})")
+        );
+        assert!(
+            query
+                .cypher
+                .contains("ON CREATE SET target.name = row.target_name")
+        );
+        assert_heritage_merge_keys!(query, rel);
+    }
+}
+
+#[test]
+fn heritage_merge_keeps_parallel_same_type_facts() {
+    let rows = [
+        heritage_relation(
+            Some("derived-id"),
+            "Derived",
+            CallTargetKind::Symbol,
+            None,
+            Some("base-id"),
+            "Base",
+            CallTargetKind::Symbol,
+            None,
+            HeritageKind::Extends,
+            10,
+        ),
+        heritage_relation(
+            Some("derived-id"),
+            "Derived",
+            CallTargetKind::Symbol,
+            None,
+            Some("base-id"),
+            "Base",
+            CallTargetKind::Symbol,
+            None,
+            HeritageKind::Extends,
+            20,
+        ),
+    ];
+    let first = planned_heritage(&rows);
+    let second = planned_heritage(&rows);
+    for queries in [&first, &second] {
+        let query = query_with(queries, "EXTENDS");
+        let rows_param = query.params.get("rows").expect("heritage UNWIND rows");
+        assert!(
+            rows_param.contains("line: 10") && rows_param.contains("line: 20"),
+            "parallel same-type facts must remain two relationships: {rows_param}"
+        );
+        assert_heritage_merge_keys!(query, "EXTENDS");
+    }
+}
+
+#[test]
+fn heritage_merge_external_and_unresolved_sources() {
+    let rows = [
+        heritage_relation(
+            None,
+            "ExternalType",
+            CallTargetKind::External,
+            Some("external_crate"),
+            Some("trait-id"),
+            "LocalTrait",
+            CallTargetKind::Symbol,
+            None,
+            HeritageKind::Implements,
+            3,
+        ),
+        heritage_relation(
+            None,
+            "MissingType",
+            CallTargetKind::Unresolved,
+            None,
+            Some("trait-id"),
+            "LocalTrait",
+            CallTargetKind::Symbol,
+            None,
+            HeritageKind::Implements,
+            5,
+        ),
+    ];
+    let queries = planned_heritage(&rows);
+    let external = query_with(&queries, "ExternalSymbol");
+    assert!(
+        external
+            .cypher
+            .contains("MERGE (source:ExternalSymbol {id: row.source_id, project: $project})")
+    );
+    assert!(
+        external
+            .cypher
+            .contains("MERGE (target:CodeSymbol {id: row.target_id, project: $project})")
+    );
+    assert_heritage_merge_keys!(external, "IMPLEMENTS");
+    let unresolved = query_with(&queries, "UnresolvedCallee");
+    assert!(
+        unresolved
+            .cypher
+            .contains("MERGE (source:UnresolvedCallee {id: row.source_id, project: $project})")
+    );
+    assert_heritage_merge_keys!(unresolved, "IMPLEMENTS");
+    let external_id = make_external_symbol_id("project-1", "ExternalType", Some("external_crate"));
+    let unresolved_id = make_unresolved_callee_id("project-1", "MissingType");
+    assert!(
+        external
+            .params
+            .get("rows")
+            .is_some_and(|rows| rows.contains(&external_id)),
+        "external source id missing from {:?}",
+        external.params.get("rows")
+    );
+    assert!(
+        unresolved
+            .params
+            .get("rows")
+            .is_some_and(|rows| rows.contains(&unresolved_id)),
+        "unresolved source id missing from {:?}",
+        unresolved.params.get("rows")
+    );
+}
+
+#[test]
+fn heritage_merge_external_and_unresolved_targets() {
+    let rows = [
+        heritage_relation(
+            Some("derived-id"),
+            "Derived",
+            CallTargetKind::Symbol,
+            None,
+            None,
+            "Display",
+            CallTargetKind::External,
+            Some("std::fmt"),
+            HeritageKind::Implements,
+            2,
+        ),
+        heritage_relation(
+            Some("derived-id"),
+            "Derived",
+            CallTargetKind::Symbol,
+            None,
+            None,
+            "UnknownBase",
+            CallTargetKind::Unresolved,
+            None,
+            HeritageKind::Extends,
+            3,
+        ),
+    ];
+    let queries = planned_heritage(&rows);
+    let external = query_with(&queries, "ExternalSymbol");
+    assert!(
+        external
+            .cypher
+            .contains("MERGE (source:CodeSymbol {id: row.source_id, project: $project})")
+    );
+    assert!(
+        external
+            .cypher
+            .contains("MERGE (target:ExternalSymbol {id: row.target_id, project: $project})")
+    );
+    assert_heritage_merge_keys!(external, "IMPLEMENTS");
+    let unresolved = query_with(&queries, "[r:EXTENDS");
+    assert!(
+        unresolved
+            .cypher
+            .contains("MERGE (target:UnresolvedCallee {id: row.target_id, project: $project})")
+    );
+    assert_heritage_merge_keys!(unresolved, "EXTENDS");
+    let external_id = make_external_symbol_id("project-1", "Display", Some("std::fmt"));
+    let unresolved_id = make_unresolved_callee_id("project-1", "UnknownBase");
+    assert!(
+        external.params.get("rows").is_some_and(|rows| {
+            rows.contains(&external_id) && rows.contains("file_path: 'src/owner.rs'")
+        }),
+        "external target rows missing owner file or id: {:?}",
+        external.params.get("rows")
+    );
+    assert!(
+        unresolved
+            .params
+            .get("rows")
+            .is_some_and(|rows| rows.contains(&unresolved_id) && rows.contains("line: 3")),
+        "unresolved target rows missing: {:?}",
+        unresolved.params.get("rows")
+    );
+}
+
+#[test]
+fn heritage_local_import_is_not_projected() {
+    let rows = [heritage_relation(
+        Some("derived-id"),
+        "Derived",
+        CallTargetKind::Symbol,
+        None,
+        None,
+        "Helper",
+        CallTargetKind::LocalImport,
+        Some("pkg/helper.py"),
+        HeritageKind::Inherits,
+        9,
+    )];
+    let queries = planned_heritage(&rows);
+    assert!(
+        queries.iter().all(|query| {
+            !query.cypher.contains("INHERITS")
+                && !query.cypher.contains("EXTENDS")
+                && !query.cypher.contains("IMPLEMENTS")
+        }),
+        "LocalImport heritage must wait for promotion"
+    );
+}
+
+#[test]
+fn sync_file_graph_passes_empty_inheritance_until_facts_thread() {
+    let write = include_str!("write.rs");
+    let lifecycle = include_str!("../../commands/graph/lifecycle.rs");
+    let projection = include_str!("../../projection/sync.rs");
+    let write_wrapper = write
+        .split("pub fn sync_file_graph(")
+        .nth(1)
+        .and_then(|rest| rest.split("\npub fn ").next())
+        .expect("write.rs::sync_file_graph");
+    assert!(
+        write_wrapper.contains("inheritance: &[InheritanceRelation]"),
+        "sync_file_graph must take the new inheritance arity"
+    );
+    assert!(
+        write_wrapper.contains("inheritance,"),
+        "sync_file_graph must forward inheritance into CodeGraph::sync_file"
+    );
+    assert!(
+        lifecycle.contains("&[]"),
+        "lifecycle graph callers must pass empty inheritance slices until 2.2"
+    );
+    let projection_sync = projection
+        .split("fn sync_graph_file(")
+        .nth(1)
+        .and_then(|rest| rest.split("\nstruct ").next())
+        .expect("projection/sync.rs::sync_graph_file");
+    assert!(
+        projection_sync.contains("&[]"),
+        "sync_graph_file must pass an empty inheritance slice until 2.2"
+    );
 }
