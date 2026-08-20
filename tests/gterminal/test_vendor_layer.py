@@ -192,7 +192,7 @@ def test_workspace_patch_serves_vendored_portable_pty() -> None:
 
     assert patch == "crates/gterminal/vendor/portable-pty"
     assert vendored.is_file()
-    assert "crates/gterminal" not in members
+    assert "crates/gterminal" in members
 
 
 def test_vendor_json_pins_ghostty_commit() -> None:
