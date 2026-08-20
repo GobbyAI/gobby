@@ -31,10 +31,22 @@ from gobby.llm.claude_runtime import (
     is_max_turns_error,
     raise_for_error_result,
 )
-from gobby.llm.image_payloads import prepare_image_data
+from gobby.llm.image_payloads import prepare_image_data, prepare_image_inputs
 from gobby.llm.textgen_cwd import fixed_textgen_cwd
 
 _FEATURE_TEXTGEN_MAX_TURNS = 8
+
+
+def _sdk_image_block(mime_type: str, image_base64: str) -> dict[str, Any]:
+    return {
+        "type": "image",
+        "source": {
+            "type": "base64",
+            "media_type": mime_type,
+            "data": image_base64,
+        },
+    }
+
 
 # One-shot generation needs no memory and must not litter ~/.claude/projects
 # with per-run auto-memory state; the SDK merges this over the inherited env.
@@ -63,11 +75,16 @@ class ClaudeSDKClient:
         *,
         reasoning_effort: str | None = None,
         caller: str | None = None,
+        images: Sequence[str] | None = None,
     ) -> LLMTextResult:
         """Generate text using Claude Agent SDK."""
         cli_path = await self._verify_cli_path()
         if not cli_path:
             raise RuntimeError("Generation unavailable (Claude CLI not found)")
+
+        image_content: list[dict[str, Any]] | None = None
+        if images:
+            image_content = await self._image_message_content(prompt, images)
 
         with fixed_textgen_cwd() as neutral_cwd:
             reasoning_options = claude_reasoning_options(reasoning_effort)
@@ -95,7 +112,18 @@ class ClaudeSDKClient:
                 message_count = 0
                 attempt_usage: dict[str, int] | None = None
                 rate_limit_info: Any | None = None
-                async for message in query(prompt=prompt, options=options):
+                query_prompt: str | AsyncIterator[dict[str, Any]] = prompt
+                if image_content is not None:
+                    content = image_content
+
+                    async def _message_generator() -> AsyncIterator[dict[str, Any]]:
+                        yield {
+                            "type": "user",
+                            "message": {"role": "user", "content": content},
+                        }
+
+                    query_prompt = _message_generator()
+                async for message in query(prompt=query_prompt, options=options):
                     message_count += 1
                     self.logger.debug(
                         "generate_text message %d: %s",
@@ -144,6 +172,17 @@ class ClaudeSDKClient:
             usage=captured_usage,
             applied_reasoning_effort=applied_reasoning_effort,
         )
+
+    async def _image_message_content(
+        self, prompt: str, images: Sequence[str]
+    ) -> list[dict[str, Any]]:
+        prepared = await prepare_image_inputs(images, self.logger)
+        content: list[dict[str, Any]] = [{"type": "text", "text": prompt}]
+        content.extend(
+            _sdk_image_block(mime_type, image_base64)
+            for _path, mime_type, image_base64, _data_url in prepared
+        )
+        return content
 
     async def generate_agentic(
         self,
@@ -373,14 +412,7 @@ class ClaudeSDKClient:
                         "role": "user",
                         "content": [
                             {"type": "text", "text": text_prompt},
-                            {
-                                "type": "image",
-                                "source": {
-                                    "type": "base64",
-                                    "media_type": mime_type,
-                                    "data": image_base64,
-                                },
-                            },
+                            _sdk_image_block(mime_type, image_base64),
                         ],
                     },
                 }

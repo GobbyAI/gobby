@@ -210,13 +210,17 @@ def _binding_input_modalities(
 
 
 def image_transport_eligible(binding: CapabilityBinding) -> bool:
-    """Return whether a binding's transport may carry image inputs at 2.1."""
+    """Return whether a binding's transport may carry image inputs."""
     if binding.provider in _FEATURE_CLI_PROVIDERS:
         return False
+    if binding.provider == "claude":
+        return True
     if not _binding_has_endpoint(binding):
         return False
-    protocol = binding.metadata.get("protocol")
     wire_api = binding.metadata.get("wire_api")
+    if wire_api == "responses":
+        return True
+    protocol = binding.metadata.get("protocol")
     if protocol not in _IMAGE_ELIGIBLE_PROTOCOLS:
         return False
     return wire_api != "responses"
@@ -226,6 +230,8 @@ def image_candidate_eligible(binding: CapabilityBinding) -> bool:
     """Return whether a binding may be selected for an image-bearing request."""
     if not image_transport_eligible(binding):
         return False
+    if binding.provider == "claude":
+        return True
     modalities = _binding_input_modalities(binding)
     return modalities is not None and "image" in modalities
 

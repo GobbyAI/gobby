@@ -664,18 +664,18 @@ class TestPrepareImageData:
         assert len(result) == 4
         assert result[1] == "image/png"
 
-    async def test_unknown_mime_defaults_to_png(
+    async def test_disallowed_mime_raises(
         self, claude_config: DaemonConfig, tmp_path: Path
     ) -> None:
-        """Unknown extensions default to image/png."""
+        """Non-image MIME types are rejected rather than defaulted."""
+        from gobby.llm.base import VisionInputError
         from gobby.llm.image_payloads import prepare_image_data
 
         img_path = tmp_path / "test.xyz"
         img_path.write_bytes(b"data")
 
-        result = await prepare_image_data(str(img_path))
-        assert isinstance(result, tuple)
-        assert result[1] == "image/png"
+        with pytest.raises(VisionInputError, match="Disallowed image MIME type"):
+            await prepare_image_data(str(img_path))
 
     async def test_read_error(self, claude_config: DaemonConfig, tmp_path: Path) -> None:
         """Raises a structured input error when the file can't be read."""
