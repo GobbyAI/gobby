@@ -312,7 +312,13 @@ fn render_mermaid(
                 .get(&node.id)
                 .cloned()
                 .with_context(|| format!("missing mermaid token for {}", node.id))?;
-            lines.push(format!("    {token}[\"{}\"]", mermaid_label(&node.name)));
+            let label = match &node.community {
+                Some(community) if !community.is_empty() => {
+                    format!("{} [{community}]", node.name)
+                }
+                _ => node.name.clone(),
+            };
+            lines.push(format!("    {token}[\"{}\"]", mermaid_label(&label)));
         }
     }
     for edge in edges {

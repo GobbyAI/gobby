@@ -2,7 +2,7 @@ use crate::models::ImportRelation;
 
 use super::super::context::{
     ExternalImportBinding, ExtractedImports, ImportResolutionContext, LocalCallBinding,
-    python_candidate_files,
+    python_candidate_files, python_local_module_lookup,
 };
 use super::super::helpers::{
     collapse_whitespace, extract_js_import_clause, extract_js_module_specifier, split_alias,
@@ -120,38 +120,6 @@ pub(crate) fn parse_python_import_statement(
             .insert(local_alias, module.to_string());
     }
     Ok(())
-}
-
-fn python_local_module_lookup(module: &str, rel_path: &str) -> Option<String> {
-    if !module.starts_with('.') {
-        return Some(module.to_string());
-    }
-
-    let level = module.chars().take_while(|ch| *ch == '.').count();
-    let suffix = module[level..].trim_matches('.');
-    let mut parts = rel_path
-        .trim_end_matches(".pyi")
-        .trim_end_matches(".py")
-        .split('/')
-        .filter(|part| !part.is_empty())
-        .collect::<Vec<_>>();
-    if parts
-        .last()
-        .is_some_and(|file_name| *file_name != "__init__")
-    {
-        parts.pop();
-    }
-    for _ in 1..level {
-        parts.pop()?;
-    }
-    if !suffix.is_empty() {
-        parts.extend(suffix.split('.').filter(|part| !part.is_empty()));
-    }
-    if parts.is_empty() {
-        None
-    } else {
-        Some(parts.join("."))
-    }
 }
 
 pub(crate) fn parse_js_import_statement(

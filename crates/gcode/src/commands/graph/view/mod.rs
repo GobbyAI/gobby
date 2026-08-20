@@ -3,7 +3,6 @@
 #[allow(dead_code)]
 mod class_hierarchy;
 mod fcg;
-#[allow(dead_code)]
 mod mcg;
 mod render;
 
@@ -251,18 +250,22 @@ fn empty_view_payload(
 }
 
 pub(crate) fn run(ctx: &Context, args: &GraphViewArgs, format: Format) -> anyhow::Result<()> {
-    let symbol = resolve_view_seed(ctx, &args.seed).context("resolve graph view seed")?;
-    let facts = CodewikiFacts::from_context(ctx.clone());
-    let hint = hint_for_availability(ctx, &facts.graph_availability());
-    let seed = ViewSeed {
-        id: symbol.id.clone(),
-        name: symbol.display_name.clone(),
-        kind: "symbol".to_string(),
-        file: None,
-    };
     match args.view {
-        crate::cli::GraphViewKind::Fcg => fcg::run(ctx, args, &symbol, format),
-        crate::cli::GraphViewKind::Mcg | crate::cli::GraphViewKind::ClassHierarchy => {
+        crate::cli::GraphViewKind::Mcg => mcg::run(ctx, args, format),
+        crate::cli::GraphViewKind::Fcg => {
+            let symbol = resolve_view_seed(ctx, &args.seed).context("resolve graph view seed")?;
+            fcg::run(ctx, args, &symbol, format)
+        }
+        crate::cli::GraphViewKind::ClassHierarchy => {
+            let symbol = resolve_view_seed(ctx, &args.seed).context("resolve graph view seed")?;
+            let facts = CodewikiFacts::from_context(ctx.clone());
+            let hint = hint_for_availability(ctx, &facts.graph_availability());
+            let seed = ViewSeed {
+                id: symbol.id.clone(),
+                name: symbol.display_name.clone(),
+                kind: "symbol".to_string(),
+                file: None,
+            };
             print_view(&empty_view_payload(ctx, args, seed, hint)?, format)
         }
     }

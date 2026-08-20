@@ -436,6 +436,18 @@ fn graph_view_omitted_depth_defaults_by_kind() {
         }
         _ => panic!("expected graph view command"),
     }
+
+    let mcg = Cli::try_parse_from(["gcode", "graph", "view", "--view", "mcg", "src/a.py"])
+        .expect("omitted --depth parses for mcg");
+    match mcg.command {
+        Command::Graph {
+            command: GraphCommand::View(args),
+        } => {
+            assert_eq!(args.depth, None);
+            assert_eq!(args.effective_depth(), 1);
+        }
+        _ => panic!("expected graph view command"),
+    }
 }
 
 #[test]

@@ -262,6 +262,12 @@ impl CodewikiFacts {
         if !seed.symbol_ids().is_empty() {
             return Ok(ScopeKeys::Symbols(seed.symbol_ids().to_vec()));
         }
+        if !seed.endpoint_files().is_empty() || !seed.endpoint_modules().is_empty() {
+            return Ok(ScopeKeys::Endpoints {
+                files: seed.endpoint_files().to_vec(),
+                modules: seed.endpoint_modules().to_vec(),
+            });
+        }
         if seed.is_all() {
             return Ok(ScopeKeys::All);
         }

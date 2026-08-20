@@ -24,7 +24,10 @@ pub(super) use package_metadata::{
     load_go_module_path, load_js_external_packages, load_js_self_package_name,
     load_rust_external_crates, load_rust_self_crate_name,
 };
-pub(super) use python::{build_python_module_index, python_candidate_files};
+pub(super) use python::{
+    build_python_module_index, python_candidate_files, python_local_module_lookup,
+    python_module_names_for_rel,
+};
 
 pub(super) use apple::build_swift_module_files;
 use apple::{build_objc_indexes, objc_relative_import_file, swift_modules_for_rel};
@@ -347,6 +350,66 @@ impl ImportResolutionContext {
             .get(module)
             .cloned()
             .unwrap_or_default()
+    }
+
+    pub(crate) fn candidate_files_for_module(
+        &self,
+        module: &str,
+        importer: Option<&str>,
+    ) -> Vec<String> {
+        let mut files = Vec::new();
+        if let Some(importer) = importer {
+            if let Some(local) = python_local_module_lookup(module, importer) {
+                files.extend(python_candidate_files(&local));
+            }
+            files.extend(self.js_candidate_files(importer, module));
+            if let Some(binding) = self.rust_import_candidate(importer, module) {
+                files.extend(binding.candidate_files);
+            }
+            files.extend(self.objc_import_candidate_files(importer, module));
+        } else if let Some(local) = python_local_module_lookup(module, "") {
+            files.extend(python_candidate_files(&local));
+        }
+        files.extend(self.go_candidate_files(module));
+        files.extend(self.java_candidate_files(module));
+        files.extend(self.csharp_type_files(module));
+        files.extend(self.kotlin_package_files(module));
+        files.extend(self.scala_package_files(module));
+        files.extend(self.lua_module_files(module));
+        files.extend(self.php_candidate_files(module));
+        files.extend(self.ruby_constant_files(module));
+        files.extend(self.elixir_module_files(module));
+        files.sort();
+        files.dedup();
+        files
+    }
+
+    pub(crate) fn path_derived_module_names(&self, file_path: &str) -> Vec<String> {
+        let mut names = python_module_names_for_rel(file_path);
+        invert_named_files(&self.java_class_files, file_path, &mut names);
+        invert_named_files(&self.csharp_type_files, file_path, &mut names);
+        invert_named_files(&self.kotlin_package_files, file_path, &mut names);
+        invert_named_files(&self.scala_package_files, file_path, &mut names);
+        invert_named_files(&self.lua_module_files, file_path, &mut names);
+        invert_named_files(&self.php_symbol_files, file_path, &mut names);
+        invert_named_files(&self.ruby_constant_files, file_path, &mut names);
+        invert_named_files(&self.elixir_module_files, file_path, &mut names);
+        invert_named_files(&self.swift_module_files, file_path, &mut names);
+        names.sort();
+        names.dedup();
+        names
+    }
+}
+
+fn invert_named_files(
+    index: &HashMap<String, Vec<String>>,
+    file_path: &str,
+    names: &mut Vec<String>,
+) {
+    for (name, files) in index {
+        if files.iter().any(|file| file == file_path) {
+            names.push(name.clone());
+        }
     }
 }
 

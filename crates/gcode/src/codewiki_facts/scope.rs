@@ -30,6 +30,8 @@ impl fmt::Display for FileId {
 pub struct ScopeSelector {
     paths: Vec<String>,
     symbols: Vec<String>,
+    files: Vec<String>,
+    modules: Vec<String>,
 }
 
 impl ScopeSelector {
@@ -41,6 +43,8 @@ impl ScopeSelector {
         Self {
             paths: paths.into_iter().map(Into::into).collect(),
             symbols: Vec::new(),
+            files: Vec::new(),
+            modules: Vec::new(),
         }
     }
 
@@ -48,15 +52,40 @@ impl ScopeSelector {
         Self {
             paths: Vec::new(),
             symbols: ids.into_iter().map(Into::into).collect(),
+            files: Vec::new(),
+            modules: Vec::new(),
+        }
+    }
+
+    pub fn endpoints(
+        files: impl IntoIterator<Item = impl Into<String>>,
+        modules: impl IntoIterator<Item = impl Into<String>>,
+    ) -> Self {
+        Self {
+            paths: Vec::new(),
+            symbols: Vec::new(),
+            files: files.into_iter().map(Into::into).collect(),
+            modules: modules.into_iter().map(Into::into).collect(),
         }
     }
 
     pub fn is_all(&self) -> bool {
-        self.paths.is_empty() && self.symbols.is_empty()
+        self.paths.is_empty()
+            && self.symbols.is_empty()
+            && self.files.is_empty()
+            && self.modules.is_empty()
     }
 
     pub fn symbol_ids(&self) -> &[String] {
         &self.symbols
+    }
+
+    pub fn endpoint_files(&self) -> &[String] {
+        &self.files
+    }
+
+    pub fn endpoint_modules(&self) -> &[String] {
+        &self.modules
     }
 
     pub(crate) fn normalized(&self, facts: &CodewikiFacts) -> Vec<String> {

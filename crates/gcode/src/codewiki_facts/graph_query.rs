@@ -60,6 +60,10 @@ pub enum ScopeKeys {
     All,
     Files(Vec<String>),
     Symbols(Vec<String>),
+    Endpoints {
+        files: Vec<String>,
+        modules: Vec<String>,
+    },
 }
 
 impl ScopeKeys {
@@ -67,6 +71,7 @@ impl ScopeKeys {
         match self {
             Self::All => false,
             Self::Files(values) | Self::Symbols(values) => values.is_empty(),
+            Self::Endpoints { files, modules } => files.is_empty() && modules.is_empty(),
         }
     }
 
@@ -82,6 +87,25 @@ impl ScopeKeys {
                 .into_iter()
                 .map(Self::Symbols)
                 .collect(),
+            Self::Endpoints { files, modules } => {
+                if files.is_empty() {
+                    chunk_values(modules, chunk_len)
+                        .into_iter()
+                        .map(|chunk| Self::Endpoints {
+                            files: Vec::new(),
+                            modules: chunk,
+                        })
+                        .collect()
+                } else {
+                    chunk_values(files, chunk_len)
+                        .into_iter()
+                        .map(|chunk| Self::Endpoints {
+                            files: chunk,
+                            modules: modules.clone(),
+                        })
+                        .collect()
+                }
+            }
         }
     }
 }
@@ -188,10 +212,11 @@ impl EdgeQueryPlan {
 
     #[cfg(test)]
     fn keeps(&self, edge: &SampleGraphEdge) -> bool {
-        let source_in = endpoint_in_scope(&self.keys, &edge.source, &edge.source_file);
-        let target_in = endpoint_in_scope(&self.peer_keys, &edge.target, &edge.target_file);
+        let source_in = source_in_scope(&self.keys, &edge.source, &edge.source_file, self.kind);
+        let target_in =
+            target_in_scope(&self.peer_keys, &edge.target, &edge.target_file, self.kind);
         let source_in_frontier =
-            endpoint_in_scope(&self.peer_keys, &edge.source, &edge.source_file);
+            source_in_scope(&self.peer_keys, &edge.source, &edge.source_file, self.kind);
         match (self.direction, self.mode) {
             (GraphDirection::Outgoing, GraphScopeMode::Closed) => source_in && target_in,
             (GraphDirection::Outgoing, GraphScopeMode::Incident) => source_in,
@@ -206,6 +231,7 @@ impl EdgeQueryPlan {
         let mut predicates = match &self.keys {
             ScopeKeys::All => Vec::new(),
             keys if keys.is_empty() || self.peer_keys.is_empty() => vec!["false".to_string()],
+            ScopeKeys::Endpoints { files, modules } => self.typed_predicates(files, modules),
             ScopeKeys::Files(files) => self.list_predicates(files, false),
             ScopeKeys::Symbols(ids) => self.list_predicates(ids, true),
         };
@@ -236,6 +262,11 @@ impl EdgeQueryPlan {
                     ScopeKeys::Files(peer) | ScopeKeys::Symbols(peer) => {
                         typed_query::id_list_literal(peer)
                     }
+                    ScopeKeys::Endpoints { files, modules } => {
+                        let mut values = files.clone();
+                        values.extend(modules.iter().cloned());
+                        typed_query::id_list_literal(&values)
+                    }
                     ScopeKeys::All => listed.clone(),
                 };
                 vec![
@@ -253,6 +284,7 @@ impl EdgeQueryPlan {
                         ScopeKeys::Files(peer) | ScopeKeys::Symbols(peer) => {
                             typed_query::id_list_literal(peer)
                         }
+                        ScopeKeys::Endpoints { files, .. } => typed_query::id_list_literal(files),
                         ScopeKeys::All => listed.clone(),
                     };
                     predicates.push(format!("NOT {source_field} IN [{frontier_listed}]"));
@@ -262,11 +294,65 @@ impl EdgeQueryPlan {
         }
     }
 
+    fn typed_predicates(&self, files: &[String], modules: &[String]) -> Vec<String> {
+        let (source_field, target_field) = endpoint_fields(self.kind, false);
+        match (self.direction, self.mode) {
+            (GraphDirection::Outgoing, _) => {
+                if files.is_empty() {
+                    vec!["false".to_string()]
+                } else {
+                    vec![format!(
+                        "{source_field} IN [{}]",
+                        typed_query::id_list_literal(files)
+                    )]
+                }
+            }
+            (GraphDirection::Incoming, GraphScopeMode::Closed) => {
+                if modules.is_empty() {
+                    vec!["false".to_string()]
+                } else {
+                    vec![format!(
+                        "{target_field} IN [{}]",
+                        typed_query::id_list_literal(modules)
+                    )]
+                }
+            }
+            (GraphDirection::Incoming, GraphScopeMode::Incident) => {
+                if modules.is_empty() {
+                    vec!["false".to_string()]
+                } else {
+                    let mut predicates = vec![format!(
+                        "{target_field} IN [{}]",
+                        typed_query::id_list_literal(modules)
+                    )];
+                    if self.can_push_frontier_exclusion() {
+                        let peer_files = match &self.peer_keys {
+                            ScopeKeys::Endpoints { files, .. } | ScopeKeys::Files(files) => {
+                                files.as_slice()
+                            }
+                            _ => &[],
+                        };
+                        if !peer_files.is_empty() {
+                            predicates.push(format!(
+                                "NOT {source_field} IN [{}]",
+                                typed_query::id_list_literal(peer_files)
+                            ));
+                        }
+                    }
+                    predicates
+                }
+            }
+        }
+    }
+
     fn can_push_frontier_exclusion(&self) -> bool {
         match &self.peer_keys {
             ScopeKeys::All => false,
             ScopeKeys::Files(values) | ScopeKeys::Symbols(values) => {
                 !values.is_empty() && values.len() <= SCOPE_CHUNK_LEN
+            }
+            ScopeKeys::Endpoints { files, .. } => {
+                !files.is_empty() && files.len() <= SCOPE_CHUNK_LEN
             }
         }
     }
@@ -316,7 +402,7 @@ pub fn incident_incoming_source_in_frontier(
 ) -> bool {
     plan.direction == GraphDirection::Incoming
         && plan.mode == GraphScopeMode::Incident
-        && endpoint_in_scope(&plan.peer_keys, source, source_file)
+        && source_in_scope(&plan.peer_keys, source, source_file, plan.kind)
 }
 
 #[cfg(test)]
@@ -450,6 +536,9 @@ fn chunked_plans(
     keys: ScopeKeys,
     limit: usize,
 ) -> Vec<EdgeQueryPlan> {
+    if let ScopeKeys::Endpoints { files, modules } = &keys {
+        return chunked_endpoint_plans(kind, direction, mode, files, modules, keys.clone(), limit);
+    }
     let chunks = keys.chunks(SCOPE_CHUNK_LEN);
     if mode == GraphScopeMode::Closed {
         let mut plans = Vec::new();
@@ -467,6 +556,41 @@ fn chunked_plans(
         .into_iter()
         .map(|chunk| {
             EdgeQueryPlan::new(kind, direction, mode, chunk, limit).with_peer_keys(keys.clone())
+        })
+        .collect()
+}
+
+fn chunked_endpoint_plans(
+    kind: GraphEdgeKind,
+    direction: GraphDirection,
+    mode: GraphScopeMode,
+    files: &[String],
+    modules: &[String],
+    keys: ScopeKeys,
+    limit: usize,
+) -> Vec<EdgeQueryPlan> {
+    let listed = match direction {
+        GraphDirection::Outgoing => files,
+        GraphDirection::Incoming => modules,
+    };
+    if listed.is_empty() {
+        return Vec::new();
+    }
+    chunk_values(listed, SCOPE_CHUNK_LEN)
+        .into_iter()
+        .map(|chunk| {
+            let chunk_keys = match direction {
+                GraphDirection::Outgoing => ScopeKeys::Endpoints {
+                    files: chunk,
+                    modules: Vec::new(),
+                },
+                GraphDirection::Incoming => ScopeKeys::Endpoints {
+                    files: Vec::new(),
+                    modules: chunk,
+                },
+            };
+            EdgeQueryPlan::new(kind, direction, mode, chunk_keys, limit)
+                .with_peer_keys(keys.clone())
         })
         .collect()
 }
@@ -518,7 +642,10 @@ fn return_clause(kind: GraphEdgeKind) -> &'static str {
         }
         GraphEdgeKind::Import => {
             "RETURN DISTINCT source.path AS source, target.name AS target, type(r) AS rel, \
-             source.path AS source_file, target.name AS target_file"
+             source.path AS source_file, target.name AS target_file, \
+             source.path AS source_name, target.name AS target_name, \
+             'file' AS source_kind, 'module' AS target_kind, \
+             source.path AS owner_path, coalesce(r.content_hash, '') AS owner_hash"
         }
     }
 }
@@ -535,12 +662,34 @@ fn endpoint_fields(kind: GraphEdgeKind, symbols: bool) -> (&'static str, &'stati
     }
 }
 
-fn endpoint_in_scope(keys: &ScopeKeys, id: &str, file: &str) -> bool {
+fn values_match(values: &[String], id: &str, file: &str) -> bool {
+    values.iter().any(|value| value == file || value == id)
+}
+
+fn source_in_scope(keys: &ScopeKeys, id: &str, file: &str, kind: GraphEdgeKind) -> bool {
     match keys {
         ScopeKeys::All => true,
-        ScopeKeys::Files(values) | ScopeKeys::Symbols(values) => {
-            values.iter().any(|value| value == file || value == id)
-        }
+        ScopeKeys::Files(values) | ScopeKeys::Symbols(values) => values_match(values, id, file),
+        ScopeKeys::Endpoints { files, modules } => match kind {
+            GraphEdgeKind::Import => values_match(files, id, file),
+            GraphEdgeKind::Call | GraphEdgeKind::Inheritance => {
+                values_match(files, id, file) || values_match(modules, id, file)
+            }
+        },
+    }
+}
+
+#[cfg(test)]
+fn target_in_scope(keys: &ScopeKeys, id: &str, file: &str, kind: GraphEdgeKind) -> bool {
+    match keys {
+        ScopeKeys::All => true,
+        ScopeKeys::Files(values) | ScopeKeys::Symbols(values) => values_match(values, id, file),
+        ScopeKeys::Endpoints { files, modules } => match kind {
+            GraphEdgeKind::Import => values_match(modules, id, file),
+            GraphEdgeKind::Call | GraphEdgeKind::Inheritance => {
+                values_match(files, id, file) || values_match(modules, id, file)
+            }
+        },
     }
 }
 

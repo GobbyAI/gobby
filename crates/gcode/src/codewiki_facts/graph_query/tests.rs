@@ -515,3 +515,41 @@ fn scoped_limits_exclude_already_emitted_outgoing_edges() {
     assert_eq!(rows, vec![PublicEdge::new("seed", "bbb-dst", "CALLS")]);
     assert!(!outgoing_truncated);
 }
+
+#[test]
+fn typed_import_keys_do_not_match_file_path_to_module_name() {
+    let edges = vec![
+        sample(
+            GraphEdgeKind::Import,
+            "collision",
+            "local-dep",
+            "collision",
+            "local-dep",
+        ),
+        sample(
+            GraphEdgeKind::Import,
+            "src/consumer.rs",
+            "collision",
+            "src/consumer.rs",
+            "collision",
+        ),
+    ];
+    let keys = ScopeKeys::Endpoints {
+        files: vec!["collision".into()],
+        modules: Vec::new(),
+    };
+    let (rows, incoming_truncated, outgoing_truncated) = collect_scoped_pairs(
+        &edges,
+        GraphEdgeKind::Import,
+        GraphBounds::symmetric(8),
+        GraphScopeMode::Incident,
+        keys,
+        &HashSet::new(),
+    );
+    assert!(!incoming_truncated);
+    assert!(!outgoing_truncated);
+    assert_eq!(
+        rows,
+        vec![PublicEdge::new("collision", "local-dep", "IMPORTS")]
+    );
+}

@@ -31,9 +31,50 @@ pub(in crate::index::import_resolution) fn python_candidate_files(module: &str) 
     files
 }
 
+pub(in crate::index::import_resolution) fn python_module_names_for_rel(rel: &str) -> Vec<String> {
+    python_module_names_for_path(Path::new(""), Path::new(rel))
+}
+
+pub(in crate::index::import_resolution) fn python_local_module_lookup(
+    module: &str,
+    rel_path: &str,
+) -> Option<String> {
+    if !module.starts_with('.') {
+        return Some(module.to_string());
+    }
+
+    let level = module.chars().take_while(|ch| *ch == '.').count();
+    let suffix = module[level..].trim_matches('.');
+    let mut parts = rel_path
+        .trim_end_matches(".pyi")
+        .trim_end_matches(".py")
+        .split('/')
+        .filter(|part| !part.is_empty())
+        .collect::<Vec<_>>();
+    if parts
+        .last()
+        .is_some_and(|file_name| *file_name != "__init__")
+    {
+        parts.pop();
+    }
+    for _ in 1..level {
+        parts.pop()?;
+    }
+    if !suffix.is_empty() {
+        parts.extend(suffix.split('.').filter(|part| !part.is_empty()));
+    }
+    if parts.is_empty() {
+        None
+    } else {
+        Some(parts.join("."))
+    }
+}
+
 fn python_module_names_for_path(root_path: &Path, path: &Path) -> Vec<String> {
-    let Ok(rel) = path.strip_prefix(root_path) else {
-        return Vec::new();
+    let rel = match path.strip_prefix(root_path) {
+        Ok(rel) => rel.to_path_buf(),
+        Err(_) if root_path.as_os_str().is_empty() => path.to_path_buf(),
+        Err(_) => return Vec::new(),
     };
     let ext = rel
         .extension()

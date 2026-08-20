@@ -335,13 +335,6 @@ pub fn reset_vectors_sync_for_project(
 /// Active visible `(source_file, target_module)` pairs for this machine's
 /// current content hashes. MCG seed equivalence (plan 3.3) unions these with
 /// path-derived aliases; do not persist a provider file on IMPORTS edges.
-#[cfg_attr(
-    not(test),
-    expect(
-        dead_code,
-        reason = "MCG seed equivalence (plan 3.3) is the first production caller"
-    )
-)]
 pub fn read_active_imports(
     conn: &mut impl GenericClient,
     project_id: &str,
