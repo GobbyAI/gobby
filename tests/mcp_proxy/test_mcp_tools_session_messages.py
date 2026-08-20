@@ -12,6 +12,7 @@ from gobby.sessions.transcript_renderer import ContentBlock, RenderedMessage
 from gobby.sessions.transcript_window import WindowResult
 from gobby.storage.session_models import Session
 from gobby.storage.sessions import SessionManager
+from gobby.utils.session_context import session_context_for_test
 
 pytestmark = pytest.mark.unit
 
@@ -457,6 +458,46 @@ async def test_get_handoff_context_expired_session_id_fails_closed(
     assert result["found"] is False
     mock_session_manager.find_parent.assert_not_called()
     mock_session_manager.list.assert_not_called()
+
+
+@pytest.mark.asyncio
+async def test_get_handoff_context_bound_successor_reads_expired_predecessor(
+    mock_session_manager: MagicMock, full_sessions_registry: InternalToolRegistry
+) -> None:
+    """A bound successor may read its direct predecessor after expiry."""
+    predecessor = _make_mock_session("sess-expired", status="expired", project_id="proj-123")
+    predecessor.summary_markdown = "## Clear Handoff\nContinue from the staged handoff."
+    predecessor.status = "expired"
+    predecessor.project_id = "proj-123"
+    successor = _make_mock_session("sess-successor", project_id="proj-123")
+    successor.parent_session_id = "sess-expired"
+    successor.project_id = "proj-123"
+    mock_session_manager.resolve_session_reference.return_value = "sess-expired"
+
+    def _get(session_id: str) -> MagicMock | None:
+        if session_id == "sess-expired":
+            return predecessor
+        if session_id == "sess-successor":
+            return successor
+        return None
+
+    mock_session_manager.get.side_effect = _get
+
+    with (
+        session_context_for_test("sess-successor"),
+        patch(
+            "gobby.mcp_proxy.tools.sessions._handoff.get_project_context",
+            return_value={"id": "proj-123"},
+        ),
+    ):
+        result = await full_sessions_registry.call(
+            "get_handoff_context", {"session_id": "sess-expired"}
+        )
+
+    assert result["success"] is True
+    assert result["found"] is True
+    assert result["context"] == "## Clear Handoff\nContinue from the staged handoff."
+    assert result["session_id"] == "sess-expired"
 
 
 @pytest.mark.asyncio
