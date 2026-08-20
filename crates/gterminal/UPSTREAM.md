@@ -1,8 +1,13 @@
 # gobby-terminal upstream record
 
-Fork point: herdr `v0.8.0` (`857196dee1ce98df53efdd3f437aa2ac8a75b608`).
+Fork point: herdr release tag `v0.8.0`, commit
+`346411fa21afd297f5ed3b3fa56f9e3fbf7654b7` (annotated tag object
+`857196dee1ce98df53efdd3f437aa2ac8a75b608`).
 Reference clone: `~/.gobby/clones/herdr`.
-This is a fork record, not a tracking contract. There is no re-pin procedure.
+
+This is a fork record, not a tracking contract. There is no re-pin
+procedure. Post-fork upstream fixes are adopted only as deliberate
+per-commit cherry-picks recorded below.
 
 ## Rebrand
 
@@ -12,32 +17,78 @@ This is a fork record, not a tracking contract. There is no re-pin procedure.
 
 ## Imported module map (v0.8.0 paths → this crate)
 
-| Upstream | Gobby |
+Paths are herdr paths at the fork-point commit. Gobby-local `include!` /
+`#[path]` splits keep public APIs on the original module path.
+
+| Upstream (`v0.8.0`) | Gobby |
 | --- | --- |
-| `src/ghostty/` | `crates/gterminal/src/ghostty/` |
-| `src/pane/{cursor,input,kitty_keyboard,osc,state,terminal,xtgettcap}.rs` | `crates/gterminal/src/pane/` |
-| `src/pty/` | `crates/gterminal/src/pty/` |
-| `src/input/` | `crates/gterminal/src/input/` |
+| `src/ghostty/mod.rs` | `crates/gterminal/src/ghostty/mod.rs` (+ `terminal_api.rs`, `terminal_ops.rs`, `render_pre.rs`, `render_state.rs`, `mod/tests.rs`) |
+| `src/ghostty/bindings.rs` | `crates/gterminal/src/ghostty/bindings.rs` (+ `bindings/generated_01.rs` … `generated_05.rs`) |
+| `src/pane.rs` | `crates/gterminal/src/pane.rs` plus `pane/{runtime,runtime_ops,shell,shutdown}.rs` (rewritten in plan 1.3) |
+| `src/pane/cursor.rs` | `crates/gterminal/src/pane/cursor.rs` |
+| `src/pane/input.rs` | `crates/gterminal/src/pane/input.rs` |
+| `src/pane/kitty_keyboard.rs` | `crates/gterminal/src/pane/kitty_keyboard.rs` |
+| `src/pane/osc.rs` | `crates/gterminal/src/pane/osc.rs` |
+| `src/pane/state.rs` | `crates/gterminal/src/pane/state.rs` |
+| `src/pane/terminal.rs` | `crates/gterminal/src/pane/terminal.rs` (+ `terminal_io.rs`, `terminal_render.rs`, `terminal_style.rs`) |
+| `src/pane/terminal/windows_recent_fallback.rs` | `crates/gterminal/src/pane/terminal/windows_recent_fallback.rs` |
+| `src/pane/xtgettcap.rs` | `crates/gterminal/src/pane/xtgettcap.rs` |
+| `src/pty/mod.rs` | `crates/gterminal/src/pty/mod.rs` |
+| `src/pty/actor.rs` | `crates/gterminal/src/pty/actor.rs` |
+| `src/pty/actor/unix.rs` | `crates/gterminal/src/pty/actor/unix.rs` |
+| `src/pty/backend.rs` | `crates/gterminal/src/pty/backend.rs` |
+| `src/pty/backend/unix.rs` | `crates/gterminal/src/pty/backend/unix.rs` |
+| `src/pty/fd.rs` | `crates/gterminal/src/pty/fd.rs` |
+| `src/input/mod.rs` | `crates/gterminal/src/input/mod.rs` |
+| `src/input/encode.rs` | `crates/gterminal/src/input/encode.rs` |
+| `src/input/model.rs` | `crates/gterminal/src/input/model.rs` |
+| `src/input/parse.rs` | `crates/gterminal/src/input/parse.rs` |
 | `src/raw_input.rs` | `crates/gterminal/src/raw_input.rs` (+ `raw_input_framer.rs`) |
-| `src/protocol/{mod,wire,render_ansi}.rs` | `crates/gterminal/src/protocol/` |
+| `src/protocol/mod.rs` | `crates/gterminal/src/protocol/mod.rs` |
+| `src/protocol/wire.rs` | `crates/gterminal/src/protocol/wire.rs` (+ `wire_types.rs`, `wire_codec.rs`) |
+| `src/protocol/render_ansi.rs` | `crates/gterminal/src/protocol/render_ansi.rs` (+ `render_ansi_blit.rs`) |
 | `src/ipc.rs` | `crates/gterminal/src/ipc.rs` |
-| `src/platform/` | `crates/gterminal/src/platform/` |
+| `src/platform/mod.rs` | `crates/gterminal/src/platform/mod.rs` |
+| `src/platform/macos.rs` | `crates/gterminal/src/platform/macos.rs` |
+| `src/platform/linux.rs` | `crates/gterminal/src/platform/linux.rs` |
+| `src/platform/windows.rs` | `crates/gterminal/src/platform/windows.rs` (+ `windows_process.rs`) |
+| `src/platform/fallback.rs` | `crates/gterminal/src/platform/fallback.rs` |
 | `src/layout.rs` | `crates/gterminal/src/layout.rs` |
 | `src/selection.rs` | `crates/gterminal/src/selection.rs` |
 | `src/terminal_theme.rs` | `crates/gterminal/src/terminal_theme.rs` |
 | `src/terminal_modes.rs` | `crates/gterminal/src/terminal_modes.rs` |
-| `src/kitty_graphics.rs` | `crates/gterminal/src/kitty_graphics/` |
+| `src/kitty_graphics.rs` | `crates/gterminal/src/kitty_graphics/` (`mod.rs`, `host_paint.rs`, `host_stream.rs`) |
 | `src/render_prof.rs` | `crates/gterminal/src/render_prof.rs` |
-| `src/terminal/{id,runtime,runtime_registry,title,history_read}.rs` | `crates/gterminal/src/runtime/` |
+| `src/terminal/id.rs` | `crates/gterminal/src/runtime/id.rs` |
+| `src/terminal/runtime.rs` | `crates/gterminal/src/runtime/runtime.rs` |
+| `src/terminal/runtime_registry.rs` | `crates/gterminal/src/runtime/runtime_registry.rs` |
+| `src/terminal/title.rs` | `crates/gterminal/src/runtime/title.rs` |
+| `src/terminal/history_read.rs` | `crates/gterminal/src/runtime/history_read.rs` |
+| `src/terminal/mod.rs` | `crates/gterminal/src/runtime/mod.rs` (crate-local module root) |
+
+`crates/gterminal/src/lib.rs` is Gobby-authored crate root (not an herdr
+file). Sidecar `#[path]` unit-test files under `*/tests.rs` ride along with
+the imported modules.
 
 ## Not imported
 
 - `src/pane/agent_detection.rs`
-- `src/pane.rs` herdr `PaneRuntime` agent-detection task and `crate::detect`/`crate::integration` wiring (plan 1.3 imported a de-agent-ified `PaneRuntime`)
+- herdr `src/pane.rs` detection task and `crate::detect` / `crate::integration`
+  wiring (plan 1.3 imported a de-agent-ified `PaneRuntime`)
 - `src/terminal/state.rs`, `src/terminal/metadata.rs`
-- `src/app/`, `src/api/`, `src/cli/`, `src/detect/`, `src/integration/`, `src/persist/`, `src/workspace/`, `src/remote/`, `src/server/`, `src/client/`, plugins, updater, sound, session
+- `src/app/`, `src/api/`, `src/cli/`, `src/detect/`, `src/integration/`,
+  `src/persist/`, `src/workspace/`, `src/remote/`, `src/server/`,
+  `src/client/`, `src/ui/`, plugins, updater, sound, session
+
+`src/ui/` chrome is deferred to `gobby-client` (plan 3.3), not this crate.
 
 ## Cherry-pick log (`v0.8.0..HEAD` keep-set paths)
+
+Keep-set paths: `src/ghostty/`, `src/pane.rs`, `src/pane/`, `src/pty/`,
+`src/input/`, `src/raw_input.rs`, `src/protocol/{mod,wire,render_ansi}.rs`,
+`src/ipc.rs`, `src/platform/`, `src/layout.rs`, `src/selection.rs`,
+`src/terminal_theme.rs`, `src/terminal_modes.rs`, `src/kitty_graphics.rs`,
+`src/render_prof.rs`, `src/terminal/`.
 
 Applied at import:
 
@@ -47,7 +98,7 @@ Applied at import:
 | `d277d2f8` | **accept (applied)** | preserve alt-prefixed control keys (`input/parse.rs`, `pane/terminal.rs`) |
 | `36074530` | **accept (applied)** | compact large terminal redraws (`protocol/render_ansi.rs` only; `server/headless.rs` not imported) |
 
-Remaining keep-set-touching commits:
+Remaining keep-set-touching commits, each with an accept/reject decision:
 
 | Commit | Decision | Notes |
 | --- | --- | --- |
@@ -58,7 +109,6 @@ Remaining keep-set-touching commits:
 | `2863b715` | reject | Windows remote attach / named-pipe product work |
 | `ea047db8` | reject | legacy pane ctrl-tab; revisit with host input |
 | `f83980db` | reject | OSC 4 palette forwarding; needs host theme path |
-| `e9222d18` | (applied above) | |
 | `fd0e4ff4` | reject | copy-mode big-word motions owned by gclient later |
 | `3825c0c3` | reject | host appearance refresh via app/theme_sync |
 | `b0723b79` | reject | kitty shift reports also change app navigate + corpus |
