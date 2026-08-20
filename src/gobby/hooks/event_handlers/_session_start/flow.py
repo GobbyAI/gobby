@@ -15,10 +15,17 @@ from gobby.hooks.terminal_context import (
     hook_cwd,
     is_gobby_acp_child,
 )
+from gobby.sessions.clear_continuation import (
+    build_clear_self_continue_prompt,
+    schedule_clear_self_continuation,
+    seed_clear_handoff_variables,
+    take_clear_handoff_marker,
+)
 from gobby.storage.session_activity import reconcile_compact_session_activity
 from gobby.storage.sessions._update_sentinel import UNSET
 
 from .agents import _seed_memory_recall_vars, _seed_wiki_overview_var
+from .claims import preserve_task_claim_state
 from .context import classify_session_start_context, mark_startup_context_injected
 from .handoff import (
     prepare_compact_continuation_variables,
@@ -162,6 +169,82 @@ def _reset_agent_context_injection(handler: Any, session_id: str | None) -> None
         handler.logger.warning("Failed to reset agent context injection flag: %s", e)
 
 
+def _bind_clear_successor(handler: Any, resolution: Any, session_obj: Any) -> None:
+    """Take the clear marker and apply isolated successor side effects."""
+    predecessor = getattr(resolution, "clear_predecessor", None)
+    attempt_id = getattr(resolution, "clear_attempt_id", None)
+    if predecessor is None or not attempt_id or handler._session_manager is None:
+        return
+    predecessor_id = getattr(predecessor, "id", None)
+    successor_id = getattr(session_obj, "id", None)
+    if not isinstance(predecessor_id, str) or not isinstance(successor_id, str):
+        return
+    won = take_clear_handoff_marker(
+        handler._session_manager.db,
+        predecessor_id,
+        attempt_id=attempt_id,
+        successor_id=successor_id,
+    )
+    if not won:
+        handler.logger.warning(
+            "Clear handoff take lost for predecessor %s successor %s",
+            predecessor_id,
+            successor_id,
+            extra={
+                "event": "clear_handoff_take_lost",
+                "predecessor_id": predecessor_id,
+                "successor_id": successor_id,
+                "attempt_id": attempt_id,
+            },
+        )
+        return
+    try:
+        seed_clear_handoff_variables(handler._session_manager, successor_id, predecessor)
+    except Exception as e:
+        handler.logger.warning(
+            "Failed to seed clear handoff variables for successor %s: %s",
+            successor_id,
+            e,
+        )
+    try:
+        predecessor_vars: dict[str, Any] = {}
+        sv_mgr: Any | None = None
+        try:
+            from gobby.workflows.state_manager import SessionVariableManager
+
+            sv_mgr = SessionVariableManager(handler._session_manager.db)
+            predecessor_vars = dict(sv_mgr.get_variables(predecessor_id) or {})
+        except Exception:
+            predecessor_vars = {}
+        preserve_task_claim_state(
+            handler,
+            sv_mgr,
+            successor_id,
+            predecessor_id,
+            predecessor_vars,
+        )
+    except Exception as e:
+        handler.logger.warning(
+            "Failed to reassign clear task claims for successor %s: %s",
+            successor_id,
+            e,
+        )
+    try:
+        predecessor_ref = str(getattr(predecessor, "ref", None) or predecessor_id)
+        prompt = build_clear_self_continue_prompt(predecessor_ref=predecessor_ref)
+        schedule_clear_self_continuation(
+            session_obj,
+            prompt,
+            loop=getattr(handler._session_coordinator, "_event_loop", None),
+        )
+    except Exception as e:
+        handler.logger.warning(
+            "Failed to schedule clear continuation for successor %s: %s",
+            successor_id,
+            e,
+        )
+
+
 def handle_session_start(handler: Any, event: HookEvent) -> HookResponse:
     """Handle SESSION_START event."""
     _t0 = time.monotonic()
@@ -210,7 +293,7 @@ def handle_session_start(handler: Any, event: HookEvent) -> HookResponse:
         terminal_context.get("gobby_session_id") if terminal_context else None
     )
 
-    if handler._session_manager:
+    if handler._session_manager and session_source != "clear":
         try:
             existing_session = handler._session_manager.get(external_id)
             if existing_session:
@@ -295,7 +378,7 @@ def handle_session_start(handler: Any, event: HookEvent) -> HookResponse:
         "SESSION_START: cli=%s, project=%s, source=%s", cli_source, project_id, session_source
     )
 
-    if handler._session_manager:
+    if handler._session_manager and session_source != "clear":
         try:
             existing_web_chat = handler._session_manager.find_by_external_id(
                 external_id,
@@ -479,6 +562,12 @@ def handle_session_start(handler: Any, event: HookEvent) -> HookResponse:
     session_obj = None
     if session_id and handler._session_manager:
         session_obj = handler._session_manager.get(session_id)
+    if session_source == "clear" and session_obj is not None:
+        _bind_clear_successor(handler, resolution, session_obj)
+        if handler._session_manager is not None:
+            rebound = handler._session_manager.get(session_id)
+            if rebound is not None:
+                session_obj = rebound
     if session_obj:
         _schedule_tmux_window_rename_for_session(handler, session_obj)
 
